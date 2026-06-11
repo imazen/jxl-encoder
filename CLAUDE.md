@@ -224,7 +224,8 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - Greedy method: hash chain backward references (effort 8)
   - Optimal method: Viterbi DP minimum-cost parse (effort 9+, best compression)
   - All methods decoder-validated with jxl-rs, jxl-oxide, and djxl
-  - Integrated into tree-learned modular paths (single-group and multi-group squeeze)
+  - Integrated into tree-learned modular paths (single-group, multi-group squeeze,
+    and — since #69 item 1 — the default non-squeeze multi-group path, per-section)
   - Per-section dist_multiplier matches decoder's per-subimage computation
 - Content-adaptive block context map (default-on in two-pass, QF-based splitting,
   ~0.5% average savings on large images, verified with jxl-rs and djxl)
@@ -1425,7 +1426,8 @@ transform (Haar wavelet), lossless patches (default-on).
    *worse* quality, not better. Both are encoder-only; the decoder just sees per-leaf predictors.
 
 3. ~~**Optimal LZ77 (effort 9)**~~ — DONE (Feb 18, 2026). Viterbi DP minimum-cost parse.
-   Integrated into tree-learned modular paths. Effort-gated: RLE at e7, Greedy at e8, Optimal at e9+.
+   Integrated into tree-learned modular paths (incl. the default multi-group path per-section, #69).
+   Effort-gated: RLE at e7, Greedy at e8, Optimal at e9+.
 
 4. ~~**Effort-level tuning for LZ77**~~ — DONE (Feb 18, 2026). LZ77 method now auto-selected by effort:
    e7=RLE, e8=Greedy, e9+=Optimal. Tree learning and LZ77 are no longer mutually exclusive.

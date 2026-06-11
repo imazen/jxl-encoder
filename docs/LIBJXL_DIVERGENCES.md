@@ -373,6 +373,8 @@ C. **SA-D-AUDIT**: Sweep all weight-generation paths (`generate_dct4x8_weights`,
 
 ## G. RESOLVED divergences (historical)
 
+| Lossless multi-group: LZ77 never applied (undocumented divergence — libjxl applies LZ77 per-section on modular streams when beneficial; our tree-learned multi-group path dropped `use_lz77`/`lz77_method` to avoid a global-code-vs-section histogram mismatch, so the e7-RLE/e8-Greedy/e9-Optimal schedule never fired above one group) | issue #69 item 1 (THIS commit) | Resolved by mirroring the squeeze multi-group path: per-section `apply_lz77` with `dist_multiplier = max(section channel widths)`, global ANS code built over transformed streams (`num_contexts + 1` when enabled), per-group writers re-apply the deterministic transform at write time (`modular/section.rs`). `apply_lz77`'s libjxl 20 % benefit floor keeps non-repetitive (photo-class) sections at the identity → those frames remain byte-identical with the pre-fix layout. Hash-locks intentionally re-baked; gate: `tests/it/lossless_multigroup_lz77.rs`. |
+
 Bugs/divergences that WERE active and are now at parity. Kept here so future agents don't re-investigate.
 
 | Divergence | Resolution commit | Notes |

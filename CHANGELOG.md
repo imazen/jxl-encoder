@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Fixed
+- **#69 item 1: per-section LZ77 now fires on the lossless multi-group
+  path.** The tree-learned multi-group writer deliberately dropped
+  `use_lz77`/`lz77_method` (global-code-vs-section histogram mismatch),
+  so every lossless image over one group encoded with no LZ77 — the
+  documented e7-RLE / e8-Greedy / e9-Optimal schedule was aspirational.
+  Now mirrors the squeeze path: per-section transform with
+  `dist_multiplier = max(section channel widths)`, global ANS code built
+  over the transformed streams, per-group writers re-apply the identical
+  deterministic transform. Photo-class sections rarely clear the libjxl
+  20 % benefit floor and then stay byte-identical (`lz77.enabled=0`
+  layout unchanged). Regression gate:
+  `tests/it/lossless_multigroup_lz77.rs` (fires + roundtrips e7/e8/e9 via
+  jxl-rs + jxl-oxide; identity on non-repetitive noise).
 - **#68: e9+ lossless emitted undecodable bitstreams** on content whose
   learned tree split on a mid-group reference-channel property.
   `collect_residuals_with_tree*` sized the per-pixel property record at

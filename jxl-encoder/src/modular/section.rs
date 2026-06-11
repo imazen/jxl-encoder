@@ -117,8 +117,24 @@ pub enum GlobalModularState {
         tree: super::tree::Tree,
         /// WP parameters used during tree learning and residual collection.
         wp_params: super::predictor::WeightedPredictorParams,
+        /// Per-section LZ77 (issue #69 item 1). `Some` means the global
+        /// entropy code was built over LZ77-transformed per-section token
+        /// streams, and every per-group section MUST re-apply the same
+        /// `(method, dist_multiplier)` transform at write time — the
+        /// decoder creates a fresh LZ77 state per section with
+        /// `dist_multiplier = max(section channel widths)`. `None` means
+        /// LZ77 is off for this frame (the pre-#69 behaviour).
+        lz77: Option<SectionLz77>,
     },
 }
+
+/// Per-section LZ77 configuration carried by
+/// [`GlobalModularState::AnsWithTree`]: the schedule's method plus the
+/// header params the global entropy code was built with.
+pub type SectionLz77 = (
+    crate::entropy_coding::lz77::Lz77Method,
+    crate::entropy_coding::lz77::Lz77Params,
+);
 
 /// CeilLog2Nonzero matching the JXL spec.
 fn ceil_log2_nonzero(x: u32) -> u32 {
@@ -706,7 +722,16 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     } else {
         profile.tree_learn_seeds.max(1)
     };
-    let mut best: Option<(Vec<crate::entropy_coding::token::Token>, usize, Tree, f64)> = None;
+    /// Winning multi-seed candidate: (all_tokens, nb_meta_tokens,
+    /// per-group token ranges within all_tokens, learned tree, cost).
+    type SeedCandidate = (
+        Vec<crate::entropy_coding::token::Token>,
+        usize,
+        Vec<core::ops::Range<usize>>,
+        Tree,
+        f64,
+    );
+    let mut best: Option<SeedCandidate> = None;
 
     // Per-seed cost log for the chunk-7 early-out decision. Indexed by
     // completed seed (0..seeds). Populated inside the loop after the
@@ -797,8 +822,11 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
             );
         }
 
-        // Collect residuals for this candidate tree.
-        let (all_tokens, nb_meta_tokens) =
+        // Collect residuals for this candidate tree. `group_ranges[g]` is
+        // group g's slice of `all_tokens` — kept so the per-section LZ77
+        // transform below can re-slice the winning seed's streams without
+        // holding a second per-group copy.
+        let (all_tokens, nb_meta_tokens, group_ranges) =
             crate::profile_time!("modular/collect_residuals_global", {
                 let per_group_tokens: Vec<Vec<crate::entropy_coding::token::Token>> =
                     crate::parallel::parallel_map(images.len(), |group_idx| {
@@ -819,10 +847,13 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                 if let Some(meta_tokens) = meta_tokens_opt {
                     all_tokens.extend(meta_tokens);
                 }
+                let mut group_ranges = Vec::with_capacity(images.len());
                 for tokens in per_group_tokens {
+                    let start = all_tokens.len();
                     all_tokens.extend(tokens);
+                    group_ranges.push(start..all_tokens.len());
                 }
-                (all_tokens, nb_meta_tokens)
+                (all_tokens, nb_meta_tokens, group_ranges)
             });
 
         // Score: skip cost estimate entirely when seeds == 1 (the legacy
@@ -830,7 +861,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         // we compute the entropy cost (with per-context header term,
         // see `estimate_token_cost`) and keep the cheapest candidate.
         if seeds == 1 {
-            best = Some((all_tokens, nb_meta_tokens, tree, 0.0));
+            best = Some((all_tokens, nb_meta_tokens, group_ranges, tree, 0.0));
             break;
         }
         let cost = estimate_token_cost(&all_tokens);
@@ -844,9 +875,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         );
         seed_costs.push(cost);
         match best {
-            None => best = Some((all_tokens, nb_meta_tokens, tree, cost)),
-            Some((_, _, _, prev_cost)) if cost < prev_cost => {
-                best = Some((all_tokens, nb_meta_tokens, tree, cost));
+            None => best = Some((all_tokens, nb_meta_tokens, group_ranges, tree, cost)),
+            Some((_, _, _, _, prev_cost)) if cost < prev_cost => {
+                best = Some((all_tokens, nb_meta_tokens, group_ranges, tree, cost));
             }
             _ => {}
         }
@@ -882,17 +913,74 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         }
     }
 
-    let (all_tokens, nb_meta_tokens, tree, _final_cost) =
+    let (all_tokens, nb_meta_tokens, group_ranges, tree, _final_cost) =
         best.expect("seeds >= 1 guarantees at least one candidate");
     let num_contexts = count_contexts(&tree) as usize;
 
-    // Note: LZ77 is NOT applied in this path. The per-group sections
-    // (write_group_modular_section) re-collect tokens independently without LZ77.
-    // Applying LZ77 to the combined stream would cause a histogram mismatch because
-    // the ANS code would include LZ77 symbols that per-group sections don't emit.
-    // The squeeze multi-group path (frame.rs) handles LZ77 correctly per-section.
-    let _ = (use_lz77, lz77_method); // suppress unused warnings
-    let lz77_params: Option<crate::entropy_coding::lz77::Lz77Params> = None;
+    // Per-section LZ77 (issue #69 item 1) — mirrors the squeeze multi-group
+    // path (frame.rs Step 5b). Every section's token stream is transformed
+    // INDEPENDENTLY: the decoder creates a fresh LZ77 state per section with
+    // dist_multiplier = max(that section's channel widths). The global ANS
+    // code is then built over the TRANSFORMED streams, so its LZ77 length
+    // context matches exactly what the sections emit — the histogram
+    // mismatch that historically kept LZ77 off this path only existed when
+    // the combined stream was transformed as one unit.
+    //
+    // Two deliberate orderings:
+    // - Seed selection above scores UNTRANSFORMED streams. Transforming
+    //   every candidate would multiply the e9 Optimal parse cost by the
+    //   seed count; "pick tree, then LZ77" is the cheap order.
+    // - Per-group sections re-collect tokens at write time
+    //   (write_group_modular_section_idx) and re-apply this same transform.
+    //   apply_lz77 is deterministic on identical inputs (same tree, same
+    //   group_id, same num_contexts, same dist_multiplier), so the
+    //   histogram-time slices and the write-time streams stay in lockstep.
+    let lz77_applied = if use_lz77 {
+        use crate::entropy_coding::lz77::{Lz77Params, apply_lz77};
+        let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Vec<AnsToken> {
+            if tokens.is_empty() {
+                return Vec::new();
+            }
+            match apply_lz77(tokens, num_contexts, false, lz77_method, dist_multiplier) {
+                Some((lz77_tokens, _)) => lz77_tokens,
+                None => tokens.to_vec(),
+            }
+        };
+        let meta_dm = meta_image
+            .map(|m| m.channels.iter().map(|c| c.width()).max().unwrap_or(0))
+            .unwrap_or(0) as i32;
+        let mut transformed = Vec::with_capacity(all_tokens.len());
+        transformed.extend(try_lz77(&all_tokens[..nb_meta_tokens], meta_dm));
+        let transformed_nb_meta = transformed.len();
+        for (g, range) in group_ranges.iter().enumerate() {
+            let dm = images[g]
+                .channels
+                .iter()
+                .map(|c| c.width())
+                .max()
+                .unwrap_or(0) as i32;
+            transformed.extend(try_lz77(&all_tokens[range.clone()], dm));
+        }
+        // Header params come from the same (num_contexts, force_huffman)
+        // construction apply_lz77 uses internally, so min_symbol/min_length
+        // agree across all sections (same contract as the squeeze path).
+        if transformed.iter().any(|t| t.is_lz77_length()) {
+            let mut params = Lz77Params::new(num_contexts, false);
+            params.enabled = true;
+            Some((transformed, transformed_nb_meta, params))
+        } else {
+            // No section materialized a reference: without refs the
+            // transform is the identity, so drop it and write the
+            // pre-#69 lz77.enabled=0 layout.
+            None
+        }
+    } else {
+        None
+    };
+    let (all_tokens, nb_meta_tokens, lz77_params) = match lz77_applied {
+        Some((tokens, nb_meta, params)) => (tokens, nb_meta, Some(params)),
+        None => (all_tokens, nb_meta_tokens, None),
+    };
     let ans_num_contexts = if lz77_params.is_some() {
         num_contexts + 1
     } else {
@@ -966,7 +1054,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     // `num_chans == 0` / `is_empty` early-returns), so the extra 4 bytes are simply
     // padding to them. See `imazen/jxl-oxide@fd4e2c3` for the matching decoder fix.
     let meta_token_slice = &all_tokens[..nb_meta_tokens];
-    write_tokens_ans(meta_token_slice, &code, None, writer)?;
+    write_tokens_ans(meta_token_slice, &code, lz77_params.as_ref(), writer)?;
 
     let total_lf_global_bits = writer.bits_written() - bits_before;
     eprintln!(
@@ -987,6 +1075,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         code,
         tree,
         wp_params,
+        lz77: lz77_params.map(|p| (lz77_method, p)),
     })
 }
 
@@ -1180,6 +1269,7 @@ pub fn write_group_modular_section_idx(
             code,
             tree,
             wp_params,
+            lz77,
         } => {
             // Collect residuals using the learned tree (multi-context).
             // Per-group images use 0-based channel indices (matching the decoder,
@@ -1192,8 +1282,38 @@ pub fn write_group_modular_section_idx(
                     wp_params,
                 )
             });
+            // Per-section LZ77 (issue #69 item 1): re-apply the exact
+            // transform the global histogram was built over — same method,
+            // same num_contexts (from the same tree), and this section's
+            // dist_multiplier (max channel width of THIS group, matching
+            // the decoder's fresh per-section LZ77 state). apply_lz77 is
+            // deterministic, so this stream is identical to the
+            // histogram-time slice in the global section.
+            let (tokens, lz77_params) = match lz77 {
+                Some((method, params)) => {
+                    let dist_multiplier = group_image
+                        .channels
+                        .iter()
+                        .map(|c| c.width())
+                        .max()
+                        .unwrap_or(0) as i32;
+                    let num_contexts = super::tree::count_contexts(tree) as usize;
+                    let transformed = match crate::entropy_coding::lz77::apply_lz77(
+                        &tokens,
+                        num_contexts,
+                        false,
+                        *method,
+                        dist_multiplier,
+                    ) {
+                        Some((lz77_tokens, _)) => lz77_tokens,
+                        None => tokens,
+                    };
+                    (transformed, Some(params))
+                }
+                None => (tokens, None),
+            };
             crate::profile_time!("modular/write_tokens_per_group", {
-                write_tokens_ans(&tokens, code, None, writer)?;
+                write_tokens_ans(&tokens, code, lz77_params, writer)?;
             });
         }
     }

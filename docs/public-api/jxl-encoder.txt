@@ -6,7 +6,7 @@
 # incompatible Runtime traits; see tests/public_api_doc.rs).
 # DO NOT EDIT BY HAND — commit regenerated changes together with the code.
 
-## default features (5063 items)
+## default features (5064 items)
 
 pub mod jxl_encoder
 pub use jxl_encoder::At
@@ -2960,6 +2960,7 @@ pub jxl_encoder::modular::GlobalModularState::Ans::code: jxl_encoder::entropy_co
 pub jxl_encoder::modular::GlobalModularState::Ans::predictor_id: u8
 pub jxl_encoder::modular::GlobalModularState::AnsWithTree
 pub jxl_encoder::modular::GlobalModularState::AnsWithTree::code: jxl_encoder::entropy_coding::encode_ans::OwnedAnsEntropyCode
+pub jxl_encoder::modular::GlobalModularState::AnsWithTree::lz77: core::option::Option<(jxl_encoder::Lz77Method, jxl_encoder::entropy_coding::lz77::Lz77Params)>
 pub jxl_encoder::modular::GlobalModularState::AnsWithTree::tree: jxl_encoder::modular::Tree
 pub jxl_encoder::modular::GlobalModularState::AnsWithTree::wp_params: jxl_encoder::modular::WeightedPredictorParams
 pub jxl_encoder::modular::GlobalModularState::Huffman
