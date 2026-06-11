@@ -4647,6 +4647,57 @@ impl<'a> BorrowedSamples<'a> {
     }
 }
 
+/// MABSplit Phase-0 instrumentation (issue #64 CHUNK 2 Phase 0): when the
+/// `__env_var_diagnostics` build sets `JXL_MABSPLIT_DUMP=<path>`, every
+/// find_best_split call (borrowed AND owned variants) appends one TSV line:
+/// node weighted_total, base_bits, chosen property (-1 = no split beat
+/// base), best_bits, then `prop:best_total` for every evaluated property —
+/// the raw material for the Hoeffding early-stop variance analysis
+/// (docs/MABSPLIT_VARIANCE_REPORT.md). Compiled out of default builds
+/// entirely per the lossy-low hygiene rule.
+#[cfg(feature = "__env_var_diagnostics")]
+mod mabsplit_dump {
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+
+    static SINK: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+
+    pub(super) fn sink() -> Option<&'static Mutex<std::fs::File>> {
+        SINK.get_or_init(|| {
+            let path = std::env::var("JXL_MABSPLIT_DUMP").ok()?;
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .ok()?;
+            Some(Mutex::new(f))
+        })
+        .as_ref()
+    }
+
+    pub(super) fn record(
+        weighted_total: u32,
+        base_bits: f64,
+        chosen: i32,
+        best_bits: f64,
+        per_prop: &[(u8, f64)],
+    ) {
+        if let Some(m) = sink()
+            && let Ok(mut f) = m.lock()
+        {
+            let mut line = format!("{weighted_total}\t{base_bits:.2}\t{chosen}\t{best_bits:.2}\t");
+            for (i, (p, v)) in per_prop.iter().enumerate() {
+                if i > 0 {
+                    line.push(',');
+                }
+                line.push_str(&format!("{p}:{v:.2}"));
+            }
+            line.push('\n');
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+}
+
 /// Borrowed-view counterpart to [`find_best_split`]. Operates on the live
 /// range `[start..end)` of a [`BorrowedSamples`].
 ///
@@ -4675,6 +4726,8 @@ fn find_best_split_borrowed(
     let total_num_pred = samples.num_predictors();
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
+    #[cfg(feature = "__env_var_diagnostics")]
+    let mut mab_per_prop: Vec<(u8, f64)> = Vec::new();
 
     let sample_counts = &samples.sample_counts[start..end];
 
@@ -4984,12 +5037,18 @@ fn find_best_split_borrowed(
             cap_totals_done = true;
         }
 
+        #[cfg(feature = "__env_var_diagnostics")]
+        let mut mab_prop_best = f64::MAX;
         for local_k in 0..local_num_thresholds {
             if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
                 continue;
             }
 
             let total = best_l_cost[local_k] + best_r_cost[local_k];
+            #[cfg(feature = "__env_var_diagnostics")]
+            if total < mab_prop_best {
+                mab_prop_best = total;
+            }
 
             if total < best_bits {
                 best_bits = total;
@@ -5006,6 +5065,10 @@ fn find_best_split_borrowed(
                     right_bits: best_r_cost[local_k],
                 });
             }
+        }
+        #[cfg(feature = "__env_var_diagnostics")]
+        if mabsplit_dump::sink().is_some() && mab_prop_best < f64::MAX {
+            mab_per_prop.push((prop_idx as u8, mab_prop_best));
         }
     }
 
@@ -5027,6 +5090,14 @@ fn find_best_split_borrowed(
         }
     }
 
+    #[cfg(feature = "__env_var_diagnostics")]
+    mabsplit_dump::record(
+        weighted_total,
+        base_bits,
+        best.as_ref().map_or(-1, |b| b.property as i32),
+        best_bits,
+        &mab_per_prop,
+    );
     best
 }
 
@@ -6917,6 +6988,8 @@ fn find_best_split(
     let total_num_pred = samples.num_predictors();
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
+    #[cfg(feature = "__env_var_diagnostics")]
+    let mut mab_per_prop: Vec<(u8, f64)> = Vec::new();
 
     let sample_counts_full = &samples.sample_counts;
     let sample_counts = &sample_counts_full[start..end];
@@ -7348,12 +7421,18 @@ fn find_best_split(
         // Find best threshold across all predictors for this property.
         // Split decision uses RAW costs (no penalty), matching libjxl enc_ma.cc:424.
         // The penalty only influenced which predictor was chosen for each side above.
+        #[cfg(feature = "__env_var_diagnostics")]
+        let mut mab_prop_best = f64::MAX;
         for local_k in 0..local_num_thresholds {
             if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
                 continue;
             }
 
             let total = best_l_cost[local_k] + best_r_cost[local_k];
+            #[cfg(feature = "__env_var_diagnostics")]
+            if total < mab_prop_best {
+                mab_prop_best = total;
+            }
 
             if total < best_bits {
                 best_bits = total;
@@ -7375,6 +7454,10 @@ fn find_best_split(
                     right_bits: best_r_cost[local_k],
                 });
             }
+        }
+        #[cfg(feature = "__env_var_diagnostics")]
+        if mabsplit_dump::sink().is_some() && mab_prop_best < f64::MAX {
+            mab_per_prop.push((prop_idx as u8, mab_prop_best));
         }
     }
 
@@ -7402,6 +7485,14 @@ fn find_best_split(
         }
     }
 
+    #[cfg(feature = "__env_var_diagnostics")]
+    mabsplit_dump::record(
+        weighted_total,
+        base_bits,
+        best.as_ref().map_or(-1, |b| b.property as i32),
+        best_bits,
+        &mab_per_prop,
+    );
     best
 }
 
