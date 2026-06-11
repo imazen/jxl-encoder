@@ -449,19 +449,17 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### 2026-06-10: `gpu-butteraugli` feature does not compile (pre-existing sibling drift)
+### RESOLVED 2026-06-11: `gpu-butteraugli` did not compile — two cubecl universes
 
-`cargo check -p jxl-encoder --lib --features gpu-butteraugli` fails with 10
-errors on origin/main (`329f207d`): `CudaRuntime:
-cubecl_runtime::runtime::Runtime` trait bound not satisfied →
-`Butteraugli<CudaRuntime>::{new_multires, set_reference_from_linear_planes
-_with_options, compute_with_reference_from_linear_planes}` unusable. Two
-cubecl versions in the graph (the butteraugli-gpu path dep in
-`~/work/zen/zenmetrics` compiled against a different cubecl than this
-lock resolves). Discovered 2026-06-10 while compile-checking the
-`env_overrides` test split; unrelated to that change (lib-only errors).
-Fix lives in dep-graph alignment (zenmetrics ↔ this repo's cubecl pins),
-NOT in this repo's source — coordinate with zenmetrics before touching.
+The workspace patched crates.io `cubecl-*` to the lilith/cubecl git fork
+while zenmetrics' GPU crates had migrated to the renamed
+`zenforks-cubecl-*` 0.10.1 crates.io publication: `Butteraugli<R>`
+bounded on zenforks' `Runtime`, our `CudaRuntime` came from the git
+lineage → E0277/E0599. Fixed by dropping the git patch entries and
+re-aliasing the member dep `cubecl = { package = "zenforks-cubecl",
+version = "0.10.1" }` — the same aliases zenmetrics uses. All GPU
+features (`gpu-butteraugli`, `zensim-loop`, `cvvdp-loop`) and the default
+workspace now compile; hash-locks 40/40.
 
 ### RESOLVED 2026-06-10: env-var runtime-override tests flaked the `it` binary under parallelism
 

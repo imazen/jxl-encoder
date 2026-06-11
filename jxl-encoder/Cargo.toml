@@ -79,9 +79,13 @@ postcard = { version = "1.1", default-features = false, features = ["use-std"], 
 # 0.0.1 is `publish = false`. CubeCL is pulled in as a direct dep so the
 # `CudaRuntime` type is reachable from the backend module.
 butteraugli-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types", "internals"], optional = true }
-# cubecl is pinned via `[patch.crates-io]` in the workspace `Cargo.toml`
+# cubecl resolves to the `zenforks-cubecl` crates.io publication (the
+# pinned-upload fork lineage) — the same package the zenmetrics GPU crates
+# bound their Runtime traits against. The old lilith/cubecl git patch
+# created a second cubecl universe and E0277/E0599 under `gpu-butteraugli`
+# (CLAUDE.md Known Bug 2026-06-10, fixed by this unification).
 # to the same git rev butteraugli-gpu is tested against.
-cubecl = { version = "0.10.0-pre.4", default-features = false, features = ["std", "cuda"], optional = true }
+cubecl = { package = "zenforks-cubecl", version = "0.10.1", default-features = false, features = ["std", "cuda"], optional = true }
 # cvvdp-fork Phase 3: GPU CVVDP backend for the perceptual quantization
 # loop (RFC `docs/RFC_CVVDP_FORK.md` §2.1, Phase 3 brief
 # `docs/RFC_CVVDP_PHASE3_BRIEF.md`). Opt-in via the `cvvdp-loop` cargo
