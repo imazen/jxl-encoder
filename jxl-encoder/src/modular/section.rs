@@ -1081,6 +1081,11 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
 
 /// Info about global transforms to write in the LfGlobal GroupHeader.
 pub struct GlobalTransforms {
+    /// Full-image palette transform (issue #69 item 2):
+    /// `(begin_c, num_c, nb_colors)`. Mutually exclusive with
+    /// `compact_info`/`rct_type` (indices are nominal — RCT is skipped,
+    /// and a full palette subsumes per-channel compaction).
+    pub full_palette: Option<(usize, usize, usize)>,
     /// Per-channel ChannelCompact transforms: (begin_c, nb_colors).
     pub compact_info: Vec<(usize, usize)>,
     /// Optional RCT type (begin_c is adjusted for ChannelCompact meta channels).
@@ -1090,6 +1095,7 @@ pub struct GlobalTransforms {
 impl GlobalTransforms {
     pub fn rct_only(rct_type: Option<RctType>) -> Self {
         Self {
+            full_palette: None,
             compact_info: Vec::new(),
             rct_type,
         }
@@ -1104,9 +1110,16 @@ fn write_global_transforms_full(
     writer: &mut BitWriter,
     transforms: &GlobalTransforms,
 ) -> Result<()> {
-    let num_transforms =
-        transforms.compact_info.len() as u32 + transforms.rct_type.is_some() as u32;
+    let num_transforms = transforms.full_palette.is_some() as u32
+        + transforms.compact_info.len() as u32
+        + transforms.rct_type.is_some() as u32;
     super::encode::write_num_transforms(writer, num_transforms)?;
+
+    // Full-image palette (issue #69 item 2) — written exactly like the
+    // single-group palette path (nb_deltas=0, d_pred=0, lossless).
+    if let Some((begin_c, num_c, nb_colors)) = transforms.full_palette {
+        write_palette_transform(writer, begin_c, num_c, nb_colors, 0, 0)?;
+    }
 
     // ChannelCompact transforms first (per-channel palette, num_c=1)
     for &(begin_c, nb_colors) in &transforms.compact_info {

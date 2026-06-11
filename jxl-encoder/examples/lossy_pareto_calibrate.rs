@@ -366,19 +366,21 @@ fn build_encoder(rc: &RowConfig) -> LossyConfig {
     let mut entropy_mul = jxl_encoder::EntropyMulTable::reference();
     entropy_mul.dct8 = rc.entropy_mul_dct8;
 
-    let params = LossyInternalParams {
-        try_dct64: Some(try_dct64),
-        fine_grained_step: Some(fine_grained_step),
-        try_dct32: Some(true),
-        try_dct16: Some(true),
-        try_dct4x8_afv: Some(true),
-        non_aligned_eval: Some(true),
-        enhanced_clustering_vardct: Some(rc.cell.enhanced_clustering),
-        k_info_loss_mul_base: Some(rc.k_info_loss_mul),
-        k_ac_quant: Some(rc.k_ac_quant),
-        entropy_mul_table: Some(entropy_mul),
-        ..Default::default()
-    };
+    // LossyInternalParams is #[non_exhaustive]: struct-literal
+    // construction stopped compiling outside the crate — build via
+    // Default + field assignment instead (same values, same semantics).
+    let mut params = LossyInternalParams::default();
+    params.try_dct64 = Some(try_dct64);
+    params.fine_grained_step = Some(fine_grained_step);
+    params.try_dct32 = Some(true);
+    params.try_dct16 = Some(true);
+    params.try_dct4x8_afv = Some(true);
+    params.non_aligned_eval = Some(true);
+    params.enhanced_clustering_vardct = Some(rc.cell.enhanced_clustering);
+    params.k_info_loss_mul_base = Some(rc.k_info_loss_mul);
+    params.k_ac_quant = Some(rc.k_ac_quant);
+    params.entropy_mul_table = Some(entropy_mul);
+    let params = params;
 
     // Apply effort first so the internal-params builder snapshots the right
     // effort-derived defaults before our overrides land. gaborish / patches /

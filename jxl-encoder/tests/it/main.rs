@@ -59,6 +59,7 @@ mod llf_invariants;
 mod lloyd_max_buckets_roundtrip;
 mod lossless_compare;
 mod lossless_multigroup_lz77;
+mod lossless_multigroup_palette;
 mod lossy_alpha_roundtrip;
 mod lossy_knobs_wiring;
 mod lossy_mixed_extras_alpha;

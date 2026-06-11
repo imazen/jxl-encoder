@@ -632,7 +632,51 @@ impl FrameEncoder {
         };
         let try_compact = self.options.use_tree_learning && self.options.use_ans;
 
-        let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> = if try_compact {
+        // Step 0-pre (issue #69 item 2): FULL-image palette (TransformId=1,
+        // num_c = colour channels) — the multi-group twin of the
+        // single-group auto-palette in write_modular_stream_with_tree_knobs.
+        // Tried BEFORE ChannelCompact/RCT: when an image has <= max_colors
+        // distinct colour tuples, one index channel + a global palette
+        // meta-channel beats both (and indices are nominal, so RCT is
+        // skipped). Honours `--modular_palette_colors` exactly like the
+        // single-group knob path: Some(0)/negative disables, Some(n) caps,
+        // unset = MAX_PALETTE_COLORS. Requires the AnsWithTree global
+        // meta-channel path, same as ChannelCompact below.
+        let full_palette: Option<(usize, super::palette::PaletteAnalysis)> = if try_compact {
+            match self.options.modular_knobs.palette_colors_or_default() {
+                None => None,
+                Some(max_colors) => {
+                    // Multi-channel tuples only (nc >= 2). Single-channel
+                    // images are ChannelCompact's domain below — for nc=1
+                    // the two transforms are bitstream-IDENTICAL
+                    // (write_palette_transform(0, 1, n) + meta + index),
+                    // and ChannelCompact additionally carries the
+                    // density <= 50% benefit filter. Verified: bilevel
+                    // 512x512 encodes byte-identical via either route.
+                    let nc = if image.is_grayscale {
+                        0usize
+                    } else {
+                        image.channels.len().min(3)
+                    };
+                    if nc < 2 {
+                        None
+                    } else {
+                        let analysis = super::palette::analyze_palette(image, 0, nc, max_colors);
+                        if analysis.use_palette {
+                            Some((nc, analysis))
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+        let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> = if try_compact
+            && full_palette.is_none()
+        {
             // For multi-group, compact overhead is higher (meta-channels in global section,
             // tree quality dilution across many groups). Require density <= 50%
             // (i.e. range >= 2x unique), which means >= 1 bit/pixel entropy savings.
@@ -684,7 +728,32 @@ impl FrameEncoder {
         };
 
         let (meta_image, source_image_owned, compact_info, rct_type);
-        if !compact_analyses.is_empty() {
+        let full_palette_info: Option<(usize, usize, usize)>;
+        if let Some((num_c, analysis)) = full_palette {
+            // Apply the palette transform: channels become
+            // [palette_meta(nb_colors x num_c), index(WxH), extras...].
+            // The meta-channel stays whole in the global section (same
+            // mechanism as ChannelCompact's palettes); the index channel +
+            // extras split per-group below.
+            let mut work = image.clone();
+            let nb_colors = super::palette::apply_palette(&mut work, 0, num_c, &analysis)?;
+            let mut meta_img = image.clone();
+            meta_img.channels = vec![work.channels.remove(0)];
+
+            crate::trace::debug_eprintln!(
+                "MULTI_GROUP_PALETTE: {} colours, num_c={}, index+{} extras split per-group",
+                nb_colors,
+                num_c,
+                work.channels.len().saturating_sub(1),
+            );
+
+            meta_image = Some(meta_img);
+            source_image_owned = work;
+            compact_info = Vec::new();
+            rct_type = None;
+            full_palette_info = Some((0, num_c, nb_colors));
+        } else if !compact_analyses.is_empty() {
+            full_palette_info = None;
             // Build palette meta-channels + index channels.
             // Layout: [pal_N-1, ..., pal_0, idx_0, ch_1, idx_2, ...extra]
             // (palettes reversed for decoder MetaPalette insertion order)
@@ -762,6 +831,7 @@ impl FrameEncoder {
             source_image_owned = work;
             compact_info = info;
         } else {
+            full_palette_info = None;
             // No ChannelCompact — standard RCT-only path
             crate::profile_time!("modular/rct_select", {
                 if has_rct {
@@ -782,6 +852,7 @@ impl FrameEncoder {
         };
 
         let global_transforms = super::section::GlobalTransforms {
+            full_palette: full_palette_info,
             compact_info,
             rct_type,
         };

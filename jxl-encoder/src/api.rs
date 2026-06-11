@@ -2945,9 +2945,11 @@ impl LosslessConfig {
     /// disables palette detection. `Some(n)` for `n > 0` caps the
     /// palette-colour search.
     ///
-    /// Encoder-side wiring through the palette-search call sites in
-    /// `modular/encode.rs` is queued follow-on work. The value is
-    /// stored on the config for surface completeness.
+    /// Consumed on BOTH lossless paths (issue #69 item 2): the
+    /// single-group palette writer and the multi-group full-image
+    /// palette gate in `modular/frame.rs` (nc >= 2; single-channel
+    /// palette is ChannelCompact's domain and is governed by the
+    /// channel-colours knobs instead).
     pub fn with_modular_palette_colors(mut self, n: Option<i64>) -> Self {
         self.modular_palette_colors = n;
         self

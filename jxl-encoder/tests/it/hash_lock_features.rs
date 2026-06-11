@@ -338,6 +338,33 @@ fn noise_rgb_512x512() -> Vec<u8> {
     out
 }
 
+/// 512x512 RGB of 8x8 blocks in 17 PRNG colours — MULTI-GROUP content
+/// where the full-image palette transform (issue #69 item 2) engages:
+/// locks the palette-meta-in-global + per-group index-channel layout
+/// that no other fixture reaches.
+fn blocky17_rgb_512x512() -> Vec<u8> {
+    let (w, h) = (512usize, 512usize);
+    let mut seed = 7777u64;
+    let mut lcg = move || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (seed >> 56) as u8
+    };
+    let palette: Vec<[u8; 3]> = (0..17).map(|_| [lcg(), lcg(), lcg()]).collect();
+    let mut out = vec![0u8; w * h * 3];
+    for by in 0..h / 8 {
+        for bx in 0..w / 8 {
+            let c = palette[(bx * 31 + by * 17 + (bx * by) % 7) % 17];
+            for y in (by * 8)..(by * 8 + 8) {
+                for x in (bx * 8)..(bx * 8 + 8) {
+                    let i = (y * w + x) * 3;
+                    out[i..i + 3].copy_from_slice(&c);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// 512x512 RGB built from a 64-px-wide PRNG noise tile repeated across
 /// the image — MULTI-GROUP content where per-section LZ77 (e8 greedy)
 /// clears the libjxl 20 % benefit floor. Locks the lz77.enabled=1
@@ -829,6 +856,26 @@ fn lossless_mg_rgb_512x512_tiled_e8() {
         .unwrap();
     assert_hashes(
         "lossless_mg_rgb_512x512_tiled_e8",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossless on 17-colour blocky content: the full-image
+/// palette transform engages (issue #69 item 2) — locks the
+/// palette + index multi-group layout.
+#[test]
+fn lossless_mg_rgb_512x512_palette_e7() {
+    let data = LosslessConfig::new()
+        .encode(&blocky17_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_512x512_palette_e7",
         &data,
         512,
         512,

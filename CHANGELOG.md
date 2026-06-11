@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Fixed
+- **#69 item 2: full-image palette transform now runs on the lossless
+  multi-group path.** Detection (`analyze_palette`, libjxl 1024-colour
+  cap, `--modular_palette_colors` honoured) previously only existed on
+  single-group paths: any few-colour image over 256x256 encoded without
+  a palette. Now mirrors the single-group tree path before
+  ChannelCompact/RCT: palette meta-channel stays whole in the global
+  section, index channel splits per-group. nc >= 2 only — single-channel
+  palette is ChannelCompact's domain (bitstream-identical transform with
+  a stricter benefit filter; verified byte-identical on bilevel).
+  43-pick bench: 14-colour plot cell -30.1/-27.7/-31.6 % at e7/8/9,
+  everything else byte-identical. Gate:
+  `tests/it/lossless_multigroup_palette.rs` + a 4th multi-group
+  hash-lock cell (17-colour blocky, 3,424 B).
 - **#69 item 1: per-section LZ77 now fires on the lossless multi-group
   path.** The tree-learned multi-group writer deliberately dropped
   `use_lz77`/`lz77_method` (global-code-vs-section histogram mismatch),
