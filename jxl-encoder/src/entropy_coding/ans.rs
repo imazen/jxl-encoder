@@ -5,7 +5,10 @@
 //! ANS (Asymmetric Numeral Systems) encoder.
 //!
 //! ANS is an entropy coding method used in JPEG XL for efficient symbol
-//! compression. This module implements the rANS (range ANS) variant.
+//! compression. This module implements the alias-table tANS variant the
+//! JXL spec mandates (alias-method state transitions, NOT range ANS —
+//! the alias method is wire-format-required; see the EX-J1 finding in
+//! docs/CODE-HISTORY.md).
 
 use crate::bit_writer::BitWriter;
 use crate::error::{Error, Result};
