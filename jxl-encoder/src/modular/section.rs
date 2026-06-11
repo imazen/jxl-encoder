@@ -298,15 +298,6 @@ pub fn write_global_modular_section_with_predictor(
     }
 }
 
-/// Writes the global modular section with a learned MA tree for multi-group encoding.
-///
-/// This writes:
-/// - dc_quant (all_default=1, or custom if dc_quant_custom is Some)
-/// - has_tree = 1
-/// - Learned tree (write_tree)
-/// - lz77.enabled = 0
-/// - Multi-context ANS data histogram (write_entropy_code_ans)
-/// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
 /// Number of quant-table modular streams in the spec stream numbering
 /// (libjxl `DequantMatrices::kNum`; zenjxl-decoder
 /// `quantizer::NUM_QUANT_TABLES`).
@@ -325,8 +316,19 @@ pub(crate) fn modular_hf_stream_id_base(num_lf_groups: u32) -> u32 {
     1 + 3 * num_lf_groups + NUM_QUANT_TABLE_STREAMS
 }
 
-#[allow(dead_code)] // public wrapper retained for API stability;
+/// Writes the global modular section with a learned MA tree for multi-group encoding.
+///
+/// This writes:
+/// - dc_quant (all_default=1, or custom if dc_quant_custom is Some)
+/// - has_tree = 1
+/// - Learned tree (write_tree)
+/// - lz77.enabled = 0
+/// - Multi-context ANS data histogram (write_entropy_code_ans)
+/// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
+#[allow(dead_code)]
+// public wrapper retained for API stability;
 // internal callers route through `write_global_modular_section_with_tree_knobs`
+#[allow(clippy::too_many_arguments)] // mirrors the knobs variant's signature
 pub fn write_global_modular_section_with_tree(
     images: &[ModularImage],
     writer: &mut BitWriter,
