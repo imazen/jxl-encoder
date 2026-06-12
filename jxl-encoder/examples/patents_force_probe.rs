@@ -12,6 +12,9 @@
 
 use jxl_encoder::api::{LossyConfig, PixelLayout};
 
+// no-DCT16 arm uses the expert internals (try_dct16 isn't on the public
+// builder); compiled only with --features __expert.
+
 fn main() {
     let path = std::env::args().nth(1).expect("png path");
     let img = image::open(&path).expect("open");
@@ -32,5 +35,33 @@ fn main() {
             .encode(&raw, w, h, PixelLayout::Rgb8)
             .expect("encode");
         println!("{:<16} {} bytes", label, data.len());
+    }
+    // Search-minus-one-strategy arms (needs __expert): the block-stats
+    // diff vs cjxl showed our mix takes DCT16x16 on 21.5% of transforms
+    // where cjxl takes 4.2% — test whether removing big-DCT admission
+    // moves us toward cjxl's operating point.
+    #[cfg(feature = "__expert")]
+    {
+        let arms: &[(&str, fn(&mut jxl_encoder::effort::LossyInternalParams))] = &[
+            ("search-no-DCT16+", |p| {
+                p.try_dct16 = Some(false);
+                p.try_dct32 = Some(false);
+                p.try_dct64 = Some(false);
+            }),
+            ("search-no-DCT32+", |p| {
+                p.try_dct32 = Some(false);
+                p.try_dct64 = Some(false);
+            }),
+        ];
+        for (label, setup) in arms {
+            let mut params = jxl_encoder::effort::LossyInternalParams::default();
+            setup(&mut params);
+            let data = LossyConfig::new(0.5)
+                .with_effort(7)
+                .with_internal_params(params)
+                .encode(&raw, w, h, PixelLayout::Rgb8)
+                .expect("encode");
+            println!("{:<16} {} bytes", label, data.len());
+        }
     }
 }
