@@ -1,0 +1,28 @@
+# scoreboard_2026-06-12.{tsv,_summary.md} — GOAL_BEAT_CJXL scoreboard v1
+# first full run (issue #74). Harness commit cc1f3926 (+ results commit);
+# binary dbafe7ad-era release build. 280 cells, bytes+quality axes only
+# (wall axis UNMEASURED — quiet-box zenbench grid pending). Reproduce:
+#   python3 scripts/scoreboard/run_scoreboard.py benchmarks/scoreboard/<out>.tsv
+# Box: shared workstation, niced; bytes/quality deterministic.
+#
+# TOPLINE: CJXL-DOMINATES 140 (50%), MIXED 73 (26%), WE-DOMINATE 59
+# (21%), TIE 8 (3%). Per family (WE/TIE/MIXED/CJXL):
+#   sdr-lossy 38/3/38/25 ; lossless 11/1/0/44 ; hdr-lossy 5/1/28/62 ;
+#   size-axis 5/3/7/9.
+#
+# FINDINGS (each owes a wedge per the goal):
+# 1. Lossless e5 on graphics content is the largest gap family:
+#    plots +52..+557 % (line-00081: ours 59,804 B vs cjxl 9,096 B),
+#    patents +156..+173 %, screenshots/docs +62..+91 %, ai-clipart +68 %.
+#    Mechanism: our lossless tree learning gates at e>=7; cjxl learns MA
+#    trees at EVERY effort. Same image at e7 we WIN (-15.8 %). Fix shape
+#    known: #72-style budgeted tree-learn lift for 8-bit at e5/e6.
+#    e7 lossless is healthy: 15/21 cells we-smaller.
+# 2. ai-products distance-monotonicity violation (filed on #74): our d2
+#    encode bigger AND higher-quality than our own d1; +108..116 % bytes
+#    vs cjxl at d>=2 (MIXED). Bisect queued.
+# 3. HDR lossy 62/96 dominated: mostly small byte losses (+1..5 %) at
+#    TIE quality — per-cell strictness counts every one; the smooth-sky
+#    DC-stream wedge (LfGroup 1256 vs 1024 B) is the known driver.
+# 4. size-axis 9/24 dominated — fixed-overhead regime still biting at
+#    64/256 px after the prefix-auto work.
