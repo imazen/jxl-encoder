@@ -1,0 +1,29 @@
+# hdr_lossy_parity_2026-06-12.tsv — lossy HDR parity attempt (issue #72,
+# lossy half): VERDICT = BLOCKED on #73, quantified from both views.
+#
+# Corpus: 12 stratified HDR crops (6 picks x {center, q1} tiles, 16-bit
+# PQ, cICP cp=1 tc=16). Grid: e{5,7} x d{0.5,1,2,4} x both encoders.
+# Metric: examples/hdr_pq_butteraugli — SMPTE 2084 EOTF -> linear,
+# 1000-nit window, butteraugli intensity_target=1000. BOTH arms decoded
+# via djxl --color_space=RGB_D65_SRG_Rel_PeQ (forced-PQ), so each file
+# is interpreted PER ITS OWN SIGNALING — the conformant-viewer view.
+#
+# RESULT (viewer-semantic): ours ~57.7 at EVERY distance vs cjxl
+# 3.9-5.9 tracking distance sanely. Our lossy files are mistagged
+# (legacy sRGB/gamma signaling — the #71 CLI fix had to GATE lossy
+# because with_color_encoding(PQ)+Rgb16 lossy destroys pixels outright,
+# ~170 score, see #73). A conformant viewer renders our lossy HDR
+# output with the wrong transfer curve; the constant 57.7 is that
+# mis-rendering, not codec noise.
+#
+# Raw-code-value control (tags ignored, no --color_space): ours d=1 e5
+# scores 2.69 — the QUANTIZED VALUES are in cjxl's ballpark, but the
+# perceptual bit allocation ran on a gamma-2.2 reading of PQ data, so
+# even this view is miscalibrated for HDR content.
+#
+# CONSEQUENCE: the bytes columns (ours -15..-28% smaller at matched d)
+# are MEANINGLESS as RD until #73 lands — smaller files at unmatched
+# semantics. Lossy HDR parity = BLOCKED on #73; this harness + corpus
+# is the acceptance gate for that fix (expected post-fix shape: ours
+# tracks distance like cjxl, then bytes-at-matched-bfly becomes the
+# real comparison).

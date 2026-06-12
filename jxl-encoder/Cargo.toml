@@ -329,6 +329,10 @@ default = ["std", "butteraugli-loop"]
 # HDR 16-bit tree-budget probe (issue #72) — sweeps LosslessInternalParams
 # tree budgets on the hdr-crops-512 corpus for the budgeted-e5 design.
 [[example]]
+name = "hdr_pq_butteraugli"
+path = "examples/hdr_pq_butteraugli.rs"
+
+[[example]]
 name = "hdr_tree_budget_probe"
 path = "examples/hdr_tree_budget_probe.rs"
 required-features = ["__expert"]
