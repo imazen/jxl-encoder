@@ -907,6 +907,27 @@ fn lossless_mg_rgb_512x512_tiled_e8() {
     );
 }
 
+/// 16-bit multi-group lossless at e5: the issue-#72 budgeted tree-learn
+/// lift fires (Rgb16 + e5) — locks lift bytes AND the 16-bit
+/// multi-group layout.
+#[test]
+fn lossless_mg_rgb16_512x512_ramp_e5() {
+    let data = LosslessConfig::new()
+        .with_effort(5)
+        .encode(&ramp_noise_rgb16_512x512(), 512, 512, PixelLayout::Rgb16)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb16_512x512_ramp_e5",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        false,
+        true,
+    );
+}
+
 /// Multi-group lossless on 17-colour blocky content: the full-image
 /// palette transform engages (issue #69 item 2) — locks the
 /// palette + index multi-group layout.
@@ -1004,6 +1025,35 @@ fn lossless_mg_gray_512x512_bilevel_e7() {
         true,
         false,
     );
+}
+
+/// 512x512 Rgb16 — MULTI-GROUP 16-bit: smooth vertical PQ-ish ramps
+/// with per-pixel LCG noise in the low byte (the HDR-photo signal shape
+/// that motivated issue #72). Locks the 16-bit e5 budgeted tree-learn
+/// lift (and the 16-bit multi-group layout generally — no 16-bit
+/// fixture existed before).
+fn ramp_noise_rgb16_512x512() -> Vec<u8> {
+    let (w, h) = (512usize, 512usize);
+    let mut seed = 31337u64;
+    let mut lcg = move || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (seed >> 56) as u16
+    };
+    let mut out = Vec::with_capacity(w * h * 6);
+    for y in 0..h {
+        let base = ((y * 60000) / h) as u16;
+        for x in 0..w {
+            let r = base.saturating_add(lcg());
+            let g = base
+                .saturating_add((x / 2) as u16 & 0xff)
+                .saturating_add(lcg());
+            let b = base.saturating_add(lcg() / 2);
+            for v in [r, g, b] {
+                out.extend_from_slice(&v.to_ne_bytes());
+            }
+        }
+    }
+    out
 }
 
 /// Multi-group lossless at e9: ref-properties offered to the learner

@@ -326,6 +326,13 @@ profile-phases = ["std"]
 tuning-override = ["std", "dep:serde", "dep:postcard"]
 default = ["std", "butteraugli-loop"]
 
+# HDR 16-bit tree-budget probe (issue #72) — sweeps LosslessInternalParams
+# tree budgets on the hdr-crops-512 corpus for the budgeted-e5 design.
+[[example]]
+name = "hdr_tree_budget_probe"
+path = "examples/hdr_tree_budget_probe.rs"
+required-features = ["__expert"]
+
 [dev-dependencies]
 image = "0.25"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests

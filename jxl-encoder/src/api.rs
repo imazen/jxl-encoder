@@ -2139,6 +2139,10 @@ pub struct LosslessConfig {
     use_ans: bool,
     squeeze: bool,
     tree_learning: bool,
+    /// True once the caller has explicitly chosen via
+    /// [`Self::with_tree_learning`] — suppresses the issue-#72 16-bit
+    /// e5/e6 budgeted-tree lift (same pattern as `patches_user_set`).
+    tree_learning_user_set: bool,
     lz77: bool,
     lz77_method: Lz77Method,
     patches: bool,
@@ -2296,6 +2300,7 @@ impl LosslessConfig {
             mode: EncoderMode::Reference,
             use_ans: profile.use_ans,
             tree_learning: profile.tree_learning,
+            tree_learning_user_set: false,
             squeeze: false, // squeeze hurts even with tree learning (14-62% larger on both photos and screenshots)
             lz77: profile.lz77,
             lz77_method: profile.lz77_method,
@@ -2548,6 +2553,74 @@ impl LosslessConfig {
         self.tree_learning
     }
 
+    /// Issue #72: 16-bit lossless at e5/e6 — budgeted tree learning.
+    ///
+    /// cjxl learns MA trees at EVERY effort (`enc_modular.cc` tier
+    /// table: 3 props / x0.3 samples at the bottom, scaling up); our
+    /// schedule was binary off-until-e7, which left 16-bit (HDR PQ)
+    /// content +29..+49 % vs cjxl at e5/e6 (mean over 76 imazen-26 HDR
+    /// PNGs, `benchmarks/hdr_png_ab_2026-06-11.meta`). This lift enables
+    /// tree learning for integer 16-bit RGB(A) input at e5/e6 with hard
+    /// budget caps (sample fraction 0.05, 4 properties, 32 buckets, 1
+    /// RCT trial, no WP param search) — measured -22 % bytes on the
+    /// 512^2 HDR-crop corpus at ~4x the (very cheap) non-tree e5 wall,
+    /// landing in cjxl's own e5/e6 wall ballpark. 8-bit input is
+    /// untouched. Opt out by calling [`Self::with_tree_learning`]
+    /// explicitly, or via `JXL_NO_16BIT_TREE_LIFT=1` (runtime behaviour
+    /// hook, A/B harness contract).
+    ///
+    /// Returns `true` (and applies the budget caps to `profile`) when
+    /// the lift fires.
+    pub(crate) fn lift_16bit_tree_learning(
+        &self,
+        layout: PixelLayout,
+        pixels: u64,
+        profile: &mut crate::effort::EffortProfile,
+    ) -> bool {
+        let is_int16_rgb = matches!(layout, PixelLayout::Rgb16 | PixelLayout::Rgba16);
+        if !is_int16_rgb
+            || !(5..=6).contains(&self.effort)
+            || self.tree_learning_user_set
+            || self.tree_learning
+            || self.faster_decoding >= 4
+        {
+            return false;
+        }
+        #[cfg(feature = "std")]
+        if std::env::var_os("JXL_NO_16BIT_TREE_LIFT").is_some() {
+            return false;
+        }
+        // Per-effort budgets, shipped EXACTLY as measured on the 76-crop
+        // sweep (/tmp-era data promoted to
+        // benchmarks/hdr16_tree_lift_sweep_2026-06-12.tsv):
+        // e5 "cheap": mean +6.4 % vs cjxl-e5 (was +17.1 %), tail capped
+        //   +43 % (was +443 %), ~2.4x cjxl-e5 wall.
+        // e6 "mid": mean -5.5 % vs cjxl-e5 — BEATS the reference — worse
+        //   on only 6/76, tail +12 %, cjxl-e8-class wall.
+        if self.effort == 5 {
+            profile.tree_sample_fraction = 0.05;
+            profile.tree_num_properties = 4;
+            profile.tree_max_buckets = 32;
+            profile.nb_rcts_to_try = 1;
+            profile.wp_num_param_sets = 0;
+        } else {
+            // e6: size-adaptive sampling. Full mid-quality fraction
+            // (0.25 — the config that BEAT cjxl-e5 by 5.5 % mean on the
+            // 512^2 crop corpus) up to ~1.2M sampled pixels, decaying
+            // hyperbolically above so 12 MP lands at frac 0.1 — the
+            // fixed-budget mid config broke wall monotonicity there
+            // (61-107 s > our e7). Props/buckets sit between the crop
+            // winner (16/256) and the 12 MP wall point (6/64).
+            let frac = (1_200_000.0 / pixels as f32).clamp(0.05, 0.25);
+            profile.tree_sample_fraction = frac;
+            profile.tree_num_properties = 10;
+            profile.tree_max_buckets = 128;
+            profile.nb_rcts_to_try = 3;
+            profile.wp_num_param_sets = 1;
+        }
+        true
+    }
+
     /// Resolve the effective patches enable flag, honoring
     /// `faster_decoding >= 2` (libjxl `enc_modular.cc:707` gates
     /// `FindBestPatchDictionary` on `decoding_speed_tier < 2`).
@@ -2741,9 +2814,13 @@ impl LosslessConfig {
         self
     }
 
-    /// Enable/disable content-adaptive tree learning (default: false).
+    /// Enable/disable content-adaptive tree learning (default: from the
+    /// effort profile — on at e7+). Explicitly calling this (either way)
+    /// also opts out of the automatic 16-bit e5/e6 budgeted-tree lift
+    /// (issue #72).
     pub fn with_tree_learning(mut self, enable: bool) -> Self {
         self.tree_learning = enable;
+        self.tree_learning_user_set = true;
         self
     }
 
@@ -8795,10 +8872,16 @@ impl<'a> EncodeRequest<'a> {
         // perceptual colour and operates on the first 3 channels
         // (which are CMY, not RGB) — false matches would inject
         // bogus subtractive-colour patches into the codestream.
-        let num_channels = self.layout.bytes_per_pixel();
+        // `bytes_per_pixel` counts BYTES; patches detection wants the
+        // CHANNEL count (and, for 16-bit layouts, reads u16 samples —
+        // see `find_and_build_lossless`). 16-bit enabled by issue #72:
+        // the tiled-pool HDR class lost 39-63 % to cjxl at e5/e6 purely
+        // because this gate kept the detector off.
+        let bytes_per_sample = if image.bit_depth > 8 { 2 } else { 1 };
+        let num_channels = self.layout.bytes_per_pixel() / bytes_per_sample;
         let can_use_patches = cfg.effective_patches()
             && !image.is_grayscale
-            && image.bit_depth <= 8
+            && image.bit_depth <= 16
             && num_channels >= 3
             && !self.layout.is_cmyk();
         let patches_data = if can_use_patches {
@@ -8968,8 +9051,11 @@ impl<'a> EncodeRequest<'a> {
         }
 
         // Encode frame
-        let use_tree_learning = cfg.effective_tree_learning();
-        let smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
+        let mut use_tree_learning = cfg.effective_tree_learning();
+        let mut smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
+        // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
+        use_tree_learning |=
+            cfg.lift_16bit_tree_learning(self.layout, (w as u64) * (h as u64), &mut smart_profile);
         let frame_encoder = FrameEncoder::new(
             w,
             h,
@@ -11937,7 +12023,14 @@ impl LosslessEncoder {
             }
 
             // Encode frame
-            let smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
+            let mut use_tree_learning_l = cfg.effective_tree_learning();
+            let mut smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
+            // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
+            use_tree_learning_l |= cfg.lift_16bit_tree_learning(
+                self.layout,
+                (w as u64) * (h as u64),
+                &mut smart_profile,
+            );
             let frame_encoder = FrameEncoder::new(
                 w,
                 h,
@@ -11945,7 +12038,7 @@ impl LosslessEncoder {
                     use_modular: true,
                     effort: cfg.effort,
                     use_ans: cfg.use_ans,
-                    use_tree_learning: cfg.effective_tree_learning(),
+                    use_tree_learning: use_tree_learning_l,
                     use_squeeze: cfg.squeeze,
                     enable_lz77: cfg.effective_lz77(),
                     lz77_method: cfg.lz77_method,
@@ -12409,8 +12502,15 @@ fn encode_animation_lossless(
         }
         .map_err(EncodeError::from)?;
 
-        let use_tree_learning = cfg.effective_tree_learning();
-        let smart_profile = cfg.effective_profile_for_image((frame_w as u64) * (frame_h as u64));
+        let mut use_tree_learning = cfg.effective_tree_learning();
+        let mut smart_profile =
+            cfg.effective_profile_for_image((frame_w as u64) * (frame_h as u64));
+        // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
+        use_tree_learning |= cfg.lift_16bit_tree_learning(
+            layout,
+            (frame_w as u64) * (frame_h as u64),
+            &mut smart_profile,
+        );
         let make_opts = |crop: Option<FrameCrop>,
                          blend_mode: Option<BlendMode>,
                          ec_override: Option<BlendMode>|

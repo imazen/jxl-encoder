@@ -2425,12 +2425,34 @@ pub(crate) fn find_and_build_lossless(
     let inv_max = 1.0 / max_val;
     let n = width * height;
 
-    // Convert to planar f32 [0, 1] — detection needs 3 channels
+    // Convert to planar f32 [0, 1] — detection needs 3 channels.
+    //
+    // Sample width follows bit_depth (issue #72): <= 8 reads one byte per
+    // sample; 9..=16 reads native-endian u16 (the PixelLayout::Rgb16/
+    // Rgba16 buffer layout). Everything downstream is already
+    // depth-parameterized — detection runs on [0, 1] planes, the ref
+    // image is f32 until `quantize_ref_image_rgb` snaps it to the
+    // integer grid at `bit_depth`, and subtraction happens in integer
+    // space — so full-precision planes are all 16-bit needed.
     let mut planes = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
-    for i in 0..n {
-        let base = i * num_channels;
-        for c in 0..3 {
-            planes[c][i] = pixels[base + c] as f32 * inv_max;
+    if bit_depth > 8 {
+        if pixels.len() < n * num_channels * 2 {
+            return None;
+        }
+        for i in 0..n {
+            let base = (i * num_channels) * 2;
+            for c in 0..3 {
+                let off = base + c * 2;
+                let v = u16::from_ne_bytes([pixels[off], pixels[off + 1]]);
+                planes[c][i] = v as f32 * inv_max;
+            }
+        }
+    } else {
+        for i in 0..n {
+            let base = i * num_channels;
+            for c in 0..3 {
+                planes[c][i] = pixels[base + c] as f32 * inv_max;
+            }
         }
     }
 

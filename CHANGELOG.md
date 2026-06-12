@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- **16-bit lossless e5/e6 budgeted tree-learning lift (#72).** cjxl
+  learns MA trees at every effort; our off-until-e7 schedule left
+  16-bit (HDR PQ) content +29..+49 % vs cjxl at e5/e6. Integer 16-bit
+  RGB(A) input now enables tree learning with hard budget caps (e6 adds
+  size-adaptive sampling). Crop corpus: e5 +28.5 %→+6.8 %, e6
+  +31.8 %→−3.4 % (beats cjxl); 12 MP walls stay monotonic under e7.
+  Opt out: explicit `with_tree_learning(..)` or `JXL_NO_16BIT_TREE_LIFT`.
+  8-bit output byte-identical (locks 45/45; new 16-bit multi-group lock
+  cell).
+
 ### Fixed
 - **#69 item 2: full-image palette transform now runs on the lossless
   multi-group path.** Detection (`analyze_palette`, libjxl 1024-colour

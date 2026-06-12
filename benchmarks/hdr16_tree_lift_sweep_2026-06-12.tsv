@@ -1,0 +1,305 @@
+crop	cfg	bytes	wall_ms
+1064_general_castle-bridge-moat_montjuic-cas	cheap	870844t377.6
+1064_general_castle-bridge-moat_montjuic-cas	mid	799219t950.8
+1064_general_castle-bridge-moat_montjuic-cas	cjxl5	781640	191
+1064_general_castle-bridge-moat_montjuic-cas	cur5	1047080t77.2
+1065_general_cathedral-model-workshop_sagrad	cheap	715630t343.3
+1065_general_cathedral-model-workshop_sagrad	mid	497984t897.2
+1065_general_cathedral-model-workshop_sagrad	cjxl5	641186	153
+1065_general_cathedral-model-workshop_sagrad	cur5	692213t64.2
+1066_general_stone-building-facade_park-guel	cheap	1040684t385.2
+1066_general_stone-building-facade_park-guel	mid	973933t1130.1
+1066_general_stone-building-facade_park-guel	cjxl5	1007741	157
+1066_general_stone-building-facade_park-guel	cur5	1063215t80.8
+1067_general_architectural-model-display_la-	cheap	952214t363.1
+1067_general_architectural-model-display_la-	mid	773792t892.5
+1067_general_architectural-model-display_la-	cjxl5	799769	163
+1067_general_architectural-model-display_la-	cur5	879291t75.4
+1069_general_illuminated-castle-night_cinder	cheap	935882t392.1
+1069_general_illuminated-castle-night_cinder	mid	900884t1305.7
+1069_general_illuminated-castle-night_cinder	cjxl5	917605	148
+1069_general_illuminated-castle-night_cinder	cur5	965044t77.6
+1070_general_stone-temple-ruins_ip13pro_iso5	cheap	1092455t338.5
+1070_general_stone-temple-ruins_ip13pro_iso5	mid	899831t992.0
+1070_general_stone-temple-ruins_ip13pro_iso5	cjxl5	916536	155
+1070_general_stone-temple-ruins_ip13pro_iso5	cur5	1018516t80.0
+1227_interiors_stained-glass-window_casa-bat	cheap	915973t380.5
+1227_interiors_stained-glass-window_casa-bat	mid	894736t1222.2
+1227_interiors_stained-glass-window_casa-bat	cjxl5	949619	158
+1227_interiors_stained-glass-window_casa-bat	cur5	1004265t78.2
+1228_interiors_stained-glass-windows_casa-ba	cheap	860521t382.3
+1228_interiors_stained-glass-windows_casa-ba	mid	805059t1195.6
+1228_interiors_stained-glass-windows_casa-ba	cjxl5	876904	153
+1228_interiors_stained-glass-windows_casa-ba	cur5	931036t75.3
+1229_interiors_lighted-archway-ceiling_casa-	cheap	845460t381.6
+1229_interiors_lighted-archway-ceiling_casa-	mid	816933t861.3
+1229_interiors_lighted-archway-ceiling_casa-	cjxl5	728499	181
+1229_interiors_lighted-archway-ceiling_casa-	cur5	1103490t79.9
+1230_interiors_empty-tiled-pool_casa-batllo-	cheap	537845t342.4
+1230_interiors_empty-tiled-pool_casa-batllo-	mid	523254t851.7
+1230_interiors_empty-tiled-pool_casa-batllo-	cjxl5	496958	179
+1230_interiors_empty-tiled-pool_casa-batllo-	cur5	692214t66.7
+1231_interiors_tiled-arched-interior_casa-ba	cheap	1121457t406.2
+1231_interiors_tiled-arched-interior_casa-ba	mid	1089490t1251.4
+1231_interiors_tiled-arched-interior_casa-ba	cjxl5	1111884	151
+1231_interiors_tiled-arched-interior_casa-ba	cur5	1138598t80.9
+1232_interiors_stained-glass-windows_sagrada	cheap	905886t385.6
+1232_interiors_stained-glass-windows_sagrada	mid	812126t1040.4
+1232_interiors_stained-glass-windows_sagrada	cjxl5	843679	161
+1232_interiors_stained-glass-windows_sagrada	cur5	920890t77.6
+1233_interiors_cathedral-ceiling-interior_sa	cheap	952393t376.4
+1233_interiors_cathedral-ceiling-interior_sa	mid	833435t1050.4
+1233_interiors_cathedral-ceiling-interior_sa	cjxl5	855274	162
+1233_interiors_cathedral-ceiling-interior_sa	cur5	907982t76.8
+1234_interiors_cathedral-ceiling-columns_sag	cheap	669834t330.7
+1234_interiors_cathedral-ceiling-columns_sag	mid	575672t905.9
+1234_interiors_cathedral-ceiling-columns_sag	cjxl5	625383	164
+1234_interiors_cathedral-ceiling-columns_sag	cur5	733596t68.1
+1235_interiors_floral-wall-mural_casa-vicens	cheap	819343t393.6
+1235_interiors_floral-wall-mural_casa-vicens	mid	776235t892.6
+1235_interiors_floral-wall-mural_casa-vicens	cjxl5	760949	176
+1235_interiors_floral-wall-mural_casa-vicens	cur5	1081769t79.4
+1236_interiors_ornate-arched-interior_casa-v	cheap	995571t371.7
+1236_interiors_ornate-arched-interior_casa-v	mid	884325t1074.2
+1236_interiors_ornate-arched-interior_casa-v	cjxl5	900844	160
+1236_interiors_ornate-arched-interior_casa-v	cur5	956532t77.1
+1237_interiors_person-standing-by-window_cas	cheap	931216t381.8
+1237_interiors_person-standing-by-window_cas	mid	888369t1099.6
+1237_interiors_person-standing-by-window_cas	cjxl5	924696	168
+1237_interiors_person-standing-by-window_cas	cur5	981989t78.5
+1238_interiors_open-doorway-interior_casa-vi	cheap	702157t311.6
+1238_interiors_open-doorway-interior_casa-vi	mid	575213t827.8
+1238_interiors_open-doorway-interior_casa-vi	cjxl5	580657	162
+1238_interiors_open-doorway-interior_casa-vi	cur5	689552t66.1
+1239_interiors_decorative-coffered-ceiling_c	cheap	1008545t385.7
+1239_interiors_decorative-coffered-ceiling_c	mid	926025t1128.3
+1239_interiors_decorative-coffered-ceiling_c	cjxl5	947073	155
+1239_interiors_decorative-coffered-ceiling_c	cur5	997531t78.5
+1240_interiors_bathroom-with-bathtub_casa-vi	cheap	557102t316.0
+1240_interiors_bathroom-with-bathtub_casa-vi	mid	468192t867.9
+1240_interiors_bathroom-with-bathtub_casa-vi	cjxl5	454646	142
+1240_interiors_bathroom-with-bathtub_casa-vi	cur5	688312t66.3
+1241_interiors_living-room-sofa_la-pedrera-b	cheap	779250t359.1
+1241_interiors_living-room-sofa_la-pedrera-b	mid	720519t1021.2
+1241_interiors_living-room-sofa_la-pedrera-b	cjxl5	780818	164
+1241_interiors_living-room-sofa_la-pedrera-b	cur5	851818t72.8
+1242_interiors_storage-room-clutter_la-pedre	cheap	726777t323.7
+1242_interiors_storage-room-clutter_la-pedre	mid	567386t869.2
+1242_interiors_storage-room-clutter_la-pedre	cjxl5	651454	166
+1242_interiors_storage-room-clutter_la-pedre	cur5	742690t69.4
+1243_interiors_vintage-living-room_la-pedrer	cheap	889911t363.9
+1243_interiors_vintage-living-room_la-pedrer	mid	792593t1005.8
+1243_interiors_vintage-living-room_la-pedrer	cjxl5	830436	165
+1243_interiors_vintage-living-room_la-pedrer	cur5	892675t75.5
+1244_interiors_painted-ceiling-columns_la-pe	cheap	899681t364.4
+1244_interiors_painted-ceiling-columns_la-pe	mid	804564t1063.4
+1244_interiors_painted-ceiling-columns_la-pe	cjxl5	922770	157
+1244_interiors_painted-ceiling-columns_la-pe	cur5	957096t77.2
+1245_interiors_circular-building-interior_la	cheap	829452t348.5
+1245_interiors_circular-building-interior_la	mid	698629t967.3
+1245_interiors_circular-building-interior_la	cjxl5	766471	171
+1245_interiors_circular-building-interior_la	cur5	847394t72.2
+1246_interiors_woven-roof-structure_azulik-c	cheap	1122306t383.5
+1246_interiors_woven-roof-structure_azulik-c	mid	1037546t1140.5
+1246_interiors_woven-roof-structure_azulik-c	cjxl5	1076100	161
+1246_interiors_woven-roof-structure_azulik-c	cur5	1137342t83.5
+1487_nature_glacier-over-water_kenai-peninsu	cheap	1025545t346.8
+1487_nature_glacier-over-water_kenai-peninsu	mid	929557t1058.2
+1487_nature_glacier-over-water_kenai-peninsu	cjxl5	940944	155
+1487_nature_glacier-over-water_kenai-peninsu	cur5	1017854t80.3
+1488_nature_iceberg-ocean-landscape_yakutat-	cheap	957973t347.8
+1488_nature_iceberg-ocean-landscape_yakutat-	mid	835829t977.1
+1488_nature_iceberg-ocean-landscape_yakutat-	cjxl5	871088	154
+1488_nature_iceberg-ocean-landscape_yakutat-	cur5	936458t73.6
+1489_nature_cruise-ship-deck_unorganized-bor	cheap	847654t401.2
+1489_nature_cruise-ship-deck_unorganized-bor	mid	784484t925.7
+1489_nature_cruise-ship-deck_unorganized-bor	cjxl5	858310	172
+1489_nature_cruise-ship-deck_unorganized-bor	cur5	876826t74.7
+1490_nature_boat-wake-at-sunset_unorganized-	cheap	825718t392.6
+1490_nature_boat-wake-at-sunset_unorganized-	mid	680100t933.3
+1490_nature_boat-wake-at-sunset_unorganized-	cjxl5	752017	154
+1490_nature_boat-wake-at-sunset_unorganized-	cur5	802403t67.9
+1491_nature_ocean-sunset-clouds_unorganized-	cheap	690486t350.1
+1491_nature_ocean-sunset-clouds_unorganized-	mid	638949t1012.9
+1491_nature_ocean-sunset-clouds_unorganized-	cjxl5	707718	155
+1491_nature_ocean-sunset-clouds_unorganized-	cur5	759624t68.8
+1492_nature_mountain-lake-landscape_whitehor	cheap	259713t231.6
+1492_nature_mountain-lake-landscape_whitehor	mid	174193t453.4
+1492_nature_mountain-lake-landscape_whitehor	cjxl5	181431	121
+1492_nature_mountain-lake-landscape_whitehor	cur5	986052t74.4
+1493_nature_sunset-over-sea_lower-davie-vanc	cheap	260770t265.5
+1493_nature_sunset-over-sea_lower-davie-vanc	mid	252545t650.7
+1493_nature_sunset-over-sea_lower-davie-vanc	cjxl5	260198	130
+1493_nature_sunset-over-sea_lower-davie-vanc	cur5	437826t58.4
+1494_nature_sunset-over-forest_colorado_zfol	cheap	925978t330.8
+1494_nature_sunset-over-forest_colorado_zfol	mid	812465t992.3
+1494_nature_sunset-over-forest_colorado_zfol	cjxl5	844324	169
+1494_nature_sunset-over-forest_colorado_zfol	cur5	965244t77.0
+1495_nature_lighthouse-on-island_york-maine_	cheap	589696t277.1
+1495_nature_lighthouse-on-island_york-maine_	mid	456422t743.6
+1495_nature_lighthouse-on-island_york-maine_	cjxl5	566762	167
+1495_nature_lighthouse-on-island_york-maine_	cur5	623287t62.9
+1496_nature_lake-with-boats_winthrop-maine_i	cheap	560297t287.9
+1496_nature_lake-with-boats_winthrop-maine_i	mid	440298t825.7
+1496_nature_lake-with-boats_winthrop-maine_i	cjxl5	580488	155
+1496_nature_lake-with-boats_winthrop-maine_i	cur5	614909t67.7
+1497_nature_pink-flower-on-vine_belltown-sea	cheap	762526t341.8
+1497_nature_pink-flower-on-vine_belltown-sea	mid	674690t1094.6
+1497_nature_pink-flower-on-vine_belltown-sea	cjxl5	726423	155
+1497_nature_pink-flower-on-vine_belltown-sea	cur5	794842t72.2
+1498_nature_yellow-flowers-garden-bed_colora	cheap	863103t364.6
+1498_nature_yellow-flowers-garden-bed_colora	mid	762802t1026.6
+1498_nature_yellow-flowers-garden-bed_colora	cjxl5	806338	154
+1498_nature_yellow-flowers-garden-bed_colora	cur5	869454t75.1
+1502_nature_ice-cave-opening_hornafjordur-ic	cheap	906887t378.8
+1502_nature_ice-cave-opening_hornafjordur-ic	mid	748556t914.5
+1502_nature_ice-cave-opening_hornafjordur-ic	cjxl5	826480	170
+1502_nature_ice-cave-opening_hornafjordur-ic	cur5	906467t74.2
+1503_nature_passionflower-on-vine_centrum-am	cheap	947354t372.1
+1503_nature_passionflower-on-vine_centrum-am	mid	818199t1062.6
+1503_nature_passionflower-on-vine_centrum-am	cjxl5	842590	156
+1503_nature_passionflower-on-vine_centrum-am	cur5	909814t77.4
+1504_nature_cloudy-sky-over-field_colorado_i	cheap	715239t346.1
+1504_nature_cloudy-sky-over-field_colorado_i	mid	592812t975.2
+1504_nature_cloudy-sky-over-field_colorado_i	cjxl5	706909	168
+1504_nature_cloudy-sky-over-field_colorado_i	cur5	755997t70.9
+1507_nature_ice-cave-waterfall_hornafjordur-	cheap	905949t338.9
+1507_nature_ice-cave-waterfall_hornafjordur-	mid	782694t982.4
+1507_nature_ice-cave-waterfall_hornafjordur-	cjxl5	861984	151
+1507_nature_ice-cave-waterfall_hornafjordur-	cur5	936140t76.8
+1508_nature_ice-cave-interior_hornafjordur-i	cheap	959367t371.4
+1508_nature_ice-cave-interior_hornafjordur-i	mid	820755t1097.9
+1508_nature_ice-cave-interior_hornafjordur-i	cjxl5	868445	160
+1508_nature_ice-cave-interior_hornafjordur-i	cur5	941906t76.6
+1509_nature_ice-cave-opening_hornafjordur-ic	cheap	814747t398.7
+1509_nature_ice-cave-opening_hornafjordur-ic	mid	780235t1012.5
+1509_nature_ice-cave-opening_hornafjordur-ic	cjxl5	795210	211
+1509_nature_ice-cave-opening_hornafjordur-ic	cur5	918197t127.7
+1515_nature_orange-flower-closeup_colorado_i	cheap	784885t609.6
+1515_nature_orange-flower-closeup_colorado_i	mid	721308t1362.5
+1515_nature_orange-flower-closeup_colorado_i	cjxl5	763246	153
+1515_nature_orange-flower-closeup_colorado_i	cur5	812853t72.7
+1516_nature_pink-flower-in-bottle_colorado_i	cheap	748102t309.1
+1516_nature_pink-flower-in-bottle_colorado_i	mid	652638t991.8
+1516_nature_pink-flower-in-bottle_colorado_i	cjxl5	690911	151
+1516_nature_pink-flower-in-bottle_colorado_i	cur5	758905t68.1
+1519_nature_orange-rose-vase_colorado_ip17pr	cheap	401654t297.0
+1519_nature_orange-rose-vase_colorado_ip17pr	mid	368657t859.5
+1519_nature_orange-rose-vase_colorado_ip17pr	cjxl5	445468	173
+1519_nature_orange-rose-vase_colorado_ip17pr	cur5	510482t63.4
+1520_nature_tulips-in-garden_notre-dame-vers	cheap	787637t362.1
+1520_nature_tulips-in-garden_notre-dame-vers	mid	693858t1099.1
+1520_nature_tulips-in-garden_notre-dame-vers	cjxl5	721365	166
+1520_nature_tulips-in-garden_notre-dame-vers	cur5	784410t72.0
+1521_nature_potted-tulips-garden_notre-dame-	cheap	931295t398.4
+1521_nature_potted-tulips-garden_notre-dame-	mid	840784t1125.6
+1521_nature_potted-tulips-garden_notre-dame-	cjxl5	860414	154
+1521_nature_potted-tulips-garden_notre-dame-	cur5	924175t77.0
+1522_nature_water-lilies-pond_colorado_ip13p	cheap	1045145t411.0
+1522_nature_water-lilies-pond_colorado_ip13p	mid	973300t1212.1
+1522_nature_water-lilies-pond_colorado_ip13p	cjxl5	1000931	165
+1522_nature_water-lilies-pond_colorado_ip13p	cur5	1037572t78.4
+1523_nature_yellow-flowers-garden_colorado_i	cheap	899686t363.9
+1523_nature_yellow-flowers-garden_colorado_i	mid	810860t1074.1
+1523_nature_yellow-flowers-garden_colorado_i	cjxl5	883949	154
+1523_nature_yellow-flowers-garden_colorado_i	cur5	930158t75.3
+1524_nature_yellow-flowers-garden_colorado_i	cheap	1021396t400.0
+1524_nature_yellow-flowers-garden_colorado_i	mid	971415t1266.2
+1524_nature_yellow-flowers-garden_colorado_i	cjxl5	977208	150
+1524_nature_yellow-flowers-garden_colorado_i	cur5	1019170t80.2
+1525_nature_wildflowers-in-garden_colorado_i	cheap	976677t380.8
+1525_nature_wildflowers-in-garden_colorado_i	mid	924797t1543.1
+1525_nature_wildflowers-in-garden_colorado_i	cjxl5	953844	152
+1525_nature_wildflowers-in-garden_colorado_i	cur5	1005040t75.7
+1526_nature_pink-flowers-garden_colorado_ip1	cheap	977155t410.3
+1526_nature_pink-flowers-garden_colorado_ip1	mid	909178t1265.2
+1526_nature_pink-flowers-garden_colorado_ip1	cjxl5	927996	158
+1526_nature_pink-flowers-garden_colorado_ip1	cur5	972646t78.6
+1527_nature_mountain-wildflowers-landscape_s	cheap	881560t404.3
+1527_nature_mountain-wildflowers-landscape_s	mid	759203t1096.9
+1527_nature_mountain-wildflowers-landscape_s	cjxl5	765103	155
+1527_nature_mountain-wildflowers-landscape_s	cur5	835860t73.1
+1528_nature_pink-blossom-branch_kawazu-japan	cheap	744524t347.3
+1528_nature_pink-blossom-branch_kawazu-japan	mid	581606t1002.2
+1528_nature_pink-blossom-branch_kawazu-japan	cjxl5	642811	155
+1528_nature_pink-blossom-branch_kawazu-japan	cur5	708507t68.7
+1529_nature_whale-tail-ocean_ip13pro_iso32-f	cheap	691854t303.6
+1529_nature_whale-tail-ocean_ip13pro_iso32-f	mid	578052t820.0
+1529_nature_whale-tail-ocean_ip13pro_iso32-f	cjxl5	687791	159
+1529_nature_whale-tail-ocean_ip13pro_iso32-f	cur5	785662t69.5
+1530_nature_whale-tail-ocean_ip13pro_iso32-f	cheap	535940t305.0
+1530_nature_whale-tail-ocean_ip13pro_iso32-f	mid	482635t764.6
+1530_nature_whale-tail-ocean_ip13pro_iso32-f	cjxl5	457739	136
+1530_nature_whale-tail-ocean_ip13pro_iso32-f	cur5	616145t62.6
+1531_nature_red-poppy-flowers_taos-new-mexic	cheap	836970t369.9
+1531_nature_red-poppy-flowers_taos-new-mexic	mid	729231t1080.9
+1531_nature_red-poppy-flowers_taos-new-mexic	cjxl5	776714	165
+1531_nature_red-poppy-flowers_taos-new-mexic	cur5	843171t74.1
+1532_nature_red-poppy-flowers_taos-new-mexic	cheap	964498t389.5
+1532_nature_red-poppy-flowers_taos-new-mexic	mid	920111t1189.7
+1532_nature_red-poppy-flowers_taos-new-mexic	cjxl5	942819	154
+1532_nature_red-poppy-flowers_taos-new-mexic	cur5	994200t79.4
+1533_nature_purple-water-lily_koyama-kamiuch	cheap	830784t374.1
+1533_nature_purple-water-lily_koyama-kamiuch	mid	739503t1088.4
+1533_nature_purple-water-lily_koyama-kamiuch	cjxl5	830519	155
+1533_nature_purple-water-lily_koyama-kamiuch	cur5	886905t77.6
+1534_nature_red-flowers-closeup_ketchikan-al	cheap	581958t327.8
+1534_nature_red-flowers-closeup_ketchikan-al	mid	525853t1006.6
+1534_nature_red-flowers-closeup_ketchikan-al	cjxl5	602168	159
+1534_nature_red-flowers-closeup_ketchikan-al	cur5	645187t66.6
+1536_nature_purple-flowers-walkway_seward-al	cheap	885825t369.2
+1536_nature_purple-flowers-walkway_seward-al	mid	758504t1107.2
+1536_nature_purple-flowers-walkway_seward-al	cjxl5	767131	153
+1536_nature_purple-flowers-walkway_seward-al	cur5	835972t72.0
+1537_nature_purple-flowers-closeup_seward-al	cheap	986817t386.3
+1537_nature_purple-flowers-closeup_seward-al	mid	936765t1262.3
+1537_nature_purple-flowers-closeup_seward-al	cjxl5	951973	158
+1537_nature_purple-flowers-closeup_seward-al	cur5	1012342t78.2
+1539_nature_legs-in-water_felipe-carrillo-pu	cheap	1147659t360.3
+1539_nature_legs-in-water_felipe-carrillo-pu	mid	1046621t1114.8
+1539_nature_legs-in-water_felipe-carrillo-pu	cjxl5	1076949	147
+1539_nature_legs-in-water_felipe-carrillo-pu	cur5	1147610t82.0
+1540_nature_purple-flowers-garden_belltown-s	cheap	910456t375.9
+1540_nature_purple-flowers-garden_belltown-s	mid	825440t1175.2
+1540_nature_purple-flowers-garden_belltown-s	cjxl5	846439	156
+1540_nature_purple-flowers-garden_belltown-s	cur5	900505t76.0
+1541_nature_blue-wildflower-grass_snaefellsb	cheap	698355t360.5
+1541_nature_blue-wildflower-grass_snaefellsb	mid	579023t1081.4
+1541_nature_blue-wildflower-grass_snaefellsb	cjxl5	739128	159
+1541_nature_blue-wildflower-grass_snaefellsb	cur5	708563t68.8
+1542_nature_orange-lily-flower_belltown-seat	cheap	966346t377.8
+1542_nature_orange-lily-flower_belltown-seat	mid	911772t1175.8
+1542_nature_orange-lily-flower_belltown-seat	cjxl5	922046	157
+1542_nature_orange-lily-flower_belltown-seat	cur5	958845t76.4
+1543_nature_water-lilies-pond_miyuki-beppu-j	cheap	575367t345.7
+1543_nature_water-lilies-pond_miyuki-beppu-j	mid	518799t862.1
+1543_nature_water-lilies-pond_miyuki-beppu-j	cjxl5	549605	166
+1543_nature_water-lilies-pond_miyuki-beppu-j	cur5	636955t68.9
+1544_nature_purple-water-lily-flower_miyuki-	cheap	709924t351.1
+1544_nature_purple-water-lily-flower_miyuki-	mid	609377t1008.9
+1544_nature_purple-water-lily-flower_miyuki-	cjxl5	723477	156
+1544_nature_purple-water-lily-flower_miyuki-	cur5	780703t72.0
+1545_nature_stalactite-cave-lake_playa-del-c	cheap	836459t370.4
+1545_nature_stalactite-cave-lake_playa-del-c	mid	788000t1146.9
+1545_nature_stalactite-cave-lake_playa-del-c	cjxl5	804100	160
+1545_nature_stalactite-cave-lake_playa-del-c	cur5	869401t74.3
+1546_nature_underground-cave-lake_playa-del-	cheap	943470t398.1
+1546_nature_underground-cave-lake_playa-del-	mid	929693t1133.7
+1546_nature_underground-cave-lake_playa-del-	cjxl5	955860	154
+1546_nature_underground-cave-lake_playa-del-	cur5	1023621t77.3
+1547_nature_orange-flowers-garden_colorado_i	cheap	772984t346.3
+1547_nature_orange-flowers-garden_colorado_i	mid	686468t1018.4
+1547_nature_orange-flowers-garden_colorado_i	cjxl5	725259	156
+1547_nature_orange-flowers-garden_colorado_i	cur5	790986t71.9
+1638_food_sliced-fish-dish_colorado_s25u_iso	cheap	933478t414.9
+1638_food_sliced-fish-dish_colorado_s25u_iso	mid	900571t1178.4
+1638_food_sliced-fish-dish_colorado_s25u_iso	cjxl5	918213	160
+1638_food_sliced-fish-dish_colorado_s25u_iso	cur5	957475t76.9
+1639_food_sashimi-on-plate_colorado_s25u_iso	cheap	926147t368.8
+1639_food_sashimi-on-plate_colorado_s25u_iso	mid	922961t1149.3
+1639_food_sashimi-on-plate_colorado_s25u_iso	cjxl5	939893	154
+1639_food_sashimi-on-plate_colorado_s25u_iso	cur5	994126t80.4
+1640_food_birthday-cake-table_colorado_ip16p	cheap	929291t375.6
+1640_food_birthday-cake-table_colorado_ip16p	mid	857859t1149.2
+1640_food_birthday-cake-table_colorado_ip16p	cjxl5	878358	156
+1640_food_birthday-cake-table_colorado_ip16p	cur5	924411t75.9
