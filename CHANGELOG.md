@@ -25,6 +25,25 @@
   cell).
 
 ### Changed
+- **Prefix-vs-ANS auto choice (libjxl `enc_ans.cc` parity) for VarDCT
+  two-pass entropy codes.** Streams that are tiny (< 100 tokens) or
+  fully deterministic (every context singleton) now use prefix codes:
+  singleton symbols cost 0 bits and prefix streams carry no 32-bit ANS
+  state flush, so fully-quantized-to-zero pass groups become literal
+  0-byte sections — exact cjxl section-layout parity on smooth content
+  (was 4-6 B per group). Tiny synthetic fixtures: 16×16 solid 97→84 B
+  (−13.4 %), 8×8 gradient 112→109 B. Streams carrying LZ77 stay ANS
+  (our LZ77 writer is ANS-only).
+- **Fixed: singleton prefix codes leaked one phantom bit per token.**
+  `create_huffman_tree`'s `n == 1` branch assigns a fake depth of 1 (a
+  brotli-ism whose "fix on upper level" never existed here) while the
+  header writers announce a single-symbol simple code the decoder reads
+  at 0 bits — harmless padding at a section end, a latent bitstream
+  DESYNC anywhere else (e.g. a singleton DC context in `--no-ans` mode,
+  where AC metadata follows DC tokens in the same section). All four
+  Huffman emission sites now consult the same depths-scan predicate the
+  header writers use (`has_single_used_symbol`), making the two sides
+  consistent by construction.
 - **libjxl `QuantizeWP` DC shaping is now DEFAULT at effort ≤ 7
   (W44-AUDIT-8 Phase 7)** — completes the `nl_dc` parity cluster
   started by Phase 5 `extra_dc_precision`. Closes ~half the median

@@ -546,6 +546,21 @@ fn store_huffman_tree(depths: &[u8], num: usize, writer: &mut BitWriter) -> Resu
     Ok(())
 }
 
+/// True when the code has exactly one used symbol. The header writers
+/// (`write_prefix_code` / `write_dyn_prefix_codes`) emit such codes as a
+/// single-symbol SIMPLE prefix code, which the decoder reads at ZERO bits
+/// per symbol — but `create_huffman_tree`'s `n == 1` branch assigns the
+/// symbol a fake depth of 1 ("will be fixed on upper level", a brotli-ism
+/// our upper level never fixed). Token emission MUST consult this
+/// predicate and write 0 bits for singleton codes, or every token leaks a
+/// phantom bit the decoder never consumes: harmless padding at the very
+/// end of a section, a bitstream DESYNC anywhere else. Both sides
+/// (header + emission) now derive singleton-ness from the same
+/// depths-scan, so they cannot disagree.
+pub(super) fn has_single_used_symbol(depths: &[u8]) -> bool {
+    depths.iter().filter(|&&d| d > 0).count() == 1
+}
+
 /// Write a single prefix code.
 pub(super) fn write_prefix_code(code: &PrefixCode, writer: &mut BitWriter) -> Result<()> {
     let mut count = 0usize;
@@ -734,12 +749,22 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
     #[cfg(feature = "debug-tokens")]
     let after_prefix = writer.bits_written();
 
-    // Write the context map tokens
+    // Write the context map tokens. Singleton ctxmap codes are 0-bit
+    // simple codes — see `has_single_used_symbol`.
+    let ctxmap_zero_bit = has_single_used_symbol(&ctxmap_code.depths);
     for t in &tokens {
         let encoded = UintCoder::encode(t.value);
         let tok = encoded.token as usize;
-        let depth = ctxmap_code.depths[tok] as usize;
-        let bits = ctxmap_code.bits[tok] as u64;
+        let depth = if ctxmap_zero_bit {
+            0
+        } else {
+            ctxmap_code.depths[tok] as usize
+        };
+        let bits = if depth == 0 {
+            0
+        } else {
+            ctxmap_code.bits[tok] as u64
+        };
 
         // Combine Huffman bits and extra bits
         let data = bits | ((encoded.bits as u64) << depth);
@@ -855,11 +880,20 @@ fn write_dyn_context_map(context_map: &[u8], writer: &mut BitWriter) -> Result<(
 
     write_prefix_codes(&[ctxmap_code], writer)?;
 
+    let ctxmap_zero_bit = has_single_used_symbol(&ctxmap_code.depths);
     for t in &tokens {
         let encoded = UintCoder::encode(t.value);
         let tok = encoded.token as usize;
-        let depth = ctxmap_code.depths[tok] as usize;
-        let bits = ctxmap_code.bits[tok] as u64;
+        let depth = if ctxmap_zero_bit {
+            0
+        } else {
+            ctxmap_code.depths[tok] as usize
+        };
+        let bits = if depth == 0 {
+            0
+        } else {
+            ctxmap_code.bits[tok] as u64
+        };
         let data = bits | ((encoded.bits as u64) << depth);
         let total_bits = depth + encoded.nbits as usize;
         writer.write(total_bits, data)?;
@@ -970,14 +1004,24 @@ impl OwnedEntropyCode {
             let code = EntropyCode::new(&self.context_map, codes);
             write_tokens(tokens, &code, lz77, writer)
         } else {
-            // Dynamic path for large alphabets
+            // Dynamic path for large alphabets. Per-code singleton mask —
+            // see `has_single_used_symbol`.
+            let zero_bit: alloc::vec::Vec<bool> = self
+                .prefix_codes
+                .iter()
+                .map(|pc| has_single_used_symbol(&pc.depths))
+                .collect();
             for token in tokens {
                 let (encoded, sym) = encode_token_value(token, lz77);
                 let prefix_idx = self.context_map[token.context() as usize] as usize;
                 let pc = &self.prefix_codes[prefix_idx];
                 let tok = sym as usize;
-                let depth = pc.depths[tok] as usize;
-                let bits = pc.bits[tok] as u64;
+                let depth = if zero_bit[prefix_idx] {
+                    0
+                } else {
+                    pc.depths[tok] as usize
+                };
+                let bits = if depth == 0 { 0 } else { pc.bits[tok] as u64 };
                 let data = bits | ((encoded.bits as u64) << depth);
                 let total_bits = depth + encoded.nbits as usize;
                 writer.write(total_bits, data)?;
@@ -1151,8 +1195,28 @@ pub fn write_tokens(
     lz77: Option<&Lz77Params>,
     writer: &mut BitWriter,
 ) -> Result<()> {
+    // Per-code singleton mask — see `has_single_used_symbol`: singleton
+    // codes are announced as 0-bit simple codes in the header, so token
+    // emission must also write 0 symbol bits.
+    let zero_bit: alloc::vec::Vec<bool> = code
+        .prefix_codes
+        .iter()
+        .map(|pc| has_single_used_symbol(&pc.depths))
+        .collect();
     for token in tokens {
-        super::encode::write_token(token, code, lz77, writer)?;
+        let (encoded, sym) = super::encode::encode_token_value(token, lz77);
+        let prefix_idx = code.context_map[token.context() as usize] as usize;
+        let pc = &code.prefix_codes[prefix_idx];
+        let tok = sym as usize;
+        let depth = if zero_bit[prefix_idx] {
+            0
+        } else {
+            pc.depths[tok] as usize
+        };
+        let bits = if depth == 0 { 0 } else { pc.bits[tok] as u64 };
+        let data = bits | ((encoded.bits as u64) << depth);
+        let total_bits = depth + encoded.nbits as usize;
+        writer.write(total_bits, data)?;
     }
     Ok(())
 }

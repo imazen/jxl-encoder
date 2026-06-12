@@ -3273,7 +3273,17 @@ impl VarDctEncoder {
                 .chain(ac_metadata_tokens_per_group.iter())
                 .map(|v| v.as_slice())
                 .collect();
-            if self.use_ans {
+            // libjxl enc_ans.cc auto choice: prefix codes for tiny or
+            // fully-deterministic streams (see
+            // prefix_beats_ans_for_token_groups). Streams carrying LZ77
+            // params stay ANS — our LZ77 writer is ANS-only.
+            let dc_use_ans = self.use_ans
+                && (dc_lz77_params.is_some()
+                    || !crate::entropy_coding::encode::prefix_beats_ans_for_token_groups(
+                        &dc_groups,
+                        dc_num_contexts,
+                    ));
+            if dc_use_ans {
                 BuiltEntropyCode::Ans(
                     crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
                         &dc_groups,
@@ -3305,7 +3315,14 @@ impl VarDctEncoder {
                     .iter()
                     .map(|v| v.as_slice())
                     .collect();
-                if self.use_ans {
+                // Same libjxl auto choice as the DC code above.
+                let ac_use_ans = self.use_ans
+                    && (ac_lz77_params_per_pass[pass].is_some()
+                        || !crate::entropy_coding::encode::prefix_beats_ans_for_token_groups(
+                            &ac_groups,
+                            ac_num_contexts,
+                        ));
+                if ac_use_ans {
                     BuiltEntropyCode::Ans(
                         crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
                             &ac_groups,

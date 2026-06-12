@@ -41,6 +41,44 @@ pub(super) fn encode_token_value(token: &Token, lz77: Option<&Lz77Params>) -> (E
 
 /// Encode a token's value using a specific HybridUint config (for per-histogram configs).
 #[inline]
+/// libjxl `enc_ans.cc` prefix-vs-ANS auto choice (the
+/// `initialize_global_state` heuristic): prefix codes win when the
+/// stream is tiny (`total_tokens < 100`) or when every context is
+/// deterministic ("all_singleton" — per-context Shannon entropy below
+/// 1e-5, which for real token streams means one distinct hybrid-uint
+/// symbol per context). A singleton prefix symbol costs 0 bits and a
+/// prefix stream carries no 32-bit ANS final state, so a
+/// fully-deterministic section costs 0 bytes — cjxl emits literal
+/// 0-byte GroupPass sections on smooth content this way, while an ANS
+/// stream pays the 4-byte state flush per section regardless.
+///
+/// Symbols are mapped with the default `HybridUintConfig` and no LZ77,
+/// mirroring libjxl which runs the heuristic before per-context config
+/// optimization. Callers must keep ANS for streams that carry LZ77
+/// params (our LZ77 writer is ANS-only).
+pub fn prefix_beats_ans_for_token_groups(groups: &[&[Token]], num_contexts: usize) -> bool {
+    let total: usize = groups.iter().map(|g| g.len()).sum();
+    if total < 100 {
+        return true;
+    }
+    let mut seen: Vec<Option<u32>> = alloc::vec![None; num_contexts];
+    for g in groups {
+        for t in g.iter() {
+            let (_, sym) = encode_token_value(t, None);
+            let Some(slot) = seen.get_mut(t.context() as usize) else {
+                // Out-of-range context — internal inconsistency; keep ANS.
+                return false;
+            };
+            match *slot {
+                None => *slot = Some(sym),
+                Some(s) if s == sym => {}
+                Some(_) => return false,
+            }
+        }
+    }
+    true
+}
+
 pub(super) fn encode_token_value_with_config(
     token: &Token,
     lz77: Option<&Lz77Params>,

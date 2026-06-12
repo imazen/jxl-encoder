@@ -7878,7 +7878,10 @@ mod tests {
         // at effort <= 7 (libjxl nl_dc QuantizeWP parity) + static-path
         // sharpness map wired. Sizes essentially unchanged on these
         // synthetic fixtures; quant_dc integers are WP-shaped.
-        const EXPECTED_HASH: u64 = 0x35635e24626db069;
+        // Updated libjxl prefix-vs-ANS auto choice (enc_ans.cc parity):
+        // tiny/deterministic streams use prefix codes (112 -> 109 B —
+        // drops per-stream 32-bit ANS state flushes).
+        const EXPECTED_HASH: u64 = 0x3a9ffe38d9b7c4d2;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7916,7 +7919,10 @@ mod tests {
         // at effort <= 7 (libjxl nl_dc QuantizeWP parity) + static-path
         // sharpness map wired. Sizes essentially unchanged on these
         // synthetic fixtures; quant_dc integers are WP-shaped.
-        const EXPECTED_HASH: u64 = 0x1f9636894eea2335;
+        // Updated libjxl prefix-vs-ANS auto choice (enc_ans.cc parity):
+        // tiny/deterministic streams use prefix codes (97 -> 84 B —
+        // drops per-stream 32-bit ANS state flushes).
+        const EXPECTED_HASH: u64 = 0xd3b32f2bd4029891;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8024,7 +8030,10 @@ mod tests {
         // at effort <= 7 (libjxl nl_dc QuantizeWP parity) + static-path
         // sharpness map wired. Sizes essentially unchanged on these
         // synthetic fixtures; quant_dc integers are WP-shaped.
-        const EXPECTED_HASH: u64 = 0x7d74291268f95e19;
+        // Updated libjxl prefix-vs-ANS auto choice (enc_ans.cc parity):
+        // tiny/deterministic streams use prefix codes (506 -> 499 B —
+        // drops per-stream 32-bit ANS state flushes).
+        const EXPECTED_HASH: u64 = 0xdd1c570984a2d618;
         assert_eq!(
             hash,
             EXPECTED_HASH,
