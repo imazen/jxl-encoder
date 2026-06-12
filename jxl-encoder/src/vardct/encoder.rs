@@ -7881,7 +7881,11 @@ mod tests {
         // Updated libjxl prefix-vs-ANS auto choice (enc_ans.cc parity):
         // tiny/deterministic streams use prefix codes (112 -> 109 B —
         // drops per-stream 32-bit ANS state flushes).
-        const EXPECTED_HASH: u64 = 0x3a9ffe38d9b7c4d2;
+        // W44-AUDIT-8 Phase 7 default-flip REVERTED same-day (W44-202
+        // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
+        // -0.30/cell budget). Hash = pre-WP quantization + the kept
+        // prefix-auto/singleton + static-sharpness changes.
+        const EXPECTED_HASH: u64 = 0x52c1ed32d4456952;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7922,7 +7926,11 @@ mod tests {
         // Updated libjxl prefix-vs-ANS auto choice (enc_ans.cc parity):
         // tiny/deterministic streams use prefix codes (97 -> 84 B —
         // drops per-stream 32-bit ANS state flushes).
-        const EXPECTED_HASH: u64 = 0xd3b32f2bd4029891;
+        // W44-AUDIT-8 Phase 7 default-flip REVERTED same-day (W44-202
+        // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
+        // -0.30/cell budget). Hash = pre-WP quantization + the kept
+        // prefix-auto/singleton + static-sharpness changes.
+        const EXPECTED_HASH: u64 = 0x960e78c4971b42e3;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7985,7 +7993,11 @@ mod tests {
         // at effort <= 7 (libjxl nl_dc QuantizeWP parity) + static-path
         // sharpness map wired. Sizes essentially unchanged on these
         // synthetic fixtures; quant_dc integers are WP-shaped.
-        const EXPECTED_HASH: u64 = 0x34b6979dbab97cac;
+        // W44-AUDIT-8 Phase 7 default-flip REVERTED same-day (W44-202
+        // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
+        // -0.30/cell budget). Hash = pre-WP quantization + the kept
+        // prefix-auto/singleton + static-sharpness changes.
+        const EXPECTED_HASH: u64 = 0x06d5672f27096037;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8033,7 +8045,11 @@ mod tests {
         // Updated libjxl prefix-vs-ANS auto choice (enc_ans.cc parity):
         // tiny/deterministic streams use prefix codes (506 -> 499 B —
         // drops per-stream 32-bit ANS state flushes).
-        const EXPECTED_HASH: u64 = 0xdd1c570984a2d618;
+        // W44-AUDIT-8 Phase 7 default-flip REVERTED same-day (W44-202
+        // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
+        // -0.30/cell budget). Hash = pre-WP quantization + the kept
+        // prefix-auto/singleton + static-sharpness changes.
+        const EXPECTED_HASH: u64 = 0x7afbca80d3d7cc13;
         assert_eq!(
             hash,
             EXPECTED_HASH,

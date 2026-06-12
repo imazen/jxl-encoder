@@ -44,6 +44,17 @@
   Huffman emission sites now consult the same depths-scan predicate the
   header writers use (`has_single_used_symbol`), making the two sides
   consistent by construction.
+- **REVERTED same-day: the QuantizeWP default-flip below.** The
+  nightly W44-202 zenjxl regression gate (per-cell SSIM2 baseline lock)
+  failed with the flip ON: 4 photo cells dropped −0.375..−0.854 SSIM2
+  (slack −0.300/cell), aggregate −0.226 (slack −0.180). The DC deadzone
+  trades photo SSIM2 for bytes beyond the sanctioned budget; libjxl
+  parity does not outrank the per-cell quality floor. QuantizeWP stays
+  OPT-IN (env hook + field mutation); the Phase 7 static-writer
+  sharpness fix, animation requantize parity, and the prefix-auto +
+  singleton fixes are KEPT (quality-neutral with the flag off).
+  Re-flip requires a Pareto-validated dispatch protecting those cells
+  or an explicit decision to re-baseline W44-202.
 - **libjxl `QuantizeWP` DC shaping is now DEFAULT at effort ≤ 7
   (W44-AUDIT-8 Phase 7)** — completes the `nl_dc` parity cluster
   started by Phase 5 `extra_dc_precision`. Closes ~half the median

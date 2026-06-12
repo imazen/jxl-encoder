@@ -1530,7 +1530,24 @@ impl EffortProfile {
             // at-or-better than cjxl mean at 7/8 grid points. At
             // effort ≥ 8 the buttloop owns DC refinement and libjxl
             // drops both nl_dc gates; we mirror that.
-            use_libjxl_wp_dc_quant: effort <= 7,
+            //
+            // Phase 7 DEFAULT-FLIP REVERTED (2026-06-12, same day): the
+            // CI-only W44-202 zenjxl regression gate (per-cell SSIM2
+            // baseline lock, stricter than rd-regression/quality-compare
+            // means) failed on 4 photo cells with the flip ON:
+            // 1025469 e5 d1 -0.375, 1418519 e6 d2 -0.854, 1531677 e7
+            // d3 -0.554, 1420710 e7 d2 -0.569 (slack -0.300/cell), AGG
+            // mean -0.226 (slack -0.180). The DC deadzone trades SSIM2
+            // for bytes on photo content beyond the sanctioned budget —
+            // libjxl parity does not outrank the repo's per-cell quality
+            // floor (K_AC_QUANT precedent). Re-flip requires either a
+            // Pareto-validated dispatch that protects those cells or an
+            // explicit user decision to re-baseline W44-202. The HDR /
+            // smooth-content wins remain reachable via the env hook +
+            // direct field mutation (opt-in), and the
+            // sharpness-map/static-writer + animation requantize fixes
+            // from Phase 7 are kept (quality-neutral with the flag off).
+            use_libjxl_wp_dc_quant: false,
 
             // ── Cost model constants (from libjxl) ──
             k_favor_2x2: -0.4,
