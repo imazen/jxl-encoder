@@ -1,0 +1,24 @@
+# scoreboard_2026-06-12_post_wedges.{tsv,_summary.md} + _diff.md —
+# GOAL_BEAT_CJXL scoreboard run 2 (issue #74), after wedges 1+2 and the
+# QuantizeWP revert. Binary f8eb3b0f release; harness commit cc1f3926;
+# same 280-cell grid as run 1. Diff via compare_scoreboards.py.
+#
+# TOPLINE: CJXL-DOMINATES 140 -> 112 (-28), WE-DOMINATE 59 -> 63,
+# MIXED 73 -> 98, TIE 8 -> 7. 68 flips (40 improved / 28 worsened).
+#
+# Per family (WE/TIE/MIXED/CJXL):
+#   lossless  11/1/0/44 -> 30/4/0/22  (wedge 1, the 8-bit e5 tree lift:
+#             19 cells improved; +52..+557% gap family now 30 wins)
+#   sdr-lossy 38/3/38/25 -> 26/0/52/26 (net of wedge 2 + WP revert)
+#   hdr-lossy 5/1/28/62 -> 2/0/35/59  (WP revert bytes cost, documented)
+#   size-axis 5/3/7/9   -> 5/3/11/5
+#
+# Reading the "worsened" 28: (a) QuantizeWP-revert byte cost — tight
+# WE-DOMINATE cells (+0.1..0.8%) flipped MIXED with quality still
+# better; recovery = the opt-in WP dispatch (#74). (b) ai-products
+# d2.0 label artifact: bytes +108.6% -> +3.8% (wedge 2 fixed the
+# monotonicity violation) but strict Pareto now reads CJXL-DOMINATES
+# by a hair since the misfire's accidental quality surplus is gone —
+# substantively a huge improvement.
+# NEW UNTRACKED WEDGE: patents 1-bit e7 d0.5 +87% (both runs — lossy
+# low-d on bilevel scans; likely wants modular/lossless-style routing).
