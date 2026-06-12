@@ -14,6 +14,22 @@
   cell).
 
 ### Fixed
+- **#73: lossy VarDCT destroyed PQ/HLG-tagged input — fixed with the
+  libjxl-parity intensity pair.** `pq_*_to_linear_f32` normalizes
+  1.0 = 10,000 nits, but the header kept `intensity_target = 255` and
+  the XYB transform assumed the SDR scale: decoded pixels were garbage
+  (PQ-butteraugli ~170 at every distance). Fix = `SetIntensityTarget`
+  dispatch (PQ → 10,000, HLG → 1,000; `luminance.cc` parity) +
+  `ComputePremulAbsorb`'s `intensity_target/255` multiplier in
+  `convert_strip` (`enc_xyb.cc:217` parity; exactly 1.0 for SDR —
+  byte-identical, locks 45/45 + libjxl byte-locks 5/5). Post-fix lossy
+  HDR quality is AT PARITY with cjxl (PQ-butteraugli ±0.02 at d≤2,
+  better at d=4) at +2..+8 % median bytes
+  (`benchmarks/hdr_lossy_parity_fixed_2026-06-12.{tsv,meta}`). The CLI
+  cICP gating from the hotfix is removed — lossy HDR input now keeps
+  correct PQ/HLG signaling end-to-end. Regression gate:
+  `tests/it/hdr_pq_lossy_roundtrip.rs` (quality tracks distance, sane
+  range, signaling survives).
 - **#71: CLI now honours PNG cICP — PQ/HLG HDR input keeps its transfer
   function.** `read_png` surfaces the cICP chunk; the request maps it
   through the libjxl-parity `ColorEncoding::from_cicp` (cICP outranks

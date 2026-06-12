@@ -1,0 +1,24 @@
+# hdr_lossy_parity_fixed_2026-06-12.tsv — lossy HDR parity AFTER the
+# issue-#73 fix (intensity_target dispatch + ComputePremulAbsorb mul).
+# Same grid/pipeline as hdr_lossy_parity_2026-06-12.tsv (12 crops x
+# e{5,7} x d{0.5,1,2,4}, both arms decoded forced-PQ, PQ-EOTF
+# butteraugli @ intensity 1000).
+#
+# VERDICT — QUALITY AT PARITY, BYTES +2..+8% MEDIAN:
+# eff d    | bytes mean/med | bigger | bfly ours | cjxl  | delta
+# e5 0.5   |  +3.07/+1.77%  | 12/12  | 3.945     | 3.943 | +0.002
+# e5 1.0   |  +5.43/+2.83%  | 12/12  | 4.269     | 4.265 | +0.004
+# e5 2.0   |  +9.64/+5.94%  | 12/12  | 4.841     | 4.861 | -0.020
+# e5 4.0   | +11.34/+7.90%  | 11/12  | 5.682     | 5.851 | -0.168
+# e7 0.5   |  +3.60/+1.97%  | 12/12  | 3.944     | 3.945 | -0.000
+# e7 1.0   |  +5.27/+3.24%  | 12/12  | 4.259     | 4.251 | +0.007
+# e7 2.0   |  +5.89/+4.29%  | 12/12  | 4.838     | 4.846 | -0.008
+# e7 4.0   | +10.88/+5.47%  | 11/12  | 5.696     | 5.775 | -0.079
+#
+# Reading: PQ-butteraugli matched within ±0.02 at d<=2 and slightly
+# BETTER than cjxl at d=4; the remaining gap is BYTES at matched
+# quality (+2..+8% median, growing with d) — ordinary HDR quant/RD
+# calibration headroom, not brokenness. Spot anchor (1230 center,
+# e5 d=1): ours 1.5274 @ 29,469 B vs cjxl 1.5264 @ 28,687 B (+2.7%).
+# Supersedes the BLOCKED verdict in hdr_lossy_parity_2026-06-12.meta
+# (kept as the pre-fix record).

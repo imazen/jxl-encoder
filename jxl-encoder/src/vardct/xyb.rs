@@ -256,12 +256,17 @@ impl VarDctEncoder {
         let mut xyb_y = crate::budget::try_alloc_vec_f32_dirty_permanent(budget, padded_n)?;
         let mut xyb_b = crate::budget::try_alloc_vec_f32_dirty_permanent(budget, padded_n)?;
 
+        // libjxl ComputePremulAbsorb parity (issue #73): HDR transfer
+        // functions resolve to intensity_target 10,000 (PQ) / 1,000
+        // (HLG); SDR stays 255 → mul == 1.0 exactly (identity).
+        let intensity_mul = self.intensity_target / 255.0;
         convert_rows_to_xyb(
             width,
             height,
             padded_width,
             linear_rgb,
             primaries_matrix.as_ref(),
+            intensity_mul,
             &mut xyb_x,
             &mut xyb_y,
             &mut xyb_b,
@@ -358,6 +363,7 @@ fn convert_rows_to_xyb(
     padded_width: usize,
     linear_rgb: &[f32],
     primaries_matrix: Option<&[[f32; 3]; 3]>,
+    intensity_mul: f32,
     xyb_x: &mut [f32],
     xyb_y: &mut [f32],
     xyb_b: &mut [f32],
@@ -382,6 +388,7 @@ fn convert_rows_to_xyb(
                     strip_rows,
                     linear_rgb,
                     primaries_matrix,
+                    intensity_mul,
                     strip_x,
                     strip_y,
                     strip_b,
@@ -404,6 +411,7 @@ fn convert_rows_to_xyb(
                 strip_rows,
                 linear_rgb,
                 primaries_matrix,
+                intensity_mul,
                 &mut xyb_x[offset..offset + this_len],
                 &mut xyb_y[offset..offset + this_len],
                 &mut xyb_b[offset..offset + this_len],
@@ -427,6 +435,7 @@ fn convert_strip(
     strip_rows: usize,
     linear_rgb: &[f32],
     primaries_matrix: Option<&[[f32; 3]; 3]>,
+    intensity_mul: f32,
     strip_x: &mut [f32],
     strip_y: &mut [f32],
     strip_b: &mut [f32],
@@ -442,12 +451,20 @@ fn convert_strip(
         let y = y_start + local_y;
         let src_row = y * width;
 
-        // Deinterleave RGB row
+        // Deinterleave RGB row. `intensity_mul` is libjxl's
+        // ComputePremulAbsorb scale (`enc_xyb.cc:217`,
+        // `intensity_target / 255`): the opsin matrix is linear in RGB,
+        // so pre-scaling the samples is exactly equivalent to
+        // premultiplying the matrix. For SDR it is exactly 1.0 and the
+        // multiply is an IEEE identity — byte-identical output. For PQ
+        // (intensity_target 10,000) this is the issue-#73 fix: without
+        // it, PQ-linear data (1.0 = 10,000 nits) entered XYB on the
+        // 255-nit SDR scale and the image was destroyed.
         for x in 0..width {
             let si = (src_row + x) * 3;
-            row_r[x] = linear_rgb[si];
-            row_g[x] = linear_rgb[si + 1];
-            row_b[x] = linear_rgb[si + 2];
+            row_r[x] = linear_rgb[si] * intensity_mul;
+            row_g[x] = linear_rgb[si + 1] * intensity_mul;
+            row_b[x] = linear_rgb[si + 2] * intensity_mul;
         }
 
         // Transform non-sRGB primaries to sRGB before XYB conversion

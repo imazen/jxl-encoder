@@ -1716,24 +1716,13 @@ fn main() {
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
             }
-            // Lossy + cICP: the integer-input PQ/HLG lossy pipeline is NOT
-            // correct yet (issue #73 — encoding with the PQ tag produced
-            // garbage pixels, butteraugli ~170 vs source at every distance).
-            // Until that lands, lossy keeps the legacy sRGB-tagged behaviour
-            // (pixels sane, tag wrong for HDR — the lesser evil) and warns.
-            if let Some(c) = cicp
-                && color_encoding_from_cicp(c, layout.is_grayscale()).is_some()
+            // cICP outranks gAMA (issue #71); the lossy PQ/HLG scale bug
+            // is fixed by the libjxl-parity intensity_target dispatch
+            // (issue #73 — SetIntensityTarget: PQ 10,000 / HLG 1,000 nits).
+            if let Some(ce) = cicp.and_then(|c| color_encoding_from_cicp(c, layout.is_grayscale()))
             {
-                {
-                    eprintln!(
-                        "Warning: input signals cICP cp={} tc={} but lossy HDR \
-                         encoding is not yet supported (issue #73); encoding with \
-                         legacy sRGB signaling. Use --lossless to preserve HDR.",
-                        c.color_primaries, c.transfer_function
-                    );
-                }
-            }
-            if let Some(gamma) = source_gamma {
+                req = req.with_color_encoding(ce);
+            } else if let Some(gamma) = source_gamma {
                 req = req.with_source_gamma(gamma);
             }
             if let Some(it) = args.intensity_target {
@@ -1800,21 +1789,14 @@ fn main() {
                 if let Some(ref meta) = metadata {
                     req = req.with_metadata(meta);
                 }
-                // Lossy + cICP: the integer-input PQ/HLG lossy pipeline is
-                // NOT correct yet (issue #73) — keep legacy signaling, warn.
-                if let Some(c) = cicp
-                    && color_encoding_from_cicp(c, layout.is_grayscale()).is_some()
+                // cICP outranks gAMA (issue #71); the lossy PQ/HLG scale bug
+                // is fixed by the libjxl-parity intensity_target dispatch
+                // (issue #73 — SetIntensityTarget: PQ 10,000 / HLG 1,000 nits).
+                if let Some(ce) =
+                    cicp.and_then(|c| color_encoding_from_cicp(c, layout.is_grayscale()))
                 {
-                    {
-                        eprintln!(
-                            "Warning: input signals cICP cp={} tc={} but lossy HDR \
-                             encoding is not yet supported (issue #73); encoding with \
-                             legacy sRGB signaling. Use --lossless to preserve HDR.",
-                            c.color_primaries, c.transfer_function
-                        );
-                    }
-                }
-                if let Some(gamma) = source_gamma {
+                    req = req.with_color_encoding(ce);
+                } else if let Some(gamma) = source_gamma {
                     req = req.with_source_gamma(gamma);
                 }
                 if let Some(it) = args.intensity_target {
@@ -1957,24 +1939,13 @@ fn main() {
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
             }
-            // Lossy + cICP: the integer-input PQ/HLG lossy pipeline is NOT
-            // correct yet (issue #73 — encoding with the PQ tag produced
-            // garbage pixels, butteraugli ~170 vs source at every distance).
-            // Until that lands, lossy keeps the legacy sRGB-tagged behaviour
-            // (pixels sane, tag wrong for HDR — the lesser evil) and warns.
-            if let Some(c) = cicp
-                && color_encoding_from_cicp(c, layout.is_grayscale()).is_some()
+            // cICP outranks gAMA (issue #71); the lossy PQ/HLG scale bug
+            // is fixed by the libjxl-parity intensity_target dispatch
+            // (issue #73 — SetIntensityTarget: PQ 10,000 / HLG 1,000 nits).
+            if let Some(ce) = cicp.and_then(|c| color_encoding_from_cicp(c, layout.is_grayscale()))
             {
-                {
-                    eprintln!(
-                        "Warning: input signals cICP cp={} tc={} but lossy HDR \
-                         encoding is not yet supported (issue #73); encoding with \
-                         legacy sRGB signaling. Use --lossless to preserve HDR.",
-                        c.color_primaries, c.transfer_function
-                    );
-                }
-            }
-            if let Some(gamma) = source_gamma {
+                req = req.with_color_encoding(ce);
+            } else if let Some(gamma) = source_gamma {
                 req = req.with_source_gamma(gamma);
             }
             // ── A1 passthrough — wire intensity_target + brotli_effort ──

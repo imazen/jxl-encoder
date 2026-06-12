@@ -9839,6 +9839,26 @@ impl<'a> EncodeRequest<'a> {
         // [`crate::vardct::VarDctEncoder::alpha_squeeze_engaged`]).
         enc.alpha_squeeze = cfg.alpha_squeeze;
 
+        // HDR intensity_target default — libjxl parity
+        // (`luminance.cc:SetIntensityTarget`): PQ peaks at 10,000 nits
+        // (SMPTE ST 2084), HLG's nominal display peak is 1,000 nits
+        // (Rec. BT.2100-2). Without this, PQ input was linearized to
+        // 1.0 = 10,000 nits (`pq_*_to_linear_f32`) while the header
+        // kept intensity_target = 255 — the decoder then interpreted
+        // the XYB data on a 255-nit scale, destroying the image
+        // (issue #73: butteraugli ~170 at every distance, bytes
+        // collapsed). Explicit metadata / request values below still
+        // override, exactly like libjxl's explicit-set path.
+        {
+            use crate::headers::color_encoding::TransferFunction;
+            if let Some(ce) = enc.color_encoding.as_ref() {
+                match ce.transfer_function {
+                    TransferFunction::Pq => enc.intensity_target = 10_000.0,
+                    TransferFunction::Hlg => enc.intensity_target = 1_000.0,
+                    _ => {}
+                }
+            }
+        }
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
             if let Some(it) = meta.intensity_target {
@@ -10981,6 +11001,19 @@ impl LossyEncoder {
                 }
             });
             enc.intensity_target = self.intensity_target;
+            // HDR default — libjxl SetIntensityTarget parity (issue #73):
+            // PQ -> 10,000 nits, HLG -> 1,000, unless the caller moved
+            // intensity_target off the 255.0 SDR default explicitly.
+            if self.intensity_target == 255.0 {
+                use crate::headers::color_encoding::TransferFunction;
+                if let Some(ce) = enc.color_encoding.as_ref() {
+                    match ce.transfer_function {
+                        TransferFunction::Pq => enc.intensity_target = 10_000.0,
+                        TransferFunction::Hlg => enc.intensity_target = 1_000.0,
+                        _ => {}
+                    }
+                }
+            }
             enc.min_nits = self.min_nits;
             enc.relative_to_max_display = self.relative_to_max_display;
             enc.linear_below = self.linear_below;
@@ -13522,8 +13555,11 @@ fn bt709_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 
 /// PQ u16 → linear f32. `u16_max` mirrors the convention in
 /// `srgb_u16_to_linear_f32` — the divisor for input normalization.
-/// Output is in linear [0..1] where 1.0 corresponds to the encoder's
-/// `intensity_target` peak luminance. Closes PQ portion of #17.
+/// Output is the normalized SMPTE ST 2084 EOTF: linear [0..1] where
+/// 1.0 = 10,000 nits (the PQ peak). The lossy path pairs this with
+/// `intensity_target = 10_000` (libjxl `SetIntensityTarget` parity —
+/// issue #73); with any other intensity_target the decoder
+/// misinterprets the scale. Closes PQ portion of #17.
 fn pq_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
     let pixels: &[u16] = bytemuck::cast_slice(data);
     pixels

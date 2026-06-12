@@ -189,9 +189,26 @@ fn explicit_butteraugli_overrides_pq_layout() {
     // with explicit Butteraugli and once with explicit Vdp2; the
     // bytes must differ. If they don't, the explicit selection is
     // being ignored.
-    let w = 32u32;
-    let h = 32u32;
-    let buf = rgb_f32_buf(w, h);
+    // 96x96 with PQ code values capped at ~0.43 (~120 nits): the old
+    // 32x32 full-range fixture stopped discriminating once the
+    // issue-#73 intensity fix gave PQ its true 10,000-nit XYB scale —
+    // extreme values drove BOTH losses into the same per-iter
+    // deviation clamps and the bitstreams converged regardless of the
+    // selected loss (probe sweep 2026-06-12: full-range d=1 ties;
+    // /600 d=1, /440 d=2, /340 d=4 all diverge). This cell keeps d=1
+    // with content in the adjustable band, where the two losses
+    // measurably steer different quant fields.
+    let w = 96u32;
+    let h = 96u32;
+    let buf: Vec<u8> = {
+        let n = (w * h * 3) as usize;
+        let mut b = vec![0u8; n * 4];
+        for i in 0..n {
+            let v: f32 = ((i % 256) as f32) / 600.0;
+            b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        b
+    };
 
     let butteraugli_bytes = LossyConfig::new(1.0)
         .with_effort(8)
