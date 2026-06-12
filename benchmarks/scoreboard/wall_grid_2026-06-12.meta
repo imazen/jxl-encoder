@@ -1,29 +1,21 @@
-# ⚠ RETRACTED 2026-06-12 (same day): the ours_*_1T columns in this TSV
-# are INVALID — with_threads(1) silently ran the rayon stages on the
-# 32-thread global pool (contract bug, fixed in the next commit). The
-# '1T lossy WE WIN 9/10' reading is FALSE: true 1T lossy e7 (photos)
-# is 0.623s vs cjxl 0.410s = 1.52x OVER. cjxl columns + ours-8T
-# columns remain valid. Superseded by wall_grid re-run post-fix.
-# wall_grid_2026-06-12.tsv — FIRST quiet-box wall-axis grid (#74 axis
-# 3). Run at loadavg 0.48-0.57 (verified quiet window; another agent's
-# zenjpeg regressions had just finished), interleaved paired c,o,c,o,
-# 5 iters post-warmup, medians; binary 6e24c93f-era release CLI
-# (DEFAULT features — what users get), cjxl v0.12.0.
+# wall_grid_2026-06-12.tsv — FIRST VALID wall-axis grid (#74 axis 3),
+# third attempt: run 1 had the with_threads(1) contract bug (32T
+# masquerading as 1T, RETRACTED + fixed ff1acd27); run 2 measured a
+# stale pre-fix binary (parked at /tmp). THIS run: load 0.12, harness
+# self-built the CLI at 644fc03c (stale-binary guard), true thread
+# semantics verified (1T spot 0.602s), interleaved paired, 5 iters.
 #
-# HEADLINE — the 8T axis decomposes into a BUILD/ENGAGEMENT bug, not
-# raw speed:
-#   1T lossy: WE WIN 9/10 cells (0.59-0.75x at e7, 0.70-1.23x at e5)
-#   1T lossless e5: parity (0.86-1.01x)
-#   1T lossless e7: over budget (1.18-2.91x) — the known #41/#64 family
-#   8T ALL cells: 1.6x-17x OVER — because OUR walls are flat 1T->8T
-#     (photos lossless e7: 1.475 -> 1.469 s; lossy 0.262 -> 0.262 s)
-#     while cjxl scales 5-7x. --threads is not engaging parallelism on
-#     these paths in the DEFAULT build: parallel-tree-learning is a
-#     non-default cargo feature (CLAUDE.md's 1.16x-at-8T lossless
-#     parity claim was measured WITH it), and the lossy multi-group
-#     path's thread engagement needs an audit (1079x1439 IS
-#     multi-group).
-# WEDGE 7 (highest wall EV): default-enable parallel-tree-learning in
-# the CLI + audit --threads on the lossy path; expected to flip most
-# 8T cells given the 1T wins. The 1.2x e<=7 budget is already MET on
-# lossy 1T.
+# HONEST TOPLINE: 39/40 cells OVER the goal budget (<=1.2x at e<=7).
+# Only plots lossy e7 1T passes (1.12x).
+#   lossy  1T: 1.12-2.17x   8T: 1.57-3.76x
+#   lossless 1T: 1.33-5.90x 8T: 2.89-10.78x
+# Scaling 1T->8T: ours ~1.8-2.5x, cjxl ~4.6-5.5x — BOTH a serial-speed
+# gap and a parallel-coverage gap (AC-tile search is already parallel;
+# XYB/AQ/gaborish/transform/tokenize are serial; cjxl parallelizes per
+# 256^2 group + within stages).
+# NOTE: CLAUDE.md's prior "lossless e7 1.16x at 8T" parity claim does
+# not reproduce against today's cjxl v0.12.0 paired runs — supersede it
+# with this grid (the old number likely paired a different cjxl
+# build/threading; per-cell paired data wins).
+# Wedge 7b = the dominant goal workstream: serial-stage speed + intra-
+# image parallelism, both thread counts.
