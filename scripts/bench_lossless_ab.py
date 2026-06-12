@@ -67,7 +67,7 @@ def main():
     args = ap.parse_args()
 
     if args.decode_verify:
-        from PIL import Image  # hard dep when verification requested; no silent skip
+        import cv2  # noqa: F401 — hard dep when verification requested; no silent skip
 
     load1 = os.getloadavg()[0]
     if load1 > 4.0:
@@ -106,12 +106,17 @@ def main():
             if r.returncode != 0:
                 roundtrip = "DECODE-FAIL"
             else:
-                from PIL import Image
-                src_px = Image.open(image).convert("RGB")
-                dec_px = Image.open(dec).convert("RGB")
+                # cv2 IMREAD_UNCHANGED preserves 16-bit samples. PIL
+                # silently truncates 16-bit RGB PNGs to 8-bit (mode
+                # 'RGB'), which made earlier verify runs 8-bit-weak —
+                # never use PIL for pixel-exact gates on >8-bit content.
+                import cv2
+                src_px = cv2.imread(image, cv2.IMREAD_UNCHANGED)
+                dec_px = cv2.imread(dec, cv2.IMREAD_UNCHANGED)
                 roundtrip = ("pixel-exact"
-                             if src_px.size == dec_px.size
-                             and list(src_px.getdata()) == list(dec_px.getdata())
+                             if src_px is not None and dec_px is not None
+                             and src_px.shape == dec_px.shape
+                             and bool((src_px == dec_px).all())
                              else "PIXEL-DIFF")
                 os.unlink(dec)
         os.unlink(tmp)
