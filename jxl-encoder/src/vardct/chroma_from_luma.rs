@@ -303,8 +303,10 @@ fn find_best_multiplier(
             } else {
                 jxl_simd::cfl_find_best_multiplier(values_m, values_s, num, base, distance_mul)
             };
+            let sum_abs_s: f32 = values_s[..num].iter().map(|v| v.abs()).sum();
+            let sum_abs_m: f32 = values_m[..num].iter().map(|v| v.abs()).sum();
             eprintln!(
-                "SA-G-FIX-A channel={} num={} base={:.1} use_newton={} libjxl_parity={} libjxl_math_ls_warm={} eps={} iters={} variant={} cmap_i8={}",
+                "SA-G-FIX-A channel={} num={} base={:.1} use_newton={} libjxl_parity={} libjxl_math_ls_warm={} eps={} iters={} variant={} sum|s|={sum_abs_s:.3} sum|m|={sum_abs_m:.3} cmap_i8={}",
                 channel,
                 num,
                 base,

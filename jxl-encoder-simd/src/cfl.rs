@@ -675,6 +675,20 @@ pub fn find_best_multiplier_newton_scalar(
         return 0;
     }
 
+    // Issue #75: exactly-zero target channel (gray content -> the XYB X
+    // plane is identically 0 for r=g=b input). The optimum is exactly
+    // x = -base/K_INV-ish... for base == 0.0 it is 0.0, and the Newton
+    // derivatives of the |residual|^p cost at a zero residual are
+    // non-finite (d/dx |x|^p at 0) with large `values_m` magnitudes --
+    // the loop fabricated multipliers up to +/-17, making the encoder
+    // code -ytox*Y as the X residual (~49% of AC tokens on gray
+    // content, ~2x bytes at tied quality). cjxl emits 0 here. The guard
+    // can't fire on real chroma (any nonzero s) so RGB byte-locks are
+    // structurally unaffected.
+    if base == 0.0 && values_s[..num].iter().all(|&v| v == 0.0) {
+        return bias_and_quantize(0.0);
+    }
+
     // Compute LS solution (always used at `libjxl_parity=false` as both
     // start and fallback). At `libjxl_parity=true` it's not the start
     // but we still need it as a stable reference value in case `num` is
@@ -744,6 +758,13 @@ pub fn find_best_multiplier_newton_scalar(
         // Second derivative via central difference
         let ddf = (fd_pe - fd_me) / (2.0 * eps);
         let step = fd / (ddf + NEWTON_STABILIZER);
+        // Issue #75 belt-and-braces: a non-finite derivative ratio means
+        // the cost surface is degenerate at this point -- stop instead of
+        // walking on garbage (the zero-target guard above catches the
+        // known case; this catches any other NaN/inf escape).
+        if !step.is_finite() {
+            break;
+        }
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
         if step.abs() < NEWTON_CONVERGENCE {
@@ -784,6 +805,20 @@ pub fn find_best_multiplier_newton_avx2(
 
     if num == 0 {
         return 0;
+    }
+
+    // Issue #75: exactly-zero target channel (gray content -> the XYB X
+    // plane is identically 0 for r=g=b input). The optimum is exactly
+    // x = -base/K_INV-ish... for base == 0.0 it is 0.0, and the Newton
+    // derivatives of the |residual|^p cost at a zero residual are
+    // non-finite (d/dx |x|^p at 0) with large `values_m` magnitudes --
+    // the loop fabricated multipliers up to +/-17, making the encoder
+    // code -ytox*Y as the X residual (~49% of AC tokens on gray
+    // content, ~2x bytes at tied quality). cjxl emits 0 here. The guard
+    // can't fire on real chroma (any nonzero s) so RGB byte-locks are
+    // structurally unaffected.
+    if base == 0.0 && values_s[..num].iter().all(|&v| v == 0.0) {
+        return bias_and_quantize(0.0);
     }
 
     let inv_cf = f32x8::splat(token, K_INV_COLOR_FACTOR);
@@ -939,6 +974,13 @@ pub fn find_best_multiplier_newton_avx2(
 
         let ddf = (fd_pe - fd_me) / (2.0 * eps);
         let step = fd / (ddf + NEWTON_STABILIZER);
+        // Issue #75 belt-and-braces: a non-finite derivative ratio means
+        // the cost surface is degenerate at this point -- stop instead of
+        // walking on garbage (the zero-target guard above catches the
+        // known case; this catches any other NaN/inf escape).
+        if !step.is_finite() {
+            break;
+        }
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
         if step.abs() < NEWTON_CONVERGENCE {
@@ -977,6 +1019,20 @@ pub fn find_best_multiplier_newton_neon(
 
     if num == 0 {
         return 0;
+    }
+
+    // Issue #75: exactly-zero target channel (gray content -> the XYB X
+    // plane is identically 0 for r=g=b input). The optimum is exactly
+    // x = -base/K_INV-ish... for base == 0.0 it is 0.0, and the Newton
+    // derivatives of the |residual|^p cost at a zero residual are
+    // non-finite (d/dx |x|^p at 0) with large `values_m` magnitudes --
+    // the loop fabricated multipliers up to +/-17, making the encoder
+    // code -ytox*Y as the X residual (~49% of AC tokens on gray
+    // content, ~2x bytes at tied quality). cjxl emits 0 here. The guard
+    // can't fire on real chroma (any nonzero s) so RGB byte-locks are
+    // structurally unaffected.
+    if base == 0.0 && values_s[..num].iter().all(|&v| v == 0.0) {
+        return bias_and_quantize(0.0);
     }
 
     let inv_cf = f32x4::splat(token, K_INV_COLOR_FACTOR);
@@ -1127,6 +1183,13 @@ pub fn find_best_multiplier_newton_neon(
 
         let ddf = (fd_pe - fd_me) / (2.0 * eps);
         let step = fd / (ddf + NEWTON_STABILIZER);
+        // Issue #75 belt-and-braces: a non-finite derivative ratio means
+        // the cost surface is degenerate at this point -- stop instead of
+        // walking on garbage (the zero-target guard above catches the
+        // known case; this catches any other NaN/inf escape).
+        if !step.is_finite() {
+            break;
+        }
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
         if step.abs() < NEWTON_CONVERGENCE {
@@ -1148,6 +1211,64 @@ pub fn find_best_multiplier_newton_neon(
 mod tests {
     extern crate std;
     use super::*;
+
+    /// Issue #75 regression gate: an exactly-zero target channel (the
+    /// XYB X plane on gray content) MUST yield multiplier 0 from every
+    /// Newton variant and every mode. Pre-fix, the Newton loop walked on
+    /// non-finite derivatives of the zero-residual cost and fabricated
+    /// multipliers up to ±17 (49% of AC tokens wasted on gray content).
+    /// `values_m` uses production-scale magnitudes (~5e3 per coeff —
+    /// inv-quant-weighted DCT coefficients) because the blowup needs
+    /// large luma energy.
+    #[test]
+    fn test_newton_zero_target_returns_zero_all_variants() {
+        let num = 4096;
+        let values_m: alloc::vec::Vec<f32> =
+            (0..num).map(|i| ((i % 64) as f32 - 32.0) * 311.7).collect();
+        let values_s: alloc::vec::Vec<f32> = alloc::vec![0.0; num];
+
+        for &(libjxl_parity, ls_warm) in &[(false, false), (true, false), (false, true)] {
+            let r = find_best_multiplier_newton_scalar(
+                &values_m,
+                &values_s,
+                num,
+                0.0,
+                1e-3,
+                1.0,
+                10,
+                libjxl_parity,
+                ls_warm,
+            );
+            assert_eq!(
+                r, 0,
+                "scalar zero-target must give 0 (parity={libjxl_parity}, warm={ls_warm})"
+            );
+        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                for &(libjxl_parity, ls_warm) in &[(false, false), (true, false), (false, true)] {
+                    let r = find_best_multiplier_newton(
+                        &values_m,
+                        &values_s,
+                        num,
+                        0.0,
+                        1e-3,
+                        1.0,
+                        10,
+                        libjxl_parity,
+                        ls_warm,
+                    );
+                    assert_eq!(
+                        r, 0,
+                        "dispatch zero-target must give 0 under {perm:?} \
+                         (parity={libjxl_parity}, warm={ls_warm})"
+                    );
+                }
+            },
+        );
+        std::println!("{report}");
+    }
 
     #[test]
     fn test_find_best_multiplier_scalar_vs_dispatch() {

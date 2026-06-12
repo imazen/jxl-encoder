@@ -1050,6 +1050,29 @@ fn lossless_mg_gray_512x512_bilevel_e7() {
     );
 }
 
+/// Multi-group LOSSY gray at e7 (document-scan class): locks the
+/// issue-#75 CfL zero-target guard — gray input has an identically-zero
+/// XYB X plane; pre-fix the e7+ Newton fit fabricated ytox (±17) and
+/// the encoder coded −ytox·Y as the X residual (~2× AC bytes). This
+/// cell pins X-channel silence on the gray lossy path.
+#[test]
+fn lossy_mg_gray_512x512_bilevel_e7_d1() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .encode(&bilevel_gray_512x512(), 512, 512, PixelLayout::Gray8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_gray_512x512_bilevel_e7_d1",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        true,
+        false,
+    );
+}
+
 /// 512x512 Rgb16 — MULTI-GROUP 16-bit: smooth vertical PQ-ish ramps
 /// with per-pixel LCG noise in the low byte (the HDR-photo signal shape
 /// that motivated issue #72). Locks the 16-bit e5 budgeted tree-learn

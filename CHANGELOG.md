@@ -71,6 +71,23 @@
   byte-identical; rd-regression passes within existing tolerances.
 
 ### Fixed
+- **#75: gray lossy at e7+ wasted ~2× bytes — CfL Newton fabricated
+  ytox on the identically-zero X channel.** Gray input (r=g=b) has an
+  exactly-zero XYB X plane; the e7+ Newton refinement's derivatives of
+  the zero-residual cost are non-finite at production luma magnitudes,
+  and the loop walked on garbage to multipliers up to ±17 — the encoder
+  then coded −ytox·Y as the X residual: a scaled copy of Y carrying
+  ~49 % of all AC tokens on gray content, at zero quality impact
+  (decoder reconstructs X = 0 either way). Fixed with a zero-target
+  guard in all three Newton variants (scalar/AVX2/NEON) + a
+  non-finite-step break; LS already returned 0 (positive-denominator).
+  Patents bilevel cell (e7 d0.5): 1,658,392 → 894,318 B (−46 %) at
+  quality better than cjxl on both metrics (was +87 % bytes). RGB
+  content structurally unaffected (guard requires an all-zero target;
+  locks + byte-locks + CID22 GRAND unchanged). New lock cell
+  `lossy_mg_gray_512x512_bilevel_e7_d1` pins X-channel silence; new
+  `test_newton_zero_target_returns_zero_all_variants` parity gate
+  covers every variant × mode.
 - **W44-108 qf-seed sub-band misfire on smooth product shots — distance
   monotonicity violation (GOAL_BEAT_CJXL wedge 2).** imazen-26
   ai-products content (m3 = 28.19, fcbr = 0.70 — passes every
