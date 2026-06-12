@@ -1,3 +1,9 @@
+# ⚠ RETRACTED 2026-06-12 (same day): the ours_*_1T columns in this TSV
+# are INVALID — with_threads(1) silently ran the rayon stages on the
+# 32-thread global pool (contract bug, fixed in the next commit). The
+# '1T lossy WE WIN 9/10' reading is FALSE: true 1T lossy e7 (photos)
+# is 0.623s vs cjxl 0.410s = 1.52x OVER. cjxl columns + ours-8T
+# columns remain valid. Superseded by wall_grid re-run post-fix.
 # wall_grid_2026-06-12.tsv — FIRST quiet-box wall-axis grid (#74 axis
 # 3). Run at loadavg 0.48-0.57 (verified quiet window; another agent's
 # zenjpeg regressions had just finished), interleaved paired c,o,c,o,

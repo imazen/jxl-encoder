@@ -12380,9 +12380,17 @@ fn run_with_threads<T>(threads: usize, f: impl FnOnce() -> T + Send) -> T
 where
     T: Send,
 {
-    if threads <= 1 {
+    if threads == 0 {
+        // Documented contract: ambient rayon pool (caller controls via
+        // pool.install around the encode call).
         return f();
     }
+    // threads >= 1: dedicated pool of exactly that size. `threads == 1`
+    // MUST install a 1-thread pool — the pre-2026-06-12 early-return ran
+    // the closure on the ambient GLOBAL pool, so `with_threads(1)`
+    // silently used every core for the rayon stages (violating the
+    // documented "force sequential" contract and producing bogus
+    // 1T wall benchmarks — #74 wall-grid postmortem).
     match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
         Ok(pool) => pool.install(f),
         Err(_) => f(),

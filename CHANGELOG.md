@@ -108,6 +108,17 @@
   1418519 mask_med 92.3 sits above every sky cell — no separation).
 
 ### Fixed
+- **`with_threads(1)` silently used every core (#74 wall-grid
+  postmortem).** `run_with_threads` early-returned for `threads <= 1`
+  without installing a pool, so the rayon stages inside the encode
+  (AC-strategy tiles, entropy-code builds, DC groups) ran on the
+  ambient GLOBAL pool — `with_threads(1)` violated its documented
+  "force sequential" contract and produced bogus 1T benchmarks (the
+  first wall grid's "1T lossy wins 9/10" headline was this bug; TRUE
+  1T lossy e7 on the 1 MP photo cell is 0.623 s vs the 0.262 s
+  measured-at-32-threads). `threads >= 1` now installs a dedicated
+  pool of exactly that size; `0` keeps the documented ambient
+  behaviour. Bytes identical across thread counts.
 - **#75: gray lossy at e7+ wasted ~2× bytes — CfL Newton fabricated
   ytox on the identically-zero X channel.** Gray input (r=g=b) has an
   exactly-zero XYB X plane; the e7+ Newton refinement's derivatives of
