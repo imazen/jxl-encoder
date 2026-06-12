@@ -209,12 +209,24 @@ pub(crate) fn w44_audit_6_is_high_colour_class(
 /// - imac_dark: M3 = 20.96
 /// - **codec_wiki: M3 = 145.73** (rich colour content, the W44-107 regression target)
 ///
-/// The 30.0 threshold separates with ~6× margin both sides — robust to
-/// natural variance in M3 across similar-class images. Photos in the
-/// validation set range M3 ≈ 32..99 — outside the sub-band by design
-/// (photos also fail the `is_screenshot` mask>95 gate, so this is
-/// belt-and-braces).
-pub const BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX: f32 = 30.0;
+/// The original 30.0 threshold claimed "~6× margin both sides", but the
+/// 6× was vs codec_wiki (145.7) only — the never-measured (21, 30) band
+/// turned out to contain real content. GOAL_BEAT_CJXL wedge 2
+/// (scoreboard 2026-06-12): imazen-26 ai-products (smooth low-colour
+/// studio shots, m3 = 28.19, fcbr = 0.70 — passes every block-based
+/// screenshot proxy INCLUDING the W44-164 classifier) tripped the
+/// sub-gate at d ≥ 2 and took the e7 3× qf lift, producing a
+/// distance-MONOTONICITY VIOLATION (d2.0 output bigger AND higher
+/// quality than our own d1.9: 56.6 KB → 115 KB) and +108..116 % bytes
+/// vs cjxl. 24.0 re-splits the band at the ratio midpoint of the
+/// measured winner max (imac_dark 20.96) and the misfire class
+/// (ai-products 28.19; windows95 27.19 also stops sub-band-firing —
+/// re-bisection measured its sub-band lift as bytes-negative at flat
+/// quality, see `benchmarks/qfseed_m3_rebisect_2026-06-12.{tsv,meta}`).
+/// Photos in the validation set range M3 ≈ 32..99 — outside the
+/// sub-band by design (photos also fail the `is_screenshot` mask
+/// gate, so this is belt-and-braces).
+pub const BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX: f32 = 24.0;
 
 /// W44-176: terminal-class exclude sub-discriminator — `luma_var` lower
 /// bound. Inside the W44-108 firing class (`is_screenshot AND m3 < 30`),

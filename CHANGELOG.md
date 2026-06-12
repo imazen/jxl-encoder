@@ -71,6 +71,22 @@
   byte-identical; rd-regression passes within existing tolerances.
 
 ### Fixed
+- **W44-108 qf-seed sub-band misfire on smooth product shots — distance
+  monotonicity violation (GOAL_BEAT_CJXL wedge 2).** imazen-26
+  ai-products content (m3 = 28.19, fcbr = 0.70 — passes every
+  block-based screenshot proxy including the W44-164 classifier) sat in
+  the never-measured m3 ∈ (21, 30) band and took the screenshot qf-seed
+  lift at d ≥ 2: our d2.0 encode came out bigger AND higher-quality
+  than our own d1.9 (57 KB → 116 KB at e7) at +108..116 % bytes vs
+  cjxl. Sub-band m3 ceiling tightened 30 → 24 (ratio midpoint of
+  winner-max 20.96 and misfire 28.19) with full re-bisection
+  (`benchmarks/qfseed_m3_rebisect_2026-06-12.{tsv,meta}`): 40/40
+  gb82-sc protection cells byte-identical, misfire cells land at
+  cjxl +3.8..+4.8 % with matched quality, monotonicity restored.
+  KNOWN RESIDUAL: the d ≥ 3.5 main band has no m3 check and still
+  misfires on this class (+72..+118 % at d4) — needs a new
+  discriminator (every existing proxy axis overlaps the main-band
+  winners).
 - **HLG lossy was distance-flat garbage — missing forward OOTF (caught
   by the new HDR suite).** Our `hlg_*_to_linear` helpers produce scene
   light (inverse OETF only), but every conformant decoder's linear→HLG

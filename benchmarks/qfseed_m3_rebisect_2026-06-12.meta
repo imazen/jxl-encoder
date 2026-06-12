@@ -1,0 +1,30 @@
+# qfseed_m3_rebisect_2026-06-12.tsv — re-bisection for tightening the
+# W44-108 qf-seed sub-band m3 ceiling (BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR
+# _M3_MAX) 30.0 -> 24.0. GOAL_BEAT_CJXL wedge 2 (issue #74): imazen-26
+# ai-products 9291 (m3=28.19, fcbr=0.70 — passes every block-based
+# screenshot proxy incl. W44-164) misfired the sub-band into a distance-
+# monotonicity violation (d1.9=59.7k -> d2.0=115.9k at e7) and
+# +108..116% bytes vs cjxl.
+#
+# Arms: old = main @ d63ad50d (m3max 30), new = this commit (m3max 24),
+# cjxl v0.12.0. Cells: 10 gb82-sc x e{5,7} x d{2.0,3.0} (the sub-band).
+# All sources normalized pixels-only PNGs; djxl-decoded; butteraugli
+# pnorm3 + ssim2 via zen-metrics.
+#
+# RESULT: 40/40 protection cells BYTE-IDENTICAL (every measured sub-band
+# winner has m3 < 21; windows95 m3=27.19 is in (24,30) but never
+# sub-band-fires — fails the mask-median gate). Products (separate run,
+# values in the divergence-row note + commit message): 9291 d2.0 e7
+# 115,916 -> 57,287 B (cjxl 55,194; +3.8%), quality matched
+# (0.903/79.14 vs cjxl 0.883/79.11), monotone vs d1.9 restored; d3.0
+# same shape (+4.8%). 9307/9678 byte-identical (never fired).
+#
+# KNOWN RESIDUAL (next wedge): d >= 3.5 MAIN band has no m3 check —
+# 9291 still misfires there (+72% e5 d4 / +118% e7 d4 vs cjxl).
+# Separating 9291 (m3 28.19, ed 0.117, luma_var 5225) from main-band
+# winners (windows95 27.19; imac_g3 ed 0.123, lv 5244) is impossible on
+# every existing ZenanalyzeProxies axis — needs a new discriminator
+# (text-likeness / patches glyph count / mask1x1 distribution shape).
+# CONTAMINATION NOTE: a first A/B run used a stale reference binary
+# (pre-QuantizeWP-revert) — discarded per the issue-#68 lesson; this
+# TSV is the clean re-run (both arms same-day builds off d63ad50d).

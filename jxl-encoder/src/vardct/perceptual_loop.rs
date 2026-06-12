@@ -3411,13 +3411,21 @@ mod tuning_tests {
         assert!(BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE < BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE);
     }
 
-    /// W44-108: the colour separator MUST be 30.0 — splits codec_wiki
-    /// (M3 ≈ 146, the W44-107 regression target) from terminal (M3 ≈ 14),
-    /// imac_g3 (M3 ≈ 14), imac_dark (M3 ≈ 21) with ~5× margin both
-    /// sides per `examples/w44_108_proxy_probe.rs`.
+    /// W44-108: the colour separator MUST be 24.0 (was 30.0) — splits
+    /// the measured sub-band winners (terminal M3 ≈ 14, imac_g3 ≈ 14,
+    /// imac_dark ≈ 21 — per `examples/w44_108_proxy_probe.rs`) from
+    /// BOTH codec_wiki (≈ 146, the W44-107 regression target) AND the
+    /// GOAL_BEAT_CJXL wedge-2 misfire class (imazen-26 ai-products,
+    /// M3 = 28.19 — smooth low-colour studio shots that pass every
+    /// block-based screenshot proxy and took the lift into a distance-
+    /// monotonicity violation at d ≥ 2). 24.0 is the ratio midpoint of
+    /// winner-max 20.96 and misfire 28.19; re-bisection
+    /// `benchmarks/qfseed_m3_rebisect_2026-06-12.{tsv,meta}` shows
+    /// 40/40 gb82-sc protection cells byte-identical. Don't move again
+    /// without re-running that A/B.
     #[test]
-    fn w44_108_seed_scale_low_colour_m3_max_is_30() {
-        assert_eq!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX, 30.0);
+    fn w44_108_seed_scale_low_colour_m3_max_is_calibrated() {
+        assert_eq!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX, 24.0);
         assert!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX.is_finite());
         assert!(BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX > 0.0);
         // Margin floor: must be > imac_dark's measured M3 = 21 by at
