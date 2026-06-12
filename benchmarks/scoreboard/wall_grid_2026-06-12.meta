@@ -1,0 +1,23 @@
+# wall_grid_2026-06-12.tsv — FIRST quiet-box wall-axis grid (#74 axis
+# 3). Run at loadavg 0.48-0.57 (verified quiet window; another agent's
+# zenjpeg regressions had just finished), interleaved paired c,o,c,o,
+# 5 iters post-warmup, medians; binary 6e24c93f-era release CLI
+# (DEFAULT features — what users get), cjxl v0.12.0.
+#
+# HEADLINE — the 8T axis decomposes into a BUILD/ENGAGEMENT bug, not
+# raw speed:
+#   1T lossy: WE WIN 9/10 cells (0.59-0.75x at e7, 0.70-1.23x at e5)
+#   1T lossless e5: parity (0.86-1.01x)
+#   1T lossless e7: over budget (1.18-2.91x) — the known #41/#64 family
+#   8T ALL cells: 1.6x-17x OVER — because OUR walls are flat 1T->8T
+#     (photos lossless e7: 1.475 -> 1.469 s; lossy 0.262 -> 0.262 s)
+#     while cjxl scales 5-7x. --threads is not engaging parallelism on
+#     these paths in the DEFAULT build: parallel-tree-learning is a
+#     non-default cargo feature (CLAUDE.md's 1.16x-at-8T lossless
+#     parity claim was measured WITH it), and the lossy multi-group
+#     path's thread engagement needs an audit (1079x1439 IS
+#     multi-group).
+# WEDGE 7 (highest wall EV): default-enable parallel-tree-learning in
+# the CLI + audit --threads on the lossy path; expected to flip most
+# 8T cells given the 1T wins. The 1.2x e<=7 budget is already MET on
+# lossy 1T.

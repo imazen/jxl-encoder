@@ -50,11 +50,23 @@ def commit():
 def pick_sources():
     rows = list(csv.DictReader(open(BENCH_SET), delimiter="\t"))
     out = []
+    norm_dir = Path("/tmp/sb_norm")
+    norm_dir.mkdir(exist_ok=True)
     for s in STRATA:
         r = next((r for r in rows if r["stratum"] == s and r["tier"] == "core"),
                  next((r for r in rows if r["stratum"] == s), None))
         assert r, s
-        out.append((s, r["bench_input"]))
+        # Pixels-only normalization (same as run_scoreboard.py): cjxl
+        # 0.12's PNG reader fails on iCCP+eXIf imazen-26 captures, and
+        # both encoders must see identical bytes anyway.
+        src = r["bench_input"]
+        norm = norm_dir / (Path(src).stem + ".norm.png")
+        if not norm.exists():
+            import cv2
+            img = cv2.imread(src, cv2.IMREAD_UNCHANGED)
+            assert img is not None, src
+            cv2.imwrite(str(norm), img)
+        out.append((s, str(norm)))
     return out
 
 
