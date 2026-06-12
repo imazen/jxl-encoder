@@ -71,6 +71,16 @@
   byte-identical; rd-regression passes within existing tolerances.
 
 ### Changed
+- **`EpfDispatch::Auto` is now the default (#74 wedge 5)** — the W36-2
+  mask-mean smooth-skip for the per-block EPF sharpness search,
+  previously opt-in. On smooth content the search was actively
+  counterproductive: the HDR smooth-sky cell paid ~400 B coding a
+  noisy sharpness map (29/64 varblocks nonzero vs cjxl's 7/64) AND
+  scored worse than the uniform default — post-flip the cell is
+  1,091 B at better quality, beating cjxl's 1,230. Textured content
+  keeps the full search; W44-202, CID22 GRAND, and rd-regression are
+  unchanged. Locks re-baked per the enum doc's flip protocol. Also a
+  wall win (the search was 45.5 % of e6 wall where it fired).
 - **QuantizeWP DC shaping now fires on PQ/HLG content at effort ≤ 7
   (#74 HDR wedge).** The Phase 7 default-flip was reverted because the
   W44-202 per-cell SSIM2 gate failed on 4 SDR photo cells — but every

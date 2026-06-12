@@ -189,7 +189,7 @@ jxl_encoder_macros::strategy_def! {
             // Perf dispatches: leave at Default (Auto). Libjxl is
             // byte-identical on `Auto` for libjxl-shaped inputs; the
             // dispatch enums are perf-only supersets of libjxl behaviour.
-            epf_dispatch = EpfDispatch::AlwaysSelect,
+            epf_dispatch = EpfDispatch::Auto,
             pixel_loss_dispatch = PixelLossDispatch::AlwaysOn,
             single_pass_entropy_dispatch = SinglePassEntropyDispatch::AlwaysTwoPass,
             patches_dispatch = PatchesDispatch::Auto,
@@ -274,7 +274,7 @@ jxl_encoder_macros::strategy_def! {
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::LegacyUniform4,
             // Perf dispatches: Default (matches the pre-W44-193
             // `..Default::default()` tail).
-            epf_dispatch = EpfDispatch::AlwaysSelect,
+            epf_dispatch = EpfDispatch::Auto,
             pixel_loss_dispatch = PixelLossDispatch::AlwaysOn,
             single_pass_entropy_dispatch = SinglePassEntropyDispatch::AlwaysTwoPass,
             patches_dispatch = PatchesDispatch::Auto,
@@ -354,7 +354,7 @@ jxl_encoder_macros::strategy_def! {
             adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             // `EpfSharpnessSeed::default()` = `AutoW44_117 { min_distance: 1.0 }`.
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 },
-            epf_dispatch = EpfDispatch::AlwaysSelect,
+            epf_dispatch = EpfDispatch::Auto,
             pixel_loss_dispatch = PixelLossDispatch::AlwaysOn,
             single_pass_entropy_dispatch = SinglePassEntropyDispatch::AlwaysTwoPass,
             patches_dispatch = PatchesDispatch::Auto,
@@ -446,7 +446,7 @@ jxl_encoder_macros::strategy_def! {
             buttloop_qf_seed = ButtloopQfSeedPolicy::AutoScale4,
             adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 },
-            epf_dispatch = EpfDispatch::AlwaysSelect,
+            epf_dispatch = EpfDispatch::Auto,
             pixel_loss_dispatch = PixelLossDispatch::AlwaysOn,
             single_pass_entropy_dispatch = SinglePassEntropyDispatch::AlwaysTwoPass,
             patches_dispatch = PatchesDispatch::Auto,
@@ -1310,7 +1310,8 @@ mod tests {
         // pre-W44-193 hand-written `Default` impl on `ResolvedImprovements`
         // which delegated to the type-level `Default::default()` of each
         // enum).
-        assert_eq!(d.epf_dispatch, EpfDispatch::AlwaysSelect);
+        // EPF dispatch default flipped to Auto 2026-06-12 (#74 wedge 5).
+        assert_eq!(d.epf_dispatch, EpfDispatch::Auto);
         assert_eq!(d.pixel_loss_dispatch, PixelLossDispatch::AlwaysOn);
         assert_eq!(
             d.single_pass_entropy_dispatch,

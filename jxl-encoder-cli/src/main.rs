@@ -256,7 +256,7 @@ struct Args {
     /// search unconditionally. The search is `compute_epf_sharpness`
     /// in `vardct/epf.rs`; per the W36-1 baseline it is 45.5% of e6
     /// wall-clock and 33.8% of e7.
-    #[arg(long, value_name = "POLICY", default_value = "always-select")]
+    #[arg(long, value_name = "POLICY", default_value = "auto")]
     epf_dispatch: String,
 
     /// Adaptive-dispatch policy for the pixel-domain loss term in the
@@ -789,11 +789,8 @@ fn main() {
         "always-default" | "always_default" | "default" | "skip" => EpfDispatch::AlwaysDefault,
         "auto" => EpfDispatch::Auto,
         other => {
-            eprintln!(
-                "Unknown EPF dispatch policy: {}. Using 'always-select'.",
-                other
-            );
-            EpfDispatch::AlwaysSelect
+            eprintln!("Unknown EPF dispatch policy: {}. Using 'auto'.", other);
+            EpfDispatch::default()
         }
     };
 

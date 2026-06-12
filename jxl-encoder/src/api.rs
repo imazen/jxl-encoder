@@ -3693,28 +3693,35 @@ impl ChromaSubsampling {
 /// default sharpness for the affected region instead. On textured /
 /// edge-heavy content the search still runs.
 ///
-/// **Default**: [`EpfDispatch::AlwaysSelect`]. Flipping this default
-/// requires a fresh hash-lock rebake plus a measured RD pass — until
-/// that lands the byte-identical default stays put.
+/// **Default**: [`EpfDispatch::Auto`] (flipped 2026-06-12, #74 wedge 5;
+/// was `AlwaysSelect`). The measured RD pass the previous default's
+/// doc demanded: on smooth content the per-block search was actively
+/// counterproductive — the HDR smooth-sky cell paid ~400 B coding a
+/// noisy sharpness map (29/64 varblocks nonzero vs cjxl's 7/64) AND
+/// scored WORSE than the uniform default (PQ-butteraugli 1.819 vs
+/// 1.778; bytes 1,487 → 1,091, beating cjxl's 1,230). Textured
+/// content keeps the search (the mask-mean discriminator only fires
+/// on smooth); CID22 GRAND + W44-202 photo cells unchanged in the
+/// flip validation. Hash-locks re-baked per the protocol.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EpfDispatch {
-    /// **Default.** Always run the per-block sharpness selection when
+    /// Always run the per-block sharpness selection when
     /// the underlying gate (`epf_iters > 0 && distance >= 0.5 &&
     /// profile.epf_dynamic_sharpness`) is satisfied. Byte-identical
-    /// to historical encoder behaviour.
-    #[default]
+    /// to pre-2026-06-12 encoder behaviour.
     AlwaysSelect,
     /// Always force the uniform default sharpness (4) and skip the
     /// per-block search. Cheap; gives up the per-block tuning win.
     /// Use this when you've measured that the search isn't worth the
     /// CPU on your content.
     AlwaysDefault,
-    /// Run the per-block selection only when a `mask1x1`-based
+    /// **Default.** Run the per-block selection only when a `mask1x1`-based
     /// smoothness predicate says the input has enough texture/edges
     /// to benefit. On smooth regions the uniform default sharpness
     /// is written without invoking the search. Bitstream-affecting
     /// on the gated subset; behaviour matches [`Self::AlwaysSelect`]
     /// on content the predicate doesn't gate.
+    #[default]
     Auto,
 }
 
