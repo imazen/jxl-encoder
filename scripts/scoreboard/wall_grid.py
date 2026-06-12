@@ -98,6 +98,16 @@ def main():
     if args.exploratory and not out_path.name.startswith("EXPLORATORY-"):
         out_path = out_path.with_name("EXPLORATORY-" + out_path.name)
 
+    # Stale-binary guard (bit twice on 2026-06-12: workspace ships leave
+    # REPO/target/release at an older commit; both wall-grid run attempts
+    # measured a pre-fix binary). Build is idempotent (~0.1 s when fresh)
+    # and runs BEFORE the load check consumed above could go stale.
+    print("rebuilding release CLI at current checkout...", file=sys.stderr)
+    subprocess.run(["nice", "-n19", "cargo", "build", "--release",
+                    "-p", "jxl-encoder-cli", "-j", "8"],
+                   cwd=REPO, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     srcs = pick_sources()
     f = open(out_path, "w")
     w = csv.writer(f, delimiter="\t")
