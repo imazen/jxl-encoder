@@ -2509,6 +2509,10 @@ path = "examples/w44_104_proxy_probe.rs"
 # wins at d in [2.0, 3.5) sacrificed by W44-107 (codec_wiki d=3 fix) without
 # re-introducing the codec_wiki regression.
 [[example]]
+name = "patents_force_probe"
+path = "examples/patents_force_probe.rs"
+
+[[example]]
 name = "qfseed_classifier_probe"
 path = "examples/qfseed_classifier_probe.rs"
 required-features = ["__pre_quantized"]
