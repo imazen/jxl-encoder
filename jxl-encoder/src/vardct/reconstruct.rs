@@ -52,67 +52,131 @@ pub(crate) fn reconstruct_xyb(
     xsize_blocks: usize,
     ysize_blocks: usize,
 ) -> [Vec<f32>; 3] {
-    #[cfg(target_arch = "x86_64")]
+    // 7b.1a (#74): band-parallel reconstruction. Bands of
+    // TILE_DIM_IN_BLOCKS (8) block rows = 64 px — transforms are
+    // tile-contained vertically (the AC strategy search selects within
+    // 8-block tiles), so every transform's pixel output lands entirely
+    // inside one band: disjoint writes, byte-identical under any
+    // schedule. The per-band worker re-enters the SIMD target-feature
+    // region via the arch token (Copy + Send), mirroring how libjxl
+    // pool-threads ReconstructImage inside its EPF sharpness search.
+    let padded_width = xsize_blocks * BLOCK_DIM;
+    let padded_height = ysize_blocks * BLOCK_DIM;
+    let num_pixels = padded_width * padded_height;
+    let mut planes = [
+        jxl_simd::vec_f32_dirty(num_pixels),
+        jxl_simd::vec_f32_dirty(num_pixels),
+        jxl_simd::vec_f32_dirty(num_pixels),
+    ];
+
+    let band_blocks = 8usize; // = ac_strategy TILE_DIM_IN_BLOCKS (64 px tiles)
+    let band_px_len = band_blocks * BLOCK_DIM * padded_width;
+
+    let run_band = |band_idx: usize, band: &mut [&mut [f32]; 3]| {
+        let by_start = band_idx * band_blocks;
+        let by_end = (by_start + band_blocks).min(ysize_blocks);
+        #[cfg(target_arch = "x86_64")]
+        {
+            use jxl_simd::SimdToken;
+            if let Some(token) = jxl_simd::X64V3Token::summon() {
+                return reconstruct_xyb_avx2(
+                    token,
+                    quant_dc,
+                    quant_ac,
+                    params,
+                    quant_field,
+                    cfl_map,
+                    ac_strategy,
+                    xsize_blocks,
+                    by_start,
+                    by_end,
+                    band,
+                );
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            use jxl_simd::SimdToken;
+            if let Some(token) = jxl_simd::NeonToken::summon() {
+                return reconstruct_xyb_neon(
+                    token,
+                    quant_dc,
+                    quant_ac,
+                    params,
+                    quant_field,
+                    cfl_map,
+                    ac_strategy,
+                    xsize_blocks,
+                    by_start,
+                    by_end,
+                    band,
+                );
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            use jxl_simd::SimdToken;
+            if let Some(token) = jxl_simd::Wasm128Token::summon() {
+                return reconstruct_xyb_wasm128(
+                    token,
+                    quant_dc,
+                    quant_ac,
+                    params,
+                    quant_field,
+                    cfl_map,
+                    ac_strategy,
+                    xsize_blocks,
+                    by_start,
+                    by_end,
+                    band,
+                );
+            }
+        }
+        reconstruct_xyb_impl(
+            quant_dc,
+            quant_ac,
+            params,
+            quant_field,
+            cfl_map,
+            ac_strategy,
+            xsize_blocks,
+            by_start,
+            by_end,
+            band,
+        )
+    };
+
+    #[cfg(feature = "parallel")]
     {
-        use jxl_simd::SimdToken;
-        if let Some(token) = jxl_simd::X64V3Token::summon() {
-            return reconstruct_xyb_avx2(
-                token,
-                quant_dc,
-                quant_ac,
-                params,
-                quant_field,
-                cfl_map,
-                ac_strategy,
-                xsize_blocks,
-                ysize_blocks,
-            );
+        use rayon::prelude::*;
+        let [ref mut p0, ref mut p1, ref mut p2] = planes;
+        let c0: Vec<&mut [f32]> = p0.par_chunks_mut(band_px_len).collect();
+        let c1: Vec<&mut [f32]> = p1.par_chunks_mut(band_px_len).collect();
+        let c2: Vec<&mut [f32]> = p2.par_chunks_mut(band_px_len).collect();
+        c0.into_par_iter()
+            .zip(c1.into_par_iter())
+            .zip(c2.into_par_iter())
+            .enumerate()
+            .for_each(|(band_idx, ((b0, b1), b2))| {
+                let mut band: [&mut [f32]; 3] = [b0, b1, b2];
+                run_band(band_idx, &mut band);
+            });
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let [ref mut p0, ref mut p1, ref mut p2] = planes;
+        for (band_idx, ((b0, b1), b2)) in p0
+            .chunks_mut(band_px_len)
+            .zip(p1.chunks_mut(band_px_len))
+            .zip(p2.chunks_mut(band_px_len))
+            .enumerate()
+        {
+            let mut band: [&mut [f32]; 3] = [b0, b1, b2];
+            run_band(band_idx, &mut band);
         }
     }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use jxl_simd::SimdToken;
-        if let Some(token) = jxl_simd::NeonToken::summon() {
-            return reconstruct_xyb_neon(
-                token,
-                quant_dc,
-                quant_ac,
-                params,
-                quant_field,
-                cfl_map,
-                ac_strategy,
-                xsize_blocks,
-                ysize_blocks,
-            );
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        use jxl_simd::SimdToken;
-        if let Some(token) = jxl_simd::Wasm128Token::summon() {
-            return reconstruct_xyb_wasm128(
-                token,
-                quant_dc,
-                quant_ac,
-                params,
-                quant_field,
-                cfl_map,
-                ac_strategy,
-                xsize_blocks,
-                ysize_blocks,
-            );
-        }
-    }
-    reconstruct_xyb_impl(
-        quant_dc,
-        quant_ac,
-        params,
-        quant_field,
-        cfl_map,
-        ac_strategy,
-        xsize_blocks,
-        ysize_blocks,
-    )
+
+    planes
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -127,8 +191,10 @@ fn reconstruct_xyb_avx2(
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
     xsize_blocks: usize,
-    ysize_blocks: usize,
-) -> [Vec<f32>; 3] {
+    by_start: usize,
+    by_end: usize,
+    planes: &mut [&mut [f32]; 3],
+) {
     reconstruct_xyb_impl(
         quant_dc,
         quant_ac,
@@ -137,7 +203,9 @@ fn reconstruct_xyb_avx2(
         cfl_map,
         ac_strategy,
         xsize_blocks,
-        ysize_blocks,
+        by_start,
+        by_end,
+        planes,
     )
 }
 
@@ -153,8 +221,10 @@ fn reconstruct_xyb_neon(
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
     xsize_blocks: usize,
-    ysize_blocks: usize,
-) -> [Vec<f32>; 3] {
+    by_start: usize,
+    by_end: usize,
+    planes: &mut [&mut [f32]; 3],
+) {
     reconstruct_xyb_impl(
         quant_dc,
         quant_ac,
@@ -163,7 +233,9 @@ fn reconstruct_xyb_neon(
         cfl_map,
         ac_strategy,
         xsize_blocks,
-        ysize_blocks,
+        by_start,
+        by_end,
+        planes,
     )
 }
 
@@ -179,8 +251,10 @@ fn reconstruct_xyb_wasm128(
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
     xsize_blocks: usize,
-    ysize_blocks: usize,
-) -> [Vec<f32>; 3] {
+    by_start: usize,
+    by_end: usize,
+    planes: &mut [&mut [f32]; 3],
+) {
     reconstruct_xyb_impl(
         quant_dc,
         quant_ac,
@@ -189,7 +263,9 @@ fn reconstruct_xyb_wasm128(
         cfl_map,
         ac_strategy,
         xsize_blocks,
-        ysize_blocks,
+        by_start,
+        by_end,
+        planes,
     )
 }
 
@@ -203,23 +279,21 @@ fn reconstruct_xyb_impl(
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
     xsize_blocks: usize,
-    ysize_blocks: usize,
-) -> [Vec<f32>; 3] {
+    by_start: usize,
+    by_end: usize,
+    planes: &mut [&mut [f32]; 3],
+) {
+    // 7b.1a (#74): band variant. `planes` are BAND slices covering pixel
+    // rows `by_start*8 .. by_end*8`; all writes are band-relative
+    // (`by - by_start`), all reads (quant_*, cfl, strategy) stay
+    // absolute. Transforms are 64px-tile-contained vertically (the AC
+    // search selects within 8-block tiles), so bands aligned to
+    // TILE_DIM_IN_BLOCKS never split a transform — every write lands in
+    // this band. Disjoint bands => byte-identical under any schedule.
     let padded_width = xsize_blocks * BLOCK_DIM;
-    let padded_height = ysize_blocks * BLOCK_DIM;
-    let num_pixels = padded_width * padded_height;
 
     let x_qm_mul = jxl_simd::fast_powf(1.25, params.x_qm_scale as f32 - 2.0);
     let b_qm_mul = jxl_simd::fast_powf(1.25, params.b_qm_scale as f32 - 2.0);
-
-    // Step 1: Dequantize all coefficients into floating-point DCT domain.
-    // For each first-block of each transform, reconstruct the full coefficient block.
-    // Output: per-channel float coefficient planes in pixel layout after IDCT.
-    let mut planes = [
-        jxl_simd::vec_f32_dirty(num_pixels),
-        jxl_simd::vec_f32_dirty(num_pixels),
-        jxl_simd::vec_f32_dirty(num_pixels),
-    ];
 
     // Pre-allocate scratch buffers to avoid per-block heap allocations.
     // Max block size is 4096 (DCT64x64 = 64x64 coefficients).
@@ -233,7 +307,7 @@ fn reconstruct_xyb_impl(
     let mut idct_scratch = jxl_simd::vec_f32_dirty(MAX_BLOCK_SIZE);
 
     // Process all first-blocks
-    for by in 0..ysize_blocks {
+    for by in by_start..by_end {
         for bx in 0..xsize_blocks {
             if !ac_strategy.is_first(bx, by) {
                 continue;
@@ -323,7 +397,7 @@ fn reconstruct_xyb_impl(
 
                 // IDCT + write to output planes
                 let pixel_x = bx * BLOCK_DIM;
-                let pixel_y = by * BLOCK_DIM;
+                let pixel_y = (by - by_start) * BLOCK_DIM; // band-relative
                 let out_base = pixel_y * padded_width + pixel_x;
 
                 let mut px = [0.0f32; 64];
@@ -462,7 +536,7 @@ fn reconstruct_xyb_impl(
 
                 // Write pixels to output plane using physical coverage dimensions
                 let pixel_x = bx * BLOCK_DIM;
-                let pixel_y = by * BLOCK_DIM;
+                let pixel_y = (by - by_start) * BLOCK_DIM; // band-relative
                 let pix_w = covered_x * BLOCK_DIM;
                 let pix_h = covered_y * BLOCK_DIM;
 
@@ -475,8 +549,6 @@ fn reconstruct_xyb_impl(
             }
         }
     }
-
-    planes
 }
 
 /// Restore LLF coefficients from quantized DC values.

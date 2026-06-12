@@ -71,6 +71,15 @@
   byte-identical; rd-regression passes within existing tolerances.
 
 ### Changed
+- **`reconstruct_xyb` is band-parallel (#74 wedge 7b.1a)** — the
+  encoder-side reconstruction (EPF sharpness search + buttloop
+  fast-path input) now splits into 64 px bands dispatched across the
+  rayon pool, mirroring how libjxl pool-threads `ReconstructImage`
+  inside its own sharpness search. Transforms are 64 px-tile-contained
+  vertically, so bands write disjointly — byte-identical under any
+  schedule (verified: output bytes equal pre-change; full lock suite).
+  8T on the 1 MP photo cell: recon 20.4 → 5.3 ms, EPF-sharpness stage
+  65.9 → 51.1 ms, encode total 189 → 176 ms. 1T unchanged.
 - **CLI default features now include `parallel-tree-learning` (#74
   wedge 7a).** The first quiet-box wall grid showed our default-build
   walls FLAT from 1T to 8T while cjxl scales 5–7×; the feature's
