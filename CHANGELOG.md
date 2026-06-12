@@ -71,6 +71,17 @@
   byte-identical; rd-regression passes within existing tolerances.
 
 ### Changed
+- **CLI default features now include `parallel-tree-learning` (#74
+  wedge 7a).** The first quiet-box wall grid showed our default-build
+  walls FLAT from 1T to 8T while cjxl scales 5–7×; the feature's
+  "default-off because it requires rayon" rationale was void — the CLI
+  default already ships `parallel` (rayon in-graph). Byte-identical to
+  the previous default on every checked cell AND across thread counts;
+  lossless e7 wall drops ~25 % even at 1T (1.475 → 1.10 s on the
+  1 MP photo cell — the feature's serial-portion chunks reshape 1T
+  code too). The remaining 8T gap is wedge 7b: the VarDCT encode
+  pipeline has no intra-image parallelism below one 2048² DC group —
+  structural work, filed on #74.
 - **`EpfDispatch::Auto` is now the default (#74 wedge 5)** — the W36-2
   mask-mean smooth-skip for the per-block EPF sharpness search,
   previously opt-in. On smooth content the search was actively
