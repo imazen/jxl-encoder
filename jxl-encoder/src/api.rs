@@ -9920,6 +9920,29 @@ impl<'a> EncodeRequest<'a> {
                     TransferFunction::Hlg => enc.intensity_target = 1_000.0,
                     _ => {}
                 }
+                // HDR QuantizeWP dispatch (#74 wedge, 2026-06-12): the
+                // W44-AUDIT-8 Phase 7 default-flip was reverted because
+                // the W44-202 per-cell SSIM2 gate failed on 4 SDR photo
+                // cells — but every measured WP win is PQ/HLG content
+                // (hdr_quantize_wp_ab_2026-06-12: medians +1.8..+7.9 %
+                // -> +1.2..+4.7 % vs cjxl; smooth-sky e7 d4 -22 %
+                // bytes; LfGroup section-diff attributes ~2/3 of the
+                // remaining smooth-sky gap to the missing DC shaping).
+                // Dispatch on the RESOLVED transfer function — a
+                // layout-level predicate (same as the intensity
+                // dispatch above), not a pixel discriminator, so there
+                // is no content cliff class. SDR (every W44-202 cell)
+                // is structurally unchanged. EncoderStrategy::Libjxl
+                // keeps its byte-locked behaviour (strategy resolution
+                // already pinned the field).
+                if matches!(
+                    ce.transfer_function,
+                    TransferFunction::Pq | TransferFunction::Hlg
+                ) && cfg.effort <= 7
+                    && !matches!(cfg.strategy(), crate::api::EncoderStrategy::Libjxl)
+                {
+                    enc.profile.use_libjxl_wp_dc_quant = true;
+                }
             }
         }
         // Tone mapping and intrinsic size from metadata
@@ -11112,6 +11135,17 @@ impl LossyEncoder {
                         TransferFunction::Pq => enc.intensity_target = 10_000.0,
                         TransferFunction::Hlg => enc.intensity_target = 1_000.0,
                         _ => {}
+                    }
+                    // HDR QuantizeWP dispatch — mirrors the one-shot
+                    // site (see EncodeRequest::encode_lossy) so
+                    // `oneshot == streaming` holds on PQ/HLG input.
+                    if matches!(
+                        ce.transfer_function,
+                        TransferFunction::Pq | TransferFunction::Hlg
+                    ) && self.cfg.effort <= 7
+                        && !matches!(self.cfg.strategy(), crate::api::EncoderStrategy::Libjxl)
+                    {
+                        enc.profile.use_libjxl_wp_dc_quant = true;
                     }
                 }
             }

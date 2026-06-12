@@ -4041,6 +4041,13 @@ impl VarDctEncoder {
         let mask1x1_median_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
             .as_deref()
             .map(|m| median_mask1x1(m, padded_width, width, height));
+        #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+        if std::env::var_os("JXL_WP_DISPATCH_DUMP_MASK").is_some() {
+            eprintln!(
+                "WP-DISPATCH mask1x1_median={:?} effort={} distance={}",
+                mask1x1_median_for_pre_scale, self.effort, self.distance
+            );
+        }
 
         // W44-168 (Smart-Zenjxl chunk 5, 2026-05-21): compute the
         // adaptive `butteraugli_iters` override EARLY so the W44-105

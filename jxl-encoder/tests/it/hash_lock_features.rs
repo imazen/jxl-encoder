@@ -1050,6 +1050,30 @@ fn lossless_mg_gray_512x512_bilevel_e7() {
     );
 }
 
+/// Multi-group LOSSY 16-bit PQ at e7: locks the #74 HDR QuantizeWP
+/// dispatch (resolved TF ∈ {Pq, Hlg} && effort ≤ 7 enables the
+/// libjxl nl_dc DC shaping on the HDR path only — SDR cells are
+/// structurally unchanged, which the rest of this suite pins).
+#[test]
+fn lossy_mg_rgb16_pq_512x512_ramp_e7_d1() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .encode_request(512, 512, PixelLayout::Rgb16)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .encode(&ramp_noise_rgb16_512x512())
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb16_pq_512x512_ramp_e7_d1",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        true,
+    );
+}
+
 /// Multi-group LOSSY gray at e7 (document-scan class): locks the
 /// issue-#75 CfL zero-target guard — gray input has an identically-zero
 /// XYB X plane; pre-fix the e7+ Newton fit fabricated ytox (±17) and

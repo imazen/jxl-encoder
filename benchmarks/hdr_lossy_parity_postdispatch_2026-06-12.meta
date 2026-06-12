@@ -1,0 +1,9 @@
+# hdr_lossy_parity_postdispatch_2026-06-12.tsv — canonical lossy HDR
+# parity after the TF-keyed QuantizeWP dispatch (this commit) + #75.
+# Same grid as hdr_lossy_parity_postarc (12 crops x e{5,7} x d{.5,1,2,4},
+# PQ-EOTF butteraugli @1000). ours == ours_wp on ALL 96 cells (the env
+# arm is now a no-op on HDR — dispatch already ON). Medians vs cjxl
+# exactly match the WP-era postarc record: e5 +1.19/+1.73/+4.56/+4.51,
+# e7 +1.39/+1.83/+2.28/+2.43 (the revert had regressed HDR to
+# +1.8..+7.9). Quality mean at-or-better than cjxl 7/8 points (worst
+# e7 d2 +0.048). SDR structurally unchanged (W44-202 binding).

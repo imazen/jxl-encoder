@@ -70,6 +70,22 @@
   byte-locks intentionally re-baked; every lossless lock
   byte-identical; rd-regression passes within existing tolerances.
 
+### Changed
+- **QuantizeWP DC shaping now fires on PQ/HLG content at effort ≤ 7
+  (#74 HDR wedge).** The Phase 7 default-flip was reverted because the
+  W44-202 per-cell SSIM2 gate failed on 4 SDR photo cells — but every
+  measured WP win is HDR. The dispatch keys on the RESOLVED transfer
+  function (the same layout-level predicate as the #73 intensity
+  dispatch — not a pixel discriminator, so no content cliff class):
+  PQ/HLG at e ≤ 7 enables the libjxl nl_dc shaping; SDR is
+  structurally unchanged (W44-202 green by construction);
+  `EncoderStrategy::Libjxl` keeps its byte-locked behaviour. Smooth-sky
+  e7 d4: 1,915 → 1,487 B (stacks with the #75 fix; old opt-in WP arm
+  was 1,503; cjxl 1,230). New lock cell
+  `lossy_mg_rgb16_pq_512x512_ramp_e7_d1` pins the dispatched path;
+  mask-median content dispatch was measured and REJECTED (photo
+  1418519 mask_med 92.3 sits above every sky cell — no separation).
+
 ### Fixed
 - **#75: gray lossy at e7+ wasted ~2× bytes — CfL Newton fabricated
   ytox on the identically-zero X channel.** Gray input (r=g=b) has an
