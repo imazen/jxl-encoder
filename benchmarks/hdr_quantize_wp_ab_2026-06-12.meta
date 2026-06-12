@@ -1,0 +1,31 @@
+# hdr_quantize_wp_ab_2026-06-12.tsv — 3-arm lossy HDR A/B quantifying the
+# W44-AUDIT-8 Phase 6 QuantizeWP DC shaping (env-forced) against default
+# and cjxl. Grid: 12 crops (hdr-crops-512, 6 sources x {c,q1}) x e{5,7} x
+# d{0.5,1,2,4}; both arms djxl-decoded, PQ-EOTF butteraugli @ 1000 nits
+# (examples/hdr_pq_butteraugli.rs). Reproduce:
+#   python3 scripts/hdr_quantize_wp_ab.py benchmarks/hdr_quantize_wp_ab_<date>.tsv
+# Encoders: target/release/cjxl-rs (this commit) with
+# JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP=1 for the wp arm;
+# ~/work/jxl-efforts/libjxl/build/tools/cjxl.
+#
+# VERDICT — QuantizeWP closes ~half the median HDR byte gap:
+# eff d    | ours-vs-cjxl med | wp-vs-cjxl med | wp dQ mean/worst (vs ours)
+# e5 0.5   |  +1.77%          |  +1.19%        |  -0.001 / +0.009
+# e5 1.0   |  +2.83%          |  +1.73%        |  -0.005 / +0.025
+# e5 2.0   |  +5.94%          |  +4.56%        |  +0.005 / +0.112
+# e5 4.0   |  +7.90%          |  +4.71%        |  +0.024 / +0.121
+# e7 0.5   |  +1.97%          |  +1.39%        |  +0.000 / +0.010
+# e7 1.0   |  +3.24%          |  +1.83%        |  -0.006 / +0.025
+# e7 2.0   |  +4.29%          |  +2.28%        |  +0.006 / +0.124
+# e7 4.0   |  +5.47%          |  +2.43%        |  +0.031 / +0.190
+#
+# Smooth-sky cells are the big movers: 1069.q1 e7 d4 -22.2% bytes
+# (section diff: gap was +654B all in LfGroup; QuantizeWP is libjxl's
+# nl_dc DC shaping at e<=7, paired there with Predictor::Weighted +
+# kWPFixedDC — enc_modular.cc:1576-1668). Quality cost concentrates at
+# d=4 (mean +0.031 worst +0.190 butteraugli) yet the wp arm still scores
+# at-or-better than cjxl on mean at 7/8 grid points (worst e7 d2 +0.048).
+# NOT HDR-specific: the same crop untagged (SDR) shows the same LfGroup
+# gap (+565B) — HDR corpora just concentrate smooth content.
+# Feeds: Phase 7 default-flip decision (static-codes WP threading first).
+# Box: shared workstation, niced; bytes/quality deterministic (load-immune).
