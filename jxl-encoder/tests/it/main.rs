@@ -47,6 +47,7 @@ mod frymire_diag;
 mod hash_lock_features;
 mod hdr_loss_ssim2_promotion;
 mod hdr_pq_lossy_roundtrip;
+mod hdr_suite;
 mod hdr_vdp2_chunk3;
 mod hdr_vdp2_chunk4_auto;
 mod hdr_vdp2_loss;

@@ -3,6 +3,17 @@
 ## [Unreleased]
 
 ### Added
+- **Comprehensive HDR test suite (`tests/it/hdr_suite.rs`), modeled on
+  libjxl's HDR coverage.** Seven gates: TF×Primaries signaling
+  preservation matrix (libjxl `PreserveOriginalProfileTest` shape, 15
+  combos × lossless/lossy), `SetIntensityTarget` dispatch rules
+  (PQ → 10,000 / HLG → 1,000 / SDR → 255 / explicit wins), HLG lossy
+  quality-tracks-distance on 512² multi-group, PQ f32-vs-u16 layout
+  consistency, lossless pixel invariance under PQ tagging (tagged and
+  untagged bitstreams decode identically; ≤1 LSB through jxl-oxide),
+  RGBA16-PQ lossy and Gray16-PQ lossless roundtrips. Decode checks use
+  jxl-oxide native output — requesting even the file's own color
+  encoding routes through a CMS roundtrip and drifts u16 samples.
 - **16-bit lossless e5/e6 budgeted tree-learning lift (#72).** cjxl
   learns MA trees at every effort; our off-until-e7 schedule left
   16-bit (HDR PQ) content +29..+49 % vs cjxl at e5/e6. Integer 16-bit
@@ -14,6 +25,20 @@
   cell).
 
 ### Fixed
+- **HLG lossy was distance-flat garbage — missing forward OOTF (caught
+  by the new HDR suite).** Our `hlg_*_to_linear` helpers produce scene
+  light (inverse OETF only), but every conformant decoder's linear→HLG
+  output conversion applies the inverse OOTF (libjxl `ApplyHlgOotf`,
+  `jxl_cms.cc:1175` — fires whenever exactly one conversion side is
+  HLG): the roundtrip landed at scene^(1/1.2), a constant ~22 dB /
+  butteraugli ~54 wedge at every distance while PQ tracked correctly.
+  Fix ports the forward OOTF (γ = 1.2 × 1.111^log2(it/1000), skipped
+  at 295–305 nits, luminance-weighted per BT.2100/P3/sRGB primaries,
+  hue-preserving gamut normalize) into both the one-shot and streaming
+  lossy paths before XYB. HLG PSNR now 49.7→43.3 dB tracking d=1→4
+  (was 22.5 flat); streaming stays bit-exact with one-shot
+  (`test_streaming_lossy_hlg_matches_oneshot`); SDR + PQ output
+  byte-identical (locks 45/45, libjxl byte-locks 5/5).
 - **#73: lossy VarDCT destroyed PQ/HLG-tagged input — fixed with the
   libjxl-parity intensity pair.** `pq_*_to_linear_f32` normalizes
   1.0 = 10,000 nits, but the header kept `intensity_target = 255` and

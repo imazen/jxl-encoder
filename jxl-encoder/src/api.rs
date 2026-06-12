@@ -9529,6 +9529,37 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
+        // HLG forward OOTF (issue #73 follow-up — libjxl ApplyHlgOotf
+        // parity). hlg_*_to_linear produce SCENE light (inverse OETF
+        // only, identity-OOTF TF class); every decoder's linear->HLG
+        // output conversion applies the INVERSE OOTF (jxl_cms.cc:1175
+        // fires whenever exactly one side is HLG). Without the matching
+        // forward pass here the roundtrip lands at scene^(1/gamma) — a
+        // constant, distance-flat ~22 dB wedge. Resolution order for
+        // the gamma's display peak mirrors the enc.intensity_target
+        // assignment below: explicit request > metadata > the HLG
+        // 1,000-nit default.
+        let is_hlg_input = source_is_hlg
+            || matches!(
+                self.layout,
+                PixelLayout::RgbHlgF32 | PixelLayout::RgbaHlgF32
+            );
+        let mut linear_rgb = linear_rgb;
+        if is_hlg_input {
+            let it = self
+                .intensity_target
+                .or_else(|| self.metadata.as_ref().and_then(|m| m.intensity_target))
+                .unwrap_or(1_000.0);
+            if let Some(g) = hlg_ootf_gamma(it) {
+                let primaries = self
+                    .color_encoding
+                    .as_ref()
+                    .map(|c| c.primaries)
+                    .unwrap_or(crate::headers::color_encoding::Primaries::Bt2100);
+                apply_hlg_forward_ootf(&mut linear_rgb, hlg_ootf_luminances(primaries), g);
+            }
+        }
+
         // W44-35: cheap smooth-photo auto-detect on the raw sRGB u8
         // input (when applicable) feeds the DCT64 admission gate via
         // `effective_profile_for_image_with_smoothness`. Returns false
@@ -9555,8 +9586,6 @@ impl<'a> EncodeRequest<'a> {
             smooth_photo_for_dct64,
             auto_content_class,
         );
-
-        let mut linear_rgb = linear_rgb;
 
         // Unpremultiply alpha BEFORE the SimplifyInvisible pre-pass and
         // BEFORE XYB conversion (closes lossy portion of #13). libjxl
@@ -10783,6 +10812,44 @@ impl LossyEncoder {
         let h = self.height as usize;
         let mut linear_rgb = self.linear_rgb;
         let alpha = self.alpha;
+
+        // HLG forward OOTF — mirrors the block in
+        // `EncodeRequest::encode_lossy` (same position: after
+        // linearization, before unpremultiply) so `oneshot ==
+        // streaming` stays byte-exact (caught by
+        // `test_streaming_lossy_hlg_matches_oneshot`). Applied at
+        // finish (not push) so a `with_color_encoding` /
+        // `with_intensity_target` call after the first push still
+        // resolves identically to the one-shot path. push_rows expands
+        // gray layouts to interleaved RGB, so the 3-channel OOTF is
+        // always well-formed here.
+        let is_hlg_input = (self.source_gamma.is_none()
+            && self.color_encoding.as_ref().is_some_and(|ce| {
+                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Hlg
+            }))
+            || matches!(
+                self.layout,
+                PixelLayout::RgbHlgF32 | PixelLayout::RgbaHlgF32
+            );
+        if is_hlg_input {
+            // Streaming has no ImageMetadata channel; 255.0 is the
+            // untouched SDR default (same sentinel the intensity
+            // dispatch below uses), so: explicit > HLG 1,000-nit
+            // default.
+            let it = if self.intensity_target != 255.0 {
+                self.intensity_target
+            } else {
+                1_000.0
+            };
+            if let Some(g) = hlg_ootf_gamma(it) {
+                let primaries = self
+                    .color_encoding
+                    .as_ref()
+                    .map(|c| c.primaries)
+                    .unwrap_or(crate::headers::color_encoding::Primaries::Bt2100);
+                apply_hlg_forward_ootf(&mut linear_rgb, hlg_ootf_luminances(primaries), g);
+            }
+        }
 
         // Unpremultiply BEFORE SimplifyInvisible / XYB — see the
         // matching block in `EncodeRequest::encode_lossy` for the full
@@ -13512,6 +13579,59 @@ fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 /// powf — matches the gamma_u8_to_linear_f32 optimization). 8-bit
 /// PQ is unusual in practice (PQ's headroom rewards wider precision)
 /// but accepting it lets callers tag low-bit-depth content correctly.
+/// BT.2100 HLG OOTF gamma for a display peak (libjxl
+/// `ApplyHlgOotf`, `jxl_cms.cc:868`): `1.2 * 1.111^log2(nits/1000)`.
+/// Returns `None` inside the 295..=305-nit band where gamma ~= 1 and
+/// libjxl skips the pass entirely.
+fn hlg_ootf_gamma(intensity_target: f32) -> Option<f32> {
+    if (295.0..=305.0).contains(&intensity_target) {
+        return None;
+    }
+    Some(1.2 * 1.111_f32.powf((intensity_target * 1e-3).log2()))
+}
+
+/// Primaries luminances for the HLG OOTF's luma weighting (libjxl
+/// `GetPrimariesLuminances` outputs for the enum primaries; the Y row
+/// of the RGB->XYZ matrix). `Custom` falls back to sRGB.
+fn hlg_ootf_luminances(primaries: crate::headers::color_encoding::Primaries) -> [f32; 3] {
+    use crate::headers::color_encoding::Primaries;
+    match primaries {
+        Primaries::Bt2100 => [0.262_700_2, 0.677_998_07, 0.059_301_7],
+        Primaries::P3 => [0.228_974_64, 0.691_738_55, 0.079_286_91],
+        Primaries::Srgb | Primaries::Custom => [0.212_639_06, 0.715_168_65, 0.072_192_32],
+    }
+}
+
+/// Forward HLG OOTF (scene light -> display light), libjxl
+/// `ApplyHlgOotf(forward=true)` parity: per-pixel luma-weighted ratio
+/// `Y_s^(gamma-1)`, with the hue-preserving gamut normalize when
+/// gamma < 1 pushes highlights above 1.0. The encoder MUST apply this
+/// before XYB for HLG input (issue #73 follow-up: without it, every
+/// decoder's linear->HLG conversion applies the inverse OOTF and the
+/// round-trip lands at scene^(1/gamma) — a constant ~22 dB wedge,
+/// distance-flat).
+fn apply_hlg_forward_ootf(rgb: &mut [f32], luminances: [f32; 3], gamma: f32) {
+    let [lr, lg, lb] = luminances;
+    for px in rgb.chunks_exact_mut(3) {
+        let luminance = px[0] * lr + px[1] * lg + px[2] * lb;
+        let ratio = luminance.powf(gamma - 1.0);
+        if ratio.is_finite() {
+            px[0] *= ratio;
+            px[1] *= ratio;
+            px[2] *= ratio;
+            if gamma < 1.0 {
+                let maximum = px[0].max(px[1]).max(px[2]);
+                if maximum > 1.0 {
+                    let normalizer = 1.0 / maximum;
+                    px[0] *= normalizer;
+                    px[1] *= normalizer;
+                    px[2] *= normalizer;
+                }
+            }
+        }
+    }
+}
+
 fn pq_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| pq_to_linear_f(i as f32 / 255.0));
     data.chunks(channels)
