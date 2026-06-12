@@ -886,6 +886,29 @@ fn lossless_mg_rgb_512x512_noise_e7() {
     );
 }
 
+/// 8-bit multi-group lossless at e5: the GOAL_BEAT_CJXL wedge-1
+/// budgeted tree-learn lift fires (8-bit + e5, scoreboard 2026-06-12)
+/// — locks the lifted-path bytes AND its budget caps. Same fixture as
+/// the e7 cell so the e5-lift vs e7-full-tree relationship stays
+/// observable in the sidecar.
+#[test]
+fn lossless_mg_rgb_512x512_noise_e5() {
+    let data = LosslessConfig::new()
+        .with_effort(5)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_512x512_noise_e5",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
 /// Multi-group lossless at e8 on tile-repeated noise: per-section LZ77
 /// FIRES (greedy backrefs clear the 20 % floor) — locks the
 /// lz77.enabled=1 multi-group layout (#69 item 1).

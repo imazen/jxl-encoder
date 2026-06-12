@@ -1,0 +1,24 @@
+# lossless_8bit_tree_lift_2026-06-12.tsv — 8-bit e5/e6 budgeted
+# tree-learn lift calibration (GOAL_BEAT_CJXL wedge 1, issue #74; the
+# scoreboard's largest gap family: lossless e5 graphics +52..+557 %).
+# 43 imazen-26 picks (lossless_bench_set_2026-06-10, bench_input,
+# normalized pixels-only PNGs) x e5, + 13 core x e6. Columns: lift =
+# this commit's default; off = JXL_NO_8BIT_TREE_LIFT=1 (pre-change
+# default); cjxl = libjxl v0.12.0 -d 0. djxl-decoded, cv2 pixel-exact
+# asserted on every lift cell (exact column, 56/56).
+#
+# VERDICT (bytes, deterministic):
+#   e5: lift-vs-off 0/43 regressions, mean -32.6 % / median -29.6 % /
+#       best -85.8 %. vs cjxl: mean -2.4 %, median -0.1 %, 20/43 win,
+#       worst +36.9 % (noaa-documents).
+#   e6: vs cjxl mean -10.7 %, median -7.0 %, 11/13 win, worst +27.0 %.
+# Budgets: e5 frac 0.05 / 4 props / 32 buckets / wp 0 — RCT trials stay
+# at the effort default for 8-bit (capping to 1 regressed photos-png
+# +19 % vs off; 16-bit keeps the measured #72 cap of 1). e6 unchanged
+# from #72 (size-adaptive frac 0.05..0.25, 10 props, 128 buckets).
+# Walls (busy-box, single runs — INDICATIVE ONLY per REVISIT_QUEUE
+# discipline): lift/off median 1.39x, max 2.39x; cjxl also pays
+# tree-learning at e5 so the quiet-box goal-scoreboard wall grid is
+# where the wall axis gets judged.
+# Reproduce: scripts in git history of this commit (sweep driver was
+# /tmp-ephemeral; the scoreboard runner re-measures these cells).

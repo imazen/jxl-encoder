@@ -2569,16 +2569,37 @@ impl LosslessConfig {
     /// explicitly, or via `JXL_NO_16BIT_TREE_LIFT=1` (runtime behaviour
     /// hook, A/B harness contract).
     ///
+    /// **Extended to 8-bit integer layouts (GOAL_BEAT_CJXL wedge 1,
+    /// 2026-06-12)**: the scoreboard's first full run measured lossless
+    /// e5 on 8-bit graphics at +52..+557 % vs cjxl (plots: ours
+    /// 59,804 B vs cjxl 9,096 B) — same mechanism, our off-until-e7
+    /// schedule vs cjxl learning at every effort. Full-tree ceiling
+    /// probe on the worst cells: plots −86.5 % (8,086 B, BEATS cjxl at
+    /// the same wall), patents −70 %, web-screenshots −46 % at ~2.2×
+    /// the (cheap) non-tree e5 wall. The 8-bit lift reuses the
+    /// 16-bit-calibrated per-effort budgets and carries its own
+    /// `JXL_NO_8BIT_TREE_LIFT` opt-out so the two lifts A/B
+    /// independently.
+    ///
     /// Returns `true` (and applies the budget caps to `profile`) when
     /// the lift fires.
-    pub(crate) fn lift_16bit_tree_learning(
+    pub(crate) fn lift_integer_tree_learning(
         &self,
         layout: PixelLayout,
         pixels: u64,
         profile: &mut crate::effort::EffortProfile,
     ) -> bool {
         let is_int16_rgb = matches!(layout, PixelLayout::Rgb16 | PixelLayout::Rgba16);
-        if !is_int16_rgb
+        let is_int8 = matches!(
+            layout,
+            PixelLayout::Rgb8
+                | PixelLayout::Rgba8
+                | PixelLayout::Bgr8
+                | PixelLayout::Bgra8
+                | PixelLayout::Gray8
+                | PixelLayout::GrayAlpha8
+        );
+        if !(is_int16_rgb || is_int8)
             || !(5..=6).contains(&self.effort)
             || self.tree_learning_user_set
             || self.tree_learning
@@ -2587,7 +2608,11 @@ impl LosslessConfig {
             return false;
         }
         #[cfg(feature = "std")]
-        if std::env::var_os("JXL_NO_16BIT_TREE_LIFT").is_some() {
+        if is_int16_rgb && std::env::var_os("JXL_NO_16BIT_TREE_LIFT").is_some() {
+            return false;
+        }
+        #[cfg(feature = "std")]
+        if is_int8 && std::env::var_os("JXL_NO_8BIT_TREE_LIFT").is_some() {
             return false;
         }
         // Per-effort budgets, shipped EXACTLY as measured on the 76-crop
@@ -2601,7 +2626,13 @@ impl LosslessConfig {
             profile.tree_sample_fraction = 0.05;
             profile.tree_num_properties = 4;
             profile.tree_max_buckets = 32;
-            profile.nb_rcts_to_try = 1;
+            // 8-bit keeps the default RCT trial count: capping to 1
+            // regressed photos-png e5 by +19 % vs the no-tree path
+            // (the off path's best-of-7 RCT is where photo bytes
+            // live); 16-bit keeps the measured #72 cap.
+            if is_int16_rgb {
+                profile.nb_rcts_to_try = 1;
+            }
             profile.wp_num_param_sets = 0;
         } else {
             // e6: size-adaptive sampling. Full mid-quality fraction
@@ -9054,8 +9085,11 @@ impl<'a> EncodeRequest<'a> {
         let mut use_tree_learning = cfg.effective_tree_learning();
         let mut smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
         // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
-        use_tree_learning |=
-            cfg.lift_16bit_tree_learning(self.layout, (w as u64) * (h as u64), &mut smart_profile);
+        use_tree_learning |= cfg.lift_integer_tree_learning(
+            self.layout,
+            (w as u64) * (h as u64),
+            &mut smart_profile,
+        );
         let frame_encoder = FrameEncoder::new(
             w,
             h,
@@ -12126,7 +12160,7 @@ impl LosslessEncoder {
             let mut use_tree_learning_l = cfg.effective_tree_learning();
             let mut smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
             // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
-            use_tree_learning_l |= cfg.lift_16bit_tree_learning(
+            use_tree_learning_l |= cfg.lift_integer_tree_learning(
                 self.layout,
                 (w as u64) * (h as u64),
                 &mut smart_profile,
@@ -12606,7 +12640,7 @@ fn encode_animation_lossless(
         let mut smart_profile =
             cfg.effective_profile_for_image((frame_w as u64) * (frame_h as u64));
         // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
-        use_tree_learning |= cfg.lift_16bit_tree_learning(
+        use_tree_learning |= cfg.lift_integer_tree_learning(
             layout,
             (frame_w as u64) * (frame_h as u64),
             &mut smart_profile,
