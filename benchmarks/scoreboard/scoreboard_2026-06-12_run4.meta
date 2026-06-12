@@ -1,0 +1,12 @@
+# scoreboard_2026-06-12_run4.{tsv,_summary.md,_diff.md} — run 4 after
+# wedges 4 (TF-keyed QuantizeWP dispatch, 629d94f0) + 5 (EpfDispatch::
+# Auto default, 3f025244). Binary 3f025244-era release.
+#
+# TOPLINE: WE-DOMINATE 63 -> 78 (+15), CJXL-DOMINATES 110 -> 105.
+# DAY TOTAL (run 1 -> run 4): CJXL-DOMINATES 140 -> 105 (-25%),
+# WE-DOMINATE 59 -> 78 (+32%). hdr-lossy WE 2 -> 10.
+# All 9 "worsened" flips are the strict-Pareto label artifact: bytes
+# improved on every one (1230.q1 e7 d4 +7.3% -> +0.5%; manuscript e7
+# d4 +4.6% -> -0.09%) — quality surplus traded for bytes, landing
+# inside tie bands with bytes a hair over. These cells are the next
+# cheapest flips on the board.
