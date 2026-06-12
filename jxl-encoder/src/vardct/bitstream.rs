@@ -2245,7 +2245,7 @@ impl VarDctEncoder {
             )?;
         }
 
-        let transform_out = self.transform_and_quantize(
+        let mut transform_out = self.transform_and_quantize(
             &xyb_x,
             &xyb_y,
             &xyb_b,
@@ -2257,6 +2257,29 @@ impl VarDctEncoder {
             &cfl_map,
             &ac_strategy,
         )?;
+
+        // W44-AUDIT-8 Phase 7: same libjxl nl_dc QuantizeWP shape the
+        // still-image paths apply (encoder.rs encode_inner +
+        // encode_from_precomputed_inner). libjxl runs AddVarDCTDC for
+        // every VarDCT frame — animation included — so skipping it here
+        // would re-open a still-vs-animation byte divergence (caught by
+        // `test_animation_lossy_runs_cfl_pass_2`'s consistency gate).
+        if self.profile.use_libjxl_wp_dc_quant
+            || (std::env::var_os("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP").is_some()
+                && self.profile.effort <= 7)
+        {
+            super::quantize_wp::requantize_dc_group_wp(
+                &mut transform_out.quant_dc,
+                &transform_out.float_dc,
+                xsize_blocks,
+                0,
+                0,
+                xsize_blocks,
+                ysize_blocks,
+                params.scale_dc,
+                params.extra_dc_precision,
+            );
+        }
 
         let sharpness_map =
             if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {

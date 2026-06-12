@@ -108,9 +108,12 @@ rd-compare:
     bash scripts/measure_cjxl_rs.sh
     python3 scripts/rd_report.py
 
-# Regenerate hash lock sidecar file after intentional encoding changes
+# Regenerate hash lock sidecar file after intentional encoding changes.
+# NOTE: manual platform-variant lines (name@arch + repeated-name libm
+# variants, issue #70) are DESTROYED by the rm — re-add them from git
+# after regen (see the sidecar comment in hash_lock_features.rs).
 update-hashes:
-    rm -f jxl_encoder/tests/hash_lock_expected.txt
+    rm -f jxl-encoder/tests/hash_lock_expected.txt
     UPDATE_HASHES=1 cargo test --test it hash_lock_features -- --test-threads=1
 
 # Compare quality vs cjxl (uses committed reference CSV, ~2 min)

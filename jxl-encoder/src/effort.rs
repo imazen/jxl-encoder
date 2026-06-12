@@ -1502,26 +1502,35 @@ impl EffortProfile {
             // strategy because cjxl emits this gate unconditionally;
             // the bitstream field is part of strict cjxl byte-parity.
             extra_dc_precision: if effort >= 8 { 0 } else { 1 },
-            // W44-AUDIT-8 Phase 6 (HONEST-STOP on default-flip): mirror
+            // W44-AUDIT-8 Phase 7 (DEFAULT at effort ≤ 7): mirror
             // libjxl `QuantizeWP` shape (WP-relative residual + 0.62
-            // deadzone + snap-to-even). Bisect on clic_22ea12 e7 d=4
-            // showed Phase 6 cuts bytes by 25% vs Phase 5 (still beats
-            // cjxl on SSIM2 by +0.24 vs cjxl) — BUT default-flip breaks
-            // the `test_optimize_codes_roundtrip_small` invariant
-            // because the static-codes path emits DC tokens via
-            // `clamped_gradient` predictor whose residual statistics
-            // diverge from the QuantizeWP-shaped quant_dc distribution
-            // (static path inflates 16×16 red square from 97 → 1098
-            // bytes; decoded pixels diverge by 3e-4 vs static/dynamic).
+            // deadzone + snap-to-even), the same `nl_dc` cluster as
+            // `extra_dc_precision` above (`enc_modular.cc:1576-1668`
+            // pairs nl_dc with QuantizeWP + Predictor::Weighted +
+            // kWPFixedDC; our dynamic-codes DC path already uses the
+            // WP fixed tree at e ≤ 7).
             //
-            // Shipped as OPT-IN only — callers can set
-            // `use_libjxl_wp_dc_quant = true` via direct EffortProfile
-            // field mutation (no public API surface in this chunk).
-            // Future Phase 7 candidates: thread WP predictor through
-            // the static-codes DC path, OR per-effort/per-distance
-            // dispatch that flips ON only when the gradient-predictor
-            // divergence is empirically acceptable.
-            use_libjxl_wp_dc_quant: false,
+            // The Phase 6 HONEST-STOP blamed the static-codes gradient
+            // tokenizer for a 3e-4 static-vs-dynamic pixel divergence —
+            // a misdiagnosis. Phase 7 forensics (quant_dc FNV hashes
+            // identical across modes; divergence vanishes with
+            // EpfDispatch::AlwaysDefault in both) proved the actual
+            // mechanism: the single-pass static writer dropped the
+            // computed EPF sharpness map (wrote default 4s), so the
+            // WP-perturbed `compute_epf_sharpness` output only reached
+            // the dynamic bitstream. Fixed by passing
+            // `sharpness_map.as_deref()` at both static `write_dc_group`
+            // call sites (layout-identical — the static AC-metadata
+            // writer always emitted sharpness tokens).
+            //
+            // Bench: benchmarks/hdr_quantize_wp_ab_2026-06-12.tsv —
+            // closes ~half the median HDR byte gap vs cjxl (smooth-sky
+            // cells up to -22 % bytes); quality free at d ≤ 1, mean
+            // +0.03 / worst +0.19 butteraugli at d = 4, still
+            // at-or-better than cjxl mean at 7/8 grid points. At
+            // effort ≥ 8 the buttloop owns DC refinement and libjxl
+            // drops both nl_dc gates; we mirror that.
+            use_libjxl_wp_dc_quant: effort <= 7,
 
             // ── Cost model constants (from libjxl) ──
             k_favor_2x2: -0.4,

@@ -5785,7 +5785,6 @@ impl VarDctEncoder {
                 params.extra_dc_precision,
             );
         }
-
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let _t_sharp = std::time::Instant::now();
         let quant_dc = &transform_out.quant_dc;
@@ -6057,7 +6056,7 @@ impl VarDctEncoder {
                 &quant_field,
                 &cfl_map,
                 &ac_strategy,
-                None, // no sharpness map in single-pass mode
+                sharpness_map.as_deref(),
                 &dc_huffman,
                 &mut dc_group,
             )?;
@@ -6185,7 +6184,7 @@ impl VarDctEncoder {
                     &quant_field,
                     &cfl_map,
                     &ac_strategy,
-                    None, // no sharpness map in single-pass mode
+                    sharpness_map.as_deref(),
                     &dc_huffman,
                     &mut dc_group,
                 )?;
@@ -7875,7 +7874,11 @@ mod tests {
         // 8x8 gradient stays 112 bytes — gradient DC values fit at both
         // 1× and 2× precision; only the quant_dc integers change.
         // Pre-W44-AUDIT-8 history: see prior W44-171 comment in git log.
-        const EXPECTED_HASH: u64 = 0x38f51c9a23207f48;
+        // Updated W44-AUDIT-8 Phase 7: use_libjxl_wp_dc_quant default-ON
+        // at effort <= 7 (libjxl nl_dc QuantizeWP parity) + static-path
+        // sharpness map wired. Sizes essentially unchanged on these
+        // synthetic fixtures; quant_dc integers are WP-shaped.
+        const EXPECTED_HASH: u64 = 0x35635e24626db069;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7909,7 +7912,11 @@ mod tests {
         // at any precision. Only the extra_dc_precision field (was 0, now 1)
         // and the quant_dc integer (was N, now 2N) differ in the bitstream.
         // Pre-W44-AUDIT-8 history: see prior W44-171 comment in git log.
-        const EXPECTED_HASH: u64 = 0xd930123d06f76a14;
+        // Updated W44-AUDIT-8 Phase 7: use_libjxl_wp_dc_quant default-ON
+        // at effort <= 7 (libjxl nl_dc QuantizeWP parity) + static-path
+        // sharpness map wired. Sizes essentially unchanged on these
+        // synthetic fixtures; quant_dc integers are WP-shaped.
+        const EXPECTED_HASH: u64 = 0x1f9636894eea2335;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -7968,7 +7975,11 @@ mod tests {
         // Output is valid (same VarDCT e7 decode path as the passing file
         // hash-locks). Regenerated the const to the current 507-byte output
         // to restore a green test on main.
-        const EXPECTED_HASH: u64 = 0x06d5672f27096037;
+        // Updated W44-AUDIT-8 Phase 7: use_libjxl_wp_dc_quant default-ON
+        // at effort <= 7 (libjxl nl_dc QuantizeWP parity) + static-path
+        // sharpness map wired. Sizes essentially unchanged on these
+        // synthetic fixtures; quant_dc integers are WP-shaped.
+        const EXPECTED_HASH: u64 = 0x34b6979dbab97cac;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8009,7 +8020,11 @@ mod tests {
         // noise content (2× integer range expands the per-row residual
         // distribution into higher token classes).
         // Pre-W44-AUDIT-8 history: 502 (W44-171).
-        const EXPECTED_HASH: u64 = 0x9c6e520cb3c0a2b5;
+        // Updated W44-AUDIT-8 Phase 7: use_libjxl_wp_dc_quant default-ON
+        // at effort <= 7 (libjxl nl_dc QuantizeWP parity) + static-path
+        // sharpness map wired. Sizes essentially unchanged on these
+        // synthetic fixtures; quant_dc integers are WP-shaped.
+        const EXPECTED_HASH: u64 = 0x7d74291268f95e19;
         assert_eq!(
             hash,
             EXPECTED_HASH,

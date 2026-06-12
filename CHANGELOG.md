@@ -24,6 +24,22 @@
   8-bit output byte-identical (locks 45/45; new 16-bit multi-group lock
   cell).
 
+### Changed
+- **libjxl `QuantizeWP` DC shaping is now DEFAULT at effort ≤ 7
+  (W44-AUDIT-8 Phase 7)** — completes the `nl_dc` parity cluster
+  started by Phase 5 `extra_dc_precision`. Closes ~half the median
+  lossy HDR byte gap vs cjxl (smooth-sky cells up to −22 % bytes;
+  `benchmarks/hdr_quantize_wp_ab_2026-06-12.tsv`) at quality
+  at-or-better than cjxl (SDR GRAND(369): bytes +0.4 %, butteraugli
+  −0.4 %, SSIM2 +0.14). The Phase 6 honest-stop was a misdiagnosis:
+  the 3e-4 static-vs-dynamic pixel divergence came from the
+  single-pass static writer dropping the computed EPF sharpness map
+  (now wired — layout-identical fix), not from the gradient DC
+  tokenizer. Animation frames apply the same shaping (still-vs-anim
+  consistency gate enforces). Lossy e ≤ 7 hash-locks + Libjxl
+  byte-locks intentionally re-baked; every lossless lock
+  byte-identical; rd-regression passes within existing tolerances.
+
 ### Fixed
 - **HLG lossy was distance-flat garbage — missing forward OOTF (caught
   by the new HDR suite).** Our `hlg_*_to_linear` helpers produce scene
