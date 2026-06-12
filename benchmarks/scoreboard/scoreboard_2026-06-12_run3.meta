@@ -1,0 +1,8 @@
+# scoreboard_2026-06-12_run3.{tsv,_summary.md,_diff.md} — run 3 after the
+# #75 CfL zero-target fix (binary 5e24132f). CJXL-DOMINATES 111 -> 110.
+# Verdict flips understate the change: the patents e7 d0.5 cell moved
+# +87.2% -> +0.9% bytes (still CJXL-DOMINATES by the strict 0.1% bytes
+# band at quality inside both tie bands — ours measures better on both
+# metrics but within tolerance). The grid sampled few gray-lossy-e7
+# cells; #75's reach (all gray content at e7+) is wider than the board
+# shows. nps gray e7 cells moved ~0.5pp. All other cells byte-stable.
