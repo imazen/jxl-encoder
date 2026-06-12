@@ -1304,7 +1304,7 @@ fn main() {
     } // end if !is_pnm
 
     // Read image (PNG or PNM single frame)
-    let (width, height, color_type, bit_depth, data, source_gamma) = if is_pnm {
+    let (width, height, color_type, bit_depth, data, source_gamma, cicp) = if is_pnm {
         let (w, h, ct, bd, d) = match read_pnm(&args.input) {
             Ok(result) => result,
             Err(e) => {
@@ -1312,7 +1312,7 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        (w, h, ct, bd, d, None) // PNM has no gamma metadata
+        (w, h, ct, bd, d, None, None) // PNM has no gamma/cICP metadata
     } else {
         match read_png(&args.input) {
             Ok(result) => result,
@@ -1335,6 +1335,15 @@ fn main() {
         );
         if let Some(gamma) = source_gamma {
             println!("Gamma:    {:.6} (display gamma {:.1})", gamma, 1.0 / gamma);
+        }
+        if let Some(c) = cicp {
+            println!(
+                "cICP:     cp={} tc={} mc={} full_range={}",
+                c.color_primaries,
+                c.transfer_function,
+                c.matrix_coefficients,
+                c.is_video_full_range_image
+            );
         }
     }
 
@@ -1707,7 +1716,11 @@ fn main() {
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
             }
-            if let Some(gamma) = source_gamma {
+            if let Some(ce) = cicp.and_then(|c| color_encoding_from_cicp(c, layout.is_grayscale()))
+            {
+                // cICP outranks gAMA (issue #71): HDR PNGs signal PQ/HLG here.
+                req = req.with_color_encoding(ce);
+            } else if let Some(gamma) = source_gamma {
                 req = req.with_source_gamma(gamma);
             }
             if let Some(it) = args.intensity_target {
@@ -1774,7 +1787,12 @@ fn main() {
                 if let Some(ref meta) = metadata {
                     req = req.with_metadata(meta);
                 }
-                if let Some(gamma) = source_gamma {
+                if let Some(ce) =
+                    cicp.and_then(|c| color_encoding_from_cicp(c, layout.is_grayscale()))
+                {
+                    // cICP outranks gAMA (issue #71): HDR PNGs signal PQ/HLG here.
+                    req = req.with_color_encoding(ce);
+                } else if let Some(gamma) = source_gamma {
                     req = req.with_source_gamma(gamma);
                 }
                 if let Some(it) = args.intensity_target {
@@ -1917,7 +1935,11 @@ fn main() {
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
             }
-            if let Some(gamma) = source_gamma {
+            if let Some(ce) = cicp.and_then(|c| color_encoding_from_cicp(c, layout.is_grayscale()))
+            {
+                // cICP outranks gAMA (issue #71): HDR PNGs signal PQ/HLG here.
+                req = req.with_color_encoding(ce);
+            } else if let Some(gamma) = source_gamma {
                 req = req.with_source_gamma(gamma);
             }
             // ── A1 passthrough — wire intensity_target + brotli_effort ──
@@ -1967,7 +1989,11 @@ fn main() {
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
             }
-            if let Some(gamma) = source_gamma {
+            if let Some(ce) = cicp.and_then(|c| color_encoding_from_cicp(c, layout.is_grayscale()))
+            {
+                // cICP outranks gAMA (issue #71): HDR PNGs signal PQ/HLG here.
+                req = req.with_color_encoding(ce);
+            } else if let Some(gamma) = source_gamma {
                 req = req.with_source_gamma(gamma);
             }
             // ── A1 passthrough — wire intensity_target + brotli_effort ──
@@ -2271,6 +2297,37 @@ fn srgb_u8_to_linear_f32(data: &[u8]) -> Vec<f32> {
 }
 
 #[allow(clippy::type_complexity)]
+/// Map a PNG cICP chunk (ITU-T H.273 code points) to a JXL
+/// [`ColorEncoding`] via the libjxl-parity
+/// [`jxl_encoder::headers::ColorEncoding::from_cicp`]. Returns `None`
+/// for combinations it rejects (with a stderr note) — the caller then
+/// falls back to the gAMA/sRGB logic. Issue #71: without this, 16-bit
+/// PQ HDR PNGs were signaled as sRGB transfer in the codestream.
+fn color_encoding_from_cicp(
+    cicp: png::CodingIndependentCodePoints,
+    grayscale: bool,
+) -> Option<jxl_encoder::headers::ColorEncoding> {
+    use jxl_encoder::headers::color_encoding::ColorSpace;
+    match jxl_encoder::headers::ColorEncoding::from_cicp(
+        cicp.color_primaries,
+        cicp.transfer_function,
+        cicp.matrix_coefficients,
+        cicp.is_video_full_range_image,
+    ) {
+        Ok(mut ce) => {
+            if grayscale {
+                ce.color_space = ColorSpace::Gray;
+            }
+            Some(ce)
+        }
+        Err(e) => {
+            eprintln!("Warning: PNG cICP ignored ({e}); falling back to gAMA/sRGB");
+            None
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
 fn read_png(
     path: &PathBuf,
 ) -> Result<
@@ -2281,6 +2338,7 @@ fn read_png(
         png::BitDepth,
         Vec<u8>,
         Option<f32>,
+        Option<png::CodingIndependentCodePoints>,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -2299,6 +2357,10 @@ fn read_png(
     } else {
         png_info.gama_chunk.map(|g| g.into_value())
     };
+    // cICP (H.273 code points) outranks gAMA/sRGB when present — HDR
+    // PNGs (PQ / HLG) signal their transfer function here. Issue #71:
+    // ignoring it tagged PQ input as sRGB in the output codestream.
+    let cicp = png_info.coding_independent_code_points;
 
     let mut buf = vec![
         0;
@@ -2324,6 +2386,7 @@ fn read_png(
         info.bit_depth,
         buf,
         source_gamma,
+        cicp,
     ))
 }
 
@@ -2661,4 +2724,54 @@ fn read_apng(path: &PathBuf) -> Result<Option<ApngResult>, Box<dyn std::error::E
         num_loops,
         frames,
     }))
+}
+
+#[cfg(test)]
+mod cicp_tests {
+    use super::color_encoding_from_cicp;
+    use jxl_encoder::headers::color_encoding::{ColorSpace, Primaries, TransferFunction};
+
+    fn cicp(cp: u8, tc: u8, mc: u8, full: bool) -> png::CodingIndependentCodePoints {
+        png::CodingIndependentCodePoints {
+            color_primaries: cp,
+            transfer_function: tc,
+            matrix_coefficients: mc,
+            is_video_full_range_image: full,
+        }
+    }
+
+    /// Issue #71 regression: the HDR-PNG corpus signature (sRGB
+    /// primaries + PQ transfer) must map to a PQ color encoding —
+    /// this exact combination was silently dropped to sRGB before.
+    #[test]
+    fn srgb_primaries_pq_transfer_maps() {
+        let ce = color_encoding_from_cicp(cicp(1, 16, 0, true), false).unwrap();
+        assert_eq!(ce.transfer_function, TransferFunction::Pq);
+        assert_eq!(ce.primaries, Primaries::Srgb);
+    }
+
+    #[test]
+    fn p3_and_bt2100_and_hlg_map() {
+        let ce = color_encoding_from_cicp(cicp(12, 16, 0, true), false).unwrap();
+        assert_eq!(ce.primaries, Primaries::P3);
+        assert_eq!(ce.transfer_function, TransferFunction::Pq);
+        let ce = color_encoding_from_cicp(cicp(9, 18, 0, true), false).unwrap();
+        assert_eq!(ce.primaries, Primaries::Bt2100);
+        assert_eq!(ce.transfer_function, TransferFunction::Hlg);
+    }
+
+    /// Unsupported combos fall back (caller then uses gAMA/sRGB):
+    /// YCbCr matrix, limited range, exotic primaries.
+    #[test]
+    fn unsupported_combos_fall_back() {
+        assert!(color_encoding_from_cicp(cicp(1, 16, 1, true), false).is_none());
+        assert!(color_encoding_from_cicp(cicp(1, 16, 0, false), false).is_none());
+        assert!(color_encoding_from_cicp(cicp(4, 16, 0, true), false).is_none());
+    }
+
+    #[test]
+    fn grayscale_coerces_color_space() {
+        let ce = color_encoding_from_cicp(cicp(1, 16, 0, true), true).unwrap();
+        assert_eq!(ce.color_space, ColorSpace::Gray);
+    }
 }

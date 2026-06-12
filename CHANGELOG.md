@@ -14,6 +14,14 @@
   cell).
 
 ### Fixed
+- **#71: CLI now honours PNG cICP — PQ/HLG HDR input keeps its transfer
+  function.** `read_png` surfaces the cICP chunk; the request maps it
+  through the libjxl-parity `ColorEncoding::from_cicp` (cICP outranks
+  gAMA/sRGB; unsupported combos warn + fall back). Previously a 16-bit
+  PQ HDR PNG was signaled as sRGB transfer in the codestream — pixels
+  exact, rendering wrong on every conformant viewer. Verified PQ
+  signaling on lossless AND lossy output; matches cjxl's signaling on
+  the imazen-26 HDR PNG corpus byte-for-tag.
 - **#69 item 2: full-image palette transform now runs on the lossless
   multi-group path.** Detection (`analyze_palette`, libjxl 1024-colour
   cap, `--modular_palette_colors` honoured) previously only existed on
