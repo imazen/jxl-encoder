@@ -1,0 +1,375 @@
+image	stratum	effort	encoder	bytes	wall_s	user_s	sys_s	input_bytes
+1064_general_castle-bridge-moat_montjuic-castle-barcelona_zfold7_iso40-f1p7_20260315-175347_3000x4000	1000-lilith-photos-general	1	ours	43235803	1.59t1.11t0.45	39330424
+1064_general_castle-bridge-moat_montjuic-castle-barcelona_zfold7_iso40-f1p7_20260315-175347_3000x4000	1000-lilith-photos-general	1	cjxl	42944186	0.52t0.30t0.17	39330424
+1064_general_castle-bridge-moat_montjuic-castle-barcelona_zfold7_iso40-f1p7_20260315-175347_3000x4000	1000-lilith-photos-general	3	ours	43066800	2.66t2.19t0.56	39330424
+1064_general_castle-bridge-moat_montjuic-castle-barcelona_zfold7_iso40-f1p7_20260315-175347_3000x4000	1000-lilith-photos-general	3	cjxl	40220616	0.78t1.45t0.56	39330424
+1065_general_cathedral-model-workshop_sagrada-familia-barcelona_zfold7_iso64-f1p7_20260317-165822_3000x4000	1000-lilith-photos-general	1	ours	38521469	1.66t1.08t0.48	46089590
+1065_general_cathedral-model-workshop_sagrada-familia-barcelona_zfold7_iso64-f1p7_20260317-165822_3000x4000	1000-lilith-photos-general	1	cjxl	36476857	0.52t0.27t0.18	46089590
+1065_general_cathedral-model-workshop_sagrada-familia-barcelona_zfold7_iso64-f1p7_20260317-165822_3000x4000	1000-lilith-photos-general	3	ours	38419756	2.72t2.20t0.52	46089590
+1065_general_cathedral-model-workshop_sagrada-familia-barcelona_zfold7_iso64-f1p7_20260317-165822_3000x4000	1000-lilith-photos-general	3	cjxl	35542671	0.80t1.64t0.45	46089590
+1066_general_stone-building-facade_park-guell-barcelona_zfold7_iso80-f1p7_20260318-172109_3000x4000	1000-lilith-photos-general	1	ours	44054653	1.79t1.16t0.48	52111843
+1066_general_stone-building-facade_park-guell-barcelona_zfold7_iso80-f1p7_20260318-172109_3000x4000	1000-lilith-photos-general	1	cjxl	43986951	0.74t0.46t0.16	52111843
+1066_general_stone-building-facade_park-guell-barcelona_zfold7_iso80-f1p7_20260318-172109_3000x4000	1000-lilith-photos-general	3	ours	43910160	3.04t2.42t0.59	52111843
+1066_general_stone-building-facade_park-guell-barcelona_zfold7_iso80-f1p7_20260318-172109_3000x4000	1000-lilith-photos-general	3	cjxl	41061282	1.00t1.71t0.52	52111843
+1067_general_architectural-model-display_la-pedrera-barcelona_zfold7_iso500-f1p7_20260319-185645_3000x4000	1000-lilith-photos-general	1	ours	37347526	1.47t1.11t0.40	33468558
+1067_general_architectural-model-display_la-pedrera-barcelona_zfold7_iso500-f1p7_20260319-185645_3000x4000	1000-lilith-photos-general	1	cjxl	36822058	0.45t0.25t0.17	33468558
+1067_general_architectural-model-display_la-pedrera-barcelona_zfold7_iso500-f1p7_20260319-185645_3000x4000	1000-lilith-photos-general	3	ours	37274266	2.50t2.08t0.58	33468558
+1067_general_architectural-model-display_la-pedrera-barcelona_zfold7_iso500-f1p7_20260319-185645_3000x4000	1000-lilith-photos-general	3	cjxl	38694900	0.74t1.67t0.45	33468558
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	1	ours	22003884	1.13t0.82t0.34	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	1	cjxl	22200169	0.44t0.32t0.10	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	3	ours	21917036	1.94t1.43t0.63	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	3	cjxl	25678382	0.70t1.47t0.40	23337063
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	1	ours	47763296	1.95t1.22t0.52	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	1	cjxl	48222276	0.74t0.42t0.22	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	3	ours	47626131	3.23t2.43t0.74	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	3	cjxl	45528336	1.03t1.79t0.47	58650579
+1227_interiors_stained-glass-window_casa-batllo-barcelona_zfold7_iso1600-f1p7_20260315-205230_3000x4000	1200-lilith-interiors	1	ours	37962131	1.57t1.11t0.45	37020656
+1227_interiors_stained-glass-window_casa-batllo-barcelona_zfold7_iso1600-f1p7_20260315-205230_3000x4000	1200-lilith-interiors	1	cjxl	39968649	0.53t0.30t0.18	37020656
+1227_interiors_stained-glass-window_casa-batllo-barcelona_zfold7_iso1600-f1p7_20260315-205230_3000x4000	1200-lilith-interiors	3	ours	37858919	2.61t2.13t0.60	37020656
+1227_interiors_stained-glass-window_casa-batllo-barcelona_zfold7_iso1600-f1p7_20260315-205230_3000x4000	1200-lilith-interiors	3	cjxl	43766458	0.79t1.59t0.52	37020656
+1228_interiors_stained-glass-windows_casa-batllo-barcelona_zfold7_iso2500-f1p7_20260315-205328_4000x3000	1200-lilith-interiors	1	ours	43100405	1.70t1.18t0.47	44026922
+1228_interiors_stained-glass-windows_casa-batllo-barcelona_zfold7_iso2500-f1p7_20260315-205328_4000x3000	1200-lilith-interiors	1	cjxl	42807387	0.54t0.32t0.15	44026922
+1228_interiors_stained-glass-windows_casa-batllo-barcelona_zfold7_iso2500-f1p7_20260315-205328_4000x3000	1200-lilith-interiors	3	ours	43013953	2.88t2.28t0.68	44026922
+1228_interiors_stained-glass-windows_casa-batllo-barcelona_zfold7_iso2500-f1p7_20260315-205328_4000x3000	1200-lilith-interiors	3	cjxl	42903281	0.79t1.55t0.50	44026922
+1229_interiors_lighted-archway-ceiling_casa-batllo-barcelona_zfold7_iso1250-f1p7_20260315-210321_3000x4000	1200-lilith-interiors	1	ours	47263890	1.81t1.18t0.51	50562911
+1229_interiors_lighted-archway-ceiling_casa-batllo-barcelona_zfold7_iso1250-f1p7_20260315-210321_3000x4000	1200-lilith-interiors	1	cjxl	48965103	0.57t0.30t0.19	50562911
+1229_interiors_lighted-archway-ceiling_casa-batllo-barcelona_zfold7_iso1250-f1p7_20260315-210321_3000x4000	1200-lilith-interiors	3	ours	47125211	3.16t2.55t0.64	50562911
+1229_interiors_lighted-archway-ceiling_casa-batllo-barcelona_zfold7_iso1250-f1p7_20260315-210321_3000x4000	1200-lilith-interiors	3	cjxl	47398472	0.84t1.60t0.50	50562911
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	1	ours	34106300	1.48t1.07t0.44	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	1	cjxl	34322864	0.47t0.26t0.17	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	3	ours	33948310	2.42t2.00t0.58	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	3	cjxl	37274859	0.74t1.65t0.42	33118028
+1231_interiors_tiled-arched-interior_casa-batllo-barcelona_zfold7_iso640-f2p2_20260315-211323_4000x2252	1200-lilith-interiors	1	ours	37371285	1.48t0.96t0.35	44895717
+1231_interiors_tiled-arched-interior_casa-batllo-barcelona_zfold7_iso640-f2p2_20260315-211323_4000x2252	1200-lilith-interiors	1	cjxl	38225380	0.59t0.34t0.17	44895717
+1231_interiors_tiled-arched-interior_casa-batllo-barcelona_zfold7_iso640-f2p2_20260315-211323_4000x2252	1200-lilith-interiors	3	ours	37280881	2.47t1.95t0.48	44895717
+1231_interiors_tiled-arched-interior_casa-batllo-barcelona_zfold7_iso640-f2p2_20260315-211323_4000x2252	1200-lilith-interiors	3	cjxl	36328577	0.82t1.33t0.39	44895717
+1232_interiors_stained-glass-windows_sagrada-familia-barcelona_zfold7_iso400-f1p7_20260317-144409_3000x4000	1200-lilith-interiors	1	ours	37074677	1.64t1.10t0.49	41914358
+1232_interiors_stained-glass-windows_sagrada-familia-barcelona_zfold7_iso400-f1p7_20260317-144409_3000x4000	1200-lilith-interiors	1	cjxl	36053252	0.53t0.29t0.17	41914358
+1232_interiors_stained-glass-windows_sagrada-familia-barcelona_zfold7_iso400-f1p7_20260317-144409_3000x4000	1200-lilith-interiors	3	ours	36924454	2.72t2.14t0.65	41914358
+1232_interiors_stained-glass-windows_sagrada-familia-barcelona_zfold7_iso400-f1p7_20260317-144409_3000x4000	1200-lilith-interiors	3	cjxl	36000073	0.81t1.66t0.48	41914358
+1233_interiors_cathedral-ceiling-interior_sagrada-familia-barcelona_zfold7_iso250-f2p2_20260317-151912_4000x3000	1200-lilith-interiors	1	ours	41214998	1.69t1.17t0.46	43921068
+1233_interiors_cathedral-ceiling-interior_sagrada-familia-barcelona_zfold7_iso250-f2p2_20260317-151912_4000x3000	1200-lilith-interiors	1	cjxl	40182994	0.55t0.29t0.19	43921068
+1233_interiors_cathedral-ceiling-interior_sagrada-familia-barcelona_zfold7_iso250-f2p2_20260317-151912_4000x3000	1200-lilith-interiors	3	ours	41115592	2.74t2.21t0.62	43921068
+1233_interiors_cathedral-ceiling-interior_sagrada-familia-barcelona_zfold7_iso250-f2p2_20260317-151912_4000x3000	1200-lilith-interiors	3	cjxl	39616457	0.82t1.59t0.54	43921068
+1234_interiors_cathedral-ceiling-columns_sagrada-familia-barcelona_zfold7_iso400-f1p7_20260317-154023_3000x4000	1200-lilith-interiors	1	ours	36815584	1.57t1.09t0.45	39842929
+1234_interiors_cathedral-ceiling-columns_sagrada-familia-barcelona_zfold7_iso400-f1p7_20260317-154023_3000x4000	1200-lilith-interiors	1	cjxl	35984363	0.50t0.25t0.19	39842929
+1234_interiors_cathedral-ceiling-columns_sagrada-familia-barcelona_zfold7_iso400-f1p7_20260317-154023_3000x4000	1200-lilith-interiors	3	ours	36672848	2.62t2.13t0.63	39842929
+1234_interiors_cathedral-ceiling-columns_sagrada-familia-barcelona_zfold7_iso400-f1p7_20260317-154023_3000x4000	1200-lilith-interiors	3	cjxl	36886100	0.82t1.66t0.47	39842929
+1235_interiors_floral-wall-mural_casa-vicens-barcelona_zfold7_iso1600-f1p7_20260319-165522_3000x4000	1200-lilith-interiors	1	ours	44563205	1.79t1.18t0.51	47531526
+1235_interiors_floral-wall-mural_casa-vicens-barcelona_zfold7_iso1600-f1p7_20260319-165522_3000x4000	1200-lilith-interiors	1	cjxl	45738847	0.58t0.33t0.18	47531526
+1235_interiors_floral-wall-mural_casa-vicens-barcelona_zfold7_iso1600-f1p7_20260319-165522_3000x4000	1200-lilith-interiors	3	ours	44388959	3.03t2.40t0.65	47531526
+1235_interiors_floral-wall-mural_casa-vicens-barcelona_zfold7_iso1600-f1p7_20260319-165522_3000x4000	1200-lilith-interiors	3	cjxl	45707806	0.85t1.63t0.51	47531526
+1236_interiors_ornate-arched-interior_casa-vicens-barcelona_zfold7_iso400-f2p2_20260319-165702_3000x4000	1200-lilith-interiors	1	ours	43162093	1.81t1.20t0.48	51169027
+1236_interiors_ornate-arched-interior_casa-vicens-barcelona_zfold7_iso400-f2p2_20260319-165702_3000x4000	1200-lilith-interiors	1	cjxl	43003621	0.57t0.27t0.21	51169027
+1236_interiors_ornate-arched-interior_casa-vicens-barcelona_zfold7_iso400-f2p2_20260319-165702_3000x4000	1200-lilith-interiors	3	ours	43064051	3.01	2.31	0.72	51169027
+1236_interiors_ornate-arched-interior_casa-vicens-barcelona_zfold7_iso400-f2p2_20260319-165702_3000x4000	1200-lilith-interiors	3	cjxl	42301912	0.84	1.61	0.51	51169027
+1237_interiors_person-standing-by-window_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170017_3000x4000	1200-lilith-interiors	1	ours	43642169	1.80	1.20	0.48	49838144
+1237_interiors_person-standing-by-window_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170017_3000x4000	1200-lilith-interiors	1	cjxl	43893002	0.57	0.31	0.17	49838144
+1237_interiors_person-standing-by-window_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170017_3000x4000	1200-lilith-interiors	3	ours	43503441	2.98	2.40	0.59	49838144
+1237_interiors_person-standing-by-window_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170017_3000x4000	1200-lilith-interiors	3	cjxl	43051802	0.85	1.62	0.46	49838144
+1238_interiors_open-doorway-interior_casa-vicens-barcelona_zfold7_iso250-f2p2_20260319-170237_3000x4000	1200-lilith-interiors	1	ours	41025816	1.61	1.14	0.45	40368756
+1238_interiors_open-doorway-interior_casa-vicens-barcelona_zfold7_iso250-f2p2_20260319-170237_3000x4000	1200-lilith-interiors	1	cjxl	40543189	0.53	0.31	0.16	40368756
+1238_interiors_open-doorway-interior_casa-vicens-barcelona_zfold7_iso250-f2p2_20260319-170237_3000x4000	1200-lilith-interiors	3	ours	40881632	2.72	2.19	0.63	40368756
+1238_interiors_open-doorway-interior_casa-vicens-barcelona_zfold7_iso250-f2p2_20260319-170237_3000x4000	1200-lilith-interiors	3	cjxl	40105295	0.82	1.62	0.49	40368756
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	1	ours	43255852	1.88	1.17	0.55	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	1	cjxl	42820336	0.74	0.39	0.22	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	3	ours	43162978	3.16	2.37	0.74	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	3	cjxl	42340467	1.02	1.80	0.51	56978241
+1240_interiors_bathroom-with-bathtub_casa-vicens-barcelona_zfold7_iso1000-f2p2_20260319-170336_3000x4000	1200-lilith-interiors	1	ours	38479100	1.71	1.13	0.49	45031690
+1240_interiors_bathroom-with-bathtub_casa-vicens-barcelona_zfold7_iso1000-f2p2_20260319-170336_3000x4000	1200-lilith-interiors	1	cjxl	38047747	0.53	0.26	0.20	45031690
+1240_interiors_bathroom-with-bathtub_casa-vicens-barcelona_zfold7_iso1000-f2p2_20260319-170336_3000x4000	1200-lilith-interiors	3	ours	38308668	2.71	2.13	0.62	45031690
+1240_interiors_bathroom-with-bathtub_casa-vicens-barcelona_zfold7_iso1000-f2p2_20260319-170336_3000x4000	1200-lilith-interiors	3	cjxl	38388316	0.83	1.61	0.51	45031690
+1241_interiors_living-room-sofa_la-pedrera-barcelona_zfold7_iso1000-f1p7_20260319-183640_3000x4000	1200-lilith-interiors	1	ours	37206549	1.49	1.11	0.40	34796105
+1241_interiors_living-room-sofa_la-pedrera-barcelona_zfold7_iso1000-f1p7_20260319-183640_3000x4000	1200-lilith-interiors	1	cjxl	38317594	0.48	0.26	0.18	34796105
+1241_interiors_living-room-sofa_la-pedrera-barcelona_zfold7_iso1000-f1p7_20260319-183640_3000x4000	1200-lilith-interiors	3	ours	37095415	2.49	2.04	0.58	34796105
+1241_interiors_living-room-sofa_la-pedrera-barcelona_zfold7_iso1000-f1p7_20260319-183640_3000x4000	1200-lilith-interiors	3	cjxl	39227347	0.78	1.63	0.44	34796105
+1242_interiors_storage-room-clutter_la-pedrera-barcelona_zfold7_iso640-f2p2_20260319-183704_3000x4000	1200-lilith-interiors	1	ours	39205368	1.63	1.11	0.47	42431516
+1242_interiors_storage-room-clutter_la-pedrera-barcelona_zfold7_iso640-f2p2_20260319-183704_3000x4000	1200-lilith-interiors	1	cjxl	37147274	0.52	0.29	0.16	42431516
+1242_interiors_storage-room-clutter_la-pedrera-barcelona_zfold7_iso640-f2p2_20260319-183704_3000x4000	1200-lilith-interiors	3	ours	39075051	2.70	2.15	0.62	42431516
+1242_interiors_storage-room-clutter_la-pedrera-barcelona_zfold7_iso640-f2p2_20260319-183704_3000x4000	1200-lilith-interiors	3	cjxl	36818665	0.81	1.58	0.50	42431516
+1243_interiors_vintage-living-room_la-pedrera-barcelona_zfold7_iso400-f2p2_20260319-183921_3000x4000	1200-lilith-interiors	1	ours	34404239	1.66	1.13	0.45	35834318
+1243_interiors_vintage-living-room_la-pedrera-barcelona_zfold7_iso400-f2p2_20260319-183921_3000x4000	1200-lilith-interiors	1	cjxl	32787780	0.46	0.27	0.13	35834318
+1243_interiors_vintage-living-room_la-pedrera-barcelona_zfold7_iso400-f2p2_20260319-183921_3000x4000	1200-lilith-interiors	3	ours	34317535	2.52	2.03	0.65	35834318
+1243_interiors_vintage-living-room_la-pedrera-barcelona_zfold7_iso400-f2p2_20260319-183921_3000x4000	1200-lilith-interiors	3	cjxl	33706406	0.77	1.60	0.52	35834318
+1244_interiors_painted-ceiling-columns_la-pedrera-barcelona_zfold7_iso800-f1p7_20260319-194130_3000x4000	1200-lilith-interiors	1	ours	40081666	1.68	1.11	0.51	43052258
+1244_interiors_painted-ceiling-columns_la-pedrera-barcelona_zfold7_iso800-f1p7_20260319-194130_3000x4000	1200-lilith-interiors	1	cjxl	39297074	0.51	0.27	0.17	43052258
+1244_interiors_painted-ceiling-columns_la-pedrera-barcelona_zfold7_iso800-f1p7_20260319-194130_3000x4000	1200-lilith-interiors	3	ours	39955157	2.96	2.21	0.84	43052258
+1244_interiors_painted-ceiling-columns_la-pedrera-barcelona_zfold7_iso800-f1p7_20260319-194130_3000x4000	1200-lilith-interiors	3	cjxl	39767731	0.85	1.76	0.48	43052258
+1245_interiors_circular-building-interior_la-pedrera-barcelona_zfold7_iso1000-f2p2_20260319-194139_4000x3000	1200-lilith-interiors	1	ours	39709744	1.75	1.15	0.51	44602421
+1245_interiors_circular-building-interior_la-pedrera-barcelona_zfold7_iso1000-f2p2_20260319-194139_4000x3000	1200-lilith-interiors	1	cjxl	38161436	0.54	0.29	0.18	44602421
+1245_interiors_circular-building-interior_la-pedrera-barcelona_zfold7_iso1000-f2p2_20260319-194139_4000x3000	1200-lilith-interiors	3	ours	39544369	2.93	2.31	0.68	44602421
+1245_interiors_circular-building-interior_la-pedrera-barcelona_zfold7_iso1000-f2p2_20260319-194139_4000x3000	1200-lilith-interiors	3	cjxl	38496728	0.84	1.57	0.55	44602421
+1246_interiors_woven-roof-structure_azulik-city-arts-francisco-uh-may_ip13pro_iso32-f1p8_img-8944_4032x3024	1200-lilith-interiors	1	ours	44585185	1.88	1.15	0.53	53606937
+1246_interiors_woven-roof-structure_azulik-city-arts-francisco-uh-may_ip13pro_iso32-f1p8_img-8944_4032x3024	1200-lilith-interiors	1	cjxl	44610625	0.57	0.28	0.20	53606937
+1246_interiors_woven-roof-structure_azulik-city-arts-francisco-uh-may_ip13pro_iso32-f1p8_img-8944_4032x3024	1200-lilith-interiors	3	ours	44449161	3.08	2.41	0.67	53606937
+1246_interiors_woven-roof-structure_azulik-city-arts-francisco-uh-may_ip13pro_iso32-f1p8_img-8944_4032x3024	1200-lilith-interiors	3	cjxl	43368385	0.86	1.54	0.59	53606937
+1487_nature_glacier-over-water_kenai-peninsula-borough-alaska_s25u_iso40-f1p7_20250801-135016_3000x4000	1400-lilith-nature	1	ours	38005624	1.54	1.09	0.45	36780755
+1487_nature_glacier-over-water_kenai-peninsula-borough-alaska_s25u_iso40-f1p7_20250801-135016_3000x4000	1400-lilith-nature	1	cjxl	35364601	0.48	0.25	0.18	36780755
+1487_nature_glacier-over-water_kenai-peninsula-borough-alaska_s25u_iso40-f1p7_20250801-135016_3000x4000	1400-lilith-nature	3	ours	37891000	2.56	2.08	0.64	36780755
+1487_nature_glacier-over-water_kenai-peninsula-borough-alaska_s25u_iso40-f1p7_20250801-135016_3000x4000	1400-lilith-nature	3	cjxl	34367613	0.76	1.62	0.41	36780755
+1488_nature_iceberg-ocean-landscape_yakutat-alaska_s25u_iso80-f1p7_20250803-185104_3000x4000	1400-lilith-nature	1	ours	33979740	1.45	1.09	0.39	32616838
+1488_nature_iceberg-ocean-landscape_yakutat-alaska_s25u_iso80-f1p7_20250803-185104_3000x4000	1400-lilith-nature	1	cjxl	31978738	0.49	0.32	0.14	32616838
+1488_nature_iceberg-ocean-landscape_yakutat-alaska_s25u_iso80-f1p7_20250803-185104_3000x4000	1400-lilith-nature	3	ours	33817327	2.53	2.04	0.68	32616838
+1488_nature_iceberg-ocean-landscape_yakutat-alaska_s25u_iso80-f1p7_20250803-185104_3000x4000	1400-lilith-nature	3	cjxl	31802391	0.81	1.63	0.51	32616838
+1489_nature_cruise-ship-deck_unorganized-borough-alaska_s25u_iso125-f1p7_20250804-210918_3000x4000	1400-lilith-nature	1	ours	32814078	1.47	1.01	0.48	31934914
+1489_nature_cruise-ship-deck_unorganized-borough-alaska_s25u_iso125-f1p7_20250804-210918_3000x4000	1400-lilith-nature	1	cjxl	32892644	0.46	0.26	0.16	31934914
+1489_nature_cruise-ship-deck_unorganized-borough-alaska_s25u_iso125-f1p7_20250804-210918_3000x4000	1400-lilith-nature	3	ours	32726738	2.44	1.89	0.71	31934914
+1489_nature_cruise-ship-deck_unorganized-borough-alaska_s25u_iso125-f1p7_20250804-210918_3000x4000	1400-lilith-nature	3	cjxl	33416943	0.73	1.58	0.48	31934914
+1490_nature_boat-wake-at-sunset_unorganized-borough-alaska_s25u_iso200-f1p7_20250804-211018_3000x4000	1400-lilith-nature	1	ours	36982275	1.44	1.04	0.45	30451813
+1490_nature_boat-wake-at-sunset_unorganized-borough-alaska_s25u_iso200-f1p7_20250804-211018_3000x4000	1400-lilith-nature	1	cjxl	36749047	0.48	0.24	0.21	30451813
+1490_nature_boat-wake-at-sunset_unorganized-borough-alaska_s25u_iso200-f1p7_20250804-211018_3000x4000	1400-lilith-nature	3	ours	36801734	2.43	2.05	0.56	30451813
+1490_nature_boat-wake-at-sunset_unorganized-borough-alaska_s25u_iso200-f1p7_20250804-211018_3000x4000	1400-lilith-nature	3	cjxl	35292256	0.76	1.61	0.45	30451813
+1491_nature_ocean-sunset-clouds_unorganized-borough-alaska_s25u_iso100-f3p4_20250804-211059_3000x4000	1400-lilith-nature	1	ours	35469994	1.39	1.03	0.45	28201640
+1491_nature_ocean-sunset-clouds_unorganized-borough-alaska_s25u_iso100-f3p4_20250804-211059_3000x4000	1400-lilith-nature	1	cjxl	35989603	0.46	0.24	0.20	28201640
+1491_nature_ocean-sunset-clouds_unorganized-borough-alaska_s25u_iso100-f3p4_20250804-211059_3000x4000	1400-lilith-nature	3	ours	35367677	2.42	2.01	0.67	28201640
+1491_nature_ocean-sunset-clouds_unorganized-borough-alaska_s25u_iso100-f3p4_20250804-211059_3000x4000	1400-lilith-nature	3	cjxl	36745442	0.73	1.57	0.50	28201640
+1492_nature_mountain-lake-landscape_whitehorse-canada_s25u_iso64-f1p7_20250805-162506_3000x4000	1400-lilith-nature	1	ours	43644213	1.76	1.19	0.52	43253978
+1492_nature_mountain-lake-landscape_whitehorse-canada_s25u_iso64-f1p7_20250805-162506_3000x4000	1400-lilith-nature	1	cjxl	44064948	0.54	0.28	0.21	43253978
+1492_nature_mountain-lake-landscape_whitehorse-canada_s25u_iso64-f1p7_20250805-162506_3000x4000	1400-lilith-nature	3	ours	43536214	2.98	2.40	0.66	43253978
+1492_nature_mountain-lake-landscape_whitehorse-canada_s25u_iso64-f1p7_20250805-162506_3000x4000	1400-lilith-nature	3	cjxl	41398738	0.84	1.63	0.53	43253978
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	1	ours	33018866	1.29	1.06	0.41	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	1	cjxl	32225516	0.36	0.18	0.19	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	3	ours	32820363	2.09	1.86	0.53	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	3	cjxl	34888551	0.68	1.52	0.51	19968872
+1494_nature_sunset-over-forest_colorado_zfold7_iso250-f1p7_20251110-170409_4000x3000	1400-lilith-nature	1	ours	42118774	1.55	1.09	0.47	36659127
+1494_nature_sunset-over-forest_colorado_zfold7_iso250-f1p7_20251110-170409_4000x3000	1400-lilith-nature	1	cjxl	41345234	0.49	0.25	0.19	36659127
+1494_nature_sunset-over-forest_colorado_zfold7_iso250-f1p7_20251110-170409_4000x3000	1400-lilith-nature	3	ours	41996590	2.74	2.30	0.62	36659127
+1494_nature_sunset-over-forest_colorado_zfold7_iso250-f1p7_20251110-170409_4000x3000	1400-lilith-nature	3	cjxl	40437006	0.79	1.57	0.51	36659127
+1495_nature_lighthouse-on-island_york-maine_ip13pro_iso50-f1p5_fullsizerender-1_3855x2891	1400-lilith-nature	1	ours	34245307	1.47	1.03	0.44	34383673
+1495_nature_lighthouse-on-island_york-maine_ip13pro_iso50-f1p5_fullsizerender-1_3855x2891	1400-lilith-nature	1	cjxl	32036327	0.41	0.23	0.13	34383673
+1495_nature_lighthouse-on-island_york-maine_ip13pro_iso50-f1p5_fullsizerender-1_3855x2891	1400-lilith-nature	3	ours	34141857	2.33	1.89	0.58	34383673
+1495_nature_lighthouse-on-island_york-maine_ip13pro_iso50-f1p5_fullsizerender-1_3855x2891	1400-lilith-nature	3	cjxl	32168139	0.67	1.42	0.45	34383673
+1496_nature_lake-with-boats_winthrop-maine_ip13pro_iso50-f1p5_fullsizerender-2_3411x2765	1400-lilith-nature	1	ours	31093321	1.32	0.90	0.37	35129191
+1496_nature_lake-with-boats_winthrop-maine_ip13pro_iso50-f1p5_fullsizerender-2_3411x2765	1400-lilith-nature	1	cjxl	30949103	0.39	0.22	0.12	35129191
+1496_nature_lake-with-boats_winthrop-maine_ip13pro_iso50-f1p5_fullsizerender-2_3411x2765	1400-lilith-nature	3	ours	31012800	2.21	1.67	0.60	35129191
+1496_nature_lake-with-boats_winthrop-maine_ip13pro_iso50-f1p5_fullsizerender-2_3411x2765	1400-lilith-nature	3	cjxl	31049133	0.62	1.26	0.35	35129191
+1497_nature_pink-flower-on-vine_belltown-seattle-washington_ip16pro_iso80-f1p8_fullsizerender-3_3745x5333	1400-lilith-nature	1	ours	54111957	2.82	1.91	0.77	74724340
+1497_nature_pink-flower-on-vine_belltown-seattle-washington_ip16pro_iso80-f1p8_fullsizerender-3_3745x5333	1400-lilith-nature	1	cjxl	55038959	1.13	0.72	0.30	74724340
+1497_nature_pink-flower-on-vine_belltown-seattle-washington_ip16pro_iso80-f1p8_fullsizerender-3_3745x5333	1400-lilith-nature	3	ours	53933918	4.46	3.41	1.15	74724340
+1497_nature_pink-flower-on-vine_belltown-seattle-washington_ip16pro_iso80-f1p8_fullsizerender-3_3745x5333	1400-lilith-nature	3	cjxl	58573832	1.62	2.93	0.81	74724340
+1498_nature_yellow-flowers-garden-bed_colorado_ip13pro_iso50-f1p5_fullsizerender_2773x3709	1400-lilith-nature	1	ours	28360350	1.52	0.96	0.42	43060240
+1498_nature_yellow-flowers-garden-bed_colorado_ip13pro_iso50-f1p5_fullsizerender_2773x3709	1400-lilith-nature	1	cjxl	28070889	0.62	0.40	0.14	43060240
+1498_nature_yellow-flowers-garden-bed_colorado_ip13pro_iso50-f1p5_fullsizerender_2773x3709	1400-lilith-nature	3	ours	28242682	2.37	1.78	0.57	43060240
+1498_nature_yellow-flowers-garden-bed_colorado_ip13pro_iso50-f1p5_fullsizerender_2773x3709	1400-lilith-nature	3	cjxl	29248739	0.88	1.55	0.41	43060240
+1502_nature_ice-cave-opening_hornafjordur-iceland_ip13pro_iso32-f1p8_img-0341_3024x4032	1400-lilith-nature	1	ours	42882689	1.83	1.21	0.52	48655335
+1502_nature_ice-cave-opening_hornafjordur-iceland_ip13pro_iso32-f1p8_img-0341_3024x4032	1400-lilith-nature	1	cjxl	43427104	0.61	0.29	0.21	48655335
+1502_nature_ice-cave-opening_hornafjordur-iceland_ip13pro_iso32-f1p8_img-0341_3024x4032	1400-lilith-nature	3	ours	42747910	3.05	2.37	0.73	48655335
+1502_nature_ice-cave-opening_hornafjordur-iceland_ip13pro_iso32-f1p8_img-0341_3024x4032	1400-lilith-nature	3	cjxl	42400359	0.87	1.77	0.51	48655335
+1503_nature_passionflower-on-vine_centrum-amsterdam-netherlands_ip16pro_iso50-f1p8_img-0354_3024x4032	1400-lilith-nature	1	ours	36746615	2.45	1.24	0.73	52492189
+1503_nature_passionflower-on-vine_centrum-amsterdam-netherlands_ip16pro_iso50-f1p8_img-0354_3024x4032	1400-lilith-nature	1	cjxl	36709768	0.71	0.43	0.20	52492189
+1503_nature_passionflower-on-vine_centrum-amsterdam-netherlands_ip16pro_iso50-f1p8_img-0354_3024x4032	1400-lilith-nature	3	ours	36689906	2.94	2.17	0.78	52492189
+1503_nature_passionflower-on-vine_centrum-amsterdam-netherlands_ip16pro_iso50-f1p8_img-0354_3024x4032	1400-lilith-nature	3	cjxl	37348882	1.01	1.75	0.54	52492189
+1504_nature_cloudy-sky-over-field_colorado_ip13pro_iso50-f1p5_img-0374_4032x3024	1400-lilith-nature	1	ours	41694328	1.67	1.15	0.50	43259690
+1504_nature_cloudy-sky-over-field_colorado_ip13pro_iso50-f1p5_img-0374_4032x3024	1400-lilith-nature	1	cjxl	42508757	0.53	0.26	0.21	43259690
+1504_nature_cloudy-sky-over-field_colorado_ip13pro_iso50-f1p5_img-0374_4032x3024	1400-lilith-nature	3	ours	41585978	2.79	2.20	0.68	43259690
+1504_nature_cloudy-sky-over-field_colorado_ip13pro_iso50-f1p5_img-0374_4032x3024	1400-lilith-nature	3	cjxl	41436760	0.83	1.69	0.46	43259690
+1507_nature_ice-cave-waterfall_hornafjordur-iceland_ip13pro_iso200-f1p5_img-0468_3024x4032	1400-lilith-nature	1	ours	40947816	1.94	1.23	0.51	57009529
+1507_nature_ice-cave-waterfall_hornafjordur-iceland_ip13pro_iso200-f1p5_img-0468_3024x4032	1400-lilith-nature	1	cjxl	40556126	0.77	0.46	0.19	57009529
+1507_nature_ice-cave-waterfall_hornafjordur-iceland_ip13pro_iso200-f1p5_img-0468_3024x4032	1400-lilith-nature	3	ours	40775196	3.22	2.52	0.62	57009529
+1507_nature_ice-cave-waterfall_hornafjordur-iceland_ip13pro_iso200-f1p5_img-0468_3024x4032	1400-lilith-nature	3	cjxl	39091794	1.04	1.78	0.57	57009529
+1508_nature_ice-cave-interior_hornafjordur-iceland_ip13pro_iso1000-f1p8_img-0474_4032x3024	1400-lilith-nature	1	ours	38968453	1.56	1.07	0.52	34443841
+1508_nature_ice-cave-interior_hornafjordur-iceland_ip13pro_iso1000-f1p8_img-0474_4032x3024	1400-lilith-nature	1	cjxl	40471790	0.47	0.26	0.17	34443841
+1508_nature_ice-cave-interior_hornafjordur-iceland_ip13pro_iso1000-f1p8_img-0474_4032x3024	1400-lilith-nature	3	ours	38860079	2.68	2.20	0.70	34443841
+1508_nature_ice-cave-interior_hornafjordur-iceland_ip13pro_iso1000-f1p8_img-0474_4032x3024	1400-lilith-nature	3	cjxl	41500824	0.78	1.59	0.50	34443841
+1509_nature_ice-cave-opening_hornafjordur-iceland_ip13pro_iso1000-f1p8_img-0480_3024x4032	1400-lilith-nature	1	ours	34812138	1.55	1.07	0.48	34374551
+1509_nature_ice-cave-opening_hornafjordur-iceland_ip13pro_iso1000-f1p8_img-0480_3024x4032	1400-lilith-nature	1	cjxl	35371443	0.47	0.23	0.19	34374551
+1509_nature_ice-cave-opening_hornafjordur-iceland_ip13pro_iso1000-f1p8_img-0480_3024x4032	1400-lilith-nature	3	ours	34605881	2.43	2.04	0.54	34374551
+1509_nature_ice-cave-opening_hornafjordur-iceland_ip13pro_iso1000-f1p8_img-0480_3024x4032	1400-lilith-nature	3	cjxl	37040442	0.77	1.68	0.53	34374551
+1515_nature_orange-flower-closeup_colorado_ip17pro_iso320-f1p8_img-1420_3024x4032	1400-lilith-nature	1	ours	33330838	1.80	1.16	0.50	49079042
+1515_nature_orange-flower-closeup_colorado_ip17pro_iso320-f1p8_img-1420_3024x4032	1400-lilith-nature	1	cjxl	34360772	0.80	0.52	0.18	49079042
+1515_nature_orange-flower-closeup_colorado_ip17pro_iso320-f1p8_img-1420_3024x4032	1400-lilith-nature	3	ours	33198969	2.82	2.18	0.65	49079042
+1515_nature_orange-flower-closeup_colorado_ip17pro_iso320-f1p8_img-1420_3024x4032	1400-lilith-nature	3	cjxl	36073685	1.09	1.86	0.59	49079042
+1516_nature_pink-flower-in-bottle_colorado_ip17pro_iso50-f1p8_img-1509_2355x3308	1400-lilith-nature	1	ours	16944151	1.06	0.74	0.22	24184181
+1516_nature_pink-flower-in-bottle_colorado_ip17pro_iso50-f1p8_img-1509_2355x3308	1400-lilith-nature	1	cjxl	17308930	0.43	0.29	0.09	24184181
+1516_nature_pink-flower-in-bottle_colorado_ip17pro_iso50-f1p8_img-1509_2355x3308	1400-lilith-nature	3	ours	16813028	1.50	1.19	0.33	24184181
+1516_nature_pink-flower-in-bottle_colorado_ip17pro_iso50-f1p8_img-1509_2355x3308	1400-lilith-nature	3	cjxl	17692758	0.62	1.12	0.30	24184181
+1519_nature_orange-rose-vase_colorado_ip17pro_iso200-f1p8_img-2700_3961x4825	1400-lilith-nature	1	ours	35125966	2.19	1.52	0.68	48796332
+1519_nature_orange-rose-vase_colorado_ip17pro_iso200-f1p8_img-2700_3961x4825	1400-lilith-nature	1	cjxl	35075188	0.86	0.59	0.22	48796332
+1519_nature_orange-rose-vase_colorado_ip17pro_iso200-f1p8_img-2700_3961x4825	1400-lilith-nature	3	ours	35001024	3.44	2.58	1.02	48796332
+1519_nature_orange-rose-vase_colorado_ip17pro_iso200-f1p8_img-2700_3961x4825	1400-lilith-nature	3	cjxl	41923260	1.38	2.82	0.69	48796332
+1520_nature_tulips-in-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3545_4284x5712	1400-lilith-nature	1	ours	72919965	3.58	2.35	0.98	98079064
+1520_nature_tulips-in-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3545_4284x5712	1400-lilith-nature	1	cjxl	73489722	1.50	0.93	0.39	98079064
+1520_nature_tulips-in-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3545_4284x5712	1400-lilith-nature	3	ours	72641964	5.63	4.37	1.34	98079064
+1520_nature_tulips-in-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3545_4284x5712	1400-lilith-nature	3	cjxl	75252388	2.13	3.68	1.10	98079064
+1521_nature_potted-tulips-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3547_4284x5712	1400-lilith-nature	1	ours	84653031	4.47	2.80	1.10	113192037
+1521_nature_potted-tulips-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3547_4284x5712	1400-lilith-nature	1	cjxl	85594767	1.69	0.97	0.45	113192037
+1521_nature_potted-tulips-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3547_4284x5712	1400-lilith-nature	3	ours	84377521	6.21	4.73	1.43	113192037
+1521_nature_potted-tulips-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3547_4284x5712	1400-lilith-nature	3	cjxl	84503209	2.13	3.62	0.99	113192037
+1522_nature_water-lilies-pond_colorado_ip13pro_iso50-f1p5_img-3764_4032x3024	1400-lilith-nature	1	ours	46390326	1.94	1.18	0.58	57997367
+1522_nature_water-lilies-pond_colorado_ip13pro_iso50-f1p5_img-3764_4032x3024	1400-lilith-nature	1	cjxl	47577880	0.74	0.42	0.22	57997367
+1522_nature_water-lilies-pond_colorado_ip13pro_iso50-f1p5_img-3764_4032x3024	1400-lilith-nature	3	ours	46273238	3.16	2.51	0.63	57997367
+1522_nature_water-lilies-pond_colorado_ip13pro_iso50-f1p5_img-3764_4032x3024	1400-lilith-nature	3	cjxl	46787727	1.05	1.73	0.55	57997367
+1523_nature_yellow-flowers-garden_colorado_ip13pro_iso50-f1p5_img-3767_3024x4032	1400-lilith-nature	1	ours	41998261	1.91	1.20	0.55	55517684
+1523_nature_yellow-flowers-garden_colorado_ip13pro_iso50-f1p5_img-3767_3024x4032	1400-lilith-nature	1	cjxl	42138610	0.75	0.44	0.21	55517684
+1523_nature_yellow-flowers-garden_colorado_ip13pro_iso50-f1p5_img-3767_3024x4032	1400-lilith-nature	3	ours	41860208	3.00	2.29	0.68	55517684
+1523_nature_yellow-flowers-garden_colorado_ip13pro_iso50-f1p5_img-3767_3024x4032	1400-lilith-nature	3	cjxl	42876408	1.02	1.75	0.54	55517684
+1524_nature_yellow-flowers-garden_colorado_ip13pro_iso50-f1p5_img-3841_3024x4032	1400-lilith-nature	1	ours	45550040	1.93	1.19	0.54	58288667
+1524_nature_yellow-flowers-garden_colorado_ip13pro_iso50-f1p5_img-3841_3024x4032	1400-lilith-nature	1	cjxl	46527458	0.74	0.43	0.21	58288667
+1524_nature_yellow-flowers-garden_colorado_ip13pro_iso50-f1p5_img-3841_3024x4032	1400-lilith-nature	3	ours	45422727	3.22	2.49	0.65	58288667
+1524_nature_yellow-flowers-garden_colorado_ip13pro_iso50-f1p5_img-3841_3024x4032	1400-lilith-nature	3	cjxl	45587859	1.04	1.78	0.53	58288667
+1525_nature_wildflowers-in-garden_colorado_ip13pro_iso50-f1p5_img-3861_3024x4032	1400-lilith-nature	1	ours	49530714	1.99	1.22	0.55	61534351
+1525_nature_wildflowers-in-garden_colorado_ip13pro_iso50-f1p5_img-3861_3024x4032	1400-lilith-nature	1	cjxl	51429968	0.80	0.49	0.20	61534351
+1525_nature_wildflowers-in-garden_colorado_ip13pro_iso50-f1p5_img-3861_3024x4032	1400-lilith-nature	3	ours	49575332	3.30	2.54	0.70	61534351
+1525_nature_wildflowers-in-garden_colorado_ip13pro_iso50-f1p5_img-3861_3024x4032	1400-lilith-nature	3	cjxl	49200510	1.09	1.83	0.51	61534351
+1526_nature_pink-flowers-garden_colorado_ip13pro_iso50-f1p5_img-4543_3024x4032	1400-lilith-nature	1	ours	44885966	1.92	1.18	0.57	57013838
+1526_nature_pink-flowers-garden_colorado_ip13pro_iso50-f1p5_img-4543_3024x4032	1400-lilith-nature	1	cjxl	45256393	0.79	0.48	0.21	57013838
+1526_nature_pink-flowers-garden_colorado_ip13pro_iso50-f1p5_img-4543_3024x4032	1400-lilith-nature	3	ours	44790531	3.15	2.53	0.64	57013838
+1526_nature_pink-flowers-garden_colorado_ip13pro_iso50-f1p5_img-4543_3024x4032	1400-lilith-nature	3	cjxl	45645333	1.14	1.87	0.55	57013838
+1527_nature_mountain-wildflowers-landscape_stikine-region-canada_ip16pro_iso100-f1p8_img-4768_4284x5712	1400-lilith-nature	1	ours	74891922	3.47	2.31	0.96	95579273
+1527_nature_mountain-wildflowers-landscape_stikine-region-canada_ip16pro_iso100-f1p8_img-4768_4284x5712	1400-lilith-nature	1	cjxl	73763391	1.45	0.89	0.39	95579273
+1527_nature_mountain-wildflowers-landscape_stikine-region-canada_ip16pro_iso100-f1p8_img-4768_4284x5712	1400-lilith-nature	3	ours	74562496	5.64	4.38	1.30	95579273
+1527_nature_mountain-wildflowers-landscape_stikine-region-canada_ip16pro_iso100-f1p8_img-4768_4284x5712	1400-lilith-nature	3	cjxl	74938657	1.94	3.56	0.87	95579273
+1528_nature_pink-blossom-branch_kawazu-japan_ip16pro_iso80-f1p8_img-4931_5712x4284	1400-lilith-nature	1	ours	63399036	3.35	2.09	0.98	96532316
+1528_nature_pink-blossom-branch_kawazu-japan_ip16pro_iso80-f1p8_img-4931_5712x4284	1400-lilith-nature	1	cjxl	64665313	1.41	0.95	0.31	96532316
+1528_nature_pink-blossom-branch_kawazu-japan_ip16pro_iso80-f1p8_img-4931_5712x4284	1400-lilith-nature	3	ours	63125458	5.43	3.95	1.45	96532316
+1528_nature_pink-blossom-branch_kawazu-japan_ip16pro_iso80-f1p8_img-4931_5712x4284	1400-lilith-nature	3	cjxl	68629986	2.04	3.74	0.85	96532316
+1529_nature_whale-tail-ocean_ip13pro_iso32-f2p8_img-5573_3024x4032	1400-lilith-nature	1	ours	32126245	1.48	0.96	0.49	35863412
+1529_nature_whale-tail-ocean_ip13pro_iso32-f2p8_img-5573_3024x4032	1400-lilith-nature	1	cjxl	30784488	0.52	0.33	0.15	35863412
+1529_nature_whale-tail-ocean_ip13pro_iso32-f2p8_img-5573_3024x4032	1400-lilith-nature	3	ours	31835361	2.35	1.86	0.57	35863412
+1529_nature_whale-tail-ocean_ip13pro_iso32-f2p8_img-5573_3024x4032	1400-lilith-nature	3	cjxl	29591485	0.81	1.66	0.44	35863412
+1530_nature_whale-tail-ocean_ip13pro_iso32-f2p8_img-5574_3024x4032	1400-lilith-nature	1	ours	30886626	1.43	0.99	0.43	34289629
+1530_nature_whale-tail-ocean_ip13pro_iso32-f2p8_img-5574_3024x4032	1400-lilith-nature	1	cjxl	29645831	0.50	0.32	0.14	34289629
+1530_nature_whale-tail-ocean_ip13pro_iso32-f2p8_img-5574_3024x4032	1400-lilith-nature	3	ours	30685636	2.30	1.76	0.64	34289629
+1530_nature_whale-tail-ocean_ip13pro_iso32-f2p8_img-5574_3024x4032	1400-lilith-nature	3	cjxl	28491645	0.79	1.59	0.47	34289629
+1531_nature_red-poppy-flowers_taos-new-mexico_ip17pro_iso80-f1p8_img-6189_4284x5712	1400-lilith-nature	1	ours	78445735	3.79	2.38	1.12	105958403
+1531_nature_red-poppy-flowers_taos-new-mexico_ip17pro_iso80-f1p8_img-6189_4284x5712	1400-lilith-nature	1	cjxl	79928464	1.51	0.91	0.43	105958403
+1531_nature_red-poppy-flowers_taos-new-mexico_ip17pro_iso80-f1p8_img-6189_4284x5712	1400-lilith-nature	3	ours	78267629	5.88	4.35	1.46	105958403
+1531_nature_red-poppy-flowers_taos-new-mexico_ip17pro_iso80-f1p8_img-6189_4284x5712	1400-lilith-nature	3	cjxl	79192624	2.06	3.68	0.86	105958403
+1532_nature_red-poppy-flowers_taos-new-mexico_ip17pro_iso80-f1p8_img-6194_4284x5712	1400-lilith-nature	1	ours	70909314	3.50	2.31	0.98	98395584
+1532_nature_red-poppy-flowers_taos-new-mexico_ip17pro_iso80-f1p8_img-6194_4284x5712	1400-lilith-nature	1	cjxl	71311351	1.50	0.98	0.35	98395584
+1532_nature_red-poppy-flowers_taos-new-mexico_ip17pro_iso80-f1p8_img-6194_4284x5712	1400-lilith-nature	3	ours	70546972	5.69	4.41	1.31	98395584
+1532_nature_red-poppy-flowers_taos-new-mexico_ip17pro_iso80-f1p8_img-6194_4284x5712	1400-lilith-nature	3	cjxl	72371686	2.07	3.70	0.90	98395584
+1533_nature_purple-water-lily_koyama-kamiuchikawaracho-kyoto-japan_ip13pro_iso125-f2p8_img-6205_3024x4032	1400-lilith-nature	1	ours	39750314	1.83	1.21	0.50	50769918
+1533_nature_purple-water-lily_koyama-kamiuchikawaracho-kyoto-japan_ip13pro_iso125-f2p8_img-6205_3024x4032	1400-lilith-nature	1	cjxl	39545842	0.73	0.46	0.19	50769918
+1533_nature_purple-water-lily_koyama-kamiuchikawaracho-kyoto-japan_ip13pro_iso125-f2p8_img-6205_3024x4032	1400-lilith-nature	3	ours	39654263	2.85	2.24	0.62	50769918
+1533_nature_purple-water-lily_koyama-kamiuchikawaracho-kyoto-japan_ip13pro_iso125-f2p8_img-6205_3024x4032	1400-lilith-nature	3	cjxl	39991297	1.04	1.84	0.53	50769918
+1534_nature_red-flowers-closeup_ketchikan-alaska_ip16pro_iso125-f1p8_img-6286_3024x4032	1400-lilith-nature	1	ours	34820286	1.78	1.15	0.53	47509002
+1534_nature_red-flowers-closeup_ketchikan-alaska_ip16pro_iso125-f1p8_img-6286_3024x4032	1400-lilith-nature	1	cjxl	35221967	0.74	0.50	0.16	47509002
+1534_nature_red-flowers-closeup_ketchikan-alaska_ip16pro_iso125-f1p8_img-6286_3024x4032	1400-lilith-nature	3	ours	34684314	2.74	2.16	0.64	47509002
+1534_nature_red-flowers-closeup_ketchikan-alaska_ip16pro_iso125-f1p8_img-6286_3024x4032	1400-lilith-nature	3	cjxl	38059543	1.06	1.81	0.53	47509002
+1536_nature_purple-flowers-walkway_seward-alaska_ip16pro_iso80-f1p8_img-8763_4284x5712	1400-lilith-nature	1	ours	69796601	3.56	2.11	1.13	100445147
+1536_nature_purple-flowers-walkway_seward-alaska_ip16pro_iso80-f1p8_img-8763_4284x5712	1400-lilith-nature	1	cjxl	70709334	1.47	0.89	0.40	100445147
+1536_nature_purple-flowers-walkway_seward-alaska_ip16pro_iso80-f1p8_img-8763_4284x5712	1400-lilith-nature	3	ours	69411888	5.61	4.20	1.31	100445147
+1536_nature_purple-flowers-walkway_seward-alaska_ip16pro_iso80-f1p8_img-8763_4284x5712	1400-lilith-nature	3	cjxl	70700503	2.06	3.78	0.84	100445147
+1537_nature_purple-flowers-closeup_seward-alaska_ip16pro_iso100-f1p8_img-8764_4284x5712	1400-lilith-nature	1	ours	64125797	3.39	2.16	0.99	93470880
+1537_nature_purple-flowers-closeup_seward-alaska_ip16pro_iso100-f1p8_img-8764_4284x5712	1400-lilith-nature	1	cjxl	65517830	1.40	0.90	0.34	93470880
+1537_nature_purple-flowers-closeup_seward-alaska_ip16pro_iso100-f1p8_img-8764_4284x5712	1400-lilith-nature	3	ours	63901148	5.44	4.10	1.26	93470880
+1537_nature_purple-flowers-closeup_seward-alaska_ip16pro_iso100-f1p8_img-8764_4284x5712	1400-lilith-nature	3	cjxl	68217368	2.01	3.70	0.83	93470880
+1539_nature_legs-in-water_felipe-carrillo-puerto-mexico_ip13pro_iso32-f1p8_img-8809_3024x4032	1400-lilith-nature	1	ours	43343912	1.91	1.19	0.52	57705104
+1539_nature_legs-in-water_felipe-carrillo-puerto-mexico_ip13pro_iso32-f1p8_img-8809_3024x4032	1400-lilith-nature	1	cjxl	42466789	0.76	0.45	0.20	57705104
+1539_nature_legs-in-water_felipe-carrillo-puerto-mexico_ip13pro_iso32-f1p8_img-8809_3024x4032	1400-lilith-nature	3	ours	43178652	3.11	2.45	0.61	57705104
+1539_nature_legs-in-water_felipe-carrillo-puerto-mexico_ip13pro_iso32-f1p8_img-8809_3024x4032	1400-lilith-nature	3	cjxl	41275601	1.06	1.88	0.48	57705104
+1540_nature_purple-flowers-garden_belltown-seattle-washington_ip16pro_iso100-f1p8_img-9109_4284x5712	1400-lilith-nature	1	ours	77778133	3.63	2.26	1.09	106089752
+1540_nature_purple-flowers-garden_belltown-seattle-washington_ip16pro_iso100-f1p8_img-9109_4284x5712	1400-lilith-nature	1	cjxl	78872605	1.58	0.92	0.47	106089752
+1540_nature_purple-flowers-garden_belltown-seattle-washington_ip16pro_iso100-f1p8_img-9109_4284x5712	1400-lilith-nature	3	ours	77604667	6.04	4.52	1.49	106089752
+1540_nature_purple-flowers-garden_belltown-seattle-washington_ip16pro_iso100-f1p8_img-9109_4284x5712	1400-lilith-nature	3	cjxl	81820386	2.13	3.80	0.97	106089752
+1541_nature_blue-wildflower-grass_snaefellsbaer-iceland_ip16pro_iso64-f1p8_img-9110_3024x4032	1400-lilith-nature	1	ours	35516140	1.84	1.13	0.54	50920565
+1541_nature_blue-wildflower-grass_snaefellsbaer-iceland_ip16pro_iso64-f1p8_img-9110_3024x4032	1400-lilith-nature	1	cjxl	35912551	0.72	0.42	0.21	50920565
+1541_nature_blue-wildflower-grass_snaefellsbaer-iceland_ip16pro_iso64-f1p8_img-9110_3024x4032	1400-lilith-nature	3	ours	35410647	2.79	2.09	0.67	50920565
+1541_nature_blue-wildflower-grass_snaefellsbaer-iceland_ip16pro_iso64-f1p8_img-9110_3024x4032	1400-lilith-nature	3	cjxl	38047316	1.02	1.81	0.47	50920565
+1542_nature_orange-lily-flower_belltown-seattle-washington_ip16pro_iso80-f1p8_img-9149_4284x5712	1400-lilith-nature	1	ours	71449719	3.60	2.30	1.06	100058719
+1542_nature_orange-lily-flower_belltown-seattle-washington_ip16pro_iso80-f1p8_img-9149_4284x5712	1400-lilith-nature	1	cjxl	73144749	1.52	0.94	0.40	100058719
+1542_nature_orange-lily-flower_belltown-seattle-washington_ip16pro_iso80-f1p8_img-9149_4284x5712	1400-lilith-nature	3	ours	71174330	5.72	4.45	1.27	100058719
+1542_nature_orange-lily-flower_belltown-seattle-washington_ip16pro_iso80-f1p8_img-9149_4284x5712	1400-lilith-nature	3	cjxl	76898072	2.04	3.66	0.91	100058719
+1543_nature_water-lilies-pond_miyuki-beppu-japan_ip16pro_iso80-f1p8_img-9522_4284x5712	1400-lilith-nature	1	ours	64668390	3.38	2.16	1.02	93014939
+1543_nature_water-lilies-pond_miyuki-beppu-japan_ip16pro_iso80-f1p8_img-9522_4284x5712	1400-lilith-nature	1	cjxl	64391598	1.39	0.88	0.36	93014939
+1543_nature_water-lilies-pond_miyuki-beppu-japan_ip16pro_iso80-f1p8_img-9522_4284x5712	1400-lilith-nature	3	ours	64498136	5.15	3.94	1.23	93014939
+1543_nature_water-lilies-pond_miyuki-beppu-japan_ip16pro_iso80-f1p8_img-9522_4284x5712	1400-lilith-nature	3	cjxl	67121006	2.03	3.59	1.02	93014939
+1544_nature_purple-water-lily-flower_miyuki-beppu-japan_ip16pro_iso64-f1p8_img-9550_3024x4032	1400-lilith-nature	1	ours	32481184	1.68	1.09	0.51	44161647
+1544_nature_purple-water-lily-flower_miyuki-beppu-japan_ip16pro_iso64-f1p8_img-9550_3024x4032	1400-lilith-nature	1	cjxl	32327616	0.51	0.25	0.19	44161647
+1544_nature_purple-water-lily-flower_miyuki-beppu-japan_ip16pro_iso64-f1p8_img-9550_3024x4032	1400-lilith-nature	3	ours	32421422	2.71	2.06	0.63	44161647
+1544_nature_purple-water-lily-flower_miyuki-beppu-japan_ip16pro_iso64-f1p8_img-9550_3024x4032	1400-lilith-nature	3	cjxl	33804353	0.83	1.61	0.54	44161647
+1545_nature_stalactite-cave-lake_playa-del-carmen-mexico_ip13pro_iso1600-f1p5_img-9591_4032x3024	1400-lilith-nature	1	ours	36504970	1.78	1.16	0.48	45990526
+1545_nature_stalactite-cave-lake_playa-del-carmen-mexico_ip13pro_iso1600-f1p5_img-9591_4032x3024	1400-lilith-nature	1	cjxl	37465326	0.73	0.44	0.21	45990526
+1545_nature_stalactite-cave-lake_playa-del-carmen-mexico_ip13pro_iso1600-f1p5_img-9591_4032x3024	1400-lilith-nature	3	ours	36412835	2.91	2.20	0.80	45990526
+1545_nature_stalactite-cave-lake_playa-del-carmen-mexico_ip13pro_iso1600-f1p5_img-9591_4032x3024	1400-lilith-nature	3	cjxl	39866008	1.06	1.82	0.55	45990526
+1546_nature_underground-cave-lake_playa-del-carmen-mexico_ip13pro_iso2000-f1p5_img-9608_3024x4032	1400-lilith-nature	1	ours	38403404	1.95	1.25	0.50	41713886
+1546_nature_underground-cave-lake_playa-del-carmen-mexico_ip13pro_iso2000-f1p5_img-9608_3024x4032	1400-lilith-nature	1	cjxl	40887043	0.55	0.26	0.21	41713886
+1546_nature_underground-cave-lake_playa-del-carmen-mexico_ip13pro_iso2000-f1p5_img-9608_3024x4032	1400-lilith-nature	3	ours	38324549	2.91	2.31	0.73	41713886
+1546_nature_underground-cave-lake_playa-del-carmen-mexico_ip13pro_iso2000-f1p5_img-9608_3024x4032	1400-lilith-nature	3	cjxl	44308911	0.91	1.71	0.56	41713886
+1547_nature_orange-flowers-garden_colorado_ip16pro_iso80-f1p8_img-9652_4284x5712	1400-lilith-nature	1	ours	64743831	3.68	2.30	1.15	90707487
+1547_nature_orange-flowers-garden_colorado_ip16pro_iso80-f1p8_img-9652_4284x5712	1400-lilith-nature	1	cjxl	65574232	1.43	0.95	0.33	90707487
+1547_nature_orange-flowers-garden_colorado_ip16pro_iso80-f1p8_img-9652_4284x5712	1400-lilith-nature	3	ours	64604143	5.50	4.26	1.37	90707487
+1547_nature_orange-flowers-garden_colorado_ip16pro_iso80-f1p8_img-9652_4284x5712	1400-lilith-nature	3	cjxl	72066483	2.14	3.75	1.11	90707487
+1638_food_sliced-fish-dish_colorado_s25u_iso800-f1p7_20250425-213810_3000x4000	1600-lilith-food	1	ours	38064355	1.72	1.11	0.50	44492446
+1638_food_sliced-fish-dish_colorado_s25u_iso800-f1p7_20250425-213810_3000x4000	1600-lilith-food	1	cjxl	38262521	0.58	0.28	0.21	44492446
+1638_food_sliced-fish-dish_colorado_s25u_iso800-f1p7_20250425-213810_3000x4000	1600-lilith-food	3	ours	37891385	3.02	2.25	0.70	44492446
+1638_food_sliced-fish-dish_colorado_s25u_iso800-f1p7_20250425-213810_3000x4000	1600-lilith-food	3	cjxl	37559943	0.83	1.67	0.46	44492446
+1639_food_sashimi-on-plate_colorado_s25u_iso200-f1p7_20250425-214145_4000x3000	1600-lilith-food	1	ours	33975242	1.62	1.08	0.46	43071072
+1639_food_sashimi-on-plate_colorado_s25u_iso200-f1p7_20250425-214145_4000x3000	1600-lilith-food	1	cjxl	34303048	0.69	0.43	0.20	43071072
+1639_food_sashimi-on-plate_colorado_s25u_iso200-f1p7_20250425-214145_4000x3000	1600-lilith-food	3	ours	33906172	2.59	1.98	0.62	43071072
+1639_food_sashimi-on-plate_colorado_s25u_iso200-f1p7_20250425-214145_4000x3000	1600-lilith-food	3	cjxl	33493762	0.96	1.72	0.51	43071072
+1640_food_birthday-cake-table_colorado_ip16pro_iso125-f1p8_img-2666_4284x5712	1600-lilith-food	1	ours	68070677	3.47	2.28	0.96	90779611
+1640_food_birthday-cake-table_colorado_ip16pro_iso125-f1p8_img-2666_4284x5712	1600-lilith-food	1	cjxl	67998446	1.48	0.94	0.39	90779611
+1640_food_birthday-cake-table_colorado_ip16pro_iso125-f1p8_img-2666_4284x5712	1600-lilith-food	3	ours	67866016	5.49	4.14	1.36	90779611
+1640_food_birthday-cake-table_colorado_ip16pro_iso125-f1p8_img-2666_4284x5712	1600-lilith-food	3	cjxl	66846136	1.93	3.66	0.83	90779611
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	2	ours	22003884	1.28	0.82	0.43	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	2	cjxl	19443709	0.64	0.84	0.44	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	4	ours	21917036	1.87	1.57	0.46	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	4	cjxl	19410117	0.95	2.92	0.43	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	5	ours	21917036	2.07	2.16	0.63	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	5	cjxl	16869123	0.92	2.92	0.39	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	6	ours	21917036	2.07	2.22	0.77	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	6	cjxl	16270923	1.09	4.25	0.41	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	7	ours	16091576	27.46	38.70	4.10	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	7	cjxl	15949117	1.69	8.16	0.47	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	8	ours	15986236	70.61	84.26	4.66	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	8	cjxl	15917331	4.31	26.97	0.40	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	9	ours	15264132	156.46	170.39	4.76	23337063
+1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827	1000-lilith-photos-general	9	cjxl	15835359	6.56	42.64	0.35	23337063
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	2	ours	47763296	2.01	1.21	0.57	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	2	cjxl	43420724	0.98	1.18	0.50	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	4	ours	47626131	3.21	2.44	0.70	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	4	cjxl	43672943	1.25	3.41	0.52	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	5	ours	47765280	3.44	3.29	0.81	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	5	cjxl	41900931	1.37	4.41	0.48	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	6	ours	47765280	3.49	3.56	0.92	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	6	cjxl	41546520	1.69	7.00	0.47	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	7	ours	40687013	49.33	64.28	6.41	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	7	cjxl	41244057	2.73	14.54	0.47	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	8	ours	40461451	110.95	127.49	5.93	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	8	cjxl	41318508	6.11	40.19	0.58	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	9	ours	38887609	244.04	258.96	6.93	58650579
+1070_general_stone-temple-ruins_ip13pro_iso50-f1p5_img-8852_4032x3024	1000-lilith-photos-general	9	cjxl	41388166	11.20	79.71	0.60	58650579
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	2	ours	34106300	1.49	1.06	0.46	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	2	cjxl	30670496	0.64	0.97	0.43	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	4	ours	33948310	2.39	1.97	0.57	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	4	cjxl	31088479	0.94	3.23	0.50	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	5	ours	33948310	2.59	2.78	0.78	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	5	cjxl	21469202	1.00	3.84	0.36	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	6	ours	33948310	2.64	3.02	0.82	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	6	cjxl	20839778	1.26	5.73	0.39	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	7	ours	24465593	37.67	52.76	4.71	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	7	cjxl	20376449	1.96	10.66	0.47	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	8	ours	24062780	89.13	105.16	5.62	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	8	cjxl	20391102	4.98	33.24	0.49	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	9	ours	22622229	188.12	203.18	6.62	33118028
+1230_interiors_empty-tiled-pool_casa-batllo-barcelona_zfold7_iso640-f1p7_20260315-210432_3000x4000	1200-lilith-interiors	9	cjxl	20227619	7.71	54.03	0.57	33118028
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	2	ours	43255852	1.88	1.21	0.49	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	2	cjxl	41249307	0.92	1.13	0.50	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	4	ours	43162978	3.09	2.40	0.63	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	4	cjxl	41523499	1.21	3.34	0.50	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	5	ours	43162978	3.26	3.16	0.80	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	5	cjxl	40524244	1.37	4.62	0.48	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	6	ours	43070081	3.29	3.39	0.87	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	6	cjxl	40289417	1.78	7.98	0.41	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	7	ours	37599142	51.92	68.63	5.78	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	7	cjxl	40310964	3.01	17.04	0.54	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	8	ours	37251446	122.91	140.88	5.70	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	8	cjxl	40445684	7.03	47.57	0.57	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	9	ours	36424532	252.60	267.91	6.69	56978241
+1239_interiors_decorative-coffered-ceiling_casa-vicens-barcelona_zfold7_iso800-f2p2_20260319-170252_4000x3000	1200-lilith-interiors	9	cjxl	40478024	12.45	89.30	0.55	56978241
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	2	ours	33018866	1.26	1.06	0.37	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	2	cjxl	27540955	0.55	0.79	0.51	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	4	ours	32820363	2.08	1.83	0.55	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	4	cjxl	27508074	0.85	3.14	0.44	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	5	ours	32219320	2.31	2.71	0.65	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	5	cjxl	14744129	0.86	3.50	0.34	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	6	ours	32219320	2.33	2.87	0.75	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	6	cjxl	14346530	1.03	4.73	0.40	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	7	ours	22461128	30.67	44.97	4.90	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	7	cjxl	13676611	1.47	8.00	0.41	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	8	ours	21970074	76.91	92.60	4.97	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	8	cjxl	13633794	3.58	23.84	0.42	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	9	ours	20429749	161.25	175.89	6.33	19968872
+1493_nature_sunset-over-sea_lower-davie-vancouver-canada_s25u_iso64-f3p4_20250809-203408_4000x3000	1400-lilith-nature	9	cjxl	13435969	5.77	38.65	0.46	19968872

@@ -1,0 +1,32 @@
+# hdr_png_ab_2026-06-11.tsv — ours vs cjxl 0.12.0 on imazen-26 HDR PNGs
+# (user question: "do we compress worse than cjxl on any hdr file at any
+# effort? how does runtime and usertime compare")
+#
+# Corpus: /mnt/v/output/imazen-26-png-v2/**/*.hdr.png — 76 files, 16-bit
+# RGB PNG, cICP P3-D65 + PQ (produced from the imazen-26 gain-map HEICs
+# by ~/work/hdr-corpus-convert, batch DONE 2026-06-11, 0 failures).
+# Mode: LOSSLESS both sides (ours --lossless, cjxl -d 0), threads 8,
+# /usr/bin/time wall/user/sys, nice -n19, sequential same-cell pairs
+# (not interleaved — magnitudes here dwarf scheduling noise; box idle).
+# Grid: all 76 x e{1,3}; effort ladder e{2,4,5,6,7,8,9} on 5 stratified
+# picks (6th pick, the 113MB tulips, produced no ladder rows — rerun).
+# NOTE rows 2-35 carry wall/user/sys merged into one field separated by
+# literal 't' (script bug, fixed mid-run; parse both shapes).
+#
+# effort | n  | ours-worse | bytes mean | median | worst    | wall x | user x
+# e1     | 76 | 35/76      |  +0.06%    | -0.43% |  +7.47%  |  2.96x |  3.25x
+# e2     |  5 |  5/5       | +11.83%    | +11.20%| +19.89%  |  2.05x |  1.07x
+# e3     | 76 | 33/76      |  -1.25%    | -0.54% | +10.25%  |  3.11x |  1.28x
+# e4     |  5 |  5/5       | +10.89%    |  +9.20%| +19.31%  |  2.54x |  0.61x
+# e5     |  5 |  5/5       | +45.42%    | +29.92%| +118.52% |  2.51x |  0.74x
+# e6     |  5 |  5/5       | +48.81%    | +34.70%| +124.58% |  2.07x |  0.52x
+# e7     |  5 |  3/5       | +15.42%    |  +0.89%| +64.23%  | 18.07x |  4.74x
+# e8     |  5 |  3/5       | +13.92%    |  +0.43%| +61.14%  | 17.90x |  3.16x
+# e9     |  5 |  2/5       |  +8.85%    | -3.61% | +52.05%  | 23.85x |  3.76x
+#
+# Named offenders: 1493 sunset-over-sea (smooth PQ gradients) +118/+125/
+# +64/+52% at e5/6/7/9; 1230 tiled-pool +58/+63/+20/+12%. Tree learning
+# (e7+) buys the median back to ~parity but not the smooth-HDR tail, at
+# 15-35x wall.
+# Side finding: our bitstreams tag this PQ input as sRGB TF (issue #71);
+# pixels verified 16-bit-exact via djxl roundtrip on the smoke cell.
