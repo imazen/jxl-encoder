@@ -944,6 +944,8 @@ pub(crate) fn compute_epf_sharpness(
 
     // Reconstruct once — the dequant→CfL→IDCT→gab result is identical for all
     // sharpness candidates. Only the EPF pass differs.
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _t_recon = std::time::Instant::now();
     let mut base_recon = reconstruct_xyb(
         quant_dc,
         quant_ac,
@@ -955,9 +957,17 @@ pub(crate) fn compute_epf_sharpness(
         ysize_blocks,
     );
 
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _ms_recon = _t_recon.elapsed().as_secs_f64() * 1000.0;
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _t_gab = std::time::Instant::now();
     if enable_gaborish {
         gab_smooth(&mut base_recon, padded_width, padded_height);
     }
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _ms_gab = _t_gab.elapsed().as_secs_f64() * 1000.0;
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _t_cands = std::time::Instant::now();
 
     // Size for the largest padding needed (pad=3 for step 0)
     let max_pad = if params.epf_iters >= 3 {
@@ -1028,6 +1038,15 @@ pub(crate) fn compute_epf_sharpness(
                 ysize_blocks,
             ))
         })?;
+
+    #[cfg(feature = "__env_var_diagnostics")]
+    if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+        eprintln!(
+            "epf_sharpness: recon={_ms_recon:.1} gab={_ms_gab:.1} candidates={:.1} (n={})",
+            _t_cands.elapsed().as_secs_f64() * 1000.0,
+            candidates.len()
+        );
+    }
 
     // Map candidate index to sharpness LUT index for context computation
     let candidate_lut: Vec<usize> = candidates
