@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+<!-- Batched for the next major (0.4.0). Do NOT ship piecemeal. -->
+- **0.4.0 will narrow the public API surface.** `cargo semver-checks` vs
+  published 0.3.1 found 4 breaks already present on HEAD (see
+  `docs/RELEASE_SEMVER_0.3.1_to_0.3.2.md`): new pub fields on `FileHeader`
+  / `ImageMetadata`, new private fields on `VarDctEncoder`, new fields on
+  `GlobalModularState` variants, and the removed `unsafe-performance`
+  feature. Rather than ship these as accidental breaks under a patch
+  bump, 0.4.0 will deliberately move the leaked `pub mod headers` /
+  `vardct` / `modular` internals to `pub(crate)`, leaving a small
+  intentional public API (`LossyConfig` / `LosslessConfig` /
+  `EncodeRequest` / streaming encoders / `PixelLayout` / `EncodeError` /
+  `Limits` / `ImageMetadata` / `EncoderStrategy`). Tracking: #76.
+
 ### Added
 - **Comprehensive HDR test suite (`tests/it/hdr_suite.rs`), modeled on
   libjxl's HDR coverage.** Seven gates: TF×Primaries signaling
