@@ -632,10 +632,15 @@ measurement at equal or better coverage.
 
 - **Lossless screenshots wall — ARC COMPLETE 2026-06-10** (#41 closing
   ledgers on the issue): B1 gather row staging, B2 batched traversal,
-  lane-per-predictor, WP fusion, radix cmp + MSD bucketing, estimate_cost
-  LUT, capacity reserves all SHIPPED byte-identical; WP batching /
-  inline-dedup-≥8MP / pair-sort / rayon-entry variants measured-REJECTED
-  with committed data. Day deltas: lossless e7 −8…−12 % on screens/docs
+  lane-per-predictor, WP fusion, radix cmp (chunk 1, `a47fabc4`),
+  estimate_cost LUT, capacity reserves all SHIPPED byte-identical; WP
+  batching / inline-dedup-≥8MP / pair-sort / rayon-entry variants
+  measured-REJECTED with committed data. **MSD radix bucketing (chunk 2)
+  was NOT shipped** (corrected 2026-06-13): left as an unfinished orphan
+  WIP from 2026-06-10 (recovered + labeled `STRANDED WIP`; sibling to the
+  rejected pair-sort, never benched to conclusion) — only chunk-1's
+  inline comparator landed. Do not cite bucketing as
+  byte-identical-shipped. Day deltas: lossless e7 −8…−12 % on screens/docs
   (more on photos with hist-sub), e5 −9…−12 %, lossy e3/e4 ≈ −25 %
   (dump env-hook gates + classifier skip). Bench via
   `scripts/bench_lossless_ab.py` on
