@@ -27,7 +27,7 @@ jxl_encoder_macros = { package = "jxl-encoder-macros", version = "0.3.2", path =
 whereat = { version = "0.1.5"}
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
-jxl_simd = { package = "jxl-encoder-simd", version = "0.3.0", path = "../jxl-encoder-simd", default-features = false }
+jxl_simd = { package = "jxl-encoder-simd", version = "0.3.2", path = "../jxl-encoder-simd", default-features = false }
 archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
 rayon = { version = "1.10", optional = true }
 zenjpeg = { version = "0.8.4", default-features = false, features = ["decoder"], optional = true }
