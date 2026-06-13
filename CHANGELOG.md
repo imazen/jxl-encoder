@@ -39,6 +39,17 @@
   cell).
 
 ### Changed
+- **Default memory cap raised 2 GiB → 4 GiB
+  (`Limits::DEFAULT_MAX_MEMORY_BYTES`).** Measured VarDCT peak working set
+  is ~180 bytes/pixel — ~2.14 GB real RSS at 12 MP e9 d4, in line with
+  libjxl `cjxl` v0.12 on the same image (1.23 GB at effort 7 → 3.42 GB at
+  effort 9). The old 2 GiB default rejected ordinary ≥ 11 MP encodes
+  mid-pipeline (a 12 MP PQ-HDR e9 d4 encode failed with `memory budget
+  exceeded: requested 144 MB on top of 2.13 GB`). The 4 GiB default covers
+  up to ~22 MP at the measured rate while still bounding an oversized
+  upload so it can't OOM the process. Hostile-input image proxies should
+  set a tighter cap via `Limits::with_max_memory_bytes`; trusted batch can
+  opt out with `Some(u64::MAX)`. (api.rs)
 - **Prefix-vs-ANS auto choice (libjxl `enc_ans.cc` parity) for VarDCT
   two-pass entropy codes.** Streams that are tiny (< 100 tokens) or
   fully deterministic (every context singleton) now use prefix codes:
@@ -131,6 +142,25 @@
   1418519 mask_med 92.3 sits above every sky cell — no separation).
 
 ### Fixed
+- **Allocation budget over-counted the perceptual loop's scratch buffers,
+  failing large encodes earlier than real RSS warranted.** The buttloop's
+  `TransformOutput` (~149 MB at 12 MP), recon planes (~138 MB), and VDP2
+  HDR reference planes (~144 MB) were reserved with `reserve_permanent`,
+  so the reservations persisted through the post-loop entropy phase after
+  the buffers had been dropped — and the loop's `TransformOutput`
+  double-counted against the base-encode one (they never coexist in real
+  memory). On the 12 MP PQ-HDR e9 d4 case this inflated the budget
+  high-water mark to 2.99 GB against 2.14 GB of real RSS (38 % phantom),
+  which combined with the (then) 2 GiB cap to fail the encode. All four
+  sites now hold RAII `BudgetGuard`s released when the loop returns / the
+  `TransformOutput` drops; the budget peak falls to 2.55 GB (−438 MB) and
+  tracks real RSS. Accounting-only — output is byte-identical (hash-locks
+  48/48, libjxl byte-lock 5/5). Extends the W44-AUDIT-2 `epf.rs` fix to
+  `transform.rs` + `vardct/perceptual_loop.rs`. Regression coverage:
+  `transform_output_reservation_released_on_drop` /
+  `transform_output_two_live_still_exceed_cap` (unit), plus the `issue_54`
+  / `w44_audit_2` no-spurious-OOM tests pinned to an explicit 2 GiB cap so
+  the new 4 GiB default doesn't blunt them.
 - **`with_threads(1)` silently used every core (#74 wall-grid
   postmortem).** `run_with_threads` early-returned for `threads <= 1`
   without installing a pool, so the rayon stages inside the encode

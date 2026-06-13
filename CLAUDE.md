@@ -449,6 +449,26 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-06-13: 12 MP HDR encode failed at 2 GiB cap — budget over-count + too-low default
+
+12 MP PQ-HDR e9 d4 failed with `memory budget exceeded: requested 144 MB on
+top of 2.13 GB (cap 2147483648)`. Measured: real peak RSS is ~2.14 GB
+(byte-identical output 2820230) — NORMAL for VarDCT at 12 MP (libjxl `cjxl`
+v0.12 uses 1.23 GB at e7 → **3.42 GB** at e9 on the same file; we're lighter
+at e9). Two real defects: (1) the `MemoryBudget` tracker over-counted —
+the buttloop's `TransformOutput`/recon/VDP2-ref buffers used
+`reserve_permanent` so the reservations persisted into the post-loop entropy
+phase after the buffers dropped (and the loop's `TransformOutput`
+double-counted the base one — they never coexist), inflating the budget peak
+to 2.99 GB vs 2.14 GB real; (2) `Limits::DEFAULT_MAX_MEMORY_BYTES` was 2 GiB
+— too low for ≥ 11 MP. Fix: all four sites → RAII `BudgetGuard` (peak
+2.99 → 2.55 GB, −438 MB, byte-identical; hash-locks 48/48, byte-lock 5/5);
+default cap 2 GiB → 4 GiB. The `issue_54` / `w44_audit_2` no-spurious-OOM
+tests were pinned to an explicit 2 GiB cap so the 4 GiB default doesn't blunt
+them. Do NOT scale the default cap with image dimensions — that defeats the
+DoS bound (a huge upload would get a huge cap). For trusted batch, callers
+set `Limits::with_max_memory_bytes` higher (or `Some(u64::MAX)`).
+
 ### RESOLVED 2026-06-11: `gpu-butteraugli` did not compile — two cubecl universes
 
 The workspace patched crates.io `cubecl-*` to the lilith/cubecl git fork
@@ -630,6 +650,28 @@ measurement at equal or better coverage.
 
 ### Live follow-ons
 
+- **Encoder memory follow-ups (from the 2026-06-13 12 MP HDR cap fix).**
+  Three measured-but-unfixed items, deprioritized vs the cap+over-count fix
+  that shipped:
+  1. `estimate_peak_memory_bytes_lossy/lossless` (api.rs, back
+     `LossyConfig::estimate_peak_memory_bytes`) compute ~46 B/px (~550 MB
+     at 12 MP) — they model only the dimension-driven planes (linear_rgb +
+     XYB + quant_ac) and MISS the ~1.6 GB of entropy-coding/transient
+     working set that dominates real RSS (~180 B/px measured). The "upper
+     bound" label is wrong — it's a ~4× UNDER-estimate. Needs entropy-coder
+     memory attribution (heaptrack text-mode merges all `alloc_zeroed`; use
+     massif or the GUI) before correcting — do NOT guess a constant.
+  2. e7 real-RSS gap vs cjxl: at 12 MP e7 d4 we use 2.07 GB vs cjxl's
+     1.23 GB (1.68×); our RSS is ~flat across effort (e7 2.07 → e9 2.16)
+     while cjxl scales (1.23 → 3.42). Suggests we over-allocate at low
+     effort (likely materialize full token/coefficient buffers regardless
+     of effort). At e9 we're LIGHTER than cjxl, so this is e7-specific.
+  3. VDP2 (HDR) path holds `linear_rgb` (interleaved, 144 MB at 12 MP) AND
+     planar `ref_r/g/b` (144 MB) simultaneously — same data twice. A real
+     −144 MB saving if the VDP2-lite metric reads interleaved `linear_rgb`
+     directly (metric-backend change in zenmetrics, not accounting). The
+     SDR/butteraugli path could drop `ref_r/g/b` after `set_reference`
+     (backend keeps its own copy) for −144 MB there too.
 - **Lossless screenshots wall — ARC COMPLETE 2026-06-10** (#41 closing
   ledgers on the issue): B1 gather row staging, B2 batched traversal,
   lane-per-predictor, WP fusion, radix cmp (chunk 1, `a47fabc4`),

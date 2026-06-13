@@ -52,6 +52,15 @@ pub struct TransformOutput {
     /// via inverse reinterpreting DCT, NOT from simple 8×8 sub-block pixel averages).
     /// Layout: `[channel][by * xsize_blocks + bx]` in XYB channel order.
     pub float_dc: [Vec<f32>; 3],
+    /// RAII budget reservation released when this `TransformOutput`
+    /// drops. The base-encode `TransformOutput` and the perceptual
+    /// loop's scratch `TransformOutput` (`perceptual_loop.rs`,
+    /// `ssim2_loop.rs`, `zensim_loop.rs`) never overlap in real memory —
+    /// the loop's is dropped before the base one is built — so reserving
+    /// permanently double-counted ~149 MB at 12 MP against the budget.
+    /// Holding the guard makes the budget high-water mark track real
+    /// peak RSS. Same fix pattern as W44-AUDIT-2 in `epf.rs`.
+    _budget_guard: crate::budget::BudgetGuard,
 }
 
 impl TransformOutput {
@@ -75,7 +84,10 @@ impl TransformOutput {
         //   float_dc:    n * sizeof(f32)              = 4n
         // Per channel: 265n; three channels: 795n.
         let bytes = (n as u64).saturating_mul(265 * 3);
-        MemoryBudget::reserve_permanent_opt(budget, bytes)?;
+        // RAII reservation (not permanent): released on drop so the
+        // perceptual loop's scratch copy doesn't double-count against
+        // the budget after it is freed. See the `_budget_guard` field doc.
+        let _budget_guard = MemoryBudget::reserve_opt(budget, bytes)?;
         Ok(Self {
             quant_dc: core::array::from_fn(|_| vec![vec![0i16; xsize_blocks]; ysize_blocks]),
             quant_ac: core::array::from_fn(|_| {
@@ -84,6 +96,7 @@ impl TransformOutput {
             nzeros: core::array::from_fn(|_| vec![vec![0u8; xsize_blocks]; ysize_blocks]),
             raw_nzeros: core::array::from_fn(|_| vec![vec![0u16; xsize_blocks]; ysize_blocks]),
             float_dc: core::array::from_fn(|_| vec![0.0f32; n]),
+            _budget_guard,
         })
     }
 }
@@ -1509,5 +1522,57 @@ impl VarDctEncoder {
             }
             result.scatter_into(out, xsize_blocks);
         }
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::TransformOutput;
+    use crate::budget::MemoryBudget;
+
+    // Per-channel bytes formula mirrored from `TransformOutput::new`.
+    fn one_transform_output_bytes(xb: usize, yb: usize) -> u64 {
+        (xb as u64) * (yb as u64) * (265 * 3)
+    }
+
+    /// The perceptual loop (`perceptual_loop.rs` / `ssim2_loop.rs` /
+    /// `zensim_loop.rs`) allocates a scratch `TransformOutput` that is
+    /// dropped before the base-encode `TransformOutput` is built — the two
+    /// never coexist in real memory. Before the RAII fix, `new` reserved
+    /// the ~149 MB (at 12 MP) **permanently**, so the second
+    /// `TransformOutput` was charged against a budget the first one's
+    /// already-freed bytes still occupied — a chunk of the 12 MP HDR
+    /// 2 GiB-cap overrun. This pins the release-on-drop contract: a budget
+    /// sized for one-and-a-half `TransformOutput`s must admit a second one
+    /// once the first drops.
+    #[test]
+    fn transform_output_reservation_released_on_drop() {
+        let (xb, yb) = (64usize, 64usize); // 4096 blocks
+        let one = one_transform_output_bytes(xb, yb);
+        let budget = MemoryBudget::new(one + one / 2); // fits one, not two
+        {
+            let _t1 = TransformOutput::new(xb, yb, Some(&budget)).expect("first fits");
+            assert!(budget.used() >= one, "first reservation must be charged");
+        }
+        // _t1 dropped: its RAII guard releases the reservation.
+        assert_eq!(budget.used(), 0, "drop must release the reservation");
+        let _t2 = TransformOutput::new(xb, yb, Some(&budget))
+            .expect("second TransformOutput must fit after the first is dropped");
+    }
+
+    /// Inverse guard: two *simultaneously live* `TransformOutput`s still
+    /// exceed a 1.5× cap — proves the guard tracks real peak (the fix did
+    /// not simply stop charging the reservation).
+    #[test]
+    fn transform_output_two_live_still_exceed_cap() {
+        let (xb, yb) = (64usize, 64usize);
+        let one = one_transform_output_bytes(xb, yb);
+        let budget = MemoryBudget::new(one + one / 2);
+        let _t1 = TransformOutput::new(xb, yb, Some(&budget)).expect("first fits");
+        let r2 = TransformOutput::new(xb, yb, Some(&budget));
+        assert!(
+            r2.is_err(),
+            "two concurrently-live TransformOutputs must exceed a 1.5x cap"
+        );
     }
 }

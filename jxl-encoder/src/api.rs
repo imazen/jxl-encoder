@@ -1426,7 +1426,7 @@ impl<'a> ImageMetadata<'a> {
 ///   `Limits.max_quant_loop_iters` (or its default) and the validator
 ///   max.
 /// - [`Self::max_memory_bytes`] — when `None`, the encoder applies
-///   [`Self::DEFAULT_MAX_MEMORY_BYTES`] (≈ 2 GB) as a soft cap so that an
+///   [`Self::DEFAULT_MAX_MEMORY_BYTES`] (≈ 4 GB) as a soft cap so that an
 ///   image proxy without explicit `Limits` configuration still has a
 ///   working-set ceiling. Set to `Some(u64::MAX)` to opt out of the soft
 ///   cap explicitly (this surfaces in logs as "user explicitly disabled
@@ -1447,12 +1447,18 @@ impl Limits {
     pub const DEFAULT_MAX_QUANT_LOOP_ITERS: u32 = crate::validation::ITER_MAX;
 
     /// Default soft cap on encoder working-set memory when no explicit
-    /// [`Self::with_max_memory_bytes`] is set. ~40 bytes/pixel × ~50
-    /// megapixels is roughly 2 GB. Image proxies that don't configure
-    /// `Limits` still get this ceiling so an oversized upload can't OOM
-    /// the process; set a tighter cap explicitly for hostile-input
-    /// scenarios.
-    pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+    /// [`Self::with_max_memory_bytes`] is set.
+    ///
+    /// Set to 4 GiB. The measured VarDCT peak working set is ~180
+    /// bytes/pixel — e.g. ~2.2 GB at 12 MP, in line with libjxl `cjxl`
+    /// (1.2 GB at effort 7 → 3.4 GB at effort 9 on the same image). The
+    /// previous 2 GB default rejected ordinary ≥ 11 MP encodes that the
+    /// encoder (and libjxl) handle fine. 4 GiB covers up to ~22 MP at the
+    /// measured rate while still bounding an oversized upload so it can't
+    /// OOM the process. For hostile-input image proxies, set a tighter
+    /// cap explicitly via [`Self::with_max_memory_bytes`]; for trusted
+    /// batch work, raise it (or pass `Some(u64::MAX)` to opt out).
+    pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
     /// Create limits with no restrictions (all `None`).
     pub fn new() -> Self {
@@ -1480,7 +1486,7 @@ impl Limits {
     /// Set maximum memory bytes the encoder may allocate.
     ///
     /// When unset, the encoder applies
-    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as a soft cap. Pass
+    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`] (~4 GB) as a soft cap. Pass
     /// `u64::MAX` explicitly to disable the cap (with the understanding
     /// that an unbounded working set on a hostile input can OOM the
     /// process).
@@ -8325,7 +8331,7 @@ impl<'a> EncodeRequest<'a> {
 
         // Build the per-encode allocation budget. Caller-supplied
         // Limits.max_memory_bytes wins; otherwise Limits provides its
-        // soft-default cap (~2 GB). The budget is threaded through to
+        // soft-default cap (~4 GB). The budget is threaded through to
         // major dimension-driven allocation sites (XYB planes, padded
         // scratch, group buffers, modular channels) via RAII guards;
         // peak working-set is observable post-encode via `peak()`.
@@ -10267,7 +10273,7 @@ pub struct LossyEncoder {
     brotli_metadata_quality: Option<u32>,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
-    /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
+    /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~4 GB) as
     /// a soft default.
     limits: Option<Limits>,
 }
@@ -10392,7 +10398,7 @@ impl LossyEncoder {
     /// The supplied [`Limits`] is consulted at [`finish`](Self::finish)
     /// time to derive the per-encode allocation cap, mirroring
     /// [`EncodeRequest::with_limits`]. When unset the encoder applies the
-    /// soft default ([`Limits::DEFAULT_MAX_MEMORY_BYTES`], ~2 GB).
+    /// soft default ([`Limits::DEFAULT_MAX_MEMORY_BYTES`], ~4 GB).
     pub fn with_limits(mut self, limits: &Limits) -> Self {
         self.limits = Some(limits.clone());
         self
@@ -10946,7 +10952,7 @@ impl LossyEncoder {
 
         // Construct the per-encode allocation budget. Streaming callers
         // can attach a [`Limits`] via [`Self::with_limits`]; otherwise we
-        // apply the same soft default the request path uses (~2 GB).
+        // apply the same soft default the request path uses (~4 GB).
         // Mirrors the up-front working-set check in
         // `EncodeRequest::encode_inner` so absurd dimensions get an early
         // `LimitExceeded` instead of a confusing mid-encode failure.
@@ -11657,7 +11663,7 @@ pub struct LosslessEncoder {
     brotli_metadata_quality: Option<u32>,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
-    /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
+    /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~4 GB) as
     /// a soft default.
     limits: Option<Limits>,
 }
@@ -11782,7 +11788,7 @@ impl LosslessEncoder {
     /// The supplied [`Limits`] is consulted at [`finish`](Self::finish)
     /// time to derive the per-encode allocation cap, mirroring
     /// [`EncodeRequest::with_limits`]. When unset the encoder applies the
-    /// soft default ([`Limits::DEFAULT_MAX_MEMORY_BYTES`], ~2 GB).
+    /// soft default ([`Limits::DEFAULT_MAX_MEMORY_BYTES`], ~4 GB).
     pub fn with_limits(mut self, limits: &Limits) -> Self {
         self.limits = Some(limits.clone());
         self

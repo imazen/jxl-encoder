@@ -53,7 +53,7 @@ fn budget_allows_request_under_cap() {
 
 #[test]
 fn no_explicit_limits_uses_default_cap() {
-    // No explicit Limits → encoder applies DEFAULT_MAX_MEMORY_BYTES (2 GB).
+    // No explicit Limits → encoder applies DEFAULT_MAX_MEMORY_BYTES (4 GiB).
     // Reasonable image fits comfortably.
     let (w, h) = (256u32, 256u32);
     let pixels = vec![64u8; (w * h * 3) as usize];
@@ -535,19 +535,23 @@ fn w44_audit_2_e9_d4_large_screenshot_no_spurious_oom() {
         }
     }
 
+    // This regression was calibrated against the (then-default) 2 GiB cap.
+    // The default is now 4 GiB (12 MP HDR memory fix, 2026-06-13), which
+    // would hand this 4 MP cell ~2 GiB of slack and blunt the test. Pin the
+    // historical 2 GiB cap explicitly so a re-introduced leak still trips it.
+    let limits = Limits::new().with_max_memory_bytes(2 * 1024 * 1024 * 1024);
     for strategy in [EncoderStrategy::Zenjxl, EncoderStrategy::Libjxl] {
         let cfg = LossyConfig::new(4.0)
             .with_effort(9)
             .with_strategy(strategy.clone());
-        // NOTE: explicitly NO `.with_limits()` — exercise the default
-        // 2 GiB cap (the path that was failing in production).
         let bytes = cfg
             .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&limits)
             .encode(&pixels)
             .unwrap_or_else(|e| {
                 panic!(
                     "W44-AUDIT-2 regression: e9 d=4 on 4 MP screenshot OOM'd \
-                 under default 2 GiB cap with strategy {strategy:?}: {e}"
+                 under explicit 2 GiB cap with strategy {strategy:?}: {e}"
                 )
             });
         assert!(
@@ -619,15 +623,18 @@ fn issue_54_imac_g3_e9_d4_no_spurious_oom() {
     }
 
     let cfg = LossyConfig::new(4.0).with_effort(9);
-    // NOTE: NO `.with_limits()` — exercise the default 2 GiB cap path
-    // (the path that failed in the W44-1 ledger seed run).
+    // Pin the historical 2 GiB cap explicitly: the default is now 4 GiB
+    // (12 MP HDR memory fix, 2026-06-13), so relying on the default would
+    // give this 5.6 MP cell too much slack to catch a re-introduced leak.
+    let limits = Limits::new().with_max_memory_bytes(2 * 1024 * 1024 * 1024);
     let bytes = cfg
         .encode_request(w, h, PixelLayout::Rgb8)
+        .with_limits(&limits)
         .encode(&pixels)
         .unwrap_or_else(|e| {
             panic!(
                 "issue #54 regression: e9 d=4 on imac_g3-sized (2940×1912 ≈ \
-                 5.6 MP) screenshot OOM'd under default 2 GiB cap: {e}"
+                 5.6 MP) screenshot OOM'd under explicit 2 GiB cap: {e}"
             )
         });
     assert!(

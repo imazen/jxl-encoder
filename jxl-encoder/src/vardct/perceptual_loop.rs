@@ -906,6 +906,18 @@ impl VarDctEncoder {
         // where the planes are released after the reference precompute takes
         // ownership of an internal copy).
         let n = width * height;
+        // `ref_r/g/b` are function-scope locals alive until this method
+        // returns: the VDP2 path walks them every iteration, the
+        // butteraugli path hands them to the backend's reference
+        // precompute. Reserve their `n*4*3` bytes once, RAII-released on
+        // return, so the budget tracks their real lifetime. Previously the
+        // VDP2 branch reserved them *permanently* (the reservation
+        // outlived the planes' drop and double-counted against the
+        // post-buttloop entropy phase — part of the 12 MP HDR 2 GB cap
+        // overrun), while the butteraugli branch released its reservation
+        // early. Accounting-only; byte-identical output.
+        let _ref_planes_guard =
+            MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
         let mut ref_r = vec![0.0f32; n];
         let mut ref_g = vec![0.0f32; n];
         let mut ref_b = vec![0.0f32; n];
@@ -933,14 +945,14 @@ impl VarDctEncoder {
         // per W44-RECON-DEEP/A7).
         let backend: Option<alloc::boxed::Box<dyn super::perceptual_backend::PerceptualBackend>> =
             if use_vdp2 {
-                // VDP2 path: hold onto the planar refs permanently (one
-                // n*4*3 reservation) and skip the butteraugli precompute.
-                MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+                // VDP2 path: the planar refs (reserved by
+                // `_ref_planes_guard` above) are walked every iteration;
+                // skip the butteraugli precompute.
                 None
             } else {
-                // Butteraugli path: transient n*4*3 reservation released as
-                // soon as the reference precompute owns its internal copy.
-                let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+                // Butteraugli path: the backend's reference precompute
+                // takes its own internal copy of `ref_r/g/b` (already
+                // reserved by `_ref_planes_guard` above).
                 // W44-RECON-DEEP/A10: dispatch `intensity_target` on the
                 // encoded transfer function (libjxl-parity with
                 // `enc_adaptive_quantization.cc:949-953`). SDR (sRGB /
@@ -1189,10 +1201,15 @@ impl VarDctEncoder {
             }
         }
 
-        // Pre-allocate buffers reused across iterations.
-        // These live for the duration of the loop — accounted permanently.
-        // sharpness is u8, tile_dist is f32 of num_blocks, recon_* are f32 of padded_pixels.
-        MemoryBudget::reserve_permanent_opt(
+        // Pre-allocate buffers reused across iterations. These are
+        // function-scope locals dropped when this method returns, so the
+        // reservation is RAII (released on return) rather than permanent:
+        // a permanent reservation kept counting them against the budget
+        // through the post-buttloop entropy phase, where they no longer
+        // exist — a chunk of the 12 MP HDR 2 GB cap overrun. Accounting
+        // only; byte-identical output. (sharpness is u8, tile_dist is f32
+        // of num_blocks, recon_* are f32 of padded_pixels.)
+        let _loop_buffers_guard = MemoryBudget::reserve_opt(
             budget,
             (num_blocks as u64)
                 .saturating_add((num_blocks as u64).saturating_mul(4))
