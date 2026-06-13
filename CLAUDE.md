@@ -661,11 +661,16 @@ measurement at equal or better coverage.
      bound" label is wrong — it's a ~4× UNDER-estimate. Needs entropy-coder
      memory attribution (heaptrack text-mode merges all `alloc_zeroed`; use
      massif or the GUI) before correcting — do NOT guess a constant.
-  2. e7 real-RSS gap vs cjxl: at 12 MP e7 d4 we use 2.07 GB vs cjxl's
-     1.23 GB (1.68×); our RSS is ~flat across effort (e7 2.07 → e9 2.16)
-     while cjxl scales (1.23 → 3.42). Suggests we over-allocate at low
-     effort (likely materialize full token/coefficient buffers regardless
-     of effort). At e9 we're LIGHTER than cjxl, so this is e7-specific.
+  2. e7 real-RSS gap vs cjxl — LARGELY ADDRESSED 2026-06-13. Root cause
+     (heaptrack peak attribution): `compute_epf_sharpness` ran its 2-3
+     candidates via `parallel_map`, each cloning base_recon + scratch
+     (~432 MB/candidate at 12 MP) → ~1.3 GB held at once, the single
+     biggest real-memory consumer. Fixed: sequential candidates + reused
+     buffers + strip-parallel `compute_block_l2_errors` (byte-identical,
+     hash-locks 48/48). 12 MP e7 RSS 2.07 → 1.55 GB (−27%, gap to cjxl
+     1.23 GB roughly halved); e9 2.15 → 1.61 GB. Wall +7 % e7 / +3 % e9
+     (sequential apply_epf loses candidate overlap; the residual gap to
+     cjxl is the entropy-coder/token materialization, still unattributed).
   3. VDP2 (HDR) path holds `linear_rgb` (interleaved, 144 MB at 12 MP) AND
      planar `ref_r/g/b` (144 MB) simultaneously — same data twice. A real
      −144 MB saving if the VDP2-lite metric reads interleaved `linear_rgb`

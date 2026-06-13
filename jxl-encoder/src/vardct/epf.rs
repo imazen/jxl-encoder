@@ -907,6 +907,51 @@ fn compute_block_l2_errors(
     xsize_blocks: usize,
     ysize_blocks: usize,
 ) -> Vec<f32> {
+    // Strip-parallel over block-rows. Each 8x8 block's error is an
+    // independent function of its own pixels (no cross-block reduction) and
+    // the SIMD kernel indexes pixels relative to its input slice, so running
+    // a contiguous block-row range on a sliced view is bit-exact with the
+    // whole-image call. This reclaims the per-candidate serial L2 cost the
+    // sequential sharpness search (`compute_epf_sharpness`) would otherwise
+    // pay 2-3x. Below the strip size we call the kernel directly (the
+    // parallel split overhead would dominate).
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        const STRIP_BLOCK_ROWS: usize = 16; // 128-px-tall strips
+        if ysize_blocks > STRIP_BLOCK_ROWS {
+            let padded_width = xsize_blocks * 8;
+            let mut errors = vec![0.0f32; xsize_blocks * ysize_blocks];
+            errors
+                .par_chunks_mut(STRIP_BLOCK_ROWS * xsize_blocks)
+                .enumerate()
+                .for_each(|(si, out)| {
+                    let by0 = si * STRIP_BLOCK_ROWS;
+                    let by_count = out.len() / xsize_blocks; // last strip may be short
+                    let row0 = by0 * 8 * padded_width;
+                    let rows = by_count * 8 * padded_width;
+                    let orig_s: [&[f32]; 3] = [
+                        &original[0][row0..row0 + rows],
+                        &original[1][row0..row0 + rows],
+                        &original[2][row0..row0 + rows],
+                    ];
+                    let recon_s: [&[f32]; 3] = [
+                        &reconstructed[0][row0..row0 + rows],
+                        &reconstructed[1][row0..row0 + rows],
+                        &reconstructed[2][row0..row0 + rows],
+                    ];
+                    let strip = jxl_simd::compute_block_l2_errors(
+                        orig_s,
+                        recon_s,
+                        &mask1x1[row0..row0 + rows],
+                        xsize_blocks,
+                        by_count,
+                    );
+                    out.copy_from_slice(&strip);
+                });
+            return errors;
+        }
+    }
     jxl_simd::compute_block_l2_errors(original, reconstructed, mask1x1, xsize_blocks, ysize_blocks)
 }
 
@@ -981,63 +1026,78 @@ pub(crate) fn compute_epf_sharpness(
     let max_padded_len = max_padded_stride * (padded_height + 2 * max_pad);
     let n = padded_width * padded_height;
 
-    // Compute per-candidate error maps in parallel. Each candidate needs its own
-    // reconstruction clone and scratch buffers since they cannot be shared across
-    // threads; in the sequential fallback `parallel_map` runs each closure in
-    // turn, which still allocates per-candidate scratch (matches previous
-    // behaviour modulo scratch sharing — the allocation cost is dwarfed by the
-    // EPF + L2 compute for realistic image sizes).
-    // Each candidate's per-thread scratch (3 output planes + 3 padded planes +
-    // a clone of base_recon's 3 planes) is transient — held only inside the
-    // closure. Account it as a transient guard so peak tracking stays accurate
-    // when sharpness search runs after a permanent reservation.
-    let scratch_bytes_per_candidate: u64 = (n as u64)
+    // Compute per-candidate error maps SEQUENTIALLY, reusing one set of
+    // scratch buffers across candidates. The candidates are independent
+    // (each `error_map` is a pure function of its candidate, so order does
+    // not matter — byte-identical to the prior `parallel_map` over
+    // candidates), and `apply_epf_with_scratch` is already strip-parallel
+    // internally, so it saturates all cores PER candidate. Running the 2-3
+    // candidates as separate parallel tasks therefore bought little extra
+    // throughput but multiplied the peak working set: each task cloned
+    // `base_recon` (~144 MB at 12 MP) plus scratch + padded planes
+    // (~432 MB/task total), so 3 candidates held ~1.3 GB simultaneously —
+    // the single largest real-memory consumer in the encoder (heaptrack
+    // peak attribution, 2026-06-13). Allocating the buffers once and
+    // resetting `recon` from `base_recon` each iteration holds ~432 MB
+    // instead, ≈ -860 MB at 3 candidates and closes most of the e7
+    // memory gap vs libjxl `cjxl`. EPF kernels overwrite every output
+    // pixel and `recon` is fully reset each iter, so reuse changes no
+    // values.
+    let scratch_bytes: u64 = (n as u64)
         .saturating_mul(4 * 3) // scratch_x/y/b
-        .saturating_add((max_padded_len as u64).saturating_mul(4 * 3))
-        .saturating_add((n as u64).saturating_mul(4 * 3)); // base_recon clone
-    let error_maps: Vec<Vec<f32>> =
-        crate::parallel::parallel_map_result(candidates.len(), |ci| -> Result<Vec<f32>> {
-            let _scratch_guard = MemoryBudget::reserve_opt(budget, scratch_bytes_per_candidate)?;
-            let sharpness_val = candidates[ci];
-            let mut recon = base_recon.clone();
+        .saturating_add((max_padded_len as u64).saturating_mul(4 * 3)) // padded_scratch
+        .saturating_add((n as u64).saturating_mul(4 * 3)); // recon (reused base_recon copy)
+    let _scratch_guard = MemoryBudget::reserve_opt(budget, scratch_bytes)?;
+    let mut recon = base_recon.clone();
+    let mut scratch_x = jxl_simd::vec_f32_dirty(n);
+    let mut scratch_y = jxl_simd::vec_f32_dirty(n);
+    let mut scratch_b = jxl_simd::vec_f32_dirty(n);
+    let mut padded_scratch: [Vec<f32>; 3] =
+        core::array::from_fn(|_| jxl_simd::vec_f32_dirty(max_padded_len));
+    let mut error_maps: Vec<Vec<f32>> = Vec::with_capacity(candidates.len());
+    for (ci, &sharpness_val) in candidates.iter().enumerate() {
+        // Reset recon to the (immutable) base reconstruction for every
+        // candidate after the first (the first reuses the `base_recon.clone()`
+        // above). apply_epf is destructive and may swap/replace recon's plane
+        // buffers, but every plane stays length `n`, so copy_from_slice always
+        // matches.
+        if ci > 0 {
+            for c in 0..3 {
+                recon[c].copy_from_slice(&base_recon[c]);
+            }
+        }
 
-            let uniform_sharpness = vec![sharpness_val; nblocks];
-            let inv_sigma = compute_inv_sigma_map(
-                quant_field,
-                &uniform_sharpness,
-                params.scale,
-                xsize_blocks,
-                ysize_blocks,
-            );
+        let uniform_sharpness = vec![sharpness_val; nblocks];
+        let inv_sigma = compute_inv_sigma_map(
+            quant_field,
+            &uniform_sharpness,
+            params.scale,
+            xsize_blocks,
+            ysize_blocks,
+        );
 
-            let mut scratch_x = jxl_simd::vec_f32_dirty(n);
-            let mut scratch_y = jxl_simd::vec_f32_dirty(n);
-            let mut scratch_b = jxl_simd::vec_f32_dirty(n);
-            let mut padded_scratch: [Vec<f32>; 3] =
-                core::array::from_fn(|_| jxl_simd::vec_f32_dirty(max_padded_len));
+        apply_epf_with_scratch(
+            &mut recon,
+            &inv_sigma,
+            params.epf_iters,
+            xsize_blocks,
+            padded_width,
+            padded_height,
+            &mut scratch_x,
+            &mut scratch_y,
+            &mut scratch_b,
+            &mut padded_scratch,
+            budget,
+        )?;
 
-            apply_epf_with_scratch(
-                &mut recon,
-                &inv_sigma,
-                params.epf_iters,
-                xsize_blocks,
-                padded_width,
-                padded_height,
-                &mut scratch_x,
-                &mut scratch_y,
-                &mut scratch_b,
-                &mut padded_scratch,
-                budget,
-            )?;
-
-            Ok(compute_block_l2_errors(
-                original_xyb,
-                [&recon[0], &recon[1], &recon[2]],
-                mask1x1,
-                xsize_blocks,
-                ysize_blocks,
-            ))
-        })?;
+        error_maps.push(compute_block_l2_errors(
+            original_xyb,
+            [&recon[0], &recon[1], &recon[2]],
+            mask1x1,
+            xsize_blocks,
+            ysize_blocks,
+        ));
+    }
 
     #[cfg(feature = "__env_var_diagnostics")]
     if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {

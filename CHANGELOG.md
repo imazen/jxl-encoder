@@ -50,6 +50,19 @@
   upload so it can't OOM the process. Hostile-input image proxies should
   set a tighter cap via `Limits::with_max_memory_bytes`; trusted batch can
   opt out with `Some(u64::MAX)`. (api.rs)
+- **EPF sharpness search runs candidates sequentially with reused buffers
+  (−25–27% encoder peak RSS, byte-identical).** `compute_epf_sharpness`
+  evaluated its 2–3 sharpness candidates via `parallel_map`, each cloning
+  `base_recon` + allocating scratch/padded planes (~432 MB/candidate at
+  12 MP), so 3 candidates held ~1.3 GB at once — the single largest
+  real-memory consumer (heaptrack peak attribution), and the reason the e7
+  peak (2.07 GB) ran 1.7× over libjxl `cjxl` (1.23 GB). Since `apply_epf`
+  is already strip-parallel internally, candidate-level parallelism mostly
+  oversubscribed memory. Candidates now run sequentially reusing one buffer
+  set, and `compute_block_l2_errors` was made strip-parallel to reclaim the
+  per-candidate serial L2 cost. Measured on 12 MP PQ-HDR d4: peak RSS
+  2.11 GB → 1.55 GB at e7 (−27%) and 2.15 GB → 1.61 GB at e9 (−25%); wall
+  +7 % at e7 / +3 % at e9. Output byte-identical (hash-locks 48/48). (epf.rs)
 - **Prefix-vs-ANS auto choice (libjxl `enc_ans.cc` parity) for VarDCT
   two-pass entropy codes.** Streams that are tiny (< 100 tokens) or
   fully deterministic (every context singleton) now use prefix codes:
