@@ -69,9 +69,10 @@ pub struct EncodeEstimate {
     /// Conservative upper-bound peak memory in bytes (worst content +
     /// margin). Use this to size a [`crate::api::Limits`] cap.
     pub peak_memory_bytes_max: u64,
-    /// Rough encode time estimate in milliseconds (typical content,
-    /// single-threaded). Coarse — calibrated from the same sweep's wall
-    /// times, which include a small PNG-load component.
+    /// Rough single-thread encode time in milliseconds, effort-aware.
+    /// Calibrated from measured wall/user time (`mem_probe`, threads=1,
+    /// 2026-06-14) — effort dominates: lossless e9 is ~300× e1 per pixel.
+    /// Divide by thread count for an approximate wall-latency estimate.
     pub time_ms: f32,
     /// Rough estimated output size in bytes.
     pub output_bytes: u64,
@@ -120,10 +121,45 @@ const LOSSLESS_BPP_ALPHA: f64 = 230.0;
 const MULT_MIN: f64 = 0.85;
 const MULT_MAX: f64 = 1.8;
 
-/// Rough encode throughput (megapixels/s, single-thread, typical) for the
-/// coarse time estimate — from the calibration sweep wall times.
-const LOSSY_MPIXELS_PER_S: f64 = 6.0;
-const LOSSLESS_MPIXELS_PER_S: f64 = 3.0;
+/// Single-thread encode microseconds/pixel per effort, measured 2026-06-14
+/// (`mem_probe` wall/user, threads=1, 512²+1024², median over 3 classes;
+/// `benchmarks/jxl_encode_time_2026-06-14.tsv`). Encode time is dominated
+/// by EFFORT, not path-flat throughput — lossless spans 0.04 → 12.8 µs/px
+/// (e1 → e9, ~300×), lossy 0.05 → 1.4. The old flat 3/6 MP/s model was
+/// ~8× high at low effort and ~38× low at e9. Anchors are interpolated
+/// linearly between measured efforts and clamped to [1, 9] (e10+ unmeasured
+/// — the e9 value is a lower bound there). `(effort, us_per_px)`.
+const LOSSY_TIME_ANCHORS: [(f64, f64); 5] = [
+    (1.0, 0.053),
+    (3.0, 0.058),
+    (5.0, 0.21),
+    (7.0, 0.343),
+    (9.0, 1.435),
+];
+const LOSSLESS_TIME_ANCHORS: [(f64, f64); 5] = [
+    (1.0, 0.043),
+    (3.0, 0.081),
+    (5.0, 0.587),
+    (7.0, 2.542),
+    (9.0, 12.827),
+];
+
+fn encode_us_per_px(is_lossless: bool, effort: u8) -> f64 {
+    let anchors = if is_lossless {
+        &LOSSLESS_TIME_ANCHORS
+    } else {
+        &LOSSY_TIME_ANCHORS
+    };
+    let e = (effort as f64).clamp(anchors[0].0, anchors[4].0);
+    for w in anchors.windows(2) {
+        let (e0, u0) = w[0];
+        let (e1, u1) = w[1];
+        if e <= e1 {
+            return u0 + (u1 - u0) * (e - e0) / (e1 - e0);
+        }
+    }
+    anchors[4].1
+}
 
 /// Typical marginal-working-set bytes/pixel for the given path + effort.
 /// Lossy e8/e9/e10 measured 314/326/348 B/px at 1 MP but the working set
@@ -190,12 +226,7 @@ pub fn estimate_encode(
     let min = base + (working as f64 * MULT_MIN) as u64;
     let max = base + (working as f64 * MULT_MAX) as u64;
 
-    let mpix_s = if is_lossless {
-        LOSSLESS_MPIXELS_PER_S
-    } else {
-        LOSSY_MPIXELS_PER_S
-    };
-    let time_ms = (pixels as f64 / (mpix_s * 1_000.0)) as f32;
+    let time_ms = (pixels as f64 * encode_us_per_px(is_lossless, effort) / 1_000.0) as f32;
     // Coarse output estimate: lossless ~0.5× input; lossy scales loosely.
     let output_bytes = if is_lossless {
         input / 2
@@ -264,6 +295,35 @@ mod tests {
         assert!(ll7 > ll6 * 2, "lossless full tree-learning step at e7");
         assert!(ll10 > ll7, "lossless e10 step above the e7-e9 band");
         assert!(ll7 > lossy9, "lossless e7 heavier than lossy e9");
+    }
+
+    /// Encode time is effort-aware (the flat-throughput model was wrong):
+    /// higher effort → strictly more time, lossless e9 ≫ e1, and lossless
+    /// is slower than lossy at high effort.
+    #[test]
+    fn encode_time_effort_aware() {
+        let (w, h) = (2048, 2048);
+        let t = |ll, e| estimate_encode(w, h, 3, false, ll, e).unwrap().time_ms;
+        assert!(
+            t(false, 9) > t(false, 5) && t(false, 5) > t(false, 1),
+            "lossy time ↑ with effort"
+        );
+        assert!(
+            t(true, 9) > t(true, 7) && t(true, 7) > t(true, 3),
+            "lossless time ↑ with effort"
+        );
+        // lossless e9 measured ~300× e1 per pixel — assert a big gap.
+        assert!(
+            t(true, 9) > t(true, 1) * 100.0,
+            "lossless e9 ≫ e1, got {}",
+            t(true, 9) / t(true, 1)
+        );
+        assert!(t(true, 9) > t(false, 9), "lossless e9 slower than lossy e9");
+        // effort below/above the measured range clamps (no panic, monotone).
+        assert_eq!(
+            t(false, 1),
+            estimate_encode(w, h, 3, false, false, 0).unwrap().time_ms
+        );
     }
 
     /// Alpha adds a substantial lossless per-pixel term (~+230 B/px, the

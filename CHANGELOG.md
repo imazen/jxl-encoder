@@ -35,7 +35,12 @@
   the `fine_grained_step`/multi-seed step) and a lossless **alpha** term
   (+230 B/px; `estimate_encode` gains a `has_alpha` param). Lossy e8/e9/e10
   collapse to one band at 12 MP (sub-linear in size) and lossy+alpha is
-  negligible, so neither gets a separate band.
+  negligible, so neither gets a separate band. `time_ms` is now
+  **effort-aware** (was a flat per-path throughput): measured single-thread
+  µs/px per effort (`mem_probe` now reports wall + user/sys CPU,
+  `benchmarks/jxl_encode_time_2026-06-14.tsv`) — encode time is dominated by
+  effort (lossless e9 ≈ 300× e1 per pixel), so the old 3/6 MP/s constant was
+  ~8× high at low effort and ~38× low at e9.
 - **Comprehensive HDR test suite (`tests/it/hdr_suite.rs`), modeled on
   libjxl's HDR coverage.** Seven gates: TF×Primaries signaling
   preservation matrix (libjxl `PreserveOriginalProfileTest` shape, 15
