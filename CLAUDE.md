@@ -468,6 +468,13 @@ tests were pinned to an explicit 2 GiB cap so the 4 GiB default doesn't blunt
 them. Do NOT scale the default cap with image dimensions — that defeats the
 DoS bound (a huge upload would get a huge cap). For trusted batch, callers
 set `Limits::with_max_memory_bytes` higher (or `Some(u64::MAX)`).
+**Follow-up 2026-06-14: the default cap is now PATH-AWARE** — lossy stays
+4 GiB, lossless is 8 GiB (`DEFAULT_MAX_MEMORY_BYTES_LOSSLESS` +
+`default_max_memory_bytes(is_lossless)`), because lossless tree-learning is
+~440 B/px (≈ 5 GB at 12 MP) so a flat 4 GiB rejected ordinary ≥ 9 MP
+lossless encodes. Both remain fixed ceilings (still not dimension-scaled);
+the 5 internal budget-cap sites select by path; explicit
+`with_max_memory_bytes` still wins. Commit nvupmply.
 
 ### RESOLVED 2026-06-11: `gpu-butteraugli` did not compile — two cubecl universes
 
@@ -653,14 +660,29 @@ measurement at equal or better coverage.
 - **Encoder memory follow-ups (from the 2026-06-13 12 MP HDR cap fix).**
   Three measured-but-unfixed items, deprioritized vs the cap+over-count fix
   that shipped:
-  1. `estimate_peak_memory_bytes_lossy/lossless` (api.rs, back
-     `LossyConfig::estimate_peak_memory_bytes`) compute ~46 B/px (~550 MB
-     at 12 MP) — they model only the dimension-driven planes (linear_rgb +
-     XYB + quant_ac) and MISS the ~1.6 GB of entropy-coding/transient
-     working set that dominates real RSS (~180 B/px measured). The "upper
-     bound" label is wrong — it's a ~4× UNDER-estimate. Needs entropy-coder
-     memory attribution (heaptrack text-mode merges all `alloc_zeroed`; use
-     massif or the GUI) before correcting — do NOT guess a constant.
+  1. `estimate_peak_memory_bytes` — RESOLVED 2026-06-14 by calibration, NOT
+     a guessed constant. The old term-by-term model modelled only the
+     dimension-driven planes (linear_rgb + XYB + quant_ac) and MISSED the
+     entropy-coding/transient working set → ~4× under on lossy, ~14× under on
+     lossless (it treated tree-learning as ~8 B/px; measured ~440). Replaced
+     by `crate::heuristics::estimate_encode` (new module, zenwebp per-codec
+     pattern): `EncodeEstimate { peak_memory_bytes_min / peak_memory_bytes
+     (typical) / _max, time_ms, output_bytes }`, model `input + fixed +
+     bpp(path, effort)·pixels` with effort STEP jumps (lossy buttloop e≥8,
+     lossless tree-learning e≥7) + content mult (min 0.85 / max 1.8). Both
+     configs' `estimate_peak_memory_bytes` delegate to `..._max`; new
+     `estimate_encode(w,h,layout)` exposes the full breakdown. Constants
+     calibrated from the MARGINAL working set (mem_probe `VmHWM` delta,
+     12 MP-anchored — no extrapolation): lossy 75/87/300 B/px (e5/e7/e8+),
+     lossless 88/135/440 B/px (e5/e6/e7+). Provenance
+     `benchmarks/mem_peak_calibrate_libharness_2026-06-14.tsv`; harness
+     `scripts/mem_peak_calibrate.py` + `examples/mem_probe.rs`. Bit depth
+     barely moves it (8 vs 16-bit ≈ 75 vs 72 B/px — f32 internals dominate,
+     only the input buffer carries bpp). Commits ntszwlux (module) +
+     ltqvptqw (rewire). REMAINING: RGBA alpha working-set is folded into the
+     RGB-calibrated term (a documented under-model — alpha test asserts only
+     the +1 input byte/px); a full ≥50-img/class sweep for tighter
+     percentiles + e8/e10 points + RGBA calibration is the open follow-up.
   2. e7 real-RSS gap vs cjxl — LARGELY ADDRESSED 2026-06-13. Root cause
      (heaptrack peak attribution): `compute_epf_sharpness` ran its 2-3
      candidates via `parallel_map`, each cloning base_recon + scratch
