@@ -40,6 +40,7 @@ pub(crate) mod parallel;
 /// See [`hdr::HdrFromSdrRequest`] for the end-to-end API.
 #[cfg(feature = "hdr-gainmap")]
 pub mod hdr;
+pub mod heuristics;
 pub mod profile_phases;
 // W44-192: side-by-side prototype proving the `strategy_def!` proc-macro
 // generates code equivalent to the hand-written gate plumbing in `api.rs`.

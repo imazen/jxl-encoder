@@ -1,0 +1,13 @@
+# mem_peak_calibrate provenance
+commit: c93d8d18
+host: lilith
+date: 2026-06-14
+bin: target/release/examples/mem_probe
+sizes: [64, 256, 512, 1024, 1448, 2048]
+efforts: [5, 7, 9]
+distances: [2.0]
+depths: [8, 16]
+paths: ['lossy', 'lossless']
+content: [['/mnt/v/output/imazen-26-png-v3/1000-lilith-photos-general/1064_general_castle-bridge-moat_montjuic-castle-barcelona_zfold7_iso40-f1p7_20260315-175347_3000x4000.hdr.png', 'photo'], ['/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png', 'screenshot'], ['/mnt/v/output/imazen-26-png-v3/2200-unsplash-renders/2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png', 'render'], ['/mnt/v/output/imazen-26-png-v3/2400-unsplash-textures/2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png', 'texture'], ['/mnt/v/output/imazen-26-png-v3/5200-epa-climate-impact-2021-report/5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png', 'document'], ['/mnt/v/output/imazen-26-png-v3/9094-lilith-ai-illustrations/9094_gen_illustrations_abstract-floral-gouache_1024x1536.sdr.png', 'ai_illustration']]
+native: []
+measure: mem_probe VmHWM delta = encoder MARGINAL working set (excludes binary floor + input buffer), one process per cell
