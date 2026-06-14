@@ -686,6 +686,29 @@ measurement at equal or better coverage.
      lower the high-water mark. The win is reduced memory pressure during
      the loop + removed redundancy, not peak. Further PEAK reduction must
      target the EPF search (base_recon + recon clone + step0 buffers).
+- **Allocation-count vs libjxl — TWO NAIVE FIXES RULED OUT 2026-06-13.**
+  We do ~1.45 M allocs at 12 MP e9 d4 vs libjxl's 831 k (1.75×), but
+  *temporary* allocs already match (104 k ≈ 105 k), so the excess is
+  long-lived tiny-byte allocations — likely NOT on the wall-time critical
+  path (un-profiled). Heaptrack alloc-COUNT attribution: entropy
+  `AccumulatedAnsData` (merge/add_tokens/Histogram) ~65 %, `dot_detection`
+  14 %, DC `find_best_split` 12 %. Two byte-identical "plug-in" fixes were
+  tried and BOTH REGRESSED, do not re-try:
+  (a) `value_freqs`/`lz77_freqs` `BTreeMap<u32,u32>` → `hashbrown::HashMap`:
+  **+11 %** allocs. Rust's `BTreeMap` is a B-tree (~11 entries/node) so a
+  small map = 1 node alloc; hashbrown resizes its buffer 3-4× as it grows.
+  For "many small freshly-built maps" BTreeMap wins.
+  (b) pre-reserving each accumulator `Histogram`'s counts to
+  `ANS_MAX_ALPHABET_SIZE` (256): **+132 %** allocs. `AccumulatedAnsData::new`
+  builds `num_contexts` histograms PER GROUP but most contexts are EMPTY in
+  a given 256² group — lazy `Vec::new()` costs 0 allocs for an empty
+  histogram; pre-reserving forces a 1 KB alloc on every empty one.
+  The real lever is architectural — the sparse per-group accumulator is
+  rebuilt per group; a pool/reuse (the existing `Histogram::clear`/
+  `copy_from` infra retains capacity, but `BTreeMap::clear` frees nodes) or
+  a sparse representation, NOT a data-structure swap. Gate any such work on
+  a callgrind malloc-fraction profile first — the temporary-alloc parity
+  says the allocator is probably not the bottleneck.
 - **Lossless screenshots wall — ARC COMPLETE 2026-06-10** (#41 closing
   ledgers on the issue): B1 gather row staging, B2 batched traversal,
   lane-per-predictor, WP fusion, radix cmp (chunk 1, `a47fabc4`),
