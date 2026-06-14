@@ -9462,13 +9462,16 @@ fn test_lossy_estimate_peak_memory_bytes_alpha_overhead() {
     let rgba = cfg
         .estimate_peak_memory_bytes(1024, 1024, PixelLayout::Rgba8)
         .unwrap();
-    // RGBA should be larger than RGB; the difference is alpha + 25 %
-    // overhead = 1024*1024 * 1.25 = ~1.31 MB.
+    // Calibrated model (heuristics::estimate_encode): the input-buffer
+    // term grows by the alpha byte — RGBA is 4 B/px vs RGB 3 — so the
+    // estimate grows by ~`pixels`. (The encoder's own alpha-plane working
+    // set is folded into the RGB-calibrated per-pixel term — a documented
+    // under-model pending RGBA calibration; see heuristics.rs.)
     let diff = rgba - rgb;
-    let pixels_with_overhead = (1024u64 * 1024 * 5) / 4;
     assert_eq!(
-        diff, pixels_with_overhead,
-        "alpha buffer should add ~pixels * 5/4 bytes",
+        diff,
+        1024u64 * 1024,
+        "alpha adds ~1 input byte/pixel under the calibrated model",
     );
 }
 

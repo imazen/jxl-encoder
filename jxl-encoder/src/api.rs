@@ -181,129 +181,6 @@ pub const MAX_QUANT_LOOP_ITERS: u32 = Limits::DEFAULT_MAX_QUANT_LOOP_ITERS;
 /// [`Limits::DEFAULT_MAX_MEMORY_BYTES`].
 pub const DEFAULT_MAX_MEMORY_BYTES: u64 = Limits::DEFAULT_MAX_MEMORY_BYTES;
 
-/// Conservative-upper-bound peak working-set estimate for a lossy
-/// encode at the given dimensions. Backs
-/// [`LossyConfig::estimate_peak_memory_bytes`]; pulled out as a free
-/// function so the formula can be unit-tested without instantiating
-/// a config. See the doc on `LossyConfig::estimate_peak_memory_bytes`
-/// for the per-buffer breakdown.
-pub(crate) fn estimate_peak_memory_bytes_lossy(
-    width: u32,
-    height: u32,
-    layout: PixelLayout,
-) -> Option<u64> {
-    let w = width as u64;
-    let h = height as u64;
-    let pixels = w.checked_mul(h)?;
-    let padded_w = w.checked_add(7)? & !7;
-    let padded_h = h.checked_add(7)? & !7;
-    let padded_pixels = padded_w.checked_mul(padded_h)?;
-    let blocks = padded_pixels / 64;
-
-    // (1) linear_rgb: pixels × 3 channels × 4 bytes (f32). Always RGB
-    //     internally regardless of pixel layout — gray expands.
-    let linear_rgb = pixels.checked_mul(12)?;
-
-    // (2) XYB planes: 3 padded channels × 4 bytes (f32).
-    let xyb = padded_pixels.checked_mul(12)?;
-
-    // (3) quant_ac: 3 channels × blocks × 64 coeffs × 4 bytes (i32).
-    let quant_ac = blocks.checked_mul(3 * 64 * 4)?;
-
-    // (4) Alpha buffer (when present).
-    let alpha = if layout.has_alpha() { pixels } else { 0 };
-
-    // (5) mask1x1: one f32 per padded pixel (adaptive-quant masking).
-    let mask = padded_pixels.checked_mul(4)?;
-
-    // (6) Reconstruction + EPF sharpness search. This — not the entropy
-    //     phase — is the true peak moment for lossy VarDCT. The
-    //     post-encode `compute_epf_sharpness` reconstructs the image
-    //     (base_recon: 3 padded f32 planes), clones it for the active
-    //     sharpness candidate, then allocates EPF scratch (3) + padded
-    //     scratch (3) + EPF step-0 internal padded+output (6) — ~18
-    //     padded f32 planes live simultaneously. Heaptrack peak
-    //     attribution (2026-06-13, 12 MP) measured ~866 MB here = ~72
-    //     bytes/padded-pixel = 18 × 4. Modeling only the dimension-driven
-    //     planes (1)-(4) under-reported the real peak ~3×. The persistent
-    //     planes above stay live across this phase, so the terms add.
-    let recon_epf = padded_pixels.checked_mul(4 * 18)?;
-
-    let major = linear_rgb
-        .checked_add(xyb)?
-        .checked_add(quant_ac)?
-        .checked_add(alpha)?
-        .checked_add(mask)?
-        .checked_add(recon_epf)?;
-
-    // 25 % overhead for entropy-coder bit buffer, histograms, scratch,
-    // transform working state. (The entropy phase peaks lower than the
-    // EPF search above; the 25 % is slop, keeping this a conservative
-    // upper bound.)
-    major.checked_add(major / 4)
-}
-
-/// Conservative-upper-bound peak working-set estimate for a lossless
-/// encode at the given dimensions. Backs
-/// [`LosslessConfig::estimate_peak_memory_bytes`].
-pub(crate) fn estimate_peak_memory_bytes_lossless(
-    width: u32,
-    height: u32,
-    layout: PixelLayout,
-    effort: u8,
-    squeeze: bool,
-) -> Option<u64> {
-    let w = width as u64;
-    let h = height as u64;
-    let pixels = w.checked_mul(h)?;
-
-    let channels: u64 = match layout {
-        PixelLayout::Gray8 | PixelLayout::Gray16 | PixelLayout::GrayLinearF32 => 1,
-        PixelLayout::GrayAlpha8 | PixelLayout::GrayAlpha16 | PixelLayout::GrayAlphaLinearF32 => 2,
-        PixelLayout::Rgb8 | PixelLayout::Rgb16 | PixelLayout::RgbLinearF32 | PixelLayout::Bgr8 => 3,
-        PixelLayout::Rgba8
-        | PixelLayout::Rgba16
-        | PixelLayout::RgbaLinearF32
-        | PixelLayout::Bgra8 => 4,
-        PixelLayout::RgbLinearF16 | PixelLayout::RgbaLinearF16 => 4,
-        PixelLayout::GrayLinearF16 | PixelLayout::GrayAlphaLinearF16 => 2,
-        // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46).
-        PixelLayout::RgbPqF32 | PixelLayout::RgbHlgF32 | PixelLayout::RgbBt709F32 => 3,
-        PixelLayout::RgbaPqF32 | PixelLayout::RgbaHlgF32 | PixelLayout::RgbaBt709F32 => 4,
-        // CMYK lossless: 3 colour planes + 1 Black extra channel
-        // (same i32 plane layout as RGBA).
-        PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => 4,
-    };
-
-    // (1) Channel planes: i32 per pixel per channel.
-    let channel_planes = pixels.checked_mul(channels)?.checked_mul(4)?;
-
-    // (2) Predictor scratch (gradient + weighted state): one i32 plane.
-    let predictor = pixels.checked_mul(4)?;
-
-    // (3) Tree-learning state (effort >= 7). 8 bytes/pixel for typical
-    //     histogram counts; 0 otherwise.
-    let tree_learning = if effort >= 7 {
-        pixels.checked_mul(8)?
-    } else {
-        0
-    };
-
-    // (4) Squeeze residuals: one extra channel-plane pair when on.
-    let squeeze_state = if squeeze {
-        pixels.checked_mul(channels)?.checked_mul(4)?
-    } else {
-        0
-    };
-
-    let major = channel_planes
-        .checked_add(predictor)?
-        .checked_add(tree_learning)?
-        .checked_add(squeeze_state)?;
-
-    major.checked_add(major / 4)
-}
-
 // ── EncodeResult / EncodeStats ──────────────────────────────────────────────
 
 /// Result of an encode operation. Holds encoded data and metrics.
@@ -3245,7 +3122,38 @@ impl LosslessConfig {
         height: u32,
         layout: PixelLayout,
     ) -> Option<u64> {
-        estimate_peak_memory_bytes_lossless(width, height, layout, self.effort, self.squeeze)
+        // Conservative upper bound = the calibrated `max`. The previous
+        // term-by-term model under-reported ~14x at e7+ (it modelled the
+        // MA tree-learning working set as 8 B/px; measured ~440). See
+        // [`Self::estimate_encode`].
+        crate::heuristics::estimate_encode(
+            width,
+            height,
+            layout.bytes_per_pixel() as u8,
+            true,
+            self.effort,
+        )
+        .map(|e| e.peak_memory_bytes_max)
+    }
+
+    /// Full calibrated resource estimate (min / typical / max peak
+    /// memory, plus coarse time and output size) for a lossless encode at
+    /// these settings. Mirrors the zen per-codec pattern
+    /// ([`crate::heuristics::EncodeEstimate`]). `None` only on dimension
+    /// overflow.
+    pub fn estimate_encode(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Option<crate::heuristics::EncodeEstimate> {
+        crate::heuristics::estimate_encode(
+            width,
+            height,
+            layout.bytes_per_pixel() as u8,
+            true,
+            self.effort,
+        )
     }
 
     /// Whether patches (dictionary-based repeated pattern detection) are enabled.
@@ -7553,7 +7461,38 @@ impl LossyConfig {
         height: u32,
         layout: PixelLayout,
     ) -> Option<u64> {
-        estimate_peak_memory_bytes_lossy(width, height, layout)
+        // Conservative upper bound (the historical contract of this
+        // method) = the calibrated `max`. See [`Self::estimate_encode`]
+        // for the full min/typical/max breakdown.
+        crate::heuristics::estimate_encode(
+            width,
+            height,
+            layout.bytes_per_pixel() as u8,
+            false,
+            self.effort,
+        )
+        .map(|e| e.peak_memory_bytes_max)
+    }
+
+    /// Full calibrated resource estimate (min / typical / max peak
+    /// memory, plus coarse time and output size) for a lossy encode at
+    /// these settings. Mirrors the zen per-codec pattern
+    /// ([`crate::heuristics::EncodeEstimate`], cf. `zenwebp`). Use
+    /// `typical` for capacity planning and `max` to size a
+    /// [`Limits`] cap. `None` only on dimension overflow.
+    pub fn estimate_encode(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Option<crate::heuristics::EncodeEstimate> {
+        crate::heuristics::estimate_encode(
+            width,
+            height,
+            layout.bytes_per_pixel() as u8,
+            false,
+            self.effort,
+        )
     }
 
     /// Butteraugli quantization loop iterations.
