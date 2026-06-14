@@ -29,7 +29,13 @@
   `benchmarks/mem_peak_calibrate_libharness_2026-06-14.tsv` (6 content
   classes × 64–2048 px × e5/e7/e9 × 8/16-bit) + direct 12 MP anchors. New
   reusable harness `scripts/mem_peak_calibrate.py` +
-  `examples/mem_probe.rs`.
+  `examples/mem_probe.rs`. Refined (5b20f08e) from a focused 7-class ×
+  1024² × e7/8/9/10 × rgb/rgba grid (`mem_peak_quick_2026-06-14.tsv` +
+  `mem_peak_fit.py`): added a lossless **e≥10** band (~620 B/px, +35 % —
+  the `fine_grained_step`/multi-seed step) and a lossless **alpha** term
+  (+230 B/px; `estimate_encode` gains a `has_alpha` param). Lossy e8/e9/e10
+  collapse to one band at 12 MP (sub-linear in size) and lossy+alpha is
+  negligible, so neither gets a separate band.
 - **Comprehensive HDR test suite (`tests/it/hdr_suite.rs`), modeled on
   libjxl's HDR coverage.** Seven gates: TF×Primaries signaling
   preservation matrix (libjxl `PreserveOriginalProfileTest` shape, 15

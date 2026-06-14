@@ -679,10 +679,16 @@ measurement at equal or better coverage.
      `scripts/mem_peak_calibrate.py` + `examples/mem_probe.rs`. Bit depth
      barely moves it (8 vs 16-bit ≈ 75 vs 72 B/px — f32 internals dominate,
      only the input buffer carries bpp). Commits ntszwlux (module) +
-     ltqvptqw (rewire). REMAINING: RGBA alpha working-set is folded into the
-     RGB-calibrated term (a documented under-model — alpha test asserts only
-     the +1 input byte/px); a full ≥50-img/class sweep for tighter
-     percentiles + e8/e10 points + RGBA calibration is the open follow-up.
+     ltqvptqw (rewire) + 5b20f08e (refinement). The e8/e10 points, the RGBA
+     alpha term, and the content-spread percentiles were settled by a
+     focused 7-class × 1024² × e7/8/9/10 × rgb/rgba grid (112 cells, ~4 min,
+     benchmarks/mem_peak_quick_2026-06-14.tsv + scripts/mem_peak_fit.py):
+     lossy e8/e9/e10 are one flat band at 12 MP (lossy is sub-linear in
+     size); lossless is ~size-independent, adds an e10 band (~620 B/px,
+     +35 %) + a +230 B/px alpha term (lossy+alpha is noise). estimate_encode
+     now takes has_alpha. No further sweep warranted — a ≥50-img/class run
+     was tried and explicitly cut as overkill; the 7-class grid pins every
+     band and MULT_MAX stays 1.8 as the conservative cap.
   2. e7 real-RSS gap vs cjxl — LARGELY ADDRESSED 2026-06-13. Root cause
      (heaptrack peak attribution): `compute_epf_sharpness` ran its 2-3
      candidates via `parallel_map`, each cloning base_recon + scratch

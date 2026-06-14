@@ -3153,6 +3153,7 @@ impl LosslessConfig {
             width,
             height,
             layout.bytes_per_pixel() as u8,
+            layout.has_alpha(),
             true,
             self.effort,
         )
@@ -3174,6 +3175,7 @@ impl LosslessConfig {
             width,
             height,
             layout.bytes_per_pixel() as u8,
+            layout.has_alpha(),
             true,
             self.effort,
         )
@@ -7491,6 +7493,7 @@ impl LossyConfig {
             width,
             height,
             layout.bytes_per_pixel() as u8,
+            layout.has_alpha(),
             false,
             self.effort,
         )
@@ -7513,6 +7516,7 @@ impl LossyConfig {
             width,
             height,
             layout.bytes_per_pixel() as u8,
+            layout.has_alpha(),
             false,
             self.effort,
         )

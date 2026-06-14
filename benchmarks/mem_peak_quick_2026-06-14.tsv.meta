@@ -1,0 +1,33 @@
+# mem_peak_calibrate provenance
+commit: 93c682f4
+host: lilith
+date: 2026-06-14
+bin: target/release/examples/mem_probe
+sizes: [1024]
+efforts: [7, 8, 9, 10]
+distances: [2.0]
+depths: [8]
+paths: ['lossy', 'lossless']
+alphas: ['rgb', 'rgba']
+content_classes: ['ai-illustration', 'ai-product', 'clipart', 'document', 'photo', 'plot', 'screenshot']
+n_content_srcs: 7
+native: []
+measure: mem_probe VmHWM delta = encoder MARGINAL working set (excludes binary floor + input buffer), one process per cell. alpha=rgba synthesizes a high-entropy alpha plane (= green channel).
+# --- B/px spread (px>=512^2), stratum=(path,effort,alpha) ---
+# stratum n p25 p50 p75 p100 max/p50 min/p50
+# ('lossless', 7, 'rgb')            7    428    440    539    540     1.23     0.25
+# ('lossless', 7, 'rgba')           7    647    666    755    783     1.17     0.34
+# ('lossless', 8, 'rgb')            7    466    466    524    532     1.14     0.33
+# ('lossless', 8, 'rgba')           7    685    691    760    791     1.14     0.48
+# ('lossless', 9, 'rgb')            7    479    489    610    653     1.34     0.49
+# ('lossless', 9, 'rgba')           7    721    723    900    977     1.35     0.55
+# ('lossless', 10, 'rgb')           7    615    619    661    669     1.08     0.38
+# ('lossless', 10, 'rgba')          7    866    875    919   1001     1.15     0.54
+# ('lossy', 7, 'rgb')               7     67     80    118    118     1.49     0.82
+# ('lossy', 7, 'rgba')              7     69     82    118    119     1.45     0.81
+# ('lossy', 8, 'rgb')               7    304    314    321    342     1.09     0.93
+# ('lossy', 8, 'rgba')              7    298    306    321    341     1.12     0.95
+# ('lossy', 9, 'rgb')               7    299    326    345    357     1.10     0.91
+# ('lossy', 9, 'rgba')              7    306    328    348    348     1.06     0.92
+# ('lossy', 10, 'rgb')              7    319    348    370    378     1.08     0.88
+# ('lossy', 10, 'rgba')             7    322    353    362    367     1.04     0.90
