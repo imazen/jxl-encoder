@@ -34,21 +34,28 @@ def gen_variant(src, n, depth, outdir):
     im.save(p)
     return p
 
-def measure(binary, img, path, effort, distance):
-    """Run one encode in its own process; return (peak_rss_kb, wall_s, ok)."""
-    out = "/tmp/_memcal.jxl"
-    if path == "lossless":
-        cmd = [binary, str(img), out, "--quality", "100", "--effort", str(effort)]
-    else:
-        cmd = [binary, str(img), out, "--distance", str(distance), "--effort", str(effort)]
+def measure(binary, img, path, effort, distance, depth=8):
+    """Run one encode via the mem_probe library harness in its own process.
+
+    Returns (encoder_working_set_kb, wall_s, ok). `mem_probe` prints the
+    VmHWM delta across `encode()` only, so this is the encoder's marginal
+    working set (what `estimate_peak_memory_bytes` should predict), not the
+    CLI binary-floor-inflated whole-process RSS.
+    """
+    cmd = [binary, str(img), path, str(effort), str(distance), str(depth)]
     t0 = time.time()
-    p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    _, status, ru = os.wait4(p.pid, 0)
-    return ru.ru_maxrss, time.time() - t0, status == 0
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    out, _ = p.communicate()
+    wall = time.time() - t0
+    delta = 0
+    for tok in out.split():
+        if tok.startswith("delta_kb="):
+            delta = int(tok.split("=", 1)[1])
+    return delta, wall, p.returncode == 0 and delta > 0
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bin", default="target/release/cjxl-rs")
+    ap.add_argument("--bin", default="target/release/examples/mem_probe")
     ap.add_argument("--sizes", default="64,256,512,1024,1448,2048")
     ap.add_argument("--native", action="append", default=[], help="extra full-res src:class")
     ap.add_argument("--efforts", default="5,7,9")
@@ -90,7 +97,7 @@ def main():
             for e in efforts:
                 for dist in (distances if path == "lossy" else [0.0]):
                     i += 1
-                    rss_kb, wall, ok = measure(a.bin, img, path, e, dist)
+                    rss_kb, wall, ok = measure(a.bin, img, path, e, dist, d)
                     px = w * h
                     rows.append((cls, d, path, e, dist, w, h, px, rss_kb, wall, int(ok)))
                     print(f"[{i}/{total}] {cls} {w}x{h} {path} e{e} d{dist} -> "
@@ -106,7 +113,8 @@ def main():
                 f"date: {date}\nbin: {a.bin}\nsizes: {sizes}\nefforts: {efforts}\n"
                 f"distances: {distances}\ndepths: {depths}\npaths: {paths}\n"
                 f"content: {content}\nnative: {a.native}\n"
-                f"measure: child ru_maxrss (peak RSS), one process per cell\n")
+                f"measure: mem_probe VmHWM delta = encoder MARGINAL working set "
+                f"(excludes binary floor + input buffer), one process per cell\n")
     print(f"\nwrote {out} ({len(rows)} rows)")
 
     # ---- fit alpha + beta per (path, effort) stratum ----
