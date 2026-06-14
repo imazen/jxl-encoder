@@ -1,0 +1,13 @@
+# mem_peak_calibrate provenance
+commit: aae8896c
+host: lilith
+date: 2026-06-13
+bin: target/release/cjxl-rs
+sizes: [64, 256, 512, 1024, 1448, 2048]
+efforts: [5, 7, 9]
+distances: [2.0]
+depths: [8]
+paths: ['lossy', 'lossless']
+content: [['/mnt/v/output/imazen-26-png-v3/1000-lilith-photos-general/1064_general_castle-bridge-moat_montjuic-castle-barcelona_zfold7_iso40-f1p7_20260315-175347_3000x4000.hdr.png', 'photo'], ['/home/lilith/work/codec-corpus/gb82-sc/codec_wiki.png', 'screenshot']]
+native: ['/mnt/v/output/imazen-26-png-v3/1000-lilith-photos-general/1064_general_castle-bridge-moat_montjuic-castle-barcelona_zfold7_iso40-f1p7_20260315-175347_3000x4000.hdr.png:photo']
+measure: child ru_maxrss (peak RSS), one process per cell
