@@ -49,10 +49,10 @@ jobs:
           prefix-key: v1-rust
 
       - name: Build workspace
-        run: cargo build --workspace --release
+        run: cargo build --workspace --locked --release
 
       - name: Run tests
-        run: cargo test --workspace --release
+        run: cargo test --workspace --locked --release
 
       # Belt-and-suspenders: ensure the no_std + alloc path keeps
       # compiling. `jxl-encoder-simd` is `#![no_std]` unconditionally
@@ -62,7 +62,7 @@ jobs:
       # downstream builds.
       - name: Build (no-std, no-default-features)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo build -p jxl-encoder --no-default-features
+        run: cargo build -p jxl-encoder --locked --no-default-features
 
   # ==========================================================================
   # Native ARM64 + macOS Intel testing
@@ -95,11 +95,11 @@ jobs:
           prefix-key: v1-rust
 
       - name: Build workspace
-        run: cargo build --workspace --release
+        run: cargo build --workspace --locked --release
 
       - name: Run tests
         if: matrix.run_tests
-        run: cargo test --workspace --release
+        run: cargo test --workspace --locked --release
 
   # ==========================================================================
   # Cross-compiled testing with QEMU emulation (32-bit targets)
@@ -185,13 +185,13 @@ jobs:
       - name: Build for WASM
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-        run: cargo build --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target wasm32-wasip1
+        run: cargo build --workspace --exclude zenjxl-tuning-runner --locked --release --no-default-features --features "std" --target wasm32-wasip1
 
       - name: Test jxl-encoder-simd (SIMD-vs-scalar tests)
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
           CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime run --dir=."
-        run: cargo test -p jxl-encoder-simd --release --target wasm32-wasip1 --lib
+        run: cargo test -p jxl-encoder-simd --locked --release --target wasm32-wasip1 --lib
 
   # ==========================================================================
   # Code Coverage
@@ -260,10 +260,10 @@ jobs:
           prefix-key: v1-rust
 
       - name: Clippy (default features)
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --locked -- -D warnings
 
       - name: Clippy (zensim-loop)
-        run: cargo clippy --workspace --features zensim-loop -- -D warnings
+        run: cargo clippy --workspace --locked --features zensim-loop -- -D warnings
 
 
   # ==========================================================================
