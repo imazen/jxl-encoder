@@ -8,8 +8,16 @@
 //! allocations on top of the caller-provided pixels), unlike the CLI
 //! whole-process RSS which is inflated by a ~126 MB binary/decode floor.
 //!
-//! Usage: mem_probe <png> <lossy|lossless> <effort> <distance> <8|16>
+//! Usage: mem_probe <png> <lossy|lossless> <effort> <distance> <8|16> [rgb|rgba]
 //! Prints: `delta_kb=<n> peak_kb=<n> bytes=<encoded_len>`
+//!
+//! The optional 6th arg selects the channel layout. `rgba` builds a
+//! 4-channel buffer whose alpha plane is the source's GREEN channel — a
+//! deterministic, high-entropy (≈ worst-case) alpha, since the calibration
+//! corpus is all-opaque. That measures the conservative extra working set
+//! the encoder spends on an alpha extra-channel (modular alpha alongside
+//! VarDCT, or the 4th channel in lossless), which is what a memory cap
+//! should budget for.
 
 use std::fs;
 
@@ -41,22 +49,45 @@ fn main() {
         a[4].parse::<f32>().unwrap(),
         a[5].parse::<u8>().unwrap(),
     );
+    let alpha = a.get(6).map(String::as_str).unwrap_or("rgb");
 
     use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
     let img = image::open(path).expect("open png");
     let (w, h) = (img.width(), img.height());
 
     // Materialize the caller-provided pixel buffer BEFORE the baseline so it
-    // is part of the load floor, not the measured encode delta.
-    let (pixels, layout): (Vec<u8>, PixelLayout) = if depth == 16 {
-        let buf = img.to_rgb16();
-        let mut bytes = Vec::with_capacity(buf.as_raw().len() * 2);
-        for &v in buf.as_raw() {
-            bytes.extend_from_slice(&v.to_ne_bytes());
+    // is part of the load floor, not the measured encode delta. For `rgba`
+    // the alpha plane is the green channel (deterministic high-entropy alpha).
+    let (pixels, layout): (Vec<u8>, PixelLayout) = match (depth, alpha) {
+        (16, "rgba") => {
+            let buf = img.to_rgba16();
+            let raw = buf.as_raw(); // RGBA interleaved
+            let mut bytes = Vec::with_capacity(raw.len() * 2);
+            for px in raw.chunks_exact(4) {
+                let g = px[1];
+                bytes.extend_from_slice(&px[0].to_ne_bytes());
+                bytes.extend_from_slice(&px[1].to_ne_bytes());
+                bytes.extend_from_slice(&px[2].to_ne_bytes());
+                bytes.extend_from_slice(&g.to_ne_bytes()); // alpha := green
+            }
+            (bytes, PixelLayout::Rgba16)
         }
-        (bytes, PixelLayout::Rgb16)
-    } else {
-        (img.to_rgb8().into_raw(), PixelLayout::Rgb8)
+        (16, _) => {
+            let buf = img.to_rgb16();
+            let mut bytes = Vec::with_capacity(buf.as_raw().len() * 2);
+            for &v in buf.as_raw() {
+                bytes.extend_from_slice(&v.to_ne_bytes());
+            }
+            (bytes, PixelLayout::Rgb16)
+        }
+        (_, "rgba") => {
+            let mut buf = img.to_rgba8().into_raw();
+            for px in buf.chunks_exact_mut(4) {
+                px[3] = px[1]; // alpha := green
+            }
+            (buf, PixelLayout::Rgba8)
+        }
+        _ => (img.to_rgb8().into_raw(), PixelLayout::Rgb8),
     };
 
     let baseline = vmhwm_kb();
