@@ -17,6 +17,19 @@
   `Limits` / `ImageMetadata` / `EncoderStrategy`). Tracking: #76.
 
 ### Added
+- **Calibrated peak-memory estimation (`heuristics` module + per-config
+  `estimate_encode`).** New `jxl_encoder::heuristics::EncodeEstimate`
+  (`peak_memory_bytes_min` / `peak_memory_bytes` typical / `_max` + coarse
+  `time_ms` / `output_bytes`) and `LossyConfig`/`LosslessConfig::estimate_encode(w,h,layout)`,
+  mirroring the zen per-codec pattern (cf. `zenwebp::heuristics`). Model:
+  `input + fixed + bytes_per_pixel(path, effort)·pixels`, with effort STEP
+  jumps (lossy buttloop e≥8, lossless tree-learning e≥7) and content
+  multipliers (min 0.85 / max 1.8). Constants calibrated from measured
+  marginal working set (mem_probe `VmHWM` delta, 12 MP-anchored):
+  `benchmarks/mem_peak_calibrate_libharness_2026-06-14.tsv` (6 content
+  classes × 64–2048 px × e5/e7/e9 × 8/16-bit) + direct 12 MP anchors. New
+  reusable harness `scripts/mem_peak_calibrate.py` +
+  `examples/mem_probe.rs`.
 - **Comprehensive HDR test suite (`tests/it/hdr_suite.rs`), modeled on
   libjxl's HDR coverage.** Seven gates: TF×Primaries signaling
   preservation matrix (libjxl `PreserveOriginalProfileTest` shape, 15
@@ -50,6 +63,16 @@
   upload so it can't OOM the process. Hostile-input image proxies should
   set a tighter cap via `Limits::with_max_memory_bytes`; trusted batch can
   opt out with `Some(u64::MAX)`. (api.rs)
+- **Default memory cap is now path-aware: lossy 4 GiB, lossless 8 GiB
+  (`Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS` +
+  `Limits::default_max_memory_bytes(is_lossless)`).** The lossless path is a
+  heavier memory regime — MA tree-learning at effort ≥ 7 measures ~440 B/px
+  (≈ 5 GB at 12 MP) vs lossy's ~85–300 B/px (see `crate::heuristics`) — so a
+  single 4 GiB default rejected ordinary ≥ 9 MP lossless encodes. The five
+  internal budget-cap sites (one-shot + streaming + animation, both paths)
+  now select the default by path; an explicit `with_max_memory_bytes` still
+  wins. Both defaults remain fixed DoS ceilings (not scaled with
+  dimensions). (api.rs)
 - **EPF sharpness search runs candidates sequentially with reused buffers
   (−25–27% encoder peak RSS, byte-identical).** `compute_epf_sharpness`
   evaluated its 2–3 sharpness candidates via `parallel_map`, each cloning
@@ -170,6 +193,15 @@
   1418519 mask_med 92.3 sits above every sky cell — no separation).
 
 ### Fixed
+- **`estimate_peak_memory_bytes` under-reported the lossless path ~14×.**
+  The old term-by-term model treated MA tree-learning's working set as
+  ~8 B/px and returned ~360 MB for a 12 MP effort-7 lossless encode vs
+  ~5 GB measured. Both `LossyConfig`/`LosslessConfig::estimate_peak_memory_bytes`
+  now delegate to `heuristics::estimate_encode(..).peak_memory_bytes_max`
+  (the conservative upper bound — the method's historical contract); the
+  lossy estimate also gains the effort-8 buttloop step (was
+  effort-independent). New `estimate_encode(w,h,layout)` exposes the full
+  min/typical/max breakdown. (api.rs, f4e2d0d2)
 - **Allocation budget over-counted the perceptual loop's scratch buffers,
   failing large encodes earlier than real RSS warranted.** The buttloop's
   `TransformOutput` (~149 MB at 12 MP), recon planes (~138 MB), and VDP2

@@ -644,3 +644,37 @@ fn issue_54_imac_g3_e9_d4_no_spurious_oom() {
     );
     assert_eq!(&bytes[..2], &[0xFF, 0x0A], "JXL signature expected");
 }
+
+/// Path-aware default cap (2026-06-14): lossless is a heavier memory
+/// regime than lossy (MA tree-learning ~440 B/px vs ~85–300), so the
+/// lossless default cap is 8 GiB vs lossy's 4 GiB. A 12 MP lossless e7
+/// encode's *typical* peak (~5.5 GB, calibrated) exceeds the lossy
+/// default but fits the lossless default — the whole reason for the split.
+#[test]
+fn path_aware_default_cap_lossless_higher() {
+    assert_eq!(
+        Limits::default_max_memory_bytes(false),
+        Limits::DEFAULT_MAX_MEMORY_BYTES
+    );
+    assert_eq!(
+        Limits::default_max_memory_bytes(true),
+        Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS
+    );
+    assert!(
+        Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS > Limits::DEFAULT_MAX_MEMORY_BYTES,
+        "lossless default must exceed lossy (heavier regime)"
+    );
+    let typical = jxl_encoder::LosslessConfig::new()
+        .with_effort(7)
+        .estimate_encode(3000, 4000, PixelLayout::Rgb8)
+        .unwrap()
+        .peak_memory_bytes;
+    assert!(
+        typical > Limits::DEFAULT_MAX_MEMORY_BYTES,
+        "12MP lossless e7 typical ({typical}) should exceed the 4 GiB lossy default"
+    );
+    assert!(
+        typical < Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS,
+        "12MP lossless e7 typical ({typical}) should fit the 8 GiB lossless default"
+    );
+}

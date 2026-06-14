@@ -1357,6 +1357,29 @@ impl Limits {
     /// batch work, raise it (or pass `Some(u64::MAX)` to opt out).
     pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
+    /// Default soft cap for the **lossless** path when no explicit
+    /// [`Self::with_max_memory_bytes`] is set. Lossless is a heavier
+    /// memory regime than lossy at the same dimensions — MA tree-learning
+    /// at effort ≥ 7 measures ~440 B/px (≈ 5 GB at 12 MP) vs lossy's
+    /// ~85–300 B/px (see [`crate::heuristics`]). A single 4 GiB default
+    /// rejected ordinary ≥ 9 MP lossless encodes, so the lossless default
+    /// is 8 GiB. Still a fixed DoS ceiling (not scaled with dimensions);
+    /// truly oversized untrusted input is still rejected, and trusted
+    /// batch raises it explicitly.
+    pub const DEFAULT_MAX_MEMORY_BYTES_LOSSLESS: u64 = 8 * 1024 * 1024 * 1024;
+
+    /// Path-aware default memory cap: [`Self::DEFAULT_MAX_MEMORY_BYTES`]
+    /// for lossy, [`Self::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS`] for
+    /// lossless. Used when the caller set no explicit
+    /// [`Self::with_max_memory_bytes`].
+    pub const fn default_max_memory_bytes(is_lossless: bool) -> u64 {
+        if is_lossless {
+            Self::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS
+        } else {
+            Self::DEFAULT_MAX_MEMORY_BYTES
+        }
+    }
+
     /// Create limits with no restrictions (all `None`).
     pub fn new() -> Self {
         Self::default()
@@ -8300,10 +8323,9 @@ impl<'a> EncodeRequest<'a> {
         // call would have to fail individually. We also refuse a budget
         // smaller than that estimate, so callers see a meaningful
         // error instead of a confusing mid-encode failure.
-        let budget_cap = self
-            .limits
-            .map(|l| l.effective_max_memory_bytes())
-            .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+        let budget_cap = self.limits.and_then(|l| l.max_memory_bytes()).unwrap_or(
+            Limits::default_max_memory_bytes(matches!(self.config, ConfigRef::Lossless(_))),
+        );
         let budget = crate::budget::MemoryBudget::new(budget_cap);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
@@ -10918,8 +10940,8 @@ impl LossyEncoder {
         let budget_cap = self
             .limits
             .as_ref()
-            .map(|l| l.effective_max_memory_bytes())
-            .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+            .and_then(|l| l.max_memory_bytes())
+            .unwrap_or(Limits::default_max_memory_bytes(false));
         let budget = crate::budget::MemoryBudget::new(budget_cap);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
@@ -12006,8 +12028,8 @@ impl LosslessEncoder {
         let budget_cap = self
             .limits
             .as_ref()
-            .map(|l| l.effective_max_memory_bytes())
-            .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+            .and_then(|l| l.max_memory_bytes())
+            .unwrap_or(Limits::default_max_memory_bytes(true));
         let budget = crate::budget::MemoryBudget::new(budget_cap);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
@@ -12475,8 +12497,8 @@ fn encode_animation_lossless(
     // so an attacker cannot multiply the working set by sending many
     // oversized frames.
     let budget_cap = limits
-        .map(|l| l.effective_max_memory_bytes())
-        .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+        .and_then(|l| l.max_memory_bytes())
+        .unwrap_or(Limits::default_max_memory_bytes(true));
     let budget = crate::budget::MemoryBudget::new(budget_cap);
     let est_bytes = (width as u64)
         .checked_mul(height as u64)
@@ -12947,8 +12969,8 @@ fn encode_animation_lossy(
     // Per-encode allocation budget. Spans the lifetime of the entire
     // animation; see `encode_animation_lossless` for the reasoning.
     let budget_cap = limits
-        .map(|l| l.effective_max_memory_bytes())
-        .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+        .and_then(|l| l.max_memory_bytes())
+        .unwrap_or(Limits::default_max_memory_bytes(false));
     let budget = crate::budget::MemoryBudget::new(budget_cap);
     let est_bytes = (width as u64)
         .checked_mul(height as u64)
