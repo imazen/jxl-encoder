@@ -63,6 +63,21 @@
   per-candidate serial L2 cost. Measured on 12 MP PQ-HDR d4: peak RSS
   2.11 GB → 1.55 GB at e7 (−27%) and 2.15 GB → 1.61 GB at e9 (−25%); wall
   +7 % at e7 / +3 % at e9. Output byte-identical (hash-locks 48/48). (epf.rs)
+- **VDP2-lite (HDR) reads its reference from interleaved `linear_rgb`;
+  butteraugli builds planar refs only transiently (byte-identical).** The
+  perceptual loop deinterleaved `linear_rgb` into 3 planar reference planes
+  (~144 MB at 12 MP) and held them for the whole loop on both metric paths.
+  `hdr_vdp2_lite` now has `compare_vdp2_interleaved`, which gathers the
+  reference straight from the interleaved buffer (bit-identical to the
+  planar path — pinned by `vdp2_planar_and_interleaved_bit_identical`), so
+  the VDP2 path materializes no planar refs; the butteraugli path builds
+  them only for the backend's one-shot `set_reference`, then drops them
+  before the iteration loop. Frees ~144 MB of buttloop-phase working set on
+  both paths. Headline peak RSS is ~unchanged (the encoder peaks in the EPF
+  sharpness search — a different phase — so e9 only drops 1.61 → 1.59 GB);
+  the win is reduced loop-phase memory pressure + removed redundancy.
+  Byte-identical (hash-locks 48/48; the 12 MP PQ-HDR file is byte-equal at
+  e7/e8/e9). (hdr_vdp2_lite.rs, vardct/perceptual_loop.rs)
 - **Prefix-vs-ANS auto choice (libjxl `enc_ans.cc` parity) for VarDCT
   two-pass entropy codes.** Streams that are tiny (< 100 tokens) or
   fully deterministic (every context singleton) now use prefix codes:

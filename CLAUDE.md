@@ -671,12 +671,21 @@ measurement at equal or better coverage.
      1.23 GB roughly halved); e9 2.15 → 1.61 GB. Wall +7 % e7 / +3 % e9
      (sequential apply_epf loses candidate overlap; the residual gap to
      cjxl is the entropy-coder/token materialization, still unattributed).
-  3. VDP2 (HDR) path holds `linear_rgb` (interleaved, 144 MB at 12 MP) AND
-     planar `ref_r/g/b` (144 MB) simultaneously — same data twice. A real
-     −144 MB saving if the VDP2-lite metric reads interleaved `linear_rgb`
-     directly (metric-backend change in zenmetrics, not accounting). The
-     SDR/butteraugli path could drop `ref_r/g/b` after `set_reference`
-     (backend keeps its own copy) for −144 MB there too.
+  3. VDP2 / butteraugli ref-plane dedup — SHIPPED 2026-06-13 (byte-
+     identical). The VDP2-lite metric is in jxl-encoder
+     (`hdr_vdp2_lite.rs`), NOT zenmetrics (earlier note was wrong). Added
+     `compare_vdp2_interleaved` (reads the ref straight from interleaved
+     `linear_rgb` — bit-identical to the planar path, pinned by
+     `vdp2_planar_and_interleaved_bit_identical`), so the VDP2 path no
+     longer deinterleaves 3 planar reference planes; the butteraugli path
+     now builds them only transiently for `set_reference` and drops them
+     before the loop. Frees ~144 MB of buttloop-PHASE working set on both
+     paths. NOTE: headline peak RSS barely moved (e9 1.61 → 1.59 GB, −22
+     MB) — the encoder's peak is the EPF sharpness search (a different
+     phase), not the buttloop, so removing buttloop-phase buffers doesn't
+     lower the high-water mark. The win is reduced memory pressure during
+     the loop + removed redundancy, not peak. Further PEAK reduction must
+     target the EPF search (base_recon + recon clone + step0 buffers).
 - **Lossless screenshots wall — ARC COMPLETE 2026-06-10** (#41 closing
   ledgers on the issue): B1 gather row staging, B2 batched traversal,
   lane-per-predictor, WP fusion, radix cmp (chunk 1, `a47fabc4`),

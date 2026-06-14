@@ -198,7 +198,13 @@ pub struct VdpResult {
 /// Returns [`Err`] only on `width × height == 0` (the buttloop never
 /// passes empty inputs, but we surface the check to keep the typed
 /// error shape symmetric with the butteraugli path).
-#[allow(clippy::too_many_arguments)] // Mirrors butteraugli::compare_linear_planar shape
+#[allow(clippy::too_many_arguments)]
+// Mirrors butteraugli::compare_linear_planar shape
+// Retained as the tested reference implementation: the production buttloop
+// now calls [`compare_vdp2_interleaved`] (which skips materializing planar
+// reference planes), and `vdp2_planar_and_interleaved_bit_identical` pins
+// the two to byte-equal output.
+#[allow(dead_code)]
 pub fn compare_vdp2_planar(
     ref_r: &[f32],
     ref_g: &[f32],
@@ -221,9 +227,54 @@ pub fn compare_vdp2_planar(
     let log_ref = log10_luminance_plane(ref_r, ref_g, ref_b, width, height, padded_stride, it);
     let log_rec = log10_luminance_plane(rec_r, rec_g, rec_b, width, height, padded_stride, it);
 
+    Ok(compare_vdp2_from_logs(&log_ref, &log_rec, width, height))
+}
+
+/// Reference-from-interleaved variant of [`compare_vdp2_planar`]. The
+/// reconstruction stays planar (the decoder reconstruction buffers are
+/// planar); only the *reference* is read from the encoder's
+/// tightly-interleaved `linear_rgb` buffer instead of three separate
+/// planar planes. Output is bit-identical to deinterleaving `linear_rgb`
+/// into `ref_r/g/b` and calling [`compare_vdp2_planar`] — the only change
+/// is how the reference luminance plane is gathered — so the encoder can
+/// skip materializing ~144 MB of planar reference planes at 12 MP.
+#[allow(clippy::too_many_arguments)] // mirrors compare_vdp2_planar, minus 2 ref planes
+pub fn compare_vdp2_interleaved(
+    ref_interleaved: &[f32],
+    rec_r: &[f32],
+    rec_g: &[f32],
+    rec_b: &[f32],
+    width: usize,
+    height: usize,
+    padded_stride: usize,
+    intensity_target: f32,
+) -> Result<VdpResult, &'static str> {
+    if width == 0 || height == 0 {
+        return Err("VDP2-lite: zero-sized image");
+    }
+    let it = intensity_target.max(MIN_LUMINANCE_NITS);
+    let log_ref =
+        log10_luminance_plane_interleaved(ref_interleaved, width, height, padded_stride, it);
+    let log_rec = log10_luminance_plane(rec_r, rec_g, rec_b, width, height, padded_stride, it);
+    Ok(compare_vdp2_from_logs(&log_ref, &log_rec, width, height))
+}
+
+/// Shared VDP2-lite pipeline once both inputs are reduced to
+/// log10(luminance-in-nits) planes: Laplacian pyramids → per-band
+/// Mantiuk-CSF-weighted difference → Minkowski p-norm pooling →
+/// butteraugli-scaled per-pixel distance + mean score. Factored out so the
+/// reference plane can come from either separate planar channels
+/// ([`compare_vdp2_planar`]) or a tightly-interleaved linear-RGB buffer
+/// ([`compare_vdp2_interleaved`]) without duplicating the pyramid math.
+fn compare_vdp2_from_logs(
+    log_ref: &[f32],
+    log_rec: &[f32],
+    width: usize,
+    height: usize,
+) -> VdpResult {
     // Step 4: build Laplacian pyramids for ref + rec.
-    let pyr_ref = laplacian_pyramid(&log_ref, width, height, PYRAMID_LEVELS);
-    let pyr_rec = laplacian_pyramid(&log_rec, width, height, PYRAMID_LEVELS);
+    let pyr_ref = laplacian_pyramid(log_ref, width, height, PYRAMID_LEVELS);
+    let pyr_rec = laplacian_pyramid(log_rec, width, height, PYRAMID_LEVELS);
 
     // Reference adaptation luminance: the lowpass (Gaussian) tail of
     // the reference pyramid — i.e. the slowly varying mean luminance
@@ -297,7 +348,7 @@ pub fn compare_vdp2_planar(
     }
     let score = score_sum / (width * height) as f64;
 
-    Ok(VdpResult { score, diffmap })
+    VdpResult { score, diffmap }
 }
 
 /// Convert a strided linear-RGB plane triple to a tightly-packed
@@ -328,6 +379,41 @@ fn log10_luminance_plane(
             // Scale to absolute display nits using the encode's
             // intensity_target. Clamp at the photopic floor so log10
             // stays finite.
+            let y_nits = (y_rel * intensity_target).max(MIN_LUMINANCE_NITS);
+            out[dst_row + x] = y_nits.log10();
+        }
+    }
+    out
+}
+
+/// Like [`log10_luminance_plane`] but reads R/G/B from a single
+/// tightly-interleaved `[r, g, b, r, g, b, …]` linear buffer (pixel
+/// `(y, x)` at `interleaved[(y * stride + x) * 3 + c]`). Bit-identical to
+/// deinterleaving into three planar buffers and calling
+/// [`log10_luminance_plane`]: the per-pixel BT.709-luma → nits → log10
+/// math is unchanged, and the `stride` indexing mirrors the planar path
+/// exactly (`ref_r[i] == interleaved[i * 3]` by construction). Lets the
+/// encoder feed VDP2-lite its `linear_rgb` input directly instead of
+/// allocating three full planar reference planes (~144 MB at 12 MP).
+fn log10_luminance_plane_interleaved(
+    interleaved: &[f32],
+    width: usize,
+    height: usize,
+    stride: usize,
+    intensity_target: f32,
+) -> Vec<f32> {
+    debug_assert!(stride >= width);
+    let mut out = vec![0.0f32; width * height];
+    for y in 0..height {
+        let src_row = y * stride;
+        let dst_row = y * width;
+        for x in 0..width {
+            let base = (src_row + x) * 3;
+            let r = interleaved[base].max(0.0);
+            let g = interleaved[base + 1].max(0.0);
+            let b = interleaved[base + 2].max(0.0);
+            // BT.709 luma; result in [0, 1].
+            let y_rel = LUMA_R * r + LUMA_G * g + LUMA_B * b;
             let y_nits = (y_rel * intensity_target).max(MIN_LUMINANCE_NITS);
             out[dst_row + x] = y_nits.log10();
         }
@@ -535,6 +621,63 @@ mod tests {
         // lowpass isn't pooled into the bands. So the constant-offset
         // case will give score ≈ 0. Use a ramp instead.
         let _ = (small.score, big.score); // silence unused if unused
+    }
+
+    /// `compare_vdp2_interleaved` MUST be bit-identical to deinterleaving
+    /// the reference into planar planes and calling `compare_vdp2_planar`.
+    /// That equivalence is the entire justification for the buttloop
+    /// feeding VDP2 its interleaved `linear_rgb` directly and skipping the
+    /// ~144 MB planar reference copy (#3 memory follow-on, 2026-06-13).
+    #[test]
+    fn vdp2_planar_and_interleaved_bit_identical() {
+        let (w, h) = (40usize, 24usize); // both multiples of 8 → stride == width
+        let n = w * h;
+        let mut ref_r = vec![0.0f32; n];
+        let mut ref_g = vec![0.0f32; n];
+        let mut ref_b = vec![0.0f32; n];
+        let mut rec_r = vec![0.0f32; n];
+        let mut rec_g = vec![0.0f32; n];
+        let mut rec_b = vec![0.0f32; n];
+        let mut interleaved = vec![0.0f32; n * 3];
+        for i in 0..n {
+            // Deterministic varied content — constants collapse into the
+            // lowpass and would mask a reference-gather bug.
+            let x = (i % w) as f32;
+            let y = (i / w) as f32;
+            let rr = 0.2 + 0.6 * ((x * 0.13).sin() * 0.5 + 0.5);
+            let rg = 0.1 + 0.7 * ((y * 0.21).cos() * 0.5 + 0.5);
+            let rb = 0.3 + 0.5 * (((x + y) * 0.07).sin() * 0.5 + 0.5);
+            ref_r[i] = rr;
+            ref_g[i] = rg;
+            ref_b[i] = rb;
+            interleaved[i * 3] = rr;
+            interleaved[i * 3 + 1] = rg;
+            interleaved[i * 3 + 2] = rb;
+            rec_r[i] = rr + 0.05 * (x * 0.3).sin();
+            rec_g[i] = rg - 0.03 * (y * 0.2).cos();
+            rec_b[i] = rb + 0.02 * ((x - y) * 0.1).sin();
+        }
+        let it = 1000.0;
+        let planar =
+            compare_vdp2_planar(&ref_r, &ref_g, &ref_b, &rec_r, &rec_g, &rec_b, w, h, w, it)
+                .expect("planar ok");
+        let inter = compare_vdp2_interleaved(&interleaved, &rec_r, &rec_g, &rec_b, w, h, w, it)
+            .expect("interleaved ok");
+        assert_eq!(
+            planar.score.to_bits(),
+            inter.score.to_bits(),
+            "VDP2 score must be bit-identical: planar {} vs interleaved {}",
+            planar.score,
+            inter.score
+        );
+        assert_eq!(planar.diffmap.len(), inter.diffmap.len());
+        for (i, (p, q)) in planar.diffmap.iter().zip(inter.diffmap.iter()).enumerate() {
+            assert_eq!(
+                p.to_bits(),
+                q.to_bits(),
+                "diffmap[{i}] differs: planar {p} vs interleaved {q}"
+            );
+        }
     }
 
     /// Adding spatial detail to the reconstruction grows the score.

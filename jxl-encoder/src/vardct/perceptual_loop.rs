@@ -905,27 +905,14 @@ impl VarDctEncoder {
         // is reserved permanently in the VDP2 branch (vs the butteraugli branch
         // where the planes are released after the reference precompute takes
         // ownership of an internal copy).
-        let n = width * height;
-        // `ref_r/g/b` are function-scope locals alive until this method
-        // returns: the VDP2 path walks them every iteration, the
-        // butteraugli path hands them to the backend's reference
-        // precompute. Reserve their `n*4*3` bytes once, RAII-released on
-        // return, so the budget tracks their real lifetime. Previously the
-        // VDP2 branch reserved them *permanently* (the reservation
-        // outlived the planes' drop and double-counted against the
-        // post-buttloop entropy phase — part of the 12 MP HDR 2 GB cap
-        // overrun), while the butteraugli branch released its reservation
-        // early. Accounting-only; byte-identical output.
-        let _ref_planes_guard =
-            MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
-        let mut ref_r = vec![0.0f32; n];
-        let mut ref_g = vec![0.0f32; n];
-        let mut ref_b = vec![0.0f32; n];
-        for i in 0..n {
-            ref_r[i] = linear_rgb[i * 3];
-            ref_g[i] = linear_rgb[i * 3 + 1];
-            ref_b[i] = linear_rgb[i * 3 + 2];
-        }
+        // VDP2-lite reads its reference straight from the interleaved
+        // `linear_rgb` (see `compare_vdp2_interleaved`), so the VDP2 path
+        // needs no planar reference planes at all. The butteraugli path
+        // still needs them for the backend's one-shot reference precompute,
+        // but only transiently: the backend keeps its own internal copy, so
+        // they are built inside the butteraugli branch below and dropped
+        // the moment `set_reference` returns — freeing ~144 MB at 12 MP
+        // that previously stayed live for the entire loop on both paths.
         // intensity_target the VDP2-lite path uses to map linear-RGB [0,1]
         // onto absolute display luminance in cd/m². Pulled from the
         // VarDctEncoder field that the public LossyConfig::with_intensity_target
@@ -1055,6 +1042,23 @@ impl VarDctEncoder {
                     metric_intensity_target,
                     selection,
                 );
+                // Build the planar reference transiently for the one-shot
+                // precompute, then drop it: the backend caches its own
+                // internal copy, so holding these ~144 MB (at 12 MP) for
+                // the whole loop would be pure waste. Scoped to this block
+                // so they free before the iteration loop. Budget guard
+                // tracks the (short) lifetime.
+                let n = width * height;
+                let _ref_planes_guard =
+                    MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+                let mut ref_r = vec![0.0f32; n];
+                let mut ref_g = vec![0.0f32; n];
+                let mut ref_b = vec![0.0f32; n];
+                for i in 0..n {
+                    ref_r[i] = linear_rgb[i * 3];
+                    ref_g[i] = linear_rgb[i * 3 + 1];
+                    ref_b[i] = linear_rgb[i * 3 + 2];
+                }
                 if b.set_reference(&ref_r, &ref_g, &ref_b, width, height)
                     .is_err()
                 {
@@ -1733,9 +1737,7 @@ impl VarDctEncoder {
                 patches_data,
                 splines_data,
                 backend.as_deref_mut(),
-                &ref_r,
-                &ref_g,
-                &ref_b,
+                linear_rgb,
                 width,
                 height,
                 use_vdp2,
@@ -1879,11 +1881,13 @@ impl VarDctEncoder {
         backend: Option<&mut (dyn super::perceptual_backend::PerceptualBackend + '_)>,
         // Planar linear-RGB reference planes (always populated by the
         // top-level call). Sized `width × height` with stride = width.
-        // Owned by the caller for the duration of the seed loop so we
-        // can re-use them across iterations without re-deinterleaving.
-        ref_r: &[f32],
-        ref_g: &[f32],
-        ref_b: &[f32],
+        // Tightly-interleaved linear-RGB reference (the encoder's
+        // `linear_rgb`). Only the VDP2-lite path reads it, per-iter via
+        // `compare_vdp2_interleaved`; the butteraugli path uses the
+        // backend's own cached reference and ignores this. Passing it
+        // interleaved lets the caller skip materializing 3 planar
+        // reference planes (~144 MB at 12 MP).
+        ref_interleaved: &[f32],
         // Logical image extent. Distinct from `padded_width`/`padded_height`
         // (which describe the reconstruction buffer's row stride).
         width: usize,
@@ -1948,9 +1952,7 @@ impl VarDctEncoder {
         let effective_metric_target_distance: f32 = effective_metric_target_distance;
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
-        debug_assert_eq!(ref_r.len(), width * height);
-        debug_assert_eq!(ref_g.len(), width * height);
-        debug_assert_eq!(ref_b.len(), width * height);
+        debug_assert_eq!(ref_interleaved.len(), width * height * 3);
         debug_assert!(use_vdp2 == backend.is_none());
         // Re-bind as mutable Option for in-loop re-borrowing. Each iter
         // takes `backend.as_deref_mut()` so the compare call doesn't
@@ -2251,10 +2253,8 @@ impl VarDctEncoder {
             // backend's `compare_linear_planar_into` writes into it
             // directly; the GPU backend resizes and overwrites.
             let iter_score: f64 = if use_vdp2 {
-                match super::hdr_vdp2_lite::compare_vdp2_planar(
-                    ref_r,
-                    ref_g,
-                    ref_b,
+                match super::hdr_vdp2_lite::compare_vdp2_interleaved(
+                    ref_interleaved,
                     recon_r,
                     recon_g,
                     recon_b,
