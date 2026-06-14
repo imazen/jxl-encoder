@@ -213,13 +213,33 @@ pub(crate) fn estimate_peak_memory_bytes_lossy(
     // (4) Alpha buffer (when present).
     let alpha = if layout.has_alpha() { pixels } else { 0 };
 
+    // (5) mask1x1: one f32 per padded pixel (adaptive-quant masking).
+    let mask = padded_pixels.checked_mul(4)?;
+
+    // (6) Reconstruction + EPF sharpness search. This — not the entropy
+    //     phase — is the true peak moment for lossy VarDCT. The
+    //     post-encode `compute_epf_sharpness` reconstructs the image
+    //     (base_recon: 3 padded f32 planes), clones it for the active
+    //     sharpness candidate, then allocates EPF scratch (3) + padded
+    //     scratch (3) + EPF step-0 internal padded+output (6) — ~18
+    //     padded f32 planes live simultaneously. Heaptrack peak
+    //     attribution (2026-06-13, 12 MP) measured ~866 MB here = ~72
+    //     bytes/padded-pixel = 18 × 4. Modeling only the dimension-driven
+    //     planes (1)-(4) under-reported the real peak ~3×. The persistent
+    //     planes above stay live across this phase, so the terms add.
+    let recon_epf = padded_pixels.checked_mul(4 * 18)?;
+
     let major = linear_rgb
         .checked_add(xyb)?
         .checked_add(quant_ac)?
-        .checked_add(alpha)?;
+        .checked_add(alpha)?
+        .checked_add(mask)?
+        .checked_add(recon_epf)?;
 
-    // 25 % overhead for entropy-coder bit buffer, histograms,
-    // scratch, transform working state.
+    // 25 % overhead for entropy-coder bit buffer, histograms, scratch,
+    // transform working state. (The entropy phase peaks lower than the
+    // EPF search above; the 25 % is slop, keeping this a conservative
+    // upper bound.)
     major.checked_add(major / 4)
 }
 

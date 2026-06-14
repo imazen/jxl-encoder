@@ -9433,15 +9433,20 @@ fn test_lossy_with_dot_detection_off_disables_path() {
 /// large-but-realistic inputs.
 #[test]
 fn test_lossy_estimate_peak_memory_bytes_4k() {
-    // 4K RGB8: dominant terms are linear_rgb (99.5 MB), XYB (100 MB),
-    // quant_ac (~13 MB). Total ~213 MB + 25 % = ~266 MB.
+    // 4K RGB8 (8.29 MP). The true peak is the reconstruction + EPF
+    // sharpness search (~597 MB; see `estimate_peak_memory_bytes_lossy`
+    // term 6), on top of linear_rgb (99.5 MB), XYB (99.5 MB), quant_ac
+    // (99.5 MB) and mask (33 MB): ~929 MB + 25 % ≈ 1.16 GB. Heaptrack
+    // measured a 12 MP lossy peak RSS of ~1.55 GB (2026-06-13), so this
+    // 8.3 MP estimate is a conservative upper bound at the measured rate
+    // (the pre-2026-06-13 model returned ~266 MB here — a ~4× under-report
+    // because it omitted the EPF-search/reconstruction peak).
     let cfg = LossyConfig::new(2.0).with_effort(5);
     let est = cfg
         .estimate_peak_memory_bytes(3840, 2160, PixelLayout::Rgb8)
         .expect("4K RGB8 must not overflow");
-    // Wide range: just check it's plausibly between 200 MB and 350 MB.
     assert!(
-        (200 * 1024 * 1024..400 * 1024 * 1024).contains(&est),
+        (1000 * 1024 * 1024..1400 * 1024 * 1024).contains(&est),
         "4K RGB8 estimate out of expected range: {est} bytes",
     );
 }
