@@ -16,6 +16,29 @@
   `EncodeRequest` / streaming encoders / `PixelLayout` / `EncodeError` /
   `Limits` / `ImageMetadata` / `EncoderStrategy`). Tracking: #76.
 
+### Security
+- **Configurable pre-flight pixel cap on the untrusted JPEG-transcode SOF
+  (#77 / #78).** The JPEG-reconstruction/transcode path (`read_jpeg` /
+  `encode_jpeg_transcode*`) parses untrusted bytes and sizes per-block
+  `i16` coefficient buffers from the SOF dimensions, but builds no
+  `MemoryBudget`. Since JPEG dims are `u16` (≤ 65535 each), a ~12-byte
+  crafted SOF could advertise up to ~4.3 Gpx and force a multi-gigabyte
+  allocation. `parse_sof_marker` now rejects `width × height` over a cap
+  **immediately after reading the SOF dimensions, before any coefficient
+  allocation**. The cap is **configurable**: it defaults to the new
+  `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS` (120 MP — admits 108 MP
+  phone photos) and is overridden through `Limits::max_pixels`, attached
+  to the transcode path via the new `LosslessConfig::with_limits` /
+  `limits()` (a trusted batch caller raises it or passes
+  `with_max_pixels(u64::MAX)` to opt out; a hostile-input proxy tightens
+  it). `read_jpeg` gains a `max_pixels: Option<u64>` parameter (`None`
+  applies the default). Byte-identical for all real input: the cap only
+  fires above the configured limit, and the JBRD byte-exact transcode
+  conformance (28 `tests/it/jpeg_reencoding.rs` fixtures, all < 120 MP)
+  still passes. Pixel-path entry points are unchanged. Follow-ups (full
+  `MemoryBudget` threading through `jpeg/encode.rs`, the PreserveJxl
+  `encode_jpeg_recompress_*` free functions) remain tracked in #77.
+
 ### Added
 - **Calibrated peak-memory estimation (`heuristics` module + per-config
   `estimate_encode`).** New `jxl_encoder::heuristics::EncodeEstimate`

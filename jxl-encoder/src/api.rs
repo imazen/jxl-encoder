@@ -1392,6 +1392,22 @@ impl Limits {
     /// batch raises it explicitly.
     pub const DEFAULT_MAX_MEMORY_BYTES_LOSSLESS: u64 = 8 * 1024 * 1024 * 1024;
 
+    /// Default pre-flight pixel cap (`width × height`) applied to the
+    /// untrusted JPEG-transcode path
+    /// ([`LosslessConfig::encode_jpeg_transcode`] and friends) when the
+    /// caller sets no explicit [`Self::with_max_pixels`].
+    ///
+    /// Set to 120 MP — admits 108 MP phone photos while bounding a crafted
+    /// SOF (JPEG dims are `u16`, so up to ~4.3 Gpx) from forcing a
+    /// multi-gigabyte `i16` coefficient allocation in the transcode parser,
+    /// which builds no `MemoryBudget`. The cap is checked immediately after
+    /// the SOF dimensions are read, before any allocation.
+    ///
+    /// Callers override it through [`Self::with_max_pixels`]: a higher value
+    /// for trusted batch input (or [`u64::MAX`] to opt out entirely), a lower
+    /// value to tighten the bound on a hostile-input proxy.
+    pub const DEFAULT_MAX_JPEG_TRANSCODE_PIXELS: u64 = 120_000_000;
+
     /// Path-aware default memory cap: [`Self::DEFAULT_MAX_MEMORY_BYTES`]
     /// for lossy, [`Self::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS`] for
     /// lossless. Used when the caller set no explicit
@@ -2244,6 +2260,16 @@ pub struct LosslessConfig {
     /// bytes are identical regardless of `buffering`. See
     /// [`Self::with_buffering`].
     buffering: Buffering,
+    /// Resource [`Limits`] consulted by the untrusted JPEG-transcode path
+    /// ([`Self::encode_jpeg_transcode`] /
+    /// [`Self::encode_jpeg_transcode_codestream`]). Currently the transcode
+    /// parser reads [`Limits::max_pixels`] as the pre-flight SOF pixel cap
+    /// (default [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] = 120 MP when
+    /// `None`). Set via [`Self::with_limits`]. (The pixel / [`EncodeRequest`]
+    /// lossless path takes its limits from [`EncodeRequest::with_limits`]
+    /// instead.)
+    #[cfg(feature = "jpeg-reencoding")]
+    limits: Option<Limits>,
 }
 
 impl Default for LosslessConfig {
@@ -2286,6 +2312,8 @@ impl LosslessConfig {
             modular_group_size_shift: None,
             auto_delta_frames: false,
             buffering: Buffering::Auto,
+            #[cfg(feature = "jpeg-reencoding")]
+            limits: None,
         }
     }
 
@@ -3373,6 +3401,38 @@ impl LosslessConfig {
     // future investigation. Other `LosslessConfig` settings (mode, patches,
     // lossy_palette, etc.) do not affect the transcode path.
 
+    /// Attach resource [`Limits`] consulted by the JPEG-transcode path
+    /// ([`Self::encode_jpeg_transcode`] /
+    /// [`Self::encode_jpeg_transcode_codestream`]).
+    ///
+    /// The transcode parser reads [`Limits::max_pixels`] as the pre-flight
+    /// `width × height` cap applied to the untrusted SOF dimensions before
+    /// any coefficient buffer is allocated. When unset (or no `Limits` is
+    /// attached), the secure default
+    /// [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] (120 MP) applies; a
+    /// trusted batch caller can raise it (or pass
+    /// [`Limits::with_max_pixels`]`(u64::MAX)` to opt out), and a
+    /// hostile-input proxy can tighten it.
+    ///
+    /// Only the `max_pixels` field is consulted today; the rest of the
+    /// transcode-path [`Limits`] wiring (a full `MemoryBudget`) is tracked in
+    /// issue #77.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    #[cfg(feature = "jpeg-reencoding")]
+    pub fn with_limits(mut self, limits: &Limits) -> Self {
+        self.limits = Some(limits.clone());
+        self
+    }
+
+    /// The [`Limits`] attached via [`Self::with_limits`], if any.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    #[cfg(feature = "jpeg-reencoding")]
+    pub fn limits(&self) -> Option<&Limits> {
+        self.limits.as_ref()
+    }
+
     /// Losslessly transcode a JPEG file into JXL with JBRD container for
     /// byte-exact JPEG reconstruction.
     ///
@@ -3419,7 +3479,12 @@ impl LosslessConfig {
         // 2026-05-28: effort gates kBest pair-merge clustering at e>=8 and LZ77
         // (greedy at e=8, optimal at e>=9) on the AC code. See
         // `crate::jpeg::encode_jpeg_to_jxl_container_with_effort`.
-        let jpeg = crate::jpeg::read_jpeg(jpeg_bytes).map_err(|e| at(EncodeError::from(e)))?;
+        // Pre-flight SOF pixel cap from the attached `Limits::max_pixels`
+        // (default 120 MP — `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS` —
+        // when unset; see `Self::with_limits`).
+        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+        let jpeg =
+            crate::jpeg::read_jpeg(jpeg_bytes, max_pixels).map_err(|e| at(EncodeError::from(e)))?;
         crate::jpeg::encode_jpeg_to_jxl_container_with_effort(&jpeg, self.effort)
             .map_err(|e| at(EncodeError::from(e)))
     }
@@ -3444,7 +3509,12 @@ impl LosslessConfig {
     #[track_caller]
     pub fn encode_jpeg_transcode_codestream(&self, jpeg_bytes: &[u8]) -> Result<Vec<u8>> {
         // 2026-05-28: see `encode_jpeg_transcode` for the effort gating.
-        let jpeg = crate::jpeg::read_jpeg(jpeg_bytes).map_err(|e| at(EncodeError::from(e)))?;
+        // Pre-flight SOF pixel cap from the attached `Limits::max_pixels`
+        // (default 120 MP — `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS` —
+        // when unset; see `Self::with_limits`).
+        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+        let jpeg =
+            crate::jpeg::read_jpeg(jpeg_bytes, max_pixels).map_err(|e| at(EncodeError::from(e)))?;
         crate::jpeg::encode_jpeg_to_jxl_with_effort(&jpeg, self.effort)
             .map_err(|e| at(EncodeError::from(e)))
     }

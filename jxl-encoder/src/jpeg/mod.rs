@@ -46,7 +46,10 @@ pub fn encode_jpeg_recompress_codestream(
     dz: f32,
     effort: u8,
 ) -> Result<alloc::vec::Vec<u8>, crate::error::Error> {
-    let jpeg = read_jpeg(jpeg_bytes)
+    // `None` applies the default `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`
+    // (120 MP) pre-flight cap. These PreserveJxl free functions take no
+    // `Limits` yet; threading a configurable cap is tracked in issue #77.
+    let jpeg = read_jpeg(jpeg_bytes, None)
         .map_err(|e| crate::error::Error::InvalidInput(alloc::format!("JPEG parse: {e:?}")))?;
     // Lossless transcode is the "do no harm" floor.
     let lossless = encode_jpeg_to_jxl_with_effort(&jpeg, effort)?;
@@ -80,7 +83,10 @@ pub fn encode_jpeg_recompress_auto_codestream(
     scale: f32,
     effort: u8,
 ) -> Result<alloc::vec::Vec<u8>, crate::error::Error> {
-    let jpeg = read_jpeg(jpeg_bytes)
+    // `None` applies the default `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`
+    // (120 MP) pre-flight cap. These PreserveJxl free functions take no
+    // `Limits` yet; threading a configurable cap is tracked in issue #77.
+    let jpeg = read_jpeg(jpeg_bytes, None)
         .map_err(|e| crate::error::Error::InvalidInput(alloc::format!("JPEG parse: {e:?}")))?;
     let lossless = encode_jpeg_to_jxl_with_effort(&jpeg, effort)?;
     // NaN-safe: NaN selects the lossless floor, same as scale <= 1.0.
@@ -110,7 +116,10 @@ pub fn encode_jpeg_recompress_planar_codestream(
     chroma_dz: f32,
     effort: u8,
 ) -> Result<alloc::vec::Vec<u8>, crate::error::Error> {
-    let jpeg = read_jpeg(jpeg_bytes)
+    // `None` applies the default `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`
+    // (120 MP) pre-flight cap. These PreserveJxl free functions take no
+    // `Limits` yet; threading a configurable cap is tracked in issue #77.
+    let jpeg = read_jpeg(jpeg_bytes, None)
         .map_err(|e| crate::error::Error::InvalidInput(alloc::format!("JPEG parse: {e:?}")))?;
     let lossless = encode_jpeg_to_jxl_with_effort(&jpeg, effort)?;
     if !(luma_scale > 1.0 || chroma_scale > 1.0) {

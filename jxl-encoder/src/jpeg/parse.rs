@@ -29,9 +29,20 @@ type Result<T> = core::result::Result<T, JpegError>;
 /// This performs two passes:
 /// 1. Marker scan: extracts marker structure, Huffman/quant tables, APP/COM data
 /// 2. zenjpeg decode: extracts quantized DCT coefficients reliably
-pub fn read_jpeg(data: &[u8]) -> Result<JpegData> {
+///
+/// `max_pixels` is the pre-flight cap applied to the untrusted SOF
+/// `width × height` *before* any per-block coefficient buffer is allocated
+/// (the transcode path builds no `MemoryBudget`). `None`
+/// applies the secure default
+/// [`crate::api::Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] (120 MP);
+/// callers thread their own cap from [`crate::api::Limits::max_pixels`]
+/// (e.g. via [`crate::api::LosslessConfig::with_limits`]). Pass
+/// `Some(u64::MAX)` to opt out of the cap entirely (trusted input only).
+pub fn read_jpeg(data: &[u8], max_pixels: Option<u64>) -> Result<JpegData> {
+    let max_pixels = max_pixels.unwrap_or(crate::api::Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS);
+
     // Phase 1: Scan markers for jbrd metadata
-    let mut jpeg = scan_markers(data)?;
+    let mut jpeg = scan_markers(data, max_pixels)?;
 
     // Phase 2: Use zenjpeg for reliable coefficient extraction
     extract_coefficients_zenjpeg(data, &mut jpeg)?;
@@ -41,7 +52,7 @@ pub fn read_jpeg(data: &[u8]) -> Result<JpegData> {
 
 /// Lightweight marker scanner that reads JPEG marker structure without
 /// decoding entropy data. Extracts everything needed for jbrd box serialization.
-fn scan_markers(data: &[u8]) -> Result<JpegData> {
+fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
     if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 {
         return Err(JpegError::Invalid("missing SOI marker".into()));
     }
@@ -110,7 +121,7 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
             }
             0xC0 | 0xC1 => {
                 // SOF0 (baseline) / SOF1 (extended sequential)
-                parse_sof_marker(data, &mut pos, &mut jpeg)?;
+                parse_sof_marker(data, &mut pos, &mut jpeg, max_pixels)?;
             }
             0xC2 => {
                 // SOF2: progressive JPEG. zenjpeg's `decode_coefficients()`
@@ -133,7 +144,7 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
                 // value we currently hard-code to 0. For multi-scan inputs
                 // this needs the per-scan pass index — handled at the JBRD
                 // writer rather than in this branch.
-                parse_sof_marker(data, &mut pos, &mut jpeg)?;
+                parse_sof_marker(data, &mut pos, &mut jpeg, max_pixels)?;
             }
             0xDB => {
                 // DQT
@@ -235,7 +246,15 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
 }
 
 /// Parse SOF marker (without the marker bytes, starting at length field).
-fn parse_sof_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result<()> {
+///
+/// `max_pixels` is the pre-flight cap on `width × height` (see [`read_jpeg`]);
+/// `u64::MAX` disables it.
+fn parse_sof_marker(
+    data: &[u8],
+    pos: &mut usize,
+    jpeg: &mut JpegData,
+    max_pixels: u64,
+) -> Result<()> {
     let p = *pos;
     if p + 1 >= data.len() {
         return Err(JpegError::UnexpectedEof);
@@ -251,6 +270,23 @@ fn parse_sof_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
     }
     jpeg.height = u16::from_be_bytes([data[p + 3], data[p + 4]]) as u32;
     jpeg.width = u16::from_be_bytes([data[p + 5], data[p + 6]]) as u32;
+
+    // Pre-flight pixel cap on the untrusted SOF dimensions, BEFORE the
+    // per-block coefficient buffers are allocated (the transcode path does not
+    // build a `MemoryBudget`). JPEG dims are `u16` (≤ 65535 each), so a crafted
+    // header can advertise ~4.3 Gpx and force a multi-gigabyte `i16`
+    // coefficient allocation downstream. `max_pixels` is the caller's cap
+    // (`Limits::max_pixels`, default 120 MP — admits 108 MP phone photos);
+    // `u64::MAX` opts out.
+    if (jpeg.width as u64) * (jpeg.height as u64) > max_pixels {
+        return Err(JpegError::Invalid(format!(
+            "JPEG frame {}x{} exceeds the {} MP transcode pixel cap",
+            jpeg.width,
+            jpeg.height,
+            max_pixels / 1_000_000
+        )));
+    }
+
     let num_comp = data[p + 7] as usize;
 
     // Accept 1-4 components (libjxl `kMaxComponents = 4`,
@@ -691,6 +727,85 @@ mod tests {
         }
     }
 
+    /// Build a minimal SOI + SOF0 (3 components) advertising `w`×`h`. The frame
+    /// has no SOS/coefficients, so parsing fails AFTER the SOF either at the
+    /// pixel cap (oversized) or later (missing scan data).
+    fn sof_only(w: u16, h: u16) -> Vec<u8> {
+        let mut d = vec![0xFF, 0xD8, 0xFF, 0xC0];
+        d.extend_from_slice(&17u16.to_be_bytes()); // len
+        d.push(8); // precision
+        d.extend_from_slice(&h.to_be_bytes());
+        d.extend_from_slice(&w.to_be_bytes());
+        d.push(3); // Nf
+        d.extend_from_slice(&[1, 0x11, 0]);
+        d.extend_from_slice(&[2, 0x11, 1]);
+        d.extend_from_slice(&[3, 0x11, 1]);
+        d
+    }
+
+    /// proderrdoc 2026-06-14 (issue #77): the JPEG-transcode path builds no
+    /// `MemoryBudget`, and JPEG dims are `u16` (≤ 65535 each), so a crafted SOF
+    /// can advertise ~4.3 Gpx and force a multi-GB coefficient allocation.
+    /// `parse_sof_marker` rejects oversized frames before any allocation;
+    /// `None` applies the default 120 MP cap.
+    #[test]
+    fn read_jpeg_rejects_oversized_sof_before_alloc() {
+        // 20000 × 20000 = 400 MP, well over the default 120 MP cap.
+        let result = read_jpeg(&sof_only(20000, 20000), None);
+        assert!(
+            matches!(&result, Err(JpegError::Invalid(m)) if m.contains("120 MP")),
+            "expected the 120 MP cap rejection, got {result:?}"
+        );
+    }
+
+    /// Regression guard: a normal-sized frame (16.8 MP) passes the default cap
+    /// — it fails later for missing scan data, never with the cap message.
+    #[test]
+    fn read_jpeg_does_not_cap_normal_dimensions() {
+        let result = read_jpeg(&sof_only(4096, 4096), None); // 16.8 MP
+        if let Err(JpegError::Invalid(m)) = &result {
+            assert!(
+                !m.contains("MP transcode pixel cap"),
+                "16.8 MP wrongly hit the cap: {m}"
+            );
+        }
+    }
+
+    /// The pixel cap is **configurable** (issue #77): a caller-supplied
+    /// `max_pixels` overrides the 120 MP default in both directions, and
+    /// `Some(u64::MAX)` opts out entirely.
+    #[test]
+    fn read_jpeg_pixel_cap_is_configurable() {
+        // (a) A tighter cap rejects a frame the default would admit: 4096×4096
+        //     (16.8 MP) under a 10 MP cap fails AT the cap, before allocation.
+        let tight = read_jpeg(&sof_only(4096, 4096), Some(10_000_000));
+        assert!(
+            matches!(&tight, Err(JpegError::Invalid(m)) if m.contains("10 MP transcode pixel cap")),
+            "expected the 10 MP cap rejection, got {tight:?}"
+        );
+
+        // (b) A looser cap admits a frame the default would reject: 20000×20000
+        //     (400 MP) under a 500 MP cap passes the cap (then fails later for
+        //     missing scan data — never with the cap message).
+        let loose = read_jpeg(&sof_only(20000, 20000), Some(500_000_000));
+        if let Err(JpegError::Invalid(m)) = &loose {
+            assert!(
+                !m.contains("transcode pixel cap"),
+                "400 MP wrongly hit the 500 MP cap: {m}"
+            );
+        }
+
+        // (c) `u64::MAX` opts out: even the largest representable JPEG frame
+        //     (65535×65535 ≈ 4.29 Gpx) clears the cap.
+        let disabled = read_jpeg(&sof_only(65535, 65535), Some(u64::MAX));
+        if let Err(JpegError::Invalid(m)) = &disabled {
+            assert!(
+                !m.contains("transcode pixel cap"),
+                "u64::MAX should disable the cap, got: {m}"
+            );
+        }
+    }
+
     /// Security audit 2026-05-06 H4 regression: a truncated SOS marker with
     /// `len < 6 + 2*Ns` previously panicked with index-out-of-bounds when
     /// `parse_sos_header` indexed `data[spec_base..spec_base + 3]` past the
@@ -720,7 +835,7 @@ mod tests {
         data.extend_from_slice(&[0xFF, 0xDA]);
         data.extend_from_slice(&0u16.to_be_bytes());
 
-        let result = read_jpeg(&data);
+        let result = read_jpeg(&data, None);
         assert!(matches!(result, Err(JpegError::Invalid(_))));
     }
 
@@ -750,7 +865,7 @@ mod tests {
         data.push(1); // Ns
         data.extend_from_slice(&[1, 0x00]); // component selector + table
 
-        let result = read_jpeg(&data);
+        let result = read_jpeg(&data, None);
         assert!(matches!(result, Err(JpegError::Invalid(_))));
     }
 
@@ -766,7 +881,7 @@ mod tests {
             crate::test_helpers::corpus_dir().display()
         );
         let data = std::fs::read(path).expect("failed to read test JPEG");
-        let jpeg = read_jpeg(&data).expect("failed to parse JPEG");
+        let jpeg = read_jpeg(&data, None).expect("failed to parse JPEG");
 
         assert!(jpeg.width > 0, "width should be nonzero");
         assert!(jpeg.height > 0, "height should be nonzero");
