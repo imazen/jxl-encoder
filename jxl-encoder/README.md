@@ -33,6 +33,29 @@ let jxl = LossyConfig::new(1.0)
     .encode(&pixels)?;
 ```
 
+## Errors
+
+`encode` returns `jxl_encoder::Result<Vec<u8>>` = `Result<Vec<u8>, whereat::At<EncodeError>>`.
+The `At<…>` wrapper records a source location for logs (`format!("{e}")`); borrow the
+inner error with `e.error()` (or own it with `e.decompose().0`) to match. `EncodeError`
+is `#[non_exhaustive]`, so keep a wildcard arm:
+
+```rust
+use jxl_encoder::{LossyConfig, EncodeError, PixelLayout};
+
+match LossyConfig::new(1.0).encode(&pixels, width, height, PixelLayout::Rgb8) {
+    Ok(_jxl) => { /* encoded bytes */ }
+    Err(e) => match e.error() {
+        EncodeError::Cancelled => { /* a Stop token requested cancellation */ }
+        EncodeError::LimitExceeded { message } => eprintln!("limit: {message}"),
+        EncodeError::Oom(_) => eprintln!("out of memory"),
+        EncodeError::InvalidInput { message }
+        | EncodeError::InvalidConfig { message } => eprintln!("bad input/config: {message}"),
+        other => eprintln!("encode failed: {other:?}"),
+    },
+}
+```
+
 ## Pixel layouts
 
 `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `RgbLinearF32`.
