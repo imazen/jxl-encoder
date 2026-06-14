@@ -29,7 +29,7 @@
   `benchmarks/mem_peak_calibrate_libharness_2026-06-14.tsv` (6 content
   classes × 64–2048 px × e5/e7/e9 × 8/16-bit) + direct 12 MP anchors. New
   reusable harness `scripts/mem_peak_calibrate.py` +
-  `examples/mem_probe.rs`. Refined (5b20f08e) from a focused 7-class ×
+  `examples/mem_probe.rs`. Refined (44a929b6) from a focused 7-class ×
   1024² × e7/8/9/10 × rgb/rgba grid (`mem_peak_quick_2026-06-14.tsv` +
   `mem_peak_fit.py`): added a lossless **e≥10** band (~620 B/px, +35 % —
   the `fine_grained_step`/multi-seed step) and a lossless **alpha** term

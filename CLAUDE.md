@@ -679,7 +679,7 @@ measurement at equal or better coverage.
      `scripts/mem_peak_calibrate.py` + `examples/mem_probe.rs`. Bit depth
      barely moves it (8 vs 16-bit ≈ 75 vs 72 B/px — f32 internals dominate,
      only the input buffer carries bpp). Commits ntszwlux (module) +
-     ltqvptqw (rewire) + 5b20f08e (refinement). The e8/e10 points, the RGBA
+     ltqvptqw (rewire) + 44a929b6 (refinement). The e8/e10 points, the RGBA
      alpha term, and the content-spread percentiles were settled by a
      focused 7-class × 1024² × e7/8/9/10 × rgb/rgba grid (112 cells, ~4 min,
      benchmarks/mem_peak_quick_2026-06-14.tsv + scripts/mem_peak_fit.py):
