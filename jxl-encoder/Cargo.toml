@@ -338,6 +338,15 @@ path = "examples/hdr_tree_budget_probe.rs"
 required-features = ["__expert"]
 
 [dev-dependencies]
+# Resolver pin (not used directly): `brotli` 8.0.3 (pulled by the
+# `zenjxl-decoder` dev-dep) requires `alloc-no-stdlib = "2.0"` (<3.0), but
+# `alloc-stdlib`'s loose `>=2.0.4, <4.0.0` range otherwise resolves to the
+# newly-published `alloc-no-stdlib 3.0.0`, splitting the version and breaking
+# brotli's `StandardAlloc: Allocator` impl (test build fails to compile — the
+# byte-lock gate went down 2026-06-14). This crate has no committed Cargo.lock,
+# so CI resolves fresh; pinning to 2.x here keeps the resolution consistent.
+# See jxl-encoder#82. Remove when brotli no longer needs alloc-no-stdlib 2.x.
+alloc-no-stdlib = "2"
 image = "0.25"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
 jxl = "0.4.0"
