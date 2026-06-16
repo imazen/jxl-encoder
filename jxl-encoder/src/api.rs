@@ -1322,12 +1322,15 @@ impl<'a> ImageMetadata<'a> {
 ///   here, but never a higher one. The encoder saturates at the lower of
 ///   `Limits.max_quant_loop_iters` (or its default) and the validator
 ///   max.
-/// - [`Self::max_memory_bytes`] — when `None`, the encoder applies
-///   [`Self::DEFAULT_MAX_MEMORY_BYTES`] (≈ 4 GB) as a soft cap so that an
-///   image proxy without explicit `Limits` configuration still has a
-///   working-set ceiling. Set to `Some(u64::MAX)` to opt out of the soft
-///   cap explicitly (this surfaces in logs as "user explicitly disabled
-///   memory limit").
+/// - [`Self::max_memory_bytes`] — when `None`, the encoder applies a
+///   path-aware soft cap so that an image proxy without explicit `Limits`
+///   configuration still has a working-set ceiling:
+///   [`Self::DEFAULT_MAX_MEMORY_BYTES`] (≈ 4 GiB) for lossy,
+///   [`Self::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS`] (8 GiB) for lossless
+///   (lossless tree-learning is a heavier memory regime). Both are fixed
+///   ceilings — deliberately not scaled with image dimensions. Set to
+///   `Some(u64::MAX)` to opt out of the soft cap explicitly (this surfaces
+///   in logs as "user explicitly disabled memory limit").
 #[derive(Clone, Debug, Default)]
 pub struct Limits {
     max_width: Option<u64>,
@@ -1405,8 +1408,10 @@ impl Limits {
 
     /// Set maximum memory bytes the encoder may allocate.
     ///
-    /// When unset, the encoder applies
-    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`] (~4 GB) as a soft cap. Pass
+    /// When unset, the encoder applies a path-aware soft cap:
+    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`] (~4 GiB) for lossy,
+    /// [`Self::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS`] (8 GiB) for lossless
+    /// (lossless tree-learning is a heavier memory regime). Pass
     /// `u64::MAX` explicitly to disable the cap (with the understanding
     /// that an unbounded working set on a hostile input can OOM the
     /// process).
@@ -1439,16 +1444,24 @@ impl Limits {
         self.max_pixels
     }
 
-    /// Get maximum memory bytes, if set. When `None`,
-    /// [`Self::effective_max_memory_bytes`] gives the soft default the
-    /// encoder will actually enforce.
+    /// Get maximum memory bytes, if set. When `None`, the encoder applies
+    /// the path-aware soft default — see [`Self::effective_max_memory_bytes`]
+    /// for the caveat about which value that is.
     pub fn max_memory_bytes(&self) -> Option<u64> {
         self.max_memory_bytes
     }
 
-    /// The cap the encoder will actually apply: explicit
-    /// `max_memory_bytes` if set, else
-    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`].
+    /// The explicit `max_memory_bytes` if set, else the **lossy** soft
+    /// default [`Self::DEFAULT_MAX_MEMORY_BYTES`] (≈ 4 GiB).
+    ///
+    /// NOTE: this is not path-aware. When `max_memory_bytes` is unset, the
+    /// encoder enforces the path-aware default from
+    /// [`Self::default_max_memory_bytes`] — which is
+    /// [`Self::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS`] (8 GiB) on the lossless
+    /// path (lossless tree-learning is a heavier memory regime). This getter
+    /// always reports the lossy value, so for an unset limit it understates
+    /// the cap a lossless encode actually runs under. Pass `is_lossless` to
+    /// [`Self::default_max_memory_bytes`] for the value the encoder uses.
     pub fn effective_max_memory_bytes(&self) -> u64 {
         self.max_memory_bytes
             .unwrap_or(Self::DEFAULT_MAX_MEMORY_BYTES)

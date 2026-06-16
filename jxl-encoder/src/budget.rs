@@ -12,7 +12,10 @@
 //! taken branch per allocation site.
 //!
 //! The cap comes from [`Limits::max_memory_bytes`] when the caller sets
-//! one, or from [`Limits::DEFAULT_MAX_MEMORY_BYTES`] otherwise.
+//! one, or from the path-aware default [`Limits::default_max_memory_bytes`]
+//! otherwise — [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (4 GiB) on the lossy
+//! path, [`Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS`] (8 GiB) on the
+//! lossless path.
 //!
 //! ## Coverage
 //!
