@@ -38,6 +38,21 @@
   still passes. Pixel-path entry points are unchanged. Follow-ups (full
   `MemoryBudget` threading through `jpeg/encode.rs`, the PreserveJxl
   `encode_jpeg_recompress_*` free functions) remain tracked in #77.
+- **Cooperative cancellation on the JPEG-transcode path (#77 item 2).**
+  The transcode path previously ignored cancellation entirely — `parse.rs`
+  hardcoded an `Unstoppable` token into the zenjpeg coefficient decode and
+  the JXL entropy phase had no `Stop` at all, so a server could not abort a
+  slow transcode of an oversized upload. New
+  `LosslessConfig::encode_jpeg_transcode_with_stop` /
+  `encode_jpeg_transcode_codestream_with_stop` accept an `enough::Stop` and
+  poll it at coarse boundaries — entry, the zenjpeg decode, and per-group /
+  pre-entropy during encoding — returning `EncodeError::Cancelled` (mapped
+  from the new `JpegError::Cancelled` / the existing `Error::Cancelled`).
+  Byte-identical to the non-stop entry points on the success path: the polls
+  are skipped when no token is attached and are no-ops under an `Unstoppable`
+  token (verified by `test_jpeg_transcode_cancellation`). Mirrors #81's
+  VarDCT-path cancellation. Encode-phase `MemoryBudget` and a `Stop` on the
+  PreserveJxl `encode_jpeg_recompress_*` free functions remain #77 follow-ups.
 
 ### Added
 - **Calibrated peak-memory estimation (`heuristics` module + per-config

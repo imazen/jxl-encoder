@@ -19,10 +19,16 @@ pub use encode::{
     encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, encode_jpeg_to_jxl_container_with_effort,
     encode_jpeg_to_jxl_with_effort,
 };
+// Cancellable (Stop-polling) variants — internal; the public transcode entry
+// points in `api.rs` use these for `*_with_stop`. See issue #77 item 2.
+pub(crate) use encode::{
+    encode_jpeg_to_jxl_container_with_effort_stop, encode_jpeg_to_jxl_with_effort_stop,
+};
 pub use lossy::{
     coarsen_coefficients, coarsen_coefficients_auto, coarsen_coefficients_dz,
     coarsen_coefficients_planar, coarsen_policy,
 };
+pub(crate) use parse::read_jpeg_with_stop;
 pub use parse::{JpegError, read_jpeg};
 
 /// PreserveJxl: coefficient-domain lossy JPEG → bare JXL codestream.

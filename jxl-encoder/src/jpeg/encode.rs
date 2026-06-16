@@ -39,6 +39,7 @@ use crate::vardct::dc_coding::{
 use crate::vardct::frame::{
     assemble_frame_sections, write_dc_group_from_tokens, write_quant_scales,
 };
+use enough::Stop;
 
 /// Lever A (2026-05-28): when `true`, the JPEG path emits the libjxl-style
 /// `kJpegTranscodeACMeta` context tree shape (single `Leaf(Zero)` for the
@@ -103,13 +104,36 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
 ///
 /// Effort 0-8 is byte-identical to [`encode_jpeg_to_jxl`] (which uses effort 7).
 pub fn encode_jpeg_to_jxl_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort)?;
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, None)?;
+    Ok(codestream)
+}
+
+/// Like [`encode_jpeg_to_jxl_with_effort`], but polls `stop` at coarse
+/// boundaries (per group during AC token collection, and before the entropy
+/// phase) so a server can abort a slow transcode. `None` is byte-identical
+/// (no poll). Returns [`crate::error::Error::Cancelled`] if cancelled.
+pub(crate) fn encode_jpeg_to_jxl_with_effort_stop(
+    jpeg: &JpegData,
+    effort: u8,
+    stop: Option<&dyn Stop>,
+) -> Result<Vec<u8>> {
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, stop)?;
     Ok(codestream)
 }
 
 /// Inner function that returns both codestream bytes and the file header size
 /// (split point for jxlp box splitting when JBRD is needed).
-fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usize)> {
+///
+/// `stop` (when `Some`) is polled at coarse boundaries during encoding; `None`
+/// performs no poll and is byte-identical to the pre-cancellation path.
+fn encode_jpeg_to_jxl_inner(
+    jpeg: &JpegData,
+    effort: u8,
+    stop: Option<&dyn Stop>,
+) -> Result<(Vec<u8>, usize)> {
+    if let Some(s) = stop {
+        s.check().map_err(|_| crate::error::Error::Cancelled)?;
+    }
     let width = jpeg.width as usize;
     let height = jpeg.height as usize;
 
@@ -778,6 +802,11 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
 
     let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
     for group_idx in 0..num_groups {
+        // Coarse cancellation point (per group, NOT per block — the inner
+        // block loops are hot). Byte-identical when `stop` is `None`.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
         let group_x = group_idx % xsize_groups;
         let group_y = group_idx / xsize_groups;
         let start_bx = group_x * GROUP_DIM_IN_BLOCKS;
@@ -880,6 +909,11 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     } else {
         NUM_DC_CONTEXTS
     };
+    // Coarse cancellation point before the entropy phase (histogram
+    // clustering + ANS — the dominant cost at high effort).
+    if let Some(s) = stop {
+        s.check().map_err(|_| crate::error::Error::Cancelled)?;
+    }
     let total_dc_tokens: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>()
         + ac_metadata_tokens_per_group
             .iter()
@@ -1091,6 +1125,11 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // result was 0 bytes / 50 files difference. At typical JPEG corpus
     // sizes the cap doesn't materially bind — kBest pair-merge converges
     // organically below the cap. Kept the existing hint for stability.
+    // Coarse cancellation point before the AC histogram clustering — the
+    // single heaviest op at effort 9 (kBest pair-merge over all AC tokens).
+    if let Some(s) = stop {
+        s.check().map_err(|_| crate::error::Error::Cancelled)?;
+    }
     let ac_code = build_entropy_code_ans_with_options(
         &all_ac_tokens,
         ac_code_num_contexts,
@@ -1269,7 +1308,19 @@ pub fn encode_jpeg_to_jxl_container(jpeg: &JpegData) -> Result<Vec<u8>> {
 /// codestream side. Container wrapping (JBRD / Exif / XMP boxes) is
 /// effort-independent.
 pub fn encode_jpeg_to_jxl_container_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort)?;
+    encode_jpeg_to_jxl_container_with_effort_stop(jpeg, effort, None)
+}
+
+/// Like [`encode_jpeg_to_jxl_container_with_effort`], but polls `stop` at
+/// coarse boundaries during codestream encoding. `None` is byte-identical
+/// (no poll). Container wrapping itself is fast and not a cancellation point.
+/// Returns [`crate::error::Error::Cancelled`] if cancelled.
+pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
+    jpeg: &JpegData,
+    effort: u8,
+    stop: Option<&dyn Stop>,
+) -> Result<Vec<u8>> {
+    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort, stop)?;
     let jbrd = encode_jbrd(jpeg)?;
     let exif = extract_exif(jpeg);
     let xmp = extract_xmp(jpeg);

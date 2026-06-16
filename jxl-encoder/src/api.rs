@@ -155,8 +155,13 @@ impl From<enough::StopReason> for EncodeError {
 #[cfg(feature = "jpeg-reencoding")]
 impl From<crate::jpeg::JpegError> for EncodeError {
     fn from(e: crate::jpeg::JpegError) -> Self {
-        Self::JpegParse {
-            message: format!("{e}"),
+        match e {
+            // Cooperative cancellation surfaces as the dedicated variant, not
+            // a parse error (mirrors the VarDCT path's `Error::Cancelled`).
+            crate::jpeg::JpegError::Cancelled => Self::Cancelled,
+            other => Self::JpegParse {
+                message: format!("{other}"),
+            },
         }
     }
 }
@@ -3516,6 +3521,53 @@ impl LosslessConfig {
         let jpeg =
             crate::jpeg::read_jpeg(jpeg_bytes, max_pixels).map_err(|e| at(EncodeError::from(e)))?;
         crate::jpeg::encode_jpeg_to_jxl_with_effort(&jpeg, self.effort)
+            .map_err(|e| at(EncodeError::from(e)))
+    }
+
+    /// Cancellable variant of [`Self::encode_jpeg_transcode`].
+    ///
+    /// Polls `stop` (an [`enough::Stop`] token) at coarse boundaries — entry,
+    /// the zenjpeg coefficient decode, and per-group / pre-entropy during JXL
+    /// encoding — returning [`EncodeError::Cancelled`] if cancellation is
+    /// requested. Output is byte-identical to [`Self::encode_jpeg_transcode`]
+    /// when the token never fires (e.g. an [`Unstoppable`] token); each poll
+    /// is a cheap check skipped entirely on the non-stop path.
+    ///
+    /// This is the untrusted-input cancellation hook from issue #77 item 2 —
+    /// a server can abort a slow transcode of an oversized JPEG.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[track_caller]
+    pub fn encode_jpeg_transcode_with_stop(
+        &self,
+        jpeg_bytes: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<Vec<u8>> {
+        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+        let jpeg = crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, Some(stop))
+            .map_err(|e| at(EncodeError::from(e)))?;
+        crate::jpeg::encode_jpeg_to_jxl_container_with_effort_stop(&jpeg, self.effort, Some(stop))
+            .map_err(|e| at(EncodeError::from(e)))
+    }
+
+    /// Cancellable variant of [`Self::encode_jpeg_transcode_codestream`].
+    ///
+    /// See [`Self::encode_jpeg_transcode_with_stop`] for the polling contract
+    /// and byte-identity guarantee.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[track_caller]
+    pub fn encode_jpeg_transcode_codestream_with_stop(
+        &self,
+        jpeg_bytes: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<Vec<u8>> {
+        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+        let jpeg = crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, Some(stop))
+            .map_err(|e| at(EncodeError::from(e)))?;
+        crate::jpeg::encode_jpeg_to_jxl_with_effort_stop(&jpeg, self.effort, Some(stop))
             .map_err(|e| at(EncodeError::from(e)))
     }
 }
@@ -15910,6 +15962,62 @@ mod tests {
             .with_stop(&enough::Unstoppable)
             .encode(&pixels);
         assert!(ok.is_ok(), "Unstoppable lossy encode failed: {ok:?}");
+    }
+
+    /// Issue #77 item 2: the JPEG-transcode path is cancellable via the
+    /// `*_with_stop` entry points (the formerly-dead `Stop` plumbing). A
+    /// cancelling token aborts with `Cancelled`; an `Unstoppable` token is
+    /// byte-identical to the non-stop path — proving the per-phase polls
+    /// (decode + per-group + pre-entropy) are harmless no-ops on success.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn test_jpeg_transcode_cancellation() {
+        use enough::{Stop, StopReason, Unstoppable};
+
+        // A committed baseline 4:4:4 JPEG — the transcode path's supported shape.
+        let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+        let cfg = LosslessConfig::new();
+
+        struct AlwaysCancel;
+        impl Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), StopReason> {
+                Err(StopReason::Cancelled)
+            }
+        }
+
+        // A cancelling Stop aborts both transcode entry points with
+        // `Cancelled` (mapped from `JpegError::Cancelled` / `Error::Cancelled`).
+        let cancelled = cfg.encode_jpeg_transcode_with_stop(data, &AlwaysCancel);
+        assert!(
+            matches!(&cancelled, Err(e) if matches!(e.error(), EncodeError::Cancelled)),
+            "expected EncodeError::Cancelled, got {cancelled:?}"
+        );
+        let cancelled_cs = cfg.encode_jpeg_transcode_codestream_with_stop(data, &AlwaysCancel);
+        assert!(
+            matches!(&cancelled_cs, Err(e) if matches!(e.error(), EncodeError::Cancelled)),
+            "codestream: expected EncodeError::Cancelled, got {cancelled_cs:?}"
+        );
+
+        // Unstoppable runs every poll (decode + per-group + pre-entropy),
+        // each returning Ok → byte-identical to the non-stop entry points.
+        let with_uns = cfg
+            .encode_jpeg_transcode_with_stop(data, &Unstoppable)
+            .expect("Unstoppable transcode should succeed");
+        let plain = cfg
+            .encode_jpeg_transcode(data)
+            .expect("plain transcode should succeed");
+        assert_eq!(
+            with_uns, plain,
+            "Unstoppable diverged from the no-stop path"
+        );
+
+        let with_uns_cs = cfg
+            .encode_jpeg_transcode_codestream_with_stop(data, &Unstoppable)
+            .expect("Unstoppable codestream transcode should succeed");
+        let plain_cs = cfg
+            .encode_jpeg_transcode_codestream(data)
+            .expect("plain codestream transcode should succeed");
+        assert_eq!(with_uns_cs, plain_cs, "codestream Unstoppable diverged");
     }
 
     #[test]

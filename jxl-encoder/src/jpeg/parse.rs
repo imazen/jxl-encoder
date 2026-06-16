@@ -8,6 +8,7 @@
 //! scanner for the jbrd reconstruction metadata.
 
 use super::data::*;
+use enough::Stop;
 
 /// Errors that can occur during JPEG parsing.
 #[derive(Debug, thiserror::Error)]
@@ -20,6 +21,10 @@ pub enum JpegError {
     Unsupported(String),
     #[error("zenjpeg decode error: {0}")]
     Decode(String),
+    /// The caller's [`enough::Stop`] token requested cancellation. Surfaced
+    /// as [`crate::api::EncodeError::Cancelled`] at the transcode boundary.
+    #[error("encoding cancelled")]
+    Cancelled,
 }
 
 type Result<T> = core::result::Result<T, JpegError>;
@@ -39,13 +44,33 @@ type Result<T> = core::result::Result<T, JpegError>;
 /// (e.g. via [`crate::api::LosslessConfig::with_limits`]). Pass
 /// `Some(u64::MAX)` to opt out of the cap entirely (trusted input only).
 pub fn read_jpeg(data: &[u8], max_pixels: Option<u64>) -> Result<JpegData> {
+    read_jpeg_with_stop(data, max_pixels, None)
+}
+
+/// Like [`read_jpeg`], but polls `stop` so a server can abort an oversized
+/// untrusted transcode mid-decode.
+///
+/// `stop` is checked at entry and threaded into the zenjpeg coefficient
+/// decode (the dominant time sink for a large frame). `None` is equivalent
+/// to an `Unstoppable` token — **byte-identical with zero overhead** (no
+/// poll is performed). Returns [`JpegError::Cancelled`] if cancellation is
+/// requested. Used by the cancellable transcode entry points
+/// ([`crate::api::LosslessConfig::encode_jpeg_transcode_with_stop`]).
+pub(crate) fn read_jpeg_with_stop(
+    data: &[u8],
+    max_pixels: Option<u64>,
+    stop: Option<&dyn Stop>,
+) -> Result<JpegData> {
+    if let Some(s) = stop {
+        s.check().map_err(|_| JpegError::Cancelled)?;
+    }
     let max_pixels = max_pixels.unwrap_or(crate::api::Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS);
 
     // Phase 1: Scan markers for jbrd metadata
     let mut jpeg = scan_markers(data, max_pixels)?;
 
     // Phase 2: Use zenjpeg for reliable coefficient extraction
-    extract_coefficients_zenjpeg(data, &mut jpeg)?;
+    extract_coefficients_zenjpeg(data, &mut jpeg, stop)?;
 
     Ok(jpeg)
 }
@@ -561,14 +586,27 @@ fn skip_entropy_data(data: &[u8], pos: &mut usize) {
 /// marker scanner and zenjpeg traverse SOS markers.
 ///
 /// [`decode_coefficients_with_jbrd_metadata`]: zenjpeg::decoder::DecodeConfig::decode_coefficients_with_jbrd_metadata
-fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> {
+fn extract_coefficients_zenjpeg(
+    data: &[u8],
+    jpeg: &mut JpegData,
+    stop: Option<&dyn Stop>,
+) -> Result<()> {
+    use enough::Unstoppable;
     use zenjpeg::decoder::DecodeConfig;
-    use zenjpeg::encoder::Unstoppable;
 
     let config = DecodeConfig::new();
-    let (decoded, jbrd_meta) = config
-        .decode_coefficients_with_jbrd_metadata(data, Unstoppable)
-        .map_err(|e| JpegError::Decode(format!("{e}")))?;
+    // Thread the caller's Stop into zenjpeg's entropy decode (the dominant
+    // time sink for a large untrusted frame). `None` → `Unstoppable`, which
+    // zenjpeg never polls — byte-identical to the pre-cancellation path.
+    let unstoppable = Unstoppable;
+    let stop_ref: &dyn Stop = stop.unwrap_or(&unstoppable);
+    let decode_result = config.decode_coefficients_with_jbrd_metadata(data, stop_ref);
+    // If the stop fired, surface a clean `Cancelled` instead of zenjpeg's
+    // generic decode error (zenjpeg maps `StopReason` into its own error).
+    if let Some(s) = stop {
+        s.check().map_err(|_| JpegError::Cancelled)?;
+    }
+    let (decoded, jbrd_meta) = decode_result.map_err(|e| JpegError::Decode(format!("{e}")))?;
 
     if decoded.components.len() != jpeg.components.len() {
         return Err(JpegError::Invalid(format!(
