@@ -203,6 +203,25 @@
   mask-median content dispatch was measured and REJECTED (photo
   1418519 mask_med 92.3 sits above every sky cell — no separation).
 
+### Documentation
+- **README: closed the four worst usability gaps found by an insulated
+  external-developer test** (reader given only the README, no source). The
+  README had **no install/version line at all** (the workspace-inherited
+  version was never stated) — added an `## Install` block (`jxl-encoder =
+  "0.3.1"` / `cargo add`, MSRV, `no_std + alloc` note). Added a
+  `## Quality (distance) and effort` section stating the distance scale
+  explicitly (lower = higher quality; valid `0.0 < d <= 25.0`; `1.0` =
+  visually lossless; `0.0` rejected for lossy → use `LosslessConfig`) and
+  the `with_effort` setter (default 7, range `1..=12`). Added a
+  `## Cancellation` section showing the real API surface — previously
+  cancellation was *mentioned* but no `with_stop` setter/token type/example
+  appeared: documents `EncodeRequest::with_stop(&dyn Stop)`, the re-exported
+  `Unstoppable` no-op, and `almost_enough::Stopper::new()` + `.cancel()` for
+  a triggerable token (deps + versions). Added a `## Resource limits`
+  section documenting what `Limits::default()` bounds (the 4 GiB lossy /
+  8 GiB lossless soft memory cap). README-only; every symbol verified
+  against source.
+
 ### Fixed
 - **`estimate_peak_memory_bytes` under-reported the lossless path ~14×.**
   The old term-by-term model treated MA tree-learning's working set as
