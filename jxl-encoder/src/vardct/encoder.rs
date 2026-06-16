@@ -21,6 +21,7 @@ use crate::debug_log;
 use crate::debug_rect;
 use crate::error::{Error, Result};
 use crate::headers::frame_header::FrameHeader;
+use enough::Stop;
 
 // Re-export types from entropy_code sub-module.
 pub(crate) use super::entropy_code::{BuiltEntropyCode, force_strategy_map};
@@ -3295,8 +3296,24 @@ impl VarDctEncoder {
         linear_rgb: &[f32],
         alpha: Option<&[u8]>,
     ) -> Result<VarDctOutput> {
+        self.encode_with_stop(width, height, linear_rgb, alpha, None)
+    }
+
+    /// Like [`encode`](Self::encode) but polls `stop` at coarse (per-group)
+    /// boundaries during entropy coding, returning [`Error::Cancelled`] if
+    /// cancellation is requested. With `None` (or an `Unstoppable` token) the
+    /// emitted bytes are identical to [`encode`](Self::encode) — the poll is a
+    /// no-op on the success path.
+    pub fn encode_with_stop(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        alpha: Option<&[u8]>,
+        stop: Option<&dyn Stop>,
+    ) -> Result<VarDctOutput> {
         match alpha {
-            None => self.encode_with_extras(width, height, linear_rgb, &[]),
+            None => self.encode_with_extras_stop(width, height, linear_rgb, &[], stop),
             Some(buf) => {
                 // Build a default-alpha ExtraChannel view borrowing the caller's
                 // buffer. `with_alpha` honours the encoder's `alpha_associated`
@@ -3321,7 +3338,7 @@ impl VarDctEncoder {
                         expected_alpha
                     )));
                 }
-                self.encode_inner(width, height, linear_rgb, &[ec])
+                self.encode_inner(width, height, linear_rgb, &[ec], stop)
             }
         }
     }
@@ -3346,6 +3363,20 @@ impl VarDctEncoder {
         height: usize,
         linear_rgb: &[f32],
         extras: &[crate::api::ExtraChannel<'_>],
+    ) -> Result<VarDctOutput> {
+        self.encode_with_extras_stop(width, height, linear_rgb, extras, None)
+    }
+
+    /// Like [`encode_with_extras`](Self::encode_with_extras) but polls `stop`
+    /// at coarse (per-group) boundaries during entropy coding. With `None`
+    /// (or an `Unstoppable` token) the emitted bytes are identical.
+    pub fn encode_with_extras_stop(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        extras: &[crate::api::ExtraChannel<'_>],
+        stop: Option<&dyn Stop>,
     ) -> Result<VarDctOutput> {
         // Materialize the internal `VardctExtra` views, validating
         // dimensions + bit depth + dim_shift up-front before any work.
@@ -3373,7 +3404,7 @@ impl VarDctEncoder {
         }
 
         self.check_alpha_squeeze_supported(&views, Some((width, height)))?;
-        self.encode_inner(width, height, linear_rgb, &views)
+        self.encode_inner(width, height, linear_rgb, &views, stop)
     }
 
     /// Chunk-2.b gate (multi-group + dim_shift consolidation).
@@ -3532,6 +3563,7 @@ impl VarDctEncoder {
         height: usize,
         linear_rgb: &[f32],
         extras: &[super::extras::VardctExtra<'_>],
+        stop: Option<&dyn Stop>,
     ) -> Result<VarDctOutput> {
         let expected_rgb = width
             .checked_mul(height)
@@ -6181,6 +6213,11 @@ impl VarDctEncoder {
             // DC group sections
             let blocks_per_dc_group = (256 / 8) * (256 / 8); // 1024 blocks per DC group
             for dc_group_idx in 0..num_dc_groups {
+                // Coarse cancellation checkpoint (per DC group). No-op on the
+                // success path, so byte output is identical under Unstoppable.
+                if let Some(s) = stop {
+                    s.check().map_err(|_| Error::Cancelled)?;
+                }
                 let mut dc_group = BitWriter::with_capacity(blocks_per_dc_group * 10);
                 self.write_dc_group(
                     dc_group_idx,
@@ -6215,6 +6252,11 @@ impl VarDctEncoder {
             // AC group sections
             let blocks_per_ac_group = (256 / 8) * (256 / 8); // 1024 blocks per AC group
             for group_idx in 0..num_groups {
+                // Coarse cancellation checkpoint (per AC group). No-op on the
+                // success path, so byte output is identical under Unstoppable.
+                if let Some(s) = stop {
+                    s.check().map_err(|_| Error::Cancelled)?;
+                }
                 let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
                 self.write_ac_group(
                     group_idx,

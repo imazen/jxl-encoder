@@ -10101,7 +10101,7 @@ impl<'a> EncodeRequest<'a> {
         };
 
         let output = enc
-            .encode_with_extras(encode_w, encode_h, &encode_rgb, &extras_vec)
+            .encode_with_extras_stop(encode_w, encode_h, &encode_rgb, &extras_vec, self.stop)
             .map_err(EncodeError::from)?;
 
         #[cfg(feature = "butteraugli-loop")]
@@ -15768,6 +15768,42 @@ mod tests {
             .with_stop(&Unstoppable)
             .encode(&pixels);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_stop_cancels_lossy_multigroup() {
+        // A 512x512 image is multi-group (2x2 AC groups + a DC group), so the
+        // per-group cancellation checkpoint in the VarDCT entropy phase runs.
+        // An always-cancelling Stop must abort the encode with `Cancelled`.
+        let (w, h) = (512u32, 512u32);
+        let mut pixels = vec![0u8; (w * h * 3) as usize];
+        for (i, p) in pixels.iter_mut().enumerate() {
+            *p = (i.wrapping_mul(2_654_435_761) >> 13) as u8;
+        }
+
+        struct AlwaysCancel;
+        impl enough::Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                Err(enough::StopReason::Cancelled)
+            }
+        }
+
+        let cancelled = LossyConfig::new(1.0)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_stop(&AlwaysCancel)
+            .encode(&pixels);
+        assert!(
+            matches!(&cancelled, Err(e) if matches!(e.error(), EncodeError::Cancelled)),
+            "expected EncodeError::Cancelled, got {cancelled:?}"
+        );
+
+        // Unstoppable on the same input must still succeed — the checkpoint is
+        // a no-op on the success path.
+        let ok = LossyConfig::new(1.0)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_stop(&enough::Unstoppable)
+            .encode(&pixels);
+        assert!(ok.is_ok(), "Unstoppable lossy encode failed: {ok:?}");
     }
 
     #[test]
