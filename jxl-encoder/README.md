@@ -10,6 +10,18 @@ Pure Rust JPEG XL encoder. Lossy (VarDCT) and lossless (Modular) encoding, verif
 
 740+ tests passing.
 
+## Install
+
+```toml
+[dependencies]
+jxl-encoder = "0.3.1"
+```
+
+Or `cargo add jxl-encoder` to pull the latest release (the crates.io badge above
+tracks the current version). MSRV is Rust 1.89. `std` is on by default; the crate
+is `no_std + alloc` capable — disable default features for the `alloc`-only build
+(`std` adds the `encode_to()` / `finish_to()` `Write`-target sinks).
+
 ## Quick start
 
 ```rust
@@ -31,6 +43,84 @@ let jxl = LossyConfig::new(1.0)
     .encode_request(width, height, PixelLayout::Rgba8)
     .with_limits(&Limits::default())
     .encode(&pixels)?;
+```
+
+## Quality (distance) and effort
+
+**Distance** is the butteraugli target passed to `LossyConfig::new(distance)`.
+It is a *perceptual error budget*, so the scale runs opposite to a percent slider:
+
+- **Lower distance = higher quality** (and larger files).
+- Valid lossy range is **`0.0 < distance <= 25.0`**. A distance outside that range
+  (or non-finite) is rejected at encode time as `EncodeError::InvalidInput`.
+- **`1.0` is the visually-lossless anchor** — the libjxl default, indistinguishable
+  from the source for most images. Go below `1.0` (e.g. `0.5`) for near-transparent
+  quality; raise it (`2.0`, `4.0`, …) to trade quality for size.
+- **`0.0` (mathematically lossless) is *not* accepted by `LossyConfig`** — use
+  `LosslessConfig` for exact reconstruction instead.
+
+**Effort** trades encode time for compression. `LossyConfig` and `LosslessConfig`
+both **default to effort 7**; set it with `with_effort(level)`:
+
+```rust
+use jxl_encoder::{LossyConfig, LosslessConfig, PixelLayout};
+
+// Slower, smaller (effort 9 = Viterbi LZ77, 4 butteraugli iterations)
+let jxl = LossyConfig::new(1.0)
+    .with_effort(9)
+    .encode(&pixels, width, height, PixelLayout::Rgb8)?;
+
+// Fast preview (effort 3 = DCT8 only, Huffman, no gaborish/patches)
+let jxl = LosslessConfig::new()
+    .with_effort(3)
+    .encode(&pixels, width, height, PixelLayout::Rgb8)?;
+```
+
+Valid effort is **`1..=12`**. `1..=9` mirrors libjxl's `kFalcon..=kTortoise` ladder;
+`10..=12` are this crate's extended search budgets (longer butteraugli / tree-learn
+seeds, still 100 %-spec-valid bitstreams). Higher effort = slower, better compression.
+
+## Cancellation
+
+Encodes are cooperatively cancellable. Pass a stop token via
+`EncodeRequest::with_stop(&dyn Stop)` — the encoder checks it periodically and
+returns `EncodeError::Cancelled` if it fires. The `Stop` trait and the no-op
+`Unstoppable` token are re-exported from `jxl_encoder` (originally from the
+[`enough`](https://crates.io/crates/enough) crate):
+
+```rust
+use jxl_encoder::{LossyConfig, PixelLayout, Unstoppable};
+
+// No-op token — zero cost, never cancels (same as not passing one):
+let jxl = LossyConfig::new(1.0)
+    .encode_request(width, height, PixelLayout::Rgb8)
+    .with_stop(&Unstoppable)
+    .encode(&pixels)?;
+```
+
+For a token you can actually trigger (e.g. from another thread, a timeout, or a
+user "cancel" button), add [`almost-enough`](https://crates.io/crates/almost-enough)
+and use its `Stopper` — clone it to share, then call `.cancel()`:
+
+```toml
+[dependencies]
+almost-enough = "0.4.4"
+```
+
+```rust
+use jxl_encoder::{LossyConfig, PixelLayout};
+use almost_enough::Stopper;
+
+let stop = Stopper::new();
+let watcher = stop.clone();           // hand a clone to a watchdog / signal handler
+// ... watcher.cancel() from elsewhere when the user aborts ...
+
+let result = LossyConfig::new(1.0)
+    .encode_request(width, height, PixelLayout::Rgb8)
+    .with_stop(&stop)
+    .encode(&pixels);
+// If `cancel()` fired before the encode finished, `result` is `Err(e)` where
+// `matches!(e.error(), EncodeError::Cancelled)` holds (see Errors below).
 ```
 
 ## Errors
@@ -83,6 +173,34 @@ Lossy encoding supports all layouts including alpha (VarDCT for RGB + modular fo
 | `rate-control` | no | Iterative encode for precise distance targeting |
 | `jpeg-reencoding` | no | JPEG bitstream re-encoding into JXL |
 | `trace-bitstream` | no | Zero-cost bitstream tracing for debugging |
+
+## Resource limits
+
+`EncodeRequest::with_limits(&Limits)` bounds an encode against untrusted input.
+`Limits` primarily caps **encoder working-set memory** (it also exposes optional
+`max_width` / `max_height` / `max_pixels` / `max_quant_loop_iters` setters, all
+`None` by default):
+
+```rust
+use jxl_encoder::{LossyConfig, Limits, PixelLayout};
+
+let limits = Limits::default()              // no explicit caps set …
+    .with_max_memory_bytes(512 * 1024 * 1024); // … 512 MB hard ceiling
+
+let jxl = LossyConfig::new(1.0)
+    .encode_request(width, height, PixelLayout::Rgb8)
+    .with_limits(&limits)
+    .encode(&pixels)?;
+```
+
+`Limits::default()` sets **no explicit** memory bound, but the encoder still
+applies a *soft default cap* so an unconfigured image proxy can't be OOM'd:
+**4 GiB for lossy**, **8 GiB for lossless** (lossless tree-learning is a heavier
+memory regime). These defaults are fixed ceilings — they are deliberately **not**
+scaled with image dimensions, so an oversized untrusted upload is still bounded.
+For trusted batch work, raise the cap with `with_max_memory_bytes(n)` (or pass
+`u64::MAX` to opt out of the soft cap entirely). If an encode exceeds the cap it
+returns `EncodeError::LimitExceeded`.
 
 ## License
 
