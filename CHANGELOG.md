@@ -221,6 +221,19 @@
   section documenting what `Limits::default()` bounds (the 4 GiB lossy /
   8 GiB lossless soft memory cap). README-only; every symbol verified
   against source.
+- **`jxl-encoder-cli` README: stated three unstated `cjxl-rs` behaviors
+  found by an insulated external-developer test** (reader given only the
+  CLI README, no source — the README ran first-try otherwise). Added a
+  Notes block under Usage: (1) the output file is **overwritten silently**
+  if it exists (`write_output` uses `File::create` —
+  `jxl-encoder-cli/src/main.rs:2396`; same on the streaming-output paths
+  at `:2166` / `:2253`; no `--force` flag exists); (2) when both `-d` and
+  `-q` are passed, **`-d` wins** (`-q` is only the fallback — main.rs:754;
+  no clap `conflicts_with`, so it is silent, not an error); (3)
+  **`--lossless` and `-d 0` are equivalent** — both fold to distance 0.0
+  (main.rs:754) and route to the `LosslessConfig` modular path (main.rs:1433
+  `distance > 0.0` is false → modular at main.rs:1813), i.e. true
+  mathematical lossless either way. README-only; verified against source.
 
 ### Fixed
 - **`estimate_peak_memory_bytes` under-reported the lossless path ~14×.**
