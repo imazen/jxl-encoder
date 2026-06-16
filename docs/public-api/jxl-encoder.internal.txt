@@ -17,7 +17,7 @@
 #   inherent methods                          140
 #   struct fields                             415
 #   enum variants                               8
-#   trait roster entries (type × trait)       113
+#   trait roster entries (type × trait)       114
 #   auto-trait-complete types                  19
 #   auto-trait exceptions                       1
 #
@@ -711,7 +711,7 @@ pub struct vardct::__recon_hook::ProductionQf
 pub struct vardct::__recon_hook::StepXyb
 pub struct vardct::__recon_hook::Xyb
 
-## trait impls (76 types)
+## trait impls (77 types)
 
 Lz77Method: TrivialClone
 RctType: TrivialClone
@@ -776,6 +776,7 @@ headers::frame_header::BlendMode: TrivialClone
 headers::frame_header::Encoding: TrivialClone
 headers::frame_header::FrameCrop: TrivialClone
 headers::frame_header::FrameType: TrivialClone
+heuristics::EncodeEstimate: TrivialClone
 image::PixelFormat: TrivialClone
 modular::Neighbors: TrivialClone
 modular::Predictor: TrivialClone

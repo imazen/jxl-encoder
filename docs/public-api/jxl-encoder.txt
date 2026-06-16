@@ -6,26 +6,26 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: jxl-encoder.txt 2493 lines (supported surface) | jxl-encoder.features.txt 0 added (features: none) | jxl-encoder.internal.txt 750 lines (807 hidden + 167 excluded-feature)
+# files: jxl-encoder.txt 2511 lines (supported surface) | jxl-encoder.features.txt 0 added (features: none) | jxl-encoder.internal.txt 751 lines (808 hidden + 167 excluded-feature)
 
 ## summary
 #
-#   pub modules                                45
-#   pub types (struct/enum/trait/alias)       176
-#   pub consts/statics                        134
+#   pub modules                                46
+#   pub types (struct/enum/trait/alias)       177
+#   pub consts/statics                        138
 #   pub macros                                 17
-#   free functions                            151
-#   inherent methods                          918
-#   struct fields                             585
+#   free functions                            152
+#   inherent methods                          924
+#   struct fields                             590
 #   enum variants                             442
 #   re-exports                                 12
-#   trait roster entries (type × trait)       441
-#   auto-trait-complete types                 108
+#   trait roster entries (type × trait)       444
+#   auto-trait-complete types                 109
 #   auto-trait exceptions                       7
 #
 # per-module pub lines:
-#   (root)                          350
-#   api                             857
+#   (root)                          353
+#   api                             863
 #   bit_writer                       24
 #   color                            14
 #   container                        16
@@ -34,15 +34,16 @@
 #   entropy_coding                  185
 #   error                            35
 #   headers                         348
+#   heuristics                        7
 #   image                            38
 #   modular                         207
 #   profile_phases                    5
 #   trace                             3
 #   tuning                           59
 #   validation                       38
-#   vardct                          165
+#   vardct                          167
 
-## items (2380 lines)
+## items (2397 lines)
 
 pub mod jxl_encoder
 pub use At
@@ -352,7 +353,9 @@ pub fn api::ImageMetadata<'a>::with_relative_to_max_display(self, bool) -> Self
 pub fn api::ImageMetadata<'a>::with_xmp(self, &'a [u8]) -> Self
 pub fn api::ImageMetadata<'a>::xmp(&self) -> core::option::Option<&[u8]>
 pub const api::Limits::DEFAULT_MAX_MEMORY_BYTES: u64
+pub const api::Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS: u64
 pub const api::Limits::DEFAULT_MAX_QUANT_LOOP_ITERS: u32
+pub const fn api::Limits::default_max_memory_bytes(bool) -> u64 [also: (root)]
 pub fn api::Limits::effective_max_memory_bytes(&self) -> u64
 pub fn api::Limits::effective_max_quant_loop_iters(&self) -> u32
 pub fn api::Limits::max_height(&self) -> core::option::Option<u64>
@@ -376,6 +379,7 @@ pub fn api::LosslessConfig::encode_animation(&self, u32, u32, api::PixelLayout, 
 pub fn api::LosslessConfig::encode_animation_with_limits(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::Limits) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encode_into(&self, &[u8], u32, u32, api::PixelLayout, &mut alloc::vec::Vec<u8>) -> api::Result<()>
 pub fn api::LosslessConfig::encode_request(&self, u32, u32, api::PixelLayout) -> api::EncodeRequest<'_>
+pub fn api::LosslessConfig::estimate_encode(&self, u32, u32, api::PixelLayout) -> core::option::Option<heuristics::EncodeEstimate>
 pub fn api::LosslessConfig::estimate_peak_memory_bytes(&self, u32, u32, api::PixelLayout) -> core::option::Option<u64>
 pub fn api::LosslessConfig::faster_decoding(&self) -> u8
 pub fn api::LosslessConfig::force_rct(&self) -> core::option::Option<RctType>
@@ -474,6 +478,7 @@ pub fn api::LossyConfig::encode_into(&self, &[u8], u32, u32, api::PixelLayout, &
 pub fn api::LossyConfig::encode_request(&self, u32, u32, api::PixelLayout) -> api::EncodeRequest<'_>
 pub fn api::LossyConfig::epf_level(&self) -> i8
 pub fn api::LossyConfig::error_diffusion(&self) -> bool
+pub fn api::LossyConfig::estimate_encode(&self, u32, u32, api::PixelLayout) -> core::option::Option<heuristics::EncodeEstimate>
 pub fn api::LossyConfig::estimate_peak_memory_bytes(&self, u32, u32, api::PixelLayout) -> core::option::Option<u64>
 pub fn api::LossyConfig::faster_decoding(&self) -> u8
 pub fn api::LossyConfig::force_strategy(&self) -> core::option::Option<u8>
@@ -1298,6 +1303,14 @@ pub fn headers::frame_header::FrameHeader::lf_frame(u32, u32, u32) -> Self
 pub fn headers::frame_header::FrameHeader::lossless() -> Self
 pub fn headers::frame_header::FrameHeader::lossy() -> Self
 pub fn headers::frame_header::FrameHeader::write(&self, &mut bit_writer::BitWriter) -> error::Result<()>
+pub mod heuristics
+#[non_exhaustive] pub struct heuristics::EncodeEstimate
+pub heuristics::EncodeEstimate::output_bytes: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes_max: u64
+pub heuristics::EncodeEstimate::peak_memory_bytes_min: u64
+pub heuristics::EncodeEstimate::time_ms: f32
+pub fn heuristics::estimate_encode(u32, u32, u8, bool, bool, u8) -> core::option::Option<heuristics::EncodeEstimate>
 pub mod image
 pub enum image::PixelFormat
 pub image::PixelFormat::Gray16
@@ -1825,6 +1838,8 @@ pub vardct::VarDctEncoder::zensim_loop: bool
 pub vardct::VarDctEncoder::zensim_use_cpu: bool
 pub fn vardct::VarDctEncoder::encode(&self, usize, usize, &[f32], core::option::Option<&[u8]>) -> error::Result<vardct::VarDctOutput>
 pub fn vardct::VarDctEncoder::encode_with_extras(&self, usize, usize, &[f32], &[api::ExtraChannel<'_>]) -> error::Result<vardct::VarDctOutput>
+pub fn vardct::VarDctEncoder::encode_with_extras_stop(&self, usize, usize, &[f32], &[api::ExtraChannel<'_>], core::option::Option<&dyn enough::Stop>) -> error::Result<vardct::VarDctOutput>
+pub fn vardct::VarDctEncoder::encode_with_stop(&self, usize, usize, &[f32], core::option::Option<&[u8]>, core::option::Option<&dyn enough::Stop>) -> error::Result<vardct::VarDctOutput>
 pub fn vardct::VarDctEncoder::new(f32) -> Self
 pub struct vardct::VarDctOutput
 pub vardct::VarDctOutput::data: alloc::vec::Vec<u8>
@@ -2158,6 +2173,7 @@ pub fn api::ImageMetadata<'a>::with_xmp(self, &'a [u8]) -> Self
 pub fn api::ImageMetadata<'a>::xmp(&self) -> core::option::Option<&[u8]>
 pub struct Limits [also: api]
 pub const api::Limits::DEFAULT_MAX_MEMORY_BYTES: u64
+pub const api::Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS: u64
 pub const api::Limits::DEFAULT_MAX_QUANT_LOOP_ITERS: u32
 pub fn api::Limits::effective_max_memory_bytes(&self) -> u64
 pub fn api::Limits::effective_max_quant_loop_iters(&self) -> u32
@@ -2183,6 +2199,7 @@ pub fn api::LosslessConfig::encode_animation(&self, u32, u32, api::PixelLayout, 
 pub fn api::LosslessConfig::encode_animation_with_limits(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::Limits) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encode_into(&self, &[u8], u32, u32, api::PixelLayout, &mut alloc::vec::Vec<u8>) -> api::Result<()>
 pub fn api::LosslessConfig::encode_request(&self, u32, u32, api::PixelLayout) -> api::EncodeRequest<'_>
+pub fn api::LosslessConfig::estimate_encode(&self, u32, u32, api::PixelLayout) -> core::option::Option<heuristics::EncodeEstimate>
 pub fn api::LosslessConfig::estimate_peak_memory_bytes(&self, u32, u32, api::PixelLayout) -> core::option::Option<u64>
 pub fn api::LosslessConfig::faster_decoding(&self) -> u8
 pub fn api::LosslessConfig::force_rct(&self) -> core::option::Option<RctType>
@@ -2283,6 +2300,7 @@ pub fn api::LossyConfig::encode_into(&self, &[u8], u32, u32, api::PixelLayout, &
 pub fn api::LossyConfig::encode_request(&self, u32, u32, api::PixelLayout) -> api::EncodeRequest<'_>
 pub fn api::LossyConfig::epf_level(&self) -> i8
 pub fn api::LossyConfig::error_diffusion(&self) -> bool
+pub fn api::LossyConfig::estimate_encode(&self, u32, u32, api::PixelLayout) -> core::option::Option<heuristics::EncodeEstimate>
 pub fn api::LossyConfig::estimate_peak_memory_bytes(&self, u32, u32, api::PixelLayout) -> core::option::Option<u64>
 pub fn api::LossyConfig::faster_decoding(&self) -> u8
 pub fn api::LossyConfig::force_strategy(&self) -> core::option::Option<u8>
@@ -2425,7 +2443,7 @@ pub fn calibrated_jxl_quality(f32) -> f32 [also: api]
 pub fn downsample_channel_u8(&[u8], usize, usize, u32) -> alloc::vec::Vec<u8> [also: api]
 pub fn quality_to_distance(f32) -> f32 [also: api]
 
-## trait impls (105 types)
+## trait impls (106 types)
 
 Lz77Method: Clone, Copy, Debug, Default, Eq, PartialEq
 RctType: Clone, Copy, Debug, Default
@@ -2511,6 +2529,7 @@ headers::frame_header::FrameCrop: Clone, Copy, Debug
 headers::frame_header::FrameHeader: Clone, Debug, Default
 headers::frame_header::FrameOptions: Clone, Debug, Default
 headers::frame_header::FrameType: Clone, Copy, Debug, Default, Eq, PartialEq
+heuristics::EncodeEstimate: Clone, Copy, Debug
 image::Image<T>: Clone, Debug
 image::ImageBundle<T>: Clone, Debug
 image::PixelFormat: Clone, Copy, Debug, Eq, PartialEq
@@ -2535,7 +2554,7 @@ vardct::hdr_metrics::HdrMetricError: Clone, Debug, Display, Eq, Error, PartialEq
 
 ## auto traits
 
-108 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+109 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 api::EncodeError: !RefUnwindSafe !UnwindSafe
 api::EncodeRequest<'a>: !RefUnwindSafe !UnwindSafe
 entropy_coding::ClusterResult: !RefUnwindSafe !Sync

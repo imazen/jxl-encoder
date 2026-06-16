@@ -11,6 +11,12 @@
 
 extern crate alloc;
 
+// Enables clickable GitHub links in `whereat` error traces (`at!()` and the
+// boundary trace transfer in `api.rs`). `path` is this crate's directory
+// relative to the repo root so the generated `blob/<sha>/jxl-encoder/src/...`
+// links resolve. Generates `crate::at_crate_info()`, consumed by `at!()`.
+whereat::define_at_crate_info!(path = "jxl-encoder/");
+
 pub mod api;
 pub mod bit_writer;
 pub(crate) mod budget;
