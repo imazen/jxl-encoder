@@ -29,6 +29,11 @@ cjxl-rs input.png output.jxl -q 90
 
 Reads PNG (including APNG animation). Writes bare JXL codestream or container format (when metadata or animation is present).
 
+Notes:
+- The output file is **overwritten silently** if it already exists — there is no `--force` / overwrite prompt.
+- If both `-d` and `-q` are given, `-d` wins (`-q` is only the fallback when `-d` is absent); they are not mutually exclusive.
+- `--lossless` and `-d 0` are equivalent — both select the modular path for true mathematical lossless. Either works.
+
 ## Flags
 
 | Flag | Default | Description |
