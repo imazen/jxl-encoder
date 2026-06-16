@@ -167,6 +167,27 @@ impl From<crate::jpeg::JpegError> for EncodeError {
 /// production-safe error tracking without debuginfo or backtraces.
 pub type Result<T> = core::result::Result<T, At<EncodeError>>;
 
+/// Convert any error that maps to [`EncodeError`] into an [`At<EncodeError>`],
+/// capturing **this call site** as the origin frame (with crate info, so the
+/// trace carries a clickable GitHub link).
+///
+/// This is the bridge for the `?` boundary where an internal
+/// [`crate::error::Result`] (carrying the bare [`crate::error::Error`]) crosses
+/// into the public [`Result`] alias: `inner_call().map_err(at_from)?`. Without
+/// it, `?` cannot apply (`From<Error>` exists for `EncodeError` but not for
+/// `At<EncodeError>`), and the location would otherwise be stamped at the
+/// outermost API boundary rather than at the conversion site near the failure.
+///
+/// `#[track_caller]` makes the captured location the *caller's*, not this
+/// helper's.
+#[track_caller]
+#[inline]
+pub(crate) fn at_from<E: Into<EncodeError>>(e: E) -> At<EncodeError> {
+    At::wrap(e.into())
+        .set_crate_info(crate::at_crate_info())
+        .at()
+}
+
 // ── Limit aliases ──────────────────────────────────────────────────────────
 
 /// Hard upper bound for quantization-loop iterations. Alias of
@@ -3297,7 +3318,7 @@ impl LosslessConfig {
         animation: &AnimationParams,
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
-        encode_animation_lossless(self, width, height, layout, animation, frames, None).map_err(at)
+        encode_animation_lossless(self, width, height, layout, animation, frames, None).at()
     }
 
     /// Encode a multi-frame animation with explicit resource [`Limits`].
@@ -3317,8 +3338,7 @@ impl LosslessConfig {
         frames: &[AnimationFrame<'_>],
         limits: &Limits,
     ) -> Result<Vec<u8>> {
-        encode_animation_lossless(self, width, height, layout, animation, frames, Some(limits))
-            .map_err(at)
+        encode_animation_lossless(self, width, height, layout, animation, frames, Some(limits)).at()
     }
 
     // ── JPEG → JXL lossless transcoding ─────────────────────────────────
@@ -7646,7 +7666,7 @@ impl LossyConfig {
         animation: &AnimationParams,
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
-        encode_animation_lossy(self, width, height, layout, animation, frames, None).map_err(at)
+        encode_animation_lossy(self, width, height, layout, animation, frames, None).at()
     }
 
     /// Encode a multi-frame animation with explicit resource [`Limits`].
@@ -7666,8 +7686,7 @@ impl LossyConfig {
         frames: &[AnimationFrame<'_>],
         limits: &Limits,
     ) -> Result<Vec<u8>> {
-        encode_animation_lossy(self, width, height, layout, animation, frames, Some(limits))
-            .map_err(at)
+        encode_animation_lossy(self, width, height, layout, animation, frames, Some(limits)).at()
     }
 }
 
@@ -8233,19 +8252,19 @@ impl<'a> EncodeRequest<'a> {
     pub fn encode(self, pixels: &[u8]) -> Result<Vec<u8>> {
         self.encode_inner(pixels)
             .map(|mut r| r.take_data().unwrap())
-            .map_err(at)
+            .at()
     }
 
     /// Encode pixels and return the JXL bytes together with [`EncodeStats`].
     #[track_caller]
     pub fn encode_with_stats(self, pixels: &[u8]) -> Result<EncodeResult> {
-        self.encode_inner(pixels).map_err(at)
+        self.encode_inner(pixels).at()
     }
 
     /// Encode pixels, appending to an existing buffer. Returns metrics.
     #[track_caller]
     pub fn encode_into(self, pixels: &[u8], out: &mut Vec<u8>) -> Result<EncodeResult> {
-        let mut result = self.encode_inner(pixels).map_err(at)?;
+        let mut result = self.encode_inner(pixels).at()?;
         if let Some(data) = result.data.take() {
             out.extend_from_slice(&data);
         }
@@ -8256,15 +8275,14 @@ impl<'a> EncodeRequest<'a> {
     #[cfg(feature = "std")]
     #[track_caller]
     pub fn encode_to(self, pixels: &[u8], mut dest: impl std::io::Write) -> Result<EncodeResult> {
-        let mut result = self.encode_inner(pixels).map_err(at)?;
+        let mut result = self.encode_inner(pixels).at()?;
         if let Some(data) = result.data.take() {
-            dest.write_all(&data)
-                .map_err(|e| at(EncodeError::from(e)))?;
+            dest.write_all(&data).map_err(at_from)?;
         }
         Ok(result)
     }
 
-    fn encode_inner(&self, pixels: &[u8]) -> core::result::Result<EncodeResult, EncodeError> {
+    fn encode_inner(&self, pixels: &[u8]) -> Result<EncodeResult> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
         // Run the full config validator (distance, effort, iter
@@ -8272,8 +8290,8 @@ impl<'a> EncodeRequest<'a> {
         // opt-in via `cfg.validate()`; auto-calling it on the encode
         // path means callers no longer have to remember to invoke it.
         match self.config {
-            ConfigRef::Lossy(cfg) => cfg.validate()?,
-            ConfigRef::Lossless(cfg) => cfg.validate()?,
+            ConfigRef::Lossy(cfg) => cfg.validate().map_err(at_from)?,
+            ConfigRef::Lossless(cfg) => cfg.validate().map_err(at_from)?,
         }
         // W44-222: install Tier-2 knobs (if any) into the runtime-tuning
         // override before encoding starts. Default knobs (the round-trip
@@ -8287,17 +8305,17 @@ impl<'a> EncodeRequest<'a> {
         {
             let rt = knobs.expand_to_runtime_tuning();
             crate::tuning::runtime::install_or_check_idempotent(rt).map_err(|_existing| {
-                EncodeError::InvalidConfig {
+                at!(EncodeError::InvalidConfig {
                     message: "with_knobs: a different RuntimeTuning is already \
                               installed in this process; the runtime override \
                               is single-shot (see W44-222 known limitation, \
                               W44-227+ for thread-local follow-on)"
                         .into(),
-                }
+                })
             })?;
         }
         if let Some(ref ce) = self.color_encoding {
-            crate::vardct::xyb::validate_color_encoding(ce).map_err(EncodeError::from)?;
+            crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
         }
         // Defensive caps on caller-supplied metadata buffers (see
         // `validate_metadata_sizes` for rationale).
@@ -8347,20 +8365,22 @@ impl<'a> EncodeRequest<'a> {
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
-            .ok_or_else(|| EncodeError::LimitExceeded {
-                message: format!(
-                    "image {}x{} too large for working-set estimate",
-                    self.width, self.height
-                ),
+            .ok_or_else(|| {
+                at!(EncodeError::LimitExceeded {
+                    message: format!(
+                        "image {}x{} too large for working-set estimate",
+                        self.width, self.height
+                    ),
+                })
             })?;
         if est_bytes > budget_cap {
-            return Err(EncodeError::LimitExceeded {
+            return Err(at!(EncodeError::LimitExceeded {
                 message: format!(
                     "estimated working set {est_bytes} bytes for {}x{} image \
                      exceeds budget cap {budget_cap}",
                     self.width, self.height
                 ),
-            });
+            }));
         }
 
         let threads = match self.config {
@@ -8390,7 +8410,8 @@ impl<'a> EncodeRequest<'a> {
         let (codestream, mut stats) = run_with_threads(threads, || match self.config {
             ConfigRef::Lossless(cfg) => self.encode_lossless(cfg, pixels, &budget),
             ConfigRef::Lossy(cfg) => self.encode_lossy(cfg, pixels, &budget),
-        })?;
+        })
+        .map_err(at_from)?;
 
         stats.codestream_size = codestream.len();
 
@@ -8464,8 +8485,8 @@ impl<'a> EncodeRequest<'a> {
         })
     }
 
-    fn validate_pixels(&self, pixels: &[u8]) -> core::result::Result<(), EncodeError> {
-        validate_dims(self.width, self.height)?;
+    fn validate_pixels(&self, pixels: &[u8]) -> Result<()> {
+        validate_dims(self.width, self.height).at()?;
         let w = self.width as usize;
         let h = self.height as usize;
         let expected = w
@@ -8483,12 +8504,12 @@ impl<'a> EncodeRequest<'a> {
             .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
             .is_none()
         {
-            return Err(EncodeError::LimitExceeded {
+            return Err(at!(EncodeError::LimitExceeded {
                 message: format!(
                     "image {w}x{h} too large for encoder working buffers \
                      (width × height × {MAX_INTERNAL_SCALE} overflows usize)"
                 ),
-            });
+            }));
         }
         // When row_stride is set, the buffer is `height * stride`
         // bytes (stride may include per-row padding). Validate
@@ -8498,48 +8519,50 @@ impl<'a> EncodeRequest<'a> {
         if let Some(stride) = self.row_stride {
             let row_bytes = w
                 .checked_mul(self.layout.bytes_per_pixel())
-                .ok_or_else(|| EncodeError::InvalidInput {
-                    message: "width * bytes_per_pixel overflows usize".into(),
+                .ok_or_else(|| {
+                    at!(EncodeError::InvalidInput {
+                        message: "width * bytes_per_pixel overflows usize".into(),
+                    })
                 })?;
             if stride < row_bytes {
-                return Err(EncodeError::InvalidInput {
+                return Err(at!(EncodeError::InvalidInput {
                     message: format!(
                         "row_stride {stride} is less than width * bytes_per_pixel = {w} * {} = {row_bytes}",
                         self.layout.bytes_per_pixel(),
                     ),
-                });
+                }));
             }
-            let needed = h
-                .checked_mul(stride)
-                .ok_or_else(|| EncodeError::InvalidInput {
+            let needed = h.checked_mul(stride).ok_or_else(|| {
+                at!(EncodeError::InvalidInput {
                     message: "height * row_stride overflows usize".into(),
-                })?;
+                })
+            })?;
             if pixels.len() < needed {
-                return Err(EncodeError::InvalidInput {
+                return Err(at!(EncodeError::InvalidInput {
                     message: format!(
                         "pixel buffer too small for strided input: need {needed} bytes (height {h} × stride {stride}), got {}",
                         pixels.len(),
                     ),
-                });
+                }));
             }
             return Ok(());
         }
         match expected {
             Some(expected) if pixels.len() == expected => Ok(()),
-            Some(expected) => Err(EncodeError::InvalidInput {
+            Some(expected) => Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "pixel buffer size mismatch: expected {expected} bytes for {w}x{h} {:?}, got {}",
                     self.layout,
                     pixels.len()
                 ),
-            }),
-            None => Err(EncodeError::InvalidInput {
+            })),
+            None => Err(at!(EncodeError::InvalidInput {
                 message: "image dimensions overflow".into(),
-            }),
+            })),
         }
     }
 
-    fn check_limits(&self) -> core::result::Result<(), EncodeError> {
+    fn check_limits(&self) -> Result<()> {
         let Some(limits) = self.limits else {
             return Ok(());
         };
@@ -8548,35 +8571,35 @@ impl<'a> EncodeRequest<'a> {
         if let Some(max_w) = limits.max_width
             && w > max_w
         {
-            return Err(EncodeError::LimitExceeded {
+            return Err(at!(EncodeError::LimitExceeded {
                 message: format!("width {w} > max {max_w}"),
-            });
+            }));
         }
         if let Some(max_h) = limits.max_height
             && h > max_h
         {
-            return Err(EncodeError::LimitExceeded {
+            return Err(at!(EncodeError::LimitExceeded {
                 message: format!("height {h} > max {max_h}"),
-            });
+            }));
         }
         if let Some(max_px) = limits.max_pixels
             && w * h > max_px
         {
-            return Err(EncodeError::LimitExceeded {
+            return Err(at!(EncodeError::LimitExceeded {
                 message: format!("pixels {}x{} = {} > max {max_px}", w, h, w * h),
-            });
+            }));
         }
         if let Some(max_mem) = limits.max_memory_bytes {
             // Conservative estimate: ~40 bytes per pixel covers XYB (3×f32=12),
             // quantization fields, strategy maps, and entropy coding buffers.
             let estimated = w.saturating_mul(h).saturating_mul(40);
             if estimated > max_mem {
-                return Err(EncodeError::LimitExceeded {
+                return Err(at!(EncodeError::LimitExceeded {
                     message: format!(
                         "estimated memory {estimated} bytes > max {max_mem} bytes \
                          (for {w}x{h} image)"
                     ),
-                });
+                }));
             }
         }
         // If the caller set an explicit max_quant_loop_iters and the
@@ -8590,12 +8613,12 @@ impl<'a> EncodeRequest<'a> {
                 ConfigRef::Lossless(_) => 0,
             };
             if configured > max_iters {
-                return Err(EncodeError::LimitExceeded {
+                return Err(at!(EncodeError::LimitExceeded {
                     message: format!(
                         "quantization-loop iterations ({configured}) exceed \
                          Limits::max_quant_loop_iters ({max_iters})"
                     ),
-                });
+                }));
             }
         }
         Ok(())
@@ -10419,26 +10442,22 @@ impl LossyEncoder {
     /// caller can free the source buffer after this call returns.
     #[track_caller]
     pub fn push_rows(&mut self, pixels: &[u8], num_rows: u32) -> Result<()> {
-        self.push_rows_inner(pixels, num_rows).map_err(at)
+        self.push_rows_inner(pixels, num_rows).at()
     }
 
-    fn push_rows_inner(
-        &mut self,
-        pixels: &[u8],
-        num_rows: u32,
-    ) -> core::result::Result<(), EncodeError> {
+    fn push_rows_inner(&mut self, pixels: &[u8], num_rows: u32) -> Result<()> {
         if num_rows == 0 {
             return Ok(());
         }
         let remaining = self.height - self.rows_pushed;
         if num_rows > remaining {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "push_rows: {num_rows} rows would exceed image height \
                      ({} pushed + {num_rows} > {})",
                     self.rows_pushed, self.height
                 ),
-            });
+            }));
         }
         let w = self.width as usize;
         let n = num_rows as usize;
@@ -10448,18 +10467,18 @@ impl LossyEncoder {
         match expected {
             Some(expected) if pixels.len() == expected => {}
             Some(expected) => {
-                return Err(EncodeError::InvalidInput {
+                return Err(at!(EncodeError::InvalidInput {
                     message: format!(
                         "push_rows: expected {expected} bytes for {w}x{n} {:?}, got {}",
                         self.layout,
                         pixels.len()
                     ),
-                });
+                }));
             }
             None => {
-                return Err(EncodeError::InvalidInput {
+                return Err(at!(EncodeError::InvalidInput {
                     message: "push_rows: row dimensions overflow".into(),
-                });
+                }));
             }
         }
 
@@ -10675,7 +10694,7 @@ impl LossyEncoder {
             // C/M/Y → XYB mapping (see comment on `Cmyk8` in the
             // first match site).
             PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
-                return Err(EncodeError::UnsupportedPixelLayout(self.layout));
+                return Err(at!(EncodeError::UnsupportedPixelLayout(self.layout)));
             }
         };
         self.linear_rgb.extend_from_slice(&new_linear);
@@ -10755,21 +10774,19 @@ impl LossyEncoder {
     /// calling this. Returns an error if the image is incomplete.
     #[track_caller]
     pub fn finish(self) -> Result<Vec<u8>> {
-        self.finish_inner()
-            .map(|mut r| r.take_data().unwrap())
-            .map_err(at)
+        self.finish_inner().map(|mut r| r.take_data().unwrap()).at()
     }
 
     /// Encode and return JXL bytes together with [`EncodeStats`].
     #[track_caller]
     pub fn finish_with_stats(self) -> Result<EncodeResult> {
-        self.finish_inner().map_err(at)
+        self.finish_inner().at()
     }
 
     /// Encode, appending to an existing buffer.
     #[track_caller]
     pub fn finish_into(self, out: &mut Vec<u8>) -> Result<EncodeResult> {
-        let mut result = self.finish_inner().map_err(at)?;
+        let mut result = self.finish_inner().at()?;
         if let Some(data) = result.data.take() {
             out.extend_from_slice(&data);
         }
@@ -10780,7 +10797,7 @@ impl LossyEncoder {
     #[cfg(feature = "std")]
     #[track_caller]
     pub fn finish_to(self, mut dest: impl std::io::Write) -> Result<EncodeResult> {
-        let mut result = self.finish_inner().map_err(at)?;
+        let mut result = self.finish_inner().at()?;
         if let Some(data) = result.data.take() {
             dest.write_all(&data)
                 .map_err(|e| at(EncodeError::from(e)))?;
@@ -10813,7 +10830,7 @@ impl LossyEncoder {
     #[cfg(feature = "std")]
     #[track_caller]
     pub fn finish_to_seekable(self, mut dest: impl WritableSeek) -> Result<EncodeResult> {
-        let mut result = self.finish_inner().map_err(at)?;
+        let mut result = self.finish_inner().at()?;
         if let Some(data) = result.data.take() {
             dest.write_all(&data)
                 .map_err(|e| at(EncodeError::from(e)))?;
@@ -10821,14 +10838,14 @@ impl LossyEncoder {
         Ok(result)
     }
 
-    fn finish_inner(self) -> core::result::Result<EncodeResult, EncodeError> {
+    fn finish_inner(self) -> Result<EncodeResult> {
         if self.rows_pushed != self.height {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "incomplete image: {} of {} rows pushed",
                     self.rows_pushed, self.height
                 ),
-            });
+            }));
         }
         // Mirror the one-shot chroma subsampling gate (issue #47).
         // Streaming and one-shot must report subsampling support
@@ -10840,7 +10857,7 @@ impl LossyEncoder {
         // subsampled mode on streaming returns InvalidConfig with a
         // pointer to the one-shot path.
         if !self.cfg.chroma_subsampling.is_full() {
-            return Err(EncodeError::InvalidConfig {
+            return Err(at!(EncodeError::InvalidConfig {
                 message: format!(
                     "chroma subsampling {} on the streaming `LossyEncoder` \
                      is not yet wired (one-shot `EncodeRequest::encode` \
@@ -10849,12 +10866,12 @@ impl LossyEncoder {
                      encode_request(w, h, layout).encode(&pixels)` for now.",
                     self.cfg.chroma_subsampling.tag(),
                 ),
-            });
+            }));
         }
         // Run the full config validator (distance, effort, iter
         // counts, mutual exclusivity). Mirrors
         // `EncodeRequest::encode_inner`.
-        self.cfg.validate()?;
+        self.cfg.validate().map_err(at_from)?;
         // Defensive caps on caller-supplied metadata buffers (mirrors
         // EncodeRequest::encode_inner).
         validate_metadata_sizes(
@@ -10963,20 +10980,22 @@ impl LossyEncoder {
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
-            .ok_or_else(|| EncodeError::LimitExceeded {
-                message: format!(
-                    "image {}x{} too large for working-set estimate",
-                    self.width, self.height
-                ),
+            .ok_or_else(|| {
+                at!(EncodeError::LimitExceeded {
+                    message: format!(
+                        "image {}x{} too large for working-set estimate",
+                        self.width, self.height
+                    ),
+                })
             })?;
         if est_bytes > budget_cap {
-            return Err(EncodeError::LimitExceeded {
+            return Err(at!(EncodeError::LimitExceeded {
                 message: format!(
                     "estimated working set {est_bytes} bytes for {}x{} image \
                      exceeds budget cap {budget_cap}",
                     self.width, self.height
                 ),
-            });
+            }));
         }
 
         let (codestream, mut stats) = run_with_threads(cfg.threads, || {
@@ -11220,7 +11239,8 @@ impl LossyEncoder {
                 ..Default::default()
             };
             Ok::<_, EncodeError>((output.data, stats))
-        })?;
+        })
+        .map_err(at_from)?;
 
         stats.codestream_size = codestream.len();
 
@@ -11309,73 +11329,73 @@ fn validate_tone_mapping_full(
     min_nits: Option<f32>,
     relative_to_max_display: Option<bool>,
     linear_below: Option<f32>,
-) -> core::result::Result<(), EncodeError> {
+) -> Result<()> {
     let it = intensity_target;
     if let Some(it) = it {
         if !it.is_finite() {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!("intensity_target must be finite (got {it})"),
-            });
+            }));
         }
         if it <= 0.0 {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!("intensity_target must be > 0 (got {it})"),
-            });
+            }));
         }
         if it > F16_MAX_NITS {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "intensity_target {it} exceeds f16 max ({F16_MAX_NITS}); the codestream cannot represent it",
                 ),
-            });
+            }));
         }
     }
     if let Some(mn) = min_nits {
         if !mn.is_finite() {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!("min_nits must be finite (got {mn})"),
-            });
+            }));
         }
         if mn < 0.0 {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!("min_nits must be >= 0 (got {mn})"),
-            });
+            }));
         }
         let cap = it.unwrap_or(F16_MAX_NITS);
         if mn > cap {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "min_nits {mn} exceeds intensity_target {cap} (min cannot exceed peak)",
                 ),
-            });
+            }));
         }
     }
     if let Some(lb) = linear_below {
         if !lb.is_finite() {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!("linear_below must be finite (got {lb})"),
-            });
+            }));
         }
         if lb < 0.0 {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!("linear_below must be >= 0 (got {lb})"),
-            });
+            }));
         }
         if lb > F16_MAX_NITS {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "linear_below {lb} exceeds f16 max ({F16_MAX_NITS}); the codestream cannot represent it",
                 ),
-            });
+            }));
         }
         // libjxl `image_metadata.cc:406`: when relative, linear_below
         // must be in [0, 1]. When absolute, only the >= 0 check applies.
         if relative_to_max_display == Some(true) && lb > 1.0 {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "linear_below {lb} > 1.0 with relative_to_max_display=true (must be a ratio in [0, 1])",
                 ),
-            });
+            }));
         }
     }
     Ok(())
@@ -11391,57 +11411,57 @@ fn validate_metadata_sizes(
     exif: Option<&[u8]>,
     xmp: Option<&[u8]>,
     jumbf: Option<&[u8]>,
-) -> core::result::Result<(), EncodeError> {
+) -> Result<()> {
     if let Some(icc) = icc {
         if icc.is_empty() {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: "ICC profile must not be empty".into(),
-            });
+            }));
         }
         if icc.len() > METADATA_SIZE_LIMIT {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "ICC profile too large: {} bytes (max {METADATA_SIZE_LIMIT})",
                     icc.len()
                 ),
-            });
+            }));
         }
     }
     if let Some(exif) = exif
         && exif.len() > METADATA_SIZE_LIMIT
     {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!(
                 "EXIF metadata too large: {} bytes (max {METADATA_SIZE_LIMIT})",
                 exif.len()
             ),
-        });
+        }));
     }
     if let Some(xmp) = xmp
         && xmp.len() > METADATA_SIZE_LIMIT
     {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!(
                 "XMP metadata too large: {} bytes (max {METADATA_SIZE_LIMIT})",
                 xmp.len()
             ),
-        });
+        }));
     }
     if let Some(jumbf) = jumbf {
         if jumbf.is_empty() {
             // Empty payload would produce a zero-payload `jumb` box
             // (8-byte header only) which no JUMBF reader can parse.
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: "JUMBF payload must not be empty".into(),
-            });
+            }));
         }
         if jumbf.len() > METADATA_SIZE_LIMIT {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "JUMBF metadata too large: {} bytes (max {METADATA_SIZE_LIMIT})",
                     jumbf.len()
                 ),
-            });
+            }));
         }
     }
     Ok(())
@@ -11453,31 +11473,31 @@ fn validate_metadata_sizes(
 /// non-positive / non-finite value yields silently garbage output
 /// (LUT becomes all-zero or all-one, or contains NaN/Inf). Reject
 /// up front instead.
-fn validate_source_gamma(gamma: Option<f32>) -> core::result::Result<(), EncodeError> {
+fn validate_source_gamma(gamma: Option<f32>) -> Result<()> {
     let Some(g) = gamma else {
         return Ok(());
     };
     if !g.is_finite() {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!("source_gamma must be finite (got {g})"),
-        });
+        }));
     }
     // libjxl accepts gamma in (1/255, 1]; we mirror that exactly so
     // codestreams round-trip through cjxl/djxl unchanged.
     const GAMMA_MIN: f32 = 1.0 / 255.0;
     if g <= GAMMA_MIN {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!(
                 "source_gamma must be > {GAMMA_MIN:.6} (got {g}); typical sRGB-ish values are 1/2.2 ≈ 0.4545",
             ),
-        });
+        }));
     }
     if g > 1.0 {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!(
                 "source_gamma must be <= 1.0 (got {g}); the stored value is the encoding exponent, not its inverse",
             ),
-        });
+        }));
     }
     Ok(())
 }
@@ -11487,37 +11507,37 @@ fn validate_source_gamma(gamma: Option<f32>) -> core::result::Result<(), EncodeE
 /// rejected. Reused at the same up-front spots so a caller who sets
 /// intrinsic_size to nonsense gets a clean error before the encoder
 /// allocates anything.
-fn validate_intrinsic_size(intrinsic: Option<(u32, u32)>) -> core::result::Result<(), EncodeError> {
+fn validate_intrinsic_size(intrinsic: Option<(u32, u32)>) -> Result<()> {
     let Some((iw, ih)) = intrinsic else {
         return Ok(());
     };
     if iw == 0 || ih == 0 {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!("intrinsic_size must be non-zero (got {iw}x{ih})"),
-        });
+        }));
     }
     if iw > MAX_JXL_DIM || ih > MAX_JXL_DIM {
-        return Err(EncodeError::LimitExceeded {
+        return Err(at!(EncodeError::LimitExceeded {
             message: format!(
                 "intrinsic_size {iw}x{ih} exceeds JXL spec maximum of {MAX_JXL_DIM} per dimension",
             ),
-        });
+        }));
     }
     Ok(())
 }
 
-fn validate_dims(width: u32, height: u32) -> core::result::Result<(), EncodeError> {
+fn validate_dims(width: u32, height: u32) -> Result<()> {
     if width == 0 || height == 0 {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!("zero dimensions: {width}x{height}"),
-        });
+        }));
     }
     if width > MAX_JXL_DIM || height > MAX_JXL_DIM {
-        return Err(EncodeError::LimitExceeded {
+        return Err(at!(EncodeError::LimitExceeded {
             message: format!(
                 "image {width}x{height} exceeds JXL spec maximum of {MAX_JXL_DIM} per dimension",
             ),
-        });
+        }));
     }
     let w = width as usize;
     let h = height as usize;
@@ -11525,11 +11545,11 @@ fn validate_dims(width: u32, height: u32) -> core::result::Result<(), EncodeErro
         .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
         .is_none()
     {
-        return Err(EncodeError::LimitExceeded {
+        return Err(at!(EncodeError::LimitExceeded {
             message: format!(
                 "image dimensions {width}x{height} overflow internal working-buffer sizing",
             ),
-        });
+        }));
     }
     Ok(())
 }
@@ -11542,7 +11562,7 @@ impl LossyConfig {
     /// incrementally rather than materializing the entire image.
     #[track_caller]
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LossyEncoder> {
-        validate_dims(width, height).map_err(at)?;
+        validate_dims(width, height).at()?;
         let w = width as usize;
         let h = height as usize;
         let rgb_capacity = w.checked_mul(h).and_then(|n| n.checked_mul(3));
@@ -11809,26 +11829,22 @@ impl LosslessEncoder {
     /// can free the source buffer after this call returns.
     #[track_caller]
     pub fn push_rows(&mut self, pixels: &[u8], num_rows: u32) -> Result<()> {
-        self.push_rows_inner(pixels, num_rows).map_err(at)
+        self.push_rows_inner(pixels, num_rows).at()
     }
 
-    fn push_rows_inner(
-        &mut self,
-        pixels: &[u8],
-        num_rows: u32,
-    ) -> core::result::Result<(), EncodeError> {
+    fn push_rows_inner(&mut self, pixels: &[u8], num_rows: u32) -> Result<()> {
         if num_rows == 0 {
             return Ok(());
         }
         let remaining = self.height - self.rows_pushed;
         if num_rows > remaining {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "push_rows: {num_rows} rows would exceed image height \
                      ({} pushed + {num_rows} > {})",
                     self.rows_pushed, self.height
                 ),
-            });
+            }));
         }
         let w = self.width as usize;
         let n = num_rows as usize;
@@ -11837,18 +11853,18 @@ impl LosslessEncoder {
         match expected {
             Some(expected) if pixels.len() == expected => {}
             Some(expected) => {
-                return Err(EncodeError::InvalidInput {
+                return Err(at!(EncodeError::InvalidInput {
                     message: format!(
                         "push_rows: expected {expected} bytes for {w}x{n} {:?}, got {}",
                         self.layout,
                         pixels.len()
                     ),
-                });
+                }));
             }
             None => {
-                return Err(EncodeError::InvalidInput {
+                return Err(at!(EncodeError::InvalidInput {
                     message: "push_rows: row dimensions overflow".into(),
-                });
+                }));
             }
         }
 
@@ -11930,7 +11946,7 @@ impl LosslessEncoder {
                 }
             }
             _ => {
-                return Err(EncodeError::UnsupportedPixelLayout(self.layout));
+                return Err(at!(EncodeError::UnsupportedPixelLayout(self.layout)));
             }
         }
 
@@ -11944,21 +11960,19 @@ impl LosslessEncoder {
     /// calling this. Returns an error if the image is incomplete.
     #[track_caller]
     pub fn finish(self) -> Result<Vec<u8>> {
-        self.finish_inner()
-            .map(|mut r| r.take_data().unwrap())
-            .map_err(at)
+        self.finish_inner().map(|mut r| r.take_data().unwrap()).at()
     }
 
     /// Encode and return JXL bytes together with [`EncodeStats`].
     #[track_caller]
     pub fn finish_with_stats(self) -> Result<EncodeResult> {
-        self.finish_inner().map_err(at)
+        self.finish_inner().at()
     }
 
     /// Encode, appending to an existing buffer.
     #[track_caller]
     pub fn finish_into(self, out: &mut Vec<u8>) -> Result<EncodeResult> {
-        let mut result = self.finish_inner().map_err(at)?;
+        let mut result = self.finish_inner().at()?;
         if let Some(data) = result.data.take() {
             out.extend_from_slice(&data);
         }
@@ -11969,7 +11983,7 @@ impl LosslessEncoder {
     #[cfg(feature = "std")]
     #[track_caller]
     pub fn finish_to(self, mut dest: impl std::io::Write) -> Result<EncodeResult> {
-        let mut result = self.finish_inner().map_err(at)?;
+        let mut result = self.finish_inner().at()?;
         if let Some(data) = result.data.take() {
             dest.write_all(&data)
                 .map_err(|e| at(EncodeError::from(e)))?;
@@ -11989,7 +12003,7 @@ impl LosslessEncoder {
     #[cfg(feature = "std")]
     #[track_caller]
     pub fn finish_to_seekable(self, mut dest: impl WritableSeek) -> Result<EncodeResult> {
-        let mut result = self.finish_inner().map_err(at)?;
+        let mut result = self.finish_inner().at()?;
         if let Some(data) = result.data.take() {
             dest.write_all(&data)
                 .map_err(|e| at(EncodeError::from(e)))?;
@@ -11997,7 +12011,7 @@ impl LosslessEncoder {
         Ok(result)
     }
 
-    fn finish_inner(self) -> core::result::Result<EncodeResult, EncodeError> {
+    fn finish_inner(self) -> Result<EncodeResult> {
         use crate::bit_writer::BitWriter;
         use crate::headers::color_encoding::ColorSpace;
         use crate::headers::{ColorEncoding, FileHeader};
@@ -12005,16 +12019,16 @@ impl LosslessEncoder {
         use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
 
         if self.rows_pushed != self.height {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "incomplete image: {} of {} rows pushed",
                     self.rows_pushed, self.height
                 ),
-            });
+            }));
         }
         // Run the full config validator. Mirrors
         // `EncodeRequest::encode_inner`.
-        self.cfg.validate()?;
+        self.cfg.validate().map_err(at_from)?;
         // Defensive caps on caller-supplied metadata buffers (mirrors
         // EncodeRequest::encode_inner).
         validate_metadata_sizes(
@@ -12051,20 +12065,22 @@ impl LosslessEncoder {
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
-            .ok_or_else(|| EncodeError::LimitExceeded {
-                message: format!(
-                    "image {}x{} too large for working-set estimate",
-                    self.width, self.height
-                ),
+            .ok_or_else(|| {
+                at!(EncodeError::LimitExceeded {
+                    message: format!(
+                        "image {}x{} too large for working-set estimate",
+                        self.width, self.height
+                    ),
+                })
             })?;
         if est_bytes > budget_cap {
-            return Err(EncodeError::LimitExceeded {
+            return Err(at!(EncodeError::LimitExceeded {
                 message: format!(
                     "estimated working set {est_bytes} bytes for {}x{} image \
                      exceeds budget cap {budget_cap}",
                     self.width, self.height
                 ),
-            });
+            }));
         }
 
         let mut image = ModularImage {
@@ -12265,7 +12281,8 @@ impl LosslessEncoder {
                 ..Default::default()
             };
             Ok::<_, EncodeError>((writer.finish_with_padding(), stats))
-        })?;
+        })
+        .map_err(at_from)?;
 
         stats.codestream_size = codestream.len();
 
@@ -12307,7 +12324,7 @@ impl LosslessConfig {
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LosslessEncoder> {
         use crate::modular::channel::Channel;
 
-        validate_dims(width, height).map_err(at)?;
+        validate_dims(width, height).at()?;
 
         let w = width as usize;
         let h = height as usize;
@@ -12413,18 +12430,20 @@ fn validate_animation_input(
     height: u32,
     layout: PixelLayout,
     frames: &[AnimationFrame<'_>],
-) -> core::result::Result<(), EncodeError> {
+) -> Result<()> {
     validate_dims(width, height)?;
     if frames.is_empty() {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: "animation requires at least one frame".into(),
-        });
+        }));
     }
     let expected_size = (width as usize)
         .checked_mul(height as usize)
         .and_then(|n| n.checked_mul(layout.bytes_per_pixel()))
-        .ok_or_else(|| EncodeError::InvalidInput {
-            message: "image dimensions overflow".into(),
+        .ok_or_else(|| {
+            at!(EncodeError::InvalidInput {
+                message: "image dimensions overflow".into(),
+            })
         })?;
     // Match the still-image working-buffer headroom check (validate_pixels).
     const MAX_INTERNAL_SCALE: usize = 16;
@@ -12433,20 +12452,20 @@ fn validate_animation_input(
         .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
         .is_none()
     {
-        return Err(EncodeError::LimitExceeded {
+        return Err(at!(EncodeError::LimitExceeded {
             message: format!("image {width}x{height} too large for encoder working buffers"),
-        });
+        }));
     }
     let num_frames = frames.len();
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() != expected_size {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "frame {} pixel buffer size mismatch: expected {expected_size}, got {}",
                     i,
                     frame.pixels.len()
                 ),
-            });
+            }));
         }
         // Reference-only frames are stored to a save slot but NOT
         // presented as a displayable keyframe — decoders skip them
@@ -12458,30 +12477,30 @@ fn validate_animation_input(
         // Marking the last frame as ReferenceOnly would emit a
         // codestream that no decoder can present as the final image.
         if frame.reference_only && i == num_frames - 1 {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: "last animation frame cannot be ReferenceOnly: the file must end on a \
                      displayable frame. Add a final regular AnimationFrame after the \
                      reference layer(s)."
                     .into(),
-            });
+            }));
         }
         // `save_as_reference` (and ReferenceOnly's implicit slot) only
         // accept values 0..=3 (2 bits in the bitstream).
         if let Some(slot) = frame.save_as_reference
             && slot > 3
         {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!(
                     "frame {i}: save_as_reference slot {slot} out of range (must be 0..=3)"
                 ),
-            });
+            }));
         }
         if let Some(src) = frame.blend_source
             && src > 3
         {
-            return Err(EncodeError::InvalidInput {
+            return Err(at!(EncodeError::InvalidInput {
                 message: format!("frame {i}: blend_source {src} out of range (must be 0..=3)"),
-            });
+            }));
         }
     }
     Ok(())
@@ -12495,14 +12514,14 @@ fn encode_animation_lossless(
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
     limits: Option<&Limits>,
-) -> core::result::Result<Vec<u8>, EncodeError> {
+) -> Result<Vec<u8>> {
     use crate::bit_writer::BitWriter;
     use crate::headers::file_header::AnimationHeader;
     use crate::headers::{ColorEncoding, FileHeader};
     use crate::modular::channel::ModularImage;
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
 
-    cfg.validate()?;
+    cfg.validate().map_err(at_from)?;
     validate_animation_input(width, height, layout, frames)?;
 
     let w = width as usize;
@@ -12520,16 +12539,18 @@ fn encode_animation_lossless(
     let est_bytes = (width as u64)
         .checked_mul(height as u64)
         .and_then(|n| n.checked_mul(40))
-        .ok_or_else(|| EncodeError::LimitExceeded {
-            message: format!("image {width}x{height} too large for working-set estimate"),
+        .ok_or_else(|| {
+            at!(EncodeError::LimitExceeded {
+                message: format!("image {width}x{height} too large for working-set estimate"),
+            })
         })?;
     if est_bytes > budget_cap {
-        return Err(EncodeError::LimitExceeded {
+        return Err(at!(EncodeError::LimitExceeded {
             message: format!(
                 "estimated working set {est_bytes} bytes for {width}x{height} \
                  image exceeds budget cap {budget_cap}"
             ),
-        });
+        }));
     }
 
     // Build file header with animation
@@ -12544,9 +12565,9 @@ fn encode_animation_lossless(
         PixelLayout::Rgba16 => ModularImage::from_rgba16_native(frames[0].pixels, w, h),
         PixelLayout::Gray16 => ModularImage::from_gray16_native(frames[0].pixels, w, h),
         PixelLayout::GrayAlpha16 => ModularImage::from_grayalpha16_native(frames[0].pixels, w, h),
-        other => return Err(EncodeError::UnsupportedPixelLayout(other)),
+        other => return Err(at!(EncodeError::UnsupportedPixelLayout(other))),
     }
-    .map_err(EncodeError::from)?;
+    .map_err(at_from)?;
 
     let mut file_header = if sample_image.is_grayscale {
         FileHeader::new_gray(width, height)
@@ -12574,7 +12595,7 @@ fn encode_animation_lossless(
 
     // Write file header
     let mut writer = BitWriter::new();
-    file_header.write(&mut writer).map_err(EncodeError::from)?;
+    file_header.write(&mut writer).map_err(at_from)?;
     writer.zero_pad_to_byte();
 
     // Encode each frame with crop detection
@@ -12685,9 +12706,9 @@ fn encode_animation_lossless(
             PixelLayout::GrayAlpha16 => {
                 ModularImage::from_grayalpha16_native(frame_pixels, frame_w, frame_h)
             }
-            other => return Err(EncodeError::UnsupportedPixelLayout(other)),
+            other => return Err(at!(EncodeError::UnsupportedPixelLayout(other))),
         }
-        .map_err(EncodeError::from)?;
+        .map_err(at_from)?;
 
         let mut use_tree_learning = cfg.effective_tree_learning();
         let mut smart_profile =
@@ -12763,7 +12784,7 @@ fn encode_animation_lossless(
         )
         .with_budget(alloc::sync::Arc::clone(&budget))
         .encode_modular(&image, &color_encoding, &mut writer_a)
-        .map_err(EncodeError::from)?;
+        .map_err(at_from)?;
 
         // Trial-encode candidate B: full-frame `BlendMode::Add` delta
         // payload. Only attempted when the caller has opted in, a
@@ -12811,7 +12832,7 @@ fn encode_animation_lossless(
                     )
                     .with_budget(alloc::sync::Arc::clone(&budget))
                     .encode_modular(&delta_image, &color_encoding, &mut wb)
-                    .map_err(EncodeError::from)?;
+                    .map_err(at_from)?;
                     Some(wb)
                 }
                 // Unsupported layout for delta (e.g. one we haven't
@@ -12831,13 +12852,11 @@ fn encode_animation_lossless(
             Some(wb) => writer_a.bits_written() <= wb.bits_written(),
         };
         if pick_a {
-            writer
-                .append_unaligned(&writer_a)
-                .map_err(EncodeError::from)?;
+            writer.append_unaligned(&writer_a).map_err(at_from)?;
         } else {
             writer
                 .append_unaligned(writer_b.as_ref().unwrap())
-                .map_err(EncodeError::from)?;
+                .map_err(at_from)?;
         }
 
         // ReferenceOnly frames are not the displayed canvas — keep
@@ -12971,12 +12990,12 @@ fn encode_animation_lossy(
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
     limits: Option<&Limits>,
-) -> core::result::Result<Vec<u8>, EncodeError> {
+) -> Result<Vec<u8>> {
     use crate::bit_writer::BitWriter;
     use crate::headers::file_header::AnimationHeader;
     use crate::headers::frame_header::FrameOptions;
 
-    cfg.validate()?;
+    cfg.validate().map_err(at_from)?;
     validate_animation_input(width, height, layout, frames)?;
 
     let w = width as usize;
@@ -12992,16 +13011,18 @@ fn encode_animation_lossy(
     let est_bytes = (width as u64)
         .checked_mul(height as u64)
         .and_then(|n| n.checked_mul(40))
-        .ok_or_else(|| EncodeError::LimitExceeded {
-            message: format!("image {width}x{height} too large for working-set estimate"),
+        .ok_or_else(|| {
+            at!(EncodeError::LimitExceeded {
+                message: format!("image {width}x{height} too large for working-set estimate"),
+            })
         })?;
     if est_bytes > budget_cap {
-        return Err(EncodeError::LimitExceeded {
+        return Err(at!(EncodeError::LimitExceeded {
             message: format!(
                 "estimated working set {est_bytes} bytes for {width}x{height} \
                  image exceeds budget cap {budget_cap}"
             ),
-        });
+        }));
     }
 
     // Set up VarDCT encoder
@@ -13165,9 +13186,9 @@ fn encode_animation_lossy(
     });
 
     let mut writer = BitWriter::with_capacity(w * h * 4);
-    file_header.write(&mut writer).map_err(EncodeError::from)?;
+    file_header.write(&mut writer).map_err(at_from)?;
     if let Some(ref icc) = enc.icc_profile {
-        crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
+        crate::icc::write_icc(icc, &mut writer).map_err(at_from)?;
     }
     writer.zero_pad_to_byte();
 
@@ -13358,7 +13379,7 @@ fn encode_animation_lossy(
             // Animated CMYK (multi-frame lossy) is not yet wired — only
             // the one-shot lossless path handles CMYK input.
             PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
-                return Err(EncodeError::UnsupportedPixelLayout(layout));
+                return Err(at!(EncodeError::UnsupportedPixelLayout(layout)));
             }
         };
 
@@ -13460,7 +13481,7 @@ fn encode_animation_lossy(
             &frame_options,
             &mut writer,
         )
-        .map_err(EncodeError::from)?;
+        .map_err(at_from)?;
 
         // ReferenceOnly frames are not the displayed canvas — keep
         // `prev_pixels` pinned to the previous displayed frame so the
@@ -14306,27 +14327,27 @@ fn unpack_strided_pixels(
     height: usize,
     bytes_per_pixel: usize,
     stride: usize,
-) -> core::result::Result<Vec<u8>, EncodeError> {
+) -> Result<Vec<u8>> {
     let row_bytes = width * bytes_per_pixel;
     if stride < row_bytes {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!(
                 "row_stride {stride} is less than width*bytes_per_pixel = {width}*{bytes_per_pixel} = {row_bytes}",
             ),
-        });
+        }));
     }
-    let needed = height
-        .checked_mul(stride)
-        .ok_or_else(|| EncodeError::InvalidInput {
+    let needed = height.checked_mul(stride).ok_or_else(|| {
+        at!(EncodeError::InvalidInput {
             message: "height * row_stride overflows usize".into(),
-        })?;
+        })
+    })?;
     if src.len() < needed {
-        return Err(EncodeError::InvalidInput {
+        return Err(at!(EncodeError::InvalidInput {
             message: format!(
                 "pixel buffer too small for strided input: need {needed} bytes (height {height} × stride {stride}), got {}",
                 src.len(),
             ),
-        });
+        }));
     }
     let mut packed = Vec::with_capacity(height * row_bytes);
     for y in 0..height {
@@ -14385,7 +14406,7 @@ fn compute_required_level(
     num_extra_channels: u32,
     has_black_channel: bool,
     icc_size: u64,
-) -> core::result::Result<u8, EncodeError> {
+) -> Result<u8> {
     crate::container::compute_codestream_level(
         width,
         height,
@@ -14393,12 +14414,14 @@ fn compute_required_level(
         has_black_channel,
         icc_size,
     )
-    .ok_or_else(|| EncodeError::InvalidInput {
-        message: format!(
-            "image {width}x{height} ({} px), {num_extra_channels} extra channels, \
-             {icc_size}-byte ICC exceeds JPEG XL level 10 limits",
-            u64::from(width).saturating_mul(u64::from(height)),
-        ),
+    .ok_or_else(|| {
+        at!(EncodeError::InvalidInput {
+            message: format!(
+                "image {width}x{height} ({} px), {num_extra_channels} extra channels, \
+                 {icc_size}-byte ICC exceeds JPEG XL level 10 limits",
+                u64::from(width).saturating_mul(u64::from(height)),
+            ),
+        })
     })
 }
 
