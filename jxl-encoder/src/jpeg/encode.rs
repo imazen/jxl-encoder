@@ -12,6 +12,7 @@ use super::data::*;
 use super::jbrd::{encode_jbrd, extract_exif, extract_icc, extract_xmp};
 use crate::BLOCK_SIZE;
 use crate::bit_writer::BitWriter;
+use crate::budget::MemoryBudget;
 use crate::container::wrap_in_container_jxlp;
 use crate::entropy_coding::encode::{
     OwnedAnsEntropyCode, build_entropy_code_ans_with_options, write_entropy_code_ans,
@@ -39,6 +40,7 @@ use crate::vardct::dc_coding::{
 use crate::vardct::frame::{
     assemble_frame_sections, write_dc_group_from_tokens, write_quant_scales,
 };
+use alloc::sync::Arc;
 use enough::Stop;
 
 /// Lever A (2026-05-28): when `true`, the JPEG path emits the libjxl-style
@@ -104,38 +106,70 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
 ///
 /// Effort 0-8 is byte-identical to [`encode_jpeg_to_jxl`] (which uses effort 7).
 pub fn encode_jpeg_to_jxl_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, None)?;
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, None, None)?;
     Ok(codestream)
 }
 
-/// Like [`encode_jpeg_to_jxl_with_effort`], but polls `stop` at coarse
-/// boundaries (per group during AC token collection, and before the entropy
-/// phase) so a server can abort a slow transcode. `None` is byte-identical
-/// (no poll). Returns [`crate::error::Error::Cancelled`] if cancelled.
+/// Like [`encode_jpeg_to_jxl_with_effort`], but polls `stop` and reserves the
+/// estimated encode working set against `budget` at coarse boundaries (per
+/// group during AC token collection, and before the entropy phase) so a server
+/// can abort or bound a slow transcode. Both `None` are byte-identical (no poll
+/// / no reservation). Returns [`crate::error::Error::Cancelled`] if cancelled
+/// or [`crate::error::Error::AllocationLimit`] if the budget is exceeded.
 pub(crate) fn encode_jpeg_to_jxl_with_effort_stop(
     jpeg: &JpegData,
     effort: u8,
     stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, stop)?;
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget)?;
     Ok(codestream)
 }
 
 /// Inner function that returns both codestream bytes and the file header size
 /// (split point for jxlp box splitting when JBRD is needed).
 ///
-/// `stop` (when `Some`) is polled at coarse boundaries during encoding; `None`
-/// performs no poll and is byte-identical to the pre-cancellation path.
+/// `stop` (when `Some`) is polled at coarse boundaries during encoding; `budget`
+/// (when `Some`) gates the estimated encode working set up front. Both `None`
+/// perform no poll / no reservation and are byte-identical to the
+/// pre-cancellation path.
 fn encode_jpeg_to_jxl_inner(
     jpeg: &JpegData,
     effort: u8,
     stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<(Vec<u8>, usize)> {
     if let Some(s) = stop {
         s.check().map_err(|_| crate::error::Error::Cancelled)?;
     }
     let width = jpeg.width as usize;
     let height = jpeg.height as usize;
+
+    // Pre-flight budget gate for the encode working set, reserved up front so
+    // an oversized untrusted frame is rejected BEFORE the expensive token
+    // collection + histogram clustering. Conservative estimate: ~32 bytes per
+    // DCT coefficient covers the i32 quant arrays (~5 B/coeff), the AC token
+    // stream held twice during clustering (2 × 8 B/coeff), the output buffer,
+    // and clustering scratch. The per-component i16 coefficient buffers are
+    // reserved separately in `read_jpeg_with_stop`. The reservation is an RAII
+    // guard held for this function's scope so it is RELEASED when the encode
+    // returns — the PreserveJxl recompress path runs two encodes on one budget
+    // (lossless floor + lossy) and the working sets do not coexist. `None`
+    // budget is a no-op.
+    const ENCODE_BYTES_PER_COEFF: u64 = 32;
+    let total_coeffs: u64 = jpeg
+        .components
+        .iter()
+        .map(|c| (c.width_in_blocks as u64) * (c.height_in_blocks as u64) * 64)
+        .sum();
+    let est_encode_bytes = total_coeffs.checked_mul(ENCODE_BYTES_PER_COEFF).ok_or(
+        crate::error::Error::AllocationLimit {
+            requested: u64::MAX,
+            used: 0,
+            cap: 0,
+        },
+    )?;
+    let _encode_budget_guard = MemoryBudget::reserve_opt(budget, est_encode_bytes)?;
 
     // Channel mapping: JXL c0=Cb, c1=Y, c2=Cr for YCbCr-flavored frames.
     //   - For semantic-YCbCr (3-comp, libjxl `color_transform == kYCbCr`):
@@ -1308,19 +1342,22 @@ pub fn encode_jpeg_to_jxl_container(jpeg: &JpegData) -> Result<Vec<u8>> {
 /// codestream side. Container wrapping (JBRD / Exif / XMP boxes) is
 /// effort-independent.
 pub fn encode_jpeg_to_jxl_container_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    encode_jpeg_to_jxl_container_with_effort_stop(jpeg, effort, None)
+    encode_jpeg_to_jxl_container_with_effort_stop(jpeg, effort, None, None)
 }
 
-/// Like [`encode_jpeg_to_jxl_container_with_effort`], but polls `stop` at
-/// coarse boundaries during codestream encoding. `None` is byte-identical
-/// (no poll). Container wrapping itself is fast and not a cancellation point.
-/// Returns [`crate::error::Error::Cancelled`] if cancelled.
+/// Like [`encode_jpeg_to_jxl_container_with_effort`], but polls `stop` and
+/// reserves the estimated encode working set against `budget` at coarse
+/// boundaries during codestream encoding. Both `None` are byte-identical
+/// (no poll / no reservation). Container wrapping itself is fast and not a
+/// cancellation point. Returns [`crate::error::Error::Cancelled`] if cancelled
+/// or [`crate::error::Error::AllocationLimit`] if the budget is exceeded.
 pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
     jpeg: &JpegData,
     effort: u8,
     stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<Vec<u8>> {
-    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort, stop)?;
+    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget)?;
     let jbrd = encode_jbrd(jpeg)?;
     let exif = extract_exif(jpeg);
     let xmp = extract_xmp(jpeg);

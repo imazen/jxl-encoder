@@ -3565,6 +3565,17 @@ impl VarDctEncoder {
         extras: &[super::extras::VardctExtra<'_>],
         stop: Option<&dyn Stop>,
     ) -> Result<VarDctOutput> {
+        // Earliest cancellation checkpoint — polled BEFORE any encode work, on
+        // EVERY entropy path (two-pass, single-pass, and the `num_sections == 4`
+        // single-group fast path). The per-group checkpoints further down add
+        // mid-encode responsiveness, but they live only in the multi-group
+        // two-pass branch; this entry poll guarantees a fired `Stop` aborts
+        // regardless of which path runs (the bug behind the previously-failing
+        // `test_stop_cancels_lossy_multigroup`). No-op / byte-identical under an
+        // `Unstoppable` token or `None`.
+        if let Some(s) = stop {
+            s.check().map_err(|_| Error::Cancelled)?;
+        }
         let expected_rgb = width
             .checked_mul(height)
             .and_then(|n| n.checked_mul(3))

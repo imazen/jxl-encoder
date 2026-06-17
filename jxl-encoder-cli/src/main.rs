@@ -884,6 +884,8 @@ fn main() {
                 &jpeg_bytes,
                 scale,
                 args.effort,
+                None,
+                None,
             ) {
                 Ok(b) => b,
                 Err(e) => {

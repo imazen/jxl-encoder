@@ -278,7 +278,15 @@ fn write_u32_jbrd(
         }
     }
 
-    unreachable!("No selector matched for value {value}");
+    // With a well-formed 4-selector table the `is_last` (selector >= 3) branch
+    // above always matches, so this is normally unreachable. Return a typed
+    // error rather than panicking on the write path (#77 item 3) — a malformed
+    // selector table or an out-of-range value must not abort the process.
+    Err(crate::error::Error::InvalidInput(format!(
+        "JBRD U32 value {value} matched no selector ({} direct + {} bits/offset)",
+        direct_values.len(),
+        bits_offset.len()
+    )))
 }
 
 /// Brotli-compress data. Returns compressed bytes.

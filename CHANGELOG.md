@@ -35,9 +35,9 @@
   applies the default). Byte-identical for all real input: the cap only
   fires above the configured limit, and the JBRD byte-exact transcode
   conformance (28 `tests/it/jpeg_reencoding.rs` fixtures, all < 120 MP)
-  still passes. Pixel-path entry points are unchanged. Follow-ups (full
-  `MemoryBudget` threading through `jpeg/encode.rs`, the PreserveJxl
-  `encode_jpeg_recompress_*` free functions) remain tracked in #77.
+  still passes. Pixel-path entry points are unchanged. (The full
+  `MemoryBudget` threading and the `encode_jpeg_recompress_*` limits — the
+  former #77 follow-ups — are now done; see the budget bullet below.)
 - **Cooperative cancellation on the JPEG-transcode path (#77 item 2).**
   The transcode path previously ignored cancellation entirely — `parse.rs`
   hardcoded an `Unstoppable` token into the zenjpeg coefficient decode and
@@ -51,8 +51,47 @@
   Byte-identical to the non-stop entry points on the success path: the polls
   are skipped when no token is attached and are no-ops under an `Unstoppable`
   token (verified by `test_jpeg_transcode_cancellation`). Mirrors #81's
-  VarDCT-path cancellation. Encode-phase `MemoryBudget` and a `Stop` on the
-  PreserveJxl `encode_jpeg_recompress_*` free functions remain #77 follow-ups.
+  VarDCT-path cancellation.
+- **Per-encode `MemoryBudget` on the JPEG-transcode + PreserveJxl paths
+  (#77 item 1, full).** The transcode path now builds a `MemoryBudget` from
+  `Limits::max_memory_bytes` (the lossless 8 GiB default when unset) and
+  threads it through both phases: the per-component `i16` coefficient buffers
+  are reserved before allocation in `read_jpeg_with_stop` (the largest
+  attacker-controlled decode buffer), and a conservative encode working-set
+  estimate (~32 B/DCT-coefficient: i32 quant arrays + the AC token stream
+  held twice during clustering + output) is reserved up front in
+  `encode_jpeg_to_jxl_inner` so an oversized frame is rejected
+  (`EncodeError::LimitExceeded`, via the new `JpegError::ResourceLimit`)
+  **before** the expensive token collection / histogram clustering. Default-on
+  for every transcode entry point (`encode_jpeg_transcode*`), like the pixel
+  path. The PreserveJxl `encode_jpeg_recompress_{,auto_,planar_}codestream`
+  free functions gain `limits: Option<&Limits>` + `stop: Option<&dyn Stop>`
+  parameters (the encode estimate is an RAII reservation released between the
+  lossless-floor and lossy encodes so their working sets don't double-count).
+  Byte-identical for all real input under the default cap. Verified by
+  `test_jpeg_transcode_memory_budget` + `test_jpeg_recompress_limits_and_stop`;
+  the 14 byte-exact JBRD reconstruction / transcode-roundtrip gates still pass.
+  This closes the remaining #77 P1 follow-ups.
+- **Checked SOF-derived overflow in the JPEG coefficient parser (#77 item 3).**
+  `extract_coefficients_zenjpeg` computed `width_in_blocks * height_in_blocks`
+  (and `* 64`) as unchecked `u32` / `usize` on attacker-controlled SOF dims —
+  a crafted SOF could wrap the count, size `comp.coeffs` short, and make the
+  zigzag copy read out of bounds. Now computed with checked `usize` arithmetic
+  (a malformed SOF errors), and the SOF-derived count is reconciled against
+  zenjpeg's actually-decoded coefficient length before the copy. The `jbrd.rs`
+  `write_u32_jbrd` `unreachable!` on the write path is replaced with a typed
+  `Error::InvalidInput`.
+
+### Fixed
+- **Cooperative cancellation now aborts on every VarDCT entropy path (#77
+  item 2 / #81).** `#81` wired per-DC/AC-group `Stop` checkpoints into
+  `VarDctEncoder::encode_inner`, but they lived only in the multi-group
+  two-pass entropy branch, so a single-pass or single-group (`num_sections == 4`)
+  encode never polled the token — `test_stop_cancels_lossy_multigroup` failed
+  (the encode completed instead of returning `Cancelled`). Added an entry-point
+  checkpoint at the top of `encode_inner` that fires before any encode work on
+  **all** paths; the per-group checkpoints remain for mid-encode responsiveness.
+  Byte-identical under `Unstoppable` / `None`.
 
 ### Added
 - **Calibrated peak-memory estimation (`heuristics` module + per-config

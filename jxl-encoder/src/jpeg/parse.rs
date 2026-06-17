@@ -8,6 +8,8 @@
 //! scanner for the jbrd reconstruction metadata.
 
 use super::data::*;
+use crate::budget::MemoryBudget;
+use alloc::sync::Arc;
 use enough::Stop;
 
 /// Errors that can occur during JPEG parsing.
@@ -25,6 +27,11 @@ pub enum JpegError {
     /// as [`crate::api::EncodeError::Cancelled`] at the transcode boundary.
     #[error("encoding cancelled")]
     Cancelled,
+    /// A dimension-driven coefficient-buffer allocation exceeded the
+    /// configured [`MemoryBudget`] cap. Surfaced as
+    /// [`crate::api::EncodeError::LimitExceeded`] at the transcode boundary.
+    #[error("memory budget exceeded: {0}")]
+    ResourceLimit(String),
 }
 
 type Result<T> = core::result::Result<T, JpegError>;
@@ -44,22 +51,27 @@ type Result<T> = core::result::Result<T, JpegError>;
 /// (e.g. via [`crate::api::LosslessConfig::with_limits`]). Pass
 /// `Some(u64::MAX)` to opt out of the cap entirely (trusted input only).
 pub fn read_jpeg(data: &[u8], max_pixels: Option<u64>) -> Result<JpegData> {
-    read_jpeg_with_stop(data, max_pixels, None)
+    read_jpeg_with_stop(data, max_pixels, None, None)
 }
 
-/// Like [`read_jpeg`], but polls `stop` so a server can abort an oversized
-/// untrusted transcode mid-decode.
+/// Like [`read_jpeg`], but polls `stop` and reserves the coefficient buffers
+/// against `budget` so a server can abort or bound an oversized untrusted
+/// transcode mid-decode.
 ///
-/// `stop` is checked at entry and threaded into the zenjpeg coefficient
-/// decode (the dominant time sink for a large frame). `None` is equivalent
-/// to an `Unstoppable` token — **byte-identical with zero overhead** (no
-/// poll is performed). Returns [`JpegError::Cancelled`] if cancellation is
-/// requested. Used by the cancellable transcode entry points
+/// `stop` is checked at entry and threaded into the zenjpeg coefficient decode
+/// (the dominant time sink for a large frame). `budget` (when `Some`) caps the
+/// per-component `i16` coefficient-buffer allocations — the largest
+/// attacker-controlled buffers on the decode side — returning
+/// [`JpegError::ResourceLimit`] if a reservation exceeds the cap. Both `None`
+/// are equivalent to an `Unstoppable` / unbounded run — **byte-identical with
+/// zero overhead**. Returns [`JpegError::Cancelled`] on cancellation. Used by
+/// the cancellable / budgeted transcode entry points
 /// ([`crate::api::LosslessConfig::encode_jpeg_transcode_with_stop`]).
 pub(crate) fn read_jpeg_with_stop(
     data: &[u8],
     max_pixels: Option<u64>,
     stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<JpegData> {
     if let Some(s) = stop {
         s.check().map_err(|_| JpegError::Cancelled)?;
@@ -70,7 +82,7 @@ pub(crate) fn read_jpeg_with_stop(
     let mut jpeg = scan_markers(data, max_pixels)?;
 
     // Phase 2: Use zenjpeg for reliable coefficient extraction
-    extract_coefficients_zenjpeg(data, &mut jpeg, stop)?;
+    extract_coefficients_zenjpeg(data, &mut jpeg, stop, budget)?;
 
     Ok(jpeg)
 }
@@ -590,6 +602,7 @@ fn extract_coefficients_zenjpeg(
     data: &[u8],
     jpeg: &mut JpegData,
     stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<()> {
     use enough::Unstoppable;
     use zenjpeg::decoder::DecodeConfig;
@@ -619,8 +632,44 @@ fn extract_coefficients_zenjpeg(
     // Copy coefficients from zenjpeg's zigzag format to our natural-order format
     for (i, zen_comp) in decoded.components.iter().enumerate() {
         let comp = &mut jpeg.components[i];
-        let num_blocks = (comp.width_in_blocks * comp.height_in_blocks) as usize;
-        comp.coeffs = vec![0i16; num_blocks * 64];
+        // SOF dims are attacker-controlled (each `*_in_blocks` up to ~983025),
+        // so `wb * hb` overflows `u32` and `* 64` overflows `usize` on 32-bit
+        // (#77 item 3). Compute block / coefficient counts with checked `usize`
+        // arithmetic; a malformed SOF errors instead of wrapping (a wrapped
+        // count would size `comp.coeffs` short and make the zigzag copy below
+        // read out of bounds).
+        let num_blocks = (comp.width_in_blocks as usize)
+            .checked_mul(comp.height_in_blocks as usize)
+            .ok_or_else(|| {
+                JpegError::Invalid(format!(
+                    "component {i}: block count overflow ({} × {})",
+                    comp.width_in_blocks, comp.height_in_blocks
+                ))
+            })?;
+        let coeff_len = num_blocks.checked_mul(64).ok_or_else(|| {
+            JpegError::Invalid(format!(
+                "component {i}: coefficient count overflow ({num_blocks} blocks)"
+            ))
+        })?;
+        // Reconcile the SOF-derived count against what zenjpeg actually decoded
+        // — the zigzag copy indexes `zen_comp.coeffs` by block, so a shorter
+        // zenjpeg buffer (inconsistent marker scan vs decode) would read OOB.
+        if zen_comp.coeffs.len() < coeff_len {
+            return Err(JpegError::Invalid(format!(
+                "component {i}: zenjpeg decoded {} coefficients, SOF implies {coeff_len}",
+                zen_comp.coeffs.len()
+            )));
+        }
+        // Reserve the per-component i16 coefficient buffer against the budget
+        // BEFORE allocating it — the largest attacker-controlled allocation on
+        // the decode side (#77 item 1). 2 bytes per i16 coefficient. `None`
+        // budget is a no-op.
+        let coeff_bytes = (coeff_len as u64)
+            .checked_mul(2)
+            .ok_or_else(|| JpegError::ResourceLimit(format!("{coeff_len} coeffs overflow")))?;
+        MemoryBudget::reserve_permanent_opt(budget, coeff_bytes)
+            .map_err(|e| JpegError::ResourceLimit(format!("{e}")))?;
+        comp.coeffs = vec![0i16; coeff_len];
 
         for blk in 0..num_blocks {
             let src_base = blk * 64;
