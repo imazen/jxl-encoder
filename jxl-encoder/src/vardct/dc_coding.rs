@@ -343,7 +343,12 @@ pub(crate) fn collect_dc_tokens_wp_with_budget(
         return Ok(Vec::new());
     }
 
-    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+    // Honor the budget's runtime fallible-alloc policy for this dimension-driven
+    // DC-token buffer (`Limits::fallible_alloc`); byte-identical when infallible.
+    let mut tokens = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        region_width * region_height * 3,
+    )?;
 
     // Encode in channel order: Y (1), X (0), B (2)
     // Each channel gets a FRESH WP state (matches libjxl per-channel processing)
@@ -449,6 +454,7 @@ pub(crate) fn collect_dc_tokens_wp_with_budget(
 /// `speed_tier >= kSquirrel` (cjxl effort 7); this is the per-channel,
 /// subsampling-aware analog we wire into the JPEG path.
 #[cfg(feature = "jpeg-reencoding")]
+#[allow(clippy::too_many_arguments)]
 pub fn collect_dc_tokens_wp_region_jpeg(
     quant_dc: &[Vec<Vec<i16>>; 3],
     wp_tree: &super::dc_tree_learn::DcTree,
@@ -457,16 +463,22 @@ pub fn collect_dc_tokens_wp_region_jpeg(
     end_bx: usize,
     end_by: usize,
     channel_shifts: &[(usize, usize); 3],
-) -> Vec<Token> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<Token>> {
     use crate::modular::predictor::{Neighbors, WeightedPredictorState};
 
     let region_width = end_bx.saturating_sub(start_bx);
     let region_height = end_by.saturating_sub(start_by);
     if region_width == 0 || region_height == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+    // Honor the budget's runtime fallible-alloc policy for this dimension-driven
+    // DC-token buffer (`Limits::fallible_alloc`); byte-identical when infallible.
+    let mut tokens = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        region_width * region_height * 3,
+    )?;
 
     // Channel order Y(1), X(0), B(2) — matches collect_dc_tokens_region and
     // collect_dc_tokens_wp.
@@ -551,7 +563,7 @@ pub fn collect_dc_tokens_wp_region_jpeg(
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 /// Collect DC tokens for a specific region (gradient predictor path).
@@ -570,15 +582,21 @@ pub fn collect_dc_tokens_region(
     end_bx: usize,
     end_by: usize,
     channel_shifts: &[(usize, usize); 3],
-) -> Vec<Token> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<Token>> {
     let region_width = end_bx - start_bx;
     let region_height = end_by - start_by;
 
     if region_width == 0 || region_height == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+    // Honor the budget's runtime fallible-alloc policy for this dimension-driven
+    // DC-token buffer (`Limits::fallible_alloc`); byte-identical when infallible.
+    let mut tokens = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        region_width * region_height * 3,
+    )?;
 
     for &c in &[1, 0, 2] {
         let (hs, vs) = channel_shifts[c];
@@ -618,7 +636,7 @@ pub fn collect_dc_tokens_region(
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 /// Collect DC tokens for a region using the JPEG-transcode context-tree's
@@ -641,15 +659,21 @@ pub fn collect_dc_tokens_region_jpeg_transcode(
     end_bx: usize,
     end_by: usize,
     channel_shifts: &[(usize, usize); 3],
-) -> Vec<Token> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<Token>> {
     let region_width = end_bx - start_bx;
     let region_height = end_by - start_by;
 
     if region_width == 0 || region_height == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+    // Honor the budget's runtime fallible-alloc policy for this dimension-driven
+    // DC-token buffer (`Limits::fallible_alloc`); byte-identical when infallible.
+    let mut tokens = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        region_width * region_height * 3,
+    )?;
 
     for &c in &[1, 0, 2] {
         let (hs, vs) = channel_shifts[c];
@@ -693,7 +717,7 @@ pub fn collect_dc_tokens_region_jpeg_transcode(
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 /// Collect AC metadata tokens for a specific region (without writing).

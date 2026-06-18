@@ -1177,28 +1177,36 @@ impl FrameEncoder {
 
         // Step 3: Collect ALL residuals (palette_meta + all groups) for histogram
         // Honours `--modular-predictor` for the no-tree-learning fallback path.
-        let collect_channel_residuals = |channel: &super::channel::Channel| -> Vec<u32> {
-            let w = channel.width();
-            let h = channel.height();
-            let mut residuals = Vec::with_capacity(w * h);
-            for y in 0..h {
-                for x in 0..w {
-                    let pixel = channel.get(x, y);
-                    let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
-                    residuals.push(pack_signed(pixel - prediction));
+        // The per-channel residual buffer is dimension-driven, so route it
+        // through the runtime fallible-alloc policy; byte-identical when
+        // infallible.
+        let residual_budget = self.budget.as_ref();
+        let collect_channel_residuals =
+            |channel: &super::channel::Channel| -> crate::error::Result<Vec<u32>> {
+                let w = channel.width();
+                let h = channel.height();
+                let mut residuals = crate::budget::vec_with_capacity_fallible(
+                    residual_budget.is_some_and(|b| b.is_fallible()),
+                    w * h,
+                )?;
+                for y in 0..h {
+                    for x in 0..w {
+                        let pixel = channel.get(x, y);
+                        let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
+                        residuals.push(pack_signed(pixel - prediction));
+                    }
                 }
-            }
-            residuals
-        };
+                Ok(residuals)
+            };
 
         // Palette meta-channel residuals (goes to LfGlobal)
-        let palette_residuals = collect_channel_residuals(&palette_meta);
+        let palette_residuals = collect_channel_residuals(&palette_meta)?;
 
         // All residuals: palette_meta + all group spatial channels
         let mut all_residuals = palette_residuals.clone();
         for group_image in &group_images {
             for channel in &group_image.channels {
-                all_residuals.extend(collect_channel_residuals(channel));
+                all_residuals.extend(collect_channel_residuals(channel)?);
             }
         }
 
@@ -1336,7 +1344,7 @@ impl FrameEncoder {
                 // Collect and encode spatial channel residuals for this group
                 let mut section_residuals: Vec<u32> = Vec::new();
                 for channel in &group_image.channels {
-                    section_residuals.extend(collect_channel_residuals(channel));
+                    section_residuals.extend(collect_channel_residuals(channel)?);
                 }
                 encode_residuals(&section_residuals, &mut group_writer, &entropy_state)?;
 
@@ -1504,24 +1512,32 @@ impl FrameEncoder {
 
         // Step 3: Collect residuals from ALL channels for histogram building
         // Honours `--modular-predictor` for the squeeze multi-group fallback.
-        let collect_channel_residuals = |channel: &super::channel::Channel| -> Vec<u32> {
-            let w = channel.width();
-            let h = channel.height();
-            let mut residuals = Vec::with_capacity(w * h);
-            for y in 0..h {
-                for x in 0..w {
-                    let pixel = channel.get(x, y);
-                    let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
-                    residuals.push(pack_signed(pixel - prediction));
+        // The per-channel residual buffer is dimension-driven, so route it
+        // through the runtime fallible-alloc policy; byte-identical when
+        // infallible.
+        let residual_budget = self.budget.as_ref();
+        let collect_channel_residuals =
+            |channel: &super::channel::Channel| -> crate::error::Result<Vec<u32>> {
+                let w = channel.width();
+                let h = channel.height();
+                let mut residuals = crate::budget::vec_with_capacity_fallible(
+                    residual_budget.is_some_and(|b| b.is_fallible()),
+                    w * h,
+                )?;
+                for y in 0..h {
+                    for x in 0..w {
+                        let pixel = channel.get(x, y);
+                        let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
+                        residuals.push(pack_signed(pixel - prediction));
+                    }
                 }
-            }
-            residuals
-        };
+                Ok(residuals)
+            };
 
         // 3a: Global channel residuals (full channels)
         let mut all_residuals: Vec<u32> = Vec::new();
         for i in 0..global_cutoff {
-            all_residuals.extend(collect_channel_residuals(&squeezed.channels[i]));
+            all_residuals.extend(collect_channel_residuals(&squeezed.channels[i])?);
         }
 
         // 3b: LfGroup channel residuals (cropped to each DC group rect)
@@ -1539,7 +1555,7 @@ impl FrameEncoder {
                 let lg_x = lg % num_lf_groups_x;
                 let lg_y = lg / num_lf_groups_x;
                 if let Some(cropped) = ch.extract_grid_cell(lg_x, lg_y, lf_group_dim) {
-                    let residuals = collect_channel_residuals(&cropped);
+                    let residuals = collect_channel_residuals(&cropped)?;
                     all_residuals.extend(&residuals);
                     lg_channels.push(residuals);
                 }
@@ -1560,7 +1576,7 @@ impl FrameEncoder {
                 let gx = g % num_groups_x;
                 let gy = g / num_groups_x;
                 if let Some(cropped) = ch.extract_grid_cell(gx, gy, group_dim) {
-                    let residuals = collect_channel_residuals(&cropped);
+                    let residuals = collect_channel_residuals(&cropped)?;
                     all_residuals.extend(&residuals);
                     g_channels.push(residuals);
                 }
@@ -1677,7 +1693,7 @@ impl FrameEncoder {
         // Write global channel residuals
         let mut global_residuals: Vec<u32> = Vec::new();
         for i in 0..global_cutoff {
-            global_residuals.extend(collect_channel_residuals(&squeezed.channels[i]));
+            global_residuals.extend(collect_channel_residuals(&squeezed.channels[i])?);
         }
         encode_residuals(&global_residuals, &mut lf_global_writer, &entropy_state)?;
 

@@ -11,7 +11,7 @@ use super::ac_group::{
 use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
 use super::common::*;
-use super::dc_coding::{collect_ac_metadata_tokens_region, collect_dc_tokens_wp};
+use super::dc_coding::collect_ac_metadata_tokens_region;
 use super::encoder::{BuiltEntropyCode, VarDctEncoder};
 use super::frame::{DistanceParams, write_quant_scales, write_toc};
 use super::noise::{NoiseParams, write_noise_params};
@@ -198,7 +198,7 @@ fn tokenize_dc_group_lf_frame(
     ac_strategy: &AcStrategyMap,
     sharpness_map: Option<&[u8]>,
     ac_meta_ctx_map: &[u32],
-) -> (Vec<Token>, Vec<Token>) {
+) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
     let dc_gy = dc_group_idx / xsize_dc_groups;
     let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
@@ -229,7 +229,7 @@ fn tokenize_dc_group_lf_frame(
         })
         .collect();
 
-    (dc_tokens, md_tokens)
+    Ok((dc_tokens, md_tokens))
 }
 
 /// Tokenize a single DC group (WP DC mode: both DC and AC metadata tokens).
@@ -247,7 +247,8 @@ fn tokenize_dc_group_wp(
     wp_dc_tree: &super::dc_tree_learn::DcTree,
     dc_ctx_remap: &[u32],
     ac_meta_ctx_map: &[u32],
-) -> (Vec<Token>, Vec<Token>) {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
     let dc_gy = dc_group_idx / xsize_dc_groups;
     let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
@@ -257,8 +258,12 @@ fn tokenize_dc_group_wp(
     let region_xsize = end_bx - start_bx;
     let region_ysize = end_by - start_by;
 
-    // Collect DC tokens using Weighted Predictor + kWPFixedDC tree
-    let dc_tokens = collect_dc_tokens_wp(quant_dc, wp_dc_tree, start_bx, start_by, end_bx, end_by);
+    // Collect DC tokens using Weighted Predictor + kWPFixedDC tree.
+    // Route through the budget-aware variant so the region-driven token buffer
+    // honors the runtime fallible-alloc policy; byte-identical when infallible.
+    let dc_tokens = super::dc_coding::collect_dc_tokens_wp_with_budget(
+        quant_dc, wp_dc_tree, start_bx, start_by, end_bx, end_by, budget,
+    )?;
     let md_tokens = collect_ac_metadata_tokens_region(
         region_xsize,
         region_ysize,
@@ -287,7 +292,7 @@ fn tokenize_dc_group_wp(
         })
         .collect();
 
-    (dc_tokens, md_tokens)
+    Ok((dc_tokens, md_tokens))
 }
 
 /// Tokenize a single DC group (LearnTree DC mode: both DC and AC metadata tokens).
@@ -315,7 +320,8 @@ fn tokenize_dc_group_learned(
     learned_dc_tree: &super::dc_tree_learn::DcTree,
     dc_ctx_remap: &[u32],
     ac_meta_ctx_map: &[u32],
-) -> (Vec<Token>, Vec<Token>) {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
     let dc_gy = dc_group_idx / xsize_dc_groups;
     let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
@@ -338,7 +344,8 @@ fn tokenize_dc_group_learned(
         start_by,
         end_bx,
         end_by,
-    );
+        budget,
+    )?;
     let md_tokens = collect_ac_metadata_tokens_region(
         region_xsize,
         region_ysize,
@@ -367,7 +374,7 @@ fn tokenize_dc_group_learned(
         })
         .collect();
 
-    (dc_tokens, md_tokens)
+    Ok((dc_tokens, md_tokens))
 }
 
 /// Tokenize a single AC group, returning per-pass token Vecs.
@@ -2441,6 +2448,7 @@ impl VarDctEncoder {
                 self.use_ans,
                 self.effort,
                 &mut writer,
+                self.budget.as_ref(),
             )?;
             writer.zero_pad_to_byte();
             Some(dc_quant)
@@ -2723,7 +2731,8 @@ impl VarDctEncoder {
                 0,
                 xsize_blocks,
                 ysize_blocks,
-            );
+                self.budget.as_ref(),
+            )?;
             for t in a_dc_tokens.iter_mut() {
                 t.set_context(a_dc_remap[t.context() as usize]);
             }
@@ -2925,8 +2934,13 @@ impl VarDctEncoder {
         type AcGroupTokens = (usize, Vec<Vec<Token>>);
         type DcGroupTokenResult = (Vec<Token>, Vec<Token>, Vec<AcGroupTokens>);
 
+        // Snapshot the budget as a `Copy` `Option<&Arc<…>>` so the parallel
+        // closure can thread it into the DC-token collectors without capturing
+        // `&self`. `parallel_map_result` short-circuits on the first
+        // allocation failure; the infallible path stays byte-identical.
+        let dc_budget = self.budget.as_ref();
         let dc_group_results: Vec<DcGroupTokenResult> =
-            crate::parallel::parallel_map(num_dc_groups, |dc_group_idx| {
+            crate::parallel::parallel_map_result(num_dc_groups, |dc_group_idx| {
                 let dc_gx = dc_group_idx % xsize_dc_groups;
                 let dc_gy = dc_group_idx / xsize_dc_groups;
 
@@ -2946,7 +2960,8 @@ impl VarDctEncoder {
                             learned_tree,
                             dc_ctx_remap,
                             &ac_meta_ctx_map,
-                        )
+                            dc_budget,
+                        )?
                     } else if let Some((wp_dc_tree, dc_ctx_remap)) = wp_dc_state.as_ref() {
                         tokenize_dc_group_wp(
                             dc_group_idx,
@@ -2961,7 +2976,8 @@ impl VarDctEncoder {
                             wp_dc_tree,
                             dc_ctx_remap,
                             &ac_meta_ctx_map,
-                        )
+                            dc_budget,
+                        )?
                     } else {
                         tokenize_dc_group_lf_frame(
                             dc_group_idx,
@@ -2973,7 +2989,7 @@ impl VarDctEncoder {
                             ac_strategy,
                             sharpness_map,
                             &ac_meta_ctx_map,
-                        )
+                        )?
                     };
 
                 // 2) AC-coefficient tokens for each contained AC group.
@@ -3015,8 +3031,8 @@ impl VarDctEncoder {
                     }
                 }
 
-                (dc_tokens, ac_meta_tokens, ac_group_tokens)
-            });
+                crate::error::Result::Ok((dc_tokens, ac_meta_tokens, ac_group_tokens))
+            })?;
 
         // ── Aggregate per-DC-group results into whole-image vectors ──
         //

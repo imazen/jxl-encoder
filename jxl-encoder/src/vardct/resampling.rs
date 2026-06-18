@@ -41,16 +41,22 @@ pub fn box_downsample_rgb(
     width: usize,
     height: usize,
     factor: u32,
-) -> (Vec<f32>, u32, u32) {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(Vec<f32>, u32, u32)> {
     debug_assert!(matches!(factor, 1 | 2 | 4 | 8), "factor must be 1/2/4/8");
     debug_assert_eq!(rgb_interleaved.len(), width * height * 3);
     if factor == 1 {
-        return (rgb_interleaved.to_vec(), width as u32, height as u32);
+        return Ok((rgb_interleaved.to_vec(), width as u32, height as u32));
     }
     let f = factor as usize;
     let out_w = width.div_ceil(f);
     let out_h = height.div_ceil(f);
-    let mut out = Vec::with_capacity(out_w * out_h * 3);
+    // Dimension-driven output buffer — honor the runtime fallible-alloc policy;
+    // byte-identical when infallible.
+    let mut out = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        out_w * out_h * 3,
+    )?;
     for oy in 0..out_h {
         let y0 = oy * f;
         let y1 = (y0 + f).min(height);
@@ -74,7 +80,7 @@ pub fn box_downsample_rgb(
             out.push(sum[2] * inv);
         }
     }
-    (out, out_w as u32, out_h as u32)
+    Ok((out, out_w as u32, out_h as u32))
 }
 
 /// 12×12 weighted kernel used by [`sharper_downsample_2x_rgb`]. Ported
@@ -406,7 +412,8 @@ pub fn sharper_downsample_2x_rgb(
     rgb_interleaved: &[f32],
     width: usize,
     height: usize,
-) -> (Vec<f32>, u32, u32) {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(Vec<f32>, u32, u32)> {
     debug_assert_eq!(rgb_interleaved.len(), width * height * 3);
     let out_w = width.div_ceil(2);
     let out_h = height.div_ceil(2);
@@ -428,14 +435,18 @@ pub fn sharper_downsample_2x_rgb(
     sharper_downsample_2x_plane(&plane_g, width, height, &mut out_g, out_w, out_h);
     sharper_downsample_2x_plane(&plane_b, width, height, &mut out_b, out_w, out_h);
 
-    // Re-interleave.
-    let mut out = Vec::with_capacity(out_w * out_h * 3);
+    // Re-interleave. Dimension-driven output buffer — honor the runtime
+    // fallible-alloc policy; byte-identical when infallible.
+    let mut out = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        out_w * out_h * 3,
+    )?;
     for i in 0..(out_w * out_h) {
         out.push(out_r[i]);
         out.push(out_g[i]);
         out.push(out_b[i]);
     }
-    (out, out_w as u32, out_h as u32)
+    Ok((out, out_w as u32, out_h as u32))
 }
 
 /// Box-filter downsample a single-channel u8 buffer (alpha) by an
@@ -446,16 +457,22 @@ pub fn box_downsample_alpha_u8(
     width: usize,
     height: usize,
     factor: u32,
-) -> (Vec<u8>, u32, u32) {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(Vec<u8>, u32, u32)> {
     debug_assert!(matches!(factor, 1 | 2 | 4 | 8), "factor must be 1/2/4/8");
     debug_assert_eq!(alpha.len(), width * height);
     if factor == 1 {
-        return (alpha.to_vec(), width as u32, height as u32);
+        return Ok((alpha.to_vec(), width as u32, height as u32));
     }
     let f = factor as usize;
     let out_w = width.div_ceil(f);
     let out_h = height.div_ceil(f);
-    let mut out = Vec::with_capacity(out_w * out_h);
+    // Dimension-driven output buffer — honor the runtime fallible-alloc policy;
+    // byte-identical when infallible.
+    let mut out = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        out_w * out_h,
+    )?;
     for oy in 0..out_h {
         let y0 = oy * f;
         let y1 = (y0 + f).min(height);
@@ -475,7 +492,7 @@ pub fn box_downsample_alpha_u8(
             out.push(((sum + count / 2) / count) as u8);
         }
     }
-    (out, out_w as u32, out_h as u32)
+    Ok((out, out_w as u32, out_h as u32))
 }
 
 #[cfg(test)]
@@ -485,7 +502,7 @@ mod tests {
     #[test]
     fn test_factor_1_is_clone() {
         let rgb = vec![0.5_f32, 0.25, 0.75, 0.1, 0.2, 0.3]; // 2 px
-        let (out, w, h) = box_downsample_rgb(&rgb, 2, 1, 1);
+        let (out, w, h) = box_downsample_rgb(&rgb, 2, 1, 1, None).unwrap();
         assert_eq!(out, rgb);
         assert_eq!(w, 2);
         assert_eq!(h, 1);
@@ -500,7 +517,7 @@ mod tests {
             .cycle()
             .take(4 * 4 * 3)
             .collect::<Vec<_>>();
-        let (out, w, h) = box_downsample_rgb(&rgb, 4, 4, 2);
+        let (out, w, h) = box_downsample_rgb(&rgb, 4, 4, 2, None).unwrap();
         assert_eq!(w, 2);
         assert_eq!(h, 2);
         assert_eq!(out.len(), 2 * 2 * 3);
@@ -518,7 +535,7 @@ mod tests {
         //  3, 0, 0,  4, 0, 0]
         // 2× downsample → 1×1 with R = (1+2+3+4)/4 = 2.5.
         let rgb = vec![1.0, 0.0, 0.0, 2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 4.0, 0.0, 0.0];
-        let (out, w, h) = box_downsample_rgb(&rgb, 2, 2, 2);
+        let (out, w, h) = box_downsample_rgb(&rgb, 2, 2, 2, None).unwrap();
         assert_eq!(w, 1);
         assert_eq!(h, 1);
         assert!((out[0] - 2.5).abs() < 1e-6);
@@ -537,7 +554,7 @@ mod tests {
                 rgb.push(v);
             }
         }
-        let (out, w, h) = box_downsample_rgb(&rgb, 5, 3, 4);
+        let (out, w, h) = box_downsample_rgb(&rgb, 5, 3, 4, None).unwrap();
         assert_eq!(w, 2);
         assert_eq!(h, 1);
         // Cell 0: averages cols 0..4, rows 0..3 → 12 cells with values
@@ -552,7 +569,7 @@ mod tests {
     fn test_factor_8() {
         // 8×8 uniform RGB image, factor 8 → 1×1 output equal to input value.
         let rgb = vec![0.42_f32; 8 * 8 * 3];
-        let (out, w, h) = box_downsample_rgb(&rgb, 8, 8, 8);
+        let (out, w, h) = box_downsample_rgb(&rgb, 8, 8, 8, None).unwrap();
         assert_eq!(w, 1);
         assert_eq!(h, 1);
         assert!((out[0] - 0.42).abs() < 1e-6);
@@ -562,7 +579,7 @@ mod tests {
     fn test_alpha_factor_2_averages() {
         // 2×2 alpha: [255, 0, 0, 255]. Factor 2 → 1×1 with mean ≈ 128.
         let alpha = vec![255u8, 0, 0, 255];
-        let (out, w, h) = box_downsample_alpha_u8(&alpha, 2, 2, 2);
+        let (out, w, h) = box_downsample_alpha_u8(&alpha, 2, 2, 2, None).unwrap();
         assert_eq!(w, 1);
         assert_eq!(h, 1);
         // (255 + 0 + 0 + 255 + 2) / 4 = 512 / 4 = 128.
@@ -572,7 +589,7 @@ mod tests {
     #[test]
     fn test_alpha_factor_1_is_clone() {
         let alpha = vec![1u8, 2, 3, 4, 5];
-        let (out, w, h) = box_downsample_alpha_u8(&alpha, 5, 1, 1);
+        let (out, w, h) = box_downsample_alpha_u8(&alpha, 5, 1, 1, None).unwrap();
         assert_eq!(out, alpha);
         assert_eq!(w, 5);
         assert_eq!(h, 1);
@@ -582,12 +599,12 @@ mod tests {
     fn test_sharper_2x_dimensions() {
         // 64×64 → 32×32; 65×64 → 33×32 (div_ceil).
         let rgb = vec![0.5_f32; 64 * 64 * 3];
-        let (out, w, h) = sharper_downsample_2x_rgb(&rgb, 64, 64);
+        let (out, w, h) = sharper_downsample_2x_rgb(&rgb, 64, 64, None).unwrap();
         assert_eq!(w, 32);
         assert_eq!(h, 32);
         assert_eq!(out.len(), 32 * 32 * 3);
         let rgb = vec![0.5_f32; 65 * 64 * 3];
-        let (_, w, h) = sharper_downsample_2x_rgb(&rgb, 65, 64);
+        let (_, w, h) = sharper_downsample_2x_rgb(&rgb, 65, 64, None).unwrap();
         assert_eq!(w, 33);
         assert_eq!(h, 32);
     }
@@ -597,7 +614,7 @@ mod tests {
         // Uniform input → kernel sum × value. The kernel sums to ~1.0
         // by construction; confirm output is approximately the input.
         let rgb = vec![0.5_f32; 32 * 32 * 3];
-        let (out, w, h) = sharper_downsample_2x_rgb(&rgb, 32, 32);
+        let (out, w, h) = sharper_downsample_2x_rgb(&rgb, 32, 32, None).unwrap();
         assert_eq!(w, 16);
         assert_eq!(h, 16);
         for &v in &out {
@@ -614,7 +631,7 @@ mod tests {
         // background away from the spike, output stays in the dark range.
         let mut rgb = vec![0.0_f32; 16 * 16 * 3];
         rgb[((8 * 16) + 8) * 3] = 1.0; // R-channel spike at (8,8)
-        let (out, _, _) = sharper_downsample_2x_rgb(&rgb, 16, 16);
+        let (out, _, _) = sharper_downsample_2x_rgb(&rgb, 16, 16, None).unwrap();
         // Far-corner output (0,0) sees no spike in its 2×2 input window
         // (covers input (0..2, 0..2)) — must be clamped to ~0.
         assert!(

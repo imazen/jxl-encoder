@@ -2476,7 +2476,8 @@ pub fn collect_dc_tokens_with_tree_variable(
     start_by: usize,
     end_bx: usize,
     end_by: usize,
-) -> Vec<crate::entropy_coding::token::Token> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
     use crate::entropy_coding::token::Token;
     use crate::modular::predictor::{Neighbors, Predictor, WeightedPredictorState};
 
@@ -2484,10 +2485,15 @@ pub fn collect_dc_tokens_with_tree_variable(
     let region_height = end_by - start_by;
 
     if region_width == 0 || region_height == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+    // Honor the budget's runtime fallible-alloc policy for this dimension-driven
+    // DC-token buffer (`Limits::fallible_alloc`); byte-identical when infallible.
+    let mut tokens = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        region_width * region_height * 3,
+    )?;
 
     // Encode in channel order: Y (1), X (0), B (2). Fresh WP state per channel.
     for (enc_idx, &c) in [1usize, 0, 2].iter().enumerate() {
@@ -2596,7 +2602,7 @@ pub fn collect_dc_tokens_with_tree_variable(
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 /// Traverse the learned tree to get (context_id, predictor) for a DC value.
@@ -2630,17 +2636,23 @@ pub fn collect_dc_tokens_with_tree(
     start_by: usize,
     end_bx: usize,
     end_by: usize,
-) -> Vec<crate::entropy_coding::token::Token> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
     use crate::entropy_coding::token::Token;
 
     let region_width = end_bx - start_bx;
     let region_height = end_by - start_by;
 
     if region_width == 0 || region_height == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+    // Honor the budget's runtime fallible-alloc policy for this dimension-driven
+    // DC-token buffer (`Limits::fallible_alloc`); byte-identical when infallible.
+    let mut tokens = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        region_width * region_height * 3,
+    )?;
 
     // Encode in channel order: Y (1), X (0), B (2)
     for (enc_idx, &c) in [1usize, 0, 2].iter().enumerate() {
@@ -2720,7 +2732,7 @@ pub fn collect_dc_tokens_with_tree(
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -2871,11 +2883,12 @@ pub fn learn_and_collect_dc_tokens(
     start_by: usize,
     end_bx: usize,
     end_by: usize,
-) -> (
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(
     DcTree,
     Vec<crate::entropy_coding::token::Token>,
     DcTreeStats,
-) {
+)> {
     // First pass: gather samples
     let mut samples = DcTreeSamples::new();
 
@@ -2890,7 +2903,8 @@ pub fn learn_and_collect_dc_tokens(
     let (tree, num_contexts) = learn_dc_tree(&samples, max_token);
 
     // Collect tokens using learned tree
-    let tokens = collect_dc_tokens_with_tree(quant_dc, &tree, start_bx, start_by, end_bx, end_by);
+    let tokens =
+        collect_dc_tokens_with_tree(quant_dc, &tree, start_bx, start_by, end_bx, end_by, budget)?;
 
     let stats = DcTreeStats {
         num_contexts,
@@ -2898,7 +2912,7 @@ pub fn learn_and_collect_dc_tokens(
         bits_saved: 0.0, // TODO: estimate actual savings
     };
 
-    (tree, tokens, stats)
+    Ok((tree, tokens, stats))
 }
 
 /// Extract a region of DC values for sample gathering.

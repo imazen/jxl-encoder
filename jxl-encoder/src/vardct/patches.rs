@@ -2705,8 +2705,11 @@ pub(crate) fn encode_reference_frame_rgb(
     use crate::modular::channel::{Channel, ModularImage};
 
     let mut channels = Vec::with_capacity(3);
+    let fallible = budget.is_some_and(|b| b.is_fallible());
     for c in 0..3 {
-        let mut data = Vec::with_capacity(n);
+        // Dimension-driven reference-frame channel — honor the runtime
+        // fallible-alloc policy; byte-identical when infallible.
+        let mut data = crate::budget::vec_with_capacity_fallible(fallible, n)?;
         for i in 0..n {
             data.push(safe_round_to_i32(patches.ref_image[c][i] * max_val));
         }
@@ -2900,20 +2903,24 @@ pub(crate) fn encode_reference_frame(
     // Build modular channels in decoder order: [Y, X, B-Y]
     use crate::modular::channel::{Channel, ModularImage};
 
+    // Dimension-driven reference-frame channels — honor the runtime
+    // fallible-alloc policy; byte-identical when infallible.
+    let fallible = budget.is_some_and(|b| b.is_fallible());
+
     // Channel 0: Y (from ref_image[1], which is the Y plane in XYB)
-    let mut ch_y = Vec::with_capacity(n);
+    let mut ch_y = crate::budget::vec_with_capacity_fallible(fallible, n)?;
     for i in 0..n {
         ch_y.push(safe_round_to_i32(patches.ref_image[1][i] * inv_dc_quant_y));
     }
 
     // Channel 1: X (from ref_image[0], which is the X plane in XYB)
-    let mut ch_x = Vec::with_capacity(n);
+    let mut ch_x = crate::budget::vec_with_capacity_fallible(fallible, n)?;
     for i in 0..n {
         ch_x.push(safe_round_to_i32(patches.ref_image[0][i] * inv_dc_quant_x));
     }
 
     // Channel 2: B-Y (B scaled by INV_DC_QUANT_B, minus Y_int from channel 0)
-    let mut ch_by = Vec::with_capacity(n);
+    let mut ch_by = crate::budget::vec_with_capacity_fallible(fallible, n)?;
     for i in 0..n {
         let b_int = safe_round_to_i32(patches.ref_image[2][i] * inv_dc_quant_b);
         ch_by.push(b_int - ch_y[i]);
