@@ -25,14 +25,17 @@ fn main() {
     let ls: f32 = args[2].parse().expect("scale must be a float");
     let out = if args.len() <= 4 {
         // scale-only: bundled production policy (deadzone + mild chroma lead)
-        jxl_encoder::jpeg::encode_jpeg_recompress_auto_codestream(&bytes, ls, 7)
+        // `None, None`: default resource limits, no cancellation token.
+        jxl_encoder::jpeg::encode_jpeg_recompress_auto_codestream(&bytes, ls, 7, None, None)
     } else {
         // explicit planar knobs (ablation)
         let p = |i: usize, d: f32| args.get(i).map(|s| s.parse().expect("float")).unwrap_or(d);
         let ldz = p(4, 0.0);
         let cs = p(5, ls);
         let cdz = p(6, ldz);
-        jxl_encoder::jpeg::encode_jpeg_recompress_planar_codestream(&bytes, ls, ldz, cs, cdz, 7)
+        jxl_encoder::jpeg::encode_jpeg_recompress_planar_codestream(
+            &bytes, ls, ldz, cs, cdz, 7, None, None,
+        )
     }
     .expect("recompress");
     fs::write(&args[3], &out).expect("write output");

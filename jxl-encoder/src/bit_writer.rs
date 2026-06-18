@@ -67,6 +67,27 @@ impl BitWriter {
         }
     }
 
+    /// Like [`Self::with_capacity`] but honors a runtime fallible-allocation
+    /// policy for the initial capacity: `Vec::with_capacity` (infallible) when
+    /// `fallible` is false, `try_reserve` (returns [`crate::error::Error::OutOfMemory`]
+    /// instead of aborting) when true. Subsequent growth is already fallible.
+    pub(crate) fn with_capacity_fallible(
+        fallible: bool,
+        capacity_bytes: usize,
+    ) -> crate::error::Result<Self> {
+        let storage = if fallible {
+            let mut v = alloc::vec::Vec::new();
+            v.try_reserve(capacity_bytes)?;
+            v
+        } else {
+            alloc::vec::Vec::with_capacity(capacity_bytes)
+        };
+        Ok(Self {
+            storage,
+            bits_written: 0,
+        })
+    }
+
     /// Returns the total number of bits written.
     #[inline]
     pub fn bits_written(&self) -> usize {

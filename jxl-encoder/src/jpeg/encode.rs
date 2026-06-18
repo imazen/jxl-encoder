@@ -12,6 +12,7 @@ use super::data::*;
 use super::jbrd::{encode_jbrd, extract_exif, extract_icc, extract_xmp};
 use crate::BLOCK_SIZE;
 use crate::bit_writer::BitWriter;
+use crate::budget::MemoryBudget;
 use crate::container::wrap_in_container_jxlp;
 use crate::entropy_coding::encode::{
     OwnedAnsEntropyCode, build_entropy_code_ans_with_options, write_entropy_code_ans,
@@ -39,6 +40,8 @@ use crate::vardct::dc_coding::{
 use crate::vardct::frame::{
     assemble_frame_sections, write_dc_group_from_tokens, write_quant_scales,
 };
+use alloc::sync::Arc;
+use enough::Stop;
 
 /// Lever A (2026-05-28): when `true`, the JPEG path emits the libjxl-style
 /// `kJpegTranscodeACMeta` context tree shape (single `Leaf(Zero)` for the
@@ -103,15 +106,76 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
 ///
 /// Effort 0-8 is byte-identical to [`encode_jpeg_to_jxl`] (which uses effort 7).
 pub fn encode_jpeg_to_jxl_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort)?;
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, None, None)?;
+    Ok(codestream)
+}
+
+/// Like [`encode_jpeg_to_jxl_with_effort`], but polls `stop` and reserves the
+/// estimated encode working set against `budget` at coarse boundaries (per
+/// group during AC token collection, and before the entropy phase) so a server
+/// can abort or bound a slow transcode. Both `None` are byte-identical (no poll
+/// / no reservation). Returns [`crate::error::Error::Cancelled`] if cancelled
+/// or [`crate::error::Error::AllocationLimit`] if the budget is exceeded.
+pub(crate) fn encode_jpeg_to_jxl_with_effort_stop(
+    jpeg: &JpegData,
+    effort: u8,
+    stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<Vec<u8>> {
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget)?;
     Ok(codestream)
 }
 
 /// Inner function that returns both codestream bytes and the file header size
 /// (split point for jxlp box splitting when JBRD is needed).
-fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usize)> {
+///
+/// `stop` (when `Some`) is polled at coarse boundaries during encoding; `budget`
+/// (when `Some`) gates the estimated encode working set up front. Both `None`
+/// perform no poll / no reservation and are byte-identical to the
+/// pre-cancellation path.
+fn encode_jpeg_to_jxl_inner(
+    jpeg: &JpegData,
+    effort: u8,
+    stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<(Vec<u8>, usize)> {
+    if let Some(s) = stop {
+        s.check().map_err(|_| crate::error::Error::Cancelled)?;
+    }
     let width = jpeg.width as usize;
     let height = jpeg.height as usize;
+
+    // Reserve the encode working set against `budget` up front, so an oversized
+    // untrusted frame is rejected BEFORE the expensive token collection +
+    // histogram clustering. The constant is **measured**, not guessed: heaptrack
+    // of the transcode path (the quant planes + the AC token stream held twice
+    // during clustering + the output buffer + the diffuse ANS/histogram
+    // accumulators, which cannot be attributed to a single allocation site)
+    // peaks at ~44 B per DCT coefficient on the worst real photo measured
+    // (high-detail `wrenches.jpg`, ~2 B of which is the separately-reserved
+    // coefficient buffer). 56 B/coeff applies a ~1.3x margin over that for
+    // more-adversarial content. Provenance:
+    // `benchmarks/transcode_mem_2026-06-18.tsv` (effort-independent: e7 == e9).
+    //
+    // The reservation is an RAII guard released when the encode returns — the
+    // PreserveJxl recompress path runs two encodes (lossless floor + lossy) on
+    // one budget and their working sets do not coexist. The per-component i16
+    // coefficient buffers are reserved separately (and exactly) in
+    // `read_jpeg_with_stop`. `None` budget is a no-op.
+    const ENCODE_BYTES_PER_COEFF: u64 = 56;
+    let total_coeffs: u64 = jpeg
+        .components
+        .iter()
+        .map(|c| (c.width_in_blocks as u64) * (c.height_in_blocks as u64) * 64)
+        .sum();
+    let est_encode_bytes = total_coeffs.checked_mul(ENCODE_BYTES_PER_COEFF).ok_or(
+        crate::error::Error::AllocationLimit {
+            requested: u64::MAX,
+            used: 0,
+            cap: 0,
+        },
+    )?;
+    let _encode_budget_guard = MemoryBudget::reserve_opt(budget, est_encode_bytes)?;
 
     // Channel mapping: JXL c0=Cb, c1=Y, c2=Cr for YCbCr-flavored frames.
     //   - For semantic-YCbCr (3-comp, libjxl `color_transform == kYCbCr`):
@@ -246,7 +310,7 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // Map JPEG coefficients to JXL data structures
     // Each channel uses its native block dimensions (may differ for subsampled chroma)
     let (mut quant_dc, mut quant_ac, mut nzeros, mut raw_nzeros) =
-        map_jpeg_coefficients(jpeg, &jpeg_c_map, &dc_offset)?;
+        map_jpeg_coefficients(jpeg, &jpeg_c_map, &dc_offset, budget)?;
 
     let is_gray = num_components == 1;
 
@@ -778,6 +842,11 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
 
     let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
     for group_idx in 0..num_groups {
+        // Coarse cancellation point (per group, NOT per block — the inner
+        // block loops are hot). Byte-identical when `stop` is `None`.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
         let group_x = group_idx % xsize_groups;
         let group_y = group_idx / xsize_groups;
         let start_bx = group_x * GROUP_DIM_IN_BLOCKS;
@@ -880,6 +949,11 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     } else {
         NUM_DC_CONTEXTS
     };
+    // Coarse cancellation point before the entropy phase (histogram
+    // clustering + ANS — the dominant cost at high effort).
+    if let Some(s) = stop {
+        s.check().map_err(|_| crate::error::Error::Cancelled)?;
+    }
     let total_dc_tokens: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>()
         + ac_metadata_tokens_per_group
             .iter()
@@ -1037,7 +1111,12 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // context map / distributions; we write the per-section tokens (in
     // `ac_lz77_section_tokens`) at the end with the shared `ac_code`.
     let total_ac_tokens: usize = ac_lz77_section_tokens.iter().map(|t| t.len()).sum();
-    let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
+    // The AC token stream is covered by the encode working-set reservation at
+    // the top of this function; here we only honor the fallible-alloc policy.
+    let mut all_ac_tokens = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        total_ac_tokens,
+    )?;
     for section in &ac_lz77_section_tokens {
         all_ac_tokens.extend_from_slice(section);
     }
@@ -1091,6 +1170,11 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
     // result was 0 bytes / 50 files difference. At typical JPEG corpus
     // sizes the cap doesn't materially bind — kBest pair-merge converges
     // organically below the cap. Kept the existing hint for stability.
+    // Coarse cancellation point before the AC histogram clustering — the
+    // single heaviest op at effort 9 (kBest pair-merge over all AC tokens).
+    if let Some(s) = stop {
+        s.check().map_err(|_| crate::error::Error::Cancelled)?;
+    }
     let ac_code = build_entropy_code_ans_with_options(
         &all_ac_tokens,
         ac_code_num_contexts,
@@ -1102,7 +1186,19 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData, effort: u8) -> Result<(Vec<u8>, usi
 
     // ── Pass 2: Write bitstream ──
 
-    let mut writer = BitWriter::with_capacity(width * height * 4);
+    // The output buffer (~4 B/pixel) is covered by the encode working-set
+    // reservation at the top of this function; honor the fallible-alloc policy
+    // for the initial capacity (growth is already fallible).
+    let output_cap = width
+        .checked_mul(height)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(crate::error::Error::DimensionOverflow {
+            width,
+            height,
+            channels: 1,
+        })?;
+    let mut writer =
+        BitWriter::with_capacity_fallible(budget.is_some_and(|b| b.is_fallible()), output_cap)?;
 
     // Extract ICC profile from JPEG APP2 markers (if present)
     let icc_profile = extract_icc(jpeg);
@@ -1269,7 +1365,22 @@ pub fn encode_jpeg_to_jxl_container(jpeg: &JpegData) -> Result<Vec<u8>> {
 /// codestream side. Container wrapping (JBRD / Exif / XMP boxes) is
 /// effort-independent.
 pub fn encode_jpeg_to_jxl_container_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort)?;
+    encode_jpeg_to_jxl_container_with_effort_stop(jpeg, effort, None, None)
+}
+
+/// Like [`encode_jpeg_to_jxl_container_with_effort`], but polls `stop` and
+/// reserves the estimated encode working set against `budget` at coarse
+/// boundaries during codestream encoding. Both `None` are byte-identical
+/// (no poll / no reservation). Container wrapping itself is fast and not a
+/// cancellation point. Returns [`crate::error::Error::Cancelled`] if cancelled
+/// or [`crate::error::Error::AllocationLimit`] if the budget is exceeded.
+pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
+    jpeg: &JpegData,
+    effort: u8,
+    stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<Vec<u8>> {
+    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget)?;
     let jbrd = encode_jbrd(jpeg)?;
     let exif = extract_exif(jpeg);
     let xmp = extract_xmp(jpeg);
@@ -1420,7 +1531,9 @@ fn map_jpeg_coefficients(
     jpeg: &JpegData,
     jpeg_c_map: &[usize; 3],
     dc_offset: &[i32; 3],
+    budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<JpegCoefficientPlanes> {
+    let fallible = budget.is_some_and(|b| b.is_fallible());
     let mut quant_dc: [Vec<Vec<i16>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut quant_ac: [Vec<Vec<[i32; BLOCK_SIZE]>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut nzeros: [Vec<Vec<u8>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
@@ -1432,16 +1545,22 @@ fn map_jpeg_coefficients(
         let xb = comp.width_in_blocks as usize;
         let yb = comp.height_in_blocks as usize;
 
-        let mut dc_rows = Vec::with_capacity(yb);
-        let mut ac_rows = Vec::with_capacity(yb);
-        let mut nz_rows = Vec::with_capacity(yb);
-        let mut raw_nz_rows = Vec::with_capacity(yb);
+        // The quant planes are covered by the encode working-set reservation in
+        // `encode_jpeg_to_jxl_inner` (a single measured per-coefficient estimate
+        // — heaptrack showed the diffuse entropy/clustering allocations cannot
+        // be attributed per-site). Here we only honor the fallible-alloc policy
+        // for the row buffers.
+        let mut dc_rows = crate::budget::vec_with_capacity_fallible(fallible, yb)?;
+        let mut ac_rows = crate::budget::vec_with_capacity_fallible(fallible, yb)?;
+        let mut nz_rows = crate::budget::vec_with_capacity_fallible(fallible, yb)?;
+        let mut raw_nz_rows = crate::budget::vec_with_capacity_fallible(fallible, yb)?;
 
         for by in 0..yb {
-            let mut dc_row = Vec::with_capacity(xb);
-            let mut ac_row: Vec<[i32; BLOCK_SIZE]> = Vec::with_capacity(xb);
-            let mut nz_row = Vec::with_capacity(xb);
-            let mut raw_nz_row = Vec::with_capacity(xb);
+            let mut dc_row = crate::budget::vec_with_capacity_fallible(fallible, xb)?;
+            let mut ac_row: Vec<[i32; BLOCK_SIZE]> =
+                crate::budget::vec_with_capacity_fallible(fallible, xb)?;
+            let mut nz_row = crate::budget::vec_with_capacity_fallible(fallible, xb)?;
+            let mut raw_nz_row = crate::budget::vec_with_capacity_fallible(fallible, xb)?;
 
             for bx in 0..xb {
                 let blk_idx = by * xb + bx;
@@ -1878,7 +1997,7 @@ mod tests {
             crate::test_helpers::corpus_dir().display()
         );
         let data = std::fs::read(path).expect("failed to read test JPEG");
-        let jpeg = super::super::parse::read_jpeg(&data).expect("failed to parse JPEG");
+        let jpeg = super::super::parse::read_jpeg(&data, None, None).expect("failed to parse JPEG");
         let jxl = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
         assert!(jxl.len() > 10, "JXL output too short: {} bytes", jxl.len());
         // Verify JXL signature
@@ -1900,7 +2019,7 @@ mod tests {
         let path =
             crate::test_helpers::output_dir_for("jpeg-reencoding", "").join("test128_420.jpg");
         let data = std::fs::read(&path).expect("failed to read test JPEG");
-        let jpeg = super::super::parse::read_jpeg(&data).expect("failed to parse JPEG");
+        let jpeg = super::super::parse::read_jpeg(&data, None, None).expect("failed to parse JPEG");
 
         // Verify it's actually 4:2:0
         assert_eq!(jpeg.components[0].h_samp_factor, 2);

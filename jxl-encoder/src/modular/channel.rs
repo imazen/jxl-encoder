@@ -58,13 +58,12 @@ impl Channel {
             .checked_mul(height)
             .ok_or(Error::InvalidImageDimensions(width, height))?;
 
-        // Channel data is `Vec<i32>` — 4 bytes per entry.
-        let bytes = (size as u64).saturating_mul(core::mem::size_of::<i32>() as u64);
-        crate::budget::MemoryBudget::reserve_permanent_opt(budget, bytes)?;
-
-        let mut data = Vec::new();
-        data.try_reserve_exact(size)?;
-        data.resize(size, 0);
+        // Channel data is `Vec<i32>` — reserve against the budget and allocate
+        // honoring its runtime fallible-alloc policy (`Limits::fallible_alloc`):
+        // `vec!` (a single `calloc`, fast) by default, `try_reserve_exact`
+        // (graceful OOM) for untrusted sizes. Byte-identical either way (a
+        // zeroed `Vec<i32>` of `size`); the helper reserves `size * 4` bytes.
+        let data = crate::budget::try_alloc_zeroed_permanent::<i32>(budget, size)?;
 
         Ok(Self {
             data,

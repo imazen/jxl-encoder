@@ -3001,6 +3001,10 @@ path = "examples/dump_cjxl_jbrd_reset_points.rs"
 name = "jpeg_recompress"
 required-features = ["jpeg-reencoding"]
 
+[[example]]
+name = "transcode_mem_probe"
+required-features = ["jpeg-reencoding"]
+
 # Debug helper for the JBRD round-trip gate: transcode + reconstruct (via
 # zenjxl-decoder dev-dep) and print the first diverging byte.
 [[example]]

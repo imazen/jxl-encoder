@@ -2954,7 +2954,7 @@ mod tests {
         let frame_encoder = FrameEncoder::new(4, 4, frame_options);
         let color_encoding = ColorEncoding::srgb();
         frame_encoder
-            .encode_modular(&image, &color_encoding, &mut writer)
+            .encode_modular(&image, &color_encoding, &mut writer, None)
             .unwrap();
 
         let bytes = writer.finish_with_padding();
@@ -3022,7 +3022,7 @@ mod tests {
             let frame_encoder = FrameEncoder::new(4, 2, frame_options);
             let color_encoding = ColorEncoding::srgb();
             frame_encoder
-                .encode_modular(&image, &color_encoding, &mut writer)
+                .encode_modular(&image, &color_encoding, &mut writer, None)
                 .unwrap();
             let huf_bytes = writer.finish_with_padding();
             eprintln!("Huffman modular gray varied 4x2: {} bytes", huf_bytes.len());
@@ -3046,7 +3046,7 @@ mod tests {
         let frame_encoder = FrameEncoder::new(4, 2, frame_options);
         let color_encoding = ColorEncoding::srgb();
         frame_encoder
-            .encode_modular(&image, &color_encoding, &mut writer)
+            .encode_modular(&image, &color_encoding, &mut writer, None)
             .unwrap();
 
         let bytes = writer.finish_with_padding();
@@ -3112,7 +3112,7 @@ mod tests {
         let frame_encoder = FrameEncoder::new(8, 8, frame_options);
         let color_encoding = ColorEncoding::srgb();
         frame_encoder
-            .encode_modular(&image, &color_encoding, &mut writer)
+            .encode_modular(&image, &color_encoding, &mut writer, None)
             .unwrap();
 
         let bytes = writer.finish_with_padding();

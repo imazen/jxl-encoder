@@ -15,6 +15,145 @@
   intentional public API (`LossyConfig` / `LosslessConfig` /
   `EncodeRequest` / streaming encoders / `PixelLayout` / `EncodeError` /
   `Limits` / `ImageMetadata` / `EncoderStrategy`). Tracking: #76.
+- **`jpeg::read_jpeg` signature** is now
+  `read_jpeg(data, limits: Option<&Limits>, stop: Option<&dyn Stop>)`
+  (was the interim `(data, max_pixels: Option<u64>)`). `Limits` bundles the
+  pixel cap + memory budget + fallible policy; `Stop` cancels — the same
+  pair the encode side takes. Approved API change (#77 / #78).
+
+### Security
+- **Configurable pre-flight pixel cap on the untrusted JPEG-transcode SOF
+  (#77 / #78).** The JPEG-reconstruction/transcode path (`read_jpeg` /
+  `encode_jpeg_transcode*`) parses untrusted bytes and sizes per-block
+  `i16` coefficient buffers from the SOF dimensions, but builds no
+  `MemoryBudget`. Since JPEG dims are `u16` (≤ 65535 each), a ~12-byte
+  crafted SOF could advertise up to ~4.3 Gpx and force a multi-gigabyte
+  allocation. `parse_sof_marker` now rejects `width × height` over a cap
+  **immediately after reading the SOF dimensions, before any coefficient
+  allocation**. The cap is **configurable**: it defaults to the new
+  `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS` (120 MP — admits 108 MP
+  phone photos) and is overridden through `Limits::max_pixels`, attached
+  to the transcode path via the new `LosslessConfig::with_limits` /
+  `limits()` (a trusted batch caller raises it or passes
+  `with_max_pixels(u64::MAX)` to opt out; a hostile-input proxy tightens
+  it). The public `read_jpeg` now takes
+  `(data, limits: Option<&Limits>, stop: Option<&dyn Stop>)` — `Limits`
+  bundles the pixel cap + memory budget + fallible policy and `Stop`
+  cancels, matching the encode-side `with_limits` / `with_stop` pattern
+  (both `None` = the historical pixel-cap-only, zero-overhead parse). This
+  replaces the interim `max_pixels: Option<u64>` parameter (an approved
+  public-API change — see QUEUED BREAKING CHANGES above). Byte-
+  identical for all real input: the cap only fires above the configured
+  limit, and the JBRD byte-exact transcode conformance (28
+  `tests/it/jpeg_reencoding.rs` fixtures, all < 120 MP) still passes.
+  Pixel-path entry points are unchanged. (The full `MemoryBudget` threading
+  and the `encode_jpeg_recompress_*` limits — the former #77 follow-ups —
+  are now done; see the budget bullet below.)
+- **Cooperative cancellation on the JPEG-transcode path (#77 item 2).**
+  The transcode path previously ignored cancellation entirely — `parse.rs`
+  hardcoded an `Unstoppable` token into the zenjpeg coefficient decode and
+  the JXL entropy phase had no `Stop` at all, so a server could not abort a
+  slow transcode of an oversized upload. New
+  `LosslessConfig::encode_jpeg_transcode_with_stop` /
+  `encode_jpeg_transcode_codestream_with_stop` accept an `enough::Stop` and
+  poll it at coarse boundaries — entry, the zenjpeg decode, and per-group /
+  pre-entropy during encoding — returning `EncodeError::Cancelled` (mapped
+  from the new `JpegError::Cancelled` / the existing `Error::Cancelled`).
+  Byte-identical to the non-stop entry points on the success path: the polls
+  are skipped when no token is attached and are no-ops under an `Unstoppable`
+  token (verified by `test_jpeg_transcode_cancellation`). Mirrors #81's
+  VarDCT-path cancellation.
+- **Per-encode `MemoryBudget` on the JPEG-transcode + PreserveJxl paths
+  (#77 item 1, full).** The transcode path now builds a `MemoryBudget` from
+  `Limits::max_memory_bytes` (the lossless 8 GiB default when unset) and
+  threads it through both phases: the per-component `i16` coefficient buffers
+  are reserved before allocation in `read_jpeg_with_stop` (the largest
+  attacker-controlled decode buffer), and a **measured** encode working-set
+  estimate is reserved as an RAII guard up front in `encode_jpeg_to_jxl_inner`
+  so an oversized frame is rejected (`EncodeError::LimitExceeded`, via the new
+  `JpegError::ResourceLimit`) **before** the expensive token collection /
+  histogram clustering. The per-coefficient constant is `heaptrack`-calibrated,
+  not guessed: on real photos the transcode peak heap is ≤ 44.1 B/DCT-coeff
+  (wrenches, the worst of 4 corpus images; effort-independent, e7 == e9), so
+  `ENCODE_BYTES_PER_COEFF = 56` carries a ~1.3× margin over the worst measured
+  cell (provenance `benchmarks/transcode_mem_2026-06-18.tsv`, harness
+  `examples/transcode_mem_probe.rs`). An earlier per-site reservation scheme
+  under-counted (≈ 46 MB reserved vs 82 MB real peak on wrenches — the diffuse
+  `AccumulatedAnsData` clustering allocations were unbudgeted), which is why the
+  whole-working-set measured estimate replaced it. Default-on for every
+  transcode entry point (`encode_jpeg_transcode*`), like the pixel path. The
+  PreserveJxl `encode_jpeg_recompress_{,auto_,planar_}codestream` free functions
+  gain `limits: Option<&Limits>` + `stop: Option<&dyn Stop>` parameters (the
+  encode estimate is an RAII reservation released between the lossless-floor and
+  lossy encodes so their working sets don't double-count), and a budget
+  rejection on their decode side now maps to `Error::AllocationLimit`
+  (reconstructed from the owned budget's live `cap`/`used`) instead of being
+  funnelled into a misleading `InvalidInput`. Byte-identical for all real input
+  under the default cap. Verified by `test_jpeg_transcode_memory_budget` +
+  `test_jpeg_recompress_limits_and_stop`; the 14 byte-exact JBRD reconstruction
+  / transcode-roundtrip gates still pass. This closes the remaining #77 P1
+  follow-ups.
+- **Runtime-configurable fallible allocation (`Limits::with_fallible_alloc`),
+  wired through ALL standard encodes.** The choice between fast
+  `vec!`/`Vec::with_capacity` (a single `calloc`, trusted input) and graceful
+  `try_reserve` (returns `Error::OutOfMemory` instead of aborting on a genuine
+  OOM, untrusted input) is a **runtime** toggle on `Limits` rather than a
+  compile-time decision. All five standard-encode budget constructions
+  (one-shot + streaming + animation, lossy + lossless) now build the
+  `MemoryBudget` via `with_alloc_policy(cap, fallible)` instead of the
+  infallible `MemoryBudget::new`, and the **dimension-driven** allocations
+  select their mechanism from the budget policy (`MemoryBudget::is_fallible`):
+  lossy output / DC+AC group BitWriters (`BitWriter::with_capacity_fallible`),
+  the flat quant + masking fields (`vec_with_capacity_fallible`), the XYB planes
+  (already), and the lossless modular channel buffers (the dominant lossless
+  allocation, via `try_alloc_zeroed_permanent`); the JPEG-transcode path was
+  the first consumer. Defaults to infallible (fast); a hostile-input proxy
+  opts into `with_fallible_alloc(true)`. Byte-identical (mechanism only) on
+  success — pinned by `test_standard_encode_fallible_alloc_toggle` (lossy +
+  lossless) and `test_jpeg_transcode_fallible_alloc_toggle`, both asserting
+  byte-identity across modes and budget rejection under a tight cap. Tiny
+  fixed-size allocations and the modular tree-learning sample-collection
+  working set (already budget-*capacity*-bounded via the `*_with_budget`
+  gather/compute variants, but grown through hot-path `Vec::reserve` in
+  budget-less sample structs) intentionally stay infallible — wiring those
+  would be a hot-path method-signature refactor with perf risk and little
+  fallibility benefit.
+- **Checked SOF-derived overflow in the JPEG coefficient parser (#77 item 3).**
+  `extract_coefficients_zenjpeg` computed `width_in_blocks * height_in_blocks`
+  (and `* 64`) as unchecked `u32` / `usize` on attacker-controlled SOF dims —
+  a crafted SOF could wrap the count, size `comp.coeffs` short, and make the
+  zigzag copy read out of bounds. Now computed with checked `usize` arithmetic
+  via the pure `checked_coeff_len` helper (a malformed SOF errors; the wrap only
+  bites 32-bit `usize` — i686 / wasm32 — where `*_in_blocks * 64` overflows at
+  the largest representable JPEG), and the SOF-derived count is reconciled
+  against zenjpeg's actually-decoded coefficient length before the copy. The
+  `jbrd.rs` `write_u32_jbrd` `unreachable!` on the write path is replaced with a
+  typed `Error::InvalidInput`. Both guards are pinned host-independently by
+  `checked_coeff_len_guards_overflow` (parse) and
+  `write_u32_jbrd_no_selector_match_is_typed_error` (jbrd).
+
+### Fixed
+- **Cooperative cancellation now aborts on every VarDCT entropy path (#77
+  item 2 / #81).** `#81` wired per-DC/AC-group `Stop` checkpoints into
+  `VarDctEncoder::encode_inner`, but they lived only in the multi-group
+  two-pass entropy branch, so a single-pass or single-group (`num_sections == 4`)
+  encode never polled the token — `test_stop_cancels_lossy_multigroup` failed
+  (the encode completed instead of returning `Cancelled`). Added an entry-point
+  checkpoint at the top of `encode_inner` that fires before any encode work on
+  **all** paths; the per-group checkpoints remain for mid-encode responsiveness.
+  Byte-identical under `Unstoppable` / `None`.
+- **Full cross-codec cancellation coverage — butteraugli loop + modular
+  lossless (#77 cancellation follow-up).** The cooperative `Stop` token is now
+  threaded through the two heaviest non-JPEG encode paths that previously could
+  not be aborted mid-work: the effort-8+ butteraugli quantization loop
+  (`butteraugli_refine_quant_field*`, polled per iteration) and the modular
+  (lossless) `FrameEncoder` — `encode_modular` / `encode_modular_with_patches` /
+  the multi-group inner + lossy-palette + squeeze + squeeze-with-tree variants,
+  polled at the encode boundary and again before each heavy per-group
+  `parallel_map_result` (after tree learning). Coarse-grained (boundary /
+  per-iteration, not per-coefficient) and byte-identical under `Unstoppable` /
+  `None`, verified by `test_stop_cancels_lossy_e8_buttloop` +
+  `test_stop_cancels_lossless_multigroup`.
 
 ### Added
 - **Calibrated peak-memory estimation (`heuristics` module + per-config

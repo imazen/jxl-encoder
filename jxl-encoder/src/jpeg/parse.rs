@@ -8,6 +8,9 @@
 //! scanner for the jbrd reconstruction metadata.
 
 use super::data::*;
+use crate::budget::MemoryBudget;
+use alloc::sync::Arc;
+use enough::Stop;
 
 /// Errors that can occur during JPEG parsing.
 #[derive(Debug, thiserror::Error)]
@@ -20,6 +23,15 @@ pub enum JpegError {
     Unsupported(String),
     #[error("zenjpeg decode error: {0}")]
     Decode(String),
+    /// The caller's [`enough::Stop`] token requested cancellation. Surfaced
+    /// as [`crate::api::EncodeError::Cancelled`] at the transcode boundary.
+    #[error("encoding cancelled")]
+    Cancelled,
+    /// A dimension-driven coefficient-buffer allocation exceeded the
+    /// configured [`MemoryBudget`] cap. Surfaced as
+    /// [`crate::api::EncodeError::LimitExceeded`] at the transcode boundary.
+    #[error("memory budget exceeded: {0}")]
+    ResourceLimit(String),
 }
 
 type Result<T> = core::result::Result<T, JpegError>;
@@ -29,19 +41,91 @@ type Result<T> = core::result::Result<T, JpegError>;
 /// This performs two passes:
 /// 1. Marker scan: extracts marker structure, Huffman/quant tables, APP/COM data
 /// 2. zenjpeg decode: extracts quantized DCT coefficients reliably
-pub fn read_jpeg(data: &[u8]) -> Result<JpegData> {
+///
+/// `limits` bounds the parse of untrusted bytes; `stop` cancels it. Both
+/// `None` parse with only the secure default pixel cap and no cancellation.
+///
+/// - [`Limits::max_pixels`] is the pre-flight cap on the SOF `width × height`,
+///   applied *before* any per-block coefficient buffer is allocated; `None`
+///   (or `limits = None`) applies the secure default
+///   [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] (120 MP). Pass
+///   [`Limits::with_max_pixels`]`(u64::MAX)` to opt out (trusted input only).
+/// - [`Limits::max_memory_bytes`] caps the per-component `i16` coefficient
+///   buffers — the largest attacker-controlled decode allocation — reserved
+///   against a transient [`MemoryBudget`] *before* allocation (8 GiB lossless
+///   default when `limits` is `Some` but the field is unset).
+/// - [`Limits::fallible_alloc`] selects `vec!` (fast) vs `try_reserve`
+///   (graceful OOM) for those buffers.
+/// - `stop` is polled at entry and threaded into the zenjpeg coefficient
+///   decode, returning [`JpegError::Cancelled`] on cancellation.
+///
+/// When `limits` is `None` only the pixel cap applies (no `MemoryBudget`) —
+/// the cap alone bounds dims → coefficient bytes before allocation, so this is
+/// the historical zero-overhead behaviour. Attach limits/stop on the encode
+/// side via [`crate::api::LosslessConfig::with_limits`] /
+/// [`crate::api::EncodeRequest::with_stop`].
+///
+/// [`Limits`]: crate::api::Limits
+/// [`Limits::max_pixels`]: crate::api::Limits::max_pixels
+/// [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`]: crate::api::Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS
+/// [`Limits::with_max_pixels`]: crate::api::Limits::with_max_pixels
+/// [`Limits::max_memory_bytes`]: crate::api::Limits::max_memory_bytes
+/// [`Limits::fallible_alloc`]: crate::api::Limits::fallible_alloc
+pub fn read_jpeg(
+    data: &[u8],
+    limits: Option<&crate::api::Limits>,
+    stop: Option<&dyn Stop>,
+) -> Result<JpegData> {
+    let max_pixels = limits.and_then(|l| l.max_pixels());
+    // Build a transient bounding budget only when the caller supplies limits;
+    // `None` preserves the historical pixel-cap-only behaviour. The budget
+    // bounds parse-time allocation and is dropped on return — the parsed
+    // coefficient buffers live on in the returned `JpegData`.
+    let budget = limits.map(|l| {
+        let cap = l
+            .max_memory_bytes()
+            .unwrap_or(crate::api::Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS);
+        MemoryBudget::with_alloc_policy(cap, l.fallible_alloc())
+    });
+    read_jpeg_with_stop(data, max_pixels, stop, budget.as_ref())
+}
+
+/// Like [`read_jpeg`], but polls `stop` and reserves the coefficient buffers
+/// against `budget` so a server can abort or bound an oversized untrusted
+/// transcode mid-decode.
+///
+/// `stop` is checked at entry and threaded into the zenjpeg coefficient decode
+/// (the dominant time sink for a large frame). `budget` (when `Some`) caps the
+/// per-component `i16` coefficient-buffer allocations — the largest
+/// attacker-controlled buffers on the decode side — returning
+/// [`JpegError::ResourceLimit`] if a reservation exceeds the cap. Both `None`
+/// are equivalent to an `Unstoppable` / unbounded run — **byte-identical with
+/// zero overhead**. Returns [`JpegError::Cancelled`] on cancellation. Used by
+/// the cancellable / budgeted transcode entry points
+/// ([`crate::api::LosslessConfig::encode_jpeg_transcode_with_stop`]).
+pub(crate) fn read_jpeg_with_stop(
+    data: &[u8],
+    max_pixels: Option<u64>,
+    stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<JpegData> {
+    if let Some(s) = stop {
+        s.check().map_err(|_| JpegError::Cancelled)?;
+    }
+    let max_pixels = max_pixels.unwrap_or(crate::api::Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS);
+
     // Phase 1: Scan markers for jbrd metadata
-    let mut jpeg = scan_markers(data)?;
+    let mut jpeg = scan_markers(data, max_pixels)?;
 
     // Phase 2: Use zenjpeg for reliable coefficient extraction
-    extract_coefficients_zenjpeg(data, &mut jpeg)?;
+    extract_coefficients_zenjpeg(data, &mut jpeg, stop, budget)?;
 
     Ok(jpeg)
 }
 
 /// Lightweight marker scanner that reads JPEG marker structure without
 /// decoding entropy data. Extracts everything needed for jbrd box serialization.
-fn scan_markers(data: &[u8]) -> Result<JpegData> {
+fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
     if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 {
         return Err(JpegError::Invalid("missing SOI marker".into()));
     }
@@ -110,7 +194,7 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
             }
             0xC0 | 0xC1 => {
                 // SOF0 (baseline) / SOF1 (extended sequential)
-                parse_sof_marker(data, &mut pos, &mut jpeg)?;
+                parse_sof_marker(data, &mut pos, &mut jpeg, max_pixels)?;
             }
             0xC2 => {
                 // SOF2: progressive JPEG. zenjpeg's `decode_coefficients()`
@@ -133,7 +217,7 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
                 // value we currently hard-code to 0. For multi-scan inputs
                 // this needs the per-scan pass index — handled at the JBRD
                 // writer rather than in this branch.
-                parse_sof_marker(data, &mut pos, &mut jpeg)?;
+                parse_sof_marker(data, &mut pos, &mut jpeg, max_pixels)?;
             }
             0xDB => {
                 // DQT
@@ -235,7 +319,15 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
 }
 
 /// Parse SOF marker (without the marker bytes, starting at length field).
-fn parse_sof_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result<()> {
+///
+/// `max_pixels` is the pre-flight cap on `width × height` (see [`read_jpeg`]);
+/// `u64::MAX` disables it.
+fn parse_sof_marker(
+    data: &[u8],
+    pos: &mut usize,
+    jpeg: &mut JpegData,
+    max_pixels: u64,
+) -> Result<()> {
     let p = *pos;
     if p + 1 >= data.len() {
         return Err(JpegError::UnexpectedEof);
@@ -251,6 +343,23 @@ fn parse_sof_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
     }
     jpeg.height = u16::from_be_bytes([data[p + 3], data[p + 4]]) as u32;
     jpeg.width = u16::from_be_bytes([data[p + 5], data[p + 6]]) as u32;
+
+    // Pre-flight pixel cap on the untrusted SOF dimensions, BEFORE the
+    // per-block coefficient buffers are allocated (the transcode path does not
+    // build a `MemoryBudget`). JPEG dims are `u16` (≤ 65535 each), so a crafted
+    // header can advertise ~4.3 Gpx and force a multi-gigabyte `i16`
+    // coefficient allocation downstream. `max_pixels` is the caller's cap
+    // (`Limits::max_pixels`, default 120 MP — admits 108 MP phone photos);
+    // `u64::MAX` opts out.
+    if (jpeg.width as u64) * (jpeg.height as u64) > max_pixels {
+        return Err(JpegError::Invalid(format!(
+            "JPEG frame {}x{} exceeds the {} MP transcode pixel cap",
+            jpeg.width,
+            jpeg.height,
+            max_pixels / 1_000_000
+        )));
+    }
+
     let num_comp = data[p + 7] as usize;
 
     // Accept 1-4 components (libjxl `kMaxComponents = 4`,
@@ -515,6 +624,22 @@ fn skip_entropy_data(data: &[u8], pos: &mut usize) {
     }
 }
 
+/// Block count and coefficient-buffer length for a JPEG component, computed
+/// with checked `usize` arithmetic.
+///
+/// SOF `*_in_blocks` fields are attacker-controlled (each up to ~983025 for a
+/// 65535-px dimension with 1×1 sampling), so `width_in_blocks *
+/// height_in_blocks` overflows `u32`, and the `* 64` coefficient scale
+/// overflows `usize` on 32-bit targets (i686 / wasm32 — #77 item 3). A wrapped
+/// length would size the component coefficient buffer short and make the
+/// zigzag copy in [`extract_coefficients_zenjpeg`] read out of bounds, so a
+/// malformed SOF must error rather than wrap. Returns `None` on overflow.
+fn checked_coeff_len(width_in_blocks: usize, height_in_blocks: usize) -> Option<(usize, usize)> {
+    let num_blocks = width_in_blocks.checked_mul(height_in_blocks)?;
+    let coeff_len = num_blocks.checked_mul(64)?;
+    Some((num_blocks, coeff_len))
+}
+
 /// Extract DCT coefficients using zenjpeg's decoder.
 ///
 /// As of zenjpeg 0.8.5 we use [`decode_coefficients_with_jbrd_metadata`]
@@ -525,14 +650,28 @@ fn skip_entropy_data(data: &[u8], pos: &mut usize) {
 /// marker scanner and zenjpeg traverse SOS markers.
 ///
 /// [`decode_coefficients_with_jbrd_metadata`]: zenjpeg::decoder::DecodeConfig::decode_coefficients_with_jbrd_metadata
-fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> {
+fn extract_coefficients_zenjpeg(
+    data: &[u8],
+    jpeg: &mut JpegData,
+    stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<()> {
+    use enough::Unstoppable;
     use zenjpeg::decoder::DecodeConfig;
-    use zenjpeg::encoder::Unstoppable;
 
     let config = DecodeConfig::new();
-    let (decoded, jbrd_meta) = config
-        .decode_coefficients_with_jbrd_metadata(data, Unstoppable)
-        .map_err(|e| JpegError::Decode(format!("{e}")))?;
+    // Thread the caller's Stop into zenjpeg's entropy decode (the dominant
+    // time sink for a large untrusted frame). `None` → `Unstoppable`, which
+    // zenjpeg never polls — byte-identical to the pre-cancellation path.
+    let unstoppable = Unstoppable;
+    let stop_ref: &dyn Stop = stop.unwrap_or(&unstoppable);
+    let decode_result = config.decode_coefficients_with_jbrd_metadata(data, stop_ref);
+    // If the stop fired, surface a clean `Cancelled` instead of zenjpeg's
+    // generic decode error (zenjpeg maps `StopReason` into its own error).
+    if let Some(s) = stop {
+        s.check().map_err(|_| JpegError::Cancelled)?;
+    }
+    let (decoded, jbrd_meta) = decode_result.map_err(|e| JpegError::Decode(format!("{e}")))?;
 
     if decoded.components.len() != jpeg.components.len() {
         return Err(JpegError::Invalid(format!(
@@ -545,8 +684,39 @@ fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> 
     // Copy coefficients from zenjpeg's zigzag format to our natural-order format
     for (i, zen_comp) in decoded.components.iter().enumerate() {
         let comp = &mut jpeg.components[i];
-        let num_blocks = (comp.width_in_blocks * comp.height_in_blocks) as usize;
-        comp.coeffs = vec![0i16; num_blocks * 64];
+        // SOF dims are attacker-controlled (each `*_in_blocks` up to ~983025),
+        // so `wb * hb` overflows `u32` and `* 64` overflows `usize` on 32-bit
+        // (#77 item 3). Compute block / coefficient counts with checked `usize`
+        // arithmetic; a malformed SOF errors instead of wrapping (a wrapped
+        // count would size `comp.coeffs` short and make the zigzag copy below
+        // read out of bounds).
+        let (num_blocks, coeff_len) = checked_coeff_len(
+            comp.width_in_blocks as usize,
+            comp.height_in_blocks as usize,
+        )
+        .ok_or_else(|| {
+            JpegError::Invalid(format!(
+                "component {i}: coefficient count overflow ({} × {} blocks)",
+                comp.width_in_blocks, comp.height_in_blocks
+            ))
+        })?;
+        // Reconcile the SOF-derived count against what zenjpeg actually decoded
+        // — the zigzag copy indexes `zen_comp.coeffs` by block, so a shorter
+        // zenjpeg buffer (inconsistent marker scan vs decode) would read OOB.
+        if zen_comp.coeffs.len() < coeff_len {
+            return Err(JpegError::Invalid(format!(
+                "component {i}: zenjpeg decoded {} coefficients, SOF implies {coeff_len}",
+                zen_comp.coeffs.len()
+            )));
+        }
+        // Reserve + allocate the per-component i16 coefficient buffer — the
+        // largest attacker-controlled allocation on the decode side (#77
+        // item 1). The helper reserves `coeff_len * 2` bytes against the budget
+        // (with checked byte arithmetic) BEFORE allocating, and honors the
+        // budget's runtime fallible-alloc policy (`vec!` fast / `try_reserve`
+        // safe — `Limits::fallible_alloc`). `None` budget is a no-op.
+        comp.coeffs = crate::budget::try_alloc_zeroed_permanent::<i16>(budget, coeff_len)
+            .map_err(|e| JpegError::ResourceLimit(format!("{e}")))?;
 
         for blk in 0..num_blocks {
             let src_base = blk * 64;
@@ -691,6 +861,176 @@ mod tests {
         }
     }
 
+    /// Build a minimal SOI + SOF0 (3 components) advertising `w`×`h`. The frame
+    /// has no SOS/coefficients, so parsing fails AFTER the SOF either at the
+    /// pixel cap (oversized) or later (missing scan data).
+    fn sof_only(w: u16, h: u16) -> Vec<u8> {
+        let mut d = vec![0xFF, 0xD8, 0xFF, 0xC0];
+        d.extend_from_slice(&17u16.to_be_bytes()); // len
+        d.push(8); // precision
+        d.extend_from_slice(&h.to_be_bytes());
+        d.extend_from_slice(&w.to_be_bytes());
+        d.push(3); // Nf
+        d.extend_from_slice(&[1, 0x11, 0]);
+        d.extend_from_slice(&[2, 0x11, 1]);
+        d.extend_from_slice(&[3, 0x11, 1]);
+        d
+    }
+
+    /// proderrdoc 2026-06-14 (issue #77): the JPEG-transcode path builds no
+    /// `MemoryBudget`, and JPEG dims are `u16` (≤ 65535 each), so a crafted SOF
+    /// can advertise ~4.3 Gpx and force a multi-GB coefficient allocation.
+    /// `parse_sof_marker` rejects oversized frames before any allocation;
+    /// `None` applies the default 120 MP cap.
+    #[test]
+    fn read_jpeg_rejects_oversized_sof_before_alloc() {
+        // 20000 × 20000 = 400 MP, well over the default 120 MP cap.
+        let result = read_jpeg(&sof_only(20000, 20000), None, None);
+        assert!(
+            matches!(&result, Err(JpegError::Invalid(m)) if m.contains("120 MP")),
+            "expected the 120 MP cap rejection, got {result:?}"
+        );
+    }
+
+    /// Regression guard: a normal-sized frame (16.8 MP) passes the default cap
+    /// — it fails later for missing scan data, never with the cap message.
+    #[test]
+    fn read_jpeg_does_not_cap_normal_dimensions() {
+        let result = read_jpeg(&sof_only(4096, 4096), None, None); // 16.8 MP
+        if let Err(JpegError::Invalid(m)) = &result {
+            assert!(
+                !m.contains("MP transcode pixel cap"),
+                "16.8 MP wrongly hit the cap: {m}"
+            );
+        }
+    }
+
+    /// The pixel cap is **configurable** (issue #77): a caller-supplied
+    /// `max_pixels` overrides the 120 MP default in both directions, and
+    /// `Some(u64::MAX)` opts out entirely.
+    #[test]
+    fn read_jpeg_pixel_cap_is_configurable() {
+        // (a) A tighter cap rejects a frame the default would admit: 4096×4096
+        //     (16.8 MP) under a 10 MP cap fails AT the cap, before allocation.
+        let tight = read_jpeg(
+            &sof_only(4096, 4096),
+            Some(&crate::api::Limits::new().with_max_pixels(10_000_000)),
+            None,
+        );
+        assert!(
+            matches!(&tight, Err(JpegError::Invalid(m)) if m.contains("10 MP transcode pixel cap")),
+            "expected the 10 MP cap rejection, got {tight:?}"
+        );
+
+        // (b) A looser cap admits a frame the default would reject: 20000×20000
+        //     (400 MP) under a 500 MP cap passes the cap (then fails later for
+        //     missing scan data — never with the cap message).
+        let loose = read_jpeg(
+            &sof_only(20000, 20000),
+            Some(&crate::api::Limits::new().with_max_pixels(500_000_000)),
+            None,
+        );
+        if let Err(JpegError::Invalid(m)) = &loose {
+            assert!(
+                !m.contains("transcode pixel cap"),
+                "400 MP wrongly hit the 500 MP cap: {m}"
+            );
+        }
+
+        // (c) `u64::MAX` opts out: even the largest representable JPEG frame
+        //     (65535×65535 ≈ 4.29 Gpx) clears the cap.
+        let disabled = read_jpeg(
+            &sof_only(65535, 65535),
+            Some(&crate::api::Limits::new().with_max_pixels(u64::MAX)),
+            None,
+        );
+        if let Err(JpegError::Invalid(m)) = &disabled {
+            assert!(
+                !m.contains("transcode pixel cap"),
+                "u64::MAX should disable the cap, got: {m}"
+            );
+        }
+    }
+
+    /// The public `read_jpeg` bounds untrusted parsing via `Limits` (memory
+    /// budget + fallible policy) and cancels via `Stop` (#77 / #78). On a real
+    /// fixture (so the coefficient buffers actually allocate): a tight memory
+    /// cap rejects with `ResourceLimit`, a cancelling token aborts with
+    /// `Cancelled`, and `None`/`None` is the historical pixel-cap-only parse.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn read_jpeg_honours_limits_budget_and_stop() {
+        let data = include_bytes!("../../tests/fixtures/jbrd/base_a_444.jpg");
+
+        // Default parse (no limits, no stop) succeeds.
+        assert!(
+            read_jpeg(data, None, None).is_ok(),
+            "default read_jpeg should parse the fixture"
+        );
+
+        // A 1 KiB memory cap can't fit the coefficient buffers → ResourceLimit
+        // (proves the budget built from `Limits` is threaded into the decode).
+        let tight = crate::api::Limits::new().with_max_memory_bytes(1024);
+        assert!(
+            matches!(
+                read_jpeg(data, Some(&tight), None),
+                Err(JpegError::ResourceLimit(_))
+            ),
+            "expected ResourceLimit under a 1 KiB cap"
+        );
+
+        // A cancelling Stop aborts with Cancelled.
+        struct AlwaysCancel;
+        impl Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                Err(enough::StopReason::Cancelled)
+            }
+        }
+        assert!(
+            matches!(
+                read_jpeg(data, None, Some(&AlwaysCancel)),
+                Err(JpegError::Cancelled)
+            ),
+            "expected Cancelled from an always-cancelling Stop"
+        );
+
+        // `Unstoppable` + a generous cap is byte-equivalent to the default
+        // parse (the budget/stop plumbing is a no-op on the success path).
+        let generous = crate::api::Limits::new().with_max_memory_bytes(u64::MAX);
+        assert!(
+            read_jpeg(data, Some(&generous), Some(&enough::Unstoppable)).is_ok(),
+            "generous cap + Unstoppable should parse the fixture"
+        );
+    }
+
+    /// #77 item 3: the per-component coefficient-buffer length is computed with
+    /// checked `usize` arithmetic so an attacker-controlled SOF can't wrap it to
+    /// a short length (which would make the zigzag copy in
+    /// `extract_coefficients_zenjpeg` read out of bounds). The wrap only bites
+    /// 32-bit targets (`*_in_blocks * 64` overflows `usize` there), so the guard
+    /// is verified host-independently by exercising `checked_coeff_len` directly.
+    #[test]
+    fn checked_coeff_len_guards_overflow() {
+        // `wb * hb` overflows `usize` outright → None (never a wrapped small value).
+        assert_eq!(checked_coeff_len(usize::MAX, 2), None);
+        // `wb * hb` fits but the ×64 coefficient scale overflows → None.
+        assert_eq!(checked_coeff_len(usize::MAX / 32, 1), None);
+        // A normal component is computed exactly.
+        assert_eq!(checked_coeff_len(128, 96), Some((12_288, 786_432)));
+
+        // The largest representable JPEG (65535 px → 8192 blocks/axis) has
+        // num_blocks = 8192² = 67_108_864 and coeff_len = ×64 = 2^32 — the exact
+        // value that overflows a 32-bit `usize` (where the guard fires and
+        // returns None), but is representable on 64-bit (where it is returned).
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            checked_coeff_len(8192, 8192),
+            Some((67_108_864, 4_294_967_296))
+        );
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(checked_coeff_len(8192, 8192), None);
+    }
+
     /// Security audit 2026-05-06 H4 regression: a truncated SOS marker with
     /// `len < 6 + 2*Ns` previously panicked with index-out-of-bounds when
     /// `parse_sos_header` indexed `data[spec_base..spec_base + 3]` past the
@@ -720,7 +1060,7 @@ mod tests {
         data.extend_from_slice(&[0xFF, 0xDA]);
         data.extend_from_slice(&0u16.to_be_bytes());
 
-        let result = read_jpeg(&data);
+        let result = read_jpeg(&data, None, None);
         assert!(matches!(result, Err(JpegError::Invalid(_))));
     }
 
@@ -750,7 +1090,7 @@ mod tests {
         data.push(1); // Ns
         data.extend_from_slice(&[1, 0x00]); // component selector + table
 
-        let result = read_jpeg(&data);
+        let result = read_jpeg(&data, None, None);
         assert!(matches!(result, Err(JpegError::Invalid(_))));
     }
 
@@ -766,7 +1106,7 @@ mod tests {
             crate::test_helpers::corpus_dir().display()
         );
         let data = std::fs::read(path).expect("failed to read test JPEG");
-        let jpeg = read_jpeg(&data).expect("failed to parse JPEG");
+        let jpeg = read_jpeg(&data, None, None).expect("failed to parse JPEG");
 
         assert!(jpeg.width > 0, "width should be nonzero");
         assert!(jpeg.height > 0, "height should be nonzero");

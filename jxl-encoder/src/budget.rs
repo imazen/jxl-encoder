@@ -57,16 +57,39 @@ pub(crate) struct MemoryBudget {
     cap: u64,
     used: AtomicU64,
     peak: AtomicU64,
+    /// Runtime allocation policy for the dimension-driven buffers this budget
+    /// guards: `false` uses `vec![v; n]` (one `calloc`, faster), `true` uses
+    /// `try_reserve_exact` (graceful OOM on untrusted sizes). See
+    /// [`try_alloc_zeroed_permanent`] and [`crate::api::Limits::fallible_alloc`].
+    fallible: bool,
 }
 
 impl MemoryBudget {
-    /// Construct a budget with `cap` bytes available.
+    /// Construct a budget with `cap` bytes available (infallible-alloc policy).
+    ///
+    /// Test-only convenience: production code constructs budgets via
+    /// [`Self::with_alloc_policy`] so the runtime fallible-alloc policy
+    /// (`Limits::fallible_alloc`) is always threaded explicitly.
+    #[cfg(test)]
     pub fn new(cap: u64) -> Arc<Self> {
+        Self::with_alloc_policy(cap, false)
+    }
+
+    /// Construct a budget with `cap` bytes available and an explicit
+    /// fallible-allocation policy (`true` = `try_reserve`, `false` = `vec!`).
+    pub fn with_alloc_policy(cap: u64, fallible: bool) -> Arc<Self> {
         Arc::new(Self {
             cap,
             used: AtomicU64::new(0),
             peak: AtomicU64::new(0),
+            fallible,
         })
+    }
+
+    /// Whether dimension-driven buffers should be allocated fallibly
+    /// (`try_reserve`) rather than via the faster infallible `vec!` path.
+    pub fn is_fallible(&self) -> bool {
+        self.fallible
     }
 
     /// Construct a budget that never denies a reservation.
@@ -345,6 +368,50 @@ pub(crate) fn try_alloc_vec_f32_dirty_permanent(
     let bytes = elem_bytes::<f32>(len)?;
     MemoryBudget::reserve_permanent_opt(budget, bytes)?;
     Ok(jxl_simd::vec_f32_dirty(len))
+}
+
+/// Create an empty `Vec<T>` with reserved capacity for `cap` elements, honoring
+/// a runtime fallible-allocation policy: `Vec::with_capacity` (infallible,
+/// fast) when `fallible` is false, `try_reserve` (returns
+/// [`Error::OutOfMemory`] instead of aborting) when true. Capacity sizing only
+/// — reserves nothing against a [`MemoryBudget`]; pair with an explicit
+/// `reserve_permanent_opt` for the budget accounting.
+pub(crate) fn vec_with_capacity_fallible<T>(fallible: bool, cap: usize) -> Result<Vec<T>> {
+    if fallible {
+        let mut v: Vec<T> = Vec::new();
+        v.try_reserve(cap)?;
+        Ok(v)
+    } else {
+        Ok(Vec::with_capacity(cap))
+    }
+}
+
+/// Reserve `len * size_of::<T>()` permanently against `budget`, then allocate a
+/// zeroed `Vec<T>`, honoring the budget's **runtime** fallible-allocation
+/// policy ([`MemoryBudget::is_fallible`]):
+/// - infallible (default): `vec![T::default(); len]` — LLVM lowers the zeroed
+///   case to a single `calloc`, the faster path for trusted sizes;
+/// - fallible: `try_reserve_exact` + `resize` — returns
+///   [`Error::OutOfMemory`] instead of aborting if the (untrusted-derived)
+///   size cannot be allocated.
+///
+/// `None` budget reserves nothing and uses the infallible path. Used for the
+/// JPEG-transcode coefficient buffers and the modular channel buffers, both
+/// sized from untrusted dimensions.
+pub(crate) fn try_alloc_zeroed_permanent<T: Copy + Default>(
+    budget: Option<&Arc<MemoryBudget>>,
+    len: usize,
+) -> Result<Vec<T>> {
+    let bytes = elem_bytes::<T>(len)?;
+    MemoryBudget::reserve_permanent_opt(budget, bytes)?;
+    if budget.is_some_and(|b| b.is_fallible()) {
+        let mut v: Vec<T> = Vec::new();
+        v.try_reserve_exact(len)?;
+        v.resize(len, T::default());
+        Ok(v)
+    } else {
+        Ok(vec![T::default(); len])
+    }
 }
 
 /// Convenience macro: `try_alloc_plane_f32!(budget, w, h)` reserves and

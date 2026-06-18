@@ -278,7 +278,15 @@ fn write_u32_jbrd(
         }
     }
 
-    unreachable!("No selector matched for value {value}");
+    // With a well-formed 4-selector table the `is_last` (selector >= 3) branch
+    // above always matches, so this is normally unreachable. Return a typed
+    // error rather than panicking on the write path (#77 item 3) — a malformed
+    // selector table or an out-of-range value must not abort the process.
+    Err(crate::error::Error::InvalidInput(format!(
+        "JBRD U32 value {value} matched no selector ({} direct + {} bits/offset)",
+        direct_values.len(),
+        bits_offset.len()
+    )))
 }
 
 /// Brotli-compress data. Returns compressed bytes.
@@ -370,4 +378,38 @@ pub(crate) fn extract_xmp(jpeg: &JpegData) -> Option<Vec<u8>> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #77 item 3: an out-of-range JBRD U32 value that matches no selector in a
+    /// malformed (< 4-selector) table returns a typed `InvalidInput` error
+    /// instead of panicking on the write path. With a well-formed 4-selector
+    /// table the `is_last` (selector >= 3) branch always matches, so this only
+    /// fires on a corrupt table — but it must degrade to an error, not abort.
+    #[test]
+    fn write_u32_jbrd_no_selector_match_is_typed_error() {
+        let mut w = BitWriter::new();
+        // 1 direct (value 1) + 1 bits/offset (2 bits, offset 100) = 2 selectors,
+        // so `is_last` never trips. value=5 matches neither the direct (5 != 1)
+        // nor the offset range (5 < 100) → the typed-error fallback fires.
+        let r = write_u32_jbrd(&mut w, 5, &[1], &[(2, 100)]);
+        assert!(
+            matches!(r, Err(crate::error::Error::InvalidInput(_))),
+            "expected InvalidInput, got {r:?}"
+        );
+    }
+
+    /// Regression guard: a well-formed 4-selector table always encodes (selector
+    /// 3 is the catch-all `is_last` branch) — the fallback must not fire on the
+    /// normal path.
+    #[test]
+    fn write_u32_jbrd_well_formed_table_encodes() {
+        let mut w = BitWriter::new();
+        // 2 direct + 2 bits/offset = 4 selectors; value 999 lands on selector 3.
+        let r = write_u32_jbrd(&mut w, 999, &[0, 1], &[(4, 2), (16, 0)]);
+        assert!(r.is_ok(), "well-formed table should encode, got {r:?}");
+    }
 }

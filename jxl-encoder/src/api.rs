@@ -155,8 +155,17 @@ impl From<enough::StopReason> for EncodeError {
 #[cfg(feature = "jpeg-reencoding")]
 impl From<crate::jpeg::JpegError> for EncodeError {
     fn from(e: crate::jpeg::JpegError) -> Self {
-        Self::JpegParse {
-            message: format!("{e}"),
+        match e {
+            // Cooperative cancellation surfaces as the dedicated variant, not
+            // a parse error (mirrors the VarDCT path's `Error::Cancelled`).
+            crate::jpeg::JpegError::Cancelled => Self::Cancelled,
+            // A coefficient-buffer reservation that overran the memory budget
+            // surfaces as a limit error, not a parse error (mirrors the pixel
+            // path's `AllocationLimit` → `LimitExceeded` mapping).
+            crate::jpeg::JpegError::ResourceLimit(message) => Self::LimitExceeded { message },
+            other => Self::JpegParse {
+                message: format!("{other}"),
+            },
         }
     }
 }
@@ -1359,6 +1368,7 @@ pub struct Limits {
     max_pixels: Option<u64>,
     max_memory_bytes: Option<u64>,
     max_quant_loop_iters: Option<u32>,
+    fallible_alloc: bool,
 }
 
 impl Limits {
@@ -1391,6 +1401,22 @@ impl Limits {
     /// truly oversized untrusted input is still rejected, and trusted
     /// batch raises it explicitly.
     pub const DEFAULT_MAX_MEMORY_BYTES_LOSSLESS: u64 = 8 * 1024 * 1024 * 1024;
+
+    /// Default pre-flight pixel cap (`width × height`) applied to the
+    /// untrusted JPEG-transcode path
+    /// ([`LosslessConfig::encode_jpeg_transcode`] and friends) when the
+    /// caller sets no explicit [`Self::with_max_pixels`].
+    ///
+    /// Set to 120 MP — admits 108 MP phone photos while bounding a crafted
+    /// SOF (JPEG dims are `u16`, so up to ~4.3 Gpx) from forcing a
+    /// multi-gigabyte `i16` coefficient allocation in the transcode parser,
+    /// which builds no `MemoryBudget`. The cap is checked immediately after
+    /// the SOF dimensions are read, before any allocation.
+    ///
+    /// Callers override it through [`Self::with_max_pixels`]: a higher value
+    /// for trusted batch input (or [`u64::MAX`] to opt out entirely), a lower
+    /// value to tighten the bound on a hostile-input proxy.
+    pub const DEFAULT_MAX_JPEG_TRANSCODE_PIXELS: u64 = 120_000_000;
 
     /// Path-aware default memory cap: [`Self::DEFAULT_MAX_MEMORY_BYTES`]
     /// for lossy, [`Self::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS`] for
@@ -1499,6 +1525,30 @@ impl Limits {
     pub fn effective_max_quant_loop_iters(&self) -> u32 {
         self.max_quant_loop_iters
             .unwrap_or(Self::DEFAULT_MAX_QUANT_LOOP_ITERS)
+    }
+
+    /// Choose **fallible** allocation for the large dimension-driven buffers
+    /// sized from untrusted input (the JPEG-transcode coefficient / working
+    /// buffers).
+    ///
+    /// - `false` (default): `vec![v; n]` — LLVM lowers the zeroed case to a
+    ///   single `calloc`, the faster path. An allocation that the OS cannot
+    ///   satisfy aborts the process.
+    /// - `true`: `try_reserve` — a failed allocation returns
+    ///   [`EncodeError`] / [`crate::error::Error::OutOfMemory`] instead of
+    ///   aborting. Slightly slower, but a hostile-input image proxy stays up.
+    ///
+    /// Orthogonal to [`Self::with_max_memory_bytes`]: the budget *rejects*
+    /// oversized requests up front; this controls how an *accepted* request is
+    /// allocated. A server handling untrusted uploads typically wants both.
+    pub fn with_fallible_alloc(mut self, fallible: bool) -> Self {
+        self.fallible_alloc = fallible;
+        self
+    }
+
+    /// Whether fallible allocation is enabled (see [`Self::with_fallible_alloc`]).
+    pub fn fallible_alloc(&self) -> bool {
+        self.fallible_alloc
     }
 }
 
@@ -2244,6 +2294,16 @@ pub struct LosslessConfig {
     /// bytes are identical regardless of `buffering`. See
     /// [`Self::with_buffering`].
     buffering: Buffering,
+    /// Resource [`Limits`] consulted by the untrusted JPEG-transcode path
+    /// ([`Self::encode_jpeg_transcode`] /
+    /// [`Self::encode_jpeg_transcode_codestream`]). Currently the transcode
+    /// parser reads [`Limits::max_pixels`] as the pre-flight SOF pixel cap
+    /// (default [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] = 120 MP when
+    /// `None`). Set via [`Self::with_limits`]. (The pixel / [`EncodeRequest`]
+    /// lossless path takes its limits from [`EncodeRequest::with_limits`]
+    /// instead.)
+    #[cfg(feature = "jpeg-reencoding")]
+    limits: Option<Limits>,
 }
 
 impl Default for LosslessConfig {
@@ -2286,6 +2346,8 @@ impl LosslessConfig {
             modular_group_size_shift: None,
             auto_delta_frames: false,
             buffering: Buffering::Auto,
+            #[cfg(feature = "jpeg-reencoding")]
+            limits: None,
         }
     }
 
@@ -3373,6 +3435,38 @@ impl LosslessConfig {
     // future investigation. Other `LosslessConfig` settings (mode, patches,
     // lossy_palette, etc.) do not affect the transcode path.
 
+    /// Attach resource [`Limits`] consulted by the JPEG-transcode path
+    /// ([`Self::encode_jpeg_transcode`] /
+    /// [`Self::encode_jpeg_transcode_codestream`]).
+    ///
+    /// The transcode parser reads [`Limits::max_pixels`] as the pre-flight
+    /// `width × height` cap applied to the untrusted SOF dimensions before
+    /// any coefficient buffer is allocated. When unset (or no `Limits` is
+    /// attached), the secure default
+    /// [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] (120 MP) applies; a
+    /// trusted batch caller can raise it (or pass
+    /// [`Limits::with_max_pixels`]`(u64::MAX)` to opt out), and a
+    /// hostile-input proxy can tighten it.
+    ///
+    /// Only the `max_pixels` field is consulted today; the rest of the
+    /// transcode-path [`Limits`] wiring (a full `MemoryBudget`) is tracked in
+    /// issue #77.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    #[cfg(feature = "jpeg-reencoding")]
+    pub fn with_limits(mut self, limits: &Limits) -> Self {
+        self.limits = Some(limits.clone());
+        self
+    }
+
+    /// The [`Limits`] attached via [`Self::with_limits`], if any.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    #[cfg(feature = "jpeg-reencoding")]
+    pub fn limits(&self) -> Option<&Limits> {
+        self.limits.as_ref()
+    }
+
     /// Losslessly transcode a JPEG file into JXL with JBRD container for
     /// byte-exact JPEG reconstruction.
     ///
@@ -3419,9 +3513,24 @@ impl LosslessConfig {
         // 2026-05-28: effort gates kBest pair-merge clustering at e>=8 and LZ77
         // (greedy at e=8, optimal at e>=9) on the AC code. See
         // `crate::jpeg::encode_jpeg_to_jxl_container_with_effort`.
-        let jpeg = crate::jpeg::read_jpeg(jpeg_bytes).map_err(|e| at(EncodeError::from(e)))?;
-        crate::jpeg::encode_jpeg_to_jxl_container_with_effort(&jpeg, self.effort)
-            .map_err(|e| at(EncodeError::from(e)))
+        // Pre-flight SOF pixel cap from the attached `Limits::max_pixels`
+        // (default 120 MP — `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS` —
+        // when unset; see `Self::with_limits`).
+        // Pre-flight SOF pixel cap + per-encode memory budget from the attached
+        // `Limits` (default 120 MP / the lossless 8 GiB default when unset; see
+        // `Self::with_limits`). DoS protection is default-on for this untrusted-
+        // bytes path, like the pixel path (#77 item 1).
+        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+        let budget = self.transcode_budget();
+        let jpeg = crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, None, Some(&budget))
+            .map_err(|e| at(EncodeError::from(e)))?;
+        crate::jpeg::encode_jpeg_to_jxl_container_with_effort_stop(
+            &jpeg,
+            self.effort,
+            None,
+            Some(&budget),
+        )
+        .map_err(|e| at(EncodeError::from(e)))
     }
 
     /// Losslessly transcode a JPEG file into a bare JXL codestream
@@ -3444,9 +3553,92 @@ impl LosslessConfig {
     #[track_caller]
     pub fn encode_jpeg_transcode_codestream(&self, jpeg_bytes: &[u8]) -> Result<Vec<u8>> {
         // 2026-05-28: see `encode_jpeg_transcode` for the effort gating.
-        let jpeg = crate::jpeg::read_jpeg(jpeg_bytes).map_err(|e| at(EncodeError::from(e)))?;
-        crate::jpeg::encode_jpeg_to_jxl_with_effort(&jpeg, self.effort)
+        // Pre-flight SOF pixel cap from the attached `Limits::max_pixels`
+        // (default 120 MP — `Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS` —
+        // when unset; see `Self::with_limits`).
+        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+        let budget = self.transcode_budget();
+        let jpeg = crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, None, Some(&budget))
+            .map_err(|e| at(EncodeError::from(e)))?;
+        crate::jpeg::encode_jpeg_to_jxl_with_effort_stop(&jpeg, self.effort, None, Some(&budget))
             .map_err(|e| at(EncodeError::from(e)))
+    }
+
+    /// Cancellable variant of [`Self::encode_jpeg_transcode`].
+    ///
+    /// Polls `stop` (an [`enough::Stop`] token) at coarse boundaries — entry,
+    /// the zenjpeg coefficient decode, and per-group / pre-entropy during JXL
+    /// encoding — returning [`EncodeError::Cancelled`] if cancellation is
+    /// requested. Output is byte-identical to [`Self::encode_jpeg_transcode`]
+    /// when the token never fires (e.g. an [`Unstoppable`] token); each poll
+    /// is a cheap check skipped entirely on the non-stop path.
+    ///
+    /// This is the untrusted-input cancellation hook from issue #77 item 2 —
+    /// a server can abort a slow transcode of an oversized JPEG.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[track_caller]
+    pub fn encode_jpeg_transcode_with_stop(
+        &self,
+        jpeg_bytes: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<Vec<u8>> {
+        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+        let budget = self.transcode_budget();
+        let jpeg =
+            crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, Some(stop), Some(&budget))
+                .map_err(|e| at(EncodeError::from(e)))?;
+        crate::jpeg::encode_jpeg_to_jxl_container_with_effort_stop(
+            &jpeg,
+            self.effort,
+            Some(stop),
+            Some(&budget),
+        )
+        .map_err(|e| at(EncodeError::from(e)))
+    }
+
+    /// Cancellable variant of [`Self::encode_jpeg_transcode_codestream`].
+    ///
+    /// See [`Self::encode_jpeg_transcode_with_stop`] for the polling contract
+    /// and byte-identity guarantee.
+    ///
+    /// Requires the `jpeg-reencoding` cargo feature.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[track_caller]
+    pub fn encode_jpeg_transcode_codestream_with_stop(
+        &self,
+        jpeg_bytes: &[u8],
+        stop: &dyn Stop,
+    ) -> Result<Vec<u8>> {
+        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+        let budget = self.transcode_budget();
+        let jpeg =
+            crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, Some(stop), Some(&budget))
+                .map_err(|e| at(EncodeError::from(e)))?;
+        crate::jpeg::encode_jpeg_to_jxl_with_effort_stop(
+            &jpeg,
+            self.effort,
+            Some(stop),
+            Some(&budget),
+        )
+        .map_err(|e| at(EncodeError::from(e)))
+    }
+
+    /// Build the per-encode [`crate::budget::MemoryBudget`] for the
+    /// JPEG-transcode path from the attached [`Limits`]: the explicit
+    /// [`Limits::max_memory_bytes`] cap if set, else the lossless default
+    /// [`Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS`] (transcode emits a lossless
+    /// bitstream); plus the [`Limits::fallible_alloc`] allocation policy.
+    #[cfg(feature = "jpeg-reencoding")]
+    fn transcode_budget(&self) -> alloc::sync::Arc<crate::budget::MemoryBudget> {
+        let cap = self
+            .limits
+            .as_ref()
+            .and_then(|l| l.max_memory_bytes())
+            .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS);
+        let fallible = self.limits.as_ref().is_some_and(|l| l.fallible_alloc());
+        crate::budget::MemoryBudget::with_alloc_policy(cap, fallible)
     }
 }
 
@@ -8361,7 +8553,8 @@ impl<'a> EncodeRequest<'a> {
         let budget_cap = self.limits.and_then(|l| l.max_memory_bytes()).unwrap_or(
             Limits::default_max_memory_bytes(matches!(self.config, ConfigRef::Lossless(_))),
         );
-        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let fallible = self.limits.is_some_and(|l| l.fallible_alloc());
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
@@ -9172,6 +9365,7 @@ impl<'a> EncodeRequest<'a> {
                 &color_encoding,
                 &mut writer,
                 patches_data.as_ref(),
+                self.stop,
             )
             .map_err(EncodeError::from)?;
 
@@ -10976,7 +11170,8 @@ impl LossyEncoder {
             .as_ref()
             .and_then(|l| l.max_memory_bytes())
             .unwrap_or(Limits::default_max_memory_bytes(false));
-        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let fallible = self.limits.as_ref().is_some_and(|l| l.fallible_alloc());
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
@@ -12061,7 +12256,8 @@ impl LosslessEncoder {
             .as_ref()
             .and_then(|l| l.max_memory_bytes())
             .unwrap_or(Limits::default_max_memory_bytes(true));
-        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let fallible = self.limits.as_ref().is_some_and(|l| l.fallible_alloc());
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
@@ -12272,6 +12468,7 @@ impl LosslessEncoder {
                     &color_encoding,
                     &mut writer,
                     patches_data.as_ref(),
+                    None,
                 )
                 .map_err(EncodeError::from)?;
 
@@ -12535,7 +12732,8 @@ fn encode_animation_lossless(
     let budget_cap = limits
         .and_then(|l| l.max_memory_bytes())
         .unwrap_or(Limits::default_max_memory_bytes(true));
-    let budget = crate::budget::MemoryBudget::new(budget_cap);
+    let fallible = limits.is_some_and(|l| l.fallible_alloc());
+    let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
     let est_bytes = (width as u64)
         .checked_mul(height as u64)
         .and_then(|n| n.checked_mul(40))
@@ -12783,7 +12981,7 @@ fn encode_animation_lossless(
             make_opts(crop, identity_blend_mode, identity_ec_override),
         )
         .with_budget(alloc::sync::Arc::clone(&budget))
-        .encode_modular(&image, &color_encoding, &mut writer_a)
+        .encode_modular(&image, &color_encoding, &mut writer_a, None)
         .map_err(at_from)?;
 
         // Trial-encode candidate B: full-frame `BlendMode::Add` delta
@@ -12831,7 +13029,7 @@ fn encode_animation_lossless(
                         ),
                     )
                     .with_budget(alloc::sync::Arc::clone(&budget))
-                    .encode_modular(&delta_image, &color_encoding, &mut wb)
+                    .encode_modular(&delta_image, &color_encoding, &mut wb, None)
                     .map_err(at_from)?;
                     Some(wb)
                 }
@@ -13007,7 +13205,8 @@ fn encode_animation_lossy(
     let budget_cap = limits
         .and_then(|l| l.max_memory_bytes())
         .unwrap_or(Limits::default_max_memory_bytes(false));
-    let budget = crate::budget::MemoryBudget::new(budget_cap);
+    let fallible = limits.is_some_and(|l| l.fallible_alloc());
+    let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
     let est_bytes = (width as u64)
         .checked_mul(height as u64)
         .and_then(|n| n.checked_mul(40))
@@ -15840,6 +16039,386 @@ mod tests {
             .with_stop(&enough::Unstoppable)
             .encode(&pixels);
         assert!(ok.is_ok(), "Unstoppable lossy encode failed: {ok:?}");
+    }
+
+    /// Issue #77 cross-codec cancellation: the effort-8 butteraugli quantization
+    /// loop polls `Stop` per iteration, and the VarDCT encode entry polls before
+    /// any work. An always-cancelling token aborts an e8 encode with `Cancelled`;
+    /// `Unstoppable` runs every poll (entry + per-buttloop-iteration) and is
+    /// byte-identical to the no-stop path — proving the buttloop poll is a no-op.
+    #[test]
+    fn test_stop_cancels_lossy_e8_buttloop() {
+        // 128x128 single-group: small enough to keep the debug-mode e8 butteraugli
+        // loop fast, large enough that the loop actually runs (and polls).
+        let (w, h) = (128u32, 128u32);
+        let mut pixels = vec![0u8; (w * h * 3) as usize];
+        for (i, p) in pixels.iter_mut().enumerate() {
+            *p = (i.wrapping_mul(2_654_435_761) >> 11) as u8;
+        }
+
+        struct AlwaysCancel;
+        impl enough::Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                Err(enough::StopReason::Cancelled)
+            }
+        }
+
+        let cancelled = LossyConfig::new(1.0)
+            .with_effort(8)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_stop(&AlwaysCancel)
+            .encode(&pixels);
+        assert!(
+            matches!(&cancelled, Err(e) if matches!(e.error(), EncodeError::Cancelled)),
+            "expected EncodeError::Cancelled at e8, got {cancelled:?}"
+        );
+
+        // Unstoppable runs the buttloop polls and matches the no-stop output.
+        let with_uns = LossyConfig::new(1.0)
+            .with_effort(8)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_stop(&enough::Unstoppable)
+            .encode(&pixels)
+            .expect("Unstoppable e8 encode should succeed");
+        let plain = LossyConfig::new(1.0)
+            .with_effort(8)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .encode(&pixels)
+            .expect("plain e8 encode should succeed");
+        assert_eq!(with_uns, plain, "Unstoppable e8 diverged from no-stop path");
+    }
+
+    /// Issue #77 cross-codec cancellation: the modular (lossless) multi-group
+    /// path polls `Stop` at the encode boundary and before the heavy per-group
+    /// parallel encode (after tree learning). An always-cancelling token aborts a
+    /// multi-group lossless encode with `Cancelled`; `Unstoppable` is byte-
+    /// identical to the no-stop path.
+    #[test]
+    fn test_stop_cancels_lossless_multigroup() {
+        // 512x512 → multi-group modular; the default effort runs tree learning
+        // + per-group parallel encoding (where the polls live).
+        let (w, h) = (512u32, 512u32);
+        let mut pixels = vec![0u8; (w * h * 3) as usize];
+        for (i, p) in pixels.iter_mut().enumerate() {
+            *p = (i.wrapping_mul(2_654_435_761) >> 13) as u8;
+        }
+
+        struct AlwaysCancel;
+        impl enough::Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                Err(enough::StopReason::Cancelled)
+            }
+        }
+
+        let cancelled = LosslessConfig::new()
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_stop(&AlwaysCancel)
+            .encode(&pixels);
+        assert!(
+            matches!(&cancelled, Err(e) if matches!(e.error(), EncodeError::Cancelled)),
+            "expected EncodeError::Cancelled for lossless multi-group, got {cancelled:?}"
+        );
+
+        let with_uns = LosslessConfig::new()
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_stop(&enough::Unstoppable)
+            .encode(&pixels)
+            .expect("Unstoppable lossless encode should succeed");
+        let plain = LosslessConfig::new()
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .encode(&pixels)
+            .expect("plain lossless encode should succeed");
+        assert_eq!(
+            with_uns, plain,
+            "Unstoppable lossless multi-group diverged from no-stop path"
+        );
+    }
+
+    /// User directive (2026-06-17): the runtime fallible-alloc toggle
+    /// (`Limits::with_fallible_alloc`) is wired through the STANDARD lossy +
+    /// lossless encodes, not just JPEG transcode. The dimension-driven output /
+    /// group-writer / quant / XYB-plane / modular-channel buffers pick `vec!`
+    /// (fast) vs `try_reserve` (graceful OOM) from the budget policy, so the
+    /// toggle changes only the allocation *mechanism* — a successful encode is
+    /// byte-identical in both modes — and both modes still honour the budget.
+    #[test]
+    fn test_standard_encode_fallible_alloc_toggle() {
+        let (w, h) = (256u32, 256u32);
+        let mut pixels = vec![0u8; (w * h * 3) as usize];
+        for (i, p) in pixels.iter_mut().enumerate() {
+            *p = (i.wrapping_mul(2_654_435_761) >> 13) as u8;
+        }
+
+        let inf = Limits::new().with_fallible_alloc(false);
+        let fal = Limits::new().with_fallible_alloc(true);
+
+        // Lossy: fallible vs infallible → byte-identical output.
+        let lossy_inf = LossyConfig::new(1.0)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&inf)
+            .encode(&pixels)
+            .expect("lossy infallible encode");
+        let lossy_fal = LossyConfig::new(1.0)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&fal)
+            .encode(&pixels)
+            .expect("lossy fallible encode");
+        assert_eq!(
+            lossy_inf, lossy_fal,
+            "lossy fallible toggle changed output bytes"
+        );
+
+        // Lossless: fallible vs infallible → byte-identical output (exercises
+        // the modular channel-data allocation path).
+        let ll_inf = LosslessConfig::new()
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&inf)
+            .encode(&pixels)
+            .expect("lossless infallible encode");
+        let ll_fal = LosslessConfig::new()
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&fal)
+            .encode(&pixels)
+            .expect("lossless fallible encode");
+        assert_eq!(
+            ll_inf, ll_fal,
+            "lossless fallible toggle changed output bytes"
+        );
+
+        // Both modes honour the budget: a 1 KiB cap rejects lossy + lossless
+        // either way (the dimension-driven buffers can't fit — the reservation
+        // fails before allocation regardless of the fallible policy).
+        for fallible in [false, true] {
+            let tight = Limits::new()
+                .with_fallible_alloc(fallible)
+                .with_max_memory_bytes(1024);
+            assert!(
+                LossyConfig::new(1.0)
+                    .encode_request(w, h, PixelLayout::Rgb8)
+                    .with_limits(&tight)
+                    .encode(&pixels)
+                    .is_err(),
+                "lossy + 1 KiB cap (fallible={fallible}) must reject"
+            );
+            assert!(
+                LosslessConfig::new()
+                    .encode_request(w, h, PixelLayout::Rgb8)
+                    .with_limits(&tight)
+                    .encode(&pixels)
+                    .is_err(),
+                "lossless + 1 KiB cap (fallible={fallible}) must reject"
+            );
+        }
+    }
+
+    /// Issue #77 item 2: the JPEG-transcode path is cancellable via the
+    /// `*_with_stop` entry points (the formerly-dead `Stop` plumbing). A
+    /// cancelling token aborts with `Cancelled`; an `Unstoppable` token is
+    /// byte-identical to the non-stop path — proving the per-phase polls
+    /// (decode + per-group + pre-entropy) are harmless no-ops on success.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn test_jpeg_transcode_cancellation() {
+        use enough::{Stop, StopReason, Unstoppable};
+
+        // A committed baseline 4:4:4 JPEG — the transcode path's supported shape.
+        let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+        let cfg = LosslessConfig::new();
+
+        struct AlwaysCancel;
+        impl Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), StopReason> {
+                Err(StopReason::Cancelled)
+            }
+        }
+
+        // A cancelling Stop aborts both transcode entry points with
+        // `Cancelled` (mapped from `JpegError::Cancelled` / `Error::Cancelled`).
+        let cancelled = cfg.encode_jpeg_transcode_with_stop(data, &AlwaysCancel);
+        assert!(
+            matches!(&cancelled, Err(e) if matches!(e.error(), EncodeError::Cancelled)),
+            "expected EncodeError::Cancelled, got {cancelled:?}"
+        );
+        let cancelled_cs = cfg.encode_jpeg_transcode_codestream_with_stop(data, &AlwaysCancel);
+        assert!(
+            matches!(&cancelled_cs, Err(e) if matches!(e.error(), EncodeError::Cancelled)),
+            "codestream: expected EncodeError::Cancelled, got {cancelled_cs:?}"
+        );
+
+        // Unstoppable runs every poll (decode + per-group + pre-entropy),
+        // each returning Ok → byte-identical to the non-stop entry points.
+        let with_uns = cfg
+            .encode_jpeg_transcode_with_stop(data, &Unstoppable)
+            .expect("Unstoppable transcode should succeed");
+        let plain = cfg
+            .encode_jpeg_transcode(data)
+            .expect("plain transcode should succeed");
+        assert_eq!(
+            with_uns, plain,
+            "Unstoppable diverged from the no-stop path"
+        );
+
+        let with_uns_cs = cfg
+            .encode_jpeg_transcode_codestream_with_stop(data, &Unstoppable)
+            .expect("Unstoppable codestream transcode should succeed");
+        let plain_cs = cfg
+            .encode_jpeg_transcode_codestream(data)
+            .expect("plain codestream transcode should succeed");
+        assert_eq!(with_uns_cs, plain_cs, "codestream Unstoppable diverged");
+    }
+
+    /// Issue #77 item 1 (full): the JPEG-transcode path is bounded by a
+    /// per-encode `MemoryBudget` built from `Limits::max_memory_bytes`,
+    /// threaded through the decode coefficient buffers AND the encode working
+    /// set. A tight cap is rejected with `LimitExceeded`; `u64::MAX` opts out.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn test_jpeg_transcode_memory_budget() {
+        let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+
+        // Default cap (8 GiB lossless default) transcodes the small fixture.
+        assert!(
+            LosslessConfig::new().encode_jpeg_transcode(data).is_ok(),
+            "default-budget transcode should succeed"
+        );
+
+        // A 1 KiB cap can't fit the coefficient buffers / encode working set —
+        // rejected with LimitExceeded (proves the budget is threaded through
+        // both the decode and encode phases).
+        let tight = Limits::new().with_max_memory_bytes(1024);
+        let r = LosslessConfig::new()
+            .with_limits(&tight)
+            .encode_jpeg_transcode(data);
+        assert!(
+            matches!(&r, Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. })),
+            "expected LimitExceeded under a 1 KiB cap, got {r:?}"
+        );
+        let r_cs = LosslessConfig::new()
+            .with_limits(&tight)
+            .encode_jpeg_transcode_codestream(data);
+        assert!(
+            matches!(&r_cs, Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. })),
+            "codestream: expected LimitExceeded under a 1 KiB cap, got {r_cs:?}"
+        );
+
+        // `u64::MAX` opts out of the cap → succeeds.
+        let unbounded = Limits::new().with_max_memory_bytes(u64::MAX);
+        assert!(
+            LosslessConfig::new()
+                .with_limits(&unbounded)
+                .encode_jpeg_transcode(data)
+                .is_ok(),
+            "u64::MAX cap should transcode fine"
+        );
+    }
+
+    /// User directive (2026-06-17): fallible-vs-infallible allocation is a
+    /// **runtime** toggle (`Limits::with_fallible_alloc`) — `vec!` (fast,
+    /// calloc) vs `try_reserve` (graceful OOM). The toggle changes the
+    /// allocation *mechanism*, not the bytes, so a successful transcode is
+    /// byte-identical in both modes; the difference only surfaces as a clean
+    /// error (vs abort) on a genuine OOM, which can't be provoked without
+    /// exhausting memory. Both modes still honour the `MemoryBudget`.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn test_jpeg_transcode_fallible_alloc_toggle() {
+        let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+
+        let infallible = Limits::new().with_fallible_alloc(false);
+        let fallible = Limits::new().with_fallible_alloc(true);
+
+        let out_infallible = LosslessConfig::new()
+            .with_limits(&infallible)
+            .encode_jpeg_transcode(data)
+            .expect("infallible-alloc transcode should succeed");
+        let out_fallible = LosslessConfig::new()
+            .with_limits(&fallible)
+            .encode_jpeg_transcode(data)
+            .expect("fallible-alloc transcode should succeed");
+        assert_eq!(
+            out_infallible, out_fallible,
+            "fallible toggle changed output bytes (must be alloc-mechanism only)"
+        );
+
+        // Both modes still honour the budget: a 1 KiB cap rejects either way
+        // (the byte reservation fails before the allocation in both modes).
+        let tight_inf = Limits::new()
+            .with_fallible_alloc(false)
+            .with_max_memory_bytes(1024);
+        let tight_fal = Limits::new()
+            .with_fallible_alloc(true)
+            .with_max_memory_bytes(1024);
+        assert!(
+            LosslessConfig::new()
+                .with_limits(&tight_inf)
+                .encode_jpeg_transcode(data)
+                .is_err(),
+            "infallible + 1 KiB cap must reject"
+        );
+        assert!(
+            LosslessConfig::new()
+                .with_limits(&tight_fal)
+                .encode_jpeg_transcode(data)
+                .is_err(),
+            "fallible + 1 KiB cap must reject"
+        );
+    }
+
+    /// Issue #77 follow-ups: the PreserveJxl `encode_jpeg_recompress_*` free
+    /// functions honour `Limits` (memory budget + pixel cap) and `Stop`.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn test_jpeg_recompress_limits_and_stop() {
+        use enough::{Stop, StopReason, Unstoppable};
+
+        let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+
+        // Default (no limits / unstoppable): the lossless floor succeeds.
+        assert!(
+            crate::jpeg::encode_jpeg_recompress_auto_codestream(data, 1.0, 7, None, None).is_ok(),
+            "default recompress should succeed"
+        );
+
+        // A tight memory cap rejects.
+        let tight = Limits::new().with_max_memory_bytes(1024);
+        let r =
+            crate::jpeg::encode_jpeg_recompress_auto_codestream(data, 2.0, 7, Some(&tight), None);
+        assert!(
+            r.is_err(),
+            "expected a memory-limit rejection under a 1 KiB cap"
+        );
+
+        // A cancelling Stop aborts with `Error::Cancelled`.
+        struct AlwaysCancel;
+        impl Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), StopReason> {
+                Err(StopReason::Cancelled)
+            }
+        }
+        let c = crate::jpeg::encode_jpeg_recompress_auto_codestream(
+            data,
+            2.0,
+            7,
+            None,
+            Some(&AlwaysCancel),
+        );
+        assert!(
+            matches!(c, Err(crate::error::Error::Cancelled)),
+            "expected Error::Cancelled, got {c:?}"
+        );
+
+        // Unstoppable + default cap succeeds.
+        assert!(
+            crate::jpeg::encode_jpeg_recompress_auto_codestream(
+                data,
+                2.0,
+                7,
+                None,
+                Some(&Unstoppable)
+            )
+            .is_ok(),
+            "Unstoppable recompress should succeed"
+        );
     }
 
     #[test]
