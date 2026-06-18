@@ -1113,7 +1113,7 @@ fn encode_jpeg_to_jxl_inner(
     let total_ac_tokens: usize = ac_lz77_section_tokens.iter().map(|t| t.len()).sum();
     // The AC token stream is covered by the encode working-set reservation at
     // the top of this function; here we only honor the fallible-alloc policy.
-    let mut all_ac_tokens = crate::budget::vec_with_capacity_policy(
+    let mut all_ac_tokens = crate::budget::vec_with_capacity_fallible(
         budget.is_some_and(|b| b.is_fallible()),
         total_ac_tokens,
     )?;
@@ -1198,7 +1198,7 @@ fn encode_jpeg_to_jxl_inner(
             channels: 1,
         })?;
     let mut writer =
-        BitWriter::with_capacity_policy(budget.is_some_and(|b| b.is_fallible()), output_cap)?;
+        BitWriter::with_capacity_fallible(budget.is_some_and(|b| b.is_fallible()), output_cap)?;
 
     // Extract ICC profile from JPEG APP2 markers (if present)
     let icc_profile = extract_icc(jpeg);
@@ -1550,17 +1550,17 @@ fn map_jpeg_coefficients(
         // — heaptrack showed the diffuse entropy/clustering allocations cannot
         // be attributed per-site). Here we only honor the fallible-alloc policy
         // for the row buffers.
-        let mut dc_rows = crate::budget::vec_with_capacity_policy(fallible, yb)?;
-        let mut ac_rows = crate::budget::vec_with_capacity_policy(fallible, yb)?;
-        let mut nz_rows = crate::budget::vec_with_capacity_policy(fallible, yb)?;
-        let mut raw_nz_rows = crate::budget::vec_with_capacity_policy(fallible, yb)?;
+        let mut dc_rows = crate::budget::vec_with_capacity_fallible(fallible, yb)?;
+        let mut ac_rows = crate::budget::vec_with_capacity_fallible(fallible, yb)?;
+        let mut nz_rows = crate::budget::vec_with_capacity_fallible(fallible, yb)?;
+        let mut raw_nz_rows = crate::budget::vec_with_capacity_fallible(fallible, yb)?;
 
         for by in 0..yb {
-            let mut dc_row = crate::budget::vec_with_capacity_policy(fallible, xb)?;
+            let mut dc_row = crate::budget::vec_with_capacity_fallible(fallible, xb)?;
             let mut ac_row: Vec<[i32; BLOCK_SIZE]> =
-                crate::budget::vec_with_capacity_policy(fallible, xb)?;
-            let mut nz_row = crate::budget::vec_with_capacity_policy(fallible, xb)?;
-            let mut raw_nz_row = crate::budget::vec_with_capacity_policy(fallible, xb)?;
+                crate::budget::vec_with_capacity_fallible(fallible, xb)?;
+            let mut nz_row = crate::budget::vec_with_capacity_fallible(fallible, xb)?;
+            let mut raw_nz_row = crate::budget::vec_with_capacity_fallible(fallible, xb)?;
 
             for bx in 0..xb {
                 let blk_idx = by * xb + bx;

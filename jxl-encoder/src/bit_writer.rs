@@ -71,7 +71,7 @@ impl BitWriter {
     /// policy for the initial capacity: `Vec::with_capacity` (infallible) when
     /// `fallible` is false, `try_reserve` (returns [`crate::error::Error::OutOfMemory`]
     /// instead of aborting) when true. Subsequent growth is already fallible.
-    pub fn with_capacity_policy(
+    pub(crate) fn with_capacity_fallible(
         fallible: bool,
         capacity_bytes: usize,
     ) -> crate::error::Result<Self> {

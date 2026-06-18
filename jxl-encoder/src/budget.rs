@@ -376,7 +376,7 @@ pub(crate) fn try_alloc_vec_f32_dirty_permanent(
 /// [`Error::OutOfMemory`] instead of aborting) when true. Capacity sizing only
 /// — reserves nothing against a [`MemoryBudget`]; pair with an explicit
 /// `reserve_permanent_opt` for the budget accounting.
-pub(crate) fn vec_with_capacity_policy<T>(fallible: bool, cap: usize) -> Result<Vec<T>> {
+pub(crate) fn vec_with_capacity_fallible<T>(fallible: bool, cap: usize) -> Result<Vec<T>> {
     if fallible {
         let mut v: Vec<T> = Vec::new();
         v.try_reserve(cap)?;

@@ -103,8 +103,8 @@
   `MemoryBudget` via `with_alloc_policy(cap, fallible)` instead of the
   infallible `MemoryBudget::new`, and the **dimension-driven** allocations
   select their mechanism from the budget policy (`MemoryBudget::is_fallible`):
-  lossy output / DC+AC group BitWriters (`BitWriter::with_capacity_policy`),
-  the flat quant + masking fields (`vec_with_capacity_policy`), the XYB planes
+  lossy output / DC+AC group BitWriters (`BitWriter::with_capacity_fallible`),
+  the flat quant + masking fields (`vec_with_capacity_fallible`), the XYB planes
   (already), and the lossless modular channel buffers (the dominant lossless
   allocation, via `try_alloc_zeroed_permanent`); the JPEG-transcode path was
   the first consumer. Defaults to infallible (fast); a hostile-input proxy
