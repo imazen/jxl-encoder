@@ -168,8 +168,8 @@ fn decode_jxl_rs_gray(data: &[u8]) -> (usize, usize, Vec<f32>) {
 fn verify_jxl_rs_decodes(jpeg_path: &str, label: &str) {
     let jpeg_data = std::fs::read(jpeg_path)
         .unwrap_or_else(|e| panic!("{label}: failed to read {jpeg_path}: {e}"));
-    let jpeg =
-        read_jpeg(&jpeg_data, None).unwrap_or_else(|e| panic!("{label}: failed to parse: {e}"));
+    let jpeg = read_jpeg(&jpeg_data, None, None)
+        .unwrap_or_else(|e| panic!("{label}: failed to parse: {e}"));
 
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).unwrap_or_else(|e| panic!("{label}: encode: {e}"));
 
@@ -211,7 +211,7 @@ fn verify_jxl_rs_decodes(jpeg_path: &str, label: &str) {
 fn test_encode_small_jpeg() {
     let path = jxl_encoder::test_helpers::output_file_for("jpeg-reencoding", "test64_444.jpg");
     let data = std::fs::read(&path).expect("failed to read test JPEG");
-    let jpeg = read_jpeg(&data, None).expect("failed to parse JPEG");
+    let jpeg = read_jpeg(&data, None, None).expect("failed to parse JPEG");
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
 
     eprintln!(
@@ -237,7 +237,7 @@ fn test_decode_small_jpeg_oxide() {
     let path = jxl_encoder::test_helpers::output_file_for("jpeg-reencoding", "test64_444.jpg");
     let path_str = path.to_string_lossy().into_owned();
     let data = std::fs::read(&path).expect("failed to read test JPEG");
-    let jpeg = read_jpeg(&data, None).expect("failed to parse JPEG");
+    let jpeg = read_jpeg(&data, None, None).expect("failed to parse JPEG");
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
 
     eprintln!(
@@ -331,7 +331,7 @@ fn test_decode_landscape_jpeg_oxide() {
         jxl_encoder::test_helpers::corpus_dir().display()
     );
     let data = std::fs::read(path).expect("failed to read test JPEG");
-    let jpeg = read_jpeg(&data, None).expect("failed to parse JPEG");
+    let jpeg = read_jpeg(&data, None, None).expect("failed to parse JPEG");
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
 
     eprintln!(
@@ -469,7 +469,7 @@ fn test_decode_landscape_jpeg_oxide() {
 fn test_jbrd_roundtrip_small() {
     let path = jxl_encoder::test_helpers::output_file_for("jpeg-reencoding", "test64_444.jpg");
     let jpeg_data = std::fs::read(&path).expect("failed to read test JPEG");
-    let jpeg = read_jpeg(&jpeg_data, None).expect("failed to parse JPEG");
+    let jpeg = read_jpeg(&jpeg_data, None, None).expect("failed to parse JPEG");
     let jxl_bytes =
         encode_jpeg_to_jxl_container(&jpeg).expect("failed to encode JPEG to JXL container");
 
@@ -550,7 +550,7 @@ fn test_jbrd_roundtrip_landscape() {
         jxl_encoder::test_helpers::corpus_dir().display()
     );
     let jpeg_data = std::fs::read(path).expect("failed to read test JPEG");
-    let jpeg = read_jpeg(&jpeg_data, None).expect("failed to parse JPEG");
+    let jpeg = read_jpeg(&jpeg_data, None, None).expect("failed to parse JPEG");
     let jxl_bytes =
         encode_jpeg_to_jxl_container(&jpeg).expect("failed to encode JPEG to JXL container");
 
@@ -631,7 +631,7 @@ fn test_jbrd_roundtrip_large_photos() {
             .to_string_lossy();
         let jpeg_data =
             std::fs::read(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
-        let jpeg = read_jpeg(&jpeg_data, None)
+        let jpeg = read_jpeg(&jpeg_data, None, None)
             .unwrap_or_else(|e| panic!("failed to parse {basename}: {e}"));
         let jxl_bytes = encode_jpeg_to_jxl_container(&jpeg)
             .unwrap_or_else(|e| panic!("failed to encode {basename}: {e}"));
@@ -680,7 +680,7 @@ fn test_jbrd_roundtrip_large_photos() {
 fn test_jbrd_parse_oxide() {
     let path = jxl_encoder::test_helpers::output_file_for("jpeg-reencoding", "test64_444.jpg");
     let jpeg_data = std::fs::read(&path).expect("failed to read test JPEG");
-    let jpeg = read_jpeg(&jpeg_data, None).expect("failed to parse JPEG");
+    let jpeg = read_jpeg(&jpeg_data, None, None).expect("failed to parse JPEG");
     let jbrd_bytes = encode_jbrd(&jpeg).expect("failed to encode JBRD");
 
     eprintln!("JBRD box: {} bytes", jbrd_bytes.len());
@@ -737,8 +737,8 @@ fn out_dir() -> String {
 fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
     let jpeg_data = std::fs::read(jpeg_path)
         .unwrap_or_else(|e| panic!("{label}: failed to read {jpeg_path}: {e}"));
-    let jpeg =
-        read_jpeg(&jpeg_data, None).unwrap_or_else(|e| panic!("{label}: failed to parse: {e}"));
+    let jpeg = read_jpeg(&jpeg_data, None, None)
+        .unwrap_or_else(|e| panic!("{label}: failed to parse: {e}"));
 
     // Log component info
     for (i, comp) in jpeg.components.iter().enumerate() {
@@ -1020,7 +1020,7 @@ fn test_cmyk_parse_succeeds() {
         jxl_encoder::test_helpers::corpus_dir().display()
     );
     let data = std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
-    let jpeg = read_jpeg(&data, None).expect("parser must accept 4-component CMYK SOF");
+    let jpeg = read_jpeg(&data, None, None).expect("parser must accept 4-component CMYK SOF");
     assert_eq!(jpeg.components.len(), 4, "expected 4 components");
     assert_eq!(jpeg.width, 1174);
     assert_eq!(jpeg.height, 734);
@@ -1044,7 +1044,7 @@ fn test_cmyk_encode_clear_error() {
         jxl_encoder::test_helpers::corpus_dir().display()
     );
     let data = std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
-    let jpeg = read_jpeg(&data, None).expect("CMYK SOF parse");
+    let jpeg = read_jpeg(&data, None, None).expect("CMYK SOF parse");
     assert_eq!(jpeg.components.len(), 4);
 
     let result = encode_jpeg_to_jxl(&jpeg);

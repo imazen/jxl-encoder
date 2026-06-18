@@ -42,16 +42,52 @@ type Result<T> = core::result::Result<T, JpegError>;
 /// 1. Marker scan: extracts marker structure, Huffman/quant tables, APP/COM data
 /// 2. zenjpeg decode: extracts quantized DCT coefficients reliably
 ///
-/// `max_pixels` is the pre-flight cap applied to the untrusted SOF
-/// `width × height` *before* any per-block coefficient buffer is allocated
-/// (the transcode path builds no `MemoryBudget`). `None`
-/// applies the secure default
-/// [`crate::api::Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] (120 MP);
-/// callers thread their own cap from [`crate::api::Limits::max_pixels`]
-/// (e.g. via [`crate::api::LosslessConfig::with_limits`]). Pass
-/// `Some(u64::MAX)` to opt out of the cap entirely (trusted input only).
-pub fn read_jpeg(data: &[u8], max_pixels: Option<u64>) -> Result<JpegData> {
-    read_jpeg_with_stop(data, max_pixels, None, None)
+/// `limits` bounds the parse of untrusted bytes; `stop` cancels it. Both
+/// `None` parse with only the secure default pixel cap and no cancellation.
+///
+/// - [`Limits::max_pixels`] is the pre-flight cap on the SOF `width × height`,
+///   applied *before* any per-block coefficient buffer is allocated; `None`
+///   (or `limits = None`) applies the secure default
+///   [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] (120 MP). Pass
+///   [`Limits::with_max_pixels`]`(u64::MAX)` to opt out (trusted input only).
+/// - [`Limits::max_memory_bytes`] caps the per-component `i16` coefficient
+///   buffers — the largest attacker-controlled decode allocation — reserved
+///   against a transient [`MemoryBudget`] *before* allocation (8 GiB lossless
+///   default when `limits` is `Some` but the field is unset).
+/// - [`Limits::fallible_alloc`] selects `vec!` (fast) vs `try_reserve`
+///   (graceful OOM) for those buffers.
+/// - `stop` is polled at entry and threaded into the zenjpeg coefficient
+///   decode, returning [`JpegError::Cancelled`] on cancellation.
+///
+/// When `limits` is `None` only the pixel cap applies (no `MemoryBudget`) —
+/// the cap alone bounds dims → coefficient bytes before allocation, so this is
+/// the historical zero-overhead behaviour. Attach limits/stop on the encode
+/// side via [`crate::api::LosslessConfig::with_limits`] /
+/// [`crate::api::EncodeRequest::with_stop`].
+///
+/// [`Limits`]: crate::api::Limits
+/// [`Limits::max_pixels`]: crate::api::Limits::max_pixels
+/// [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`]: crate::api::Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS
+/// [`Limits::with_max_pixels`]: crate::api::Limits::with_max_pixels
+/// [`Limits::max_memory_bytes`]: crate::api::Limits::max_memory_bytes
+/// [`Limits::fallible_alloc`]: crate::api::Limits::fallible_alloc
+pub fn read_jpeg(
+    data: &[u8],
+    limits: Option<&crate::api::Limits>,
+    stop: Option<&dyn Stop>,
+) -> Result<JpegData> {
+    let max_pixels = limits.and_then(|l| l.max_pixels());
+    // Build a transient bounding budget only when the caller supplies limits;
+    // `None` preserves the historical pixel-cap-only behaviour. The budget
+    // bounds parse-time allocation and is dropped on return — the parsed
+    // coefficient buffers live on in the returned `JpegData`.
+    let budget = limits.map(|l| {
+        let cap = l
+            .max_memory_bytes()
+            .unwrap_or(crate::api::Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS);
+        MemoryBudget::with_alloc_policy(cap, l.fallible_alloc())
+    });
+    read_jpeg_with_stop(data, max_pixels, stop, budget.as_ref())
 }
 
 /// Like [`read_jpeg`], but polls `stop` and reserves the coefficient buffers
@@ -849,7 +885,7 @@ mod tests {
     #[test]
     fn read_jpeg_rejects_oversized_sof_before_alloc() {
         // 20000 × 20000 = 400 MP, well over the default 120 MP cap.
-        let result = read_jpeg(&sof_only(20000, 20000), None);
+        let result = read_jpeg(&sof_only(20000, 20000), None, None);
         assert!(
             matches!(&result, Err(JpegError::Invalid(m)) if m.contains("120 MP")),
             "expected the 120 MP cap rejection, got {result:?}"
@@ -860,7 +896,7 @@ mod tests {
     /// — it fails later for missing scan data, never with the cap message.
     #[test]
     fn read_jpeg_does_not_cap_normal_dimensions() {
-        let result = read_jpeg(&sof_only(4096, 4096), None); // 16.8 MP
+        let result = read_jpeg(&sof_only(4096, 4096), None, None); // 16.8 MP
         if let Err(JpegError::Invalid(m)) = &result {
             assert!(
                 !m.contains("MP transcode pixel cap"),
@@ -876,7 +912,11 @@ mod tests {
     fn read_jpeg_pixel_cap_is_configurable() {
         // (a) A tighter cap rejects a frame the default would admit: 4096×4096
         //     (16.8 MP) under a 10 MP cap fails AT the cap, before allocation.
-        let tight = read_jpeg(&sof_only(4096, 4096), Some(10_000_000));
+        let tight = read_jpeg(
+            &sof_only(4096, 4096),
+            Some(&crate::api::Limits::new().with_max_pixels(10_000_000)),
+            None,
+        );
         assert!(
             matches!(&tight, Err(JpegError::Invalid(m)) if m.contains("10 MP transcode pixel cap")),
             "expected the 10 MP cap rejection, got {tight:?}"
@@ -885,7 +925,11 @@ mod tests {
         // (b) A looser cap admits a frame the default would reject: 20000×20000
         //     (400 MP) under a 500 MP cap passes the cap (then fails later for
         //     missing scan data — never with the cap message).
-        let loose = read_jpeg(&sof_only(20000, 20000), Some(500_000_000));
+        let loose = read_jpeg(
+            &sof_only(20000, 20000),
+            Some(&crate::api::Limits::new().with_max_pixels(500_000_000)),
+            None,
+        );
         if let Err(JpegError::Invalid(m)) = &loose {
             assert!(
                 !m.contains("transcode pixel cap"),
@@ -895,13 +939,68 @@ mod tests {
 
         // (c) `u64::MAX` opts out: even the largest representable JPEG frame
         //     (65535×65535 ≈ 4.29 Gpx) clears the cap.
-        let disabled = read_jpeg(&sof_only(65535, 65535), Some(u64::MAX));
+        let disabled = read_jpeg(
+            &sof_only(65535, 65535),
+            Some(&crate::api::Limits::new().with_max_pixels(u64::MAX)),
+            None,
+        );
         if let Err(JpegError::Invalid(m)) = &disabled {
             assert!(
                 !m.contains("transcode pixel cap"),
                 "u64::MAX should disable the cap, got: {m}"
             );
         }
+    }
+
+    /// The public `read_jpeg` bounds untrusted parsing via `Limits` (memory
+    /// budget + fallible policy) and cancels via `Stop` (#77 / #78). On a real
+    /// fixture (so the coefficient buffers actually allocate): a tight memory
+    /// cap rejects with `ResourceLimit`, a cancelling token aborts with
+    /// `Cancelled`, and `None`/`None` is the historical pixel-cap-only parse.
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn read_jpeg_honours_limits_budget_and_stop() {
+        let data = include_bytes!("../../tests/fixtures/jbrd/base_a_444.jpg");
+
+        // Default parse (no limits, no stop) succeeds.
+        assert!(
+            read_jpeg(data, None, None).is_ok(),
+            "default read_jpeg should parse the fixture"
+        );
+
+        // A 1 KiB memory cap can't fit the coefficient buffers → ResourceLimit
+        // (proves the budget built from `Limits` is threaded into the decode).
+        let tight = crate::api::Limits::new().with_max_memory_bytes(1024);
+        assert!(
+            matches!(
+                read_jpeg(data, Some(&tight), None),
+                Err(JpegError::ResourceLimit(_))
+            ),
+            "expected ResourceLimit under a 1 KiB cap"
+        );
+
+        // A cancelling Stop aborts with Cancelled.
+        struct AlwaysCancel;
+        impl Stop for AlwaysCancel {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                Err(enough::StopReason::Cancelled)
+            }
+        }
+        assert!(
+            matches!(
+                read_jpeg(data, None, Some(&AlwaysCancel)),
+                Err(JpegError::Cancelled)
+            ),
+            "expected Cancelled from an always-cancelling Stop"
+        );
+
+        // `Unstoppable` + a generous cap is byte-equivalent to the default
+        // parse (the budget/stop plumbing is a no-op on the success path).
+        let generous = crate::api::Limits::new().with_max_memory_bytes(u64::MAX);
+        assert!(
+            read_jpeg(data, Some(&generous), Some(&enough::Unstoppable)).is_ok(),
+            "generous cap + Unstoppable should parse the fixture"
+        );
     }
 
     /// #77 item 3: the per-component coefficient-buffer length is computed with
@@ -961,7 +1060,7 @@ mod tests {
         data.extend_from_slice(&[0xFF, 0xDA]);
         data.extend_from_slice(&0u16.to_be_bytes());
 
-        let result = read_jpeg(&data, None);
+        let result = read_jpeg(&data, None, None);
         assert!(matches!(result, Err(JpegError::Invalid(_))));
     }
 
@@ -991,7 +1090,7 @@ mod tests {
         data.push(1); // Ns
         data.extend_from_slice(&[1, 0x00]); // component selector + table
 
-        let result = read_jpeg(&data, None);
+        let result = read_jpeg(&data, None, None);
         assert!(matches!(result, Err(JpegError::Invalid(_))));
     }
 
@@ -1007,7 +1106,7 @@ mod tests {
             crate::test_helpers::corpus_dir().display()
         );
         let data = std::fs::read(path).expect("failed to read test JPEG");
-        let jpeg = read_jpeg(&data, None).expect("failed to parse JPEG");
+        let jpeg = read_jpeg(&data, None, None).expect("failed to parse JPEG");
 
         assert!(jpeg.width > 0, "width should be nonzero");
         assert!(jpeg.height > 0, "height should be nonzero");

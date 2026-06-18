@@ -15,6 +15,11 @@
   intentional public API (`LossyConfig` / `LosslessConfig` /
   `EncodeRequest` / streaming encoders / `PixelLayout` / `EncodeError` /
   `Limits` / `ImageMetadata` / `EncoderStrategy`). Tracking: #76.
+- **`jpeg::read_jpeg` signature** is now
+  `read_jpeg(data, limits: Option<&Limits>, stop: Option<&dyn Stop>)`
+  (was the interim `(data, max_pixels: Option<u64>)`). `Limits` bundles the
+  pixel cap + memory budget + fallible policy; `Stop` cancels — the same
+  pair the encode side takes. Approved API change (#77 / #78).
 
 ### Security
 - **Configurable pre-flight pixel cap on the untrusted JPEG-transcode SOF
@@ -31,13 +36,19 @@
   to the transcode path via the new `LosslessConfig::with_limits` /
   `limits()` (a trusted batch caller raises it or passes
   `with_max_pixels(u64::MAX)` to opt out; a hostile-input proxy tightens
-  it). `read_jpeg` gains a `max_pixels: Option<u64>` parameter (`None`
-  applies the default). Byte-identical for all real input: the cap only
-  fires above the configured limit, and the JBRD byte-exact transcode
-  conformance (28 `tests/it/jpeg_reencoding.rs` fixtures, all < 120 MP)
-  still passes. Pixel-path entry points are unchanged. (The full
-  `MemoryBudget` threading and the `encode_jpeg_recompress_*` limits — the
-  former #77 follow-ups — are now done; see the budget bullet below.)
+  it). The public `read_jpeg` now takes
+  `(data, limits: Option<&Limits>, stop: Option<&dyn Stop>)` — `Limits`
+  bundles the pixel cap + memory budget + fallible policy and `Stop`
+  cancels, matching the encode-side `with_limits` / `with_stop` pattern
+  (both `None` = the historical pixel-cap-only, zero-overhead parse). This
+  replaces the interim `max_pixels: Option<u64>` parameter (an approved
+  public-API change — see QUEUED BREAKING CHANGES above). Byte-
+  identical for all real input: the cap only fires above the configured
+  limit, and the JBRD byte-exact transcode conformance (28
+  `tests/it/jpeg_reencoding.rs` fixtures, all < 120 MP) still passes.
+  Pixel-path entry points are unchanged. (The full `MemoryBudget` threading
+  and the `encode_jpeg_recompress_*` limits — the former #77 follow-ups —
+  are now done; see the budget bullet below.)
 - **Cooperative cancellation on the JPEG-transcode path (#77 item 2).**
   The transcode path previously ignored cancellation entirely — `parse.rs`
   hardcoded an `Unstoppable` token into the zenjpeg coefficient decode and

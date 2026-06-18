@@ -1997,7 +1997,7 @@ mod tests {
             crate::test_helpers::corpus_dir().display()
         );
         let data = std::fs::read(path).expect("failed to read test JPEG");
-        let jpeg = super::super::parse::read_jpeg(&data, None).expect("failed to parse JPEG");
+        let jpeg = super::super::parse::read_jpeg(&data, None, None).expect("failed to parse JPEG");
         let jxl = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
         assert!(jxl.len() > 10, "JXL output too short: {} bytes", jxl.len());
         // Verify JXL signature
@@ -2019,7 +2019,7 @@ mod tests {
         let path =
             crate::test_helpers::output_dir_for("jpeg-reencoding", "").join("test128_420.jpg");
         let data = std::fs::read(&path).expect("failed to read test JPEG");
-        let jpeg = super::super::parse::read_jpeg(&data, None).expect("failed to parse JPEG");
+        let jpeg = super::super::parse::read_jpeg(&data, None, None).expect("failed to parse JPEG");
 
         // Verify it's actually 4:2:0
         assert_eq!(jpeg.components[0].h_samp_factor, 2);

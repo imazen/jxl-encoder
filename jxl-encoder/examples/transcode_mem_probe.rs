@@ -25,7 +25,7 @@ fn main() {
     let bytes = std::fs::read(&path).expect("read jpeg");
 
     // Parse once (no budget) to report the budget-relevant dimensions.
-    let jpeg = jxl_encoder::jpeg::read_jpeg(&bytes, None).expect("parse jpeg");
+    let jpeg = jxl_encoder::jpeg::read_jpeg(&bytes, None, None).expect("parse jpeg");
     let px = jpeg.width as u64 * jpeg.height as u64;
     let comp_blocks: Vec<u64> = jpeg
         .components
