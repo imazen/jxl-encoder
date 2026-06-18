@@ -1450,19 +1450,24 @@ fn patches_dispatch_block_mask_median(
     width: usize,
     height: usize,
     stride: usize,
-) -> Option<f32> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Option<f32>> {
     if width < 8 || height < 8 {
-        return None;
+        return Ok(None);
     }
     // Re-pack the (possibly strided) Y plane into a contiguous buffer
     // because `compute_mask1x1` assumes `stride == width` (callers in
     // `encode_inner` already pass `padded_width` directly as both
     // width AND stride, so the contiguous fast-path almost always
-    // wins).
+    // wins). The strided repack is dimension-driven, so route it through
+    // the runtime fallible-alloc policy; byte-identical when infallible.
     let y_contig: Vec<f32> = if stride == width {
         xyb_y[..width * height].to_vec()
     } else {
-        let mut buf = Vec::with_capacity(width * height);
+        let mut buf = crate::budget::vec_with_capacity_fallible(
+            budget.is_some_and(|b| b.is_fallible()),
+            width * height,
+        )?;
         for y in 0..height {
             let row_start = y * stride;
             buf.extend_from_slice(&xyb_y[row_start..row_start + width]);
@@ -1473,7 +1478,7 @@ fn patches_dispatch_block_mask_median(
     let blocks_per_row = width / 8;
     let blocks_per_col = height / 8;
     if blocks_per_row == 0 || blocks_per_col == 0 {
-        return None;
+        return Ok(None);
     }
     let n_blocks = blocks_per_row * blocks_per_col;
     let mut block_means: Vec<f32> = Vec::with_capacity(n_blocks);
@@ -1507,7 +1512,7 @@ fn patches_dispatch_block_mask_median(
     block_means.select_nth_unstable_by(mid, |a, b| {
         a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
     });
-    Some(block_means[mid])
+    Ok(Some(block_means[mid]))
 }
 
 /// Return the median value of the unpadded region `[0, width) × [0, height)`
@@ -3548,8 +3553,14 @@ impl VarDctEncoder {
         let shifted_q = |shift: u32| -> u32 {
             self.compute_extra_pixel_quantizer_shifted(bits, alpha.info.ec_type, shift)
         };
-        let pipeline =
-            super::extras::build_alpha_squeeze_pipeline(alpha, width, height, shift0_q, shifted_q)?;
+        let pipeline = super::extras::build_alpha_squeeze_pipeline(
+            alpha,
+            width,
+            height,
+            shift0_q,
+            shifted_q,
+            self.budget.as_ref(),
+        )?;
         Ok(Some(pipeline))
     }
 
@@ -3829,9 +3840,15 @@ impl VarDctEncoder {
                     // than 8×8 in either dim) falls back to "run scan"
                     // because that's the safe / byte-identical
                     // direction.
-                    patches_dispatch_block_mask_median(&xyb_y, width, height, padded_width)
-                        .map(|m| m > PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD)
-                        .unwrap_or(true)
+                    patches_dispatch_block_mask_median(
+                        &xyb_y,
+                        width,
+                        height,
+                        padded_width,
+                        self.budget.as_ref(),
+                    )?
+                    .map(|m| m > PATCHES_DISPATCH_BLOCK_MASK_THRESHOLD)
+                    .unwrap_or(true)
                 }
             };
         let mut patches_data = if should_scan_patches {
@@ -3958,7 +3975,13 @@ impl VarDctEncoder {
             // synthetic as screenshot-class, while admitting all 5
             // CLIC2025-1024 photos (photo median ~56 vs screenshot/synth
             // median 100).
-            if super::splines::looks_like_screenshot(&xyb_y, width, height, padded_width) {
+            if super::splines::looks_like_screenshot(
+                &xyb_y,
+                width,
+                height,
+                padded_width,
+                self.budget.as_ref(),
+            )? {
                 None
             } else {
                 // Pass distance through so the per-spline cost-benefit gate

@@ -874,25 +874,31 @@ pub(crate) fn looks_like_screenshot(
     width: usize,
     height: usize,
     stride: usize,
-) -> bool {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<bool> {
     if width < 8 || height < 8 {
         // Below one full 8x8 block — there's no meaningful median to take,
         // and `find_splines_at_distance` already short-circuits at
         // `width < 16 || height < 16` anyway. Treat as "not screenshot".
-        return false;
+        return Ok(false);
     }
 
     // Re-pack the (possibly strided) Y plane into a contiguous buffer
     // because `compute_mask1x1` assumes `stride == width`. The mask1x1
     // computation expects row-major contiguous input — see callers in
     // `vardct/encoder.rs:1218` which pass `padded_width` directly as
-    // both width AND stride.
+    // both width AND stride. The strided repack is dimension-driven, so
+    // route it through the runtime fallible-alloc policy; byte-identical
+    // when infallible.
     let y_contig: alloc::vec::Vec<f32> = if stride == width {
         // SAFETY: stride == width means buffer is already contiguous.
         // Slice up to width*height to drop any trailing slop.
         xyb_y[..width * height].to_vec()
     } else {
-        let mut buf = alloc::vec::Vec::with_capacity(width * height);
+        let mut buf = crate::budget::vec_with_capacity_fallible(
+            budget.is_some_and(|b| b.is_fallible()),
+            width * height,
+        )?;
         for y in 0..height {
             let row_start = y * stride;
             buf.extend_from_slice(&xyb_y[row_start..row_start + width]);
@@ -907,7 +913,7 @@ pub(crate) fn looks_like_screenshot(
     let blocks_per_row = width / 8;
     let blocks_per_col = height / 8;
     if blocks_per_row == 0 || blocks_per_col == 0 {
-        return false;
+        return Ok(false);
     }
     let n_blocks = blocks_per_row * blocks_per_col;
     let mut block_means: alloc::vec::Vec<f32> = alloc::vec::Vec::with_capacity(n_blocks);
@@ -950,7 +956,7 @@ pub(crate) fn looks_like_screenshot(
             "non-screenshot"
         }
     );
-    median > SCREENSHOT_MEDIAN_MASK_THRESHOLD
+    Ok(median > SCREENSHOT_MEDIAN_MASK_THRESHOLD)
 }
 
 /// Distance-aware variant of [`find_splines`]. Internal entry used by
@@ -2518,7 +2524,7 @@ mod tests {
         let (w, h) = (128usize, 128usize);
         let y_plane = alloc::vec![0.4f32; w * h];
         assert!(
-            looks_like_screenshot(&y_plane, w, h, w),
+            looks_like_screenshot(&y_plane, w, h, w, None).unwrap(),
             "constant-color image must be classified as screenshot-like"
         );
     }
@@ -2541,7 +2547,7 @@ mod tests {
             }
         }
         assert!(
-            !looks_like_screenshot(&y_plane, w, h, w),
+            !looks_like_screenshot(&y_plane, w, h, w, None).unwrap(),
             "photo-like gradient with spatial noise must NOT be classified as screenshot"
         );
     }
@@ -2566,7 +2572,7 @@ mod tests {
             }
         }
         assert!(
-            looks_like_screenshot(&y_plane, w, h, stride),
+            looks_like_screenshot(&y_plane, w, h, stride, None).unwrap(),
             "strided flat image must still be classified as screenshot"
         );
     }
@@ -2578,7 +2584,7 @@ mod tests {
     fn test_looks_like_screenshot_tiny_image() {
         let y_plane = alloc::vec![0.4f32; 4 * 4];
         assert!(
-            !looks_like_screenshot(&y_plane, 4, 4, 4),
+            !looks_like_screenshot(&y_plane, 4, 4, 4, None).unwrap(),
             "tiny image must safely return false"
         );
     }

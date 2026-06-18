@@ -118,6 +118,27 @@
   budget-less sample structs) intentionally stay infallible — wiring those
   would be a hot-path method-signature refactor with perf risk and little
   fallibility benefit.
+- **Fallible-alloc + budget policy extended to the remaining >1 MB
+  dimension-driven buffers.** Beyond the dominant allocations wired above, the
+  encoder's other heap buffers that can exceed ~1 MB at realistic sizes now
+  route through `vec_with_capacity_fallible` / the budget policy (byte-identical
+  on the default infallible path): DC-token buffers (`dc_coding` WP + the three
+  region collectors, `dc_tree_learn` tree-variable/tree/learn-and-collect, and
+  the `bitstream` DC-group tokenizers — the per-DC-group fan-out moved from
+  `parallel_map` to `parallel_map_result`), modular multi-group residual
+  buffers (`frame.rs` palette + squeeze closures), the VarDCT patches-dispatch
+  mask repack, the `splines` screenshot-detection Y buffer
+  (`looks_like_screenshot` is now `Result<bool>`), the `lf_frame` DC planes,
+  the JPEG-preprocessing `resampling` box/sharper downsamplers + alpha, the
+  `extras` alpha-squeeze plane, and the `patches` reference-frame channel
+  buffers. Budget is threaded as `Option<&Arc<MemoryBudget>>` (or `self.budget`
+  on `VarDctEncoder`/`FrameEncoder` methods). Three sites intentionally stay
+  infallible (honest-stop): `encoder` `median_mask1x1`/`percentile_mask1x1` (a
+  `bool`-predicate cascade through `pixel_loss_auto_should_skip`), the
+  `patches` BFS detection queue, and the `lz77` optimal-parse token buffer
+  (no budget infrastructure) — all reachable only via deep multi-hop refactors
+  with little marginal safety. Verified byte-identical (hash-locks 48/48; full
+  1986-test suite) and clippy `-D warnings` clean (default + jpeg + zensim).
 - **Checked SOF-derived overflow in the JPEG coefficient parser (#77 item 3).**
   `extract_coefficients_zenjpeg` computed `width_in_blocks * height_in_blocks`
   (and `* 64`) as unchecked `u32` / `usize` on attacker-controlled SOF dims —

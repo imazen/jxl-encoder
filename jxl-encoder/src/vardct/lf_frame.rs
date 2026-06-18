@@ -131,6 +131,9 @@ fn round_hafz(val: f32) -> i32 {
 /// * `ysize_blocks` - Number of 8x8 blocks vertically
 /// * `use_ans` - Whether to use ANS entropy coding
 /// * `effort` - Effort level (1-12; e10/e11/e12 extends libjxl kTortoise=9)
+/// * `budget` - Optional allocation budget; threads the runtime fallible-alloc
+///   policy through the dimension-driven DC plane buffers
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_lf_frame(
     float_dc: &[Vec<f32>; 3],
     main_distance: f32,
@@ -139,6 +142,7 @@ pub(crate) fn encode_lf_frame(
     use_ans: bool,
     effort: u8,
     writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<([Vec<f32>; 3], [f32; 3])> {
     // Full-precision enc_factors: lossy compression happens via Squeeze + modular
     // quantization (tree leaf multipliers), not via coarser enc_factors. This
@@ -153,6 +157,9 @@ pub(crate) fn encode_lf_frame(
     }
 
     let n = xsize_blocks * ysize_blocks;
+    // Honor the budget's runtime fallible-alloc policy for these dimension-driven
+    // DC plane buffers (`Limits::fallible_alloc`); byte-identical when infallible.
+    let fallible = budget.is_some_and(|b| b.is_fallible());
 
     // Convert float DC to [Y, X, B-Y] integers.
     //
@@ -166,9 +173,9 @@ pub(crate) fn encode_lf_frame(
     // The decoder's ConvertModularXYBToF32Stage does:
     //   output_b = (ch2 + ch0) * scale_b = (B_quant - Y_quant + Y_quant) * scale_b = B_quant * scale_b
     // So the Y terms cancel and B is recovered correctly.
-    let mut ch_y_data = Vec::with_capacity(n);
-    let mut ch_x_data = Vec::with_capacity(n);
-    let mut ch_by_data = Vec::with_capacity(n);
+    let mut ch_y_data = crate::budget::vec_with_capacity_fallible(fallible, n)?;
+    let mut ch_x_data = crate::budget::vec_with_capacity_fallible(fallible, n)?;
+    let mut ch_by_data = crate::budget::vec_with_capacity_fallible(fallible, n)?;
 
     for ((&dc_x, &dc_y), &dc_b) in float_dc[0]
         .iter()
@@ -196,9 +203,9 @@ pub(crate) fn encode_lf_frame(
     //   decoded_X = x_int * dc_quant[0]
     //   decoded_B = (by_int + y_int) * dc_quant[2]
     let decoded_dc = {
-        let mut dc_x = Vec::with_capacity(n);
-        let mut dc_y = Vec::with_capacity(n);
-        let mut dc_b = Vec::with_capacity(n);
+        let mut dc_x = crate::budget::vec_with_capacity_fallible(fallible, n)?;
+        let mut dc_y = crate::budget::vec_with_capacity_fallible(fallible, n)?;
+        let mut dc_b = crate::budget::vec_with_capacity_fallible(fallible, n)?;
         for i in 0..n {
             dc_y.push(ch_y_data[i] as f32 * factors.dc_quant[1]);
             dc_x.push(ch_x_data[i] as f32 * factors.dc_quant[0]);

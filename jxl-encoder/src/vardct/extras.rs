@@ -284,6 +284,7 @@ pub(crate) fn build_alpha_squeeze_pipeline(
     image_height: usize,
     shift0_quantizer: u32,
     shifted_quantizer: impl Fn(u32) -> u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<AlphaSqueezePipeline> {
     use crate::modular::channel::ModularImage;
     use crate::modular::squeeze::{apply_squeeze, default_squeeze_params};
@@ -294,7 +295,12 @@ pub(crate) fn build_alpha_squeeze_pipeline(
     let ch_h = image_height >> alpha.info.dim_shift;
     debug_assert!(ch_w > 0 && ch_h > 0, "alpha squeeze: empty channel");
 
-    let mut data: alloc::vec::Vec<i32> = alloc::vec::Vec::with_capacity(ch_w * ch_h);
+    // Dimension-driven alpha plane — honor the runtime fallible-alloc policy;
+    // byte-identical when infallible.
+    let mut data: alloc::vec::Vec<i32> = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        ch_w * ch_h,
+    )?;
     for y in 0..ch_h {
         for x in 0..ch_w {
             data.push(alpha.data.sample(y * ch_w + x));
@@ -418,6 +424,7 @@ mod squeeze_pipeline_tests {
             // (halves per shift) without pulling in the real
             // constants.
             |shift| (100u32 >> shift).max(1),
+            None,
         )
         .expect("squeeze pipeline build");
         assert!(
@@ -465,7 +472,7 @@ mod squeeze_pipeline_tests {
             data: VardctExtraBuf::U8(&pixels),
         };
         let pipe =
-            build_alpha_squeeze_pipeline(&extra, 400, 267, 7, |shift| (7u32 >> shift).max(1))
+            build_alpha_squeeze_pipeline(&extra, 400, 267, 7, |shift| (7u32 >> shift).max(1), None)
                 .expect("build");
         let part = pipe.partition(super::super::common::GROUP_DIM);
         assert!(
@@ -509,9 +516,15 @@ mod squeeze_pipeline_tests {
             info: &info,
             data: VardctExtraBuf::U8(&pixels),
         };
-        let pipe =
-            build_alpha_squeeze_pipeline(&extra, 1024, 1024, 7, |shift| (7u32 >> shift).max(1))
-                .expect("build");
+        let pipe = build_alpha_squeeze_pipeline(
+            &extra,
+            1024,
+            1024,
+            7,
+            |shift| (7u32 >> shift).max(1),
+            None,
+        )
+        .expect("build");
         let part = pipe.partition(super::super::common::GROUP_DIM);
         assert!(
             !part.hf_group_indices.is_empty(),
@@ -556,7 +569,7 @@ mod squeeze_pipeline_tests {
             info: &info,
             data: VardctExtraBuf::U8(&pixels),
         };
-        let pipe = build_alpha_squeeze_pipeline(&extra, 8, 8, 7, |_| 1).expect("build");
+        let pipe = build_alpha_squeeze_pipeline(&extra, 8, 8, 7, |_| 1, None).expect("build");
         assert!(
             pipe.squeeze_params.is_empty(),
             "≤8×8 input must skip squeeze"

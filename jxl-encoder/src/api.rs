@@ -10224,24 +10224,34 @@ impl<'a> EncodeRequest<'a> {
         let (encode_rgb, encode_alpha, encode_w, encode_h) =
             if effective_resampling > 1 && !cfg.already_downsampled {
                 let (down_rgb, dw, dh) = if effective_resampling == 2 {
-                    crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
+                    crate::vardct::resampling::sharper_downsample_2x_rgb(
+                        &linear_rgb,
+                        w,
+                        h,
+                        Some(budget),
+                    )?
                 } else {
                     crate::vardct::resampling::box_downsample_rgb(
                         &linear_rgb,
                         w,
                         h,
                         effective_resampling,
-                    )
+                        Some(budget),
+                    )?
                 };
-                let down_alpha = alpha.as_ref().map(|a| {
-                    let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
-                        a,
-                        w,
-                        h,
-                        effective_resampling,
-                    );
-                    a_down
-                });
+                let down_alpha = match alpha.as_ref() {
+                    Some(a) => {
+                        let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
+                            a,
+                            w,
+                            h,
+                            effective_resampling,
+                            Some(budget),
+                        )?;
+                        Some(a_down)
+                    }
+                    None => None,
+                };
                 (down_rgb, down_alpha, dw as usize, dh as usize)
             } else {
                 (linear_rgb, alpha, w, h)
@@ -11392,24 +11402,34 @@ impl LossyEncoder {
 
             let (encode_rgb, encode_alpha, encode_w, encode_h) = if effective_resampling > 1 {
                 let (down_rgb, dw, dh) = if effective_resampling == 2 {
-                    crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
+                    crate::vardct::resampling::sharper_downsample_2x_rgb(
+                        &linear_rgb,
+                        w,
+                        h,
+                        Some(&budget),
+                    )?
                 } else {
                     crate::vardct::resampling::box_downsample_rgb(
                         &linear_rgb,
                         w,
                         h,
                         effective_resampling,
-                    )
+                        Some(&budget),
+                    )?
                 };
-                let down_alpha = alpha.as_ref().map(|a| {
-                    let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
-                        a,
-                        w,
-                        h,
-                        effective_resampling,
-                    );
-                    a_down
-                });
+                let down_alpha = match alpha.as_ref() {
+                    Some(a) => {
+                        let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
+                            a,
+                            w,
+                            h,
+                            effective_resampling,
+                            Some(&budget),
+                        )?;
+                        Some(a_down)
+                    }
+                    None => None,
+                };
                 (down_rgb, down_alpha, dw as usize, dh as usize)
             } else {
                 (linear_rgb, alpha, w, h)

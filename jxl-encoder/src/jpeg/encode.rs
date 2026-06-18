@@ -566,7 +566,8 @@ fn encode_jpeg_to_jxl_inner(
                 end_bx,
                 end_by,
                 &channel_shifts,
-            );
+                budget,
+            )?;
             for tok in t.iter_mut() {
                 tok.set_context(dc_remap[tok.context() as usize]);
             }
@@ -579,7 +580,8 @@ fn encode_jpeg_to_jxl_inner(
                 end_bx,
                 end_by,
                 &channel_shifts,
-            )
+                budget,
+            )?
         } else {
             collect_dc_tokens_region(
                 &quant_dc,
@@ -588,7 +590,8 @@ fn encode_jpeg_to_jxl_inner(
                 end_bx,
                 end_by,
                 &channel_shifts,
-            )
+                budget,
+            )?
         };
         let md_tokens = if let Some((_, _, _, _, ref ac_map)) = wp_dc_state {
             // WP-DC path uses the gradient-style AC-metadata collector (same
