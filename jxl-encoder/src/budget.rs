@@ -61,6 +61,11 @@ pub(crate) struct MemoryBudget {
     /// guards: `false` uses `vec![v; n]` (one `calloc`, faster), `true` uses
     /// `try_reserve_exact` (graceful OOM on untrusted sizes). See
     /// [`try_alloc_zeroed_permanent`] and [`crate::api::Limits::fallible_alloc`].
+    ///
+    /// Read only via [`Self::is_fallible`], whose sole consumers are the
+    /// `jpeg-reencoding` transcode allocations; `dead_code` is expected (the
+    /// field is still written by `with_alloc_policy`) when that feature is off.
+    #[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
     fallible: bool,
 }
 
@@ -83,6 +88,10 @@ impl MemoryBudget {
 
     /// Whether dimension-driven buffers should be allocated fallibly
     /// (`try_reserve`) rather than via the faster infallible `vec!` path.
+    ///
+    /// Consumed only by the `jpeg-reencoding` transcode allocations, so it is
+    /// dead code when that feature is off.
+    #[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
     pub fn is_fallible(&self) -> bool {
         self.fallible
     }
@@ -371,6 +380,10 @@ pub(crate) fn try_alloc_vec_f32_dirty_permanent(
 /// [`Error::OutOfMemory`] instead of aborting) when true. Capacity sizing only
 /// — reserves nothing against a [`MemoryBudget`]; pair with an explicit
 /// `reserve_permanent_opt` for the budget accounting.
+///
+/// Used only by the `jpeg-reencoding` transcode allocations — dead code when
+/// that feature is off.
+#[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
 pub(crate) fn vec_with_capacity_policy<T>(fallible: bool, cap: usize) -> Result<Vec<T>> {
     if fallible {
         let mut v: Vec<T> = Vec::new();
@@ -392,6 +405,10 @@ pub(crate) fn vec_with_capacity_policy<T>(fallible: bool, cap: usize) -> Result<
 ///
 /// `None` budget reserves nothing and uses the infallible path. Used for the
 /// JPEG-transcode coefficient buffers, sized from untrusted SOF dimensions.
+///
+/// Used only by the `jpeg-reencoding` transcode path — dead code when that
+/// feature is off.
+#[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
 pub(crate) fn try_alloc_zeroed_permanent<T: Copy + Default>(
     budget: Option<&Arc<MemoryBudget>>,
     len: usize,

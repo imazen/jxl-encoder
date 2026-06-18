@@ -71,6 +71,10 @@ impl BitWriter {
     /// policy for the initial capacity: `Vec::with_capacity` (infallible) when
     /// `fallible` is false, `try_reserve` (returns [`crate::error::Error::OutOfMemory`]
     /// instead of aborting) when true. Subsequent growth is already fallible.
+    ///
+    /// Used only by the `jpeg-reencoding` transcode output buffer — dead code
+    /// when that feature is off.
+    #[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
     pub fn with_capacity_policy(
         fallible: bool,
         capacity_bytes: usize,
