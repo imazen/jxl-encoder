@@ -3150,7 +3150,8 @@ impl VarDctEncoder {
                 false,
                 self.lz77_method,
                 _dc_distance_multiplier,
-            ) {
+                self.budget.as_ref(),
+            )? {
                 #[cfg(feature = "debug-tokens")]
                 eprintln!(
                     "[LZ77] DC LZ77 ACTIVATED: {} -> {} tokens",
@@ -3178,7 +3179,8 @@ impl VarDctEncoder {
                         false,
                         self.lz77_method,
                         group_dc_width,
-                    ) {
+                        self.budget.as_ref(),
+                    )? {
                         new_dc_per_group.push(lz77_dc);
                     } else {
                         new_dc_per_group.push(dc_tokens_per_group[i].clone());
@@ -3209,7 +3211,8 @@ impl VarDctEncoder {
                         false,
                         self.lz77_method,
                         md_dist_mult,
-                    ) {
+                        self.budget.as_ref(),
+                    )? {
                         new_md_per_group.push(lz77_md);
                     } else {
                         new_md_per_group.push(ac_metadata_tokens_per_group[i].clone());
@@ -3247,7 +3250,8 @@ impl VarDctEncoder {
                     false,
                     self.lz77_method,
                     ac_distance_multiplier,
-                ) {
+                    self.budget.as_ref(),
+                )? {
                     #[cfg(feature = "debug-tokens")]
                     eprintln!(
                         "[LZ77] AC pass {} LZ77 ACTIVATED: {} -> {} tokens",
@@ -3264,7 +3268,8 @@ impl VarDctEncoder {
                             false,
                             self.lz77_method,
                             ac_distance_multiplier,
-                        ) {
+                            self.budget.as_ref(),
+                        )? {
                             new_sections.push(lz77_ac);
                         } else {
                             new_sections.push(tokens.clone());

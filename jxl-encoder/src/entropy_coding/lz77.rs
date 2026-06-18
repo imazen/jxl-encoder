@@ -14,8 +14,11 @@
 
 use hashbrown::HashMap;
 
+use alloc::sync::Arc;
+
 use super::token::{Lz77UintCoder, Token, UintCoder};
 use crate::bit_writer::BitWriter;
+use crate::budget::{MemoryBudget, vec_with_capacity_fallible};
 use crate::error::Result;
 
 /// Maximum window size for LZ77 matching (1MB, matches libjxl).
@@ -1097,23 +1100,41 @@ pub enum Lz77Method {
 /// For photographic content, `Greedy` typically provides 1-3% additional compression
 /// over RLE-only. `Optimal` finds the minimum-cost parse via dynamic programming.
 ///
-/// Returns `Some((transformed_tokens, params))` if LZ77 is beneficial,
-/// or `None` if the savings are insufficient.
+/// Returns `Ok(Some((transformed_tokens, params)))` if LZ77 is beneficial,
+/// `Ok(None)` if the savings are insufficient, or `Err` if a (potentially
+/// large, untrusted-size) working buffer could not be allocated under the
+/// caller's fallible-allocation policy. The RLE and greedy methods never
+/// allocate against `budget`; only the `Optimal` method's Viterbi DP buffers
+/// are threaded through it (`out` and `prefix_costs`, both `O(token_count)`).
+#[allow(clippy::too_many_arguments)]
 pub fn apply_lz77(
     tokens: &[Token],
     num_contexts: usize,
     force_huffman: bool,
     method: Lz77Method,
     distance_multiplier: i32,
-) -> Option<(Vec<Token>, Lz77Params)> {
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<Option<(Vec<Token>, Lz77Params)>> {
     match method {
-        Lz77Method::Rle => apply_lz77_rle(tokens, num_contexts, force_huffman, distance_multiplier),
-        Lz77Method::Greedy => {
-            apply_lz77_backref(tokens, num_contexts, force_huffman, distance_multiplier)
-        }
-        Lz77Method::Optimal => {
-            apply_lz77_optimal(tokens, num_contexts, force_huffman, distance_multiplier)
-        }
+        Lz77Method::Rle => Ok(apply_lz77_rle(
+            tokens,
+            num_contexts,
+            force_huffman,
+            distance_multiplier,
+        )),
+        Lz77Method::Greedy => Ok(apply_lz77_backref(
+            tokens,
+            num_contexts,
+            force_huffman,
+            distance_multiplier,
+        )),
+        Lz77Method::Optimal => apply_lz77_optimal(
+            tokens,
+            num_contexts,
+            force_huffman,
+            distance_multiplier,
+            budget,
+        ),
     }
 }
 
@@ -1123,17 +1144,26 @@ pub fn apply_lz77(
 /// First runs greedy LZ77 to build a cost model, then uses that model with
 /// forward-pass DP to find the optimal literal/match decisions at each position.
 ///
-/// Returns `Some((transformed_tokens, params))` if LZ77 is beneficial,
-/// or `None` if the savings are insufficient.
+/// Returns `Ok(Some((transformed_tokens, params)))` if LZ77 is beneficial,
+/// `Ok(None)` if the savings are insufficient, or `Err` if the Viterbi DP
+/// working buffers (`out` and `prefix_costs`, both `O(token_count)` — multi-MB
+/// to tens of MB on lossless e9+) could not be allocated under the caller's
+/// fallible-allocation policy.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_lz77_optimal(
     tokens: &[Token],
     num_contexts: usize,
     force_huffman: bool,
     distance_multiplier: i32,
-) -> Option<(Vec<Token>, Lz77Params)> {
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<Option<(Vec<Token>, Lz77Params)>> {
     if tokens.is_empty() {
-        return None;
+        return Ok(None);
     }
+
+    // Whether the (token-count-sized) DP buffers should be allocated fallibly
+    // (`try_reserve`) rather than via the faster infallible path.
+    let fallible = budget.is_some_and(|b| b.is_fallible());
 
     // Step 1: Run greedy LZ77 to get a cost estimate.
     // If greedy doesn't help, optimal won't either.
@@ -1141,7 +1171,7 @@ pub fn apply_lz77_optimal(
         apply_lz77_backref(tokens, num_contexts, force_huffman, distance_multiplier);
     let greedy_tokens = match &greedy_result {
         Some((t, _)) => t,
-        None => return None,
+        None => return Ok(None),
     };
 
     let mut lz77 = Lz77Params::new(num_contexts, force_huffman);
@@ -1196,14 +1226,21 @@ pub fn apply_lz77_optimal(
     }
 
     let n = tokens.len();
-    let mut prefix_costs: Vec<PrefixInfo> = (0..=n)
-        .map(|_| PrefixInfo {
-            len: 0,
-            dist_symbol: 0,
-            ctx: 0,
-            total_cost: f32::MAX,
-        })
-        .collect();
+    // `prefix_costs` holds n+1 `PrefixInfo` entries — the larger of the two
+    // token-count-sized DP buffers. Reserve its bytes against the budget and
+    // honor the fallible-alloc policy, then fill with the same initial values
+    // (byte-identical to the previous `(0..=n).map(..).collect()`).
+    MemoryBudget::reserve_permanent_opt(
+        budget,
+        ((n + 1) as u64).saturating_mul(core::mem::size_of::<PrefixInfo>() as u64),
+    )?;
+    let mut prefix_costs: Vec<PrefixInfo> = vec_with_capacity_fallible(fallible, n + 1)?;
+    prefix_costs.extend((0..=n).map(|_| PrefixInfo {
+        len: 0,
+        dist_symbol: 0,
+        ctx: 0,
+        total_cost: f32::MAX,
+    }));
     prefix_costs[0].total_cost = 0.0;
 
     let mut rle_length = 0usize;
@@ -1287,7 +1324,13 @@ pub fn apply_lz77_optimal(
     }
 
     // Step 5: Backtrace from end to beginning.
-    let mut out = Vec::with_capacity(n);
+    // `out` is the second token-count-sized DP buffer (`Vec<Token>`, ~8 B each).
+    // Reserve its bytes against the budget and honor the fallible-alloc policy.
+    MemoryBudget::reserve_permanent_opt(
+        budget,
+        (n as u64).saturating_mul(core::mem::size_of::<Token>() as u64),
+    )?;
+    let mut out: Vec<Token> = vec_with_capacity_fallible(fallible, n)?;
     let mut pos = n;
     while pos > 0 {
         let info = &prefix_costs[pos];
@@ -1311,7 +1354,7 @@ pub fn apply_lz77_optimal(
     }
 
     out.reverse();
-    Some((out, lz77))
+    Ok(Some((out, lz77)))
 }
 
 /// Try both LZ77 methods and return the one with better compression.
@@ -1558,13 +1601,13 @@ mod tests {
         }
 
         // Test RLE method
-        let rle_result = apply_lz77(&tokens, 1, false, Lz77Method::Rle, 0);
+        let rle_result = apply_lz77(&tokens, 1, false, Lz77Method::Rle, 0, None).unwrap();
         if let Some((_, params)) = &rle_result {
             assert!(params.enabled);
         }
 
         // Test Greedy method
-        let greedy_result = apply_lz77(&tokens, 1, false, Lz77Method::Greedy, 0);
+        let greedy_result = apply_lz77(&tokens, 1, false, Lz77Method::Greedy, 0, None).unwrap();
         if let Some((_, params)) = &greedy_result {
             assert!(params.enabled);
         }

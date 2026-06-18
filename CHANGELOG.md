@@ -135,10 +135,11 @@
   on `VarDctEncoder`/`FrameEncoder` methods). Verified byte-identical
   (hash-locks 48/48; full 1986-test suite) and clippy `-D warnings` clean
   (default + jpeg + zensim).
-- **Two of the #88 honest-stopped >1 MB sites now wired through the
-  fallible-alloc policy (follow-up).** The AQ-mask statistics and the patches
-  BFS detection — both >1 MB at realistic sizes — now route through the budget
-  policy (byte-identical on the default infallible path):
+- **All three #88 honest-stopped >1 MB sites now wired through the
+  fallible-alloc policy (follow-up).** The AQ-mask statistics, the patches
+  BFS detection, and the lz77 optimal-parse buffers — all >1 MB at realistic
+  sizes — now route through the budget policy (byte-identical on the default
+  infallible path):
   - **AQ mask buffers** (`encoder` `median_mask1x1` / `percentile_mask1x1`, the
     `width * height` `f32` copy allocated on every lossy encode, 4–50 MB at
     ≥ 1 MP). Both helpers now take an `Option<&Arc<MemoryBudget>>` and return
@@ -163,17 +164,16 @@
     `find_and_build_with_min_peak` / `find_and_build_patches_lossless`) keep
     their `Option`-returning signatures (public API unchanged) and call the
     inner with `None` budget on the infallible path.
+  - **lz77 optimal-parse buffers** (`apply_lz77_optimal`'s `prefix_costs` +
+    `out`, both `O(token_count)`, multi-MB to 10s of MB at lossless e9+). The
+    `budget` is threaded through `apply_lz77` and all its callers: the
+    `pub(crate)` modular wrapper stack (`write_modular_stream_with_tree*`,
+    `write_global_modular_section_with_tree*`, `write_group_modular_section_idx`)
+    takes the param and bottoms out at `FrameEncoder` (`self.budget`);
+    `vardct/bitstream`'s `encode_two_pass_to_writer` passes `self.budget`; the
+    small `icc.rs` profile-compression call passes `None` (not a >1 MB site).
   Verified byte-identical (hash-locks 48/48; full 1986-test suite) and clippy
-  `-D warnings` clean (default + jpeg + zensim). The third #88 honest-stopped
-  site — the `lz77` optimal-parse buffers (`prefix_costs` / `sym_cost` / `out`,
-  multi-MB at lossless e9+) — **stays infallible (honest-stop continues)**:
-  wiring it requires threading a budget through `apply_lz77` and its 13+
-  callers across `icc.rs` / `modular/{encode,section,frame}.rs` /
-  `vardct/bitstream.rs` plus the public `pub(crate)` modular wrapper stack
-  (`write_modular_stream_with_tree*`, `write_global_modular_section_with_tree*`,
-  `write_group_modular_section_idx`) and three top-level `api.rs` encode
-  entries via the `write_icc` branch — well past the ~5-hop threshold, with the
-  lossless-e9 modular path (the size that matters) requiring the deepest leg.
+  `-D warnings` clean (default + jpeg + zensim).
 - **Checked SOF-derived overflow in the JPEG coefficient parser (#77 item 3).**
   `extract_coefficients_zenjpeg` computed `width_in_blocks * height_in_blocks`
   (and `* 64`) as unchecked `u32` / `usize` on attacker-controlled SOF dims —
