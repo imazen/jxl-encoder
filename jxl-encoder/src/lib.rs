@@ -271,13 +271,20 @@ pub mod __internals {
         num_channels: usize,
         bit_depth: u32,
     ) -> Option<crate::vardct::patches::PatchesData> {
+        // Calibration-harness entry — no `MemoryBudget` (infallible alloc).
+        // `find_and_build_lossless` only returns `Err` here on an
+        // allocation-size `usize` overflow (the same condition that would
+        // abort the underlying `vec!` today), so unwrapping preserves the
+        // historical `Option`-returning public signature unchanged.
         crate::vardct::patches::find_and_build_lossless(
             pixels,
             width,
             height,
             num_channels,
             bit_depth,
+            None,
         )
+        .expect("lossless patches detection allocation overflow (infallible path)")
     }
 
     /// Telemetry for a [`crate::vardct::patches::PatchesData`]:

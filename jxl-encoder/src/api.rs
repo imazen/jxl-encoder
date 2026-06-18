@@ -9150,7 +9150,9 @@ impl<'a> EncodeRequest<'a> {
                     h,
                     num_channels,
                     image.bit_depth,
-                );
+                    Some(budget),
+                )
+                .map_err(EncodeError::from)?;
                 // RFC#45 chunks 4-7 lossless backport (chunk 5 lossless
                 // trial encoder): per-image cost gate. Trial-encodes
                 // lossless-shape ref-frame + dictionary overhead,
@@ -12337,7 +12339,9 @@ impl LosslessEncoder {
                     h,
                     num_channels,
                     image.bit_depth,
-                );
+                    Some(&budget),
+                )
+                .map_err(EncodeError::from)?;
                 // RFC#45 chunks 4-7 lossless backport (chunk 5 lossless
                 // trial encoder): per-image cost gate (see
                 // `PatchesData::is_cost_effective_lossless`).

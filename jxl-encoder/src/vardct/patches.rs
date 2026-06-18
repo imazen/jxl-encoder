@@ -879,8 +879,9 @@ pub(crate) fn find_text_like_patches(
     height: usize,
     stride: usize,
     is_xyb: bool,
-) -> Vec<PatchInfo> {
-    find_text_like_patches_with_min_peak(xyb, width, height, stride, is_xyb, MIN_PEAK)
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<PatchInfo>> {
+    find_text_like_patches_with_min_peak(xyb, width, height, stride, is_xyb, MIN_PEAK, budget)
 }
 
 /// Variant of [`find_text_like_patches`] that lets the caller override the
@@ -890,6 +891,7 @@ pub(crate) fn find_text_like_patches(
 /// `min_peak == 2` matches libjxl `enc_patch_dictionary.cc` exactly
 /// (drops all-{-1, 0, +1} patches). `min_peak == 1` matches W2-5 chunk 1
 /// (accepts low-contrast anti-aliased glyph edges).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn find_text_like_patches_with_min_peak(
     xyb: [&[f32]; 3],
     width: usize,
@@ -897,7 +899,8 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     stride: usize,
     is_xyb: bool,
     min_peak: i32,
-) -> Vec<PatchInfo> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<PatchInfo>> {
     let cs = if is_xyb {
         PatchColorspaceInfo::xyb()
     } else {
@@ -906,8 +909,11 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     let bw = width / PATCH_SIDE;
     let bh = height / PATCH_SIDE;
     if bw < 3 || bh < 3 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
+    // Runtime fallible-alloc policy flag for the dimension-driven (`stride *
+    // height`) BFS buffers below; byte-identical when infallible.
+    let fallible = budget.is_some_and(|b| b.is_fallible());
 
     let xyb_ref = [xyb[0], xyb[1], xyb[2]];
     let n = stride * height;
@@ -967,18 +973,28 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     );
 
     if num_seeds == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     // Step 3: BFS background flood-fill with (current, source) pairs.
     // Each background pixel stores its seed's opsin color in the background image.
     // Source propagates unchanged through BFS — Manhattan distance is from source.
-    let mut is_background = vec![false; n];
-    let mut background = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
+    // These `n = stride * height` planes (~13 MB at 1 MP for the 3 f32 + 2 bool
+    // buffers) are the largest patches-detection allocations; route them through
+    // the runtime fallible-alloc policy. `try_alloc_zeroed_permanent(None, n)`
+    // zeroes exactly like `vec![v; n]`, so byte-identical on the infallible path.
+    let mut is_background = crate::budget::try_alloc_zeroed_permanent::<bool>(budget, n)?;
+    let mut background = [
+        crate::budget::try_alloc_zeroed_permanent::<f32>(budget, n)?,
+        crate::budget::try_alloc_zeroed_permanent::<f32>(budget, n)?,
+        crate::budget::try_alloc_zeroed_permanent::<f32>(budget, n)?,
+    ];
     // Queue entries: (cur_x, cur_y, src_x, src_y) as u32 to match libjxl's
     // std::pair<XY, XY> (16 bytes vs 32 bytes with usize — halves cache pressure).
-    let mut queue: Vec<(u32, u32, u32, u32)> =
-        Vec::with_capacity(2 * num_seeds as usize * PATCH_SIDE * PATCH_SIDE);
+    let mut queue: Vec<(u32, u32, u32, u32)> = crate::budget::vec_with_capacity_fallible(
+        fallible,
+        2 * num_seeds as usize * PATCH_SIDE * PATCH_SIDE,
+    )?;
 
     // Seed from screenshot-like block pixels
     for by in 1..bh.saturating_sub(1) {
@@ -1105,7 +1121,9 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     // Step 4: Extract foreground connected components (8-connected DFS).
     // Track border consistency: first background neighbor = reference,
     // all subsequent must match reference via background image colors.
-    let mut visited = vec![false; n];
+    // `n = stride * height` (~1 MB bool plane at 1 MP) — same fallible-alloc
+    // policy as the BFS planes above; byte-identical when infallible.
+    let mut visited = crate::budget::try_alloc_zeroed_permanent::<bool>(budget, n)?;
     let mut patches: Vec<(QuantizedPatch, u32, u32)> = Vec::new();
 
     // Diagnostic counters (zero-cost when debug-rect is disabled)
@@ -1589,10 +1607,10 @@ pub(crate) fn find_text_like_patches_with_min_peak(
         .max()
         .unwrap_or(0);
     if max_patch_pixels < MIN_MAX_PATCH_SIZE {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    result
+    Ok(result)
 }
 
 // ── Bin Packing ────────────────────────────────────────────────────────────────
@@ -2053,7 +2071,13 @@ pub fn find_and_build_with_min_peak(
     stride: usize,
     min_peak: i32,
 ) -> Option<PatchesData> {
-    find_and_build_with_per_patch_gate(xyb, width, height, stride, min_peak, None, true)
+    // Public calibration/GPU-helper entry — no `MemoryBudget` (infallible
+    // alloc path). `find_and_build_with_per_patch_gate` only returns `Err`
+    // here on an allocation-size `usize` overflow (the same condition that
+    // would abort the underlying `vec!` today), so unwrapping preserves the
+    // historical `Option`-returning contract without changing the public API.
+    find_and_build_with_per_patch_gate(xyb, width, height, stride, min_peak, None, true, None)
+        .expect("patches detection allocation overflow (infallible path)")
 }
 
 /// Variant of [`find_and_build_with_min_peak`] that, when `distance` is
@@ -2085,6 +2109,7 @@ pub fn find_and_build_with_min_peak(
 /// When `distance` is `None`, behaviour is identical to the
 /// no-per-patch path (back-compat for downstream `__pre_quantized`
 /// callers that hand us pre-detected infos and run their own gate).
+#[allow(clippy::too_many_arguments)]
 pub fn find_and_build_with_per_patch_gate(
     xyb: [&[f32]; 3],
     width: usize,
@@ -2093,11 +2118,13 @@ pub fn find_and_build_with_per_patch_gate(
     min_peak: i32,
     distance: Option<f32>,
     use_ans: bool,
-) -> Option<PatchesData> {
-    let infos = find_text_like_patches_with_min_peak(xyb, width, height, stride, true, min_peak);
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Option<PatchesData>> {
+    let infos =
+        find_text_like_patches_with_min_peak(xyb, width, height, stride, true, min_peak, budget)?;
     if infos.is_empty() {
         debug_rect!("patches/detect", 0, 0, width, height, "no patches detected");
-        return None;
+        return Ok(None);
     }
 
     // Compute coverage statistics before building
@@ -2155,10 +2182,15 @@ pub fn find_and_build_with_per_patch_gate(
         );
         #[cfg(feature = "debug-tokens")]
         eprintln!("PATCHES: skipping — too little coverage ({coverage_pct:.1}% < 1%)");
-        return None;
+        return Ok(None);
     }
 
-    let patches_data = build_patches_data(infos)?;
+    // `build_patches_data` returns `None` when there's nothing to build —
+    // surface that as `Ok(None)` (no patches), preserving the original
+    // Option-`?` short-circuit semantics now that the fn returns `Result`.
+    let Some(patches_data) = build_patches_data(infos) else {
+        return Ok(None);
+    };
 
     #[cfg(feature = "debug-tokens")]
     eprintln!(
@@ -2183,7 +2215,11 @@ pub fn find_and_build_with_per_patch_gate(
     // does not beat their `pixels * empirical_bpp + occurrences * 5`
     // overhead. Then rebuild from the survivors.
     let patches_data = if let Some(d) = distance {
-        apply_per_patch_cost_gate(patches_data, d, use_ans, width, height)?
+        // Cost gate may reject all survivors (`None`) → `Ok(None)`.
+        let Some(gated) = apply_per_patch_cost_gate(patches_data, d, use_ans, width, height) else {
+            return Ok(None);
+        };
+        gated
     } else {
         patches_data
     };
@@ -2209,7 +2245,7 @@ pub fn find_and_build_with_per_patch_gate(
         patches_data.positions.len()
     );
 
-    Some(patches_data)
+    Ok(Some(patches_data))
 }
 
 /// Apply per-patch cost decision. The empirical winning configuration
@@ -2416,9 +2452,10 @@ pub(crate) fn find_and_build_lossless(
     height: usize,
     num_channels: usize,
     bit_depth: u32,
-) -> Option<PatchesData> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Option<PatchesData>> {
     if width < 16 || height < 16 || num_channels < 3 {
-        return None;
+        return Ok(None);
     }
 
     let max_val = ((1u32 << bit_depth) - 1) as f32;
@@ -2434,10 +2471,17 @@ pub(crate) fn find_and_build_lossless(
     // image is f32 until `quantize_ref_image_rgb` snaps it to the
     // integer grid at `bit_depth`, and subtraction happens in integer
     // space — so full-precision planes are all 16-bit needed.
-    let mut planes = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
+    // These 3 `n = width * height` f32 planes are dimension-driven (>1 MB at
+    // ≥1 MP) — route through the runtime fallible-alloc policy. Zeroed exactly
+    // like `vec![0.0; n]`, so byte-identical on the infallible path.
+    let mut planes = [
+        crate::budget::try_alloc_zeroed_permanent::<f32>(budget, n)?,
+        crate::budget::try_alloc_zeroed_permanent::<f32>(budget, n)?,
+        crate::budget::try_alloc_zeroed_permanent::<f32>(budget, n)?,
+    ];
     if bit_depth > 8 {
         if pixels.len() < n * num_channels * 2 {
-            return None;
+            return Ok(None);
         }
         for i in 0..n {
             let base = (i * num_channels) * 2;
@@ -2462,9 +2506,10 @@ pub(crate) fn find_and_build_lossless(
         height,
         width,
         false, // RGB colorspace
-    );
+        budget,
+    )?;
     if infos.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // Coverage filter (same as lossy)
@@ -2474,16 +2519,20 @@ pub(crate) fn find_and_build_lossless(
         .sum();
     let image_pixels = width * height;
     if total_patch_pixels * 100 < image_pixels {
-        return None;
+        return Ok(None);
     }
 
-    let mut patches_data = build_patches_data(infos)?;
+    // `None` here means nothing to build → `Ok(None)` (preserves the original
+    // Option-`?` short-circuit now that the fn returns `Result`).
+    let Some(mut patches_data) = build_patches_data(infos) else {
+        return Ok(None);
+    };
 
     // Roundtrip ref image through integer quantization to match decoder.
     // For non-XYB: round(v * max_val) / max_val for each channel.
     quantize_ref_image_rgb(&mut patches_data, bit_depth);
 
-    Some(patches_data)
+    Ok(Some(patches_data))
 }
 
 /// Roundtrip reference image through integer quantization for non-XYB (lossless).
@@ -3085,7 +3134,7 @@ mod tests {
                 b[i] = (px as f32 + py as f32) / (w + h) as f32;
             }
         }
-        let result = find_text_like_patches([&x, &y, &b], w, h, w, true);
+        let result = find_text_like_patches([&x, &y, &b], w, h, w, true, None).unwrap();
         assert!(result.is_empty(), "Photos should produce no patches");
     }
 
@@ -3122,7 +3171,7 @@ mod tests {
             }
         }
 
-        let result = find_text_like_patches([&x, &y, &b], w, h, w, true);
+        let result = find_text_like_patches([&x, &y, &b], w, h, w, true, None).unwrap();
         // Should find at least one patch group with >= 2 occurrences
         // Note: the exact number depends on detection thresholds
         if !result.is_empty() {
@@ -3161,7 +3210,7 @@ mod tests {
         let mut b_out = vec![0.0f32; n];
         crate::color::xyb::srgb_image_to_xyb(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
 
-        let result = find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true);
+        let result = find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true, None).unwrap();
         let patches_data = build_patches_data(result).unwrap();
 
         let ref_w = patches_data.ref_width;
@@ -3256,7 +3305,7 @@ mod tests {
         crate::color::xyb::srgb_image_to_xyb(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
 
         // Run detection (eprintln stats from cfg(test) instrumentation)
-        let result = find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true);
+        let result = find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true, None).unwrap();
 
         // Print size distribution
         let mut size_dist: std::collections::HashMap<(usize, usize), (usize, usize)> =
@@ -3291,7 +3340,8 @@ mod tests {
 
         // Analyze near-miss dedup: find singletons that are close to popular patterns
         // Count singleton dimensions
-        let _all_patches = find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true);
+        let _all_patches =
+            find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true, None).unwrap();
         // Re-run to get raw CCs with their positions (need to access raw data)
         // For now, just analyze the final result's dimension distribution
         eprintln!("\nAnalyzing dedup quality...");

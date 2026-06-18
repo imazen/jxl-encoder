@@ -1426,9 +1426,10 @@ pub(crate) fn pixel_loss_auto_should_skip(
     stride: usize,
     width: usize,
     height: usize,
-) -> bool {
-    let med = median_mask1x1(mask1x1, stride, width, height);
-    med > PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<bool> {
+    let med = median_mask1x1(mask1x1, stride, width, height, budget)?;
+    Ok(med > PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD)
 }
 
 /// W36-3 patches photo-skip dispatch helper: returns the per-8×8-block
@@ -1521,18 +1522,32 @@ fn patches_dispatch_block_mask_median(
 /// expected, no allocation outside the temporary buffer) — exact median
 /// rather than histogram approximation because the field is small
 /// (≤ 12 MP) and `mask1x1` is allocated once per encode anyway.
-pub(super) fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: usize) -> f32 {
+pub(super) fn median_mask1x1(
+    mask: &[f32],
+    stride: usize,
+    width: usize,
+    height: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<f32> {
     if width == 0 || height == 0 {
-        return 0.0;
+        return Ok(0.0);
     }
-    let mut buf: Vec<f32> = Vec::with_capacity(width * height);
+    // Temporary `width * height` copy of the unpadded values; dimension-driven
+    // (4–50 MB at ≥1 MP), so route it through the runtime fallible-alloc policy.
+    // Byte-identical when infallible (`vec_with_capacity_fallible(false, n)` ==
+    // `with_capacity(n)`); reserves nothing against the budget (the buffer is
+    // scratch and freed before return).
+    let mut buf: Vec<f32> = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        width * height,
+    )?;
     for y in 0..height {
         let row_off = y * stride;
         let row_end = row_off + width;
         if row_end > mask.len() {
             // Defensive: pad / row-stride mismatch — return 0.0 so the
             // gate stays off rather than reading uninitialised memory.
-            return 0.0;
+            return Ok(0.0);
         }
         buf.extend_from_slice(&mask[row_off..row_end]);
     }
@@ -1545,7 +1560,7 @@ pub(super) fn median_mask1x1(mask: &[f32], stride: usize, width: usize, height: 
     buf.select_nth_unstable_by(mid, |a, b| {
         a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
     });
-    buf[mid]
+    Ok(buf[mid])
 }
 
 /// W44-150: arbitrary-percentile selector on the unpadded `width × height`
@@ -1576,22 +1591,29 @@ pub(super) fn percentile_mask1x1(
     width: usize,
     height: usize,
     p: f32,
-) -> f32 {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<f32> {
     if width == 0 || height == 0 {
-        return 0.0;
+        return Ok(0.0);
     }
-    let mut buf: Vec<f32> = Vec::with_capacity(width * height);
+    // Temporary `width * height` copy of the unpadded values; dimension-driven,
+    // routed through the runtime fallible-alloc policy. Byte-identical when
+    // infallible; reserves nothing (scratch, freed before return).
+    let mut buf: Vec<f32> = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        width * height,
+    )?;
     for y in 0..height {
         let row_off = y * stride;
         let row_end = row_off + width;
         if row_end > mask.len() {
-            return 0.0;
+            return Ok(0.0);
         }
         buf.extend_from_slice(&mask[row_off..row_end]);
     }
     let n = buf.len();
     if n == 0 {
-        return 0.0;
+        return Ok(0.0);
     }
     let p_clamped = p.clamp(0.0, 1.0);
     let idx = ((n as f32 - 1.0) * p_clamped).floor() as usize;
@@ -1599,7 +1621,7 @@ pub(super) fn percentile_mask1x1(
     buf.select_nth_unstable_by(idx, |a, b| {
         a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
     });
-    buf[idx]
+    Ok(buf[idx])
 }
 
 /// W44-91 cheap encoder-internal zenanalyze proxies used to widen the
@@ -3860,7 +3882,8 @@ impl VarDctEncoder {
                 min_peak,
                 Some(self.distance),
                 self.use_ans,
-            )
+                self.budget.as_ref(),
+            )?
         } else {
             None
         };
@@ -4106,7 +4129,8 @@ impl VarDctEncoder {
             };
         let mask1x1_median_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
             .as_deref()
-            .map(|m| median_mask1x1(m, padded_width, width, height));
+            .map(|m| median_mask1x1(m, padded_width, width, height, self.budget.as_ref()))
+            .transpose()?;
         #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
         if std::env::var_os("JXL_WP_DISPATCH_DUMP_MASK").is_some() {
             eprintln!(
@@ -4131,7 +4155,8 @@ impl VarDctEncoder {
         // sRGB layouts).
         let mask1x1_p25_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
             .as_deref()
-            .map(|m| percentile_mask1x1(m, padded_width, width, height, 0.25));
+            .map(|m| percentile_mask1x1(m, padded_width, width, height, 0.25, self.budget.as_ref()))
+            .transpose()?;
         let edge_density_for_pre_scale: Option<f32> =
             self.zenanalyze_proxies.map(|p| p.edge_density);
         #[cfg(feature = "butteraugli-loop")]
@@ -4435,8 +4460,13 @@ impl VarDctEncoder {
             if matches!(
                 self.pixel_loss_dispatch,
                 crate::api::PixelLossDispatch::Auto
-            ) && pixel_loss_auto_should_skip(&m, padded_width, width, height)
-            {
+            ) && pixel_loss_auto_should_skip(
+                &m,
+                padded_width,
+                width,
+                height,
+                self.budget.as_ref(),
+            )? {
                 None
             } else {
                 Some(m)
@@ -4616,7 +4646,8 @@ impl VarDctEncoder {
         // hint that bypasses the mask discriminator.
         let mask1x1_median: Option<f32> = mask1x1
             .as_deref()
-            .map(|mask| median_mask1x1(mask, padded_width, width, height));
+            .map(|mask| median_mask1x1(mask, padded_width, width, height, self.budget.as_ref()))
+            .transpose()?;
         // W44-151: compute `mask_p25` (mask1x1 25th percentile) for the
         // W44-29 outer gate's mask_p25 >= 85 admission branch. Same
         // None-semantics as `mask1x1_median` (gates degrade to off).
@@ -4624,7 +4655,17 @@ impl VarDctEncoder {
         // plane — negligible vs the median compute above.
         let mask1x1_p25: Option<f32> = mask1x1
             .as_deref()
-            .map(|mask| percentile_mask1x1(mask, padded_width, width, height, 0.25));
+            .map(|mask| {
+                percentile_mask1x1(
+                    mask,
+                    padded_width,
+                    width,
+                    height,
+                    0.25,
+                    self.budget.as_ref(),
+                )
+            })
+            .transpose()?;
 
         // W44-118 probe: env-gated dump of mask1x1_median + key
         // zenanalyze proxies to discriminate lift firing on the wedge
@@ -5516,9 +5557,11 @@ impl VarDctEncoder {
                     super::perceptual_tuning::SCREENSHOT_MEDIAN_THRESHOLD,
                     screenshot_median_threshold,
                 );
-                let is_screenshot = mask1x1.as_deref().is_some_and(|m| {
-                    median_mask1x1(m, padded_width, width, height) > median_threshold
-                });
+                let is_screenshot = mask1x1
+                    .as_deref()
+                    .map(|m| median_mask1x1(m, padded_width, width, height, self.budget.as_ref()))
+                    .transpose()?
+                    .is_some_and(|med| med > median_threshold);
                 // W44-150 Phase 2 HONEST-STOP (2026-05-21): the
                 // Mechanism A photo-admission path (was: admit
                 // `is_screenshot || (mask_p25 >= 85.0 AND distance >=
@@ -6716,7 +6759,8 @@ impl VarDctEncoder {
                     min_peak,
                     Some(self.distance),
                     self.use_ans,
-                );
+                    self.budget.as_ref(),
+                )?;
                 if matches!(self.encoder_mode, crate::api::EncoderMode::Experimental)
                     && let Some(ref p) = pd
                     && !p.is_cost_effective(self.distance, self.use_ans)
@@ -7213,16 +7257,16 @@ mod tests {
             5.0, 6.0, 7.0, 8.0,  0.0, 0.0, // row 1: 5..8 + padding
             9.0,10.0,11.0,12.0, 0.0, 0.0, // row 2: 9..12 + padding
         ];
-        let med = median_mask1x1(&mask, 6, 4, 3);
+        let med = median_mask1x1(&mask, 6, 4, 3, None).unwrap();
         assert_eq!(med, 7.0);
     }
 
     #[test]
     fn test_median_mask1x1_zero_dim() {
         // 0-width / 0-height shouldn't panic.
-        assert_eq!(median_mask1x1(&[], 0, 0, 0), 0.0);
-        assert_eq!(median_mask1x1(&[1.0, 2.0], 2, 0, 1), 0.0);
-        assert_eq!(median_mask1x1(&[1.0, 2.0], 2, 2, 0), 0.0);
+        assert_eq!(median_mask1x1(&[], 0, 0, 0, None).unwrap(), 0.0);
+        assert_eq!(median_mask1x1(&[1.0, 2.0], 2, 0, 1, None).unwrap(), 0.0);
+        assert_eq!(median_mask1x1(&[1.0, 2.0], 2, 2, 0, None).unwrap(), 0.0);
     }
 
     /// W44-151: verify the new [`W44_151_HIGH_MASK_P25_MIN`] constant
@@ -7305,11 +7349,11 @@ mod tests {
             5.0, 6.0, 7.0, 8.0,  0.0, 0.0,
             9.0,10.0,11.0,12.0, 0.0, 0.0,
         ];
-        let p25 = percentile_mask1x1(&mask, 6, 4, 3, 0.25);
+        let p25 = percentile_mask1x1(&mask, 6, 4, 3, 0.25, None).unwrap();
         assert_eq!(p25, 3.0);
-        let p50 = percentile_mask1x1(&mask, 6, 4, 3, 0.50);
+        let p50 = percentile_mask1x1(&mask, 6, 4, 3, 0.50, None).unwrap();
         assert_eq!(p50, 6.0); // floor(11 * 0.5) = 5 → value 6
-        let p100 = percentile_mask1x1(&mask, 6, 4, 3, 1.0);
+        let p100 = percentile_mask1x1(&mask, 6, 4, 3, 1.0, None).unwrap();
         assert_eq!(p100, 12.0);
     }
 
@@ -7322,7 +7366,7 @@ mod tests {
         let high_smooth: Vec<f32> = (0..(32 * 32))
             .map(|i| if i < 32 { 50.0 } else { 90.0 + (i % 10) as f32 })
             .collect();
-        let p25_hi = percentile_mask1x1(&high_smooth, 32, 32, 32, 0.25);
+        let p25_hi = percentile_mask1x1(&high_smooth, 32, 32, 32, 0.25, None).unwrap();
         assert!(
             p25_hi >= W44_151_HIGH_MASK_P25_MIN,
             "high-smooth synthetic p25 = {p25_hi}, expected >= {W44_151_HIGH_MASK_P25_MIN}"
@@ -7331,7 +7375,7 @@ mod tests {
         // Low-mask case: photo-class with values around 40-70 — p25
         // far below the threshold, should reject.
         let low_mask: Vec<f32> = (0..(32 * 32)).map(|i| 40.0 + (i % 30) as f32).collect();
-        let p25_lo = percentile_mask1x1(&low_mask, 32, 32, 32, 0.25);
+        let p25_lo = percentile_mask1x1(&low_mask, 32, 32, 32, 0.25, None).unwrap();
         assert!(
             p25_lo < W44_151_HIGH_MASK_P25_MIN,
             "photo-class synthetic p25 = {p25_lo}, expected < {W44_151_HIGH_MASK_P25_MIN}"
@@ -7344,7 +7388,7 @@ mod tests {
         // (compute_mask1x1 produces 1/(log1p(diff) + 0.01) — high local
         // activity → low mask). Expected median far below 95.
         let photo: Vec<f32> = (0..(64 * 64)).map(|i| 5.0 + (i % 35) as f32).collect();
-        let m_photo = median_mask1x1(&photo, 64, 64, 64);
+        let m_photo = median_mask1x1(&photo, 64, 64, 64, None).unwrap();
         assert!(
             m_photo < 95.0,
             "photo-band median {m_photo} should be < 95.0 threshold"
@@ -7353,7 +7397,7 @@ mod tests {
         // Screenshot-class: high mask values (flat regions, low activity)
         // clustered around 110..170. Expected median above 95.
         let screen: Vec<f32> = (0..(64 * 64)).map(|i| 110.0 + (i % 30) as f32).collect();
-        let m_screen = median_mask1x1(&screen, 64, 64, 64);
+        let m_screen = median_mask1x1(&screen, 64, 64, 64, None).unwrap();
         assert!(
             m_screen > 95.0,
             "screen-band median {m_screen} should be > 95.0 threshold"
@@ -7370,7 +7414,7 @@ mod tests {
         // (keep the pixel-domain loss term — strategy search benefits).
         let photo: Vec<f32> = (0..(64 * 64)).map(|i| 5.0 + (i % 35) as f32).collect();
         assert!(
-            !pixel_loss_auto_should_skip(&photo, 64, 64, 64),
+            !pixel_loss_auto_should_skip(&photo, 64, 64, 64, None).unwrap(),
             "photo-band content should keep pixel-domain loss"
         );
 
@@ -7379,14 +7423,14 @@ mod tests {
         // bokeh). Should skip.
         let smooth: Vec<f32> = vec![85.0; 64 * 64];
         assert!(
-            pixel_loss_auto_should_skip(&smooth, 64, 64, 64),
+            pixel_loss_auto_should_skip(&smooth, 64, 64, 64, None).unwrap(),
             "smooth-photo content (median 85 > 80) should skip pixel-domain loss"
         );
 
         // Screenshot-class: median far above the threshold → skip.
         let screen: Vec<f32> = (0..(64 * 64)).map(|i| 110.0 + (i % 30) as f32).collect();
         assert!(
-            pixel_loss_auto_should_skip(&screen, 64, 64, 64),
+            pixel_loss_auto_should_skip(&screen, 64, 64, 64, None).unwrap(),
             "screenshot-band content (median ~125 > 80) should skip pixel-domain loss"
         );
 
@@ -7394,12 +7438,12 @@ mod tests {
         // (the `>` comparator excludes the boundary).
         let at_threshold: Vec<f32> = vec![PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD; 64 * 64];
         assert!(
-            !pixel_loss_auto_should_skip(&at_threshold, 64, 64, 64),
+            !pixel_loss_auto_should_skip(&at_threshold, 64, 64, 64, None).unwrap(),
             "median exactly at 80 should NOT skip (strict `>`)"
         );
         let just_above: Vec<f32> = vec![PIXEL_LOSS_DISPATCH_MEDIAN_THRESHOLD + 0.1; 64 * 64];
         assert!(
-            pixel_loss_auto_should_skip(&just_above, 64, 64, 64),
+            pixel_loss_auto_should_skip(&just_above, 64, 64, 64, None).unwrap(),
             "median 80.1 (just above strict threshold) should skip"
         );
     }

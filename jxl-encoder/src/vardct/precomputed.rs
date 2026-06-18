@@ -412,7 +412,13 @@ impl EncoderPrecomputed {
         // released early so peak working-set doesn't include it.
         if matches!(pixel_loss_dispatch, crate::api::PixelLossDispatch::Auto)
             && let Some(ref m) = mask1x1_after_fill
-            && super::encoder::pixel_loss_auto_should_skip(m, global.padded_width, width, height)
+            && super::encoder::pixel_loss_auto_should_skip(
+                m,
+                global.padded_width,
+                width,
+                height,
+                budget,
+            )?
         {
             mask1x1_after_fill = None;
         }
@@ -876,7 +882,8 @@ impl EncoderPrecomputedGlobal {
                 min_peak,
                 Some(distance),
                 use_ans,
-            )
+                budget,
+            )?
         } else {
             None
         };
