@@ -4199,10 +4199,16 @@ impl VarDctEncoder {
                 self.budget.as_ref(),
                 (nblocks as u64).saturating_mul(4 * 2),
             )?;
+            // Runtime fallible-alloc policy for these dimension-driven quant
+            // buffers; byte-identical (resize fills to the same values that
+            // `vec![v; nblocks]` would, without reallocating the exact capacity).
+            let fallible = self.budget.as_ref().is_some_and(|b| b.is_fallible());
             let q = self.profile.initial_q_numerator / self.distance;
-            let flat_qf = vec![q; nblocks];
+            let mut flat_qf = crate::budget::vec_with_capacity_policy(fallible, nblocks)?;
+            flat_qf.resize(nblocks, q);
             let masking_val = 1.0 / (q + 0.001);
-            let flat_masking = vec![masking_val; nblocks];
+            let mut flat_masking = crate::budget::vec_with_capacity_policy(fallible, nblocks)?;
+            flat_masking.resize(nblocks, masking_val);
             (flat_qf, flat_masking)
         };
 
@@ -6026,7 +6032,11 @@ impl VarDctEncoder {
             .saturating_mul(height as u64)
             .saturating_mul(4);
         crate::budget::MemoryBudget::reserve_permanent_opt(self.budget.as_ref(), main_cap)?;
-        let mut writer = BitWriter::with_capacity(width * height * 4);
+        // Honor the budget's runtime fallible-alloc policy for this large
+        // dimension-driven buffer (`Limits::fallible_alloc`): `with_capacity`
+        // (fast) by default, `try_reserve` (graceful OOM) for untrusted input.
+        let fallible = self.budget.as_ref().is_some_and(|b| b.is_fallible());
+        let mut writer = BitWriter::with_capacity_policy(fallible, width * height * 4)?;
 
         // Write file header (includes JXL signature, ICC, and byte padding).
         // The streaming/one-pass static-Huffman path doesn't carry any
@@ -6097,7 +6107,10 @@ impl VarDctEncoder {
                 self.budget.as_ref(),
                 (num_blocks as u64).saturating_mul(110),
             )?;
-            let mut dc_group = BitWriter::with_capacity(num_blocks * 10);
+            // Runtime fallible-alloc policy for these dimension-driven group
+            // writers (`Limits::fallible_alloc`); covers dc_group + ac_group.
+            let fallible = self.budget.as_ref().is_some_and(|b| b.is_fallible());
+            let mut dc_group = BitWriter::with_capacity_policy(fallible, num_blocks * 10)?;
             self.write_dc_group(
                 0,
                 quant_dc,
@@ -6122,7 +6135,7 @@ impl VarDctEncoder {
                 &mut ac_global,
             )?;
 
-            let mut ac_group_writer = BitWriter::with_capacity(num_blocks * 100);
+            let mut ac_group_writer = BitWriter::with_capacity_policy(fallible, num_blocks * 100)?;
             self.write_ac_group(
                 0,
                 quant_ac,
@@ -6194,6 +6207,8 @@ impl VarDctEncoder {
                 self.budget.as_ref(),
                 total_groups_bytes,
             )?;
+            // Runtime fallible-alloc policy for the per-group writers below.
+            let fallible = self.budget.as_ref().is_some_and(|b| b.is_fallible());
             let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
             let dc_huffman = dc_code.as_huffman();
             let ac_huffman = ac_code.as_huffman();
@@ -6230,7 +6245,8 @@ impl VarDctEncoder {
                 if let Some(s) = stop {
                     s.check().map_err(|_| Error::Cancelled)?;
                 }
-                let mut dc_group = BitWriter::with_capacity(blocks_per_dc_group * 10);
+                let mut dc_group =
+                    BitWriter::with_capacity_policy(fallible, blocks_per_dc_group * 10)?;
                 self.write_dc_group(
                     dc_group_idx,
                     quant_dc,
@@ -6269,7 +6285,8 @@ impl VarDctEncoder {
                 if let Some(s) = stop {
                     s.check().map_err(|_| Error::Cancelled)?;
                 }
-                let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
+                let mut ac_group_writer =
+                    BitWriter::with_capacity_policy(fallible, blocks_per_ac_group * 100)?;
                 self.write_ac_group(
                     group_idx,
                     quant_ac,

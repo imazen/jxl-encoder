@@ -8553,7 +8553,8 @@ impl<'a> EncodeRequest<'a> {
         let budget_cap = self.limits.and_then(|l| l.max_memory_bytes()).unwrap_or(
             Limits::default_max_memory_bytes(matches!(self.config, ConfigRef::Lossless(_))),
         );
-        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let fallible = self.limits.is_some_and(|l| l.fallible_alloc());
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
@@ -11169,7 +11170,8 @@ impl LossyEncoder {
             .as_ref()
             .and_then(|l| l.max_memory_bytes())
             .unwrap_or(Limits::default_max_memory_bytes(false));
-        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let fallible = self.limits.as_ref().is_some_and(|l| l.fallible_alloc());
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
@@ -12254,7 +12256,8 @@ impl LosslessEncoder {
             .as_ref()
             .and_then(|l| l.max_memory_bytes())
             .unwrap_or(Limits::default_max_memory_bytes(true));
-        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let fallible = self.limits.as_ref().is_some_and(|l| l.fallible_alloc());
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
         let est_bytes = (self.width as u64)
             .checked_mul(self.height as u64)
             .and_then(|n| n.checked_mul(40))
@@ -12729,7 +12732,8 @@ fn encode_animation_lossless(
     let budget_cap = limits
         .and_then(|l| l.max_memory_bytes())
         .unwrap_or(Limits::default_max_memory_bytes(true));
-    let budget = crate::budget::MemoryBudget::new(budget_cap);
+    let fallible = limits.is_some_and(|l| l.fallible_alloc());
+    let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
     let est_bytes = (width as u64)
         .checked_mul(height as u64)
         .and_then(|n| n.checked_mul(40))
@@ -13201,7 +13205,8 @@ fn encode_animation_lossy(
     let budget_cap = limits
         .and_then(|l| l.max_memory_bytes())
         .unwrap_or(Limits::default_max_memory_bytes(false));
-    let budget = crate::budget::MemoryBudget::new(budget_cap);
+    let fallible = limits.is_some_and(|l| l.fallible_alloc());
+    let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
     let est_bytes = (width as u64)
         .checked_mul(height as u64)
         .and_then(|n| n.checked_mul(40))
@@ -16127,6 +16132,83 @@ mod tests {
             with_uns, plain,
             "Unstoppable lossless multi-group diverged from no-stop path"
         );
+    }
+
+    /// User directive (2026-06-17): the runtime fallible-alloc toggle
+    /// (`Limits::with_fallible_alloc`) is wired through the STANDARD lossy +
+    /// lossless encodes, not just JPEG transcode. The dimension-driven output /
+    /// group-writer / quant / XYB-plane / modular-channel buffers pick `vec!`
+    /// (fast) vs `try_reserve` (graceful OOM) from the budget policy, so the
+    /// toggle changes only the allocation *mechanism* — a successful encode is
+    /// byte-identical in both modes — and both modes still honour the budget.
+    #[test]
+    fn test_standard_encode_fallible_alloc_toggle() {
+        let (w, h) = (256u32, 256u32);
+        let mut pixels = vec![0u8; (w * h * 3) as usize];
+        for (i, p) in pixels.iter_mut().enumerate() {
+            *p = (i.wrapping_mul(2_654_435_761) >> 13) as u8;
+        }
+
+        let inf = Limits::new().with_fallible_alloc(false);
+        let fal = Limits::new().with_fallible_alloc(true);
+
+        // Lossy: fallible vs infallible → byte-identical output.
+        let lossy_inf = LossyConfig::new(1.0)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&inf)
+            .encode(&pixels)
+            .expect("lossy infallible encode");
+        let lossy_fal = LossyConfig::new(1.0)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&fal)
+            .encode(&pixels)
+            .expect("lossy fallible encode");
+        assert_eq!(
+            lossy_inf, lossy_fal,
+            "lossy fallible toggle changed output bytes"
+        );
+
+        // Lossless: fallible vs infallible → byte-identical output (exercises
+        // the modular channel-data allocation path).
+        let ll_inf = LosslessConfig::new()
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&inf)
+            .encode(&pixels)
+            .expect("lossless infallible encode");
+        let ll_fal = LosslessConfig::new()
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_limits(&fal)
+            .encode(&pixels)
+            .expect("lossless fallible encode");
+        assert_eq!(
+            ll_inf, ll_fal,
+            "lossless fallible toggle changed output bytes"
+        );
+
+        // Both modes honour the budget: a 1 KiB cap rejects lossy + lossless
+        // either way (the dimension-driven buffers can't fit — the reservation
+        // fails before allocation regardless of the fallible policy).
+        for fallible in [false, true] {
+            let tight = Limits::new()
+                .with_fallible_alloc(fallible)
+                .with_max_memory_bytes(1024);
+            assert!(
+                LossyConfig::new(1.0)
+                    .encode_request(w, h, PixelLayout::Rgb8)
+                    .with_limits(&tight)
+                    .encode(&pixels)
+                    .is_err(),
+                "lossy + 1 KiB cap (fallible={fallible}) must reject"
+            );
+            assert!(
+                LosslessConfig::new()
+                    .encode_request(w, h, PixelLayout::Rgb8)
+                    .with_limits(&tight)
+                    .encode(&pixels)
+                    .is_err(),
+                "lossless + 1 KiB cap (fallible={fallible}) must reject"
+            );
+        }
     }
 
     /// Issue #77 item 2: the JPEG-transcode path is cancellable via the

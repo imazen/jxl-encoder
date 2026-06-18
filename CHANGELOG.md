@@ -93,17 +93,31 @@
   `test_jpeg_recompress_limits_and_stop`; the 14 byte-exact JBRD reconstruction
   / transcode-roundtrip gates still pass. This closes the remaining #77 P1
   follow-ups.
-- **Runtime-configurable fallible allocation (`Limits::with_fallible_alloc`).**
-  The choice between fast `vec!`/`Vec::with_capacity` (a single `calloc`,
-  trusted input) and graceful `try_reserve` (returns `Error::OutOfMemory`
-  instead of aborting on a genuine OOM, untrusted input) is now a **runtime**
-  toggle on `Limits` rather than a compile-time decision — the JPEG-transcode
-  coefficient + working-set allocations select the mechanism from the
-  budget's policy (`MemoryBudget::is_fallible`). Defaults to infallible
-  (fast); a hostile-input proxy opts into `with_fallible_alloc(true)`. The
-  toggle changes the allocation *mechanism* only, never the output bytes —
-  pinned by `test_jpeg_transcode_fallible_alloc_toggle` (both modes
-  byte-identical on success, both honour the budget under a tight cap).
+- **Runtime-configurable fallible allocation (`Limits::with_fallible_alloc`),
+  wired through ALL standard encodes.** The choice between fast
+  `vec!`/`Vec::with_capacity` (a single `calloc`, trusted input) and graceful
+  `try_reserve` (returns `Error::OutOfMemory` instead of aborting on a genuine
+  OOM, untrusted input) is a **runtime** toggle on `Limits` rather than a
+  compile-time decision. All five standard-encode budget constructions
+  (one-shot + streaming + animation, lossy + lossless) now build the
+  `MemoryBudget` via `with_alloc_policy(cap, fallible)` instead of the
+  infallible `MemoryBudget::new`, and the **dimension-driven** allocations
+  select their mechanism from the budget policy (`MemoryBudget::is_fallible`):
+  lossy output / DC+AC group BitWriters (`BitWriter::with_capacity_policy`),
+  the flat quant + masking fields (`vec_with_capacity_policy`), the XYB planes
+  (already), and the lossless modular channel buffers (the dominant lossless
+  allocation, via `try_alloc_zeroed_permanent`); the JPEG-transcode path was
+  the first consumer. Defaults to infallible (fast); a hostile-input proxy
+  opts into `with_fallible_alloc(true)`. Byte-identical (mechanism only) on
+  success — pinned by `test_standard_encode_fallible_alloc_toggle` (lossy +
+  lossless) and `test_jpeg_transcode_fallible_alloc_toggle`, both asserting
+  byte-identity across modes and budget rejection under a tight cap. Tiny
+  fixed-size allocations and the modular tree-learning sample-collection
+  working set (already budget-*capacity*-bounded via the `*_with_budget`
+  gather/compute variants, but grown through hot-path `Vec::reserve` in
+  budget-less sample structs) intentionally stay infallible — wiring those
+  would be a hot-path method-signature refactor with perf risk and little
+  fallibility benefit.
 - **Checked SOF-derived overflow in the JPEG coefficient parser (#77 item 3).**
   `extract_coefficients_zenjpeg` computed `width_in_blocks * height_in_blocks`
   (and `* 64`) as unchecked `u32` / `usize` on attacker-controlled SOF dims —
