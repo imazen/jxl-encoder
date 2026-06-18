@@ -775,8 +775,9 @@ pub fn write_icc(icc: &[u8], writer: &mut BitWriter) -> Result<()> {
         NUM_ICC_CONTEXTS,
         true, // force_huffman
         lz77_method,
-        0, // no special distance codes for ICC
-    ) {
+        0,    // no special distance codes for ICC
+        None, // ICC profiles are small — not a budget-tracked allocation site
+    )? {
         Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
         None => (tokens, None),
     };

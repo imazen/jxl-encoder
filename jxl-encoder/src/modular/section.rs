@@ -354,6 +354,7 @@ pub fn write_global_modular_section_with_tree(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     meta_image: Option<&ModularImage>,
     hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant_knobs(
         images,
@@ -366,6 +367,7 @@ pub fn write_global_modular_section_with_tree(
         meta_image,
         &super::palette::ModularKnobs::default(),
         hf_stream_id_base,
+        budget,
     )
 }
 
@@ -396,6 +398,7 @@ pub fn write_global_modular_section_with_tree_knobs(
     meta_image: Option<&ModularImage>,
     knobs: &super::palette::ModularKnobs,
     hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant_knobs(
         images,
@@ -408,6 +411,7 @@ pub fn write_global_modular_section_with_tree_knobs(
         meta_image,
         knobs,
         hf_stream_id_base,
+        budget,
     )
 }
 
@@ -423,6 +427,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     dc_quant_custom: Option<[f32; 3]>,
     meta_image: Option<&ModularImage>,
     hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant_knobs(
         images,
@@ -435,6 +440,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         meta_image,
         &super::palette::ModularKnobs::default(),
         hf_stream_id_base,
+        budget,
     )
 }
 
@@ -454,6 +460,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     meta_image: Option<&ModularImage>,
     knobs: &super::palette::ModularKnobs,
     hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
@@ -937,20 +944,29 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     //   histogram-time slices and the write-time streams stay in lockstep.
     let lz77_applied = if use_lz77 {
         use crate::entropy_coding::lz77::{Lz77Params, apply_lz77};
-        let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Vec<AnsToken> {
+        let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Result<Vec<AnsToken>> {
             if tokens.is_empty() {
-                return Vec::new();
+                return Ok(Vec::new());
             }
-            match apply_lz77(tokens, num_contexts, false, lz77_method, dist_multiplier) {
-                Some((lz77_tokens, _)) => lz77_tokens,
-                None => tokens.to_vec(),
-            }
+            Ok(
+                match apply_lz77(
+                    tokens,
+                    num_contexts,
+                    false,
+                    lz77_method,
+                    dist_multiplier,
+                    budget,
+                )? {
+                    Some((lz77_tokens, _)) => lz77_tokens,
+                    None => tokens.to_vec(),
+                },
+            )
         };
         let meta_dm = meta_image
             .map(|m| m.channels.iter().map(|c| c.width()).max().unwrap_or(0))
             .unwrap_or(0) as i32;
         let mut transformed = Vec::with_capacity(all_tokens.len());
-        transformed.extend(try_lz77(&all_tokens[..nb_meta_tokens], meta_dm));
+        transformed.extend(try_lz77(&all_tokens[..nb_meta_tokens], meta_dm)?);
         let transformed_nb_meta = transformed.len();
         for (g, range) in group_ranges.iter().enumerate() {
             let dm = images[g]
@@ -959,7 +975,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                 .map(|c| c.width())
                 .max()
                 .unwrap_or(0) as i32;
-            transformed.extend(try_lz77(&all_tokens[range.clone()], dm));
+            transformed.extend(try_lz77(&all_tokens[range.clone()], dm)?);
         }
         // Header params come from the same (num_contexts, force_huffman)
         // construction apply_lz77 uses internally, so min_symbol/min_length
@@ -1168,12 +1184,25 @@ fn collect_group_residuals_with_predictor(
 /// - Encoded pixel residuals using HybridUint {4,2,0} + global entropy codes
 ///
 /// The `group_image` should be the extracted region for this group.
+// `MemoryBudget` is a `pub(crate)` type; this `pub` fn lives in the
+// `pub(crate) mod section` (re-exported only inside `pub(crate) mod encode`),
+// so it is not externally reachable despite the `pub` keyword. The budget
+// param is an internal allocation-policy detail.
+#[allow(private_interfaces)]
 pub fn write_group_modular_section(
     group_image: &ModularImage,
     state: &GlobalModularState,
     writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
-    write_group_modular_section_idx(group_image, state, 0, &GroupTransforms::none(), writer)
+    write_group_modular_section_idx(
+        group_image,
+        state,
+        0,
+        &GroupTransforms::none(),
+        writer,
+        budget,
+    )
 }
 
 /// Like [`write_group_modular_section`] but with an explicit group index
@@ -1206,6 +1235,7 @@ pub fn write_group_modular_section_idx(
     group_idx: u32,
     transforms: &GroupTransforms,
     writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     crate::trace::debug_eprintln!(
         "GROUP_MODULAR [bit {}]: Starting group section ({}x{}, compact={}, rct={:?})",
@@ -1317,7 +1347,8 @@ pub fn write_group_modular_section_idx(
                         false,
                         *method,
                         dist_multiplier,
-                    ) {
+                        budget,
+                    )? {
                         Some((lz77_tokens, _)) => lz77_tokens,
                         None => tokens,
                     };

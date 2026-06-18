@@ -132,13 +132,48 @@
   the JPEG-preprocessing `resampling` box/sharper downsamplers + alpha, the
   `extras` alpha-squeeze plane, and the `patches` reference-frame channel
   buffers. Budget is threaded as `Option<&Arc<MemoryBudget>>` (or `self.budget`
-  on `VarDctEncoder`/`FrameEncoder` methods). Three sites intentionally stay
-  infallible (honest-stop): `encoder` `median_mask1x1`/`percentile_mask1x1` (a
-  `bool`-predicate cascade through `pixel_loss_auto_should_skip`), the
-  `patches` BFS detection queue, and the `lz77` optimal-parse token buffer
-  (no budget infrastructure) — all reachable only via deep multi-hop refactors
-  with little marginal safety. Verified byte-identical (hash-locks 48/48; full
-  1986-test suite) and clippy `-D warnings` clean (default + jpeg + zensim).
+  on `VarDctEncoder`/`FrameEncoder` methods). Verified byte-identical
+  (hash-locks 48/48; full 1986-test suite) and clippy `-D warnings` clean
+  (default + jpeg + zensim).
+- **All three #88 honest-stopped >1 MB sites now wired through the
+  fallible-alloc policy (follow-up).** The AQ-mask statistics, the patches
+  BFS detection, and the lz77 optimal-parse buffers — all >1 MB at realistic
+  sizes — now route through the budget policy (byte-identical on the default
+  infallible path):
+  - **AQ mask buffers** (`encoder` `median_mask1x1` / `percentile_mask1x1`, the
+    `width * height` `f32` copy allocated on every lossy encode, 4–50 MB at
+    ≥ 1 MP). Both helpers now take an `Option<&Arc<MemoryBudget>>` and return
+    `crate::error::Result<f32>`; the `bool`-predicate cascade through
+    `pixel_loss_auto_should_skip` (now `Result<bool>` + budget) propagates
+    through its three `encode_inner` / `encode_frame_to_writer` /
+    `compute_with_budget_and_buffering` callers (the `.map(..).transpose()?`
+    pattern at the `mask1x1_median` / `mask1x1_p25` sites; `?` at the inline
+    gate sites). Budget threaded from `self.budget` / the existing `budget`
+    param.
+  - **Patches detection** (`patches` `find_text_like_patches{,_with_min_peak}`
+    and `find_and_build_lossless`, the BFS `queue` + 3 `background` f32 planes +
+    `is_background` / `visited` bool planes + the lossless `planes` triple, all
+    `stride * height`, ~13 MB at 1 MP). The two detectors return
+    `crate::error::Result<Vec<PatchInfo>>` and `find_and_build_with_per_patch_gate`
+    / `find_and_build_lossless` return `crate::error::Result<Option<PatchesData>>`,
+    threaded `Option<&Arc<MemoryBudget>>` from the four VarDCT encode paths
+    (`encoder` `encode_inner` / `encode_from_precomputed_inner`, `bitstream`
+    `encode_frame_to_writer`, `precomputed` `compute_global_only`) and the two
+    lossless paths (`api` `encode_lossless` + the streaming `finish_inner`
+    closure). The public calibration wrappers (`find_and_build` /
+    `find_and_build_with_min_peak` / `find_and_build_patches_lossless`) keep
+    their `Option`-returning signatures (public API unchanged) and call the
+    inner with `None` budget on the infallible path.
+  - **lz77 optimal-parse buffers** (`apply_lz77_optimal`'s `prefix_costs` +
+    `out`, both `O(token_count)`, multi-MB to 10s of MB at lossless e9+). The
+    `budget` is threaded through `apply_lz77` and all its callers: the
+    `pub(crate)` modular wrapper stack (`write_modular_stream_with_tree*`,
+    `write_global_modular_section_with_tree*`, `write_group_modular_section_idx`)
+    takes the param and bottoms out at `FrameEncoder` (`self.budget`);
+    `vardct/bitstream`'s `encode_two_pass_to_writer` passes `self.budget`; the
+    small `icc.rs` profile-compression call passes `None` (not a >1 MB site).
+  Verified byte-identical (hash-locks 48/48; full 1986-test suite) and clippy
+  `-D warnings` clean (default + jpeg + zensim).
 - **Checked SOF-derived overflow in the JPEG coefficient parser (#77 item 3).**
   `extract_coefficients_zenjpeg` computed `width_in_blocks * height_in_blocks`
   (and `* 64`) as unchecked `u32` / `usize` on attacker-controlled SOF dims —

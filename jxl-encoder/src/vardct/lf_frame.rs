@@ -300,6 +300,7 @@ pub(crate) fn encode_lf_frame(
             Some(factors.dc_quant),
             Some(lossy_opts),
             false, // no palette for lossy LfFrame
+            budget,
         )?;
 
         let section_data = section_writer.finish();
@@ -323,6 +324,7 @@ pub(crate) fn encode_lf_frame(
             ysize_blocks,
             use_ans,
             writer,
+            budget,
         )?;
     }
 
@@ -339,6 +341,7 @@ pub(crate) fn encode_lf_frame(
 /// - Sections 1..num_lf_groups: LfGroup (empty for modular)
 /// - Section num_lf_groups+1: HfGlobal (empty for modular)
 /// - Sections num_lf_groups+2..: PassGroup (modular data per group)
+#[allow(clippy::too_many_arguments)]
 fn encode_lf_frame_multi_group(
     image: &ModularImage,
     factors: &DcQuantFactors,
@@ -347,6 +350,7 @@ fn encode_lf_frame_multi_group(
     ysize_blocks: usize,
     _use_ans: bool,
     writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     use crate::modular::encode::write_group_modular_section_idx;
     use crate::modular::section::{
@@ -390,6 +394,7 @@ fn encode_lf_frame_multi_group(
         Some(factors.dc_quant),
         None, // no ChannelCompact meta-channels for LfFrame
         crate::modular::section::modular_hf_stream_id_base(num_lf_groups as u32),
+        budget,
     )?;
     let lf_global_data = lf_global_writer.finish();
 
@@ -413,6 +418,7 @@ fn encode_lf_frame_multi_group(
                     + group_idx as u32,
                 &GroupTransforms::none(),
                 &mut group_writer,
+                budget,
             )?;
             pass_group_data.push(group_writer.finish());
         }

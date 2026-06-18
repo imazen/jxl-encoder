@@ -397,6 +397,7 @@ impl FrameEncoder {
                     &self.options.profile,
                     self.options.enable_lz77,
                     self.options.lz77_method,
+                    self.budget.as_ref(),
                 )?;
             } else if has_squeeze {
                 super::encode::write_modular_stream_with_squeeze(
@@ -414,6 +415,7 @@ impl FrameEncoder {
                     self.options.enable_lz77,
                     self.options.lz77_method,
                     &self.options.modular_knobs,
+                    self.budget.as_ref(),
                 )?;
             } else if image.channels.len() >= 3 {
                 super::encode::write_modular_stream_with_rct_knobs(
@@ -515,6 +517,7 @@ impl FrameEncoder {
                     &self.options.profile,
                     self.options.enable_lz77,
                     self.options.lz77_method,
+                    self.budget.as_ref(),
                 )?;
             } else if has_squeeze {
                 // Squeeze without tree learning (lower effort levels)
@@ -533,6 +536,7 @@ impl FrameEncoder {
                     self.options.enable_lz77,
                     self.options.lz77_method,
                     &self.options.modular_knobs,
+                    self.budget.as_ref(),
                 )?;
             } else if image.channels.len() >= 3 {
                 super::encode::write_modular_stream_with_rct_knobs(
@@ -919,6 +923,7 @@ impl FrameEncoder {
                 meta_image.as_ref(),
                 &self.options.modular_knobs,
                 super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
+                self.budget.as_ref(),
             )?
         } else if self.options.use_tree_learning && self.options.use_ans {
             // Tree learning path: gather samples, learn tree, build multi-context ANS.
@@ -936,6 +941,7 @@ impl FrameEncoder {
                 meta_image.as_ref(),
                 &self.options.modular_knobs,
                 super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
+                self.budget.as_ref(),
             )?
         } else {
             // Standard path: collect residuals using the requested predictor
@@ -1015,6 +1021,7 @@ impl FrameEncoder {
             s.check().map_err(|_| crate::error::Error::Cancelled)?;
         }
         // PassGroup sections — parallelizable (each group writes to its own BitWriter)
+        let budget = self.budget.as_ref();
         let pass_group_data: Vec<Vec<u8>> =
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
                 let group_idx = flat_idx / num_passes;
@@ -1027,6 +1034,7 @@ impl FrameEncoder {
                     group_idx as u32 + per_group_id_offset,
                     &group_transforms[group_idx],
                     &mut group_writer,
+                    budget,
                 )?;
 
                 crate::trace::debug_eprintln!(
@@ -2176,14 +2184,24 @@ impl FrameEncoder {
         let lz77_params = if use_lz77 {
             use crate::entropy_coding::lz77::apply_lz77;
 
-            let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Vec<AnsToken> {
+            let budget = self.budget.as_ref();
+            let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Result<Vec<AnsToken>> {
                 if tokens.is_empty() {
-                    return tokens.to_vec();
+                    return Ok(tokens.to_vec());
                 }
-                match apply_lz77(tokens, num_contexts, false, lz77_method, dist_multiplier) {
-                    Some((lz77_tokens, _)) => lz77_tokens,
-                    None => tokens.to_vec(),
-                }
+                Ok(
+                    match apply_lz77(
+                        tokens,
+                        num_contexts,
+                        false,
+                        lz77_method,
+                        dist_multiplier,
+                        budget,
+                    )? {
+                        Some((lz77_tokens, _)) => lz77_tokens,
+                        None => tokens.to_vec(),
+                    },
+                )
             };
 
             // Global section: dist_multiplier from global channels
@@ -2192,7 +2210,7 @@ impl FrameEncoder {
                 .map(|c| c.width())
                 .max()
                 .unwrap_or(0) as i32;
-            global_tokens = try_lz77(&global_tokens, global_dm);
+            global_tokens = try_lz77(&global_tokens, global_dm)?;
 
             // LfGroup sections: dist_multiplier from each LfGroup's channels
             for (lg, lg_tokens) in lf_group_tokens.iter_mut().enumerate() {
@@ -2201,7 +2219,7 @@ impl FrameEncoder {
                     .map(|c| c.width())
                     .max()
                     .unwrap_or(0) as i32;
-                *lg_tokens = try_lz77(lg_tokens, dm);
+                *lg_tokens = try_lz77(lg_tokens, dm)?;
             }
 
             // PassGroup sections: dist_multiplier from each PassGroup's channels
@@ -2211,7 +2229,7 @@ impl FrameEncoder {
                     .map(|c| c.width())
                     .max()
                     .unwrap_or(0) as i32;
-                *pg_tokens = try_lz77(pg_tokens, dm);
+                *pg_tokens = try_lz77(pg_tokens, dm)?;
             }
 
             // Check if any section has LZ77 references
@@ -2451,6 +2469,7 @@ impl FrameEncoder {
                     None, // not lossy modular (no Squeeze + multiplier-info path)
                     true, // palette detection ok
                     &self.options.modular_knobs,
+                    self.budget.as_ref(),
                 )?;
             } else if self.options.use_tree_learning && self.options.use_ans {
                 super::encode::write_modular_stream_with_tree_knobs(
@@ -2461,6 +2480,7 @@ impl FrameEncoder {
                     self.options.enable_lz77,
                     self.options.lz77_method,
                     &self.options.modular_knobs,
+                    self.budget.as_ref(),
                 )?;
             } else if use_rct {
                 super::encode::write_modular_stream_with_rct_knobs(

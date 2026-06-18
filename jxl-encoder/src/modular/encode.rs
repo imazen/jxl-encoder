@@ -1681,6 +1681,7 @@ pub(crate) fn select_best_rct_at(
 /// - GroupHeader (use_global_tree=1, wp_header, num_transforms=0..2)
 /// - ANS-encoded residuals (write_tokens_ans)
 /// - byte padding
+#[allow(clippy::too_many_arguments)]
 pub fn write_modular_stream_with_tree(
     image: &ModularImage,
     writer: &mut BitWriter,
@@ -1688,6 +1689,7 @@ pub fn write_modular_stream_with_tree(
     rct: bool,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     write_modular_stream_with_tree_dc_quant(
         image,
@@ -1699,6 +1701,7 @@ pub fn write_modular_stream_with_tree(
         None,
         None, // no lossy modular options
         true, // enable palette detection
+        budget,
     )
 }
 
@@ -1709,6 +1712,7 @@ pub fn write_modular_stream_with_tree(
 /// `-E N`) into the tree-learning + palette + channel-compact pipeline.
 /// `None` knobs (the default) gives byte-identical output to
 /// [`write_modular_stream_with_tree`].
+#[allow(clippy::too_many_arguments)]
 pub fn write_modular_stream_with_tree_knobs(
     image: &ModularImage,
     writer: &mut BitWriter,
@@ -1717,6 +1721,7 @@ pub fn write_modular_stream_with_tree_knobs(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     knobs: &super::palette::ModularKnobs,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     write_modular_stream_with_tree_dc_quant_knobs(
         image,
@@ -1729,6 +1734,7 @@ pub fn write_modular_stream_with_tree_knobs(
         None, // no lossy modular options
         true, // enable palette detection
         knobs,
+        budget,
     )
 }
 
@@ -1768,6 +1774,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     dc_quant_custom: Option<[f32; 3]>,
     lossy_options: Option<LossyModularOptions>,
     palette: bool,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     write_modular_stream_with_tree_dc_quant_knobs(
         image,
@@ -1780,6 +1787,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         lossy_options,
         palette,
         &super::palette::ModularKnobs::default(),
+        budget,
     )
 }
 
@@ -1804,6 +1812,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     lossy_options: Option<LossyModularOptions>,
     palette: bool,
     knobs: &super::palette::ModularKnobs,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
@@ -2176,7 +2185,14 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         .unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
         // LZ77 application
-        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier) {
+        match apply_lz77(
+            &tokens,
+            num_contexts,
+            false,
+            lz77_method,
+            dist_multiplier,
+            budget,
+        )? {
             Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
             None => (tokens, None),
         }
@@ -2300,6 +2316,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
     squeeze_params: &[super::squeeze::SqueezeParams],
     multiplier_info: &[super::quantize::ModularMultiplierInfo],
     _quants: &[i32],
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
@@ -2379,7 +2396,14 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
     // Step 3b: Optionally apply LZ77 to the token stream
     let dist_multiplier = image.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
-        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier) {
+        match apply_lz77(
+            &tokens,
+            num_contexts,
+            false,
+            lz77_method,
+            dist_multiplier,
+            budget,
+        )? {
             Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
             None => (tokens, None),
         }
@@ -2474,6 +2498,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     profile: &crate::effort::EffortProfile,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     use super::rct::{RctType, forward_rct};
     use super::squeeze::{apply_squeeze, default_squeeze_params};
@@ -2497,6 +2522,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
             image.channels.len() >= 3,
             use_lz77,
             lz77_method,
+            budget,
         );
     }
 
@@ -2596,7 +2622,14 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         .max()
         .unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
-        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier) {
+        match apply_lz77(
+            &tokens,
+            num_contexts,
+            false,
+            lz77_method,
+            dist_multiplier,
+            budget,
+        )? {
             Some((lz77_tokens, params)) => {
                 crate::trace::debug_eprintln!(
                     "SQUEEZE LZ77: {} → {} tokens ({:.1}x), method={:?}, dm={}",

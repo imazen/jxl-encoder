@@ -1769,7 +1769,8 @@ impl VarDctEncoder {
                 min_peak,
                 Some(self.distance),
                 self.use_ans,
-            )
+                self.budget.as_ref(),
+            )?
         } else {
             None
         };
@@ -1895,8 +1896,13 @@ impl VarDctEncoder {
             if matches!(
                 self.pixel_loss_dispatch,
                 crate::api::PixelLossDispatch::Auto
-            ) && super::encoder::pixel_loss_auto_should_skip(&m, padded_width, width, height)
-            {
+            ) && super::encoder::pixel_loss_auto_should_skip(
+                &m,
+                padded_width,
+                width,
+                height,
+                self.budget.as_ref(),
+            )? {
                 None
             } else {
                 Some(m)
@@ -1985,13 +1991,26 @@ impl VarDctEncoder {
         // for the gate cascade.
         let mask1x1_median_for_search = mask1x1
             .as_deref()
-            .map(|m| super::encoder::median_mask1x1(m, padded_width, width, height));
+            .map(|m| {
+                super::encoder::median_mask1x1(m, padded_width, width, height, self.budget.as_ref())
+            })
+            .transpose()?;
         // W44-151: also compute mask1x1 p25 for the new mask_p25 >= 85
         // admission branch in the W44-29 outer gate. Same None-semantics
         // (mask1x1 unavailable → gate degrades to off).
         let mask1x1_p25_for_search = mask1x1
             .as_deref()
-            .map(|m| super::encoder::percentile_mask1x1(m, padded_width, width, height, 0.25));
+            .map(|m| {
+                super::encoder::percentile_mask1x1(
+                    m,
+                    padded_width,
+                    width,
+                    height,
+                    0.25,
+                    self.budget.as_ref(),
+                )
+            })
+            .transpose()?;
         let profile_for_search =
             self.compute_profile_for_search(mask1x1_median_for_search, mask1x1_p25_for_search);
         let active_profile_for_search = profile_for_search.as_ref().unwrap_or(&self.profile);
@@ -3131,7 +3150,8 @@ impl VarDctEncoder {
                 false,
                 self.lz77_method,
                 _dc_distance_multiplier,
-            ) {
+                self.budget.as_ref(),
+            )? {
                 #[cfg(feature = "debug-tokens")]
                 eprintln!(
                     "[LZ77] DC LZ77 ACTIVATED: {} -> {} tokens",
@@ -3159,7 +3179,8 @@ impl VarDctEncoder {
                         false,
                         self.lz77_method,
                         group_dc_width,
-                    ) {
+                        self.budget.as_ref(),
+                    )? {
                         new_dc_per_group.push(lz77_dc);
                     } else {
                         new_dc_per_group.push(dc_tokens_per_group[i].clone());
@@ -3190,7 +3211,8 @@ impl VarDctEncoder {
                         false,
                         self.lz77_method,
                         md_dist_mult,
-                    ) {
+                        self.budget.as_ref(),
+                    )? {
                         new_md_per_group.push(lz77_md);
                     } else {
                         new_md_per_group.push(ac_metadata_tokens_per_group[i].clone());
@@ -3228,7 +3250,8 @@ impl VarDctEncoder {
                     false,
                     self.lz77_method,
                     ac_distance_multiplier,
-                ) {
+                    self.budget.as_ref(),
+                )? {
                     #[cfg(feature = "debug-tokens")]
                     eprintln!(
                         "[LZ77] AC pass {} LZ77 ACTIVATED: {} -> {} tokens",
@@ -3245,7 +3268,8 @@ impl VarDctEncoder {
                             false,
                             self.lz77_method,
                             ac_distance_multiplier,
-                        ) {
+                            self.budget.as_ref(),
+                        )? {
                             new_sections.push(lz77_ac);
                         } else {
                             new_sections.push(tokens.clone());
