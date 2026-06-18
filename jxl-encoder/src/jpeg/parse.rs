@@ -588,6 +588,22 @@ fn skip_entropy_data(data: &[u8], pos: &mut usize) {
     }
 }
 
+/// Block count and coefficient-buffer length for a JPEG component, computed
+/// with checked `usize` arithmetic.
+///
+/// SOF `*_in_blocks` fields are attacker-controlled (each up to ~983025 for a
+/// 65535-px dimension with 1×1 sampling), so `width_in_blocks *
+/// height_in_blocks` overflows `u32`, and the `* 64` coefficient scale
+/// overflows `usize` on 32-bit targets (i686 / wasm32 — #77 item 3). A wrapped
+/// length would size the component coefficient buffer short and make the
+/// zigzag copy in [`extract_coefficients_zenjpeg`] read out of bounds, so a
+/// malformed SOF must error rather than wrap. Returns `None` on overflow.
+fn checked_coeff_len(width_in_blocks: usize, height_in_blocks: usize) -> Option<(usize, usize)> {
+    let num_blocks = width_in_blocks.checked_mul(height_in_blocks)?;
+    let coeff_len = num_blocks.checked_mul(64)?;
+    Some((num_blocks, coeff_len))
+}
+
 /// Extract DCT coefficients using zenjpeg's decoder.
 ///
 /// As of zenjpeg 0.8.5 we use [`decode_coefficients_with_jbrd_metadata`]
@@ -638,17 +654,14 @@ fn extract_coefficients_zenjpeg(
         // arithmetic; a malformed SOF errors instead of wrapping (a wrapped
         // count would size `comp.coeffs` short and make the zigzag copy below
         // read out of bounds).
-        let num_blocks = (comp.width_in_blocks as usize)
-            .checked_mul(comp.height_in_blocks as usize)
-            .ok_or_else(|| {
-                JpegError::Invalid(format!(
-                    "component {i}: block count overflow ({} × {})",
-                    comp.width_in_blocks, comp.height_in_blocks
-                ))
-            })?;
-        let coeff_len = num_blocks.checked_mul(64).ok_or_else(|| {
+        let (num_blocks, coeff_len) = checked_coeff_len(
+            comp.width_in_blocks as usize,
+            comp.height_in_blocks as usize,
+        )
+        .ok_or_else(|| {
             JpegError::Invalid(format!(
-                "component {i}: coefficient count overflow ({num_blocks} blocks)"
+                "component {i}: coefficient count overflow ({} × {} blocks)",
+                comp.width_in_blocks, comp.height_in_blocks
             ))
         })?;
         // Reconcile the SOF-derived count against what zenjpeg actually decoded
@@ -660,16 +673,14 @@ fn extract_coefficients_zenjpeg(
                 zen_comp.coeffs.len()
             )));
         }
-        // Reserve the per-component i16 coefficient buffer against the budget
-        // BEFORE allocating it — the largest attacker-controlled allocation on
-        // the decode side (#77 item 1). 2 bytes per i16 coefficient. `None`
-        // budget is a no-op.
-        let coeff_bytes = (coeff_len as u64)
-            .checked_mul(2)
-            .ok_or_else(|| JpegError::ResourceLimit(format!("{coeff_len} coeffs overflow")))?;
-        MemoryBudget::reserve_permanent_opt(budget, coeff_bytes)
+        // Reserve + allocate the per-component i16 coefficient buffer — the
+        // largest attacker-controlled allocation on the decode side (#77
+        // item 1). The helper reserves `coeff_len * 2` bytes against the budget
+        // (with checked byte arithmetic) BEFORE allocating, and honors the
+        // budget's runtime fallible-alloc policy (`vec!` fast / `try_reserve`
+        // safe — `Limits::fallible_alloc`). `None` budget is a no-op.
+        comp.coeffs = crate::budget::try_alloc_zeroed_permanent::<i16>(budget, coeff_len)
             .map_err(|e| JpegError::ResourceLimit(format!("{e}")))?;
-        comp.coeffs = vec![0i16; coeff_len];
 
         for blk in 0..num_blocks {
             let src_base = blk * 64;
@@ -891,6 +902,34 @@ mod tests {
                 "u64::MAX should disable the cap, got: {m}"
             );
         }
+    }
+
+    /// #77 item 3: the per-component coefficient-buffer length is computed with
+    /// checked `usize` arithmetic so an attacker-controlled SOF can't wrap it to
+    /// a short length (which would make the zigzag copy in
+    /// `extract_coefficients_zenjpeg` read out of bounds). The wrap only bites
+    /// 32-bit targets (`*_in_blocks * 64` overflows `usize` there), so the guard
+    /// is verified host-independently by exercising `checked_coeff_len` directly.
+    #[test]
+    fn checked_coeff_len_guards_overflow() {
+        // `wb * hb` overflows `usize` outright → None (never a wrapped small value).
+        assert_eq!(checked_coeff_len(usize::MAX, 2), None);
+        // `wb * hb` fits but the ×64 coefficient scale overflows → None.
+        assert_eq!(checked_coeff_len(usize::MAX / 32, 1), None);
+        // A normal component is computed exactly.
+        assert_eq!(checked_coeff_len(128, 96), Some((12_288, 786_432)));
+
+        // The largest representable JPEG (65535 px → 8192 blocks/axis) has
+        // num_blocks = 8192² = 67_108_864 and coeff_len = ×64 = 2^32 — the exact
+        // value that overflows a 32-bit `usize` (where the guard fires and
+        // returns None), but is representable on 64-bit (where it is returned).
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            checked_coeff_len(8192, 8192),
+            Some((67_108_864, 4_294_967_296))
+        );
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(checked_coeff_len(8192, 8192), None);
     }
 
     /// Security audit 2026-05-06 H4 regression: a truncated SOS marker with

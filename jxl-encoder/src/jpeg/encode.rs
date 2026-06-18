@@ -145,18 +145,24 @@ fn encode_jpeg_to_jxl_inner(
     let width = jpeg.width as usize;
     let height = jpeg.height as usize;
 
-    // Pre-flight budget gate for the encode working set, reserved up front so
-    // an oversized untrusted frame is rejected BEFORE the expensive token
-    // collection + histogram clustering. Conservative estimate: ~32 bytes per
-    // DCT coefficient covers the i32 quant arrays (~5 B/coeff), the AC token
-    // stream held twice during clustering (2 × 8 B/coeff), the output buffer,
-    // and clustering scratch. The per-component i16 coefficient buffers are
-    // reserved separately in `read_jpeg_with_stop`. The reservation is an RAII
-    // guard held for this function's scope so it is RELEASED when the encode
-    // returns — the PreserveJxl recompress path runs two encodes on one budget
-    // (lossless floor + lossy) and the working sets do not coexist. `None`
-    // budget is a no-op.
-    const ENCODE_BYTES_PER_COEFF: u64 = 32;
+    // Reserve the encode working set against `budget` up front, so an oversized
+    // untrusted frame is rejected BEFORE the expensive token collection +
+    // histogram clustering. The constant is **measured**, not guessed: heaptrack
+    // of the transcode path (the quant planes + the AC token stream held twice
+    // during clustering + the output buffer + the diffuse ANS/histogram
+    // accumulators, which cannot be attributed to a single allocation site)
+    // peaks at ~44 B per DCT coefficient on the worst real photo measured
+    // (high-detail `wrenches.jpg`, ~2 B of which is the separately-reserved
+    // coefficient buffer). 56 B/coeff applies a ~1.3x margin over that for
+    // more-adversarial content. Provenance:
+    // `benchmarks/transcode_mem_2026-06-18.tsv` (effort-independent: e7 == e9).
+    //
+    // The reservation is an RAII guard released when the encode returns — the
+    // PreserveJxl recompress path runs two encodes (lossless floor + lossy) on
+    // one budget and their working sets do not coexist. The per-component i16
+    // coefficient buffers are reserved separately (and exactly) in
+    // `read_jpeg_with_stop`. `None` budget is a no-op.
+    const ENCODE_BYTES_PER_COEFF: u64 = 56;
     let total_coeffs: u64 = jpeg
         .components
         .iter()
@@ -304,7 +310,7 @@ fn encode_jpeg_to_jxl_inner(
     // Map JPEG coefficients to JXL data structures
     // Each channel uses its native block dimensions (may differ for subsampled chroma)
     let (mut quant_dc, mut quant_ac, mut nzeros, mut raw_nzeros) =
-        map_jpeg_coefficients(jpeg, &jpeg_c_map, &dc_offset)?;
+        map_jpeg_coefficients(jpeg, &jpeg_c_map, &dc_offset, budget)?;
 
     let is_gray = num_components == 1;
 
@@ -1105,7 +1111,12 @@ fn encode_jpeg_to_jxl_inner(
     // context map / distributions; we write the per-section tokens (in
     // `ac_lz77_section_tokens`) at the end with the shared `ac_code`.
     let total_ac_tokens: usize = ac_lz77_section_tokens.iter().map(|t| t.len()).sum();
-    let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
+    // The AC token stream is covered by the encode working-set reservation at
+    // the top of this function; here we only honor the fallible-alloc policy.
+    let mut all_ac_tokens = crate::budget::vec_with_capacity_policy(
+        budget.is_some_and(|b| b.is_fallible()),
+        total_ac_tokens,
+    )?;
     for section in &ac_lz77_section_tokens {
         all_ac_tokens.extend_from_slice(section);
     }
@@ -1175,7 +1186,19 @@ fn encode_jpeg_to_jxl_inner(
 
     // ── Pass 2: Write bitstream ──
 
-    let mut writer = BitWriter::with_capacity(width * height * 4);
+    // The output buffer (~4 B/pixel) is covered by the encode working-set
+    // reservation at the top of this function; honor the fallible-alloc policy
+    // for the initial capacity (growth is already fallible).
+    let output_cap = width
+        .checked_mul(height)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(crate::error::Error::DimensionOverflow {
+            width,
+            height,
+            channels: 1,
+        })?;
+    let mut writer =
+        BitWriter::with_capacity_policy(budget.is_some_and(|b| b.is_fallible()), output_cap)?;
 
     // Extract ICC profile from JPEG APP2 markers (if present)
     let icc_profile = extract_icc(jpeg);
@@ -1508,7 +1531,9 @@ fn map_jpeg_coefficients(
     jpeg: &JpegData,
     jpeg_c_map: &[usize; 3],
     dc_offset: &[i32; 3],
+    budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<JpegCoefficientPlanes> {
+    let fallible = budget.is_some_and(|b| b.is_fallible());
     let mut quant_dc: [Vec<Vec<i16>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut quant_ac: [Vec<Vec<[i32; BLOCK_SIZE]>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut nzeros: [Vec<Vec<u8>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
@@ -1520,16 +1545,22 @@ fn map_jpeg_coefficients(
         let xb = comp.width_in_blocks as usize;
         let yb = comp.height_in_blocks as usize;
 
-        let mut dc_rows = Vec::with_capacity(yb);
-        let mut ac_rows = Vec::with_capacity(yb);
-        let mut nz_rows = Vec::with_capacity(yb);
-        let mut raw_nz_rows = Vec::with_capacity(yb);
+        // The quant planes are covered by the encode working-set reservation in
+        // `encode_jpeg_to_jxl_inner` (a single measured per-coefficient estimate
+        // — heaptrack showed the diffuse entropy/clustering allocations cannot
+        // be attributed per-site). Here we only honor the fallible-alloc policy
+        // for the row buffers.
+        let mut dc_rows = crate::budget::vec_with_capacity_policy(fallible, yb)?;
+        let mut ac_rows = crate::budget::vec_with_capacity_policy(fallible, yb)?;
+        let mut nz_rows = crate::budget::vec_with_capacity_policy(fallible, yb)?;
+        let mut raw_nz_rows = crate::budget::vec_with_capacity_policy(fallible, yb)?;
 
         for by in 0..yb {
-            let mut dc_row = Vec::with_capacity(xb);
-            let mut ac_row: Vec<[i32; BLOCK_SIZE]> = Vec::with_capacity(xb);
-            let mut nz_row = Vec::with_capacity(xb);
-            let mut raw_nz_row = Vec::with_capacity(xb);
+            let mut dc_row = crate::budget::vec_with_capacity_policy(fallible, xb)?;
+            let mut ac_row: Vec<[i32; BLOCK_SIZE]> =
+                crate::budget::vec_with_capacity_policy(fallible, xb)?;
+            let mut nz_row = crate::budget::vec_with_capacity_policy(fallible, xb)?;
+            let mut raw_nz_row = crate::budget::vec_with_capacity_policy(fallible, xb)?;
 
             for bx in 0..xb {
                 let blk_idx = by * xb + bx;

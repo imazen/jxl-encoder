@@ -2184,6 +2184,8 @@ impl VarDctEncoder {
                     // encoder's fixed `self.butteraugli_iters` for
                     // byte-identical pre-W44-168 animation behaviour.
                     None,
+                    // No Stop token on the animation frame path.
+                    None,
                 )?;
             }
         }

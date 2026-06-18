@@ -1,0 +1,16 @@
+# JPEG-transcode peak-heap measurement (heaptrack) — #77 MemoryBudget calibration
+# host: WSL2 (AMD Ryzen 9 7950X); jxl-encoder PR #78 (harden-jpeg-transcode-cap)
+# build: cargo build --release --example transcode_mem_probe --features jpeg-reencoding
+# cmd:   heaptrack ./transcode_mem_probe <jpeg> <effort>; peak = "peak heap memory consumption"
+# corpus: ~/work/codec-corpus/imageflow/test_inputs/ (real photos, 3-component baseline)
+# Note: peak is effort-independent (e7 == e9 to the reported precision) — kBest
+#   clustering at e9 adds bounded (not coeff-proportional) histogram memory.
+# Used to set ENCODE_BYTES_PER_COEFF=56 in jpeg/encode.rs (jpeg_to_jxl_inner):
+#   worst measured B/coeff = 44.1 (wrenches, high detail); 56 adds ~1.3x margin.
+#   The per-component i16 coeff buffer (~2 B/coeff) is reserved separately/exactly.
+image	width	height	coeffs	effort	peak_heap_MB	B_per_coeff
+wrenches	1800	676	1865856	7	82.24	44.1
+wrenches	1800	676	1865856	9	82.24	44.1
+waterhouse	-	-	3588096	7	90.83	25.3
+canon_5d_srgb	-	-	1305600	7	31.80	24.4
+roof_test_800x600	800	600	1440000	7	25.77	17.9

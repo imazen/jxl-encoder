@@ -5650,6 +5650,7 @@ impl VarDctEncoder {
                     // resolves to `self.butteraugli_iters`, byte-
                     // identical to pre-W44-168.
                     Some(effective_buttloop_iters),
+                    stop,
                 )?;
             }
         }

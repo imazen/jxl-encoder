@@ -329,9 +329,10 @@ impl FrameEncoder {
         color_encoding: &ColorEncoding,
         writer: &mut BitWriter,
         patches: Option<&crate::vardct::patches::PatchesData>,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
         if patches.is_none() {
-            return self.encode_modular(image, color_encoding, writer);
+            return self.encode_modular(image, color_encoding, writer, stop);
         }
         let patches = patches.unwrap();
 
@@ -440,7 +441,7 @@ impl FrameEncoder {
         } else {
             // Multi-group with patches: patches section goes into LfGlobal.
             // Squeeze + patches is not yet supported; use non-squeeze multi-group path.
-            self.encode_modular_multi_group_inner(image, writer, Some(patches))?;
+            self.encode_modular_multi_group_inner(image, writer, Some(patches), stop)?;
         }
 
         Ok(())
@@ -452,7 +453,16 @@ impl FrameEncoder {
         image: &ModularImage,
         _color_encoding: &ColorEncoding,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        // Coarse cancellation check at the modular encode boundary. Polled
+        // once here so the single-group path (tree learning + entropy coding
+        // can run for seconds at e9) is cancellable; the multi-group dispatch
+        // below re-polls inside `encode_modular_multi_group_inner`. No-op and
+        // byte-identical under `None` / an `Unstoppable` token.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
         // Compute num_extra_channels from image. Channels beyond the
         // base color set (1 for grayscale, 3 for RGB) are extra
         // channels — alpha is the historical case but [`ModularImage`]
@@ -556,20 +566,20 @@ impl FrameEncoder {
             }
         } else if self.options.lossy_palette && image.channels.len() >= 3 {
             // Multi-group lossy palette: palette meta in LfGlobal, index across groups
-            self.encode_modular_multi_group_lossy_palette(image, writer)?;
+            self.encode_modular_multi_group_lossy_palette(image, writer, stop)?;
         } else if self.options.use_squeeze
             && !super::squeeze::default_squeeze_params(image).is_empty()
         {
             if self.options.use_tree_learning && self.options.use_ans {
                 // Multi-group with squeeze + tree learning: best compression
-                self.encode_modular_multi_group_squeeze_with_tree(image, writer)?;
+                self.encode_modular_multi_group_squeeze_with_tree(image, writer, stop)?;
             } else {
                 // Multi-group with squeeze: gradient predictor, single context
-                self.encode_modular_multi_group_squeeze(image, writer)?;
+                self.encode_modular_multi_group_squeeze(image, writer, stop)?;
             }
         } else {
             // Multi-group: separate TOC entries for global and each group
-            self.encode_modular_multi_group(image, writer)?;
+            self.encode_modular_multi_group(image, writer, stop)?;
         }
 
         Ok(())
@@ -586,8 +596,9 @@ impl FrameEncoder {
         &self,
         image: &ModularImage,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
-        self.encode_modular_multi_group_inner(image, writer, None)
+        self.encode_modular_multi_group_inner(image, writer, None, stop)
     }
 
     /// Inner multi-group encoder that accepts optional patches.
@@ -597,7 +608,15 @@ impl FrameEncoder {
         image: &ModularImage,
         writer: &mut BitWriter,
         patches: Option<&crate::vardct::patches::PatchesData>,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        // Cooperative cancellation entry checkpoint for the lossless/modular
+        // heavy path (#77 cross-codec cancellation note). Further checkpoints
+        // sit before MA tree learning and per group below. No-op / byte-
+        // identical under an `Unstoppable` token / `None`.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
         let num_groups = self.num_groups();
         let num_lf_groups = self.num_lf_groups();
         let num_passes = 1;
@@ -988,6 +1007,13 @@ impl FrameEncoder {
         // section.rs (both now derive from `modular_hf_stream_id_base`).
         let per_group_id_offset: u32 =
             super::section::modular_hf_stream_id_base(num_lf_groups as u32);
+        // Cooperative cancellation checkpoint BEFORE the parallel per-group
+        // encoding (residual collection + MA-tree-driven ANS — the dominant
+        // lossless cost). Polled here (sequentially) rather than inside the
+        // rayon closure to avoid a `Send + Sync` bound on the token.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
         // PassGroup sections — parallelizable (each group writes to its own BitWriter)
         let pass_group_data: Vec<Vec<u8>> =
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
@@ -1067,7 +1093,13 @@ impl FrameEncoder {
         &self,
         image: &ModularImage,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        // Coarse cancellation at the multi-group lossy-palette boundary.
+        // No-op / byte-identical under `None` or an `Unstoppable` token.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
         use super::encode::{
             predict_pixel_with_id, resolve_fixed_predictor_for_simple_path,
             write_gradient_tree_tokens, write_hybrid_data_histogram, write_predictor_tree_tokens,
@@ -1108,7 +1140,7 @@ impl FrameEncoder {
             Some(r) => r,
             None => {
                 // Lossy palette not beneficial, fall back to standard multi-group
-                return self.encode_modular_multi_group_inner(image, writer, None);
+                return self.encode_modular_multi_group_inner(image, writer, None, None);
             }
         };
 
@@ -1363,7 +1395,13 @@ impl FrameEncoder {
         &self,
         image: &ModularImage,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        // Coarse cancellation at the multi-group squeeze boundary.
+        // No-op / byte-identical under `None` or an `Unstoppable` token.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
         use super::encode::{
             predict_pixel_with_id, resolve_fixed_predictor_for_simple_path,
             write_gradient_tree_tokens, write_predictor_tree_tokens, write_rct_transform,
@@ -1779,7 +1817,13 @@ impl FrameEncoder {
         &self,
         image: &ModularImage,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        // Coarse cancellation at the multi-group squeeze+tree boundary.
+        // No-op / byte-identical under `None` or an `Unstoppable` token.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
         use super::encode::{write_rct_transform, write_squeeze_transform, write_tree};
         use super::rct::{RctType, forward_rct};
         use super::squeeze::{apply_squeeze, default_squeeze_params};
@@ -2281,6 +2325,13 @@ impl FrameEncoder {
         // Step 9: HfGlobal is empty for modular
         let hf_global_data: Vec<u8> = Vec::new();
 
+        // Coarse cancellation after tree learning, before the per-group
+        // parallel encode (mirrors `encode_modular_multi_group_inner`).
+        // No-op / byte-identical under `None` or an `Unstoppable` token.
+        if let Some(s) = stop {
+            s.check().map_err(|_| crate::error::Error::Cancelled)?;
+        }
+
         // Step 10: Write PassGroup sections — parallelizable
         let pass_group_data: Vec<Vec<u8>> =
             crate::parallel::parallel_map_result(num_groups, |g| {
@@ -2420,7 +2471,7 @@ impl FrameEncoder {
             }
         } else {
             // Multi-group: use the standard multi-group encoder (no patches in body)
-            self.encode_modular_multi_group_inner(image, writer, None)?;
+            self.encode_modular_multi_group_inner(image, writer, None, None)?;
         }
 
         Ok(())
@@ -2648,7 +2699,7 @@ mod tests {
         let color_encoding = ColorEncoding::srgb();
 
         encoder
-            .encode_modular(&image, &color_encoding, &mut writer)
+            .encode_modular(&image, &color_encoding, &mut writer, None)
             .unwrap();
 
         let bytes = writer.finish_with_padding();
@@ -2680,7 +2731,7 @@ mod tests {
         let color_encoding = ColorEncoding::srgb();
 
         encoder
-            .encode_modular(&image, &color_encoding, &mut writer)
+            .encode_modular(&image, &color_encoding, &mut writer, None)
             .unwrap();
 
         let bytes = writer.finish_with_padding();

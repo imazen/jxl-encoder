@@ -833,6 +833,9 @@ impl VarDctEncoder {
         // condition `iters_override.unwrap_or(self.butteraugli_iters)
         // > 0` so the buttloop isn't entered with iters=0.
         iters_override: Option<u32>,
+        // Cooperative cancellation token, polled per butteraugli iteration
+        // inside `butteraugli_refine_quant_field_inner_seed`.
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<DistanceParams> {
         use crate::budget::MemoryBudget;
 
@@ -1758,6 +1761,7 @@ impl VarDctEncoder {
                 // cvvdp-fork Phase 4: metric-direction target for the
                 // inner loop's bad-block + accept-bound + diff_raw math.
                 effective_metric_target_distance,
+                stop,
             )?;
             outcomes.push(outcome);
         }
@@ -1940,6 +1944,8 @@ impl VarDctEncoder {
         // file, not the metric target. See
         // `docs/archive/RFC_CVVDP_PHASE4_BRIEF.md` Step 4.
         effective_metric_target_distance: f32,
+        // Cooperative cancellation token, polled once per butteraugli iteration.
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<SeedOutcome> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
@@ -1977,6 +1983,13 @@ impl VarDctEncoder {
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
         // i=iters: SetQuantField + roundtrip + compare + break
         for iter in 0..iters + 1 {
+            // Cooperative cancellation checkpoint, per butteraugli iteration —
+            // this loop (a full reconstruct + metric compare per iter) is the
+            // slowest VarDCT phase at effort 8+. Byte-identical under an
+            // `Unstoppable` token / `None`.
+            if let Some(s) = stop {
+                s.check().map_err(|_| crate::error::Error::Cancelled)?;
+            }
             // Step 1: SetQuantField — recompute global_scale from float field,
             // then convert float → u8.
             // (libjxl: quantizer.SetQuantField(initial_quant_dc, quant_field, &raw_quant_field))

@@ -54,10 +54,23 @@ fn read_jpeg_for_recompress(
     let cap = limits
         .and_then(|l| l.max_memory_bytes())
         .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS);
-    let budget = MemoryBudget::new(cap);
+    let fallible = limits.is_some_and(|l| l.fallible_alloc());
+    let budget = MemoryBudget::with_alloc_policy(cap, fallible);
     let jpeg =
         read_jpeg_with_stop(jpeg_bytes, max_pixels, stop, Some(&budget)).map_err(|e| match e {
             JpegError::Cancelled => crate::error::Error::Cancelled,
+            // A budget rejection is a resource limit, not malformed input — map
+            // it to the limit variant rather than funnelling it into
+            // `InvalidInput` (which wrongly implies a bad JPEG). The structured
+            // fields were stringified crossing the public `JpegError` boundary,
+            // but we own the budget here, so reconstruct from its live state:
+            // `cap`/`used` are exact at the point of failure; the failing
+            // `requested` amount is not recoverable across the boundary (0).
+            JpegError::ResourceLimit(_) => crate::error::Error::AllocationLimit {
+                requested: 0,
+                used: budget.used(),
+                cap: budget.cap(),
+            },
             other => crate::error::Error::InvalidInput(alloc::format!("JPEG parse: {other:?}")),
         })?;
     Ok((jpeg, budget))

@@ -57,30 +57,55 @@
   `Limits::max_memory_bytes` (the lossless 8 GiB default when unset) and
   threads it through both phases: the per-component `i16` coefficient buffers
   are reserved before allocation in `read_jpeg_with_stop` (the largest
-  attacker-controlled decode buffer), and a conservative encode working-set
-  estimate (~32 B/DCT-coefficient: i32 quant arrays + the AC token stream
-  held twice during clustering + output) is reserved up front in
-  `encode_jpeg_to_jxl_inner` so an oversized frame is rejected
-  (`EncodeError::LimitExceeded`, via the new `JpegError::ResourceLimit`)
-  **before** the expensive token collection / histogram clustering. Default-on
-  for every transcode entry point (`encode_jpeg_transcode*`), like the pixel
-  path. The PreserveJxl `encode_jpeg_recompress_{,auto_,planar_}codestream`
-  free functions gain `limits: Option<&Limits>` + `stop: Option<&dyn Stop>`
-  parameters (the encode estimate is an RAII reservation released between the
-  lossless-floor and lossy encodes so their working sets don't double-count).
-  Byte-identical for all real input under the default cap. Verified by
-  `test_jpeg_transcode_memory_budget` + `test_jpeg_recompress_limits_and_stop`;
-  the 14 byte-exact JBRD reconstruction / transcode-roundtrip gates still pass.
-  This closes the remaining #77 P1 follow-ups.
+  attacker-controlled decode buffer), and a **measured** encode working-set
+  estimate is reserved as an RAII guard up front in `encode_jpeg_to_jxl_inner`
+  so an oversized frame is rejected (`EncodeError::LimitExceeded`, via the new
+  `JpegError::ResourceLimit`) **before** the expensive token collection /
+  histogram clustering. The per-coefficient constant is `heaptrack`-calibrated,
+  not guessed: on real photos the transcode peak heap is ≤ 44.1 B/DCT-coeff
+  (wrenches, the worst of 4 corpus images; effort-independent, e7 == e9), so
+  `ENCODE_BYTES_PER_COEFF = 56` carries a ~1.3× margin over the worst measured
+  cell (provenance `benchmarks/transcode_mem_2026-06-18.tsv`, harness
+  `examples/transcode_mem_probe.rs`). An earlier per-site reservation scheme
+  under-counted (≈ 46 MB reserved vs 82 MB real peak on wrenches — the diffuse
+  `AccumulatedAnsData` clustering allocations were unbudgeted), which is why the
+  whole-working-set measured estimate replaced it. Default-on for every
+  transcode entry point (`encode_jpeg_transcode*`), like the pixel path. The
+  PreserveJxl `encode_jpeg_recompress_{,auto_,planar_}codestream` free functions
+  gain `limits: Option<&Limits>` + `stop: Option<&dyn Stop>` parameters (the
+  encode estimate is an RAII reservation released between the lossless-floor and
+  lossy encodes so their working sets don't double-count), and a budget
+  rejection on their decode side now maps to `Error::AllocationLimit`
+  (reconstructed from the owned budget's live `cap`/`used`) instead of being
+  funnelled into a misleading `InvalidInput`. Byte-identical for all real input
+  under the default cap. Verified by `test_jpeg_transcode_memory_budget` +
+  `test_jpeg_recompress_limits_and_stop`; the 14 byte-exact JBRD reconstruction
+  / transcode-roundtrip gates still pass. This closes the remaining #77 P1
+  follow-ups.
+- **Runtime-configurable fallible allocation (`Limits::with_fallible_alloc`).**
+  The choice between fast `vec!`/`Vec::with_capacity` (a single `calloc`,
+  trusted input) and graceful `try_reserve` (returns `Error::OutOfMemory`
+  instead of aborting on a genuine OOM, untrusted input) is now a **runtime**
+  toggle on `Limits` rather than a compile-time decision — the JPEG-transcode
+  coefficient + working-set allocations select the mechanism from the
+  budget's policy (`MemoryBudget::is_fallible`). Defaults to infallible
+  (fast); a hostile-input proxy opts into `with_fallible_alloc(true)`. The
+  toggle changes the allocation *mechanism* only, never the output bytes —
+  pinned by `test_jpeg_transcode_fallible_alloc_toggle` (both modes
+  byte-identical on success, both honour the budget under a tight cap).
 - **Checked SOF-derived overflow in the JPEG coefficient parser (#77 item 3).**
   `extract_coefficients_zenjpeg` computed `width_in_blocks * height_in_blocks`
   (and `* 64`) as unchecked `u32` / `usize` on attacker-controlled SOF dims —
   a crafted SOF could wrap the count, size `comp.coeffs` short, and make the
   zigzag copy read out of bounds. Now computed with checked `usize` arithmetic
-  (a malformed SOF errors), and the SOF-derived count is reconciled against
-  zenjpeg's actually-decoded coefficient length before the copy. The `jbrd.rs`
-  `write_u32_jbrd` `unreachable!` on the write path is replaced with a typed
-  `Error::InvalidInput`.
+  via the pure `checked_coeff_len` helper (a malformed SOF errors; the wrap only
+  bites 32-bit `usize` — i686 / wasm32 — where `*_in_blocks * 64` overflows at
+  the largest representable JPEG), and the SOF-derived count is reconciled
+  against zenjpeg's actually-decoded coefficient length before the copy. The
+  `jbrd.rs` `write_u32_jbrd` `unreachable!` on the write path is replaced with a
+  typed `Error::InvalidInput`. Both guards are pinned host-independently by
+  `checked_coeff_len_guards_overflow` (parse) and
+  `write_u32_jbrd_no_selector_match_is_typed_error` (jbrd).
 
 ### Fixed
 - **Cooperative cancellation now aborts on every VarDCT entropy path (#77
@@ -92,6 +117,18 @@
   checkpoint at the top of `encode_inner` that fires before any encode work on
   **all** paths; the per-group checkpoints remain for mid-encode responsiveness.
   Byte-identical under `Unstoppable` / `None`.
+- **Full cross-codec cancellation coverage — butteraugli loop + modular
+  lossless (#77 cancellation follow-up).** The cooperative `Stop` token is now
+  threaded through the two heaviest non-JPEG encode paths that previously could
+  not be aborted mid-work: the effort-8+ butteraugli quantization loop
+  (`butteraugli_refine_quant_field*`, polled per iteration) and the modular
+  (lossless) `FrameEncoder` — `encode_modular` / `encode_modular_with_patches` /
+  the multi-group inner + lossy-palette + squeeze + squeeze-with-tree variants,
+  polled at the encode boundary and again before each heavy per-group
+  `parallel_map_result` (after tree learning). Coarse-grained (boundary /
+  per-iteration, not per-coefficient) and byte-identical under `Unstoppable` /
+  `None`, verified by `test_stop_cancels_lossy_e8_buttloop` +
+  `test_stop_cancels_lossless_multigroup`.
 
 ### Added
 - **Calibrated peak-memory estimation (`heuristics` module + per-config
