@@ -338,6 +338,17 @@ path = "examples/hdr_tree_budget_probe.rs"
 required-features = ["__expert"]
 
 [dev-dependencies]
+# Transitive-version pin (#82), NOT used directly. `brotli` (a dev-dep via
+# `zenjxl-decoder`, and our own optional `brotli-metadata` dep) pulls
+# `alloc-stdlib`, which provides `StandardAlloc: alloc_no_stdlib::Allocator`.
+# `alloc-stdlib 0.2.3` loosened its `alloc-no-stdlib` range to `>=2.0.4, <4.0`,
+# so a fresh (non-`--locked`) resolve pulled `alloc-no-stdlib 3.0.0` for
+# `StandardAlloc` while `brotli` stayed on the 2.x trait → E0277 trait mismatch
+# that broke EVERY test build (byte-lock gate down ~2026-06-14). `0.2.4`
+# re-tightened the range to `<3.0`. Pinning to the `0.2.4`+ line (and thereby
+# excluding the 3.x-pulling `0.3.x`) keeps `alloc-no-stdlib` on 2.x in
+# Cargo.toml — durable regardless of `--locked` or future upstream drift.
+alloc-stdlib = "0.2.4"
 image = "0.25"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
 jxl = "0.4.0"

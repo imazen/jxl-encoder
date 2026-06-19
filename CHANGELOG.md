@@ -189,6 +189,21 @@
   `write_u32_jbrd_no_selector_match_is_typed_error` (jbrd).
 
 ### Fixed
+- **Test builds: pin `alloc-stdlib` so `alloc-no-stdlib` stays on 2.x (#82).**
+  `brotli` (a dev-dep via `zenjxl-decoder`, plus our optional `brotli-metadata`
+  dep) provides `impl BrotliAlloc for StandardAlloc`, where `StandardAlloc`
+  comes from `alloc-stdlib` and impls `alloc_no_stdlib::Allocator`. When
+  `alloc-stdlib 0.2.3` loosened its `alloc-no-stdlib` range to `>=2.0.4, <4.0`,
+  a fresh (non-`--locked`) resolve pulled `alloc-no-stdlib 3.0.0` for
+  `StandardAlloc` while `brotli` stayed on the 2.x trait → `E0277` mismatch
+  that broke **every** test build (the `hash_lock_features` / byte-lock gate
+  was down from ~2026-06-14). Upstream is now fixed (`alloc-stdlib 0.2.4`
+  re-tightened to `<3.0`; `brotli 8.0.4` added the same caps), but the durable
+  guard is a Cargo.toml constraint, not the lockfile: `jxl-encoder`'s
+  dev-dependencies now pin `alloc-stdlib = "0.2.4"`, which keeps
+  `alloc-no-stdlib` on 2.x even under a fresh `--locked`-less resolve and
+  blocks the 3.x-pulling `0.3.x`. Verified: `cargo tree -i alloc-no-stdlib`
+  shows only `2.0.4`, and `cargo test -p jxl-encoder --lib --no-run` compiles.
 - **Cooperative cancellation now aborts on every VarDCT entropy path (#77
   item 2 / #81).** `#81` wired per-DC/AC-group `Stop` checkpoints into
   `VarDctEncoder::encode_inner`, but they lived only in the multi-group
