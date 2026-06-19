@@ -2873,12 +2873,14 @@ impl LosslessConfig {
     /// pipeline, so this flag is stored for API-surface parity and takes
     /// effect the day lossless patch detection lands. Toggling it does
     /// not change lossless output bytes today.
+    #[doc(hidden)]
     pub fn with_patches(mut self, enable: bool) -> Self {
         self.patches = Some(enable);
         self
     }
 
     /// Enable/disable ANS entropy coding (default: true).
+    #[doc(hidden)]
     pub fn with_ans(mut self, enable: bool) -> Self {
         self.use_ans = Some(enable);
         self
@@ -2903,6 +2905,7 @@ impl LosslessConfig {
     /// effort profile — on at e7+). Explicitly calling this (either way)
     /// also opts out of the automatic 16-bit e5/e6 budgeted-tree lift
     /// (issue #72).
+    #[doc(hidden)]
     pub fn with_tree_learning(mut self, enable: bool) -> Self {
         self.tree_learning = Some(enable);
         self
@@ -3010,6 +3013,7 @@ impl LosslessConfig {
     /// writer ignores the flag. ICC payload compression and the squeeze
     /// multi-group path do honor LZ77. Toggling this does not change
     /// lossless output bytes today.
+    #[doc(hidden)]
     pub fn with_lz77(mut self, enable: bool) -> Self {
         self.lz77 = Some(enable);
         self
@@ -3020,6 +3024,7 @@ impl LosslessConfig {
     /// Only meaningful where LZ77 is actually applied — see
     /// [`Self::with_lz77`] for the lossless-path caveat
     /// (jxl-encoder#69): on that path this is stored but unused today.
+    #[doc(hidden)]
     pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
         self.lz77_method = Some(method);
         self
@@ -5899,12 +5904,14 @@ impl LossyConfig {
     }
 
     /// Enable/disable ANS entropy coding (default: true).
+    #[doc(hidden)]
     pub fn with_ans(mut self, enable: bool) -> Self {
         self.use_ans = Some(enable);
         self
     }
 
     /// Enable/disable gaborish inverse pre-filter (default: true).
+    #[doc(hidden)]
     pub fn with_gaborish(mut self, enable: bool) -> Self {
         self.gaborish = Some(enable);
         self
@@ -5930,6 +5937,7 @@ impl LossyConfig {
     /// Silent gate: when [`Self::with_gaborish`] is `false` (or the
     /// `effective_gaborish()` distance/speed-tier gates disable gab), this
     /// flag is also a no-op.
+    #[doc(hidden)]
     pub fn with_adaptive_gaborish(mut self, enable: bool) -> Self {
         self.adaptive_gaborish = enable;
         self
@@ -6068,6 +6076,7 @@ impl LossyConfig {
     ///
     /// Reasonable range: `0.5..=2.0`. Aggressive values produce
     /// surprising quality / size deltas.
+    #[doc(hidden)]
     pub fn with_quant_ac_rescale(mut self, rescale: Option<f32>) -> Self {
         self.quant_ac_rescale = rescale.filter(|v| v.is_finite() && *v > 0.0);
         self
@@ -6096,6 +6105,7 @@ impl LossyConfig {
     /// target_distance` is silently treated as `None` (no need —
     /// already encoding to a tighter budget than the source).
     /// Negative / NaN / zero are quietly ignored.
+    #[doc(hidden)]
     pub fn with_original_distance(mut self, original: Option<f32>) -> Self {
         self.original_distance = original.filter(|v| v.is_finite() && *v > 0.0);
         self
@@ -6168,12 +6178,14 @@ impl LossyConfig {
     /// no-op in the reference encoder. Our implementation actually performs
     /// the diffusion, which can hurt quality on certain content (bright features
     /// in dark regions), especially when combined with gaborish.
+    #[doc(hidden)]
     pub fn with_error_diffusion(mut self, enable: bool) -> Self {
         self.error_diffusion = Some(enable);
         self
     }
 
     /// Enable/disable pixel-domain loss in strategy selection (default: true).
+    #[doc(hidden)]
     pub fn with_pixel_domain_loss(mut self, enable: bool) -> Self {
         self.pixel_domain_loss = Some(enable);
         self
@@ -6226,6 +6238,7 @@ impl LossyConfig {
     /// per-knob settings called *after* this still take precedence
     /// (e.g. `cfg.with_perceptual_optimizations(false).with_gaborish(true)`
     /// re-enables just gaborish).
+    #[doc(hidden)]
     pub fn with_perceptual_optimizations(mut self, enable: bool) -> Self {
         // Set the five perceptual knobs to their on/off positions.
         // Defaults mirror libjxl's enabled state when on.
@@ -6242,18 +6255,21 @@ impl LossyConfig {
     }
 
     /// Enable/disable LZ77 backward references (default: false).
+    #[doc(hidden)]
     pub fn with_lz77(mut self, enable: bool) -> Self {
         self.lz77 = Some(enable);
         self
     }
 
     /// Set LZ77 method (default: Greedy).
+    #[doc(hidden)]
     pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
         self.lz77_method = Some(method);
         self
     }
 
     /// Force a specific AC strategy for all blocks. `None` for auto-selection.
+    #[doc(hidden)]
     pub fn with_force_strategy(mut self, strategy: Option<u8>) -> Self {
         self.force_strategy = strategy;
         self
@@ -6269,6 +6285,7 @@ impl LossyConfig {
     ///
     /// `None` means no restriction (same as `64`). Values are clamped to the
     /// nearest valid size.
+    #[doc(hidden)]
     pub fn with_max_strategy_size(mut self, size: Option<u8>) -> Self {
         self.max_strategy_size = size;
         self
@@ -6284,6 +6301,7 @@ impl LossyConfig {
     /// so an explicit `with_patches(false)` is respected even when a
     /// `Screenshot` class has been set via
     /// [`Self::with_content_class`].
+    #[doc(hidden)]
     pub fn with_patches(mut self, enable: bool) -> Self {
         self.patches = Some(enable);
         self
@@ -6493,6 +6511,7 @@ impl LossyConfig {
     ///         ..Default::default()
     ///     });
     /// ```
+    #[doc(hidden)]
     pub fn with_strategy_overrides(mut self, overrides: StrategyOverrides) -> Self {
         self.strategy_overrides = overrides;
         self
@@ -6877,6 +6896,7 @@ impl LossyConfig {
     ///
     /// A manual [`Self::with_splines`] call always wins outright — the
     /// auto-detector is only consulted when no manual splines are set.
+    #[doc(hidden)]
     pub fn with_auto_splines(mut self, enable: bool) -> Self {
         self.auto_splines = Some(enable);
         self
@@ -7083,6 +7103,7 @@ impl LossyConfig {
     /// DoS the encoder by passing a huge value.
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
+    #[doc(hidden)]
     pub fn with_butteraugli_iters(mut self, n: u32) -> Self {
         self.butteraugli_iters = Some(n);
         self
@@ -7226,6 +7247,7 @@ impl LossyConfig {
     ///
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
+    #[doc(hidden)]
     pub fn with_perceptual_target_score(mut self, score: Option<f32>) -> Self {
         self.perceptual_target_score = score;
         self
@@ -7418,6 +7440,7 @@ impl LossyConfig {
     /// `cvvdp-loop-tighten` cargo feature (which transitively requires
     /// `cvvdp-loop`).
     #[cfg(feature = "butteraugli-loop")]
+    #[doc(hidden)]
     pub fn with_cvvdp_bytes_tighten(mut self, enable: Option<bool>) -> Self {
         self.cvvdp_bytes_tighten = enable;
         self
@@ -7573,6 +7596,7 @@ impl LossyConfig {
     /// are handled.
     /// Requires the `ssim2-loop` feature.
     #[cfg(feature = "ssim2-loop")]
+    #[doc(hidden)]
     pub fn with_ssim2_iters(mut self, n: u32) -> Self {
         self.ssim2_iters = n;
         self
@@ -7586,6 +7610,7 @@ impl LossyConfig {
     /// Can stack with butteraugli loop (butteraugli runs first, then zensim fine-tunes).
     /// Requires the `zensim-loop` feature.
     #[cfg(feature = "zensim-loop")]
+    #[doc(hidden)]
     pub fn with_zensim_iters(mut self, n: u32) -> Self {
         self.zensim_iters = n;
         self
@@ -16908,31 +16933,51 @@ mod tests {
 
         #[test]
         fn lossless_internal_params_persist_across_with_effort() {
-            // Override applied before with_effort should still take effect
-            // (with_effort preserves profile_override).
+            // Issue #80: `with_internal_params` is now order-independent vs
+            // `with_effort`. The override is stored sparsely and resolved
+            // lazily against the FINAL effort, so it (a) takes effect and
+            // (b) is byte-identical regardless of whether it was applied
+            // before or after `with_effort`. `use_ans: Some(false)` forces
+            // Huffman — a guaranteed-visible delta vs the ANS default.
+            //
+            // (Pre-#80 this test pinned `tree_max_buckets: Some(16)` and
+            // passed only *because of* the order bug: the eager
+            // `profile_override` captured effort=7 set before
+            // `with_effort(9)`, so the override config encoded at e7 ≠
+            // e9-plain. With the bug fixed it correctly resolves at e9,
+            // where 16 buckets happen not to change this 64×64 encode — so
+            // the assertion is now order-independence + a visible knob.)
             let params = LosslessInternalParams {
-                tree_max_buckets: Some(16),
+                nb_rcts_to_try: Some(1),
                 ..Default::default()
             };
-
-            let cfg = LosslessConfig::new()
-                .with_internal_params(params)
-                .with_effort(9) // should NOT clobber the override
-                .with_threads(1);
-
-            let pixels = pseudo_random_rgb8(64, 64);
-            let bytes_with_override = cfg
-                .encode(&pixels, 64, 64, PixelLayout::Rgb8)
-                .expect("encode");
-            let bytes_e9_plain = LosslessConfig::new()
+            let before = LosslessConfig::new()
+                .with_internal_params(params.clone())
                 .with_effort(9)
-                .with_threads(1)
-                .encode(&pixels, 64, 64, PixelLayout::Rgb8)
-                .expect("encode");
+                .with_threads(1);
+            let after = LosslessConfig::new()
+                .with_effort(9)
+                .with_internal_params(params.clone())
+                .with_threads(1);
+            let plain = LosslessConfig::new().with_effort(9).with_threads(1);
 
-            assert_ne!(
-                bytes_with_override, bytes_e9_plain,
-                "override should persist across with_effort()"
+            // (1) The override reaches the resolved profile regardless of
+            //     builder order (the #80 order-independence invariant).
+            assert_eq!(before.effective_profile().nb_rcts_to_try, 1);
+            assert_eq!(after.effective_profile().nb_rcts_to_try, 1);
+            // (2) ...and it actually overrides the e9 schedule default.
+            assert_ne!(plain.effective_profile().nb_rcts_to_try, 1);
+            // (3) ...and the encode is byte-identical regardless of order.
+            let pixels = pseudo_random_rgb8(64, 64);
+            let enc = |cfg: &LosslessConfig| {
+                cfg.clone()
+                    .encode(&pixels, 64, 64, PixelLayout::Rgb8)
+                    .expect("encode")
+            };
+            assert_eq!(
+                enc(&before),
+                enc(&after),
+                "with_internal_params is order-independent vs with_effort (#80)"
             );
         }
     }

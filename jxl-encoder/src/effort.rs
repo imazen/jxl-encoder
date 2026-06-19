@@ -2867,26 +2867,6 @@ pub struct LossyInternalParams {
     /// per-effort defaults and the seed-selection rule. Setting this to
     /// `Some(1)` reverts to libjxl's single-seed loop even at e10/e11.
     pub lossy_search_seeds: Option<u8>,
-
-    // ── Effort-derived knobs (issue #80 / sweep completeness) ──────────
-    // Mirror the `LossyConfig` Option fields so the FULL knob surface is
-    // sweepable through one struct. `None` inherits the effort schedule.
-    /// Override `use_ans` (ANS vs Huffman entropy coding).
-    pub use_ans: Option<bool>,
-    /// Override `gaborish` (inverse-Gabor pre-filter).
-    pub gaborish: Option<bool>,
-    /// Override `error_diffusion` in AC quantization.
-    pub error_diffusion: Option<bool>,
-    /// Override `pixel_domain_loss` in AC strategy selection.
-    pub pixel_domain_loss: Option<bool>,
-    /// Override `lz77` backward-reference coding.
-    pub lz77: Option<bool>,
-    /// Override the `lz77_method`.
-    pub lz77_method: Option<Lz77Method>,
-    /// Override `patches` (dictionary) detection.
-    pub patches: Option<bool>,
-    /// Override the butteraugli quantization-loop iteration count.
-    pub butteraugli_iters: Option<u32>,
 }
 
 /// Picker / sweep override knobs for the **lossless (modular)** encode path.
@@ -3078,18 +3058,6 @@ pub struct LosslessInternalParams {
     /// untouched; only the candidate splitval shortlist the tree learner
     /// chooses from is refined.
     pub lloyd_max_buckets: Option<bool>,
-
-    // ── Effort-derived knobs (sweep completeness) ─────────────────────
-    /// Override `use_ans`.
-    pub use_ans: Option<bool>,
-    /// Override `tree_learning` (MA-tree context modelling).
-    pub tree_learning: Option<bool>,
-    /// Override `lz77`.
-    pub lz77: Option<bool>,
-    /// Override the `lz77_method`.
-    pub lz77_method: Option<Lz77Method>,
-    /// Override `patches`.
-    pub patches: Option<bool>,
 }
 
 #[cfg(feature = "__expert")]
@@ -3112,14 +3080,6 @@ impl LossyInternalParams {
             ans_histogram_strategy_vardct,
             k_ac_quant,
             lossy_search_seeds,
-            use_ans,
-            gaborish,
-            error_diffusion,
-            pixel_domain_loss,
-            lz77,
-            lz77_method,
-            patches,
-            butteraugli_iters,
         } = self;
         if let Some(v) = try_dct16 {
             profile.try_dct16 = v;
@@ -3166,30 +3126,6 @@ impl LossyInternalParams {
         if let Some(v) = lossy_search_seeds {
             profile.lossy_search_seeds = v;
         }
-        if let Some(v) = use_ans {
-            profile.use_ans = v;
-        }
-        if let Some(v) = gaborish {
-            profile.gaborish = v;
-        }
-        if let Some(v) = error_diffusion {
-            profile.error_diffusion = v;
-        }
-        if let Some(v) = pixel_domain_loss {
-            profile.pixel_domain_loss = v;
-        }
-        if let Some(v) = lz77 {
-            profile.lz77 = v;
-        }
-        if let Some(v) = lz77_method {
-            profile.lz77_method = v;
-        }
-        if let Some(v) = patches {
-            profile.patches = v;
-        }
-        if let Some(v) = butteraugli_iters {
-            profile.butteraugli_iters = v;
-        }
     }
 }
 
@@ -3215,11 +3151,6 @@ impl LosslessInternalParams {
             tree_parallel_small_image_fallback,
             tree_learn_seeds,
             lloyd_max_buckets,
-            use_ans,
-            tree_learning,
-            lz77,
-            lz77_method,
-            patches,
         } = self;
         if let Some(v) = nb_rcts_to_try {
             profile.nb_rcts_to_try = v;
@@ -3271,21 +3202,6 @@ impl LosslessInternalParams {
         }
         if let Some(v) = lloyd_max_buckets {
             profile.lloyd_max_buckets = v;
-        }
-        if let Some(v) = use_ans {
-            profile.use_ans = v;
-        }
-        if let Some(v) = tree_learning {
-            profile.tree_learning = v;
-        }
-        if let Some(v) = lz77 {
-            profile.lz77 = v;
-        }
-        if let Some(v) = lz77_method {
-            profile.lz77_method = v;
-        }
-        if let Some(v) = patches {
-            profile.patches = v;
         }
     }
 }

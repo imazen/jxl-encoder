@@ -233,6 +233,29 @@ jobs:
   # ==========================================================================
   # Clippy (x64 + aarch64, default + zensim-loop features)
   # ==========================================================================
+  # ==========================================================================
+  # Expert-feature tests: the `__expert` / `__internals` gated surface
+  # (the `sweep` module's unique-config tests, `internal_params`
+  # propagation, the W44-194 divergence-table drift test + Libjxl
+  # per-cell byte-lock). These are gated out of the default build, so the
+  # other jobs do not cover them.
+  # ==========================================================================
+  expert-tests:
+    name: Expert tests (__expert)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
+      - name: Test (__expert __internals)
+        run: cargo test -p jxl-encoder --features "__expert __internals" --release
+
   clippy:
     name: Clippy (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

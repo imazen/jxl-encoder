@@ -17,8 +17,8 @@
 //! profile, first-seen order preserved.
 //!
 //! The sweep surface is [`LossyInternalParams`] / [`LosslessInternalParams`]
-//! (the full sweepable struct — every effort-derived and cost-model knob is
-//! reachable through it). Resolution mirrors the encoder exactly: a base
+//! (the full sweepable struct — every cost-model, AC-strategy, and
+//! modular-tree knob is reachable through it). Resolution mirrors the encoder exactly: a base
 //! schedule from `(effort, mode)` with the sparse params applied on top
 //! (`apply_to`), so a unique profile here is a unique encode in production.
 //!
@@ -422,7 +422,6 @@ impl LosslessSweep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entropy_coding::Lz77Method;
 
     #[test]
     fn fingerprint_stable_and_distinguishing() {
@@ -475,15 +474,15 @@ mod tests {
     #[test]
     fn unique_lossy_configs_dedups() {
         let same = LossyInternalParams {
-            lz77_method: Some(Lz77Method::Greedy),
+            try_dct64: Some(true),
             ..Default::default()
         };
         let also_same = LossyInternalParams {
-            lz77_method: Some(Lz77Method::Greedy),
+            try_dct64: Some(true),
             ..Default::default()
         };
         let diff = LossyInternalParams {
-            lz77_method: Some(Lz77Method::Optimal),
+            try_dct64: Some(false),
             ..Default::default()
         };
         let uniques = unique_lossy_configs(9, EncoderMode::Reference, [same, also_same, diff]);
