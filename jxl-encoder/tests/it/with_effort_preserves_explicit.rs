@@ -21,7 +21,7 @@
 //! stay byte-identical — proven separately by the hash-lock suite; here we
 //! just pin the default-adoption behaviour at the API level).
 
-use jxl_encoder::{LosslessConfig, LossyConfig, Lz77Method};
+use jxl_encoder::{ContainerMode, LosslessConfig, LossyConfig, Lz77Method, RctType};
 
 // ----------------------------------------------------------------------
 // LossyConfig
@@ -267,5 +267,272 @@ fn lossless_with_lz77_method_survives_with_effort_both_orders() {
             .lz77_method(),
         Lz77Method::Optimal,
         "with_lz77_method after with_effort must be preserved"
+    );
+}
+
+// ----------------------------------------------------------------------
+// Issue #80 FOLLOW-UP: fixed-default caller-preference fields.
+//
+// PR #90 (above) covered the effort-DERIVED fields via `*_explicit`
+// flags. These fields take a FIXED literal in `new_with_effort` /
+// `with_effort_level` (not `profile.X`), so `with_effort` now preserves
+// the caller's value UNCONDITIONALLY. Each test pins a value that
+// differs from the construction default and asserts it survives
+// `with_effort` in BOTH chain orders.
+// ----------------------------------------------------------------------
+
+// ---- LossyConfig fixed-default fields ----
+
+#[test]
+fn lossy_with_threads_survives_with_effort_both_orders() {
+    // default threads = 0; pick 8.
+    assert_eq!(
+        LossyConfig::new(1.0)
+            .with_threads(8)
+            .with_effort(7)
+            .threads(),
+        8,
+        "with_threads(8) before with_effort must be preserved (#80 follow-up)"
+    );
+    assert_eq!(
+        LossyConfig::new(1.0)
+            .with_effort(7)
+            .with_threads(8)
+            .threads(),
+        8,
+        "with_threads(8) after with_effort must be preserved"
+    );
+    // Untouched common path keeps the fixed default (0) — byte-identical.
+    assert_eq!(
+        LossyConfig::new(1.0).with_effort(7).threads(),
+        0,
+        "untouched config keeps the fixed threads default (0)"
+    );
+}
+
+#[test]
+fn lossy_with_resampling_survives_with_effort_both_orders() {
+    // default resampling = 1; pick 2. resampling carries an `_explicit`
+    // companion (gates auto-resample), so this uses the *_explicit pattern.
+    assert_eq!(
+        LossyConfig::new(1.0)
+            .with_resampling(2)
+            .with_effort(7)
+            .resampling(),
+        2,
+        "with_resampling(2) before with_effort must be preserved (#80 follow-up)"
+    );
+    assert_eq!(
+        LossyConfig::new(1.0)
+            .with_effort(7)
+            .with_resampling(2)
+            .resampling(),
+        2,
+        "with_resampling(2) after with_effort must be preserved"
+    );
+    // The `_explicit` flag itself must survive too: an explicit
+    // `with_resampling(1)` suppresses auto-resample at d>=10, so the
+    // EFFECTIVE factor must stay 1 (not auto-bumped to 2) after with_effort.
+    assert_eq!(
+        LossyConfig::new(12.0)
+            .with_resampling(1)
+            .with_effort(7)
+            .effective_resampling(),
+        1,
+        "explicit with_resampling(1) must keep suppressing auto-resample at d>=10 after with_effort (#80 follow-up)"
+    );
+    // Sanity: WITHOUT the explicit pin, auto-resample still fires at d>=10.
+    assert_eq!(
+        LossyConfig::new(12.0).with_effort(7).effective_resampling(),
+        2,
+        "auto-resample default must still engage at d>=10 when resampling is untouched"
+    );
+}
+
+#[test]
+fn lossy_with_dot_detection_survives_with_effort_both_orders() {
+    // default dot_detection = true; flip to false.
+    assert!(
+        !LossyConfig::new(1.0)
+            .with_dot_detection(false)
+            .with_effort(7)
+            .dot_detection(),
+        "with_dot_detection(false) before with_effort must be preserved (#80 follow-up)"
+    );
+    assert!(
+        !LossyConfig::new(1.0)
+            .with_effort(7)
+            .with_dot_detection(false)
+            .dot_detection(),
+        "with_dot_detection(false) after with_effort must be preserved"
+    );
+    assert!(
+        LossyConfig::new(1.0).with_effort(7).dot_detection(),
+        "untouched config keeps the fixed dot_detection default (true)"
+    );
+}
+
+// NOTE: `simplify_invisible` (lossy `with_simplify_invisible` / lossless
+// `with_keep_invisible`) has no public getter, only a private flag. Its
+// `with_effort` preservation is proven by the in-crate unit tests in
+// `src/api.rs` (`with_effort_simplify_invisible_*`), which CAN reach the
+// `#[cfg(test)]` accessor — an external integration crate cannot.
+
+#[test]
+fn lossy_with_lf_frame_survives_with_effort_both_orders() {
+    // default lf_frame = false; flip to true.
+    assert!(
+        LossyConfig::new(1.0)
+            .with_lf_frame(true)
+            .with_effort(7)
+            .lf_frame(),
+        "with_lf_frame(true) before with_effort must be preserved (#80 follow-up)"
+    );
+    assert!(
+        LossyConfig::new(1.0)
+            .with_effort(7)
+            .with_lf_frame(true)
+            .lf_frame(),
+        "with_lf_frame(true) after with_effort must be preserved"
+    );
+    assert!(
+        !LossyConfig::new(1.0).with_effort(7).lf_frame(),
+        "untouched config keeps the fixed lf_frame default (false)"
+    );
+}
+
+// ---- LosslessConfig fixed-default fields ----
+
+#[test]
+fn lossless_with_lossy_palette_survives_with_effort_both_orders() {
+    // default lossy_palette = false; flip to true.
+    assert!(
+        LosslessConfig::new()
+            .with_lossy_palette(true)
+            .with_effort(7)
+            .lossy_palette(),
+        "with_lossy_palette(true) before with_effort must be preserved (#80 follow-up)"
+    );
+    assert!(
+        LosslessConfig::new()
+            .with_effort(7)
+            .with_lossy_palette(true)
+            .lossy_palette(),
+        "with_lossy_palette(true) after with_effort must be preserved"
+    );
+    assert!(
+        !LosslessConfig::new().with_effort(7).lossy_palette(),
+        "untouched config keeps the fixed lossy_palette default (false)"
+    );
+}
+
+#[test]
+fn lossless_with_modular_predictor_survives_with_effort_both_orders() {
+    // default modular_predictor = None; pick Some(5).
+    assert_eq!(
+        LosslessConfig::new()
+            .with_modular_predictor(Some(5))
+            .with_effort(7)
+            .modular_predictor(),
+        Some(5),
+        "with_modular_predictor before with_effort must be preserved (#80 follow-up)"
+    );
+    assert_eq!(
+        LosslessConfig::new()
+            .with_effort(7)
+            .with_modular_predictor(Some(5))
+            .modular_predictor(),
+        Some(5),
+        "with_modular_predictor after with_effort must be preserved"
+    );
+    assert_eq!(
+        LosslessConfig::new().with_effort(7).modular_predictor(),
+        None,
+        "untouched config keeps the fixed modular_predictor default (None)"
+    );
+}
+
+#[test]
+fn lossless_with_force_rct_survives_with_effort_both_orders() {
+    // default forced_rct = None; force YCoCg (RctType inner = 6). RctType
+    // has no PartialEq, so compare the public `.0` byte.
+    assert_eq!(
+        LosslessConfig::new()
+            .with_force_rct(Some(RctType::YCOCG))
+            .with_effort(7)
+            .force_rct()
+            .map(|r| r.0),
+        Some(RctType::YCOCG.0),
+        "with_force_rct before with_effort must be preserved (#80 follow-up)"
+    );
+    assert_eq!(
+        LosslessConfig::new()
+            .with_effort(7)
+            .with_force_rct(Some(RctType::YCOCG))
+            .force_rct()
+            .map(|r| r.0),
+        Some(RctType::YCOCG.0),
+        "with_force_rct after with_effort must be preserved"
+    );
+    assert!(
+        LosslessConfig::new().with_effort(7).force_rct().is_none(),
+        "untouched config keeps the fixed forced_rct default (None)"
+    );
+}
+
+#[test]
+fn lossless_with_container_mode_survives_with_effort_both_orders() {
+    // default container_mode = Auto; pick Always.
+    assert!(
+        matches!(
+            LosslessConfig::new()
+                .with_container_mode(ContainerMode::Always)
+                .with_effort(7)
+                .container_mode(),
+            ContainerMode::Always
+        ),
+        "with_container_mode before with_effort must be preserved (#80 follow-up)"
+    );
+    assert!(
+        matches!(
+            LosslessConfig::new()
+                .with_effort(7)
+                .with_container_mode(ContainerMode::Always)
+                .container_mode(),
+            ContainerMode::Always
+        ),
+        "with_container_mode after with_effort must be preserved"
+    );
+    assert!(
+        matches!(
+            LosslessConfig::new().with_effort(7).container_mode(),
+            ContainerMode::Auto
+        ),
+        "untouched config keeps the fixed container_mode default (Auto)"
+    );
+}
+
+#[test]
+fn lossless_with_threads_survives_with_effort_both_orders() {
+    assert_eq!(
+        LosslessConfig::new()
+            .with_threads(8)
+            .with_effort(7)
+            .threads(),
+        8,
+        "with_threads(8) before with_effort must be preserved (#80 follow-up)"
+    );
+    assert_eq!(
+        LosslessConfig::new()
+            .with_effort(7)
+            .with_threads(8)
+            .threads(),
+        8,
+        "with_threads(8) after with_effort must be preserved"
+    );
+    assert_eq!(
+        LosslessConfig::new().with_effort(7).threads(),
+        0,
+        "untouched config keeps the fixed threads default (0)"
     );
 }

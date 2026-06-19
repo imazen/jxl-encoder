@@ -2863,6 +2863,36 @@ impl LosslessConfig {
         // `LosslessConfig::new().with_buffering(_).with_effort(_)` is
         // order-independent.
         new.buffering = self.buffering;
+        // Issue #80 follow-up: preserve the FIXED-DEFAULT caller-preference
+        // knobs too. Every field here is assigned a fixed literal in
+        // `with_effort_level` (`threads: 0`, `forced_rct: None`,
+        // `container_mode: ContainerMode::Auto`, `simplify_invisible:
+        // false`, …) — NOT `profile.X` — so an unconditional copy keeps the
+        // common `new().with_effort(N)` path byte-identical (each line is a
+        // no-op-equivalent there: `self.<field> == new.<field>`, both the
+        // construction default) while making the builder chain
+        // order-independent in BOTH orders for callers that set the value.
+        new.auto_delta_frames = self.auto_delta_frames;
+        new.container_mode = self.container_mode;
+        new.faster_decoding = self.faster_decoding;
+        new.forced_rct = self.forced_rct;
+        new.lossy_palette = self.lossy_palette;
+        new.modular_channel_colors_global_percent = self.modular_channel_colors_global_percent;
+        new.modular_channel_colors_group_percent = self.modular_channel_colors_group_percent;
+        new.modular_group_size_shift = self.modular_group_size_shift;
+        new.modular_nb_prev_channels = self.modular_nb_prev_channels;
+        new.modular_palette_colors = self.modular_palette_colors;
+        new.modular_predictor = self.modular_predictor;
+        new.simplify_invisible = self.simplify_invisible;
+        new.threads = self.threads;
+        new.tree_sample_fraction_override = self.tree_sample_fraction_override;
+        // `limits` is a pure caller-supplied resource cap (JPEG-transcode
+        // path); never effort-derived. Non-`Copy` (`Option<Limits>`), so
+        // clone. Feature-gated identically to the field.
+        #[cfg(feature = "jpeg-reencoding")]
+        {
+            new.limits = self.limits.clone();
+        }
         new
     }
 
@@ -3086,6 +3116,15 @@ impl LosslessConfig {
         // branch is a single boolean read on the hot path.
         self.simplify_invisible = !keep;
         self
+    }
+
+    /// Test-only accessor for the private `simplify_invisible` flag
+    /// (the public surface is the inverse `with_keep_invisible` setter,
+    /// which has no getter). Used by `with_effort_preserves_explicit` to
+    /// prove the flag survives `with_effort` (issue #80 follow-up).
+    #[cfg(test)]
+    pub(crate) fn simplify_invisible_for_test(&self) -> bool {
+        self.simplify_invisible
     }
 
     /// Force a fixed modular predictor (CLI passthrough — mirrors libjxl
@@ -5951,11 +5990,13 @@ impl LossyConfig {
         new.center_x = self.center_x;
         new.center_y = self.center_y;
         new.upsampling_mode = self.upsampling_mode;
-        // If group_order was set to 1 (center-first), keep center_first
-        // wired through with_effort too.
-        if matches!(self.group_order, Some(1)) {
-            new.center_first = true;
-        }
+        // (`center_first` is preserved unconditionally in the #80
+        // follow-up block below — `new.center_first = self.center_first`.
+        // `with_group_order`/`with_center_first` already maintain
+        // `self.center_first`, so carrying the field straight across
+        // subsumes the former `group_order == Some(1)` re-derivation that
+        // used to live here and also honours an explicit
+        // `with_center_first(false)`.)
         // Chroma subsampling — never effort-derived; carry across
         // `with_effort` so the builder chain
         // `LossyConfig::new(d).with_chroma_subsampling(Sub420).with_effort(5)`
@@ -5966,6 +6007,60 @@ impl LossyConfig {
         // `LossyConfig::new(d).with_buffering(_).with_effort(_)` is
         // order-independent.
         new.buffering = self.buffering;
+        // Issue #80 follow-up: preserve the FIXED-DEFAULT caller-preference
+        // knobs too. Unlike the `*_explicit`-gated block above (which
+        // guards effort-DERIVED `profile.X` defaults), every field here is
+        // assigned a fixed literal in `new_with_effort` — `dot_detection:
+        // true`, `threads: 0`, `simplify_invisible: true`, etc. — so an
+        // unconditional copy is the right shape: on the common
+        // `new(d).with_effort(N)` path `self.<field> == new.<field>` (both
+        // the construction default), making each line a no-op-equivalent
+        // and keeping the bitstream byte-identical (proved by the
+        // hash-locks). A caller that *did* set the value via `with_<field>`
+        // now keeps it, making the chain order-independent in BOTH orders.
+        new.dot_detection = self.dot_detection;
+        new.adaptive_gaborish = self.adaptive_gaborish;
+        new.already_downsampled = self.already_downsampled;
+        new.auto_resampling = self.auto_resampling;
+        new.lf_frame = self.lf_frame;
+        new.non_finite_action = self.non_finite_action;
+        new.simplify_invisible = self.simplify_invisible;
+        new.threads = self.threads;
+        new.epf_level = self.epf_level;
+        new.center_first = self.center_first;
+        new.progressive_dc = self.progressive_dc;
+        new.auto_delta_frames = self.auto_delta_frames;
+        new.faster_decoding = self.faster_decoding;
+        new.container_mode = self.container_mode;
+        // `resampling` carries an existing `resampling_explicit` companion
+        // that gates the auto-resample-at-d>=10 rule (see
+        // `effective_resampling` / `effective_distance`). A bare
+        // `new.resampling = self.resampling` would NOT be enough — it would
+        // leave `resampling_explicit == false`, so a caller's
+        // `with_resampling(1)` (which suppresses auto-resample) would
+        // silently re-enable it at d>=10 after `with_effort`. So this one
+        // uses the `*_explicit` pattern, preserving both fields together.
+        if self.resampling_explicit {
+            new.resampling = self.resampling;
+            new.resampling_explicit = true;
+        }
+        // Perceptual-loop knobs (metric / device / target / display) are
+        // fixed defaults too; carry them across like `ssim2_iters` /
+        // `zensim_iters` / `hdr_loss` already are above.
+        #[cfg(feature = "butteraugli-loop")]
+        {
+            new.perceptual_metric = self.perceptual_metric;
+            new.perceptual_device = self.perceptual_device;
+            new.perceptual_target_score = self.perceptual_target_score;
+            new.cvvdp_bytes_tighten = self.cvvdp_bytes_tighten;
+            new.target_display = self.target_display;
+        }
+        // Tier-2 coupling knobs (opt-in sweep override) — fixed `None`
+        // default, never effort-derived.
+        #[cfg(feature = "tuning-override")]
+        {
+            new.tier2_knobs = self.tier2_knobs;
+        }
         new
     }
 
@@ -6463,6 +6558,16 @@ impl LossyConfig {
     pub fn with_keep_invisible(mut self, keep: bool) -> Self {
         self.simplify_invisible = !keep;
         self
+    }
+
+    /// Test-only accessor for the private `simplify_invisible` flag
+    /// (the public surface is `with_simplify_invisible` /
+    /// `with_keep_invisible` setters, neither with a getter). Used by
+    /// `with_effort_preserves_explicit` to prove the flag survives
+    /// `with_effort` (issue #80 follow-up).
+    #[cfg(test)]
+    pub(crate) fn simplify_invisible_for_test(&self) -> bool {
+        self.simplify_invisible
     }
 
     /// Enable/disable input canonicalization pre-pass (default: `false`).
@@ -18319,5 +18424,65 @@ mod tests {
                 "good target_score {good} MUST pass through"
             );
         }
+    }
+
+    // ── Issue #80 follow-up: `simplify_invisible` preservation across
+    //    `with_effort`. In-crate unit tests because the flag has no public
+    //    getter (only the private `simplify_invisible_for_test` accessor,
+    //    which an external integration crate cannot reach). The
+    //    public-getter fields are covered in
+    //    `tests/it/with_effort_preserves_explicit.rs`.
+
+    #[test]
+    fn with_effort_simplify_invisible_lossy_both_orders() {
+        // lossy default simplify_invisible = true; flip to false.
+        assert!(
+            !LossyConfig::new(1.0)
+                .with_simplify_invisible(false)
+                .with_effort(7)
+                .simplify_invisible_for_test(),
+            "lossy with_simplify_invisible(false) before with_effort must be preserved (#80 follow-up)"
+        );
+        assert!(
+            !LossyConfig::new(1.0)
+                .with_effort(7)
+                .with_simplify_invisible(false)
+                .simplify_invisible_for_test(),
+            "lossy with_simplify_invisible(false) after with_effort must be preserved"
+        );
+        // Untouched common path keeps the fixed default (true) — byte-identical.
+        assert!(
+            LossyConfig::new(1.0)
+                .with_effort(7)
+                .simplify_invisible_for_test(),
+            "untouched lossy config keeps the fixed simplify_invisible default (true)"
+        );
+    }
+
+    #[test]
+    fn with_effort_simplify_invisible_lossless_both_orders() {
+        // lossless default simplify_invisible = false (keep_invisible = true);
+        // `with_keep_invisible(false)` sets simplify_invisible = true.
+        assert!(
+            LosslessConfig::new()
+                .with_keep_invisible(false)
+                .with_effort(7)
+                .simplify_invisible_for_test(),
+            "lossless with_keep_invisible(false) before with_effort must be preserved (#80 follow-up)"
+        );
+        assert!(
+            LosslessConfig::new()
+                .with_effort(7)
+                .with_keep_invisible(false)
+                .simplify_invisible_for_test(),
+            "lossless with_keep_invisible(false) after with_effort must be preserved"
+        );
+        // Untouched common path keeps the fixed default (false).
+        assert!(
+            !LosslessConfig::new()
+                .with_effort(7)
+                .simplify_invisible_for_test(),
+            "untouched lossless config keeps the fixed simplify_invisible default (false)"
+        );
     }
 }

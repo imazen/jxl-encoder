@@ -210,6 +210,41 @@
   `new().with_effort(N)` path keeps adopting the effort default and stays
   byte-identical (hash-locks 48/48). New test
   `tests/it/with_effort_preserves_explicit.rs`.
+- **`with_effort()` follow-up: also preserve the FIXED-DEFAULT
+  caller-preference fields (#80).** The first #80 fix covered the
+  effort-*derived* fields (whose value in the rebuild is `profile.X`) via
+  `*_explicit` flags, but missed the caller-preference fields whose value
+  in `new_with_effort` / `with_effort_level` is a *fixed literal* (e.g.
+  `threads: 0`, `dot_detection: true`, `forced_rct: None`) — these have a
+  public `with_*` setter yet were still silently reset by `with_effort`
+  (the same footgun, e.g. `.with_threads(8).with_effort(7)` → threads back
+  to 0). Since these are not effort-derived, `with_effort` now carries the
+  caller's value across *unconditionally* (like the pre-existing
+  `noise` / `force_strategy` / `splines` / `buffering` preserves), so the
+  chain is order-independent in both orders. Now-preserved across
+  `with_effort`: on `LossyConfig` — `with_dot_detection`,
+  `with_adaptive_gaborish`, `with_already_downsampled`,
+  `with_auto_resampling`, `with_lf_frame`, `with_non_finite_action`,
+  `with_resampling` (via its existing `resampling_explicit` companion,
+  which also gates auto-resample-at-d≥10), `with_simplify_invisible` /
+  `with_keep_invisible`, `with_threads`, plus the additional gaps found in
+  the same audit — `with_epf_level`, `with_center_first`,
+  `with_progressive_dc`, `with_auto_delta_frames`, `with_faster_decoding`,
+  `with_container_mode`, and (feature-gated) the perceptual-loop knobs
+  (`with_perceptual_metric` / `with_perceptual_device` /
+  `with_perceptual_target_score` / `with_cvvdp_bytes_tighten` /
+  `with_target_display`) and `with_knobs`; on `LosslessConfig` —
+  `with_auto_delta_frames`, `with_container_mode`, `with_faster_decoding`,
+  `with_force_rct`, `with_lossy_palette`,
+  `with_modular_channel_colors_global_percent` /
+  `..._group_percent`, `with_modular_group_size`,
+  `with_modular_nb_prev_channels`, `with_modular_palette_colors`,
+  `with_modular_predictor`, `with_keep_invisible`, `with_threads`,
+  `with_tree_learning_sample_fraction`, and (feature-gated) `with_limits`.
+  The common `new().with_effort(N)` path stays byte-identical because each
+  preserve is a no-op-equivalent there (hash-locks 48/48). Extended
+  `tests/it/with_effort_preserves_explicit.rs` (+ in-crate unit tests for
+  the getter-less `simplify_invisible` flag).
 - **Test builds: pin `alloc-stdlib` so `alloc-no-stdlib` stays on 2.x (#82).**
   `brotli` (a dev-dep via `zenjxl-decoder`, plus our optional `brotli-metadata`
   dep) provides `impl BrotliAlloc for StandardAlloc`, where `StandardAlloc`
