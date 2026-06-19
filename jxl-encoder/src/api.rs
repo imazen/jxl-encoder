@@ -2146,33 +2146,24 @@ pub const MAX_PROGRESSIVE_DC: u8 = 2;
 pub struct LosslessConfig {
     effort: u8,
     mode: EncoderMode,
-    use_ans: bool,
-    /// `true` once [`Self::with_ans`] was called explicitly. Mirrors the
-    /// `tree_learning_user_set` pattern so `with_effort` preserves a
-    /// caller-set `use_ans` instead of re-adopting the effort default
-    /// (issue #80).
-    use_ans_explicit: bool,
+    /// Effort-derived knob: `None` inherits the effort schedule's
+    /// `use_ans`; `Some(v)` is a caller override. The `Option` *is* the
+    /// touched-bit the pre-#80 `use_ans_explicit` flag tracked, so
+    /// [`Self::with_effort`] is a pure setter (order-independent). See
+    /// [`LossyConfig::use_ans`].
+    use_ans: Option<bool>,
     squeeze: bool,
-    tree_learning: bool,
-    /// True once the caller has explicitly chosen via
-    /// [`Self::with_tree_learning`] — suppresses the issue-#72 16-bit
-    /// e5/e6 budgeted-tree lift (same pattern as `patches_user_set`).
-    tree_learning_user_set: bool,
-    lz77: bool,
-    /// `true` once [`Self::with_lz77`] was called explicitly. Mirrors the
-    /// `tree_learning_user_set` pattern so `with_effort` preserves a
-    /// caller-set `lz77` (issue #80).
-    lz77_explicit: bool,
-    lz77_method: Lz77Method,
-    /// `true` once [`Self::with_lz77_method`] was called explicitly.
-    /// Mirrors the `tree_learning_user_set` pattern so `with_effort`
-    /// preserves a caller-set `lz77_method` (issue #80).
-    lz77_method_explicit: bool,
-    patches: bool,
-    /// `true` once [`Self::with_patches`] was called explicitly. Mirrors
-    /// the `tree_learning_user_set` pattern so `with_effort` preserves a
-    /// caller-set `patches` (issue #80).
-    patches_explicit: bool,
+    /// Effort-derived knob (`None` inherits the schedule). `is_some()`
+    /// replaces the pre-#80 `tree_learning_user_set` flag and gates the
+    /// issue-#72 16-bit e5/e6 budgeted-tree lift.
+    tree_learning: Option<bool>,
+    /// Effort-derived knob (`None` inherits the schedule).
+    lz77: Option<bool>,
+    /// Effort-derived knob (`None` inherits the schedule).
+    lz77_method: Option<Lz77Method>,
+    /// Effort-derived knob (`None` inherits the per-image profile's
+    /// `patches`). `is_some()` replaces the pre-#80 `patches_explicit`.
+    patches: Option<bool>,
     lossy_palette: bool,
     threads: usize,
     /// Override for the effort-derived tree-learning sample fraction
@@ -2184,10 +2175,13 @@ pub struct LosslessConfig {
     /// `cparams.colorspace`). `None` keeps the per-effort search;
     /// `Some(rct)` skips the search and applies the given RCT.
     forced_rct: Option<crate::modular::rct::RctType>,
-    /// Sweep / picker hook: when set, replaces the effort+mode-derived
-    /// `EffortProfile` everywhere the encoder asks for one. See
-    /// [`Self::with_effort_profile_override`].
-    profile_override: Option<crate::effort::EffortProfile>,
+    /// Sweep / picker hook (`__expert`): sparse internal-param overrides
+    /// stored as the params themselves (NOT an eagerly-resolved profile)
+    /// and applied lazily in [`Self::effective_profile`] against the
+    /// CURRENT effort — so `with_internal_params(_).with_effort(_)`
+    /// resolves correctly regardless of builder order (issue #80).
+    #[cfg(feature = "__expert")]
+    internal_overrides: Option<crate::effort::LosslessInternalParams>,
     /// Opt-in: re-tune `tree_parallel_max_depth` / `tree_parallel_floor`
     /// per-image (based on pixel count) instead of using the effort-only
     /// defaults. Bitstream-equivalent — only changes rayon fanout shape.
@@ -2335,22 +2329,18 @@ impl LosslessConfig {
         Self {
             effort: profile.effort,
             mode: EncoderMode::Reference,
-            use_ans: profile.use_ans,
-            use_ans_explicit: false,
-            tree_learning: profile.tree_learning,
-            tree_learning_user_set: false,
+            use_ans: None,
+            tree_learning: None,
             squeeze: false, // squeeze hurts even with tree learning (14-62% larger on both photos and screenshots)
-            lz77: profile.lz77,
-            lz77_explicit: false,
-            lz77_method: profile.lz77_method,
-            lz77_method_explicit: false,
-            patches: profile.patches,
-            patches_explicit: false,
+            lz77: None,
+            lz77_method: None,
+            patches: None,
             lossy_palette: false,
             threads: 0,
             tree_sample_fraction_override: None,
             forced_rct: None,
-            profile_override: None,
+            #[cfg(feature = "__expert")]
+            internal_overrides: None,
             tree_parallel_smart: false,
             small_image_fallback_override: None,
             // libjxl lossless default: `keep_invisible = kDefault` with
@@ -2539,11 +2529,37 @@ impl LosslessConfig {
     /// otherwise the standard profile derived from effort + mode. Then
     /// apply the public per-knob overrides (sample fraction, forced
     /// RCT) on top.
+    /// Base effort+mode schedule used to resolve the effort-derived
+    /// `Option` knobs (issue #80). See [`LossyConfig::effort_schedule`].
+    fn effort_schedule(&self) -> crate::effort::EffortProfile {
+        crate::effort::EffortProfile::lossless(self.effort, self.mode)
+    }
+
     pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
-        let mut p = self
-            .profile_override
-            .clone()
-            .unwrap_or_else(|| crate::effort::EffortProfile::lossless(self.effort, self.mode));
+        let mut p = crate::effort::EffortProfile::lossless(self.effort, self.mode);
+        // Sweep/picker internal-param overrides (issue #80): applied
+        // lazily against the CURRENT effort.
+        #[cfg(feature = "__expert")]
+        if let Some(ip) = self.internal_overrides.clone() {
+            ip.apply_to(&mut p);
+        }
+        // Sparse-override resolution (issue #80): apply the effort-derived
+        // knob overrides on top of the schedule.
+        if let Some(v) = self.use_ans {
+            p.use_ans = v;
+        }
+        if let Some(v) = self.tree_learning {
+            p.tree_learning = v;
+        }
+        if let Some(v) = self.lz77 {
+            p.lz77 = v;
+        }
+        if let Some(v) = self.lz77_method {
+            p.lz77_method = v;
+        }
+        if let Some(v) = self.patches {
+            p.patches = v;
+        }
         if let Some(f) = self.tree_sample_fraction_override {
             p.tree_sample_fraction = f;
         }
@@ -2578,12 +2594,12 @@ impl LosslessConfig {
     /// Resolve the effective LZ77 enable flag, honoring
     /// `faster_decoding >= 1` (libjxl `enc_ans.cc:1372` and
     /// `enc_modular.cc` paths set the LZ77 method to `kNone`).
-    /// Returns the stored `cfg.lz77` field at tier 0.
+    /// Returns the stored `cfg.lz77()` field at tier 0.
     pub(crate) fn effective_lz77(&self) -> bool {
         if self.faster_decoding >= 1 {
             return false;
         }
-        self.lz77
+        self.lz77()
     }
 
     /// Resolve the effective tree-learning enable flag, honoring
@@ -2593,7 +2609,7 @@ impl LosslessConfig {
         if self.faster_decoding >= 4 {
             return false;
         }
-        self.tree_learning
+        self.tree_learning()
     }
 
     /// Issue #72: 16-bit lossless at e5/e6 — budgeted tree learning.
@@ -2644,8 +2660,8 @@ impl LosslessConfig {
         );
         if !(is_int16_rgb || is_int8)
             || !(5..=6).contains(&self.effort)
-            || self.tree_learning_user_set
-            || self.tree_learning
+            || self.tree_learning.is_some()
+            || self.tree_learning()
             || self.faster_decoding >= 4
         {
             return false;
@@ -2702,7 +2718,7 @@ impl LosslessConfig {
         if self.faster_decoding >= 2 {
             return false;
         }
-        self.patches
+        self.patches()
     }
 
     /// Override the small-image parallel-tree-learning fallback gate.
@@ -2759,7 +2775,7 @@ impl LosslessConfig {
         // Skipped only if the caller has supplied an explicit override
         // via `with_internal_params` (profile_override), to avoid
         // silently re-overriding a sweep harness's pinned value.
-        if self.profile_override.is_none() {
+        if !self.has_internal_overrides() {
             p.adapt_tree_max_buckets_for_image(pixels);
         }
         // Opt-in smart-fanout re-tuning.
@@ -2788,9 +2804,10 @@ impl LosslessConfig {
     #[cfg(feature = "__expert")]
     #[doc(hidden)]
     pub fn with_internal_params(mut self, params: crate::effort::LosslessInternalParams) -> Self {
-        let mut profile = crate::effort::EffortProfile::lossless(self.effort, self.mode);
-        params.apply_to(&mut profile);
-        self.profile_override = Some(profile);
+        // Store the sparse params (issue #80); resolved lazily in
+        // `effective_profile` so the final effort wins regardless of
+        // builder order.
+        self.internal_overrides = Some(params);
         self
     }
 
@@ -2824,46 +2841,14 @@ impl LosslessConfig {
     /// a tunable knob.
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
-    pub fn with_effort(self, effort: u8) -> Self {
-        let mut new = Self::with_effort_level(effort);
-        // Preserve settings that aren't effort-derived
-        new.mode = self.mode;
-        new.squeeze = self.squeeze;
-        new.profile_override = self.profile_override;
-        new.tree_parallel_smart = self.tree_parallel_smart;
-        new.small_image_fallback_override = self.small_image_fallback_override;
-        // Issue #80: preserve explicitly-set effort-derived knobs across
-        // `with_effort`. Each defaults from the effort profile in `new`,
-        // so an untouched config (the common `new().with_effort(N)` path)
-        // keeps `*_explicit`/`*_user_set == false` and adopts the effort
-        // value exactly as before — byte-identical. A caller that *did*
-        // set the value now keeps it, making the chain order-independent.
-        if self.use_ans_explicit {
-            new.use_ans = self.use_ans;
-            new.use_ans_explicit = true;
-        }
-        if self.tree_learning_user_set {
-            new.tree_learning = self.tree_learning;
-            new.tree_learning_user_set = true;
-        }
-        if self.lz77_explicit {
-            new.lz77 = self.lz77;
-            new.lz77_explicit = true;
-        }
-        if self.lz77_method_explicit {
-            new.lz77_method = self.lz77_method;
-            new.lz77_method_explicit = true;
-        }
-        if self.patches_explicit {
-            new.patches = self.patches;
-            new.patches_explicit = true;
-        }
-        // Buffering policy — never effort-derived; pure caller
-        // preference. Carry across `with_effort` so the builder chain
-        // `LosslessConfig::new().with_buffering(_).with_effort(_)` is
-        // order-independent.
-        new.buffering = self.buffering;
-        new
+    pub fn with_effort(mut self, effort: u8) -> Self {
+        // Pure setter (issue #80): effort-derived knobs are `Option`
+        // (resolved against `self.effort` in `effective_profile`) and
+        // every other profile field is resolved from `self.effort`, so
+        // changing the effort needs no rebuild and cannot clobber a
+        // caller override regardless of call order.
+        self.effort = effort;
+        self
     }
 
     /// Set encoder mode (default: [`EncoderMode::Reference`]).
@@ -2889,15 +2874,13 @@ impl LosslessConfig {
     /// effect the day lossless patch detection lands. Toggling it does
     /// not change lossless output bytes today.
     pub fn with_patches(mut self, enable: bool) -> Self {
-        self.patches = enable;
-        self.patches_explicit = true;
+        self.patches = Some(enable);
         self
     }
 
     /// Enable/disable ANS entropy coding (default: true).
     pub fn with_ans(mut self, enable: bool) -> Self {
-        self.use_ans = enable;
-        self.use_ans_explicit = true;
+        self.use_ans = Some(enable);
         self
     }
 
@@ -2921,8 +2904,7 @@ impl LosslessConfig {
     /// also opts out of the automatic 16-bit e5/e6 budgeted-tree lift
     /// (issue #72).
     pub fn with_tree_learning(mut self, enable: bool) -> Self {
-        self.tree_learning = enable;
-        self.tree_learning_user_set = true;
+        self.tree_learning = Some(enable);
         self
     }
 
@@ -3029,8 +3011,7 @@ impl LosslessConfig {
     /// multi-group path do honor LZ77. Toggling this does not change
     /// lossless output bytes today.
     pub fn with_lz77(mut self, enable: bool) -> Self {
-        self.lz77 = enable;
-        self.lz77_explicit = true;
+        self.lz77 = Some(enable);
         self
     }
 
@@ -3040,8 +3021,7 @@ impl LosslessConfig {
     /// [`Self::with_lz77`] for the lossless-path caveat
     /// (jxl-encoder#69): on that path this is stored but unused today.
     pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
-        self.lz77_method = method;
-        self.lz77_method_explicit = true;
+        self.lz77_method = Some(method);
         self
     }
 
@@ -3241,6 +3221,7 @@ impl LosslessConfig {
     /// Whether ANS entropy coding is enabled.
     pub fn ans(&self) -> bool {
         self.use_ans
+            .unwrap_or_else(|| self.effort_schedule().use_ans)
     }
 
     /// Whether squeeze (Haar wavelet) transform is enabled.
@@ -3251,16 +3232,19 @@ impl LosslessConfig {
     /// Whether content-adaptive tree learning is enabled.
     pub fn tree_learning(&self) -> bool {
         self.tree_learning
+            .unwrap_or_else(|| self.effort_schedule().tree_learning)
     }
 
     /// Whether LZ77 backward references are enabled.
     pub fn lz77(&self) -> bool {
         self.lz77
+            .unwrap_or_else(|| self.effort_schedule().lz77)
     }
 
     /// Current LZ77 method.
     pub fn lz77_method(&self) -> Lz77Method {
         self.lz77_method
+            .unwrap_or_else(|| self.effort_schedule().lz77_method)
     }
 
     /// Conservative upper bound on peak working-set memory for a
@@ -3331,6 +3315,7 @@ impl LosslessConfig {
     /// Whether patches (dictionary-based repeated pattern detection) are enabled.
     pub fn patches(&self) -> bool {
         self.patches
+            .unwrap_or_else(|| self.effort_schedule().patches)
     }
 
     /// Whether lossy delta palette is enabled.
@@ -3346,8 +3331,27 @@ impl LosslessConfig {
     /// Borrow the resolved `EffortProfile` override, if any. Internal hook
     /// used by [`crate::validation`].
     #[cfg(feature = "__expert")]
-    pub(crate) fn profile_override_ref(&self) -> Option<&crate::effort::EffortProfile> {
-        self.profile_override.as_ref()
+    /// True when a sweep/picker has pinned `__expert` internal-param
+    /// overrides (issue #80) — used to skip the per-image auto-adapter
+    /// so the pinned value survives.
+    #[cfg(feature = "__expert")]
+    fn has_internal_overrides(&self) -> bool {
+        self.internal_overrides.is_some()
+    }
+
+    #[cfg(not(feature = "__expert"))]
+    fn has_internal_overrides(&self) -> bool {
+        false
+    }
+
+    /// The resolved override profile (schedule + internal-param overrides)
+    /// when a sweep has pinned `__expert` params; `None` otherwise. Used by
+    /// `validate` to range-check pinned values.
+    #[cfg(feature = "__expert")]
+    pub(crate) fn overridden_profile(&self) -> Option<crate::effort::EffortProfile> {
+        self.internal_overrides
+            .as_ref()
+            .map(|_| self.effective_profile())
     }
 
     // ── Request / fluent encode ─────────────────────────────────────
@@ -4685,17 +4689,17 @@ pub struct LossyConfig {
     distance: f32,
     effort: u8,
     mode: EncoderMode,
-    use_ans: bool,
-    /// `true` once [`Self::with_ans`] was called explicitly. Mirrors the
-    /// `patches_explicit` / `auto_splines_explicit` pattern so that
-    /// `with_effort` preserves a caller-set `use_ans` instead of
-    /// re-adopting the effort-derived default (issue #80).
-    use_ans_explicit: bool,
-    gaborish: bool,
-    /// `true` once [`Self::with_gaborish`] was called explicitly.
-    /// Mirrors the `auto_splines_explicit` pattern so `with_effort`
-    /// preserves a caller-set `gaborish` (issue #80).
-    gaborish_explicit: bool,
+    /// Effort-derived knob: `None` inherits the effort schedule's
+    /// `use_ans`; `Some(v)` is a caller override (set via
+    /// [`Self::with_ans`]). Resolved in [`Self::effective_profile`] /
+    /// [`Self::ans`]. The `Option` *is* the touched-bit that the
+    /// pre-#80 `use_ans_explicit` flag tracked by hand — so
+    /// [`Self::with_effort`] is a pure setter and the builder chain is
+    /// order-independent by construction.
+    use_ans: Option<bool>,
+    /// Effort-derived knob (`None` inherits the schedule's `gaborish`).
+    /// See [`Self::use_ans`] for the Option-as-touched-bit pattern.
+    gaborish: Option<bool>,
     /// EX-J13 — per-tile contrast-adaptive gaborish kernel strength.
     /// Encoder-only; decoder always applies the fixed 3x3 inverse blur.
     /// Default `false`. See [`Self::with_adaptive_gaborish`].
@@ -4719,29 +4723,26 @@ pub struct LossyConfig {
     /// ground-truth, original = target).
     original_distance: Option<f32>,
     denoise: bool,
-    error_diffusion: bool,
-    /// `true` once [`Self::with_error_diffusion`] was called explicitly.
-    /// Mirrors the `auto_splines_explicit` pattern so `with_effort`
-    /// preserves a caller-set `error_diffusion` (issue #80).
-    error_diffusion_explicit: bool,
-    pixel_domain_loss: bool,
-    /// `true` once [`Self::with_pixel_domain_loss`] was called explicitly.
-    /// Mirrors the `auto_splines_explicit` pattern so `with_effort`
-    /// preserves a caller-set `pixel_domain_loss` (issue #80).
-    pixel_domain_loss_explicit: bool,
-    lz77: bool,
-    /// `true` once [`Self::with_lz77`] was called explicitly. Mirrors
-    /// the `auto_splines_explicit` pattern so `with_effort` preserves a
-    /// caller-set `lz77` (issue #80).
-    lz77_explicit: bool,
-    lz77_method: Lz77Method,
-    /// `true` once [`Self::with_lz77_method`] was called explicitly.
-    /// Mirrors the `auto_splines_explicit` pattern so `with_effort`
-    /// preserves a caller-set `lz77_method` (issue #80).
-    lz77_method_explicit: bool,
+    /// Effort-derived knob (`None` inherits the schedule's
+    /// `error_diffusion`). See [`Self::use_ans`] for the pattern.
+    error_diffusion: Option<bool>,
+    /// Effort-derived knob (`None` inherits the schedule's
+    /// `pixel_domain_loss`). See [`Self::use_ans`] for the pattern.
+    pixel_domain_loss: Option<bool>,
+    /// Effort-derived knob (`None` inherits the schedule's `lz77`).
+    /// See [`Self::use_ans`] for the pattern.
+    lz77: Option<bool>,
+    /// Effort-derived knob (`None` inherits the schedule's
+    /// `lz77_method`). See [`Self::use_ans`] for the pattern.
+    lz77_method: Option<Lz77Method>,
     force_strategy: Option<u8>,
     max_strategy_size: Option<u8>,
-    patches: bool,
+    /// Effort-derived knob (`None` inherits the per-image profile's
+    /// `patches`; `Some(v)` is a caller pin via [`Self::with_patches`]).
+    /// `patches.is_some()` replaces the pre-#80 `patches_explicit`
+    /// flag. See [`Self::use_ans`] for the pattern and
+    /// [`Self::effective_patches`] for resolution.
+    patches: Option<bool>,
     /// libjxl-style dot detection (refs #19). Default `true` to
     /// mirror libjxl's `Override::kDefault` semantics — the in-encoder
     /// gates (effort >= 7, distance >= 3.0, no text-like patches in
@@ -4797,26 +4798,20 @@ pub struct LossyConfig {
     /// add back in the decoder. Mirrors libjxl `enc_heuristics.cc:1048-1054`
     /// (`speed_tier <= kSquirrel`).
     ///
-    /// Default derived from effort via
-    /// [`crate::effort::EffortProfile::auto_splines_default`]
-    /// (`effort >= 8`). When the caller explicitly opts in/out via
-    /// [`Self::with_auto_splines`], [`Self::auto_splines_explicit`]
-    /// flips and the explicit value wins outright (mirroring the
-    /// `patches_explicit` / `butteraugli_iters_explicit` pattern).
-    auto_splines: bool,
-    /// Tracks whether the caller has explicitly set `auto_splines`
-    /// via [`Self::with_auto_splines`]. Mirrors the
-    /// `patches_explicit` / `butteraugli_iters_explicit` pattern.
-    /// `false` means the auto-splines enable state derives from the
-    /// per-effort profile default; `true` means the user-set
-    /// [`Self::auto_splines`] wins outright.
-    auto_splines_explicit: bool,
+    /// Effort-derived knob (`None` inherits
+    /// [`crate::effort::EffortProfile::auto_splines_default`], i.e.
+    /// `effort >= 8`; `Some(v)` is a caller override via
+    /// [`Self::with_auto_splines`]). `auto_splines.is_some()` replaces
+    /// the pre-#80 `auto_splines_explicit` flag. See [`Self::use_ans`].
+    auto_splines: Option<bool>,
     progressive: ProgressiveMode,
     lf_frame: bool,
+    /// Effort-derived knob (`None` inherits the schedule's
+    /// `butteraugli_iters`; `Some(n)` is a caller override via
+    /// [`Self::with_butteraugli_iters`]). `is_some()` replaces the
+    /// pre-#80 `butteraugli_iters_explicit` flag. See [`Self::use_ans`].
     #[cfg(feature = "butteraugli-loop")]
-    butteraugli_iters: u32,
-    #[cfg(feature = "butteraugli-loop")]
-    butteraugli_iters_explicit: bool,
+    butteraugli_iters: Option<u32>,
     /// HDR-aware perceptual loss for the butteraugli quantization loop
     /// (EX-J11). Default [`HdrLoss::Butteraugli`] keeps every existing
     /// hash-lock byte-identical. [`HdrLoss::Vdp2`] is opt-in and surfaces
@@ -4830,10 +4825,13 @@ pub struct LossyConfig {
     zensim_iters: u32,
     threads: usize,
     non_finite_action: NonFiniteAction,
-    /// Sweep / picker hook: when set, replaces the effort+mode-derived
-    /// `EffortProfile` everywhere the encoder asks for one. See
-    /// [`Self::with_effort_profile_override`].
-    profile_override: Option<crate::effort::EffortProfile>,
+    /// Sweep / picker hook (`__expert`): sparse internal-param overrides
+    /// stored as the params themselves (NOT an eagerly-resolved profile)
+    /// and applied lazily in [`Self::effective_profile`] against the
+    /// CURRENT effort — so `with_internal_params(_).with_effort(_)`
+    /// resolves correctly regardless of builder order (issue #80).
+    #[cfg(feature = "__expert")]
+    internal_overrides: Option<crate::effort::LossyInternalParams>,
     /// Input canonicalization pre-pass (drop opaque alpha,
     /// near-grayscale collapse, 16→8 downcast when safe). Default
     /// `false` to keep existing hash-locks byte-identical. See
@@ -4888,14 +4886,6 @@ pub struct LossyConfig {
     ///
     /// See [`Self::with_strategy`] and `docs/COMPATIBILITY_MODES.md`.
     strategy: EncoderStrategy,
-    /// Tracks whether the caller has explicitly set `patches` via
-    /// [`Self::with_patches`]. Mirrors the
-    /// `butteraugli_iters_explicit` / `resampling_explicit` pattern.
-    /// `false` means the patches enable state derives from the
-    /// per-image profile (effort default + content-class dispatch);
-    /// `true` means the user-set [`Self::patches`] wins outright.
-    /// Default `false`. See [`Self::with_patches`].
-    patches_explicit: bool,
     // W44-130 Chunk D: `patches_dispatch` field deleted from
     // `LossyConfig`. The dispatch policy now lives on
     // `EncoderImprovementsCustom.patches_dispatch` and flows to
@@ -5408,10 +5398,8 @@ impl LossyConfig {
             distance,
             effort: profile.effort,
             mode: EncoderMode::Reference,
-            use_ans: profile.use_ans,
-            use_ans_explicit: false,
-            gaborish: profile.gaborish,
-            gaborish_explicit: false,
+            use_ans: None,
+            gaborish: None,
             adaptive_gaborish: false,
             noise: false,
             photon_noise_iso: None,
@@ -5419,17 +5407,13 @@ impl LossyConfig {
             quant_ac_rescale: None,
             original_distance: None,
             denoise: false,
-            error_diffusion: profile.error_diffusion,
-            error_diffusion_explicit: false,
-            pixel_domain_loss: profile.pixel_domain_loss,
-            pixel_domain_loss_explicit: false,
-            lz77: profile.lz77,
-            lz77_explicit: false,
-            lz77_method: profile.lz77_method,
-            lz77_method_explicit: false,
+            error_diffusion: None,
+            pixel_domain_loss: None,
+            lz77: None,
+            lz77_method: None,
             force_strategy: None,
             max_strategy_size: None,
-            patches: profile.patches,
+            patches: None,
             dot_detection: true, // refs #19; default-on to mirror libjxl Override::kDefault (gated effort>=7 && d>=3.0)
             simplify_invisible: true,
             center_first: false,
@@ -5438,16 +5422,14 @@ impl LossyConfig {
             auto_resampling: true,
             already_downsampled: false,
             splines: None,
-            // Default derived from effort. `with_auto_splines` flips
-            // `auto_splines_explicit = true` and pins the value.
-            auto_splines: crate::effort::EffortProfile::auto_splines_default(profile.effort),
-            auto_splines_explicit: false,
+            // `None` inherits the effort-derived auto-splines default
+            // (resolved in `effective_profile`); `with_auto_splines`
+            // pins `Some(v)`.
+            auto_splines: None,
             progressive: ProgressiveMode::Single,
             lf_frame: false,
             #[cfg(feature = "butteraugli-loop")]
-            butteraugli_iters: profile.butteraugli_iters,
-            #[cfg(feature = "butteraugli-loop")]
-            butteraugli_iters_explicit: false,
+            butteraugli_iters: None,
             // EX-J11 chunk 4: default flipped from `Butteraugli` to
             // `Auto`. SDR encodes (sRGB / BT.709 / Linear / Unknown)
             // resolve `Auto` → `Butteraugli` at encode entry — the
@@ -5465,7 +5447,8 @@ impl LossyConfig {
             zensim_iters: 0,
             threads: 0,
             non_finite_action: NonFiniteAction::default(),
-            profile_override: None,
+            #[cfg(feature = "__expert")]
+            internal_overrides: None,
             canonicalize_input: false,
             content_class: None,
             // W44-130 Chunk D: `content_aware_entropy_mul` field
@@ -5483,7 +5466,6 @@ impl LossyConfig {
             // is unused until Chunk C+ rewires call sites; hash-locks
             // therefore stay byte-identical at the default.
             strategy: EncoderStrategy::default(),
-            patches_explicit: false,
             // W44-130 Chunk D: `patches_dispatch`, `epf_dispatch`,
             // `pixel_loss_dispatch`, `single_pass_entropy_dispatch`
             // fields deleted (absorbed into `EncoderImprovementsCustom`).
@@ -5555,11 +5537,56 @@ impl LossyConfig {
     /// otherwise the standard profile derived from effort + mode. The
     /// `faster_decoding` knob is applied last (libjxl ordering — the
     /// speed-tier gates fire AFTER effort defaults are computed).
+    /// Base effort+mode schedule used to resolve the effort-derived
+    /// `Option` knobs (issue #80). `None` knobs inherit this; `Some(v)`
+    /// overrides win. Does NOT apply `faster_decoding` or per-image
+    /// adaptation — it is the bare "what would the schedule pick"
+    /// baseline the getters read.
+    fn effort_schedule(&self) -> crate::effort::EffortProfile {
+        crate::effort::EffortProfile::lossy(self.effort, self.mode)
+    }
+
     pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
-        let mut p = self
-            .profile_override
-            .clone()
-            .unwrap_or_else(|| crate::effort::EffortProfile::lossy(self.effort, self.mode));
+        let mut p = crate::effort::EffortProfile::lossy(self.effort, self.mode);
+        // Sweep/picker internal-param overrides (issue #80): applied
+        // lazily against the CURRENT effort.
+        #[cfg(feature = "__expert")]
+        if let Some(ip) = self.internal_overrides.clone() {
+            ip.apply_to(&mut p);
+        }
+        // Sparse-override resolution (issue #80): apply the
+        // effort-derived knob overrides on top of the schedule. `None`
+        // inherits, `Some(v)` overrides. This is the single resolution
+        // point; getters + the encoder read through it (or the matching
+        // getter), so the value cannot diverge from `with_effort` call
+        // order. `auto_splines` is resolved in its getter (it is
+        // `auto_splines_default(effort)`-derived, not an `EffortProfile`
+        // field).
+        if let Some(v) = self.use_ans {
+            p.use_ans = v;
+        }
+        if let Some(v) = self.gaborish {
+            p.gaborish = v;
+        }
+        if let Some(v) = self.error_diffusion {
+            p.error_diffusion = v;
+        }
+        if let Some(v) = self.pixel_domain_loss {
+            p.pixel_domain_loss = v;
+        }
+        if let Some(v) = self.lz77 {
+            p.lz77 = v;
+        }
+        if let Some(v) = self.lz77_method {
+            p.lz77_method = v;
+        }
+        if let Some(v) = self.patches {
+            p.patches = v;
+        }
+        #[cfg(feature = "butteraugli-loop")]
+        if let Some(v) = self.butteraugli_iters {
+            p.butteraugli_iters = v;
+        }
         p.apply_faster_decoding(self.faster_decoding);
         p
     }
@@ -5572,18 +5599,18 @@ impl LossyConfig {
         if self.faster_decoding >= 2 {
             return false;
         }
-        self.patches
+        self.patches()
     }
 
     /// Effective LZ77 flag. libjxl `enc_ans.cc:1372` skips LZ77 for
     /// VarDCT streams at `decoding_speed_tier >= 1` (the per-frame
     /// AC histogram pass forces `lz77_method = kNone`). Returns the
-    /// stored `cfg.lz77` field at tier 0.
+    /// stored `cfg.lz77()` field at tier 0.
     pub(crate) fn effective_lz77(&self) -> bool {
         if self.faster_decoding >= 1 {
             return false;
         }
-        self.lz77
+        self.lz77()
     }
 
     /// Effective gaborish flag. libjxl `enc_frame.cc:280` disables
@@ -5595,7 +5622,7 @@ impl LossyConfig {
         if self.faster_decoding >= 4 {
             return false;
         }
-        self.gaborish
+        self.gaborish()
     }
 
     /// Resolve the per-image effective [`EffortProfile`] for the lossy
@@ -5666,7 +5693,7 @@ impl LossyConfig {
         // Always-on per-image adapter — skipped only when an explicit
         // `__expert` override is in play, to avoid silently re-flipping
         // a sweep harness's pinned value.
-        if self.profile_override.is_none() {
+        if !self.has_internal_overrides() {
             // W44-129 Chunk C: resolve the `smooth_photo_dct64_admission`
             // policy from the `EncoderStrategy` bundle + per-field
             // overrides. `ResolvedImprovements` is computed once here
@@ -5770,9 +5797,10 @@ impl LossyConfig {
     #[cfg(feature = "__expert")]
     #[doc(hidden)]
     pub fn with_internal_params(mut self, params: crate::effort::LossyInternalParams) -> Self {
-        let mut profile = crate::effort::EffortProfile::lossy(self.effort, self.mode);
-        params.apply_to(&mut profile);
-        self.profile_override = Some(profile);
+        // Store the sparse params (issue #80); resolved lazily in
+        // `effective_profile` so the final effort wins regardless of
+        // builder order.
+        self.internal_overrides = Some(params);
         self
     }
 
@@ -5843,130 +5871,18 @@ impl LossyConfig {
     /// #45.
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
-    pub fn with_effort(self, effort: u8) -> Self {
-        let mut new = Self::new_with_effort(self.distance, effort);
-        // Preserve settings that are never effort-derived (always opt-in)
-        new.mode = self.mode;
-        new.noise = self.noise;
-        new.photon_noise_iso = self.photon_noise_iso;
-        new.manual_noise_lut = self.manual_noise_lut;
-        new.quant_ac_rescale = self.quant_ac_rescale;
-        new.original_distance = self.original_distance;
-        new.denoise = self.denoise;
-        new.force_strategy = self.force_strategy;
-        new.max_strategy_size = self.max_strategy_size;
-        new.splines = self.splines;
-        // Preserve explicit auto_splines setting across with_effort.
-        // Otherwise let the effort-derived default in `new` win, so
-        // that `LossyConfig::new(d).with_effort(8)` flips on the
-        // chunk-3 detector while `with_effort(7)` flips it off.
-        if self.auto_splines_explicit {
-            new.auto_splines = self.auto_splines;
-            new.auto_splines_explicit = true;
-        }
-        // Issue #80: preserve explicitly-set effort-derived knobs across
-        // `with_effort`. Each defaults from the effort profile in `new`,
-        // so an untouched config (the common `new().with_effort(N)` path)
-        // keeps `*_explicit == false` and adopts the effort value exactly
-        // as before — byte-identical. A caller that *did* set the value
-        // (e.g. `with_ans(false).with_effort(7)`) now keeps it, making
-        // the builder chain order-independent.
-        if self.use_ans_explicit {
-            new.use_ans = self.use_ans;
-            new.use_ans_explicit = true;
-        }
-        if self.gaborish_explicit {
-            new.gaborish = self.gaborish;
-            new.gaborish_explicit = true;
-        }
-        if self.error_diffusion_explicit {
-            new.error_diffusion = self.error_diffusion;
-            new.error_diffusion_explicit = true;
-        }
-        if self.pixel_domain_loss_explicit {
-            new.pixel_domain_loss = self.pixel_domain_loss;
-            new.pixel_domain_loss_explicit = true;
-        }
-        if self.lz77_explicit {
-            new.lz77 = self.lz77;
-            new.lz77_explicit = true;
-        }
-        if self.lz77_method_explicit {
-            new.lz77_method = self.lz77_method;
-            new.lz77_method_explicit = true;
-        }
-        new.progressive = self.progressive;
-        // Preserve explicit butteraugli override
-        #[cfg(feature = "butteraugli-loop")]
-        if self.butteraugli_iters_explicit {
-            new.butteraugli_iters = self.butteraugli_iters;
-            new.butteraugli_iters_explicit = true;
-        }
-        // EX-J11 chunk 1: hdr_loss is a plain flag (no _explicit twin —
-        // the default Butteraugli is the existing behaviour, so simple
-        // copy preserves the caller's choice across with_effort() exactly
-        // like ssim2_iters / zensim_iters below).
-        #[cfg(feature = "butteraugli-loop")]
-        {
-            new.hdr_loss = self.hdr_loss;
-        }
-        #[cfg(feature = "ssim2-loop")]
-        {
-            new.ssim2_iters = self.ssim2_iters;
-        }
-        #[cfg(feature = "zensim-loop")]
-        {
-            new.zensim_iters = self.zensim_iters;
-        }
-        new.profile_override = self.profile_override;
-        new.canonicalize_input = self.canonicalize_input;
-        new.content_class = self.content_class;
-        // W44-130 Chunk D: `content_aware_entropy_mul` field deleted;
-        // opt-in lives via `strategy` / `strategy_overrides` below.
-        // Preserve the caller's strategy overrides across
-        // `with_effort` (mirror of the strategy preservation below).
-        new.strategy_overrides = self.strategy_overrides.clone();
-        // W44-128 Chunk B: preserve the caller's
-        // `with_strategy(EncoderStrategy::...)` across `with_effort`.
-        // Effort-derived state (in `new`) is regenerated from the new
-        // effort + mode, but the strategy bundle is orthogonal — the
-        // caller's choice of bundle should outlive effort changes.
-        new.strategy = self.strategy.clone();
-        // Preserve explicit patches setting across with_effort.
-        if self.patches_explicit {
-            new.patches = self.patches;
-            new.patches_explicit = true;
-        }
-        // W44-130 Chunk D: the 4 dispatch fields (`patches_dispatch`,
-        // `pixel_loss_dispatch`, `single_pass_entropy_dispatch`,
-        // `epf_dispatch`) were deleted from `LossyConfig` and
-        // absorbed into `EncoderImprovementsCustom`. The `strategy`
-        // bundle (preserved across `with_effort` below) carries the
-        // dispatch values; no separate copy needed.
-        // Preserve CLI-passthrough knobs across with_effort (they're
-        // never effort-derived; opt-in / pure forwarding).
-        new.alpha_distance = self.alpha_distance;
-        new.alpha_squeeze = self.alpha_squeeze;
-        new.group_order = self.group_order;
-        new.center_x = self.center_x;
-        new.center_y = self.center_y;
-        new.upsampling_mode = self.upsampling_mode;
-        // If group_order was set to 1 (center-first), keep center_first
-        // wired through with_effort too.
-        if matches!(self.group_order, Some(1)) {
-            new.center_first = true;
-        }
-        // Chroma subsampling — never effort-derived; carry across
-        // `with_effort` so the builder chain
-        // `LossyConfig::new(d).with_chroma_subsampling(Sub420).with_effort(5)`
-        // is order-independent.
-        new.chroma_subsampling = self.chroma_subsampling;
-        // Buffering policy — never effort-derived; pure caller
-        // preference. Carry across `with_effort` so the builder chain
-        // `LossyConfig::new(d).with_buffering(_).with_effort(_)` is
-        // order-independent.
-        new.buffering = self.buffering;
-        new
+    pub fn with_effort(mut self, effort: u8) -> Self {
+        // Pure setter (issue #80). Effort-derived knobs are `Option`
+        // (resolved against `self.effort` in `effective_profile`), and
+        // every other profile field is resolved from `self.effort` too —
+        // nothing on the config caches an effort-derived value — so
+        // changing the effort needs no field rebuild and *cannot* clobber
+        // a caller override regardless of call order. This replaces the
+        // ~40-line field-by-field preserve block + the `*_explicit`
+        // touched-bits that the rebuild-from-`new_with_effort` design
+        // required.
+        self.effort = effort;
+        self
     }
 
     /// Set encoder mode (default: [`EncoderMode::Reference`]).
@@ -5985,15 +5901,13 @@ impl LossyConfig {
 
     /// Enable/disable ANS entropy coding (default: true).
     pub fn with_ans(mut self, enable: bool) -> Self {
-        self.use_ans = enable;
-        self.use_ans_explicit = true;
+        self.use_ans = Some(enable);
         self
     }
 
     /// Enable/disable gaborish inverse pre-filter (default: true).
     pub fn with_gaborish(mut self, enable: bool) -> Self {
-        self.gaborish = enable;
-        self.gaborish_explicit = true;
+        self.gaborish = Some(enable);
         self
     }
 
@@ -6256,15 +6170,13 @@ impl LossyConfig {
     /// the diffusion, which can hurt quality on certain content (bright features
     /// in dark regions), especially when combined with gaborish.
     pub fn with_error_diffusion(mut self, enable: bool) -> Self {
-        self.error_diffusion = enable;
-        self.error_diffusion_explicit = true;
+        self.error_diffusion = Some(enable);
         self
     }
 
     /// Enable/disable pixel-domain loss in strategy selection (default: true).
     pub fn with_pixel_domain_loss(mut self, enable: bool) -> Self {
-        self.pixel_domain_loss = enable;
-        self.pixel_domain_loss_explicit = true;
+        self.pixel_domain_loss = Some(enable);
         self
     }
 
@@ -6318,35 +6230,27 @@ impl LossyConfig {
     pub fn with_perceptual_optimizations(mut self, enable: bool) -> Self {
         // Set the five perceptual knobs to their on/off positions.
         // Defaults mirror libjxl's enabled state when on.
-        self.gaborish = enable;
-        self.patches = enable;
-        // Convenience setter pins patches — opting out via this method
-        // suppresses the content-class dispatch too.
-        self.patches_explicit = true;
+        self.gaborish = Some(enable);
+        // Convenience setter pins patches (the `Some` *is* the pin) —
+        // opting out via this method suppresses the content-class
+        // dispatch too. Issue #80: pinning via `Some` makes a following
+        // `with_effort` preserve all three knobs automatically.
+        self.patches = Some(enable);
         self.dot_detection = enable; // libjxl `Override::kDefault`; in-encoder effort/distance gates make this niche-only
         self.noise = false; // off by default in libjxl too
-        self.pixel_domain_loss = enable;
-        // Issue #80: pin the knobs this convenience wrapper touches so a
-        // following `with_effort` preserves them (matching the existing
-        // `patches_explicit` pin above — otherwise gaborish/pixel-domain
-        // loss would silently revert to the effort default while patches
-        // stuck, an inconsistent half-pin).
-        self.gaborish_explicit = true;
-        self.pixel_domain_loss_explicit = true;
+        self.pixel_domain_loss = Some(enable);
         self
     }
 
     /// Enable/disable LZ77 backward references (default: false).
     pub fn with_lz77(mut self, enable: bool) -> Self {
-        self.lz77 = enable;
-        self.lz77_explicit = true;
+        self.lz77 = Some(enable);
         self
     }
 
     /// Set LZ77 method (default: Greedy).
     pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
-        self.lz77_method = method;
-        self.lz77_method_explicit = true;
+        self.lz77_method = Some(method);
         self
     }
 
@@ -6382,8 +6286,7 @@ impl LossyConfig {
     /// `Screenshot` class has been set via
     /// [`Self::with_content_class`].
     pub fn with_patches(mut self, enable: bool) -> Self {
-        self.patches = enable;
-        self.patches_explicit = true;
+        self.patches = Some(enable);
         self
     }
 
@@ -6976,15 +6879,16 @@ impl LossyConfig {
     /// A manual [`Self::with_splines`] call always wins outright — the
     /// auto-detector is only consulted when no manual splines are set.
     pub fn with_auto_splines(mut self, enable: bool) -> Self {
-        self.auto_splines = enable;
-        self.auto_splines_explicit = true;
+        self.auto_splines = Some(enable);
         self
     }
 
     /// Whether automatic spline detection is enabled. See
     /// [`Self::with_auto_splines`].
     pub fn auto_splines(&self) -> bool {
-        self.auto_splines
+        self.auto_splines.unwrap_or_else(|| {
+            crate::effort::EffortProfile::auto_splines_default(self.effort)
+        })
     }
 
     /// Whether [`Self::auto_splines`] was set explicitly via
@@ -6992,7 +6896,7 @@ impl LossyConfig {
     /// effort-based default in
     /// [`crate::effort::EffortProfile::auto_splines_default`]).
     pub fn auto_splines_explicit(&self) -> bool {
-        self.auto_splines_explicit
+        self.auto_splines.is_some()
     }
 
     /// Set progressive encoding mode (default: Single = no progressive).
@@ -7182,8 +7086,7 @@ impl LossyConfig {
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
     pub fn with_butteraugli_iters(mut self, n: u32) -> Self {
-        self.butteraugli_iters = n;
-        self.butteraugli_iters_explicit = true;
+        self.butteraugli_iters = Some(n);
         self
     }
 
@@ -7719,11 +7622,13 @@ impl LossyConfig {
     /// Whether ANS entropy coding is enabled.
     pub fn ans(&self) -> bool {
         self.use_ans
+            .unwrap_or_else(|| self.effort_schedule().use_ans)
     }
 
     /// Whether gaborish inverse pre-filter is enabled.
     pub fn gaborish(&self) -> bool {
         self.gaborish
+            .unwrap_or_else(|| self.effort_schedule().gaborish)
     }
 
     /// Configured edge-preserving filter override.
@@ -7754,17 +7659,20 @@ impl LossyConfig {
     /// Whether error diffusion in AC quantization is enabled.
     pub fn error_diffusion(&self) -> bool {
         self.error_diffusion
+            .unwrap_or_else(|| self.effort_schedule().error_diffusion)
     }
 
     /// Whether pixel-domain loss is enabled.
     pub fn pixel_domain_loss(&self) -> bool {
         self.pixel_domain_loss
+            .unwrap_or_else(|| self.effort_schedule().pixel_domain_loss)
     }
 
     /// Whether patches (dictionary-based repeated pattern detection)
     /// are enabled.
     pub fn patches(&self) -> bool {
         self.patches
+            .unwrap_or_else(|| self.effort_schedule().patches)
     }
 
     /// Whether dot detection (refs #19) is enabled.
@@ -7775,11 +7683,13 @@ impl LossyConfig {
     /// Whether LZ77 backward references are enabled.
     pub fn lz77(&self) -> bool {
         self.lz77
+            .unwrap_or_else(|| self.effort_schedule().lz77)
     }
 
     /// Current LZ77 method.
     pub fn lz77_method(&self) -> Lz77Method {
         self.lz77_method
+            .unwrap_or_else(|| self.effort_schedule().lz77_method)
     }
 
     /// Forced AC strategy, if any.
@@ -7877,6 +7787,7 @@ impl LossyConfig {
     #[cfg(feature = "butteraugli-loop")]
     pub fn butteraugli_iters(&self) -> u32 {
         self.butteraugli_iters
+            .unwrap_or_else(|| self.effort_schedule().butteraugli_iters)
     }
 
     /// SSIM2 quantization loop iterations (internal accessor for validation).
@@ -7894,8 +7805,27 @@ impl LossyConfig {
     /// Borrow the resolved `EffortProfile` override, if any. Internal hook
     /// used by [`crate::validation`].
     #[cfg(feature = "__expert")]
-    pub(crate) fn profile_override_ref(&self) -> Option<&crate::effort::EffortProfile> {
-        self.profile_override.as_ref()
+    /// True when a sweep/picker has pinned `__expert` internal-param
+    /// overrides (issue #80) — used to skip the per-image auto-adapter
+    /// so the pinned value survives.
+    #[cfg(feature = "__expert")]
+    fn has_internal_overrides(&self) -> bool {
+        self.internal_overrides.is_some()
+    }
+
+    #[cfg(not(feature = "__expert"))]
+    fn has_internal_overrides(&self) -> bool {
+        false
+    }
+
+    /// The resolved override profile (schedule + internal-param overrides)
+    /// when a sweep has pinned `__expert` params; `None` otherwise. Used by
+    /// `validate` to range-check pinned values.
+    #[cfg(feature = "__expert")]
+    pub(crate) fn overridden_profile(&self) -> Option<crate::effort::EffortProfile> {
+        self.internal_overrides
+            .as_ref()
+            .map(|_| self.effective_profile())
     }
 
     /// Thread count (0 = auto, 1 = sequential).
@@ -8955,7 +8885,7 @@ impl<'a> EncodeRequest<'a> {
         let mut m = 0u32;
         #[cfg(feature = "butteraugli-loop")]
         {
-            m = m.max(cfg.butteraugli_iters);
+            m = m.max(cfg.butteraugli_iters());
         }
         #[cfg(feature = "ssim2-loop")]
         {
@@ -9287,7 +9217,7 @@ impl<'a> EncodeRequest<'a> {
                 // clear the detector's 1% coverage filter but the
                 // ref-frame overhead dominates net savings. See
                 // `PatchesData::is_cost_effective_lossless` doc-comment.
-                pd_opt.filter(|pd| pd.is_cost_effective_lossless(image.bit_depth, cfg.use_ans))
+                pd_opt.filter(|pd| pd.is_cost_effective_lossless(image.bit_depth, cfg.ans()))
             })
         } else {
             None
@@ -9425,7 +9355,7 @@ impl<'a> EncodeRequest<'a> {
             crate::vardct::patches::encode_reference_frame_rgb(
                 pd,
                 image.bit_depth,
-                cfg.use_ans,
+                cfg.ans(),
                 lossless_profile.patch_ref_tree_learning,
                 &mut writer,
                 Some(budget),
@@ -9451,11 +9381,11 @@ impl<'a> EncodeRequest<'a> {
             FrameEncoderOptions {
                 use_modular: true,
                 effort: cfg.effort,
-                use_ans: cfg.use_ans,
+                use_ans: cfg.ans(),
                 use_tree_learning,
                 use_squeeze: cfg.squeeze,
                 enable_lz77: cfg.effective_lz77(),
-                lz77_method: cfg.lz77_method,
+                lz77_method: cfg.lz77_method(),
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
                 profile: smart_profile,
@@ -9499,7 +9429,7 @@ impl<'a> EncodeRequest<'a> {
 
         let stats = EncodeStats {
             mode: EncodeMode::Lossless,
-            ans: cfg.use_ans,
+            ans: cfg.ans(),
             ..Default::default()
         };
         Ok((writer.finish_with_padding(), stats))
@@ -10047,7 +9977,7 @@ impl<'a> EncodeRequest<'a> {
         enc.resolved_improvements = cfg.resolve_improvements();
         enc.effort = cfg.effort;
         enc.profile = profile;
-        enc.use_ans = cfg.use_ans;
+        enc.use_ans = cfg.ans();
         enc.optimize_codes = enc.profile.optimize_codes;
         enc.custom_orders = enc.profile.custom_orders;
         enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
@@ -10078,14 +10008,14 @@ impl<'a> EncodeRequest<'a> {
         // remain (many call-site reads); we hydrate them from the
         // resolved bundle here.
         enc.epf_dispatch = enc.resolved_improvements.epf_dispatch;
-        enc.error_diffusion = cfg.error_diffusion;
-        enc.pixel_domain_loss = cfg.pixel_domain_loss;
+        enc.error_diffusion = cfg.error_diffusion();
+        enc.pixel_domain_loss = cfg.pixel_domain_loss();
         enc.pixel_loss_dispatch = enc.resolved_improvements.pixel_loss_dispatch;
         enc.single_pass_entropy_dispatch = enc.resolved_improvements.single_pass_entropy_dispatch;
         enc.enable_lz77 = cfg.effective_lz77();
-        enc.lz77_method = cfg.lz77_method;
+        enc.lz77_method = cfg.lz77_method();
         enc.force_strategy = cfg.force_strategy;
-        // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
+        // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches()`
         // via `with_patches`, that wins; otherwise read the per-image
         // dispatched profile (the content-class adapter may have flipped
         // patches on for Screenshot content at e5/e6).
@@ -10098,7 +10028,7 @@ impl<'a> EncodeRequest<'a> {
         // api.rs:4404-4408.
         enc.enable_patches = if self.layout.is_cmyk() {
             false
-        } else if cfg.patches_explicit {
+        } else if cfg.patches.is_some() {
             cfg.effective_patches()
         } else if cfg.faster_decoding >= 2 {
             // libjxl `enc_modular.cc:707` skips patches at
@@ -10113,7 +10043,7 @@ impl<'a> EncodeRequest<'a> {
         enc.enable_dot_detection = cfg.dot_detection;
         enc.encoder_mode = cfg.mode;
         enc.splines = cfg.splines.clone();
-        enc.auto_splines = cfg.auto_splines;
+        enc.auto_splines = cfg.auto_splines();
         enc.is_grayscale = self.layout.is_grayscale();
         enc.progressive = cfg.progressive;
         enc.use_lf_frame = cfg.lf_frame;
@@ -10152,7 +10082,7 @@ impl<'a> EncodeRequest<'a> {
         enc.buffering = cfg.buffering;
         #[cfg(feature = "butteraugli-loop")]
         {
-            enc.butteraugli_iters = cfg.butteraugli_iters;
+            enc.butteraugli_iters = cfg.butteraugli_iters();
             // EX-J11 chunk 4: resolve `HdrLoss::Auto` to a concrete
             // loss now (using caller's `with_color_encoding` if set,
             // else `PixelLayout::implied_transfer_function()`), so the
@@ -10473,17 +10403,17 @@ impl<'a> EncodeRequest<'a> {
             .map_err(EncodeError::from)?;
 
         #[cfg(feature = "butteraugli-loop")]
-        let butteraugli_iters_actual = cfg.butteraugli_iters;
+        let butteraugli_iters_actual = cfg.butteraugli_iters();
         #[cfg(not(feature = "butteraugli-loop"))]
         let butteraugli_iters_actual = 0u32;
 
         let stats = EncodeStats {
             mode: EncodeMode::Lossy,
             strategy_counts: output.strategy_counts,
-            gaborish: cfg.gaborish,
-            ans: cfg.use_ans,
+            gaborish: cfg.gaborish(),
+            ans: cfg.ans(),
             butteraugli_iters: butteraugli_iters_actual,
-            pixel_domain_loss: cfg.pixel_domain_loss,
+            pixel_domain_loss: cfg.pixel_domain_loss(),
             ..Default::default()
         };
         Ok((output.data, stats))
@@ -10554,7 +10484,7 @@ impl<'a> EncodeRequest<'a> {
         .map_err(EncodeError::from)?;
         let stats = EncodeStats {
             mode: EncodeMode::Lossy,
-            ans: cfg.use_ans,
+            ans: cfg.ans(),
             ..Default::default()
         };
         Ok((bytes, stats))
@@ -11357,7 +11287,7 @@ impl LossyEncoder {
             enc.resolved_improvements = cfg.resolve_improvements();
             enc.effort = cfg.effort;
             enc.profile = profile;
-            enc.use_ans = cfg.use_ans;
+            enc.use_ans = cfg.ans();
             enc.optimize_codes = enc.profile.optimize_codes;
             enc.custom_orders = enc.profile.custom_orders;
             enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
@@ -11392,19 +11322,19 @@ impl LossyEncoder {
             // resolved bundle (LossyConfig setters deleted; absorbed
             // into `EncoderImprovementsCustom`).
             enc.epf_dispatch = enc.resolved_improvements.epf_dispatch;
-            enc.error_diffusion = cfg.error_diffusion;
-            enc.pixel_domain_loss = cfg.pixel_domain_loss;
+            enc.error_diffusion = cfg.error_diffusion();
+            enc.pixel_domain_loss = cfg.pixel_domain_loss();
             enc.pixel_loss_dispatch = enc.resolved_improvements.pixel_loss_dispatch;
             enc.single_pass_entropy_dispatch =
                 enc.resolved_improvements.single_pass_entropy_dispatch;
             enc.enable_lz77 = cfg.effective_lz77();
-            enc.lz77_method = cfg.lz77_method;
+            enc.lz77_method = cfg.lz77_method();
             enc.force_strategy = cfg.force_strategy;
-            // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
+            // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches()`
             // via `with_patches`, that wins; otherwise read the per-image
             // dispatched profile (the content-class adapter may have flipped
             // patches on for Screenshot content at e5/e6).
-            enc.enable_patches = if cfg.patches_explicit {
+            enc.enable_patches = if cfg.patches.is_some() {
                 cfg.effective_patches()
             } else if cfg.faster_decoding >= 2 {
                 // libjxl `enc_modular.cc:707` skips patches at
@@ -11417,7 +11347,7 @@ impl LossyEncoder {
             enc.enable_dot_detection = cfg.dot_detection;
             enc.encoder_mode = cfg.mode;
             enc.splines = cfg.splines.clone();
-            enc.auto_splines = cfg.auto_splines;
+            enc.auto_splines = cfg.auto_splines();
             enc.is_grayscale = self.layout.is_grayscale();
             enc.progressive = cfg.progressive;
             enc.use_lf_frame = cfg.lf_frame;
@@ -11439,7 +11369,7 @@ impl LossyEncoder {
             enc.buffering = cfg.buffering;
             #[cfg(feature = "butteraugli-loop")]
             {
-                enc.butteraugli_iters = cfg.butteraugli_iters;
+                enc.butteraugli_iters = cfg.butteraugli_iters();
                 // EX-J11 chunk 4: see `encode_lossy` site above for
                 // the resolution rationale. Auto → Vdp2 on PQ/HLG,
                 // Butteraugli otherwise.
@@ -11568,17 +11498,17 @@ impl LossyEncoder {
                 .map_err(EncodeError::from)?;
 
             #[cfg(feature = "butteraugli-loop")]
-            let butteraugli_iters_actual = cfg.butteraugli_iters;
+            let butteraugli_iters_actual = cfg.butteraugli_iters();
             #[cfg(not(feature = "butteraugli-loop"))]
             let butteraugli_iters_actual = 0u32;
 
             let stats = EncodeStats {
                 mode: EncodeMode::Lossy,
                 strategy_counts: output.strategy_counts,
-                gaborish: cfg.gaborish,
-                ans: cfg.use_ans,
+                gaborish: cfg.gaborish(),
+                ans: cfg.ans(),
                 butteraugli_iters: butteraugli_iters_actual,
-                pixel_domain_loss: cfg.pixel_domain_loss,
+                pixel_domain_loss: cfg.pixel_domain_loss(),
                 ..Default::default()
             };
             Ok::<_, EncodeError>((output.data, stats))
@@ -12471,7 +12401,7 @@ impl LosslessEncoder {
                 // RFC#45 chunks 4-7 lossless backport (chunk 5 lossless
                 // trial encoder): per-image cost gate (see
                 // `PatchesData::is_cost_effective_lossless`).
-                pd_opt.filter(|pd| pd.is_cost_effective_lossless(image.bit_depth, cfg.use_ans))
+                pd_opt.filter(|pd| pd.is_cost_effective_lossless(image.bit_depth, cfg.ans()))
             } else {
                 None
             };
@@ -12552,7 +12482,7 @@ impl LosslessEncoder {
                 crate::vardct::patches::encode_reference_frame_rgb(
                     pd,
                     image.bit_depth,
-                    cfg.use_ans,
+                    cfg.ans(),
                     lossless_profile.patch_ref_tree_learning,
                     &mut writer,
                     Some(&budget),
@@ -12578,11 +12508,11 @@ impl LosslessEncoder {
                 FrameEncoderOptions {
                     use_modular: true,
                     effort: cfg.effort,
-                    use_ans: cfg.use_ans,
+                    use_ans: cfg.ans(),
                     use_tree_learning: use_tree_learning_l,
                     use_squeeze: cfg.squeeze,
                     enable_lz77: cfg.effective_lz77(),
-                    lz77_method: cfg.lz77_method,
+                    lz77_method: cfg.lz77_method(),
                     lossy_palette: cfg.lossy_palette,
                     encoder_mode: cfg.mode,
                     profile: smart_profile,
@@ -12624,7 +12554,7 @@ impl LosslessEncoder {
 
             let stats = EncodeStats {
                 mode: EncodeMode::Lossless,
-                ans: cfg.use_ans,
+                ans: cfg.ans(),
                 ..Default::default()
             };
             Ok::<_, EncodeError>((writer.finish_with_padding(), stats))
@@ -13074,11 +13004,11 @@ fn encode_animation_lossless(
             FrameEncoderOptions {
                 use_modular: true,
                 effort: cfg.effort,
-                use_ans: cfg.use_ans,
+                use_ans: cfg.ans(),
                 use_tree_learning,
                 use_squeeze: cfg.squeeze,
                 enable_lz77: cfg.effective_lz77(),
-                lz77_method: cfg.lz77_method,
+                lz77_method: cfg.lz77_method(),
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
                 profile: smart_profile.clone(),
@@ -13397,7 +13327,7 @@ fn encode_animation_lossy(
     enc.resolved_improvements = cfg.resolve_improvements();
     enc.effort = cfg.effort;
     enc.profile = profile;
-    enc.use_ans = cfg.use_ans;
+    enc.use_ans = cfg.ans();
     enc.optimize_codes = enc.profile.optimize_codes;
     enc.custom_orders = enc.profile.custom_orders;
     enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
@@ -13425,18 +13355,18 @@ fn encode_animation_lossy(
     // bundle (LossyConfig setters deleted; absorbed into
     // `EncoderImprovementsCustom`).
     enc.epf_dispatch = enc.resolved_improvements.epf_dispatch;
-    enc.error_diffusion = cfg.error_diffusion;
-    enc.pixel_domain_loss = cfg.pixel_domain_loss;
+    enc.error_diffusion = cfg.error_diffusion();
+    enc.pixel_domain_loss = cfg.pixel_domain_loss();
     enc.pixel_loss_dispatch = enc.resolved_improvements.pixel_loss_dispatch;
     enc.single_pass_entropy_dispatch = enc.resolved_improvements.single_pass_entropy_dispatch;
     enc.enable_lz77 = cfg.effective_lz77();
-    enc.lz77_method = cfg.lz77_method;
+    enc.lz77_method = cfg.lz77_method();
     enc.force_strategy = cfg.force_strategy;
-    // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches`
+    // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches()`
     // via `with_patches`, that wins; otherwise read the per-image
     // dispatched profile (the content-class adapter may have flipped
     // patches on for Screenshot content at e5/e6).
-    enc.enable_patches = if cfg.patches_explicit {
+    enc.enable_patches = if cfg.patches.is_some() {
         cfg.effective_patches()
     } else if cfg.faster_decoding >= 2 {
         // libjxl `enc_modular.cc:707` skips patches at
@@ -13449,7 +13379,7 @@ fn encode_animation_lossy(
     enc.enable_dot_detection = cfg.dot_detection;
     enc.encoder_mode = cfg.mode;
     enc.splines = cfg.splines.clone();
-    enc.auto_splines = cfg.auto_splines;
+    enc.auto_splines = cfg.auto_splines();
     enc.progressive = cfg.progressive;
     enc.use_lf_frame = cfg.lf_frame;
     // W44-130 Chunk D: `content_aware_entropy_mul` + legacy
@@ -13467,7 +13397,7 @@ fn encode_animation_lossy(
     enc.buffering = cfg.buffering;
     #[cfg(feature = "butteraugli-loop")]
     {
-        enc.butteraugli_iters = cfg.butteraugli_iters;
+        enc.butteraugli_iters = cfg.butteraugli_iters();
         // EX-J11 chunk 4: see the still-image `encode_lossy` site
         // for the resolution rationale. The animation API has no
         // per-encode `with_color_encoding` (today), so resolution
