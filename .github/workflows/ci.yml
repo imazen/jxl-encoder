@@ -254,7 +254,7 @@ jobs:
         with:
           prefix-key: v1-rust
       - name: Test (__expert __internals)
-        run: cargo test -p jxl-encoder --features "__expert __internals" --release
+        run: cargo test -p jxl-encoder --features "__expert __internals" --release --lib --test it
 
   clippy:
     name: Clippy (${{ matrix.name }})
