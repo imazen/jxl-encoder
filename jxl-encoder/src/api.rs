@@ -2147,6 +2147,11 @@ pub struct LosslessConfig {
     effort: u8,
     mode: EncoderMode,
     use_ans: bool,
+    /// `true` once [`Self::with_ans`] was called explicitly. Mirrors the
+    /// `tree_learning_user_set` pattern so `with_effort` preserves a
+    /// caller-set `use_ans` instead of re-adopting the effort default
+    /// (issue #80).
+    use_ans_explicit: bool,
     squeeze: bool,
     tree_learning: bool,
     /// True once the caller has explicitly chosen via
@@ -2154,8 +2159,20 @@ pub struct LosslessConfig {
     /// e5/e6 budgeted-tree lift (same pattern as `patches_user_set`).
     tree_learning_user_set: bool,
     lz77: bool,
+    /// `true` once [`Self::with_lz77`] was called explicitly. Mirrors the
+    /// `tree_learning_user_set` pattern so `with_effort` preserves a
+    /// caller-set `lz77` (issue #80).
+    lz77_explicit: bool,
     lz77_method: Lz77Method,
+    /// `true` once [`Self::with_lz77_method`] was called explicitly.
+    /// Mirrors the `tree_learning_user_set` pattern so `with_effort`
+    /// preserves a caller-set `lz77_method` (issue #80).
+    lz77_method_explicit: bool,
     patches: bool,
+    /// `true` once [`Self::with_patches`] was called explicitly. Mirrors
+    /// the `tree_learning_user_set` pattern so `with_effort` preserves a
+    /// caller-set `patches` (issue #80).
+    patches_explicit: bool,
     lossy_palette: bool,
     threads: usize,
     /// Override for the effort-derived tree-learning sample fraction
@@ -2319,12 +2336,16 @@ impl LosslessConfig {
             effort: profile.effort,
             mode: EncoderMode::Reference,
             use_ans: profile.use_ans,
+            use_ans_explicit: false,
             tree_learning: profile.tree_learning,
             tree_learning_user_set: false,
             squeeze: false, // squeeze hurts even with tree learning (14-62% larger on both photos and screenshots)
             lz77: profile.lz77,
+            lz77_explicit: false,
             lz77_method: profile.lz77_method,
+            lz77_method_explicit: false,
             patches: profile.patches,
+            patches_explicit: false,
             lossy_palette: false,
             threads: 0,
             tree_sample_fraction_override: None,
@@ -2811,6 +2832,32 @@ impl LosslessConfig {
         new.profile_override = self.profile_override;
         new.tree_parallel_smart = self.tree_parallel_smart;
         new.small_image_fallback_override = self.small_image_fallback_override;
+        // Issue #80: preserve explicitly-set effort-derived knobs across
+        // `with_effort`. Each defaults from the effort profile in `new`,
+        // so an untouched config (the common `new().with_effort(N)` path)
+        // keeps `*_explicit`/`*_user_set == false` and adopts the effort
+        // value exactly as before — byte-identical. A caller that *did*
+        // set the value now keeps it, making the chain order-independent.
+        if self.use_ans_explicit {
+            new.use_ans = self.use_ans;
+            new.use_ans_explicit = true;
+        }
+        if self.tree_learning_user_set {
+            new.tree_learning = self.tree_learning;
+            new.tree_learning_user_set = true;
+        }
+        if self.lz77_explicit {
+            new.lz77 = self.lz77;
+            new.lz77_explicit = true;
+        }
+        if self.lz77_method_explicit {
+            new.lz77_method = self.lz77_method;
+            new.lz77_method_explicit = true;
+        }
+        if self.patches_explicit {
+            new.patches = self.patches;
+            new.patches_explicit = true;
+        }
         // Buffering policy — never effort-derived; pure caller
         // preference. Carry across `with_effort` so the builder chain
         // `LosslessConfig::new().with_buffering(_).with_effort(_)` is
@@ -2843,12 +2890,14 @@ impl LosslessConfig {
     /// not change lossless output bytes today.
     pub fn with_patches(mut self, enable: bool) -> Self {
         self.patches = enable;
+        self.patches_explicit = true;
         self
     }
 
     /// Enable/disable ANS entropy coding (default: true).
     pub fn with_ans(mut self, enable: bool) -> Self {
         self.use_ans = enable;
+        self.use_ans_explicit = true;
         self
     }
 
@@ -2981,6 +3030,7 @@ impl LosslessConfig {
     /// lossless output bytes today.
     pub fn with_lz77(mut self, enable: bool) -> Self {
         self.lz77 = enable;
+        self.lz77_explicit = true;
         self
     }
 
@@ -2991,6 +3041,7 @@ impl LosslessConfig {
     /// (jxl-encoder#69): on that path this is stored but unused today.
     pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
         self.lz77_method = method;
+        self.lz77_method_explicit = true;
         self
     }
 
@@ -4635,7 +4686,16 @@ pub struct LossyConfig {
     effort: u8,
     mode: EncoderMode,
     use_ans: bool,
+    /// `true` once [`Self::with_ans`] was called explicitly. Mirrors the
+    /// `patches_explicit` / `auto_splines_explicit` pattern so that
+    /// `with_effort` preserves a caller-set `use_ans` instead of
+    /// re-adopting the effort-derived default (issue #80).
+    use_ans_explicit: bool,
     gaborish: bool,
+    /// `true` once [`Self::with_gaborish`] was called explicitly.
+    /// Mirrors the `auto_splines_explicit` pattern so `with_effort`
+    /// preserves a caller-set `gaborish` (issue #80).
+    gaborish_explicit: bool,
     /// EX-J13 — per-tile contrast-adaptive gaborish kernel strength.
     /// Encoder-only; decoder always applies the fixed 3x3 inverse blur.
     /// Default `false`. See [`Self::with_adaptive_gaborish`].
@@ -4660,9 +4720,25 @@ pub struct LossyConfig {
     original_distance: Option<f32>,
     denoise: bool,
     error_diffusion: bool,
+    /// `true` once [`Self::with_error_diffusion`] was called explicitly.
+    /// Mirrors the `auto_splines_explicit` pattern so `with_effort`
+    /// preserves a caller-set `error_diffusion` (issue #80).
+    error_diffusion_explicit: bool,
     pixel_domain_loss: bool,
+    /// `true` once [`Self::with_pixel_domain_loss`] was called explicitly.
+    /// Mirrors the `auto_splines_explicit` pattern so `with_effort`
+    /// preserves a caller-set `pixel_domain_loss` (issue #80).
+    pixel_domain_loss_explicit: bool,
     lz77: bool,
+    /// `true` once [`Self::with_lz77`] was called explicitly. Mirrors
+    /// the `auto_splines_explicit` pattern so `with_effort` preserves a
+    /// caller-set `lz77` (issue #80).
+    lz77_explicit: bool,
     lz77_method: Lz77Method,
+    /// `true` once [`Self::with_lz77_method`] was called explicitly.
+    /// Mirrors the `auto_splines_explicit` pattern so `with_effort`
+    /// preserves a caller-set `lz77_method` (issue #80).
+    lz77_method_explicit: bool,
     force_strategy: Option<u8>,
     max_strategy_size: Option<u8>,
     patches: bool,
@@ -5333,7 +5409,9 @@ impl LossyConfig {
             effort: profile.effort,
             mode: EncoderMode::Reference,
             use_ans: profile.use_ans,
+            use_ans_explicit: false,
             gaborish: profile.gaborish,
+            gaborish_explicit: false,
             adaptive_gaborish: false,
             noise: false,
             photon_noise_iso: None,
@@ -5342,9 +5420,13 @@ impl LossyConfig {
             original_distance: None,
             denoise: false,
             error_diffusion: profile.error_diffusion,
+            error_diffusion_explicit: false,
             pixel_domain_loss: profile.pixel_domain_loss,
+            pixel_domain_loss_explicit: false,
             lz77: profile.lz77,
+            lz77_explicit: false,
             lz77_method: profile.lz77_method,
+            lz77_method_explicit: false,
             force_strategy: None,
             max_strategy_size: None,
             patches: profile.patches,
@@ -5782,6 +5864,37 @@ impl LossyConfig {
             new.auto_splines = self.auto_splines;
             new.auto_splines_explicit = true;
         }
+        // Issue #80: preserve explicitly-set effort-derived knobs across
+        // `with_effort`. Each defaults from the effort profile in `new`,
+        // so an untouched config (the common `new().with_effort(N)` path)
+        // keeps `*_explicit == false` and adopts the effort value exactly
+        // as before — byte-identical. A caller that *did* set the value
+        // (e.g. `with_ans(false).with_effort(7)`) now keeps it, making
+        // the builder chain order-independent.
+        if self.use_ans_explicit {
+            new.use_ans = self.use_ans;
+            new.use_ans_explicit = true;
+        }
+        if self.gaborish_explicit {
+            new.gaborish = self.gaborish;
+            new.gaborish_explicit = true;
+        }
+        if self.error_diffusion_explicit {
+            new.error_diffusion = self.error_diffusion;
+            new.error_diffusion_explicit = true;
+        }
+        if self.pixel_domain_loss_explicit {
+            new.pixel_domain_loss = self.pixel_domain_loss;
+            new.pixel_domain_loss_explicit = true;
+        }
+        if self.lz77_explicit {
+            new.lz77 = self.lz77;
+            new.lz77_explicit = true;
+        }
+        if self.lz77_method_explicit {
+            new.lz77_method = self.lz77_method;
+            new.lz77_method_explicit = true;
+        }
         new.progressive = self.progressive;
         // Preserve explicit butteraugli override
         #[cfg(feature = "butteraugli-loop")]
@@ -5873,12 +5986,14 @@ impl LossyConfig {
     /// Enable/disable ANS entropy coding (default: true).
     pub fn with_ans(mut self, enable: bool) -> Self {
         self.use_ans = enable;
+        self.use_ans_explicit = true;
         self
     }
 
     /// Enable/disable gaborish inverse pre-filter (default: true).
     pub fn with_gaborish(mut self, enable: bool) -> Self {
         self.gaborish = enable;
+        self.gaborish_explicit = true;
         self
     }
 
@@ -6142,12 +6257,14 @@ impl LossyConfig {
     /// in dark regions), especially when combined with gaborish.
     pub fn with_error_diffusion(mut self, enable: bool) -> Self {
         self.error_diffusion = enable;
+        self.error_diffusion_explicit = true;
         self
     }
 
     /// Enable/disable pixel-domain loss in strategy selection (default: true).
     pub fn with_pixel_domain_loss(mut self, enable: bool) -> Self {
         self.pixel_domain_loss = enable;
+        self.pixel_domain_loss_explicit = true;
         self
     }
 
@@ -6209,18 +6326,27 @@ impl LossyConfig {
         self.dot_detection = enable; // libjxl `Override::kDefault`; in-encoder effort/distance gates make this niche-only
         self.noise = false; // off by default in libjxl too
         self.pixel_domain_loss = enable;
+        // Issue #80: pin the knobs this convenience wrapper touches so a
+        // following `with_effort` preserves them (matching the existing
+        // `patches_explicit` pin above — otherwise gaborish/pixel-domain
+        // loss would silently revert to the effort default while patches
+        // stuck, an inconsistent half-pin).
+        self.gaborish_explicit = true;
+        self.pixel_domain_loss_explicit = true;
         self
     }
 
     /// Enable/disable LZ77 backward references (default: false).
     pub fn with_lz77(mut self, enable: bool) -> Self {
         self.lz77 = enable;
+        self.lz77_explicit = true;
         self
     }
 
     /// Set LZ77 method (default: Greedy).
     pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
         self.lz77_method = method;
+        self.lz77_method_explicit = true;
         self
     }
 
