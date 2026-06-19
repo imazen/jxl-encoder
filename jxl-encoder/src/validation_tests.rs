@@ -390,6 +390,7 @@ mod expert {
             tree_parallel_small_image_fallback: Some(false),
             tree_learn_seeds: Some(1),
             lloyd_max_buckets: Some(false),
+            ..Default::default()
         };
         assert!(p.validate().is_ok());
     }

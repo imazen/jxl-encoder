@@ -39,6 +39,10 @@ pub mod image;
 pub mod jpeg;
 pub mod modular;
 pub(crate) mod parallel;
+/// Config enumeration + computed unique-configs for parameter sweeps
+/// (`__expert`). See [`sweep`] module docs.
+#[cfg(feature = "__expert")]
+pub mod sweep;
 
 /// Ultra HDR gain-map encoding for JPEG XL containers (feature
 /// `hdr-gainmap`).

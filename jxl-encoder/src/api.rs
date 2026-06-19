@@ -3237,8 +3237,7 @@ impl LosslessConfig {
 
     /// Whether LZ77 backward references are enabled.
     pub fn lz77(&self) -> bool {
-        self.lz77
-            .unwrap_or_else(|| self.effort_schedule().lz77)
+        self.lz77.unwrap_or_else(|| self.effort_schedule().lz77)
     }
 
     /// Current LZ77 method.
@@ -6886,9 +6885,8 @@ impl LossyConfig {
     /// Whether automatic spline detection is enabled. See
     /// [`Self::with_auto_splines`].
     pub fn auto_splines(&self) -> bool {
-        self.auto_splines.unwrap_or_else(|| {
-            crate::effort::EffortProfile::auto_splines_default(self.effort)
-        })
+        self.auto_splines
+            .unwrap_or_else(|| crate::effort::EffortProfile::auto_splines_default(self.effort))
     }
 
     /// Whether [`Self::auto_splines`] was set explicitly via
@@ -7682,8 +7680,7 @@ impl LossyConfig {
 
     /// Whether LZ77 backward references are enabled.
     pub fn lz77(&self) -> bool {
-        self.lz77
-            .unwrap_or_else(|| self.effort_schedule().lz77)
+        self.lz77.unwrap_or_else(|| self.effort_schedule().lz77)
     }
 
     /// Current LZ77 method.
