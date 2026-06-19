@@ -356,8 +356,8 @@ impl crate::api::LossyConfig {
 
         // Validate the resolved internal-params profile if one was set.
         #[cfg(feature = "__expert")]
-        if let Some(profile) = self.profile_override_ref() {
-            validate_lossy_profile_overrides(profile)?;
+        if let Some(profile) = self.overridden_profile() {
+            validate_lossy_profile_overrides(&profile)?;
         }
 
         Ok(())
@@ -373,8 +373,8 @@ impl crate::api::LosslessConfig {
         check_effort(self.effort())?;
 
         #[cfg(feature = "__expert")]
-        if let Some(profile) = self.profile_override_ref() {
-            validate_lossless_profile_overrides(profile)?;
+        if let Some(profile) = self.overridden_profile() {
+            validate_lossless_profile_overrides(&profile)?;
         }
         Ok(())
     }

@@ -162,23 +162,23 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     // `libjxl_output_decodes_via_jxl_rs_and_jxl_oxide`).
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1",
-        size: 213,
-        hash: 0x7ae1cf0273e95247,
+        size: 211,
+        hash: 0x063bb0e9c4f2b5e8,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
-        size: 173,
-        hash: 0x67180590cd52bf00,
+        size: 154,
+        hash: 0x86050e4ba08e29dc,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
-        size: 211,
-        hash: 0x5edd6bfed89e073d,
+        size: 209,
+        hash: 0x5c87f6448ade80a3,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
-        size: 309,
-        hash: 0xae3d3cc1e9a3bcef,
+        size: 314,
+        hash: 0x9b475a92f6c4d6f6,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",

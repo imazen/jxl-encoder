@@ -20,7 +20,6 @@
   (was the interim `(data, max_pixels: Option<u64>)`). `Limits` bundles the
   pixel cap + memory budget + fallible policy; `Stop` cancels — the same
   pair the encode side takes. Approved API change (#77 / #78).
-
 ### Security
 - **Configurable pre-flight pixel cap on the untrusted JPEG-transcode SOF
   (#77 / #78).** The JPEG-reconstruction/transcode path (`read_jpeg` /
@@ -248,6 +247,15 @@
   `test_stop_cancels_lossless_multigroup`.
 
 ### Added
+- **`sweep` module — config enumeration + computed unique-configs
+  (`__expert`).** `LossySweep` / `LosslessSweep` closure-axis grids plus
+  `unique_lossy_configs` / `unique_lossless_configs` enumerate a cartesian
+  product of `LossyInternalParams` / `LosslessInternalParams` candidates,
+  resolve each to an `EffortProfile`, and deduplicate by
+  `EffortProfile::fingerprint()` (a stable 71-field content hash; equal
+  fingerprints ⇒ byte-identical encode) — so a parameter sweep encodes each
+  *distinct effective config* once instead of re-encoding combinations that
+  resolve identically. (#80)
 - **Calibrated peak-memory estimation (`heuristics` module + per-config
   `estimate_encode`).** New `jxl_encoder::heuristics::EncodeEstimate`
   (`peak_memory_bytes_min` / `peak_memory_bytes` typical / `_max` + coarse
@@ -294,6 +302,33 @@
   cell).
 
 ### Changed
+- **Sparse-override config resolution — `with_effort` is now a pure setter
+  (#80).** The effort-derived knobs (lossy `use_ans`, `gaborish`, `lz77`,
+  `lz77_method`, `patches`, `error_diffusion`, `pixel_domain_loss`,
+  `auto_splines`, `butteraugli_iters`; lossless `use_ans`, `tree_learning`,
+  `lz77`, `lz77_method`, `patches`) are stored as `Option<T>` (`None` =
+  inherit the effort schedule) and resolved lazily in `effective_profile` /
+  the getters. `with_effort` only sets the effort level, so it can no longer
+  clobber a caller override in any builder order — the structural fix for the
+  #80 footgun that #90/#91 patched field-by-field (the 14 `*_explicit` /
+  `*_user_set` touched-bits + the ~120-line field-by-field preserve blocks
+  are gone; the `Option` *is* the touched-bit). `with_internal_params`
+  (`__expert`) likewise stores the sparse params and resolves them against
+  the final effort (was: an eager `profile_override` capturing the effort at
+  call time), fixing the same order-sensitivity on the expert path.
+  Byte-identical on every hash-lock fixture (48/48).
+- **Minimal default API surface (#80).** The ~20 codec-internal tuning
+  setters (`with_ans`, `with_gaborish`, `with_lz77`, `with_lz77_method`,
+  `with_patches`, `with_error_diffusion`, `with_pixel_domain_loss`,
+  `with_auto_splines`, `with_force_strategy`, `with_max_strategy_size`,
+  `with_quant_ac_rescale`, `with_strategy_overrides`, `with_butteraugli_iters`,
+  `with_perceptual_optimizations`, lossless `with_tree_learning`, …) are now
+  `#[doc(hidden)]`: the *documented* default builder is minimal
+  (quality/effort/threads, output-format + feature toggles, metric
+  selection, limits, metadata). They remain callable for power users and
+  sweep harnesses, so this is **non-breaking**. The full sweepable knob set
+  (`LossyInternalParams` / `LosslessInternalParams` + `with_internal_params`
+  + the new `sweep` module) stays behind the `__expert` cargo feature.
 - **Default memory cap raised 2 GiB → 4 GiB
   (`Limits::DEFAULT_MAX_MEMORY_BYTES`).** Measured VarDCT peak working set
   is ~180 bytes/pixel — ~2.14 GB real RSS at 12 MP e9 d4, in line with
