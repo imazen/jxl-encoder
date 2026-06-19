@@ -121,6 +121,7 @@ mod w44_63_decoder_roundtrip;
 mod w44_65_decoder_roundtrip;
 mod w44_78_decoder_roundtrip;
 mod w44_phase3_b1_gpu_buttloop_roundtrip;
+mod with_effort_preserves_explicit;
 mod with_patches_data;
 mod zenjxl_regression_gate;
 mod zensim_backend_smoke;

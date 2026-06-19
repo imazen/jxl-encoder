@@ -189,6 +189,42 @@
   `write_u32_jbrd_no_selector_match_is_typed_error` (jbrd).
 
 ### Fixed
+- **`with_effort()` no longer silently discards builder settings placed
+  before it in the chain (#80).** `LossyConfig::with_effort` /
+  `LosslessConfig::with_effort` rebuild the config from the effort profile
+  and previously preserved only a hand-picked field list, so any other
+  setter called *before* `with_effort` was dropped — e.g.
+  `LossyConfig::new(1.0).with_ans(false).with_effort(7)` silently lost
+  `with_ans(false)`. Extended the existing `auto_splines_explicit` /
+  `patches_explicit` / `tree_learning_user_set` touched-tracking pattern
+  with private `*_explicit` flags so `with_effort` preserves a value only
+  when its setter was actually called; the builder chain is now
+  order-independent. Now-preserved across `with_effort`: on `LossyConfig`
+  — `with_ans`, `with_gaborish`, `with_error_diffusion`,
+  `with_pixel_domain_loss`, `with_lz77`, `with_lz77_method` (and the
+  gaborish/pixel-domain-loss knobs that `with_perceptual_optimizations`
+  sets, matching its pre-existing patches pin); on `LosslessConfig` —
+  `with_ans`, `with_patches`, `with_lz77`, `with_lz77_method`, and
+  `with_tree_learning` (whose `tree_learning_user_set` flag existed but
+  was not honored by `with_effort`). The untouched common
+  `new().with_effort(N)` path keeps adopting the effort default and stays
+  byte-identical (hash-locks 48/48). New test
+  `tests/it/with_effort_preserves_explicit.rs`.
+- **Test builds: pin `alloc-stdlib` so `alloc-no-stdlib` stays on 2.x (#82).**
+  `brotli` (a dev-dep via `zenjxl-decoder`, plus our optional `brotli-metadata`
+  dep) provides `impl BrotliAlloc for StandardAlloc`, where `StandardAlloc`
+  comes from `alloc-stdlib` and impls `alloc_no_stdlib::Allocator`. When
+  `alloc-stdlib 0.2.3` loosened its `alloc-no-stdlib` range to `>=2.0.4, <4.0`,
+  a fresh (non-`--locked`) resolve pulled `alloc-no-stdlib 3.0.0` for
+  `StandardAlloc` while `brotli` stayed on the 2.x trait → `E0277` mismatch
+  that broke **every** test build (the `hash_lock_features` / byte-lock gate
+  was down from ~2026-06-14). Upstream is now fixed (`alloc-stdlib 0.2.4`
+  re-tightened to `<3.0`; `brotli 8.0.4` added the same caps), but the durable
+  guard is a Cargo.toml constraint, not the lockfile: `jxl-encoder`'s
+  dev-dependencies now pin `alloc-stdlib = "0.2.4"`, which keeps
+  `alloc-no-stdlib` on 2.x even under a fresh `--locked`-less resolve and
+  blocks the 3.x-pulling `0.3.x`. Verified: `cargo tree -i alloc-no-stdlib`
+  shows only `2.0.4`, and `cargo test -p jxl-encoder --lib --no-run` compiles.
 - **Cooperative cancellation now aborts on every VarDCT entropy path (#77
   item 2 / #81).** `#81` wired per-DC/AC-group `Stop` checkpoints into
   `VarDctEncoder::encode_inner`, but they lived only in the multi-group
