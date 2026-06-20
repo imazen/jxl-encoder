@@ -1,0 +1,34 @@
+# vCPU resource sweep — jxl-encoder (peak mem / peak heap / wall vs THREAD COUNT)
+date: 2026-06-20
+host: lilith
+cpu: AMD Ryzen 9 7950X 16-Core Processor
+ram: 59 GiB
+base_commit: 28fcae06 (origin/main)
+jj_change: znwrlsxtquzp
+bin: target/release/examples/mem_probe   (jxl-encoder-cli, default features incl. parallel,parallel-tree-learning)
+source_image: imazen-26-png-v3/1000-lilith-photos-general/1000_general_red-convertible-car_...4032x3024.sdr.png (1 photo, downscale-only Lanczos square ladder)
+grid: sizes {256,1024,2048}^2 (downscale-only) × {lossless e7, lossy e9 d2.0} × threads {1,2,4,8,16,28}; 8-bit rgb
+measure: ONE PROCESS PER CELL, run-heavy (nice+ionice+cgroup MemoryMax 40G), SERIAL, GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072.
+  - clean run (all 6 thread points): driver VmHWM delta (marginal working set) + VmHWM peak (whole-proc peak RSS) + wall(Instant)/user+sys(/proc/self/stat) + bytes + heuristics::estimate_encode prediction (est_min/typ/max/time, thread-INDEPENDENT) in the same row.
+  - heaptrack run (threads {1,8,28}): allocator PEAK_HEAP + peak RSS via heaptrack_print.
+reproducer:
+  cargo build --release -p jxl-encoder-cli --example mem_probe
+  # ladder: for n in 256 1024 2048; do convert SRC -filter Lanczos -resize ${n}x${n}! /tmp/jxl_vcpu_imgs/${n}.png; done
+  run-heavy --mem 40G -- bash scripts/vcpu_resource_sweep.sh target/release/examples/mem_probe /tmp/jxl_vcpu_imgs benchmarks/vcpu_resource_sweep_2026-06-20.tsv
+  python3 scripts/vcpu_resource_fit.py benchmarks/vcpu_resource_sweep_2026-06-20.tsv
+columns: codec content_class src width height pixels path effort threads est_min_kb est_typ_kb est_max_kb est_time_ms meas_peak_heap_kb meas_peak_rss_kb meas_vmhwm_kb meas_delta_kb meas_wall_ms meas_user_ms meas_sys_ms bytes ok
+  (est_* = heuristics::estimate_encode, thread-independent, calibrated threads=1; peak_heap/peak_rss from heaptrack at threads {1,8,28} only)
+
+# --- FINDINGS (vCPU axis — the dimension estimate_encode does NOT model) ---
+# TIME does NOT scale 1/N. Wall speedup SATURATES far below thread count:
+#   lossless e7: ~3.5x max (peaks ~16T), efficiency 91%@2T -> 22%@16T -> 12%@28T.
+#   lossy e9 (buttloop): ~1.9x max (peaks ~8T), then FLAT/regresses (largely serial).
+#   => wall(N) ≈ single_thread / speedup(N), speedup capped 1.9x(lossy)/3.5x(lossless),
+#      NOT N. A naive time/N model is 5-15x optimistic at 28T.
+# PEAK MEMORY is ~thread-independent for lossless, mildly thread-growing for lossy:
+#   lossless peak HEAP byte-IDENTICAL across threads (γ_heap≈0); peak RSS +~4% (1->28T) = arena frag only.
+#   lossy   peak HEAP +9% (1->8T) then plateaus; γ ≈ 2.56 MB/thread per 4.19MP (EPF/buttloop per-candidate scratch).
+#   => existing thread-independent peak model is ~safe; budget +~10% headroom for multi-threaded lossy.
+# EST vs MEASURED (1 photo): working_pred/measured-marginal-delta = 1.16-1.34x (model slightly conservative
+#   for this below-median-complexity photo); est_max covers measured peak RSS by 2.0-2.5x (safe upper bound).
+#   Single-image — NOT a recalibration trigger; the content axis needs the multi-class sweep.

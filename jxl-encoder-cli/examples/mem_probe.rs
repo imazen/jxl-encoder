@@ -8,10 +8,20 @@
 //! allocations on top of the caller-provided pixels), unlike the CLI
 //! whole-process RSS which is inflated by a ~126 MB binary/decode floor.
 //!
-//! Usage: mem_probe <png> <lossy|lossless> <effort> <distance> <8|16> [rgb|rgba]
-//! Prints: `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> bytes=<n>`
+//! Usage: mem_probe <png> <lossy|lossless> <effort> <distance> <8|16> [rgb|rgba] [threads]
+//! Prints: `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> bytes=<n> \
+//!          threads=<n> est_min_kb=<n> est_typ_kb=<n> est_max_kb=<n> est_time_ms=<f>`
 //! Time is isolated to the `encode()` call (wall via `Instant`, user/sys via
 //! `/proc/self/stat`), so the PNG-load and process startup don't count.
+//!
+//! The optional 7th arg is the encoder thread count for the vCPU resource
+//! sweep (default 1). `with_threads(n)` installs a dedicated n-thread rayon
+//! pool for the parallel stages (lossless tree-learning, EPF search), so
+//! peak working set grows with n (per-worker SplitWorkspace) and wall time
+//! drops — exactly the axis `estimate_encode` does NOT yet model. The
+//! `est_*` columns are `heuristics::estimate_encode`'s prediction (its
+//! thread-independent typical/min/max peak + single-thread time_ms) emitted
+//! in the SAME row so prediction-vs-measurement is one join-free record.
 //!
 //! The optional 6th arg selects the channel layout. `rgba` builds a
 //! 4-channel buffer whose alpha plane is the source's GREEN channel — a
@@ -68,6 +78,7 @@ fn main() {
         a[5].parse::<u8>().unwrap(),
     );
     let alpha = a.get(6).map(String::as_str).unwrap_or("rgb");
+    let threads: usize = a.get(7).and_then(|s| s.parse().ok()).unwrap_or(1);
 
     use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
     let img = image::open(path).expect("open png");
@@ -108,21 +119,39 @@ fn main() {
         _ => (img.to_rgb8().into_raw(), PixelLayout::Rgb8),
     };
 
+    // Model prediction for the same encode (thread-independent — calibrated
+    // at threads=1). input_bpp/has_alpha derive from the materialized layout.
+    let is_lossless = mode == "lossless";
+    let input_bpp: u8 = match (depth, alpha == "rgba") {
+        (16, true) => 8,
+        (16, _) => 6,
+        (_, true) => 4,
+        _ => 3,
+    };
+    let est = jxl_encoder::heuristics::estimate_encode(
+        w,
+        h,
+        input_bpp,
+        alpha == "rgba",
+        is_lossless,
+        effort,
+    );
+
     let baseline = vmhwm_kb();
     let (cu0, cs0) = cpu_ticks();
     let t0 = Instant::now();
-    // Pin to 1 thread so wall ≈ user (clean single-thread CPU time, which
-    // is what estimate_encode's time_ms models).
-    let encoded = if mode == "lossless" {
+    // `with_threads(n)`: n>=1 installs a dedicated n-thread rayon pool for
+    // the parallel stages (the vCPU axis); n=1 forces sequential.
+    let encoded = if is_lossless {
         LosslessConfig::new()
             .with_effort(effort)
-            .with_threads(1)
+            .with_threads(threads)
             .encode_request(w, h, layout)
             .encode(&pixels)
     } else {
         LossyConfig::new(distance)
             .with_effort(effort)
-            .with_threads(1)
+            .with_threads(threads)
             .encode_request(w, h, layout)
             .encode(&pixels)
     };
@@ -130,13 +159,29 @@ fn main() {
     let (cu1, cs1) = cpu_ticks();
     let peak = vmhwm_kb();
     let len = encoded.map(|d| d.len()).unwrap_or(0);
+    let (est_min, est_typ, est_max, est_t) = est
+        .map(|e| {
+            (
+                e.peak_memory_bytes_min / 1024,
+                e.peak_memory_bytes / 1024,
+                e.peak_memory_bytes_max / 1024,
+                e.time_ms,
+            )
+        })
+        .unwrap_or((0, 0, 0, 0.0));
     println!(
-        "delta_kb={} peak_kb={} wall_ms={:.1} user_ms={:.1} sys_ms={:.1} bytes={}",
+        "delta_kb={} peak_kb={} wall_ms={:.1} user_ms={:.1} sys_ms={:.1} bytes={} \
+         threads={} est_min_kb={} est_typ_kb={} est_max_kb={} est_time_ms={:.1}",
         peak.saturating_sub(baseline),
         peak,
         wall.as_secs_f64() * 1000.0,
         (cu1 - cu0) as f64 * TICK_MS,
         (cs1 - cs0) as f64 * TICK_MS,
-        len
+        len,
+        threads,
+        est_min,
+        est_typ,
+        est_max,
+        est_t,
     );
 }
