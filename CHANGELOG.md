@@ -20,6 +20,18 @@
   (was the interim `(data, max_pixels: Option<u64>)`). `Limits` bundles the
   pixel cap + memory budget + fallible policy; `Stop` cancels — the same
   pair the encode side takes. Approved API change (#77 / #78).
+- **`convenience` module: the 8 `encode_*` fns now return
+  `Result<Vec<u8>, At<EncodeError>>`** (was bare `Result<Vec<u8>, EncodeError>`).
+  They previously dropped the `whereat` trace from `LossyConfig` / `LosslessConfig`
+  `::encode` via `.map_err(|e| e.decompose().0)`; now they return the traced `At`
+  directly so the originating encode site survives in the error.
+
+### Fixed
+- **`convenience::encode_*` preserve the whereat trace** — removed the
+  trace-dropping `.map_err(|e| e.decompose().0)` from all 8 wrappers; the
+  `At<EncodeError>` from `*Config::encode` now propagates intact. Regression
+  test: `convenience::tests::convenience_encode_error_preserves_whereat_trace`.
+
 ### Security
 - **Configurable pre-flight pixel cap on the untrusted JPEG-transcode SOF
   (#77 / #78).** The JPEG-reconstruction/transcode path (`read_jpeg` /
