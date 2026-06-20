@@ -243,6 +243,95 @@ pub fn estimate_encode(
     })
 }
 
+/// How an encode scales across CPU cores (measured, single-photo sparse fit,
+/// `benchmarks/vcpu_resource_sweep_2026-06-20.tsv`). `estimate_encode`'s
+/// `time_ms` is a single-thread figure; use [`estimate_encode_threaded`] (or
+/// [`ThreadingInfo::speedup`]) to fold in the available cores — wall time does
+/// NOT scale as `1/cores`: speedup saturates per-codec and per-effort.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct ThreadingInfo {
+    /// Whether the encode uses more than one core at all.
+    pub parallel: bool,
+    /// Threads beyond this yield no further speedup (group/tile/block count
+    /// caps it). 1 = serial.
+    pub max_useful_threads: u32,
+    /// Amdahl parallel fraction `p` fitted from measurement; peak speedup is
+    /// `1/(1-p)`. 0 = serial.
+    pub parallel_fraction: f32,
+    /// Extra peak working-set per added worker thread, bytes (the γ term;
+    /// peak-RSS basis — lossless heap is thread-invariant, lossy carries
+    /// per-worker buttloop/EPF scratch).
+    pub mem_bytes_per_thread: u64,
+}
+
+impl ThreadingInfo {
+    /// Threads that actually do work given `cores` available (clamped to
+    /// `max_useful_threads`).
+    #[must_use]
+    pub fn effective_threads(&self, cores: usize) -> u64 {
+        (cores.max(1) as u64).min(self.max_useful_threads.max(1) as u64)
+    }
+    /// Achieved wall-time speedup at `cores` (Amdahl, clamped). 1.0 = serial.
+    #[must_use]
+    pub fn speedup(&self, cores: usize) -> f32 {
+        let n = self.effective_threads(cores);
+        if !self.parallel || n <= 1 {
+            return 1.0;
+        }
+        let p = self.parallel_fraction as f64;
+        (1.0 / ((1.0 - p) + p / n as f64)) as f32
+    }
+}
+
+/// Threading characterisation for a jxl encode. lossless: rayon group/tree
+/// parallel, peak speedup ~3.5×, heap thread-invariant. lossy: buttloop/EPF
+/// parallel, peak ~1.9×, ~2.5 MB/thread scratch.
+#[must_use]
+pub fn encode_threading_info(is_lossless: bool, _effort: u8) -> ThreadingInfo {
+    if is_lossless {
+        ThreadingInfo {
+            parallel: true,
+            max_useful_threads: 16,
+            parallel_fraction: 0.72,
+            mem_bytes_per_thread: 0,
+        }
+    } else {
+        ThreadingInfo {
+            parallel: true,
+            max_useful_threads: 8,
+            parallel_fraction: 0.55,
+            mem_bytes_per_thread: 2_500_000,
+        }
+    }
+}
+
+/// [`estimate_encode`] adjusted for `cores` available CPU cores: `time_ms` is
+/// divided by the measured (saturating) speedup and the peak terms gain the
+/// per-thread working-set. Pair with [`encode_threading_info`] to inspect the
+/// scaling. Returns `None` only on dimension overflow.
+#[must_use]
+pub fn estimate_encode_threaded(
+    width: u32,
+    height: u32,
+    input_bpp: u8,
+    has_alpha: bool,
+    is_lossless: bool,
+    effort: u8,
+    cores: usize,
+) -> Option<EncodeEstimate> {
+    let mut e = estimate_encode(width, height, input_bpp, has_alpha, is_lossless, effort)?;
+    let ti = encode_threading_info(is_lossless, effort);
+    e.time_ms = (e.time_ms as f64 / ti.speedup(cores) as f64) as f32;
+    let extra = ti
+        .mem_bytes_per_thread
+        .saturating_mul(ti.effective_threads(cores).saturating_sub(1));
+    e.peak_memory_bytes_min = e.peak_memory_bytes_min.saturating_add(extra);
+    e.peak_memory_bytes = e.peak_memory_bytes.saturating_add(extra);
+    e.peak_memory_bytes_max = e.peak_memory_bytes_max.saturating_add(extra);
+    Some(e)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
