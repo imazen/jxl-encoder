@@ -702,6 +702,39 @@ measurement at equal or better coverage.
 
 ### Live follow-ons
 
+- **Buttloop memory reduction — measured options (2026-06-23, #93 follow-up).**
+  Two threads investigated at the user's request:
+  1. **jxl↔butteraugli XYB buffer-sharing is NOT viable** (definitive,
+     source-grounded — don't re-attempt). butteraugli's XYB
+     (`opsin.rs::opsin_dynamics_image`) is a **spatially-adaptive** opsin: it
+     blurs RGB at σ=1.2, derives a per-pixel sensitivity from the BLURRED
+     neighborhood, applies it to the original RGB, and scales by
+     `intensity_target`. jxl's encoder XYB (`vardct/xyb.rs::convert_rows_to_xyb`)
+     is **pointwise** + intensity-scaled. Different transforms → butteraugli
+     needs the linear RGB regardless (for the blur), so the encoder's XYB
+     planes can't feed it. **Linear-RGB planar is already the shared interface**
+     (`compare_linear_planar_into`); the GPU backend already uploads linear
+     planes directly (W44-phase3-B4). The only redundant pure-copy is jxl's
+     reference deinterleave (`linear_rgb` → `ref_r/g/b`), and eliminating it is
+     a net loss with today's API (`new_linear` interleaved CLONES the source
+     via `rgb.to_vec()`, vs `new_linear_planar`'s `source: None`). Net: no
+     meaningful cross-crate copy win.
+  2. **Strip-wise butteraugli is a real memory lever** (measured,
+     `imazen/butteraugli` `benchmarks/strip_vs_full_mem_2026-06-23` via the new
+     `strip_vs_full_mem` harness): one-shot strip vs full is **2.84–2.97×
+     smaller RSS** (3.10→1.09 GiB @16 MP, 6.47→2.26 GiB @36 MP), **BIT-IDENTICAL
+     score**, and ~equal-or-faster one-shot. The catch: the buttloop is
+     **warm-ref** (precompute once, compare 2–4×) — full amortizes the
+     precompute across iters, standalone strip re-walks it, which is why the
+     buttloop-wired strip-tile was "measured slower" (W44-PHASE3-B7d). The
+     unblock is a **warm-ref strip** (cache per-strip reference precompute,
+     reuse across the 2–4 compares) — the unfinished true-tile refactor. For
+     the memory-bound `modes_full` sweep this is the highest-leverage per-encode
+     win; for latency-sensitive single encodes, weigh the warm-ref re-walk cost.
+     heaptrack (`benchmarks/issue93_*`, 12 MP e8) confirms butteraugli's
+     working set (precompute + per-compare opsin-blur/diffmap/malta) is ~40–50 %
+     of the e8 peak — a strip path bounds all of it.
+
 - **Encoder memory follow-ups (from the 2026-06-13 12 MP HDR cap fix).**
   Three measured-but-unfixed items, deprioritized vs the cap+over-count fix
   that shipped:
