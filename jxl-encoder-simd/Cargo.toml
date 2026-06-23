@@ -25,7 +25,7 @@ avx512 = ["magetypes/avx512", "archmage/avx512"]
 
 [dependencies]
 archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
-magetypes = { version = "0.9.15", default-features = false }
+magetypes = { path = "/home/lilith/work/archmage/magetypes", default-features = false }
 # Pure-Rust libm fallback. Only pulled in when `std` is OFF — the
 # `scalarmath` veneer in `lib.rs` cfg-gates each `f32` math call so
 # `std` builds use the inherent methods (which lower to hardware
