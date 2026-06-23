@@ -27,6 +27,22 @@
   directly so the originating encode site survives in the error.
 
 ### Fixed
+- **butteraugli quantization loop is now bounded by the `MemoryBudget` (#93).**
+  The CPU butteraugli backend's `ButteraugliReference` builds a
+  multi-resolution psycho pyramid + masks *inside* the butteraugli crate —
+  the buttloop's single largest allocation (heaptrack: 6.35 GB on an OOMing
+  `modes_full` sweep) — which was invisible to the encoder's budget, so the
+  default 4 GiB lossy cap could not catch it and a large rendition
+  OOM-killed the host instead of failing gracefully. The buttloop now
+  reserves `butteraugli::ButteraugliReference::estimated_reference_bytes`
+  before constructing the reference (CPU butteraugli path only), so an
+  over-cap encode returns `EncodeError::LimitExceeded`. Pure memory
+  accounting — hash-locks (48/48) and the `EncoderStrategy::Libjxl`
+  byte-lock (10/10) are unchanged. Measurement (`examples/pool_growth_probe.rs`,
+  `benchmarks/issue93_pool_*_2026-06-23`) ruled out the reported
+  "BufferPool grows unbounded" leak: the pool is fresh-per-encode,
+  count-capped at 8, and dropped at encode end. The buttloop ref planes
+  also now honor the runtime `Limits::fallible_alloc()` toggle.
 - **`convenience::encode_*` preserve the whereat trace** — removed the
   trace-dropping `.map_err(|e| e.decompose().0)` from all 8 wrappers; the
   `At<EncodeError>` from `*Config::encode` now propagates intact. Regression

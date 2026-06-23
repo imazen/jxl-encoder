@@ -386,6 +386,28 @@ pub(crate) fn vec_with_capacity_fallible<T>(fallible: bool, cap: usize) -> Resul
     }
 }
 
+/// Allocate a zero-filled `Vec<f32>` of `len`, honoring a runtime
+/// fallible-allocation policy. Reserves nothing against a [`MemoryBudget`]
+/// — pair with a separate `reserve_opt`/`reserve_permanent_opt` for the
+/// accounting (callers that already hold a [`BudgetGuard`] for the bytes use
+/// this for the allocation only).
+///
+/// - infallible (default): `vec![0.0f32; len]` — byte-identical to a bare
+///   `vec!`, lowered to a single `calloc`;
+/// - fallible: `try_reserve_exact` + `resize` — returns
+///   [`Error::OutOfMemory`] instead of aborting when the size cannot be
+///   satisfied (e.g. a cap raised above physical RAM for trusted batch).
+pub(crate) fn vec_f32_zeroed_fallible(fallible: bool, len: usize) -> Result<Vec<f32>> {
+    if fallible {
+        let mut v: Vec<f32> = Vec::new();
+        v.try_reserve_exact(len)?;
+        v.resize(len, 0.0);
+        Ok(v)
+    } else {
+        Ok(vec![0.0f32; len])
+    }
+}
+
 /// Reserve `len * size_of::<T>()` permanently against `budget`, then allocate a
 /// zeroed `Vec<T>`, honoring the budget's **runtime** fallible-allocation
 /// policy ([`MemoryBudget::is_fallible`]):

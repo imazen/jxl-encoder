@@ -876,6 +876,20 @@ impl VarDctEncoder {
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
 
+        // Issue #93: the CPU butteraugli backend's `ButteraugliReference`
+        // builds a multi-resolution psycho pyramid + masks (the dominant,
+        // long-lived allocation of the whole buttloop — heaptrack put it at
+        // 6.35 GB on the OOMing sweep). It is allocated *inside* butteraugli
+        // (`new_linear_planar`), so it was invisible to the encoder's
+        // `MemoryBudget`: the default 4 GiB lossy cap could not see it and a
+        // large rendition OOM-killed the host instead of failing gracefully.
+        // We reserve the reference's a-priori precompute estimate below
+        // (only on the CPU butteraugli path that actually allocates it) and
+        // hold the guard for the backend's whole lifetime so the cap bounds
+        // the buttloop. Pure memory accounting — encoded bytes are
+        // unchanged. `None` (no cap) makes the guard inert.
+        let mut _butteraugli_precompute_guard: Option<crate::budget::BudgetGuard> = None;
+
         // W44-168: resolve the iter count once — override (if Some)
         // wins, else fall back to the encoder's fixed-per-effort
         // `self.butteraugli_iters`. Mode A (Baseline) callers pass
@@ -1038,6 +1052,25 @@ impl VarDctEncoder {
                     // matching DisplayConfig.
                     target_display: self.target_display,
                 };
+                // Issue #93: reserve the CPU butteraugli reference precompute
+                // on the budget BEFORE constructing it, so an over-cap encode
+                // fails with a graceful `EncodeError` instead of OOM-killing
+                // the host. Scoped to the CpuButteraugliBackend — the only
+                // backend that builds this host-side multi-res pyramid (GPU
+                // butteraugli keeps it on the device; cvvdp/zensim have their
+                // own profiles). The guard is held in the function-scoped
+                // `_butteraugli_precompute_guard` so the reservation persists
+                // for the reference's whole lifetime (the entire seed loop).
+                if metric == PerceptualMetric::Butteraugli && device == PerceptualDevice::Cpu {
+                    let precompute_bytes =
+                        butteraugli::ButteraugliReference::estimated_reference_bytes(
+                            width,
+                            height,
+                            &butteraugli_params,
+                        );
+                    _butteraugli_precompute_guard =
+                        Some(MemoryBudget::reserve_opt(budget, precompute_bytes as u64)?);
+                }
                 let mut b = super::perceptual_backend::construct_backend(
                     width as u32,
                     height as u32,
@@ -1054,9 +1087,15 @@ impl VarDctEncoder {
                 let n = width * height;
                 let _ref_planes_guard =
                     MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
-                let mut ref_r = vec![0.0f32; n];
-                let mut ref_g = vec![0.0f32; n];
-                let mut ref_b = vec![0.0f32; n];
+                // Honor the runtime fallible-alloc policy (alloc preference):
+                // these three image-sized planes use `try_reserve` when the
+                // caller opted into fallible alloc, else the fast infallible
+                // `vec!` (byte-identical to the prior code). Budget is already
+                // reserved by `_ref_planes_guard` above.
+                let fallible = budget.is_some_and(|b| b.is_fallible());
+                let mut ref_r = crate::budget::vec_f32_zeroed_fallible(fallible, n)?;
+                let mut ref_g = crate::budget::vec_f32_zeroed_fallible(fallible, n)?;
+                let mut ref_b = crate::budget::vec_f32_zeroed_fallible(fallible, n)?;
                 for i in 0..n {
                     ref_r[i] = linear_rgb[i * 3];
                     ref_g[i] = linear_rgb[i * 3 + 1];

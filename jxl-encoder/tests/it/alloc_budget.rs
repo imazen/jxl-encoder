@@ -645,6 +645,94 @@ fn issue_54_imac_g3_e9_d4_no_spurious_oom() {
     assert_eq!(&bytes[..2], &[0xFF, 0x0A], "JXL signature expected");
 }
 
+/// Issue #93: the CPU butteraugli backend's `ButteraugliReference` builds a
+/// multi-resolution psycho pyramid + masks *inside* the butteraugli crate
+/// (`new_linear_planar`). Before this fix it was invisible to the encoder's
+/// `MemoryBudget`, so the default 4 GiB lossy cap could not see the
+/// buttloop's single largest allocation and a large rendition OOM-killed the
+/// host instead of failing gracefully (the OOMing sweep's heaptrack put this
+/// allocation at 6.35 GB). The fix reserves
+/// `ButteraugliReference::estimated_reference_bytes` on the budget before
+/// constructing the reference.
+///
+/// Contract test for the figure we reserve: it is exposed by the butteraugli
+/// dependency, non-trivial, scales with pixels, and honours the half-res
+/// gate (`MIN_SIZE_FOR_SUBSAMPLE = 15`). Pinned exactly to the real
+/// allocation by butteraugli's own `estimated_reference_bytes_matches_precompute`.
+#[test]
+fn butteraugli_precompute_estimate_is_exposed_and_scales() {
+    let params = butteraugli::ButteraugliParams::new().with_compute_diffmap(true);
+    let small = butteraugli::ButteraugliReference::estimated_reference_bytes(256, 256, &params);
+    let large = butteraugli::ButteraugliReference::estimated_reference_bytes(768, 768, &params);
+    // 256×256 = 12 planes × 256×256×4 (full) + quarter (half) ≈ 3.9 MB.
+    assert!(
+        small > 3 * 1024 * 1024,
+        "256² precompute too small: {small}"
+    );
+    // ~9× the pixels → ~9× the bytes (multi-res factor cancels).
+    assert!(
+        large > 8 * small,
+        "768² should be ~9× 256²: {large} vs {small}"
+    );
+    // Below the subsample floor: single-res only (no half level).
+    let tiny = butteraugli::ButteraugliReference::estimated_reference_bytes(14, 14, &params);
+    let tiny_multi = butteraugli::ButteraugliReference::estimated_reference_bytes(16, 16, &params);
+    // 16×16 builds a half level; 14×14 does not — so 16² > 14² by more than
+    // the bare 4-pixel-per-side area growth (the half ScaleData is extra).
+    assert!(tiny > 0 && tiny_multi > tiny);
+}
+
+/// Issue #93 regression: the butteraugli quantization loop (effort ≥ 8) must
+/// be enforced by the per-encode `MemoryBudget`. A cap set ABOVE the rough
+/// 40 B/px up-front estimate (so the encode starts) but BELOW the real e8
+/// working set must be rejected by the *in-encoder* reservations — which now
+/// include the butteraugli reference precompute (the buttloop's dominant
+/// allocation). Uses a 768×768 image: multi-group (3×3 groups, per the
+/// multi-group test mandate) and large enough that the e8 working set far
+/// exceeds the cap. Pre-fix the precompute was uncharged; the cap is sized so
+/// reaching the buttloop with the precompute reservation is what tips it over.
+#[test]
+fn issue_93_buttloop_precompute_charged_against_budget() {
+    let (w, h) = (768u32, 768u32); // 3×3 groups (multi-group path).
+    // High-frequency content so the buttloop fully engages at e8.
+    let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let edge = ((x / 5) ^ (y / 5)) & 1;
+            pixels.push(if edge == 0 { 230 } else { 20 });
+            pixels.push(if edge == 0 { 180 } else { 40 });
+            pixels.push(if edge == 0 { 120 } else { 60 });
+        }
+    }
+    // Up-front 40 B/px estimate = 768×768×40 ≈ 22.5 MB (passes). The e8
+    // marginal working set is ~300 B/px ≈ 177 MB, with the reference
+    // precompute alone ≈ 35 MB. Cap at 48 MB: the encode starts, reaches the
+    // buttloop, and the in-encoder reservations (precompute among them) deny.
+    let cap = 48 * 1024 * 1024;
+    let limits = Limits::new().with_max_memory_bytes(cap);
+    let result = LossyConfig::new(2.0)
+        .with_effort(8)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_limits(&limits)
+        .encode(&pixels);
+    let err = result.expect_err("e8 768² under a 48 MB cap must be denied, not OOM");
+    let inner: &EncodeError = err.as_ref();
+    assert!(
+        matches!(inner, EncodeError::LimitExceeded { .. }),
+        "expected LimitExceeded (graceful), got: {inner:?}"
+    );
+
+    // Sanity: the SAME image at e8 with a generous cap succeeds — the guard
+    // does not reject reasonable encodes.
+    let ok = LossyConfig::new(2.0)
+        .with_effort(8)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_limits(&Limits::new().with_max_memory_bytes(1024 * 1024 * 1024))
+        .encode(&pixels)
+        .expect("768² e8 under a 1 GB cap must succeed");
+    assert_eq!(&ok[..2], &[0xFF, 0x0A]);
+}
+
 /// Path-aware default cap (2026-06-14): lossless is a heavier memory
 /// regime than lossy (MA tree-learning ~440 B/px vs ~85–300), so the
 /// lossless default cap is 8 GiB vs lossy's 4 GiB. A 12 MP lossless e7

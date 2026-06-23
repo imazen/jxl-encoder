@@ -1,0 +1,30 @@
+# Issue #93 measurement: VarDCT butteraugli backend "OOMs many-encode sweeps"
+# Date: 2026-06-23  Host: lilith  jxl-encoder commit: 28ee00eb
+# Tool: jxl-encoder/examples/pool_growth_probe.rs (sequential multi-encode, VmRSS/VmHWM per encode)
+# Build: cargo build --release --example pool_growth_probe --features parallel
+#
+# FINDING: NO per-encode leak. The issue's "BufferPool grows unbounded across
+# encodes" is a MISDIAGNOSIS for jxl-encoder's usage: each encode builds a FRESH
+# ButteraugliReference with a FRESH BufferPool (precompute.rs:361, BufferPool::new())
+# that is DROPPED at encode end. The pool is also already count-capped at
+# MAX_POOL_BUFFERS=8 per pool. heaptrack attributes bytes to BufferPool::take
+# because that is the malloc SITE; the retention is the reference precompute held
+# by concurrently-live encodes, not a growing pool.
+#
+# Sequential threads=1, 300 encodes, varied sizes [192,768], e8 d2.0:
+#   VmRSS tracks CURRENT image size (idx40@614x637=86MB, idx80@345x466=43MB); NOT monotonic.
+#   "growth" 13MB = idx0(tiny) vs idx299(medium) size artifact. HWM=194MB (largest single image).
+# Constant 512x512, threads=8, 300 encodes (size confounder removed):
+#   RSS floor by decile: 44,51,50,33,60,53,50,48,47,46 MB -> NO monotonic rise (flat band).
+#   per-encode peak ~85-99MB; floor ~45-50MB. Encoder fully releases between encodes.
+# Same-image (idx299 686x352) RSS scales with threads: 25/69/98 MB at t1/t4/t8 (per-worker scratch).
+#
+# ROOT CAUSE of the sweep's 32GB: concurrency x per-encode butteraugli precompute size.
+# The buttloop runs under the default 4 GiB lossy MemoryBudget cap, but the butteraugli
+# reference precompute (multi-res psycho pyramid) is allocated inside butteraugli and is
+# NOT reserved on the budget (perceptual_loop.rs:1056 reserves only the 4*3*n planar ref
+# planes). So the cap cannot catch the buttloop's largest allocation -> OOM-kill instead
+# of a graceful EncodeError.
+#
+# FIX: (1) butteraugli exposes estimated_reference_bytes(w,h,&params); (2) jxl reserves it
+# on the budget before set_reference so the 4 GiB cap bounds the buttloop; (3) fallible alloc.

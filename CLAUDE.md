@@ -449,6 +449,51 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-06-23: #93 butteraugli buttloop OOMs sweeps — precompute evaded the budget (NOT a pool leak)
+
+`zenmetrics sweep --codec zenjxl --plan modes_full` OOM-killed Hetzner
+cpx51 boxes (31+ GB RSS) encoding many varied-size renditions. The issue
+blamed `butteraugli::image::BufferPool` "growing unbounded across
+encodes." **Measurement overturned that diagnosis** — there is NO leak:
+- `examples/pool_growth_probe.rs` (sequential multi-encode, VmRSS per
+  encode): at constant 512² e8 threads=8 over 300 encodes the RSS *floor*
+  is flat (44→45.7 MB, oscillating 33–60), peak ~85–99 MB. The earlier
+  "growth" was pure current-image-size tracking. Provenance:
+  `benchmarks/issue93_pool_*_2026-06-23.{tsv,meta}`.
+- Each jxl-encoder encode builds a **fresh** `ButteraugliReference` with a
+  **fresh** `BufferPool` (`precompute.rs:361`, `BufferPool::new()`),
+  count-capped at `MAX_POOL_BUFFERS = 8`, **dropped at encode end**. The
+  pool does not persist across encodes; heaptrack only attributed bytes to
+  `BufferPool::take` because that is the malloc *site*. The 32 GB is
+  concurrency × per-encode butteraugli precompute, not accumulation.
+
+**Real root cause**: the buttloop runs under the default 4 GiB lossy
+`MemoryBudget` cap, but the `ButteraugliReference`'s multi-resolution
+psycho pyramid + masks (the buttloop's dominant allocation — heaptrack:
+6.35 GB) is allocated *inside* butteraugli, so it was invisible to the
+budget. `perceptual_loop.rs` reserved only the `4*3*n` planar ref planes,
+NOT the precompute → the cap could not catch the largest allocation →
+OOM-kill instead of a graceful `EncodeError`. Same shape as the 2026-06-13
+12 MP HDR fix, inverted (that over-counted; this under-counted).
+
+**Fix** (commit pending; butteraugli + jxl, authorized cross-repo):
+1. butteraugli (additive, no behavior change): `ButteraugliReference::`
+   `estimated_reference_bytes(w,h,&params)` (a-priori precompute cost) +
+   `precompute_bytes`/`memory_bytes` introspection, pinned exactly to the
+   real allocation by `estimated_reference_bytes_matches_precompute`.
+2. jxl guard (`perceptual_loop.rs`): reserve `estimated_reference_bytes`
+   on the budget before `set_reference`, scoped to the CpuButteraugli path,
+   held for the backend lifetime. The 4 GiB cap now bounds the buttloop.
+   Pure accounting — hash-locks 48/48 + Libjxl byte-lock 10/10 unchanged.
+3. fallible alloc: the buttloop ref planes honor the runtime
+   `Limits::fallible_alloc()` toggle (`budget::vec_f32_zeroed_fallible`).
+Tests: `tests/it/alloc_budget.rs` `issue_93_buttloop_precompute_charged_
+against_budget` (multi-group 768² e8) + `butteraugli_precompute_estimate_
+is_exposed_and_scales`. Does NOT bound the *concurrent sum* across a
+sweep's parallel encodes — that is a sweep-harness (zenmetrics) concern;
+the jxl fix bounds per-encode so a single oversized rendition fails
+gracefully instead of killing the box.
+
 ### RESOLVED 2026-06-13: 12 MP HDR encode failed at 2 GiB cap — budget over-count + too-low default
 
 12 MP PQ-HDR e9 d4 failed with `memory budget exceeded: requested 144 MB on

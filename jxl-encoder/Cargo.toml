@@ -427,6 +427,15 @@ name = "lossy_phase_baseline"
 required-features = ["__env_var_diagnostics"]
 path = "examples/lossy_phase_baseline.rs"
 
+# Issue #93: sequential multi-encode memory-growth probe. Encodes many
+# varied-size images in one process to discriminate a per-encode leak
+# from sweep-level concurrency (each encode's ButteraugliReference + pool
+# is fresh and dropped, so sequential growth here is a real leak).
+[[example]]
+name = "pool_growth_probe"
+path = "examples/pool_growth_probe.rs"
+required-features = ["butteraugli-loop", "parallel"]
+
 # W36-2: A/B sweep for the EpfDispatch adaptive policy
 # (AlwaysSelect / Auto / AlwaysDefault).
 [[example]]
