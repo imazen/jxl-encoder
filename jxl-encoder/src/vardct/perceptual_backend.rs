@@ -601,6 +601,8 @@ impl PerceptualBackend for CpuButteraugliBackend {
         width: usize,
         height: usize,
     ) -> Result<()> {
+        let _trace = std::env::var_os("JXL_BTRLOOP_TRACE").is_some();
+        let _t0 = std::time::Instant::now();
         let r = butteraugli::ButteraugliReference::new_linear_planar(
             ref_r,
             ref_g,
@@ -611,6 +613,12 @@ impl PerceptualBackend for CpuButteraugliBackend {
             self.params.clone(),
         )
         .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli reference: {e}")))?;
+        if _trace {
+            eprintln!(
+                "[btrloop] set_reference (warm-ref precompute) {width}x{height} {:.1}ms",
+                _t0.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         self.reference = Some(r);
         Ok(())
     }
@@ -660,9 +668,18 @@ impl PerceptualBackend for CpuButteraugliBackend {
         // persistent pool, and fills the caller-owned `diffmap_out` Vec —
         // eliminating the per-iter `width*height*4 B` allocation that the
         // prior `compare_linear_planar` → `into_buf` path produced.
+        let _trace = std::env::var_os("JXL_BTRLOOP_TRACE").is_some();
+        let _t0 = std::time::Instant::now();
         let (score, _pnorm_3) = bref
             .compare_linear_planar_into(dist_r, dist_g, dist_b, padded_width, diffmap_out)
             .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli compare: {e}")))?;
+        if _trace {
+            eprintln!(
+                "[btrloop] compare #{} (warm-ref) {width}x{height} {:.1}ms",
+                self.compare_call_count,
+                _t0.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         debug_assert_eq!(diffmap_out.len(), width * height);
         // Phase 8b: optional diffmap distribution dump.
         maybe_dump_diffmap_stats(
