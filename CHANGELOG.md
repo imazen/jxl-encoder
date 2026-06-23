@@ -27,6 +27,29 @@
   directly so the originating encode site survives in the error.
 
 ### Fixed
+- **Encode peak-memory model (`heuristics::estimate_encode`) recalibrated
+  from a full SIZE sweep — the 2026-06-14 constants over-predicted (TYP acted
+  like a MAX).** The prior constants were fit at 1024² only, which conflates
+  the fixed overhead α into the per-pixel β and inflates the apparent B/px;
+  the result over-predicted the marginal working set by ≈ 1.5–4× (worst on
+  the lossy buttloop: **4.16×** at 12 MP). A size sweep {256,512,1024,2048} ×
+  {lossy,lossless} × effort {1,4,5,6,7,8,9} × content {photo,screenshot} ×
+  threads {1,8,16} (lossy at q50 worst-case + q90) re-fit each band as the
+  tightest linear upper bound clearing the MAX measured cell at every size
+  with a ≥ 10 % safety margin. Key changes: lossy base 85 → 80 B/px; **lossy
+  buttloop 300 → 90 B/px** (the buttloop measures the same working set as e7
+  at equal quality — the prior 300 was a 1024²-α artifact); lossless base
+  90 → 76; **lossless e6 140 → 235 B/px** (the prior 140 was *under*-predicting
+  — e6 is a much heavier partial-search than assumed); lossless tree 465 (kept,
+  re-verified to cover the e9 top); lossy fixed 16 → 50 MB (covers the lossy
+  1024² q50 marginal bulge), lossless fixed 20 → 16 MB. `MULT_MAX = 1.8`
+  retained — heaptrack confirmed it covers the requested-heap-vs-RSS gap
+  (1.02–1.25×). The probe (`zenjxl examples/mem_probe_encode`) gained a
+  threads arg. Provenance: `benchmarks/jxl_encode_mem_2026-06-23.tsv`. Tests
+  `estimate_brackets_measured_12mp` (now `estimate_safely_covers_measured_12mp`)
+  and `effort_steps_and_path_ordering` updated to the re-measured truth (the
+  old 12 MP anchors, 3.4 GB lossy / 5.0 GB lossless, were ~4× / ~1.2× over the
+  real 857 MB / 4186 MB marginal).
 - **butteraugli quantization loop is now bounded by the `MemoryBudget` (#93).**
   The CPU butteraugli backend's `ButteraugliReference` builds a
   multi-resolution psycho pyramid + masks *inside* the butteraugli crate —

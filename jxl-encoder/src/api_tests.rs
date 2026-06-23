@@ -9428,19 +9428,17 @@ fn test_lossy_with_dot_detection_off_disables_path() {
     assert_eq!(image.height(), h);
 }
 
-/// Refs #11 (streaming): `estimate_peak_memory_bytes` should give a
-/// reasonable upper bound for typical sizes and stay finite under
+/// Refs #11 (streaming): `estimate_peak_memory_bytes` (the MAX tier) should
+/// give a conservative upper bound for typical sizes and stay finite under
 /// large-but-realistic inputs.
 #[test]
 fn test_lossy_estimate_peak_memory_bytes_4k() {
-    // 4K RGB8 (8.29 MP). The true peak is the reconstruction + EPF
-    // sharpness search (~597 MB; see `estimate_peak_memory_bytes_lossy`
-    // term 6), on top of linear_rgb (99.5 MB), XYB (99.5 MB), quant_ac
-    // (99.5 MB) and mask (33 MB): ~929 MB + 25 % ≈ 1.16 GB. Heaptrack
-    // measured a 12 MP lossy peak RSS of ~1.55 GB (2026-06-13), so this
-    // 8.3 MP estimate is a conservative upper bound at the measured rate
-    // (the pre-2026-06-13 model returned ~266 MB here — a ~4× under-report
-    // because it omitted the EPF-search/reconstruction peak).
+    // 4K RGB8 (8.29 MP), lossy e5 (base band). Under the 2026-06-23
+    // size-sweep calibration (`heuristics::estimate_encode`): working =
+    // 50 MB fixed + 80 B/px · 8.29 MP ≈ 663 MB; MAX = (fixed + input
+    // 24.9 MB) + working · 1.8 ≈ 1.24 GB. Measured marginal at this size is
+    // far lower (~50–60 B/px at 2048²+ asymptote, but the 1024²-bulge cap on
+    // β + the 1.8 MAX multiplier keep this a conservative will-it-fit bound).
     let cfg = LossyConfig::new(2.0).with_effort(5);
     let est = cfg
         .estimate_peak_memory_bytes(3840, 2160, PixelLayout::Rgb8)
@@ -9487,14 +9485,17 @@ fn test_lossless_estimate_peak_memory_bytes_effort_jump() {
         .with_effort(7)
         .estimate_peak_memory_bytes(1024, 1024, PixelLayout::Rgb8)
         .unwrap();
-    // e7 should be larger because the tree-learning state kicks in
-    // (~8 bytes per pixel of histogram).
+    // e7 should be much larger because MA tree-learning kicks in: the base
+    // band (e ≤ 5) is ≈ 76 B/px, the tree band (e7–e9) ≈ 465 B/px
+    // (2026-06-23 calibration), so the per-pixel working set jumps by
+    // ≈ 390 B/px — far above the conservative `pixels * 8` floor asserted
+    // here.
     assert!(
         small_e7 > small_e3,
         "e7 estimate ({small_e7}) should exceed e3 estimate ({small_e3}) due to tree learning"
     );
-    // Difference should be at least pixels * 8 (ignoring the 25 %
-    // overhead increase).
+    // Difference is at least pixels * 8 (a loose floor; the real jump is
+    // ≈ pixels * 390 under the calibrated bands).
     assert!(
         small_e7 - small_e3 >= 1024 * 1024 * 8,
         "tree-learning bump should be at least pixels * 8 bytes"

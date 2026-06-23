@@ -39,23 +39,52 @@
 //!
 //! Constants are the measured marginal working set (mem_probe `VmHWM`
 //! delta around `encode()`, which excludes the binary floor and the
-//! caller's input buffer). Two sources, both per the no-extrapolate-memory
-//! discipline:
-//!   - 12 MP anchors for the lossy absolutes (lossy is sub-linear in size,
-//!     so the small-image B/px overstates the large sizes where memory
-//!     matters).
-//!   - a 7-class × 1024² × e7/8/9/10 × rgb/rgba grid
-//!     (`benchmarks/mem_peak_quick_2026-06-14.tsv`, +
-//!     `scripts/mem_peak_fit.py`) for the lossless bands (size-independent,
-//!     so 1 MP ≈ 12 MP), the e10 step, and the alpha term.
+//! caller's input buffer), recalibrated 2026-06-23 from a full SIZE sweep
+//! per the no-extrapolate-memory discipline. The recalibration replaced the
+//! 2026-06-14 constants, which were fit at **1024² only** — a single size
+//! conflates the fixed overhead α into the per-pixel β and inflates the
+//! apparent B/px, making the TYP behave like a MAX (≈ 1.5–4× over the real
+//! marginal, worst at small sizes where α dominates and at e ≥ 8 where the
+//! 1024²-anchored buttloop B/px was a 1024²-artifact).
 //!
-//! Findings that shaped the model: lossy e8/e9/e10 are flat at 12 MP (no
-//! separate e10 band); lossless e10 is a real +35 % jump; lossless+alpha
-//! is +226…255 B/px but lossy+alpha is +2…5 (noise). Per-stratum content
-//! spread (max/p50) was 1.08–1.49 here (1.79 in the earlier wider sweep),
-//! so the max multiplier stays 1.8. Bit depth barely moves the working set
-//! (8 vs 16-bit ≈ 75 vs 72 B/px lossy — f32 internals dominate), so only
-//! the input buffer carries the depth, not `bytes_per_pixel`.
+//! Sweep: sizes {256, 512, 1024, 2048} × {lossy, lossless} × effort
+//! {1,4,5,6,7,8,9} × content {photo, screenshot} × threads {1, 8, 16},
+//! lossy at q50 (worst-case: the e7 quant + buttloop working set is heavier
+//! at low quality) and q90. Per (mode, effort-band, content, thread) we fit
+//! `marginal = α + β·pixels` across sizes, then choose (α, β) as the smallest
+//! linear upper bound that clears the MAX measured cell at every size with a
+//! **≥ 10 % safety margin** (verified — min margin 1.10 over all measured
+//! cells, 1.26–1.28 at the 12 MP asymptote). Provenance:
+//! `benchmarks/jxl_encode_mem_2026-06-23.tsv` + `scripts/mem_peak_fit.py`
+//! (the prior `mem_peak_quick_2026-06-14.tsv` is superseded for the per-pixel
+//! values; its rgb-vs-rgba alpha term is retained — not re-measured here).
+//!
+//! Findings that shaped the model:
+//!   - The lossy working set is **not monotone in B/px**: it bulges at
+//!     1024² (≈ 122 B/px at q50) then drops to ≈ 65 B/px at 2048² and
+//!     ≈ 75 B/px at 12 MP. The 1024² point is the binding constraint, so β
+//!     is set to clear it (≈ 80) with a larger α (50 MB), which over-predicts
+//!     the 2048²/12 MP asymptote by ≈ 1.5× — the safe direction.
+//!   - **The buttloop (e ≥ 8) adds essentially ZERO memory over e7 at the
+//!     same quality** (lossy e7 q50 and e8/e9 q50 measure byte-for-byte the
+//!     same working set across all sizes). The prior 300 B/px buttloop band
+//!     was a 1024²-α-artifact; the real value tracks the base (β ≈ 80–90).
+//!   - lossless is ~size-independent in B/px (1 MP ≈ 12 MP): base (e ≤ 5)
+//!     ≈ 72 B/px, e6 ≈ 215 B/px (the prior 140 UNDER-predicted — e6 is a
+//!     much heavier partial-search than assumed; β set to 235 for headroom),
+//!     e7–e9 tree-learning ≈ 360–425 B/px (e9 is the band's top; β 465 keeps
+//!     ≥ 10 % margin). e10 (620) is unswept here and retained from
+//!     2026-06-14, as is the +230 B/px lossless alpha term.
+//!   - Content spread (photo vs screenshot) and thread count (1/8/16) barely
+//!     move the working set: lossy +~95 KB/thread (NOT 2.5 MB), lossless
+//!     thread-invariant; the envelope already folds these in. So the per-
+//!     pixel β is content- and thread-independent and the per-thread term is
+//!     additive (`mem_bytes_per_thread`, kept conservative).
+//!   - est/max ratio (heaptrack `peak heap` requested vs probe `VmHWM`
+//!     marginal, 3000²+ cells): requested-heap / working is 1.02–1.25, so
+//!     `MULT_MAX = 1.8` covers both the content tail AND the requested-heap-
+//!     vs-RSS gap. Bit depth barely moves it (f32 internals dominate), so
+//!     only the input buffer carries the depth, not `bytes_per_pixel`.
 
 /// Resource estimate for an encode operation. `#[non_exhaustive]` so
 /// fields can be added without a breaking change.
@@ -78,28 +107,38 @@ pub struct EncodeEstimate {
     pub output_bytes: u64,
 }
 
-// ── Calibrated constants (2026-06-14, mem_probe marginal working set) ──
+// ── Calibrated constants (2026-06-23, full size-sweep marginal working set) ──
 
-/// Encoder fixed overhead (size-independent): plans, tables, thread pool.
-/// Measured α from the per-stratum α+β fits was 2–20 MB; the encoder's
-/// true fixed cost is small — the per-pixel term dominates at the sizes
-/// where memory matters.
-const LOSSY_FIXED_OVERHEAD: u64 = 16 << 20;
-const LOSSLESS_FIXED_OVERHEAD: u64 = 20 << 20;
+/// Encoder fixed overhead (size-independent): plans, tables, thread pool,
+/// and — for lossy — the size-sublinear butteraugli/EPF precompute that
+/// makes the marginal bulge at 1024². The lossy α is set to 50 MB so the
+/// `α + β·pixels` line clears the 1024² bulge (≈ 122 MB worst case) with a
+/// ≥ 10 % safety margin at β ≈ 80 (the alternative, a smaller α + steeper β,
+/// over-predicts the 2048²/12 MP asymptote much more). Lossless has no such
+/// bulge, so its α is the small true fixed cost (16 MB covers the worst
+/// lossless band's intercept with margin).
+const LOSSY_FIXED_OVERHEAD: u64 = 50 << 20;
+const LOSSLESS_FIXED_OVERHEAD: u64 = 16 << 20;
 
-/// Typical encoder marginal working set, bytes/pixel, 12 MP-anchored.
-/// Lossy base covers e ≤ 7 (75–87 B/px measured); buttloop is e ≥ 8.
-const LOSSY_BPP_BASE: f64 = 85.0;
-const LOSSY_BPP_BUTTLOOP: f64 = 300.0;
+/// Typical encoder marginal working set, bytes/pixel (size-sweep envelope).
+/// Lossy base covers e ≤ 7; the buttloop (e ≥ 8) measured the SAME working
+/// set as e7 at the same quality (the prior 300 B/px was a 1024²-α-artifact),
+/// so the buttloop band tracks the base with a small extra-headroom bump
+/// (only e8/e9 were swept, at q50). β dominates the 1024² bulge (≈ 122 B/px
+/// at q50); the 2048²/12 MP asymptote is ≈ 65–75 B/px, so these slightly
+/// over-predict the largest sizes — the safe direction.
+const LOSSY_BPP_BASE: f64 = 80.0;
+const LOSSY_BPP_BUTTLOOP: f64 = 90.0; // == base + headroom (buttloop adds ~0 memory; e8/9 swept q50 only)
 /// Lossless ramps in four bands (not a clean step): e ≤ 5 base
-/// (88 B/px, no tree learning), e6 intermediate (135 B/px — a
-/// partial-search band), e7–e9 full MA tree-learning (440–489 B/px),
-/// e ≥ 10 (`fine_grained_step`/multi-seed) ≈ 620 B/px (a real ~+35 %
-/// jump over the e7–e9 band). Unlike lossy, the lossless working set is
-/// ~size-independent (1 MP ≈ 12 MP measured), so these B/px hold at the
-/// large sizes where memory matters.
-const LOSSLESS_BPP_BASE: f64 = 90.0;
-const LOSSLESS_BPP_E6: f64 = 140.0;
+/// (≈ 72 B/px, no tree learning), e6 (≈ 215 B/px — a heavier partial-search
+/// than the prior 140 const assumed; it was UNDER-predicting), e7–e9 full
+/// MA tree-learning (≈ 360 B/px at e7 rising to ≈ 425 B/px at e9, the band's
+/// top), e ≥ 10 (`fine_grained_step`/multi-seed) ≈ 620 B/px. Unlike lossy,
+/// the lossless working set is ~size-independent (1 MP ≈ 12 MP measured), so
+/// these B/px hold at the large sizes where memory matters. The e10 value is
+/// retained from the 2026-06-14 grid (e ≥ 10 not re-swept 2026-06-23).
+const LOSSLESS_BPP_BASE: f64 = 76.0;
+const LOSSLESS_BPP_E6: f64 = 235.0;
 const LOSSLESS_BPP_TREE: f64 = 465.0;
 const LOSSLESS_BPP_E10: f64 = 620.0;
 
@@ -112,12 +151,18 @@ const LOSSLESS_BPP_E10: f64 = 620.0;
 const LOSSLESS_BPP_ALPHA: f64 = 230.0;
 
 /// Content-spread multipliers around the typical (median) estimate.
-/// Worst measured content/typical ratio was 1.79 (earlier 420-cell sweep);
-/// the 7-class re-measure (2026-06-14) topped out at 1.49, so `max` stays
-/// 1.8 to remain a conservative upper bound across the wider tail. `min`
-/// 0.85 is intentionally NOT the measured floor (lossless line-art hits
-/// 0.25); the floor is path/content-specific and `min` is informational,
-/// so it stays a mild best-case rather than the sparsest outlier.
+/// `max` 1.8 is kept as the MAX-tier multiplier: the 2026-06-23 size sweep
+/// confirmed it covers BOTH the modest content/thread spread (photo vs
+/// screenshot, 1/8/16 threads, all within ~1.1× of each other once the band
+/// β is the worst-case envelope) AND the requested-heap-vs-RSS gap measured
+/// by heaptrack (`peak heap` / `VmHWM` working = 1.02–1.25 on 3000²+ cells)
+/// — so `working · 1.8` ≥ the allocator's requested-heap peak with headroom.
+/// `min` 0.85 is intentionally NOT the measured floor; since β is now the
+/// worst-case envelope (which over-predicts the large-size asymptote), the
+/// MIN can even sit slightly above a very-large-size measurement — that is
+/// harmless (MIN is informational best-case, never a cap callers OOM on;
+/// only TYP/MAX under-prediction would cause OOM, and the envelope prevents
+/// that at every measured size).
 const MULT_MIN: f64 = 0.85;
 const MULT_MAX: f64 = 1.8;
 
@@ -161,10 +206,12 @@ fn encode_us_per_px(is_lossless: bool, effort: u8) -> f64 {
     anchors[4].1
 }
 
-/// Typical marginal-working-set bytes/pixel for the given path + effort.
-/// Lossy e8/e9/e10 measured 314/326/348 B/px at 1 MP but the working set
-/// is sub-linear in size (≈ 286–300 at 12 MP), so e ≥ 8 is one buttloop
-/// band anchored to the 12 MP value, not the inflated small-image numbers.
+/// Typical marginal-working-set bytes/pixel for the given path + effort
+/// (the size-sweep envelope β; the size-dependent fixed term is
+/// `*_FIXED_OVERHEAD`, added once in [`estimate_encode`]). e ≥ 8 is one
+/// buttloop band — measured equal to the e7 base working set at the same
+/// quality (the buttloop's butteraugli precompute is folded into the lossy
+/// α, not a per-pixel surcharge).
 fn bytes_per_pixel(is_lossless: bool, effort: u8) -> f64 {
     if is_lossless {
         if effort >= 10 {
@@ -336,36 +383,61 @@ pub fn estimate_encode_threaded(
 mod tests {
     use super::*;
 
-    /// 12 MP estimates must bracket the measured marginal working set
-    /// (mem_probe, 2026-06-14): lossy e9 ≈ 3.4 GB, lossless e7 ≈ 5.0 GB.
+    /// 12 MP estimates must SAFELY cover the measured marginal working set
+    /// (mem_probe `VmHWM` delta, 3000×4000, 2026-06-23 re-measure): lossy e9
+    /// ≈ 857 MB, lossless e7 ≈ 4186 MB. The 2026-06-14 anchors this test used
+    /// (3468 MB lossy / 5072 MB lossless) were ~4× / ~1.2× over the real
+    /// marginal — the old model over-predicted to match them. The binding
+    /// safety contract is `measured + input ≤ MAX` (callers size a cap from
+    /// `peak_memory_bytes_max`); TYP must be a *tight* upper bound (not 2×
+    /// over), not strictly bracket — MIN (0.85·working) can sit above a
+    /// large-size measurement once β is the worst-case envelope, which is
+    /// harmless (MIN is informational best-case).
     #[test]
-    fn estimate_brackets_measured_12mp() {
+    fn estimate_safely_covers_measured_12mp() {
         let px12 = (3000, 4000);
-        // lossy e9: measured 3432 MB marginal (+ ~36 MB input).
+        let input12 = 3000u64 * 4000 * 3;
+        // lossy e9: measured 857 MB working + ~34 MB input.
         let lossy = estimate_encode(px12.0, px12.1, 3, false, false, 9).unwrap();
-        let measured_lossy = 3468u64 << 20;
+        let measured_lossy = (857u64 << 20) + input12;
         assert!(
-            lossy.peak_memory_bytes_min <= measured_lossy
-                && measured_lossy <= lossy.peak_memory_bytes_max,
-            "lossy e9 12MP {} not in [{}, {}]",
-            measured_lossy,
-            lossy.peak_memory_bytes_min,
+            measured_lossy <= lossy.peak_memory_bytes_max,
+            "lossy e9 12MP measured {measured_lossy} exceeds MAX {} — UNSAFE (would OOM a \
+             cap sized from the estimate)",
             lossy.peak_memory_bytes_max
         );
-        // lossless e7: measured ~5036 MB marginal.
-        let ll = estimate_encode(px12.0, px12.1, 3, false, true, 7).unwrap();
-        let measured_ll = 5072u64 << 20;
+        // TYP must be a tight upper bound: ≥ measured but < 2× measured (the
+        // old model was ~4× over here — that over-prediction is what this
+        // recalibration fixes).
         assert!(
-            ll.peak_memory_bytes_min <= measured_ll && measured_ll <= ll.peak_memory_bytes_max,
-            "lossless e7 12MP {} not in [{}, {}]",
-            measured_ll,
-            ll.peak_memory_bytes_min,
+            lossy.peak_memory_bytes >= measured_lossy
+                && lossy.peak_memory_bytes < measured_lossy * 2,
+            "lossy e9 12MP TYP {} not a tight cover of measured {measured_lossy} \
+             (want [meas, 2·meas))",
+            lossy.peak_memory_bytes
+        );
+        // lossless e7: measured ~4186 MB working + ~34 MB input.
+        let ll = estimate_encode(px12.0, px12.1, 3, false, true, 7).unwrap();
+        let measured_ll = (4186u64 << 20) + input12;
+        assert!(
+            measured_ll <= ll.peak_memory_bytes_max,
+            "lossless e7 12MP measured {measured_ll} exceeds MAX {} — UNSAFE",
             ll.peak_memory_bytes_max
+        );
+        assert!(
+            ll.peak_memory_bytes >= measured_ll && ll.peak_memory_bytes < measured_ll * 2,
+            "lossless e7 12MP TYP {} not a tight cover of measured {measured_ll}",
+            ll.peak_memory_bytes
         );
     }
 
-    /// Lossless is a heavier memory regime than lossy at the same effort;
-    /// the effort steps (lossy e8, lossless e7, lossless e10) must show up.
+    /// Lossless is a much heavier memory regime than lossy at the same
+    /// effort; the effort steps (lossless e6, lossless e7, lossless e10)
+    /// must show up. NOTE (2026-06-23 re-measure): the lossy buttloop (e ≥ 8)
+    /// does NOT create a memory step — it measures the same working set as e7
+    /// at the same quality — so e9 is only modestly above e7 (the band's
+    /// extra-headroom bump), not 2× as the prior 300-B/px buttloop const
+    /// implied. The real steps are all on the lossless side.
     #[test]
     fn effort_steps_and_path_ordering() {
         let (w, h) = (4096, 4096);
@@ -377,11 +449,19 @@ mod tests {
         let lossy7 = p(false, 7);
         let lossy9 = p(false, 9);
         let (ll5, ll6, ll7, ll10) = (p(true, 5), p(true, 6), p(true, 7), p(true, 10));
-        assert!(lossy9 > lossy7 * 2, "buttloop step at e8 expected");
-        // Lossless ramps e5 < e6 < e7 (the e6 partial-search band — 88/135
-        // B/px) and steps again at e10 (fine_grained_step, ~620 B/px).
+        // The buttloop adds little memory: e9 ≥ e7 but well under 2× (it is
+        // NOT a step). Asserting the absence of a phantom step guards against
+        // re-inflating the buttloop band.
+        assert!(lossy9 >= lossy7, "lossy e9 (buttloop band) at least e7 base");
+        assert!(
+            lossy9 < lossy7 * 2,
+            "lossy buttloop must NOT be a 2× memory step (measured ≈ e7 working set)"
+        );
+        // Lossless ramps e5 < e6 < e7 (e6 ≈ 215 B/px partial-search,
+        // e7 ≈ 430 full tree-learning) and steps again at e10
+        // (fine_grained_step, ~620 B/px).
         assert!(ll6 > ll5, "lossless e6 above e5 base");
-        assert!(ll7 > ll6 * 2, "lossless full tree-learning step at e7");
+        assert!(ll7 > ll6, "lossless full tree-learning step at e7");
         assert!(ll10 > ll7, "lossless e10 step above the e7-e9 band");
         assert!(ll7 > lossy9, "lossless e7 heavier than lossy e9");
     }

@@ -1,0 +1,15 @@
+# Provenance for jxl_encode_mem_2026-06-23.tsv
+commit_jxl_encoder_main_at_sweep: 1cf97d18
+host: lilith (WSL2, AMD Ryzen 9, 28 cores)
+date: 2026-06-23
+probe: zenjxl examples/mem_probe_encode (threads-arg variant), built --features parallel
+  args: <rgb8.bin> <w> <h> <lossy|lossless> <effort> <quality> [threads] [est]
+measure: VmHWM marginal = peak-RSS delta around encode() = encoder MARGINAL working set
+  (excludes binary floor + caller input buffer); one process per cell.
+env: GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072 (WSL2 glibc-arena RSS stability)
+fit: scripts/mem_peak_fit.py shape (marginal = alpha + beta*pixels per band, OLS across sizes);
+  band const = smallest linear upper bound clearing MAX measured at every size with >=10% margin.
+purpose: recalibrate src/heuristics.rs estimate_encode (the 2026-06-14 1024-only fit conflated
+  alpha into beta -> TYP behaved like MAX; 4.16x over on lossy buttloop, UNDER on lossless e6).
+columns: w h pixels mode effort quality threads content out_bytes pre_rss_kb vmhwm_kb marginal_kb
+  (12MP rows: pre/vmhwm zeroed, marginal_kb from direct measurement)
