@@ -1,4 +1,6 @@
-# jxl-encoder [![CI](https://img.shields.io/github/actions/workflow/status/imazen/jxl-encoder/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/jxl-encoder?style=flat-square)](https://crates.io/crates/jxl-encoder) [![lib.rs](https://img.shields.io/crates/v/jxl-encoder?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/jxl-encoder) [![docs.rs](https://img.shields.io/docsrs/jxl-encoder?style=flat-square)](https://docs.rs/jxl-encoder) [![license](https://img.shields.io/badge/license-AGPL--3.0%20%2F%20Commercial-blue?style=flat-square)](#license) ![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)
+<!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
+
+# jxl-encoder
 
 jxl-encoder is a pure-Rust [JPEG XL](https://jpeg.org/jpegxl/) encoder for both
 lossy (VarDCT) and lossless (Modular) images, built on the foundation of
@@ -22,82 +24,6 @@ lossy, and is pure-Rust and embeddable. The honest, measured breakdown is in
 [the benchmark index](https://github.com/imazen/jxl-encoder/blob/main/benchmarks/README.md)
 (and the scoreboard tables below on GitHub).
 
-<!-- crates.io:skip-start -->
-## Where it stands vs cjxl (the honest version)
-
-cjxl is the reference, and on a per-scenario basis it still wins more cells than
-we do today, and it is measurably faster. We track this with a strict per-cell
-Pareto scoreboard (`docs/GOAL_BEAT_CJXL.md`): a cell is "ours" only when we are
-no worse on bytes, no worse on perceptual quality, and within the wall budget.
-The numbers below are what that scoreboard reports — not aspirations.
-
-**Bytes + quality**, 280 cells across SDR lossy, SDR lossless, HDR lossy, and a
-fixed-overhead size axis (measured 2026-06-12, binary `3f025244`; cjxl =
-libjxl v0.12.0; reproduce with `scripts/scoreboard/run_scoreboard.py`,
-see [`benchmarks/README.md`](benchmarks/README.md)):
-
-| Verdict | Cells | Share |
-|---|---|---|
-| cjxl dominates | 105 | 38 % |
-| mixed (we win one axis, lose another) | 89 | 32 % |
-| we dominate | 78 | 28 % |
-| tie | 8 | 3 % |
-
-By content family (we-dominate / tie / mixed / cjxl-dominates), from
-`benchmarks/scoreboard/scoreboard_2026-06-12_run4_summary.md`:
-
-| Family | We | Tie | Mixed | cjxl |
-|---|---|---|---|---|
-| SDR lossless | 30 | 4 | 0 | 22 |
-| SDR lossy | 33 | 0 | 47 | 24 |
-| HDR lossy | 10 | 1 | 30 | 55 |
-| Size axis (64²/256²) | 5 | 3 | 12 | 4 |
-
-We lead on lossless graphics and photos at e7, and on a good chunk of SDR lossy
-content; HDR lossy is where cjxl wins most cells (small per-cell byte gaps at
-tied quality — the per-cell strictness counts every one). The smooth-gradient /
-HDR sky class is the historical loss locus and an open wedge.
-
-**Wall time is the weak axis, and there is no way to spin it.** On a 40-cell
-quiet-box grid (5 strata × e{5,7} × {1,8} threads × {lossy, lossless}, measured
-2026-06-12, binary `a5a9e4d6`, `benchmarks/scoreboard/wall_grid_2026-06-12.tsv`),
-**39 of 40 cells are over the ≤1.2× budget** — cjxl is faster on all but one
-(plots lossy e7 1T, 1.12×):
-
-| Mode | 1 thread | 8 threads |
-|---|---|---|
-| lossy | 1.12–2.17× cjxl | 1.57–3.76× cjxl |
-| lossless | 1.33–5.90× cjxl | 2.89–10.78× cjxl |
-
-Single-thread lossy is roughly competitive; everything else is slower, and the
-8T gap is the largest. cjxl scales ~4.6–5.5× from 1T→8T while we scale ~1.8–2.5×
-— that's both a serial-speed gap and a parallel-coverage gap (our AC-tile search
-is parallel, but XYB / adaptive-quant / gaborish / transform / tokenize are
-still serial, and cjxl parallelizes per 256² group). Closing this is the active
-workstream.
-
-### Lossless, in more detail
-
-8-bit lossless is where we are strongest. With the e5/e6 budgeted tree-learn
-lift (`benchmarks/lossless_8bit_tree_lift_2026-06-12.tsv`, 43 imazen-26 picks,
-djxl-verified pixel-exact on all 56 cells):
-
-- **e5**: vs cjxl mean −2.4 %, median −0.1 % bytes, 20/43 cells smaller (worst
-  +36.9 % on a noaa-documents scan).
-- **e6**: vs cjxl mean −10.7 %, median −7.0 % bytes, 11/13 cells smaller.
-
-16-bit lossless at low effort (e2/e4) still loses to cjxl on bytes, and the
-lossless wall gap is the widest of any mode (see the grid above).
-
-### HDR lossy, in more detail
-
-On 12 PQ/HLG crops × e{5,7} × d{0.5,1,2,4}
-(`benchmarks/hdr_lossy_parity_postdispatch_2026-06-12.tsv`, PQ-EOTF butteraugli
-@ 1000 nits), median bytes run **+1.2 % to +4.6 % over cjxl** at quality
-at-or-better than cjxl on 7 of 8 measured points. The QuantizeWP DC-shaping
-dispatch (keyed on the resolved transfer function) closed roughly half the
-median HDR byte gap; the smooth-sky residual remains.
-<!-- crates.io:skip-end -->
 
 ## Quick start
 
@@ -361,24 +287,6 @@ fine-grained strategy search (step=1 for 32×32+ blocks).
 | `decoding_speed_tier` | Yes | We expose individual gating knobs that approximate the major effects. |
 | Wall-time parity | — | cjxl is faster on 39/40 measured cells; see the scoreboard on GitHub. |
 
-<!-- crates.io:skip-start -->
-### AC strategy coverage
-
-| Strategy | Block | Min distance | libjxl effort |
-|----------|-------|-------------|---------------|
-| DCT8 | 8×8 | any | e1+ |
-| DCT4x4 | 8×8 (4 sub) | any | e5+ |
-| DCT4x8, DCT8x4 | 8×8 (2 sub) | any | e6+ |
-| IDENTITY | 8×8 (pixel domain) | any | e5+ |
-| DCT2x2 | 8×8 (4 sub) | any | e5+ |
-| AFV0-3 | 8×8 (corner DCT) | any | e6+ |
-| DCT16x8, DCT8x16 | 16×8 | any | e5+ |
-| DCT16x16 | 16×16 | any | e5+ |
-| DCT32x16, DCT16x32 | 32×16 | d ≥ 2.0 | e6+ |
-| DCT32x32 | 32×32 | d ≥ 2.0 | e7+ |
-| DCT64x32, DCT32x64 | 64×32 | d ≥ 3.0 | e7+ |
-| DCT64x64 | 64×64 | d ≥ 3.0 | e7+ |
-<!-- crates.io:skip-end -->
 
 ## CLI
 
@@ -398,62 +306,6 @@ cjxl-rs input.png output.jxl --lossless
 cjxl-rs --help
 ```
 
-<!-- crates.io:skip-start -->
-## Experimental: CVVDP-driven quantization loop (opt-in)
-
-The quant loop at effort ≥ 8 normally calls butteraugli once per iteration. An
-opt-in path drives it with [ColorVideoVDP](https://github.com/gfxdisp/ColorVideoVDP)
-(cvvdp, Mantiuk et al. 2024) instead. Default OFF; butteraugli stays the
-production default, and `EncoderStrategy::Libjxl` forces cvvdp off regardless so
-cjxl-parity byte-locks hold.
-
-```bash
-cargo build --release --features cvvdp-loop       # GPU (needs CUDA)
-cargo build --release --features cvvdp-loop-cpu    # pure-Rust CPU
-```
-
-It is opt-in because cvvdp ships an uncalibrated per-distance target table: at
-the same `distance` it converges to a tighter perceptual target than the
-`distance` knob currently implies, producing larger files. The full 1,134-cell
-tracking sweep is at `benchmarks/cvvdp_vs_buttloop_tracking_2026-05-24.tsv`;
-methodology and the ship-rule are in
-[`docs/CVVDP_FORK_DECISION.md`](docs/CVVDP_FORK_DECISION.md). zensim is also
-available as a third quant-loop metric (`zensim-loop` / `zensim-loop-gpu`).
-
-## Reproducible benchmarks
-
-Every comparison number above traces to a committed file under `benchmarks/`.
-[`benchmarks/README.md`](benchmarks/README.md) is the reproduction index: the
-exact command for each board, what corpus it uses, what it measures, and the
-quiet-box caveat for wall numbers. Bytes and quality are deterministic;
-**wall-time numbers are only disposition-grade on a quiet box** — the wall
-harness refuses to run under load for that reason.
-
-## Project structure
-
-```
-jxl-encoder/                    # workspace root (this repo)
-├── jxl-encoder/               # the jxl-encoder library crate
-│   └── src/
-│       ├── api.rs                 # public API (LossyConfig, LosslessConfig, EncodeRequest)
-│       ├── vardct/                # VarDCT (lossy) encoder
-│       ├── modular/               # Modular (lossless) encoder
-│       ├── entropy_coding/        # ANS, Huffman, HybridUint, LZ77
-│       └── headers/               # file / frame headers
-├── jxl-encoder-simd/          # SIMD primitives (jxl-encoder-simd on crates.io)
-├── jxl-encoder-macros/        # internal proc-macros (jxl-encoder-macros on crates.io)
-└── jxl-encoder-cli/           # CLI tool: cjxl-rs (jxl-encoder-cli on crates.io)
-```
-
-## Building
-
-```bash
-cargo build                                # debug
-cargo build --release -p jxl-encoder-cli   # release CLI
-cargo test --workspace --lib --tests       # all tests
-cargo clippy --workspace -- -D warnings    # lint
-```
-<!-- crates.io:skip-end -->
 
 ## When to reach for cjxl instead
 

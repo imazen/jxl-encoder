@@ -26,6 +26,14 @@
   `::encode` via `.map_err(|e| e.decompose().0)`; now they return the traced `At`
   directly so the originating encode site survives in the error.
 
+### Documentation
+- Repo-root `README.md` overhauled to the zen crate conventions (flat-square
+  badge row incl. dual AGPL/Commercial license badge, merged quick-start /
+  distance-effort / cancellation / errors / limits onboarding, refreshed
+  feature tables and footer) and split into a generated badge-free
+  `README.crates.md` for crates.io (`readme = "../README.crates.md"`); heavy
+  scoreboard / benchmark tables wrapped in `crates.io:skip` markers.
+
 ### Fixed
 - **Encode peak-memory model (`heuristics::estimate_encode`) recalibrated
   from a full SIZE sweep — the 2026-06-14 constants over-predicted (TYP acted
