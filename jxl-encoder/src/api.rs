@@ -2574,6 +2574,16 @@ impl LosslessConfig {
         p
     }
 
+    /// Resolved effort-profile (effort schedule + `__expert`/sparse
+    /// overrides + `faster_decoding`), exposed for sweep
+    /// encode-fingerprinting: the resolved byte-affecting state two
+    /// knobsets must share to be byte-identical (see zenjxl
+    /// `encode_fingerprint`). Public wrapper over the crate-internal
+    /// resolver so sweep tooling needn't duplicate the override mapping.
+    pub fn resolved_profile(&self) -> crate::effort::EffortProfile {
+        self.effective_profile()
+    }
+
     /// Resolve the effective `modular_group_size_shift`, honoring
     /// `faster_decoding >= 2` (libjxl `enc_frame.cc:340-343` forces
     /// `group_size_shift = 0` for smaller groups and multithreaded
@@ -5593,6 +5603,16 @@ impl LossyConfig {
         }
         p.apply_faster_decoding(self.faster_decoding);
         p
+    }
+
+    /// Resolved effort-profile (effort schedule + `__expert`/sparse
+    /// overrides + `faster_decoding`), exposed for sweep
+    /// encode-fingerprinting: the resolved byte-affecting state two
+    /// knobsets must share to be byte-identical (see zenjxl
+    /// `encode_fingerprint`). Public wrapper over the crate-internal
+    /// resolver so sweep tooling needn't duplicate the override mapping.
+    pub fn resolved_profile(&self) -> crate::effort::EffortProfile {
+        self.effective_profile()
     }
 
     /// Effective patches flag (libjxl `enc_modular.cc:707` —
