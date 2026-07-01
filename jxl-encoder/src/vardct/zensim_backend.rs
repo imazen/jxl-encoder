@@ -108,11 +108,10 @@ pub(crate) mod cpu {
     //! ## API surface this wraps (zensim 0.2.7+)
     //!
     //! - [`zensim::Zensim::new`] — construct a scorer for a chosen
-    //!   [`zensim::ZensimProfile`] (default
-    //!   [`zensim::ZensimProfile::PreviewV0_2`] — latest profile
-    //!   shipped on crates.io as of 2026-05-25; future zensim 0.3+
-    //!   versions will expose `PreviewV0_3` per the audit
-    //!   recommendation in `RFC_ZENSIM_BUTTLOOP_AUDIT.md` §5).
+    //!   [`zensim::ZensimProfile`]. zensim 0.3+ ships only
+    //!   [`zensim::ZensimProfile::A`] (the canonical codec-target profile);
+    //!   the legacy linear `PreviewV0_1` / `PreviewV0_2` variants were
+    //!   removed. This backend pins `A`.
     //! - [`zensim::Zensim::precompute_reference_linear_planar`] —
     //!   build the per-cell `PrecomputedReference` ONCE from the
     //!   linear-RGB planes the buttloop hands us (no sRGB byte

@@ -155,10 +155,11 @@ fn zensim_score(
     let dist = RgbSlice::new(dist_chunks, w as usize, h as usize);
 
     // Score with `ZensimProfile::A` — the SAME profile the zensim loop uses
-    // (zensim_loop.rs pins `ZensimProfile::A`). The prior seed used
-    // `PreviewV0_2` (the bounded squash), which did NOT match the loop's
-    // metric, so the table it produced was mis-scaled for the loop. Pinning
-    // both to `A` keeps the calibration coherent with what the loop measures.
+    // (zensim_loop.rs pins `ZensimProfile::A`). The prior seed used the legacy
+    // linear profile (the removed `PreviewV0_2`), which did NOT match the
+    // loop's metric, so the table it produced was mis-scaled for the loop.
+    // Pinning both to `A` keeps the calibration coherent with what the loop
+    // measures.
     // (Path note: this uses the u8 RgbSlice `compute` path; the loop uses the
     // linear-planar diffmap path. The scalar `.score()` is the same MLP output;
     // any residual u8-vs-linear difference is second-order and a Phase-8

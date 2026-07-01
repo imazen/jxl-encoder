@@ -78,13 +78,13 @@
 /// full multi-metric tracking data.
 pub(crate) static ZENSIM_DISTANCE_TARGETS: &[(f32, f32)] = &[
     // **RE-SEEDED 2026-05-27 against `ZensimProfile::A` = v47-strict-QAT-native**
-    // (the shipped codec-target metric). The prior seed scored with
-    // `PreviewV0_2` (the bounded squash) — which did NOT match the loop's
-    // profile (`A`), so the old table was mis-scaled for what the loop
+    // (the shipped codec-target metric). The prior seed scored with the legacy
+    // linear profile (the removed `PreviewV0_2`) — which did NOT match the
+    // loop's profile (`A`), so the old table was mis-scaled for what the loop
     // measures. Both the loop (`zensim_loop.rs`) and the seed example now pin
-    // `ZensimProfile::A`. v47-A scores butteraugli-default output lower than
-    // V0_2 did (it is more discriminating at low quality), so the targets are
-    // higher, especially at d >= 3.
+    // `ZensimProfile::A`. v47-A scores butteraugli-default output lower than the
+    // old linear profile did (it is more discriminating at low quality), so the
+    // targets are higher, especially at d >= 3.
     //
     // Seed values measured by `examples/zensim_calibration_seed.rs` on 3 images
     // × 7 distances = 21 cells (2 CID22 photos + 1 gb82-sc screenshot),
