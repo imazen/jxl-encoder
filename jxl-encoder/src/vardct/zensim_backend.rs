@@ -202,12 +202,14 @@ pub(crate) mod cpu {
                 return None;
             }
             let n = (width as usize).checked_mul(height as usize)?;
-            // PreviewV0_2 is the latest profile shipped on crates.io
-            // as of 2026-05-25; the RFC audit recommends V0_3 (CID22
-            // SROCC 0.9367 vs V0_2's 0.9278), which will land via
-            // zensim 0.3+ in a future Phase 5 follow-on
-            // (`with_zensim_profile` API).
-            let scorer = Zensim::new(ZensimProfile::PreviewV0_2);
+            // Profile A (the v47-strict-QAT bake, external name `zensim-a`) — the
+            // standardized profile as of the 2026-07-01 "ban PreviewV0_2, A only"
+            // directive. The local zensim 0.3.x (`../zensim/zensim`) provides it, and
+            // it is the profile the canonical training data + zenmetrics production
+            // scoring now use (`latest_preview()` also resolves to A). Pinned
+            // explicitly rather than via `latest_preview()` so this encoder's
+            // zensim-loop RD target stays reproducible across zensim revisions.
+            let scorer = Zensim::new(ZensimProfile::A);
             Some(Self {
                 scorer,
                 ref_planes: [
