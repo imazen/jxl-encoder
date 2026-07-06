@@ -452,7 +452,10 @@ mod tests {
         // The buttloop adds little memory: e9 ≥ e7 but well under 2× (it is
         // NOT a step). Asserting the absence of a phantom step guards against
         // re-inflating the buttloop band.
-        assert!(lossy9 >= lossy7, "lossy e9 (buttloop band) at least e7 base");
+        assert!(
+            lossy9 >= lossy7,
+            "lossy e9 (buttloop band) at least e7 base"
+        );
         assert!(
             lossy9 < lossy7 * 2,
             "lossy buttloop must NOT be a 2× memory step (measured ≈ e7 working set)"
