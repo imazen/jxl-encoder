@@ -362,7 +362,7 @@ pub fn compute_dc_properties(
 ///
 /// Each channel gets a FRESH `WeightedPredictorState` — matches libjxl's
 /// per-channel processing pattern.
-pub fn gather_dc_samples_variable(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i16>>; 3]) {
+pub fn gather_dc_samples_variable(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i32>>; 3]) {
     use crate::modular::predictor::{Neighbors, Predictor, WeightedPredictorState};
 
     if quant_dc[0].is_empty() || quant_dc[0][0].is_empty() {
@@ -381,39 +381,31 @@ pub fn gather_dc_samples_variable(samples: &mut DcTreeSamples, quant_dc: &[Vec<V
             let mut prev_local_grad = 0i32;
 
             for x in 0..width {
-                let dc_val = channel[y][x] as i32;
+                let dc_val = channel[y][x];
 
                 // Edge handling matching jxl-rs decoder + libjxl's PredictionData.
                 let left = if x > 0 {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > 0 {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
-                let top = if y > 0 {
-                    channel[y - 1][x] as i32
-                } else {
-                    left
-                };
+                let top = if y > 0 { channel[y - 1][x] } else { left };
                 let topleft = if x > 0 && y > 0 {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     left
                 };
                 let topright = if y > 0 && x + 1 < width {
-                    channel[y - 1][x + 1] as i32
+                    channel[y - 1][x + 1]
                 } else {
                     top
                 };
-                let toptop = if y > 1 { channel[y - 2][x] as i32 } else { top };
-                let leftleft = if x > 1 {
-                    channel[y][x - 2] as i32
-                } else {
-                    left
-                };
+                let toptop = if y > 1 { channel[y - 2][x] } else { top };
+                let leftleft = if x > 1 { channel[y][x - 2] } else { left };
                 let nee = if y > 0 && x + 2 < width {
-                    channel[y - 1][x + 2] as i32
+                    channel[y - 1][x + 2]
                 } else {
                     topright
                 };
@@ -474,7 +466,7 @@ pub fn gather_dc_samples_variable(samples: &mut DcTreeSamples, quant_dc: &[Vec<V
 /// # Arguments
 /// * `samples` - Sample collection to add to
 /// * `quant_dc` - Quantized DC values [channel][y][x]
-pub fn gather_dc_samples(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i16>>; 3]) {
+pub fn gather_dc_samples(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i32>>; 3]) {
     if quant_dc[0].is_empty() || quant_dc[0][0].is_empty() {
         return;
     }
@@ -490,42 +482,34 @@ pub fn gather_dc_samples(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i16>>;
             let mut prev_local_grad = 0i32;
 
             for x in 0..width {
-                let dc_val = channel[y][x] as i32;
+                let dc_val = channel[y][x];
 
                 // Get neighbors with edge handling matching jxl-rs decoder
                 let left = if x > 0 {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > 0 {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
 
-                let top = if y > 0 {
-                    channel[y - 1][x] as i32
-                } else {
-                    left
-                };
+                let top = if y > 0 { channel[y - 1][x] } else { left };
 
                 let topleft = if x > 0 && y > 0 {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     left
                 };
 
                 let topright = if y > 0 && x + 1 < width {
-                    channel[y - 1][x + 1] as i32
+                    channel[y - 1][x + 1]
                 } else {
                     top
                 };
 
-                let toptop = if y > 1 { channel[y - 2][x] as i32 } else { top };
+                let toptop = if y > 1 { channel[y - 2][x] } else { top };
 
-                let leftleft = if x > 1 {
-                    channel[y][x - 2] as i32
-                } else {
-                    left
-                };
+                let leftleft = if x > 1 { channel[y][x - 2] } else { left };
 
                 // Compute prediction and residual
                 let prediction = clamped_gradient(top, left, topleft);
@@ -1702,7 +1686,7 @@ mod tests {
 
     #[test]
     fn test_gather_dc_samples_empty() {
-        let quant_dc: [Vec<Vec<i16>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+        let quant_dc: [Vec<Vec<i32>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
         let mut samples = DcTreeSamples::new();
         gather_dc_samples(&mut samples, &quant_dc);
         assert_eq!(samples.num_samples, 0);
@@ -1712,14 +1696,14 @@ mod tests {
     fn test_gather_dc_samples_variable_multi_predictor() {
         // 8x8 channel with stride values to exercise all predictors.
         // Channel: each row constant (so Top predictor wins easily on row 1+).
-        let mk_channel = |base: i16| -> Vec<Vec<i16>> {
+        let mk_channel = |base: i32| -> Vec<Vec<i32>> {
             let mut ch = Vec::with_capacity(8);
             for y in 0..8 {
-                ch.push(vec![base + y as i16 * 4; 8]);
+                ch.push(vec![base + y as i32 * 4; 8]);
             }
             ch
         };
-        let quant_dc: [Vec<Vec<i16>>; 3] = [mk_channel(50), mk_channel(100), mk_channel(30)];
+        let quant_dc: [Vec<Vec<i32>>; 3] = [mk_channel(50), mk_channel(100), mk_channel(30)];
 
         let mut samples = DcTreeSamples::new();
         gather_dc_samples_variable(&mut samples, &quant_dc);
@@ -1744,8 +1728,8 @@ mod tests {
     #[test]
     fn test_gather_dc_samples_simple() {
         // 4x4 constant DC values
-        let channel = vec![vec![100i16; 4]; 4];
-        let quant_dc: [Vec<Vec<i16>>; 3] = [channel.clone(), channel.clone(), channel];
+        let channel = vec![vec![100i32; 4]; 4];
+        let quant_dc: [Vec<Vec<i32>>; 3] = [channel.clone(), channel.clone(), channel];
 
         let mut samples = DcTreeSamples::new();
         gather_dc_samples(&mut samples, &quant_dc);
@@ -1767,8 +1751,8 @@ mod tests {
     #[test]
     fn test_learn_dc_tree_constant() {
         // Constant DC values should produce single-leaf tree
-        let channel = vec![vec![50i16; 8]; 8];
-        let quant_dc: [Vec<Vec<i16>>; 3] = [channel.clone(), channel.clone(), channel];
+        let channel = vec![vec![50i32; 8]; 8];
+        let quant_dc: [Vec<Vec<i32>>; 3] = [channel.clone(), channel.clone(), channel];
 
         let mut samples = DcTreeSamples::new();
         gather_dc_samples(&mut samples, &quant_dc);
@@ -1867,17 +1851,17 @@ mod tests {
     fn test_learn_dc_tree_best_smoke() {
         // 32×32 channel mixing two flat regions — enough samples to admit splits
         // and exercise the Best (2-predictor) path.
-        let mut channel = alloc::vec![alloc::vec![0i16; 32]; 32];
+        let mut channel = alloc::vec![alloc::vec![0i32; 32]; 32];
         for (y, row) in channel.iter_mut().enumerate() {
             for (x, v) in row.iter_mut().enumerate() {
                 *v = if x < 16 {
-                    50 + (y as i16)
+                    50 + (y as i32)
                 } else {
-                    200 - (y as i16)
+                    200 - (y as i32)
                 };
             }
         }
-        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i16>>; 3] =
+        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i32>>; 3] =
             [channel.clone(), channel.clone(), channel];
 
         let mut samples = DcTreeSamples::new();
@@ -1942,17 +1926,17 @@ mod tests {
     fn test_find_best_split_variable_parallel_smoke() {
         // 32×32 channel with two sharp regions + a gradient slope to give
         // the splitter actual work (multiple beneficial splits available).
-        let mut channel = alloc::vec![alloc::vec![0i16; 32]; 32];
+        let mut channel = alloc::vec![alloc::vec![0i32; 32]; 32];
         for (y, row) in channel.iter_mut().enumerate() {
             for (x, v) in row.iter_mut().enumerate() {
                 *v = if x < 16 {
-                    (50 + (y as i16)) * (if x < 8 { 1 } else { 2 })
+                    (50 + (y as i32)) * (if x < 8 { 1 } else { 2 })
                 } else {
-                    (200 - (y as i16)) - (x as i16)
+                    (200 - (y as i32)) - (x as i32)
                 };
             }
         }
-        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i16>>; 3] =
+        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i32>>; 3] =
             [channel.clone(), channel.clone(), channel];
 
         let mut samples = DcTreeSamples::new();
@@ -1997,17 +1981,17 @@ mod tests {
         // 32×32 channel with structured content so the splitter has actual
         // beneficial splits to find (NUM_DC_PROPERTIES > 0 distinct property
         // values per axis).
-        let mut channel = alloc::vec![alloc::vec![0i16; 32]; 32];
+        let mut channel = alloc::vec![alloc::vec![0i32; 32]; 32];
         for (y, row) in channel.iter_mut().enumerate() {
             for (x, v) in row.iter_mut().enumerate() {
                 *v = if x < 16 {
-                    (50 + (y as i16)) * (if x < 8 { 1 } else { 2 })
+                    (50 + (y as i32)) * (if x < 8 { 1 } else { 2 })
                 } else {
-                    (200 - (y as i16)) - (x as i16)
+                    (200 - (y as i32)) - (x as i32)
                 };
             }
         }
-        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i16>>; 3] =
+        let quant_dc: [alloc::vec::Vec<alloc::vec::Vec<i32>>; 3] =
             [channel.clone(), channel.clone(), channel];
 
         let mut samples = DcTreeSamples::new();
@@ -2470,7 +2454,7 @@ pub fn ac_metadata_only_tree() -> (Vec<(u32, u32)>, u32, [u32; NUM_AC_META_CONTE
 /// Mirrors libjxl `EncodeModularChannelMAANS` per-pixel loop. Each channel
 /// gets a FRESH `WeightedPredictorState` (matches libjxl per-channel pass).
 pub fn collect_dc_tokens_with_tree_variable(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     tree: &DcTree,
     start_bx: usize,
     start_by: usize,
@@ -2504,42 +2488,42 @@ pub fn collect_dc_tokens_with_tree_variable(
             let mut prev_local_grad = 0i32;
 
             for x in start_bx..end_bx {
-                let dc_val = channel[y][x] as i32;
+                let dc_val = channel[y][x];
 
                 let left = if x > start_bx {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
                 let top = if y > start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     left
                 };
                 let topleft = if x > start_bx && y > start_by {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     left
                 };
                 let topright = if y > start_by && x + 1 < end_bx {
-                    channel[y - 1][x + 1] as i32
+                    channel[y - 1][x + 1]
                 } else {
                     top
                 };
                 let toptop = if y > start_by + 1 {
-                    channel[y - 2][x] as i32
+                    channel[y - 2][x]
                 } else {
                     top
                 };
                 let leftleft = if x > start_bx + 1 {
-                    channel[y][x - 2] as i32
+                    channel[y][x - 2]
                 } else {
                     left
                 };
                 let nee = if y > start_by && x + 2 < end_bx {
-                    channel[y - 1][x + 2] as i32
+                    channel[y - 1][x + 2]
                 } else {
                     topright
                 };
@@ -2630,7 +2614,7 @@ pub fn get_dc_context_and_predictor(tree: &DcTree, props: &[i32; NUM_DC_PROPERTI
 /// This is the learned-tree version of `collect_dc_tokens_region()` from dc_coding.rs.
 /// Instead of using GRADIENT_CONTEXT_LUT, it traverses the learned tree to get contexts.
 pub fn collect_dc_tokens_with_tree(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     tree: &DcTree,
     start_bx: usize,
     start_by: usize,
@@ -2662,43 +2646,43 @@ pub fn collect_dc_tokens_with_tree(
             let mut prev_local_grad = 0i32;
 
             for x in start_bx..end_bx {
-                let dc_val = channel[y][x] as i32;
+                let dc_val = channel[y][x];
 
                 // Get neighbors with proper edge handling
                 let left = if x > start_bx {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
 
                 let top = if y > start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     left
                 };
 
                 let topleft = if x > start_bx && y > start_by {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     left
                 };
 
                 let topright = if y > start_by && x + 1 < end_bx {
-                    channel[y - 1][x + 1] as i32
+                    channel[y - 1][x + 1]
                 } else {
                     top
                 };
 
                 let toptop = if y > start_by + 1 {
-                    channel[y - 2][x] as i32
+                    channel[y - 2][x]
                 } else {
                     top
                 };
 
                 let leftleft = if x > start_bx + 1 {
-                    channel[y][x - 2] as i32
+                    channel[y][x - 2]
                 } else {
                     left
                 };
@@ -2878,7 +2862,7 @@ pub struct DcTreeStats {
 /// - tokens are DC tokens using the learned contexts
 /// - stats contains compression statistics
 pub fn learn_and_collect_dc_tokens(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     start_bx: usize,
     start_by: usize,
     end_bx: usize,
@@ -2918,16 +2902,16 @@ pub fn learn_and_collect_dc_tokens(
 /// Extract a region of DC values for sample gathering.
 #[allow(clippy::needless_range_loop)]
 fn extract_dc_region(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     start_bx: usize,
     start_by: usize,
     end_bx: usize,
     end_by: usize,
-) -> [Vec<Vec<i16>>; 3] {
+) -> [Vec<Vec<i32>>; 3] {
     let width = end_bx - start_bx;
     let height = end_by - start_by;
 
-    let mut result: [Vec<Vec<i16>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut result: [Vec<Vec<i32>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
 
     for c in 0..3 {
         let mut channel = Vec::with_capacity(height);

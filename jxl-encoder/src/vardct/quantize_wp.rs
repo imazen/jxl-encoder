@@ -130,8 +130,8 @@ fn quantize_wp_one_presvalued(svalue_base: f32, pred: i32) -> i32 {
 /// `Predictor::Gradient`'s edge fallbacks (north → west when y=0,
 /// west → 0 when x=0 and y=0 — the seed value).
 fn wp_predict(
-    qrow: &[i16],
-    prev_row: Option<&[i16]>,
+    qrow: &[i32],
+    prev_row: Option<&[i32]>,
     x: usize,
     y: usize,
     xsize: usize,
@@ -141,24 +141,20 @@ fn wp_predict(
     // handling (which itself mirrors libjxl's `PredictNoTreeWP` edge
     // behaviour through `weighted::State::Predict<true>`).
     let w = if x > 0 {
-        qrow[x - 1] as i32
+        qrow[x - 1]
     } else if y > 0 {
-        prev_row.map(|r| r[x] as i32).unwrap_or(0)
+        prev_row.map(|r| r[x]).unwrap_or(0)
     } else {
         0
     };
-    let n = if let Some(pr) = prev_row {
-        pr[x] as i32
-    } else {
-        w
-    };
+    let n = if let Some(pr) = prev_row { pr[x] } else { w };
     let nw = if let Some(pr) = prev_row {
-        if x > 0 { pr[x - 1] as i32 } else { w }
+        if x > 0 { pr[x - 1] } else { w }
     } else {
         w
     };
     let ne = if let Some(pr) = prev_row {
-        if x + 1 < xsize { pr[x + 1] as i32 } else { n }
+        if x + 1 < xsize { pr[x + 1] } else { n }
     } else {
         n
     };
@@ -174,7 +170,7 @@ fn wp_predict(
         nw,
         ne,
         nn,
-        ww: if x > 1 { qrow[x - 2] as i32 } else { w },
+        ww: if x > 1 { qrow[x - 2] } else { w },
         nee,
     };
 
@@ -198,7 +194,7 @@ fn wp_predict(
 /// pre-pass `quant_dc` value (diagnostic — used by tests / probes).
 #[allow(clippy::too_many_arguments)]
 pub fn requantize_dc_group_wp(
-    quant_dc: &mut [Vec<Vec<i16>>; 3],
+    quant_dc: &mut [Vec<Vec<i32>>; 3],
     float_dc: &[Vec<f32>; 3],
     xsize_blocks: usize,
     start_bx: usize,
@@ -238,12 +234,12 @@ pub fn requantize_dc_group_wp(
         for (ly, gy) in (start_by..end_by).enumerate() {
             // Snapshot prev_row BEFORE borrowing the current row mutably.
             // The borrow checker won't let us hold a shared ref to row gy-1
-            // while we mutably borrow row gy from the same Vec<Vec<i16>>,
+            // while we mutably borrow row gy from the same Vec<Vec<i32>>,
             // so we copy the prev row into a local Vec each iteration.
             // Cost: O(region_width) per row × region_height = same big-O as
             // the pass itself; under any plausible DC group size (≤256 blocks)
             // this is trivial relative to the f32 quantize work.
-            let prev_row: Option<Vec<i16>> = if gy > start_by {
+            let prev_row: Option<Vec<i32>> = if gy > start_by {
                 Some(quant_dc[c][gy - 1][start_bx..end_bx].to_vec())
             } else {
                 None
@@ -252,7 +248,7 @@ pub fn requantize_dc_group_wp(
             // Pre-extract a copy of the Y row (when c != Y) for CFL
             // subtraction. By the time we walk X (c=0) or B (c=2), the
             // Y channel has already been requantized for the whole image.
-            let y_row: Option<Vec<i16>> = if c != C_Y {
+            let y_row: Option<Vec<i32>> = if c != C_Y {
                 Some(quant_dc[C_Y][gy][start_bx..end_bx].to_vec())
             } else {
                 None
@@ -290,19 +286,24 @@ pub fn requantize_dc_group_wp(
 
                 let q = quantize_wp_one_presvalued(svalue_base, pred);
 
-                // Clamp to i16 range (libjxl uses i32 storage internally
-                // and only clamps at bitstream encode time). Our
-                // `quant_dc` is i16 today (matches the existing inline
-                // path; `transform.rs` does the same `as i16` cast).
-                let q16 = q.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-                if q16 != row[gx] {
+                // Store the quantized DC directly as i32 — matching libjxl,
+                // which keeps DC in i32 storage and only clamps at bitstream
+                // encode time. `quant_dc` was i16 until issue #18: at fine
+                // butteraugli distances (d ≲ 0.02) the DC inv_factor grows
+                // large enough that legitimate DC coefficients exceed
+                // ±32767, and the old `as i16` saturation corrupted the
+                // low-frequency image. i32 removes the saturation; the DC
+                // token encoder (`dc_coding::write_dc_tokens_region`) already
+                // packs i32 residuals, so in-range DC stays byte-identical.
+                let qv = q;
+                if qv != row[gx] {
                     changed += 1;
                 }
-                row[gx] = q16;
+                row[gx] = qv;
 
                 // Update WP error state for this position (mirrors libjxl
                 // line 1660 `wp_state.UpdateErrors(quant_row[x], x, y, xsize)`).
-                wp_state.update_errors(q16 as i32, lx, ly, region_width);
+                wp_state.update_errors(qv, lx, ly, region_width);
             }
         }
     }
@@ -362,10 +363,10 @@ mod tests {
         // 4×4 DC group, single channel populated with monotone values.
         let xsize = 4;
         let ysize = 4;
-        let mut quant_dc: [Vec<Vec<i16>>; 3] = [
-            vec![vec![0i16; xsize]; ysize],
-            vec![vec![0i16; xsize]; ysize],
-            vec![vec![0i16; xsize]; ysize],
+        let mut quant_dc: [Vec<Vec<i32>>; 3] = [
+            vec![vec![0i32; xsize]; ysize],
+            vec![vec![0i32; xsize]; ysize],
+            vec![vec![0i32; xsize]; ysize],
         ];
         let float_dc: [Vec<f32>; 3] = [
             vec![0.0; xsize * ysize],

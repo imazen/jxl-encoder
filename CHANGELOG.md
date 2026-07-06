@@ -35,6 +35,23 @@
   scoreboard / benchmark tables wrapped in `crates.io:skip` markers.
 
 ### Fixed
+- **Near-lossless VarDCT round-trip at butteraugli distance ≤ 0.02 no longer
+  produces a corrupt low-frequency image (imazen/zenjxl#18).** Quantised DC
+  coefficients were stored as `i16` and saturated at fine distances (the DC
+  `inv_factor` = `INV_DC_QUANT[c]·scale_dc·dc_mul` grows large as distance → 0),
+  collapsing the DC plane — a real sRGB fixture decoded to ~21–27 dB PSNR
+  versus ~63 dB at distance 0.03, despite spending *more* bits (larger file).
+  DC storage is widened `i16 → i32` (matching the wire format, which already
+  packs `i32` DC residuals, and libjxl's internal `i32` DC), so bright blocks
+  (`max |Y DC| > ~0.877`) stay exact. Additionally the VarDCT lossy distance is
+  now clamped up to a measured spec-conformant floor
+  (`VARDCT_MIN_LOSSY_DISTANCE` = 0.03): below it the fine DC pushes the DC
+  modular ANS stream past the JPEG XL spec's `0x130000` final-state check, so a
+  conformant reference decoder (jxl-oxide) rejects the frame ("ANS stream
+  verification failed") even though our own decoder reconstructs it. Sub-floor
+  requests now emit conformant near-lossless output that every decoder accepts;
+  use `LosslessConfig` for bit-exact encoding. Regression guard:
+  `tests/nl_dc_roundtrip_issue18.rs`.
 - **jxl-encoder-simd: NEON/WASM128 SIMD kernels no longer reference retired
   magetypes concrete-type methods (`f32x4::from_float32x4_t`, `.raw()`,
   `f32x4::from_v128`, single-arg `f32x4::from_i32x4`).** magetypes 0.9.27

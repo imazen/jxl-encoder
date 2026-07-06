@@ -1524,7 +1524,7 @@ type WpDcTreeState = (
 /// `[jxl_channel][by][bx]` at that channel's native (subsampled) block
 /// resolution.
 type JpegCoefficientPlanes = (
-    [Vec<Vec<i16>>; 3],
+    [Vec<Vec<i32>>; 3],
     [Vec<Vec<[i32; BLOCK_SIZE]>>; 3],
     [Vec<Vec<u8>>; 3],
     [Vec<Vec<u16>>; 3],
@@ -1537,7 +1537,7 @@ fn map_jpeg_coefficients(
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<JpegCoefficientPlanes> {
     let fallible = budget.is_some_and(|b| b.is_fallible());
-    let mut quant_dc: [Vec<Vec<i16>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut quant_dc: [Vec<Vec<i32>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut quant_ac: [Vec<Vec<[i32; BLOCK_SIZE]>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut nzeros: [Vec<Vec<u8>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut raw_nzeros: [Vec<Vec<u16>>; 3] = [Vec::new(), Vec::new(), Vec::new()];
@@ -1580,10 +1580,13 @@ fn map_jpeg_coefficients(
                 // preserving the existing YCbCr/grayscale paths.
                 //
                 // The offset is small (~128 for typical luma DC quant
-                // = 8) and the result still fits in i16 because JPEG
-                // quantized DC is in [-1024, 1023] and the max offset
-                // is `1024 / 1` = 1024.
-                let dc = (comp.coeffs[base] as i32 + dc_offset[jxl_c]).clamp(-32768, 32767) as i16;
+                // = 8) and the result comfortably fits in i16 because
+                // JPEG quantized DC is in [-1024, 1023] and the max
+                // offset is `1024 / 1` = 1024. The quant_dc plane is i32
+                // now (issue #18 — VarDCT fine-distance DC overflowed
+                // i16), but JPEG-transcode DC keeps the same i16-range
+                // clamp so the transcode round-trip is byte-identical.
+                let dc = (comp.coeffs[base] as i32 + dc_offset[jxl_c]).clamp(-32768, 32767);
                 dc_row.push(dc);
 
                 // AC coefficients with transposition: JXL block[x*8+y] = JPEG[y*8+x]

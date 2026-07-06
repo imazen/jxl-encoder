@@ -2639,9 +2639,35 @@ impl Default for VarDctEncoder {
     }
 }
 
+/// Minimum butteraugli distance the VarDCT lossy path can encode into a
+/// **spec-conformant** bitstream. Below this, the DC quantiser becomes fine
+/// enough that the DC coefficients (and their gradient residuals) push the
+/// DC modular ANS stream out of the state that the JPEG XL spec's ANS
+/// final-state verification (`state == 0x130000`) accepts — reference decoders
+/// such as `jxl-oxide` then reject the frame with "ANS stream verification
+/// failed", even though our own (non-verifying) decoder still reconstructs it.
+///
+/// This is the measured clean floor (imazen/zenjxl#18): distance 0.03 encodes
+/// and decodes cleanly in every decoder we tested across photo + high-contrast
+/// screen content, while 0.02 does not. Sub-floor requests are clamped up to
+/// this value so the emitted stream is always conformant near-lossless rather
+/// than garbage (the pre-fix `i16` DC-saturation failure) or a stream only our
+/// decoder accepts. Callers wanting bit-exact output should use the lossless
+/// (modular) path via `LosslessConfig`, not an ever-finer VarDCT distance.
+///
+/// The DC storage itself was widened `i16 -> i32` (same issue) so bright blocks
+/// (`max |Y DC| > ~0.877`) stay exact at this floor instead of saturating.
+pub(crate) const VARDCT_MIN_LOSSY_DISTANCE: f32 = 0.03;
+
 impl VarDctEncoder {
     /// Create a new tiny encoder with the given distance.
+    ///
+    /// The distance is clamped up to [`VARDCT_MIN_LOSSY_DISTANCE`] — see that
+    /// constant for why the VarDCT path cannot emit a spec-conformant stream
+    /// below it (imazen/zenjxl#18). Normal distances are far above the floor,
+    /// so this is a no-op for every non-near-lossless encode.
     pub fn new(distance: f32) -> Self {
+        let distance = distance.max(VARDCT_MIN_LOSSY_DISTANCE);
         Self {
             distance,
             effort: 7,
@@ -7068,7 +7094,7 @@ impl VarDctEncoder {
         &self,
         precomputed: &super::precomputed::EncoderPrecomputed,
         quant_field: &[u8],
-        quant_dc: &[alloc::vec::Vec<alloc::vec::Vec<i16>>; 3],
+        quant_dc: &[alloc::vec::Vec<alloc::vec::Vec<i32>>; 3],
         quant_ac: &[alloc::vec::Vec<alloc::vec::Vec<[i32; super::common::DCT_BLOCK_SIZE]>>; 3],
         nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u8>>; 3],
         raw_nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u16>>; 3],
@@ -7122,7 +7148,7 @@ impl VarDctEncoder {
         &self,
         precomputed: &super::precomputed::EncoderPrecomputed,
         quant_field: &[u8],
-        quant_dc: &[alloc::vec::Vec<alloc::vec::Vec<i16>>; 3],
+        quant_dc: &[alloc::vec::Vec<alloc::vec::Vec<i32>>; 3],
         quant_ac: &[alloc::vec::Vec<alloc::vec::Vec<[i32; super::common::DCT_BLOCK_SIZE]>>; 3],
         nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u8>>; 3],
         raw_nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u16>>; 3],

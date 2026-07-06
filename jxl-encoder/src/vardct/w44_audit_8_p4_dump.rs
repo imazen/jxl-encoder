@@ -85,7 +85,7 @@ fn ensure_initialized(dir: &std::path::Path) {
 /// is the rounded i16 that lands in the DC channel of the modular stream.
 #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 #[inline]
-pub fn dump_dc(bx: usize, by: usize, channel: usize, raw_strategy: u8, dc_raw: f32, dc_quant: i16) {
+pub fn dump_dc(bx: usize, by: usize, channel: usize, raw_strategy: u8, dc_raw: f32, dc_quant: i32) {
     let Some(dir) = dump_dir() else { return };
     ensure_initialized(&dir);
     let mut guard = DUMP_STATE.lock().unwrap();
@@ -108,6 +108,6 @@ pub fn dump_dc(
     _channel: usize,
     _raw_strategy: u8,
     _dc_raw: f32,
-    _dc_quant: i16,
+    _dc_quant: i32,
 ) {
 }

@@ -33,7 +33,7 @@ use super::quantize::adjust_quant_bias;
 /// Returns `(xyb_x, xyb_y, xyb_b)` as flat arrays of size `padded_width * padded_height`.
 ///
 /// # Arguments
-/// * `quant_dc` - Quantized DC per channel `[Vec<Vec<i16>>; 3]`
+/// * `quant_dc` - Quantized DC per channel `[Vec<Vec<i32>>; 3]`
 /// * `quant_ac` - Quantized AC per channel `[Vec<Vec<[i32; 64]>>; 3]`
 /// * `params` - Distance parameters (scale, qm_scale, etc.)
 /// * `quant_field` - Per-block raw quantization values (u8)
@@ -43,7 +43,7 @@ use super::quantize::adjust_quant_bias;
 /// * `ysize_blocks` - Image height in 8x8 blocks
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn reconstruct_xyb(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     params: &DistanceParams,
     quant_field: &[u8],
@@ -184,7 +184,7 @@ pub(crate) fn reconstruct_xyb(
 #[allow(clippy::too_many_arguments)]
 fn reconstruct_xyb_avx2(
     _token: jxl_simd::X64V3Token,
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     params: &DistanceParams,
     quant_field: &[u8],
@@ -214,7 +214,7 @@ fn reconstruct_xyb_avx2(
 #[allow(clippy::too_many_arguments)]
 fn reconstruct_xyb_neon(
     _token: jxl_simd::NeonToken,
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     params: &DistanceParams,
     quant_field: &[u8],
@@ -244,7 +244,7 @@ fn reconstruct_xyb_neon(
 #[allow(clippy::too_many_arguments)]
 fn reconstruct_xyb_wasm128(
     _token: jxl_simd::Wasm128Token,
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     params: &DistanceParams,
     quant_field: &[u8],
@@ -272,7 +272,7 @@ fn reconstruct_xyb_wasm128(
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn reconstruct_xyb_impl(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     params: &DistanceParams,
     quant_field: &[u8],
@@ -559,8 +559,8 @@ fn reconstruct_xyb_impl(
 #[allow(clippy::too_many_arguments)]
 fn restore_llf_from_dc(
     coeffs: &mut [f32],
-    quant_dc_ch: &[Vec<i16>],
-    quant_dc_y: &[Vec<i16>], // Y channel DC for CfL on B channel
+    quant_dc_ch: &[Vec<i32>],
+    quant_dc_y: &[Vec<i32>], // Y channel DC for CfL on B channel
     channel: usize,
     params: &DistanceParams,
     raw_strategy: u8,
@@ -1428,9 +1428,9 @@ mod tests {
         // Extract DC values (forward path)
         let dcs = dc_from_dct_16x16(&coeffs);
         let inv_factor = super::super::quant::INV_DC_QUANT[channel] * params.scale_dc;
-        let quant_dc: Vec<i16> = dcs
+        let quant_dc: Vec<i32> = dcs
             .iter()
-            .map(|&dc| (dc * inv_factor).round() as i16)
+            .map(|&dc| (dc * inv_factor).round() as i32)
             .collect();
 
         // Now reconstruct: dequant AC + restore LLF from DC + IDCT

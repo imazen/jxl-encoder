@@ -158,7 +158,7 @@ pub const JPEG_TRANSCODE_DC_CONTEXT_OFFSET: u32 = 1;
 /// * `writer` - BitWriter to write encoded data
 #[allow(dead_code)]
 pub fn write_dc_tokens(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -187,7 +187,7 @@ pub fn write_dc_tokens(
 /// * `dc_code` - DC entropy code to use for token writing
 /// * `writer` - BitWriter to write encoded data
 pub fn write_dc_tokens_region(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     start_bx: usize,
     start_by: usize,
     end_bx: usize,
@@ -231,28 +231,28 @@ pub fn write_dc_tokens_region(
                 // because we have access to the full DC array and neighbors may be
                 // outside this DC group's region
                 let left = if x > start_bx {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
 
                 let top = if y > start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     left
                 };
 
                 let topleft = if x > start_bx && y > start_by {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     left
                 };
 
                 // Compute prediction and residual
                 let guess = clamped_gradient(top, left, topleft);
-                let actual = channel[y][x] as i32;
+                let actual = channel[y][x];
                 let residual = actual - guess;
 
                 // Compute gradient property for context lookup
@@ -309,7 +309,7 @@ pub fn write_dc_tokens_region(
 /// * `start_bx` / `start_by` - Starting block coordinates (inclusive)
 /// * `end_bx` / `end_by` - Ending block coordinates (exclusive)
 pub fn collect_dc_tokens_wp(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     wp_tree: &super::dc_tree_learn::DcTree,
     start_bx: usize,
     start_by: usize,
@@ -326,7 +326,7 @@ pub fn collect_dc_tokens_wp(
 /// plus four sub-predictor errors of the same length — region-driven,
 /// charged against the cap. `budget = None` is zero-overhead.
 pub(crate) fn collect_dc_tokens_wp_with_budget(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     wp_tree: &super::dc_tree_learn::DcTree,
     start_bx: usize,
     start_by: usize,
@@ -358,49 +358,45 @@ pub(crate) fn collect_dc_tokens_wp_with_budget(
 
         for y in start_by..end_by {
             for x in start_bx..end_bx {
-                let actual = channel[y][x] as i32;
+                let actual = channel[y][x];
 
                 // Gather neighbors matching modular edge handling
                 let w = if x > start_bx {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
 
-                let n = if y > start_by {
-                    channel[y - 1][x] as i32
-                } else {
-                    w
-                };
+                let n = if y > start_by { channel[y - 1][x] } else { w };
 
                 let nw = if x > start_bx && y > start_by {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     w
                 };
 
                 let ne = if x + 1 < end_bx && y > start_by {
-                    channel[y - 1][x + 1] as i32
+                    channel[y - 1][x + 1]
                 } else {
                     n
                 };
 
                 let ww = if x > start_bx + 1 {
-                    channel[y][x - 2] as i32
+                    channel[y][x - 2]
                 } else {
                     w
                 };
 
                 let nn = if y > start_by + 1 {
-                    channel[y - 2][x] as i32
+                    channel[y - 2][x]
                 } else {
                     n
                 };
 
                 let nee = if x + 2 < end_bx && y > start_by {
-                    channel[y - 1][x + 2] as i32
+                    channel[y - 1][x + 2]
                 } else {
                     ne
                 };
@@ -456,7 +452,7 @@ pub(crate) fn collect_dc_tokens_wp_with_budget(
 #[cfg(feature = "jpeg-reencoding")]
 #[allow(clippy::too_many_arguments)]
 pub fn collect_dc_tokens_wp_region_jpeg(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     wp_tree: &super::dc_tree_learn::DcTree,
     start_bx: usize,
     start_by: usize,
@@ -576,7 +572,7 @@ pub fn collect_dc_tokens_wp_region_jpeg(
 /// channels have shift (1,1), causing the DC iteration to use halved bounds.
 #[allow(dead_code)]
 pub fn collect_dc_tokens_region(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     start_bx: usize,
     start_by: usize,
     end_bx: usize,
@@ -609,24 +605,24 @@ pub fn collect_dc_tokens_region(
         for y in ch_start_by..ch_end_by {
             for x in ch_start_bx..ch_end_bx {
                 let left = if x > ch_start_bx {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > ch_start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
                 let top = if y > ch_start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     left
                 };
                 let topleft = if x > ch_start_bx && y > ch_start_by {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     left
                 };
                 let guess = clamped_gradient(top, left, topleft);
-                let actual = channel[y][x] as i32;
+                let actual = channel[y][x];
                 let residual = actual - guess;
                 let grad_prop = (GRAD_RANGE_MID + top as i64 + left as i64 - topleft as i64)
                     .clamp(GRAD_RANGE_MIN, GRAD_RANGE_MAX) as usize;
@@ -653,7 +649,7 @@ pub fn collect_dc_tokens_region(
 /// context space, ~one fewer cluster).
 #[allow(dead_code)]
 pub fn collect_dc_tokens_region_jpeg_transcode(
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     start_bx: usize,
     start_by: usize,
     end_bx: usize,
@@ -686,24 +682,24 @@ pub fn collect_dc_tokens_region_jpeg_transcode(
         for y in ch_start_by..ch_end_by {
             for x in ch_start_bx..ch_end_bx {
                 let left = if x > ch_start_bx {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > ch_start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
                 let top = if y > ch_start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     left
                 };
                 let topleft = if x > ch_start_bx && y > ch_start_by {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     left
                 };
                 let guess = clamped_gradient(top, left, topleft);
-                let actual = channel[y][x] as i32;
+                let actual = channel[y][x];
                 let residual = actual - guess;
                 let grad_prop = (GRAD_RANGE_MID + top as i64 + left as i64 - topleft as i64)
                     .clamp(GRAD_RANGE_MIN, GRAD_RANGE_MAX) as usize;
@@ -1295,7 +1291,7 @@ mod tests {
 
     #[test]
     fn test_write_dc_tokens_empty() {
-        let quant_dc: [Vec<Vec<i16>>; 3] = [vec![], vec![], vec![]];
+        let quant_dc: [Vec<Vec<i32>>; 3] = [vec![], vec![], vec![]];
         let dc_code = super::super::static_codes::get_dc_entropy_code();
         let mut writer = BitWriter::new();
         assert!(write_dc_tokens(&quant_dc, &dc_code, &mut writer).is_ok());
@@ -1305,7 +1301,7 @@ mod tests {
     #[test]
     fn test_write_dc_tokens_simple() {
         // Create a simple 2x2 DC image with all zeros
-        let quant_dc: [Vec<Vec<i16>>; 3] = [
+        let quant_dc: [Vec<Vec<i32>>; 3] = [
             vec![vec![0, 0], vec![0, 0]],
             vec![vec![0, 0], vec![0, 0]],
             vec![vec![0, 0], vec![0, 0]],

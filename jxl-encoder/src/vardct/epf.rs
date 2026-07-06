@@ -964,7 +964,7 @@ fn compute_block_l2_errors(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_epf_sharpness(
     original_xyb: [&[f32]; 3],
-    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; 64]>>; 3],
     quant_field: &[u8],
     mask1x1: &[f32],
