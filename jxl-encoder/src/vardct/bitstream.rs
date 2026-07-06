@@ -941,6 +941,11 @@ impl VarDctEncoder {
                 have_intrinsic_size: self.intrinsic_size.is_some(),
                 intrinsic_width: self.intrinsic_size.map_or(0, |(w, _)| w),
                 intrinsic_height: self.intrinsic_size.map_or(0, |(_, h)| h),
+                // #94: signal 32-bit modular buffers when the quantized DC
+                // overflowed i16 (flag set during DC quantization below).
+                force_modular_32bit: self
+                    .force_modular_32bit
+                    .load(core::sync::atomic::Ordering::Relaxed),
                 ..ImageMetadata::default()
             },
             // Plumb the caller-selected upsampling mode + factor so

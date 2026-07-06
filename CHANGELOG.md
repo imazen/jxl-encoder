@@ -7,7 +7,8 @@
 - **0.4.0 will narrow the public API surface.** `cargo semver-checks` vs
   published 0.3.1 found 4 breaks already present on HEAD (see
   `docs/RELEASE_SEMVER_0.3.1_to_0.3.2.md`): new pub fields on `FileHeader`
-  / `ImageMetadata`, new private fields on `VarDctEncoder`, new fields on
+  / `ImageMetadata` (incl. `ImageMetadata::force_modular_32bit`, #94), new
+  private fields on `VarDctEncoder` (incl. `force_modular_32bit`, #94), new fields on
   `GlobalModularState` variants, and the removed `unsafe-performance`
   feature. Rather than ship these as accidental breaks under a patch
   bump, 0.4.0 will deliberately move the leaked `pub mod headers` /
@@ -35,6 +36,33 @@
   scoreboard / benchmark tables wrapped in `crates.io:skip` markers.
 
 ### Fixed
+- **True VarDCT near-lossless below distance 0.03 is now spec-conformant; the
+  `0.03` distance floor is removed (imazen/jxl-encoder#94).** After the #18
+  `i16 → i32` DC widening the reconstruction was correct, but sub-0.03 frames
+  were still rejected by strict decoders (jxl-oxide: "ANS stream verification
+  failed") — worked around by clamping distance up to `VARDCT_MIN_LOSSY_DISTANCE
+  = 0.03`. Root cause: at distance < ~0.025 the fine DC quantiser produces
+  quantized DC exceeding `i16` (`|DC| > 32767`), while the file header
+  unconditionally signalled `modular_16bit_buffer_sufficient = true`. A
+  conformant decoder honouring that promise reconstructs the LF/DC modular image
+  into `i16` sample buffers; the oversized DC wraps there, corrupting the
+  neighbours fed back into the DC Weighted-Predictor, which diverges the modular
+  context derivation and desynchronises the DC ANS stream (final-state `0x130000`
+  check fails). The entropy stream itself was always well-formed — the bug was
+  the sample-buffer width the header advertised. Fix: signal
+  `modular_16bit_buffer_sufficient = false` whenever the quantized DC overflows
+  `i16` (`VarDctEncoder::note_dc_modular_width`, a new `force_modular_32bit`
+  header flag), so a spec decoder uses `i32` buffers. The Huffman entropy path
+  was also sized to the actual maximum token (large-DC symbols ≥ 64 previously
+  panicked the fixed 64-symbol prefix-code path). The `VARDCT_MIN_LOSSY_DISTANCE`
+  floor is deleted — `LossyConfig::new` accepts any positive distance. Distance
+  ≥ 0.03 output is byte-identical (the flag/alphabet only change when DC exceeds
+  `i16`, which does not occur there — verified: all 6 distances × 2 entropy
+  coders hash-identical pre/post fix). New regression guard
+  `tests/nl_dc_conformance_issue94.rs` decodes 0.01/0.02/0.03 through BOTH
+  jxl-oxide (spec-conformance gate) and zenjxl-decoder, asserting acceptance,
+  PSNR ≥ 40 dB, and monotonicity (fails pre-fix, passes post-fix — both
+  verified).
 - **Near-lossless VarDCT round-trip at butteraugli distance ≤ 0.02 no longer
   produces a corrupt low-frequency image (imazen/zenjxl#18).** Quantised DC
   coefficients were stored as `i16` and saturated at fine distances (the DC
@@ -43,14 +71,9 @@
   versus ~63 dB at distance 0.03, despite spending *more* bits (larger file).
   DC storage is widened `i16 → i32` (matching the wire format, which already
   packs `i32` DC residuals, and libjxl's internal `i32` DC), so bright blocks
-  (`max |Y DC| > ~0.877`) stay exact. Additionally the VarDCT lossy distance is
-  now clamped up to a measured spec-conformant floor
-  (`VARDCT_MIN_LOSSY_DISTANCE` = 0.03): below it the fine DC pushes the DC
-  modular ANS stream past the JPEG XL spec's `0x130000` final-state check, so a
-  conformant reference decoder (jxl-oxide) rejects the frame ("ANS stream
-  verification failed") even though our own decoder reconstructs it. Sub-floor
-  requests now emit conformant near-lossless output that every decoder accepts;
-  use `LosslessConfig` for bit-exact encoding. Regression guard:
+  (`max |Y DC| > ~0.877`) stay exact. (Spec-conformance of the resulting large
+  DC below distance 0.03 was initially handled by a `0.03` distance floor; that
+  stopgap is now removed by the root-cause fix in #94 below.) Regression guard:
   `tests/nl_dc_roundtrip_issue18.rs`.
 - **jxl-encoder-simd: NEON/WASM128 SIMD kernels no longer reference retired
   magetypes concrete-type methods (`f32x4::from_float32x4_t`, `.raw()`,

@@ -2220,6 +2220,16 @@ pub struct VarDctEncoder {
     /// is always f32 internally), but the decoder uses this to reconstruct at
     /// the correct output bit depth.
     pub bit_depth_16: bool,
+    /// Set during encoding when the quantized VarDCT DC exceeds the i16 range
+    /// (`|DC| > 32767`). A spec decoder that honours `modular_16bit_buffers`
+    /// (e.g. jxl-oxide's `narrow_modular` path) reconstructs the LF/DC modular
+    /// image into i16 sample buffers; oversized DC wraps there, corrupting the
+    /// neighbours fed back into the WP predictor and desynchronising the DC
+    /// ANS stream (final-state check fails). When this fires the file header
+    /// signals `modular_16bit_buffer_sufficient = false` so the decoder uses
+    /// i32 buffers. Interior mutability because `build_file_header` takes
+    /// `&self` yet the flag is only known after DC quantization. (#94)
+    pub force_modular_32bit: core::sync::atomic::AtomicBool,
     /// ICC profile to embed in the codestream.
     /// When Some, writes has_icc=1 and encodes the profile after the file header.
     pub icc_profile: Option<Vec<u8>>,
@@ -2588,6 +2598,7 @@ impl Default for VarDctEncoder {
             #[cfg(feature = "zensim-loop")]
             zensim_iters: 0, // Off by default. Set via LossyConfig.
             bit_depth_16: false,
+            force_modular_32bit: core::sync::atomic::AtomicBool::new(false),
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
             patches_dispatch: crate::api::PatchesDispatch::default(),
@@ -2639,35 +2650,20 @@ impl Default for VarDctEncoder {
     }
 }
 
-/// Minimum butteraugli distance the VarDCT lossy path can encode into a
-/// **spec-conformant** bitstream. Below this, the DC quantiser becomes fine
-/// enough that the DC coefficients (and their gradient residuals) push the
-/// DC modular ANS stream out of the state that the JPEG XL spec's ANS
-/// final-state verification (`state == 0x130000`) accepts — reference decoders
-/// such as `jxl-oxide` then reject the frame with "ANS stream verification
-/// failed", even though our own (non-verifying) decoder still reconstructs it.
-///
-/// This is the measured clean floor (imazen/zenjxl#18): distance 0.03 encodes
-/// and decodes cleanly in every decoder we tested across photo + high-contrast
-/// screen content, while 0.02 does not. Sub-floor requests are clamped up to
-/// this value so the emitted stream is always conformant near-lossless rather
-/// than garbage (the pre-fix `i16` DC-saturation failure) or a stream only our
-/// decoder accepts. Callers wanting bit-exact output should use the lossless
-/// (modular) path via `LosslessConfig`, not an ever-finer VarDCT distance.
-///
-/// The DC storage itself was widened `i16 -> i32` (same issue) so bright blocks
-/// (`max |Y DC| > ~0.877`) stay exact at this floor instead of saturating.
-pub(crate) const VARDCT_MIN_LOSSY_DISTANCE: f32 = 0.03;
-
 impl VarDctEncoder {
     /// Create a new tiny encoder with the given distance.
     ///
-    /// The distance is clamped up to [`VARDCT_MIN_LOSSY_DISTANCE`] — see that
-    /// constant for why the VarDCT path cannot emit a spec-conformant stream
-    /// below it (imazen/zenjxl#18). Normal distances are far above the floor,
-    /// so this is a no-op for every non-near-lossless encode.
+    /// Any positive distance is accepted, including true near-lossless
+    /// (`< 0.03`). Sub-0.03 VarDCT used to be clamped up to a `0.03` floor
+    /// because the fine DC quantiser there produces quantized DC that exceeds
+    /// the i16 range, and the header unconditionally signalled
+    /// `modular_16bit_buffer_sufficient = true` — so a spec decoder (jxl-oxide)
+    /// reconstructed the LF/DC modular image into i16 buffers, wrapped the
+    /// oversized DC, and rejected the frame on the ANS final-state check. That
+    /// is fixed at the root: the encoder now signals 32-bit modular buffers
+    /// whenever the DC overflows i16 (see [`Self::note_dc_modular_width`]), so
+    /// the floor is gone (imazen/jxl-encoder#94).
     pub fn new(distance: f32) -> Self {
-        let distance = distance.max(VARDCT_MIN_LOSSY_DISTANCE);
         Self {
             distance,
             effort: 7,
@@ -2763,6 +2759,7 @@ impl VarDctEncoder {
             #[cfg(feature = "zensim-loop")]
             zensim_iters: 0, // Off by default. Set via LossyConfig.
             bit_depth_16: false,
+            force_modular_32bit: core::sync::atomic::AtomicBool::new(false),
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
             patches_dispatch: crate::api::PatchesDispatch::default(),
@@ -3330,6 +3327,28 @@ impl VarDctEncoder {
             }
         }
         Some(p)
+    }
+
+    /// #94: record whether any finalised quantized-DC value exceeds the i16
+    /// range. A spec decoder honouring `modular_16bit_buffer_sufficient = true`
+    /// reconstructs the LF/DC modular image into i16 sample buffers; the stored
+    /// sample IS the quant_dc value, so `|DC| > 32767` wraps there, corrupting
+    /// the WP predictor's neighbours and desynchronising the DC ANS stream
+    /// (final-state check fails in jxl-oxide/libjxl). Monotonic OR so multiple
+    /// DC groups accumulate: once any group overflows, the whole image is
+    /// flagged. Called before every `write_file_header_and_pad`.
+    fn note_dc_modular_width(
+        flag: &core::sync::atomic::AtomicBool,
+        quant_dc: &[Vec<Vec<i32>>; 3],
+    ) {
+        // Overflow ⇔ the value does not fit the i16 sample buffer.
+        let overflow = quant_dc.iter().any(|ch| {
+            ch.iter()
+                .any(|row| row.iter().any(|&v| i16::try_from(v).is_err()))
+        });
+        if overflow {
+            flag.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     /// Encode an image in linear sRGB format, optionally with an alpha channel.
@@ -5937,6 +5956,9 @@ impl VarDctEncoder {
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let _t_sharp = std::time::Instant::now();
         let quant_dc = &transform_out.quant_dc;
+        // #94: record whether the finalised DC exceeds i16 so the file header
+        // signals 32-bit modular buffers (must run before write_file_header_and_pad).
+        Self::note_dc_modular_width(&self.force_modular_32bit, quant_dc);
         let quant_ac = &transform_out.quant_ac;
         let nzeros = &transform_out.nzeros;
         let raw_nzeros = &transform_out.raw_nzeros;
@@ -6963,6 +6985,9 @@ impl VarDctEncoder {
         let _ = precomputed_source;
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let quant_dc = &transform_out.quant_dc;
+        // #94: OR across DC groups — 32-bit modular buffers if any group's DC
+        // exceeds i16 (must run before write_file_header_and_pad).
+        Self::note_dc_modular_width(&self.force_modular_32bit, quant_dc);
         let quant_ac = &transform_out.quant_ac;
         let nzeros = &transform_out.nzeros;
         let raw_nzeros = &transform_out.raw_nzeros;

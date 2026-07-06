@@ -1068,13 +1068,23 @@ pub fn build_entropy_code_from_token_groups(
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
 ) -> OwnedEntropyCode {
-    // Compute the required alphabet size. Without LZ77, tokens fit in ALPHABET_SIZE (64).
-    // With LZ77, length tokens have symbol = lz77.min_symbol + Lz77UintCoder token (up to ~31).
+    // Compute the required alphabet size. Most streams fit in ALPHABET_SIZE (64),
+    // but large hybrid-uint values overflow it — e.g. VarDCT near-lossless DC
+    // residuals at distance < ~0.03 reach token symbols 64-66 (#94). Size the
+    // alphabet to the actual maximum symbol so the prefix code covers every
+    // token instead of panicking on out-of-range indexing.
     let alphabet_size = if let Some(lz77_params) = lz77 {
         // min_symbol + max possible Lz77UintCoder token (1 + floor_log2(u32::MAX) = 32)
         (lz77_params.min_symbol as usize + 32).max(ALPHABET_SIZE)
     } else {
-        ALPHABET_SIZE
+        let mut max_sym = 0usize;
+        for group in groups {
+            for token in *group {
+                let (_encoded, sym) = encode_token_value(token, lz77);
+                max_sym = max_sym.max(sym as usize);
+            }
+        }
+        (max_sym + 1).max(ALPHABET_SIZE)
     };
 
     // Build per-context histograms (Vec-based for arbitrary alphabet size)

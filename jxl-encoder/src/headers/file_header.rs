@@ -197,6 +197,12 @@ pub struct ImageMetadata {
     pub intrinsic_height: u32,
     /// Whether image uses XYB color encoding (true for lossy, false for lossless).
     pub xyb_encoded: bool,
+    /// Force `modular_16bit_buffer_sufficient = false` in the header even when
+    /// `bits_per_sample <= 12`. Set by the VarDCT encoder when the quantized DC
+    /// exceeds the i16 range so a spec decoder reconstructs the LF/DC modular
+    /// image into i32 (not i16) buffers — otherwise oversized DC wraps and
+    /// desynchronises the DC ANS stream. Default `false`. (#94)
+    pub force_modular_32bit: bool,
 }
 
 impl Default for ImageMetadata {
@@ -215,6 +221,7 @@ impl Default for ImageMetadata {
             intrinsic_width: 0,
             intrinsic_height: 0,
             xyb_encoded: false, // Default to lossless (non-XYB)
+            force_modular_32bit: false,
         }
     }
 }
@@ -544,8 +551,11 @@ impl FileHeader {
         crate::trace::debug_eprintln!("META [bit {}]: After bit_depth", writer.bits_written());
 
         // modular_16_bit_buffer_sufficient
-        // Default is true for bit depths <= 12
-        let mod16_sufficient = meta.bit_depth.bits_per_sample <= 12;
+        // Default is true for bit depths <= 12, BUT the VarDCT encoder forces it
+        // false when the quantized DC exceeds i16 (#94): a decoder honouring the
+        // "true" promise reconstructs the LF/DC modular image into i16 buffers,
+        // where oversized DC wraps and desynchronises the DC ANS stream.
+        let mod16_sufficient = meta.bit_depth.bits_per_sample <= 12 && !meta.force_modular_32bit;
         crate::trace::debug_eprintln!(
             "META [bit {}]: modular_16_bit_buffer_sufficient = {}",
             writer.bits_written(),

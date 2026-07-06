@@ -13,10 +13,13 @@
 //!     `.round() as i16` cast collapsed the low-frequency image → garbage.
 //!     Fixed by widening DC storage to `i32` (matches the wire format, which
 //!     already packs `i32` DC residuals, and libjxl's internal `i32` DC).
-//!  2. Below `VARDCT_MIN_LOSSY_DISTANCE` (0.03) the resulting large DC pushes
-//!     the DC modular ANS stream out of the spec's final-state (`0x130000`)
-//!     verification — a conformant decoder (jxl-oxide) rejects it. The VarDCT
-//!     lossy distance is therefore clamped up to that measured floor.
+//!  2. The resulting large DC also broke spec-conformance below distance 0.03
+//!     (imazen/jxl-encoder#94): the DC overflows the `i16` sample buffers a
+//!     strict decoder uses for `modular_16bit_buffer_sufficient = true`,
+//!     desynchronising the DC modular ANS stream. That was a separate stopgap
+//!     `0.03` distance floor, now removed — #94 signals 32-bit modular buffers
+//!     when the DC overflows `i16`, so sub-0.03 is genuinely conformant.
+//!     `nl_dc_conformance_issue94.rs` is the dedicated jxl-oxide gate.
 //!
 //! This test drives the exact reported failure: encode a real high-contrast
 //! sRGB image at distance 0.02 AND 0.03, decode with the pure-Rust
@@ -110,8 +113,8 @@ fn near_lossless_distance_002_roundtrip_is_not_garbage_issue18() {
 
     // Monotonicity: a FINER distance must never decode dramatically worse than a
     // coarser one. Pre-fix, distance 0.02 (~15 dB) was ~80 dB worse than 0.03
-    // (~96 dB) despite a larger file. Post-fix, 0.02 is clamped to the 0.03
-    // floor, so the two are within noise.
+    // (~96 dB) despite a larger file. Post-fix, 0.02 genuinely encodes at 0.02
+    // (no floor) and decodes at least as well as 0.03 (finer = higher PSNR).
     assert!(
         p02 >= p03 - 1.0,
         "distance-0.02 PSNR {p02:.2} dB is worse than distance-0.03 {p03:.2} dB — \
