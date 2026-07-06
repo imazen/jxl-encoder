@@ -35,6 +35,33 @@
   scoreboard / benchmark tables wrapped in `crates.io:skip` markers.
 
 ### Fixed
+- **jxl-encoder-simd: NEON/WASM128 SIMD kernels no longer reference retired
+  magetypes concrete-type methods (`f32x4::from_float32x4_t`, `.raw()`,
+  `f32x4::from_v128`, single-arg `f32x4::from_i32x4`).** magetypes 0.9.27
+  fully retired the legacy per-platform concrete SIMD structs (`arm::w128`,
+  `wasm::w128`, …); the bare `magetypes::simd::f32x4` alias on aarch64/wasm32
+  now resolves to the generic `generic::f32x4<Token>` strategy type, which
+  only exposes the token-gated `from_repr`/`into_repr`/`from_i32x4(token, ..)`
+  API (x86_64's `X64V3Token` f32x4/f32x8 keep a `.raw()`/`from_m128`/`from_m256`
+  convenience alias, so those call sites were unaffected). Since this repo's
+  `Cargo.lock` is gitignored, CI always re-resolves to the latest compatible
+  magetypes/archmage (0.9.27) regardless of what's cached locally, which is
+  why this broke `ubuntu-24.04-arm` Clippy in a downstream consumer (zenpipe)
+  without ever showing up in a same-day x86_64 build. Fixed the four call
+  sites in `jxl-encoder-simd/src/transpose.rs`, `dct8.rs`, and `dequant.rs`
+  (NEON `transpose_8x8_neon`/`neon_transpose_4x4`/`neon_dequant_4`, WASM128
+  `wasm128_transpose_4x4`/`wasm128_dequant_4`) and bumped the declared
+  `archmage`/`magetypes` floor in `jxl-encoder-simd/Cargo.toml` and
+  `jxl-encoder/Cargo.toml` to `0.9.27` (the first version where the bare
+  aarch64/wasm32 `f32x4` alias is consistently the generic type — pinning
+  lower risks resolving a version where it's still the old concrete struct,
+  which lacks `from_repr`/`into_repr`/token-taking `from_i32x4`). Pure
+  API-adaptation, no logic change — verified `cargo check`/`clippy -D
+  warnings` clean on `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+  and `wasm32-unknown-unknown`, and jxl-encoder-simd's 186 scalar-vs-dispatch
+  parity tests still pass on x86_64 (native execution can't cover the
+  NEON/WASM128 code paths themselves on this host; typecheck + clippy across
+  both cross targets is the verification available here).
 - **Encode peak-memory model (`heuristics::estimate_encode`) recalibrated
   from a full SIZE sweep — the 2026-06-14 constants over-predicted (TYP acted
   like a MAX).** The prior constants were fit at 1024² only, which conflates

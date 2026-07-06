@@ -24,8 +24,16 @@ std = ["archmage/std", "magetypes/std"]
 avx512 = ["magetypes/avx512", "archmage/avx512"]
 
 [dependencies]
-archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
-magetypes = { version = "0.9.15", default-features = false }
+# 0.9.27 minimum: magetypes 0.9.27 fully retired the legacy concrete
+# per-platform SIMD structs (arm::w128/wasm::w128/x86::w128/w256/w512) in
+# favor of the generic strategy-pattern `generic::TYPE<Token>` everywhere,
+# including the bare `simd::f32x4` alias on aarch64/wasm32. Our NEON/WASM128
+# call sites use the generic `from_repr`/`into_repr` API (see dct8.rs,
+# transpose.rs), which only exists uniformly from 0.9.27 onward — pinning
+# below it risks resolving to a version whose bare aarch64/wasm32 f32x4 is
+# still the old concrete struct lacking those methods.
+archmage = { version = "0.9.27", default-features = false, features = ["macros"] }
+magetypes = { version = "0.9.27", default-features = false }
 # Pure-Rust libm fallback. Only pulled in when `std` is OFF — the
 # `scalarmath` veneer in `lib.rs` cfg-gates each `f32` math call so
 # `std` builds use the inherent methods (which lower to hardware

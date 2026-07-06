@@ -1071,10 +1071,10 @@ fn neon_transpose_4x4(
     use core::arch::aarch64::*;
     use magetypes::simd::f32x4;
 
-    let r0 = r0.raw();
-    let r1 = r1.raw();
-    let r2 = r2.raw();
-    let r3 = r3.raw();
+    let r0 = r0.into_repr();
+    let r1 = r1.into_repr();
+    let r2 = r2.into_repr();
+    let r3 = r3.into_repr();
 
     let t01_lo = vtrn1q_f32(r0, r1);
     let t01_hi = vtrn2q_f32(r0, r1);
@@ -1091,12 +1091,12 @@ fn neon_transpose_4x4(
     let out2 = vreinterpretq_f32_f64(vtrn2q_f64(lo0, lo1));
     let out3 = vreinterpretq_f32_f64(vtrn2q_f64(hi0, hi1));
 
-    // Token needed for from_float32x4_t, get it back via _token
+    // Token needed for from_repr, get it back via _token
     (
-        f32x4::from_float32x4_t(_token, out0),
-        f32x4::from_float32x4_t(_token, out1),
-        f32x4::from_float32x4_t(_token, out2),
-        f32x4::from_float32x4_t(_token, out3),
+        f32x4::from_repr(_token, out0),
+        f32x4::from_repr(_token, out1),
+        f32x4::from_repr(_token, out2),
+        f32x4::from_repr(_token, out3),
     )
 }
 
@@ -1468,10 +1468,10 @@ fn wasm128_transpose_4x4(
     use core::arch::wasm32::*;
     use magetypes::simd::f32x4;
 
-    let r0 = r0.raw();
-    let r1 = r1.raw();
-    let r2 = r2.raw();
-    let r3 = r3.raw();
+    let r0 = r0.into_repr();
+    let r1 = r1.into_repr();
+    let r2 = r2.into_repr();
+    let r3 = r3.into_repr();
 
     // Stage 1: interleave pairs
     // t0 = [r0[0], r1[0], r0[1], r1[1]]
@@ -1494,10 +1494,10 @@ fn wasm128_transpose_4x4(
     let out3 = i64x2_shuffle::<1, 3>(t1, t3);
 
     (
-        f32x4::from_v128(token, out0),
-        f32x4::from_v128(token, out1),
-        f32x4::from_v128(token, out2),
-        f32x4::from_v128(token, out3),
+        f32x4::from_repr(token, out0),
+        f32x4::from_repr(token, out1),
+        f32x4::from_repr(token, out2),
+        f32x4::from_repr(token, out3),
     )
 }
 

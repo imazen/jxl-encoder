@@ -31,7 +31,10 @@ whereat = { version = "0.1.5"}
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
 jxl_simd = { package = "jxl-encoder-simd", version = "0.3.2", path = "../jxl-encoder-simd", default-features = false }
-archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
+# Kept in lockstep with jxl-encoder-simd's magetypes 0.9.27 floor (see that
+# crate's Cargo.toml comment) — archmage and magetypes ship from the same
+# monorepo and are always released together.
+archmage = { version = "0.9.27", default-features = false, features = ["macros"] }
 rayon = { version = "1.10", optional = true }
 zenjpeg = { version = "0.8.4", default-features = false, features = ["decoder"], optional = true }
 brotli = { version = "8.0", default-features = false, features = ["std"], optional = true }
@@ -387,7 +390,7 @@ zenbench = "0.1.8"
 # the test suite needs `std` for `archmage::testing::for_each_token_permutation`
 # (used by `tests/nonfinite_xyb_repro.rs` to exercise scalar / SSE / AVX2 / etc.
 # fallback paths on the trigger fixtures).
-archmage = { version = "0.9.15", default-features = false, features = ["macros", "std"] }
+archmage = { version = "0.9.27", default-features = false, features = ["macros", "std"] }
 # cvvdp-vs-buttloop tracking baseline harness (docs/RFC_CVVDP_FORK.md §5).
 # Path-pinned via workspace [patch.crates-io] to the sibling zenmetrics
 # checkout. Only consumed by `examples/cvvdp_track_baseline.rs`.
