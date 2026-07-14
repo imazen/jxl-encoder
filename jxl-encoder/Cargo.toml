@@ -193,6 +193,10 @@ cvvdp-loop-cpu = ["cvvdp-loop", "dep:cvvdp-cpu"]
 # tightening the butteraugli loop is a documented anti-pattern, see
 # `docs/RFC_CVVDP_PHASE8_PARETO_TARGETING.md` §3.3).
 cvvdp-loop-tighten = ["cvvdp-loop"]
+# Standalone SSIM2 quantization-loop refinement (predates the multi-metric
+# PerceptualBackend and is NOT a PerceptualMetric variant): extra quant-field
+# iterations scored with fast-ssim2, driven via
+# `LossyConfig::with_ssim2_iters` / `--ssim2-iters`. Inert unless iters > 0.
 ssim2-loop = ["butteraugli-loop", "dep:fast-ssim2", "dep:imgref"]
 zensim-loop = ["butteraugli-loop", "dep:zensim"]
 # zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
@@ -265,6 +269,7 @@ zenjxl-regression-gate = ["butteraugli-loop", "ssim2-loop", "parallel"]
 # enforces mode-correctness (lossy-only knobs cannot be passed to the
 # lossless setter, and vice versa). Not stable; field sets may grow
 # additively between minor versions.
+__expert = []
 # Compile-IN the diagnostic dump env hooks (JXL_W44_76_PER_BLOCK_DUMP,
 # JXL_W44_201_COEFFS_*, JXL_W44_181_DUMP_DC, JXL_W44_182_DUMP_CFL,
 # JXL_W44_AUDIT_8_P4_DUMP, JXL_DUMP_POS, JXL_DUMP_COST_INPUTS_PATH,
@@ -279,7 +284,6 @@ zenjxl-regression-gate = ["butteraugli-loop", "ssim2-loop", "parallel"]
 # production builds. Output bytes are identical with the feature on or
 # off when no hook is set (hash-lock-enforced).
 __env_var_diagnostics = []
-__expert = []
 # Re-exports private vardct internals (epf_step0_strip, adjust_quant_block_ac,
 # compute_scaled_constants, ytox_ratio, ytob_ratio, INV_DC_QUANT) under a
 # `pub mod __internals` for downstream parity testing (notably from

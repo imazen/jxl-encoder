@@ -5199,12 +5199,13 @@ pub enum PerceptualMetric {
     /// `zensim-loop` (CPU) or `zensim-loop-gpu` (GPU) cargo features.
     /// See `docs/RFC_ZENSIM_FORK_PLAN.md` + `docs/RFC_ZENSIM_BUTTLOOP_AUDIT.md`.
     ///
-    /// **Phase 3 ships the backend impl + dispatch only** — the per-distance
-    /// target table at `vardct/zensim_targets.rs` and per-block reducer
-    /// constants are Phase 4 follow-on work. Until Phase 4 lands, opting
-    /// into Zensim with `LossyConfig::with_perceptual_metric` constructs the
-    /// backend but the buttloop still consumes butteraugli-direction
-    /// targets; the resulting quality calibration is not Pareto-tuned.
+    /// **Calibration status:** the per-distance target table
+    /// (`vardct/zensim_targets.rs`) is wired in, but the per-block reducer
+    /// premultiplier (`K_TILE_NORM`) still carries the butteraugli-parity
+    /// placeholder — the zensim-specific refit ("Phase 8-zensim") is
+    /// pending, and the 2026-05-24 tracking sweep measured this calibration
+    /// as over-loose (65.3 % Pareto-front vs butteraugli's 67.7 %). Opting
+    /// in works end-to-end but is not yet Pareto-tuned.
     Zensim,
 }
 
@@ -10538,9 +10539,11 @@ impl<'a> EncodeRequest<'a> {
 /// Streaming lossy (VarDCT) encoder.
 ///
 /// Accepts pixel rows incrementally via [`push_rows`](Self::push_rows), then
-/// encodes on [`finish`](Self::finish). This allows callers to free source pixel
-/// buffers as rows are pushed, rather than materializing the entire image in
-/// memory before encoding.
+/// encodes on [`finish`](Self::finish). Rows are converted to the internal
+/// linear-RGB f32 representation as they arrive, so callers can free the
+/// source pixel buffer incrementally. The converted full-image planes
+/// (12 bytes/pixel for RGB) are still held in memory until `finish` —
+/// streaming input bounds the caller's copy, not the encoder's peak memory.
 ///
 /// ```rust,no_run
 /// use jxl_encoder::{LossyConfig, PixelLayout};
@@ -11872,9 +11875,11 @@ fn validate_dims(width: u32, height: u32) -> Result<()> {
 impl LossyConfig {
     /// Create a streaming encoder for incremental row input.
     ///
-    /// Pixels are converted to the internal format as rows are pushed via
-    /// [`LossyEncoder::push_rows`], allowing callers to free source buffers
-    /// incrementally rather than materializing the entire image.
+    /// Pixels are converted to the internal linear-f32 format as rows are
+    /// pushed via [`LossyEncoder::push_rows`], so callers can free source
+    /// buffers incrementally. The converted whole-image planes stay in
+    /// memory until [`LossyEncoder::finish`] — input streaming does not
+    /// bound peak encoder memory.
     #[track_caller]
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LossyEncoder> {
         validate_dims(width, height).at()?;
@@ -11934,9 +11939,11 @@ impl LossyConfig {
 /// Streaming lossless (modular) encoder.
 ///
 /// Accepts pixel rows incrementally via [`push_rows`](Self::push_rows), then
-/// encodes on [`finish`](Self::finish). This allows callers to free source pixel
-/// buffers as rows are pushed, rather than materializing the entire image in
-/// memory before encoding.
+/// encodes on [`finish`](Self::finish). Rows are copied into pre-allocated
+/// per-channel planes as they arrive, so callers can free the source pixel
+/// buffer incrementally. The full-image planes are still held in memory
+/// until `finish` — streaming input bounds the caller's copy, not the
+/// encoder's peak memory.
 ///
 /// ```rust,no_run
 /// use jxl_encoder::{LosslessConfig, PixelLayout};
@@ -12637,8 +12644,10 @@ impl LosslessConfig {
     /// Create a streaming encoder for incremental row input.
     ///
     /// Per-channel planes are pre-allocated and filled as rows are pushed via
-    /// [`LosslessEncoder::push_rows`], allowing callers to free source buffers
-    /// incrementally rather than materializing the entire image.
+    /// [`LosslessEncoder::push_rows`], so callers can free source buffers
+    /// incrementally. The full-image planes stay in memory until
+    /// [`LosslessEncoder::finish`] — input streaming does not bound peak
+    /// encoder memory.
     #[track_caller]
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LosslessEncoder> {
         use crate::modular::channel::Channel;
