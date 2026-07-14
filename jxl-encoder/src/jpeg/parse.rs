@@ -642,7 +642,8 @@ fn checked_coeff_len(width_in_blocks: usize, height_in_blocks: usize) -> Option<
 
 /// Extract DCT coefficients using zenjpeg's decoder.
 ///
-/// As of zenjpeg 0.8.5 we use [`decode_coefficients_with_jbrd_metadata`]
+/// Since zenjpeg 0.9.0 (path-patched sibling until published) we use
+/// [`decode_coefficients_with_jbrd_metadata`]
 /// so we get the per-scan JBRD signals (`reset_points` and
 /// `extra_zero_runs`) for free in the same single decode pass. These are
 /// merged into the marker-scanner-built `scan_info` entries by matching

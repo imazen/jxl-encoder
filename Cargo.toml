@@ -69,14 +69,17 @@ jxl-vardct = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" 
 jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
 jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
 jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-# zenjpeg 0.7.1 / 0.8.3 (latest crates.io) calls `magetypes::mf32x8::load_8x8(block)`
-# but magetypes 0.9.16+ requires the token-passing signature
-# `load_8x8(token, block)`. The local workspace at ~/work/zen/zenjpeg/zenjpeg
-# (version 0.8.7 unpublished) carries the magetypes fix plus the new
-# `decode_coefficients_with_jbrd_metadata` API used by `jpeg-reencoding`
-# (task #10, 2026-05-28) plus the task #12 reset_points / extra_zero_runs
-# libjxl-parity fix (commit 1ed960f4 on zenjpeg main). Path-patch until
-# published.
+# crates.io zenjpeg (latest 0.8.4) does not ship
+# `DecodeConfig::decode_coefficients_with_jbrd_metadata`, which our
+# `jpeg-reencoding` feature requires, and 0.8.4's `parallel` feature does not
+# compile with default-features off (`fused_parallel_encode.rs` references
+# `color::fast_yuv`, gated behind the default-on `yuv` feature it never
+# declares). The local sibling (0.9.0, unpublished) has both: the jbrd API and
+# fast_yuv de-gated. Path-patch until zenjpeg 0.9.0 is published.
+# CAUTION: the `zenjpeg` version req in jxl-encoder/Cargo.toml must track the
+# sibling's version, or this patch silently deactivates and cargo falls back
+# to broken crates.io 0.8.4 — that mismatch (req 0.8.4 vs sibling 0.9.0) broke
+# every nightly-CI run 2026-07-08..13.
 # Required for the `jpeg-reencoding` feature to build.
 zenjpeg = { path = "../zenjpeg/zenjpeg" }
 # zenjxl-decoder (our pure-Rust JXL decoder) is a DEV-dependency used only by

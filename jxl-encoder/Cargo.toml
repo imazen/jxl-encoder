@@ -36,7 +36,8 @@ jxl_simd = { package = "jxl-encoder-simd", version = "0.3.2", path = "../jxl-enc
 # monorepo and are always released together.
 archmage = { version = "0.9.27", default-features = false, features = ["macros"] }
 rayon = { version = "1.10", optional = true }
-zenjpeg = { version = "0.8.4", default-features = false, features = ["decoder"], optional = true }
+# zenjpeg 0.9.0: decoder is unconditional (no `decoder` feature since 0.8.x).
+zenjpeg = { version = "0.9.0", default-features = false, optional = true }
 brotli = { version = "8.0", default-features = false, features = ["std"], optional = true }
 # Issue #47 chunk 3: SIMD RGB↔YCbCr / 4:4:4 / 4:2:0 / 4:2:2 conversion +
 # Sharp YUV for chroma subsampling. Production-quality, archmage-based
@@ -372,12 +373,13 @@ rgb = "0.8"
 walkdir = "2.5"
 sha2 = "0.11.0"
 # zenjpeg comparator for the lossy low-effort cross-codec baseline (W38).
-# `trellis` enables the HybridProgressive / HybridMaxCompression presets;
-# `parallel` enables rayon-fanout for fair wall-clock comparison.
+# `parallel` enables rayon-fanout for fair wall-clock comparison. Since
+# zenjpeg 0.9.0 the decoder and trellis presets are unconditional (the
+# `decoder`/`trellis` features no longer exist).
 # Workspace `[patch.crates-io]` redirects zenjpeg to the local sibling path
-# (see workspace Cargo.toml line 62); use the registry coordinate here so
-# both refer to the same canonical source.
-zenjpeg = { version = "0.8.4", default-features = false, features = ["decoder", "trellis", "parallel"] }
+# (see workspace Cargo.toml); use the registry coordinate here so both refer
+# to the same canonical source.
+zenjpeg = { version = "0.9.0", default-features = false, features = ["parallel"] }
 # zenjxl-decoder: pure-Rust JXL decoder used as the byte-exact reconstruction
 # oracle in the JBRD round-trip conformance gate. The `jpeg` feature enables
 # `take_jpeg_reconstruction()`. Path-patched via workspace `[patch.crates-io]`.
