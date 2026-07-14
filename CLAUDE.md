@@ -1727,7 +1727,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] `encode_to()`/`finish_to()` std-only (gated behind `feature = "std"`)
 - [x] Add `At<>` error location tracking (from `whereat` crate)
 - [x] Add `EncodeStats` for encode metrics
-- [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
+- [x] Memory estimation on both config types — shipped as `estimate_peak_memory_bytes()` + `estimate_encode()` delegating to `heuristics::estimate_encode` (calibrated 2026-06-14)
 - [x] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output
   - ICC: embedded in codestream via PredictICC + Huffman entropy, lossy + lossless paths
   - EXIF/XMP: container format boxes (already working)

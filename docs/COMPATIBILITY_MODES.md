@@ -875,7 +875,7 @@ perf-dispatch absorption + env-var promotion all expand scope vs v1):
 |---|---|---|
 | `jxl-encoder/src/api.rs` | +600 (new enum definitions including `EffortGate`, Default impls, builder, absorbed perf-dispatch fields, promoted env-var fields), -80 (rewire `with_*_hint`/`with_*_dispatch` setters to update overrides struct or `EncoderImprovementsCustom`) | enum defs, `LossyConfig::with_strategy`, `resolve()`, env-var fallback layer |
 | `jxl-encoder/src/vardct/encoder.rs` | ~12 sites changed (~70 LOC), each replacing an `Option<bool>` match with an enum match | W44-65, W22-1, W44-29, W44-123/124, smooth-photo DCT64, W44-91/96/98/99/100 sub-gates, etc. |
-| `jxl-encoder/src/vardct/butteraugli_loop.rs` | ~5 sites, ~60 LOC | EPF sharpness seed (W44-117/118/120 chain), buttloop qf seed scale (W44-105/107/108 chain), env-var fallback layer |
+| `jxl-encoder/src/vardct/perceptual_loop.rs` (formerly `butteraugli_loop.rs`) | ~5 sites, ~60 LOC | EPF sharpness seed (W44-117/118/120 chain), buttloop qf seed scale (W44-105/107/108 chain), env-var fallback layer |
 | `jxl-encoder/src/vardct/adaptive_quant.rs` | ~3 sites, ~30 LOC | W44-109 qf pre-scale chain |
 | `jxl-encoder/src/vardct/bitstream.rs` | ~2 sites, ~20 LOC | EPF dispatch routing |
 | `jxl-encoder/src/effort.rs` | ~80 LOC | EntropyMulTable resolve (table-swap entry point), Section A effort-gate consultation (3 sites: `cfl_two_pass`, `try_dct64`, `epf_dynamic_sharpness`) — each now reads the `EffortGate` enum |

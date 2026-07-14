@@ -5,6 +5,11 @@ Instruction-level comparison of the encoder-side reconstruction pipeline between
 from quantized coefficients, enabling the butteraugli quantization loop and EPF
 sharpness selection.
 
+> **Path note (2026-07-13):** `vardct/butteraugli_loop.rs` was renamed to
+> `vardct/perceptual_loop.rs` in the multi-metric refactor (2026-05-25). The
+> `butteraugli_loop.rs:N` file/line references below predate the rename and
+> are kept as written; look up the cited code in `perceptual_loop.rs`.
+
 **Scope**: Only the reconstruction path used during encoding (butteraugli loop +
 AR heuristics). Not the decoder itself, not the forward encoding path.
 

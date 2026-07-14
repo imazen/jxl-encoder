@@ -2,6 +2,12 @@
 
 Last updated: 2026-04-12 (source-verified against libjxl C++ code)
 
+> **Staleness note (2026-07-13):** this audit predates the W44 tuning era
+> (May–June 2026) and has not been re-verified since. For current, CI
+> drift-tested gate/constant divergences use
+> [docs/LIBJXL_DIVERGENCES.md](docs/LIBJXL_DIVERGENCES.md); treat rows here
+> as historical until re-audited.
+
 Systematic audit against libjxl source. Each item verified against actual C++ code.
 
 ---
@@ -50,7 +56,7 @@ not present in libjxl.
 | `decoding_speed_tier` | Simplified output for fast decoders | Not implemented | Decoder perf |
 | Invisible pixel simplification | Smooth alpha=0 regions | Not implemented | 5-20% on sprites/UI |
 | Recursive LfFrame (progressive_dc > 1) | Multi-level DC pyramid | 1 level only | Progressive |
-| Dot detection | Star fields, specular highlights | Not implemented (d>=3.0, niche) | Very low |
+| Dot detection | Star fields, specular highlights | Stub only (`vardct/dot_detection.rs` computes the energy image; no detection/encoding) | Very low |
 
 ### Container Format
 
