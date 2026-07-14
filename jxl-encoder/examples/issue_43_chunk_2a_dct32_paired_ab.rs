@@ -19,12 +19,12 @@
 //!
 //! Cells (5 total):
 //! - Gate-firing (chunk 2a fires + chunk 1 fires):
-//!     tiny_256x256 (65,536 px) at d=0.25  (e7)
-//!     tiny_100x100 (10,000 px) at d=0.25  (e7)
-//!     tiny_200x200 (40,000 px) at d=0.4   (e7)
+//!   tiny_256x256 (65,536 px) at d=0.25  (e7)
+//!   tiny_100x100 (10,000 px) at d=0.25  (e7)
+//!   tiny_200x200 (40,000 px) at d=0.4   (e7)
 //! - Control (chunk 2a does NOT fire; chunk 1 may or may not):
-//!     ctrl_256x256 at d=0.5  (distance at threshold — gate NOT firing)
-//!     ctrl_400x400 (160,000 px) at d=0.25  (pixel above 100k — gate NOT firing)
+//!   ctrl_256x256 at d=0.5  (distance at threshold — gate NOT firing)
+//!   ctrl_400x400 (160,000 px) at d=0.25  (pixel above 100k — gate NOT firing)
 //!
 //! Usage:
 //!   cargo run --release -p jxl-encoder \
