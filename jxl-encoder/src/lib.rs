@@ -409,6 +409,14 @@ pub mod __internals {
     pub use crate::vardct::hdr_vdp2_lite::{
         VdpResult, compare_vdp2_interleaved, compare_vdp2_planar,
     };
+
+    /// The per-image content proxies the W44 content-aware gates dispatch
+    /// on (M3 colourfulness, flat-color-block ratio, Sobel edge density,
+    /// luma variance). Re-exported so calibration/diagnostic examples can
+    /// read the EXACT values the encoder gates on — no formula drift
+    /// between the sweep that picks a threshold and the gate that uses it.
+    /// (Also reachable via `__pre_quantized`; this is the lighter path.)
+    pub use crate::vardct::encoder::ZenanalyzeProxies;
 }
 
 /// Pre-quantized AC entry point — accepts an already-prepared

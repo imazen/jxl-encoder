@@ -3063,3 +3063,11 @@ required-features = ["jpeg-reencoding"]
 [[example]]
 name = "jpeg_pixel_parity"
 required-features = ["jpeg-reencoding"]
+
+# Pin the e7 line-art effort-monotonicity regression (#74) — toggles each
+# e7-gated knob via LossyInternalParams and reads the exact ZenanalyzeProxies
+# the gate dispatches on, to find which bloats aliased line-art.
+[[example]]
+name = "line_art_cfl_probe"
+path = "examples/line_art_cfl_probe.rs"
+required-features = ["__expert", "__internals"]

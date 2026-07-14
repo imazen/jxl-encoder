@@ -1,0 +1,44 @@
+# cfl_two_pass line-art ablation — root-cause of the #74 #1 SDR gap
+# date: 2026-07-14
+# commit: 0cb4b424 (probe run under this checkout; proxies use lib.rs __internals re-export)
+# host: lilith
+# harness: jxl-encoder/examples/line_art_cfl_probe.rs (--features __expert,__internals)
+# invocation: line_art_cfl_probe --tsv <out> <24 imazen-26 images>
+# config: LossyConfig::new(0.5).with_effort(7) (d0.5 e7 — the effort where the regression appears)
+# corpus: ~/work/codec-corpus/imazen-26, 24 images across 6 classes (see class column)
+#
+# COLUMNS:
+#   class                  = source-folder-derived content class
+#   m3_colourfulness       = ZenanalyzeProxies.m3_colourfulness (Hasler-Susstrunk M3)
+#   flat_color_block_ratio = fraction of 8x8 blocks flat (<=4/channel range)
+#   edge_density           = fraction of interior px with Sobel luma gradient > 30
+#   luma_var               = BT.601 luma variance
+#   base_bytes             = e7 d0.5 encoded size with cfl_two_pass ON (default)
+#   no_cfl2_pct            = % size change from cfl_two_pass=Some(false)   (NEGATIVE = cfl2 was bloating)
+#   no_chroma_pct          = % size change from chromacity_adjustment=Some(false)
+#   all_off_pct            = % size change from BOTH off
+#
+# KEY FINDING (proven, airtight):
+#   cfl_two_pass (the effort>=7 Newton pass-2 CfL refit) OVER-FITS chroma on ALIASED
+#   line-art: disabling it saves 7.8-23.9% bytes (mean -14.5%) on the 8 aliased-* images,
+#   but is NEUTRAL elsewhere (antialiased-lineart mean -0.3%, chart mean -0.7%,
+#   photo/screenshot/doc/ai-art all -0.0 to -0.4%). Only ONE image regresses on disable
+#   (7076 line-polygons +0.1%, noise). Prior photo ssim2 spot-check: disabling is
+#   byte-neutral-to-Pareto-win with <=0.1 ssim2 delta on photos/screenshots.
+#
+#   THE PROXIES CANNOT GATE IT. Same-seed aliased/anti-aliased pairs are proxy-identical
+#   but behave oppositely:
+#     7022 aliased-poly  (m3 80.9 fcbr 0.891 edge 0.039) -> no_cfl2 -16.5%   [HURTS]
+#     7076 antialias-poly (m3 80.8 fcbr 0.867 edge 0.049) -> no_cfl2  +0.1%   [NEUTRAL]  (same seed s4fc8f443)
+#     7007 aliased-lines (m3 40.0 fcbr 0.212 edge 0.422) -> no_cfl2 -14.5%   [HURTS]
+#     7060 antialias-line (m3 37.9 fcbr 0.140 edge 0.589) -> no_cfl2  -0.8%   [NEUTRAL]  (same seed s1aac7045)
+#   aliased fcbr range [0.15,0.91] fully OVERLAPS antialiased [0.14,0.88]. The discriminator
+#   is ALIASING (hard single-pixel color transitions), which m3/fcbr/edge/luma_var are blind to.
+#   => A content-proxy gate on existing features is IMPOSSIBLE. Fix must be a keep-best /
+#      cost-aware pass-2 guard (content-agnostic) OR a NEW aliasing proxy. See ledger #28,
+#      CLAUDE.md "cfl_two_pass line-art over-fit".
+#
+# MECHANISM: refine_cfl_map (chroma_from_luma.rs:567) minimizes an L2 chroma residual then
+#   UNCONDITIONALLY overwrites cfl_map (no keep-best vs pass-1). On aliased color edges the
+#   L2-optimal multiplier is dominated by HF aliased-edge energy, yielding a chroma field
+#   that is HARDER to entropy-code than pass-1's estimate (min L2 residual != min coded bits).

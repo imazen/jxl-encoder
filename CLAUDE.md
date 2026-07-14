@@ -721,6 +721,31 @@ measurement at equal or better coverage.
 
 ### Live follow-ons
 
+- **cfl_two_pass line-art over-fit — root-caused, fix pending (2026-07-14, #74
+  #1 SDR gap).** Aliased line-art (imazen-26 `7000-plots/aliased-*`) loses
+  +19..52 % to cjxl at **e7 d0.5** while our OWN e6 BEATS cjxl (−0.7 %) — an
+  effort-monotonicity violation. ROOT CAUSE (proven, `benchmarks/cfl_two_pass_
+  lineart_ablation_2026-07-14.{tsv,meta}`, harness `examples/line_art_cfl_probe.rs`
+  --features `__expert,__internals`): the effort-≥7 `cfl_two_pass` (Newton
+  pass-2 CfL refit in `chroma_from_luma.rs::refine_cfl_map`) over-fits chroma on
+  aliased color edges. Disabling it saves 7.8–23.9 % (mean −14.5 %) on aliased
+  line-art, NEUTRAL elsewhere (antialiased-lineart −0.3 %, chart −0.7 %,
+  photo/screenshot/doc/ai-art −0.0..−0.4 %; only 1/24 regresses, +0.1 % noise);
+  photo ssim2 ≤0.1 delta. `chromacity_adjustment` adds a secondary −1.5..−9 %
+  line-art penalty. **DO NOT try a content-proxy gate on the existing 4
+  proxies** (m3/fcbr/edge/luma_var) — RULED OUT: same-seed aliased/anti-aliased
+  pairs are proxy-IDENTICAL but opposite (7022 aliased-poly −16.5 % vs 7076
+  antialias-poly SAME SEED +0.1 %; fcbr ranges fully overlap [0.15,0.91] vs
+  [0.14,0.88]). The discriminator is ALIASING (hard single-px color
+  transitions), invisible to those proxies. Mechanism: `refine_cfl_map`
+  minimizes an L2 chroma residual then UNCONDITIONALLY overwrites cfl_map (no
+  keep-best vs pass-1); on aliased edges the L2-optimal multiplier is dominated
+  by HF aliased-edge energy → a chroma field harder to entropy-code than pass-1
+  (min L2 residual ≠ min coded bits). **Fix direction (task #10)**:
+  content-agnostic keep-best/cost-aware pass-2 guard (compare pass-1 vs pass-2
+  coded cost, keep cheaper) OR a NEW aliasing proxy — NOT a gate on the current
+  proxies. Must stay Zenjxl-only if it breaks the `EncoderStrategy::Libjxl`
+  byte-lock. Ledger #28.
 - **Buttloop memory reduction — measured options (2026-06-23, #93 follow-up).**
   Two threads investigated at the user's request:
   1. **jxl↔butteraugli XYB buffer-sharing is NOT viable** (definitive,
