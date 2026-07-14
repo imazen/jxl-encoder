@@ -41,13 +41,27 @@
   `ExtraChannel`/streaming/result types) deliberately stays in `api.rs` —
   splitting it would force dozens of fields to `pub(crate)`. The boundary is
   documented in the `api.rs` module doc (00d42b16, addca8a6, 46e7216e).
-- **Dead-code hygiene**: dropped 4 vestigial + 2 single-item + 1
-  cluster-cleared file-level `#![allow(dead_code)]` (17 → 10); deleted the
-  unused zero-predictor debug cluster from `modular/encode_tree.rs`
-  (`write_tree_histogram_for_zero`/`write_zero_tree_tokens`/
-  `USE_ZERO_PREDICTOR`, all `pub(crate)`, zero callers). The 10 remaining
-  blanket allows cover test-exercised, feature-gated, or reference-complete
-  ported code (9d9991a9, dcf3cc71, c3cf5e86).
+- **Dead-code hygiene** (17 → 6 file-level `#![allow(dead_code)]`, two passes).
+  Pass 1: dropped 4 vestigial + 2 single-item + 1 cluster-cleared blanket;
+  deleted the unused zero-predictor debug cluster from
+  `modular/encode_tree.rs` (`write_tree_histogram_for_zero`/
+  `write_zero_tree_tokens`/`USE_ZERO_PREDICTOR`, all `pub(crate)`, zero
+  callers) (9d9991a9, dcf3cc71, c3cf5e86). Pass 2: the 4 blankets that sat on
+  mostly-LIVE modules (`patches`, `entropy_coding/{encode_ans,encode_huffman}`,
+  `vardct/ac_context`) were over-broad — replaced with targeted item allows
+  after classifying every hidden item as feature-gated (`cfg_attr(not(feature
+  = …))` for parallel / jpeg-reencoding / __pre_quantized / __internals /
+  butteraugli-loop), test-only parity reference, or simple-form entry wrapper;
+  deleted the dead `weighted_distance_to_color` (superseded by the live `_idx`
+  variant); and re-armed the two orphaned ANS conformance checkers
+  (`verify_histogram_serialization` + `verify_ans_roundtrip_parsed`, now
+  `#[cfg(test)]`) with a new `ans_verify_helpers_rearm` unit test — the
+  omit_pos-class histogram-serialization / parsed-roundtrip guard. The
+  dead-code lint now covers the live surface of those four modules. The 6
+  remaining blankets cover a macro prototype (`strategy_def_prototype`),
+  macro-generated gates (`gate_registry`), feature-gated constants
+  (`perceptual_tuning`, `region_source`), reference-complete DCTs
+  (`vardct/dct`), and test-covered WIP (`dc_tree_learn`) (6f674cdc).
 
 ### Documentation
 - Fixed ~29 intra-doc links broken by the `api.rs` split (doc comments moved
