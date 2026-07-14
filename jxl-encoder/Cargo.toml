@@ -723,6 +723,13 @@ name = "content_aware_entropy_mul_ab"
 path = "examples/content_aware_entropy_mul_ab.rs"
 required-features = ["butteraugli-loop"]
 
+# Issue #74 routing pilot: per-image Zenjxl-vs-Libjxl RD A/B to find lossy
+# cells where our content-aware lifts REGRESS vs libjxl-parity (router targets).
+[[example]]
+name = "zenjxl_vs_libjxl_routing_pilot"
+path = "examples/zenjxl_vs_libjxl_routing_pilot.rs"
+required-features = ["butteraugli-loop"]
+
 # W44-35 acceptance check: 1418519 cells + screenshot regressions +
 # F-D residual cells. Does not need zenanalyze (uses default API).
 [[example]]

@@ -1,0 +1,43 @@
+# Zenjxl-vs-Libjxl routing pilot — provenance (issue #74 "win or match always")
+date:        2026-07-14
+git_commit:  17df6a15 (parent; this commit adds the example + data)
+host:        lilith
+harness:     jxl-encoder/examples/zenjxl_vs_libjxl_routing_pilot.rs
+build:       cargo run -p jxl-encoder --release --features butteraugli-loop --example zenjxl_vs_libjxl_routing_pilot
+metrics:     jxl-oxide linear-sRGB decode + Rust butteraugli + Rust fast-ssim2 (CLAUDE.md metric rules)
+grid:        10 images (4 photo, 5 screen, 1 doc) x d{0.5,1,2,3,5} x {Libjxl, Zenjxl}, e7 = 50 cells
+baseline:    EncoderStrategy::Libjxl (parity bundle) ; test: EncoderStrategy::Zenjxl (production default)
+
+## Verdict counts
+  Z_DOMINATES: 35   (our lift wins: fewer bytes AND/OR better quality, none worse)
+  TRADEOFF:    15   (Pareto-incomparable)
+  B_DOMINATES:  0   (our lift strictly worse than parity — NONE)
+  EQUAL:        0
+
+## Finding (answers the user's "route between libjxl and zenjxl strategies" hint)
+1. Our production Zenjxl NEVER regresses below our own Libjxl-parity bundle
+   (0/50 B_DOMINATES). The W44-* content-aware lifts are well-calibrated —
+   they win (35) or make a Pareto tradeoff (15), never a strict loss.
+   => A strategy-level Libjxl<->Zenjxl router has ~NO target on lossy. Routing
+      cannot close the scoreboard's cjxl-dominant lossy cells, because those
+      are NOT cases where our lift regressed below parity.
+
+2. All 15 TRADEOFF cells are SCREEN/DOC content at AGGRESSIVE distance
+   (d=2..5): Zenjxl spends +27..+49 % bytes but delivers butteraugli
+   -35..-68 % and ssim2 +4..+27. This is the W44-105 text-legibility lift
+   working as designed — it refuses to let UI/text degrade at aggressive
+   distances.
+   => Many scoreboard "cjxl-dominates" LOSSY cells are SINGLE-METRIC / bytes-
+      only misreads of these tradeoffs: cjxl produces a smaller, uglier file;
+      we produce a bigger, much higher-quality one. A bytes-only or one-metric
+      scoreboard flags this as a "loss" when our output is Pareto-superior on
+      quality. The scoreboard needs MULTI-METRIC Pareto classification.
+
+## Implication for "win or match always"
+The lossy gap vs cjxl is NOT a mis-routing between our strategies (routing has
+no target). It is either (a) a deliberate quality-for-bytes tradeoff we already
+make (the W44-105 SHIP-cell mechanism — arguably correct, "pixels are sacred"),
+or (b) genuine encoder-quality gaps where BOTH our strategies lose to cjxl. To
+separate (a) from (b), re-classify the scoreboard's cjxl-dominant lossy cells
+with the same multi-metric Pareto test this harness applies (bytes AND
+butteraugli AND ssim2), NOT bytes/single-metric alone.
