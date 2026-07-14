@@ -7,8 +7,6 @@
 //! Contains tree histogram construction (for zero, gradient, and weighted predictors),
 //! tree token writing, weighted predictor header, and general MA tree serialization.
 
-#![allow(dead_code)]
-
 use super::encode_primitives::{pack_signed, write_integer_config, write_varlen_u16};
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::huffman_tree::{
@@ -473,12 +471,6 @@ pub(crate) fn decompose_multiplier_pub(q: u32) -> (u32, u32) {
     (mul_log, mul_bits)
 }
 
-/// Write a tree histogram for a single-leaf tree with Zero predictor.
-/// Returns (depths, codes) for use in encoding tree tokens.
-pub(crate) fn write_tree_histogram_for_zero(writer: &mut BitWriter) -> Result<(Vec<u8>, Vec<u16>)> {
-    write_tree_histogram_for_predictor_impl(writer, true, 0)
-}
-
 /// Write tree histogram and return (depths, codes) for encoding tree tokens.
 fn write_tree_histogram_for_predictor_impl(
     writer: &mut BitWriter,
@@ -600,16 +592,6 @@ fn write_tree_histogram_for_predictor_impl(
     Ok((depths, codes))
 }
 
-/// Write tree tokens for a single leaf with Zero predictor.
-/// Uses the provided (depths, codes) from write_tree_histogram_for_zero.
-pub(crate) fn write_zero_tree_tokens(
-    writer: &mut BitWriter,
-    depths: &[u8],
-    codes: &[u16],
-) -> Result<()> {
-    write_single_leaf_tree_tokens(writer, depths, codes, 0)
-}
-
 /// Write tree tokens for a single leaf with Gradient predictor.
 /// Uses the provided (depths, codes) from write_tree_histogram_for_gradient.
 pub(crate) fn write_gradient_tree_tokens(
@@ -683,10 +665,6 @@ fn write_single_leaf_tree_tokens(
     crate::trace::debug_eprintln!("  TREE_TOKENS [bit {}]: Done", writer.bits_written());
     Ok(())
 }
-
-// Set to true to use Zero predictor for debugging
-// Try: false = gradient tree path, true = zero tree path (works)
-const USE_ZERO_PREDICTOR: bool = false;
 
 /// Write a tree histogram that can encode tokens 0-6 (for Weighted predictor).
 pub(super) fn write_tree_histogram_for_weighted(writer: &mut BitWriter) -> Result<()> {
