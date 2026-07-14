@@ -19,7 +19,7 @@ pub struct AnimationParams {
     /// `true`, the encoder unpremultiplies before XYB conversion and
     /// signals `alpha_associated=true` in the codestream so the decoder
     /// re-premultiplies on output. Mirrors
-    /// [`EncodeRequest::with_premultiplied_alpha`] for the animation
+    /// [`crate::EncodeRequest::with_premultiplied_alpha`] for the animation
     /// path. Closes the lossy portion of the animation audit's
     /// "doesn't unpremultiply alpha" finding.
     pub premultiplied_alpha: bool,
@@ -90,7 +90,7 @@ pub struct AnimationFrame<'a> {
     /// Combine with [`Self::with_save_as_reference`] to pick the target
     /// slot (default `1`). The animation entry points reject
     /// `reference_only=true` on the last frame
-    /// ([`EncodeError::InvalidInput`]) — the codestream must end with a
+    /// ([`crate::EncodeError::InvalidInput`]) — the codestream must end with a
     /// displayable frame.
     ///
     /// `duration` is ignored for reference-only frames; the field is

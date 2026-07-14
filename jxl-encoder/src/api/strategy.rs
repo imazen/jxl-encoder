@@ -14,7 +14,7 @@
 /// decoder. The difference is in *encoder-side* decisions: strategy selection
 /// heuristics, cost models, entropy coding parameters, tree learning, etc.
 ///
-/// Do **not** confuse with [`EncodeMode`] (`Lossy` / `Lossless`) — that is the
+/// Do **not** confuse with [`crate::EncodeMode`] (`Lossy` / `Lossless`) — that is the
 /// orthogonal *compression-kind* axis (the one-letter-apart names are an
 /// unfortunate historical clash). This coarse two-way policy is also largely
 /// subsumed by the finer [`EncoderStrategy`] bundle (`Reference` ≈
@@ -50,7 +50,7 @@ pub enum EncoderMode {
 /// they reach the cost gate. The full scan still runs end-to-end every time.
 ///
 /// `Auto` (default) consults the same `median(mask1x1) > 95` discriminator
-/// already used by [`Self::with_content_aware_entropy_mul`] / the GPU
+/// already used by [`crate::LossyConfig::with_content_aware_entropy_mul`] / the GPU
 /// encoder's AFV cost-grid gate and the W23-2 auto-splines screenshot skip.
 /// When the discriminator says "photo class", `Auto` skips the scan entirely
 /// — the omitted scan would have produced the same empty `PatchesData` it
@@ -65,7 +65,7 @@ pub enum EncoderMode {
 /// against earlier output).
 ///
 /// `NeverScan` short-circuits the scan and skips it on every image
-/// (equivalent to [`LossyConfig::with_patches`]`(false)` for the scan step
+/// (equivalent to [`crate::LossyConfig::with_patches`]`(false)` for the scan step
 /// — note that the rest of the patches pipeline including `enable_patches`
 /// gating still applies; this only suppresses the detector).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -135,7 +135,7 @@ pub enum ProgressiveMode {
 /// **API surface + zenyuv-backed RGB→YCbCr+420 helpers landed; encoder
 /// pipeline not yet wired.** Only [`ChromaSubsampling::Full444`] (the
 /// default) is currently honoured end-to-end. Setting any other mode
-/// causes the encoder to return [`EncodeError::InvalidConfig`].
+/// causes the encoder to return [`crate::EncodeError::InvalidConfig`].
 ///
 /// The conversion building blocks live in
 /// `crate::vardct::chroma_subsampling` (gated behind the
@@ -209,7 +209,7 @@ impl ChromaSubsampling {
     }
 
     /// Industry-convention tag string (`"4:4:4"` / `"4:2:2"` / etc.).
-    /// Used in [`EncodeError::InvalidConfig`] messages so callers see
+    /// Used in [`crate::EncodeError::InvalidConfig`] messages so callers see
     /// the format they typed in CLI / config rather than the Rust
     /// variant name.
     pub const fn tag(self) -> &'static str {
@@ -357,7 +357,7 @@ pub enum PixelLossDispatch {
 ///
 /// **Default**: [`SinglePassEntropyDispatch::AlwaysTwoPass`].
 /// Bitstream byte-identical to historical builds; callers opt in
-/// via [`LossyConfig::with_single_pass_entropy_dispatch`].
+/// via [`crate::LossyConfig::with_single_pass_entropy_dispatch`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SinglePassEntropyDispatch {
     /// **Default.** Always run the two-pass dynamic entropy path
@@ -803,7 +803,7 @@ pub(crate) use crate::gate_registry::CustomResolvedImprovements as ResolvedImpro
 /// precedence pattern.
 ///
 /// W44-130 (Chunk D): exposed as `pub` and reachable via
-/// [`LossyConfig::with_strategy_overrides`]. Replaces the five deleted
+/// [`crate::LossyConfig::with_strategy_overrides`]. Replaces the five deleted
 /// `with_*_hint(Option<bool>)` setters; use `EncoderStrategy::Custom`
 /// with [`EncoderImprovementsCustom`] when full per-divergence control
 /// is needed.

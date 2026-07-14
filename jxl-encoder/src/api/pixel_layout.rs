@@ -71,14 +71,14 @@ pub enum PixelLayout {
     RgbaBt709F32,
     /// 8-bit CMYK, 4 bytes per pixel (C, M, Y, K). The C/M/Y planes
     /// are encoded as the frame's 3 color channels; the K (Black)
-    /// plane is encoded as an [`ExtraChannelType::Black`] extra
+    /// plane is encoded as an [`crate::headers::extra_channels::ExtraChannelType::Black`] extra
     /// channel. JXL convention is **`0 = full ink, 255 = no ink`**
     /// for all four planes (libjxl `enc_image_bundle.cc:65`); callers
     /// must pre-invert any "0 = no ink" CMYK input before encoding.
     ///
     /// For a colour-managed CMYK workflow attach a CMYK ICC profile
-    /// via [`LosslessConfig::with_metadata`] →
-    /// [`ImageMetadata::icc_profile`]; without an ICC the decoder will
+    /// via [`crate::EncodeRequest::with_metadata`] →
+    /// [`crate::ImageMetadata::icc_profile`]; without an ICC the decoder will
     /// fall back to interpreting the CMY planes as sRGB and the K
     /// plane as an opaque extra channel. Lossless-only in this
     /// chunk; lossy CMYK is not yet wired (would route C/M/Y through
@@ -227,8 +227,8 @@ impl PixelLayout {
     /// Layouts whose names carry an explicit transfer function (PQ /
     /// HLG / BT.709 f32 input — A3 chunk 1b, issue #46) return
     /// `Some(...)`; sRGB-default and linear layouts return `None`
-    /// (caller may still override with [`LossyConfig::with_color_encoding`] /
-    /// [`LosslessConfig::with_color_encoding`]).
+    /// (caller may still override with [`crate::EncodeRequest::with_color_encoding`] /
+    /// [`crate::EncodeRequest::with_color_encoding`]).
     ///
     /// The encoder consults this when the caller did NOT set an
     /// explicit `with_color_encoding(...)` so that PQ / HLG / BT.709

@@ -29,8 +29,8 @@ pub enum EncodeError {
     Internal { message: String },
     /// JPEG input could not be parsed for lossless transcoding.
     ///
-    /// Raised by [`LosslessConfig::encode_jpeg_transcode`] and the bare
-    /// [`LosslessConfig::encode_jpeg_transcode_codestream`] variant when
+    /// Raised by [`crate::LosslessConfig::encode_jpeg_transcode`] and the bare
+    /// [`crate::LosslessConfig::encode_jpeg_transcode_codestream`] variant when
     /// the supplied bytes are not a valid baseline-sequential JPEG, when
     /// the JPEG uses a feature unsupported by the transcoder (e.g.,
     /// arithmetic coding), or when the embedded decoder fails to extract
@@ -154,7 +154,7 @@ impl From<crate::jpeg::JpegError> for EncodeError {
 /// production-safe error tracking without debuginfo or backtraces.
 pub type Result<T> = core::result::Result<T, At<EncodeError>>;
 
-/// Convert any error that maps to [`EncodeError`] into an [`At<EncodeError>`],
+/// Convert any error that maps to [`crate::EncodeError`] into an [`At<EncodeError>`],
 /// capturing **this call site** as the origin frame (with crate info, so the
 /// trace carries a clickable GitHub link).
 ///

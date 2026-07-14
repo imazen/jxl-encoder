@@ -19,7 +19,7 @@
 /// that always expect the ISOBMFF framing. [`Never`] skips the
 /// container even when metadata is present (the metadata is silently
 /// dropped); this fails the encode (returns
-/// [`EncodeError::InvalidInput`]) if the codestream level requires a
+/// [`crate::EncodeError::InvalidInput`]) if the codestream level requires a
 /// container, since the result would be unreadable.
 ///
 /// [`Auto`]: ContainerMode::Auto
@@ -37,7 +37,7 @@ pub enum ContainerMode {
     Always,
     /// Never wrap; emit the bare codestream. Drops attached EXIF / XMP
     /// / JUMBF / colr / hCdR silently (they have nowhere to go without
-    /// the container). Returns [`EncodeError::InvalidInput`] when the
+    /// the container). Returns [`crate::EncodeError::InvalidInput`] when the
     /// codestream level requires a container (e.g. level 10).
     /// Equivalent to libjxl `--container 0`.
     Never,
@@ -45,7 +45,7 @@ pub enum ContainerMode {
 
 /// Trait bundle for output destinations that support both writing and
 /// random-access seeking. Required by the streaming-refactor
-/// [`LossyEncoder::finish_to_seekable`] / [`LosslessEncoder::finish_to_seekable`]
+/// [`crate::LossyEncoder::finish_to_seekable`] / [`crate::LosslessEncoder::finish_to_seekable`]
 /// entry points (jxl-encoder#11 chunk 6).
 ///
 /// The blanket impl covers every type that implements [`std::io::Write`]
@@ -89,7 +89,7 @@ impl<T: std::io::Write + std::io::Seek> WritableSeek for T {}
 /// jxl-encoder#11 / libjxl PRs #4634 + #4635 + #4637 + #4642 + #4728
 /// (commits `acc28c0` + `032d39a` + `b3510d1` + `1389871` + `6553831`).
 /// **Chunk 1 (this commit)** introduces the enum, the builder methods
-/// on [`LossyConfig`] / [`LosslessConfig`], and the CLI flag. **No
+/// on [`crate::LossyConfig`] / [`crate::LosslessConfig`], and the CLI flag. **No
 /// dispatch is wired yet** — every variant currently routes through
 /// the existing one-shot full-buffer path, so output bytes are
 /// identical regardless of which `Buffering` value is selected.
@@ -326,10 +326,10 @@ impl Buffering {
 ///   scan is O(N) and runs before the encode loop; for trusted inputs
 ///   prefer the explicit [`Off`]/[`On`] forms.
 ///
-/// On the [`LossyConfig`] path the encoder requires the
+/// On the [`crate::LossyConfig`] path the encoder requires the
 /// unpremultiplication pre-pass (#13) — calling `finish()` on a lossy
 /// encode with [`On`] (or [`Auto`] that resolves to premultiplied)
-/// returns [`EncodeError::InvalidInput`]. On the [`LosslessConfig`]
+/// returns [`crate::EncodeError::InvalidInput`]. On the [`crate::LosslessConfig`]
 /// path the pixels are preserved bit-exactly and the
 /// `alpha_associated` header bit is set so the decoder interprets the
 /// stored values correctly.
@@ -367,12 +367,12 @@ impl PremultipliedAlphaMode {
     }
 }
 
-/// Maximum value for [`LossyConfig::with_faster_decoding`] /
-/// [`LosslessConfig::with_faster_decoding`]. Matches libjxl
+/// Maximum value for [`crate::LossyConfig::with_faster_decoding`] /
+/// [`crate::LosslessConfig::with_faster_decoding`]. Matches libjxl
 /// `cjxl --faster_decoding 0..4`.
 pub const MAX_FASTER_DECODING: u8 = 4;
 
-/// Maximum value for [`LossyConfig::with_progressive_dc`]. Matches
+/// Maximum value for [`crate::LossyConfig::with_progressive_dc`]. Matches
 /// libjxl `cjxl --progressive_dc 0..2`.
 ///
 /// 0 = no progressive DC.

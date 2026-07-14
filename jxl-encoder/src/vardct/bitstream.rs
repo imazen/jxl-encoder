@@ -40,7 +40,7 @@ use crate::headers::frame_header::{BlendMode, FrameHeader, FrameOptions};
 /// line dispatches on whatever `tree_kind` was already set, and the DC
 /// stream's `tree_kind` is only set to `kLearn` at lines 1591-1597 under
 /// `speed_tier < kSquirrel`. The misgate ran the (expensive)
-/// `learn_dc_tree_variable` pass at every effort 4-7, costing 78 % of CPU on
+/// `learn_dc_tree_variable_with_set` pass at every effort 4-7, costing 78 % of CPU on
 /// 5+ MP screenshots at e5 d=1.0 (`imac_dark`: 65× cjxl wall ratio in the
 /// W44-170 sweep). Restoring the libjxl-parity gate at `effort >= 8`
 /// recovers ~3-4× wall-time on the W44-170 perf-wedge cluster while losing
@@ -72,8 +72,9 @@ pub(crate) const DC_TREE_VARIABLE_TRIAL_MIN_EFFORT: u8 = 8;
 /// hits the residual wedge from "when we do run kLearn at e8, we run the
 /// expensive Variable trial instead of the cheap Best trial".
 ///
-/// Production source: dispatch picks `learn_dc_tree_best` at effort 8,
-/// `learn_dc_tree_variable` at effort >= 9. Both share the `_with_set` core.
+/// Production source: dispatch picks `PredictorSet::Best` at effort 8,
+/// `PredictorSet::Variable` at effort >= 9, both via
+/// `learn_dc_tree_variable_with_set`.
 pub(crate) const DC_TREE_VARIABLE_PREDICTOR_FULL_MIN_EFFORT: u8 = 9;
 
 /// Progressive pass configuration computed from ProgressiveMode.
@@ -297,15 +298,14 @@ fn tokenize_dc_group_wp(
 
 /// Tokenize a single DC group (LearnTree DC mode: both DC and AC metadata tokens).
 ///
-/// Mirrors `tokenize_dc_group_wp` but uses the gradient predictor + a
-/// data-adaptive context tree produced by
-/// [`super::dc_tree_learn::learn_dc_tree`]. Active when effort >= 4
-/// (libjxl `speed_tier < kFalcon`, [enc_modular.cc:1166]). The learned
-/// tree splits on properties 4/5/6/7/9/10 (intensity + gradient) rather
-/// than property 15 (`wp_max_error`), so DC residuals are computed via
-/// `clamped_gradient(top, left, topleft)` to match each leaf's
-/// `predictor = Gradient` field that the merged tree emits to the
-/// bitstream.
+/// Mirrors `tokenize_dc_group_wp` but uses a data-adaptive context tree
+/// produced by [`super::dc_tree_learn::learn_dc_tree_variable_with_set`]
+/// (Variable-mode: each leaf carries its own concrete predictor `0..13`).
+/// Active when the trial-and-pick DC-tree path fires — effort >=
+/// [`DC_TREE_VARIABLE_TRIAL_MIN_EFFORT`] (the W44-171 libjxl-parity gate).
+/// The tokenizer reads each leaf's chosen predictor and runs the WP state
+/// in parallel so property 15 (`wp_max_error`) stays consistent with the
+/// decoder (see the Stage 7c note in the body).
 #[allow(clippy::too_many_arguments)]
 fn tokenize_dc_group_learned(
     dc_group_idx: usize,

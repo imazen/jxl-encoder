@@ -7,8 +7,8 @@
 ///
 /// Every field is `Option<…>`; `None` means "unlimited" (or "use the
 /// validator-side default", for fields that have one). Callers wire a
-/// [`Limits`] onto an [`EncodeRequest`] via
-/// [`EncodeRequest::with_limits`]; the encoder consults it before any
+/// [`crate::Limits`] onto an [`crate::EncodeRequest`] via
+/// [`crate::EncodeRequest::with_limits`]; the encoder consults it before any
 /// dimension-driven allocation and before each per-encode CPU budget
 /// check.
 ///
@@ -73,7 +73,7 @@ impl Limits {
 
     /// Default pre-flight pixel cap (`width × height`) applied to the
     /// untrusted JPEG-transcode path
-    /// ([`LosslessConfig::encode_jpeg_transcode`] and friends) when the
+    /// ([`crate::LosslessConfig::encode_jpeg_transcode`] and friends) when the
     /// caller sets no explicit [`Self::with_max_pixels`].
     ///
     /// Set to 120 MP — admits 108 MP phone photos while bounding a crafted
@@ -204,7 +204,7 @@ impl Limits {
     ///   single `calloc`, the faster path. An allocation that the OS cannot
     ///   satisfy aborts the process.
     /// - `true`: `try_reserve` — a failed allocation returns
-    ///   [`EncodeError`] / [`crate::error::Error::OutOfMemory`] instead of
+    ///   [`crate::EncodeError`] / [`crate::error::Error::OutOfMemory`] instead of
     ///   aborting. Slightly slower, but a hostile-input image proxy stays up.
     ///
     /// Orthogonal to [`Self::with_max_memory_bytes`]: the budget *rejects*

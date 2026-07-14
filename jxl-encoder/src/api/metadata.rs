@@ -114,7 +114,7 @@ impl<'a> ImageMetadata<'a> {
     /// decoders MUST ignore boxes with unrecognised types — so emitting
     /// this box never alters decoded pixels.
     ///
-    /// Only honoured on the one-shot [`EncodeRequest`] path. Streaming
+    /// Only honoured on the one-shot [`crate::EncodeRequest`] path. Streaming
     /// encoders (`LossyEncoder` / `LosslessEncoder`) do not surface
     /// `ImageMetadata` and silently drop this field.
     pub fn with_colr_payload(mut self, data: &'a [u8]) -> Self {
@@ -141,7 +141,7 @@ impl<'a> ImageMetadata<'a> {
     /// clause 5, decoders MUST ignore boxes with unrecognised types —
     /// so emitting this box never alters decoded pixels.
     ///
-    /// Only honoured on the one-shot [`EncodeRequest`] path. Streaming
+    /// Only honoured on the one-shot [`crate::EncodeRequest`] path. Streaming
     /// encoders (`LossyEncoder` / `LosslessEncoder`) do not surface
     /// `ImageMetadata` and silently drop this field.
     pub fn with_hcdr_payload(mut self, data: &'a [u8]) -> Self {

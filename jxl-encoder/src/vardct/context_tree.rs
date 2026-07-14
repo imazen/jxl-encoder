@@ -777,10 +777,10 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
 ///
 /// This is the learned-tree version of `write_context_tree`. Instead of using
 /// the static `CONTEXT_TREE_TOKENS`, it uses tokens generated from a learned
-/// DC tree via `tree_to_tokens`.
+/// DC tree via `tree_tokens_with_ac_metadata_prefix`.
 ///
 /// # Arguments
-/// * `tree_tokens` - Tokens from `dc_tree_learn::tree_to_tokens()`
+/// * `tree_tokens` - Tokens from `dc_tree_learn::tree_tokens_with_ac_metadata_prefix()`
 /// * `num_dc_groups` - Number of DC groups (for multi-group images)
 /// * `writer` - Bitstream writer
 pub fn write_learned_context_tree(
