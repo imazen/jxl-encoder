@@ -343,6 +343,14 @@ default = ["std", "butteraugli-loop"]
 name = "hdr_pq_butteraugli"
 path = "examples/hdr_pq_butteraugli.rs"
 
+# File-based scorer using the SHIPPED VDP2-lite metric (the one the buttloop
+# steers on) — pairs with hdr_pq_butteraugli as the scoreboard's 2nd HDR
+# quality metric. Needs __internals for the compare_vdp2_planar re-export.
+[[example]]
+name = "hdr_vdp2_scorer"
+path = "examples/hdr_vdp2_scorer.rs"
+required-features = ["__internals"]
+
 [[example]]
 name = "hdr_tree_budget_probe"
 path = "examples/hdr_tree_budget_probe.rs"

@@ -396,6 +396,19 @@ pub mod __internals {
             r.buttloop_epf_sharpness_seed,
         )
     }
+
+    /// The SHIPPED VDP2-lite HDR metric the buttloop steers on (default
+    /// `HdrLoss` for PQ/HLG encodes). Re-exported so the codec scoreboard
+    /// can judge HDR quality with the EXACT metric the encoder optimizes
+    /// against, rather than an independent reimplementation — the scoreboard
+    /// and the encoder then agree on what "HDR quality" means. See
+    /// [`crate::vardct::hdr_vdp2_lite`] for the algorithm + calibration.
+    /// Gated on `butteraugli-loop` because that is where `hdr_vdp2_lite`
+    /// lives (it is only consumed inside the quantization loop).
+    #[cfg(feature = "butteraugli-loop")]
+    pub use crate::vardct::hdr_vdp2_lite::{
+        VdpResult, compare_vdp2_interleaved, compare_vdp2_planar,
+    };
 }
 
 /// Pre-quantized AC entry point — accepts an already-prepared

@@ -17,8 +17,11 @@ Cells v1:
     pixels must be EXACT for both encoders — cv2 IMREAD_UNCHANGED,
     never PIL; a non-exact side forfeits the cell)
   - HDR lossy: 12 hdr-crops-512 x e{5,7} x d{0.5,1,2,4}
-    (quality = PQ-EOTF butteraugli @1000 nits single-metric — SSIM2 is
-    not HDR-aware; flagged HDR-SINGLE-METRIC)
+    (quality = TWO-metric HDR guard: PQ-EOTF butteraugli @1000 nits AND
+    the shipped VDP2-lite, both lower-better, must agree in direction
+    beyond tolerance, else quality axis is TIE. SSIM2 is not HDR-aware so
+    it is not used here; flagged HDR-2METRIC. cvvdp slots in as a third
+    metric once zen-metrics is built — see agree_direction().)
   - Size axis: 64x64 + 256x256 center crops of 4 core picks x e7 x
     d{1,4} + lossless e7 (fixed-overhead regime)
 
@@ -54,6 +57,14 @@ CJXL = Path.home() / "work/jxl-efforts/libjxl/build/tools/cjxl"
 DJXL = Path.home() / "work/jxl-efforts/libjxl/build/tools/djxl"
 ZEN_METRICS = Path.home() / "work/zen/zenmetrics/target/release/zen-metrics"
 HDR_SCORER = REPO / "target/release/examples/hdr_pq_butteraugli"
+# Second HDR quality metric: the SHIPPED VDP2-lite the encoder steers on
+# (compare_vdp2_planar). Luminance-adaptive HDR-VDP-2 subset — catches the
+# HDR-specific mis-quantization butteraugli's SDR-tuned threshold misses. It
+# is LUMINANCE-ONLY (blind to chroma near primaries); the point of running it
+# alongside pq_butteraugli is that where the two DISAGREE the cell is a TIE,
+# which is exactly how the 48 HDR near-ties get correctly demoted from the
+# butteraugli-single-metric "loss" they used to be flagged as (ledger #26).
+VDP2_SCORER = REPO / "target/release/examples/hdr_vdp2_scorer"
 # Reference-PNG normalization/crop is dogfooded through our own PNG codec
 # (zenpng) instead of OpenCV/cv2 — zenpng decodes Display-P3 / EXIF captures
 # that crash libjxl's PNG reader and re-emits a pixels-only PNG.
@@ -68,6 +79,11 @@ BFLY_REL_TIE = 0.02
 BFLY_ABS_FLOOR = 0.005
 PQ_REL_TIE = 0.02
 PQ_ABS_FLOOR = 0.02
+# VDP2-lite lands in the same 0.9..5 range as pq_butteraugli (both lower =
+# better), so it takes the same tie band. Re-tune only with a calibrated
+# HDR A/B, not by feel.
+VDP2_REL_TIE = 0.02
+VDP2_ABS_FLOOR = 0.02
 
 # Size-axis sources: (stratum substring, label) — resolved against the
 # core picks so the crops track the canonical corpus.
@@ -118,8 +134,14 @@ def score_sdr(ref, dist):
 
 
 def score_hdr(ref, dist):
-    out = run([HDR_SCORER, ref, dist])
-    return float(out.strip().split()[-1]), None
+    """Two HDR quality metrics, both PQ-EOTF linearized @1000 nits, both
+    lower = better: (pq_butteraugli, vdp2_lite). VDP2-lite is the shipped
+    in-loop HDR metric; pairing it with pq_butteraugli turns the HDR quality
+    axis into a two-metric agreement guard (disagreement → TIE), the HDR
+    analogue of the SDR butteraugli+ssim2 guard."""
+    bfly = float(run([HDR_SCORER, ref, dist]).strip().split()[-1])
+    vdp2 = float(run([VDP2_SCORER, ref, dist]).strip().split()[-1])
+    return bfly, vdp2
 
 
 def pixels_exact(ref, dist):
@@ -145,18 +167,34 @@ def metric_dir(ours, cjxl, lower_better, rel_tie, abs_floor):
     return "OURS" if better else "CJXL"
 
 
-def axis_quality_sdr(ob, cb, os2, cs2):
-    d1 = metric_dir(ob, cb, True, BFLY_REL_TIE, BFLY_ABS_FLOOR)
-    d2 = "TIE" if abs(os2 - cs2) <= SSIM2_TIE else ("OURS" if os2 > cs2 else "CJXL")
-    if d1 == d2:
-        return d1, ""
-    if "TIE" in (d1, d2):
-        return (d1 if d2 == "TIE" else d2), ""
+def agree_direction(dirs):
+    """Collapse per-metric directions (each 'OURS' / 'CJXL' / 'TIE') into one
+    quality-axis direction. Every non-TIE metric must agree; any OURS-vs-CJXL
+    conflict is a TIE with MIXED-METRICS (neither encoder strictly dominates
+    quality). Extensible to N metrics — cvvdp slots in as another entry."""
+    nz = [d for d in dirs if d != "TIE"]
+    if not nz:
+        return "TIE", ""
+    if all(d == nz[0] for d in nz):
+        return nz[0], ""
     return "TIE", "MIXED-METRICS"
 
 
-def axis_quality_hdr(ob, cb):
-    return metric_dir(ob, cb, True, PQ_REL_TIE, PQ_ABS_FLOOR), "HDR-SINGLE-METRIC"
+def axis_quality_sdr(ob, cb, os2, cs2):
+    # butteraugli_pnorm3 (lower better) + ssim2 (higher better).
+    d1 = metric_dir(ob, cb, True, BFLY_REL_TIE, BFLY_ABS_FLOOR)
+    d2 = "TIE" if abs(os2 - cs2) <= SSIM2_TIE else ("OURS" if os2 > cs2 else "CJXL")
+    return agree_direction([d1, d2])
+
+
+def axis_quality_hdr(ob, cb, ov, cv):
+    # Two-metric HDR guard: pq_butteraugli + vdp2-lite, BOTH lower = better.
+    # Where they disagree the cell is a TIE — which is precisely what demotes
+    # the 48 butteraugli-single-metric HDR near-ties to noise (ledger #26).
+    d1 = metric_dir(ob, cb, True, PQ_REL_TIE, PQ_ABS_FLOOR)
+    d2 = metric_dir(ov, cv, True, VDP2_REL_TIE, VDP2_ABS_FLOOR)
+    ax, flag = agree_direction([d1, d2])
+    return ax, ("HDR-2METRIC" if not flag else "HDR-2METRIC;" + flag)
 
 
 def verdict(bax, qax):
@@ -213,7 +251,7 @@ def main():
     if args.walls:
         sys.exit("wall axis not implemented in v1 (quiet-box zenbench grid required)")
 
-    for p in (OURS, CJXL, DJXL, ZEN_METRICS, HDR_SCORER, ZENPNG):
+    for p in (OURS, CJXL, DJXL, ZEN_METRICS, HDR_SCORER, VDP2_SCORER, ZENPNG):
         assert Path(p).exists(), f"missing tool: {p}"
 
     done = set()
@@ -232,7 +270,8 @@ def main():
         print(f"{row[17]:>15} {row[1]}  bytes {row[9]:+.2f}%  [{row[18]}]",
               file=sys.stderr, flush=True)
 
-    def lossy_cell(family, name, src, effort, dist, scorer, size_label="native"):
+    def lossy_cell(family, name, src, effort, dist, scorer, size_label="native",
+                   qkind="sdr"):
         cell = f"{family}:{name}:e{effort}:d{dist}:{size_label}"
         if cell in done:
             return
@@ -253,9 +292,9 @@ def main():
             for s in ("_o.jxl", "_c.jxl", "_o.png", "_c.png"):
                 Path(tmp + s).unlink(missing_ok=True)
         bax, bd = axis_bytes(ob, cb)
-        if oq2 is None:
-            qax, flag = axis_quality_hdr(oq1, cq1)
-            kind = "pq_bfly"
+        if qkind == "hdr":
+            qax, flag = axis_quality_hdr(oq1, cq1, oq2, cq2)
+            kind = "pq_bfly+vdp2"
         else:
             qax, flag = axis_quality_sdr(oq1, cq1, oq2, cq2)
             kind = "bfly_pnorm3+ssim2"
@@ -319,7 +358,7 @@ def main():
     for name, src in hdr_crop_paths():
         for e in ("5", "7"):
             for d in ("0.5", "1.0", "2.0", "4.0"):
-                lossy_cell("hdr-lossy", name, src, e, d, score_hdr)
+                lossy_cell("hdr-lossy", name, src, e, d, score_hdr, qkind="hdr")
 
     # Size axis: 64 + 256 center crops of 4 core strata
     crop_dir = Path(f"/tmp/sb_crops_{os.getpid()}")
