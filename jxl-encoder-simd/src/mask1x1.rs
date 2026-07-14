@@ -733,7 +733,7 @@ mod expanded_coverage {
         ];
         for &(w, h) in cases {
             let n = w * h;
-            let xyb_y: Vec<f32> = gen_f32(0xD15E_A5E_u64 ^ ((w as u64) << 32) ^ h as u64, n, 0.5);
+            let xyb_y: Vec<f32> = gen_f32(0x0D15_EA5E_u64 ^ ((w as u64) << 32) ^ h as u64, n, 0.5);
             let mut ref_out = vec![0.0_f32; n];
             compute_mask1x1_scalar(&xyb_y, w, h, &mut ref_out);
             run_dispatch_parity(|perm| {

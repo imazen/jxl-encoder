@@ -1102,10 +1102,7 @@ mod expanded_coverage {
             let size = gw * gh;
             let llf_x = gw / 8;
             let llf_y = gh / 8;
-            let dct = gen_f32(0x9AAA_7777 ^ ((gw as u64) << 32) ^ gh as u64, size, 4.0)
-                .iter()
-                .copied()
-                .collect::<alloc::vec::Vec<f32>>();
+            let dct = gen_f32(0x9AAA_7777 ^ ((gw as u64) << 32) ^ gh as u64, size, 4.0);
             let weights: alloc::vec::Vec<f32> =
                 (0..size).map(|i| 0.5 + (i % 64) as f32 * 0.05).collect();
 

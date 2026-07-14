@@ -128,7 +128,7 @@ pub fn f32_edge_battery(n: usize) -> Vec<F32Case> {
     let mut out = Vec::new();
     if n == 0 {
         out.push(F32Case {
-            label: format!("empty(n=0)"),
+            label: String::from("empty(n=0)"),
             data: Vec::new(),
         });
         return out;
@@ -354,7 +354,7 @@ mod self_tests {
                 "missing {} (size - 1)",
                 boundary
             );
-            assert!(sizes.iter().any(|&s| s == boundary), "missing {}", boundary);
+            assert!(sizes.contains(&boundary), "missing {}", boundary);
             assert!(
                 sizes.iter().any(|&s| s == boundary + 1),
                 "missing {} (size + 1)",

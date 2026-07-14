@@ -2255,12 +2255,12 @@ mod expanded_coverage {
             let in_h = h + 2 * pad;
             let n = in_stride * in_h;
 
-            let in_x = gen_f32(0xE_F1_AAAA ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
-            let in_y = gen_f32(0xE_F1_BBBB ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
-            let in_b = gen_f32(0xE_F1_CCCC ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
+            let in_x = gen_f32(0x0EF1_AAAA ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
+            let in_y = gen_f32(0x0EF1_BBBB ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
+            let in_b = gen_f32(0x0EF1_CCCC ^ ((xb as u64) << 16) ^ yb as u64, n, 0.5);
             // inv_sigma is per-block.
             let inv_sigma: alloc::vec::Vec<f32> =
-                gen_f32_unit(0xE_F1_DDDD ^ ((xb as u64) << 16) ^ yb as u64, xb * yb);
+                gen_f32_unit(0x0EF1_DDDD ^ ((xb as u64) << 16) ^ yb as u64, xb * yb);
 
             for (step_label, step_fn_ref, step_fn_disp) in [
                 (
