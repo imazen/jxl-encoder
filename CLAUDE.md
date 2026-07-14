@@ -765,20 +765,24 @@ measurement at equal or better coverage.
   distance — use vdp2/cvvdp as arbiters.) **Section split** (`benchmarks/hdr_
   section_split_2026-07-14.tsv`, jxl-oxide `--with-offset`, 4 cells): LfGlobal
   +12..27 %, DC +3..7 %, AC +1..4 % — **95 % of the gap is in DC+AC COEFFICIENT
-  coding (diffuse), only ~10 % LfGlobal signaling**. **KEY (general, not HDR-
-  specific)**: our fixed DC `context_tree` = **983 bits (~123 B) on BOTH SDR and
-  HDR** (`benchmarks/hdr_lfglobal_dctree_2026-07-14.tsv`, debug-tokens) — the
-  static 313-token `CONTEXT_TREE_TOKENS` **ported from libjxl-TINY**
-  (`vardct/context_tree.rs:33`); cjxl's inferred DC tree ≈26 B. This holdover
-  taxes SMALL files (HDR crops, size-axis) while amortizing to ~0 on the big SDR
-  images we win. **DO NOT reach for `dc_tree_learning` to shrink it** — it goes
-  the WRONG way (DC_TREE_VARIABLE at e8 COSTS +0.7-1.6 %, a quality/parity
-  feature). Shrinking needs a HAND-DESIGNED compact fixed DC tree, size-gated
-  (quality-neutral — DC is losslessly coded so tree choice is bytes-only — but
-  only ~11 % of the HDR gap; also helps size-axis 64². Regression-risky on large
-  files, so must size-gate). The 90 % (DC/AC coefficient RD on PQ content) is a
-  multi-week study. **VERDICT: no single lever; two documented multi-day next-
-  attempts, neither a quick chunk.**
+  coding (diffuse), only ~10 % LfGlobal signaling**. Our LfGlobal `context_tree`
+  = 983 bits (~123 B) at 512² on both SDR and HDR
+  (`benchmarks/hdr_lfglobal_dctree_2026-07-14.tsv`). **CORRECTION — the DC tree
+  is ALREADY at libjxl parity; do NOT chase a "compact DC tree" lever**: at
+  effort 4-7 the encoder uses `build_wp_fixed_dc_tree` (`dc_tree_learn.rs:2751`),
+  our BYTE-FOR-BYTE port of libjxl's kWPFixedDC `MakeFixedTree` (same
+  `WP_FIXED_DC_CUTOFFS` + same `min_gap = 8*(14-log_px)` size pruning). The tree
+  DOES shrink with size (313 tokens at 512², 82 at 64²; e5==e7). The static
+  313-token `CONTEXT_TREE_TOKENS` (`context_tree.rs:33`) is only the
+  `write_context_tree` fallback these encodes never hit. So the LfGlobal +97 B
+  vs cjxl is NOT a bloated-tree holdover — it is UNATTRIBUTED signaling (our
+  `dc_entropy_code` DC ANS histograms = 222 B and/or the AC-metadata prefix), not
+  separable from cjxl's tree-vs-entropy split without cjxl's sub-breakdown.
+  `dc_tree_learning` goes the WRONG way (DC_TREE_VARIABLE at e8 COSTS +0.7-1.6 %).
+  **VERDICT: NO clean lever** — DC tree at parity, LfGlobal ~10 % + unattributed,
+  the 90 % is diffuse DC/AC coefficient coding. Only next-attempt: a DC/AC
+  coefficient-coding RD study on PQ content (histogram clustering + context
+  modeling + DC ANS efficiency) — a multi-week research item, not a chunk.
 - **Buttloop memory reduction — measured options (2026-06-23, #93 follow-up).**
   Two threads investigated at the user's request:
   1. **jxl↔butteraugli XYB buffer-sharing is NOT viable** (definitive,

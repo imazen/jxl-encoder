@@ -11,7 +11,15 @@ lfglobal sub-breakdown via --features debug-tokens (DC_global detailed breakdown
 KEY FINDINGS (see HYPOTHESIS_LEDGER.md #29):
 - Distance knob EXHAUSTED: iso-vdp2-quality ours +4.5% bytes vs cjxl (RD gap, not calibration).
 - 95% of gap in DC+AC COEFFICIENT coding (diffuse); ~10% in LfGlobal signaling.
-- LfGlobal overage is GENERAL not HDR-specific: our fixed DC context_tree = 983 bits
-  (~123B) on BOTH SDR and HDR — the static 313-token CONTEXT_TREE_TOKENS ported from
-  libjxl-TINY (context_tree.rs:33). cjxl's inferred DC tree ~26B. Taxes small files.
-- dc_tree_learning goes WRONG way (+0.7-1.6% at e8). Shrink needs hand-designed compact tree.
+- LfGlobal context_tree = 983 bits (~123B) at 512² on both SDR and HDR.
+  CORRECTION (traced): the DC tree is ALREADY at libjxl kWPFixedDC parity — at
+  effort 4-7 the encoder uses build_wp_fixed_dc_tree (dc_tree_learn.rs:2751), a
+  byte-for-byte port of libjxl MakeFixedTree (same WP_FIXED_DC_CUTOFFS +
+  min_gap=8*(14-log_px) size pruning). Tree shrinks with size (313 tok @512²,
+  82 @64²). The static 313-token CONTEXT_TREE_TOKENS (context_tree.rs:33) is only
+  the write_context_tree fallback these encodes never hit. So the LfGlobal +97B
+  vs cjxl is NOT a tree holdover — it's unattributed signaling (dc_entropy_code
+  DC ANS histograms 222B and/or AC-metadata prefix). NO clean DC-tree lever.
+- dc_tree_learning goes WRONG way (+0.7-1.6% at e8).
+- VERDICT: diffuse RD gap, no clean lever. Only next-attempt = DC/AC coefficient
+  coding RD study on PQ content (multi-week research, not a chunk).
