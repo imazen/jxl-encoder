@@ -33,8 +33,29 @@
   and lint surface — the zenjpeg nightly break and ~70 accumulated test-code
   lints were invisible to the previous lib-only gate. The whole workspace is
   now clean under `cargo clippy --workspace --all-targets -- -D warnings`.
+- **`api.rs` split into `api/` submodules** (18,370 → ~9,650 lines): the
+  independent pieces moved to `api/{pixel_layout,quality,metadata,limits,
+  animation,container,strategy,errors,ingest,content_detect,validate,
+  animate,tests}.rs`, re-exported so public paths are unchanged. The
+  tightly-coupled encode core (`LossyConfig`/`LosslessConfig`/`EncodeRequest`/
+  `ExtraChannel`/streaming/result types) deliberately stays in `api.rs` —
+  splitting it would force dozens of fields to `pub(crate)`. The boundary is
+  documented in the `api.rs` module doc (00d42b16, addca8a6, 46e7216e).
+- **Dead-code hygiene**: dropped 4 vestigial + 2 single-item + 1
+  cluster-cleared file-level `#![allow(dead_code)]` (17 → 10); deleted the
+  unused zero-predictor debug cluster from `modular/encode_tree.rs`
+  (`write_tree_histogram_for_zero`/`write_zero_tree_tokens`/
+  `USE_ZERO_PREDICTOR`, all `pub(crate)`, zero callers). The 10 remaining
+  blanket allows cover test-exercised, feature-gated, or reference-complete
+  ported code (9d9991a9, dcf3cc71, c3cf5e86).
 
 ### Documentation
+- Fixed ~29 intra-doc links broken by the `api.rs` split (doc comments moved
+  into `api/` submodules where the api-level types were no longer in scope —
+  fully-qualified to `crate::` paths) plus 3 wrong-type links, and refreshed
+  stale DC-tree references (`learn_dc_tree_variable_with_set` is the live
+  learned-DC producer; the gate is `effort >= 8`, not the pre-W44-171
+  `>= 4`) (7a6ca462).
 - 2026-07-13 maintenance-review pass: streaming-encoder rustdoc no longer
   claims input streaming avoids materializing the image (full-image internal
   planes are held until `finish`); stale Zensim "Phase 4 pending" caveat
