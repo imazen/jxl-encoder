@@ -3,7 +3,7 @@
 
 //! Conformance regression test for **imazen/jxl-encoder#94**: true VarDCT
 //! near-lossless below distance 0.03 must produce a **spec-conformant**
-//! bitstream that a strict reference decoder accepts — not just one our own
+//! bitstream that strict reference decoders accept — not just one our own
 //! decoder can read.
 //!
 //! History: a prior fix (008499e1) widened quantized DC `i16 -> i32` so the
@@ -27,15 +27,18 @@
 //!
 //! This test drives the exact reported failure: encode `frymire-srgb`
 //! (high-contrast screen content — large Y DC) at distances **below** the old
-//! floor, decode with BOTH the pure-Rust `zenjxl-decoder` AND the strict
-//! `jxl-oxide` reference decoder, and assert:
-//!   1. jxl-oxide ACCEPTS the frame (the spec-conformance gate — this is what
-//!      failed pre-fix and is the core of #94);
-//!   2. both decoders reconstruct near-lossless (PSNR >= 40 dB);
+//! floor (down to 0.001, where the DC overflow is hardest and the large-DC
+//! Huffman-token path is exercised), decode with the CLAUDE.md-mandated
+//! primary decoder **jxl-rs**, the strict reference decoder **jxl-oxide**, AND
+//! the pure-Rust **zenjxl-decoder**, and assert:
+//!   1. all three decoders ACCEPT the frame (the spec-conformance gate — this
+//!      is what failed pre-fix and is the core of #94);
+//!   2. jxl-oxide + zenjxl-decoder reconstruct near-lossless (PSNR >= 40 dB) —
+//!      an "accepted but garbage" reconstruction still fails;
 //!   3. a finer distance never decodes dramatically worse than a coarser one.
 //!
-//! Pre-fix (root cause unfixed, floor bypassed) jxl-oxide REJECTS distance
-//! 0.01 / 0.02 → assertion (1) fails. Post-fix all three distances pass.
+//! Pre-fix (root cause unfixed, floor bypassed) jxl-oxide/jxl-rs REJECT the
+//! sub-0.03 distances → assertion (1) fails. Post-fix all distances pass.
 //!
 //! No runtime skip: the fixture is a committed file (`tests/images/`) and a
 //! load failure is a hard panic, never a silent early return.
@@ -45,7 +48,9 @@ use jxl_encoder::{LossyConfig, PixelLayout};
 /// Load the committed sRGB fixture and crop to a bounded, high-contrast region.
 /// `frymire-srgb.png` is a vivid screen illustration; bright saturated blocks
 /// give large Y-channel DC — the content class whose quantized DC overflows
-/// `i16` at fine distances.
+/// `i16` at fine distances. The 384-px crop is a multi-group image (> 256 px),
+/// so the multi-DC-group `note_dc_modular_width` OR-accumulation path is
+/// exercised, not just a single group.
 fn load_fixture() -> (Vec<u8>, u32, u32) {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/frymire-srgb.png");
     let img = image::open(path)
@@ -132,13 +137,78 @@ fn jxl_oxide_conformance_psnr(jxl: &[u8], src_rgb: &[u8], w: u32, h: u32) -> Res
     Ok(psnr_u8(src_rgb, &rgb))
 }
 
+/// Decode with the CLAUDE.md-mandated primary decoder `jxl-rs` (the `jxl`
+/// crate). Returns `Ok(())` if the frame is ACCEPTED (spec-conformant), `Err`
+/// if rejected. This is the decoder the #94 report cited (jxl-rs shares the
+/// strict DC-ANS final-state check with libjxl/jxl-oxide) and was missing from
+/// this test — a non-conformant sub-0.03 stream errors in `process` here.
+fn jxl_rs_conformance(jxl: &[u8], w: u32, h: u32) -> Result<(), String> {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+
+    let mut input = jxl;
+    let decoder = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+    let mut decoder_init = decoder;
+    let mut decoder = loop {
+        match decoder_init.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder_init = fallback,
+            Err(e) => return Err(format!("jxl-rs header: {e:?}")),
+        }
+    };
+    let basic_info = decoder.basic_info().clone();
+    let (width, height) = basic_info.size;
+    if (width as u32, height as u32) != (w, h) {
+        return Err(format!(
+            "jxl-rs dimensions {width}x{height} differ from source {w}x{h}"
+        ));
+    }
+    let channels = 3usize;
+    decoder.set_pixel_format(JxlPixelFormat {
+        color_type: JxlColorType::Rgb,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: vec![],
+    });
+    let mut decoder_frame = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder = fallback,
+            Err(e) => return Err(format!("jxl-rs frame info: {e:?}")),
+        }
+    };
+    let mut output_image = Image::<f32>::new((width * channels, height))
+        .map_err(|e| format!("jxl-rs output alloc: {e:?}"))?;
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+        output_image
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width * channels, height),
+            })
+            .into_raw(),
+    )];
+    // The spec-conformance gate: the DC-ANS final-state desync (#94 pre-fix)
+    // surfaces as a decode error while draining the frame here.
+    loop {
+        match decoder_frame.process(&mut input, &mut buffers) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder_frame = fallback,
+            Err(e) => return Err(format!("jxl-rs frame: {e:?}")),
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn sub_floor_vardct_is_spec_conformant_issue94() {
     let (rgb, w, h) = load_fixture();
 
-    // Distances below the old 0.03 floor (0.01, 0.02) exercise the i16-DC
-    // overflow the fix addresses; 0.03 is the boundary control (DC fits i16).
-    let distances = [0.01f32, 0.02, 0.03];
+    // Distances below the old 0.03 floor exercise the i16-DC overflow the fix
+    // addresses; 0.001/0.005 push the overflow hardest and drive the large-DC
+    // Huffman-token path (symbols >= 64); 0.03 is the boundary control.
+    let distances = [0.001f32, 0.005, 0.01, 0.02, 0.03];
     let mut zenjxl_psnrs = Vec::new();
     let mut oxide_psnrs = Vec::new();
 
@@ -147,16 +217,25 @@ fn sub_floor_vardct_is_spec_conformant_issue94() {
             .encode(&rgb, w, h, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("encode at distance {d} failed: {e:?}"));
 
-        // (1) Spec-conformance gate — jxl-oxide must ACCEPT. This is the #94 bug.
+        // (1) Spec-conformance gate — jxl-rs (primary) AND jxl-oxide must both
+        // ACCEPT. This is the #94 bug: a sub-0.03 DC overflows i16 while the
+        // header still promises modular_16bit_buffer_sufficient = true.
+        jxl_rs_conformance(&jxl, w, h).unwrap_or_else(|e| {
+            panic!(
+                "distance-{d} VarDCT stream is NOT spec-conformant for jxl-rs — {e}. \
+                 #94 has regressed (sub-0.03 DC overflows i16 while the header still \
+                 signals modular_16bit_buffer_sufficient = true)."
+            )
+        });
         let oxide = jxl_oxide_conformance_psnr(&jxl, &rgb, w, h).unwrap_or_else(|e| {
             panic!(
-                "distance-{d} VarDCT stream is NOT spec-conformant — {e}. \
-                 #94 has regressed (sub-0.03 DC overflows i16 while the header \
-                 still signals modular_16bit_buffer_sufficient = true)."
+                "distance-{d} VarDCT stream is NOT spec-conformant for jxl-oxide — {e}. \
+                 #94 has regressed."
             )
         });
 
-        // Both decoders must reconstruct near-lossless (not accept-then-garbage).
+        // Both PSNR-capable decoders must reconstruct near-lossless (not
+        // accept-then-garbage). jxl-rs is validated as a conformance gate above.
         let zx = zenjxl_psnr(&jxl, &rgb, w, h);
         assert!(
             zx >= 40.0,
@@ -173,8 +252,8 @@ fn sub_floor_vardct_is_spec_conformant_issue94() {
     }
 
     // (3) Monotonicity: a FINER distance must never decode dramatically worse
-    // than a coarser one. distances is coarsening (0.01 -> 0.02 -> 0.03), so
-    // each earlier (finer) entry should be >= the next (coarser) minus noise.
+    // than a coarser one. distances coarsens (0.001 -> ... -> 0.03), so each
+    // earlier (finer) entry should be >= the next (coarser) minus noise.
     for pair in [&zenjxl_psnrs, &oxide_psnrs] {
         for i in 0..pair.len() - 1 {
             let (finer, coarser) = (pair[i], pair[i + 1]);
