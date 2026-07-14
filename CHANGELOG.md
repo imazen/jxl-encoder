@@ -46,6 +46,30 @@
   scoreboard / benchmark tables wrapped in `crates.io:skip` markers.
 
 ### Fixed
+- **Misaligned pixel slices no longer panic (input-placement DoS)**: every
+  16-bit / f16 / f32 pixel layout reinterpreted the caller's `&[u8]` with
+  `bytemuck::cast_slice`, which panics when the slice is not 2-/4-byte
+  aligned — and a sub-slice like `&file_buf[header..]` is only guaranteed
+  1-byte alignment, so a service encoding untrusted-shaped input could be
+  crashed by placement alone. All 53 ingestion casts (api.rs +
+  modular/channel.rs) now go through `cast_pixel_lanes`, which stays
+  zero-copy for aligned input and copies misaligned input into an aligned
+  buffer. Regression test covers offsets 0..4 for Gray16 lossless +
+  RgbLinearF32 lossy (3bb2b416).
+- **`with_force_strategy` values past the strategy tables now return a clean
+  `ValidationError::ForceStrategyOutOfRange`** instead of panicking inside
+  `AcStrategyMap::force_strategy` (`COVERED_X[raw]` OOB for codes >= 19); the
+  encode path auto-validates so the panic was reachable from the public API (3bb2b416).
+- **Extra-channel `dim_shift > 30` is rejected up front** with a clear
+  `InvalidInput` instead of flowing raw into the modular writer's per-group
+  region shifts (`1 << shift` overflow); 30 is the ceiling implied by the
+  2^30 max image dimension (3bb2b416).
+- **LZ77 `special_distance` computed in i64** (saturating): `multiplier` is a
+  channel width (up to 2^30) times a table factor up to 8, which could
+  overflow i32 for ultra-wide images (debug panic / release wrong distance) (3bb2b416).
+- **Patch coverage gates accumulate in u64**: bounding-box-area × occurrences
+  over-counts sparse glyphs, so `total_patch_pixels * 100` could wrap 32-bit
+  `usize` on wasm32 and mis-gate the patch dictionary (3bb2b416).
 - **cjxl-rs could exit 0 without writing any output file**: with
   `--streaming-input --streaming-output` set, every encode path that fell
   back to in-memory encoding (lossy `--progressive`/`--qprogressive`/
