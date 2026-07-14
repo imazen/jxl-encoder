@@ -688,6 +688,11 @@ pub const fn non_zero_context(non_zeros: usize, block_ctx: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    // Constant-pinning tests deliberately assert relationships between
+    // calibrated gate constants (CLAUDE.md "Invariant Preservation");
+    // clippy::assertions_on_constants would flag every such pin.
+    #![allow(clippy::assertions_on_constants)]
+
     use super::*;
 
     #[test]
@@ -918,11 +923,8 @@ mod tests {
     #[test]
     fn test_block_ctx_map_jpeg_dc_quantile_ex_j15_large_n_falls_back() {
         // Push num_thresholds to its maximum (7 → num_dc_ctxs = 8).
-        let mut dc_counts = [0usize; 2048];
         // Uniform histogram → quantile cuts will be evenly spaced.
-        for i in 0..2048 {
-            dc_counts[i] = 1;
-        }
+        let dc_counts = [1usize; 2048];
         let total = 2048usize;
         // Push qt_sum small to maximise num_thresholds via the log formula.
         let m_ex_j15 = BlockCtxMap::jpeg_dc_quantile_ex_j15(&dc_counts, total, 1, false);

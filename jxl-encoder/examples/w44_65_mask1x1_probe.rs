@@ -94,8 +94,8 @@ fn main() {
     println!("W44-65 mask1x1 probe — median_mask1x1 over CID22 + gb82-sc test corpus");
     println!();
     println!(
-        "{:>28}  {:^9}  {:^15}  {:^15}  {:^15}  {:^15}  {:^15}  {}",
-        "image", "dims", "median", "p25", "p75", "p10", "p90", "fires(>95)"
+        "{:>28}  {:^9}  {:^15}  {:^15}  {:^15}  {:^15}  {:^15}  fires(>95)",
+        "image", "dims", "median", "p25", "p75", "p10", "p90"
     );
     println!("{}", "-".repeat(140));
 

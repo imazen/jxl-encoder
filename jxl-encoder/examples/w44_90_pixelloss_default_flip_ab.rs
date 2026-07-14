@@ -9,7 +9,7 @@
 //!   - bytes Δ vs AlwaysOn baseline: ≤ +5% on every cell
 //!   - butteraugli Δ: ≤ +3% on every cell
 //!   - ssim2 Δ: ≥ -1.5 points on every cell
-//! AND median perf win on smooth-photo cells (where Auto fires) ≥ 5 ms.
+//!   - AND median perf win on smooth-photo cells (where Auto fires) ≥ 5 ms.
 //!
 //! Methodology: paired interleaved A/B/C with 5 trials per cell, ALL
 //! variants run back-to-back within each trial to amortise cold-pool /

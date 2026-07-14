@@ -27,7 +27,7 @@ fn encode_and_save(name: &str, d: f32, out: &PathBuf) -> usize {
     bytes.len()
 }
 
-fn decode_jxlrs(jxl_path: &PathBuf) -> Result<(), String> {
+fn decode_jxlrs(jxl_path: &std::path::Path) -> Result<(), String> {
     let out_png = PathBuf::from("/tmp/w44-68-jxlrs.png");
     let r = Command::new("/home/lilith/work/third-party/jxl-rs/target/release/jxl_cli")
         .args([jxl_path.to_str().unwrap(), out_png.to_str().unwrap()])
@@ -42,7 +42,7 @@ fn decode_jxlrs(jxl_path: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-fn decode_djxl(jxl_path: &PathBuf) -> Result<(), String> {
+fn decode_djxl(jxl_path: &std::path::Path) -> Result<(), String> {
     let out_png = PathBuf::from("/tmp/w44-68-djxl.png");
     let r = Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
         .args([jxl_path.to_str().unwrap(), out_png.to_str().unwrap()])

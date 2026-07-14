@@ -7282,6 +7282,11 @@ impl VarDctEncoder {
 
 #[cfg(test)]
 mod tests {
+    // Constant-pinning tests deliberately assert relationships between
+    // calibrated gate constants (CLAUDE.md "Invariant Preservation");
+    // clippy::assertions_on_constants would flag every such pin.
+    #![allow(clippy::assertions_on_constants)]
+
     use super::*;
 
     #[test]
@@ -7348,7 +7353,7 @@ mod tests {
         // Mirror the production predicate (`w44_152_distance_in_band`
         // in compute_profile_for_search + encode_inner) on the bounds.
         let in_band = |d: f32| -> bool {
-            d >= W44_152_W44_151_MIN_DISTANCE && d <= W44_152_W44_151_MAX_DISTANCE
+            (W44_152_W44_151_MIN_DISTANCE..=W44_152_W44_151_MAX_DISTANCE).contains(&d)
         };
 
         // Below the lower bound: gate must NOT fire (would re-enable

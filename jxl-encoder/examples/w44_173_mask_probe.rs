@@ -17,7 +17,7 @@ use std::path::PathBuf;
 const SRC_PNG: &str =
     "/home/lilith/work/codec-corpus/clic2025-1024/097cb426910ba8ce2525dd8bb7fb1777.png";
 
-fn percentile(v: &mut Vec<f32>, q: f32) -> f32 {
+fn percentile(v: &mut [f32], q: f32) -> f32 {
     if v.is_empty() {
         return 0.0;
     }

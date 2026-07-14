@@ -67,7 +67,7 @@ fn synthetic_mask(width: usize, height: usize) -> Vec<f32> {
     for y in 0..height {
         for x in 0..width {
             let v = 0.55 + 0.35 * ((x as f32 * 0.05).sin() + (y as f32 * 0.07).cos()) * 0.5;
-            buf[y * width + x] = v.max(0.1).min(1.0);
+            buf[y * width + x] = v.clamp(0.1, 1.0);
         }
     }
     buf

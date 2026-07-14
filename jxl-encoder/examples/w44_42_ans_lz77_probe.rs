@@ -74,10 +74,10 @@ fn cjxl_bin() -> PathBuf {
 fn output_path() -> PathBuf {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
-        if a == "--output" {
-            if let Some(p) = args.next() {
-                return PathBuf::from(p);
-            }
+        if a == "--output"
+            && let Some(p) = args.next()
+        {
+            return PathBuf::from(p);
         }
     }
     PathBuf::from("benchmarks/codec_wiki_section_attribution_2026-05-18.tsv")
@@ -191,11 +191,11 @@ fn probe(jxl: &[u8]) -> SectionStats {
             return s;
         }
     };
-    if image_header.metadata.colour_encoding.want_icc() {
-        if let Err(e) = jxl_color::icc::read_icc(&mut br) {
-            s.error = Some(format!("icc: {e}"));
-            return s;
-        }
+    if image_header.metadata.colour_encoding.want_icc()
+        && let Err(e) = jxl_color::icc::read_icc(&mut br)
+    {
+        s.error = Some(format!("icc: {e}"));
+        return s;
     }
     if br.zero_pad_to_byte().is_err() {
         s.error = Some("zero_pad_to_byte after header failed".to_string());
@@ -223,7 +223,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
             return s;
         }
         let after_header_bits = br.num_read_bits();
-        let frame_header_bytes = (after_header_bits - frame_start_bits + 7) / 8;
+        let frame_header_bytes = (after_header_bits - frame_start_bits).div_ceil(8);
         let frame_total_bytes = toc.total_byte_size();
 
         if frame_header.frame_type == FrameType::ReferenceOnly {
@@ -275,7 +275,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                         // pad-to-byte after section.
                         let _ = br.zero_pad_to_byte();
                         let consumed_bits = br.num_read_bits() - sec_start_bits;
-                        let consumed_bytes = (consumed_bits + 7) / 8;
+                        let consumed_bytes = consumed_bits.div_ceil(8);
                         s.main_frame_lfglobal_bytes += group.size as usize;
                         if consumed_bytes > group.size as usize {
                             eprintln!(
@@ -292,7 +292,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                     Err(e) => {
                         s.error = Some(format!("lf_global parse: {e}"));
                         let consumed_bits = br.num_read_bits() - sec_start_bits;
-                        let consumed_bytes = (consumed_bits + 7) / 8;
+                        let consumed_bytes = consumed_bits.div_ceil(8);
                         let remaining = (group.size as usize).saturating_sub(consumed_bytes) * 8;
                         let _ = br.skip_bits(remaining);
                     }
@@ -323,7 +323,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                 let dequant_bytes = match jxl_vardct::DequantMatrixSet::parse(&mut hf_br, params) {
                     Ok(_) => {
                         let consumed = hf_br.num_read_bits() - dequant_start;
-                        (consumed + 7) / 8
+                        consumed.div_ceil(8)
                     }
                     Err(_) => 0,
                 };
@@ -333,17 +333,17 @@ fn probe(jxl: &[u8]) -> SectionStats {
                 let num_groups = frame_header.num_groups();
                 let num_histo_bits = num_groups.next_power_of_two().trailing_zeros() as usize;
                 // Read the rest manually: num_hf_presets bits, then u2S for used_orders.
-                if let Ok(_num_hf_presets_m1) = hf_br.read_bits(num_histo_bits) {
-                    if let Ok(sel) = hf_br.read_bits(2) {
-                        let used_orders_val: u32 = match sel {
-                            0 => 0x5F,
-                            1 => 0x13,
-                            2 => 0,
-                            _ => hf_br.read_bits(13).unwrap_or(0),
-                        };
-                        s.used_orders_pass0 = used_orders_val;
-                        s.used_orders_count_pass0 = used_orders_val.count_ones();
-                    }
+                if let Ok(_num_hf_presets_m1) = hf_br.read_bits(num_histo_bits)
+                    && let Ok(sel) = hf_br.read_bits(2)
+                {
+                    let used_orders_val: u32 = match sel {
+                        0 => 0x5F,
+                        1 => 0x13,
+                        2 => 0,
+                        _ => hf_br.read_bits(13).unwrap_or(0),
+                    };
+                    s.used_orders_pass0 = used_orders_val;
+                    s.used_orders_count_pass0 = used_orders_val.count_ones();
                 }
 
                 // Now parse HfGlobal with the full bitstream (re-using br).
@@ -361,7 +361,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                         s.num_hf_presets = hf_global.num_hf_presets;
                         let _ = br.zero_pad_to_byte();
                         let consumed_bits = br.num_read_bits() - sec_start_bits;
-                        let consumed_bytes = (consumed_bits + 7) / 8;
+                        let consumed_bytes = consumed_bits.div_ceil(8);
                         s.main_frame_hfglobal_bytes += group.size as usize;
                         let remaining = (group.size as usize).saturating_sub(consumed_bytes) * 8;
                         if remaining > 0 && br.skip_bits(remaining).is_err() {
@@ -373,7 +373,7 @@ fn probe(jxl: &[u8]) -> SectionStats {
                         s.error = Some(format!("hf_global parse: {e}"));
                         s.main_frame_hfglobal_bytes += group.size as usize;
                         let consumed_bits = br.num_read_bits() - sec_start_bits;
-                        let consumed_bytes = (consumed_bits + 7) / 8;
+                        let consumed_bytes = consumed_bits.div_ceil(8);
                         let remaining = (group.size as usize).saturating_sub(consumed_bytes) * 8;
                         let _ = br.skip_bits(remaining);
                     }

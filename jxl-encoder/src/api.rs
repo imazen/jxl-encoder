@@ -17529,7 +17529,7 @@ mod tests {
             "Aggressive must NOT set cfl_newton_libjxl_parity"
         );
         assert!(
-            !EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom::default()))
+            !EncoderStrategy::Custom(Box::default())
                 .resolve(&StrategyOverrides::default())
                 .cfl_newton_libjxl_parity,
             "Custom(default) must NOT set cfl_newton_libjxl_parity"
@@ -17567,7 +17567,7 @@ mod tests {
             "Aggressive must NOT set cfl_pass2_ls_at_low_effort"
         );
         assert!(
-            !EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom::default()))
+            !EncoderStrategy::Custom(Box::default())
                 .resolve(&StrategyOverrides::default())
                 .cfl_pass2_ls_at_low_effort,
             "Custom(default) must NOT set cfl_pass2_ls_at_low_effort"
@@ -17824,8 +17824,10 @@ mod tests {
             assert_eq!(cfg.strategy(), &variant);
         }
         // Custom variant carries a payload; equality is structural.
-        let mut custom_inner = EncoderImprovementsCustom::default();
-        custom_inner.dct64_search_policy = Dct64SearchPolicy::ForceSuppress;
+        let custom_inner = EncoderImprovementsCustom {
+            dct64_search_policy: Dct64SearchPolicy::ForceSuppress,
+            ..Default::default()
+        };
         let custom = EncoderStrategy::Custom(Box::new(custom_inner.clone()));
         let cfg = LossyConfig::new(1.0).with_strategy(custom.clone());
         assert_eq!(cfg.strategy(), &custom);
@@ -17869,8 +17871,10 @@ mod tests {
         // Case 2: Custom asks for ForceSuppress, but a `Some(false)`
         // override rewrites the resolved policy to ForceAllow.
         // Overrides WIN over the preset.
-        let mut custom_inner = EncoderImprovementsCustom::default();
-        custom_inner.dct64_search_policy = Dct64SearchPolicy::ForceSuppress;
+        let custom_inner = EncoderImprovementsCustom {
+            dct64_search_policy: Dct64SearchPolicy::ForceSuppress,
+            ..Default::default()
+        };
         let cfg = LossyConfig::new(1.0)
             .with_strategy(EncoderStrategy::Custom(Box::new(custom_inner)))
             .with_strategy_overrides(StrategyOverrides {

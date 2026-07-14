@@ -7,7 +7,7 @@
 //!   `PreserveOriginalProfileTest`): TF × primaries grid, lossless AND
 //!   lossy, decoded header must reproduce the declared encoding.
 //! - **Intensity-target rules** (libjxl `luminance.cc:SetIntensityTarget`
-//!   + decode_test's `IsPQ ? 10000 : 255` convention): PQ → 10,000,
+//!   and decode_test's `IsPQ ? 10000 : 255` convention): PQ → 10,000,
 //!   HLG → 1,000, SDR → 255, explicit values win (issue #73).
 //! - **Quality-tracks-distance gates** for PQ and HLG (the #73
 //!   acceptance shape — destruction shows up as distance-flat scores).
@@ -213,7 +213,7 @@ fn hlg_lossy_quality_tracks_distance_multigroup() {
         // No request_color_encoding: jxl-oxide's default output IS the
         // file's own encoding (HLG here), so the floats below are
         // HLG-coded like the source — no CMS re-encode in the loop.
-        let mut image = decode_header(&bytes);
+        let image = decode_header(&bytes);
         let render = image.render_frame(0).expect("render");
         let fb = render.image_all_channels();
         let to_img = |vals: &[f32]| -> Img<Vec<RGB<f32>>> {
@@ -322,7 +322,7 @@ fn lossless_pixels_invariant_under_pq_tag() {
         // unconverted for both arms. (Requesting the file's own PQ
         // encoding explicitly is NOT an identity — it routes through a
         // CMS roundtrip and drifts the samples.)
-        let mut image = decode_header(bytes);
+        let image = decode_header(bytes);
         let render = image.render_frame(0).expect("render");
         render
             .image_all_channels()
@@ -379,7 +379,7 @@ fn rgba16_pq_lossy_roundtrips_sane() {
     );
     let got = format!("{:?}", img.image_header().metadata.colour_encoding);
     assert!(got.contains("Pq"), "alpha path lost PQ: {got}");
-    let mut image = img;
+    let image = img;
     image.render_frame(0).expect("render");
 }
 

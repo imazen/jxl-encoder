@@ -576,90 +576,6 @@ pub fn run_cell(spec: &SweepCellSpec, output_parquet: &Path) -> Result<SweepCell
     Ok(row)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn persist_config_defaults_off() {
-        // Use a temp parquet path to avoid creating an artifacts/ dir
-        // in cwd if a test process accidentally has env on.
-        let cfg = PersistConfig::default();
-        assert!(!cfg.save_encoded);
-        assert!(!cfg.save_diffmap);
-        assert!(!cfg.compute_multimetric);
-        assert!(cfg.artifacts_dir.is_none());
-        let opts = cfg.score_options();
-        assert!(!opts.compute_multimetric);
-        assert!(!opts.save_diffmap);
-    }
-
-    #[test]
-    fn diffmap_blob_format_roundtrip() {
-        let dm: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
-        let blob = encode_diffmap_blob(&dm, 8, 8);
-        // Magic + version + w + h + data
-        assert_eq!(&blob[0..8], b"BUTTERDM");
-        assert_eq!(&blob[8..12], &1u32.to_le_bytes()[..]);
-        assert_eq!(&blob[12..16], &8u32.to_le_bytes()[..]);
-        assert_eq!(&blob[16..20], &8u32.to_le_bytes()[..]);
-        assert_eq!(blob.len(), 20 + 64 * 4);
-        // Spot-check the first f32 round-trips.
-        let first = f32::from_le_bytes([blob[20], blob[21], blob[22], blob[23]]);
-        assert_eq!(first, 0.0);
-        let second = f32::from_le_bytes([blob[24], blob[25], blob[26], blob[27]]);
-        assert!((second - 0.1).abs() < 1e-6);
-    }
-
-    #[test]
-    fn diffmap_content_sha_depends_on_pixels() {
-        let ref1 = vec![100u8; 16 * 16 * 3];
-        let ref2 = vec![101u8; 16 * 16 * 3];
-        let dst = vec![100u8; 16 * 16 * 3];
-        let sha_a = diffmap_content_sha(&ref1, &dst, 16, 16);
-        let sha_b = diffmap_content_sha(&ref2, &dst, 16, 16);
-        let sha_a2 = diffmap_content_sha(&ref1, &dst, 16, 16);
-        assert_eq!(sha_a, sha_a2, "same inputs → same sha");
-        assert_ne!(sha_a, sha_b, "different ref → different sha");
-        assert_eq!(sha_a.len(), 64, "hex sha256 = 64 chars");
-    }
-
-    #[test]
-    fn stage_content_addressed_writes_and_dedups() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let bytes = b"hello-jxl-bytes";
-        let sha = "feedbeef00112233feedbeef00112233feedbeef00112233feedbeef00112233";
-        let key = stage_content_addressed(bytes, sha, tmp.path(), "jxl", "jxl").unwrap();
-        assert_eq!(
-            key,
-            format!("artifacts/jxl/fe/{sha}.jxl"),
-            "r2 key shape uses first 2 hex chars as prefix dir"
-        );
-        let path = tmp.path().join("jxl").join("fe").join(format!("{sha}.jxl"));
-        assert!(path.exists());
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        // Second call dedups (same key, no error, file unchanged).
-        let key2 = stage_content_addressed(bytes, sha, tmp.path(), "jxl", "jxl").unwrap();
-        assert_eq!(key, key2);
-    }
-
-    #[test]
-    fn persist_config_from_env_artifacts_dir_default() {
-        // Simulate env on by directly constructing — env-mutating tests
-        // are flaky in parallel. The default-fallback logic lives in
-        // from_env's else branch; here we just confirm the explicit
-        // path constructs cleanly.
-        let cfg = PersistConfig {
-            save_encoded: true,
-            save_diffmap: false,
-            compute_multimetric: false,
-            artifacts_dir: Some(PathBuf::from("/tmp/m1-test")),
-        };
-        assert!(cfg.score_options().compute_multimetric == false);
-        assert!(cfg.artifacts_dir.is_some());
-    }
-}
-
 /// Parse the strategy string. Mirrors the `cjxl-rs` CLI `--strategy`
 /// flag.
 fn parse_strategy(s: &str) -> Result<jxl_encoder::api::EncoderStrategy, String> {
@@ -826,4 +742,88 @@ fn commit_sha() -> String {
     // Build-time: prefer GIT_COMMIT env var (set by Dockerfile build);
     // fall back to a static "unknown" marker.
     option_env!("GIT_COMMIT").unwrap_or("unknown").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persist_config_defaults_off() {
+        // Use a temp parquet path to avoid creating an artifacts/ dir
+        // in cwd if a test process accidentally has env on.
+        let cfg = PersistConfig::default();
+        assert!(!cfg.save_encoded);
+        assert!(!cfg.save_diffmap);
+        assert!(!cfg.compute_multimetric);
+        assert!(cfg.artifacts_dir.is_none());
+        let opts = cfg.score_options();
+        assert!(!opts.compute_multimetric);
+        assert!(!opts.save_diffmap);
+    }
+
+    #[test]
+    fn diffmap_blob_format_roundtrip() {
+        let dm: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+        let blob = encode_diffmap_blob(&dm, 8, 8);
+        // Magic + version + w + h + data
+        assert_eq!(&blob[0..8], b"BUTTERDM");
+        assert_eq!(&blob[8..12], &1u32.to_le_bytes()[..]);
+        assert_eq!(&blob[12..16], &8u32.to_le_bytes()[..]);
+        assert_eq!(&blob[16..20], &8u32.to_le_bytes()[..]);
+        assert_eq!(blob.len(), 20 + 64 * 4);
+        // Spot-check the first f32 round-trips.
+        let first = f32::from_le_bytes([blob[20], blob[21], blob[22], blob[23]]);
+        assert_eq!(first, 0.0);
+        let second = f32::from_le_bytes([blob[24], blob[25], blob[26], blob[27]]);
+        assert!((second - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn diffmap_content_sha_depends_on_pixels() {
+        let ref1 = vec![100u8; 16 * 16 * 3];
+        let ref2 = vec![101u8; 16 * 16 * 3];
+        let dst = vec![100u8; 16 * 16 * 3];
+        let sha_a = diffmap_content_sha(&ref1, &dst, 16, 16);
+        let sha_b = diffmap_content_sha(&ref2, &dst, 16, 16);
+        let sha_a2 = diffmap_content_sha(&ref1, &dst, 16, 16);
+        assert_eq!(sha_a, sha_a2, "same inputs → same sha");
+        assert_ne!(sha_a, sha_b, "different ref → different sha");
+        assert_eq!(sha_a.len(), 64, "hex sha256 = 64 chars");
+    }
+
+    #[test]
+    fn stage_content_addressed_writes_and_dedups() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let bytes = b"hello-jxl-bytes";
+        let sha = "feedbeef00112233feedbeef00112233feedbeef00112233feedbeef00112233";
+        let key = stage_content_addressed(bytes, sha, tmp.path(), "jxl", "jxl").unwrap();
+        assert_eq!(
+            key,
+            format!("artifacts/jxl/fe/{sha}.jxl"),
+            "r2 key shape uses first 2 hex chars as prefix dir"
+        );
+        let path = tmp.path().join("jxl").join("fe").join(format!("{sha}.jxl"));
+        assert!(path.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        // Second call dedups (same key, no error, file unchanged).
+        let key2 = stage_content_addressed(bytes, sha, tmp.path(), "jxl", "jxl").unwrap();
+        assert_eq!(key, key2);
+    }
+
+    #[test]
+    fn persist_config_from_env_artifacts_dir_default() {
+        // Simulate env on by directly constructing — env-mutating tests
+        // are flaky in parallel. The default-fallback logic lives in
+        // from_env's else branch; here we just confirm the explicit
+        // path constructs cleanly.
+        let cfg = PersistConfig {
+            save_encoded: true,
+            save_diffmap: false,
+            compute_multimetric: false,
+            artifacts_dir: Some(PathBuf::from("/tmp/m1-test")),
+        };
+        assert!(!cfg.score_options().compute_multimetric);
+        assert!(cfg.artifacts_dir.is_some());
+    }
 }

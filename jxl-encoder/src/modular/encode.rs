@@ -3059,7 +3059,7 @@ mod tests {
                 .unwrap();
             let huf_bytes = writer.finish_with_padding();
             eprintln!("Huffman modular gray varied 4x2: {} bytes", huf_bytes.len());
-            eprintln!("Huffman bytes: {:02x?}", &huf_bytes);
+            eprintln!("Huffman bytes: {:02x?}", huf_bytes);
         }
 
         // Now write with ANS
@@ -3084,7 +3084,7 @@ mod tests {
 
         let bytes = writer.finish_with_padding();
         eprintln!("ANS modular gray varied 4x2: {} bytes", bytes.len());
-        eprintln!("ANS bytes: {:02x?}", &bytes);
+        eprintln!("ANS bytes: {:02x?}", bytes);
 
         // Save for external debugging
         std::fs::write(std::env::temp_dir().join("ans_modular_varied.jxl"), &bytes).ok();

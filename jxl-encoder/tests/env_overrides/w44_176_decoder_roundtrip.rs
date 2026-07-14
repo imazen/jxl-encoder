@@ -186,6 +186,7 @@ fn w44_176_env_disable_decodes_cleanly() {
     // unless `--test-threads` set; this test toggles env once and
     // restores).
     let prev = std::env::var("JXL_W44_176_DISABLE").ok();
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe {
         std::env::set_var("JXL_W44_176_DISABLE", "1");
     }
@@ -196,6 +197,8 @@ fn w44_176_env_disable_decodes_cleanly() {
         Ok(i) => i,
         Err(_) => {
             // Restore env before panicking
+            // SAFETY: this test holds env_serial(); no other thread touches
+            // the environment.
             unsafe {
                 match prev {
                     Some(v) => std::env::set_var("JXL_W44_176_DISABLE", v),
@@ -218,6 +221,7 @@ fn w44_176_env_disable_decodes_cleanly() {
 
     // Restore env immediately after the encode so test pollution stays
     // local even if a later assertion panics.
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe {
         match prev {
             Some(v) => std::env::set_var("JXL_W44_176_DISABLE", v),

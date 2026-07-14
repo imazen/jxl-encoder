@@ -259,7 +259,7 @@ mod tests {
         // `JXL_W44_184_FORCE_LIBJXL_NEWTON=1` set; in CI we don't set
         // any `JXL_*` env vars so this is safe. The integration test
         // exercises the env-fallback paths explicitly.
-        assert_eq!(resolved.content_class_auto_classify, false);
+        assert!(!resolved.content_class_auto_classify);
         assert_eq!(resolved.adaptive_buttloop_iters, IterMode::Combined);
     }
 

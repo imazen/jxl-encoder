@@ -43,7 +43,7 @@ fn noise_rgb8(w: u32, h: u32, seed: u64) -> Vec<u8> {
 
 fn decode_ok(jxl: &[u8]) -> Result<(), String> {
     let cursor = std::io::Cursor::new(jxl);
-    let mut img = jxl_oxide::JxlImage::builder()
+    let img = jxl_oxide::JxlImage::builder()
         .read(cursor)
         .map_err(|e| format!("read: {e:?}"))?;
     img.render_frame(0).map_err(|e| format!("render: {e:?}"))?;

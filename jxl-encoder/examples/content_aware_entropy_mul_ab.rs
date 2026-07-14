@@ -86,6 +86,7 @@ struct Measure {
     encode_ms: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn measure(
     rgb_u8: &[u8],
     w: u32,

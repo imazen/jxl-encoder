@@ -84,7 +84,7 @@ fn main() {
             let delta = (b as i64) - (a as i64);
             let delta_pct = (delta as f64) / (a as f64) * 100.0;
             // Expected fire only when d in [3, 5] AND TARGET class
-            let exp_in_band = *exp_fires && (d >= 3.0 - 0.01) && (d <= 5.0 + 0.01);
+            let exp_in_band = *exp_fires && (3.0 - 0.01..=5.0 + 0.01).contains(&d);
             println!(
                 "{}\t{}\t{:.1}\t{}\t{}\t{}\t{:+.3}\t{}",
                 class, name, d, a, b, delta, delta_pct, exp_in_band

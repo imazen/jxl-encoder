@@ -61,7 +61,7 @@ fn encode_with_fraction(rgb: &[u8], w: u32, h: u32, fraction: Option<f32>) -> (u
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let images: Vec<&str> = if args.is_empty() {
-        DEFAULT_IMAGES.iter().copied().collect()
+        DEFAULT_IMAGES.to_vec()
     } else {
         args.iter().map(String::as_str).collect()
     };

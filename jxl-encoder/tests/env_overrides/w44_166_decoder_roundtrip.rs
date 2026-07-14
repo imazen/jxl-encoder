@@ -144,6 +144,7 @@ fn w44_166_libjxl_strategy_byte_identical_regardless_of_env() {
     // Single-mutation pattern guarded by --test-threads=1 in CI is the
     // canonical pattern for env-mutation tests; here we self-protect by
     // doing both encodes back-to-back inside ONE test.
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe { std::env::remove_var("JXL_W44_166_VARIANT_Z_ADMIT_MODE") };
     let bytes_unset = LossyConfig::new(5.0)
         .with_effort(8)
@@ -151,6 +152,7 @@ fn w44_166_libjxl_strategy_byte_identical_regardless_of_env() {
         .with_strategy(EncoderStrategy::Libjxl)
         .encode(rgb.as_raw(), w, h, PixelLayout::Rgb8)
         .expect("encode unset");
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe { std::env::set_var("JXL_W44_166_VARIANT_Z_ADMIT_MODE", "B") };
     let bytes_b = LossyConfig::new(5.0)
         .with_effort(8)
@@ -158,6 +160,7 @@ fn w44_166_libjxl_strategy_byte_identical_regardless_of_env() {
         .with_strategy(EncoderStrategy::Libjxl)
         .encode(rgb.as_raw(), w, h, PixelLayout::Rgb8)
         .expect("encode B");
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe { std::env::remove_var("JXL_W44_166_VARIANT_Z_ADMIT_MODE") };
     eprintln!(
         "[w44-166] Libjxl 1418519 e8 d=5: env-unset bytes = {}, env=B bytes = {}",

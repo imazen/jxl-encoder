@@ -1642,6 +1642,11 @@ pub fn tree_to_tokens(tree: &DcTree) -> Vec<(u32, u32)> {
 
 #[cfg(test)]
 mod tests {
+    // Constant-pinning tests deliberately assert relationships between
+    // calibrated gate constants (CLAUDE.md "Invariant Preservation");
+    // clippy::assertions_on_constants would flag every such pin.
+    #![allow(clippy::assertions_on_constants)]
+
     use super::*;
 
     #[test]
@@ -1699,7 +1704,7 @@ mod tests {
         let mk_channel = |base: i32| -> Vec<Vec<i32>> {
             let mut ch = Vec::with_capacity(8);
             for y in 0..8 {
-                ch.push(vec![base + y as i32 * 4; 8]);
+                ch.push(vec![base + y * 4; 8]);
             }
             ch
         };
@@ -1839,7 +1844,7 @@ mod tests {
         assert_eq!(indices[1], 5); // Gradient
         // Remaining slots are the leftover predictors (any permutation OK so
         // long as all 0..=13 appear exactly once).
-        let mut sorted: alloc::vec::Vec<u32> = indices.iter().copied().collect();
+        let mut sorted: alloc::vec::Vec<u32> = indices.to_vec();
         sorted.sort_unstable();
         let expected: alloc::vec::Vec<u32> = (0..14).collect();
         assert_eq!(sorted, expected);

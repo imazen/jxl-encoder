@@ -54,20 +54,20 @@ fn corpus_root() -> Option<PathBuf> {
 fn load_screenshot() -> (Vec<u8>, u32, u32) {
     if let Some(root) = corpus_root() {
         let path = root.join("gb82-sc/terminal.png");
-        if path.exists() {
-            if let Ok(img) = image::open(&path) {
-                let rgb = img.to_rgb8();
-                let (w, h) = rgb.dimensions();
-                let (cw, ch) = (w.min(256), h.min(256));
-                let mut out = Vec::with_capacity((cw * ch * 3) as usize);
-                for y in 0..ch {
-                    for x in 0..cw {
-                        let p = rgb.get_pixel(x, y);
-                        out.extend_from_slice(&p.0);
-                    }
+        if path.exists()
+            && let Ok(img) = image::open(&path)
+        {
+            let rgb = img.to_rgb8();
+            let (w, h) = rgb.dimensions();
+            let (cw, ch) = (w.min(256), h.min(256));
+            let mut out = Vec::with_capacity((cw * ch * 3) as usize);
+            for y in 0..ch {
+                for x in 0..cw {
+                    let p = rgb.get_pixel(x, y);
+                    out.extend_from_slice(&p.0);
                 }
-                return (out, cw, ch);
             }
+            return (out, cw, ch);
         }
     }
     // Synthetic fallback: 256×256 white background with thin black

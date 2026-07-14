@@ -1451,7 +1451,7 @@ mod tests {
             // Selector 1 (BitsOffset(8,16)): 16..272 → 10 bits total
             // Selector 2 (BitsOffset(16,272)): 272..65808 → 18 bits total
             let bits = writer.bits_written();
-            assert!(bits >= 6 && bits <= 18, "v={} bits={}", v, bits);
+            assert!((6..=18).contains(&bits), "v={} bits={}", v, bits);
         }
     }
 
@@ -1491,7 +1491,7 @@ mod tests {
         for cycle in 0..8 {
             for v in 0u8..=4 {
                 let run_len = if cycle == 0 && v <= 2 { 1 } else { 15 };
-                map.extend(std::iter::repeat(v).take(run_len));
+                map.extend(std::iter::repeat_n(v, run_len));
             }
         }
 

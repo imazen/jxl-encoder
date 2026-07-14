@@ -208,6 +208,7 @@ fn main() {
     );
 
     // Load all images once.
+    #[allow(clippy::type_complexity)]
     let images: Vec<(String, Vec<u8>, u32, u32, Img<Vec<RGB<f32>>>)> = IMAGES
         .iter()
         .filter_map(|rel| {

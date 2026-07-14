@@ -101,7 +101,7 @@ fn fmt_phase_table(phases: &[(&'static str, u128)], total_ns: u128) -> String {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let images: Vec<&str> = if args.is_empty() {
-        DEFAULT_IMAGES.iter().copied().collect()
+        DEFAULT_IMAGES.to_vec()
     } else {
         args.iter().map(String::as_str).collect()
     };
@@ -125,6 +125,7 @@ fn main() {
     );
 
     // Cache breakdown to print after the summary.
+    #[allow(clippy::type_complexity)]
     let mut breakdowns: Vec<(String, f64, Vec<(&'static str, u128)>, u128)> = Vec::new();
 
     for img_path in &images {

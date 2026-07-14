@@ -151,7 +151,7 @@ impl BlockStats {
         }
         v.sort_unstable();
         let n = v.len();
-        if n % 2 == 0 {
+        if n.is_multiple_of(2) {
             (v[n / 2 - 1] as f64 + v[n / 2] as f64) / 2.0
         } else {
             v[n / 2] as f64
@@ -178,7 +178,7 @@ impl BlockStats {
         }
         devs.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let n = devs.len();
-        if n % 2 == 0 {
+        if n.is_multiple_of(2) {
             (devs[n / 2 - 1] + devs[n / 2]) / 2.0
         } else {
             devs[n / 2]
@@ -376,6 +376,7 @@ fn tsv_header() -> String {
     s
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_row(
     out: &mut String,
     image: &str,

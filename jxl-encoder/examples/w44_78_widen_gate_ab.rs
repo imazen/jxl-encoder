@@ -18,8 +18,8 @@
 //! Method: per cell, encode three times:
 //!   * baseline = default LossyConfig (current gate)
 //!   * variant  = LossyConfig with `with_high_d_photo_hint(Some(true))`
-//!                IF the cell's (distance, mask1x1_median) would
-//!                trigger under that variant's gate
+//!     IF the cell's (distance, mask1x1_median) would
+//!     trigger under that variant's gate
 //!   * cjxl ref via the cjxl binary
 //!
 //! Measures bytes-delta per cell and identifies regressions

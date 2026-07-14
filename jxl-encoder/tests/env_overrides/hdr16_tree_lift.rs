@@ -51,11 +51,14 @@ fn lift_fires_and_is_suppressable() {
     let (w, h) = (512usize, 512usize);
     let pixels = ramp_noise_rgb16(w, h);
 
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe { std::env::remove_var("JXL_NO_16BIT_TREE_LIFT") };
     let lifted = encode_e5(&pixels, w as u32, h as u32);
 
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe { std::env::set_var("JXL_NO_16BIT_TREE_LIFT", "1") };
     let disabled = encode_e5(&pixels, w as u32, h as u32);
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe { std::env::remove_var("JXL_NO_16BIT_TREE_LIFT") };
 
     assert!(
@@ -82,12 +85,14 @@ fn lift_fires_and_is_suppressable() {
         .chunks_exact(2)
         .map(|c| (u16::from_ne_bytes([c[0], c[1]]) >> 8) as u8)
         .collect();
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe { std::env::set_var("JXL_NO_16BIT_TREE_LIFT", "1") };
     let eight_a = LosslessConfig::new()
         .with_effort(5)
         .with_threads(1)
         .encode(&pixels8, w as u32, h as u32, PixelLayout::Rgb8)
         .unwrap();
+    // SAFETY: this test holds env_serial(); no other thread touches the environment.
     unsafe { std::env::remove_var("JXL_NO_16BIT_TREE_LIFT") };
     let eight_b = LosslessConfig::new()
         .with_effort(5)

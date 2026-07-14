@@ -1275,6 +1275,11 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES_LEN: usize = ALL_DIVERGENCE_ENTRIES.len(
 
 #[cfg(test)]
 mod tests {
+    // Constant-pinning tests deliberately assert relationships between
+    // calibrated gate constants (CLAUDE.md "Invariant Preservation");
+    // clippy::assertions_on_constants would flag every such pin.
+    #![allow(clippy::assertions_on_constants)]
+
     use super::*;
 
     /// Sanity: `CustomEncoderImprovements::default()` matches the
@@ -1409,9 +1414,11 @@ mod tests {
     /// field-by-field clone constructor.
     #[test]
     fn from_custom_field_for_field_copy() {
-        let mut custom = CustomEncoderImprovements::default();
-        custom.cfl_newton_libjxl_parity = true;
-        custom.block_ctx_map_15_cluster = true;
+        let custom = CustomEncoderImprovements {
+            cfl_newton_libjxl_parity: true,
+            block_ctx_map_15_cluster: true,
+            ..Default::default()
+        };
         let r = CustomResolvedImprovements::from_custom(&custom);
         assert!(r.cfl_newton_libjxl_parity);
         assert!(r.block_ctx_map_15_cluster);

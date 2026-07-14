@@ -67,7 +67,7 @@ fn check_djxl(jxl_bytes: &[u8], name: &str) -> bool {
 
 fn check_jxl_oxide(jxl_bytes: &[u8], name: &str) -> bool {
     match jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(jxl_bytes)) {
-        Ok(mut img) => match img.render_frame(0) {
+        Ok(img) => match img.render_frame(0) {
             Ok(_) => true,
             Err(e) => {
                 eprintln!("  ✗ jxl-oxide render failed on {name}: {e:?}");

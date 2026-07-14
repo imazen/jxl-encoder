@@ -225,6 +225,7 @@ fn row_header() -> String {
         .to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn row_tsv(
     image: &str,
     class: &str,

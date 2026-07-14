@@ -68,21 +68,21 @@ fn corpus_root() -> Option<PathBuf> {
 fn load_screenshot() -> (Vec<u8>, u32, u32) {
     if let Some(root) = corpus_root() {
         let path = root.join("gb82-sc/terminal.png");
-        if path.exists() {
-            if let Ok(img) = image::open(&path) {
-                let rgb = img.to_rgb8();
-                let (w, h) = rgb.dimensions();
-                // Cap at 512×512 to keep test runtime reasonable.
-                let (cw, ch) = (w.min(512), h.min(512));
-                let mut out = Vec::with_capacity((cw * ch * 3) as usize);
-                for y in 0..ch {
-                    for x in 0..cw {
-                        let p = rgb.get_pixel(x, y);
-                        out.extend_from_slice(&p.0);
-                    }
+        if path.exists()
+            && let Ok(img) = image::open(&path)
+        {
+            let rgb = img.to_rgb8();
+            let (w, h) = rgb.dimensions();
+            // Cap at 512×512 to keep test runtime reasonable.
+            let (cw, ch) = (w.min(512), h.min(512));
+            let mut out = Vec::with_capacity((cw * ch * 3) as usize);
+            for y in 0..ch {
+                for x in 0..cw {
+                    let p = rgb.get_pixel(x, y);
+                    out.extend_from_slice(&p.0);
                 }
-                return (out, cw, ch);
             }
+            return (out, cw, ch);
         }
     }
     // Synthetic fallback: 256×256 white background with two horizontal
@@ -156,8 +156,10 @@ fn override_changes_buttloop_qf_seed_scale() {
     // (4.0 → 8.0). The W44-105 buttloop gate fires on screenshot-class
     // content at d>=3.5, so e8 d=4 triggers; the doubled scale changes
     // the buttloop's exploration window and yields different bytes.
-    let mut tuning = RuntimeTuning::default();
-    tuning.buttloop_default_screenshot_qf_seed_scale = 8.0;
+    let tuning = RuntimeTuning {
+        buttloop_default_screenshot_qf_seed_scale: 8.0,
+        ..Default::default()
+    };
     install(tuning).expect("install RuntimeTuning");
     assert!(is_loaded(), "is_loaded() should be true after install");
 

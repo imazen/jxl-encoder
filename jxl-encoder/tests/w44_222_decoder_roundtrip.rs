@@ -41,21 +41,21 @@ fn corpus_root() -> Option<PathBuf> {
 fn load_or_synth(name: &str, fallback_w: u32, fallback_h: u32) -> (Vec<u8>, u32, u32) {
     if let Some(root) = corpus_root() {
         let path = root.join(name);
-        if path.exists() {
-            if let Ok(img) = image::open(&path) {
-                let rgb = img.to_rgb8();
-                let (w, h) = rgb.dimensions();
-                let cw = w.min(256);
-                let ch = h.min(256);
-                let mut out = Vec::with_capacity((cw * ch * 3) as usize);
-                for y in 0..ch {
-                    for x in 0..cw {
-                        let p = rgb.get_pixel(x, y);
-                        out.extend_from_slice(&p.0);
-                    }
+        if path.exists()
+            && let Ok(img) = image::open(&path)
+        {
+            let rgb = img.to_rgb8();
+            let (w, h) = rgb.dimensions();
+            let cw = w.min(256);
+            let ch = h.min(256);
+            let mut out = Vec::with_capacity((cw * ch * 3) as usize);
+            for y in 0..ch {
+                for x in 0..cw {
+                    let p = rgb.get_pixel(x, y);
+                    out.extend_from_slice(&p.0);
                 }
-                return (out, cw, ch);
             }
+            return (out, cw, ch);
         }
     }
     // Synthetic fallback that exercises both screen + photo gates.

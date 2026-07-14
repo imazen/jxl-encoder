@@ -3327,6 +3327,11 @@ pub mod recon_hook {
 // `forks/butteraugli_loop.rs::resolved_*` tests for parity.
 #[cfg(test)]
 mod tuning_tests {
+    // Constant-pinning tests deliberately assert relationships between
+    // calibrated gate constants (CLAUDE.md "Invariant Preservation");
+    // clippy::assertions_on_constants would flag every such pin.
+    #![allow(clippy::assertions_on_constants)]
+
     use super::*;
 
     fn reset_overrides() {

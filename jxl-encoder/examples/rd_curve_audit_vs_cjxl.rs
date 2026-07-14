@@ -368,7 +368,7 @@ fn discover_images(filter: &Option<Vec<String>>) -> Vec<ImageEntry> {
         }
     }
     if let Some(filt) = filter {
-        entries.retain(|e| filt.iter().any(|n| e.name == *n));
+        entries.retain(|e| filt.contains(&e.name));
     }
     entries
 }

@@ -125,8 +125,8 @@ fn jxl_oxide_conformance_psnr(jxl: &[u8], src_rgb: &[u8], w: u32, h: u32) -> Res
     let buf = fb.buf();
     let mut rgb = Vec::with_capacity((w * h * 3) as usize);
     for px in buf.chunks_exact(ch) {
-        for c in 0..3 {
-            rgb.push((px[c].clamp(0.0, 1.0) * 255.0).round() as u8);
+        for &v in &px[..3] {
+            rgb.push((v.clamp(0.0, 1.0) * 255.0).round() as u8);
         }
     }
     Ok(psnr_u8(src_rgb, &rgb))

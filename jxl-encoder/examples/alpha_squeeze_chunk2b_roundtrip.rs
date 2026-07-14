@@ -154,7 +154,7 @@ fn main() {
                     -1.0,
                     format!(
                         "SQ_ENC_ERR:{}",
-                        &format!("{e:?}").chars().take(40).collect::<String>()
+                        format!("{e:?}").chars().take(40).collect::<String>()
                     ),
                 ),
                 (Err(e), _) => (
@@ -164,7 +164,7 @@ fn main() {
                     -1.0,
                     format!(
                         "BASE_ENC_ERR:{}",
-                        &format!("{e:?}").chars().take(40).collect::<String>()
+                        format!("{e:?}").chars().take(40).collect::<String>()
                     ),
                 ),
             };

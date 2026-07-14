@@ -738,6 +738,8 @@ fn issue_93_buttloop_precompute_charged_against_budget() {
 /// lossless default cap is 8 GiB vs lossy's 4 GiB. A 12 MP lossless e7
 /// encode's *typical* peak (~5.5 GB, calibrated) exceeds the lossy
 /// default but fits the lossless default — the whole reason for the split.
+// Deliberately pins the constant relationship between the two default caps.
+#[allow(clippy::assertions_on_constants)]
 #[test]
 fn path_aware_default_cap_lossless_higher() {
     assert_eq!(

@@ -60,10 +60,10 @@ fn cjxl_bin() -> PathBuf {
 fn output_path() -> PathBuf {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
-        if a == "--output" {
-            if let Some(p) = args.next() {
-                return PathBuf::from(p);
-            }
+        if a == "--output"
+            && let Some(p) = args.next()
+        {
+            return PathBuf::from(p);
         }
     }
     PathBuf::from("benchmarks/codec_wiki_block_ctx_2026-05-19.tsv")
@@ -153,11 +153,11 @@ fn probe_block_ctx(jxl: &[u8]) -> CtxStats {
             return s;
         }
     };
-    if image_header.metadata.colour_encoding.want_icc() {
-        if let Err(e) = jxl_color::icc::read_icc(&mut br) {
-            s.error = Some(format!("icc: {e}"));
-            return s;
-        }
+    if image_header.metadata.colour_encoding.want_icc()
+        && let Err(e) = jxl_color::icc::read_icc(&mut br)
+    {
+        s.error = Some(format!("icc: {e}"));
+        return s;
     }
     if br.zero_pad_to_byte().is_err() {
         s.error = Some("zero_pad_to_byte after header failed".to_string());

@@ -9,7 +9,7 @@
 //!     butteraugli-delta) overall
 //!   - default-on decision (per task spec):
 //!     Photos: bytes Δ ≤ -1.0% mean AND butteraugli Δ ≤ +2% mean
-//!             AND no cell shows butteraugli Δ > +5%
+//!     AND no cell shows butteraugli Δ > +5%
 //!     Screenshots: bytes Δ ≤ +0.5% mean AND butteraugli Δ ≤ +2% mean
 //!     e5 AND e7 both must pass.
 //!
@@ -66,10 +66,10 @@ impl Pair {
 fn parse_in_path() -> PathBuf {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
-        if a == "--in" {
-            if let Some(v) = args.next() {
-                return PathBuf::from(v);
-            }
+        if a == "--in"
+            && let Some(v) = args.next()
+        {
+            return PathBuf::from(v);
         }
     }
     PathBuf::from("benchmarks/adaptive_gaborish_wider_corpus_2026-05-18.tsv")
