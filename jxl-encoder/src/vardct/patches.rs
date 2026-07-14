@@ -11,7 +11,6 @@
 //!
 //! Algorithm ported from libjxl `enc_patch_dictionary.cc` (`FindTextLikePatches`).
 
-#![allow(dead_code)]
 #![allow(clippy::needless_range_loop)]
 
 use super::common::pack_signed;
@@ -190,6 +189,7 @@ pub(crate) const SAVINGS_BYTES_PER_PIXEL_LOSSLESS: f64 = 0.35;
 
 #[doc(hidden)]
 #[derive(Copy, Clone, Debug)]
+#[cfg_attr(not(feature = "__internals"), allow(dead_code))] // read via __internals::take_last_patches_stats
 pub struct LastPatchesStats {
     /// Sum over all occurrences of `pixels` (patch w*h * occurrences).
     pub total_patch_pixels: usize,
@@ -215,6 +215,7 @@ thread_local! {
 /// Calibration / instrumentation hook only — `#[doc(hidden)]`, not part
 /// of the stable API.
 #[doc(hidden)]
+#[cfg_attr(not(feature = "__internals"), allow(dead_code))]
 pub fn take_last_patches_stats() -> Option<LastPatchesStats> {
     LAST_PATCHES_STATS.with(|c| c.take())
 }
@@ -230,6 +231,7 @@ fn set_last_patches_stats(stats: LastPatchesStats) {
 /// `#[doc(hidden)]` — instrumentation hook only, not part of the stable API.
 #[doc(hidden)]
 #[derive(Copy, Clone, Debug, Default)]
+#[cfg_attr(not(feature = "__internals"), allow(dead_code))] // read via __internals::take_last_patches_detect_stats
 pub struct LastPatchesDetectStats {
     pub num_seeds: u32,
     pub bg_count: usize,
@@ -256,6 +258,7 @@ thread_local! {
 /// Take the most recent [`LastPatchesDetectStats`] snapshot for this
 /// thread, clearing the slot. W44-20 instrumentation hook.
 #[doc(hidden)]
+#[cfg_attr(not(feature = "__internals"), allow(dead_code))]
 pub fn take_last_patches_detect_stats() -> Option<LastPatchesDetectStats> {
     LAST_PATCHES_DETECT_STATS.with(|c| c.take())
 }
@@ -621,6 +624,7 @@ impl PatchesData {
     // `__internals::patches_data_stats`) without leaking the
     // `pub(crate)` field layout. Tiny inline getters; no behaviour.
     #[doc(hidden)]
+    #[cfg_attr(not(feature = "__internals"), allow(dead_code))]
     pub fn total_patch_pixels_for_calibration(&self) -> usize {
         self.positions
             .iter()
@@ -631,14 +635,17 @@ impl PatchesData {
             .sum()
     }
     #[doc(hidden)]
+    #[cfg_attr(not(feature = "__internals"), allow(dead_code))]
     pub fn ref_positions_len_for_calibration(&self) -> usize {
         self.ref_positions.len()
     }
     #[doc(hidden)]
+    #[cfg_attr(not(feature = "__internals"), allow(dead_code))]
     pub fn ref_frame_pixels_for_calibration(&self) -> usize {
         self.ref_width * self.ref_height
     }
     #[doc(hidden)]
+    #[cfg_attr(not(feature = "__internals"), allow(dead_code))]
     pub fn positions_len_for_calibration(&self) -> usize {
         self.positions.len()
     }
@@ -751,6 +758,7 @@ const NEIGHBORS_8: [(i32, i32); 8] = [
 /// Compute weighted L1 distance between two pixels.
 /// Matches libjxl: `sum(|v1[c] - v2[c]| * kChannelWeights[c])`
 #[inline]
+#[allow(dead_code)] // reference distance kernel; exercised by the weighted_distance unit test
 fn weighted_distance(
     planes: &[&[f32]; 3],
     stride: usize,
@@ -769,27 +777,9 @@ fn weighted_distance(
     dist
 }
 
-/// Compute weighted L1 distance between a pixel and a given color.
-/// Matches libjxl: `sum(|v1[c] - v2[c]| * kChannelWeights[c])`
-#[inline]
-fn weighted_distance_to_color(
-    planes: &[&[f32]; 3],
-    stride: usize,
-    x: usize,
-    y: usize,
-    color: &[f32; 3],
-    cs: &PatchColorspaceInfo,
-) -> f32 {
-    let i = y * stride + x;
-    let mut dist = 0.0f32;
-    for c in 0..3 {
-        dist += (planes[c][i] - color[c]).abs() * cs.channel_weights[c];
-    }
-    dist
-}
-
-/// Like `weighted_distance_to_color` but takes a pre-computed flat index,
-/// eliminating the `y * stride + x` multiplication.
+/// Compute weighted L1 distance between a pixel and a given color from a
+/// pre-computed flat index. Matches libjxl:
+/// `sum(|v1[c] - v2[c]| * kChannelWeights[c])`.
 #[inline]
 fn weighted_distance_to_color_idx(
     planes: &[&[f32]; 3],
@@ -1889,6 +1879,9 @@ pub fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &Pa
 ///
 /// Used by the butteraugli loop to simulate the decoder's reconstruction,
 /// which adds patches via blend mode kAdd after IDCT + gab + EPF.
+// Consumed only by the perceptual reconstruction loops (perceptual_loop /
+// zensim_loop / ssim2_loop), all of which require `butteraugli-loop`.
+#[cfg_attr(not(feature = "butteraugli-loop"), allow(dead_code))]
 pub(crate) fn add_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &PatchesData) {
     for pos in &patches.positions {
         let ref_pos = &patches.ref_positions[pos.ref_pos_idx];
@@ -2044,6 +2037,7 @@ pub(crate) fn encode_patches_section(
 /// relaxation at low distance should call
 /// [`find_and_build_with_min_peak`] with `min_peak = 2` (libjxl parity)
 /// when `distance < 1.0`.
+#[cfg_attr(not(feature = "__pre_quantized"), allow(dead_code))] // re-exported as __pre_quantized::find_and_build_patches (for jxl-encoder-gpu)
 pub fn find_and_build(
     xyb: [&[f32]; 3],
     width: usize,
@@ -2064,6 +2058,7 @@ pub fn find_and_build(
 /// the lossy still-image path use this entry to pass `min_peak = 2`
 /// (libjxl parity) below `distance = 1.0`. At higher distances the chunk
 /// 1 relaxation pays off (-53 B / -43 B on the same image at d=1.0 / 2.0).
+#[cfg_attr(not(feature = "__pre_quantized"), allow(dead_code))]
 pub fn find_and_build_with_min_peak(
     xyb: [&[f32]; 3],
     width: usize,

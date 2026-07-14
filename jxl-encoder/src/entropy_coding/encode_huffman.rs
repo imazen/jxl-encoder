@@ -7,8 +7,6 @@
 //! Contains all Huffman-specific code: tree building, prefix code writing,
 //! context map writing, and token writing for Huffman-coded bitstreams.
 
-#![allow(dead_code)]
-
 use super::encode::{
     ALPHABET_SIZE, CODE_LENGTH_CODES, EntropyCode, PrefixCode, encode_token_value,
     write_var_len_uint16,
@@ -1038,6 +1036,7 @@ impl OwnedEntropyCode {
 /// 3. Builds a Huffman tree for each cluster.
 ///
 /// Returns an `OwnedEntropyCode` ready for writing.
+#[allow(dead_code)] // simple-form entry point; live callers thread options via _with_options
 pub fn build_entropy_code(tokens: &[Token], num_contexts: usize) -> OwnedEntropyCode {
     build_entropy_code_with_options(tokens, num_contexts, false, None)
 }

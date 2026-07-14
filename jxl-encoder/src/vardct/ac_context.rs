@@ -4,10 +4,13 @@
 
 //! AC coefficient context computation for entropy coding.
 //!
-//! These functions and constants are ported from libjxl-tiny and will be used
-//! when the AC group encoding is implemented.
-
-#![allow(dead_code)]
+//! These functions and constants are ported from libjxl-tiny and full libjxl.
+//! The live consumers are the VarDCT bitstream writer (`bitstream.rs`,
+//! `ac_group.rs`, `encoder.rs`) and the JPEG-transcode path (`jpeg/encode.rs`);
+//! `static_codes.rs` re-exports `NUM_AC_CONTEXTS`. A handful of reference
+//! constants and the standalone `block_context`/`zero_density_context` helpers
+//! are ported-complete but not on the live path — those carry item-level
+//! `#[allow(dead_code)]` with a reason, rather than a module-wide blanket.
 
 use super::ac_strategy::AcStrategyMap;
 use super::coeff_order::{NUM_ORDER_BUCKETS, STRATEGY_TO_BUCKET};
@@ -16,6 +19,7 @@ use super::coeff_order::{NUM_ORDER_BUCKETS, STRATEGY_TO_BUCKET};
 pub const NON_ZERO_BUCKETS: usize = 37;
 
 /// Number of AC strategy codes.
+#[allow(dead_code)] // parity-reference: feeds the test-only standalone block_context(); not on the live path
 pub const NUM_AC_STRATEGY_CODES: usize = 27;
 
 /// Number of block contexts for the default (hardcoded) context map.
@@ -32,6 +36,7 @@ pub const ZERO_DENSITY_CONTEXT_LIMIT: usize = 474;
 pub const NUM_AC_CONTEXTS: usize = NUM_BLOCK_CTXS * (NON_ZERO_BUCKETS + ZERO_DENSITY_CONTEXT_COUNT);
 
 /// Maximum number of distinct block contexts allowed by the spec.
+#[allow(dead_code)] // referenced by unit tests + the jpeg-reencoding debug asserts
 pub const MAX_BLOCK_CTXS: usize = 16;
 
 /// Context for coefficient frequency.
@@ -224,6 +229,7 @@ impl BlockCtxMap {
     /// libjxl's `qt[1] + qt[2] + ... + qt[5]` with `qt[c=0]` = JXL
     /// channel 0 = JPEG chroma). `is_grayscale` selects the
     /// num_components==1 path.
+    #[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
     pub fn jpeg_dc_quantile(
         dc_counts: &[usize; 2048],
         total_dc_luma: usize,
@@ -310,6 +316,7 @@ impl BlockCtxMap {
     ///
     /// Default-OFF in production; gated by `EX_J15_FULL_CHROMA=1` env
     /// hook in [`crate::jpeg::encode`].
+    #[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
     pub fn jpeg_dc_quantile_ex_j15(
         dc_counts: &[usize; 2048],
         total_dc_luma: usize,
@@ -404,12 +411,14 @@ impl BlockCtxMap {
 
     /// Get the offset into the context map for zero density contexts.
     #[inline]
+    #[allow(dead_code)] // parity-reference; unit tests cross-check vs the free fn
     pub fn zero_density_contexts_offset(&self, block_ctx: usize) -> usize {
         self.num_ctxs * NON_ZERO_BUCKETS + ZERO_DENSITY_CONTEXT_COUNT * block_ctx
     }
 
     /// Compute context for the number of non-zeros.
     #[inline]
+    #[allow(dead_code)] // parity-reference; unit tests cross-check vs the free fn
     pub fn non_zero_context(&self, non_zeros: usize, block_ctx: usize) -> usize {
         let nz_bucket = if non_zeros < 8 {
             non_zeros
@@ -614,6 +623,7 @@ pub fn compute_block_ctx_map(
 /// which the decoder reads, indexed by `[ch_idx * 13 + order_id]` where
 /// ch_idx swaps X↔Y (0→1, 1→0, 2→2) and order_id maps from strategy codes via
 /// a LUT (e.g., code 0→order 0, code 4→order 2, code 5→order 3, code 6,7→order 4).
+#[allow(dead_code)] // parity-reference table for the test-only standalone block_context()
 static BLOCK_CONTEXT_MAP: [u8; 81] = [
     // X (c=0): decoder reads with ch_idx=1 (compact group 1)
     //  code: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 ...
@@ -638,6 +648,7 @@ static BLOCK_CONTEXT_MAP: [u8; 81] = [
 
 /// Get block context from channel and AC strategy code.
 #[inline]
+#[allow(dead_code)] // standalone libjxl-tiny formula; unit tests cross-check vs BlockCtxMap
 pub const fn block_context(c: usize, ac_strategy_code: u8) -> usize {
     BLOCK_CONTEXT_MAP[c * NUM_AC_STRATEGY_CODES + ac_strategy_code as usize] as usize
 }
@@ -666,6 +677,7 @@ pub fn zero_density_context(
 
 /// Get the offset into the context map for zero density contexts.
 #[inline]
+#[allow(dead_code)] // standalone reference; unit tests cross-check vs BlockCtxMap
 pub const fn zero_density_contexts_offset(block_ctx: usize) -> usize {
     NUM_BLOCK_CTXS * NON_ZERO_BUCKETS + ZERO_DENSITY_CONTEXT_COUNT * block_ctx
 }
@@ -675,6 +687,7 @@ pub const fn zero_density_contexts_offset(block_ctx: usize) -> usize {
 /// Non-zero context is based on predicted number of non-zeros and block context.
 /// For better clustering, contexts with same number of non-zeros are grouped.
 #[inline]
+#[allow(dead_code)] // standalone reference; unit tests cross-check vs BlockCtxMap
 pub const fn non_zero_context(non_zeros: usize, block_ctx: usize) -> usize {
     let nz_bucket = if non_zeros < 8 {
         non_zeros

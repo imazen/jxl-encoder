@@ -7,8 +7,6 @@
 //! Contains all ANS-specific code: distribution building, header writing,
 //! token writing, and verification/roundtrip utilities.
 
-#![allow(dead_code)]
-
 use super::ans::{ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder};
 use super::context_map::move_to_front_transform;
 use super::encode::{
@@ -112,6 +110,7 @@ impl AccumulatedAnsData {
     }
 
     /// Merge another accumulator into this one (for combining per-thread results).
+    #[cfg_attr(not(feature = "parallel"), allow(dead_code))] // used by the parallel accumulate map-reduce
     pub fn merge(&mut self, other: &Self) {
         debug_assert_eq!(self.num_contexts, other.num_contexts);
         for ctx in 0..self.num_contexts {
@@ -177,6 +176,7 @@ fn accumulate_groups_parallel(
 ///
 /// This is Phase B of the two-phase approach: takes pre-accumulated statistics
 /// and builds the entropy code (clustering, HybridUint optimization, ANS distributions).
+#[allow(dead_code)] // simple-form entry point; live callers thread strategy via _with_strategy
 pub fn build_entropy_code_from_accumulated_ans(
     data: AccumulatedAnsData,
     enhanced_clustering: bool,
@@ -1314,6 +1314,11 @@ pub fn write_tokens_ans(
 /// Verify that each ANS histogram serializes and deserializes correctly.
 ///
 /// Writes each histogram to bits, decodes it back with our decoder, and compares frequencies.
+///
+/// Test-only invariant helper (exercised by the `verify_tests` module): re-arms
+/// the Layer-2 histogram-serialization check from the omit_pos investigation.
+/// Nothing in production calls it, so it is scoped to test builds.
+#[cfg(test)]
 pub fn verify_histogram_serialization(code: &OwnedAnsEntropyCode, label: &str) -> Result<()> {
     use crate::entropy_coding::ans_decode::{AnsHistogram, BitReader};
 
@@ -1608,7 +1613,10 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
 /// Unlike verify_ans_roundtrip which builds decoder histograms from encoder's
 /// known distributions, this test catches format mismatches where our encoder
 /// and our internal decoder agree but external decoders (jxl-rs, djxl) disagree.
-#[cfg(debug_assertions)]
+// Test-only invariant helper (exercised by the `verify_tests` module). Was
+// `#[cfg(debug_assertions)]` during the omit_pos investigation; nothing in
+// production calls it, so it is scoped to test builds.
+#[cfg(test)]
 pub fn verify_ans_roundtrip_parsed(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Result<()> {
     use crate::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
 
@@ -1815,4 +1823,60 @@ pub fn verify_ans_roundtrip_parsed(tokens: &[Token], code: &OwnedAnsEntropyCode)
 
     eprintln!("  ANS parsed roundtrip OK: {} tokens", tokens.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+
+    /// Re-arms the two ANS conformance invariants that lost their callers when
+    /// the ad-hoc omit_pos investigation ended. Per CLAUDE.md "Proof-by-Tests
+    /// Methodology" these are permanent invariant checks, not throwaway probes:
+    ///
+    ///  * [`verify_histogram_serialization`] — write each ANS histogram, decode
+    ///    it back with our own decoder, and compare frequencies. This is the
+    ///    exact Layer-2 check that pinpointed the omit_pos histogram-serialization
+    ///    bug (see CLAUDE.md Investigation Notes).
+    ///  * [`verify_ans_roundtrip_parsed`] — encode the tokens, then re-parse the
+    ///    histogram out of the bitstream (the path a real decoder walks) and
+    ///    decode, catching format mismatches our own encoder/decoder would
+    ///    otherwise agree on.
+    ///
+    /// The distribution is deliberately non-degenerate: ~120 distinct values on
+    /// a power-law-ish curve so many symbols share a `log2(count)` bucket (the
+    /// condition under which omit_pos misbehaved — a flat gradient never
+    /// triggers it), plus a few sparse high-value outliers so the token
+    /// alphabet is not contiguous-dense. Full-photo ANS *quality* is covered by
+    /// the decoder roundtrip integration tests; this test covers the
+    /// serialization/roundtrip *machinery* itself.
+    #[test]
+    fn ans_verify_helpers_rearm() {
+        let mut tokens = Vec::new();
+        for v in 0u32..120 {
+            // Varied counts; the +2 floor keeps low-frequency symbols present,
+            // and integer division makes several adjacent values share a count.
+            let count = (240 / (v + 3)) as usize + 2;
+            for _ in 0..count {
+                tokens.push(Token::new(0, v));
+            }
+        }
+        for &v in &[200u32, 511, 1000, 4095] {
+            tokens.push(Token::new(0, v));
+        }
+
+        // Single context => exactly one histogram, which
+        // verify_ans_roundtrip_parsed requires.
+        let code = build_entropy_code_ans(&tokens, 1);
+        assert_eq!(
+            code.histograms.len(),
+            1,
+            "expected a single ANS distribution"
+        );
+
+        verify_histogram_serialization(&code, "ans_verify_helpers_rearm")
+            .expect("every ANS histogram must serialize and decode back bit-exact");
+
+        verify_ans_roundtrip_parsed(&tokens, &code)
+            .expect("parsed-header ANS roundtrip must reproduce every token");
+    }
 }
