@@ -2112,6 +2112,9 @@ impl VarDctEncoder {
                 // (libjxl math + LS warm-start) for animation frames
                 // under Zenjxl / Aggressive.
                 self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
+                // #74 task #10: keep-best Pass-2 guard — same profile value as
+                // the still-image path so animation frames stay consistent.
+                self.profile.cfl_keep_best,
             );
         }
 

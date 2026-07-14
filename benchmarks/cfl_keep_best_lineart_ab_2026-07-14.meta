@@ -1,0 +1,28 @@
+# keep-best CfL Pass-2 guard (#74 task #10) — A/B on the cfl_two_pass ablation set
+# date: 2026-07-14
+# commit: ba89f0de (+ the keep_best productization in the same working change)
+# host: lilith
+# harness: jxl-encoder/examples/line_art_cfl_probe.rs (--features __expert,__internals)
+# config: LossyConfig::new(0.5).with_effort(7), Zenjxl default strategy (keep_best ON)
+# corpus: ~/work/codec-corpus/imazen-26, same 24 imgs as cfl_two_pass_lineart_ablation_2026-07-14
+#
+# COLUMNS: base_bytes = production default (keep-best ON). no_keepbest_pct = % size change
+#   from LossyInternalParams.cfl_keep_best=Some(false) (POSITIVE = keep-best SAVED that much).
+#   no_cfl2_pct / no_chroma_pct / all_off_pct = further toggles relative to base.
+#
+# RESULT (keep-best guard, CFL_KEEP_BEST_MARGIN=0.02):
+#   aliased-lineart  n=8  keep-best saves mean +17.7% (max +31.3%, min +8.6%)
+#   antialiased      n=5  +0.50%   chart n=5 +0.79%   document +0.19%
+#   photo/screenshot n=3  +0.29%   ai-art +0.05%
+#   -> matches/beats full-disable (no_cfl2 ~0 at base, i.e. base already captured the
+#      Pass-1 rate benefit) on line-art, small wins elsewhere, ZERO real-content regressions.
+#
+# QUALITY (examples/score_jxl_files.rs, jxl-oxide-linear + Rust butteraugli + fast-ssim2,
+#   baseline vs keep-best on 5 cells): butteraugli equal-or-better on ALL 5
+#   (7006 aliased 0.486->0.345), ssim2 better on 3/5 (-0.18/-0.12 dips are favorable RD).
+#   CfL recon error is bounded by +-0.5 quant-step regardless of multiplier -> quality-neutral.
+#
+# HASH-LOCK: 17 lossy e7 cells changed (byte-locked to the new default); 8 improved,
+#   3 degenerate synthetic micro-fixtures regressed +1..2 bytes (no_ans_huffman/Huffman,
+#   rgb16_32x32, error_diffusion — the ANS-shaped proxy mispredicts on ~190-byte fixtures;
+#   real content never regresses). Libjxl byte-lock UNCHANGED (guard off there).

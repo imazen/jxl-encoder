@@ -49,11 +49,20 @@ fn main() {
 
     let mut tsv = String::from(
         "image\twidth\theight\tm3_colourfulness\tflat_color_block_ratio\tedge_density\t\
-         luma_var\tbase_bytes\tno_cfl2_pct\tno_chroma_pct\tall_off_pct\n",
+         luma_var\tbase_bytes\tno_keepbest_pct\tno_cfl2_pct\tno_chroma_pct\tall_off_pct\n",
     );
     println!(
-        "{:<38} {:>7} {:>6} {:>6} {:>7} {:>8} {:>10} {:>9} {:>9}",
-        "image", "m3", "fcbr", "edge", "lumavar", "base", "no_cfl2", "no_chroma", "all_off"
+        "{:<38} {:>7} {:>6} {:>6} {:>7} {:>8} {:>8} {:>10} {:>9} {:>9}",
+        "image",
+        "m3",
+        "fcbr",
+        "edge",
+        "lumavar",
+        "base",
+        "no_kb",
+        "no_cfl2",
+        "no_chroma",
+        "all_off"
     );
     for path in &paths {
         let img = image::open(path).expect("open").to_rgb8();
@@ -63,7 +72,11 @@ fn main() {
         // Exact gate proxies (bpp=3, r/g/b at 0/1/2 for Rgb8).
         let px = ZenanalyzeProxies::compute_srgb_u8(&rgb, w as usize, h as usize, 3, 0, 1, 2);
 
+        // `base` = production default (keep-best ON for Zenjxl e7). `no_keepbest`
+        // disables the #74 keep-best guard so `no_keepbest - base` isolates its
+        // effect; `no_cfl2` disables Pass-2 entirely (the guard's ceiling target).
         let base = enc(&rgb, w, h, |_| {});
+        let no_keepbest = enc(&rgb, w, h, |p| p.cfl_keep_best = Some(false));
         let no_cfl2 = enc(&rgb, w, h, |p| p.cfl_two_pass = Some(false));
         let no_chroma = enc(&rgb, w, h, |p| p.chromacity_adjustment = Some(false));
         let all_off = enc(&rgb, w, h, |p| {
@@ -102,23 +115,25 @@ fn main() {
             .unwrap_or(path);
         let short = &name[..name.len().min(38)];
         println!(
-            "{:<38} {:>7.1} {:>6.3} {:>6.3} {:>7.0} {:>8} {:>+8.1}% {:>+8.1}% {:>+8.1}%",
+            "{:<38} {:>7.1} {:>6.3} {:>6.3} {:>7.0} {:>8} {:>+7.1}% {:>+8.1}% {:>+8.1}% {:>+8.1}%",
             short,
             px.m3_colourfulness,
             px.flat_color_block_ratio,
             px.edge_density,
             px.luma_var,
             base,
+            pct(no_keepbest),
             pct(no_cfl2),
             pct(no_chroma),
             pct(all_off),
         );
         tsv.push_str(&format!(
-            "{name}\t{w}\t{h}\t{:.3}\t{:.4}\t{:.4}\t{:.1}\t{base}\t{:.2}\t{:.2}\t{:.2}\n",
+            "{name}\t{w}\t{h}\t{:.3}\t{:.4}\t{:.4}\t{:.1}\t{base}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\n",
             px.m3_colourfulness,
             px.flat_color_block_ratio,
             px.edge_density,
             px.luma_var,
+            pct(no_keepbest),
             pct(no_cfl2),
             pct(no_chroma),
             pct(all_off),

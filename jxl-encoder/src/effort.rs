@@ -664,6 +664,17 @@ pub struct EffortProfile {
     pub epf_dynamic_sharpness: bool,
     /// Recompute CfL map after initial quantization for better estimates (effort >= 7 in libjxl).
     pub cfl_two_pass: bool,
+    /// **Keep-best CfL Pass-2 guard** (#74, task #10). When `true`, the Pass-2
+    /// CfL refit ([`crate::vardct::chroma_from_luma::refine_cfl_map`]) keeps the
+    /// Pass-1 multiplier for any tile where it codes chroma AC more cheaply than
+    /// the Pass-2 (distortion-fit) multiplier — a per-tile rate guard that fixes
+    /// the aliased-line-art over-fit (Pass-2's L2 fit scatters small non-zero
+    /// residuals on hard color edges). CfL reconstruction error is bounded by
+    /// ±0.5 quant-step regardless of the multiplier, so this is a pure rate win
+    /// with no quality cost. Divergence from libjxl (which has no such guard) →
+    /// **OFF on `EncoderStrategy::Libjxl`** (byte-parity), ON for Zenjxl /
+    /// Aggressive at effort >= 7. Only meaningful when `cfl_two_pass` is on.
+    pub cfl_keep_best: bool,
     /// Use Newton's method (perceptual cost model) for CfL fitting (effort >= 7 in libjxl).
     /// When false, uses fast least-squares fitting (quadratic cost, single-pass).
     pub cfl_newton: bool,
@@ -1453,6 +1464,11 @@ impl EffortProfile {
             // activation at e7, not by CFL Pass-2. Gate retained at
             // effort >= 7. Do NOT re-investigate widening this gate.
             cfl_two_pass: effort >= 7,
+            // #74 task #10: keep-best Pass-2 CfL guard, same effort gate as
+            // cfl_two_pass (only runs when Pass-2 does). ANDed with the
+            // strategy-level `resolved.cfl_keep_best` in
+            // `apply_section_c_cfl_newton_libjxl_parity` (Libjxl → off).
+            cfl_keep_best: effort >= 7,
             cfl_newton: effort >= 7,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
@@ -1677,6 +1693,9 @@ impl EffortProfile {
             ans_histogram_strategy_vardct: ANSHistogramStrategy::Precise, // N/A for lossless
             epf_dynamic_sharpness: false,
             cfl_two_pass: false,
+            // N/A for lossless (no VarDCT CfL); keep shape parity, moot since
+            // `cfl_two_pass: false` means refine_cfl_map never runs.
+            cfl_keep_best: false,
             cfl_newton: false,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
@@ -2448,6 +2467,14 @@ impl EffortProfile {
         if resolved.cfl_zero_for_search {
             self.cfl_zero_for_search = true;
         }
+        // #74 task #10: keep-best CfL Pass-2 guard. UNLIKE the fields above
+        // (default-off, force-ON-when-resolved), this one is default-ON at
+        // effort >= 7 (set in `for_effort`) and the strategy gate FORCES IT
+        // OFF for byte-parity: `resolved.cfl_keep_best` is `true` for Zenjxl /
+        // Aggressive and `false` for `EncoderStrategy::Libjxl`, so ANDing keeps
+        // the effort gate on Zenjxl and clears it on Libjxl. (`LossyInternal
+        // Params::cfl_keep_best` still overrides afterwards for expert A/B.)
+        self.cfl_keep_best = self.cfl_keep_best && resolved.cfl_keep_best;
     }
 
     /// Content-class-aware per-image adapter (RFC #45 pick #4 chunk 1).
@@ -2825,6 +2852,13 @@ pub struct LossyInternalParams {
     /// Default at effort 7+: `true`.
     pub cfl_two_pass: Option<bool>,
 
+    /// Keep-best CfL Pass-2 guard (#74, task #10). Default: `true` at
+    /// effort >= 7 on Zenjxl / Aggressive, `false` on `EncoderStrategy::Libjxl`.
+    /// Overrides the strategy/effort default when `Some(_)`. When `true`,
+    /// Pass-2 keeps the Pass-1 multiplier per tile where it codes chroma AC
+    /// more cheaply (fixes the aliased-line-art over-fit; quality-neutral).
+    pub cfl_keep_best: Option<bool>,
+
     /// Apply pixel-level chromacity adjustments. Default at effort 7+:
     /// `true`. Disabling skips per-pixel chromacity nudges.
     pub chromacity_adjustment: Option<bool>,
@@ -3073,6 +3107,7 @@ impl LossyInternalParams {
             k_info_loss_mul_base,
             entropy_mul_table,
             cfl_two_pass,
+            cfl_keep_best,
             chromacity_adjustment,
             patch_ref_tree_learning,
             non_aligned_eval,
@@ -3104,6 +3139,9 @@ impl LossyInternalParams {
         }
         if let Some(v) = cfl_two_pass {
             profile.cfl_two_pass = v;
+        }
+        if let Some(v) = cfl_keep_best {
+            profile.cfl_keep_best = v;
         }
         if let Some(v) = chromacity_adjustment {
             profile.chromacity_adjustment = v;

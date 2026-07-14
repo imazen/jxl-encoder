@@ -218,6 +218,9 @@ jxl_encoder_macros::strategy_def! {
             // Safe here because every other divergence is also flipped
             // (no W44-29..W44-172 calibration to throw off).
             cfl_newton_libjxl_parity = true,
+            // #74 task #10: keep-best CfL Pass-2 guard OFF on Libjxl
+            // (byte parity — libjxl has no such guard).
+            cfl_keep_best = false,
             // W44-AUDIT-5 Phase 2 (Mode C): MUST stay `false` on Libjxl —
             // `cfl_newton_libjxl_parity = true` (above) takes priority
             // inside the SIMD kernel. Strict cjxl byte-parity is required
@@ -304,6 +307,8 @@ jxl_encoder_macros::strategy_def! {
             // cost-model calibration which is incompatible with the
             // libjxl-parity Newton (W44-183 measured 25/27 regressions).
             cfl_newton_libjxl_parity = false,
+            // #74 task #10: keep-best CfL Pass-2 guard ON (rate win, not a parity strategy).
+            cfl_keep_best = true,
             // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY. LeanFaster
             // mirrors Zenjxl per the standing pattern. See Zenjxl
             // preset for the HONEST-STOP narrative.
@@ -376,6 +381,9 @@ jxl_encoder_macros::strategy_def! {
             // W44-176 terminal exclude via OR.
             high_colour_class_exclude = true,
             cfl_newton_libjxl_parity = false,
+            // #74 task #10: keep-best CfL Pass-2 guard ON (default; ships the
+            // aliased-line-art rate win, quality-neutral).
+            cfl_keep_best = true,
             // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY on Zenjxl. The
             // Phase 2 3-mode bisect (`benchmarks/w44_audit_5_phase2_mode_bisect_2026-05-24.tsv`,
             // codec_wiki e7 d=4 + 1418519 + 1531677) measured Mode C =
@@ -467,6 +475,8 @@ jxl_encoder_macros::strategy_def! {
             // discriminator for the Zenjxl bundle).
             high_colour_class_exclude = true,
             cfl_newton_libjxl_parity = false,
+            // #74 task #10: keep-best CfL Pass-2 guard ON.
+            cfl_keep_best = true,
             // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY. Aggressive
             // mirrors Zenjxl per the standing pattern; bench measured
             // byte-identical to Mode A on the codec_wiki + 2 photo cells
@@ -694,6 +704,23 @@ jxl_encoder_macros::strategy_def! {
             env_hook = "JXL_W44_184_FORCE_LIBJXL_NEWTON" => parse_bool_one,
             divergence_section = "C",
             divergence_row_ref = "W44-184/W44-195 CfL Newton libjxl parity (Pass-1 dispatch + Pass-2 internals, eps=100, max_iters=20)",
+        },
+
+        /// **Keep-best CfL Pass-2 guard** (#74, task #10). Strategy-level allow
+        /// flag for [`crate::effort::EffortProfile::cfl_keep_best`]: `true` on
+        /// Zenjxl / Aggressive (ships the guard), `false` on
+        /// [`crate::api::EncoderStrategy::Libjxl`] (byte-parity — libjxl has no
+        /// such guard). ANDed with the `effort >= 7` gate in
+        /// [`crate::effort::EffortProfile::apply_section_c_cfl_newton_libjxl_parity`].
+        /// When on, `chroma_from_luma::refine_cfl_map` keeps the Pass-1
+        /// multiplier for any tile it codes chroma AC more cheaply than Pass-2 —
+        /// fixes the aliased-line-art over-fit (Pass-2's L2 fit scatters small
+        /// non-zero residuals on hard color edges). Quality-neutral (CfL recon
+        /// error is bounded by ±0.5 quant-step regardless of the multiplier).
+        cfl_keep_best: bool {
+            env_hook = "JXL_CFL_KEEP_BEST" => parse_bool_one,
+            divergence_section = "C",
+            divergence_row_ref = "#74 keep-best CfL Pass-2 guard (per-tile Pass-1/Pass-2 rate pick; Zenjxl/Aggressive on, Libjxl off)",
         },
 
         /// **W44-AUDIT-5 Phase 2 (Mode C)**: hybrid CfL Newton — libjxl
@@ -1221,6 +1248,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W44-184/W44-195 CfL Newton libjxl parity (Pass-1 dispatch + Pass-2 internals, eps=100, max_iters=20)",
         raw: __CUSTOM_DIVERGENCE_CFL_NEWTON_LIBJXL_PARITY,
+    },
+    // Section C — #74 keep-best CfL Pass-2 guard
+    DivergenceEntry {
+        gate_name: "cfl_keep_best",
+        section: "C",
+        row_ref: "#74 keep-best CfL Pass-2 guard (per-tile Pass-1/Pass-2 rate pick; Zenjxl/Aggressive on, Libjxl off)",
+        raw: __CUSTOM_DIVERGENCE_CFL_KEEP_BEST,
     },
     // Section C — W44-AUDIT-5 Phase 2 Mode C hybrid CfL Newton
     DivergenceEntry {

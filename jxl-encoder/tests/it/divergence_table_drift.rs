@@ -90,7 +90,8 @@ use std::path::PathBuf;
 /// W44-AUDIT-5 Phase 2 added `cfl_newton_libjxl_math_with_ls_warm_start` Section C gate → 29.
 /// W44-AUDIT-5 Phase 3 added `cfl_pass1_screenshot_x0_start` Section C gate → 30.
 /// W44-AUDIT-9 / SA-G Fix C added `cfl_zero_for_search` Section C gate → 31.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 31;
+/// #74 task #10 added `cfl_keep_best` Section C gate → 32.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 32;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -227,6 +228,11 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // "W44-AUDIT-9 / SA-G Fix C" so anchor on that.
         if row_ref.contains("SA-G Fix C") {
             out.push("SA-G Fix C".to_string());
+        }
+        // #74 keep-best CfL Pass-2 guard: issue-numbered ref, no W-code.
+        // The doc table row carries "keep-best CfL Pass-2 guard" verbatim.
+        if row_ref.contains("keep-best CfL") {
+            out.push("keep-best CfL".to_string());
         }
     }
     out

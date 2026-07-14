@@ -5488,6 +5488,9 @@ impl VarDctEncoder {
                 // route (Phase 3 forces `libjxl_parity = true`, taking
                 // priority inside the SIMD kernel).
                 self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
+                // #74 task #10: keep-best Pass-2 guard (ON for Zenjxl /
+                // Aggressive at e>=7, OFF on Libjxl for byte parity).
+                self.profile.cfl_keep_best,
             );
         }
 

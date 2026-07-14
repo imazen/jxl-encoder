@@ -721,31 +721,38 @@ measurement at equal or better coverage.
 
 ### Live follow-ons
 
-- **cfl_two_pass line-art over-fit — root-caused, fix pending (2026-07-14, #74
-  #1 SDR gap).** Aliased line-art (imazen-26 `7000-plots/aliased-*`) loses
-  +19..52 % to cjxl at **e7 d0.5** while our OWN e6 BEATS cjxl (−0.7 %) — an
-  effort-monotonicity violation. ROOT CAUSE (proven, `benchmarks/cfl_two_pass_
-  lineart_ablation_2026-07-14.{tsv,meta}`, harness `examples/line_art_cfl_probe.rs`
-  --features `__expert,__internals`): the effort-≥7 `cfl_two_pass` (Newton
-  pass-2 CfL refit in `chroma_from_luma.rs::refine_cfl_map`) over-fits chroma on
-  aliased color edges. Disabling it saves 7.8–23.9 % (mean −14.5 %) on aliased
-  line-art, NEUTRAL elsewhere (antialiased-lineart −0.3 %, chart −0.7 %,
-  photo/screenshot/doc/ai-art −0.0..−0.4 %; only 1/24 regresses, +0.1 % noise);
-  photo ssim2 ≤0.1 delta. `chromacity_adjustment` adds a secondary −1.5..−9 %
-  line-art penalty. **DO NOT try a content-proxy gate on the existing 4
-  proxies** (m3/fcbr/edge/luma_var) — RULED OUT: same-seed aliased/anti-aliased
-  pairs are proxy-IDENTICAL but opposite (7022 aliased-poly −16.5 % vs 7076
-  antialias-poly SAME SEED +0.1 %; fcbr ranges fully overlap [0.15,0.91] vs
-  [0.14,0.88]). The discriminator is ALIASING (hard single-px color
-  transitions), invisible to those proxies. Mechanism: `refine_cfl_map`
-  minimizes an L2 chroma residual then UNCONDITIONALLY overwrites cfl_map (no
-  keep-best vs pass-1); on aliased edges the L2-optimal multiplier is dominated
-  by HF aliased-edge energy → a chroma field harder to entropy-code than pass-1
-  (min L2 residual ≠ min coded bits). **Fix direction (task #10)**:
-  content-agnostic keep-best/cost-aware pass-2 guard (compare pass-1 vs pass-2
-  coded cost, keep cheaper) OR a NEW aliasing proxy — NOT a gate on the current
-  proxies. Must stay Zenjxl-only if it breaks the `EncoderStrategy::Libjxl`
-  byte-lock. Ledger #28.
+- **cfl_two_pass line-art over-fit — FIXED via keep-best CfL Pass-2 guard
+  (2026-07-14, #74 #1 SDR gap).** Aliased line-art (imazen-26
+  `7000-plots/aliased-*`) lost +19..52 % to cjxl at **e7 d0.5** while our OWN e6
+  BEAT cjxl (−0.7 %) — an effort-monotonicity violation. ROOT CAUSE (proven,
+  `benchmarks/cfl_two_pass_lineart_ablation_2026-07-14.{tsv,meta}`, harness
+  `examples/line_art_cfl_probe.rs`): the effort-≥7 CfL Pass-2 refit
+  (`chroma_from_luma::refine_cfl_map`) minimizes an L2 chroma residual then
+  UNCONDITIONALLY overwrites the Pass-1 multiplier; on aliased color edges the
+  L2-optimal multiplier is dominated by HF aliased-edge energy → a chroma field
+  harder to entropy-code than Pass-1 (min L2 residual ≠ min coded bits).
+  **DO NOT try a content-proxy gate on the 4 proxies** (m3/fcbr/edge/luma_var) —
+  RULED OUT: same-seed aliased/anti-aliased pairs are proxy-IDENTICAL but
+  opposite (7022 −16.5 % vs 7076 SAME SEED +0.1 %; fcbr ranges fully overlap).
+  The discriminator is ALIASING, invisible to those proxies. **FIX SHIPPED
+  (task #10): the keep-best CfL Pass-2 guard** — `EffortProfile.cfl_keep_best`
+  (Section C gate, ON for Zenjxl/Aggressive/LeanFaster at e≥7, OFF for
+  `EncoderStrategy::Libjxl`). Per tile, `refine_cfl_map` compares the Pass-1 vs
+  Pass-2 multiplier by an ANS-shaped chroma-AC coding-cost proxy (dead-zoned
+  residual count + `log2` magnitude, `CFL_COST_DEADZONE=0.58`,
+  `CFL_KEEP_BEST_MARGIN=0.02` confidence moat) over the ACTUAL AC-strategy
+  coefficients and keeps the cheaper. Content-AGNOSTIC (no proxy discriminator).
+  Quality-neutral: CfL recon error is bounded by ±0.5 quant-step regardless of
+  the multiplier (signaled + inverted exactly at decode) → decoded butteraugli
+  equal-or-better on all 5 quality-checked cells. A/B
+  (`benchmarks/cfl_keep_best_lineart_ab_2026-07-14.{tsv,meta}`): aliased
+  line-art saves mean **+17.7 %** (max +31.3 %), ≤+1.5 % elsewhere, 0/24
+  real-content imgs regress. **DON'T disable it or move `CFL_KEEP_BEST_MARGIN`
+  below 0.02** without re-running the A/B — the margin makes the tile decision
+  platform-stable (float-noise ≪ 2 % moat) and avoids proxy-noise flips that
+  regressed ~190-byte synthetic fixtures (Huffman/16-bit/error-diffusion, +1..2
+  bytes, documented-acceptable). Libjxl byte-lock 5/5 UNCHANGED; hash-locks
+  regenerated. Ledger #28, LIBJXL_DIVERGENCES.md `EffortProfile.cfl_keep_best`.
 - **Buttloop memory reduction — measured options (2026-06-23, #93 follow-up).**
   Two threads investigated at the user's request:
   1. **jxl↔butteraugli XYB buffer-sharing is NOT viable** (definitive,

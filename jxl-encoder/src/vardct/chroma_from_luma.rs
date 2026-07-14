@@ -339,6 +339,52 @@ fn find_best_multiplier(
     }
 }
 
+/// Chroma-AC coding-cost proxy for the first `num` residual coefficients under
+/// a candidate CfL multiplier `ratio` (bit-estimate — lower = cheaper). The
+/// residual coded per coefficient is `ratio*luma - chroma`; the quantizer
+/// dead-zones it to zero at `|r| < CFL_COST_DEADZONE` (matching the X/B AC
+/// dead-zone ≈ 0.58, not the raw 0.5 rounding boundary). A surviving
+/// coefficient costs a base token (`CFL_COST_TOKEN_BITS`) plus a magnitude term
+/// `log2(|r|+1)` — so the proxy rewards BOTH fewer non-zeros AND smaller
+/// residual magnitudes (a pure zero-count misses tiles where pass-2 zeros as
+/// many coeffs but scatters larger survivors). Used by the keep-best pass-2
+/// guard (task #10, #74): CfL reconstruction error is bounded by ±0.5
+/// quant-step regardless of `mult` (the multiplier is signaled and inverted
+/// exactly at decode), so selecting the multiplier for rate costs no quality.
+const CFL_COST_DEADZONE: f32 = 0.58;
+const CFL_COST_TOKEN_BITS: f32 = 1.5;
+
+/// Confidence margin for the keep-best pick: revert to the Pass-1 multiplier
+/// only when its coding-cost proxy is cheaper than Pass-2's by MORE than this
+/// relative fraction. The proxy is an ANS-shaped chroma-AC estimate that does
+/// not model cfl-map coding, fixed per-frame costs, or the Huffman/16-bit
+/// coders exactly; requiring a clear margin avoids proxy-noise flips on
+/// borderline tiles (which slightly regressed tiny synthetic fixtures) while
+/// preserving the large aliased-line-art wins (Pass-1 there is far cheaper).
+const CFL_KEEP_BEST_MARGIN: f32 = 0.02;
+
+#[inline]
+fn cfl_residual_cost(luma_coeffs: &[f32], chroma_coeffs: &[f32], num: usize, ratio: f32) -> f32 {
+    let mut cost = 0.0f32;
+    for i in 0..num {
+        let r = (ratio * luma_coeffs[i] - chroma_coeffs[i]).abs();
+        if r >= CFL_COST_DEADZONE {
+            cost += CFL_COST_TOKEN_BITS + (r + 1.0).log2();
+        }
+    }
+    cost
+}
+
+#[inline]
+fn cfl_cost_x(luma_coeffs: &[f32], chroma_coeffs: &[f32], num: usize, mult: i8) -> f32 {
+    cfl_residual_cost(luma_coeffs, chroma_coeffs, num, ytox_ratio(mult))
+}
+
+#[inline]
+fn cfl_cost_b(luma_coeffs: &[f32], chroma_coeffs: &[f32], num: usize, mult: i8) -> f32 {
+    cfl_residual_cost(luma_coeffs, chroma_coeffs, num, ytob_ratio(mult))
+}
+
 /// Compute the CfL map for an entire image.
 ///
 /// For each 64x64-pixel tile (8x8 blocks), computes optimal ytox and ytob
@@ -580,10 +626,26 @@ pub fn refine_cfl_map(
     newton_max_iters: usize,
     newton_libjxl_parity: bool,
     newton_libjxl_math_with_ls_warm_start: bool,
+    keep_best: bool,
 ) {
     let xsize_tiles = cfl_map.xsize_tiles;
     let ysize_tiles = cfl_map.ysize_tiles;
     let num_tiles = xsize_tiles * ysize_tiles;
+
+    // Keep-best guard (task #10, #74): on entry `cfl_map` still holds the
+    // pass-1 multipliers (the DCT8-coefficient fit). Snapshot them so each tile
+    // can compare its pass-2 multiplier (the same L2/Newton fit over the ACTUAL
+    // AC-strategy coefficients) against pass-1 by a chroma-AC coding-cost proxy
+    // and keep whichever codes cheaper. Fixes the aliased line-art over-fit
+    // where pass-2's actual-strategy fit scatters small non-zero residuals that
+    // pass-1's DCT8 fit avoids (ledger #28). CfL reconstruction error
+    // is bounded by ±0.5 quant-step regardless of the multiplier, so this is a
+    // pure rate win with no quality cost. `keep_best` is the resolved profile
+    // field (`EffortProfile::cfl_keep_best`): ON for Zenjxl / Aggressive at
+    // effort >= 7, OFF on `EncoderStrategy::Libjxl` (byte parity). The
+    // `JXL_CFL_KEEP_BEST` env override is applied upstream by the gate registry.
+    let pass1_ytox = cfl_map.ytox.clone();
+    let pass1_ytob = cfl_map.ytob.clone();
 
     // Process tiles in parallel. Each tile is independent.
     let tile_results = crate::parallel::parallel_map(num_tiles, |tile_idx| {
@@ -724,7 +786,38 @@ pub fn refine_cfl_map(
             newton_libjxl_math_with_ls_warm_start,
         );
 
-        (tx_val, tb_val)
+        // Keep-best: revert to the pass-1 multiplier per channel when it zeros
+        // strictly more chroma AC coefficients than pass-2 over THIS tile's
+        // actual coefficients. `num_ac` is the accumulated coefficient count
+        // shared by both channels' X/B accumulators.
+        if keep_best {
+            // Revert to Pass-1 only when its cost is cheaper than Pass-2's by
+            // more than CFL_KEEP_BEST_MARGIN (confidence guard vs proxy noise).
+            let cheaper = |c1: f32, c2: f32| c1 < c2 * (1.0 - CFL_KEEP_BEST_MARGIN);
+            let p1x = pass1_ytox[tile_idx];
+            let tx_kept = if p1x != tx_val
+                && cheaper(
+                    cfl_cost_x(&coeffs_yx, &coeffs_x, num_ac, p1x),
+                    cfl_cost_x(&coeffs_yx, &coeffs_x, num_ac, tx_val),
+                ) {
+                p1x
+            } else {
+                tx_val
+            };
+            let p1b = pass1_ytob[tile_idx];
+            let tb_kept = if p1b != tb_val
+                && cheaper(
+                    cfl_cost_b(&coeffs_yb, &coeffs_b, num_ac, p1b),
+                    cfl_cost_b(&coeffs_yb, &coeffs_b, num_ac, tb_val),
+                ) {
+                p1b
+            } else {
+                tb_val
+            };
+            (tx_kept, tb_kept)
+        } else {
+            (tx_val, tb_val)
+        }
     });
 
     // Write results back to cfl_map
@@ -915,6 +1008,7 @@ mod tests {
             10,
             false, // newton_libjxl_parity (W44-184): default path
             false, // newton_libjxl_math_with_ls_warm_start (W44-AUDIT-5 Phase 2 Mode C): default off in unit tests
+            false, // keep_best (#74 task #10): default off in unit tests (preserve pre-guard assertions)
         );
         // The function ran without panic on a real input. Whether it
         // mutated the map depends on how much the per-block-weighted
@@ -1006,6 +1100,7 @@ mod tests {
             10,
             false, // newton_libjxl_parity (W44-184): default path
             false, // newton_libjxl_math_with_ls_warm_start (W44-AUDIT-5 Phase 2 Mode C): default off in unit tests
+            false, // keep_best (#74 task #10): default off in unit tests (preserve pre-guard assertions)
         );
 
         let changed = (0..cfl.ytox.len())
@@ -1150,6 +1245,7 @@ mod tests {
             10,
             false, // newton_libjxl_parity (W44-184): default path
             false, // newton_libjxl_math_with_ls_warm_start (W44-AUDIT-5 Phase 2 Mode C): default off in unit tests
+            false, // keep_best (#74 task #10): default off in unit tests (preserve pre-guard assertions)
         );
 
         // Sensibility check: every cfl entry must remain a valid i8
