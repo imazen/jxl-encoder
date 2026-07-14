@@ -16,18 +16,25 @@
 //!
 //! These tests assert two things on a forced error:
 //!   1. the trace carries at least one location frame (it is no longer empty),
-//!   2. at least one frame's file is the encoder's `api.rs` — i.e. the origin
-//!      was captured inside the library, not only at this test's call site.
+//!   2. at least one frame's file is in the encoder's api layer (`api.rs` or
+//!      its `api/*.rs` submodules) — i.e. the origin was captured inside the
+//!      library, not only at this test's call site.
 
 use jxl_encoder::{At, EncodeError, LossyConfig, PixelLayout};
 
-/// True when any frame in the trace was captured inside the encoder's
-/// `api.rs` (the origin/validation layer), as opposed to only this test
-/// file (the API caller).
-fn has_frame_in_api_rs(at: &At<EncodeError>) -> bool {
+/// True when any frame in the trace was captured inside the encoder's api
+/// layer — `api.rs` or its `api/*.rs` submodules (the origin/validation
+/// layer) — as opposed to only this test file (the API caller).
+fn has_frame_in_api_layer(at: &At<EncodeError>) -> bool {
     at.frames().any(|f| {
         f.location()
-            .map(|loc| loc.file().replace('\\', "/").ends_with("src/api.rs"))
+            .map(|loc| {
+                // The api layer spans `api.rs` plus its `api/*.rs` submodules
+                // (validate / ingest / animate / … extracted 2026-07); an
+                // origin captured in any of them counts as "the api layer".
+                let file = loc.file().replace('\\', "/");
+                file.ends_with("src/api.rs") || file.contains("src/api/")
+            })
             .unwrap_or(false)
     })
 }
@@ -86,7 +93,7 @@ fn pixel_buffer_mismatch_origin_is_captured_in_api() {
         dump(&err)
     );
     assert!(
-        has_frame_in_api_rs(&err),
+        has_frame_in_api_layer(&err),
         "origin frame should be inside the encoder's api.rs (the real failure \
          site), not only this test's call site; got:\n{}",
         dump(&err)
@@ -105,7 +112,7 @@ fn deep_failure_trace_spans_origin_and_entry() {
         .expect_err("must fail");
 
     assert!(
-        has_frame_in_api_rs(&err),
+        has_frame_in_api_layer(&err),
         "missing the internal origin frame; got:\n{}",
         dump(&err)
     );
@@ -141,8 +148,8 @@ fn tone_mapping_origin_is_captured_in_api() {
         err.error()
     );
     assert!(
-        has_frame_in_api_rs(&err) && err.frame_count() >= 1,
-        "tone-mapping validation origin should be captured in api.rs; got:\n{}",
+        has_frame_in_api_layer(&err) && err.frame_count() >= 1,
+        "tone-mapping validation origin should be captured in the api layer (api.rs or api/*.rs); got:\n{}",
         dump(&err)
     );
 }
