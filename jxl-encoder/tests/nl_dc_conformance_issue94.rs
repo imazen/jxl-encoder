@@ -86,7 +86,10 @@ fn zenjxl_psnr(jxl: &[u8], src_rgb: &[u8], w: u32, h: u32) -> f64 {
         (w, h),
         "zenjxl-decoder dimensions differ from source"
     );
-    assert_eq!(decoded.channels, 4, "expected RGBA output for a color image");
+    assert_eq!(
+        decoded.channels, 4,
+        "expected RGBA output for a color image"
+    );
     // Drop alpha to compare against the RGB source.
     let mut rgb = Vec::with_capacity((w * h * 3) as usize);
     for px in decoded.data.chunks_exact(4) {

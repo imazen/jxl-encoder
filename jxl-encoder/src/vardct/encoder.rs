@@ -3337,10 +3337,7 @@ impl VarDctEncoder {
     /// (final-state check fails in jxl-oxide/libjxl). Monotonic OR so multiple
     /// DC groups accumulate: once any group overflows, the whole image is
     /// flagged. Called before every `write_file_header_and_pad`.
-    fn note_dc_modular_width(
-        flag: &core::sync::atomic::AtomicBool,
-        quant_dc: &[Vec<Vec<i32>>; 3],
-    ) {
+    fn note_dc_modular_width(flag: &core::sync::atomic::AtomicBool, quant_dc: &[Vec<Vec<i32>>; 3]) {
         // Overflow ⇔ the value does not fit the i16 sample buffer.
         let overflow = quant_dc.iter().any(|ch| {
             ch.iter()
