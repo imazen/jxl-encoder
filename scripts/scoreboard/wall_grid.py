@@ -36,6 +36,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 OURS = REPO / "target/release/cjxl-rs"
 CJXL = Path.home() / "work/jxl-efforts/libjxl/build/tools/cjxl"
+# Reference-PNG normalization dogfooded through zenpng (matches
+# run_scoreboard.py) instead of OpenCV — decodes the Display-P3 / EXIF
+# captures that crash libjxl's PNG reader and re-emits pixels-only PNG.
+ZENPNG = Path.home() / "work/zen/zenpng/target/release/zenpng"
 BENCH_SET = REPO / "benchmarks/lossless_bench_set_2026-06-10.tsv"
 STRATA = ["photos-png", "web-screenshots", "plots", "noaa-documents", "ai-illustrations"]
 ITERS = 5
@@ -56,16 +60,14 @@ def pick_sources():
         r = next((r for r in rows if r["stratum"] == s and r["tier"] == "core"),
                  next((r for r in rows if r["stratum"] == s), None))
         assert r, s
-        # Pixels-only normalization (same as run_scoreboard.py): cjxl
-        # 0.12's PNG reader fails on iCCP+eXIf imazen-26 captures, and
+        # Pixels-only normalization via zenpng (same as run_scoreboard.py):
+        # cjxl 0.12's PNG reader fails on iCCP+eXIf imazen-26 captures, and
         # both encoders must see identical bytes anyway.
         src = r["bench_input"]
         norm = norm_dir / (Path(src).stem + ".norm.png")
         if not norm.exists():
-            import cv2
-            img = cv2.imread(src, cv2.IMREAD_UNCHANGED)
-            assert img is not None, src
-            cv2.imwrite(str(norm), img)
+            subprocess.run([str(ZENPNG), "normalize", str(src), str(norm)],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         out.append((s, str(norm)))
     return out
 
