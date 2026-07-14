@@ -28,6 +28,16 @@
   directly so the originating encode site survives in the error.
 
 ### Documentation
+- 2026-07-13 maintenance-review pass: streaming-encoder rustdoc no longer
+  claims input streaming avoids materializing the image (full-image internal
+  planes are held until `finish`); stale Zensim "Phase 4 pending" caveat
+  replaced with actual calibration status; `ssim2-loop` feature documented
+  and the `__expert` feature comment reattached (6f4942c8); stale
+  `butteraugli_loop.rs` live-path citations annotated with the
+  `perceptual_loop.rs` rename, `DIFFERENCES.md` got a staleness banner
+  pointing at the drift-tested `docs/LIBJXL_DIVERGENCES.md`, completed
+  `MIGRATION_PLAN.md` archived, accidental empty `step` file removed
+  (7f018af4).
 - Repo-root `README.md` overhauled to the zen crate conventions (flat-square
   badge row incl. dual AGPL/Commercial license badge, merged quick-start /
   distance-effort / cancellation / errors / limits onboarding, refreshed
@@ -36,6 +46,35 @@
   scoreboard / benchmark tables wrapped in `crates.io:skip` markers.
 
 ### Fixed
+- **cjxl-rs could exit 0 without writing any output file**: with
+  `--streaming-input --streaming-output` set, every encode path that fell
+  back to in-memory encoding (lossy `--progressive`/`--qprogressive`/
+  `--lf-frame`/`--progressive-dc`, `--rate-control` builds, lossless
+  `--lossy-palette`, active `--ec_resampling`) skipped `write_output` because
+  the skip keyed off the CLI flags rather than whether the streaming encoder
+  actually wrote the file. Encode arms now return an `EncodeOutput` marker
+  (`Bytes` vs `WrittenDirectly`) so the write decision follows the arm that
+  ran (5e2eb76a). Same commit: unknown `--lz77-method` /
+  `--epf-dispatch` / `--pixel-loss-dispatch` values are now hard errors
+  (previously warned and silently changed the encode — a typo in
+  `--lz77-method` selected greedy); `--jpeg-coarsen` without the
+  `jpeg-reencoding` feature errors out like `--lossless-jpeg`;
+  `--epf-dispatch` help text now states the real default (`auto`); the CLI
+  README documented a nonexistent `--no-error-diffusion` flag (real flag:
+  opt-in `--error-diffusion`).
+- **Nightly CI red 2026-07-08..13 repaired (zenjpeg E0433 `fast_yuv`)**: the
+  workspace zenjpeg path patch silently deactivated when the sibling bumped
+  to 0.9.0 while our req stayed 0.8.4 (a `[patch.crates-io]` only applies
+  when versions match), so builds resolved crates.io zenjpeg 0.8.4 — which
+  lacks `decode_coefficients_with_jbrd_metadata` (required by
+  `jpeg-reencoding`) and does not compile with `parallel` +
+  `default-features = false` (undeclared `yuv` feature gap). Both reqs
+  bumped to 0.9.0 to re-activate the patch (d9ff132b). zenjpeg 0.9.0 must be
+  published to crates.io before the next jxl-encoder release.
+- clippy `--all-targets -- -D warnings` restored to green: 8 lints in
+  jxl-encoder-simd test code (byte groupings, useless_format,
+  manual_contains, iter_cloned_collect; PRNG seed values unchanged)
+  (dadc46fe).
 - **True VarDCT near-lossless below distance 0.03 is now spec-conformant; the
   `0.03` distance floor is removed (imazen/jxl-encoder#94).** After the #18
   `i16 → i32` DC widening the reconstruction was correct, but sub-0.03 frames
