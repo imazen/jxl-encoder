@@ -208,6 +208,10 @@ pub(crate) mod cpu {
             // scoring now use (`latest_preview()` also resolves to A). Pinned
             // explicitly rather than via `latest_preview()` so this encoder's
             // zensim-loop RD target stays reproducible across zensim revisions.
+            // zensim deprecated `A` in favour of `B` (2026-07); staying on `A`
+            // is deliberate until the Phase 8-zensim recalibration re-seeds the
+            // target table against a new profile.
+            #[allow(deprecated)]
             let scorer = Zensim::new(ZensimProfile::A);
             Some(Self {
                 scorer,

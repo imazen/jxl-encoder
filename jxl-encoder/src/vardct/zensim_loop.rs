@@ -278,6 +278,9 @@ impl VarDctEncoder {
         // ZENSIM_DISTANCE_TARGETS calibration table is seeded against a SPECIFIC
         // profile, so the scoring profile must be pinned to keep the loop and its
         // calibration coherent across zensim releases.
+        // zensim deprecated `A` in favour of `B` (2026-07); the pin stays until
+        // the calibration table is re-seeded against a new profile.
+        #[allow(deprecated)]
         let z = zensim::Zensim::new(zensim::ZensimProfile::A).with_parallel(false);
         // The deinterleaved planes are transient: only used to build the zensim
         // precomputed reference, then dropped.
