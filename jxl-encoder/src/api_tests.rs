@@ -11214,3 +11214,94 @@ fn test_extra_fields_triggers_on_relative_to_max_display_alone() {
          intensity_target/min_nits are at defaults",
     );
 }
+
+// ── 2026-07-13 maintenance review regression tests ──────────────────────────
+
+/// Encoding must accept a pixel slice at ANY byte offset. `bytemuck::cast_slice`
+/// panics on misaligned input, and a `&[u8]` sub-slice (e.g. `&file_buf[header..]`)
+/// is only guaranteed 1-byte alignment — every 16-bit / f32 layout used to be
+/// panickable by input placement alone. Offsets 0..4 guarantee misaligned starts
+/// for both 2-byte and 4-byte lanes regardless of the backing allocation.
+#[test]
+fn misaligned_pixel_slices_encode_without_panicking() {
+    let (w, h) = (8u32, 8u32);
+    let n = (w * h) as usize;
+
+    // Gray16 (2-byte lanes), lossless path.
+    let gray16_bytes = n * 2;
+    for off in 0..4usize {
+        let mut backing = vec![0u8; gray16_bytes + 4];
+        for (i, b) in backing[off..off + gray16_bytes].iter_mut().enumerate() {
+            *b = (i * 31 % 251) as u8;
+        }
+        let slice = &backing[off..off + gray16_bytes];
+        LosslessConfig::new()
+            .with_effort(1)
+            .encode(slice, w, h, PixelLayout::Gray16)
+            .unwrap_or_else(|e| panic!("Gray16 encode failed at offset {off}: {e}"));
+    }
+
+    // RgbLinearF32 (4-byte lanes), lossy VarDCT path. Every f32 lane is 0.5,
+    // written relative to the slice start so each offset still reads valid
+    // finite pixels.
+    let f32_bytes = n * 12;
+    let lane = 0.5f32.to_le_bytes();
+    for off in 0..4usize {
+        let mut backing = vec![0u8; f32_bytes + 4];
+        for (i, b) in backing[off..off + f32_bytes].iter_mut().enumerate() {
+            *b = lane[i % 4];
+        }
+        let slice = &backing[off..off + f32_bytes];
+        LossyConfig::new(2.0)
+            .with_effort(1)
+            .encode(slice, w, h, PixelLayout::RgbLinearF32)
+            .unwrap_or_else(|e| panic!("RgbLinearF32 encode failed at offset {off}: {e}"));
+    }
+}
+
+/// `with_force_strategy` with a code past the strategy tables must be a clean
+/// validation error. It used to panic inside `AcStrategyMap::force_strategy`
+/// (`COVERED_X[raw]` on the NUM_RAW_STRATEGIES-long table) once the encode
+/// reached strategy selection.
+#[test]
+fn force_strategy_out_of_range_is_a_clean_error() {
+    let first_invalid = crate::vardct::ac_strategy::NUM_RAW_STRATEGIES as u8;
+    let err = LossyConfig::new(1.0)
+        .with_force_strategy(Some(first_invalid))
+        .validate()
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("force_strategy"),
+        "unexpected error: {err}"
+    );
+
+    // The encode path auto-validates, so it must surface the same clean
+    // error (and must not panic).
+    let pixels = vec![128u8; 16 * 16 * 3];
+    LossyConfig::new(1.0)
+        .with_force_strategy(Some(255))
+        .encode(&pixels, 16, 16, PixelLayout::Rgb8)
+        .unwrap_err();
+
+    // The largest valid code still encodes.
+    LossyConfig::new(1.0)
+        .with_force_strategy(Some(first_invalid - 1))
+        .encode(&pixels, 16, 16, PixelLayout::Rgb8)
+        .unwrap_or_else(|e| panic!("largest valid force_strategy failed: {e}"));
+}
+
+/// `dim_shift > 30` on an extra channel is rejected up front with a clean
+/// error (it used to flow raw into the modular writer's per-group region
+/// shifts, where `1 << shift` overflows).
+#[test]
+fn extra_channel_dim_shift_out_of_range_is_a_clean_error() {
+    let pixels = vec![128u8; 16 * 16 * 3];
+    let alpha = vec![255u8; 1];
+    let extras = [crate::api::ExtraChannel::from_alpha_buf(&alpha, false).with_dim_shift(31)];
+    let err = LosslessConfig::new()
+        .encode_request(16, 16, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .unwrap_err();
+    assert!(err.to_string().contains("dim_shift"), "unexpected: {err}");
+}

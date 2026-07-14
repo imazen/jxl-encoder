@@ -2128,9 +2128,11 @@ pub fn find_and_build_with_per_patch_gate(
     }
 
     // Compute coverage statistics before building
-    let total_patch_pixels: usize = infos
+    // u64: bounding-box area × occurrences over-counts sparse glyphs, so the
+    // sum (and the ×100 below) can exceed 32-bit usize on wasm32.
+    let total_patch_pixels: u64 = infos
         .iter()
-        .map(|p| p.patch.num_pixels() * p.positions.len())
+        .map(|p| p.patch.num_pixels() as u64 * p.positions.len() as u64)
         .sum();
     let total_unique = infos.len();
     let total_occurrences: usize = infos.iter().map(|p| p.positions.len()).sum();
@@ -2170,7 +2172,7 @@ pub fn find_and_build_with_per_patch_gate(
     }
 
     // Quick coverage filter: patches on <1% of the image never help.
-    if total_patch_pixels * 100 < image_pixels {
+    if total_patch_pixels * 100 < image_pixels as u64 {
         let coverage_pct = total_patch_pixels as f64 / image_pixels as f64 * 100.0;
         debug_rect!(
             "patches/coverage",
@@ -2225,7 +2227,7 @@ pub fn find_and_build_with_per_patch_gate(
     };
 
     set_last_patches_stats(LastPatchesStats {
-        total_patch_pixels,
+        total_patch_pixels: usize::try_from(total_patch_pixels).unwrap_or(usize::MAX),
         unique_refs_before_gate,
         unique_refs_after_gate: patches_data.ref_positions.len(),
         ref_frame_pixels_after_gate: patches_data.ref_width * patches_data.ref_height,
@@ -2513,12 +2515,13 @@ pub(crate) fn find_and_build_lossless(
     }
 
     // Coverage filter (same as lossy)
-    let total_patch_pixels: usize = infos
+    // u64 for the same wasm32-overflow reason as the lossy coverage gate.
+    let total_patch_pixels: u64 = infos
         .iter()
-        .map(|p| p.patch.num_pixels() * p.positions.len())
+        .map(|p| p.patch.num_pixels() as u64 * p.positions.len() as u64)
         .sum();
     let image_pixels = width * height;
-    if total_patch_pixels * 100 < image_pixels {
+    if total_patch_pixels * 100 < image_pixels as u64 {
         return Ok(None);
     }
 

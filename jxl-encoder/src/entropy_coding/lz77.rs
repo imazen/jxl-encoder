@@ -50,9 +50,16 @@ const SPECIAL_DISTANCES: [[i8; 2]; NUM_SPECIAL_DISTANCES] = [
 ];
 
 /// Compute special distance from code index and distance multiplier (image width).
+///
+/// Computed in i64: `multiplier` is a channel width (up to 2^30) and the
+/// table's second column reaches 8, so i32 arithmetic could overflow for
+/// ultra-wide images. Saturate instead of wrapping — a saturated distance
+/// simply never matches a real backreference.
 #[inline]
 fn special_distance(index: usize, multiplier: i32) -> i32 {
-    SPECIAL_DISTANCES[index][0] as i32 + multiplier * SPECIAL_DISTANCES[index][1] as i32
+    let wide = i64::from(SPECIAL_DISTANCES[index][0])
+        + i64::from(multiplier) * i64::from(SPECIAL_DISTANCES[index][1]);
+    wide.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 /// Empirical cost table for LZ77 length encoding (from libjxl).

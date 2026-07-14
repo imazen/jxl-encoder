@@ -26,6 +26,35 @@ pub use crate::vardct::hdr_metrics::HdrLoss;
 pub use enough::{Stop, Unstoppable};
 pub use whereat::{At, ResultAtExt, at};
 
+// ── Pixel byte-slice casting ────────────────────────────────────────────────
+
+/// Reinterpret raw pixel bytes as `T` lanes, tolerating any caller alignment.
+///
+/// `bytemuck::cast_slice` panics when the byte slice is not aligned for `T`,
+/// and a caller-supplied `&[u8]` is only guaranteed 1-byte alignment (e.g. a
+/// sub-slice at an odd offset into a larger file buffer) — so every 16-bit /
+/// f32 pixel layout could be made to panic by input *placement* alone. The
+/// aligned case — practically every buffer that was allocated as pixels —
+/// stays zero-copy; misaligned input is copied into an owned, aligned buffer
+/// instead of panicking.
+///
+/// `pixels.len()` must be a multiple of `size_of::<T>()`; `validate_pixels`
+/// guarantees this before any conversion path runs.
+pub(crate) fn cast_pixel_lanes<T: bytemuck::AnyBitPattern>(
+    pixels: &[u8],
+) -> alloc::borrow::Cow<'_, [T]> {
+    debug_assert_eq!(pixels.len() % core::mem::size_of::<T>(), 0);
+    match bytemuck::try_cast_slice::<u8, T>(pixels) {
+        Ok(lanes) => alloc::borrow::Cow::Borrowed(lanes),
+        Err(_) => alloc::borrow::Cow::Owned(
+            pixels
+                .chunks_exact(core::mem::size_of::<T>())
+                .map(bytemuck::pod_read_unaligned::<T>)
+                .collect(),
+        ),
+    }
+}
+
 // ── Error type ──────────────────────────────────────────────────────────────
 
 /// Encode error type.
@@ -9193,6 +9222,19 @@ impl<'a> EncodeRequest<'a> {
         // added to the modular image and its `ExtraChannelInfo` is
         // written into the file header.
         for (idx, ec) in self.extra_channels.iter().enumerate() {
+            // dim_shift > 30 cannot correspond to a real channel (the max
+            // image dimension is 2^30) and would overflow the modular
+            // writer's per-group region shifts; reject it up front instead
+            // of relying on the `.min(31)` cap inside `downsampled_dims`
+            // (which only protects the length check below).
+            if ec.info.dim_shift > 30 {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "extra_channels[{idx}]: dim_shift {} exceeds the maximum of 30",
+                        ec.info.dim_shift
+                    ),
+                });
+            }
             let (ec_w, ec_h) = ec.downsampled_dims(w, h);
             let len = ec.data.len();
             if len != ec_w * ec_h {
@@ -9734,11 +9776,11 @@ impl<'a> EncodeRequest<'a> {
                 (rgb, Some(alpha), true)
             }
             PixelLayout::RgbLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 (floats.to_vec(), None, false)
             }
             PixelLayout::RgbaLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 let rgb: Vec<f32> = floats
                     .chunks(4)
                     .flat_map(|px| [px[0], px[1], px[2]])
@@ -9747,11 +9789,11 @@ impl<'a> EncodeRequest<'a> {
                 (rgb, Some(alpha), false)
             }
             PixelLayout::GrayLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 (gray_f32_to_linear_f32_rgb(floats, 1), None, false)
             }
             PixelLayout::GrayAlphaLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 let rgb = gray_f32_to_linear_f32_rgb(floats, 2);
                 let alpha = extract_alpha_f32(floats, 2, 1);
                 (rgb, Some(alpha), false)
@@ -9774,31 +9816,31 @@ impl<'a> EncodeRequest<'a> {
             // color_encoding override is required for linearization to
             // fire. We still run the f32-domain inverse EOTF here.
             PixelLayout::RgbPqF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 (pq_f32_to_linear_f32_rgb(floats, 3), None, false)
             }
             PixelLayout::RgbaPqF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 let rgb = pq_f32_to_linear_f32_rgb(floats, 4);
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::RgbHlgF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 (hlg_f32_to_linear_f32_rgb(floats, 3), None, false)
             }
             PixelLayout::RgbaHlgF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 let rgb = hlg_f32_to_linear_f32_rgb(floats, 4);
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::RgbBt709F32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 (bt709_f32_to_linear_f32_rgb(floats, 3), None, false)
             }
             PixelLayout::RgbaBt709F32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 let rgb = bt709_f32_to_linear_f32_rgb(floats, 4);
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha), false)
@@ -10946,22 +10988,22 @@ impl LossyEncoder {
                 }
             }
             PixelLayout::RgbLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 floats.to_vec()
             }
             PixelLayout::RgbaLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 floats
                     .chunks(4)
                     .flat_map(|px| [px[0], px[1], px[2]])
                     .collect()
             }
             PixelLayout::GrayLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 gray_f32_to_linear_f32_rgb(floats, 1)
             }
             PixelLayout::GrayAlphaLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 gray_f32_to_linear_f32_rgb(floats, 2)
             }
             // FLOAT16 streaming input (closes FLOAT16 portion of #18).
@@ -10972,27 +11014,27 @@ impl LossyEncoder {
             // A3 chunk 1b: f32 PQ/HLG/BT.709 streaming input (issue #46).
             // Same linearization helpers as the one-shot path.
             PixelLayout::RgbPqF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 pq_f32_to_linear_f32_rgb(floats, 3)
             }
             PixelLayout::RgbaPqF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 pq_f32_to_linear_f32_rgb(floats, 4)
             }
             PixelLayout::RgbHlgF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 hlg_f32_to_linear_f32_rgb(floats, 3)
             }
             PixelLayout::RgbaHlgF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 hlg_f32_to_linear_f32_rgb(floats, 4)
             }
             PixelLayout::RgbBt709F32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 bt709_f32_to_linear_f32_rgb(floats, 3)
             }
             PixelLayout::RgbaBt709F32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 bt709_f32_to_linear_f32_rgb(floats, 4)
             }
             // Streaming CMYK is not yet wired — only the one-shot
@@ -11033,14 +11075,14 @@ impl LossyEncoder {
                     .extend_from_slice(&new_alpha);
             }
             PixelLayout::RgbaLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 let new_alpha = extract_alpha_f32(floats, 4, 3);
                 self.alpha
                     .get_or_insert_with(Vec::new)
                     .extend_from_slice(&new_alpha);
             }
             PixelLayout::GrayAlphaLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 let new_alpha = extract_alpha_f32(floats, 2, 1);
                 self.alpha
                     .get_or_insert_with(Vec::new)
@@ -11062,7 +11104,7 @@ impl LossyEncoder {
             // regardless of color transfer function — the inverse EOTF
             // applies only to RGB.
             PixelLayout::RgbaPqF32 | PixelLayout::RgbaHlgF32 | PixelLayout::RgbaBt709F32 => {
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let floats: &[f32] = &cast_pixel_lanes(pixels);
                 let new_alpha = extract_alpha_f32(floats, 4, 3);
                 self.alpha
                     .get_or_insert_with(Vec::new)
@@ -12255,7 +12297,7 @@ impl LosslessEncoder {
             | PixelLayout::Rgba16
             | PixelLayout::Gray16
             | PixelLayout::GrayAlpha16 => {
-                let pixels_u16: &[u16] = bytemuck::cast_slice(pixels);
+                let pixels_u16: &[u16] = &cast_pixel_lanes(pixels);
                 for y in 0..n {
                     let row_offset = y * w * nc;
                     let dst_y = y_start + y;
@@ -13641,11 +13683,11 @@ fn encode_animation_lossy(
                 (rgb, Some(alpha))
             }
             PixelLayout::RgbLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 (floats.to_vec(), None)
             }
             PixelLayout::RgbaLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 let rgb: Vec<f32> = floats
                     .chunks(4)
                     .flat_map(|px| [px[0], px[1], px[2]])
@@ -13654,11 +13696,11 @@ fn encode_animation_lossy(
                 (rgb, Some(alpha))
             }
             PixelLayout::GrayLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 (gray_f32_to_linear_f32_rgb(floats, 1), None)
             }
             PixelLayout::GrayAlphaLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 let rgb = gray_f32_to_linear_f32_rgb(floats, 2);
                 let alpha = extract_alpha_f32(floats, 2, 1);
                 (rgb, Some(alpha))
@@ -13677,31 +13719,31 @@ fn encode_animation_lossy(
             }
             // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46).
             PixelLayout::RgbPqF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 (pq_f32_to_linear_f32_rgb(floats, 3), None)
             }
             PixelLayout::RgbaPqF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 let rgb = pq_f32_to_linear_f32_rgb(floats, 4);
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha))
             }
             PixelLayout::RgbHlgF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 (hlg_f32_to_linear_f32_rgb(floats, 3), None)
             }
             PixelLayout::RgbaHlgF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 let rgb = hlg_f32_to_linear_f32_rgb(floats, 4);
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha))
             }
             PixelLayout::RgbBt709F32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 (bt709_f32_to_linear_f32_rgb(floats, 3), None)
             }
             PixelLayout::RgbaBt709F32 => {
-                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
                 let rgb = bt709_f32_to_linear_f32_rgb(floats, 4);
                 let alpha = extract_alpha_f32(floats, 4, 3);
                 (rgb, Some(alpha))
@@ -14119,7 +14161,7 @@ fn bt709_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 /// issue #73); with any other intensity_target the decoder
 /// misinterprets the scale. Closes PQ portion of #17.
 fn pq_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
         .flat_map(|px| {
@@ -14135,7 +14177,7 @@ fn pq_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> 
 /// BT.709 u16 → linear f32. Same shape as `pq_u16_to_linear_f32`.
 /// Closes BT.709 portion of #17.
 fn bt709_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
         .flat_map(|px| {
@@ -14151,7 +14193,7 @@ fn bt709_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f3
 /// HLG u16 → linear scene-light f32. Same shape as
 /// `pq_u16_to_linear_f32`. Closes HLG portion of #17.
 fn hlg_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
         .flat_map(|px| {
@@ -14171,7 +14213,7 @@ fn hlg_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32>
 /// precision (e.g., 1023 for 10-bit, 4095 for 12-bit, 16383 for 14-bit).
 /// See `EncodeRequest::with_bits_per_sample`.
 fn srgb_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
         .flat_map(|px| {
@@ -14289,7 +14331,7 @@ fn gamma_u8_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32> 
 /// Gamma u16 → linear f32 RGB. `linear = (encoded/u16_max)^(1/gamma)`
 fn gamma_u16_to_linear_f32(data: &[u8], channels: usize, gamma: f32, u16_max: f32) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
         .flat_map(|px| {
@@ -14341,7 +14383,7 @@ fn cmyk_u8_to_linear_f32_rgb(cmy: &[u8], k: &[u8]) -> Vec<f32> {
 /// as the 8-bit variant; `u16_max` is the bit-depth normaliser (e.g.
 /// `65535.0` for full-precision 16-bit input).
 fn cmyk_u16_to_linear_f32_rgb(cmy: &[u8], k: &[u16], u16_max: f32) -> Vec<f32> {
-    let cmy_u16: &[u16] = bytemuck::cast_slice(cmy);
+    let cmy_u16: &[u16] = &cast_pixel_lanes(cmy);
     debug_assert_eq!(cmy_u16.len(), k.len() * 3);
     let inv = 1.0f32 / u16_max;
     let mut out = Vec::with_capacity(k.len() * 3);
@@ -14375,7 +14417,7 @@ fn gamma_gray_u16_to_linear_f32_rgb(
     u16_max: f32,
 ) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
         .flat_map(|px| {
@@ -14391,7 +14433,7 @@ fn gamma_gray_u16_to_linear_f32_rgb(
 /// `(1 << bits) - 1` for narrower precision). Used to scale alpha
 /// from `0..=u16_max` to `0..=255` correctly.
 fn extract_alpha_u16(data: &[u8], stride: usize, alpha_offset: usize, u16_max: f32) -> Vec<u8> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
         .map(|px| ((px[alpha_offset] as f32 / u16_max).clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
@@ -14466,7 +14508,7 @@ fn gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
 
 /// Expand 16-bit sRGB grayscale to linear f32 RGB (gray→R=G=B).
 fn gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
         .flat_map(|px| {
@@ -14491,7 +14533,7 @@ fn pq_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
 
 /// Expand u16 grayscale to linear f32 RGB via the PQ EOTF.
 fn pq_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
         .flat_map(|px| {
@@ -14514,7 +14556,7 @@ fn hlg_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
 
 /// Expand u16 grayscale to linear f32 RGB via the HLG inverse OETF.
 fn hlg_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
         .flat_map(|px| {
@@ -14537,7 +14579,7 @@ fn bt709_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
 
 /// Expand u16 grayscale to linear f32 RGB via the BT.709 inverse OETF.
 fn bt709_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
-    let pixels: &[u16] = bytemuck::cast_slice(data);
+    let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
         .flat_map(|px| {
@@ -14614,7 +14656,7 @@ fn gray_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
 /// `bytes` must contain exactly `n_pixels * stride * 2` u16-bytes.
 fn f16_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
     use crate::f16::f16_bits_to_f32;
-    let pixels: &[u16] = bytemuck::cast_slice(bytes);
+    let pixels: &[u16] = &cast_pixel_lanes(bytes);
     pixels
         .chunks(stride)
         .flat_map(|px| {
@@ -14631,7 +14673,7 @@ fn f16_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
 /// `stride=2` for gray+alpha) to interleaved linear f32 RGB.
 fn f16_gray_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
     use crate::f16::f16_bits_to_f32;
-    let pixels: &[u16] = bytemuck::cast_slice(bytes);
+    let pixels: &[u16] = &cast_pixel_lanes(bytes);
     pixels
         .chunks(stride)
         .flat_map(|px| {
@@ -14789,7 +14831,7 @@ fn unpremultiply_alpha_inplace(linear_rgb_interleaved: &mut [f32], alpha_u8: &[u
 /// conversion before clamping.
 fn extract_alpha_f16(bytes: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8> {
     use crate::f16::f16_bits_to_f32;
-    let pixels: &[u16] = bytemuck::cast_slice(bytes);
+    let pixels: &[u16] = &cast_pixel_lanes(bytes);
     pixels
         .chunks(stride)
         .map(|px| (f16_bits_to_f32(px[alpha_offset]).clamp(0.0, 1.0) * 255.0 + 0.5) as u8)

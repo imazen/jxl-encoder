@@ -54,6 +54,12 @@ pub enum ValidationError {
         value: u8,
         valid: RangeInclusive<u8>,
     },
+    /// `LossyConfig::with_force_strategy` was given a raw strategy code
+    /// outside the implemented table. Valid codes are
+    /// `0..NUM_RAW_STRATEGIES` (see [`crate::vardct::ac_strategy`]); larger
+    /// values would index past the per-strategy coverage tables and panic.
+    #[error("force_strategy {value} out of range: valid raw strategy codes are 0..{max_exclusive}")]
+    ForceStrategyOutOfRange { value: u8, max_exclusive: u8 },
 
     // ── LossyConfig (quality loops) ────────────────────────────────────
     /// A quality-loop iteration count exceeds the encoder's reasonable cap.
@@ -311,6 +317,18 @@ impl crate::api::LossyConfig {
             });
         }
         check_effort(self.effort())?;
+
+        // force_strategy indexes the raw-strategy coverage tables directly;
+        // an out-of-range code would panic in `AcStrategyMap::force_strategy`
+        // (`COVERED_X[raw]` on a NUM_RAW_STRATEGIES-long table).
+        if let Some(s) = self.force_strategy()
+            && (s as usize) >= crate::vardct::ac_strategy::NUM_RAW_STRATEGIES
+        {
+            return Err(ValidationError::ForceStrategyOutOfRange {
+                value: s,
+                max_exclusive: crate::vardct::ac_strategy::NUM_RAW_STRATEGIES as u8,
+            });
+        }
 
         // Quality-loop iter counts and exclusivity.
         #[cfg(feature = "butteraugli-loop")]

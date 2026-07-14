@@ -554,7 +554,7 @@ impl ModularImage {
         if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
-        let pixels: &[u16] = bytemuck::cast_slice(data);
+        let pixels: &[u16] = &crate::api::cast_pixel_lanes(data);
         let mut channels = Vec::with_capacity(3);
         for c in 0..3 {
             let mut channel = Channel::new(width, height)?;
@@ -589,7 +589,7 @@ impl ModularImage {
         if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
-        let pixels: &[u16] = bytemuck::cast_slice(data);
+        let pixels: &[u16] = &crate::api::cast_pixel_lanes(data);
         let mut channels = Vec::with_capacity(4);
         for c in 0..4 {
             let mut channel = Channel::new(width, height)?;
@@ -654,7 +654,7 @@ impl ModularImage {
         if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
-        let pixels: &[u16] = bytemuck::cast_slice(data);
+        let pixels: &[u16] = &crate::api::cast_pixel_lanes(data);
         let mut channel = Channel::new(width, height)?;
         for (i, &val) in pixels.iter().enumerate() {
             let x = i % width;
@@ -684,7 +684,7 @@ impl ModularImage {
         if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
-        let pixels: &[u16] = bytemuck::cast_slice(data);
+        let pixels: &[u16] = &crate::api::cast_pixel_lanes(data);
         let mut gray = Channel::new(width, height)?;
         let mut alpha = Channel::new(width, height)?;
         for y in 0..height {
