@@ -8029,6 +8029,9 @@ mod tests {
     }
 
     /// Compute a simple hash of a byte slice for output locking.
+    /// x86_64-gated like its only consumers (the hash-lock tests pin
+    /// x86_64-encoded bytes); on other arches it would be dead code.
+    #[cfg(target_arch = "x86_64")]
     fn hash_bytes(bytes: &[u8]) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
