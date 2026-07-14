@@ -7,8 +7,6 @@
 //! Contains HybridUint encoding, histogram building, LZ77 histogram writing,
 //! bitstream config writing, and ANS modular helpers.
 
-#![allow(dead_code)]
-
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::encode::{
     OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans,

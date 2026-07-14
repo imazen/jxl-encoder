@@ -7,8 +7,6 @@
 //! Contains RCT (Reversible Color Transform), Palette, and Squeeze (Haar wavelet)
 //! transform descriptors written to the JXL bitstream.
 
-#![allow(dead_code)]
-
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
 use crate::modular::rct::RctType;

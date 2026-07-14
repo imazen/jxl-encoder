@@ -6,8 +6,6 @@
 //!
 //! These are ported from libjxl-tiny and will be used for entropy coding.
 
-#![allow(dead_code)]
-
 use crate::vardct::common::floor_log2_nonzero;
 
 /// Bit flag for LZ77 length tokens, packed into bit 31 of context_and_flags.

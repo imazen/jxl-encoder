@@ -8,8 +8,6 @@
 //! All public items are re-exported here so consumers can continue using
 //! `crate::entropy_coding::encode::*`.
 
-#![allow(dead_code)]
-
 use super::hybrid_uint::HybridUintConfig;
 use super::lz77::Lz77Params;
 use super::token::{Lz77UintCoder, Token, UintCoder};
