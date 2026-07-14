@@ -6,8 +6,6 @@
 //!
 //! These are ported from libjxl-tiny and will be used as encoding is implemented.
 
-#![allow(dead_code)]
-
 /// Block dimension (8 pixels).
 pub const BLOCK_DIM: usize = 8;
 
@@ -34,10 +32,12 @@ pub const TILE_DIM_IN_BLOCKS: usize = TILE_DIM / BLOCK_DIM;
 
 /// Horizontal shift for each jpeg_upsampling mode.
 /// Mode 0: no subsampling, 1: 4:2:0, 2: 4:2:2, 3: 4:4:0
+#[allow(dead_code)] // consumed only by the jpeg-reencoding path
 pub const JPEG_UPSAMPLING_H_SHIFT: [usize; 4] = [0, 1, 1, 0];
 
 /// Vertical shift for each jpeg_upsampling mode.
 /// Mode 0: no subsampling, 1: 4:2:0, 2: 4:2:2, 3: 4:4:0
+#[allow(dead_code)] // consumed only by the jpeg-reencoding path
 pub const JPEG_UPSAMPLING_V_SHIFT: [usize; 4] = [0, 1, 0, 1];
 
 /// Divide and round up.

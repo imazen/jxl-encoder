@@ -6,7 +6,6 @@
 //!
 //! These are ported from libjxl-tiny's static_entropy_codes.h.
 
-#![allow(dead_code)]
 //!
 //! These are the default Huffman codes used by libjxl-tiny. Using static codes
 //! avoids the complexity of dynamic Huffman code optimization while still
@@ -162,6 +161,7 @@ pub static DC_PREFIX_CODES: [PrefixCode; NUM_DC_PREFIX_CODES] = [
 pub const NUM_AC_PREFIX_CODES: usize = 8;
 
 /// Number of AC contexts.
+#[allow(dead_code)] // re-export alias kept for symmetry with the AC-prefix consts above
 pub const NUM_AC_CONTEXTS: usize = super::ac_context::NUM_AC_CONTEXTS;
 
 /// AC context map (maps context ID to prefix code index).
