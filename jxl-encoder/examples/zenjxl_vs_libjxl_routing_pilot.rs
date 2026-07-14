@@ -64,7 +64,13 @@ fn linear_to_srgb_u8(linear: f32) -> u8 {
     (srgb * 255.0).round() as u8
 }
 
-fn encode(rgb_u8: &[u8], w: u32, h: u32, d: f32, strategy: EncoderStrategy) -> Result<Vec<u8>, String> {
+fn encode(
+    rgb_u8: &[u8],
+    w: u32,
+    h: u32,
+    d: f32,
+    strategy: EncoderStrategy,
+) -> Result<Vec<u8>, String> {
     LossyConfig::new(d)
         .with_effort(EFFORT)
         .with_strategy(strategy)
@@ -164,7 +170,9 @@ fn main() {
     let out_path = std::env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("benchmarks/zenjxl_vs_libjxl_routing_pilot_2026-07-14.tsv"));
+        .unwrap_or_else(|| {
+            PathBuf::from("benchmarks/zenjxl_vs_libjxl_routing_pilot_2026-07-14.tsv")
+        });
 
     let corpus = PathBuf::from(
         std::env::var("CODEC_CORPUS_DIR")
@@ -184,7 +192,10 @@ fn main() {
         Source { label: "imazen26/doc-lee", class: "doc", path: corpus.join("imazen-26/5300-noaa-hurricane-documents/5334_noaa_nhc-al132023-lee_p21_2550x3300.png") },
     ];
 
-    let staging = PathBuf::from(format!("/tmp/zenjxl_vs_libjxl_routing_pilot_{}.tsv", std::process::id()));
+    let staging = PathBuf::from(format!(
+        "/tmp/zenjxl_vs_libjxl_routing_pilot_{}.tsv",
+        std::process::id()
+    ));
     let mut out = std::fs::File::create(&staging).expect("create staging tsv");
     use std::io::Write;
     writeln!(out, "image\tclass\tdistance\tlibjxl_bytes\tzenjxl_bytes\tbytes_delta_pct\tlibjxl_bfly\tzenjxl_bfly\tbfly_delta_pct\tlibjxl_ssim2\tzenjxl_ssim2\tssim2_delta_abs\tverdict").unwrap();
@@ -199,7 +210,10 @@ fn main() {
         }
         let img = match image::open(&src.path) {
             Ok(i) => i,
-            Err(e) => { eprintln!("open {}: {e}", src.path.display()); continue; }
+            Err(e) => {
+                eprintln!("open {}: {e}", src.path.display());
+                continue;
+            }
         };
         let (w, h) = img.dimensions();
         let rgb = img.to_rgb8();
@@ -207,7 +221,13 @@ fn main() {
 
         let linear_rgb: Vec<RGB<f32>> = rgb
             .pixels()
-            .map(|p| RGB::new(srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])))
+            .map(|p| {
+                RGB::new(
+                    srgb_to_linear(p[0]),
+                    srgb_to_linear(p[1]),
+                    srgb_to_linear(p[2]),
+                )
+            })
             .collect();
         let orig_linear_img = Img::new(linear_rgb, w as usize, h as usize);
         let orig_srgb_pixels: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
@@ -216,30 +236,75 @@ fn main() {
         eprintln!("=== {} ({}, {}x{}) ===", src.label, src.class, w, h);
 
         for &d in DISTANCES {
-            let b = match measure(rgb_u8, w, h, d, EncoderStrategy::Libjxl, &orig_linear_img, &orig_srgb_img, &params) {
+            let b = match measure(
+                rgb_u8,
+                w,
+                h,
+                d,
+                EncoderStrategy::Libjxl,
+                &orig_linear_img,
+                &orig_srgb_img,
+                &params,
+            ) {
                 Ok(m) => m,
-                Err(e) => { eprintln!("  d={d} libjxl: {e}"); continue; }
+                Err(e) => {
+                    eprintln!("  d={d} libjxl: {e}");
+                    continue;
+                }
             };
-            let z = match measure(rgb_u8, w, h, d, EncoderStrategy::Zenjxl, &orig_linear_img, &orig_srgb_img, &params) {
+            let z = match measure(
+                rgb_u8,
+                w,
+                h,
+                d,
+                EncoderStrategy::Zenjxl,
+                &orig_linear_img,
+                &orig_srgb_img,
+                &params,
+            ) {
                 Ok(m) => m,
-                Err(e) => { eprintln!("  d={d} zenjxl: {e}"); continue; }
+                Err(e) => {
+                    eprintln!("  d={d} zenjxl: {e}");
+                    continue;
+                }
             };
             let verdict = classify(&z, &b);
             *counts.entry(verdict).or_insert(0) += 1;
             let bytes_pct = 100.0 * (z.bytes as f64 - b.bytes as f64) / b.bytes as f64;
             let bfly_pct = 100.0 * (z.butteraugli - b.butteraugli) / b.butteraugli.max(1e-6);
             let ssim_abs = z.ssim2 - b.ssim2;
-            writeln!(out, "{}\t{}\t{}\t{}\t{}\t{:+.2}\t{:.3}\t{:.3}\t{:+.2}\t{:.3}\t{:.3}\t{:+.3}\t{}",
-                src.label, src.class, d, b.bytes, z.bytes, bytes_pct,
-                b.butteraugli, z.butteraugli, bfly_pct, b.ssim2, z.ssim2, ssim_abs, verdict).unwrap();
-            eprintln!("  d={d}: {verdict}  bytes {:+.1}%  bfly {:+.1}%  ssim2 {:+.2}  (enc B={:.0}ms Z={:.0}ms)",
-                bytes_pct, bfly_pct, ssim_abs, b.encode_ms, z.encode_ms);
+            writeln!(
+                out,
+                "{}\t{}\t{}\t{}\t{}\t{:+.2}\t{:.3}\t{:.3}\t{:+.2}\t{:.3}\t{:.3}\t{:+.3}\t{}",
+                src.label,
+                src.class,
+                d,
+                b.bytes,
+                z.bytes,
+                bytes_pct,
+                b.butteraugli,
+                z.butteraugli,
+                bfly_pct,
+                b.ssim2,
+                z.ssim2,
+                ssim_abs,
+                verdict
+            )
+            .unwrap();
+            eprintln!(
+                "  d={d}: {verdict}  bytes {:+.1}%  bfly {:+.1}%  ssim2 {:+.2}  (enc B={:.0}ms Z={:.0}ms)",
+                bytes_pct, bfly_pct, ssim_abs, b.encode_ms, z.encode_ms
+            );
         }
     }
 
     drop(out);
-    if let Some(parent) = out_path.parent() { std::fs::create_dir_all(parent).ok(); }
-    std::fs::rename(&staging, &out_path).or_else(|_| std::fs::copy(&staging, &out_path).map(|_| ())).ok();
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::rename(&staging, &out_path)
+        .or_else(|_| std::fs::copy(&staging, &out_path).map(|_| ()))
+        .ok();
     eprintln!("\n=== VERDICT COUNTS ===");
     for (k, v) in &counts {
         eprintln!("  {k}: {v}");
