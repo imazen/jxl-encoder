@@ -693,6 +693,25 @@ measurement at equal or better coverage.
   on WSL2 swing ±120 MB from glibc adaptive-arena policy — pin
   `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072` for memory A/Bs.
   (issue #64 chunk 1, benchmarks/perf_hist_sub{,_lossless}_2026-06-10.meta)
+- Lossless-graphics gap vs cjxl (#74 "match always") is HETEROGENEOUS and
+  correlates with background dominance (top_color_pct): sparse docs > ~80 %
+  LOSE (5336 +26 %, 5340 +6 %, 5342 +9 %), lower win (5334 −53 %, 5324 −25 %),
+  palette-friendly win big (8222 499-colour −68 %). Four global levers RULED
+  OUT (2026-07-14, don't re-try): context-map ANS+LZ77 writer is ALREADY at
+  parity; histogram cap 128→256 is a NO-OP (clustering picks cost-optimal
+  ≤128; CLUSTERS_LIMIT=256); global tree-threshold sweep helps ONLY the 5336
+  outlier while regressing photos + not helping 5340/5342; trial-encode-two-
+  trees is LOW-EV (1/13 img, ~1 pp). 5336 attribution: over-split global tree
+  (2059 nodes / 10.9 KB LfGlobal vs cjxl 312 B) that ALSO codes residuals
+  +21 % worse. A zenanalyze proxy PREDICTS the loss but there is NO winning
+  alternative modular strategy to route to (unlike lossy Libjxl↔Zenjxl) —
+  fix needs modular predictor/context RD on high-dominance content, not a
+  knob. (#74, HYPOTHESIS_LEDGER #24, benchmarks/lossless_graphics_gap_probe_2026-07-14.*)
+- cjxl v0.11.2 fails ("Getting pixel data failed") on some Display-P3 /
+  Android-EXIF PNGs (e.g. imazen-26 8025) → produces NO file. Sweeps that
+  stat() a reused temp path then compare vs a STALE prior output (observed:
+  a bogus 8025 "+265 %" that was 8248's cjxl size). Record cjxl_fail, never
+  compare; filter scoreboard cjxl-dominant counts for this. (2026-07-14)
 
 **Process**
 - Gate changes: update `gate_registry.rs` macro metadata + ALL_DIVERGENCE_ENTRIES

@@ -1,0 +1,11 @@
+image	class	w	h	unique_colors	top_color_pct	cjxl_bytes	ours_bytes	ours_vs_cjxl_pct
+5334_noaa_nhc-al132023-lee_p21_2550x3300.png	doc	2550	3300	4692	71.0	312915	147272	-52.9
+5324_noaa_nhc-al092022-ian_p25_2550x3300.png	doc	2550	3300	5463	62.1	200459	150386	-25.0
+5336_noaa_nhc-al132024-leslie_p05_2550x3300.png	doc	2550	3300	4943	86.6	202517	255415	+26.1
+5340_noaa_nhc-al172022-nicole_p40_2550x3300.png	doc	2550	3300	4742	94.2	95826	101686	+6.1
+5342_noaa_nhc-al182024-rafael_p10_2550x3300.png	doc	2550	3300	4853	81.3	140079	152997	+9.2
+8222_web-screenshots_bls-employment-situation_dpr2_page1_2880x1800.png	screenshot	2880	1800	499	98.5	53082	16949	-68.1
+8432_web-screenshots_nih-recipes-keep-the-beat_dpr1_page1_1280x800.png	screenshot	1280	800	4318	81.3	53457	67104	+25.5
+8174_web-screenshots_loc-free-to-use_dpr1_page1_1920x1080.png	screenshot	1920	1080	215351	61.6	695699	706389	+1.5
+11f2b039b293758398b1a7a8afa64bb2.png	photo	1024	1024	236222	2.1	808161	811600	+0.4
+2a2420f929cd47122eae364a2bc27710.png	photo	1024	1024	135366	0.2	1067600	1069435	+0.2

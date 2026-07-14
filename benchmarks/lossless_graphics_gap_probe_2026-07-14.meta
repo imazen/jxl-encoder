@@ -1,0 +1,50 @@
+# Lossless-graphics gap probe vs cjxl — provenance
+date:        2026-07-14
+git_commit:  a0f7e870
+host:        lilith
+encoder:     target/release/cjxl-rs (jxl-encoder-cli, EncoderStrategy::Zenjxl default), --lossless -e 7
+reference:   cjxl v0.11.2 (~/work/libjxl-build/tools/cjxl), -d 0 -e 7
+corpus:      ~/work/codec-corpus/imazen-26 (docs/screenshots) + clic2025-1024 (photos)
+script:      benchmarks/lossless_graphics_gap_probe_2026-07-14.py
+tmp:         PROBE_TMP=<dir> (defaults /tmp)
+
+## Finding (issue #74 "win or match always", lossless graphics)
+The lossless-graphics gap vs cjxl is HETEROGENEOUS and correlates with
+background dominance (top_color_pct):
+  - top_color_pct > ~80% (sparse, background-dominant docs) -> we LOSE
+    (5336 +26.1%, 5340 +6.1%, 5342 +9.2%, 8432 +25.5%)
+  - lower dominance -> we WIN/match (5334 -52.9%, 5324 -25.0%)
+  - palette-friendly (few unique colors) -> we WIN big (8222: 499 colors, -68.1%)
+  - dense photos -> match (+0.2..+0.4%)
+
+## Ruled-out levers (measured 2026-07-14, do not re-try without new evidence)
+  - Context-map ANS+LZ77 writer: ALREADY at libjxl parity
+    (write_context_map_nonsimple picks Huffman+MTF vs ANS+LZ77 by cost).
+  - ANS histogram cap 128 -> 256: NO effect (clustering already picks the
+    cost-optimal count <=128; CLUSTERS_LIMIT is already 256).
+  - Global tree-threshold multiplier (JXL_TREE_THRESH_MUL sweep 1x..32x):
+    helps ONLY the 5336 outlier (255415 -> 193898 at 8x, -24%), while
+    regressing photos monotonically (+0.4% -> +3.3% at 32x) and NOT helping
+    other sparse docs (5340/5342 monotonically prefer the big 1x tree).
+  - Trial-encode two tree sizes, keep smaller: measured LOW-EV
+    (1/13 images improved, by ~1pp) — NOT worth the 2x tree-learn cost.
+
+## Root cause (attribution, 5336 e7: ours 255415 vs cjxl 202517, +26.1%)
+  LfGlobal (global MA tree): ours 10904 B (2059 nodes / 1030 ctx / 128 histo)
+                             vs cjxl 312 B (tiny tree). +10592 B / +3395%.
+  GroupPass (residuals):     ours 244229 vs cjxl 201912. +42317 B / +21%.
+  The big tree over-splits on sparse content (removed threshold floor won
+  CLIC photos -0.7% but over-splits documents) AND codes residuals WORSE.
+  No single global knob fixes it; needs content-adaptive tree regularization
+  OR a better modular predictor/context model on high-background-dominance
+  content. A zenanalyze-proxy discriminator can PREDICT the loss
+  (top_color_pct) but there is no alternative modular strategy that WINS
+  these cells to route to (unlike the lossy Libjxl<->Zenjxl choice).
+
+## cjxl PNG-read robustness
+cjxl v0.11.2 fails ("Getting pixel data failed") on some Display-P3 / Android
+EXIF PNGs (e.g. 8025 mobile screenshot) and produces NO output. Naive sweeps
+that stat() a reused temp path then compare against a STALE previous output
+(observed: a bogus 8025 "+265%" that was actually the prior image's cjxl size).
+This harness records such cells as cjxl_fail and never compares them.
+Scoreboard cjxl-dominant counts should be filtered for this contamination.
