@@ -18,6 +18,29 @@
 //!     .encode(&pixels)?;
 //! # Ok::<_, jxl_encoder::At<jxl_encoder::EncodeError>>(())
 //! ```
+//!
+//! # Module organization
+//!
+//! The independent pieces of the former `api.rs` monolith live in `api/`
+//! submodules, re-exported here so public paths are unchanged:
+//! `pixel_layout`, `quality`, `metadata`, `limits`, `animation`,
+//! `container` (leaf types); `strategy` (encoder-mode / strategy enums);
+//! `errors` (`EncodeError`); `ingest` (pixel-unpack + transfer-function
+//! helpers); `content_detect` (smart-dispatch discriminators);
+//! `validate` (encode-entry guards); `animate` (multi-frame paths);
+//! `tests`.
+//!
+//! What deliberately stays in this file is the tightly-coupled encode
+//! core: `LossyConfig`, `LosslessConfig`, `EncodeRequest`, `ExtraChannel`,
+//! the streaming `LossyEncoder` / `LosslessEncoder`, and the
+//! `EncodeResult` / `EncodeStats` result types. These share direct
+//! private-field access across each other (e.g. `EncodeRequest::encode_lossy`
+//! reads ~40 `LossyConfig` fields; the encode path mutates `ExtraChannel`
+//! internals in place). Splitting any of them into a separate module would
+//! force dozens of fields to `pub(crate)` — an encapsulation loss, not a
+//! win — so they are kept together by design. See CLAUDE.md's api-narrowing
+//! notes before relocating them; the clean cut is at the leaf/helper
+//! boundary above, not through the core.
 
 pub use crate::entropy_coding::Lz77Method;
 pub use crate::headers::frame_header::BlendMode;
