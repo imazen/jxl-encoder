@@ -26,7 +26,11 @@ use jxl_encoder::{LossyConfig, LossyInternalParams, PixelLayout};
 fn enc(rgb: &[u8], w: u32, h: u32, tweak: impl FnOnce(&mut LossyInternalParams)) -> usize {
     let mut p = LossyInternalParams::default();
     tweak(&mut p);
-    LossyConfig::new(0.5)
+    let d: f32 = std::env::var("JXL_PROBE_D")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.5);
+    LossyConfig::new(d)
         .with_effort(7)
         .with_internal_params(p)
         .encode(rgb, w, h, PixelLayout::Rgb8)

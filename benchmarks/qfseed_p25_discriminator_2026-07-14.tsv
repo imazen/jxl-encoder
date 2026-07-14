@@ -1,0 +1,19 @@
+class	image	m3	fcbr	edge	luma_var	mask1x1_median	mask1x1_p25	is_screenshot	low_colour_m3lt24	cjxl_over_alloc_ratio	note
+PHOTO	9290_beard-oil	23.4	0.741	0.159	4712	100.01	83.67	1	1	0.96	misfire; cjxl d2.0=60312 ~ lift_off 62533
+PHOTO	9285_auremor-lip-oil	21.1	0.754	0.090	4293	100.01	89.03	1	1	NA	misfire (worst-photo p25 in band)
+PHOTO	9286_auremor-retinol-back	20.5	0.627	0.078	9769	100.01	61.48	1	1	NA	misfire
+PHOTO	9272_baby-onesie	NA	NA	NA	NA	92.79	47.34	0	NA	NA	median<95 not is_screenshot; unaffected
+PHOTO	9271_baby-mustard-onesie	NA	NA	NA	NA	84.51	45.04	0	NA	NA	median<95 unaffected
+PHOTO	CID22_258947	NA	NA	NA	NA	62.35	44.76	0	NA	NA	median<95 unaffected
+PHOTO	CID22_pexels-6096399	NA	NA	NA	NA	66.84	45.11	0	NA	NA	median<95 unaffected
+SCREEN	gb82_terminal	13.8	0.833	0.087	1706	100.01	100.01	1	1	NA	SHIP low-colour; keep lift
+SCREEN	gb82_gmessages	10.2	0.899	0.038	1046	100.01	100.01	1	1	NA	SHIP low-colour; keep lift
+SCREEN	gb82_graph	11.8	0.809	0.070	NA	100.01	100.01	1	1	NA	SHIP low-colour; keep lift
+SCREEN	gb82_gui	10.1	0.858	0.062	NA	100.01	100.01	1	1	NA	SHIP low-colour; keep lift
+SCREEN	gb82_imac_g3	14.3	0.775	0.123	5244	100.01	100.01	1	1	NA	SHIP low-colour; keep lift
+SCREEN	gb82_imac_g3_strip	14.3	0.775	0.123	NA	100.01	100.01	1	1	NA	SHIP low-colour; keep lift
+SCREEN	gb82_windows	20.0	0.769	0.120	NA	100.01	100.01	1	1	NA	SHIP low-colour; keep lift
+SCREEN	gb82_imac_dark	21.0	0.728	0.144	3303	100.01	98.91	1	1	2.31	SHIP low-colour WORST p25; cjxl d2.0=461960 >> lift_off 200197
+SCREEN	gb82_codec_wiki	145.7	0.904	0.040	1374	100.01	100.01	1	0	NA	high-colour; main band only (d>=3.5)
+SCREEN	gb82_imessage	67.6	0.864	0.053	NA	100.01	95.11	1	0	1.16	high-colour; not in sub-band (m3>=24)
+SCREEN	gb82_windows95	27.2	0.360	0.316	NA	100.01	52.53	1	0	0.97	NOT low-colour (m3>=24) -> sub-band n/a; untouched

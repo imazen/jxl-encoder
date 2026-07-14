@@ -228,6 +228,39 @@ pub(crate) fn w44_audit_6_is_high_colour_class(
 /// gate, so this is belt-and-braces).
 pub const BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX: f32 = 24.0;
 
+/// Task #12 (#74, 2026-07-14): minimum `mask1x1` 25th-percentile required
+/// for the W44-108 low-colour SUB-band (`is_screenshot AND m3 < 24 AND
+/// d ∈ [2.0, 3.5)`) to fire the qf-seed lift. The wedge-2 m3 threshold
+/// (30 → 24, 2026-06-12) caught the ai-products misfires at m3 ≈ 28 but
+/// LEAKS the residual pure-white-background low-colour product shots at
+/// m3 < 24: `9290_...beard-oil` (m3 = 23.4, is_screenshot median = 100)
+/// still tripped the sub-band and took the e7 3× lift at d = 2.0,
+/// re-incurring the distance-MONOTONICITY VIOLATION (d1.99 = 62790 B →
+/// d2.0 = 128100 B, +104 %; +112 % vs cjxl at ssim2 87 when the d2.0
+/// target wants ssim2 76). Ground truth: cjxl does NOT over-allocate on
+/// these (cjxl d2.0 = 60312 B ≈ our lift-OFF 62533 B), whereas on the
+/// genuine text-class screenshots the lift is meant to match cjxl's
+/// bimodal-qac over-allocation (imac_dark d2.0: cjxl = 461960 B ≫ our
+/// lift-off 200197 B).
+///
+/// `m3`/`fcbr`/`edge`/`luma_var` CANNOT separate the misfire from the win
+/// (beard-oil ≈ imac_dark on all four). `mask1x1_p25` CAN, orthogonally:
+/// flat UI panels saturate `compute_mask1x1` at ~100 (`1/(log1p(0)+0.01)`),
+/// so genuine screenshots have ≥ 25 % perfectly-flat blocks → high p25;
+/// photographic texture keeps p25 down. Measured within the m3 < 24
+/// sub-band (`benchmarks/qfseed_p25_discriminator_2026-07-14.tsv`):
+/// - low-colour SHIP screenshots (gmessages/graph/gui/imac_dark/imac_g3/
+///   imac_g3_strip/terminal/windows): p25 ∈ [98.9, 100.0]
+/// - misfiring white-bg product photos (beard-oil/9285/9286 + baby set):
+///   p25 ∈ [45, 89]
+///
+/// 95.0 sits in the clean gap (worst SHIP imac_dark 98.9 vs worst misfire
+/// 89.0), 6 pp above the worst photo and 3.9 pp below the worst SHIP cell.
+/// Applied to the SUB-band ONLY — the d ≥ 3.5 main band (which also fires
+/// on high-colour screenshots like windows95 p25 = 52, imessage p25 = 95)
+/// is UNTOUCHED to avoid regressing its calibrated SHIP behaviour.
+pub const BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25: f32 = 95.0;
+
 /// W44-176: terminal-class exclude sub-discriminator — `luma_var` lower
 /// bound. Inside the W44-108 firing class (`is_screenshot AND m3 < 30`),
 /// this gate excludes terminal-like images where the W44-109 lift is
@@ -640,6 +673,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
         is_screenshot,
         target_distance,
         m3_colourfulness,
+        /* mask1x1_p25 */ None,
         crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
         /* proxies */ None,
         /* terminal_class_exclude */ false,
@@ -694,6 +728,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     is_screenshot: bool,
     target_distance: f32,
     m3_colourfulness: Option<f32>,
+    mask1x1_p25: Option<f32>,
     policy: crate::api::AdaptiveQuantQfSeedPolicy,
     proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
     terminal_class_exclude: bool,
@@ -722,8 +757,20 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
         BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE,
         buttloop_qf_seed_scale_min_distance,
     );
+    // Task #12 (#74): the W44-108 low-colour sub-band additionally requires
+    // a saturated `mask1x1_p25` (genuine flat-UI content), excluding the
+    // pure-white-background low-colour product photos (m3 < 24 but
+    // photographic p25) that the wedge-2 m3 threshold leaks. `None` (the
+    // e8+ buttloop / legacy-wrapper callers that don't thread p25) maps to
+    // `true` → the sub-band behaviour there is unchanged. See
+    // [`BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25`]. The d ≥ 3.5 main band is
+    // deliberately NOT p25-gated (preserves its calibrated SHIP cells).
+    let sub_band_p25_ok =
+        mask1x1_p25.is_none_or(|p25| p25 >= BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25);
     let gate_fires = target_distance >= min_distance
-        || (w44_108_low_colour && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE);
+        || (w44_108_low_colour
+            && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE
+            && sub_band_p25_ok);
     if !gate_fires {
         return 1.0;
     }

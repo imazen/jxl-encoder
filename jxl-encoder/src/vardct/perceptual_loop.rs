@@ -1199,6 +1199,28 @@ impl VarDctEncoder {
         let w44_108_low_colour = self
             .zenanalyze_proxies
             .is_some_and(|p| p.m3_colourfulness < BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX);
+        // Task #12 (#74): p25 sub-band exclude — mirrors the e5-7 path in
+        // `perceptual_tuning::resolved_adaptive_quant_qf_seed_scale_with_policy`.
+        // Pure-white-background low-colour PHOTOS (e.g. beard-oil m3=23.4,
+        // is_screenshot median=100) leak the m3<24 sub-gate but have
+        // photographic p25; require a saturated p25 (genuine flat-UI content)
+        // for the SUB-band. `mask1x1 == None` (non-screenshot / mask not
+        // materialised) → `true`, preserving pre-fix behaviour. The d ≥ 3.5
+        // main band is deliberately NOT p25-gated. See
+        // [`BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25`].
+        let sub_band_p25_ok = match mask1x1 {
+            Some(m) => {
+                super::encoder::percentile_mask1x1(
+                    m,
+                    padded_width,
+                    width,
+                    height,
+                    0.25,
+                    self.budget.as_ref(),
+                )? >= BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25
+            }
+            None => true,
+        };
         // W44-213: tuning-override-aware min-distance + scale lookups.
         let buttloop_min_distance = crate::runtime_or_default!(
             BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE,
@@ -1207,7 +1229,8 @@ impl VarDctEncoder {
         let auto_gate_fires = is_screenshot
             && (target_distance >= buttloop_min_distance
                 || (w44_108_low_colour
-                    && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
+                    && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE
+                    && sub_band_p25_ok));
         let buttloop_qf_seed_scale = match buttloop_qf_seed_policy {
             crate::api::ButtloopQfSeedPolicy::AutoScale4 => {
                 if auto_gate_fires {
@@ -3880,6 +3903,7 @@ mod tuning_tests {
             true,
             4.0,
             Some(13.85),
+            None, // mask1x1_p25 — main band (d=4.0); sub-band p25 gate n/a
             crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             Some(&p),
             true,  // terminal_class_exclude
@@ -3903,6 +3927,7 @@ mod tuning_tests {
             true,
             4.0,
             Some(13.85),
+            None, // mask1x1_p25 — main band (d=4.0); sub-band p25 gate n/a
             crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
             Some(&p),
             false, // terminal_class_exclude OFF
@@ -3934,6 +3959,7 @@ mod tuning_tests {
                 true,
                 4.0,
                 Some(m3),
+                None, // mask1x1_p25 — main band (d=4.0); sub-band p25 gate n/a
                 crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
                 Some(&p),
                 true,  // terminal_class_exclude ON

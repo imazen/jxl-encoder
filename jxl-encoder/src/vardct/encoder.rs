@@ -4199,6 +4199,13 @@ impl VarDctEncoder {
             .as_deref()
             .map(|m| percentile_mask1x1(m, padded_width, width, height, 0.25, self.budget.as_ref()))
             .transpose()?;
+        #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+        if std::env::var_os("JXL_WP_DISPATCH_DUMP_MASK").is_some() {
+            eprintln!(
+                "WP-DISPATCH-P25 mask1x1_median={:?} mask1x1_p25={:?} effort={} distance={}",
+                mask1x1_median_for_pre_scale, mask1x1_p25_for_pre_scale, self.effort, self.distance
+            );
+        }
         let edge_density_for_pre_scale: Option<f32> =
             self.zenanalyze_proxies.map(|p| p.edge_density);
         #[cfg(feature = "butteraugli-loop")]
@@ -4411,6 +4418,10 @@ impl VarDctEncoder {
                     is_screenshot,
                     self.distance,
                     m3,
+                    // Task #12 (#74): p25 sub-band exclude — drops the e7 3×
+                    // lift on pure-white-bg low-colour product PHOTOS that
+                    // pass the m3 < 24 sub-gate but have photographic p25.
+                    mask1x1_p25_for_pre_scale,
                     adaptive_quant_qf_seed_policy,
                     self.zenanalyze_proxies.as_ref(),
                     terminal_class_exclude,

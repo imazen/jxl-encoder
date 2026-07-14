@@ -3078,3 +3078,10 @@ required-features = ["jpeg-reencoding"]
 name = "line_art_cfl_probe"
 path = "examples/line_art_cfl_probe.rs"
 required-features = ["__expert", "__internals"]
+
+# task #12 (#74): beard-oil e7 distance non-monotonicity — d-sweep + AC
+# strategy histogram + LossyInternalParams knob ablation across the d2.0 spike.
+[[example]]
+name = "beardoil_d2_probe"
+path = "examples/beardoil_d2_probe.rs"
+required-features = ["__expert"]

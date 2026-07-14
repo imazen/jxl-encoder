@@ -1,0 +1,48 @@
+qf-seed screenshot lift — mask1x1_p25 sub-band discriminator (task #12, #74)
+commit: (this change) — child of cb5811a6
+host: lilith
+date: 2026-07-14
+cli: target/release/cjxl-rs (post-fix) + ~/work/jxl-efforts/libjxl/build/tools/cjxl (v0.11.x)
+proxies: line_art_cfl_probe (m3/fcbr/edge/luma_var); p25 via JXL_WP_DISPATCH_DUMP_MASK
+         (encoder.rs WP-DISPATCH-P25 dump, __env_var_diagnostics feature)
+ground-truth (cjxl_over_alloc_ratio = cjxl_bytes / our_lift_off_bytes) at d2.0 e7:
+  lift_off isolated via env JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0 (pixel-domain stays on)
+
+PROBLEM (task #12): the W44-108 low-colour SUB-band (is_screenshot AND m3<24 AND
+d>=2.0) fired the e7 3x / e8+ 4x qf-seed lift on pure-white-background low-colour
+PRODUCT PHOTOS, which the wedge-2 m3 threshold (30->24, 2026-06-12) LEAKS at m3<24.
+beard-oil (m3=23.4, is_screenshot median=100) took the lift at d>=2.0:
+  e7: d1.99=62790 -> d2.0=128100 (+104%, distance-MONOTONICITY VIOLATION); +112% vs cjxl
+  e8: d2.0=112425 (same leak in the separate buttloop seed-scale gate)
+RD (d2.0 e7): lift_on 128100B/butt1.11/ssim2 87.1  vs  lift_off 62533B/butt2.66/ssim2 76.2
+              vs cjxl 60312B/butt2.90/ssim2 76.7  -> lift_off MATCHES cjxl; lift overshoots
+              to ~d1.0 quality at 2x bytes when the d2.0 target wants ssim2 76.
+
+KEY FINDING: m3/fcbr/edge/luma_var CANNOT separate the misfire from the SHIP win —
+beard-oil (m3=23.4,fcbr=0.741,edge=0.159,lv=4712) ~ imac_dark (21.0,0.728,0.144,3303),
+yet cjxl over-allocates OPPOSITELY: beard-oil ratio 0.96 (no over-alloc, lift wrong),
+imac_dark ratio 2.31 (cjxl 461960 >> lift_off 200197, lift correct).
+mask1x1_p25 SEPARATES them: flat UI panels saturate compute_mask1x1 at ~100 so genuine
+screenshots have >=25% perfectly-flat blocks (high p25); photographic texture keeps p25
+down. Within the m3<24 sub-band:
+  - low-colour SHIP screenshots: p25 in [98.91, 100.01]  (imac_dark worst = 98.91)
+  - misfiring white-bg product photos: p25 in [61.48, 89.03]  (9285 worst = 89.03)
+  clean gap 89.03 -> 98.91. windows95 (p25=52.5) is m3=27.2 (NOT low-colour) so the
+  sub-band never fires on it -> the p25 gate on the sub-band cannot regress it.
+
+FIX: BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25 = 95.0, required for the SUB-band ONLY
+(both the e5-7 resolved_adaptive_quant_qf_seed_scale_with_policy AND the e8+ buttloop
+auto_gate_fires). The d>=3.5 MAIN band is deliberately NOT p25-gated (it fires on
+high-colour screenshots like windows95 p25=52 / imessage p25=95 whose main-band SHIP
+behaviour stays calibrated). None (mask not materialised / non-screenshot) -> preserve
+pre-fix behaviour.
+
+RESULT (post-fix, verified): beard-oil now monotone e7 (62790->62533->51938) AND
+e8 (58962->58503->47820); +3.7% vs cjxl (was +112%). SHIP cells byte-identical
+(imac_dark d2.0e7=290990 unchanged). hash-locks 48/48 default byte-identical,
+Libjxl byte-lock unchanged, divergence drift unchanged, it 446/446, lib 1557/1557.
+
+CAVEAT: threshold 95.0 set from a modest sample (3 in-band photos + 8 SHIP screenshots
++ a wider median<95 photo confirmation set). The clean gap (89->99) and the mechanism
+(flat-UI p25 saturation) justify it, but a full re-baseline sweep of the screenshot-class
+gates on imazen-26 modern content (8000/8100) remains the pending follow-on (CLAUDE.md).
