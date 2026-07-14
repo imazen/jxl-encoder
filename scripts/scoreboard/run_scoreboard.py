@@ -27,13 +27,15 @@ Tolerances (documented, conservative):
   ssim2 tie band 0.25; butteraugli_pnorm3 tie band 2 % rel (abs floor
   0.005); PQ butteraugli tie band 2 % rel (abs floor 0.02).
 
-All SDR sources are NORMALIZED first (cv2 IMREAD_UNCHANGED -> pixels-only
-PNG rewrite): strips iCCP/eXIf/gAMA ancillary chunks that (a) crash
-cjxl 0.12's PNG reader on some imazen-26 captures ("Getting pixel data
-failed" on iCCP+eXIf screenshots) and (b) skew CMS-linearizing metric
-tools (the CLAUDE.md PNG-metadata butteraugli trap). Both encoders get
-the SAME normalized bytes; pixels are unchanged; any embedded profile is
-deliberately dropped (corpus-standard treat-as-sRGB simplification).
+All SDR sources are NORMALIZED first via zenpng (`zenpng normalize` ->
+pixels-only PNG rewrite, dogfooding our own PNG codec instead of OpenCV):
+strips iCCP/eXIf/gAMA ancillary chunks that (a) crash cjxl 0.12's PNG
+reader on some imazen-26 captures ("Getting pixel data failed" on
+iCCP+eXIf screenshots — zenpng decodes them fine) and (b) skew
+CMS-linearizing metric tools (the CLAUDE.md PNG-metadata butteraugli
+trap). Both encoders get the SAME normalized bytes; pixels are unchanged;
+any embedded profile is deliberately dropped (corpus-standard
+treat-as-sRGB simplification). Size-axis crops use `zenpng crop`.
 
 Usage:
   python3 scripts/scoreboard/run_scoreboard.py benchmarks/scoreboard/scoreboard_<date>.tsv
@@ -52,6 +54,10 @@ CJXL = Path.home() / "work/jxl-efforts/libjxl/build/tools/cjxl"
 DJXL = Path.home() / "work/jxl-efforts/libjxl/build/tools/djxl"
 ZEN_METRICS = Path.home() / "work/zen/zenmetrics/target/release/zen-metrics"
 HDR_SCORER = REPO / "target/release/examples/hdr_pq_butteraugli"
+# Reference-PNG normalization/crop is dogfooded through our own PNG codec
+# (zenpng) instead of OpenCV/cv2 — zenpng decodes Display-P3 / EXIF captures
+# that crash libjxl's PNG reader and re-emits a pixels-only PNG.
+ZENPNG = Path.home() / "work/zen/zenpng/target/release/zenpng"
 BENCH_SET = REPO / "benchmarks/lossless_bench_set_2026-06-10.tsv"
 HDR_CROPS = Path("/mnt/v/input/jxl-encoder/hdr-crops-512")
 HDR_IDS = ["1069", "1070", "1230", "1239", "1493", "1521"]
@@ -117,10 +123,11 @@ def score_hdr(ref, dist):
 
 
 def pixels_exact(ref, dist):
-    import cv2
-    a = cv2.imread(str(ref), cv2.IMREAD_UNCHANGED)
-    b = cv2.imread(str(dist), cv2.IMREAD_UNCHANGED)
-    return a is not None and b is not None and a.shape == b.shape and bool((a == b).all())
+    # Lossless-exactness gate through our own decoder (zenpng), consistently on
+    # both sides. `zenpng compare` exits 0 for EXACT and DIFFER alike; a real
+    # error (missing file / 16-bit) raises via run() and fails the cell loudly.
+    out = run([ZENPNG, "compare", str(ref), str(dist)])
+    return out.strip().startswith("EXACT")
 
 
 def axis_bytes(ours, cjxl):
@@ -182,22 +189,16 @@ def hdr_crop_paths():
 
 
 def normalize(src, cache_dir):
-    """Pixels-only PNG rewrite (see module docstring). Cached per run."""
-    import cv2
+    """Pixels-only PNG rewrite via zenpng (see module docstring). Cached per run."""
     out = cache_dir / (Path(src).stem + ".norm.png")
     if not out.exists():
-        img = cv2.imread(str(src), cv2.IMREAD_UNCHANGED)
-        assert img is not None, f"cv2 failed to read {src}"
-        cv2.imwrite(str(out), img)
+        run([ZENPNG, "normalize", str(src), str(out)])
     return str(out)
 
 
 def make_crop(src, side, out):
-    import cv2
-    img = cv2.imread(str(src), cv2.IMREAD_UNCHANGED)
-    h, w = img.shape[:2]
-    y0, x0 = max(0, (h - side) // 2), max(0, (w - side) // 2)
-    cv2.imwrite(str(out), img[y0:y0 + side, x0:x0 + side])
+    """Centered side x side crop (clamped) via zenpng, pixels-only."""
+    run([ZENPNG, "crop", str(src), str(out), str(side)])
     return out
 
 
@@ -212,7 +213,7 @@ def main():
     if args.walls:
         sys.exit("wall axis not implemented in v1 (quiet-box zenbench grid required)")
 
-    for p in (OURS, CJXL, DJXL, ZEN_METRICS, HDR_SCORER):
+    for p in (OURS, CJXL, DJXL, ZEN_METRICS, HDR_SCORER, ZENPNG):
         assert Path(p).exists(), f"missing tool: {p}"
 
     done = set()
