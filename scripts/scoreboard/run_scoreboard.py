@@ -14,14 +14,17 @@ Cells v1:
     agree in direction beyond tolerance, else quality axis is TIE and
     the cell is flagged MIXED-METRICS)
   - SDR lossless: 43 picks x e5 + 13 core x e7 (quality axis = decoded
-    pixels must be EXACT for both encoders — cv2 IMREAD_UNCHANGED,
-    never PIL; a non-exact side forfeits the cell)
+    pixels must be EXACT for both encoders — `zenpng compare` through our
+    own decoder; a non-exact side forfeits the cell)
   - HDR lossy: 12 hdr-crops-512 x e{5,7} x d{0.5,1,2,4}
-    (quality = TWO-metric HDR guard: PQ-EOTF butteraugli @1000 nits AND
-    the shipped VDP2-lite, both lower-better, must agree in direction
-    beyond tolerance, else quality axis is TIE. SSIM2 is not HDR-aware so
-    it is not used here; flagged HDR-2METRIC. cvvdp slots in as a third
-    metric once zen-metrics is built — see agree_direction().)
+    (quality = THREE-metric HDR guard: PQ-EOTF butteraugli @1000 nits +
+    the shipped VDP2-lite (both lower-better) + CVVDP JOD (higher-better,
+    full-color, catches chroma-near-primaries errors VDP2-lite's
+    luminance-only model misses) must agree in direction beyond tolerance,
+    else quality axis is TIE. SSIM2 is not HDR-aware so it is not used
+    here; flagged HDR-3METRIC. cvvdp via `zenmetrics score --metric cvvdp
+    --hdr` needs a cICP transfer=16 PQ chunk, which the refs carry and
+    djxl preserves.)
   - Size axis: 64x64 + 256x256 center crops of 4 core picks x e7 x
     d{1,4} + lossless e7 (fixed-overhead regime)
 
@@ -55,7 +58,6 @@ REPO = Path(__file__).resolve().parents[2]
 OURS = REPO / "target/release/cjxl-rs"
 CJXL = Path.home() / "work/jxl-efforts/libjxl/build/tools/cjxl"
 DJXL = Path.home() / "work/jxl-efforts/libjxl/build/tools/djxl"
-ZEN_METRICS = Path.home() / "work/zen/zenmetrics/target/release/zen-metrics"
 HDR_SCORER = REPO / "target/release/examples/hdr_pq_butteraugli"
 # Second HDR quality metric: the SHIPPED VDP2-lite the encoder steers on
 # (compare_vdp2_planar). Luminance-adaptive HDR-VDP-2 subset — catches the
@@ -65,6 +67,15 @@ HDR_SCORER = REPO / "target/release/examples/hdr_pq_butteraugli"
 # which is exactly how the 48 HDR near-ties get correctly demoted from the
 # butteraugli-single-metric "loss" they used to be flagged as (ledger #26).
 VDP2_SCORER = REPO / "target/release/examples/hdr_vdp2_scorer"
+# Third HDR quality metric: CVVDP (ColorVideoVDP) CPU port via the zenmetrics
+# CLI. Unlike VDP2-lite it is FULL-COLOR (L/M/S cone responses), so it catches
+# the chroma-near-primaries HDR errors VDP2-lite (luminance-only) is blind to.
+# Scored through `zenmetrics score --metric cvvdp --hdr`; both the reference
+# crop and the djxl-decoded distorted PNG carry a cICP transfer=16 (PQ) chunk,
+# which the --hdr path requires. Output JOD 0..10, HIGHER = better (10 =
+# imperceptible). CPU-only, no GPU/CUDA. Binary is `zenmetrics` (NOT the stale
+# repo-root `zen-metrics` artifact).
+ZENMETRICS = Path.home() / "work/zen/zenmetrics/target/release/zenmetrics"
 # Reference-PNG normalization/crop is dogfooded through our own PNG codec
 # (zenpng) instead of OpenCV/cv2 — zenpng decodes Display-P3 / EXIF captures
 # that crash libjxl's PNG reader and re-emits a pixels-only PNG.
@@ -84,6 +95,11 @@ PQ_ABS_FLOOR = 0.02
 # HDR A/B, not by feel.
 VDP2_REL_TIE = 0.02
 VDP2_ABS_FLOOR = 0.02
+# CVVDP is a JOD (0..10, higher better). The scale compresses near 10 for good
+# encodes, so it takes an ABSOLUTE tie band. 0.1 JOD is a conservative noise
+# floor (cvvdp targets pycvvdp within 1e-3 JOD, so 0.1 is well above metric
+# noise). Re-tune only with a calibrated HDR A/B.
+CVVDP_ABS_TIE = 0.1
 
 # Size-axis sources: (stratum substring, label) — resolved against the
 # core picks so the crops track the canonical corpus.
@@ -92,7 +108,8 @@ SIZE_AXIS_STRATA = ["photos-png", "web-screenshots", "plots", "noaa-documents"]
 COLS = [
     "family", "cell", "image", "mode", "effort", "distance", "size_label",
     "ours_bytes", "cjxl_bytes", "bytes_delta_pct",
-    "ours_q1", "cjxl_q1", "ours_q2", "cjxl_q2", "quality_kind",
+    "ours_q1", "cjxl_q1", "ours_q2", "cjxl_q2", "ours_q3", "cjxl_q3",
+    "quality_kind",
     "bytes_axis", "quality_axis", "verdict", "flags",
 ]
 
@@ -123,25 +140,41 @@ def decode(jxl, png):
     run([DJXL, jxl, png])
 
 
+def _metric_token(out, prefix):
+    return float([t for t in out.split() if t.startswith(prefix)][-1].split("=")[1])
+
+
 def score_sdr(ref, dist):
-    out = run([ZEN_METRICS, "score", "--metric", "ssim2",
+    """[butteraugli_pnorm3 (lower better), ssim2 (higher better)]."""
+    out = run([ZENMETRICS, "score", "--metric", "ssim2",
                "--reference", ref, "--distorted", dist])
-    ssim2 = float([t for t in out.split() if t.startswith("ssim2=")][-1].split("=")[1])
-    out = run([ZEN_METRICS, "score", "--metric", "butteraugli",
+    ssim2 = _metric_token(out, "ssim2=")
+    out = run([ZENMETRICS, "score", "--metric", "butteraugli",
                "--reference", ref, "--distorted", dist])
-    bfly = float([t for t in out.split() if t.startswith("butteraugli_pnorm3=")][-1].split("=")[1])
-    return bfly, ssim2
+    bfly = _metric_token(out, "butteraugli_pnorm3=")
+    return [bfly, ssim2]
 
 
 def score_hdr(ref, dist):
-    """Two HDR quality metrics, both PQ-EOTF linearized @1000 nits, both
-    lower = better: (pq_butteraugli, vdp2_lite). VDP2-lite is the shipped
-    in-loop HDR metric; pairing it with pq_butteraugli turns the HDR quality
-    axis into a two-metric agreement guard (disagreement → TIE), the HDR
-    analogue of the SDR butteraugli+ssim2 guard."""
+    """Three HDR quality metrics: [pq_butteraugli, vdp2_lite, cvvdp].
+    pq_butteraugli + vdp2_lite are PQ-EOTF linearized @1000 nits, LOWER =
+    better; cvvdp is JOD 0..10, HIGHER = better. VDP2-lite is the shipped
+    in-loop metric (luminance-only); cvvdp is full-color (L/M/S cones) and
+    catches the chroma-near-primaries errors VDP2-lite is blind to. Together
+    they form a three-metric HDR agreement guard (disagreement → TIE)."""
     bfly = float(run([HDR_SCORER, ref, dist]).strip().split()[-1])
     vdp2 = float(run([VDP2_SCORER, ref, dist]).strip().split()[-1])
-    return bfly, vdp2
+    cvvdp = score_cvvdp(ref, dist)
+    return [bfly, vdp2, cvvdp]
+
+
+def score_cvvdp(ref, dist):
+    """CVVDP JOD (0..10, higher = better) via zenmetrics. Both PNGs must carry
+    a cICP transfer=16 (PQ) chunk — the hdr-crops-512 refs do, and djxl
+    preserves it on the decoded distorted PNG (our .jxl declares PQ)."""
+    out = run([ZENMETRICS, "score", "--metric", "cvvdp", "--hdr",
+               "--reference", ref, "--distorted", dist])
+    return _metric_token(out, "cvvdp_cpu_")
 
 
 def pixels_exact(ref, dist):
@@ -180,21 +213,25 @@ def agree_direction(dirs):
     return "TIE", "MIXED-METRICS"
 
 
-def axis_quality_sdr(ob, cb, os2, cs2):
+def axis_quality_sdr(oqs, cqs):
     # butteraugli_pnorm3 (lower better) + ssim2 (higher better).
-    d1 = metric_dir(ob, cb, True, BFLY_REL_TIE, BFLY_ABS_FLOOR)
-    d2 = "TIE" if abs(os2 - cs2) <= SSIM2_TIE else ("OURS" if os2 > cs2 else "CJXL")
+    d1 = metric_dir(oqs[0], cqs[0], True, BFLY_REL_TIE, BFLY_ABS_FLOOR)
+    d2 = "TIE" if abs(oqs[1] - cqs[1]) <= SSIM2_TIE else ("OURS" if oqs[1] > cqs[1] else "CJXL")
     return agree_direction([d1, d2])
 
 
-def axis_quality_hdr(ob, cb, ov, cv):
-    # Two-metric HDR guard: pq_butteraugli + vdp2-lite, BOTH lower = better.
-    # Where they disagree the cell is a TIE — which is precisely what demotes
-    # the 48 butteraugli-single-metric HDR near-ties to noise (ledger #26).
-    d1 = metric_dir(ob, cb, True, PQ_REL_TIE, PQ_ABS_FLOOR)
-    d2 = metric_dir(ov, cv, True, VDP2_REL_TIE, VDP2_ABS_FLOOR)
-    ax, flag = agree_direction([d1, d2])
-    return ax, ("HDR-2METRIC" if not flag else "HDR-2METRIC;" + flag)
+def axis_quality_hdr(oqs, cqs):
+    # Three-metric HDR guard: pq_butteraugli (lower better) + vdp2-lite (lower
+    # better) + cvvdp JOD (higher better). Any disagreement → TIE — which
+    # demotes the butteraugli-single-metric HDR near-ties to noise (ledger #26)
+    # AND lets cvvdp's chroma awareness break ties vdp2-lite (luminance-only)
+    # can't. cvvdp direction is inverted (higher = better) vs the two bfly-like
+    # metrics.
+    d1 = metric_dir(oqs[0], cqs[0], True, PQ_REL_TIE, PQ_ABS_FLOOR)
+    d2 = metric_dir(oqs[1], cqs[1], True, VDP2_REL_TIE, VDP2_ABS_FLOOR)
+    d3 = "TIE" if abs(oqs[2] - cqs[2]) <= CVVDP_ABS_TIE else ("OURS" if oqs[2] > cqs[2] else "CJXL")
+    ax, flag = agree_direction([d1, d2, d3])
+    return ax, ("HDR-3METRIC" if not flag else "HDR-3METRIC;" + flag)
 
 
 def verdict(bax, qax):
@@ -251,7 +288,7 @@ def main():
     if args.walls:
         sys.exit("wall axis not implemented in v1 (quiet-box zenbench grid required)")
 
-    for p in (OURS, CJXL, DJXL, ZEN_METRICS, HDR_SCORER, VDP2_SCORER, ZENPNG):
+    for p in (OURS, CJXL, DJXL, ZENMETRICS, HDR_SCORER, VDP2_SCORER, ZENPNG):
         assert Path(p).exists(), f"missing tool: {p}"
 
     done = set()
@@ -264,10 +301,14 @@ def main():
         f = open(out_path, "w")
         f.write("\t".join(COLS) + "\n")
 
+    verdict_i = COLS.index("verdict")
+    flags_i = COLS.index("flags")
+    bd_i = COLS.index("bytes_delta_pct")
+
     def emit(row):
         f.write("\t".join(str(x) for x in row) + "\n")
         f.flush()
-        print(f"{row[17]:>15} {row[1]}  bytes {row[9]:+.2f}%  [{row[18]}]",
+        print(f"{row[verdict_i]:>15} {row[1]}  bytes {row[bd_i]:+.2f}%  [{row[flags_i]}]",
               file=sys.stderr, flush=True)
 
     def lossy_cell(family, name, src, effort, dist, scorer, size_label="native",
@@ -281,11 +322,11 @@ def main():
             cb = encode(CJXL, src, f"{tmp}_c.jxl", "lossy", effort, dist)
             decode(f"{tmp}_o.jxl", f"{tmp}_o.png")
             decode(f"{tmp}_c.jxl", f"{tmp}_c.png")
-            oq1, oq2 = scorer(src, f"{tmp}_o.png")
-            cq1, cq2 = scorer(src, f"{tmp}_c.png")
+            oqs = scorer(src, f"{tmp}_o.png")
+            cqs = scorer(src, f"{tmp}_c.png")
         except RuntimeError as e:
             emit([family, cell, name, "lossy", effort, dist, size_label,
-                  -1, -1, 0.0, -1, -1, -1, -1, "ERROR", "ERR", "ERR",
+                  -1, -1, 0.0, -1, -1, -1, -1, -1, -1, "ERROR", "ERR", "ERR",
                   "ERROR", str(e)[:120].replace("\t", " ").replace("\n", " ")])
             return
         finally:
@@ -293,14 +334,15 @@ def main():
                 Path(tmp + s).unlink(missing_ok=True)
         bax, bd = axis_bytes(ob, cb)
         if qkind == "hdr":
-            qax, flag = axis_quality_hdr(oq1, cq1, oq2, cq2)
-            kind = "pq_bfly+vdp2"
+            qax, flag = axis_quality_hdr(oqs, cqs)
+            kind = "pq_bfly+vdp2+cvvdp"
         else:
-            qax, flag = axis_quality_sdr(oq1, cq1, oq2, cq2)
+            qax, flag = axis_quality_sdr(oqs, cqs)
             kind = "bfly_pnorm3+ssim2"
+        oq3 = oqs[2] if len(oqs) > 2 else ""
+        cq3 = cqs[2] if len(cqs) > 2 else ""
         emit([family, cell, name, "lossy", effort, dist, size_label,
-              ob, cb, round(bd, 3), oq1, cq1,
-              oq2 if oq2 is not None else "", cq2 if cq2 is not None else "",
+              ob, cb, round(bd, 3), oqs[0], cqs[0], oqs[1], cqs[1], oq3, cq3,
               kind, bax, qax, verdict(bax, qax), flag])
 
     def lossless_cell(family, name, src, effort, size_label="native"):
@@ -317,7 +359,7 @@ def main():
             c_exact = pixels_exact(src, f"{tmp}_c.png")
         except RuntimeError as e:
             emit([family, cell, name, "lossless", effort, 0, size_label,
-                  -1, -1, 0.0, -1, -1, -1, -1, "ERROR", "ERR", "ERR",
+                  -1, -1, 0.0, -1, -1, -1, -1, -1, -1, "ERROR", "ERR", "ERR",
                   "ERROR", str(e)[:120].replace("\t", " ").replace("\n", " ")])
             return
         finally:
@@ -331,7 +373,7 @@ def main():
             qax, flag = "TIE", ""
         bax, bd = axis_bytes(ob, cb)
         emit([family, cell, name, "lossless", effort, 0, size_label,
-              ob, cb, round(bd, 3), int(o_exact), int(c_exact), "", "",
+              ob, cb, round(bd, 3), int(o_exact), int(c_exact), "", "", "", "",
               "pixel_exact", bax, qax, verdict(bax, qax), flag])
 
     all_rows, core = load_bench_set()

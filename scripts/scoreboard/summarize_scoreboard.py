@@ -35,6 +35,7 @@ from collections import Counter, defaultdict
 # Noise floors — MUST match run_scoreboard.py's tie bands.
 BFLY_REL = 0.02      # butteraugli / pq_butteraugli / vdp2 relative tie band
 SSIM_ABS = 0.25      # ssim2 absolute tie band
+CVVDP_ABS = 0.1      # cvvdp JOD absolute tie band (higher = better)
 BYTES_NEAR = 2.0     # |bytes delta %| below this (with no quality loss) = near-tie
 
 
@@ -56,6 +57,16 @@ def rel_dir(ours, cjxl, lower_better, rel=BFLY_REL):
     return "OURS" if better else "CJXL"
 
 
+def abs_dir(ours, cjxl, higher_better, band):
+    """'OURS' / 'CJXL' / 'TIE' for an absolute-tie-band metric (ssim2, cvvdp)."""
+    if ours is None or cjxl is None:
+        return "TIE"
+    if abs(ours - cjxl) <= band:
+        return "TIE"
+    better = ours > cjxl if higher_better else ours < cjxl
+    return "OURS" if better else "CJXL"
+
+
 def quality_dirs(r):
     """List of per-metric quality directions for a cell, per its quality_kind.
     Empty list => quality axis carries no signal (e.g. lossless: exact both
@@ -63,17 +74,28 @@ def quality_dirs(r):
     kind = r.get("quality_kind", "")
     q1o, q1c = num(r["ours_q1"]), num(r["cjxl_q1"])
     q2o, q2c = num(r["ours_q2"]), num(r["cjxl_q2"])
+    q3o, q3c = num(r.get("ours_q3", "")), num(r.get("cjxl_q3", ""))
     if kind == "bfly_pnorm3+ssim2":
-        d2 = "TIE"
-        if q2o is not None and q2c is not None:
-            d2 = "TIE" if abs(q2o - q2c) <= SSIM_ABS else ("OURS" if q2o > q2c else "CJXL")
-        return [rel_dir(q1o, q1c, True), d2]
+        return [rel_dir(q1o, q1c, True), abs_dir(q2o, q2c, True, SSIM_ABS)]
+    if kind == "pq_bfly+vdp2+cvvdp":  # 3-metric HDR: bfly+vdp2 lower, cvvdp higher
+        return [rel_dir(q1o, q1c, True), rel_dir(q2o, q2c, True),
+                abs_dir(q3o, q3c, True, CVVDP_ABS)]
     if kind == "pq_bfly+vdp2":  # two-metric HDR: both lower = better
         return [rel_dir(q1o, q1c, True), rel_dir(q2o, q2c, True)]
     if kind == "pq_bfly":       # legacy single-metric HDR
         return [rel_dir(q1o, q1c, True)]
     # pixel_exact (lossless) / unknown: no quality signal
     return []
+
+
+def qstr(r):
+    """Human-readable 'ours vs cjxl' quality string, including q2/q3 when set."""
+    s = f"{r['ours_q1']} vs {r['cjxl_q1']}"
+    if r.get("ours_q2"):
+        s += f" / q2 {r['ours_q2']} vs {r['cjxl_q2']}"
+    if r.get("ours_q3"):
+        s += f" / q3 {r['ours_q3']} vs {r['cjxl_q3']}"
+    return s
 
 
 def calibrate(r):
@@ -162,10 +184,7 @@ def main():
         w("| cell | verdict | bytes Δ% | quality (ours vs cjxl) | kind | flags |\n")
         w("|---|---|---|---|---|---|\n")
         for r in sorted(real, key=lambda r: -abs(num(r["bytes_delta_pct"]) or 0)):
-            q = f"{r['ours_q1']} vs {r['cjxl_q1']}"
-            if r["ours_q2"]:
-                q += f" / q2 {r['ours_q2']} vs {r['cjxl_q2']}"
-            w(f"| {r['cell']} | {r['verdict']} | {r['bytes_delta_pct']} | {q} | "
+            w(f"| {r['cell']} | {r['verdict']} | {r['bytes_delta_pct']} | {qstr(r)} | "
               f"{r.get('quality_kind', '')} | {r['flags']} |\n")
     else:
         w("\n**Zero REAL losses after calibration — goal floor holds on these axes.**\n")
@@ -176,10 +195,7 @@ def main():
         w("|---|---|---|---|---|\n")
         for r in cal["TRADEOFF"] + cal["NEAR_TIE"]:
             bucket = "TRADEOFF" if r in cal["TRADEOFF"] else "NEAR_TIE"
-            q = f"{r['ours_q1']} vs {r['cjxl_q1']}"
-            if r["ours_q2"]:
-                q += f" / q2 {r['ours_q2']} vs {r['cjxl_q2']}"
-            w(f"| {r['cell']} | {bucket} | {r['bytes_delta_pct']} | {q} | "
+            w(f"| {r['cell']} | {bucket} | {r['bytes_delta_pct']} | {qstr(r)} | "
               f"{r.get('quality_kind', '')} |\n")
 
 
