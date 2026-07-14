@@ -248,11 +248,11 @@ struct Args {
     epf: i8,
 
     /// Adaptive-dispatch policy for the per-block EPF sharpness
-    /// search (W36-2). `always-select` (default) runs the full
-    /// search whenever EPF + dynamic sharpness are active —
-    /// byte-identical to historical builds. `auto` skips the
-    /// per-block search on smooth regions (uniform default
-    /// sharpness emitted instead). `always-default` skips the
+    /// search (W36-2). `auto` (default) skips the per-block search
+    /// on smooth regions (uniform default sharpness emitted
+    /// instead). `always-select` runs the full search whenever EPF
+    /// and dynamic sharpness are active — byte-identical to
+    /// historical builds. `always-default` skips the
     /// search unconditionally. The search is `compute_epf_sharpness`
     /// in `vardct/epf.rs`; per the W36-1 baseline it is 45.5% of e6
     /// wall-clock and 33.8% of e7.
@@ -779,8 +779,10 @@ fn main() {
             "greedy" => Lz77Method::Greedy,
             "optimal" => Lz77Method::Optimal,
             other => {
-                eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
-                Lz77Method::Greedy
+                eprintln!(
+                    "Error: unknown --lz77-method '{other}' (expected rle | greedy | optimal)"
+                );
+                std::process::exit(1);
             }
         });
 
@@ -789,8 +791,11 @@ fn main() {
         "always-default" | "always_default" | "default" | "skip" => EpfDispatch::AlwaysDefault,
         "auto" => EpfDispatch::Auto,
         other => {
-            eprintln!("Unknown EPF dispatch policy: {}. Using 'auto'.", other);
-            EpfDispatch::default()
+            eprintln!(
+                "Error: unknown --epf-dispatch '{other}' (expected always-select | \
+                 always-default | auto)"
+            );
+            std::process::exit(1);
         }
     };
 
@@ -800,10 +805,10 @@ fn main() {
         "auto" => PixelLossDispatch::Auto,
         other => {
             eprintln!(
-                "Unknown pixel-loss dispatch policy: {}. Using 'always-on'.",
-                other
+                "Error: unknown --pixel-loss-dispatch '{other}' (expected always-on | \
+                 always-off | auto)"
             );
-            PixelLossDispatch::AlwaysOn
+            std::process::exit(1);
         }
     };
 
@@ -990,6 +995,10 @@ fn main() {
         let _ = (args.lossless_jpeg, args.no_lossless_jpeg, is_jpeg_ext);
         if args.lossless_jpeg {
             eprintln!("Error: --lossless-jpeg requires the `jpeg-reencoding` cargo feature.");
+            std::process::exit(1);
+        }
+        if args.jpeg_coarsen.is_some() {
+            eprintln!("Error: --jpeg-coarsen requires the `jpeg-reencoding` cargo feature.");
             std::process::exit(1);
         }
     }
@@ -1652,6 +1661,9 @@ fn main() {
                 tiny.use_lf_frame = true;
             }
 
+            if args.streaming_input && !args.quiet {
+                eprintln!("Warning: --streaming-input ignored — --rate-control encodes in memory");
+            }
             let linear_rgb = srgb_u8_to_linear_f32(&data);
             let rc_config = jxl_encoder::vardct::RateControlConfig {
                 max_iterations: args.rc_iterations,
@@ -1669,7 +1681,7 @@ fn main() {
                 println!("Rate control converged in {} iterations", iters);
             }
             result
-                .map(|(data, _)| data)
+                .map(|(data, _)| EncodeOutput::Bytes(data))
                 .map_err(|e| jxl_encoder::at(jxl_encoder::EncodeError::from(e)))
         } else if args.streaming_input
             && !args.progressive
@@ -1735,7 +1747,7 @@ fn main() {
                     args.premultiply,
                 ));
             }
-            req.encode(&data)
+            req.encode(&data).map(EncodeOutput::Bytes)
         }
 
         #[cfg(not(feature = "rate-control"))]
@@ -1809,7 +1821,7 @@ fn main() {
                         args.premultiply,
                     ));
                 }
-                req.encode(&data)
+                req.encode(&data).map(EncodeOutput::Bytes)
             }
         }
     } else {
@@ -1907,6 +1919,12 @@ fn main() {
         // GrayAlpha path below exercises the new writer.
 
         if ec_resampling_active {
+            if args.streaming_input && !args.quiet {
+                eprintln!(
+                    "Warning: --streaming-input ignored — --ec_resampling pre-splits the \
+                     alpha plane in memory"
+                );
+            }
             // Split: bpp = 4 for RGBA/BGRA, bpp = 2 for GrayAlpha.
             let (bpp, color_layout, color_bpp) = match layout {
                 PixelLayout::Rgba8 => (4, PixelLayout::Rgb8, 3),
@@ -1954,7 +1972,7 @@ fn main() {
             if let Some(q) = args.brotli_effort {
                 req = req.with_brotli_metadata(q);
             }
-            req.encode(&color)
+            req.encode(&color).map(EncodeOutput::Bytes)
         } else if args.streaming_input && !args.lossy_palette {
             if !args.quiet {
                 println!(
@@ -2008,7 +2026,7 @@ fn main() {
             if let Some(q) = args.brotli_effort {
                 req = req.with_brotli_metadata(q);
             }
-            req.encode(&data)
+            req.encode(&data).map(EncodeOutput::Bytes)
         }
     };
 
@@ -2022,25 +2040,27 @@ fn main() {
 
     let encode_time = start.elapsed();
 
-    // Write output (skip if --streaming-output already wrote it directly)
-    if !(args.streaming_input && args.streaming_output) {
-        match write_output(&args.output, &encoded) {
-            Ok(()) => {}
-            Err(e) => {
+    // Write the output unless the encode arm proved it already streamed the
+    // bytes to disk. (Never key this off the CLI flags: arms that fall back
+    // to in-memory encoding must still produce an output file.)
+    let encoded_bytes = match encoded {
+        EncodeOutput::Bytes(bytes) => {
+            if let Err(e) = write_output(&args.output, &bytes) {
                 eprintln!("Error writing output: {}", e);
                 std::process::exit(1);
             }
-        };
-    }
+            Some(bytes)
+        }
+        EncodeOutput::WrittenDirectly => None,
+    };
 
     let input_size = std::fs::metadata(&args.input).map(|m| m.len()).unwrap_or(0);
-    let output_size = if args.streaming_input && args.streaming_output {
+    let output_size = match &encoded_bytes {
+        Some(bytes) => bytes.len() as u64,
         // `finish_to` wrote the bytes directly; ask the FS for the size
-        std::fs::metadata(&args.output)
+        None => std::fs::metadata(&args.output)
             .map(|m| m.len())
-            .unwrap_or(0)
-    } else {
-        encoded.len() as u64
+            .unwrap_or(0),
     };
     let ratio = if input_size > 0 {
         output_size as f64 / input_size as f64
@@ -2093,9 +2113,26 @@ fn container_mode_from_cli(v: i8) -> ContainerMode {
 /// incremental path end-to-end; bitstreams are bit-identical to the
 /// bulk one-shot path on the eligible subset.
 ///
-/// When `streaming_output` is `true` the resulting `Vec<u8>` is empty —
-/// bytes were streamed directly to `output_path` via
-/// [`LossyEncoder::finish_to`].
+/// When `streaming_output` is `true` the bytes are streamed directly to
+/// `output_path` via [`LossyEncoder::finish_to`] and
+/// [`EncodeOutput::WrittenDirectly`] is returned.
+/// Outcome of the one-shot encode dispatch: either encoded bytes the caller
+/// still has to write to the output path, or proof that a streaming encoder
+/// already wrote them there directly via `finish_to`.
+///
+/// Forcing every encode arm to state which one happened is the point: the
+/// old scheme keyed the "skip `write_output`" decision off the raw
+/// `--streaming-input`/`--streaming-output` flags, so any arm that fell back
+/// to in-memory encoding while both flags were set (progressive modes,
+/// `--rate-control`, `--lossy-palette`, `--ec_resampling`) silently produced
+/// no output file at all and still exited 0.
+enum EncodeOutput {
+    /// In-memory codestream; caller must write it to the output path.
+    Bytes(Vec<u8>),
+    /// A streaming encoder already wrote the output file via `finish_to`.
+    WrittenDirectly,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn encode_lossy_streaming(
     cfg: &LossyConfig,
@@ -2110,7 +2147,7 @@ fn encode_lossy_streaming(
     premultiply: i8,
     output_path: &std::path::Path,
     streaming_output: bool,
-) -> Result<Vec<u8>, jxl_encoder::At<jxl_encoder::EncodeError>> {
+) -> Result<EncodeOutput, jxl_encoder::At<jxl_encoder::EncodeError>> {
     let mut enc = cfg.encoder(width, height, layout)?;
     if let Some(meta) = metadata {
         if let Some(icc) = meta.icc_profile() {
@@ -2172,9 +2209,9 @@ fn encode_lossy_streaming(
         })?;
         let writer = BufWriter::new(file);
         let _result = enc.finish_to(writer)?;
-        Ok(Vec::new())
+        Ok(EncodeOutput::WrittenDirectly)
     } else {
-        enc.finish()
+        enc.finish().map(EncodeOutput::Bytes)
     }
 }
 
@@ -2197,7 +2234,7 @@ fn encode_lossless_streaming(
     premultiply: i8,
     output_path: &std::path::Path,
     streaming_output: bool,
-) -> Result<Vec<u8>, jxl_encoder::At<jxl_encoder::EncodeError>> {
+) -> Result<EncodeOutput, jxl_encoder::At<jxl_encoder::EncodeError>> {
     let mut enc = cfg.encoder(width, height, layout)?;
     if let Some(meta) = metadata {
         if let Some(icc) = meta.icc_profile() {
@@ -2259,9 +2296,9 @@ fn encode_lossless_streaming(
         })?;
         let writer = BufWriter::new(file);
         let _result = enc.finish_to(writer)?;
-        Ok(Vec::new())
+        Ok(EncodeOutput::WrittenDirectly)
     } else {
-        enc.finish()
+        enc.finish().map(EncodeOutput::Bytes)
     }
 }
 

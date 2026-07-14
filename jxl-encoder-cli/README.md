@@ -49,7 +49,7 @@ Notes:
 | `--dct8-only` | off | Force DCT8 only |
 | `--noise` | off | Enable noise synthesis |
 | `--denoise` | off | Wiener denoising pre-filter (implies --noise) |
-| `--no-error-diffusion` | on | Disable error diffusion |
+| `--error-diffusion` | off | Enable error diffusion in AC quantization (libjxl accepts but never uses it) |
 | `--lz77` | off | Enable LZ77 backward references (ANS two-pass only) |
 | `--tree-learning` | off | Content-adaptive MA tree for lossless |
 | `--squeeze` | off | Haar wavelet transform for lossless |
