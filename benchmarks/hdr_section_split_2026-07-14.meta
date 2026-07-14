@@ -1,0 +1,17 @@
+HDR-lossy RD gap characterization (#74, task #11)
+commit: f5aa60b9 (working @ = keep-best f5aa60b9 child)
+host: lilith
+date: 2026-07-14
+cjxl: ~/work/jxl-efforts/libjxl/build/tools/cjxl (v0.11.x)
+ours: target/release/cjxl-rs (post keep-best f5aa60b9)
+crops: /mnt/v/input/jxl-encoder/hdr-crops-512/ (PQ transfer=16, 512x512)
+settings: e5 d4 (VarDCT lossy); section sizes via jxl-oxide info --with-offset
+lfglobal sub-breakdown via --features debug-tokens (DC_global detailed breakdown)
+
+KEY FINDINGS (see HYPOTHESIS_LEDGER.md #29):
+- Distance knob EXHAUSTED: iso-vdp2-quality ours +4.5% bytes vs cjxl (RD gap, not calibration).
+- 95% of gap in DC+AC COEFFICIENT coding (diffuse); ~10% in LfGlobal signaling.
+- LfGlobal overage is GENERAL not HDR-specific: our fixed DC context_tree = 983 bits
+  (~123B) on BOTH SDR and HDR — the static 313-token CONTEXT_TREE_TOKENS ported from
+  libjxl-TINY (context_tree.rs:33). cjxl's inferred DC tree ~26B. Taxes small files.
+- dc_tree_learning goes WRONG way (+0.7-1.6% at e8). Shrink needs hand-designed compact tree.

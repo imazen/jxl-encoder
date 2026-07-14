@@ -1,0 +1,3 @@
+image	kind	dequant_dc_bits	quant_scales_bits	block_ctx_map_bits	context_tree_bits	dc_entropy_code_bits	lfglobal_bytes_ours	lfglobal_bytes_cjxl
+1239.q1	HDR_512	1	20	88	983	2104	400	330
+1001682	SDR_512	1	20	88	983	1776	359	262

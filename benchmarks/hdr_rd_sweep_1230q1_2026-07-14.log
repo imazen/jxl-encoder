@@ -1,0 +1,8 @@
+enc              bytes  vs_cjxl   pq_bfly     vdp2   cvvdp  quality-vs-cjxl(tie=2%rel / 0.1abs)
+cjxl d4.0        17073       --    4.0455   2.2727  9.8210  ANCHOR
+ours d4.0        17979   +5.31%    4.0304   2.2534  9.8235  bfly:tie vdp2:tie cvvdp:tie
+ours d4.25       17414   +2.00%    4.7026   2.3377  9.8049  bfly:OURS+ vdp2:OURS+ cvvdp:tie
+ours d4.5        16656   -2.44%    4.2901   2.4136  9.7839  bfly:OURS+ vdp2:OURS+ cvvdp:tie
+ours d4.75       16041   -6.04%    4.9571   2.5090  9.7603  bfly:OURS+ vdp2:OURS+ cvvdp:tie
+ours d5.0        15526   -9.06%    4.8485   2.5848  9.7417  bfly:OURS+ vdp2:OURS+ cvvdp:tie
+ours d5.5        14435  -15.45%    4.9039   2.7661  9.6849  bfly:OURS+ vdp2:OURS+ cvvdp:cjxl+

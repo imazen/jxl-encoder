@@ -753,6 +753,32 @@ measurement at equal or better coverage.
   regressed ~190-byte synthetic fixtures (Huffman/16-bit/error-diffusion, +1..2
   bytes, documented-acceptable). Libjxl byte-lock 5/5 UNCHANGED; hash-locks
   regenerated. Ledger #28, LIBJXL_DIVERGENCES.md `EffortProfile.cfl_keep_best`.
+- **HDR-lossy RD gap — CHARACTERIZED as a HARD diffuse RD-efficiency gap
+  (2026-07-14, #74 task #11, ledger #29).** 25 scoreboard real losses: cjxl-rs
+  spends +2..5 % bytes for HDR quality 3-metric-TIED (pq_butteraugli/VDP2-lite/
+  CVVDP) at e5/e7 d2-4 on PQ 512² crops. **RULED OUT — the calibration-nudge
+  hypothesis**: the distance knob is EXHAUSTED (`benchmarks/hdr_rd_sweep_1230q1_
+  2026-07-14.log`) — sweeping OUR d4.0→5.5, at iso-vdp2-quality ours is still
+  **+4.5 %** bytes vs cjxl; coarsening degrades vdp2/cvvdp faster than it saves
+  bytes. cjxl's HDR RD curve genuinely dominates ours; this is NOT a quant offset
+  a distance-nudge closes. (pq_bfly is a NOISY max-norm — non-monotonic across
+  distance — use vdp2/cvvdp as arbiters.) **Section split** (`benchmarks/hdr_
+  section_split_2026-07-14.tsv`, jxl-oxide `--with-offset`, 4 cells): LfGlobal
+  +12..27 %, DC +3..7 %, AC +1..4 % — **95 % of the gap is in DC+AC COEFFICIENT
+  coding (diffuse), only ~10 % LfGlobal signaling**. **KEY (general, not HDR-
+  specific)**: our fixed DC `context_tree` = **983 bits (~123 B) on BOTH SDR and
+  HDR** (`benchmarks/hdr_lfglobal_dctree_2026-07-14.tsv`, debug-tokens) — the
+  static 313-token `CONTEXT_TREE_TOKENS` **ported from libjxl-TINY**
+  (`vardct/context_tree.rs:33`); cjxl's inferred DC tree ≈26 B. This holdover
+  taxes SMALL files (HDR crops, size-axis) while amortizing to ~0 on the big SDR
+  images we win. **DO NOT reach for `dc_tree_learning` to shrink it** — it goes
+  the WRONG way (DC_TREE_VARIABLE at e8 COSTS +0.7-1.6 %, a quality/parity
+  feature). Shrinking needs a HAND-DESIGNED compact fixed DC tree, size-gated
+  (quality-neutral — DC is losslessly coded so tree choice is bytes-only — but
+  only ~11 % of the HDR gap; also helps size-axis 64². Regression-risky on large
+  files, so must size-gate). The 90 % (DC/AC coefficient RD on PQ content) is a
+  multi-week study. **VERDICT: no single lever; two documented multi-day next-
+  attempts, neither a quick chunk.**
 - **Buttloop memory reduction — measured options (2026-06-23, #93 follow-up).**
   Two threads investigated at the user's request:
   1. **jxl↔butteraugli XYB buffer-sharing is NOT viable** (definitive,
