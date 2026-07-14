@@ -283,10 +283,10 @@ jobs:
           prefix-key: v1-rust
 
       - name: Clippy (default features)
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Clippy (zensim-loop)
-        run: cargo clippy --workspace --features zensim-loop -- -D warnings
+        run: cargo clippy --workspace --all-targets --features zensim-loop -- -D warnings
 
 
   # ==========================================================================

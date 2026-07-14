@@ -27,6 +27,13 @@
   `::encode` via `.map_err(|e| e.decompose().0)`; now they return the traced `At`
   directly so the originating encode site survives in the error.
 
+### Changed
+- **CI clippy now runs with `--all-targets`** (and the pre-commit checklist
+  matches): test/example/bench targets carry their own feature unification
+  and lint surface — the zenjpeg nightly break and ~70 accumulated test-code
+  lints were invisible to the previous lib-only gate. The whole workspace is
+  now clean under `cargo clippy --workspace --all-targets -- -D warnings`.
+
 ### Documentation
 - 2026-07-13 maintenance-review pass: streaming-encoder rustdoc no longer
   claims input streaming avoids materializing the image (full-image internal

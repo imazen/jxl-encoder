@@ -925,8 +925,11 @@ just compare-visual source.png ours_decoded.png cjxl_decoded.png 4.0 [output_dir
 
 Run before every commit:
 ```bash
-cargo fmt && cargo clippy -- -D warnings && cargo test
+cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test
 ```
+(`--all-targets` is load-bearing: test/example/bench targets carry their own
+feature unification — the 2026-07 zenjpeg nightly break was only visible
+there, and CI enforces the same flags.)
 
 Run `just rd-regression` after any change to encoding, quantization, or entropy coding
 to verify no quality/size regressions.
