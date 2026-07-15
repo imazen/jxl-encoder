@@ -787,8 +787,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
         || mask1x1_p25.is_none_or(|p25| p25 >= BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25);
     let gate_fires = low_colour_p25_ok
         && (target_distance >= min_distance
-            || (w44_108_low_colour
-                && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
+            || (w44_108_low_colour && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
     if !gate_fires {
         return 1.0;
     }
