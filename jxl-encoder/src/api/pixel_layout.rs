@@ -80,17 +80,21 @@ pub enum PixelLayout {
     /// via [`crate::EncodeRequest::with_metadata`] →
     /// [`crate::ImageMetadata::icc_profile`]; without an ICC the decoder will
     /// fall back to interpreting the CMY planes as sRGB and the K
-    /// plane as an opaque extra channel. Lossless-only in this
-    /// chunk; lossy CMYK is not yet wired (would route C/M/Y through
-    /// VarDCT in XYB, which loses CMYK semantics). Closes #58.
+    /// plane as an opaque extra channel. Both lossless and one-shot
+    /// lossy encoding are wired: lossy routes C/M/Y through VarDCT
+    /// (XYB) via a naive `1-CMY × (1-K)` subtractive transform
+    /// (gamut-direction correct, not colorimetric — no ICC/SWOP
+    /// calibration yet) while K rides the Black extra channel
+    /// losslessly, so CMYK semantics survive the round-trip.
+    /// Streaming CMYK is not yet wired (one-shot only). Closes #58.
     ///
     /// Bumps codestream level to 10 (level 5 forbids the Black
     /// extra channel; see `compute_codestream_level`).
     Cmyk8,
     /// 16-bit CMYK, 8 bytes per pixel — native-endian u16 per channel
     /// (C, M, Y, K). Same `0 = full ink, 65535 = no ink` convention
-    /// as [`Self::Cmyk8`]; same lossless-only restriction. The Black
-    /// channel is signaled as 16-bit in the extra-channel header.
+    /// as [`Self::Cmyk8`]; same one-shot lossless-and-lossy support. The
+    /// Black channel is signaled as 16-bit in the extra-channel header.
     Cmyk16,
 }
 
@@ -153,8 +157,10 @@ impl PixelLayout {
     }
 
     /// Whether this layout is CMYK (3 colour channels + Black extra
-    /// channel). Encoded losslessly only; lossy CMYK would have to
-    /// pass C/M/Y through XYB and is not yet wired.
+    /// channel). One-shot lossless and lossy are both supported
+    /// (lossy passes C/M/Y through XYB via `1-CMY × (1-K)`, K stays
+    /// lossless on the Black extra channel); streaming CMYK is not
+    /// yet wired.
     pub const fn is_cmyk(self) -> bool {
         matches!(self, Self::Cmyk8 | Self::Cmyk16)
     }
