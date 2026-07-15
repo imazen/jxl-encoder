@@ -1240,6 +1240,26 @@ pub struct EffortProfile {
     /// `modular/tree_learn.rs::select_best_tree_multi_seed`.
     pub tree_learn_seeds: u8,
 
+    /// Cost-based modular tree self-repair (task #14, #24 lossless-docs gap).
+    /// When the fixed-stride tree-learning sample may be *stride-aliased*
+    /// (large gather stride + over-split tree + high clustered/ideal cost
+    /// ratio — the e5/e6 8/16-bit tree-lift path), learn a second tree from a
+    /// de-aliased randomized re-gather and keep whichever codes the ACTUAL
+    /// residuals cheaper by real ≤96-histogram-clustered ANS cost. Fixes
+    /// periodic-document aliasing (imazen-26 5336 `+36.9 % → +0.3 %`) with
+    /// ZERO regression — keeping the cheaper tree can never grow the file, and
+    /// non-aliased content (photos, flat docs; ratio ≈ 1.0) skips the second
+    /// pass via the ratio pre-filter ⇒ byte-identical. **ON for the lossless
+    /// path** (`lossless_reference`); **OFF for lossy** (`lossy_reference` —
+    /// the self-repair only fires on the large-stride lossless tree-lift, so
+    /// lossy stays byte-identical). Overridable at runtime via
+    /// `JXL_TREE_SELF_REPAIR=0/1`. Read by
+    /// `modular/encode.rs::tree_self_repair_should_try`. Strategy-invariant:
+    /// the lossless `EffortProfile` does not flow through
+    /// `ResolvedImprovements`, so this is a plain profile field, not a
+    /// per-strategy gate-registry gate.
+    pub tree_self_repair: bool,
+
     /// Number of butteraugli quantization-loop seeds to run in parallel,
     /// then pick the smallest-bytes result among those that meet the
     /// target butteraugli (RFC#45 pick #1 chunk 3 — lossy analog of
@@ -1469,6 +1489,10 @@ impl EffortProfile {
             // strategy-level `resolved.cfl_keep_best` in
             // `apply_section_c_cfl_newton_libjxl_parity` (Libjxl → off).
             cfl_keep_best: effort >= 7,
+            // task #14 (#24): the cost-based tree self-repair fires only on the
+            // large-stride lossless tree-lift (e5/e6). OFF for lossy keeps every
+            // lossy path byte-identical (lossy byte-lock + hash-locks unchanged).
+            tree_self_repair: false,
             cfl_newton: effort >= 7,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
@@ -1696,6 +1720,13 @@ impl EffortProfile {
             // N/A for lossless (no VarDCT CfL); keep shape parity, moot since
             // `cfl_two_pass: false` means refine_cfl_map never runs.
             cfl_keep_best: false,
+            // task #14 (#24): cost-based modular tree self-repair default-ON
+            // for the lossless path — fixes periodic-document stride aliasing
+            // (imazen-26 5336 `+36.9 % → +0.3 %`) with ZERO regression (keeps
+            // the cheaper of the fixed-stride vs de-aliased tree; non-aliased
+            // content skips the second pass via the ratio pre-filter ⇒
+            // byte-identical). Overridable via `JXL_TREE_SELF_REPAIR=0`.
+            tree_self_repair: true,
             cfl_newton: false,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,

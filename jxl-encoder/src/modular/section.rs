@@ -945,8 +945,11 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         // fires (gated to the base seed path, stride >= 8, non-trivial tree).
         let (all_tokens, nb_meta_tokens, group_ranges, tree) = if force_predictor.is_none()
             && riged_override.is_none()
-            && super::encode::tree_self_repair_should_try(seed_stride, tree.len())
-        {
+            && super::encode::tree_self_repair_should_try(
+                profile.tree_self_repair,
+                seed_stride,
+                tree.len(),
+            ) {
             // Cheap aliasing pre-filter (bounds the wall-time cost): a
             // stride-aliased tree loses far more to the ≤96-histogram
             // clustering than a well-sampled one, so its REAL clustered ANS

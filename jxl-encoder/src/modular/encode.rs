@@ -1824,30 +1824,47 @@ const TREE_SELF_REPAIR_COST_MARGIN: f64 = 0.98;
 /// miss a fix.
 const TREE_SELF_REPAIR_ALIASING_RATIO: f64 = 1.05;
 
-/// `JXL_TREE_SELF_REPAIR=1` opts into the content-agnostic aliased-tree
-/// self-repair (default OFF during validation ⇒ byte-identical). The repair
-/// learns the tree twice — once from the fixed-stride sample, once from a
-/// de-aliased randomized re-gather — and keeps whichever codes the real
-/// residuals cheaper (see [`tree_self_repair_should_try`] /
-/// [`tree_self_repair_keep_by_cost`]).
+/// Runtime override for the tree self-repair default (task #14 flip). The
+/// self-repair is now default-ON for the lossless path
+/// ([`crate::effort::EffortProfile::tree_self_repair`]) and OFF for lossy;
+/// `JXL_TREE_SELF_REPAIR=1` forces it ON, `=0` forces it OFF (paired-bench
+/// A/B), anything else / unset → `None` (keep the profile default). Mirrors the
+/// `parse_bool_zero_or_one` shape used by the lossy gate-registry env hooks.
+/// Read here directly rather than through the gate registry because the
+/// self-repair is a lossless-only feature and the lossless `EffortProfile` is
+/// strategy-invariant — it never flows through `ResolvedImprovements` /
+/// `apply_env_var_fallbacks`.
 #[cfg(feature = "std")]
-fn tree_self_repair_enabled() -> bool {
+fn tree_self_repair_env_override() -> Option<bool> {
     use std::sync::OnceLock;
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("JXL_TREE_SELF_REPAIR").is_some())
+    static OVERRIDE: OnceLock<Option<bool>> = OnceLock::new();
+    *OVERRIDE.get_or_init(
+        || match std::env::var("JXL_TREE_SELF_REPAIR").ok().as_deref() {
+            Some("1") => Some(true),
+            Some("0") => Some(false),
+            _ => None,
+        },
+    )
 }
 #[cfg(not(feature = "std"))]
-fn tree_self_repair_enabled() -> bool {
-    false
+fn tree_self_repair_env_override() -> Option<bool> {
+    None
 }
 
-/// Should we attempt an aliased-tree self-repair? True only when the feature
-/// is enabled AND the gather stride is large enough for aliasing to occur AND
-/// the fixed-stride tree is non-trivial (the node floor is a cost gate, not an
-/// aliasing test — see [`TREE_SELF_REPAIR_MIN_NODES`]). Shared by every
-/// tree-learning site so all paths use identical thresholds.
-pub(crate) fn tree_self_repair_should_try(stride: usize, tree_a_nodes: usize) -> bool {
-    tree_self_repair_enabled()
+/// Should we attempt an aliased-tree self-repair? True only when the feature is
+/// enabled AND the gather stride is large enough for aliasing to occur AND the
+/// fixed-stride tree is non-trivial (the node floor is a cost gate, not an
+/// aliasing test — see [`TREE_SELF_REPAIR_MIN_NODES`]). `profile_enabled` is
+/// [`crate::effort::EffortProfile::tree_self_repair`] (ON for the lossless
+/// path, OFF for lossy), overridable at runtime via
+/// [`tree_self_repair_env_override`]. Shared by every tree-learning site so all
+/// paths use identical thresholds.
+pub(crate) fn tree_self_repair_should_try(
+    profile_enabled: bool,
+    stride: usize,
+    tree_a_nodes: usize,
+) -> bool {
+    tree_self_repair_env_override().unwrap_or(profile_enabled)
         && stride >= TREE_SELF_REPAIR_MIN_STRIDE
         && tree_a_nodes >= TREE_SELF_REPAIR_MIN_NODES
 }

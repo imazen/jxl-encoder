@@ -744,7 +744,7 @@ measurement at equal or better coverage.
 ### Live follow-ons
 
 - **#24 lossless-docs stride-aliasing — MECHANISM FOUND + COST-BASED SELF-REPAIR
-  SHIPPED OPT-IN (2026-07-15, ledger #33, task #14).** Root cause (source-verified
+  DEFAULT-ON for the lossless path (2026-07-15, ledger #33, task #14).** Root cause (source-verified
   vs libjxl): our modular tree-learning sample gather uses a FIXED stride
   (`compute_gather_stride_from_profile`) that ALIASES against periodic document
   text-line spacing → non-representative sample → catastrophic tree over-split
@@ -762,13 +762,23 @@ measurement at equal or better coverage.
   1500-7859) and **ideal per-context entropy does NOT** (`estimate_token_cost`
   sees 1.7 % of the real 27 %) — ONLY the ≤96-histogram-clustered ANS cost
   (`build_entropy_code_ans_with_options`) reproduces the gap; a clustered/ideal
-  ratio > 1.05 is the cheap aliasing pre-filter. **Ships OPT-IN not default**:
-  should_try fires broadly at e5-e6 so the ratio's clustered build costs ~+30 %
-  e5 wall on ALL content (rdtime). **Default-on enabler (follow-on)**: cache the
-  loop's clustered_a build (`section.rs` self-repair) and reuse it for the
-  downstream Step-4 `build_entropy_code_ans_with_options` when tree_a wins → SKIP
-  path free → default-on ~0 cost on non-aliased content, then flip on for Zenjxl
-  (off for Libjxl byte-lock) + hash-lock regen. **e7 note**: self-repair fires
+  ratio > 1.05 is the cheap aliasing pre-filter. **NOW DEFAULT-ON (task #14 flip,
+  wins rd AND rdtime)**: (a) perf-opt (67d1dc91) caches the ratio gate's
+  clustered_a build and reuses it in the downstream Step-4
+  `build_entropy_code_ans_with_options` when tree_a wins (LZ77 off at e5/e6 ⇒
+  byte-exact; photo wall 1.3×→1.12×), so non-aliased content pays ~0; (b) it is a
+  plain `EffortProfile::tree_self_repair` field (`true` in `lossless_reference`,
+  `false` in `lossy_reference`), `JXL_TREE_SELF_REPAIR=0/1` a runtime override.
+  **NOT a gate-registry gate** — the modular/lossless path reads NO
+  strategy/`ResolvedImprovements` (lossless output is STRATEGY-INVARIANT;
+  `EncoderStrategy::Libjxl` makes no distinct lossless bitstream — we already
+  beat cjxl lossless, there is no libjxl-lossless parity target), so "off for
+  Libjxl" is vacuous and a per-strategy gate would be non-functional; drift count
+  stays 32. **NO hash-lock regen needed**: every fixture is lossless-e7/e9
+  (stride-2, no fire), lossy (field OFF), or below the 256-node floor → 53/53
+  byte-identical; 5/5 Libjxl byte-lock (LossyConfig) untouched. Validated (release,
+  default features, no env): 5336 e5 288293→211098 (−26.8 %, djxl AE=0 pixel-exact),
+  photos byte-identical, `=0` recovers 288293. **e7 note**: self-repair fires
   only at e5-e6 (tree-lift stride ≥ 8); e7's base path is stride-2 (no tree-lift)
   so it needs the paired `tree_sample_fraction` ×0.1 fix (drops the ×0.1 libjxl
   applies) to reach a de-aliasing stride. `benchmarks/lossless_{stride_alias,self_repair_ab}_2026-07-15.*`.
