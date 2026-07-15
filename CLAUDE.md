@@ -598,21 +598,26 @@ measurement at equal or better coverage.
   the 2026-06-10 A/B. (issue #43 chunk 2c, ae62c219)
 
 **Perceptual loop / butteraugli**
-- Buttloop screenshot qf-seed scale: gate ≥ d=3.5 plus the W44-108 m3<24
-  sub-band at d∈[2,3.5) (wedge-2 lowered 30→24), AND — since task #12
-  (2026-07-14) — the sub-band additionally requires `mask1x1_p25 ≥ 95`
-  (`BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25`, both the e5-7 resolver AND the
-  e8+ buttloop `auto_gate_fires`). The m3 axis LEAKS pure-white-bg low-colour
-  product PHOTOS at m3<24 (beard-oil m3=23.4, is_screenshot median=100 →
-  +112% vs cjxl distance-monotonicity violation); p25 separates them
-  (photos p25<90, low-colour SHIP screenshots p25≥98.9) where m3/fcbr/edge/
-  luma_var cannot. Don't re-widen to a flat d≥2.0 (codec_wiki e8 d=3
-  regression), don't lower the 4× scale constants without re-running the
-  W44-105 sweep, and don't raise the p25 floor above 95 without re-checking
-  imac_dark (98.9, the worst SHIP cell). The d≥3.5 MAIN band is NOT
-  p25-gated — its residual 9291-class misfire stays a HONEST-STOP follow-on
-  (p25 DOES separate windows95=52/imac_g3=100 there but needs own SHIP
-  validation). (W44-105/107/108, wedge 2, task #12)
+- Buttloop screenshot qf-seed scale: gate ≥ d=3.5 (main band) plus the
+  W44-108 m3<24 sub-band at d∈[2,3.5) (wedge-2 lowered 30→24), AND — since
+  task #12 (2026-07-14) — ALL LOW-COLOUR (m3<24) firing on BOTH bands
+  additionally requires `mask1x1_p25 ≥ 95` via the `(m3 ≥ 24 OR p25 ≥ 95)`
+  term (`BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25`, both the e5-7 resolver
+  AND the e8+ buttloop `auto_gate_fires`). The m3 axis LEAKS pure-white-bg
+  low-colour product PHOTOS at m3<24 (beard-oil 9290 m3=23.4, is_screenshot
+  median=100 → +112% sub-band / +136% main-band vs cjxl, distance-
+  monotonicity violation); p25 separates them (photos p25<90, low-colour
+  SHIP screenshots p25≥98.9) where m3/fcbr/edge/luma_var cannot. HIGH-colour
+  cells (m3≥24) short-circuit the p25 check → main-band behaviour byte-
+  identical. Don't re-widen to a flat d≥2.0 (codec_wiki e8 d=3 regression),
+  don't lower the 4× scale constants without re-running the W44-105 sweep,
+  and don't raise the p25 floor above 95 without re-checking imac_dark
+  (98.9, the worst SHIP cell). RESIDUAL (HIGH-colour only): 9291 (m3=28.2) /
+  windows95 (m3=27.2) still misfire at d≥3.5 — out of the low-colour scope;
+  p25 DOES separate them (windows95=52 vs imac_g3=100, first axis that does)
+  but no high-colour main-band WINNER is known and extending to m3∈[24,80)
+  needs its own SHIP validation (the re-baseline-screenshot-gates follow-on).
+  (W44-105/107/108, wedge 2, task #12)
 - No per-block mask1x1 bimodal scaling at e5-e7 — cjxl is NOT bimodal below e8;
   candidate only for the e8+ W44-105 path. LOW threshold bisection [70, 95] is
   conclusive. (W44-145)

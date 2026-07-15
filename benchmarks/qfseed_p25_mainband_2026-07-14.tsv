@@ -1,0 +1,20 @@
+image	m3	p25	class	d	bytes_e7	note
+9290_beard-oil	23.4	83.7	low-colour PHOTO (misfire)	1.99	62790	FIXED: fully monotone, low-colour main-band p25 exclude
+9290_beard-oil	23.4	83.7	low-colour PHOTO (misfire)	2.0	62533	sub-band exclude (3564728f)
+9290_beard-oil	23.4	83.7	low-colour PHOTO (misfire)	3.0	44420	lift off
+9290_beard-oil	23.4	83.7	low-colour PHOTO (misfire)	3.5	38671	was 86826 pre-extend (cliff); now lift off
+9290_beard-oil	23.4	83.7	low-colour PHOTO (misfire)	4.0	34345	was 77769 pre-extend
+9290_beard-oil	23.4	83.7	low-colour PHOTO (misfire)	5.0	28572	was 64948 pre-extend
+9291_ingredients	28.2	NA	HIGH-colour PHOTO (misfire, OUT OF SCOPE)	3.0	40546	high-colour: low-colour p25 gate does not reach it
+9291_ingredients	28.2	NA	HIGH-colour PHOTO (misfire, OUT OF SCOPE)	3.5	76061	STILL cliff +87.6% — residual high-colour main-band issue
+9291_ingredients	28.2	NA	HIGH-colour PHOTO (misfire, OUT OF SCOPE)	4.0	68525	residual
+9291_ingredients	28.2	NA	HIGH-colour PHOTO (misfire, OUT OF SCOPE)	5.0	57274	residual
+imac_dark	21.0	98.9	low-colour SHIP screenshot	3.5	234494	fires (lift on) — byte-size-identical vs pre-extend
+imac_dark	21.0	98.9	low-colour SHIP screenshot	4.0	223216	fires — identical to pre-change 223216
+imac_dark	21.0	98.9	low-colour SHIP screenshot	5.0	199102	fires
+imac_g3	14.0	100.0	low-colour SHIP screenshot	3.5	191271	fires
+imac_g3	14.0	100.0	low-colour SHIP screenshot	4.0	181556	fires
+imac_g3	14.0	100.0	low-colour SHIP screenshot	5.0	165353	fires
+terminal	14.0	100.0	low-colour SHIP (W44-176 excluded)	3.5	32327	W44-176 terminal-class exclude — lift suppressed regardless
+terminal	14.0	100.0	low-colour SHIP (W44-176 excluded)	4.0	30537	unchanged
+terminal	14.0	100.0	low-colour SHIP (W44-176 excluded)	5.0	27955	unchanged

@@ -1,0 +1,39 @@
+qf-seed screenshot lift — mask1x1_p25 exclude extended to the d>=3.5 MAIN band (task #12, #74)
+commit: (this change) — child of feaf1553 (which was child of 3564728f = sub-band-only fix)
+host: lilith
+date: 2026-07-14
+cli: target/release/cjxl-rs (default features, post main-band extend); proxies via
+     line_art_cfl_probe (m3/fcbr/edge/luma_var, __expert+__internals)
+
+CONTEXT: the sub-band-only fix (3564728f) gated the W44-108 low-colour SUB-band
+(d in [2.0, 3.5)) on mask1x1_p25 >= 95 but left the d>=3.5 MAIN band unguarded.
+That (a) left the misfire at d>=3.5 (9290 beard-oil d3.5 = 86826, +136% vs cjxl) AND
+(b) created a NEW monotonicity cliff (9290 d3.0 = 44420 -> d3.5 = 86826, +95.5%) once
+the sub-band below it was fixed. This change extends the p25 exclude to the main band.
+
+CHANGE: the qf-seed gate now requires (m3 >= 24 OR mask1x1_p25 >= 95) on BOTH bands,
+i.e. the p25 exclude applies to ALL LOW-COLOUR (m3 < 24) firing. HIGH-colour cells
+(m3 >= 24) short-circuit the check, so their calibrated main-band behaviour is
+byte-identical. Both paths edited: e5-7 resolved_adaptive_quant_qf_seed_scale_with_policy
+(perceptual_tuning.rs) + e8+ buttloop auto_gate_fires (perceptual_loop.rs).
+
+RESULT (verified, this table):
+  - 9290 beard-oil (m3=23.4 LOW-colour PHOTO): FULLY MONOTONE e7 now
+    (62790 -> 62533 -> 44420 -> 38671 -> 34345 -> 28572). d3.5 cliff GONE (86826 -> 38671).
+  - SHIP low-colour screenshots UNCHANGED (lift still fires): imac_dark d4 = 223216
+    (byte-size-identical to pre-change), d3.5 = 234494, d5 = 199102; imac_g3/terminal fire.
+  - 9291 ingredients (m3=28.2 HIGH-colour PHOTO): STILL cliff at d3.5 (+87.6%) — CORRECTLY
+    out of the low-colour scope; this is the residual HIGH-colour main-band misfire
+    (same class as windows95 m3=27.2), NOT closed by this change.
+
+GATES: hash-locks 65/65 default byte-identical (incl. multi-group), Libjxl byte-lock
+unchanged, divergence drift unchanged (no gate add/remove — predicate change only),
+rd-regression 2/2 (frymire d0.5 3.6% smaller +0.85 SSIM2), clippy --all-targets clean.
+
+RESIDUAL / HONEST-STOP: the HIGH-colour main-band misfire (9291, windows95: cjxl 0.97x =
+no over-allocation, lift bloats +49%) is OUT OF SCOPE. p25 DOES separate the high-colour
+misfires (windows95 p25=52, 9291 p25<95) from imac_g3 (p25=100) — the first axis that
+does — but no high-colour main-band WINNER is known, and extending the p25 exclude to
+m3 in [24, 80) needs its own SHIP validation across the screenshot corpus (imazen-26
+8000/8100 modern content + gb82-sc). That is the pending "re-baseline screenshot-class
+gates" sweep (CLAUDE.md follow-on).

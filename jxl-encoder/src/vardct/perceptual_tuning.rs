@@ -256,9 +256,21 @@ pub const BUTTLOOP_QF_SEED_SCALE_LOW_COLOUR_M3_MAX: f32 = 24.0;
 ///
 /// 95.0 sits in the clean gap (worst SHIP imac_dark 98.9 vs worst misfire
 /// 89.0), 6 pp above the worst photo and 3.9 pp below the worst SHIP cell.
-/// Applied to the SUB-band ONLY — the d ≥ 3.5 main band (which also fires
-/// on high-colour screenshots like windows95 p25 = 52, imessage p25 = 95)
-/// is UNTOUCHED to avoid regressing its calibrated SHIP behaviour.
+///
+/// Applied to ALL LOW-COLOUR firing (`m3 < 24`) — BOTH the W44-108 sub-band
+/// AND the d ≥ 3.5 main band. The original sub-band-only fix (commit
+/// 3564728f) left the main band unguarded, which re-incurred the misfire at
+/// d ≥ 3.5 (beard-oil d3.5 = 86826 B, +136 % vs cjxl) and created a NEW
+/// monotonicity cliff (d3.0 = 44420 → d3.5 = 86826) once the sub-band was
+/// fixed. Extending the exclude to the main band closes both. The extend is
+/// SCOPED to low-colour: HIGH-colour main-band cells (windows95 m3 = 27.2,
+/// imessage m3 = 67, codec_wiki m3 = 145) short-circuit past the p25 check
+/// (`!w44_108_low_colour`), so their calibrated main-band behaviour is
+/// byte-identical. Every low-colour SHIP screenshot has p25 ≥ 98.9, so those
+/// are byte-identical too — only the low-colour flat-bg photos (p25 < 95)
+/// lose the lift on the main band. The residual high-colour main-band
+/// misfire (windows95 at d ≥ 3.5, cjxl 0.97× = no over-allocation) is a
+/// SEPARATE, still-open issue (LIBJXL_DIVERGENCES "needs a new proxy").
 pub const BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25: f32 = 95.0;
 
 /// W44-176: terminal-class exclude sub-discriminator — `luma_var` lower
@@ -757,20 +769,26 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
         BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE,
         buttloop_qf_seed_scale_min_distance,
     );
-    // Task #12 (#74): the W44-108 low-colour sub-band additionally requires
-    // a saturated `mask1x1_p25` (genuine flat-UI content), excluding the
-    // pure-white-background low-colour product photos (m3 < 24 but
-    // photographic p25) that the wedge-2 m3 threshold leaks. `None` (the
-    // e8+ buttloop / legacy-wrapper callers that don't thread p25) maps to
-    // `true` → the sub-band behaviour there is unchanged. See
-    // [`BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25`]. The d ≥ 3.5 main band is
-    // deliberately NOT p25-gated (preserves its calibrated SHIP cells).
-    let sub_band_p25_ok =
-        mask1x1_p25.is_none_or(|p25| p25 >= BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25);
-    let gate_fires = target_distance >= min_distance
-        || (w44_108_low_colour
-            && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE
-            && sub_band_p25_ok);
+    // Task #12 (#74): LOW-COLOUR screenshots (m3 < 24) require a saturated
+    // `mask1x1_p25` (≥ 25 % perfectly-flat blocks — genuine flat-UI content)
+    // on BOTH the W44-108 sub-band AND the d ≥ 3.5 main band. Pure-white-
+    // background low-colour PRODUCT PHOTOS (beard-oil m3 = 23.4, is_screenshot
+    // median = 100) leak the m3 < 24 gate but have photographic p25, so
+    // without this they take the lift and lose +112 % (sub-band d ∈ [2, 3.5))
+    // / +136 % (main band d ≥ 3.5) vs cjxl — a distance-monotonicity
+    // violation (file GROWS with distance). The exclude is SCOPED to
+    // low-colour: HIGH-colour main-band SHIP cells (windows95 m3 = 27.2,
+    // imessage m3 = 67) short-circuit to `true` (untouched), and every
+    // low-colour SHIP screenshot has p25 ≥ 98.9 (imac_dark worst) so all
+    // stay byte-identical. `None` (the legacy wrapper / callers that don't
+    // thread p25) maps to `true` → behaviour unchanged there. See
+    // [`BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25`].
+    let low_colour_p25_ok = !w44_108_low_colour
+        || mask1x1_p25.is_none_or(|p25| p25 >= BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25);
+    let gate_fires = low_colour_p25_ok
+        && (target_distance >= min_distance
+            || (w44_108_low_colour
+                && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
     if !gate_fires {
         return 1.0;
     }
