@@ -230,3 +230,71 @@ fn explicit_butteraugli_overrides_pq_layout() {
          bitstreams must differ"
     );
 }
+
+/// #74/#11 (2026-07-15): the DEFAULT HDR path (`HdrLoss::Auto` → `Vdp2` on
+/// PQ/HLG) SKIPS the perceptual quantization loop at e8+, because the loop
+/// over-refines HDR catastrophically (+100..500 % bytes vs cjxl; both
+/// butteraugli and VDP2-lite read per-block tile distances ~2× too high at HDR
+/// luminance). The encoder zeroes `butteraugli_iters` for the default HDR path,
+/// so the output is byte-identical to an explicit `with_butteraugli_iters(0)`.
+///
+/// This is NON-VACUOUS: on the same fixture, an explicit
+/// `with_hdr_loss(Butteraugli)` (the escape hatch, which KEEPS the loop) differs
+/// from the no-loop base — proving the loop actually fires here and the gate is
+/// what skips it for the default path. Covers a single-group (96²) AND a
+/// multi-group (300² > 256) cell per the CLAUDE.md multi-group directive.
+fn pq_600_buf(w: u32, h: u32) -> Vec<u8> {
+    // Same /600 PQ-code-value band as `explicit_butteraugli_overrides_pq_layout`
+    // (~120 nits), where the two losses measurably steer different quant fields.
+    let n = (w * h * 3) as usize;
+    let mut b = vec![0u8; n * 4];
+    for i in 0..n {
+        let v: f32 = ((i % 256) as f32) / 600.0;
+        b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    b
+}
+
+#[test]
+fn default_hdr_path_skips_buttloop() {
+    for (w, h) in [(96u32, 96u32), (300u32, 300u32)] {
+        let buf = pq_600_buf(w, h);
+
+        // Default (implicit Auto → Vdp2 on PQ) at e8 — the buttloop WOULD run
+        // (e8 → butteraugli_iters=2) but the #74/#11 HDR gate zeroes it.
+        let default_bytes = LossyConfig::new(1.0)
+            .with_effort(8)
+            .encode(&buf, w, h, PixelLayout::RgbPqF32)
+            .expect("default Auto+PQ e8 encode must succeed");
+
+        // Explicit no-loop base.
+        let base_bytes = LossyConfig::new(1.0)
+            .with_effort(8)
+            .with_butteraugli_iters(0)
+            .encode(&buf, w, h, PixelLayout::RgbPqF32)
+            .expect("no-loop base PQ e8 encode must succeed");
+
+        assert_eq!(
+            default_bytes, base_bytes,
+            "{w}x{h}: default HDR path (Auto→Vdp2) must SKIP the buttloop at e8 \
+             → byte-identical to with_butteraugli_iters(0). #74/#11 HDR fix."
+        );
+
+        // Non-vacuity: the escape hatch (explicit Butteraugli) KEEPS the loop,
+        // which is non-trivial on this fixture → must differ from the base. If
+        // this ever ties, the fixture stopped exercising the loop and the
+        // assert_eq above would be vacuous.
+        let escape_hatch_bytes = LossyConfig::new(1.0)
+            .with_effort(8)
+            .with_hdr_loss(HdrLoss::Butteraugli)
+            .encode(&buf, w, h, PixelLayout::RgbPqF32)
+            .expect("explicit-Butteraugli PQ e8 encode must succeed");
+
+        assert_ne!(
+            escape_hatch_bytes, base_bytes,
+            "{w}x{h}: explicit with_hdr_loss(Butteraugli) KEEPS the buttloop \
+             (escape hatch) and the loop is non-trivial here → must differ from \
+             the no-loop base, proving the default-path skip is non-vacuous"
+        );
+    }
+}

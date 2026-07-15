@@ -1,0 +1,69 @@
+HDR e8/e9 perceptual-loop over-refinement — DIAGNOSED + FIXED (#11 / #74, 2026-07-15)
+commit: a8b63c48 child (fix @ #11 HDR buttloop skip)
+host: lilith  date: 2026-07-15
+crops: /mnt/v/input/jxl-encoder/hdr-crops-512/*.q1.hdr.png (PQ transfer=16, 512x512)
+ours: target/release/cjxl-rs ; cjxl: ~/work/jxl-efforts/libjxl/build/tools/cjxl v0.11.x
+vdp2: target/release/examples/hdr_vdp2_scorer (jxl_encoder::__internals::compare_vdp2_planar; LOWER=better)
+data: hdr_buttloop_blowup_2026-07-15.tsv (e9 d4, base/loop/cjxl bytes+vdp2),
+      hdr_loop_rd_sweep_2026-07-15.tsv (e9 d1/d2/d4 base/loop/cjxl bytes+vdp2)
+
+BUG: the perceptual quantization loop (e8+, speed_tier<=kKitten) OVER-REFINES on
+HDR PQ content, inflating files +100% to +500% vs its own no-loop base and vs
+cjxl e9 — worst at LOW distance (high quality): 1493 d1 base 9306 -> loop 52729
+(5.7x), 1070 d1 base 18068 -> loop 75707 (4.2x), 1239 d4 base 15455 -> loop 66172
+(4.3x). The loop drives VDP2 to ~0.35-1.3 (far past the requested quality) at
+2-6x the bytes — a tradeoff nobody wants.
+
+ROOT CAUSE (source-verified, corrected from the initial mis-attribution):
+1. The DEFAULT HDR path is NOT butteraugli. `HdrLoss::Auto` resolves to
+   `HdrLoss::Vdp2` for PQ/HLG (hdr_metrics.rs:176). So the shipping HDR loop
+   steers on VDP2-lite, and the "iter-0 median tile distance 8.1" measured on
+   1230.q1 is VDP2's per-block reading, NOT butteraugli's (the earlier note that
+   blamed butteraugli intensity_target was WRONG — the butteraugli-params
+   intensity override had ZERO effect precisely because that path is dead code
+   under the default Vdp2 routing).
+2. In VDP2 mode (perceptual_loop.rs:2363) the per-pixel diffmap comes from
+   VDP2-lite, but Step 6 (line 2448) computes the per-block `tile_dist` with
+   `active_metric = Butteraugli` -> `k_tile_norm = 1.2` (butteraugli's block
+   reducer) applied to VDP2's diffmap, and compares it against
+   `effective_target = 4` (butteraugli's distance scale). VDP2's diffmap is on a
+   DIFFERENT scale, so this reads td_median ~8 vs target 4 -> bad_rate ~0.94 ->
+   the loop cranks the quant field far past the requested distance.
+3. BOTH metrics over-refine, not just VDP2: forcing `with_hdr_loss(Butteraugli)`
+   on 1230.q1 e9 d4 blows up EVEN MORE (53712 B, VDP2 0.951) than the default
+   Vdp2 path (41079 B, VDP2 1.203), with a broken frozen butteraugli tile_dist
+   of ~234. So it is not a single-metric miscalibration — the loop's premise
+   (reliable per-block distances at HDR luminance) fails structurally.
+
+KEY: our NO-LOOP base BEATS/MATCHES cjxl e9 across d1..d4 on 6/6 crops. At d4 it
+wins BOTH bytes AND VDP2 quality (1230: 16927<17007 AND 2.259<2.364; 1239:
+15455<15768 AND 3.377<3.420). Elsewhere it sits right on cjxl's RD curve (usually
+fewer bytes, occasionally +2-3%) — i.e. it is the same well-calibrated encode e5/
+e7 already ship. The loop is pure harm on HDR.
+
+FIX (shipped this commit): the encoder DISABLES the perceptual loop on the
+DEFAULT HDR path — `is_hdr_pq_hlg(layout, color_encoding) AND resolved
+hdr_loss == Vdp2` -> `enc.butteraugli_iters = 0` at the config->encoder wiring
+(api.rs encode_lossy + streaming sites). This reproduces the `--no-butteraugli`
+base EXACTLY (same field state -> identical downstream W44-168/169 dispatch),
+verified byte-identical on 18 cells (6 crops x d1/d2/d4). SDR is untouched
+(transfer != PQ/HLG) -> byte-identical (hash-locks 48/48, Libjxl byte-lock 5/5,
+drift green). Explicit `with_hdr_loss(Butteraugli)` on HDR is a deliberate escape
+hatch that KEEPS the loop (still over-refines; documented caveat) so the
+`explicit_butteraugli_overrides_pq_layout` contract holds. Regression test:
+hdr_vdp2_chunk4_auto::default_hdr_path_skips_buttloop (single-group 96^2 +
+multi-group 300^2, non-vacuous: escape-hatch != base). Divergence:
+docs/LIBJXL_DIVERGENCES.md; ledger #29.
+
+NOTE — this is a deliberate divergence from libjxl (which runs its butteraugli
+loop on HDR and converges fine, e.g. cjxl 17007 on 1230.q1 d4). Our VDP2 loop
+cannot reproduce that convergence (different metric + the scale mismatch above),
+and our no-loop base already beats cjxl, so skipping is the correct call. A
+FUTURE calibration item could re-enable an HDR loop with a VDP2-native block
+reducer + VDP2-scale target (a source-informing dense sweep per CLAUDE.md), but
+its best case only matches the base that already wins — low EV vs the skip.
+
+Scope note: the 2026-07-14 scoreboard only sampled e5/e7 d2-4 (no loop at e<8),
+so it MISSED this e8/e9 bug entirely. The +2-5% e5/e7 diffuse gap (ledger #29,
+"HDR-lossy RD gap") is a SEPARATE, smaller diffuse DC/AC coefficient-coding issue;
+e7 d4 is already only +0.5%.

@@ -821,6 +821,34 @@ measurement at equal or better coverage.
   regressed ~190-byte synthetic fixtures (Huffman/16-bit/error-diffusion, +1..2
   bytes, documented-acceptable). Libjxl byte-lock 5/5 UNCHANGED; hash-locks
   regenerated. Ledger #28, LIBJXL_DIVERGENCES.md `EffortProfile.cfl_keep_best`.
+- **HDR e8/e9 buttloop over-refinement — FIXED (2026-07-15, #74 task #11,
+  ledger #34).** SEPARATE from and LARGER than the e5/e7 diffuse gap below (the
+  2026-07-14 scoreboard sampled only e5/e7 = no loop, so it MISSED this). At
+  e8/e9 the perceptual quantization loop OVER-REFINES HDR PQ/HLG +100..500 %
+  bytes vs cjxl across d1..d4 (worst at low-d: 1493 d1 base 9306 → loop 52729,
+  5.7×). Root cause (source-verified): the default HDR loop steers on VDP2-lite
+  (`HdrLoss::Auto`→`Vdp2`, `hdr_metrics.rs:176`), but Step 6
+  (`perceptual_loop.rs:2448`) reduces VDP2's diffmap with butteraugli's
+  `k_tile_norm=1.2` and compares against butteraugli's `effective_target=4` — a
+  SCALE MISMATCH → td_median ~8 vs 4 → the loop cranks quant far past target.
+  BOTH metrics over-refine (forced-Butteraugli 53712 > Vdp2 41079 on 1230.q1
+  e9 d4), so it's structural, not a single-metric miscalibration. **Two REFUTED
+  sub-hypotheses (don't re-chase)**: intensity_target is NOT the driver
+  (`JXL_METRIC_INTENSITY_OVERRIDE` {80..10000} byte-identical — butteraugli-params
+  is dead code on the default Vdp2 path; our butteraugli opsin MATCHES libjxl:
+  log gamma + ×intensity_target + fixed kGlobalScale); libjxl does NOT scale its
+  loop target for HDR. **Our NO-LOOP base BEATS/MATCHES cjxl e9 on 6/6 crops** (d4
+  wins bytes AND VDP2), so the loop is pure harm. **FIX**:
+  `is_hdr_pq_hlg(layout, color_encoding) AND resolved hdr_loss == Vdp2` →
+  `enc.butteraugli_iters = 0` (api.rs encode_lossy + streaming) = reproduces
+  `--no-butteraugli` EXACTLY, verified byte-identical on 18 cells; SDR untouched
+  (hash-locks 48/48, Libjxl byte-lock 5/5, drift green; NOT a gate-registry gate).
+  Explicit `with_hdr_loss(Butteraugli)` on HDR keeps the loop (escape hatch,
+  documented caveat). Test `hdr_vdp2_chunk4_auto::default_hdr_path_skips_buttloop`
+  (single- + multi-group, non-vacuous). Divergence LIBJXL_DIVERGENCES.md §B;
+  `benchmarks/hdr_buttloop_blowup_2026-07-15.*`, `hdr_loop_rd_sweep_2026-07-15.tsv`.
+  FUTURE (low EV): a VDP2-native block reducer + VDP2-scale target could re-enable
+  an HDR loop, but its best case only matches the base that already wins.
 - **HDR-lossy RD gap — CHARACTERIZED as a HARD diffuse RD-efficiency gap
   (2026-07-14, #74 task #11, ledger #29).** 25 scoreboard real losses: cjxl-rs
   spends +2..5 % bytes for HDR quality 3-metric-TIED (pq_butteraugli/VDP2-lite/

@@ -4765,6 +4765,26 @@ impl LossyConfig {
         self.hdr_loss.resolve(tf)
     }
 
+    /// `true` when the content is HDR PQ or HLG (by explicit
+    /// `with_color_encoding`, else the layout's implied transfer function).
+    ///
+    /// #74/#11 (2026-07-15): the encoder pipelines DISABLE the perceptual
+    /// quantization loop on HDR content — see the call sites for the measured
+    /// rationale and [`docs/LIBJXL_DIVERGENCES.md`]. Uses the SAME transfer
+    /// resolution as [`Self::resolve_hdr_loss`] so the two stay consistent.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) fn is_hdr_pq_hlg(
+        &self,
+        layout: PixelLayout,
+        color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
+    ) -> bool {
+        use crate::headers::color_encoding::TransferFunction;
+        let tf = color_encoding
+            .map(|ce| ce.transfer_function)
+            .or_else(|| layout.implied_transfer_function());
+        matches!(tf, Some(TransferFunction::Pq) | Some(TransferFunction::Hlg))
+    }
+
     /// Set the policy for non-finite XYB values at the
     /// conversion→pipeline boundary. See [`NonFiniteAction`] for the
     /// trade-off between fail-fast (default, `Error`) and best-effort
@@ -7315,6 +7335,32 @@ impl<'a> EncodeRequest<'a> {
             // HLG content lands on `Vdp2`; everything else on
             // `Butteraugli` (SDR hash-locks stay byte-identical).
             enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
+            // #74/#11 (2026-07-15): DISABLE the perceptual quantization loop on the
+            // DEFAULT HDR path (PQ/HLG content, which `HdrLoss::Auto` routes to
+            // `Vdp2`). MEASURED (benchmarks/hdr_buttloop_blowup_2026-07-15.* +
+            // hdr_loss_ab): at e8/e9 the loop OVER-REFINES HDR catastrophically
+            // (+100..500 % bytes vs cjxl across d1..d4). Both butteraugli AND
+            // VDP2-lite read per-block tile distances ~2× too high at HDR luminance
+            // (td_median ~8 vs target 4, bad_rate ~0.94), so the loop cranks the
+            // quant field far past the requested distance (VDP2 ~1.2 at 2-6× the
+            // bytes). The no-loop base already MATCHES/BEATS cjxl e9 on bytes AND
+            // VDP2 quality on every measured crop, so the loop is pure harm here.
+            // Zeroing `butteraugli_iters` reproduces the `--no-butteraugli` base
+            // EXACTLY (same field state → identical downstream W44-168/169 dispatch).
+            //
+            // Gate = HDR transfer AND resolved-loss `Vdp2` (the default routing):
+            //  - SDR (transfer != PQ/HLG) → untouched, byte-identical (hash-locks).
+            //  - explicit `with_hdr_loss(Butteraugli)` on HDR is a deliberate escape
+            //    hatch → KEEPS the loop (still over-refines; documented caveat), so
+            //    the `explicit_butteraugli_overrides_pq_layout` contract holds.
+            //  - explicit `with_hdr_loss(Vdp2)` on SDR (odd but legal) is guarded by
+            //    the transfer check → keeps the loop.
+            // See docs/LIBJXL_DIVERGENCES.md.
+            if cfg.is_hdr_pq_hlg(self.layout, self.color_encoding.as_ref())
+                && matches!(enc.hdr_loss, crate::vardct::hdr_metrics::HdrLoss::Vdp2)
+            {
+                enc.butteraugli_iters = 0;
+            }
             // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate the
             // resolved perceptual-metric selection. The
             // [`crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder`]
@@ -8601,6 +8647,17 @@ impl LossyEncoder {
                 // the resolution rationale. Auto → Vdp2 on PQ/HLG,
                 // Butteraugli otherwise.
                 enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
+                // #74/#11 (2026-07-15): DISABLE the perceptual quantization loop on
+                // the DEFAULT HDR path (PQ/HLG → `Vdp2`) — see the `encode_lossy`
+                // site above for the measured rationale + the exact gate semantics
+                // (loop over-refines HDR +100..500 %; the no-loop base beats cjxl).
+                // Zeroing `butteraugli_iters` reproduces `--no-butteraugli` exactly.
+                // SDR + explicit-Butteraugli-on-HDR untouched (byte-identical).
+                if cfg.is_hdr_pq_hlg(self.layout, self.color_encoding.as_ref())
+                    && matches!(enc.hdr_loss, crate::vardct::hdr_metrics::HdrLoss::Vdp2)
+                {
+                    enc.butteraugli_iters = 0;
+                }
                 // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate
                 // the resolved perceptual-metric selection (streaming
                 // LossyEncoder path). Same semantics as the still-image

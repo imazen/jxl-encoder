@@ -1,0 +1,7 @@
+# HDR loop metric A/B — 1230.q1 e9 d4 (cjxl ref 17007 B, VDP2 2.364)
+# proves BOTH metrics over-refine; no-loop base beats cjxl. See hdr_buttloop_blowup_2026-07-15.meta
+config	bytes	vdp2	vs_cjxl_bytes_pct	note
+noloop_base	16927	2.259446	-0.5	beats cjxl on bytes AND vdp2 (SHIPPED default for HDR now)
+default_vdp2	41079	1.202903	+141.5	over-refined (was the shipping default before the fix)
+forced_butteraugli	53712	0.951094	+215.8	WORSE than vdp2 — both metrics over-refine
+cjxl_e9	17007	2.364234	0.0	reference

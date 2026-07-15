@@ -1,0 +1,10 @@
+# HDR e8/e9 butteraugli-loop over-refinement bug — 1230-style PQ crops, e9 d4
+# base = ours e9 --no-butteraugli | loop = ours e9 (default buttloop) | cjxl = cjxl e9
+# vdp2 = VDP2-lite score vs source (LOWER=better), the production HDR metric the buttloop steers on
+cell	base_bytes	loop_bytes	cjxl_bytes	loop_vs_base_pct	loop_vs_cjxl_pct	vdp2_base	vdp2_loop	vdp2_cjxl
+1069	818	781	1047	-4.5	-25.4	0.204366	0.199759	0.147558
+1070	4095	12786	4794	212.2	166.7	1.660808	1.090538	1.510302
+1230	16927	41079	17007	142.7	141.5	2.259446	1.202903	2.364234
+1239	15455	66172	15768	328.2	319.7	3.377034	1.203915	3.419692
+1493	1174	1246	1490	6.1	-16.4	1.053849	1.048829	1.021831
+1521	16040	33444	16277	108.5	105.5	2.736806	1.303004	2.683482
