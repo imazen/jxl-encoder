@@ -778,10 +778,17 @@ measurement at equal or better coverage.
   (stride-2, no fire), lossy (field OFF), or below the 256-node floor → 53/53
   byte-identical; 5/5 Libjxl byte-lock (LossyConfig) untouched. Validated (release,
   default features, no env): 5336 e5 288293→211098 (−26.8 %, djxl AE=0 pixel-exact),
-  photos byte-identical, `=0` recovers 288293. **e7 note**: self-repair fires
-  only at e5-e6 (tree-lift stride ≥ 8); e7's base path is stride-2 (no tree-lift)
-  so it needs the paired `tree_sample_fraction` ×0.1 fix (drops the ×0.1 libjxl
-  applies) to reach a de-aliasing stride. `benchmarks/lossless_{stride_alias,self_repair_ab}_2026-07-15.*`.
+  photos byte-identical, `=0` recovers 288293. **e7 residual — ×0.1 lever
+  REFUTED at source (2026-07-15)**: self-repair fires only at e5-e6 (tree-lift
+  stride ≥ 8); e7's base path is stride-2. The prior "fix e7 with a
+  `tree_sample_fraction` ×0.1" idea is WRONG — libjxl's `GatherTreeData`
+  (enc_encoding.cc:105/629, `pixel_fraction = min(1.0, nb_repeats)`, NO ×0.1) is
+  the tree-learning sample gatherer and OURS MATCHES it; the ×0.1
+  (`CollectPixelSamples`, enc_ma.cc:973) feeds only `PreQuantizeProperties`
+  (property BOUNDS), not the tree-learn gather. Applying ×0.1 would DIVERGE +
+  under-sample → regress. So the e7 5336 +29.6 % residual is NOT a tree-sample-
+  density divergence; only un-refuted e7 thread is property-pre-quant density
+  parity (source-verify first). `benchmarks/lossless_{stride_alias,self_repair_ab}_2026-07-15.*`.
 - **cfl_two_pass line-art over-fit — FIXED via keep-best CfL Pass-2 guard
   (2026-07-14, #74 #1 SDR gap).** Aliased line-art (imazen-26
   `7000-plots/aliased-*`) lost +19..52 % to cjxl at **e7 d0.5** while our OWN e6

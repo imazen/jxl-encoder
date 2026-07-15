@@ -67,6 +67,29 @@ SECONDARY DIVERGENCE (separate lever, e7+/non-lift path)
   this LOWERS our per-split acceptance bar → over-split. This is a real but
   SECONDARY lever; the DOMINANT 5336 effect is the aliasing (random vs strided).
 
+  ────────────────────────────────────────────────────────────────────────
+  REFUTED AT SOURCE (2026-07-15, task #14 flip follow-up — do NOT apply ×0.1):
+  The "we sample 10× more than libjxl" claim above MIS-ATTRIBUTED libjxl's
+  samplers. libjxl has TWO distinct samplers:
+    • GatherTreeData (enc_encoding.cc:105; `pixel_fraction = min(1.0, nb_repeats)`
+      at line 119 — NO ×0.1; `tree_samples.AddSample` at line 59; called at
+      line 629 from the multi-image LearnTree per-channel loop) gathers the
+      ACTUAL tree-learning residual samples. OUR `tree_sample_fraction =
+      min(1, nb_repeats)` MATCHES this ⇒ we are AT PARITY on tree-learning
+      sample density.
+    • CollectPixelSamples (enc_ma.cc:958; `fraction = nb_repeats × 0.1` at
+      line 973) is called ONLY at enc_encoding.cc:577 to build pixel_samples/
+      diff_samples for PreQuantizeProperties (property split-point BOUNDS) —
+      NOT the tree-learning gather.
+  So the ×0.1 belongs to property-bound pre-quantization, NOT tree-sample
+  density. Applying ×0.1 to `tree_sample_fraction` would DIVERGE from
+  GatherTreeData (the real path) and under-sample ⇒ likely REGRESS. The e7 5336
+  +29.6 % residual is therefore NOT a tree-sample-density divergence. Only
+  un-refuted e7 thread: whether OUR property pre-quantization sampling density
+  matches libjxl's ×0.1 CollectPixelSamples (a DIFFERENT concern) — separate
+  future investigation, source-verify before any code.
+  ────────────────────────────────────────────────────────────────────────
+
 RULED OUT (this session, source-verified — do not re-investigate)
   - threshold base: ours 75+14*(10-effort) == libjxl 75+14*speed_tier
     (SpeedTier kHare=5, common.h:53; e5→145 both). MATCH.
@@ -101,8 +124,12 @@ FIX IMPLEMENTED + MEASURED (task #14, env-gated opt-in)
 
   e7 note: randomization barely helps 5336 at e7 (+29.6 → +29.3) because the e7
   base path has stride=2 (frac 0.5, no tree-lift) — a randomization window too
-  small to de-alias. Fixing e7 also needs the SECONDARY fraction fix (× 0.1 to
-  match libjxl's actual sample rate → stride ~20 → randomization bites).
+  small to de-alias, and the self-repair (task #14) needs stride ≥ 8 to fire.
+  The earlier "fix e7 with the ×0.1 fraction" idea is REFUTED (see the block
+  above — our tree-sample density already matches libjxl's GatherTreeData; ×0.1
+  is libjxl's property-bound sampler, not the tree-learn gather). The e7 5336
+  residual is NOT a tree-sample-density divergence; a future e7 investigation
+  must start from a different hypothesis (e.g. property pre-quant density).
 
 FOLLOW-ON (default-flip decision — needs a dense sweep, NOT this session)
   1. CONTENT-ADAPTIVE: randomize only when aliasing-prone (large stride AND a
