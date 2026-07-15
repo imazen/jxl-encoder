@@ -35,7 +35,7 @@
 //!       > benchmarks/patches_lossless_savings_calibrate_2026-05-17.tsv 2>/dev/null
 
 use jxl_encoder::__internals::{
-    find_and_build_patches_lossless, patches_data_stats, patches_trial_overhead,
+    find_and_build_patches_lossless, patches_data_stats, patches_trial_overhead_lossless,
 };
 use jxl_encoder::{LosslessConfig, PixelLayout};
 
@@ -158,6 +158,10 @@ fn detect_lossless_stats_full(
         return (0, 0, 0, 0, 0, 0);
     };
     let (tpp, ur, rfp, occ) = patches_data_stats(&pd);
-    let (ref_b, dict_b) = patches_trial_overhead(&pd, true);
+    // Lossless calibrate → the lossless trial-overhead estimator (the one the
+    // production `is_cost_effective_lossless` gate uses), keyed on `bit_depth`.
+    // (The lossy `patches_trial_overhead` takes a `distance` instead; this
+    // example never had one — a stale call left by the lossless-variant split.)
+    let (ref_b, dict_b) = patches_trial_overhead_lossless(&pd, bit_depth, true);
     (tpp, ur, rfp, occ, ref_b, dict_b)
 }
