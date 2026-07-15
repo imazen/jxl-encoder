@@ -1,0 +1,14 @@
+image	effort	config	tree_sample_fraction	stride_approx	ours_bytes	cjxl_bytes	pct_vs_cjxl	roundtrip
+5336_leslie_p05	5	default_tree_lift_on	0.05	20	288293	210569	36.91	pixel_exact
+5336_leslie_p05	5	tree_lift_off	0.25	4	361733	210569	71.79	na
+5336_leslie_p05	7	frac_sweep	0.5	2	255415	197094	29.59	na
+5336_leslie_p05	7	frac_sweep	0.25	4	137207	197094	-30.38	pixel_exact
+5336_leslie_p05	7	frac_sweep	0.1	10	262533	197094	33.20	na
+5336_leslie_p05	7	frac_sweep	0.05	20	152944	197094	-22.40	na
+5336_leslie_p05	7	frac_sweep	0.025	40	159076	197094	-19.29	na
+5335_leslie_p01	7	frac_sweep	0.5	2	773408	786786	-1.70	na
+5335_leslie_p01	7	frac_sweep	0.25	4	787573	786786	0.10	na
+5335_leslie_p01	7	frac_sweep	0.05	20	785999	786786	-0.10	na
+5337_leslie_p09	7	frac_sweep	0.5	2	126311	223165	-43.40	na
+5337_leslie_p09	7	frac_sweep	0.25	4	133229	223165	-40.30	na
+5337_leslie_p09	7	frac_sweep	0.05	20	140594	223165	-37.00	na

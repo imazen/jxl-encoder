@@ -1,0 +1,122 @@
+#24 lossless-docs gap — ROOT CAUSE: modular tree-learning STRIDE ALIASING (2026-07-15)
+
+commit: (investigation, child of 4e78af31)
+host: lilith
+date: 2026-07-15
+image: 5336_noaa_nhc-al132024-leslie_p05_2550x3300.png (8.4 MP RGB8 document scan)
+   ~/work/codec-corpus/imazen-26/5300-noaa-hurricane-documents/
+tools: OURS=target/release/cjxl-rs (default features, built 2026-07-14 18:46)
+       cjxl/djxl=~/work/jxl-efforts/libjxl/build/tools/ (v0.11.x)
+data: lossless_stride_alias_2026-07-15.tsv
+
+SUMMARY
+The #24 "lossless-docs gap" (biggest scoreboard REAL_LOSS: 5336 e5 +36.9%,
+e7 +29.6%) is caused — for the 5336 outlier specifically — by our
+tree-learning sample gather using a FIXED STRIDE that ALIASES against the
+document's periodic structure (text-line spacing). libjxl samples RANDOMLY
+(geometric distribution), which cannot alias.
+
+SOURCE PROOF (libjxl vs ours)
+- libjxl `CollectPixelSamples` (lib/jxl/modular/encoding/enc_ma.cc:958-1010):
+    Rng rng(group_id);
+    float fraction = std::min(options.nb_repeats * 0.1, 0.99);
+    Rng::GeometricDistribution dist = Rng::MakeGeometric(fraction);
+    ... advance(random amount from dist) ...
+  → RANDOM geometric-gap sampling, deterministic per group_id seed.
+- ours `gather_samples_strided` (jxl-encoder/src/modular/tree_learn.rs:1221)
+  + `compute_gather_stride_from_profile` (tree_learn.rs:1629):
+    stride = total_pixels.div_ceil(max_samples)  →  FIXED stride, offset 0.
+  → aliases with any periodic image structure at stride == period/k.
+
+MEASUREMENT (5336, e7 lossless, cjxl_e7 = 197094 bytes)
+  tree_sample_fraction   stride(≈1/f)   OURS bytes   vs cjxl_e7
+  0.5   (DEFAULT)         2              255415       +29.59%   ← the scoreboard LOSS
+  0.25                    4              137207       -30.38%   ← WIN, pixel-exact
+  0.1                     10             262533       +33.20%
+  0.05                    20             152944       -22.40%
+  0.025                   40             159076       -19.29%
+  → WILDLY NON-MONOTONIC = stride-aliasing signature. The content genuinely
+    compresses to BEAT cjxl (-30%); the default stride-2 catastrophically
+    aliases (+29%). frac=0.25 e7 roundtrip VALIDATED pixel-exact
+    (djxl decode, max_abs_diff=0 vs source, 0 nonzero px).
+
+UNIVERSALITY (e7, same knob)
+  5335 (leslie p01)  cjxl 786786  f0.5:-1.7%  f0.25:+0.1%  f0.05:-0.1%  ← flat, already WIN
+  5337 (leslie p09)  cjxl 223165  f0.5:-43.4% f0.25:-40.3% f0.05:-37.0% ← flat, big WIN
+  → 5335/5337 (sibling pages of the SAME document) are FLAT across fraction
+    and already beat cjxl. ONLY 5336 is pathological + non-monotonic. This is
+    the aliasing fingerprint: 5336 has a periodic structure the stride hits;
+    5335/5337 do not.
+
+e5 PATH (tree-lift, separate)
+  5336 e5 default (8-bit tree-lift ON, forces frac=0.05/props=4/buckets=32/
+    wp=0, api.rs:780-840): 288293 (+36.9% vs cjxl_e5 210569).
+  5336 e5 JXL_NO_8BIT_TREE_LIFT=1: 361733 (+71.8%) — tree-lift HELPS but
+    insufficient. The e5 --tree-learning-sample-fraction CLI knob is a NO-OP
+    (clobbered by the tree-lift force-set). e7 has no tree-lift (gate is
+    e5..=6) so the knob bites there.
+
+SECONDARY DIVERGENCE (separate lever, e7+/non-lift path)
+  tree_sample_fraction_for(effort) (effort.rs:1882): e5=0.25 e6=0.35 e7=0.5
+  e8=0.55 e9=0.65 — these are EXACTLY libjxl's nb_repeats (base 0.5 × tier
+  mult: Hare 0.5, Wombat 0.7, Squirrel 1.0, Kitten 1.1, Tortoise 1.3). BUT
+  libjxl's CollectPixelSamples multiplies nb_repeats × 0.1 to get the ACTUAL
+  fraction. We DROPPED the ×0.1 → we sample 10× more pixels than libjxl at
+  every effort on the non-tree-lift path. Combined with required_cost's 0.1
+  intercept (matches libjxl, enc_encoding.cc:228, VERIFIED — NOT a divergence)
+  this LOWERS our per-split acceptance bar → over-split. This is a real but
+  SECONDARY lever; the DOMINANT 5336 effect is the aliasing (random vs strided).
+
+RULED OUT (this session, source-verified — do not re-investigate)
+  - threshold base: ours 75+14*(10-effort) == libjxl 75+14*speed_tier
+    (SpeedTier kHare=5, common.h:53; e5→145 both). MATCH.
+  - required_cost = pixel_fraction*0.9+0.1 threshold scaling: EXISTS in libjxl
+    LearnTree (enc_encoding.cc:228-230). Our comment's parity claim is CORRECT.
+    Do NOT remove it — that would DIVERGE.
+
+FIX IMPLEMENTED + MEASURED (task #14, env-gated opt-in)
+  `JXL_TREE_SAMPLE_RANDOM=1` (tree_learn.rs `tree_sample_random_enabled` +
+  `next_subsample_gap`): replaces the fixed-stride reset with a randomized gap
+  in [1, 2*stride-1] (mean = stride) via a deterministic per-(group,channel)
+  xorshift64. Env UNSET ⇒ byte-identical (hash-locks 53/53 pass, 5336 e5
+  default still 288293). All randomized outputs roundtrip PIXEL-EXACT.
+
+  MEASURED (e5, % vs cjxl, - = we win; default fixed-stride vs random):
+    5336_doc  +36.9 → +0.3   (-36.7pp) ← the aliased outlier, ESSENTIALLY FIXED
+    clipart   +16.8 → +10.3  (-6.5pp)
+    5340_doc   -5.8 →  -6.4  (-0.6pp)
+    5337_doc  -33.5 → -32.7  (+0.8pp)
+    webshot    +9.0 →  +8.0  (-1.0pp)
+    5335_doc   +7.2 → +12.1  (+4.9pp) ← structured doc REGRESSES
+    doc-set mean +5.1 → -1.4 (-6.5pp, dominated by 5336)
+    PHOTOS (13 pre-decoded PNGs, e5): mean -0.9 → -0.2 (+0.7pp REGRESSION —
+      lose part of the photo edge); 6108-patent-scan +1.8 → +7.3 (+5.5pp).
+
+  VERDICT: randomization is NOT a clean default-flip. It fixes catastrophic
+  ALIASING outliers hugely (5336 -36.7pp) but costs a broad SMALL regression on
+  photos (+0.7pp mean) and some structured/periodic docs (5335 +4.9, 6108 +5.5).
+  This CONFIRMS + QUANTIFIES the ledger's "global lever regresses photos"
+  warning. Shipped ENV-GATED (opt-in, default byte-identical) so the win is
+  available without the broad cost.
+
+  e7 note: randomization barely helps 5336 at e7 (+29.6 → +29.3) because the e7
+  base path has stride=2 (frac 0.5, no tree-lift) — a randomization window too
+  small to de-alias. Fixing e7 also needs the SECONDARY fraction fix (× 0.1 to
+  match libjxl's actual sample rate → stride ~20 → randomization bites).
+
+FOLLOW-ON (default-flip decision — needs a dense sweep, NOT this session)
+  1. CONTENT-ADAPTIVE: randomize only when aliasing-prone (large stride AND a
+     periodicity/detail proxy) — the "content-aware modular strategy" the ledger
+     wanted. Keeps photo edge, fixes doc aliasing.
+  2. LOWER-VARIANCE scheme: stratified (one random per stride-window) may cut
+     the +0.7pp photo regression while keeping the 5336 win — untested.
+  3. e7 fraction fix (× 0.1) as a separate lever, swept with randomization.
+  Per CLAUDE.md source-informing discipline this is a size × effort × content
+  dense sweep (imazen-26 docs+photos+screenshots), Pareto-scored, before any
+  default-flip + hash-lock regen.
+
+LEDGER: HYPOTHESIS_LEDGER #24 (updated). Reframes "over-split tree" attribution:
+  the over-split is a SYMPTOM of stride-aliased non-representative samples, not
+  a threshold miscalibration. This is a KNOB after all (sampling method), unlike
+  the ledger's earlier "no winning knob" conclusion — but the knob is the
+  sampling RANDOMIZATION, which the global-threshold sweeps never touched.

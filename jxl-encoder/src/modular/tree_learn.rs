@@ -1749,6 +1749,49 @@ impl GatherRowStaging {
 /// `dedup_samples` arbiter that runs after gather still owns the final
 /// byte-determining unique set and hash-locks stay byte-identical when
 /// the knob defaults are unchanged.
+/// Runtime opt-in (behaviour override — per CLAUDE.md "BEHAVIOUR-override env
+/// hooks stay runtime") for libjxl-parity RANDOMIZED tree-learning sample
+/// gather. The default FIXED-stride gather aliases against periodic image
+/// structure (e.g. document text-line spacing) and can pick a catastrophically
+/// non-representative sample set: measured on noaa-leslie 5336 (8.4 MP scan),
+/// e7 fixed-stride is +29.6 % vs cjxl, yet the same content compresses to
+/// -30 % under a non-aliasing sample. libjxl's `CollectPixelSamples`
+/// (lib/jxl/modular/encoding/enc_ma.cc) samples at geometric-random gaps for
+/// exactly this reason. When enabled, the per-sample gap is randomized
+/// (mean = `stride`) via a deterministic per-(group, channel) xorshift so
+/// encoding stays reproducible. Env unset ⇒ byte-identical to before.
+/// Provenance: benchmarks/lossless_stride_alias_2026-07-15.* + jxl-encoder#24
+/// task #14.
+#[cfg(feature = "std")]
+fn tree_sample_random_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("JXL_TREE_SAMPLE_RANDOM").is_some())
+}
+#[cfg(not(feature = "std"))]
+fn tree_sample_random_enabled() -> bool {
+    false
+}
+
+/// Next subsample gap for the tree-learning gather. Returns the fixed `stride`
+/// (byte-identical to the historical behaviour) unless `randomize`, in which
+/// case a xorshift64 draw yields a gap in `[1, 2*stride-1]` (mean = `stride`)
+/// that de-aliases the sample positions. `stride <= 1` always gathers every
+/// pixel. See [`tree_sample_random_enabled`].
+#[inline]
+fn next_subsample_gap(rng_state: &mut u64, stride: usize, randomize: bool) -> usize {
+    if !randomize || stride <= 1 {
+        return stride;
+    }
+    // xorshift64 — cheap, deterministic, good enough for de-aliasing.
+    let mut x = *rng_state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *rng_state = x;
+    1 + (x as usize) % (2 * stride - 1)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn gather_channel_samples(
     samples: &mut TreeSamples,
@@ -1784,6 +1827,18 @@ fn gather_channel_samples(
     // touching WP state continuity. WP error tracking still updates on
     // every pixel; only the sample-push gate shifts.
     let mut subsample_counter: usize = if stride > 0 { start_offset % stride } else { 0 };
+
+    // Randomized (libjxl-parity) vs fixed-stride sample gaps. The seed is
+    // deterministic per-(group, channel) so encoding stays reproducible;
+    // libjxl seeds its `Rng` from group_id. Env unset ⇒ `randomize_sampling`
+    // is false ⇒ `next_subsample_gap` returns `stride` ⇒ byte-identical.
+    let randomize_sampling = tree_sample_random_enabled();
+    let mut sample_rng: u64 = {
+        let s = (group_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (channel_idx as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+            ^ 0x2545_F491_4F6C_DD1D;
+        if s == 0 { 0xDEAD_BEEF_CAFE_F00D } else { s }
+    };
 
     let max_refs = samples.num_ref_channels;
 
@@ -1928,7 +1983,8 @@ fn gather_channel_samples(
                         &local_ref_props,
                         max_refs,
                     );
-                    subsample_counter = stride - 1;
+                    subsample_counter =
+                        next_subsample_gap(&mut sample_rng, stride, randomize_sampling) - 1;
                     continue;
                 }
 
@@ -2009,7 +2065,8 @@ fn gather_channel_samples(
                     // in lockstep with `num_samples` (and we never
                     // pop_back in the local-probe path).
                     samples.sample_counts[existing as usize] += 1;
-                    subsample_counter = stride - 1;
+                    subsample_counter =
+                        next_subsample_gap(&mut sample_rng, stride, randomize_sampling) - 1;
                     continue;
                 }
 
@@ -2059,7 +2116,8 @@ fn gather_channel_samples(
                     dedup_backend.is_none() || samples.sample_counts.len() == samples.num_samples,
                 );
 
-                subsample_counter = stride - 1;
+                subsample_counter =
+                    next_subsample_gap(&mut sample_rng, stride, randomize_sampling) - 1;
             } else {
                 // Still need to track gradient for subsequent pixels
                 let grad = n.w.wrapping_add(n.n).wrapping_sub(n.nw);
