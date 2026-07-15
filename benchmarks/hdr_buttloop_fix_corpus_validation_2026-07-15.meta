@@ -1,0 +1,32 @@
+HDR buttloop-skip fix — corpus-wide validation (#74/#11, 2026-07-15)
+commit: child of 6236d5fd (the fix)
+host: lilith  date: 2026-07-15
+corpus: /mnt/v/input/jxl-encoder/hdr-crops-512/*.hdr.png (88 PQ crops, transfer=16, 512x512;
+        76 .c + 6 .q1 + 6 .q3 variants)
+ours: target/release/cjxl-rs (default features, WITH the fix)
+cjxl: ~/work/jxl-efforts/libjxl/build/tools/cjxl v0.11.x
+data: hdr_buttloop_fix_corpus_validation_2026-07-15.tsv
+
+PART 1 — the fix fires on EVERY HDR crop (loop skipped, blowup eliminated):
+  e9 d4: default == --no-butteraugli byte-identical on 88/88 crops
+  (LOOP-SKIPPED=88, NOT-SKIPPED=0, FAIL-ENCODE=0). The gate
+  (is_hdr_pq_hlg AND resolved hdr_loss==Vdp2) is content-independent, so it
+  fires for all PQ/HLG content — no crop slips it. Before the fix these e8/e9
+  encodes ran the VDP2 loop and over-refined +100..500 % bytes.
+
+PART 2 — with the loop skipped, our HDR e9 default now BEATS cjxl on bytes
+  corpus-wide (matched requested distance):
+    e9 d1:  ours <= cjxl bytes on 83/88 crops;  total ours 4145270 vs cjxl
+            4415878 = -6.1 % vs cjxl
+    e9 d4:  ours <= cjxl bytes on 74/88 crops;  total ours 1358434 vs cjxl
+            1399753 = -3.0 % vs cjxl
+  (Quality: the 6-crop RD sweep hdr_loop_rd_sweep_2026-07-15.tsv established the
+  no-loop base sits ON or INSIDE cjxl's RD curve — at d4 it wins BOTH bytes AND
+  VDP2 on the checked crops. These matched-distance byte totals are the corpus-
+  scale confirmation that the base is competitive-to-better, not just non-blown-up.)
+
+VERDICT: the e8/e9 HDR buttloop over-refinement (the dominant HDR RD gap, missed
+by the e5/e7-only 2026-07-14 scoreboard) is CLOSED — HDR e8/e9 now wins rd AND
+rdtime (no loop = faster) vs cjxl. Residual: the SEPARATE e5/e7 +2-5 % diffuse
+DC/AC coefficient-coding gap (ledger #29) — a characterized hard multi-week
+research item with no clean lever, unchanged by this fix.

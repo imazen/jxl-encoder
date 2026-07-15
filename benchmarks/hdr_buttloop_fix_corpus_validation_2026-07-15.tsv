@@ -1,0 +1,5 @@
+# HDR buttloop-skip fix corpus validation, 88 PQ crops, e9, WITH fix (6236d5fd)
+# metric	distance	n	loop_skipped	ours_le_cjxl	ours_total_B	cjxl_total_B	vs_cjxl_pct
+loop_skipped_check	d4	88	88	-	-	-	-
+bytes_vs_cjxl	d1	88	-	83	4145270	4415878	-6.1
+bytes_vs_cjxl	d4	88	-	74	1358434	1399753	-3.0
