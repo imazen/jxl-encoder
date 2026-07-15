@@ -88,6 +88,15 @@ SECONDARY DIVERGENCE (separate lever, e7+/non-lift path)
   un-refuted e7 thread: whether OUR property pre-quantization sampling density
   matches libjxl's ×0.1 CollectPixelSamples (a DIFFERENT concern) — separate
   future investigation, source-verify before any code.
+    CHECKED (2026-07-15): our `pre_quantize` (tree_learn.rs:734) takes `&self`
+    and uses the ALREADY-GATHERED full-density tree samples for property bounds,
+    whereas libjxl's PreQuantizeProperties uses the SPARSE ×0.1 CollectPixelSamples
+    output → a real density divergence in property-bound determination. BUT this
+    is a WEAK hypothesis for the over-split: MORE samples give finer/BETTER
+    property bounds, not worse, so it should not CAUSE over-split (libjxl's ×0.1
+    there is a SPEED optimisation, not a quality choice). Most likely the e7 5336
+    residual is genuine RD difficulty at e7 (dense stride-2 gather barely aliases),
+    NOT a clean lever. Do not over-invest without a new, stronger hypothesis.
   ────────────────────────────────────────────────────────────────────────
 
 RULED OUT (this session, source-verified — do not re-investigate)
