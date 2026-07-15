@@ -879,6 +879,18 @@ measurement at equal or better coverage.
   the 90 % is diffuse DC/AC coefficient coding. Only next-attempt: a DC/AC
   coefficient-coding RD study on PQ content (histogram clustering + context
   modeling + DC ANS efficiency) — a multi-week research item, not a chunk.
+  **UPDATE 2026-07-15 (post e8/e9 fix, ledger #29+#34): the residual e5 gap is a
+  distance-calibration OVERSHOOT, not a diffuse coding deficit.** With the
+  buttloop-skip fix, e9 WINS (−3..−6 %), e7 ~parity, and only e5 remains (+3.2 %
+  matched-distance). But at e5 d2 OURS is FINER quality than cjxl on 12/12 crops
+  at the same distance (overshoot); at iso-VDP2-quality ours is RD-competitive
+  (1493 −27 %, others ~parity), so the +3.2 % is largely TRADEOFF_QUALITY (same
+  shape as ledger #31/#32 screenshots), which the 3-metric guard demotes from
+  REAL_LOSS. The 1493 "+47 % AC" is the overshoot spending on finer AC, NOT coding
+  inefficiency. The part-A iso-quality deficit (+4.5 %) is confined to AGGRESSIVE
+  d4–5.5. **No clean RD lever remains**; a matched-distance lean-out would be a
+  content-adaptive e5-HDR quant coarsening (dense HDR-scoped sweep, lateral RD
+  move, no free bytes). `benchmarks/hdr_e5_overshoot_2026-07-15.*`.
 - **Buttloop memory reduction — measured options (2026-06-23, #93 follow-up).**
   Two threads investigated at the user's request:
   1. **jxl↔butteraugli XYB buffer-sharing is NOT viable** (definitive,

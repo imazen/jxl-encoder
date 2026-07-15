@@ -1,0 +1,16 @@
+# HDR e5 overshoot — 12 sampled PQ crops, e5 d2, ours(with fix) vs cjxl, matched distance
+# ours_finer=YES means ours VDP2 < cjxl VDP2 at the same d2 (overshoot). See .meta.
+crop	ours_B	cjxl_B	byte_pct	ours_vdp2	cjxl_vdp2	ours_finer
+1069	16750	15926	+5.2	0.766101	0.777818	YES
+1230	16696	16284	+2.5	1.155814	1.181999	YES
+1235	43255	42537	+1.7	2.752343	2.762159	YES
+1240	15545	14760	+5.3	1.178447	1.244295	YES
+1487	57752	56990	+1.3	4.223388	4.232841	YES
+1493	3544	3001	+18.1	0.874097	0.936926	YES
+1502	35874	34720	+3.3	2.519279	2.541956	YES
+1516	17712	17038	+4.0	0.983133	0.995404	YES
+1523	20312	19728	+3.0	1.423613	1.438145	YES
+1530	16685	15936	+4.7	1.038853	1.079804	YES
+1539	72236	71526	+1.0	4.949445	4.955382	YES
+1546	27090	25924	+4.5	1.364021	1.392929	YES
+# iso-quality RD (sweep ours distance to VDP2<=cjxl d2): 1493 -14.2%, others ~parity +2.5..5.3% (grid-limited)

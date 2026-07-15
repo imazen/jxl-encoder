@@ -1,0 +1,54 @@
+HDR e5 "gap" is a distance-calibration OVERSHOOT, not a coding deficit (#74/#11, 2026-07-15)
+commit: child of 2757e856
+host: lilith  date: 2026-07-15
+corpus: /mnt/v/input/jxl-encoder/hdr-crops-512/*.hdr.png (88 PQ crops, 512x512, transfer=16)
+ours: target/release/cjxl-rs (default features, WITH the buttloop-skip fix 6236d5fd)
+cjxl: ~/work/jxl-efforts/libjxl/build/tools/cjxl v0.11.x ; djxl same
+vdp2: target/release/examples/hdr_vdp2_scorer (lower = better)
+data: hdr_e5_overshoot_2026-07-15.tsv
+
+CONTEXT: after the e8/e9 buttloop-skip fix (ledger #34), the residual HDR gap is
+at e5 (corpus-wide vs cjxl e9→-3..-6% WIN; e7 d2 +1.1%/d4 -1.1% ~parity; e5 d2
++3.2%/d4 +3.4%). e5 is the widest matched-distance gap.
+
+FINDING — the e5 matched-distance "loss" is a SYSTEMATIC OVERSHOOT, not a coding
+deficit:
+- SECTION SPLIT (worst e5 d2 crop, 1493 sunset, ours 3544B vs cjxl 3001B, +18.1%,
+  jxl-oxide --with-offset): the gap is +439B in AC(GroupPass) coding (our AC 1366
+  vs cjxl 927, +47%), DC(LfGroup) ~parity (1845 vs 1811, +34B), LfGlobal +22,
+  HfGlobal +44. So on smooth content the e5 gap is CONCENTRATED in AC, NOT the
+  diffuse-DC picture ledger #29 reported.
+- BUT it is an OVERSHOOT: at MATCHED QUALITY (VDP2), cjxl needs 3001B (d2.0,
+  VDP2 0.937) while ours needs ~2195B (d3.0, VDP2 0.935) — ours 27% SMALLER at
+  iso-quality on 1493. Our e5 d2.0 delivers FINER quality (VDP2 0.874) than
+  cjxl's d2.0 (0.937), which is why matched-distance bytes look +18%.
+- SYSTEMATIC: on 12/12 sampled crops, OURS is finer quality than cjxl at the SAME
+  requested d2 (ours_vdp2 < cjxl_vdp2 every time; byte delta +1.0..+18.1%). The
+  extra AC bytes are the overshoot spending on finer AC coefficients — NOT a
+  coding-efficiency deficit.
+
+ISO-QUALITY RD (sweep OUR distance until VDP2 <= cjxl's d2 VDP2): MIXED, no clean
+win from recalibration:
+  1493 -14.2% (ours RD-better)   1230 +2.5%   1240 +5.3%   1546 +4.5%   1516 +4.0%
+  (grid step 0.3; the +few% cells are ~parity within grid resolution — ours is
+  already finer at d2.0 so the true iso point is between d2.0 and d2.3).
+So our e5 HDR RD curve is COMPETITIVE with cjxl (mix of small wins/losses at
+matched quality), NOT a systematic deficit and NOT a systematic win.
+
+VERDICT (CORRECTS ledger #29's "diffuse DC/AC coding gap, no lever"): the e5
+HDR matched-distance "loss" is a distance-calibration OVERSHOOT — our open-loop
+e5 quant lands finer than cjxl's for the same distance parameter. At iso-quality
+the RD is competitive (mixed), so it is largely TRADEOFF_QUALITY (we deliver more
+quality per distance), the same shape ledger #31/#32 established for screenshots.
+The 3-metric HDR scoreboard guard (ledger #27) already demotes such quality-finer
+cells from REAL_LOSS. There is NO clean RD win available: recalibrating (coarsen
+e5 to cjxl's distance→quality) only moves us along our own curve — trading the
+quality overshoot for fewer matched-distance bytes, with no free bytes at iso-
+quality, and is a delicate change (needs a dense size×q×content sweep, HDR-scoped
+to avoid SDR regression, risk of over-coarsening the crops already at parity).
+
+NEXT (follow-on, NOT a quick chunk): IF a matched-distance scoreboard lean-out is
+wanted, a content-adaptive e5 HDR quant coarsening (dense Pareto-scored sweep,
+HDR-scoped) could convert the overshoot cells to matched-distance parity — but it
+is a lateral RD move (scoreboard-metric optimization), not a true RD gain, and
+must not coarsen the ~parity crops below cjxl quality.
