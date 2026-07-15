@@ -612,12 +612,18 @@ measurement at equal or better coverage.
   identical. Don't re-widen to a flat d≥2.0 (codec_wiki e8 d=3 regression),
   don't lower the 4× scale constants without re-running the W44-105 sweep,
   and don't raise the p25 floor above 95 without re-checking imac_dark
-  (98.9, the worst SHIP cell). RESIDUAL (HIGH-colour only): 9291 (m3=28.2) /
-  windows95 (m3=27.2) still misfire at d≥3.5 — out of the low-colour scope;
-  p25 DOES separate them (windows95=52 vs imac_g3=100, first axis that does)
-  but no high-colour main-band WINNER is known and extending to m3∈[24,80)
-  needs its own SHIP validation (the re-baseline-screenshot-gates follow-on).
-  (W44-105/107/108, wedge 2, task #12)
+  (98.9, the worst SHIP cell). HIGH-colour main-band: a blanket exclude was
+  HYPOTHESISED then REFUTED (ledger #31, task #13,
+  `benchmarks/qfseed_mainband_rd_efficiency_2026-07-14.*`) — on the true RD
+  curve (matched-quality efficiency, NOT the matched-distance byte-ratio)
+  high-colour screenshots contain genuine WINS (w8221 2.32×, w8102 1.55×);
+  the apparent misfire is the lift overshooting the requested distance to a
+  point ON cjxl's curve (deliberate screenshot design), NOT RD waste. So the
+  main band keeps firing on all is_screenshot (minus W44-176 + AUDIT-6 m3≥80).
+  Colour does NOT separate wins from losses; luma_var/detail is the candidate
+  future discriminator (RD losses cluster at lv≤1223, wins lv≥3162) pending
+  the dense Pareto-scored SHIP-validated re-baseline-screenshot-gates sweep.
+  (W44-105/107/108, wedge 2, task #12/#13)
 - No per-block mask1x1 bimodal scaling at e5-e7 — cjxl is NOT bimodal below e8;
   candidate only for the e8+ W44-105 path. LOW threshold bisection [70, 95] is
   conclusive. (W44-145)
