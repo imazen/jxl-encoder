@@ -745,6 +745,15 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     );
     let mut best: Option<SeedCandidate> = None;
 
+    // Perf (task #14 default-on enabler): when the self-repair runs it already
+    // builds the winning tree's real clustered ANS code (in `real_ans_cost`),
+    // which — LZ77 being off on the e5/e6 tree-lift path — is BYTE-IDENTICAL to
+    // the Step-4 build below. Cache it here and reuse it downstream so the
+    // self-repair costs NO extra entropy build on the common (non-aliased,
+    // KEEP/SKIP) path. Only ever set at seeds==1 (the single tree-lift seed);
+    // stays `None` when the self-repair does not run ⇒ default rebuild.
+    let mut cached_winner_code: Option<OwnedAnsEntropyCode> = None;
+
     // Per-seed cost log for the chunk-7 early-out decision. Indexed by
     // completed seed (0..seeds). Populated inside the loop after the
     // entropy estimate is computed for seed >= 0. Capacity matches the
@@ -802,31 +811,34 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     // far worse than its node count or ideal entropy imply (5336 e5: the ideal
     // estimate sees 1.7 %, the real ANS build sees ~27 %). Used only by the
     // task-#14 self-repair to pick between the fixed and de-aliased trees.
-    let real_ans_cost =
-        |tokens: &[crate::entropy_coding::token::Token], tree: &Tree| -> Result<usize> {
-            if tokens.is_empty() {
-                return Ok(0);
-            }
-            let num_contexts = count_contexts(tree) as usize;
-            // Match the real write path's build (section.rs Step 4): enhanced
-            // pair-merge clustering + uint-config optimization. The clustering
-            // (≤ histogram cap) is precisely where a stride-aliased tree's many
-            // thin contexts collapse into shared histograms and code badly —
-            // the simple `build_entropy_code_ans` (near-ideal, uncapped) misses
-            // it. LZ77 is off on the e5/e6 tree-lift path this repair fires on.
-            let code = build_entropy_code_ans_with_options(
-                tokens,
-                num_contexts.max(1),
-                true, // enhanced clustering (pair-merge refinement)
-                true, // optimize uint configs
-                None, // LZ77 off on the tree-lift path
-                Some(total_pixels),
-            );
-            let mut w = BitWriter::new();
-            write_entropy_code_ans(&code, &mut w)?;
-            write_tokens_ans(tokens, &code, None, &mut w)?;
-            Ok(w.bits_written())
-        };
+    let real_ans_cost = |tokens: &[crate::entropy_coding::token::Token],
+                         tree: &Tree|
+     -> Result<(usize, OwnedAnsEntropyCode)> {
+        let num_contexts = count_contexts(tree) as usize;
+        // Match the real write path's build (section.rs Step 4): enhanced
+        // pair-merge clustering + uint-config optimization. The clustering
+        // (≤ histogram cap) is precisely where a stride-aliased tree's many
+        // thin contexts collapse into shared histograms and code badly —
+        // the simple `build_entropy_code_ans` (near-ideal, uncapped) misses
+        // it. LZ77 is off on the e5/e6 tree-lift path this repair fires on, so
+        // this build is BYTE-IDENTICAL to the Step-4 build for the same tree —
+        // the winning candidate's code is cached and reused there (perf).
+        let code = build_entropy_code_ans_with_options(
+            tokens,
+            num_contexts.max(1),
+            true, // enhanced clustering (pair-merge refinement)
+            true, // optimize uint configs
+            None, // LZ77 off on the tree-lift path
+            Some(total_pixels),
+        );
+        if tokens.is_empty() {
+            return Ok((0, code));
+        }
+        let mut w = BitWriter::new();
+        write_entropy_code_ans(&code, &mut w)?;
+        write_tokens_ans(tokens, &code, None, &mut w)?;
+        Ok((w.bits_written(), code))
+    };
 
     for seed in 0..(seeds as u64) {
         // Chunk 4: per-seed sample-fraction override takes precedence
@@ -943,7 +955,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
             // re-gather when the ratio flags aliasing. Non-aliased content
             // (photos, flat docs; ratio ≈ 1.0) skips the second pass entirely.
             let ideal_a = estimate_token_cost(&all_tokens);
-            let cost_a = real_ans_cost(&all_tokens, &tree)? as f64;
+            let (cost_a_bits, code_a) = real_ans_cost(&all_tokens, &tree)?;
+            let cost_a = cost_a_bits as f64;
             if !super::encode::tree_self_repair_ratio_flags_aliasing(cost_a, ideal_a) {
                 crate::trace::debug_eprintln!(
                     "SELF_REPAIR seed={} stride={} tree_a={}n clustered={:.0} ideal={:.0} ratio={:.3} -> SKIP (clusters clean, not aliased)",
@@ -954,6 +967,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                     ideal_a,
                     cost_a / ideal_a.max(1.0),
                 );
+                // KEEP fixed-stride tree: cache its already-built code for the
+                // Step-4 reuse (this is why the SKIP path costs ~0 extra).
+                cached_winner_code = Some(code_a);
                 (all_tokens, nb_meta_tokens, group_ranges, tree)
             } else {
                 let mut samples_r = gather_for_seed(seed, seed_stride, true);
@@ -963,7 +979,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                     crate::profile_time!("modular/collect_residuals_global", {
                         collect_for_tree(&tree_r)
                     });
-                let cost_r = real_ans_cost(&tokens_r, &tree_r)? as f64;
+                let (cost_r_bits, code_r) = real_ans_cost(&tokens_r, &tree_r)?;
+                let cost_r = cost_r_bits as f64;
                 let switch = super::encode::tree_self_repair_keep_by_cost(cost_r, cost_a);
                 crate::trace::debug_eprintln!(
                     "SELF_REPAIR seed={} stride={} tree_a={}n clustered={:.0} ideal={:.0} ratio={:.3} tree_r={}n clustered_r={:.0} -> {}",
@@ -981,9 +998,12 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                         "KEEP fixed-stride tree"
                     },
                 );
+                // Cache the WINNER's already-built code for the Step-4 reuse.
                 if switch {
+                    cached_winner_code = Some(code_r);
                     (tokens_r, meta_r, ranges_r, tree_r)
                 } else {
+                    cached_winner_code = Some(code_a);
                     (all_tokens, nb_meta_tokens, group_ranges, tree)
                 }
             }
@@ -1131,16 +1151,27 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         num_contexts
     };
 
-    // Step 4: Build multi-context ANS code with enhanced clustering
+    // Step 4: Build multi-context ANS code with enhanced clustering.
+    //
+    // Reuse the self-repair's already-built code when present (task #14 perf):
+    // it fires only on the LZ77-off e5/e6 tree-lift path where this build's
+    // params are IDENTICAL — same winning tokens (no LZ77 transform, so
+    // `all_tokens` is unchanged), `ans_num_contexts == num_contexts ==
+    // count_contexts(tree)`, same clustering/uint flags, `lz77_params = None`.
+    // So the cached code is byte-for-byte what this build would produce; the
+    // `!use_lz77` guard is a belt-and-braces assertion of that invariant.
     let code = crate::profile_time!("modular/build_ans_code", {
-        build_entropy_code_ans_with_options(
-            &all_tokens,
-            ans_num_contexts,
-            true, // enhanced clustering (pair-merge refinement)
-            true, // optimize uint configs
-            lz77_params.as_ref(),
-            Some(total_pixels),
-        )
+        match cached_winner_code.take() {
+            Some(cached) if !use_lz77 => cached,
+            _ => build_entropy_code_ans_with_options(
+                &all_tokens,
+                ans_num_contexts,
+                true, // enhanced clustering (pair-merge refinement)
+                true, // optimize uint configs
+                lz77_params.as_ref(),
+                Some(total_pixels),
+            ),
+        }
     });
 
     // Per-seed diagnostics are emitted inside the loop via the
