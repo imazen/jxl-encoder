@@ -1,0 +1,28 @@
+# Cost-based tree-self-repair (JXL_TREE_SELF_REPAIR) vs default, e5 lossless, % vs cjxl (- = we win)
+# dec = SWITCH (kept de-aliased tree) | KEEP/SKIP (kept fixed-stride tree, byte-identical to default)
+# All SWITCH outputs roundtrip PIXEL-EXACT (djxl). ident=YES means byte-identical to default.
+class	img	off_bytes	on_bytes	ident	dec	off_pct_cjxl	on_pct_cjxl	t_off_s	t_on_s
+doc	5330	167563	167563	YES	KEEP	-27.6	-27.6	1.27	2.16
+doc	5334	180927	176855	no	SWITCH	-45.9	-47.1	1.30	2.14
+doc	5335	883728	883728	YES	KEEP	7.2	7.2	1.35	2.29
+doc	5336	288293	211098	no	SWITCH	36.9	0.3	1.29	2.22
+doc	5337	159171	159171	YES	KEEP	-33.5	-33.5	1.26	2.13
+doc	5340	95513	95513	YES	KEEP	-5.8	-5.8	1.20	2.05
+photo	1008_general	8551271	8551271	YES	KEEP	0.8	0.8	2.79	4.85
+photo	1037_general	5424851	5424851	YES	KEEP	-3.6	-3.6	2.23	3.69
+photo	1203_interiors	11194881	11194881	YES	KEEP	2.1	2.1	3.03	5.41
+photo	1231_interiors	7520957	7520957	YES	KEEP	-0.1	-0.1	2.16	3.82
+photo	1406_nature	7954501	7954501	YES	KEEP	-2.5	-2.5	2.26	4.04
+photo	1469_nature	8290389	8290389	YES	KEEP	-0.0	-0.0	2.75	4.68
+photo	1628_food	9410247	9410247	YES	KEEP	1.2	1.2	2.67	4.78
+photo	2004_people	14717245	14717245	YES	KEEP	-0.9	-0.9	3.08	5.96
+photo	2205_renders	7221231	7221231	YES	KEEP	-4.5	-4.5	2.47	4.36
+photo	2404_textures	12185476	12185476	YES	KEEP	-1.4	-1.4	2.54	5.08
+photo	3005_aic	4758378	4758378	YES	KEEP	-3.9	-3.9	1.39	2.60
+photo	3300_met	6851868	6851868	YES	KEEP	-0.1	-0.1	2.41	4.24
+photo	6108_patent_scan	2184322	2184322	YES	KEEP	1.8	1.8	1.54	2.60
+shot	8100_web	172953	166240	no	SWITCH	3.6	-0.4	0.26	0.42
+shot	8101_web	443748	443748	YES	KEEP	8.2	8.2	0.27	0.48
+shot	8102_web	234557	234557	YES	KEEP	-10.5	-10.5	0.27	0.46
+clip	9000_ai	197523	186527	no	SWITCH	16.8	10.3	0.28	0.46
+clip	9001_ai	252813	252813	YES	KEEP	14.8	14.8	0.21	0.36

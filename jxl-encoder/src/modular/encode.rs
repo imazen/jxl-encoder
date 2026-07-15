@@ -1791,6 +1791,88 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     )
 }
 
+/// Minimum gather stride below which stride-aliasing cannot occur. A
+/// randomized re-gather with a `[1, 2·stride−1]` window is too narrow to
+/// de-alias at stride `< 8`, and small strides already sample densely (so the
+/// fixed grid can't systematically miss a periodic structure).
+const TREE_SELF_REPAIR_MIN_STRIDE: usize = 8;
+/// Minimum learned-tree node count before a self-repair is worth attempting.
+/// This is only a *cost gate* (skip the second tree-learn on trivially small
+/// trees), NOT an aliasing discriminator — measurement (2026-07-15) showed
+/// node count does NOT separate aliased docs from detailed photos (5336 641
+/// nodes vs a photo's 4147; both over-split). The aliasing verdict is made by
+/// real coded cost in [`tree_self_repair_keep_by_cost`], not by size.
+const TREE_SELF_REPAIR_MIN_NODES: usize = 256;
+/// Switch to the de-aliased tree only when it is estimated to code the *actual
+/// residuals* at least this much cheaper than the fixed-stride tree. A 2 %
+/// confidence moat (mirrors `EffortProfile::cfl_keep_best`'s
+/// `CFL_KEEP_BEST_MARGIN`) keeps non-aliased content — where the two trees
+/// cost within noise — on the fixed-stride tree ⇒ byte-identical, and fires
+/// only on the clear aliasing win (5336: `cost_r/cost_a` ≈ 0.73).
+const TREE_SELF_REPAIR_COST_MARGIN: f64 = 0.98;
+/// Aliasing pre-filter threshold: the ratio of a tree's REAL clustered ANS cost
+/// to its IDEAL per-context entropy. A stride-aliased tree spreads samples
+/// across many thin contexts that collapse badly under the ≤96-histogram
+/// clustering, so its clustered cost runs far above its ideal entropy
+/// (measured 2026-07-15: 5336 ratio 2.00, 5334 1.30). Non-aliased content
+/// clusters almost for free (photos 1.00, flat docs 1.02–1.17). Only when the
+/// ratio exceeds this do we pay for the de-aliased re-gather; below it the
+/// fixed-stride tree is kept without the second tree-learn (bounds the
+/// wall-time cost to genuinely-suspect content). Set low (5 %) so a
+/// borderline-aliased doc is never skipped — a false positive only wastes the
+/// second pass (real cost still keeps the fixed tree), a false negative would
+/// miss a fix.
+const TREE_SELF_REPAIR_ALIASING_RATIO: f64 = 1.05;
+
+/// `JXL_TREE_SELF_REPAIR=1` opts into the content-agnostic aliased-tree
+/// self-repair (default OFF during validation ⇒ byte-identical). The repair
+/// learns the tree twice — once from the fixed-stride sample, once from a
+/// de-aliased randomized re-gather — and keeps whichever codes the real
+/// residuals cheaper (see [`tree_self_repair_should_try`] /
+/// [`tree_self_repair_keep_by_cost`]).
+#[cfg(feature = "std")]
+fn tree_self_repair_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("JXL_TREE_SELF_REPAIR").is_some())
+}
+#[cfg(not(feature = "std"))]
+fn tree_self_repair_enabled() -> bool {
+    false
+}
+
+/// Should we attempt an aliased-tree self-repair? True only when the feature
+/// is enabled AND the gather stride is large enough for aliasing to occur AND
+/// the fixed-stride tree is non-trivial (the node floor is a cost gate, not an
+/// aliasing test — see [`TREE_SELF_REPAIR_MIN_NODES`]). Shared by every
+/// tree-learning site so all paths use identical thresholds.
+pub(crate) fn tree_self_repair_should_try(stride: usize, tree_a_nodes: usize) -> bool {
+    tree_self_repair_enabled()
+        && stride >= TREE_SELF_REPAIR_MIN_STRIDE
+        && tree_a_nodes >= TREE_SELF_REPAIR_MIN_NODES
+}
+
+/// Keep the de-aliased tree only when it codes the actual residuals materially
+/// cheaper than the fixed-stride tree (by the [`TREE_SELF_REPAIR_COST_MARGIN`]
+/// moat). `cost_*` are `estimate_token_cost` bit estimates over the collected
+/// residuals — the same estimator the multi-seed picker trusts. Because the
+/// cheaper tree is kept, the repair can only shrink the output (never a byte
+/// regression); on non-aliased content the two costs are within noise so the
+/// fixed-stride tree is kept ⇒ byte-identical.
+pub(crate) fn tree_self_repair_keep_by_cost(cost_r: f64, cost_a: f64) -> bool {
+    cost_r < cost_a * TREE_SELF_REPAIR_COST_MARGIN
+}
+
+/// Cheap aliasing pre-filter: does the fixed-stride tree's real clustered ANS
+/// cost run far enough above its ideal per-context entropy to suspect
+/// stride-aliasing (and thus be worth a de-aliased re-learn)? See
+/// [`TREE_SELF_REPAIR_ALIASING_RATIO`]. Keeps the wall-time cost of the
+/// self-repair off non-aliased content (photos, flat docs), whose clustered
+/// and ideal costs are within a few percent.
+pub(crate) fn tree_self_repair_ratio_flags_aliasing(clustered_cost: f64, ideal_cost: f64) -> bool {
+    clustered_cost > ideal_cost.max(1.0) * TREE_SELF_REPAIR_ALIASING_RATIO
+}
+
 /// Knob-aware variant of [`write_modular_stream_with_tree_dc_quant`].
 ///
 /// Honours [`super::palette::ModularKnobs::palette_colors`] (caps the

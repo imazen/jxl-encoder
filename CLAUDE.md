@@ -743,6 +743,35 @@ measurement at equal or better coverage.
 
 ### Live follow-ons
 
+- **#24 lossless-docs stride-aliasing — MECHANISM FOUND + COST-BASED SELF-REPAIR
+  SHIPPED OPT-IN (2026-07-15, ledger #33, task #14).** Root cause (source-verified
+  vs libjxl): our modular tree-learning sample gather uses a FIXED stride
+  (`compute_gather_stride_from_profile`) that ALIASES against periodic document
+  text-line spacing → non-representative sample → catastrophic tree over-split
+  (5336 noaa-leslie e5 +36.9 % vs cjxl; the same content compresses to +0.3 %
+  pixel-exact under a non-aliasing sample). libjxl `CollectPixelSamples`
+  (`enc_ma.cc:972`) samples RANDOMLY (geometric), which cannot alias. Two opt-in
+  fixes shipped, default BYTE-IDENTICAL: (1) `JXL_TREE_SAMPLE_RANDOM` (d0a304aa,
+  `tree_learn.rs`) = unconditional randomized gap — fixes 5336 but regresses
+  photos +0.7pp (NOT clean). (2) `JXL_TREE_SELF_REPAIR` (task #14,
+  `section.rs` global tree learner + `encode.rs` predicates) = learn tree_a
+  (fixed) + tree_r (de-aliased re-gather), keep whichever codes the ACTUAL
+  residuals cheaper → STRICT byte win, ZERO regressions (5336 +36.9→+0.3 %, all
+  13 photos byte-IDENTICAL). **Two refutations (do NOT re-try): node count does
+  NOT discriminate aliasing** (5336 641 vs 613 nodes; photos over-split to
+  1500-7859) and **ideal per-context entropy does NOT** (`estimate_token_cost`
+  sees 1.7 % of the real 27 %) — ONLY the ≤96-histogram-clustered ANS cost
+  (`build_entropy_code_ans_with_options`) reproduces the gap; a clustered/ideal
+  ratio > 1.05 is the cheap aliasing pre-filter. **Ships OPT-IN not default**:
+  should_try fires broadly at e5-e6 so the ratio's clustered build costs ~+30 %
+  e5 wall on ALL content (rdtime). **Default-on enabler (follow-on)**: cache the
+  loop's clustered_a build (`section.rs` self-repair) and reuse it for the
+  downstream Step-4 `build_entropy_code_ans_with_options` when tree_a wins → SKIP
+  path free → default-on ~0 cost on non-aliased content, then flip on for Zenjxl
+  (off for Libjxl byte-lock) + hash-lock regen. **e7 note**: self-repair fires
+  only at e5-e6 (tree-lift stride ≥ 8); e7's base path is stride-2 (no tree-lift)
+  so it needs the paired `tree_sample_fraction` ×0.1 fix (drops the ×0.1 libjxl
+  applies) to reach a de-aliasing stride. `benchmarks/lossless_{stride_alias,self_repair_ab}_2026-07-15.*`.
 - **cfl_two_pass line-art over-fit — FIXED via keep-best CfL Pass-2 guard
   (2026-07-14, #74 #1 SDR gap).** Aliased line-art (imazen-26
   `7000-plots/aliased-*`) lost +19..52 % to cjxl at **e7 d0.5** while our OWN e6

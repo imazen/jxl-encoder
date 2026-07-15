@@ -557,7 +557,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     // pre-RFC#45-chunk-2 gather. Higher seeds shift the offset, may use
     // a perturbed `seed_stride` (different sample density), and pick a
     // per-seed predictor permutation (chunk-4 evaluation-order variance).
-    let gather_for_seed = |seed: u64, seed_stride: usize| -> TreeSamples {
+    let gather_for_seed = |seed: u64, seed_stride: usize, randomize: bool| -> TreeSamples {
         let start_offset = if seed_stride > 1 {
             (seed as usize) % seed_stride
         } else {
@@ -570,6 +570,10 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         // checks lengths; the SoA columns are predictor-indexed so they
         // must agree).
         let mut samples = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
+        // Self-repair re-gather (task #14): draw de-aliased randomized
+        // samples instead of the fixed stride. `false` on the normal path
+        // ⇒ byte-identical.
+        samples.randomize_gather = randomize;
         // Meta channels first.
         if let Some(meta) = meta_image {
             if enable_gather_dedup && seed == 0 {
@@ -607,6 +611,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
             crate::parallel::parallel_map(images.len(), |group_idx| {
                 // Same per-seed predictor order as the meta init above.
                 let mut local = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
+                local.randomize_gather = randomize;
                 if enable_gather_dedup && seed == 0 {
                     let _ = gather_samples_strided_with_dedup_backend(
                         &mut local,
@@ -754,6 +759,75 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         .with_ref_properties(num_refs, profile.effort)
         .with_total_pixels(total_pixels);
 
+    // Collect residuals for a candidate tree across meta + every group,
+    // returning the concatenated token stream, the meta prefix length, and
+    // per-group ranges into it. Shared by the normal per-seed scoring and the
+    // task-#14 self-repair (which collects a second, de-aliased candidate).
+    let collect_for_tree = |tree: &Tree| -> (
+        Vec<crate::entropy_coding::token::Token>,
+        usize,
+        Vec<core::ops::Range<usize>>,
+    ) {
+        let per_group_tokens: Vec<Vec<crate::entropy_coding::token::Token>> =
+            crate::parallel::parallel_map(images.len(), |group_idx| {
+                collect_residuals_with_tree(
+                    &images[group_idx],
+                    tree,
+                    group_idx as u32 + per_group_id_offset,
+                    &wp_params,
+                )
+            });
+        let meta_tokens_opt =
+            meta_image.map(|meta| collect_residuals_with_tree(meta, tree, 0, &wp_params));
+        let nb_meta_tokens = meta_tokens_opt.as_ref().map(|t| t.len()).unwrap_or(0);
+        let total_len: usize =
+            nb_meta_tokens + per_group_tokens.iter().map(|t| t.len()).sum::<usize>();
+        let mut all_tokens = Vec::<crate::entropy_coding::token::Token>::with_capacity(total_len);
+        if let Some(meta_tokens) = meta_tokens_opt {
+            all_tokens.extend(meta_tokens);
+        }
+        let mut group_ranges = Vec::with_capacity(images.len());
+        for tokens in per_group_tokens {
+            let start = all_tokens.len();
+            all_tokens.extend(tokens);
+            group_ranges.push(start..all_tokens.len());
+        }
+        (all_tokens, nb_meta_tokens, group_ranges)
+    };
+
+    // Real ANS-coded cost (histogram tables + coded tokens) of a candidate's
+    // residual stream. Unlike `estimate_token_cost`'s per-context *ideal*
+    // entropy, this runs the actual clustering + ANS build, so it captures the
+    // ≤96-histogram clustering penalty that makes a stride-aliased tree code
+    // far worse than its node count or ideal entropy imply (5336 e5: the ideal
+    // estimate sees 1.7 %, the real ANS build sees ~27 %). Used only by the
+    // task-#14 self-repair to pick between the fixed and de-aliased trees.
+    let real_ans_cost =
+        |tokens: &[crate::entropy_coding::token::Token], tree: &Tree| -> Result<usize> {
+            if tokens.is_empty() {
+                return Ok(0);
+            }
+            let num_contexts = count_contexts(tree) as usize;
+            // Match the real write path's build (section.rs Step 4): enhanced
+            // pair-merge clustering + uint-config optimization. The clustering
+            // (≤ histogram cap) is precisely where a stride-aliased tree's many
+            // thin contexts collapse into shared histograms and code badly —
+            // the simple `build_entropy_code_ans` (near-ideal, uncapped) misses
+            // it. LZ77 is off on the e5/e6 tree-lift path this repair fires on.
+            let code = build_entropy_code_ans_with_options(
+                tokens,
+                num_contexts.max(1),
+                true, // enhanced clustering (pair-merge refinement)
+                true, // optimize uint configs
+                None, // LZ77 off on the tree-lift path
+                Some(total_pixels),
+            );
+            let mut w = BitWriter::new();
+            write_entropy_code_ans(&code, &mut w)?;
+            write_tokens_ans(tokens, &code, None, &mut w)?;
+            Ok(w.bits_written())
+        };
+
     for seed in 0..(seeds as u64) {
         // Chunk 4: per-seed sample-fraction override takes precedence
         // over chunk-3's stride perturbation. Seed 0 returns None → fall
@@ -764,21 +838,10 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
             Some(frac) => stride_for_seeded_sample_fraction(total_pixels, frac),
             None => derive_seeded_stride(stride, seed),
         };
-        // Gather + tree-learn for this seed — skipped entirely when the
-        // force-predictor override is active (the single-leaf tree below
-        // does not consume samples, and gather is the dominant cost at
-        // e7+). The RIGED override (predictor id 14) takes the same
-        // gather-skip shortcut and substitutes a 3-leaf gradient-aware
-        // tree instead of a single-leaf one.
-        let tree = if let Some(forced) = force_predictor {
-            super::tree::simple_tree(forced)
-        } else if let Some(ref riged) = riged_override {
-            riged.clone()
-        } else {
-            let mut samples = crate::profile_time!("modular/gather_samples", {
-                gather_for_seed(seed, seed_stride)
-            });
-
+        // Build seeded params from a gathered sample set. Shared by the base
+        // per-seed tree-learn and the task-#14 self-repair re-gather so both
+        // apply the same per-seed variance (pixel_fraction / bucket / prop caps).
+        let build_params = |samples: &TreeSamples| -> TreeLearningParams {
             let pixel_fraction = if total_pixels > 0 {
                 samples.total_gathered_weight() as f64 / total_pixels as f64
             } else {
@@ -800,6 +863,23 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                 let cap = prop_cap.min(params.properties.len());
                 params.properties.truncate(cap);
             }
+            params
+        };
+        // Gather + tree-learn for this seed — skipped entirely when the
+        // force-predictor override is active (the single-leaf tree below
+        // does not consume samples, and gather is the dominant cost at
+        // e7+). The RIGED override (predictor id 14) takes the same
+        // gather-skip shortcut and substitutes a 3-leaf gradient-aware
+        // tree instead of a single-leaf one.
+        let tree = if let Some(forced) = force_predictor {
+            super::tree::simple_tree(forced)
+        } else if let Some(ref riged) = riged_override {
+            riged.clone()
+        } else {
+            let mut samples = crate::profile_time!("modular/gather_samples", {
+                gather_for_seed(seed, seed_stride, false)
+            });
+            let params = build_params(&samples);
             crate::profile_time!("modular/compute_best_tree", {
                 compute_best_tree(&mut samples, &params)
             })
@@ -835,33 +915,81 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         // holding a second per-group copy.
         let (all_tokens, nb_meta_tokens, group_ranges) =
             crate::profile_time!("modular/collect_residuals_global", {
-                let per_group_tokens: Vec<Vec<crate::entropy_coding::token::Token>> =
-                    crate::parallel::parallel_map(images.len(), |group_idx| {
-                        collect_residuals_with_tree(
-                            &images[group_idx],
-                            &tree,
-                            group_idx as u32 + per_group_id_offset,
-                            &wp_params,
-                        )
-                    });
-                let meta_tokens_opt =
-                    meta_image.map(|meta| collect_residuals_with_tree(meta, &tree, 0, &wp_params));
-                let nb_meta_tokens = meta_tokens_opt.as_ref().map(|t| t.len()).unwrap_or(0);
-                let total_len: usize =
-                    nb_meta_tokens + per_group_tokens.iter().map(|t| t.len()).sum::<usize>();
-                let mut all_tokens =
-                    Vec::<crate::entropy_coding::token::Token>::with_capacity(total_len);
-                if let Some(meta_tokens) = meta_tokens_opt {
-                    all_tokens.extend(meta_tokens);
-                }
-                let mut group_ranges = Vec::with_capacity(images.len());
-                for tokens in per_group_tokens {
-                    let start = all_tokens.len();
-                    all_tokens.extend(tokens);
-                    group_ranges.push(start..all_tokens.len());
-                }
-                (all_tokens, nb_meta_tokens, group_ranges)
+                collect_for_tree(&tree)
             });
+
+        // Content-agnostic self-repair (task #14, #24): our fixed-stride sample
+        // gather can ALIAS against periodic content (document text-line
+        // spacing), yielding a non-representative sample whose learned tree
+        // codes the real residuals badly (5336 e5: +36.9% vs cjxl). When that
+        // is possible (large stride, non-trivial tree) learn a SECOND tree from
+        // a DE-ALIASED randomized re-gather and keep whichever codes the actual
+        // residuals cheaper (`estimate_token_cost` — the same estimator the
+        // multi-seed picker trusts). Node count does NOT separate aliased docs
+        // from detailed photos (both over-split); only real coded cost does.
+        // Picking the cheaper tree can never regress bytes; on non-aliased
+        // content the two costs sit within the moat so the fixed-stride tree is
+        // kept ⇒ byte-identical. Costs a second tree-learn + collect when it
+        // fires (gated to the base seed path, stride >= 8, non-trivial tree).
+        let (all_tokens, nb_meta_tokens, group_ranges, tree) = if force_predictor.is_none()
+            && riged_override.is_none()
+            && super::encode::tree_self_repair_should_try(seed_stride, tree.len())
+        {
+            // Cheap aliasing pre-filter (bounds the wall-time cost): a
+            // stride-aliased tree loses far more to the ≤96-histogram
+            // clustering than a well-sampled one, so its REAL clustered ANS
+            // cost runs well above its IDEAL per-context entropy. Compute both
+            // for the fixed-stride tree and only pay for the de-aliased
+            // re-gather when the ratio flags aliasing. Non-aliased content
+            // (photos, flat docs; ratio ≈ 1.0) skips the second pass entirely.
+            let ideal_a = estimate_token_cost(&all_tokens);
+            let cost_a = real_ans_cost(&all_tokens, &tree)? as f64;
+            if !super::encode::tree_self_repair_ratio_flags_aliasing(cost_a, ideal_a) {
+                crate::trace::debug_eprintln!(
+                    "SELF_REPAIR seed={} stride={} tree_a={}n clustered={:.0} ideal={:.0} ratio={:.3} -> SKIP (clusters clean, not aliased)",
+                    seed,
+                    seed_stride,
+                    tree.len(),
+                    cost_a,
+                    ideal_a,
+                    cost_a / ideal_a.max(1.0),
+                );
+                (all_tokens, nb_meta_tokens, group_ranges, tree)
+            } else {
+                let mut samples_r = gather_for_seed(seed, seed_stride, true);
+                let params_r = build_params(&samples_r);
+                let tree_r = compute_best_tree(&mut samples_r, &params_r);
+                let (tokens_r, meta_r, ranges_r) =
+                    crate::profile_time!("modular/collect_residuals_global", {
+                        collect_for_tree(&tree_r)
+                    });
+                let cost_r = real_ans_cost(&tokens_r, &tree_r)? as f64;
+                let switch = super::encode::tree_self_repair_keep_by_cost(cost_r, cost_a);
+                crate::trace::debug_eprintln!(
+                    "SELF_REPAIR seed={} stride={} tree_a={}n clustered={:.0} ideal={:.0} ratio={:.3} tree_r={}n clustered_r={:.0} -> {}",
+                    seed,
+                    seed_stride,
+                    tree.len(),
+                    cost_a,
+                    ideal_a,
+                    cost_a / ideal_a.max(1.0),
+                    tree_r.len(),
+                    cost_r,
+                    if switch {
+                        "SWITCH to de-aliased tree"
+                    } else {
+                        "KEEP fixed-stride tree"
+                    },
+                );
+                if switch {
+                    (tokens_r, meta_r, ranges_r, tree_r)
+                } else {
+                    (all_tokens, nb_meta_tokens, group_ranges, tree)
+                }
+            }
+        } else {
+            (all_tokens, nb_meta_tokens, group_ranges, tree)
+        };
 
         // Score: skip cost estimate entirely when seeds == 1 (the legacy
         // single-pass path doesn't need to know the cost). For seeds > 1

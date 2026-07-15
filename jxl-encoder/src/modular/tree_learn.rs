@@ -547,6 +547,13 @@ pub struct TreeSamples {
     /// Maximum number of reference channels across all channels in the image.
     /// 0 for squeeze mode or single-channel images.
     num_ref_channels: usize,
+    /// When true, [`gather_channel_samples`] draws randomized (de-aliased)
+    /// sample gaps for THIS gather regardless of the `JXL_TREE_SAMPLE_RANDOM`
+    /// env default. Set by the cost-based tree self-repair (task #14, the
+    /// `JXL_TREE_SELF_REPAIR` path in `section.rs`) for its second, de-aliased
+    /// re-gather. Only read during gather — its value in split/merge results is
+    /// irrelevant. Default `false` ⇒ env-driven.
+    pub(crate) randomize_gather: bool,
 }
 
 impl Default for TreeSamples {
@@ -625,6 +632,7 @@ impl TreeSamples {
             props: vec![Vec::new(); total_props],
             sample_counts: Vec::new(),
             num_ref_channels,
+            randomize_gather: false,
         }
     }
 
@@ -1832,7 +1840,7 @@ fn gather_channel_samples(
     // deterministic per-(group, channel) so encoding stays reproducible;
     // libjxl seeds its `Rng` from group_id. Env unset ⇒ `randomize_sampling`
     // is false ⇒ `next_subsample_gap` returns `stride` ⇒ byte-identical.
-    let randomize_sampling = tree_sample_random_enabled();
+    let randomize_sampling = samples.randomize_gather || tree_sample_random_enabled();
     let mut sample_rng: u64 = {
         let s = (group_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ (channel_idx as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9)
@@ -4171,6 +4179,7 @@ fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSample
         props: right_props,
         sample_counts: right_sample_counts,
         num_ref_channels: samples.num_ref_channels,
+        randomize_gather: samples.randomize_gather,
     };
 
     (samples, right)
@@ -4228,6 +4237,7 @@ fn split_owned_from_borrowed(
         props: core::mem::take(&mut samples.props),
         sample_counts: core::mem::take(&mut samples.sample_counts),
         num_ref_channels: samples.num_ref_channels,
+        randomize_gather: samples.randomize_gather,
     };
     let taken_pq = PreQuantizedProps {
         threshold_sets: core::mem::take(&mut pq.threshold_sets),

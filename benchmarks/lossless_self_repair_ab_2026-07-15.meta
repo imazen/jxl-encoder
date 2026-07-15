@@ -1,0 +1,106 @@
+#24 lossless-docs gap — COST-BASED TREE SELF-REPAIR (JXL_TREE_SELF_REPAIR, 2026-07-15)
+
+commit: (task #14, child of d0a304aa "env-gated randomized tree-sample gather")
+host: lilith
+date: 2026-07-15
+tools: OURS=target/release/cjxl-rs (default features, built 2026-07-15)
+       cjxl/djxl=~/work/jxl-efforts/libjxl/build/tools/ (v0.11.x)
+data: lossless_self_repair_ab_2026-07-15.tsv
+harness: /home/lilith/.claude/jobs/c81743c2/tmp/val2.py (unique temps, cjxl-success
+         checks, SWITCH/KEEP capture, /usr/bin/time timing)
+
+WHAT SHIPPED (env-gated OPT-IN, default byte-identical)
+  `JXL_TREE_SELF_REPAIR=1` turns on a content-agnostic self-repair in the
+  multi-group global modular tree learner (`section.rs
+  write_global_modular_section_with_tree_dc_quant_knobs`). For a candidate that
+  may be stride-aliased (large gather stride + non-trivial tree — the e5/e6
+  8/16-bit tree-lift path), it:
+    1. learns the tree from the DEFAULT fixed-stride sample (tree_a),
+    2. cheaply pre-filters on the clustered/ideal cost RATIO (see below),
+    3. if flagged, learns a SECOND tree from a DE-ALIASED randomized re-gather
+       (tree_r, via the plumbed `TreeSamples::randomize_gather` +
+       `next_subsample_gap`), and
+    4. keeps whichever codes the ACTUAL residuals cheaper (real clustered ANS
+       cost, 2 % moat).
+  Decode is lossless-correct for either tree; only bytes differ. Because it
+  keeps the cheaper tree, it can NEVER regress bytes — on non-aliased content
+  the two costs sit within the moat so the fixed-stride tree is kept ⇒
+  byte-identical (hash-locks 53/53, byte-lock, drift, full `it` 446/0 all green
+  with the env unset).
+
+THE TWO KEY FINDINGS (both refute earlier hypotheses)
+
+1. NODE COUNT DOES NOT DISCRIMINATE ALIASING. The approved design ("keep the
+   smaller tree") is WRONG: the aliased tree_a and the de-aliased tree_r are
+   nearly the SAME SIZE (5336 e5: 641 vs 613 nodes) yet code 288 KB vs 211 KB
+   (27 %). Photos over-split just as much (1508–7859 nodes) without aliasing.
+   The over-split is a red herring — the aliased tree makes BAD SPLITS at
+   similar size, it does not make MORE splits.
+
+2. IDEAL PER-CONTEXT ENTROPY DOES NOT DISCRIMINATE EITHER. `estimate_token_cost`
+   (the multi-seed picker's estimator) sees only a 1.7 % gap on 5336 (1148 k vs
+   1128 k bits) because it models each context with its OWN ideal histogram. The
+   REAL encoder CLUSTERS contexts to ≤96 histograms; the aliased tree's many
+   thin contexts collapse badly under that cap. Only a REAL clustered ANS cost
+   (`build_entropy_code_ans_with_options(.., enhanced_clustering=true, ..)` +
+   write) reproduces the 27 % gap: 5336 tree_a=2290969 bits (real file 288293),
+   tree_r=1674095 bits (real file 211098). THIS is the selection metric.
+
+THE CHEAP ALIASING PRE-FILTER (bounds wall-time cost)
+  The aliasing signature is a high clustered/ideal cost RATIO (a tree that loses
+  a lot to the histogram-clustering cap). Measured tree_a ratios:
+    5336 (SWITCH) 1.996   5334 (SWITCH) 1.302
+    5335 (KEEP)   1.019   5340 (KEEP)   1.166
+    photos (KEEP) 0.998–1.002   (clustering is ~free — contexts already similar)
+  Gate at ratio > 1.05 (TREE_SELF_REPAIR_ALIASING_RATIO): non-aliased content
+  skips the second tree-learn entirely. Set low so a borderline-aliased doc is
+  never skipped — a false positive only wastes the second pass (real cost still
+  keeps the fixed tree), a false negative would miss a fix.
+
+MEASURED (e5, JXL_TREE_SELF_REPAIR=1 vs default; full table in the .tsv)
+  STRICT byte improvement, ZERO regressions across 24 images (6 doc / 13 photo /
+  3 shot / 2 clip):
+    5336 doc  +36.9% → +0.3%  (SWITCH, roundtrip pixel-exact) — the headline fix
+    5334 doc  -45.9% → -47.1% (SWITCH, extra 1.2pp)
+    8100 shot +3.6%  → -0.4%  (SWITCH, now beats cjxl)
+    9000 clip +16.8% → +10.3% (SWITCH, 6.5pp)
+    ALL 13 photos: byte-IDENTICAL (KEEP) — no photo regression, unlike the
+      unconditional JXL_TREE_SAMPLE_RANDOM (+0.7pp photo mean, 5335 +4.9pp).
+    5335 doc stays +7.2% (KEEP) — random regressed it to +12.1%; cost-based keeps
+      the fixed tree. THIS is why cost-based selection beats unconditional random:
+      it is the max of both sampling schemes, never the worse of them.
+
+WALL-TIME COST (the default-flip blocker)
+  should_try fires broadly at e5-e6 (tree-lift stride ≥ 8, tree ≥ 256 nodes —
+  photos included). With the ratio pre-filter:
+    docs that SWITCH: ~1.75× (2× tree-learn + 2× collect + 2× clustered cost)
+    photos that SKIP: ~1.3× (still pay ONE clustered-cost build for the ratio —
+      real_ans_cost's write_tokens_ans over ~25M tokens is the cost)
+  This is why it ships OPT-IN, not default-on: +30 % e5 lossless wall on ALL
+  content (for the ratio's clustered build) is an rdtime regression that a
+  default flip must not pay silently.
+
+DEFAULT-FLIP PATH (follow-on, to win rd AND rdtime)
+  The photo SKIP-path cost is ONE redundant clustered build: for a photo that
+  KEEPs tree_a, the downstream real encode
+  (section.rs Step 4 `build_entropy_code_ans_with_options`) rebuilds the SAME
+  code the ratio gate already built (same tree_a, same tokens, LZ77 off at e5).
+  Caching the loop's clustered_a code and reusing it downstream when tree_a wins
+  makes the SKIP path free ⇒ default-on costs ~0 on non-aliased content. That
+  reuse (thread an Option<pre-built code> through the `best` tuple) is the
+  clean enabler for default-on; it is a real but localized refactor, deferred to
+  keep this chunk shippable. Alternatively compute the ratio's clustered cost
+  from clustered-histogram population (skip write_tokens_ans) — blocked today
+  because OwnedAnsEntropyCode stores normalized ANS tables, not raw counts.
+
+RELATION TO d0a304aa (JXL_TREE_SAMPLE_RANDOM)
+  d0a304aa shipped the unconditional-randomize primitive (opt-in, forces
+  randomized gather everywhere). This builds on it: same randomized gather, but
+  learn-both + keep-cheaper-by-real-cost, so it captures the doc win WITHOUT the
+  broad photo/structured-doc regression that made unconditional-random non-clean.
+  Both stay opt-in; SELF_REPAIR is the smart superset.
+
+LEDGER: HYPOTHESIS_LEDGER #24 (updated). e7 note: the self-repair fires only at
+e5-e6 (tree-lift stride ≥ 8); e7's base path is stride-2 (frac 0.5, no tree-lift)
+so should_try does not fire — fixing e7 aliasing additionally needs the secondary
+tree_sample_fraction ×0.1 fix (see lossless_stride_alias_2026-07-15.meta §SECONDARY).
