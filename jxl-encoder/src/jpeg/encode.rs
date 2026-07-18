@@ -1497,8 +1497,10 @@ fn compute_jpeg_dc_offset(jpeg: &JpegData, jpeg_c_map: &[usize; 3], is_ycbcr: bo
         if jpeg_c >= jpeg.components.len() {
             continue;
         }
-        let qt_idx = jpeg.components[jpeg_c].quant_idx as usize;
-        let qt_dc = jpeg.quant[qt_idx].values[0];
+        let Some(qt) = quant_table_by_id(jpeg, jpeg.components[jpeg_c].quant_idx) else {
+            continue;
+        };
+        let qt_dc = qt.values[0];
         if qt_dc > 0 {
             offsets[jxl_c] = 1024 / qt_dc;
         }
@@ -1627,6 +1629,40 @@ fn map_jpeg_coefficients(
     Ok((quant_dc, quant_ac, nzeros, raw_nzeros))
 }
 
+/// Look up the JPEG quantization table a component references by its DQT
+/// identifier (`Tq`), returning `None` if no such table was defined.
+///
+/// The referencing component stores the DQT *identifier*, not a position in the
+/// parsed table list. A crafted JPEG can reference an in-range-but-undefined
+/// table (or define DQT tables out of order / sparsely), so indexing
+/// `jpeg.quant` by the identifier would panic (index OOB) or silently select the
+/// wrong table and embed it into the JXL (non-byte-exact reconstruction). For a
+/// well-formed JPEG with in-order, contiguous DQT tables this is identical to
+/// positional lookup.
+fn quant_table_by_id(jpeg: &JpegData, tq: u32) -> Option<&JpegQuantTable> {
+    jpeg.quant.iter().find(|t| t.index == tq)
+}
+
+/// Resolve the quantization table for a JPEG component by its DQT identifier,
+/// erroring (rather than panicking) on an out-of-range component index or an
+/// undefined table.
+fn quant_table_for(jpeg: &JpegData, jpeg_c: usize) -> Result<&JpegQuantTable> {
+    let tq = jpeg
+        .components
+        .get(jpeg_c)
+        .ok_or_else(|| {
+            crate::error::Error::InvalidInput(format!(
+                "JPEG references out-of-range component index {jpeg_c}"
+            ))
+        })?
+        .quant_idx;
+    quant_table_by_id(jpeg, tq).ok_or_else(|| {
+        crate::error::Error::InvalidInput(format!(
+            "JPEG component references undefined quantization table {tq}"
+        ))
+    })
+}
+
 /// Build the transposed RAW quantization tables for JXL.
 ///
 /// For each JXL channel c, builds a 64-entry table from the JPEG quant table,
@@ -1635,8 +1671,7 @@ fn build_raw_qtables(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> Result<Vec<i32
     let mut qtables = vec![0i32; 3 * 64];
     for jxl_c in 0..3 {
         let jpeg_c = jpeg_c_map[jxl_c];
-        let quant_idx = jpeg.components[jpeg_c].quant_idx as usize;
-        let qt = &jpeg.quant[quant_idx].values;
+        let qt = &quant_table_for(jpeg, jpeg_c)?.values;
         for y in 0..8 {
             for x in 0..8 {
                 // Transpose: JXL stores coefficients transposed vs JPEG
@@ -1659,8 +1694,7 @@ fn build_dc_dequant(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> Result<[f32; 3]
     let mut dc_dequant = [0.0f32; 3];
     for jxl_c in 0..3 {
         let jpeg_c = jpeg_c_map[jxl_c];
-        let quant_idx = jpeg.components[jpeg_c].quant_idx as usize;
-        let q_dc = jpeg.quant[quant_idx].values[0] as f32;
+        let q_dc = quant_table_for(jpeg, jpeg_c)?.values[0] as f32;
         dc_dequant[jxl_c] = q_dc / (255.0 * 8.0);
     }
     Ok(dc_dequant)
@@ -1989,6 +2023,77 @@ mod tests {
             bits > 0 && bits < 0x4000,
             "qtable_den f16 bits = 0x{bits:04X}"
         );
+    }
+
+    fn qtable(index: u32, dc: i32) -> JpegQuantTable {
+        let mut values = [1i32; 64];
+        values[0] = dc;
+        JpegQuantTable {
+            values,
+            precision: 0,
+            index,
+            is_last: true,
+        }
+    }
+
+    fn jpeg_with_components(quant: Vec<JpegQuantTable>, quant_idx: [u32; 3]) -> JpegData {
+        let comp = |id: u32, qi: u32| JpegComponent {
+            id,
+            h_samp_factor: 1,
+            v_samp_factor: 1,
+            quant_idx: qi,
+            width_in_blocks: 1,
+            height_in_blocks: 1,
+            coeffs: Vec::new(),
+        };
+        JpegData {
+            width: 8,
+            height: 8,
+            restart_interval: 0,
+            app_data: Vec::new(),
+            app_marker_type: Vec::new(),
+            com_data: Vec::new(),
+            quant,
+            huffman_code: Vec::new(),
+            components: vec![
+                comp(1, quant_idx[0]),
+                comp(2, quant_idx[1]),
+                comp(3, quant_idx[2]),
+            ],
+            scan_info: Vec::new(),
+            marker_order: Vec::new(),
+            inter_marker_data: Vec::new(),
+            tail_data: Vec::new(),
+            has_zero_padding_bit: false,
+            padding_bits: Vec::new(),
+            component_type: JpegComponentType::Rgb,
+        }
+    }
+
+    // Regression: a crafted JPEG-transcode input whose component references an
+    // in-range-but-undefined DQT (or has out-of-order DQT tables) must resolve by
+    // the DQT identifier and error rather than panic on an OOB Vec index.
+    #[test]
+    fn quant_table_lookup_is_by_identifier_and_rejects_undefined() {
+        let c_map = [0usize, 1, 2];
+
+        // Component references Tq=1 but only Tq=0 is defined → error, no panic.
+        let jpeg = jpeg_with_components(vec![qtable(0, 10)], [0, 1, 0]);
+        assert!(quant_table_by_id(&jpeg, 1).is_none());
+        assert!(quant_table_for(&jpeg, 1).is_err());
+        assert!(build_raw_qtables(&jpeg, &c_map).is_err());
+        assert!(build_dc_dequant(&jpeg, &c_map).is_err());
+
+        // No DQT markers at all → every component's table is undefined.
+        let none = jpeg_with_components(Vec::new(), [0, 0, 0]);
+        assert!(build_raw_qtables(&none, &c_map).is_err());
+        assert!(build_dc_dequant(&none, &c_map).is_err());
+
+        // Out-of-order DQT: tables stored as index 1 then index 0. Lookup must key
+        // on `.index`, not Vec position.
+        let jpeg = jpeg_with_components(vec![qtable(1, 11), qtable(0, 22)], [0, 1, 0]);
+        assert_eq!(quant_table_for(&jpeg, 0).unwrap().values[0], 22);
+        assert_eq!(quant_table_for(&jpeg, 1).unwrap().values[0], 11);
     }
 
     #[test]
