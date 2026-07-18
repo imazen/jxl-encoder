@@ -22,6 +22,60 @@ use super::frame::DistanceParams;
 use crate::debug_rect;
 use crate::error::Result;
 
+/// diffmap-RD worktree (2026-07-18): bake bytes for `JXL_ZENSIM_RD_PROFILE=bake:<path>`
+/// — mounts an arbitrary ZNPR bake as the loop scorer via `ZensimProfile::Custom`
+/// (zensim `custom-profiles` feature; enabled in this worktree's Cargo.toml).
+static RD_BAKE_BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+fn rd_bake_bytes() -> &'static [u8] {
+    RD_BAKE_BYTES.get().expect("rd bake bytes set").as_slice()
+}
+/// Resolved (profile, n_inputs) for the RD experiment — computed once per process.
+static RD_PROFILE: std::sync::OnceLock<(zensim::ZensimProfile, usize)> = std::sync::OnceLock::new();
+
+/// Feature-width probe: the bakes we mount are exact-width, so the first width
+/// the forward accepts is the model's n_inputs (dependency-free — avoids a
+/// zenpredict dep just to read the header).
+fn rd_infer_n_inputs(profile: zensim::ZensimProfile) -> usize {
+    let feats = vec![0.0f64; 372];
+    for n in [372usize, 300, 228, 156] {
+        if zensim::score_features_with_profile(profile, &feats[..n], 64, 64).is_ok() {
+            return n;
+        }
+    }
+    0
+}
+
+/// `JXL_ZENSIM_RD_PROFILE=a|b|latest|bake:<path>` → (profile, n_inputs).
+/// n_inputs = 0 means "model-map unsupported for this profile" (A's feature
+/// regime is not probed; the shipped default needs no gradient).
+fn rd_profile_from_env() -> (zensim::ZensimProfile, usize) {
+    let v = std::env::var("JXL_ZENSIM_RD_PROFILE").unwrap_or_default();
+    if let Some(path) = v.strip_prefix("bake:") {
+        let bytes = std::fs::read(path)
+            .unwrap_or_else(|e| panic!("JXL_ZENSIM_RD_PROFILE bake {path}: {e}"));
+        RD_BAKE_BYTES.set(bytes).expect("rd bake set once");
+        let params = zensim::profile::ProfileParams::builder()
+            .mlp(rd_bake_bytes)
+            .skip_score_mapping(true)
+            .extrapolate_score(true)
+            .extended_features(true)
+            .compute_iw_features(true)
+            .build();
+        let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
+        let profile = zensim::ZensimProfile::Custom { params, name: "rd-bake" };
+        let n_in = rd_infer_n_inputs(profile);
+        return (profile, n_in);
+    }
+    match v.as_str() {
+        "b" => (zensim::ZensimProfile::B, 372),
+        "latest" => (zensim::ZensimProfile::latest_preview(), 372),
+        _ => {
+            #[allow(deprecated)]
+            (zensim::ZensimProfile::A, 0)
+        }
+    }
+}
+
 /// Tunable parameters for the zensim loop, readable from environment variables.
 /// Allows parameter sweeps without recompilation.
 #[derive(Debug, Clone)]
@@ -280,8 +334,20 @@ impl VarDctEncoder {
         // calibration coherent across zensim releases.
         // zensim deprecated `A` in favour of `B` (2026-07); the pin stays until
         // the calibration table is re-seeded against a new profile.
-        #[allow(deprecated)]
-        let z = zensim::Zensim::new(zensim::ZensimProfile::A).with_parallel(false);
+        // RD-experiment override (2026-07-18): `JXL_ZENSIM_RD_PROFILE=
+        // a|b|latest|bake:<path>` selects the loop's scoring profile (bake:
+        // mounts an arbitrary ZNPR via ZensimProfile::Custom); unset → A
+        // (shipped behavior). `JXL_ZENSIM_MODEL_MAP=signed|abs` additionally
+        // steers iterations 2+ with the MODEL'S OWN gradient s_k
+        // (DiffmapWeighting::ModelSensitivity) — s_k measured numerically at
+        // the first iteration's features, fold per the 2026-07-18 coherence
+        // matrix (signed for MLP gradients, abs for additive solves).
+        let (rd_profile, rd_n_in) = *RD_PROFILE.get_or_init(rd_profile_from_env);
+        let z = zensim::Zensim::new(rd_profile).with_parallel(false);
+        let model_map = std::env::var("JXL_ZENSIM_MODEL_MAP").ok();
+        let model_map_active =
+            matches!(model_map.as_deref(), Some("signed") | Some("abs")) && rd_n_in > 0;
+        let mut model_s: Option<&'static [f64]> = None;
         // The deinterleaved planes are transient: only used to build the zensim
         // precomputed reference, then dropped.
         let precomputed = {
@@ -299,7 +365,7 @@ impl VarDctEncoder {
             // src_r/g/b drop here; _g releases the reservation.
         };
 
-        let diffmap_opts = zensim::DiffmapOptions {
+        let mut diffmap_opts = zensim::DiffmapOptions {
             weighting: zensim::DiffmapWeighting::Trained,
             include_edge_mse: params.include_edge_mse,
             include_hf: params.include_hf,
@@ -437,6 +503,19 @@ impl VarDctEncoder {
             let zensim_score = dm_result.score();
             let diffmap = dm_result.diffmap();
 
+            // RD-experiment: a SIGNED model-sensitivity map carries negative
+            // values where refining LOSES score. The L4 tile fold below is
+            // sign-blind, so clamp at 0 — those tiles read as "no error" and
+            // the redistribution coarsens them (the directionally-correct
+            // action). No-op for the non-negative Trained map.
+            let clamped_map;
+            let diffmap: &[f32] = if model_s.is_some() {
+                clamped_map = diffmap.iter().map(|&v| v.max(0.0)).collect::<Vec<f32>>();
+                &clamped_map
+            } else {
+                diffmap
+            };
+
             // Step 6: Compute per-block error from zensim diffmap.
             // Use L4 norm per tile to capture spatial error distribution.
             let measured_dist = dm_result.result().approx_butteraugli() as f32;
@@ -451,6 +530,51 @@ impl VarDctEncoder {
                 &mut tile_dist,
                 &params,
             );
+
+            // RD-experiment: derive the model-sensitivity weighting from the
+            // FIRST compare's features (numerical central differences through
+            // the production features→score runtime; `abs` fold = pass −|s|
+            // through the signed ModelSensitivity fold). Iterations 2+ steer
+            // with the model's own gradient.
+            if model_map_active && model_s.is_none() {
+                let feats = dm_result.result().features();
+                if feats.len() >= rd_n_in {
+                    let base: Vec<f64> = feats[..rd_n_in].to_vec();
+                    let sf = |f: &[f64]| {
+                        zensim::score_features_with_profile(
+                            rd_profile,
+                            f,
+                            width as u32,
+                            height as u32,
+                        )
+                        .unwrap_or(f64::NAN)
+                    };
+                    let mut s = vec![0.0f64; rd_n_in];
+                    let mut probe = base.clone();
+                    for (k, sk) in s.iter_mut().enumerate() {
+                        let eps = (base[k].abs() * 1e-3).max(1e-5);
+                        probe[k] = base[k] + eps;
+                        let up = sf(&probe);
+                        probe[k] = base[k] - eps;
+                        let dn = sf(&probe);
+                        probe[k] = base[k];
+                        *sk = if up.is_finite() && dn.is_finite() {
+                            (up - dn) / (2.0 * eps)
+                        } else {
+                            0.0
+                        };
+                    }
+                    if model_map.as_deref() == Some("abs") {
+                        for v in &mut s {
+                            *v = -v.abs();
+                        }
+                    }
+                    let s: &'static [f64] = Box::leak(s.into_boxed_slice());
+                    model_s = Some(s);
+                    diffmap_opts.weighting = zensim::DiffmapWeighting::ModelSensitivity(s);
+                    diffmap_opts.sqrt = false; // sqrt(negative) is NaN on a signed map
+                }
+            }
 
             // Strategy refinement disabled: splitting large transforms with high
             // error causes size inflation (+5-12%) without proportional quality gain.

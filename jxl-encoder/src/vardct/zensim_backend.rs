@@ -211,8 +211,19 @@ pub(crate) mod cpu {
             // zensim deprecated `A` in favour of `B` (2026-07); staying on `A`
             // is deliberate until the Phase 8-zensim recalibration re-seeds the
             // target table against a new profile.
-            #[allow(deprecated)]
-            let scorer = Zensim::new(ZensimProfile::A);
+            //
+            // RD-experiment override (2026-07-18, diffmap-RD worktree): the
+            // profile is selectable via `JXL_ZENSIM_RD_PROFILE=a|b|latest` so
+            // the target-zensim RD eval can compare loop drivers WITHOUT
+            // changing the shipped default (unset → A, hash-locks intact).
+            let scorer = match std::env::var("JXL_ZENSIM_RD_PROFILE").as_deref() {
+                Ok("b") => Zensim::new(ZensimProfile::B),
+                Ok("latest") => Zensim::new(ZensimProfile::latest_preview()),
+                _ => {
+                    #[allow(deprecated)]
+                    Zensim::new(ZensimProfile::A)
+                }
+            };
             Some(Self {
                 scorer,
                 ref_planes: [
@@ -369,7 +380,19 @@ pub(crate) mod cpu {
                     width,
                     height,
                     width, // tight stride
-                    DiffmapOptions::default(),
+                    // RD-experiment knob (2026-07-18): `JXL_ZENSIM_DIFFMAP_SIGNALS=all`
+                    // turns on the edge/mse/hf per-pixel signals (the coherence
+                    // matrix showed the ssim-only default is part of the
+                    // steering bottleneck). Unset → default (shipped behavior).
+                    if std::env::var("JXL_ZENSIM_DIFFMAP_SIGNALS").as_deref() == Ok("all") {
+                        DiffmapOptions {
+                            include_edge_mse: true,
+                            include_hf: true,
+                            ..DiffmapOptions::default()
+                        }
+                    } else {
+                        DiffmapOptions::default()
+                    },
                 )
                 .map_err(|e| {
                     crate::error::Error::InvalidInput(format!(

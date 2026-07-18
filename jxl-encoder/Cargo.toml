@@ -55,7 +55,10 @@ butteraugli = { version = "0.9", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
-zensim = { version = "0.3.0", optional = true }
+# diffmap-RD worktree (2026-07-18): custom-profiles enables mounting arbitrary
+# bakes (ZensimProfile::Custom) + DiffmapWeighting::ModelSensitivity for the
+# model-map RD experiment. Worktree-only — do not land on main without review.
+zensim = { version = "0.3.0", optional = true, features = ["custom-profiles"] }
 # zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
 # quantization loop (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5). Opt-in via
 # the `zensim-loop-gpu` cargo feature; requires CUDA runtime at build +
