@@ -1546,7 +1546,7 @@ fn test_jpeg_transcode_cancellation() {
     use enough::{Stop, StopReason, Unstoppable};
 
     // A committed baseline 4:4:4 JPEG — the transcode path's supported shape.
-    let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+    let data = include_bytes!("../../tests/fixtures/jbrd/base_a_444.jpg");
     let cfg = LosslessConfig::new();
 
     struct AlwaysCancel;
@@ -1598,7 +1598,7 @@ fn test_jpeg_transcode_cancellation() {
 #[cfg(feature = "jpeg-reencoding")]
 #[test]
 fn test_jpeg_transcode_memory_budget() {
-    let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+    let data = include_bytes!("../../tests/fixtures/jbrd/base_a_444.jpg");
 
     // Default cap (8 GiB lossless default) transcodes the small fixture.
     assert!(
@@ -1646,7 +1646,7 @@ fn test_jpeg_transcode_memory_budget() {
 #[cfg(feature = "jpeg-reencoding")]
 #[test]
 fn test_jpeg_transcode_fallible_alloc_toggle() {
-    let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+    let data = include_bytes!("../../tests/fixtures/jbrd/base_a_444.jpg");
 
     let infallible = Limits::new().with_fallible_alloc(false);
     let fallible = Limits::new().with_fallible_alloc(true);
@@ -1695,7 +1695,7 @@ fn test_jpeg_transcode_fallible_alloc_toggle() {
 fn test_jpeg_recompress_limits_and_stop() {
     use enough::{Stop, StopReason, Unstoppable};
 
-    let data = include_bytes!("../tests/fixtures/jbrd/base_a_444.jpg");
+    let data = include_bytes!("../../tests/fixtures/jbrd/base_a_444.jpg");
 
     // Default (no limits / unstoppable): the lossless floor succeeds.
     assert!(
