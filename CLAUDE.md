@@ -78,8 +78,9 @@ identical pixel data. This produces up to **2x score inflation** that looks like
 - Feb 15, 2026: wasted a session investigating "2x worse external scores" — was metadata mismatch
 - Previously in butteraugli crate: similar TF mismatch caused months of wrong parity conclusions
 
-**The comparison scripts at `/tmp/run_cmp3.sh` use `butteraugli_main` and are UNRELIABLE
-unless source PNGs are metadata-stripped first.**
+**The old comparison scripts at `/tmp/run_cmp3.sh` (was /tmp — wiped; use ~/tmp
+for any rebuild) used `butteraugli_main` and are UNRELIABLE unless source PNGs
+are metadata-stripped first.**
 
 **The correct way to compare quality against cjxl:** `just quality-compare` — uses in-process
 Rust butteraugli on both encoders' output, decoded via jxl-oxide in linear RGB. Completely
@@ -162,229 +163,65 @@ tables — re-measure. Historical status snapshots (Feb 2026 quality-gap
 tables, the libjxl-tiny upgrade roadmap) are archived in
 [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md).
 
-### Remaining Gaps vs Full libjxl
-
-**A. AC Strategies — 19/27 implemented, 19 enabled**
-
-All AC strategies that libjxl evaluates through effort 9 are implemented. The remaining
-8 (DCT32x8, DCT8x32, DCT128+) are commented out or experimental in libjxl — never selected.
-
-libjxl effort level strategy gating:
-- e5 (Hare): DCT8, DCT16x8, DCT8x16, DCT16x16, DCT4x4, DCT2x2, IDENTITY
-- e6 (Wombat): + DCT4x8, DCT8x4, AFV0-3, DCT32x16, DCT16x32
-- e7 (Squirrel): + DCT32x32, DCT64x32, DCT32x64, DCT64x64
-- e8-9: Same strategies, quality gains come from cost model refinements
-
-Strategy status:
-- DCT32x16/DCT16x32: ENABLED at d>=0.5 (fixed Feb 14, gate lowered Feb 19)
-- DCT64x32/DCT32x64: ENABLED at d>=1.0 (fixed Feb 14, gate lowered Feb 19)
-- AFV0-3: ENABLED (fixed Feb 15, 2026 — DCT4x8 sub-weight row indexing bug in generate_afv_weights)
-- DCT64x64: enabled at d>=1.0 (square transform, works correctly, bfly=2.3-3.0 on crops)
-- DCT32x32: enabled at d>=0.5 (square transform, works correctly)
-- DCT2x2/IDENTITY: auto-select (kFavor2X2 = -0.4, matches libjxl)
-
-Non-square transform bug RESOLVED (Feb 14, 2026):
-Root cause was bucket_to_cx_cy() in coeff_order.rs missing bucket 6 (DCT32X16/DCT16X32).
-Fix: add bucket 6 → (4,2), fix bucket 5 label, switch default orders to natural_coeff_order.
-
-AFV quantization weight bug RESOLVED (Feb 15, 2026):
-Root cause was generate_afv_weights() indexing DCT4x8 sub-weights with y*8 instead of y*16.
-DCT4x8 weights use row-duplicated layout (base row y at rows 2y, 2y+1). Fixed: y*8 → y*16.
-Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants enabled.
-
-**B. Quantization Calibration** (VERIFIED Feb 19, 2026)
-- AdjustQuantBlockAC now effort-gated: runs at effort >= 5 (matching libjxl speed_tier <= kHare)
-- At effort < 5: fixed thresholds Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62}
-- `K_AC_QUANT` matches libjxl (0.765)
-- global_scale from effort-matched fixed q: 0.39/d at e>=5, 0.79/d at e<5 (matches libjxl exactly)
-  - Previous bug: computed global_scale from quant field median/MAD at all effort levels
-  - libjxl only uses adaptive median/MAD in the butteraugli loop (effort >= 8)
-  - Fix (eb14b65): -5.4% file size on smooth content at d=1.0 e7
-- At effort < 5: flat quant field = 0.79/d (matches libjxl SetQuant path)
-- kFavor2X2 = -0.4, weight formula ((5-d)/5)² — all match libjxl exactly
-- Butteraugli loop: kPow, kInitMul, kOriginalComparisonRound — all match libjxl exactly
-- Multi-resolution butteraugli comparison enabled (default params)
-
-**C. Cost Model**
-- AdjustQuantBlockAC: IMPLEMENTED, effort-gated (effort >= 5, `transform.rs:626-700`)
-- Dead-zone thresholds: UPDATED to full libjxl values (Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62})
-- X/B multi-block threshold: IMPLEMENTED (-0.00744 * xsize*ysize for c!=1, coverage>=4)
-- kFavor2X2: IMPLEMENTED at -0.4 (matches libjxl)
-- Note: libjxl uses Round() with thresholds, same as us (previous "truncation" claim was wrong)
-
-**D. Entropy Coding**
-- Enhanced histogram clustering: ENABLED for both VarDCT (pair-merge) and modular tree-learned paths
-- ANS now default for both VarDCT and modular lossless paths
-- Modular ANS: 0.5-1.7% savings on photos, 19-57% on graphics (single-context)
-- Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in)
-  Learns per-pixel predictor/context selection, multi-context ANS encoding
-- HybridUint {4,2,0} for modular (was raw split=15, now matches libjxl default)
-- LZ77 with RLE, greedy, and optimal methods (default-on at effort >= 7, ANS-only)
-  - RLE method: consecutive identical tokens (effort 7, fast)
-  - Greedy method: hash chain backward references (effort 8)
-  - Optimal method: Viterbi DP minimum-cost parse (effort 9+, best compression)
-  - All methods decoder-validated with jxl-rs, jxl-oxide, and djxl
-  - Integrated into tree-learned modular paths (single-group, multi-group squeeze,
-    and — since #69 item 1 — the default non-squeeze multi-group path, per-section)
-  - Per-section dist_multiplier matches decoder's per-subimage computation
-- Content-adaptive block context map (default-on in two-pass, QF-based splitting,
-  ~0.5% average savings on large images, verified with jxl-rs and djxl)
-- Context map encoding: simple vs non-simple cost comparison (matches libjxl EncodeContextMap,
-  saves bits when context map is large and repetitive with few histograms)
-- jxl-oxide 0.12.5 used to error with `UnexpectedEof` in modular sub-bitstreams
-  whose section had no decodable channels (e.g. multi-group VarDCT alpha extra
-  channel, multi-group patches reference frame). Fixed in
-  `imazen/jxl-oxide@fd4e2c3` (forked from `tirr-c/jxl-oxide`). The workspace
-  `[patch.crates-io]` in `Cargo.toml` pins the fork until the change lands in
-  a published jxl-oxide release. djxl and jxl-rs were always able to decode
-  these bitstreams; tests still use jxl-rs as the primary roundtrip decoder.
-
-**E. Effort 8+ Features**
-- **Butteraugli quantization loop** (effort 8+): IMPLEMENTED, FLOAT-DOMAIN.
-  Gated at speed_tier <= kKitten (effort >= 8) matching libjxl (enc_adaptive_quantization.cc:1282).
-  Matches libjxl FindBestQuantization: float quant field (~0.3-1.5 range),
-  per-iteration global_scale recomputation via SetQuantField (median/MAD), deviation
-  bounds, kOriginalComparisonRound=1, kPow=[0.2,0.2,0,...]. 2 iters at e8, 4 at e9+.
-  Returns final DistanceParams for downstream encoding. `--no-butteraugli` to disable.
-- ~~**Fine-grained AC strategy search**~~ DONE (effort 9): step=1 instead of step=2 for 32x32+ blocks
-- ~~**Optimal LZ77**~~ DONE: Viterbi DP parser at effort 9+, greedy at e8, RLE at e7
-- ~~**Full histogram clustering**~~ DONE: pair-merge enabled for both VarDCT and modular tree-learned paths
-- ~~**Predictor::Variable**~~ ALREADY DONE: tree learning with all 14 predictors IS Variable mode
-
-**F. Other**
-- Splines: IMPLEMENTED (manual API, opt-in via `LossyConfig::with_splines()`)
-- No dots detection (effort 7 feature we skip)
-- Patches/dictionary: IMPLEMENTED (auto-detect, default-on, 33.3% corpus savings, 29.6% smaller than cjxl e7)
-- EPF per-block sharpness: IMPLEMENTED (Feb 6, 2026, Phase 4 of reconstruction plan)
-- DC coding: fixed context tree, no modular optimization
-- LfFrame (separate DC frame): IMPLEMENTED (Feb 20, 2026, opt-in via `--lf-frame`)
-  - For progressive display (low-res DC preview before full decode), NOT compression
-  - Separate modular frame (frame_type=1, dc_level=1) with DC at 1/8 resolution
-  - Full-precision enc_factors [65536, 4096, 4096] with F16 roundtrip for decoder parity
-  - Custom dc_quant in LfGlobal, USE_LF_FRAME flag on main frame
-  - Lossy modular quantization (tree leaf multiplier) for DC data compression
-  - Float DC from transform pipeline (dc_from_dct_NxN) — NOT simple pixel averages
-  - Overhead: +1.2% to +3.8% avg (butteraugli within 2% of no-LfFrame)
-  - Verified with djxl and jxl-rs/jxl-oxide
-
-**Priority path:**
-1. ~~Fix DCT32x32~~ — DONE (enabled at d>=2.0, works correctly on smooth content)
-2. ~~AFV corner DCT~~ — DONE (Feb 4, 2026, all 4 variants verified with decoders)
-3. ~~DC tree learning~~ — DONE (Feb 4, 2026)
-   - `dc_tree_learn.rs`: Learns optimal context tree from DC statistics
-   - `VarDctEncoder.dc_tree_learning` flag (off by default, opt-in feature)
-   - Merges learned DC tree with AC metadata prefix subtree (11 fixed contexts)
-   - Uses BFS ordering for tree tokens with full context remapping
-   - Key fixes: JXL tree direction convention (LEFT=property>splitval, RIGHT=property≤splitval),
-     removed padding chain (invalid: decoders narrow property ranges), full BFS remap array
-   - Verified with jxl-oxide, djxl, and jxl-rs
-   - Impact on 64x64 gradient: -18.9% file size (482 → 391 bytes)
-4. ~~Backward-reference LZ77~~ — DONE (hash chain matching implemented, `--lz77-method greedy`)
-   - RLE and Greedy methods both work, decoder-validated with jxl-rs, jxl-oxide, and djxl
-   - Fixed Feb 5, 2026: LZ77 header bit count (CeilLog2Nonzero(1)=0 for msb/lsb) and
-     distance multiplier (must match decoder's per-subimage max(channel_widths))
-   - Special distance codes now correctly enabled for DC stream (dist_multiplier=xsize_blocks)
-5. ~~Iterative rate control~~ — DONE (commit 67f011c)
-6. ~~DCT64x64/DCT64x32/DCT32x64~~ — DONE (Feb 5, 2026, all verified with jxl-oxide and djxl)
-   - Brings total to 19/27 strategies — all that libjxl evaluates through effort 9
-   - Auto-selection guarded at d>=3.0, hierarchical 64→32→16 evaluation
-   - nzeros widened from u8 to u16 for DCT64x64's 4032 AC coefficients
-7. ~~Butteraugli quantization loop~~ — DONE (Feb 6, 2026, effort 8+ float-domain)
-   - Gated at effort >= 8 (speed_tier <= kKitten), matching libjxl exactly.
-   - Float-domain: works on quant field values ~0.3-1.5, per-iter global_scale recompute.
-   - 2 iters at e8, 4 at e9+. At e7: disabled (no loop). `--no-butteraugli` to disable.
-   - Per-block EPF sharpness also done (Phase 4, same date)
-8. ~~Increase kFavor2X2~~ — DONE (matches libjxl at -0.4)
-
-### What Works
-- [x] XYB color space conversion (linear sRGB input)
-- [x] Adaptive quantization (per-block perceptual masking, full pipeline)
-- [x] Chroma-from-luma (per-tile ytox/ytob, Newton at e7+, pass 2 with actual AC strategies)
-- [x] AC strategy selection (19 of 27: DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/DCT32x16/DCT16x32/DCT64x64/DCT64x32/DCT32x64/IDENTITY/DCT2X2/AFV0-3)
-- [x] DCT32x16/DCT16x32: enabled at d>=2.0 (fixed Feb 14 — coefficient order bucket bug, bfly 4.6)
-- [x] DCT64x64: enabled at d>=3.0, verified with jxl-oxide and djxl
-- [x] DCT64x32/DCT32x64: enabled at d>=3.0 (fixed Feb 14 — same coefficient order fix, bfly 4.6)
-- [x] AFV0-3: ENABLED — fixed DCT4x8 sub-weight row indexing in generate_afv_weights (y*8 → y*16)
-- [x] Error diffusion in AC quantization (opt-in via `--error-diffusion`, OFF by default —
-  libjxl accepts the param but never uses it in QuantizeBlockAC)
-- [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
-- [x] DC coding with gradient predictor and fixed context tree
-- [x] LfFrame (separate DC frame, `--lf-frame`, opt-in, progressive_dc=1)
-- [x] AC coding with channel interleaving
-- [x] Multi-group encoding (>256x256 images)
-- [x] Dynamic Huffman codes (two-pass, histogram clustering, default-on)
-- [x] Static Huffman fallback (streaming single-pass, `--no-optimize-codes`)
-- [x] Modular encoder (lossless path, RCT, decision tree contexts, HybridUint {4,2,0})
-- [x] RGBA lossless encoding (extra channel support in frame header)
-- [x] RGBA/BGRA lossy+alpha encoding (VarDCT RGB + modular alpha extra channel)
-- [x] Frame assembly, TOC, multi-group section layout
-- [x] CLI tool (`cjxl-rs`) with distance and code optimization flags
-- [x] ANS entropy coding (default-on, `--no-ans` for Huffman) — VarDCT and modular paths
-- [x] ANS for modular lossless (single-group and multi-group, 0.5-1.7% on photos, 19-57% on graphics)
-- [x] Custom coefficient ordering (default-on, `--no-custom-orders` to disable)
-- [x] Noise synthesis (`--noise` flag, opt-in, estimates and encodes noise params)
-- [x] Gaborish inverse (default-on, `--no-gaborish` to disable)
-- [x] Pixel-domain loss (default-on, `--no-pixel-domain-loss` to disable)
-- [x] LZ77 backward references (default-on at effort >= 7, ANS two-pass only)
-  - RLE method: `--lz77-method rle` (effort 7, consecutive identical tokens)
-  - Greedy method: `--lz77-method greedy` (effort 8, hash chain matching)
-  - Optimal method: `--lz77-method optimal` (effort 9+, Viterbi DP minimum-cost parse)
-  - Integrated into tree-learned paths (single-group, multi-group squeeze)
-  - All methods decoder-validated with jxl-rs, jxl-oxide, and djxl
-- [x] Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in, multi-context ANS)
-- [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
-- [x] Per-block EPF sharpness selection (auto, Phase 4 of reconstruction plan)
-- [x] Encoder-side reconstruction pipeline (dequant → CfL → LLF → IDCT → gab → EPF)
-- [x] Butteraugli quantization loop (effort 8+, `--no-butteraugli` to disable)
-  - Float-domain quant field with per-iteration global_scale recomputation (libjxl parity)
-  - Deviation bounds, kOriginalComparisonRound=1, kPow=[0.2,0.2,0,...] all match libjxl
-  - 2 iterations at effort 8, 4 at effort 9+ (gated at speed_tier <= kKitten, matching libjxl)
-- [x] Patches/dictionary (default-on, auto-detect, `--no-patches` to disable)
-  - Detects repeated rectangular patterns in screenshots/UI (text glyphs, icons, buttons)
-  - Detection matches libjxl FindTextLikePatches (L1 distance, 8-connected BFS/DFS,
-    background image with source pairs, has_similar check, kMinPeak filter)
-  - Packs unique patterns into modular reference frame (≤256×256), subtracts from VarDCT
-  - Cost-benefit gating: trial-encodes ref frame + dict, requires 2x savings/overhead ratio
-  - GB82-SC corpus (10 screenshots): 36.7% total savings
-    - imac_dark: -46.3%, imac_g3: -46.9%, windows: -39.6%, codec_wiki: -14.5%
-    - terminal: -53.3%, windows95: -34.9%, imessage: -9.8%
-  - RGBA alpha uses LZ77 RLE (gui.png: 234KB→49KB, 4.8x improvement)
-  - Zero overhead on CLIC photos (patches correctly produce nothing)
-  - Indexed/palette PNGs now supported via EXPAND transformation
-  - Verified with djxl, jxl-rs, jxl-oxide
-- [x] Lossless patches (default-on at effort >= 5, `--no-patches` to disable)
-  - Reuses VarDCT patch detection with RGB colorspace constants (PatchColorspaceInfo)
-  - Non-XYB reference frame: xyb_encoded=false, save_before_ct=true, integer RGB channels
-  - Subtracts patches from ModularImage channels in integer space before RCT
-  - ANS encoding for patches in multi-group LfGlobal (fixed: log_alpha_size consistency)
-  - GB82-SC corpus: 36.7% total savings, terminal -53.3%, imac_g3 -46.9%
-  - Zero overhead on CLIC photos (identical output with/without patches)
-  - All output pixel-exact verified with jxl-rs and djxl
-- [x] Lossy delta palette (`--lossy-palette`, near-lossless with error diffusion)
-  - Two-pass algorithm: discover frequent deltas, apply with error diffusion
-  - 72 built-in deltas, implicit color cubes (4^3 + 5^3), perceptual color distance
-  - Single-group only (<=256x256). Verified with djxl and jxl-oxide
-- [x] Fine-grained AC strategy search (effort 9+, step=1 for 32x32+ blocks)
-- [x] 16-bit pixel input (Rgb16, Rgba16, Gray16, GrayAlpha16)
-- [x] Float pixel input (RgbLinearF32, RgbaLinearF32, GrayLinearF32, GrayAlphaLinearF32)
-- [x] Grayscale lossless encoding (Gray8, Gray16, GrayLinearF32, with/without alpha)
-- [x] Progressive VarDCT encoding (`--progressive` 3-pass, `--qprogressive` 2-pass)
-  - 2-pass (QuantizedAcFullAc): Pass 0 all AC at half precision (shift=1), Pass 1 residual refinement
-  - 3-pass (DcVlfLfAc): Pass 0 DC+VLF (2 coeffs, 4x downsample), Pass 1 +LLF (3 coeffs, 2x), Pass 2 full AC
-  - Per-pass entropy codes, pass-major section ordering, frame header Passes struct
-  - Works with all AC strategies (DCT8 through DCT64x64) and multi-group images
-  - Verified with jxl-rs and djxl at effort 1-5
-- [x] Splines (manual API, opt-in via `LossyConfig::with_splines()`)
-  - Gaussian-blurred parametric curves for thin features (power lines, horizons, hair)
-  - Full pipeline: Catmull-Rom → resampling → continuous IDCT → Gaussian splatting
-  - Quantization with CfL decorrelation, ANS encoding with 6 spline contexts
-  - Encoder subtracts splines from XYB, decoder adds back after reconstruction
-  - Verified with jxl-rs and djxl
-
+The Feb-2026 deep-status snapshots that used to follow here ("Remaining
+Gaps vs Full libjxl" strategy/calibration/entropy tables + the "What Works"
+checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
+("Archived from CLAUDE.md 2026-07-19" section) — re-measure, don't trust them.
 
 ## Resolved Bugs
 
 See [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md) for full chronological bug narrative.
+
+### RESOLVED 2026-06-23: #93 butteraugli buttloop OOMs sweeps — precompute evaded the budget (NOT a pool leak)
+
+`zenmetrics sweep --codec zenjxl --plan modes_full` OOM-killed Hetzner
+cpx51 boxes (31+ GB RSS) encoding many varied-size renditions. The issue
+blamed `butteraugli::image::BufferPool` "growing unbounded across
+encodes." **Measurement overturned that diagnosis** — there is NO leak:
+- `examples/pool_growth_probe.rs` (sequential multi-encode, VmRSS per
+  encode): at constant 512² e8 threads=8 over 300 encodes the RSS *floor*
+  is flat (44→45.7 MB, oscillating 33–60), peak ~85–99 MB. The earlier
+  "growth" was pure current-image-size tracking. Provenance:
+  `benchmarks/issue93_pool_*_2026-06-23.{tsv,meta}`.
+- Each jxl-encoder encode builds a **fresh** `ButteraugliReference` with a
+  **fresh** `BufferPool` (`precompute.rs:361`, `BufferPool::new()`),
+  count-capped at `MAX_POOL_BUFFERS = 8`, **dropped at encode end**. The
+  pool does not persist across encodes; heaptrack only attributed bytes to
+  `BufferPool::take` because that is the malloc *site*. The 32 GB is
+  concurrency × per-encode butteraugli precompute, not accumulation.
+
+**Real root cause**: the buttloop runs under the default 4 GiB lossy
+`MemoryBudget` cap, but the `ButteraugliReference`'s multi-resolution
+psycho pyramid + masks (the buttloop's dominant allocation — heaptrack:
+6.35 GB) is allocated *inside* butteraugli, so it was invisible to the
+budget. `perceptual_loop.rs` reserved only the `4*3*n` planar ref planes,
+NOT the precompute → the cap could not catch the largest allocation →
+OOM-kill instead of a graceful `EncodeError`. Same shape as the 2026-06-13
+12 MP HDR fix, inverted (that over-counted; this under-counted).
+
+**Fix — LANDED** (butteraugli + jxl, authorized cross-repo; verified
+in-tree 2026-07-19: `ButteraugliReference::estimated_reference_bytes` defined at
+butteraugli `src/precompute.rs:789` — pinned by
+`estimated_reference_bytes_matches_precompute` — consumed at
+`jxl-encoder/src/vardct/perceptual_loop.rs:1066`, tests in
+`jxl-encoder/tests/it/alloc_budget.rs`):
+1. butteraugli (additive, no behavior change): `ButteraugliReference::`
+   `estimated_reference_bytes(w,h,&params)` (a-priori precompute cost) +
+   `precompute_bytes`/`memory_bytes` introspection, pinned exactly to the
+   real allocation by `estimated_reference_bytes_matches_precompute`.
+2. jxl guard (`perceptual_loop.rs`): reserve `estimated_reference_bytes`
+   on the budget before `set_reference`, scoped to the CpuButteraugli path,
+   held for the backend lifetime. The 4 GiB cap now bounds the buttloop.
+   Pure accounting — hash-locks 48/48 + Libjxl byte-lock 10/10 unchanged.
+3. fallible alloc: the buttloop ref planes honor the runtime
+   `Limits::fallible_alloc()` toggle (`budget::vec_f32_zeroed_fallible`).
+Tests: `tests/it/alloc_budget.rs` `issue_93_buttloop_precompute_charged_
+against_budget` (multi-group 768² e8) + `butteraugli_precompute_estimate_
+is_exposed_and_scales`. Does NOT bound the *concurrent sum* across a
+sweep's parallel encodes — that is a sweep-harness (zenmetrics) concern;
+the jxl fix bounds per-encode so a single oversized rendition fails
+gracefully instead of killing the box.
+
 
 Key patterns to watch for when working on this codebase:
 - **Transpose/layout bugs**: DCT output is transposed for square blocks, not for ROWS<COLS. Always verify against C++ `ComputeScaledDCT`.
@@ -448,51 +285,6 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
-
-### RESOLVED 2026-06-23: #93 butteraugli buttloop OOMs sweeps — precompute evaded the budget (NOT a pool leak)
-
-`zenmetrics sweep --codec zenjxl --plan modes_full` OOM-killed Hetzner
-cpx51 boxes (31+ GB RSS) encoding many varied-size renditions. The issue
-blamed `butteraugli::image::BufferPool` "growing unbounded across
-encodes." **Measurement overturned that diagnosis** — there is NO leak:
-- `examples/pool_growth_probe.rs` (sequential multi-encode, VmRSS per
-  encode): at constant 512² e8 threads=8 over 300 encodes the RSS *floor*
-  is flat (44→45.7 MB, oscillating 33–60), peak ~85–99 MB. The earlier
-  "growth" was pure current-image-size tracking. Provenance:
-  `benchmarks/issue93_pool_*_2026-06-23.{tsv,meta}`.
-- Each jxl-encoder encode builds a **fresh** `ButteraugliReference` with a
-  **fresh** `BufferPool` (`precompute.rs:361`, `BufferPool::new()`),
-  count-capped at `MAX_POOL_BUFFERS = 8`, **dropped at encode end**. The
-  pool does not persist across encodes; heaptrack only attributed bytes to
-  `BufferPool::take` because that is the malloc *site*. The 32 GB is
-  concurrency × per-encode butteraugli precompute, not accumulation.
-
-**Real root cause**: the buttloop runs under the default 4 GiB lossy
-`MemoryBudget` cap, but the `ButteraugliReference`'s multi-resolution
-psycho pyramid + masks (the buttloop's dominant allocation — heaptrack:
-6.35 GB) is allocated *inside* butteraugli, so it was invisible to the
-budget. `perceptual_loop.rs` reserved only the `4*3*n` planar ref planes,
-NOT the precompute → the cap could not catch the largest allocation →
-OOM-kill instead of a graceful `EncodeError`. Same shape as the 2026-06-13
-12 MP HDR fix, inverted (that over-counted; this under-counted).
-
-**Fix** (commit pending; butteraugli + jxl, authorized cross-repo):
-1. butteraugli (additive, no behavior change): `ButteraugliReference::`
-   `estimated_reference_bytes(w,h,&params)` (a-priori precompute cost) +
-   `precompute_bytes`/`memory_bytes` introspection, pinned exactly to the
-   real allocation by `estimated_reference_bytes_matches_precompute`.
-2. jxl guard (`perceptual_loop.rs`): reserve `estimated_reference_bytes`
-   on the budget before `set_reference`, scoped to the CpuButteraugli path,
-   held for the backend lifetime. The 4 GiB cap now bounds the buttloop.
-   Pure accounting — hash-locks 48/48 + Libjxl byte-lock 10/10 unchanged.
-3. fallible alloc: the buttloop ref planes honor the runtime
-   `Limits::fallible_alloc()` toggle (`budget::vec_f32_zeroed_fallible`).
-Tests: `tests/it/alloc_budget.rs` `issue_93_buttloop_precompute_charged_
-against_budget` (multi-group 768² e8) + `butteraugli_precompute_estimate_
-is_exposed_and_scales`. Does NOT bound the *concurrent sum* across a
-sweep's parallel encodes — that is a sweep-harness (zenmetrics) concern;
-the jxl fix bounds per-encode so a single oversized rendition fails
-gracefully instead of killing the box.
 
 ### RESOLVED 2026-06-13: 12 MP HDR encode failed at 2 GiB cap — budget over-count + too-low default
 
@@ -1780,109 +1572,12 @@ splitval=2 caused decode failures for images >2048px wide, imazen/jxl-encoder#3)
 **Files**: `dc_tree_learn.rs` (tree building), `context_tree.rs` (bitstream writing)
 
 
-### Modular Encoder Parity vs libjxl (Feb 6, 2026)
+### Modular parity + lossless status (Feb 2026) — archived
 
-**AT PARITY**: RCT (all 42 variants), ANS + Huffman, HybridUint {4,2,0}, LZ77 (RLE + greedy +
-optimal Viterbi DP), histogram clustering, tree learning (ID3, 16 properties, 256 quantization
-buckets), 14/14 predictors (including Weighted), multi-group encoding, RGBA/grayscale, 16-bit,
-float input, context map compression, palette transform (lossless + lossy delta), squeeze
-transform (Haar wavelet), lossless patches (default-on).
-
-**COMPLETED** (Feb 6, 2026):
-- Palette transform (TransformId=1): auto-detect, lossless, 19-57% on graphics. Verified jxl-rs + djxl.
-- Squeeze transform (TransformId=2): Haar wavelet decomposition, progressive decoding support.
-  3 roundtrip tests (gray 16/128, RGB 32) pixel-exact. Verified jxl-rs + djxl.
-- Tree learning expanded to 14 candidate predictors (all spatial + Weighted)
-- WP golden-number test confirms bit-exact match with jxl-rs/libjxl
-
-**FIXED** (Feb 16, 2026):
-- Predictor formulas 10-13 were WRONG (caused decode failures when tree selected these predictors):
-  - 10: was ((W+N)/2+gradient)/2, fixed to (W+NW)/2 (AverageWestAndNorthWest)
-  - 11: was ((W+N)/2+W)/2, fixed to (N+NW)/2 (AverageNorthAndNorthWest)
-  - 12: was ((W+N)/2+N)/2, fixed to (N+NE)/2 (AverageNorthAndNorthEast)
-  - 13: was (N+NE)/2, fixed to (6N-2NN+7W+WW+NEE+3NE+8)/16 (AverageAll)
-  - Added `nee` (x+2,y-1) neighbor to Neighbors struct for AverageAll
-  - Root cause of all tree-learned decode failures on 8colors/xy_256 test images
-- Palette+tree integration: palette auto-detected in tree-learning path when beneficial
-
-**GAPS (ranked by compression impact)**:
-
-1. ~~**Property 15 (wp_max_error) disabled in tree learning**~~ — FIXED (Feb 16, 2026).
-   Root cause was predictor formulas 10-13 being wrong, which corrupted WP error state.
-   With correct formulas, property 15 works correctly. Re-enabled for all tree learning.
-
-2. ~~**Best/Variable predictors (14, 15)**~~ — ALREADY DONE. Our tree learning with all 14
-   candidate predictors IS libjxl's `Predictor::Variable` mode (effort ≤7 in libjxl).
-   `Predictor::Best` is a speed optimization (only Gradient+Weighted) for effort 8+ — it's
-   *worse* quality, not better. Both are encoder-only; the decoder just sees per-leaf predictors.
-
-3. ~~**Optimal LZ77 (effort 9)**~~ — DONE (Feb 18, 2026). Viterbi DP minimum-cost parse.
-   Integrated into tree-learned modular paths (incl. the default multi-group path per-section, #69).
-   Effort-gated: RLE at e7, Greedy at e8, Optimal at e9+.
-
-4. ~~**Effort-level tuning for LZ77**~~ — DONE (Feb 18, 2026). LZ77 method now auto-selected by effort:
-   e7=RLE, e8=Greedy, e9+=Optimal. Tree learning and LZ77 are no longer mutually exclusive.
-
-5. ~~**Lossy palette / delta palette**~~ — DONE (Feb 18, 2026). Two-pass algorithm from libjxl:
-   72 built-in deltas, implicit color cubes, error diffusion, perceptual color distance.
-   API: `LosslessConfig::with_lossy_palette(true)`, CLI: `--lossy-palette`.
-   Multi-group support added: palette meta in LfGlobal, index across PassGroups.
-
-6. **16-bit input**: DONE (Feb 18, 2026). Full 16-bit pixel layout support (Rgb16, Rgba16,
-   Gray16, GrayAlpha16). Tree learning works on 16-bit. Float input (RgbaLinearF32, etc.) also supported.
-   **Animation, streaming ANS**: NOT IMPLEMENTED.
-
-7. ~~**Squeeze in multi-group**~~ — DONE (Feb 15, 2026). Squeeze transform works for multi-group
-   images. Channels assigned by shift: global (both dims ≤256), LfGroup (min_shift≥3),
-   PassGroup (shift<3). ANS fix: one encoder state per section (concatenate channel residuals).
-
-~~**Palette + tree learning integration**~~ — DONE (Feb 6, 2026). Auto-detect for RGB in tree learning path.
-
-### Lossless Compression Status (Feb 16, 2026)
-
-**BEATS cjxl e7** on CLIC photos. Average: **-0.7%** (7 of 8 images equal or smaller).
-
-**Default path (effort 7)**: RCT selection (best of 7 candidates) + learned MA tree +
-multi-context ANS with up to 96 histograms + per-histogram HybridUint config optimization +
-LZ77 RLE. Tree learning with 50% pixel sampling (matching libjxl's nb_repeats=0.5), 14
-candidate predictors including Weighted, no threshold floor. Effort 8 uses greedy LZ77,
-effort 9+ uses optimal Viterbi DP LZ77. 16-bit and float input supported.
-
-**Squeeze disabled by default** — hurts compression even WITH tree learning:
-- Photos (1024x1024 CLIC): squeeze+tree 1334KB vs tree-only 1163KB (+14.7%)
-- Screenshots (imac_dark): squeeze+tree 1828KB vs tree-only 1128KB (+62%)
-Tree-learned adaptive prediction handles spatial correlations more efficiently
-than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true)`.
-
-**Compression vs cjxl (8 CLIC 1024x1024 photos, effort 7)**:
-- cjxl-rs total: 7,930KB (avg 991KB/image)
-- vs cjxl e7: **-0.7%** (7 of 8 images equal or smaller)
-- Per-image range: -5.7% to +1.2% vs cjxl e7
-- Encode time: **~1.81s best-iter per 1024x1024 image** at 8 threads with `--features parallel-tree-learning` (release build; cjxl reference ~1.56s, gap **1.16×** strict target met; under-load mean is ~1.84s = 1.18×). Single-thread default is ~5.3s. Path: SIMD `estimate_bits` (`6011f10`) + SplitTreeSamples in-place permutation (`f5ea70f`) + packed-key sort dedup (`6112987`) + rayon parallel `compute_best_tree` (`8588e0c`) + parallel serial portions (`177cd65` collect_residuals_global, `0fae6cb` gather_samples, `4c04abc` rct_select, `1c003ae` pre_quantize, `d541c86` dedup_samples_packed_sort) + thread-local SplitWorkspace cache (`cb5e202`). Streaming hash-dedup (`3f4b135`) shipped opt-in; regressed end-to-end vs packed-key sort. Remaining future work: `split_tree_samples_owned` clone overhead (the actual rayon-internal ceiling, not allocator pressure as previously suspected), hash-table-at-gather (true libjxl pattern), pre_quantize SIMD inner loop. See jxl-encoder#40, #41 for tracked follow-ups.
-
-**Optimization history** (gap reduction on 8 CLIC 1024x1024 photos):
-1. Tree learning sample cap (65K): +28.5% → +7.7%
-2. Prefix-sum split evaluation: speed-only (3-5x faster)
-3. 256K samples + 8192 max_nodes: +7.7% → +6.5%
-4. Predictor change penalty: +6.5% → +5.8%
-5. Threshold floor 0.40: +5.8% → +3.7%
-6. Non-simple context map (64 histograms): +3.7% → +1.8%
-7. RCT selection for multi-group: +1.8% → +0.4%
-8. 96 max histograms: +0.4% → +0.3%
-9. Per-histogram HybridUint configs: +0.3% → +0.2%
-10. 50% pixel sampling + remove threshold floor: +0.2% → **-0.7%**
-
-**Known issues**:
-- Screenshots: lossless patches improved (36.7% total savings, was 17.5%). Removed 256×256
-  ref frame limit (multi-group), first-fit grid bin packing, RCT via FrameEncoder.
-  terminal -53.3%, imac_g3 -46.9%, imac_dark -46.3%, windows -39.6%, codec_wiki -14.5%.
-- ~~Palette+ANS checksum mismatch~~ RESOLVED: root cause was u2S bit width bug in
-  write_palette_transform (fixed Feb 17). Regression test: `test_palette_256_colors_regression`
-- Tree learning optimized Feb 17, 2026: 86x speedup via count_increase buckets, incremental entropy,
-  u8 tokens, counting sort, and nlog2n lookup table. 1024x1024 photo: ~14s (was ~120s).
-
-**All lossless output verified pixel-exact** via djxl and jxl-rs on:
-- 8 CLIC 1024x1024 photos, 10 screenshots, RGBA, grayscale, 4x4, 13x17, 16x16, 32x32, 257x1, 300x300, 512x512
+The "Modular Encoder Parity vs libjxl (Feb 6, 2026)" and "Lossless
+Compression Status (Feb 16, 2026)" deep-status sections were archived to
+[docs/CODE-HISTORY.md](docs/CODE-HISTORY.md) ("Archived from CLAUDE.md
+2026-07-19" section).
 
 ## API Convergence TODOs
 
