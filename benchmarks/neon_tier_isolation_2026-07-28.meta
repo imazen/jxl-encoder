@@ -1,0 +1,36 @@
+# jxl-encoder NEON vs forced-scalar — first tier-isolated measurement
+date:    2026-07-28
+host:    Apple M4 Pro (12 core), macOS, aarch64
+command: cargo bench -p jxl-encoder --bench tier_isolation --features _dev
+build:   release, NO -C target-cpu=native
+input:   512x512 noise+patches (a gradient would give degenerate DCT
+         coefficients and understate the transform kernels), effort 5
+
+## Result — the split is by coding mode
+
+| mode                  | NEON     | scalar   | speedup |
+|-----------------------|----------|----------|---------|
+| lossy d1.0 (VarDCT)   |  54.86ms | 115.40ms |  2.10x  |
+| lossless (modular)    | 240.27ms | 283.39ms |  1.18x  |
+
+No regression.
+
+VarDCT more than doubles: that path runs the XYB transform, DCT8/DCT64,
+Gaborish 5x5, EPF and chroma-from-luma kernels, all of them
+`#[magetypes(... neon ...)]` in jxl-encoder-simd. Modular gains far less
+because it is predictor + entropy coded, which is serial.
+
+This independently reproduces the same split measured on the DECODER side the
+same day (zenjxl-decoder: VarDCT 1.71-1.83x, modular 1.02-1.05x). Two separate
+codebases, same conclusion — the mode, not the implementation, is what decides
+how much NEON is worth in JPEG XL.
+
+## Why this bench had to be added
+
+The existing benches here (`dedup_samples_strategies`,
+`predictor_prune_microbench`, `tree_learn_split_read_pattern`) are microbenches
+of specific modular tree-learning strategies. None compares the encoder against
+itself with SIMD disabled, so nothing measured what the SIMD crate is worth —
+on any architecture.
+
+NOT MEASURED: per-kernel attribution, and only one effort level / one distance.

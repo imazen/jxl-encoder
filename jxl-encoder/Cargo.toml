@@ -116,6 +116,10 @@ cvvdp-cpu = { package = "cvvdp", path = "../../zenmetrics/crates/cvvdp", default
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
+# Dev-only: archmage/testable_dispatch lets benches/tier_isolation.rs disable
+# the baseline SIMD token (NEON on aarch64) so the scalar arm is real rather
+# than a second measurement of the SIMD path.
+_dev = ["archmage/testable_dispatch"]
 # Ultra HDR gain map encoding: typed `GainMapBundle` serializer that matches
 # libjxl `JxlGainMapBundle` byte-for-byte (jhgm box payload), plus an
 # `HdrFromSdrRequest` end-to-end API that takes an SDR + HDR pair, computes
@@ -3085,3 +3089,8 @@ required-features = ["__expert", "__internals"]
 name = "beardoil_d2_probe"
 path = "examples/beardoil_d2_probe.rs"
 required-features = ["__expert"]
+
+[[bench]]
+name = "tier_isolation"
+harness = false
+required-features = ["_dev"]

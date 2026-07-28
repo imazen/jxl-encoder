@@ -1,0 +1,3039 @@
+warning: function `rgb_to_yuv420_scalar_tail` is never used
+   --> /Users/lilith/work/zen/zenjpeg/zenyuv/src/encode.rs:281:15
+    |
+281 | pub(crate) fn rgb_to_yuv420_scalar_tail(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `pack_i16_pair` is never used
+   --> /Users/lilith/work/zen/zenjpeg/zenyuv/src/types.rs:124:21
+    |
+124 | pub(crate) const fn pack_i16_pair(a: i16, b: i16) -> i32 {
+    |                     ^^^^^^^^^^^^^
+
+warning: function `load_16` is never used
+  --> /Users/lilith/work/butteraugli/butteraugli/src/malta.rs:74:4
+   |
+74 | fn load_16(data: &[f32], start: usize) -> &[f32; 16] {
+   |    ^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zenyuv` (lib) generated 2 warnings
+warning: `butteraugli` (lib) generated 1 warning
+warning: function `verify_ans_roundtrip` is never used
+    --> jxl-encoder/src/entropy_coding/encode_ans.rs:1436:8
+     |
+1436 | pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Result<()> {
+     |        ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:76:37
+   |
+76 |     let v_clamped = if v < f32::new(0.0) {
+   |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+   = note: `#[warn(float_literal_f32_fallback)]` (part of `#[warn(future_incompatible)]`) on by default
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:77:18
+   |
+77 |         f32::new(0.0)
+   |                  ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:78:28
+   |
+78 |     } else if v > f32::new(1.0) {
+   |                            ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:79:18
+   |
+79 |         f32::new(1.0)
+   |                  ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:86:30
+   |
+86 |         let l_max = f32::new(10000.0);
+   |                              ^^^^^^^ help: explicitly specify the type as `f32`: `10000.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:87:27
+   |
+87 |         let m1 = f32::new(0.159_301_75);
+   |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.159_301_75_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:88:27
+   |
+88 |         let m2 = f32::new(78.843_75);
+   |                           ^^^^^^^^^ help: explicitly specify the type as `f32`: `78.843_75_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:89:27
+   |
+89 |         let c1 = f32::new(0.835_937_5);
+   |                           ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.835_937_5_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:90:27
+   |
+90 |         let c2 = f32::new(18.851_562);
+   |                           ^^^^^^^^^^ help: explicitly specify the type as `f32`: `18.851_562_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:91:27
+   |
+91 |         let c3 = f32::new(18.687_5);
+   |                           ^^^^^^^^ help: explicitly specify the type as `f32`: `18.687_5_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:94:42
+   |
+94 |         let im_t = f32::powf(v, f32::new(1.0) / m2);
+   |                                          ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:96:41
+   |
+96 |         let num = if num_raw < f32::new(0.0) {
+   |                                         ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:97:22
+   |
+97 |             f32::new(0.0)
+   |                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:102:57
+    |
+102 |         let lin = l_max * f32::powf(num / den, f32::new(1.0) / m1);
+    |                                                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:103:34
+    |
+103 |         let floor_val = f32::new(0.005);
+    |                                  ^^^^^ help: explicitly specify the type as `f32`: `0.005_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:113:26
+    |
+113 |         let a = f32::new(0.178_832_77);
+    |                          ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.178_832_77_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:114:26
+    |
+114 |         let b = f32::new(1.0) - f32::new(4.0) * a;
+    |                          ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:114:42
+    |
+114 |         let b = f32::new(1.0) - f32::new(4.0) * a;
+    |                                          ^^^ help: explicitly specify the type as `f32`: `4.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:115:26
+    |
+115 |         let c = f32::new(0.5) - a * f32::ln(f32::new(4.0) * a);
+    |                          ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:115:54
+    |
+115 |         let c = f32::new(0.5) - a * f32::ln(f32::new(4.0) * a);
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `4.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:116:44
+    |
+116 |         let lin = if v_clamped <= f32::new(0.5) {
+    |                                            ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:117:48
+    |
+117 |             (v_clamped * v_clamped) / f32::new(3.0)
+    |                                                ^^^ help: explicitly specify the type as `f32`: `3.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:119:60
+    |
+119 |             (f32::exp((v_clamped - c) / a) + b) / f32::new(12.0)
+    |                                                            ^^^^ help: explicitly specify the type as `f32`: `12.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:126:34
+    |
+126 |         let floor_val = f32::new(0.005);
+    |                                  ^^^^^ help: explicitly specify the type as `f32`: `0.005_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:141:30
+    |
+141 |         let gamma = f32::new(2.4);
+    |                              ^^^ help: explicitly specify the type as `f32`: `2.4_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:142:34
+    |
+142 |         let inv_gamma = f32::new(1.0) / gamma;
+    |                                  ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:148:41
+    |
+148 |         let sum_pos = if sum < f32::new(0.0) {
+    |                                         ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:149:22
+    |
+149 |             f32::new(0.0)
+    |                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:164:43
+    |
+164 |         let lin = if v_clamped > f32::new(0.040_45) {
+    |                                           ^^^^^^^^ help: explicitly specify the type as `f32`: `0.040_45_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:166:39
+    |
+166 |                 (v_clamped + f32::new(0.055)) / f32::new(1.055),
+    |                                       ^^^^^ help: explicitly specify the type as `f32`: `0.055_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:166:58
+    |
+166 |                 (v_clamped + f32::new(0.055)) / f32::new(1.055),
+    |                                                          ^^^^^ help: explicitly specify the type as `f32`: `1.055_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:167:26
+    |
+167 |                 f32::new(2.4),
+    |                          ^^^ help: explicitly specify the type as `f32`: `2.4_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:170:34
+    |
+170 |             v_clamped / f32::new(12.92)
+    |                                  ^^^^^ help: explicitly specify the type as `f32`: `12.92_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:200:37
+    |
+200 |     let inv_r = if scale > f32::new(0.0) {
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:203:18
+    |
+203 |         f32::new(0.0)
+    |                  ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:205:37
+    |
+205 |     let inv_g = if scale > f32::new(0.0) {
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:208:18
+    |
+208 |         f32::new(0.0)
+    |                  ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:210:37
+    |
+210 |     let inv_b = if scale > f32::new(0.0) {
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:213:18
+    |
+213 |         f32::new(0.0)
+    |                  ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:216:24
+    |
+216 |     let y_s = f32::new(0.262_7) * inv_r + f32::new(0.678_0) * inv_g + f32::new(0.059_3) * inv_b;
+    |                        ^^^^^^^ help: explicitly specify the type as `f32`: `0.262_7_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:216:52
+    |
+216 |     let y_s = f32::new(0.262_7) * inv_r + f32::new(0.678_0) * inv_g + f32::new(0.059_3) * inv_b;
+    |                                                    ^^^^^^^ help: explicitly specify the type as `f32`: `0.678_0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:216:80
+    |
+216 |     let y_s = f32::new(0.262_7) * inv_r + f32::new(0.678_0) * inv_g + f32::new(0.059_3) * inv_b;
+    |                                                                                ^^^^^^^ help: explicitly specify the type as `f32`: `0.059_3_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:217:36
+    |
+217 |     let factor = if y_s > f32::new(0.0) {
+    |                                    ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:218:41
+    |
+218 |         f32::powf(y_s, gamma - f32::new(1.0))
+    |                                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:220:18
+    |
+220 |         f32::new(0.0)
+    |                  ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:303:28
+    |
+303 |     let inv_255 = f32::new(1.0) / f32::new(255.0);
+    |                            ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/color.rs:303:44
+    |
+303 |     let inv_255 = f32::new(1.0) / f32::new(255.0);
+    |                                            ^^^^^ help: explicitly specify the type as `f32`: `255.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:69:30
+   |
+69 |     let axis_min = f32::new(-2.301_03);
+   |                              ^^^^^^^^ help: explicitly specify the type as `f32`: `2.301_03_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:76:29
+   |
+76 |     let inv_step = f32::new(4.919_830_6);
+   |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `4.919_830_6_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:81:30
+   |
+81 |     let max_idx_f = f32::new(30.999_999);
+   |                              ^^^^^^^^^^ help: explicitly specify the type as `f32`: `30.999_999_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:85:36
+   |
+85 |     let log_correction = f32::new(-0.013_987_1);
+   |                                    ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.013_987_1_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:90:40
+   |
+90 |     let off_lo = if off_raw < f32::new(0.0) {
+   |                                        ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:91:18
+   |
+91 |         f32::new(0.0)
+   |                  ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:149:30
+    |
+149 |     let axis_min = f32::new(-2.301_03);
+    |                              ^^^^^^^^ help: explicitly specify the type as `f32`: `2.301_03_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:150:29
+    |
+150 |     let inv_step = f32::new(4.919_830_6); // tick 203 fix — see csf_apply_per_pixel_kernel
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `4.919_830_6_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:151:30
+    |
+151 |     let max_idx_f = f32::new(30.999_999);
+    |                              ^^^^^^^^^^ help: explicitly specify the type as `f32`: `30.999_999_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:152:36
+    |
+152 |     let log_correction = f32::new(-0.013_987_1);
+    |                                    ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.013_987_1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:157:40
+    |
+157 |     let off_lo = if off_raw < f32::new(0.0) {
+    |                                        ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:158:18
+    |
+158 |         f32::new(0.0)
+    |                  ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:247:30
+    |
+247 |     let axis_min = f32::new(-2.301_03);
+    |                              ^^^^^^^^ help: explicitly specify the type as `f32`: `2.301_03_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:248:29
+    |
+248 |     let inv_step = f32::new(4.919_830_6); // tick 203 fix — see csf_apply_per_pixel_kernel
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `4.919_830_6_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:249:30
+    |
+249 |     let max_idx_f = f32::new(30.999_999);
+    |                              ^^^^^^^^^^ help: explicitly specify the type as `f32`: `30.999_999_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:250:36
+    |
+250 |     let log_correction = f32::new(-0.013_987_1);
+    |                                    ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.013_987_1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:255:40
+    |
+255 |     let off_lo = if off_raw < f32::new(0.0) {
+    |                                        ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/csf.rs:256:18
+    |
+256 |         f32::new(0.0)
+    |                  ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:209:39
+    |
+209 |     let fx = (x_dst as f32 + f32::new(0.5)) * (src_w_f / dst_w_f) - f32::new(0.5);
+    |                                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:209:78
+    |
+209 |     let fx = (x_dst as f32 + f32::new(0.5)) * (src_w_f / dst_w_f) - f32::new(0.5);
+    |                                                                              ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:210:39
+    |
+210 |     let fy = (y_dst as f32 + f32::new(0.5)) * (src_h_f / dst_h_f) - f32::new(0.5);
+    |                                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:210:78
+    |
+210 |     let fy = (y_dst as f32 + f32::new(0.5)) * (src_h_f / dst_h_f) - f32::new(0.5);
+    |                                                                              ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:215:25
+    |
+215 |     let zero = f32::new(0.0);
+    |                         ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:218:39
+    |
+218 |     } else if fx > src_w_f - f32::new(1.0) {
+    |                                       ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:219:28
+    |
+219 |         src_w_f - f32::new(1.0)
+    |                            ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:225:39
+    |
+225 |     } else if fy > src_h_f - f32::new(1.0) {
+    |                                       ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:226:28
+    |
+226 |         src_h_f - f32::new(1.0)
+    |                            ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:250:24
+    |
+250 |     let one = f32::new(1.0);
+    |                        ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:317:25
+    |
+317 |     let zero = f32::new(0.0);
+    |                         ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:332:24
+    |
+332 |     let one = f32::new(1.0);
+    |                        ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/diffmap.rs:349:26
+    |
+349 |     dest[idx] = f32::new(0.0);
+    |                          ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:84:23
+   |
+84 |     let k0 = f32::new(1.854_402_2e-2);
+   |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:85:23
+   |
+85 |     let k1 = f32::new(3.416_694_2e-2);
+   |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:86:23
+   |
+86 |     let k2 = f32::new(5.633_176_4e-2);
+   |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:87:23
+   |
+87 |     let k3 = f32::new(8.310_854e-2);
+   |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:88:23
+   |
+88 |     let k4 = f32::new(1.097_193e-1);
+   |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:89:23
+   |
+89 |     let k5 = f32::new(1.296_180_3e-1);
+   |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:90:23
+   |
+90 |     let k6 = f32::new(1.370_228_2e-1);
+   |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.370_228_2e-1_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:91:23
+   |
+91 |     let k7 = f32::new(1.296_180_3e-1);
+   |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:92:23
+   |
+92 |     let k8 = f32::new(1.097_193e-1);
+   |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:93:23
+   |
+93 |     let k9 = f32::new(8.310_854e-2);
+   |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:94:24
+   |
+94 |     let k10 = f32::new(5.633_176_4e-2);
+   |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:95:24
+   |
+95 |     let k11 = f32::new(3.416_694_2e-2);
+   |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:96:24
+   |
+96 |     let k12 = f32::new(1.854_402_2e-2);
+   |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:152:25
+    |
+152 |     let zero = f32::new(0.0);
+    |                         ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:190:23
+    |
+190 |     let k0 = f32::new(1.854_402_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:191:23
+    |
+191 |     let k1 = f32::new(3.416_694_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:192:23
+    |
+192 |     let k2 = f32::new(5.633_176_4e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:193:23
+    |
+193 |     let k3 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:194:23
+    |
+194 |     let k4 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:195:23
+    |
+195 |     let k5 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:196:23
+    |
+196 |     let k6 = f32::new(1.370_228_2e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.370_228_2e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:197:23
+    |
+197 |     let k7 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:198:23
+    |
+198 |     let k8 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:199:23
+    |
+199 |     let k9 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:200:24
+    |
+200 |     let k10 = f32::new(5.633_176_4e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:201:24
+    |
+201 |     let k11 = f32::new(3.416_694_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:202:24
+    |
+202 |     let k12 = f32::new(1.854_402_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:311:23
+    |
+311 |     let k0 = f32::new(1.854_402_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:312:23
+    |
+312 |     let k1 = f32::new(3.416_694_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:313:23
+    |
+313 |     let k2 = f32::new(5.633_176_4e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:314:23
+    |
+314 |     let k3 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:315:23
+    |
+315 |     let k4 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:316:23
+    |
+316 |     let k5 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:317:23
+    |
+317 |     let k6 = f32::new(1.370_228_2e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.370_228_2e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:318:23
+    |
+318 |     let k7 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:319:23
+    |
+319 |     let k8 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:320:23
+    |
+320 |     let k9 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:321:24
+    |
+321 |     let k10 = f32::new(5.633_176_4e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:322:24
+    |
+322 |     let k11 = f32::new(3.416_694_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:323:24
+    |
+323 |     let k12 = f32::new(1.854_402_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:396:23
+    |
+396 |     let k0 = f32::new(1.854_402_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:397:23
+    |
+397 |     let k1 = f32::new(3.416_694_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:398:23
+    |
+398 |     let k2 = f32::new(5.633_176_4e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:399:23
+    |
+399 |     let k3 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:400:23
+    |
+400 |     let k4 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:401:23
+    |
+401 |     let k5 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:402:23
+    |
+402 |     let k6 = f32::new(1.370_228_2e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.370_228_2e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:403:23
+    |
+403 |     let k7 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:404:23
+    |
+404 |     let k8 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:405:23
+    |
+405 |     let k9 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:406:24
+    |
+406 |     let k10 = f32::new(5.633_176_4e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:407:24
+    |
+407 |     let k11 = f32::new(3.416_694_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:408:24
+    |
+408 |     let k12 = f32::new(1.854_402_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:471:23
+    |
+471 |     let k0 = f32::new(1.854_402_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:472:23
+    |
+472 |     let k1 = f32::new(3.416_694_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:473:23
+    |
+473 |     let k2 = f32::new(5.633_176_4e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:474:23
+    |
+474 |     let k3 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:475:23
+    |
+475 |     let k4 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:476:23
+    |
+476 |     let k5 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:477:23
+    |
+477 |     let k6 = f32::new(1.370_228_2e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.370_228_2e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:478:23
+    |
+478 |     let k7 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:479:23
+    |
+479 |     let k8 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:480:23
+    |
+480 |     let k9 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:481:24
+    |
+481 |     let k10 = f32::new(5.633_176_4e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:482:24
+    |
+482 |     let k11 = f32::new(3.416_694_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:483:24
+    |
+483 |     let k12 = f32::new(1.854_402_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:612:23
+    |
+612 |     let k0 = f32::new(1.854_402_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:613:23
+    |
+613 |     let k1 = f32::new(3.416_694_2e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:614:23
+    |
+614 |     let k2 = f32::new(5.633_176_4e-2);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:615:23
+    |
+615 |     let k3 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:616:23
+    |
+616 |     let k4 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:617:23
+    |
+617 |     let k5 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:618:23
+    |
+618 |     let k6 = f32::new(1.370_228_2e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.370_228_2e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:619:23
+    |
+619 |     let k7 = f32::new(1.296_180_3e-1);
+    |                       ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.296_180_3e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:620:23
+    |
+620 |     let k8 = f32::new(1.097_193e-1);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.097_193e-1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:621:23
+    |
+621 |     let k9 = f32::new(8.310_854e-2);
+    |                       ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `8.310_854e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:622:24
+    |
+622 |     let k10 = f32::new(5.633_176_4e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `5.633_176_4e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:623:24
+    |
+623 |     let k11 = f32::new(3.416_694_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.416_694_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:624:24
+    |
+624 |     let k12 = f32::new(1.854_402_2e-2);
+    |                        ^^^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.854_402_2e-2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:739:25
+    |
+739 |     let zero = f32::new(0.0);
+    |                         ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:806:27
+    |
+806 |     let mask_p = f32::new(2.264_355_2);
+    |                           ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `2.264_355_2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:807:29
+    |
+807 |     let mask_q_0 = f32::new(1.302_622_7);
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.302_622_7_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:808:29
+    |
+808 |     let mask_q_1 = f32::new(2.888_590_8);
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `2.888_590_8_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:809:29
+    |
+809 |     let mask_q_2 = f32::new(3.680_771_3);
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.680_771_3_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:810:29
+    |
+810 |     let pu_scale = f32::new(0.160_188_4); // 10^MASK_C with MASK_C = -0.79549712
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.160_188_4_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:811:30
+    |
+811 |     let d_max_lin = f32::new(366.732_25); // 10^D_MAX with D_MAX = 2.5642455
+    |                              ^^^^^^^^^^ help: explicitly specify the type as `f32`: `366.732_25_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:814:27
+    |
+814 |     let xcm_00 = f32::new(0.876_968);
+    |                           ^^^^^^^^^ help: explicitly specify the type as `f32`: `0.876_968_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:815:27
+    |
+815 |     let xcm_01 = f32::new(0.016_103_15);
+    |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.016_103_15_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:816:27
+    |
+816 |     let xcm_02 = f32::new(0.050_159_38);
+    |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.050_159_38_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:817:27
+    |
+817 |     let xcm_10 = f32::new(5.918_792);
+    |                           ^^^^^^^^^ help: explicitly specify the type as `f32`: `5.918_792_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:818:27
+    |
+818 |     let xcm_11 = f32::new(1.269_323);
+    |                           ^^^^^^^^^ help: explicitly specify the type as `f32`: `1.269_323_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:819:27
+    |
+819 |     let xcm_12 = f32::new(0.152_080_92);
+    |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.152_080_92_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:820:27
+    |
+820 |     let xcm_20 = f32::new(14.041_055);
+    |                           ^^^^^^^^^^ help: explicitly specify the type as `f32`: `14.041_055_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:821:27
+    |
+821 |     let xcm_21 = f32::new(0.498_209_6);
+    |                           ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.498_209_6_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:822:27
+    |
+822 |     let xcm_22 = f32::new(0.697_756_55);
+    |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.697_756_55_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:824:24
+    |
+824 |     let eps = f32::new(1e-5);
+    |                        ^^^^ help: explicitly specify the type as `f32`: `1e-5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:833:37
+    |
+833 |     let abs_t_a = if t_a < f32::new(0.0) { -t_a } else { t_a };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:834:39
+    |
+834 |     let abs_t_rg = if t_rg < f32::new(0.0) { -t_rg } else { t_rg };
+    |                                       ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:835:39
+    |
+835 |     let abs_t_vy = if t_vy < f32::new(0.0) { -t_vy } else { t_vy };
+    |                                       ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:836:37
+    |
+836 |     let abs_r_a = if r_a < f32::new(0.0) { -r_a } else { r_a };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:837:39
+    |
+837 |     let abs_r_rg = if r_rg < f32::new(0.0) { -r_rg } else { r_rg };
+    |                                       ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:838:39
+    |
+838 |     let abs_r_vy = if r_vy < f32::new(0.0) { -r_vy } else { r_vy };
+    |                                       ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:868:43
+    |
+868 |     let abs_diff_a = if diff_a < f32::new(0.0) {
+    |                                           ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:874:45
+    |
+874 |     let abs_diff_rg = if diff_rg < f32::new(0.0) {
+    |                                             ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:880:45
+    |
+880 |     let abs_diff_vy = if diff_vy < f32::new(0.0) {
+    |                                             ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:890:34
+    |
+890 |     let d_u_a = sp_a / (f32::new(1.0) + m_a_pool);
+    |                                  ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:891:36
+    |
+891 |     let d_u_rg = sp_rg / (f32::new(1.0) + m_rg_pool);
+    |                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:892:36
+    |
+892 |     let d_u_vy = sp_vy / (f32::new(1.0) + m_vy_pool);
+    |                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:931:27
+    |
+931 |     let mask_p = f32::new(2.264_355_2);
+    |                           ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `2.264_355_2_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:932:29
+    |
+932 |     let mask_q_0 = f32::new(1.302_622_7);
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `1.302_622_7_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:933:29
+    |
+933 |     let mask_q_1 = f32::new(2.888_590_8);
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `2.888_590_8_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:934:29
+    |
+934 |     let mask_q_2 = f32::new(3.680_771_3);
+    |                             ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `3.680_771_3_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:935:30
+    |
+935 |     let d_max_lin = f32::new(366.732_25);
+    |                              ^^^^^^^^^^ help: explicitly specify the type as `f32`: `366.732_25_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:937:27
+    |
+937 |     let xcm_00 = f32::new(0.876_968);
+    |                           ^^^^^^^^^ help: explicitly specify the type as `f32`: `0.876_968_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:938:27
+    |
+938 |     let xcm_01 = f32::new(0.016_103_15);
+    |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.016_103_15_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:939:27
+    |
+939 |     let xcm_02 = f32::new(0.050_159_38);
+    |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.050_159_38_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:940:27
+    |
+940 |     let xcm_10 = f32::new(5.918_792);
+    |                           ^^^^^^^^^ help: explicitly specify the type as `f32`: `5.918_792_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:941:27
+    |
+941 |     let xcm_11 = f32::new(1.269_323);
+    |                           ^^^^^^^^^ help: explicitly specify the type as `f32`: `1.269_323_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:942:27
+    |
+942 |     let xcm_12 = f32::new(0.152_080_92);
+    |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.152_080_92_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:943:27
+    |
+943 |     let xcm_20 = f32::new(14.041_055);
+    |                           ^^^^^^^^^^ help: explicitly specify the type as `f32`: `14.041_055_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:944:27
+    |
+944 |     let xcm_21 = f32::new(0.498_209_6);
+    |                           ^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.498_209_6_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:945:27
+    |
+945 |     let xcm_22 = f32::new(0.697_756_55);
+    |                           ^^^^^^^^^^^^ help: explicitly specify the type as `f32`: `0.697_756_55_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:947:24
+    |
+947 |     let eps = f32::new(1e-5);
+    |                        ^^^^ help: explicitly specify the type as `f32`: `1e-5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:953:37
+    |
+953 |     let abs_m_a = if m_a < f32::new(0.0) { -m_a } else { m_a };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:954:39
+    |
+954 |     let abs_m_rg = if m_rg < f32::new(0.0) { -m_rg } else { m_rg };
+    |                                       ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:955:39
+    |
+955 |     let abs_m_vy = if m_vy < f32::new(0.0) { -m_vy } else { m_vy };
+    |                                       ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:973:43
+    |
+973 |     let abs_diff_a = if diff_a < f32::new(0.0) {
+    |                                           ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:979:45
+    |
+979 |     let abs_diff_rg = if diff_rg < f32::new(0.0) {
+    |                                             ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:985:45
+    |
+985 |     let abs_diff_vy = if diff_vy < f32::new(0.0) {
+    |                                             ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:995:34
+    |
+995 |     let d_u_a = sp_a / (f32::new(1.0) + m_a_pool);
+    |                                  ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:996:36
+    |
+996 |     let d_u_rg = sp_rg / (f32::new(1.0) + m_rg_pool);
+    |                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/masking.rs:997:36
+    |
+997 |     let d_u_vy = sp_vy / (f32::new(1.0) + m_vy_pool);
+    |                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:82:33
+   |
+82 |     let abs_v = if v < f32::new(0.0) { -v } else { v };
+   |                                 ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:83:24
+   |
+83 |     let eps = f32::new(1e-5);
+   |                        ^^^^ help: explicitly specify the type as `f32`: `1e-5_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:122:24
+    |
+122 |     let eps = f32::new(1e-5);
+    |                        ^^^^ help: explicitly specify the type as `f32`: `1e-5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:126:35
+    |
+126 |     let abs_a = if v_a < f32::new(0.0) { -v_a } else { v_a };
+    |                                   ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:131:37
+    |
+131 |     let abs_rg = if v_rg < f32::new(0.0) { -v_rg } else { v_rg };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:136:37
+    |
+136 |     let abs_vy = if v_vy < f32::new(0.0) { -v_vy } else { v_vy };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:186:24
+    |
+186 |     let eps = f32::new(1e-5);
+    |                        ^^^^ help: explicitly specify the type as `f32`: `1e-5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:190:35
+    |
+190 |     let abs_a = if v_a < f32::new(0.0) { -v_a } else { v_a };
+    |                                   ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:195:37
+    |
+195 |     let abs_rg = if v_rg < f32::new(0.0) { -v_rg } else { v_rg };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:200:37
+    |
+200 |     let abs_vy = if v_vy < f32::new(0.0) { -v_vy } else { v_vy };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:249:24
+    |
+249 |     let eps = f32::new(1e-5);
+    |                        ^^^^ help: explicitly specify the type as `f32`: `1e-5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:265:35
+    |
+265 |     let abs_a = if v_a < f32::new(0.0) { -v_a } else { v_a };
+    |                                   ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:267:55
+    |
+267 |     let c_a = if in_range { c_a_raw } else { f32::new(0.0) };
+    |                                                       ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:270:37
+    |
+270 |     let abs_rg = if v_rg < f32::new(0.0) { -v_rg } else { v_rg };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:272:57
+    |
+272 |     let c_rg = if in_range { c_rg_raw } else { f32::new(0.0) };
+    |                                                         ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:275:37
+    |
+275 |     let abs_vy = if v_vy < f32::new(0.0) { -v_vy } else { v_vy };
+    |                                     ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pool.rs:277:57
+    |
+277 |     let c_vy = if in_range { c_vy_raw } else { f32::new(0.0) };
+    |                                                         ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:137:23
+    |
+137 |     let k0 = f32::new(0.05);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:138:23
+    |
+138 |     let k1 = f32::new(0.25);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.25_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:139:23
+    |
+139 |     let k2 = f32::new(0.40);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.40_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:140:23
+    |
+140 |     let k3 = f32::new(0.25);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.25_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:141:23
+    |
+141 |     let k4 = f32::new(0.05);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:240:34
+    |
+240 |             total_v += f32::new(-0.05) * vs_last2 + f32::new(-0.20) * vs_last;
+    |                                  ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:240:63
+    |
+240 |             total_v += f32::new(-0.05) * vs_last2 + f32::new(-0.20) * vs_last;
+    |                                                               ^^^^ help: explicitly specify the type as `f32`: `0.20_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:244:33
+    |
+244 |             total_v += f32::new(0.05) * vs_last2 + f32::new(0.20) * vs_last;
+    |                                 ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:244:61
+    |
+244 |             total_v += f32::new(0.05) * vs_last2 + f32::new(0.20) * vs_last;
+    |                                                             ^^^^ help: explicitly specify the type as `f32`: `0.20_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:322:23
+    |
+322 |     let k0 = f32::new(0.05);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:323:23
+    |
+323 |     let k1 = f32::new(0.25);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.25_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:324:23
+    |
+324 |     let k2 = f32::new(0.40);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.40_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:325:23
+    |
+325 |     let k3 = f32::new(0.25);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.25_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:326:23
+    |
+326 |     let k4 = f32::new(0.05);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:418:34
+    |
+418 |             total_v += f32::new(-0.05) * vs_last2 + f32::new(-0.20) * vs_last;
+    |                                  ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:418:63
+    |
+418 |             total_v += f32::new(-0.05) * vs_last2 + f32::new(-0.20) * vs_last;
+    |                                                               ^^^^ help: explicitly specify the type as `f32`: `0.20_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:420:33
+    |
+420 |             total_v += f32::new(0.05) * vs_last2 + f32::new(0.20) * vs_last;
+    |                                 ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:420:61
+    |
+420 |             total_v += f32::new(0.05) * vs_last2 + f32::new(0.20) * vs_last;
+    |                                                             ^^^^ help: explicitly specify the type as `f32`: `0.20_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:548:23
+    |
+548 |     let k0 = f32::new(0.05);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:549:23
+    |
+549 |     let k1 = f32::new(0.25);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.25_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:550:23
+    |
+550 |     let k2 = f32::new(0.40);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.40_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:551:23
+    |
+551 |     let k3 = f32::new(0.25);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.25_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:552:23
+    |
+552 |     let k4 = f32::new(0.05);
+    |                       ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:621:34
+    |
+621 |             total_v += f32::new(-0.05) * vs_last2 + f32::new(-0.20) * vs_last;
+    |                                  ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:621:63
+    |
+621 |             total_v += f32::new(-0.05) * vs_last2 + f32::new(-0.20) * vs_last;
+    |                                                               ^^^^ help: explicitly specify the type as `f32`: `0.20_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:623:33
+    |
+623 |             total_v += f32::new(0.05) * vs_last2 + f32::new(0.20) * vs_last;
+    |                                 ^^^^ help: explicitly specify the type as `f32`: `0.05_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:623:61
+    |
+623 |             total_v += f32::new(0.05) * vs_last2 + f32::new(0.20) * vs_last;
+    |                                                             ^^^^ help: explicitly specify the type as `f32`: `0.20_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:672:23
+    |
+672 |     let k0 = f32::new(0.1);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:673:23
+    |
+673 |     let k1 = f32::new(0.5);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:674:23
+    |
+674 |     let k2 = f32::new(0.8);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.8_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:675:23
+    |
+675 |     let k3 = f32::new(0.5);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:676:23
+    |
+676 |     let k4 = f32::new(0.1);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:740:31
+    |
+740 |     let m0 = if v0 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:740:54
+    |
+740 |     let m0 = if v0 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:741:31
+    |
+741 |     let m1 = if v1 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:741:54
+    |
+741 |     let m1 = if v1 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:742:31
+    |
+742 |     let m2 = if v2 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:742:54
+    |
+742 |     let m2 = if v2 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:743:31
+    |
+743 |     let m3 = if v3 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:743:54
+    |
+743 |     let m3 = if v3 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:744:31
+    |
+744 |     let m4 = if v4 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:744:54
+    |
+744 |     let m4 = if v4 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:800:23
+    |
+800 |     let k0 = f32::new(0.1);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:801:23
+    |
+801 |     let k1 = f32::new(0.5);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:802:23
+    |
+802 |     let k2 = f32::new(0.8);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.8_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:803:23
+    |
+803 |     let k3 = f32::new(0.5);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:804:23
+    |
+804 |     let k4 = f32::new(0.1);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:876:31
+    |
+876 |     let m0 = if v0 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:876:54
+    |
+876 |     let m0 = if v0 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:877:31
+    |
+877 |     let m1 = if v1 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:877:54
+    |
+877 |     let m1 = if v1 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:878:31
+    |
+878 |     let m2 = if v2 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:878:54
+    |
+878 |     let m2 = if v2 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:879:31
+    |
+879 |     let m3 = if v3 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:879:54
+    |
+879 |     let m3 = if v3 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:880:31
+    |
+880 |     let m4 = if v4 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:880:54
+    |
+880 |     let m4 = if v4 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:910:23
+    |
+910 |     let k0 = f32::new(0.1);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:911:23
+    |
+911 |     let k1 = f32::new(0.5);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:912:23
+    |
+912 |     let k2 = f32::new(0.8);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.8_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:913:23
+    |
+913 |     let k3 = f32::new(0.5);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:914:23
+    |
+914 |     let k4 = f32::new(0.1);
+    |                       ^^^ help: explicitly specify the type as `f32`: `0.1_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:978:31
+    |
+978 |     let m0 = if v0 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:978:54
+    |
+978 |     let m0 = if v0 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:979:31
+    |
+979 |     let m1 = if v1 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:979:54
+    |
+979 |     let m1 = if v1 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:980:31
+    |
+980 |     let m2 = if v2 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:980:54
+    |
+980 |     let m2 = if v2 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:981:31
+    |
+981 |     let m3 = if v3 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:981:54
+    |
+981 |     let m3 = if v3 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:982:31
+    |
+982 |     let m4 = if v4 { f32::new(1.0) } else { f32::new(0.0) };
+    |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:982:54
+    |
+982 |     let m4 = if v4 { f32::new(1.0) } else { f32::new(0.0) };
+    |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1029:23
+     |
+1029 |     let k0 = f32::new(0.1);
+     |                       ^^^ help: explicitly specify the type as `f32`: `0.1_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1030:23
+     |
+1030 |     let k1 = f32::new(0.5);
+     |                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1031:23
+     |
+1031 |     let k2 = f32::new(0.8);
+     |                       ^^^ help: explicitly specify the type as `f32`: `0.8_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1032:23
+     |
+1032 |     let k3 = f32::new(0.5);
+     |                       ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1033:23
+     |
+1033 |     let k4 = f32::new(0.1);
+     |                       ^^^ help: explicitly specify the type as `f32`: `0.1_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1097:31
+     |
+1097 |     let m0 = if v0 { f32::new(1.0) } else { f32::new(0.0) };
+     |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1097:54
+     |
+1097 |     let m0 = if v0 { f32::new(1.0) } else { f32::new(0.0) };
+     |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1098:31
+     |
+1098 |     let m1 = if v1 { f32::new(1.0) } else { f32::new(0.0) };
+     |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1098:54
+     |
+1098 |     let m1 = if v1 { f32::new(1.0) } else { f32::new(0.0) };
+     |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1099:31
+     |
+1099 |     let m2 = if v2 { f32::new(1.0) } else { f32::new(0.0) };
+     |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1099:54
+     |
+1099 |     let m2 = if v2 { f32::new(1.0) } else { f32::new(0.0) };
+     |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1100:31
+     |
+1100 |     let m3 = if v3 { f32::new(1.0) } else { f32::new(0.0) };
+     |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1100:54
+     |
+1100 |     let m3 = if v3 { f32::new(1.0) } else { f32::new(0.0) };
+     |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1101:31
+     |
+1101 |     let m4 = if v4 { f32::new(1.0) } else { f32::new(0.0) };
+     |                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1101:54
+     |
+1101 |     let m4 = if v4 { f32::new(1.0) } else { f32::new(0.0) };
+     |                                                      ^^^ help: explicitly specify the type as `f32`: `0.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1165:26
+     |
+1165 |     let l_min = f32::new(0.01);
+     |                          ^^^^ help: explicitly specify the type as `f32`: `0.01_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1166:26
+     |
+1166 |     let l_max = f32::new(1000.0);
+     |                          ^^^^^^ help: explicitly specify the type as `f32`: `1000.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1167:31
+     |
+1167 |     let l_min_neg = f32::new(-1000.0);
+     |                               ^^^^^^ help: explicitly specify the type as `f32`: `1000.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1218:26
+     |
+1218 |     let l_min = f32::new(0.01);
+     |                          ^^^^ help: explicitly specify the type as `f32`: `0.01_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1219:26
+     |
+1219 |     let l_max = f32::new(1000.0);
+     |                          ^^^^^^ help: explicitly specify the type as `f32`: `1000.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1220:31
+     |
+1220 |     let l_min_neg = f32::new(-1000.0);
+     |                               ^^^^^^ help: explicitly specify the type as `f32`: `1000.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1308:26
+     |
+1308 |     let l_min = f32::new(0.01);
+     |                          ^^^^ help: explicitly specify the type as `f32`: `0.01_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1309:26
+     |
+1309 |     let l_max = f32::new(1000.0);
+     |                          ^^^^^^ help: explicitly specify the type as `f32`: `1000.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1310:31
+     |
+1310 |     let l_min_neg = f32::new(-1000.0);
+     |                               ^^^^^^ help: explicitly specify the type as `f32`: `1000.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1429:26
+     |
+1429 |     let l_min = f32::new(0.01);
+     |                          ^^^^ help: explicitly specify the type as `f32`: `0.01_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1430:26
+     |
+1430 |     let l_max = f32::new(1000.0);
+     |                          ^^^^^^ help: explicitly specify the type as `f32`: `1000.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> /Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu/src/kernels/pyramid.rs:1431:31
+     |
+1431 |     let l_min_neg = f32::new(-1000.0);
+     |                               ^^^^^^ help: explicitly specify the type as `f32`: `1000.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: unused imports: `YCBCR_B_TO_CB`, `YCBCR_B_TO_CR`, `YCBCR_B_TO_Y`, `YCBCR_G_TO_CB`, `YCBCR_G_TO_CR`, `YCBCR_G_TO_Y`, `YCBCR_R_TO_CB`, `YCBCR_R_TO_CR`, and `YCBCR_R_TO_Y`
+  --> /Users/lilith/work/zen/zenjpeg/zenjpeg/src/encode_simd.rs:40:5
+   |
+40 |     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+41 |     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `w`
+   --> /Users/lilith/work/zen/zenjpeg/zenjpeg/src/decode/upsample.rs:453:13
+    |
+453 |         let w = out_width.min(in_width);
+    |             ^ help: if this is intentional, prefix it with an underscore: `_w`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `upsample_h2v2_libjpeg_row_scalar` is never used
+   --> /Users/lilith/work/zen/zenjpeg/zenjpeg/src/decode/upsample.rs:737:8
+    |
+737 | pub fn upsample_h2v2_libjpeg_row_scalar(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `jxl-encoder` (lib) generated 1 warning
+warning: `cvvdp-gpu` (lib) generated 326 warnings (run `cargo fix --lib -p cvvdp-gpu` to apply 326 suggestions)
+warning: `zenjpeg` (lib) generated 3 warnings (run `cargo fix --lib -p zenjpeg` to apply 2 suggestions)
+   Compiling jxl-encoder v0.3.2 (/Users/lilith/work/zen/jxl-encoder/jxl-encoder)
+warning: unused import: `archmage::SimdToken`
+  --> jxl-encoder/benches/tier_isolation.rs:40:9
+   |
+40 |     use archmage::SimdToken;
+   |         ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `jxl-encoder` (bench "tier_isolation") generated 1 warning (run `cargo fix --bench "tier_isolation" -p jxl-encoder` to apply 1 suggestion)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.51s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running benches/tier_isolation.rs (/Users/lilith/work/zen/jxl-encoder/target/release/deps/tier_isolation-6558a1277cf677cc)
+[tier_isolation] comparing neon vs forced scalar
+[zenbench] calibration: int=0.38ns/iter mem_bw=86.2GiB/s mem_lat=7.9ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.42ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /var/folders/sc/m9jbk0qj0jz4w09h7gg8v3p80000gn/T/zenbench/zenbench-1785247389-932d.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1785247389-932d
+  git: 1a768cbf522c69dcb6f4dd8404887e6bbcdce18b
+═══════════════════════════════════════════════════════════════
+
+  encode_lossy_d1_512  30 rounds × 1 calls
+              mean ±mad ms  95% CI vs base     
+  ├─ neon      54.9 ±0.6ms  [54.4–55.4]ms      
+  ╰─ scalar   115.4 ±0.9ms  [+109.0%–+111.8%]  
+
+  neon    █████████████████████████████ 54.86ms
+  scalar  █████████████████████████████████████████████████████████████ 115.40ms
+
+  encode_lossless_512  20 rounds × 1 calls
+              mean ±mad ms  95% CI vs base   
+  ├─ neon     240.3 ±1.2ms  [239.6–241.0]ms  
+  ╰─ scalar   283.4 ±2.4ms  [+17.4%–+18.5%]  
+
+  neon    ████████████████████████████████████████████████████ 240.27ms
+  scalar  █████████████████████████████████████████████████████████████ 283.39ms
+
+  total: 23.4s  (3 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
