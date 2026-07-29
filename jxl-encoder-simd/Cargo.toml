@@ -43,3 +43,11 @@ libm = { version = "0.2.16", default-features = false }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "kernel_tiers"
+harness = false
+
+[dev-dependencies]
+# Workspace-standard benchmarking harness (interleaved arms, paired statistics).
+zenbench = "0.1.8"
