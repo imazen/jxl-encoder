@@ -20,8 +20,8 @@
 //! time, after which it cannot be disabled and this bench skips rather than
 //! silently reporting the SIMD path under both labels.
 
-use zenbench::prelude::*;
 use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
+use zenbench::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
 type TierToken = archmage::NeonToken;

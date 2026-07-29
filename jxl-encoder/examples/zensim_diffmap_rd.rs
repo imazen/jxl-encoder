@@ -145,6 +145,63 @@ fn parse_metric(s: &str) -> PerceptualMetric {
     }
 }
 
+/// C3b (zensim task #67): judge profile — the SAME bake that drives the
+/// loop, scoring decoded-vs-ref (native zensim, higher = better). One bake
+/// per process (OnceLock; the loop's own RD_PROFILE cache has the same
+/// constraint — the outer script runs one process per bake).
+static JUDGE_BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+fn judge_bytes() -> &'static [u8] {
+    JUDGE_BYTES.get().expect("judge bake set").as_slice()
+}
+static JUDGE: std::sync::OnceLock<zensim::ZensimProfile> = std::sync::OnceLock::new();
+
+fn judge_profile(bake_path: &str) -> zensim::ZensimProfile {
+    *JUDGE.get_or_init(|| {
+        let bytes = std::fs::read(bake_path).expect("judge bake read");
+        JUDGE_BYTES.set(bytes).expect("judge bytes once");
+        let params = zensim::profile::ProfileParams::builder()
+            .mlp(judge_bytes)
+            .skip_score_mapping(true)
+            .extrapolate_score(true)
+            .extended_features(true)
+            .compute_iw_features(true)
+            .build();
+        let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
+        zensim::ZensimProfile::Custom {
+            params,
+            name: "judge-bake",
+        }
+    })
+}
+
+fn judge_score(bake_path: &str, ref_rgb: &[u8], dec_rgb: &[u8], w: u32, h: u32) -> f64 {
+    let profile = judge_profile(bake_path);
+    let z = zensim::Zensim::new(profile).with_parallel(false);
+    let rp: Vec<[u8; 3]> = ref_rgb
+        .chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+    let dp: Vec<[u8; 3]> = dec_rgb
+        .chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+    let rs = zensim::RgbSlice::new(&rp, w as usize, h as usize);
+    let ds = zensim::RgbSlice::new(&dp, w as usize, h as usize);
+    z.compute(&rs, &ds).map(|r| r.score()).unwrap_or(f64::NAN)
+}
+
+/// Seed distance for the target controller (rough; the controller owns
+/// convergence — the seed only sets iteration-1's operating point).
+fn seed_distance_for_target(t: f64) -> f32 {
+    if t >= 90.0 {
+        0.9
+    } else if t >= 80.0 {
+        1.5
+    } else {
+        2.5
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut metric_s = "zensim".to_string();
     let mut label = "zensim_v47_default".to_string();
@@ -156,6 +213,17 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut iters: u32 = 3;
     let mut corpus_file: Option<String> = None;
     let mut distances: Vec<f32> = vec![1.0, 2.0, 3.0];
+    // C3b target-A/B mode (activated by --zensim-targets): per
+    // (fixture × target × arm) encode with the shared target controller and
+    // judge decoded output with the SAME bake.
+    let mut zensim_targets: Vec<f64> = Vec::new();
+    let mut arms: Vec<String> = vec![
+        "baseline".into(),
+        "abs".into(),
+        "attr".into(),
+        "attr-stale".into(),
+    ];
+    let mut bake: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -169,6 +237,17 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     distances = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
                 }
             }
+            "--zensim-targets" => {
+                if let Some(s) = args.next() {
+                    zensim_targets = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                }
+            }
+            "--arms" => {
+                if let Some(s) = args.next() {
+                    arms = s.split(',').map(|x| x.trim().to_string()).collect();
+                }
+            }
+            "--bake" => bake = args.next(),
             _ => {}
         }
     }
@@ -177,6 +256,19 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None => default_corpus(),
     };
     let metric = parse_metric(&metric_s);
+
+    if !zensim_targets.is_empty() {
+        return run_target_ab(
+            &corpus,
+            &zensim_targets,
+            &arms,
+            bake.as_deref()
+                .expect("--bake required for --zensim-targets"),
+            iters,
+            &label,
+            &out_dir,
+        );
+    }
     let decoded_dir = out_dir.join("decoded");
     let ref_dir = out_dir.join("ref");
     fs::create_dir_all(&decoded_dir)?;
@@ -245,5 +337,110 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     fs::write(&manifest_path, &manifest)?;
     eprintln!("[diffmap_rd] wrote manifest {}", manifest_path.display());
+    Ok(())
+}
+
+/// C3b target-hitting A/B (zensim task #67): per (fixture × target × arm),
+/// encode with the shared target controller, decode, judge with the SAME
+/// bake, and emit one TSV row. Arms differ ONLY in `JXL_ZENSIM_MODEL_MAP`.
+#[allow(clippy::too_many_arguments)]
+fn run_target_ab(
+    corpus: &[(String, String, String)],
+    targets: &[f64],
+    arms: &[String],
+    bake: &str,
+    iters: u32,
+    label: &str,
+    out_dir: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use jxl_encoder::api::{EncoderStrategy, PerceptualMetric};
+    use jxl_encoder::{LossyConfig, PixelLayout};
+
+    let decoded_dir = out_dir.join("decoded");
+    let ref_dir = out_dir.join("ref");
+    fs::create_dir_all(&decoded_dir)?;
+    fs::create_dir_all(&ref_dir)?;
+    let stats_tmp = out_dir.join(format!(".stats_tmp_{label}.tsv"));
+
+    // One bake per process (the loop's RD_PROFILE OnceLock caches the first).
+    // SAFETY (edition 2024 set_var): single-threaded driver; all encodes run
+    // sequentially after these writes.
+    unsafe {
+        std::env::set_var("JXL_ZENSIM_RD_PROFILE", format!("bake:{bake}"));
+        std::env::set_var("JXL_ZENSIM_RD_STATS", &stats_tmp);
+    }
+
+    let manifest_path = out_dir.join(format!("target_ab_{label}.tsv"));
+    let mut manifest = String::from(
+        "image\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n",
+    );
+    for (name, class, path) in corpus {
+        let (pixels, w, h) = load_rgb8(path)?;
+        let ref_png = ref_dir.join(format!("{name}.png"));
+        if !ref_png.exists() {
+            image::RgbImage::from_raw(w, h, pixels.clone())
+                .ok_or("ref from_raw")?
+                .save(&ref_png)?;
+        }
+        for &t in targets {
+            for arm in arms {
+                // SAFETY: sequential driver, no concurrent env readers here.
+                unsafe {
+                    match arm.as_str() {
+                        "baseline" => std::env::remove_var("JXL_ZENSIM_MODEL_MAP"),
+                        other => std::env::set_var("JXL_ZENSIM_MODEL_MAP", other),
+                    }
+                    std::env::set_var("JXL_ZENSIM_TARGET_SCORE", format!("{t}"));
+                }
+                let _ = fs::remove_file(&stats_tmp);
+                let seed_d = seed_distance_for_target(t);
+                let t0 = Instant::now();
+                let cfg = LossyConfig::new(seed_d)
+                    .with_strategy(EncoderStrategy::Zenjxl)
+                    .with_effort(EFFORT)
+                    .with_perceptual_metric(PerceptualMetric::Zensim)
+                    .with_butteraugli_iters(0)
+                    .with_zensim_iters(iters);
+                let encoded = cfg.encode(&pixels, w, h, PixelLayout::Rgb8)?;
+                let encode_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                let bytes = encoded.len();
+                // Loop stats: last line of the per-encode stats file.
+                let (iters_used, inloop, loop_ms, per_iter) = fs::read_to_string(&stats_tmp)
+                    .ok()
+                    .and_then(|s| {
+                        let l = s.lines().last()?.to_string();
+                        let mut f = l.split('\t');
+                        Some((
+                            f.next()?.parse::<u32>().ok()?,
+                            f.next()?.parse::<f64>().ok()?,
+                            f.next()?.parse::<f64>().ok()?,
+                            f.next().unwrap_or("").to_string(),
+                        ))
+                    })
+                    .unwrap_or((0, f64::NAN, f64::NAN, String::new()));
+                let ms_per_compare = if iters_used > 0 {
+                    loop_ms / iters_used as f64
+                } else {
+                    f64::NAN
+                };
+                let decoded = decode_jxl_srgb_u8(&encoded, w, h)?;
+                let dist_png = decoded_dir.join(format!("{label}__{name}__t{t:.0}__{arm}.png"));
+                image::RgbImage::from_raw(w, h, decoded.clone())
+                    .ok_or("dec from_raw")?
+                    .save(&dist_png)?;
+                let achieved = judge_score(bake, &pixels, &decoded, w, h);
+                let err = (achieved - t).abs();
+                manifest.push_str(&format!(
+                    "{name}\t{class}\t{t:.0}\t{arm}\t{bake}\t{seed_d:.2}\t{inloop:.3}\t{iters_used}\t{achieved:.3}\t{err:.3}\t{bytes}\t{encode_ms:.1}\t{loop_ms:.1}\t{ms_per_compare:.1}\n",
+                ));
+                eprintln!(
+                    "  [{label}] {name} t={t:.0} {arm}: inloop={inloop:.2} decoded={achieved:.2} err={err:.2} iters={iters_used} bytes={bytes} {encode_ms:.0}ms ({per_iter} ms/iter)"
+                );
+            }
+        }
+    }
+    let _ = fs::remove_file(&stats_tmp);
+    fs::write(&manifest_path, &manifest)?;
+    eprintln!("[target_ab] wrote {}", manifest_path.display());
     Ok(())
 }

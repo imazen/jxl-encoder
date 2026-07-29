@@ -219,7 +219,8 @@ pub(crate) mod cpu {
             let scorer = match std::env::var("JXL_ZENSIM_RD_PROFILE").as_deref() {
                 Ok("b") => Zensim::new(ZensimProfile::B),
                 Ok("latest") => Zensim::new(ZensimProfile::latest_preview()),
-                _ => {
+                _ =>
+                {
                     #[allow(deprecated)]
                     Zensim::new(ZensimProfile::A)
                 }

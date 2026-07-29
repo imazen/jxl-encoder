@@ -62,14 +62,18 @@ fn rd_profile_from_env() -> (zensim::ZensimProfile, usize) {
             .compute_iw_features(true)
             .build();
         let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
-        let profile = zensim::ZensimProfile::Custom { params, name: "rd-bake" };
+        let profile = zensim::ZensimProfile::Custom {
+            params,
+            name: "rd-bake",
+        };
         let n_in = rd_infer_n_inputs(profile);
         return (profile, n_in);
     }
     match v.as_str() {
         "b" => (zensim::ZensimProfile::B, 372),
         "latest" => (zensim::ZensimProfile::latest_preview(), 372),
-        _ => {
+        _ =>
+        {
             #[allow(deprecated)]
             (zensim::ZensimProfile::A, 0)
         }
@@ -236,6 +240,77 @@ fn compute_tile_dist(
     }
 }
 
+/// C3b (task #67): per-tile steering from the C3a attribution map — the
+/// per-tile raw value is the CLAMPED mean attribution density over the
+/// tile's pixel rect (`max(0, query_rect)/pixels`; clamping at the TILE
+/// level is the signed-map analogue of the fold arm's per-pixel clamp —
+/// negative-sum tiles read "refining here loses score" and coarsen under
+/// redistribution, the directionally-correct action). The normalization /
+/// `spatial_weight` / `ratio_max` blend tail is IDENTICAL to
+/// [`compute_tile_dist`] so the A/B isolates the MAP change alone.
+#[allow(clippy::too_many_arguments)]
+fn compute_tile_dist_attr(
+    attr: &zensim::AttributionResult,
+    ac_strategy: &AcStrategyMap,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    anchor_dist: f32,
+    tile_dist: &mut [f32],
+    params: &ZensimParams,
+) {
+    tile_dist.fill(0.0);
+    let (width, height) = (attr.width(), attr.height());
+    let mut sum_raw = 0.0f64;
+    let mut n_tiles = 0u32;
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            if !ac_strategy.is_first(bx, by) {
+                continue;
+            }
+            let covered_x = ac_strategy.covered_blocks_x(bx, by);
+            let covered_y = ac_strategy.covered_blocks_y(bx, by);
+            let px_start_x = bx * BLOCK_DIM;
+            let px_start_y = by * BLOCK_DIM;
+            let px_end_x = ((bx + covered_x) * BLOCK_DIM).min(width);
+            let px_end_y = ((by + covered_y) * BLOCK_DIM).min(height);
+            if px_start_x >= width || px_start_y >= height {
+                continue;
+            }
+            let pixels = ((px_end_x - px_start_x) * (px_end_y - px_start_y)).max(1) as f64;
+            // O(1) SAT rectangle query — the C3a steering contract: the
+            // tile's summed density ≈ the first-order score gain from
+            // refining exactly this tile.
+            let gain = attr.query_rect(px_start_x, px_start_y, px_end_x, px_end_y);
+            let tile_norm = (gain.max(0.0) / pixels) as f32;
+
+            for sy in 0..covered_y {
+                for sx in 0..covered_x {
+                    tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = tile_norm;
+                }
+            }
+            sum_raw += tile_norm as f64;
+            n_tiles += 1;
+        }
+    }
+
+    if n_tiles == 0 || sum_raw < 1e-30 {
+        tile_dist.fill(anchor_dist);
+        return;
+    }
+    let avg_raw = (sum_raw / n_tiles as f64) as f32;
+    let spatial_weight = params.spatial_weight;
+    let ratio_max = params.ratio_max;
+    for td in tile_dist.iter_mut() {
+        let ratio = if avg_raw > 1e-30 {
+            (*td / avg_raw).min(ratio_max)
+        } else {
+            1.0
+        };
+        let blended = 1.0 - spatial_weight + spatial_weight * ratio;
+        *td = anchor_dist * blended;
+    }
+}
+
 /// Refine AC strategy by splitting large transforms with high perceptual error.
 ///
 /// Scans the strategy map for multi-block transforms (DCT16+) where the
@@ -345,9 +420,45 @@ impl VarDctEncoder {
         let (rd_profile, rd_n_in) = *RD_PROFILE.get_or_init(rd_profile_from_env);
         let z = zensim::Zensim::new(rd_profile).with_parallel(false);
         let model_map = std::env::var("JXL_ZENSIM_MODEL_MAP").ok();
-        let model_map_active =
-            matches!(model_map.as_deref(), Some("signed") | Some("abs")) && rd_n_in > 0;
+        // C3b (task #67): `attr` steers iterations 2+ with the C3a FUSED
+        // compare (`compute_with_ref_score_and_attribution` — ONE call =
+        // score + attribution map, replacing the separate compare +
+        // ModelSensitivity fold); `attr-stale` additionally steers with the
+        // PREVIOUS iteration's map (pricing the stale-scalar single-pass
+        // lever: does steering quality survive a one-iteration-stale map?).
+        // Both derive s_k exactly like `signed` at iteration 1. 372-class
+        // profiles only (the fused entry's contract).
+        let model_map_active = matches!(
+            model_map.as_deref(),
+            Some("signed") | Some("abs") | Some("attr") | Some("attr-stale")
+        ) && rd_n_in > 0;
+        let attr_mode = matches!(model_map.as_deref(), Some("attr") | Some("attr-stale"));
+        let attr_stale = model_map.as_deref() == Some("attr-stale");
         let mut model_s: Option<&'static [f64]> = None;
+        // attr mode: interleaved LinearF32Rgba view of the recon (reused),
+        // and the previous iteration's map for the stale arm.
+        let mut attr_rgba: Vec<f32> = Vec::new();
+        let mut prev_attr: Option<zensim::AttributionResult> = None;
+        // C3b target-seeking controller (shared by ALL arms so the A/B
+        // isolates the steering map): `JXL_ZENSIM_TARGET_SCORE=<native
+        // 0-100>` adds a damped global quant-field step toward the target
+        // each iteration (redistribution stays sum-preserving; the global
+        // step owns the score dial), with early stop at
+        // `JXL_ZENSIM_TARGET_TOL` (default 0.25). `JXL_ZENSIM_RD_STATS`
+        // appends one TSV line per encode (iters, final score, ms/iter) —
+        // experiment instrumentation, env-gated, defaults unchanged.
+        let target_native: Option<f64> = std::env::var("JXL_ZENSIM_TARGET_SCORE")
+            .ok()
+            .and_then(|s| s.parse().ok());
+        let target_tol: f64 = std::env::var("JXL_ZENSIM_TARGET_TOL")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.25);
+        let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
+        let t_loop = std::time::Instant::now();
+        let mut iter_ms: Vec<f64> = Vec::new();
+        let mut compares_used = 0usize;
+        let mut final_score = f64::NAN;
         // The deinterleaved planes are transient: only used to build the zensim
         // precomputed reference, then dropped.
         let precomputed = {
@@ -371,6 +482,7 @@ impl VarDctEncoder {
             include_hf: params.include_hf,
             masking_strength: params.masking_strength,
             sqrt: params.sqrt,
+            guided_coarse_redistribution: false,
         };
 
         // Deviation bounds (same as butteraugli loop).
@@ -411,6 +523,7 @@ impl VarDctEncoder {
         let mut current_params;
 
         for iter in 0..iters + 1 {
+            let t_iter = std::time::Instant::now();
             // Step 1: SetQuantField — recompute global_scale from float field
             current_params =
                 DistanceParams::compute_from_quant_field(target_distance, quant_field_float);
@@ -486,58 +599,142 @@ impl VarDctEncoder {
                 padded_pixels,
             );
 
-            // Step 5: Zensim comparison → global score + per-pixel diffmap.
-            // Pass planar linear RGB directly — no RGBA interleaving, no byte cast.
-            let dm_result = match z.compute_with_ref_and_diffmap_linear_planar(
-                &precomputed,
-                [&recon_r, &recon_g, &recon_b],
-                width,
-                height,
-                padded_width, // stride = padded_width (encoder pads rows for SIMD)
-                diffmap_opts,
-            ) {
-                Ok(r) => r,
-                Err(_) => return Ok(current_params),
-            };
-
-            let zensim_score = dm_result.score();
-            let diffmap = dm_result.diffmap();
-
-            // RD-experiment: a SIGNED model-sensitivity map carries negative
-            // values where refining LOSES score. The L4 tile fold below is
-            // sign-blind, so clamp at 0 — those tiles read as "no error" and
-            // the redistribution coarsens them (the directionally-correct
-            // action). No-op for the non-negative Trained map.
-            let clamped_map;
-            let diffmap: &[f32] = if model_s.is_some() {
-                clamped_map = diffmap.iter().map(|&v| v.max(0.0)).collect::<Vec<f32>>();
-                &clamped_map
+            // Step 5+6, C3b attr arm (iterations 2+, s_k known): ONE fused
+            // call = scalar score + attribution map; per-tile steering via
+            // O(1) SAT rectangle queries (clamp-at-0 at the TILE level — the
+            // signed-map analogue of the fold arm's per-pixel clamp — then
+            // the IDENTICAL normalization/blend tail as `compute_tile_dist`).
+            let dm_result;
+            let zensim_score;
+            let measured_dist;
+            if attr_mode && model_s.is_some() {
+                let n_px = width * height;
+                attr_rgba.resize(n_px * 4, 1.0);
+                for y in 0..height {
+                    let row = y * padded_width;
+                    let out = y * width * 4;
+                    for x in 0..width {
+                        attr_rgba[out + x * 4] = recon_r[row + x];
+                        attr_rgba[out + x * 4 + 1] = recon_g[row + x];
+                        attr_rgba[out + x * 4 + 2] = recon_b[row + x];
+                        attr_rgba[out + x * 4 + 3] = 1.0;
+                    }
+                }
+                let src = zensim::StridedBytes::with_alpha_mode(
+                    bytemuck::cast_slice(&attr_rgba),
+                    width,
+                    height,
+                    width * 16,
+                    zensim::PixelFormat::LinearF32Rgba,
+                    zensim::AlphaMode::Opaque,
+                );
+                let s = model_s.expect("attr arm requires s_k");
+                let (res, attr) =
+                    match z.compute_with_ref_score_and_attribution(&precomputed, &src, s) {
+                        Ok(r) => r,
+                        Err(_) => return Ok(current_params),
+                    };
+                zensim_score = res.score();
+                measured_dist = res.approx_butteraugli() as f32;
+                // Stale arm: steer with the PREVIOUS iteration's map when
+                // one exists (first steered iteration uses the fresh map).
+                let steer_map = if attr_stale {
+                    prev_attr.as_ref().unwrap_or(&attr)
+                } else {
+                    &attr
+                };
+                compute_tile_dist_attr(
+                    steer_map,
+                    ac_strategy,
+                    xsize_blocks,
+                    ysize_blocks,
+                    target_distance,
+                    &mut tile_dist,
+                    &params,
+                );
+                // Smoke-test probe: one line per attr-steered iteration with
+                // the tile-dist stats (env-gated; test asserts sane values).
+                if let Ok(pp) = std::env::var("JXL_ZENSIM_ATTR_PROBE") {
+                    use std::io::Write;
+                    let (mut mn, mut mx, mut sum) = (f32::INFINITY, f32::NEG_INFINITY, 0.0f64);
+                    for &v in tile_dist.iter() {
+                        mn = mn.min(v);
+                        mx = mx.max(v);
+                        sum += v as f64;
+                    }
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(pp)
+                    {
+                        let _ = writeln!(
+                            f,
+                            "attr_iter\t{mn}\t{mx}\t{}",
+                            sum / tile_dist.len().max(1) as f64
+                        );
+                    }
+                }
+                if attr_stale {
+                    prev_attr = Some(attr);
+                }
+                drop(res);
+                dm_result = None;
             } else {
-                diffmap
-            };
+                // Step 5: Zensim comparison → global score + per-pixel diffmap.
+                // Pass planar linear RGB directly — no RGBA interleaving, no byte cast.
+                let dm = match z.compute_with_ref_and_diffmap_linear_planar(
+                    &precomputed,
+                    [&recon_r, &recon_g, &recon_b],
+                    width,
+                    height,
+                    padded_width, // stride = padded_width (encoder pads rows for SIMD)
+                    diffmap_opts,
+                ) {
+                    Ok(r) => r,
+                    Err(_) => return Ok(current_params),
+                };
+                zensim_score = dm.score();
+                let diffmap = dm.diffmap();
 
-            // Step 6: Compute per-block error from zensim diffmap.
-            // Use L4 norm per tile to capture spatial error distribution.
-            let measured_dist = dm_result.result().approx_butteraugli() as f32;
-            compute_tile_dist(
-                diffmap,
-                width,
-                height,
-                ac_strategy,
-                xsize_blocks,
-                ysize_blocks,
-                target_distance,
-                &mut tile_dist,
-                &params,
-            );
+                // RD-experiment: a SIGNED model-sensitivity map carries negative
+                // values where refining LOSES score. The L4 tile fold below is
+                // sign-blind, so clamp at 0 — those tiles read as "no error" and
+                // the redistribution coarsens them (the directionally-correct
+                // action). No-op for the non-negative Trained map.
+                let clamped_map;
+                let diffmap: &[f32] = if model_s.is_some() {
+                    clamped_map = diffmap.iter().map(|&v| v.max(0.0)).collect::<Vec<f32>>();
+                    &clamped_map
+                } else {
+                    diffmap
+                };
+
+                // Step 6: Compute per-block error from zensim diffmap.
+                // Use L4 norm per tile to capture spatial error distribution.
+                measured_dist = dm.result().approx_butteraugli() as f32;
+                compute_tile_dist(
+                    diffmap,
+                    width,
+                    height,
+                    ac_strategy,
+                    xsize_blocks,
+                    ysize_blocks,
+                    target_distance,
+                    &mut tile_dist,
+                    &params,
+                );
+                dm_result = Some(dm);
+            }
 
             // RD-experiment: derive the model-sensitivity weighting from the
             // FIRST compare's features (numerical central differences through
             // the production features→score runtime; `abs` fold = pass −|s|
             // through the signed ModelSensitivity fold). Iterations 2+ steer
             // with the model's own gradient.
-            if model_map_active && model_s.is_none() {
-                let feats = dm_result.result().features();
+            if let (true, true, Some(dm_ref)) =
+                (model_map_active, model_s.is_none(), dm_result.as_ref())
+            {
+                let feats = dm_ref.result().features();
                 if feats.len() >= rd_n_in {
                     let base: Vec<f64> = feats[..rd_n_in].to_vec();
                     let sf = |f: &[f64]| {
@@ -571,8 +768,10 @@ impl VarDctEncoder {
                     }
                     let s: &'static [f64] = Box::leak(s.into_boxed_slice());
                     model_s = Some(s);
-                    diffmap_opts.weighting = zensim::DiffmapWeighting::ModelSensitivity(s);
-                    diffmap_opts.sqrt = false; // sqrt(negative) is NaN on a signed map
+                    if !attr_mode {
+                        diffmap_opts.weighting = zensim::DiffmapWeighting::ModelSensitivity(s);
+                        diffmap_opts.sqrt = false; // sqrt(negative) is NaN on a signed map
+                    }
                 }
             }
 
@@ -616,6 +815,18 @@ impl VarDctEncoder {
                 );
             }
 
+            compares_used = iter + 1;
+            final_score = zensim_score;
+            iter_ms.push(t_iter.elapsed().as_secs_f64() * 1e3);
+            // Target convergence: stop once the measured score is within
+            // tolerance (needs >= 1 redistribution behind it so the map
+            // actually steered something).
+            if let Some(tgt) = target_native
+                && iter >= 1
+                && (zensim_score - tgt).abs() <= target_tol
+            {
+                break;
+            }
             // Last iteration is compare-only
             if iter == iters {
                 break;
@@ -666,6 +877,39 @@ impl VarDctEncoder {
                         *v *= scale;
                     }
                 }
+            }
+
+            // C3b: damped global step toward the native-score target.
+            // Loss (100 − score) above target ⇒ too lossy ⇒ scale the whole
+            // field up (more bits). Exponent 0.6 + 1.35 clamp = stable
+            // convergence in 3-5 iterations on 576² content.
+            if let Some(tgt) = target_native {
+                let achieved_loss = (100.0 - zensim_score).max(0.05);
+                let target_loss = (100.0 - tgt).max(0.05);
+                let g = ((achieved_loss / target_loss).powf(0.6)).clamp(1.0 / 1.35, 1.35) as f32;
+                for v in quant_field_float.iter_mut() {
+                    *v = (*v * g).clamp(qf_lower, qf_higher);
+                }
+            }
+        }
+
+        if let Some(sp) = &stats_path {
+            use std::io::Write;
+            let per_iter = iter_ms
+                .iter()
+                .map(|v| format!("{v:.1}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let line = format!(
+                "{compares_used}\t{final_score:.4}\t{:.1}\t{per_iter}\n",
+                t_loop.elapsed().as_secs_f64() * 1e3
+            );
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(sp)
+            {
+                let _ = f.write_all(line.as_bytes());
             }
         }
 
