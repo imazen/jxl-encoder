@@ -1742,6 +1742,11 @@ name = "zensim_attr_smoke"
 path = "tests/zensim_attr_smoke.rs"
 required-features = ["butteraugli-loop", "zensim-loop", "parallel"]
 
+[[test]]
+name = "zensim_h_arms_smoke"
+path = "tests/zensim_h_arms_smoke.rs"
+required-features = ["butteraugli-loop", "zensim-loop", "parallel"]
+
 # zensim-fork Phase 4 (2026-05-25): 20-cell smoke bench mirroring
 # `cvvdp_loop_smoke_bench`. Encodes 5 synthetic fixtures × 4 distances
 # × 2 backends (B + Z_CPU) and writes a TSV in the tracking schema.

@@ -311,6 +311,50 @@ fn compute_tile_dist_attr(
     }
 }
 
+/// #69 H arms: per-tile SIGNED attribution values — `tile_signed[b]` = the
+/// tile's MEAN density (score-units/pixel, signed; H1/H2's field) and
+/// `tile_q[b]` = the tile's TOTAL `query_rect` (score units; H3's field).
+/// No clamp, no normalization — the arm-specific redistribution applies its
+/// own registered rule.
+fn compute_tile_signed_attr(
+    attr: &zensim::AttributionResult,
+    ac_strategy: &AcStrategyMap,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    tile_signed: &mut [f32],
+    tile_q: &mut [f32],
+) {
+    tile_signed.fill(0.0);
+    tile_q.fill(0.0);
+    let (width, height) = (attr.width(), attr.height());
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            if !ac_strategy.is_first(bx, by) {
+                continue;
+            }
+            let covered_x = ac_strategy.covered_blocks_x(bx, by);
+            let covered_y = ac_strategy.covered_blocks_y(bx, by);
+            let px_start_x = bx * BLOCK_DIM;
+            let px_start_y = by * BLOCK_DIM;
+            let px_end_x = ((bx + covered_x) * BLOCK_DIM).min(width);
+            let px_end_y = ((by + covered_y) * BLOCK_DIM).min(height);
+            if px_start_x >= width || px_start_y >= height {
+                continue;
+            }
+            let pixels = ((px_end_x - px_start_x) * (px_end_y - px_start_y)).max(1) as f64;
+            let gain = attr.query_rect(px_start_x, px_start_y, px_end_x, px_end_y);
+            let s = (gain / pixels) as f32;
+            let q = gain as f32;
+            for sy in 0..covered_y {
+                for sx in 0..covered_x {
+                    tile_signed[(by + sy) * xsize_blocks + (bx + sx)] = s;
+                    tile_q[(by + sy) * xsize_blocks + (bx + sx)] = q;
+                }
+            }
+        }
+    }
+}
+
 /// Refine AC strategy by splitting large transforms with high perceptual error.
 ///
 /// Scans the strategy map for multi-block transforms (DCT16+) where the
@@ -428,12 +472,55 @@ impl VarDctEncoder {
         // lever: does steering quality survive a one-iteration-stale map?).
         // Both derive s_k exactly like `signed` at iteration 1. 372-class
         // profiles only (the fused entry's contract).
+        // #69 loop-steering arms (PLAN_LOOP_STEERING_69.md, frozen gates):
+        //   h1-signed — signed redistribution: the attribution map's signed
+        //     per-tile mass drives the qf factor directly (negative tiles
+        //     push coarser proportionally; no clamp-at-0, no anchor blend).
+        //   h2-ctrl  — controller separation: the map steers only the
+        //     ZERO-SUM residual (tile value minus mean); the damped
+        //     controller owns the level from scalar error alone.
+        //   h3-mag   — magnitude steering: per-tile step ∝ query_rect
+        //     score-units (× ZENSIM_H3_GAIN, default 10.0), capped by
+        //     factor_max; NOT ratio-normalized.
+        // All three share the C3b attr arm's fused compare, controller,
+        // qf bounds, and sum-renormalization — the A/B isolates the
+        // redistribution rule.
         let model_map_active = matches!(
             model_map.as_deref(),
-            Some("signed") | Some("abs") | Some("attr") | Some("attr-stale")
+            Some("signed")
+                | Some("abs")
+                | Some("attr")
+                | Some("attr-stale")
+                | Some("h1-signed")
+                | Some("h2-ctrl")
+                | Some("h3-mag")
+                | Some("h3-mag-stale")
         ) && rd_n_in > 0;
-        let attr_mode = matches!(model_map.as_deref(), Some("attr") | Some("attr-stale"));
-        let attr_stale = model_map.as_deref() == Some("attr-stale");
+        let attr_mode = matches!(
+            model_map.as_deref(),
+            Some("attr")
+                | Some("attr-stale")
+                | Some("h1-signed")
+                | Some("h2-ctrl")
+                | Some("h3-mag")
+                | Some("h3-mag-stale")
+        );
+        // `*-stale` steers with the PREVIOUS iteration's map (#69 G4 pricing
+        // of the single-pass endpoint for a G1+G2-passing arm).
+        let attr_stale = matches!(
+            model_map.as_deref(),
+            Some("attr-stale") | Some("h3-mag-stale")
+        );
+        let h_arm: Option<u8> = match model_map.as_deref() {
+            Some("h1-signed") => Some(1),
+            Some("h2-ctrl") => Some(2),
+            Some("h3-mag") | Some("h3-mag-stale") => Some(3),
+            _ => None,
+        };
+        let h3_gain: f32 = std::env::var("ZENSIM_H3_GAIN")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10.0);
         let mut model_s: Option<&'static [f64]> = None;
         // attr mode: interleaved LinearF32Rgba view of the recon (reused),
         // and the previous iteration's map for the stale arm.
@@ -512,6 +599,12 @@ impl VarDctEncoder {
         )?;
         let sharpness = vec![4u8; num_blocks];
         let mut tile_dist = vec![0.0f32; num_blocks];
+        // #69 H arms: per-tile SIGNED mean attribution density + per-tile
+        // total query (score units); `h_steered` marks iterations where an
+        // H redistribution replaces the shared ratio redistribution.
+        let mut tile_signed = vec![0.0f32; num_blocks];
+        let mut tile_q = vec![0.0f32; num_blocks];
+        let mut h_steered = false;
         let mut recon_r = vec![0.0f32; padded_pixels];
         let mut recon_g = vec![0.0f32; padded_pixels];
         let mut recon_b = vec![0.0f32; padded_pixels];
@@ -607,7 +700,7 @@ impl VarDctEncoder {
             let dm_result;
             let zensim_score;
             let measured_dist;
-            if attr_mode && model_s.is_some() {
+            if let (true, Some(s)) = (attr_mode, model_s) {
                 let n_px = width * height;
                 attr_rgba.resize(n_px * 4, 1.0);
                 for y in 0..height {
@@ -628,7 +721,6 @@ impl VarDctEncoder {
                     zensim::PixelFormat::LinearF32Rgba,
                     zensim::AlphaMode::Opaque,
                 );
-                let s = model_s.expect("attr arm requires s_k");
                 let (res, attr) =
                     match z.compute_with_ref_score_and_attribution(&precomputed, &src, s) {
                         Ok(r) => r,
@@ -643,21 +735,40 @@ impl VarDctEncoder {
                 } else {
                     &attr
                 };
-                compute_tile_dist_attr(
-                    steer_map,
-                    ac_strategy,
-                    xsize_blocks,
-                    ysize_blocks,
-                    target_distance,
-                    &mut tile_dist,
-                    &params,
-                );
+                if h_arm.is_some() {
+                    compute_tile_signed_attr(
+                        steer_map,
+                        ac_strategy,
+                        xsize_blocks,
+                        ysize_blocks,
+                        &mut tile_signed,
+                        &mut tile_q,
+                    );
+                    // tile_dist only feeds the shared log line on this path.
+                    tile_dist.fill(target_distance);
+                    h_steered = true;
+                } else {
+                    compute_tile_dist_attr(
+                        steer_map,
+                        ac_strategy,
+                        xsize_blocks,
+                        ysize_blocks,
+                        target_distance,
+                        &mut tile_dist,
+                        &params,
+                    );
+                }
                 // Smoke-test probe: one line per attr-steered iteration with
                 // the tile-dist stats (env-gated; test asserts sane values).
                 if let Ok(pp) = std::env::var("JXL_ZENSIM_ATTR_PROBE") {
                     use std::io::Write;
+                    let probe_src: &[f32] = if h_arm.is_some() {
+                        &tile_signed
+                    } else {
+                        &tile_dist
+                    };
                     let (mut mn, mut mx, mut sum) = (f32::INFINITY, f32::NEG_INFINITY, 0.0f64);
-                    for &v in tile_dist.iter() {
+                    for &v in probe_src.iter() {
                         mn = mn.min(v);
                         mx = mx.max(v);
                         sum += v as f64;
@@ -670,7 +781,7 @@ impl VarDctEncoder {
                         let _ = writeln!(
                             f,
                             "attr_iter\t{mn}\t{mx}\t{}",
-                            sum / tile_dist.len().max(1) as f64
+                            sum / probe_src.len().max(1) as f64
                         );
                     }
                 }
@@ -832,6 +943,67 @@ impl VarDctEncoder {
                 break;
             }
 
+            // Step 7 (#69 H arms): the arm-specific redistribution rule.
+            // Shared with every other arm: qf deviation bounds, the exact
+            // sum-renormalization, and the damped controller below.
+            let h_this_iter = h_steered;
+            h_steered = false;
+            if h_this_iter {
+                let n_f = num_blocks as f64;
+                let mean_s: f32 = (tile_signed.iter().map(|&v| v as f64).sum::<f64>() / n_f) as f32;
+                let qf_sum_before: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
+                match h_arm.unwrap_or(0) {
+                    1 | 2 => {
+                        // H1: signed value as-is; H2: zero-sum residual.
+                        let center = if h_arm == Some(2) { mean_s } else { 0.0 };
+                        let mean_abs: f32 = (tile_signed
+                            .iter()
+                            .map(|&v| (v - center).abs() as f64)
+                            .sum::<f64>()
+                            / n_f) as f32;
+                        if mean_abs > 1e-20 {
+                            // Adaptive alpha mirrors the shared rule:
+                            // alpha_base / (1 + CV of the |field|).
+                            let var: f64 = tile_signed
+                                .iter()
+                                .map(|&v| {
+                                    let d = ((v - center).abs() - mean_abs) as f64;
+                                    d * d
+                                })
+                                .sum::<f64>()
+                                / n_f;
+                            let cv = (var.sqrt() / mean_abs as f64) as f32;
+                            let k_alpha = params.alpha_base / (1.0 + cv);
+                            for bi in 0..num_blocks {
+                                let r = ((tile_signed[bi] - center) / mean_abs)
+                                    .clamp(-params.ratio_max, params.ratio_max);
+                                let factor = (1.0 + k_alpha * r)
+                                    .clamp(1.0 / params.factor_max, params.factor_max);
+                                quant_field_float[bi] =
+                                    (quant_field_float[bi] * factor).clamp(qf_lower, qf_higher);
+                            }
+                        }
+                    }
+                    _ => {
+                        // H3: step ∝ per-tile query_rect score-units, capped.
+                        for bi in 0..num_blocks {
+                            let factor = (1.0 + h3_gain * tile_q[bi])
+                                .clamp(1.0 / params.factor_max, params.factor_max);
+                            quant_field_float[bi] =
+                                (quant_field_float[bi] * factor).clamp(qf_lower, qf_higher);
+                        }
+                    }
+                }
+                // Shared sum-renormalization (size control), as in every arm.
+                let qf_sum_after: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
+                if qf_sum_after > 1e-10 {
+                    let scale = (qf_sum_before / qf_sum_after) as f32;
+                    for v in quant_field_float.iter_mut() {
+                        *v *= scale;
+                    }
+                }
+            }
+
             // Step 7: Symmetric sum-preserving redistribution of quant_field.
             //
             // Tiles with above-average error get lower quant_field (more bits),
@@ -840,7 +1012,7 @@ impl VarDctEncoder {
             let td_sum: f64 = tile_dist.iter().map(|&v| v as f64).sum();
             let td_avg = (td_sum / num_blocks as f64) as f32;
 
-            if td_avg > 1e-10 {
+            if !h_this_iter && td_avg > 1e-10 {
                 let td_var: f64 = tile_dist
                     .iter()
                     .map(|&v| {
