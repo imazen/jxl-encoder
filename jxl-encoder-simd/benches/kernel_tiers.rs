@@ -169,7 +169,7 @@ fn bench_kernels(suite: &mut Suite) {
     {
         let counts: &'static [i32] = Box::leak(
             (0..4096)
-                .map(|i| ((i * 7919) % 997) as i32)
+                .map(|i| (i * 7919) % 997)
                 .collect::<Vec<i32>>()
                 .into_boxed_slice(),
         );
