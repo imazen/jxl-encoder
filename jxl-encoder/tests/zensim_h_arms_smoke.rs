@@ -26,7 +26,7 @@ fn h_arms_steer_with_signed_fields() {
             ]);
         }
     }
-    // SAFETY (edition-2024 set_var): single test fn in this binary; arms run
+    // SAFETY: edition-2024 set_var — single test fn in this binary; arms run
     // sequentially with no concurrent env readers.
     unsafe {
         std::env::set_var("JXL_ZENSIM_RD_PROFILE", "b");
@@ -35,6 +35,8 @@ fn h_arms_steer_with_signed_fields() {
         let probe =
             std::env::temp_dir().join(format!("zensim_h_smoke_{arm}_{}.tsv", std::process::id()));
         let _ = std::fs::remove_file(&probe);
+        // SAFETY: edition-2024 set_var — same single-test sequential contract
+        // as above (no concurrent env readers in this binary).
         unsafe {
             std::env::set_var("JXL_ZENSIM_MODEL_MAP", arm);
             std::env::set_var("JXL_ZENSIM_ATTR_PROBE", &probe);

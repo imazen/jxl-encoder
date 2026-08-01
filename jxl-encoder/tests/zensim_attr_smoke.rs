@@ -36,7 +36,7 @@ fn model_map_attr_steers_with_fused_map() {
         std::process::id()
     ));
     let _ = std::fs::remove_file(&probe);
-    // SAFETY (edition-2024 set_var): this integration-test binary contains
+    // SAFETY: edition-2024 set_var — this integration-test binary contains
     // exactly one test — no concurrent env readers in this process.
     unsafe {
         std::env::set_var("JXL_ZENSIM_RD_PROFILE", "b"); // embedded 372 profile
