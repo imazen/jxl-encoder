@@ -37,7 +37,8 @@
   now windowed to the tile rect (≤ 64 B each; byte-identical output —
   hash-locks 53/53, Libjxl byte-lock 5/5). 108 MP lossy e5 t=1 peak RSS:
   ≥ 44 GiB (cgroup-killed) → 5.65 GiB; 48 MP: 9.93 → 2.49 GiB. Measured
-  grids: `benchmarks/jxl_encode_mem_threads{,_postfix}_2026-08-01.{tsv,meta}`.
+  grids: `benchmarks/jxl_encode_mem_threads{,_postfix}_2026-08-01.{tsv,meta}`
+  (6fc767f2; grids 4f04a8b7).
 
 ### Changed
 - **Encode pre-flight is now an honest, calibrated admission check with a
@@ -56,7 +57,8 @@
   screen removed (the calibrated check is strictly stronger). At the
   path-aware default caps this now cleanly rejects what cannot fit
   (e.g. 108 MP lossy vs the 4 GiB default) instead of OOMing the host;
-  callers with real budgets pass `with_max_memory_bytes` as before.
+  callers with real budgets pass `with_max_memory_bytes` as before
+  (4763a882).
 - **Memory model recalibrated at real large sizes** (12–108 MP zensysbench
   corpus, d1.75 + d6.0, threads 1–16, post-quadratic-fix;
   `benchmarks/jxl_encode_mem_threads_postfix_2026-08-01.tsv`): lossy
@@ -66,11 +68,11 @@
   photo measured 83 / 490 B/px), and the lossy 2.5 MB/thread term is
   re-confirmed and now UNCLAMPED past `max_useful_threads` in
   `estimate_encode_threaded` (memory keeps growing where speedup
-  saturates — measured through t=16).
+  saturates — measured through t=16) (4763a882).
 - **`EncodeStats` reports the memory decision** (additive, non_exhaustive
   pattern): `budget_peak_bytes()` (tracked reservation high-water),
   `threads_used()` (post-walk-down count, 0 = ambient) and
-  `estimated_peak_bytes()` (the admitting estimate).
+  `estimated_peak_bytes()` (the admitting estimate) (4763a882).
 - **CI clippy now runs with `--all-targets`** (and the pre-commit checklist
   matches): test/example/bench targets carry their own feature unification
   and lint surface — the zenjpeg nightly break and ~70 accumulated test-code
