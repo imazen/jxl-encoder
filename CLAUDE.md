@@ -172,6 +172,49 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 See [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md) for full chronological bug narrative.
 
+### RESOLVED 2026-08-01: 108 MP encodes kernel-OOM-killed 32 GiB boxes — QUADRATIC per-tile AC-strategy peak + dishonest flat pre-flight
+
+zensysbench fleet (2026-07-31): 108 MP lossy e5/e7 encodes OOM-killed 32 GiB
+boxes at ~29.9 GiB RSS **even at threads=1** (and a 40 GiB cgroup at 24
+threads in 18 s). Measured root cause (grid
+`benchmarks/jxl_encode_mem_threads_2026-08-01.{tsv,meta}` + heaptrack):
+`compute_ac_strategy_for_tiles` allocated a FULL-IMAGE `AcStrategyMap`
+(n_blocks bytes) per 64×64 tile and `parallel_map` collected all of them
+alive until the merge → **n_tiles × n_blocks = px²/262144 bytes** of
+transient peak (3.81e-6 B/px², matched the measured size curve to 1 %):
+~8.8 of 9.6 GiB at 48 MP, ~44.5 GiB at 108 MP — the true t=1 peak exceeded
+44 GiB (cgroup-censored); the fleet kills were box-size censoring, and the
+"parallel blowup" was the same peak reached faster, NOT a per-thread term
+(RSS is thread-flat at 12–108 MP; the only measured slope is lossy e7's
+2.5 MB/thread). Two fixes (byte-identical, hash-locks 53/53 + Libjxl
+byte-lock 5/5 + rd-regression green):
+1. `AcStrategyMap` backing-store **window** (`new_dct8_tile`): per-tile
+   scratch maps are tile-rect-sized (≤ 64 B). Safe because every
+   `process_tile` access is tile-bounded and the merge reads only the tile
+   rect; `idx()` debug-asserts the window. 108 MP e5 t=1: ≥ 44 GiB → 5.65
+   GiB; 48 MP: 9.93 → 2.49 GiB. Do NOT revert to full-image scratch maps.
+2. The flat `w×h×40` pre-flight (six copies, effort/path/thread-blind — it
+   ADMITTED those encodes) → ONE `encode_preflight` (api.rs) at all five
+   entry points: calibrated `heuristics::estimate_encode_threaded`
+   admission, budget-driven thread walk-down (fits cap AND MemAvailable
+   ×0.8; availability only reduces threads), rejection only when the t=1
+   estimate exceeds the cap, decision recorded in `EncodeStats`
+   (`budget_peak_bytes` / `threads_used` / `estimated_peak_bytes`).
+   Recalibrated on the 12–108 MP corpus post-fix
+   (`…_postfix_2026-08-01.tsv`): lossy e≥7 band 135 B/px (q30 regime was
+   never swept; measured up to 122), lossless base 92 / tree 540, lossy
+   γ=2.5 MB/thread UNCLAMPED past max_useful_threads. At default caps this
+   now cleanly rejects ≳50 MP lossy-e≤6 / ≳30 MP lossy-e7 / ≳15.7 MP
+   lossless-e7 (they estimate past 4/8 GiB) — callers with real budgets set
+   `Limits::with_max_memory_bytes`.
+Remaining unguarded mass (post-fix heaptrack, 48 MP e5): per-group AC token
+vectors from `tokenize_ac_group` (~1.15 GB ≈ 24 B/px, linear, all groups'
+tokens alive before ANS build) — covered by the pre-flight envelope, not
+individually budget-reserved. Budget guards track ~61 % of the 108 MP peak.
+Tests: `tests/it/alloc_budget.rs` (honest tight-cap + default-cap
+rejections, 16→3 thread-walk-down success), `api_tests::
+encode_preflight_walkdown`, `heuristics::estimate_covers_measured_large_sizes_2026_08`.
+
 ### RESOLVED 2026-06-23: #93 butteraugli buttloop OOMs sweeps — precompute evaded the budget (NOT a pool leak)
 
 `zenmetrics sweep --codec zenjxl --plan modes_full` OOM-killed Hetzner
