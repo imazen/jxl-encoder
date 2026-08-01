@@ -167,6 +167,51 @@ fn bench_kernels(suite: &mut Suite) {
             });
         });
     }
+
+    // ---- third wave: rectangular DCTs, inverse 16x16, sanitize ----
+    // 739 dispatch sites; 8 measured was ~1% coverage. Each of these has both
+    // a `_neon` and a `_scalar` export, so no shim is needed.
+
+    macro_rules! dct2 {
+        ($name:expr, $n:expr, $neon:path, $scalar:path) => {
+            suite.compare($name, |g| {
+                let v = ramp($n, 51);
+                let arr: [f32; $n] = v.try_into().unwrap();
+                let inp: &'static [f32; $n] = Box::leak(Box::new(arr));
+                g.bench("neon", move |b| {
+                    let mut out = Box::new([0f32; $n]);
+                    b.iter(move || $neon(t, inp, &mut out))
+                });
+                g.bench("scalar", move |b| {
+                    let mut out = Box::new([0f32; $n]);
+                    b.iter(move || $scalar(inp, &mut out))
+                });
+            });
+        };
+    }
+    dct2!("dct_16x8", 128, jxl_encoder_simd::dct_16x8_neon, jxl_encoder_simd::dct_16x8_scalar);
+    dct2!("dct_8x16", 128, jxl_encoder_simd::dct_8x16_neon, jxl_encoder_simd::dct_8x16_scalar);
+    dct2!("idct_16x16", 256, jxl_encoder_simd::idct_16x16_neon, jxl_encoder_simd::idct_16x16_scalar);
+
+    // In-place plane sanitize: replaces non-finite values. Fed an ALL-FINITE
+    // plane on purpose — the scalar form short-circuits nothing, but a plane
+    // full of NaN would exercise a different branch mix and is not the common
+    // case.
+    {
+        const N: usize = 1 << 20;
+        let clean: &'static [f32] = Box::leak(ramp(N, 61).into_boxed_slice());
+        suite.compare("sanitize_finite/1MP", move |g| {
+            g.throughput(Throughput::Bytes((N * 4) as u64));
+            g.bench("neon", move |b| {
+                b.with_input(move || clean.to_vec())
+                    .run(move |mut p| { let r = jxl_encoder_simd::sanitize_finite_neon(t, &mut p); (p, r) })
+            });
+            g.bench("scalar", move |b| {
+                b.with_input(move || clean.to_vec())
+                    .run(move |mut p| { let r = jxl_encoder_simd::sanitize_finite_scalar(&mut p); (p, r) })
+            });
+        });
+    }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
