@@ -200,10 +200,28 @@ pub(crate) const COVERED_Y: [usize; NUM_RAW_STRATEGIES] =
 ///
 /// Each byte stores `(raw_strategy << 1) | is_first` matching the C++
 /// `AcStrategyImage` layout.
+///
+/// The backing store may be a **window** of the logical block grid (see
+/// [`Self::new_dct8_tile`]): `data` covers only
+/// `[win_x0, win_x0+win_w) × [win_y0, win_y0+win_h)` while
+/// `xsize_blocks`/`ysize_blocks` stay the logical image dims. Full-image
+/// maps (every public constructor) have origin 0 and window == image, so
+/// nothing changes for existing users. The window exists for the per-tile
+/// strategy-search scratch maps: before 2026-08-01 each 64×64 tile's
+/// worker allocated a FULL-IMAGE map and `parallel_map` kept all of them
+/// alive until the merge — `n_tiles × n_blocks` bytes = `px²/262144`, a
+/// QUADRATIC term that reached ~44 GiB at 108 MP and OOM-killed 32 GiB
+/// hosts (measured, `benchmarks/jxl_encode_mem_threads_2026-08-01.tsv`;
+/// heaptrack attribution `ht_mp48_e5_t1`: 8.8 of 9.6 GiB peak at 48 MP).
+/// Tile-windowed scratch maps are 64 bytes each instead of `n_blocks`.
 pub struct AcStrategyMap {
     data: Vec<u8>,
     pub xsize_blocks: usize,
     pub ysize_blocks: usize,
+    win_x0: usize,
+    win_y0: usize,
+    win_w: usize,
+    win_h: usize,
 }
 
 impl AcStrategyMap {
@@ -215,7 +233,59 @@ impl AcStrategyMap {
             data,
             xsize_blocks,
             ysize_blocks,
+            win_x0: 0,
+            win_y0: 0,
+            win_w: xsize_blocks,
+            win_h: ysize_blocks,
         }
+    }
+
+    /// Create a DCT8-filled map whose backing store covers only the
+    /// `w × h`-block window at `(x0, y0)` of the logical
+    /// `xsize_blocks × ysize_blocks` grid. All accessors keep taking
+    /// ABSOLUTE block coordinates; touching a block outside the window is
+    /// a bug (debug-asserted). Used by the per-tile strategy-search
+    /// workers, whose reads/writes are provably tile-bounded (every
+    /// candidate loop bounds `cx + span < tile_w` / `cy + span < tile_h`)
+    /// and whose merge (`copy_region_from`) only reads the tile rect.
+    pub(crate) fn new_dct8_tile(
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        x0: usize,
+        y0: usize,
+        w: usize,
+        h: usize,
+    ) -> Self {
+        debug_assert!(x0 + w <= xsize_blocks && y0 + h <= ysize_blocks);
+        Self {
+            data: vec![1u8; w * h],
+            xsize_blocks,
+            ysize_blocks,
+            win_x0: x0,
+            win_y0: y0,
+            win_w: w,
+            win_h: h,
+        }
+    }
+
+    /// Backing-store index for the ABSOLUTE block position `(bx, by)`.
+    #[inline]
+    fn idx(&self, bx: usize, by: usize) -> usize {
+        debug_assert!(
+            bx >= self.win_x0
+                && bx < self.win_x0 + self.win_w
+                && by >= self.win_y0
+                && by < self.win_y0 + self.win_h,
+            "AcStrategyMap access ({bx},{by}) outside backing window \
+             ({},{})+{}x{} of {}x{} logical grid",
+            self.win_x0,
+            self.win_y0,
+            self.win_w,
+            self.win_h,
+            self.xsize_blocks,
+            self.ysize_blocks
+        );
+        (by - self.win_y0) * self.win_w + (bx - self.win_x0)
     }
 
     /// Create a new map forcing a specific strategy for all blocks that fit.
@@ -239,13 +309,13 @@ impl AcStrategyMap {
     /// Get the raw strategy at (bx, by).
     #[inline]
     pub fn raw_strategy(&self, bx: usize, by: usize) -> u8 {
-        self.data[by * self.xsize_blocks + bx] >> 1
+        self.data[self.idx(bx, by)] >> 1
     }
 
     /// Is this the first (top-left) block of the transform?
     #[inline]
     pub fn is_first(&self, bx: usize, by: usize) -> bool {
-        (self.data[by * self.xsize_blocks + bx] & 1) != 0
+        (self.data[self.idx(bx, by)] & 1) != 0
     }
 
     /// Get the strategy code for bitstream writing.
@@ -316,8 +386,8 @@ impl AcStrategyMap {
         for iy in 0..cy {
             for ix in 0..cx {
                 let is_first = (iy | ix) == 0;
-                self.data[(by + iy) * self.xsize_blocks + bx + ix] =
-                    (raw_strategy << 1) | (is_first as u8);
+                let i = self.idx(bx + ix, by + iy);
+                self.data[i] = (raw_strategy << 1) | (is_first as u8);
             }
         }
     }
@@ -326,14 +396,15 @@ impl AcStrategyMap {
     /// The byte is `(raw_strategy << 1) | is_first`.
     #[inline]
     fn raw_byte(&self, bx: usize, by: usize) -> u8 {
-        self.data[by * self.xsize_blocks + bx]
+        self.data[self.idx(bx, by)]
     }
 
     /// Set the raw packed byte at (bx, by) directly.
     /// Bypasses multi-block coverage logic — use only for save/restore.
     #[inline]
     fn set_raw_byte(&mut self, bx: usize, by: usize, byte: u8) {
-        self.data[by * self.xsize_blocks + bx] = byte;
+        let i = self.idx(bx, by);
+        self.data[i] = byte;
     }
 
     /// Find the first block (top-left corner) of the transform that owns (bx, by).
@@ -593,6 +664,8 @@ impl AcStrategyMap {
 
     /// Copy a rectangular region from `src` into `self`.
     /// Copies blocks from `(start_bx, start_by)` to `(end_bx, end_by)` exclusive.
+    /// Coordinates are ABSOLUTE; both maps' backing windows must contain
+    /// the region (the per-tile scratch maps' window IS the tile rect).
     pub(crate) fn copy_region_from(
         &mut self,
         src: &AcStrategyMap,
@@ -602,10 +675,15 @@ impl AcStrategyMap {
         end_by: usize,
     ) {
         debug_assert_eq!(self.xsize_blocks, src.xsize_blocks);
+        let n = end_bx - start_bx;
+        if n == 0 {
+            return;
+        }
         for by in start_by..end_by {
-            let row_start = by * self.xsize_blocks;
-            self.data[row_start + start_bx..row_start + end_bx]
-                .copy_from_slice(&src.data[row_start + start_bx..row_start + end_bx]);
+            let dst_start = self.idx(start_bx, by);
+            let src_start = src.idx(start_bx, by);
+            self.data[dst_start..dst_start + n]
+                .copy_from_slice(&src.data[src_start..src_start + n]);
         }
     }
 
@@ -2582,12 +2660,29 @@ pub(crate) fn compute_ac_strategy_for_tiles(
     // Process tiles in parallel. Each tile gets its own AcStrategyMap and scratch
     // buffer. Tiles are spatially disjoint, so results can be merged by copying
     // each tile's region into the final map.
+    //
+    // The per-tile scratch map is WINDOWED to the tile rect (≤ 64 bytes)
+    // — before 2026-08-01 it was a full-image map per tile and
+    // `parallel_map`'s collect held all of them alive at once:
+    // `n_tiles × n_blocks` = px²/262144 bytes, a quadratic term measuring
+    // ~8.8 GiB at 48 MP and ~44 GiB at 108 MP (the whole-process OOM on
+    // 32 GiB hosts; `benchmarks/jxl_encode_mem_threads_2026-08-01.tsv` +
+    // heaptrack `ht_mp48_e5_t1`). Windowing is byte-identical: every
+    // process_tile read/write is tile-bounded and the merge only reads
+    // the tile rect (hash-locks + Libjxl byte-lock verify).
     let tile_results = crate::parallel::parallel_map(tile_list.len(), |tile_idx| {
         let (tile_bx, tile_by) = tile_list[tile_idx];
         let tile_w = TILE_DIM_IN_BLOCKS.min(xsize_blocks - tile_bx);
         let tile_h = TILE_DIM_IN_BLOCKS.min(ysize_blocks - tile_by);
 
-        let mut local_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+        let mut local_strategy = AcStrategyMap::new_dct8_tile(
+            xsize_blocks,
+            ysize_blocks,
+            tile_bx,
+            tile_by,
+            tile_w,
+            tile_h,
+        );
         let mut scratch = EntropyEstScratch::new();
 
         process_tile(
