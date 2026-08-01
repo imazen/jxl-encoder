@@ -797,8 +797,12 @@ impl VarDctEncoder {
                 );
                 let (res, attr) = if singlepass {
                     let sess = attr_session.get_or_insert_with(zensim::AttributionSession::new);
-                    match z.compute_with_ref_score_and_attribution_stale(&precomputed, &src, s, sess)
-                    {
+                    match z.compute_with_ref_score_and_attribution_stale(
+                        &precomputed,
+                        &src,
+                        s,
+                        sess,
+                    ) {
                         Ok(r) => r,
                         Err(_) => return Ok(current_params),
                     }
@@ -1177,8 +1181,8 @@ impl VarDctEncoder {
             if let Some(tgt) = target_native {
                 let achieved_loss = (100.0 - zensim_score).max(0.05);
                 let target_loss = (100.0 - tgt).max(0.05);
-                let g = ((achieved_loss / target_loss).powf(0.6)).clamp(1.0 / ctrl_clamp, ctrl_clamp)
-                    as f32;
+                let g = ((achieved_loss / target_loss).powf(0.6))
+                    .clamp(1.0 / ctrl_clamp, ctrl_clamp) as f32;
                 for v in quant_field_float.iter_mut() {
                     *v = (*v * g).clamp(qf_lower, qf_higher);
                 }
