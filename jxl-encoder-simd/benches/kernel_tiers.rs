@@ -93,6 +93,80 @@ fn bench_kernels(suite: &mut Suite) {
             b.iter(move || jxl_encoder_simd::compute_mask1x1_scalar(plane, W, H, &mut out))
         });
     });
+
+    // ---- wider sweep: the rest of the exported neon/scalar pairs ----
+    // 739 dispatch sites in this crate; the four above were a sample. Each of
+    // these has both a `_neon` and a `_scalar` export, so they can be compared
+    // head-to-head without touching the dispatch token.
+
+    // Inverse DCT — the decode-side twin of dct_8x8.
+    suite.compare("idct_8x8", |g| {
+        let v = ramp(64, 21);
+        let arr: [f32; 64] = v.try_into().unwrap();
+        let inp: &'static [f32; 64] = Box::leak(Box::new(arr));
+        g.bench("neon", move |b| {
+            let mut out = Box::new([0f32; 64]);
+            b.iter(move || jxl_encoder_simd::idct_8x8_neon(t, inp, &mut out))
+        });
+        g.bench("scalar", move |b| {
+            let mut out = Box::new([0f32; 64]);
+            b.iter(move || jxl_encoder_simd::idct_8x8_scalar(inp, &mut out))
+        });
+    });
+
+    // Gaborish smoothing — a separable 3-tap over a full plane.
+    {
+        const W: usize = 512;
+        const H: usize = 512;
+        let plane: &'static [f32] = Box::leak(ramp(W * H, 33).into_boxed_slice());
+        suite.compare("gab_smooth/512x512", move |g| {
+            g.throughput(Throughput::Bytes((W * H * 4) as u64));
+            g.bench("neon", move |b| {
+                let mut out = vec![0f32; W * H];
+                b.iter(move || {
+                    jxl_encoder_simd::gab_smooth_neon(t, &mut out, plane, W, H, 0.7, 0.15, 0.05)
+                })
+            });
+            g.bench("scalar", move |b| {
+                let mut out = vec![0f32; W * H];
+                b.iter(move || {
+                    jxl_encoder_simd::gab_smooth_scalar(&mut out, plane, W, H, 0.7, 0.15, 0.05)
+                })
+            });
+        });
+    }
+
+    // Whole-plane predicate — the shape most likely to be autovectorized
+    // already, and the one where an early exit can mislead.
+    {
+        const N: usize = 1 << 20;
+        let plane: &'static [f32] = Box::leak(ramp(N, 41).into_boxed_slice());
+        suite.compare("is_finite_plane/1MP", move |g| {
+            g.throughput(Throughput::Bytes((N * 4) as u64));
+            g.bench("neon", move |b| {
+                b.iter(move || jxl_encoder_simd::is_finite_plane_neon(t, plane))
+            });
+            g.bench("scalar", move |b| {
+                b.iter(move || jxl_encoder_simd::is_finite_plane_scalar(plane))
+            });
+        });
+    }
+
+    // Entropy: a reduction over histogram counts.
+    {
+        let counts: &'static [i32] = Box::leak(
+            (0..4096).map(|i| ((i * 7919) % 997) as i32).collect::<Vec<i32>>().into_boxed_slice(),
+        );
+        let total: usize = counts.iter().map(|c| *c as usize).sum();
+        suite.compare("shannon_entropy/4096", move |g| {
+            g.bench("neon", move |b| {
+                b.iter(move || jxl_encoder_simd::shannon_entropy_neon(t, counts, total))
+            });
+            g.bench("scalar", move |b| {
+                b.iter(move || jxl_encoder_simd::shannon_entropy_scalar(counts, total))
+            });
+        });
+    }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
