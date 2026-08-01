@@ -545,6 +545,21 @@ impl VarDctEncoder {
         // and the previous iteration's map for the stale arm.
         let mut attr_rgba: Vec<f32> = Vec::new();
         let mut prev_attr: Option<zensim::AttributionResult> = None;
+        // #70 item 2: `JXL_ZENSIM_SINGLEPASS=1` routes the fused compare
+        // through zensim's stale-scalar single-pass entry
+        // (`compute_with_ref_score_and_attribution_stale`) — score +
+        // steering map from ONE pipeline pass. The map combines the CURRENT
+        // iterate's planes with the PREVIOUS compare's pooled scalars (the
+        // proven-free one-iterate-lag semantics; the session's first fused
+        // call primes via the fresh path). Default OFF = the fresh fused
+        // call, byte-identical to shipped behavior (R0-gated). The session
+        // lives per encode (one reference), created lazily at the first
+        // steered iteration.
+        let singlepass = matches!(
+            std::env::var("JXL_ZENSIM_SINGLEPASS").ok().as_deref(),
+            Some("1" | "true" | "yes")
+        );
+        let mut attr_session: Option<zensim::AttributionSession> = None;
         // C3b target-seeking controller (shared by ALL arms so the A/B
         // isolates the steering map): `JXL_ZENSIM_TARGET_SCORE=<native
         // 0-100>` adds a damped global quant-field step toward the target
@@ -780,11 +795,19 @@ impl VarDctEncoder {
                     zensim::PixelFormat::LinearF32Rgba,
                     zensim::AlphaMode::Opaque,
                 );
-                let (res, attr) =
+                let (res, attr) = if singlepass {
+                    let sess = attr_session.get_or_insert_with(zensim::AttributionSession::new);
+                    match z.compute_with_ref_score_and_attribution_stale(&precomputed, &src, s, sess)
+                    {
+                        Ok(r) => r,
+                        Err(_) => return Ok(current_params),
+                    }
+                } else {
                     match z.compute_with_ref_score_and_attribution(&precomputed, &src, s) {
                         Ok(r) => r,
                         Err(_) => return Ok(current_params),
-                    };
+                    }
+                };
                 zensim_score = res.score();
                 measured_dist = res.approx_butteraugli() as f32;
                 // Stale arm: steer with the PREVIOUS iteration's map when
