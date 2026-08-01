@@ -446,6 +446,25 @@ impl VarDctEncoder {
         // Defaults match the benchmark-validated configuration.
         let params = ZensimParams::from_env();
 
+        // Efficiency study (2026-07-31): env-gated global quant-field
+        // pre-scale — the actuator for the harness-level bytes-target outer
+        // loop (E7). The loop itself never entropy-codes, so per-iterate
+        // bytes do not exist here; the outer harness measures real bytes per
+        // full encode and drives this scale with the same damped-controller
+        // formula the in-loop score controller uses. Unset / 1.0 = no-op
+        // (default behavior unchanged; byte-identity gated in the study's R0).
+        if let Some(g) = std::env::var("JXL_ZENSIM_QF_GLOBAL_SCALE")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            && g.is_finite()
+            && g > 0.0
+            && g != 1.0
+        {
+            for v in quant_field_float.iter_mut() {
+                *v *= g;
+            }
+        }
+
         // Pinned to `ZensimProfile::A` (the shipped codec-target metric, v47-strict
         // as of 2026-05-27) rather than the deprecated `latest()` — the
         // ZENSIM_DISTANCE_TARGETS calibration table is seeded against a SPECIFIC
@@ -542,6 +561,14 @@ impl VarDctEncoder {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.25);
         let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
+        // Efficiency study (2026-07-31): per-COMPARE trace — one TSV line per
+        // iteration: `trace_id  iter  score  qf_mean  qf_min  qf_max  iter_ms`.
+        // Env-gated, append-only, default off. NO bytes column: the loop
+        // never entropy-codes (no true bytes, no in-loop estimate) — a
+        // registered limitation; per-iterate bytes come from budget-capped
+        // full encodes (deterministic trajectory).
+        let trace_path = std::env::var("JXL_ZENSIM_TRACE").ok();
+        let trace_id = std::env::var("JXL_ZENSIM_TRACE_ID").unwrap_or_default();
         let t_loop = std::time::Instant::now();
         let mut iter_ms: Vec<f64> = Vec::new();
         let mut compares_used = 0usize;
@@ -929,6 +956,30 @@ impl VarDctEncoder {
             compares_used = iter + 1;
             final_score = zensim_score;
             iter_ms.push(t_iter.elapsed().as_secs_f64() * 1e3);
+            // Efficiency-study trace (env-gated; see decl above). The qf
+            // stats describe the field MEASURED by this compare (the field
+            // that produced iterate `iter`), not the post-redistribution one.
+            if let Some(tp) = &trace_path {
+                use std::io::Write;
+                let (mut qmn, mut qmx, mut qsum) = (f32::INFINITY, f32::NEG_INFINITY, 0.0f64);
+                for &v in quant_field_float.iter() {
+                    qmn = qmn.min(v);
+                    qmx = qmx.max(v);
+                    qsum += v as f64;
+                }
+                let qmean = qsum / quant_field_float.len().max(1) as f64;
+                let ms = iter_ms.last().copied().unwrap_or(f64::NAN);
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(tp)
+                {
+                    let _ = writeln!(
+                        f,
+                        "{trace_id}\t{iter}\t{zensim_score:.4}\t{qmean:.6}\t{qmn:.6}\t{qmx:.6}\t{ms:.1}"
+                    );
+                }
+            }
             // Target convergence: stop once the measured score is within
             // tolerance (needs >= 1 redistribution behind it so the map
             // actually steered something).

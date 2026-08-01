@@ -102,7 +102,7 @@ fn decode_jxl_srgb_u8(
     w: u32,
     h: u32,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut decoder = jxl_oxide::JxlImage::builder().read(Cursor::new(encoded))?;
+    let decoder = jxl_oxide::JxlImage::builder().read(Cursor::new(encoded))?;
     let frame = decoder.render_frame(0)?;
     let stream = frame.stream();
     let (dec_w, dec_h) = (stream.width(), stream.height());
@@ -224,9 +224,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "attr-stale".into(),
     ];
     let mut bake: Option<String> = None;
+    // Efficiency study E7 (2026-07-31): bytes-target outer-loop mode.
+    let mut bytes_targets_file: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
+            "--bytes-targets-file" => bytes_targets_file = args.next(),
             "--metric" => metric_s = args.next().unwrap_or(metric_s),
             "--label" => label = args.next().unwrap_or(label),
             "--out-dir" => out_dir = PathBuf::from(args.next().unwrap_or_default()),
@@ -256,6 +259,17 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None => default_corpus(),
     };
     let metric = parse_metric(&metric_s);
+
+    if let Some(btf) = &bytes_targets_file {
+        return run_bytes_target(
+            btf,
+            bake.as_deref()
+                .expect("--bake required for --bytes-targets-file"),
+            iters,
+            &label,
+            &out_dir,
+        );
+    }
 
     if !zensim_targets.is_empty() {
         return run_target_ab(
@@ -391,6 +405,12 @@ fn run_target_ab(
                         other => std::env::set_var("JXL_ZENSIM_MODEL_MAP", other),
                     }
                     std::env::set_var("JXL_ZENSIM_TARGET_SCORE", format!("{t}"));
+                    // Efficiency study: per-encode trace id (the loop only
+                    // reads it when JXL_ZENSIM_TRACE is set by the runner).
+                    std::env::set_var(
+                        "JXL_ZENSIM_TRACE_ID",
+                        format!("{label}|{name}|{class}|{t:.0}|{arm}"),
+                    );
                 }
                 let _ = fs::remove_file(&stats_tmp);
                 let seed_d = seed_distance_for_target(t);
@@ -423,6 +443,13 @@ fn run_target_ab(
                 } else {
                     f64::NAN
                 };
+                // Efficiency study R0 identity gate: save the encoded
+                // bitstream itself when JXL_SAVE_BITSTREAM=1 (byte-identity
+                // across instrument-env conditions is checked on the .jxl).
+                if std::env::var("JXL_SAVE_BITSTREAM").as_deref() == Ok("1") {
+                    let bs = decoded_dir.join(format!("{label}__{name}__t{t:.0}__{arm}.jxl"));
+                    fs::write(&bs, &encoded)?;
+                }
                 let decoded = decode_jxl_srgb_u8(&encoded, w, h)?;
                 let dist_png = decoded_dir.join(format!("{label}__{name}__t{t:.0}__{arm}.png"));
                 image::RgbImage::from_raw(w, h, decoded.clone())
@@ -442,5 +469,95 @@ fn run_target_ab(
     let _ = fs::remove_file(&stats_tmp);
     fs::write(&manifest_path, &manifest)?;
     eprintln!("[target_ab] wrote {}", manifest_path.display());
+    Ok(())
+}
+
+/// Efficiency study E7 (2026-07-31): SIZE (bytes) targeting via an OUTER
+/// loop of full encodes. The zensim loop never entropy-codes, so per-iterate
+/// bytes do not exist inside it (registered limitation); an E7 "iteration"
+/// is one full encode with REAL bytes. The existing damped controller
+/// formula (ratio^0.6, per-step clamp [1/1.35, 1.35]) drives the env-gated
+/// `JXL_ZENSIM_QF_GLOBAL_SCALE` actuator — the same actuator (global
+/// multiplicative qf step) the in-loop score controller uses. Baseline arm
+/// only; `JXL_ZENSIM_TARGET_SCORE` unset (inner loop = redistribution only).
+///
+/// Input TSV rows: `path \t name \t class \t quality_target \t target_bytes`
+/// (quality_target only sets the seed distance + labels the cell; the
+/// controller sees bytes alone). Fixed outer budget of 8 encodes per cell —
+/// no early acceptance, so the full convergence curve is recorded.
+fn run_bytes_target(
+    targets_file: &str,
+    bake: &str,
+    iters: u32,
+    label: &str,
+    out_dir: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    const OUTER_BUDGET: u32 = 8;
+    fs::create_dir_all(out_dir)?;
+    // SAFETY (edition 2024 set_var): single-threaded driver; all encodes run
+    // sequentially after these writes.
+    unsafe {
+        std::env::set_var("JXL_ZENSIM_RD_PROFILE", format!("bake:{bake}"));
+        std::env::remove_var("JXL_ZENSIM_TARGET_SCORE");
+        std::env::remove_var("JXL_ZENSIM_MODEL_MAP");
+    }
+    let manifest_path = out_dir.join(format!("bytes_target_{label}.tsv"));
+    let mut manifest = String::from(
+        "image\tclass\tqtarget\ttarget_bytes\touter_iter\tqf_scale\tbytes\trel_err\tjudged\tencode_ms\n",
+    );
+    for line in std::fs::read_to_string(targets_file)?.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() < 5 {
+            return Err(format!("bytes-targets row needs 5 cols: {line}").into());
+        }
+        let (path, name, class) = (f[0], f[1], f[2]);
+        let qtarget: f64 = f[3].parse()?;
+        let target_bytes: f64 = f[4].parse::<u64>()? as f64;
+        let (pixels, w, h) = load_rgb8(path)?;
+        let seed_d = seed_distance_for_target(qtarget);
+        let mut g: f64 = 1.0;
+        for j in 0..OUTER_BUDGET {
+            // SAFETY: sequential driver (as above).
+            unsafe {
+                std::env::set_var("JXL_ZENSIM_QF_GLOBAL_SCALE", format!("{g}"));
+                std::env::set_var(
+                    "JXL_ZENSIM_TRACE_ID",
+                    format!("{label}|{name}|{class}|{qtarget:.0}|bytes{j}"),
+                );
+            }
+            let t0 = Instant::now();
+            let cfg = LossyConfig::new(seed_d)
+                .with_strategy(EncoderStrategy::Zenjxl)
+                .with_effort(EFFORT)
+                .with_perceptual_metric(PerceptualMetric::Zensim)
+                .with_butteraugli_iters(0)
+                .with_zensim_iters(iters);
+            let encoded = cfg.encode(&pixels, w, h, PixelLayout::Rgb8)?;
+            let encode_ms = t0.elapsed().as_secs_f64() * 1000.0;
+            let bytes = encoded.len() as f64;
+            let rel_err = (bytes - target_bytes) / target_bytes;
+            let decoded = decode_jxl_srgb_u8(&encoded, w, h)?;
+            let judged = judge_score(bake, &pixels, &decoded, w, h);
+            manifest.push_str(&format!(
+                "{name}\t{class}\t{qtarget:.0}\t{target_bytes:.0}\t{j}\t{g:.6}\t{bytes:.0}\t{rel_err:.5}\t{judged:.3}\t{encode_ms:.1}\n",
+            ));
+            eprintln!(
+                "  [bytes {label}] {name} q{qtarget:.0} j={j} g={g:.4} bytes={bytes:.0} rel_err={:+.2}% judged={judged:.2} {encode_ms:.0}ms",
+                rel_err * 100.0
+            );
+            // The registered damped update (qf up ⇒ more bytes).
+            g *= ((target_bytes / bytes).powf(0.6)).clamp(1.0 / 1.35, 1.35);
+        }
+        // SAFETY: sequential driver (as above).
+        unsafe {
+            std::env::remove_var("JXL_ZENSIM_QF_GLOBAL_SCALE");
+        }
+    }
+    fs::write(&manifest_path, &manifest)?;
+    eprintln!("[bytes_target] wrote {}", manifest_path.display());
     Ok(())
 }
