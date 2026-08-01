@@ -212,6 +212,48 @@ fn bench_kernels(suite: &mut Suite) {
             });
         });
     }
+
+    // ---- edge-preserving filter (EPF step 1) ----
+    // A real encode hot path, three planes at once. Parameters mirror the
+    // crate's own epf test so the shapes are known-good rather than guessed:
+    // pad = 2, sigma_scale = 1.65, border_sigma_mul = 2/3.
+    {
+        const W: usize = 512;
+        const H: usize = 512;
+        const PAD: usize = 2;
+        let stride = W + 2 * PAD;
+        let xsb = W / 8;
+
+        let base = ramp(W * H, 71);
+        let px: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&base, W, H, PAD).into_boxed_slice());
+        let py: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 73), W, H, PAD).into_boxed_slice());
+        let pb: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 79), W, H, PAD).into_boxed_slice());
+        // Positive inv_sigma so the filter actually runs (the test uses -1.0,
+        // which is the "skip this block" sentinel — that would measure nothing).
+        let isg: &'static [f32] = Box::leak(vec![0.7f32; xsb * (H / 8)].into_boxed_slice());
+
+        suite.compare("epf_step1/512x512", move |g| {
+            g.throughput(Throughput::Bytes((W * H * 4 * 3) as u64));
+            g.bench("neon", move |b| {
+                let (mut ox, mut oy, mut ob) = (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
+                b.iter(move || {
+                    jxl_encoder_simd::epf_step1_neon(
+                        t, px, py, pb, &mut ox, &mut oy, &mut ob, isg,
+                        xsb, W, H, stride, PAD, 1.65, 2.0 / 3.0,
+                    )
+                })
+            });
+            g.bench("scalar", move |b| {
+                let (mut ox, mut oy, mut ob) = (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
+                b.iter(move || {
+                    jxl_encoder_simd::epf_step1_scalar(
+                        px, py, pb, &mut ox, &mut oy, &mut ob, isg,
+                        xsb, W, H, stride, PAD, 1.65, 2.0 / 3.0,
+                    )
+                })
+            });
+        });
+    }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
