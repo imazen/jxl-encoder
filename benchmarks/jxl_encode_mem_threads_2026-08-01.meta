@@ -1,0 +1,45 @@
+# jxl_encode_mem_threads_2026-08-01.tsv — peak-RSS grid, PRE-FIX baseline
+#
+# Commit: 4f250773d67b (main@origin) + measurement-only additions
+#   (EncodeStats::budget_peak_bytes wiring, examples/mem_grid_probe.rs);
+#   the encoder's allocation behavior is the pre-fix state.
+# Host: WSL2 dev box (7950X, 28 cores visible, 58 GiB), 2026-08-01.
+# Driver: scripts/mem_grid_sweep.sh benchmarks/jxl_encode_mem_threads_2026-08-01.tsv 44G
+#   (each cell its own process under run-heavy --mem 44G --jobs 12, /usr/bin/time -v;
+#    per-cell logs ~/tmp/memgrid/*.log). Extra mp27/mp48/mp75 crop rows appended
+#   manually from curve_mp{27,48,75}_e5_t1.log (crops of photo_mp108.ppm,
+#    top-left 6000x4500 / 8000x6000 / 10000x7500).
+# Corpus: ~/work/zen/zensysbench/corpus-cache/photo_{mp12,mp20,mp108}.ppm
+#   (mp12=4000x3000, mp20=5477x3651, mp108=12000x9000, RGB8 P6).
+# Probe: mem_grid_probe <ppm> <mode> <effort> <distance> <threads> max
+#   -> Limits::with_max_memory_bytes(u64::MAX) so the true unconstrained peak
+#      is observable. d6.0 ~ q30, d1.75 ~ q75 (percent_to_distance).
+# Columns: time_max_rss_kb = GNU time Maximum resident set size;
+#   vmhwm_peak_kb/delta_kb = /proc VmHWM end/delta across encode();
+#   budget_peak_kb = the encoder's own MemoryBudget peak (guarded sites only).
+#   rc=137 = run-heavy 44G cgroup OOM-killed the cell (peak >= ~44 GiB).
+#
+# FINDINGS (the reason this grid exists):
+# 1. QUADRATIC unguarded term: lossy marginal B/px grows linearly with MP
+#    (74.7 @12MP, 104.7 @20MP, 132.7 @27MP, 211.8 @48MP, 317.9 @75MP,
+#    censored >=427 @108MP): peak ~ 28.5 B/px + 3.85e-6 B/px^2.
+#    Attribution (heaptrack ht_mp48_e5_t1, 8.8 of 9.6 GiB peak):
+#    vardct/ac_strategy.rs compute_ac_strategy_for_tiles allocated a
+#    FULL-IMAGE AcStrategyMap (n_blocks bytes) per 64x64 tile and
+#    parallel_map collected all n_tiles of them alive -> n_tiles x n_blocks
+#    = px^2/262144 B (3.81e-6, matches the fit to 1%). ~44.5 GiB at 108 MP
+#    = the zensysbench fleet OOM (32 GiB boxes killed at ~29.9 GiB RSS).
+#    FIXED same day: tile-windowed scratch maps (see postfix TSV).
+# 2. Budget (guarded) mass is exactly LINEAR: 32.7 B/px at every size
+#    (lossy e5); the entire superlinear mass was unguarded.
+# 3. Threads: RSS ~flat across t in {1,2,4,8,16} at 12/20 MP (largest bump
+#    +242 MiB at mp12 e7 t=4 vs t=1, non-monotone). The fleet "parallel
+#    blowup" was the same quadratic peak reached faster, not a per-thread
+#    term. Lossless t=8 peaks BELOW t=1 (5.64 -> 4.41 GiB at mp12 e7).
+# 4. Effort/quality: e7 d6.0 measures ABOVE the 2026-06-23 model at 12 MP
+#    (1486 MiB marginal vs est_typ 1000 MiB) - that calibration swept
+#    q50/q90 only, never the q30 regime.
+# 5. All six mp108 d6.0 cells AND e7 d1.75 t=1 blew the 44 GiB cgroup:
+#    the true pre-fix t=1 peak at 108 MP is >= 44 GiB (~>=427 B/px), far
+#    above the fleet's 29.9/39.9 GiB kill points (those were box-size
+#    censoring, not the peak).

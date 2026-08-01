@@ -363,6 +363,14 @@ name = "hdr_tree_budget_probe"
 path = "examples/hdr_tree_budget_probe.rs"
 required-features = ["__expert"]
 
+# Peak-memory grid probe over corpus PPMs (size x effort x threads memory
+# recalibration, 2026-08-01). One encode per process; prints VmHWM + the
+# encoder's own MemoryBudget peak. Driver: scripts/mem_grid_sweep.sh.
+[[example]]
+name = "mem_grid_probe"
+path = "examples/mem_grid_probe.rs"
+required-features = ["std", "parallel"]
+
 [dev-dependencies]
 # Transitive-version pin (#82), NOT used directly. `brotli` (a dev-dep via
 # `zenjxl-decoder`, and our own optional `brotli-metadata` dep) pulls
