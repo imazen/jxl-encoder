@@ -113,4 +113,84 @@ dir); stat definitions in `scripts/zensim-loop-eff/analyze_emitbest.py`
 
 ## Results
 
-_(filled after the runs; protocol above frozen first)_
+Data: `zensim_emitbest_{cells,traces}_2026-07-31.tsv` (this dir); analysis
+`scripts/zensim-loop-eff/analyze_emitbest.py report` (every number below
+re-derives exactly from the committed TSVs). Runs 2026-07-31, 216 encodes
++ gates, ~2 min nice'd. Substrate as registered: jxl-encoder `0eb31edc` +
+instrument commit `b4b6fd95`, zensim `402f4e63` (clean), v47A bake.
+
+**Gates — all green:**
+
+- **R0a PASS** — env unset, new binary vs pre-change MAIN binary:
+  byte-identical (sha `12cf08e0…` — the SAME gate-cell sha as the
+  efficiency and metric-matrix studies' R0: cross-study determinism).
+- **R0b PASS** — `JXL_ZENSIM_EMIT_BEST=1` on a last-is-best cell
+  (cid1025469 t70 baseline k6): byte-identical to emit-last.
+- **R0c PASS** — engagement on an overshoot cell (cid1025469 t70 h3 k12):
+  bitstream differs.
+- **G-TRAJ PASS** — all 4 run-pairs, 27/27 cells: emit-best traces equal
+  emit-last traces exactly (max |Δscore| = 0) — the emission rule does
+  not perturb the trajectory.
+- **G-EMIT PASS** — all 4 emit-best runs: RD_STATS internal score equals
+  the trace argmin score (0 mismatched cells), and the sha-changed cell
+  set equals the argmin≠last set exactly (0 mismatches).
+
+### Headline conclusions
+
+1. **At k6 (primary) the within-2 census is UNCHANGED — exactly the
+   pre-registered expectation from the mm-study trace pricing** (base
+   18/27, h3g20c135 21/27, both emission rules). The medians still
+   improve: base 1.174 → 1.052, h3 0.926 → 0.745 all-cells; h3 t70
+   0.926 → 0.393 and t80 0.472 → 0.214 (the h3 sweet spot lands mid-run
+   and emit-best keeps it).
+2. **At k12 (secondary — the diagnosed overshoot regime) emit-best is a
+   large win**: h3 med |err| 0.747 → **0.382** and census 22 → **25/27**;
+   baseline 0.750 → **0.432**, census 23 → **25/27**. Finding #7's
+   emit-last penalty (h3 judged 0.59@k6 → 1.02@k12 on the E6 subsample)
+   is cured — extended budgets now HELP instead of hurting: h3 k12-best
+   is the best arm measured in this series (t70 0.382 / t80 0.154 /
+   t88 0.583 medians).
+3. **Bytes are neutral-to-slightly-saving**: med best/last ratio 1.0000
+   (both arms, k6), 0.9920/0.9928 (k12); per-cell range 0.914-1.059.
+   Emit-best does not buy accuracy with size.
+4. **Transfer caveat observed as registered**: base k6 t70 med worsened
+   slightly (1.867 → 1.921) — the internal argmin can pick an iterate
+   whose JUDGED error is marginally worse (E6 ±0.13 photo transfer);
+   every other arm × target median improved or tied.
+5. **Emitted-iterate distribution (P4)**: at k6 the argmin IS the last
+   compare for 21/27 (base) / 15/27 (h3) cells; at k12 only 10/27 and
+   6/27 — the longer the budget, the more emit-best engages (h3 k12 med
+   emitted iterate 9 of 12).
+
+### P1/P2 — decoded-judged med |err| (all + per target) and within-2 census
+
+| run | med all | t70 | t80 | t88 | within2 |
+|---|--:|--:|--:|--:|--:|
+| v47A_base_k6_last | 1.174 | 1.867 | 0.633 | 1.174 | 18/27 |
+| v47A_base_k6_best | 1.052 | 1.921 | 0.633 | 1.052 | 18/27 |
+| v47A_base_k12_last | 0.750 | 1.049 | 0.641 | 0.633 | 23/27 |
+| v47A_base_k12_best | 0.432 | 0.353 | 0.373 | 0.633 | 25/27 |
+| v47A_h3g20c135_k6_last | 0.926 | 0.926 | 0.472 | 1.178 | 21/27 |
+| v47A_h3g20c135_k6_best | 0.745 | 0.393 | 0.214 | 1.178 | 21/27 |
+| v47A_h3g20c135_k12_last | 0.747 | 1.745 | 0.747 | 0.692 | 22/27 |
+| v47A_h3g20c135_k12_best | 0.382 | 0.382 | 0.154 | 0.583 | 25/27 |
+
+### P3 — bytes best/last (per-cell join)
+
+| arm × budget | med ratio | min | max | bytes-differ cells |
+|---|--:|--:|--:|--:|
+| base k6 | 1.0000 | 0.9723 | 1.0422 | 6/27 |
+| base k12 | 0.9920 | 0.9501 | 1.0000 | 17/27 |
+| h3g20c135 k6 | 1.0000 | 0.9989 | 1.0587 | 12/27 |
+| h3g20c135 k12 | 0.9928 | 0.9136 | 1.0550 | 21/27 |
+
+### Limitations (registered + observed)
+
+- Best-iterate selection reads the INTERNAL score (registered design —
+  no in-loop decoded scoring); judged deltas are bounded by the
+  judged−internal transfer, and one arm×target median (base k6 t70)
+  regressed by 0.05 through that channel.
+- 576²-class fixtures only; loop-dynamics study, not a perf calibration.
+- k12 is a SECONDARY endpoint (the primary directed matrix is k6); its
+  large wins are consistent with the efficiency study's E5/E6 but were
+  measured here on the full 27-cell matrix, not E6's 9-cell subsample.

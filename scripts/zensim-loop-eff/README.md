@@ -12,7 +12,14 @@ the tooling outlives scratch dirs):
   `r0`..`r5` (or `all`); `r0` is a hard identity gate and `r1` embeds the
   arm-engagement gate (unknown `JXL_ZENSIM_MODEL_MAP` values silently fall
   through to baseline — always prove engagement in-run).
+- `run_mm.sh` + `analyze_mm.py` — the metric-matrix study (model ×
+  mechanism at budget 3). Protocol:
+  `benchmarks/zensim_loop_metric_matrix_2026-07-31.md`.
+- `run_emitbest.sh` + `analyze_emitbest.py` — the best-so-far emission A/B
+  (`JXL_ZENSIM_EMIT_BEST`). Protocol:
+  `benchmarks/zensim_emit_best_2026-07-31.md`. `MAIN_BIN` must point at a
+  pre-change binary for the R0a gate.
 
-Both drive `jxl-encoder/examples/zensim_diffmap_rd.rs` (build command in
+All drive `jxl-encoder/examples/zensim_diffmap_rd.rs` (build command in
 `run_eff.sh`'s header). Binary path override: `ZDR_BIN`. Heavy work is
 nice'd; logs land in the runner's `$OUT`.
