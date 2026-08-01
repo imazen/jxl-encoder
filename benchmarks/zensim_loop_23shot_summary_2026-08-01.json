@@ -1,0 +1,269 @@
+{
+ "schema": "zensim_loop_23shot_summary.v1",
+ "date": "2026-08-01",
+ "source": "jxl-encoder benchmarks/zensim_loop_23shot_summary_2026-08-01.json",
+ "matrix": {
+  "refs": 9,
+  "targets": [
+   70,
+   80,
+   88
+  ],
+  "n_cells": 27,
+  "within_tol": 2.0,
+  "judge": "decode the emitted bitstream, score with the SAME metric that drove the loop (bake judge for bake arms; zenmetrics ssim2 for ssim2-outer)"
+ },
+ "substrate": {
+  "jxl_encoder": "1e98748e",
+  "zensim": "2f0cec29",
+  "mm_study": "jxl 475f50ad+instr, zensim 402f4e63 (probe-verified numerically identical for the loop)"
+ },
+ "notes": "Each arm's within-\u00b12.0 is in its OWN metric's units \u2014 counts are NOT unit-comparable across metrics (the mm study's F5 carries the shared-scale read). k2/k3 = inner-loop budget (--iters k; k+1 compares, the emitted bitstream is the last (emit_last) or internally-best (emit_best, JXL_ZENSIM_EMIT_BEST=1) measured iterate; judged decoded either way). Outer j2/j3 = as-emitted full encode at outer_iter j (seed + j controller steps, the step-count parallel of inner k=j); j*_best = best-of-<=j (decoded-judged by construction). latest arm SKIPPED: proven 27/27 byte-identical to B_base (mm mount-equivalence gate) \u2014 its numbers are B_base's. blend2L/bvls bakes are not on the gauntlet fulleval board.",
+ "models": {
+  "v47A_base": {
+   "kind": "inner",
+   "label": "v47A baseline (MLP 372)",
+   "bake": "v47_strict_qat_native_2026-05-27.bin",
+   "cells": {
+    "k2_emit_last": {
+     "within2": 12,
+     "n_cells": 27,
+     "med_abs_err": 3.041,
+     "med_bytes": 22809.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=v47A_base_k2_last)"
+    },
+    "k2_emit_best": {
+     "within2": 12,
+     "n_cells": 27,
+     "med_abs_err": 3.041,
+     "med_bytes": 22809.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=v47A_base_k2_best)"
+    },
+    "k3_emit_best": {
+     "within2": 13,
+     "n_cells": 27,
+     "med_abs_err": 2.276,
+     "med_bytes": 22195.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=v47A_base_k3_best)"
+    },
+    "k3_emit_last": {
+     "within2": 13,
+     "n_cells": 27,
+     "med_abs_err": 2.276,
+     "med_bytes": 22195.0,
+     "provenance": "derived: benchmarks/zensim_mm_cells_2026-07-31.tsv (run=v47A_base_k3, as-emitted; substrate-probe-verified)"
+    }
+   }
+  },
+  "B_base": {
+   "kind": "inner",
+   "label": "shippedB / profile B (linear 372)",
+   "bake": "b_sdr_linear_cid80_inclwinsor_dense_dial_2026-07-07.bin",
+   "cells": {
+    "k2_emit_last": {
+     "within2": 13,
+     "n_cells": 27,
+     "med_abs_err": 2.231,
+     "med_bytes": 26437.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=B_base_k2_last)"
+    },
+    "k2_emit_best": {
+     "within2": 14,
+     "n_cells": 27,
+     "med_abs_err": 1.937,
+     "med_bytes": 26437.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=B_base_k2_best)"
+    },
+    "k3_emit_best": {
+     "within2": 15,
+     "n_cells": 27,
+     "med_abs_err": 1.894,
+     "med_bytes": 26321.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=B_base_k3_best)"
+    },
+    "k3_emit_last": {
+     "within2": 14,
+     "n_cells": 27,
+     "med_abs_err": 1.894,
+     "med_bytes": 26321.0,
+     "provenance": "derived: benchmarks/zensim_mm_cells_2026-07-31.tsv (run=B_base_k3, as-emitted; substrate-probe-verified)"
+    }
+   }
+  },
+  "bvls_base": {
+   "kind": "inner",
+   "label": "v02bvls (linear, 86 active weights)",
+   "bake": "v02_bvls_NO_shaping_2026-05-28.bin",
+   "cells": {
+    "k2_emit_last": {
+     "within2": 6,
+     "n_cells": 27,
+     "med_abs_err": 5.353,
+     "med_bytes": 31157.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=bvls_base_k2_last)"
+    },
+    "k2_emit_best": {
+     "within2": 7,
+     "n_cells": 27,
+     "med_abs_err": 5.235,
+     "med_bytes": 31157.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=bvls_base_k2_best)"
+    },
+    "k3_emit_best": {
+     "within2": 8,
+     "n_cells": 27,
+     "med_abs_err": 3.137,
+     "med_bytes": 32581.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=bvls_base_k3_best)"
+    },
+    "k3_emit_last": {
+     "within2": 6,
+     "n_cells": 27,
+     "med_abs_err": 3.26,
+     "med_bytes": 32581.0,
+     "provenance": "derived: benchmarks/zensim_mm_cells_2026-07-31.tsv (run=bvls_base_k3, as-emitted; substrate-probe-verified)"
+    }
+   }
+  },
+  "blend2L_base": {
+   "kind": "inner",
+   "label": "blend2L (2-layer MLP 372-128-128-1)",
+   "bake": "mlp_2L_diverse_H128_2026-07-15.bin",
+   "cells": {
+    "k2_emit_last": {
+     "within2": 8,
+     "n_cells": 27,
+     "med_abs_err": 2.758,
+     "med_bytes": 23107.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=blend2L_base_k2_last)"
+    },
+    "k2_emit_best": {
+     "within2": 8,
+     "n_cells": 27,
+     "med_abs_err": 2.758,
+     "med_bytes": 23107.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=blend2L_base_k2_best)"
+    },
+    "k3_emit_best": {
+     "within2": 11,
+     "n_cells": 27,
+     "med_abs_err": 2.18,
+     "med_bytes": 23107.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=blend2L_base_k3_best)"
+    },
+    "k3_emit_last": {
+     "within2": 11,
+     "n_cells": 27,
+     "med_abs_err": 2.18,
+     "med_bytes": 22502.0,
+     "provenance": "derived: benchmarks/zensim_mm_cells_2026-07-31.tsv (run=blend2L_base_k3, as-emitted; substrate-probe-verified)"
+    }
+   }
+  },
+  "v47A_h3g20c135": {
+   "kind": "inner",
+   "label": "v47A + h3-mag steering g20 c1.35 (#70 gate winner)",
+   "bake": "v47_strict_qat_native_2026-05-27.bin",
+   "cells": {
+    "k2_emit_last": {
+     "within2": 12,
+     "n_cells": 27,
+     "med_abs_err": 2.843,
+     "med_bytes": 22456.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=v47A_h3g20c135_k2_last)"
+    },
+    "k2_emit_best": {
+     "within2": 12,
+     "n_cells": 27,
+     "med_abs_err": 2.843,
+     "med_bytes": 22456.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=v47A_h3g20c135_k2_best)"
+    },
+    "k3_emit_best": {
+     "within2": 13,
+     "n_cells": 27,
+     "med_abs_err": 2.046,
+     "med_bytes": 21656.0,
+     "provenance": "fresh-run 2026-08-01 (zensim_loop_23shot_2026-08-01.tsv, run=v47A_h3g20c135_k3_best)"
+    },
+    "k3_emit_last": {
+     "within2": 13,
+     "n_cells": 27,
+     "med_abs_err": 2.046,
+     "med_bytes": 21656.0,
+     "provenance": "derived: benchmarks/zensim_mm_cells_2026-07-31.tsv (run=v47A_h3g20c135_k3, as-emitted; substrate-probe-verified)"
+    }
+   }
+  },
+  "outer_zensimA": {
+   "kind": "outer",
+   "label": "outer controller, v47A decoded judge",
+   "bake": "v47_strict_qat_native_2026-05-27.bin",
+   "cells": {
+    "j2": {
+     "within2": 12,
+     "n_cells": 27,
+     "med_abs_err": 3.085,
+     "med_bytes": 22898.0,
+     "provenance": "derived: benchmarks/zensim_mm_outer_2026-07-31.tsv (run=outer_zensimA, as-emitted at outer_iter==2)"
+    },
+    "j2_best": {
+     "within2": 12,
+     "n_cells": 27,
+     "med_abs_err": 3.085,
+     "med_bytes": 22898.0,
+     "provenance": "derived: benchmarks/zensim_mm_outer_2026-07-31.tsv (run=outer_zensimA, min |judged-t| over outer_iter<=2, latest-tie)"
+    },
+    "j3": {
+     "within2": 14,
+     "n_cells": 27,
+     "med_abs_err": 1.942,
+     "med_bytes": 21906.0,
+     "provenance": "derived: benchmarks/zensim_mm_outer_2026-07-31.tsv (run=outer_zensimA, as-emitted at outer_iter==3)"
+    },
+    "j3_best": {
+     "within2": 14,
+     "n_cells": 27,
+     "med_abs_err": 1.942,
+     "med_bytes": 21906.0,
+     "provenance": "derived: benchmarks/zensim_mm_outer_2026-07-31.tsv (run=outer_zensimA, min |judged-t| over outer_iter<=3, latest-tie)"
+    }
+   }
+  },
+  "outer_ssim2": {
+   "kind": "outer",
+   "label": "outer controller, SSIMULACRA2 (zenmetrics)",
+   "bake": null,
+   "cells": {
+    "j2": {
+     "within2": 11,
+     "n_cells": 27,
+     "med_abs_err": 2.627,
+     "med_bytes": 22249.0,
+     "provenance": "derived: benchmarks/zensim_mm_outer_2026-07-31.tsv (run=outer_ssim2, as-emitted at outer_iter==2)"
+    },
+    "j2_best": {
+     "within2": 11,
+     "n_cells": 27,
+     "med_abs_err": 2.627,
+     "med_bytes": 22249.0,
+     "provenance": "derived: benchmarks/zensim_mm_outer_2026-07-31.tsv (run=outer_ssim2, min |judged-t| over outer_iter<=2, latest-tie)"
+    },
+    "j3": {
+     "within2": 16,
+     "n_cells": 27,
+     "med_abs_err": 1.623,
+     "med_bytes": 21150.0,
+     "provenance": "derived: benchmarks/zensim_mm_outer_2026-07-31.tsv (run=outer_ssim2, as-emitted at outer_iter==3)"
+    },
+    "j3_best": {
+     "within2": 16,
+     "n_cells": 27,
+     "med_abs_err": 1.623,
+     "med_bytes": 21150.0,
+     "provenance": "derived: benchmarks/zensim_mm_outer_2026-07-31.tsv (run=outer_ssim2, min |judged-t| over outer_iter<=3, latest-tie)"
+    }
+   }
+  }
+ }
+}
