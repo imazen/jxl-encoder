@@ -560,6 +560,29 @@ impl VarDctEncoder {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.25);
+        // #70 best-so-far emission (efficiency-study finding #7: the loop
+        // emits the LAST iterate, and overshoot past the sweet spot does not
+        // self-correct — h3 judged err 0.59@k6 → 1.02@k12). With
+        // `JXL_ZENSIM_EMIT_BEST=1` AND a target set, snapshot the float quant
+        // field measured by the compare whose INTERNAL score is closest to
+        // the target (`<=`: the LATEST iterate wins exact ties, so a tied
+        // last iterate emits exactly the default bitstream) and restore it
+        // for the final SetQuantField — the emitted bitstream then
+        // corresponds to the BEST measured iterate, not the last. The
+        // internal fused score is the trusted proxy (E6: judged−internal med
+        // ±0.13 on photos); no decoded scoring is added in-loop. Default
+        // OFF: env unset, or no `JXL_ZENSIM_TARGET_SCORE` ("best" is
+        // undefined without a target) = shipped emit-last behavior
+        // (byte-identity gated in the study's R0).
+        let emit_best = target_native.is_some()
+            && matches!(
+                std::env::var("JXL_ZENSIM_EMIT_BEST").ok().as_deref(),
+                Some("1" | "true" | "yes")
+            );
+        let mut best_err = f64::INFINITY;
+        let mut best_score = f64::NAN;
+        let mut best_iter = usize::MAX;
+        let mut best_qf: Vec<f32> = Vec::new();
         // Metric-matrix study (2026-07-31): env-gated override of the damped
         // controller's per-step clamp (the #70-item-1 gain/clamp co-sweep
         // axis). Unset / 1.35 = shipped behavior (byte-identity gated in the
@@ -964,6 +987,19 @@ impl VarDctEncoder {
 
             compares_used = iter + 1;
             final_score = zensim_score;
+            // #70 emit-best: `quant_field_float` still holds the field this
+            // compare MEASURED (redistribution/controller run later), so a
+            // snapshot here reproduces this iterate exactly at emission.
+            if let (true, Some(tgt)) = (emit_best, target_native) {
+                let err = (zensim_score - tgt).abs();
+                if err.is_finite() && err <= best_err {
+                    best_err = err;
+                    best_score = zensim_score;
+                    best_iter = iter;
+                    best_qf.clear();
+                    best_qf.extend_from_slice(quant_field_float);
+                }
+            }
             iter_ms.push(t_iter.elapsed().as_secs_f64() * 1e3);
             // Efficiency-study trace (env-gated; see decl above). The qf
             // stats describe the field MEASURED by this compare (the field
@@ -1124,6 +1160,29 @@ impl VarDctEncoder {
                     *v = (*v * g).clamp(qf_lower, qf_higher);
                 }
             }
+        }
+
+        // #70 emit-best: restore the best iterate's measured field for the
+        // final SetQuantField below. Skipped when the last executed compare
+        // WAS the best (`<=` tracking makes the latest tie win), so the
+        // emitted bitstream is bit-for-bit the default one in that case.
+        // `final_score` (the RD_STATS line) reports the EMITTED iterate's
+        // internal score — the honest value for downstream consumers.
+        if emit_best && best_iter != usize::MAX && best_iter + 1 != compares_used {
+            quant_field_float.copy_from_slice(&best_qf);
+            final_score = best_score;
+            debug_rect!(
+                "zensim/emit-best",
+                0,
+                0,
+                width,
+                height,
+                "restoring iterate {} (score {:.3}, |err| {:.3}) over last iterate {}",
+                best_iter,
+                best_score,
+                best_err,
+                compares_used - 1
+            );
         }
 
         if let Some(sp) = &stats_path {
