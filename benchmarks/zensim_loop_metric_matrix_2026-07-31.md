@@ -229,4 +229,186 @@ numpy.median, percentile method='linear').
 
 ## Results
 
-_(filled in after the runs; protocol above frozen first)_
+Data: `zensim_mm_{cells,traces,outer,xmetric}_2026-07-31.tsv` (this dir);
+analysis `scripts/zensim-loop-eff/analyze_mm.py` (every table re-derives
+exactly from the TSVs). Runs 2026-07-31, ~760 encodes (540 inner + 216
+outer + gates), all phases + every in-run gate green. Substrate as
+registered: jxl-encoder main `475f50ad` + instruments, zensim `402f4e63`
+(clean), bakes sha256 v47A `d0ef7a30…` / shippedB `b6fe5233…` / v02bvls
+`5ffb8a2c…` / blend2L `8898301955ac2d40…`.
+
+**Gates:**
+- **R0 identity PASS** — no-envs / TRACE on / `CTRL_CLAMP=1.35` /
+  `QF_GLOBAL_SCALE=1.0` all byte-identical (sha `12cf08e0…` — the SAME sha
+  as the efficiency study's R0 on the older binary + zensim `e8cd105a`:
+  cross-study, cross-substrate determinism for the gate cell).
+- **Engagement PASS** — h3 probes exactly k×27 (81 at k3, 162 at k6) in
+  all 8 h3 runs; all 12 baseline-run probes 0; clamp-1.6 diverges from
+  1.35 on ≥1 cell; ssim2-outer zenmetrics calls 108/108 (0 nulls).
+- **Mount-equivalence CONFIRMED** — `latest` (named profile) vs shippedB
+  (bake-mount): **27/27 bitstreams byte-identical**, decoded scores max
+  |Δ| = 0.0000. The `bake:` mount path is exactly the named-B profile.
+- **Determinism** — k3-vs-k6 trace prefixes identical (max |Δ| 0.0000
+  over 108 compares × 5 baseline models).
+
+### Headline conclusions
+
+1. **Nothing reliably reaches ±2.0 in 3 iterations: the best arm lands
+   16/27 cells.** At budget 3 (as-emitted): ssim2-outer 16/27 (its own
+   units), shippedB/latest 14/27 and zensimA-outer 14/27, every v47A
+   inner arm 13/27, blend2L 11/27, v02bvls 6/27. At k=6 the same arms
+   reach 18-22/27 — the efficiency study's "budget-limited, not
+   tolerance-limited" verdict extends to every model class and both
+   mechanisms. (Cross-arm caveat: each arm's ±2.0 is in its OWN metric's
+   units — F5 is the shared-scale read.)
+2. **Model class matters more than mechanism at budget 3.** The linear
+   B dial (14/27, med t70 |err| 1.24) beats the MLP A dial (13/27, 2.93)
+   at k=3 — B's oscillating controller (eff-study E4) gets close fast,
+   and best-of-≤3 lifts it to 16/27. Mechanism swap at fixed metric
+   (inner-A 13/27 → outer-A 14/27) buys +1 cell for ~4× wall cost
+   (214 ms → 849 ms median): the outer controller's advantage is reading
+   decoded truth instead of reconstruction-domain estimates, and it is
+   small.
+3. **#70-item-1 gate verdict: WINNER = gain 20, clamp 1.35** (the
+   registered-default clamp). All four co-sweep configs tie F1 at 13/27;
+   tie-break median bytes ratio at equal achieved → g20c135 = 0.976
+   (n=15) vs 0.989/0.989/0.985. None disqualified (all ratios < 1.0 —
+   h3 keeps SAVING bytes at equal achieved, extending #69 G2). The
+   baseline-clamp1.6 control ties baseline exactly (13/27, ratio 1.000,
+   n=22) — the h3 arms' byte win is steering, not controller-step size.
+   Gain 20 also improves k=3 accuracy medians (t70 2.34 vs 2.93, t80
+   0.85 vs 1.03) without flipping the within-2 census.
+4. **The clamp axis is dead at k=3 and mildly helpful at k=6.** At k=3,
+   c1.6 arms are median-identical to their c1.35 counterparts (the clamp
+   only binds on far-from-target cells, which stay unreachable-by-3
+   anyway). At k=6: basec160 19/27 vs base 18/27; h3g10c16 22/27 vs 21,
+   h3g20c16 22/27 vs 21 — consistent +1 cell. The frozen k3 gate is
+   unaffected; a budget-6 deployment could prefer c1.6.
+5. **F5 — the cross-metric product read: the zensim-targeted loop is
+   ~2× tighter in ssim2's eyes than the ssim2-targeted loop is in
+   zensim's eyes.** ssim2 IQR of zensim-A-targeted emissions:
+   4.66/2.18/1.97 (inner k3, t70/80/88) and 4.25/2.40/1.73 (outer). \
+   zensimA IQR of ssim2-targeted emissions: **8.76/5.03/2.69**. Targeting
+   zensim yields more consistent ssim2 than the reverse at every target —
+   the zensim dial is the safer loop metric when both metrics' opinions
+   matter.
+6. **Custom mounts work mechanically; dial SHAPE decides usefulness.**
+   Both mounts ran (372-probe clean). blend2L ≈ v47A at t80/t88 but
+   11/27 overall (soft bottom: t70 med 4.36). v02bvls is the census
+   floor (6/27): its compressed top-end (dial p95 ≈ 87.4) makes t88
+   structurally unreachable — photos saturate at 84-86 even at k=6
+   (err 2.0-3.9). A bake's output-spline geometry, not its SROCC, decides
+   whether a target is expressible — check the dial range BEFORE mounting
+   a bake as a loop metric.
+7. **F6 tail is nonphoto + one photo cell.** As-emitted, 7/27 cells are
+   within-2 in NO arm: sc_gui/t70+t80, sc_imessage/t70+t80,
+   sc_wiki/t70+t80, cid1418519/t70. Best-of-≤3 trims it to 5 (all
+   nonphoto). Same seed-miscalibration mechanism the efficiency study
+   identified: budget 3 is spent walking off a ~10-20-point seed offset.
+8. **Emission rule matters for oscillating dials.** best-of-≤3 (min
+   |err| over iterates 0..3) adds +2 cells for B/latest (14→16) and
+   bvls (6→8), ~0 for the one-sided v47A arms. Transfer pricing caveat
+   quantified in-study: med (judged − internal) within ±0.16 for every
+   k3 arm; max |Δ| 0.35-0.62 for linear dials, up to 2.35 on h3/nonphoto
+   (the arms where best-of is trace-priced least reliably).
+
+### F1 — fraction of 27 cells within ±2.0 at budget 3 (primary)
+
+| arm | as-emitted | best-of-≤3 |
+|---|--:|--:|
+| v47A_base_k3 | 13/27 | 13/27 |
+| v47A_basec160_k3 | 13/27 | 13/27 |
+| B_base_k3 | 14/27 | 16/27 |
+| latest_base_k3 | 14/27 | 16/27 |
+| bvls_base_k3 | 6/27 | 8/27 |
+| blend2L_base_k3 | 11/27 | 11/27 |
+| v47A_h3g10c135_k3 | 13/27 | 13/27 |
+| v47A_h3g10c16_k3 | 13/27 | 13/27 |
+| v47A_h3g20c135_k3 | 13/27 | 13/27 |
+| v47A_h3g20c16_k3 | 13/27 | 13/27 |
+| outer_zensimA | 14/27 | 14/27 |
+| outer_ssim2 | 16/27 | 16/27 |
+
+k=6 reference (as-emitted / best-of-≤6): v47A_base 18/18, basec160
+19/19, B 20/21, latest 20/21, bvls 13/19, blend2L 18/18, h3g10c135
+21/22, h3g10c16 22/23, h3g20c135 21/21, h3g20c16 22/23.
+
+### F2 — median decoded |err| at budget 3 (as-emitted | best-of-≤3)
+
+| arm | t70 | t80 | t88 | t70 best | t80 best | t88 best |
+|---|--:|--:|--:|--:|--:|--:|
+| v47A_base_k3 | 2.93 | 1.03 | 1.98 | 3.17 | 1.42 | 1.85 |
+| v47A_basec160_k3 | 2.93 | 1.03 | 1.98 | 3.17 | 1.42 | 1.85 |
+| B_base_k3 | 1.24 | 1.16 | 2.16 | 1.33 | 0.64 | 1.98 |
+| latest_base_k3 | 1.24 | 1.16 | 2.16 | 1.33 | 0.64 | 1.98 |
+| bvls_base_k3 | 4.27 | 2.66 | 3.99 | 3.29 | 2.43 | 3.66 |
+| blend2L_base_k3 | 4.36 | 1.51 | 2.12 | 3.47 | 1.43 | 2.16 |
+| v47A_h3g10c135_k3 | 2.54 | 0.97 | 1.91 | 2.64 | 1.18 | 1.89 |
+| v47A_h3g10c16_k3 | 2.54 | 0.97 | 1.91 | 2.64 | 1.18 | 1.89 |
+| v47A_h3g20c135_k3 | 2.34 | 0.85 | 1.99 | 2.98 | 0.95 | 1.89 |
+| v47A_h3g20c16_k3 | 2.34 | 0.85 | 1.99 | 2.98 | 0.95 | 1.89 |
+| outer_zensimA | 2.78 | 1.22 | 1.87 | 2.78 | 1.22 | 1.87 |
+| outer_ssim2 | 2.75 | 1.57 | 1.37 | 2.75 | 1.57 | 1.37 |
+
+(Inner best-of medians can exceed as-emitted medians — the rules read
+DIFFERENT scorers (decoded-judged vs internal trace), so per-cell
+domination doesn't hold across quantities and cell medians reorder;
+e.g. v47A t70: judged 2.93 vs internal-min 3.17. Outer rows have no such
+gap — both rules are decoded-judged there.)
+
+### F3 — bytes at equal achieved (|Δachieved| ≤ 0.5) vs v47A_base_k3
+
+| arm | n matched | med bytes ratio | med Δachieved |
+|---|--:|--:|--:|
+| v47A_basec160_k3 | 22 | 1.000 | +0.000 |
+| v47A_h3g10c135_k3 | 17 | 0.989 | −0.177 |
+| v47A_h3g10c16_k3 | 16 | 0.989 | −0.199 |
+| v47A_h3g20c135_k3 | 15 | 0.976 | −0.091 |
+| v47A_h3g20c16_k3 | 13 | 0.985 | −0.073 |
+| outer_zensimA | 17 | 0.994 | +0.003 |
+
+### F4 — cost (inner iteration = one COMPARE; outer iteration = one FULL ENCODE)
+
+| arm | med ms/iter | med wall-to-budget-3 |
+|---|--:|--:|
+| inner baselines (all 6 models) | 36.5-37.4 | 209-216 ms |
+| inner h3 arms | 79.9-83.8 (incl. i0 model-gradient amortized) | 386-406 ms |
+| outer_zensimA | 150.7 encode + 68.8 scoring | 848.6 ms |
+| outer_ssim2 | 142.7 encode + 68.7 scoring | 832.1 ms |
+
+(576²-class; outer wall = 4 full encodes + per-iterate judge + zenmetrics
+shell — the scoring ~69 ms/iterate splits ≈ judge + ssim2 shell.)
+
+### F5 — cross-metric spread of budget-3 as-emitted emissions (n=9/target)
+
+| emission arm | other metric | t70 IQR | t80 IQR | t88 IQR | worst stdev |
+|---|---|--:|--:|--:|--:|
+| v47A_base_k3 (inner) | ssim2 | 4.66 | 2.18 | 1.97 | 4.78 |
+| outer_zensimA (j3) | ssim2 | 4.25 | 2.40 | 1.73 | 4.99 |
+| outer_ssim2 (j3) | zensimA | **8.76** | **5.03** | **2.69** | 7.16 |
+
+Secondary (ssim2 IQR of every inner k3 arm): v47A_base 4.66/2.18/1.97,
+basec160 2.96/2.34/1.97, B=latest 4.90/2.56/1.28, bvls 3.27/1.30/1.66,
+blend2L 5.06/2.17/1.78, h3g10c135 4.26/2.78/1.52, h3g10c16
+2.18/1.65/1.52, h3g20c135 3.31/2.85/1.80, h3g20c16 2.35/1.78/1.80.
+
+### F6 — never-reached tail (within 2.0 in NO arm at budget 3)
+
+- as-emitted (7): cid1418519/t70, sc_gui/t70, sc_gui/t80,
+  sc_imessage/t70, sc_imessage/t80, sc_wiki/t70, sc_wiki/t80
+- best-of-≤3 (5): sc_gui/t70, sc_gui/t80, sc_imessage/t70, sc_wiki/t70,
+  sc_wiki/t80
+
+### Limitations (registered + observed)
+
+- Inner best-of-≤3 is priced from INTERNAL traces (registered); this
+  study's own per-arm transfer stats (headline 8) bound the error —
+  worst max |judged−internal| 2.35 on an h3/nonphoto cell.
+- F1 across arms compares each metric in its own units (registered);
+  F5 carries the shared-scale comparison.
+- Outer arms embed one dead-cost zensim iter-1 loop (the actuator lives
+  inside the zensim loop) — identical in both outer arms, included in
+  the reported encode ms.
+- 924-class models out of scope in-loop (extractor-side retention hooks
+  absent), as registered. 576²-class fixtures only; no size sweep (loop
+  dynamics, not perf calibration).
