@@ -27,20 +27,30 @@
 //! caller-supplied input buffer). Unlike a smooth quality dial, it has
 //! **step jumps** at the effort thresholds where the heavy machinery
 //! turns on:
-//!   - lossy: the butteraugli quantization loop at effort ≥ 8
-//!     (≈ 85 → 300 B/px at 12 MP; sub-linear in size, so e8/e9/e10 are one
-//!     band anchored to the 12 MP value),
-//!   - lossless: four bands — e ≤ 5 ≈ 90 B/px, e6 ≈ 140 (partial search),
-//!     e7–e9 full MA tree-learning ≈ 465 B/px, e ≥ 10 ≈ 620 B/px; plus a
-//!     +230 B/px alpha term (the 4th channel through tree-learning).
-//!     Lossless is ~size-independent (1 MP ≈ 12 MP).
+//!   - lossy: two bands — e ≤ 6 base (≈ 52 B/px measured flat 12→108 MP;
+//!     β 80 keeps the 1024²-bulge envelope) and e ≥ 7 (≈ up to 122 B/px
+//!     measured at d6.0; β 135). The buttloop (e ≥ 8) adds ~0 memory over
+//!     e7 at equal quality, so it shares the e7 band.
+//!   - lossless: four bands — e ≤ 5, e6 (partial search), e7–e9 full MA
+//!     tree-learning, e ≥ 10; plus a +230 B/px alpha term (the 4th
+//!     channel through tree-learning). Lossless is ~size-independent
+//!     (1 MP ≈ 12 MP ≈ measured constants at every size).
 //!
 //! ## Calibration
 //!
 //! Constants are the measured marginal working set (mem_probe `VmHWM`
 //! delta around `encode()`, which excludes the binary floor and the
 //! caller's input buffer), recalibrated 2026-06-23 from a full SIZE sweep
-//! per the no-extrapolate-memory discipline. The recalibration replaced the
+//! per the no-extrapolate-memory discipline, then re-anchored 2026-08-01
+//! at REAL LARGE SIZES (12/20/27/48/75/108 MP zensysbench corpus photos,
+//! d1.75 + d6.0, threads 1–16, `benchmarks/
+//! jxl_encode_mem_threads_postfix_2026-08-01.tsv` — measured AFTER the
+//! per-tile AC-strategy quadratic-peak fix; the matching pre-fix grid in
+//! `jxl_encode_mem_threads_2026-08-01.tsv` documents the removed
+//! px²/262144 term). The 2026-08-01 pass raised the lossy e ≥ 7 band
+//! (q30-regime, never swept before), the lossless base and tree bands,
+//! and re-confirmed the lossy 2.5 MB/thread term (unclamped — see
+//! [`estimate_encode_threaded`]). The 2026-06-23 recalibration replaced the
 //! 2026-06-14 constants, which were fit at **1024² only** — a single size
 //! conflates the fixed overhead α into the per-pixel β and inflates the
 //! apparent B/px, making the TYP behave like a MAX (≈ 1.5–4× over the real
@@ -121,25 +131,45 @@ const LOSSY_FIXED_OVERHEAD: u64 = 50 << 20;
 const LOSSLESS_FIXED_OVERHEAD: u64 = 16 << 20;
 
 /// Typical encoder marginal working set, bytes/pixel (size-sweep envelope).
-/// Lossy base covers e ≤ 7; the buttloop (e ≥ 8) measured the SAME working
-/// set as e7 at the same quality (the prior 300 B/px was a 1024²-α-artifact),
-/// so the buttloop band tracks the base with a small extra-headroom bump
-/// (only e8/e9 were swept, at q50). β dominates the 1024² bulge (≈ 122 B/px
-/// at q50); the 2048²/12 MP asymptote is ≈ 65–75 B/px, so these slightly
-/// over-predict the largest sizes — the safe direction.
+/// Lossy base covers e ≤ 6; e ≥ 7 is its own band (2026-08-01 re-measure).
+///
+/// 2026-08-01 large-size recalibration (`benchmarks/
+/// jxl_encode_mem_threads_postfix_2026-08-01.tsv`, real 12–108 MP corpus
+/// photos, d1.75 + d6.0, AFTER the per-tile AC-strategy quadratic fix):
+///   - e5 marginal is a dead-flat ≈ 52 B/px from 12 MP through 108 MP
+///     (625 MiB @12 MP → 5.6 GiB @108 MP, zero intercept) and
+///     distance-invariant — the base β=80 (which the 1024²-bulge envelope
+///     from 2026-06-23 still requires: α 50 MB + β·1 MP ≥ 122 MB) covers
+///     it with ≥ 1.5× headroom at large sizes. Unchanged.
+///   - e7 measured UP TO ≈ 122 B/px at d6.0 on the 12 MP corpus photo
+///     (1.42 GiB marginal; the 20/48 MP photos measured ≈ 59 — strong
+///     content spread), well above the old shared base 80. The 2026-06-23
+///     sweep only measured q50/q90 (d4/d1) — the q30 regime was never
+///     swept, which is exactly where the zensysbench fleet ran. New e≥7
+///     band β=135 = envelope of the 122 max cell + ≥ 10 % margin.
+///   - e ≥ 8 (buttloop) keeps tracking e7 (2026-06-23 finding: buttloop
+///     adds ~0 working set at equal quality), so one band covers e ≥ 7.
 const LOSSY_BPP_BASE: f64 = 80.0;
-const LOSSY_BPP_BUTTLOOP: f64 = 90.0; // == base + headroom (buttloop adds ~0 memory; e8/9 swept q50 only)
+const LOSSY_BPP_E7PLUS: f64 = 135.0;
 /// Lossless ramps in four bands (not a clean step): e ≤ 5 base
-/// (≈ 72 B/px, no tree learning), e6 (≈ 215 B/px — a heavier partial-search
-/// than the prior 140 const assumed; it was UNDER-predicting), e7–e9 full
-/// MA tree-learning (≈ 360 B/px at e7 rising to ≈ 425 B/px at e9, the band's
-/// top), e ≥ 10 (`fine_grained_step`/multi-seed) ≈ 620 B/px. Unlike lossy,
+/// (no tree learning), e6 (heavier partial-search), e7–e9 full MA
+/// tree-learning, e ≥ 10 (`fine_grained_step`/multi-seed). Unlike lossy,
 /// the lossless working set is ~size-independent (1 MP ≈ 12 MP measured), so
 /// these B/px hold at the large sizes where memory matters. The e10 value is
-/// retained from the 2026-06-14 grid (e ≥ 10 not re-swept 2026-06-23).
-const LOSSLESS_BPP_BASE: f64 = 76.0;
+/// retained from the 2026-06-14 grid (e ≥ 10 not re-swept since).
+///
+/// 2026-08-01 re-measure on the 12 MP zensysbench corpus photo
+/// (`benchmarks/jxl_encode_mem_threads_postfix_2026-08-01.tsv`): e5
+/// marginal 995 MiB (≈ 83 B/px — the prior 76 under-covered by 7 %;
+/// raised to 92, +12 % margin) and e7 marginal 5.88 GiB at threads=1
+/// (≈ 490 B/px — the prior 465 under-covered by 4 %; raised to 540,
+/// +11 % margin — content spread vs the 2026-06-23 photo's 4.19 GiB is
+/// 1.4×, and β is the envelope-of-max per the calibration discipline).
+/// Threads=8 measured BELOW threads=1 (4.59 GiB) — lossless stays
+/// thread-invariant in the model (γ = 0, anchored at the t=1 max).
+const LOSSLESS_BPP_BASE: f64 = 92.0;
 const LOSSLESS_BPP_E6: f64 = 235.0;
-const LOSSLESS_BPP_TREE: f64 = 465.0;
+const LOSSLESS_BPP_TREE: f64 = 540.0;
 const LOSSLESS_BPP_E10: f64 = 620.0;
 
 /// Extra marginal working set for a lossless encode with an alpha
@@ -208,10 +238,11 @@ fn encode_us_per_px(is_lossless: bool, effort: u8) -> f64 {
 
 /// Typical marginal-working-set bytes/pixel for the given path + effort
 /// (the size-sweep envelope β; the size-dependent fixed term is
-/// `*_FIXED_OVERHEAD`, added once in [`estimate_encode`]). e ≥ 8 is one
-/// buttloop band — measured equal to the e7 base working set at the same
-/// quality (the buttloop's butteraugli precompute is folded into the lossy
-/// α, not a per-pixel surcharge).
+/// `*_FIXED_OVERHEAD`, added once in [`estimate_encode`]). Lossy e ≥ 7 is
+/// one band: e7 carries the heavier DCT64/EPF-era working set (measured
+/// up to ≈ 122 B/px at d6.0, 2026-08-01) and the buttloop (e ≥ 8) adds
+/// ~0 on top of e7 at equal quality (2026-06-23 finding; its butteraugli
+/// precompute is folded into the lossy α, not a per-pixel surcharge).
 fn bytes_per_pixel(is_lossless: bool, effort: u8) -> f64 {
     if is_lossless {
         if effort >= 10 {
@@ -223,8 +254,8 @@ fn bytes_per_pixel(is_lossless: bool, effort: u8) -> f64 {
         } else {
             LOSSLESS_BPP_BASE
         }
-    } else if effort >= 8 {
-        LOSSY_BPP_BUTTLOOP
+    } else if effort >= 7 {
+        LOSSY_BPP_E7PLUS
     } else {
         LOSSY_BPP_BASE
     }
@@ -332,8 +363,13 @@ impl ThreadingInfo {
 }
 
 /// Threading characterisation for a jxl encode. lossless: rayon group/tree
-/// parallel, peak speedup ~3.5×, heap thread-invariant. lossy: buttloop/EPF
-/// parallel, peak ~1.9×, ~2.5 MB/thread scratch.
+/// parallel, peak speedup ~3.5×, heap thread-invariant (2026-08-01: 12 MP
+/// e7 t=8 measured BELOW t=1 — 4.59 vs 5.88 GiB). lossy: buttloop/EPF
+/// parallel, peak ~1.9×, ~2.5 MB/thread scratch (2026-08-01 re-measure,
+/// `benchmarks/jxl_encode_mem_threads_postfix_2026-08-01.tsv`: 12 MP e7
+/// d6.0 rises 1423.5 → 1461.8 MiB across t=1→16 ≈ 2.5 MB/thread exactly;
+/// e5 and 20 MP+ are thread-flat — the constant is the worst measured
+/// slope).
 #[must_use]
 pub fn encode_threading_info(is_lossless: bool, _effort: u8) -> ThreadingInfo {
     if is_lossless {
@@ -357,6 +393,14 @@ pub fn encode_threading_info(is_lossless: bool, _effort: u8) -> ThreadingInfo {
 /// divided by the measured (saturating) speedup and the peak terms gain the
 /// per-thread working-set. Pair with [`encode_threading_info`] to inspect the
 /// scaling. Returns `None` only on dimension overflow.
+///
+/// The memory term uses the RAW `cores` count, NOT the speedup-clamped
+/// [`ThreadingInfo::effective_threads`]: `max_useful_threads` is where
+/// wall-time speedup saturates, but a wider rayon pool still materializes
+/// per-worker scratch (12 MP e7 measured a continued +2.5 MB/thread rise
+/// through t=16 > `max_useful` 8, 2026-08-01) — clamping would flatten
+/// the estimate exactly where a budget-driven thread walk-down needs it
+/// to keep growing.
 #[must_use]
 pub fn estimate_encode_threaded(
     width: u32,
@@ -372,7 +416,7 @@ pub fn estimate_encode_threaded(
     e.time_ms = (e.time_ms as f64 / ti.speedup(cores) as f64) as f32;
     let extra = ti
         .mem_bytes_per_thread
-        .saturating_mul(ti.effective_threads(cores).saturating_sub(1));
+        .saturating_mul((cores.max(1) as u64).saturating_sub(1));
     e.peak_memory_bytes_min = e.peak_memory_bytes_min.saturating_add(extra);
     e.peak_memory_bytes = e.peak_memory_bytes.saturating_add(extra);
     e.peak_memory_bytes_max = e.peak_memory_bytes_max.saturating_add(extra);
@@ -496,6 +540,68 @@ mod tests {
             t(false, 1),
             estimate_encode(w, h, 3, false, false, 0).unwrap().time_ms
         );
+    }
+
+    /// 2026-08-01 large-size anchors (12–108 MP zensysbench corpus,
+    /// `benchmarks/jxl_encode_mem_threads_postfix_2026-08-01.tsv`,
+    /// measured AFTER the per-tile AC-strategy quadratic fix): the TYP
+    /// estimate must COVER every measured cell — under-prediction is what
+    /// admitted the 108 MP encodes that kernel-OOM-killed 32 GiB fleet
+    /// boxes — without inflating past the envelope's purpose (e5 is
+    /// content-tight, ≤ 2×; e7's band is an envelope of a 2.1× content
+    /// spread, so its ceiling is looser at 3× on this content-light
+    /// photo).
+    #[test]
+    fn estimate_covers_measured_large_sizes_2026_08() {
+        // 108 MP lossy e5 t=1: measured marginal 5_602_944 KiB + 324 MB input.
+        let m_e5 = 5_602_944u64 * 1024 + 12000 * 9000 * 3;
+        let e5 = estimate_encode(12000, 9000, 3, false, false, 5).unwrap();
+        assert!(
+            e5.peak_memory_bytes >= m_e5,
+            "e5 108MP TYP {} under measured {m_e5}",
+            e5.peak_memory_bytes
+        );
+        assert!(
+            e5.peak_memory_bytes < m_e5 * 2,
+            "e5 108MP TYP {} not tight (≥2× measured {m_e5})",
+            e5.peak_memory_bytes
+        );
+        // 108 MP lossy e7 t=1 d6.0: measured marginal 6_342_420 KiB.
+        let m_e7 = 6_342_420u64 * 1024 + 12000 * 9000 * 3;
+        let e7 = estimate_encode(12000, 9000, 3, false, false, 7).unwrap();
+        assert!(
+            e7.peak_memory_bytes >= m_e7,
+            "e7 108MP TYP {} under measured {m_e7}",
+            e7.peak_memory_bytes
+        );
+        assert!(
+            e7.peak_memory_bytes < m_e7 * 3,
+            "e7 108MP TYP {} runaway (≥3× measured {m_e7})",
+            e7.peak_memory_bytes
+        );
+        // 12 MP lossless e7 t=1: measured marginal 5_879_984 KiB (the
+        // 2026-08-01 corpus photo, 1.4× the 2026-06-23 one — β re-anchored).
+        let m_ll = 5_879_984u64 * 1024 + 4000 * 3000 * 3;
+        let ll = estimate_encode(4000, 3000, 3, false, true, 7).unwrap();
+        assert!(
+            ll.peak_memory_bytes >= m_ll,
+            "lossless e7 12MP TYP {} under measured {m_ll}",
+            ll.peak_memory_bytes
+        );
+        assert!(
+            ll.peak_memory_bytes < m_ll * 2,
+            "lossless e7 12MP TYP {} not tight",
+            ll.peak_memory_bytes
+        );
+        // Threaded: the lossy per-thread term is measured (2.5 MB/thread,
+        // 12 MP e7 t=1→16) and unclamped past max_useful_threads.
+        let t1 = estimate_encode_threaded(4000, 3000, 3, false, false, 7, 1)
+            .unwrap()
+            .peak_memory_bytes;
+        let t16 = estimate_encode_threaded(4000, 3000, 3, false, false, 7, 16)
+            .unwrap()
+            .peak_memory_bytes;
+        assert_eq!(t16 - t1, 2_500_000 * 15, "unclamped per-thread term");
     }
 
     /// Alpha adds a substantial lossless per-pixel term (~+230 B/px, the

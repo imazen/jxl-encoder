@@ -138,6 +138,9 @@ pub struct EncodeStats {
     ans: bool,
     butteraugli_iters: u32,
     pixel_domain_loss: bool,
+    budget_peak_bytes: u64,
+    threads_used: u32,
+    estimated_peak_bytes: u64,
 }
 
 impl EncodeStats {
@@ -179,6 +182,35 @@ impl EncodeStats {
     /// Whether pixel-domain loss was enabled.
     pub fn pixel_domain_loss(&self) -> bool {
         self.pixel_domain_loss
+    }
+
+    /// Highest cumulative bytes reserved on the encoder's internal
+    /// [`MemoryBudget`](crate::budget) during this encode.
+    ///
+    /// Tracks only the guarded dimension-driven allocation sites (XYB
+    /// planes, group buffers, modular channels, butteraugli precompute…),
+    /// so it is a lower bound on the process working set — the delta to
+    /// real peak RSS is the unguarded allocation mass (see
+    /// `benchmarks/jxl_encode_mem_threads_2026-08-01.tsv`). 0 for paths
+    /// that don't populate it (animation).
+    pub fn budget_peak_bytes(&self) -> u64 {
+        self.budget_peak_bytes
+    }
+
+    /// Worker thread count the encode actually ran with, after the
+    /// pre-flight walked the configured/ambient count down to fit the
+    /// memory budget (see [`crate::heuristics::estimate_encode_threaded`]).
+    /// 0 = ambient rayon pool (the pre-flight found no reduction needed
+    /// and the caller requested 0 = ambient).
+    pub fn threads_used(&self) -> u32 {
+        self.threads_used
+    }
+
+    /// Pre-flight estimated peak memory (bytes) at [`Self::threads_used`],
+    /// from the calibrated [`crate::heuristics::estimate_encode_threaded`]
+    /// model. This is the estimate the budget admission decision used.
+    pub fn estimated_peak_bytes(&self) -> u64 {
+        self.estimated_peak_bytes
     }
 }
 
@@ -5826,48 +5858,41 @@ impl<'a> EncodeRequest<'a> {
         validate_source_gamma(self.source_gamma)?;
         validate_intrinsic_size(self.metadata.and_then(|m| m.intrinsic_size))?;
 
-        // Build the per-encode allocation budget. Caller-supplied
-        // Limits.max_memory_bytes wins; otherwise Limits provides its
-        // soft-default cap (~4 GB). The budget is threaded through to
-        // major dimension-driven allocation sites (XYB planes, padded
-        // scratch, group buffers, modular channels) via RAII guards;
-        // peak working-set is observable post-encode via `peak()`.
+        // Build the per-encode allocation budget + choose the worker
+        // thread count. Caller-supplied Limits.max_memory_bytes wins;
+        // otherwise Limits provides its path-aware soft-default cap. The
+        // budget is threaded through to major dimension-driven allocation
+        // sites (XYB planes, padded scratch, group buffers, modular
+        // channels) via RAII guards; peak working-set is observable
+        // post-encode via `EncodeStats::budget_peak_bytes`.
         //
-        // Up-front reservation of the rough working-set estimate gives
-        // an early bail-out for absurd dimensions before any allocator
-        // call would have to fail individually. We also refuse a budget
-        // smaller than that estimate, so callers see a meaningful
-        // error instead of a confusing mid-encode failure.
-        let budget_cap = self.limits.and_then(|l| l.max_memory_bytes()).unwrap_or(
-            Limits::default_max_memory_bytes(matches!(self.config, ConfigRef::Lossless(_))),
-        );
-        let fallible = self.limits.is_some_and(|l| l.fallible_alloc());
-        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
-        let est_bytes = (self.width as u64)
-            .checked_mul(self.height as u64)
-            .and_then(|n| n.checked_mul(40))
-            .ok_or_else(|| {
-                at!(EncodeError::LimitExceeded {
-                    message: format!(
-                        "image {}x{} too large for working-set estimate",
-                        self.width, self.height
-                    ),
-                })
-            })?;
-        if est_bytes > budget_cap {
-            return Err(at!(EncodeError::LimitExceeded {
-                message: format!(
-                    "estimated working set {est_bytes} bytes for {}x{} image \
-                     exceeds budget cap {budget_cap}",
-                    self.width, self.height
-                ),
-            }));
-        }
-
-        let threads = match self.config {
-            ConfigRef::Lossless(cfg) => cfg.threads,
-            ConfigRef::Lossy(cfg) => cfg.threads,
+        // The up-front check uses the calibrated path/effort/thread-aware
+        // estimate (`heuristics::estimate_encode_threaded`): threads are
+        // walked down until the estimate fits the cap (and the detected
+        // available RAM × 0.8), and the encode is rejected only when even
+        // the single-threaded estimate exceeds the cap — an early,
+        // meaningful bail-out for absurd dimensions instead of a
+        // confusing mid-encode failure (or a kernel OOM kill).
+        let (is_lossless, effort, requested_threads) = match self.config {
+            ConfigRef::Lossless(cfg) => (true, cfg.effort, cfg.threads),
+            ConfigRef::Lossy(cfg) => (false, cfg.effort, cfg.threads),
         };
+        let preflight = encode_preflight(
+            self.width,
+            self.height,
+            self.layout.bytes_per_pixel() as u8,
+            self.layout.has_alpha(),
+            is_lossless,
+            effort,
+            requested_threads,
+            false,
+            self.limits,
+        )?;
+        let EncodePreflight {
+            budget,
+            threads,
+            estimated_peak_bytes,
+        } = preflight;
 
         // Repack strided input into a tightly-packed buffer once.
         // Closes row-stride portion of #18. Downstream encode paths
@@ -5895,6 +5920,9 @@ impl<'a> EncodeRequest<'a> {
         .map_err(at_from)?;
 
         stats.codestream_size = codestream.len();
+        stats.budget_peak_bytes = budget.peak();
+        stats.threads_used = threads as u32;
+        stats.estimated_peak_bytes = estimated_peak_bytes;
 
         // Pick the codestream level: 5 for baseline-fits images, 10
         // when any cap is exceeded (> 262144 dim, > 2²⁸ pixels, >4 EC,
@@ -6070,19 +6098,13 @@ impl<'a> EncodeRequest<'a> {
                 message: format!("pixels {}x{} = {} > max {max_px}", w, h, w * h),
             }));
         }
-        if let Some(max_mem) = limits.max_memory_bytes {
-            // Conservative estimate: ~40 bytes per pixel covers XYB (3×f32=12),
-            // quantization fields, strategy maps, and entropy coding buffers.
-            let estimated = w.saturating_mul(h).saturating_mul(40);
-            if estimated > max_mem {
-                return Err(at!(EncodeError::LimitExceeded {
-                    message: format!(
-                        "estimated memory {estimated} bytes > max {max_mem} bytes \
-                         (for {w}x{h} image)"
-                    ),
-                }));
-            }
-        }
+        // NOTE: max_memory_bytes admission is NOT checked here. The old
+        // flat 40 B/px screen this method used both under-estimated
+        // (admitted 108 MP encodes that peaked ≥ 44 GiB pre-2026-08-01)
+        // and duplicated the real check — `encode_preflight` performs the
+        // calibrated path/effort/thread-aware admission (strictly
+        // stronger: every band's β exceeds 40 B/px) for every entry
+        // point, including this request path.
         // If the caller set an explicit max_quant_loop_iters and the
         // resolved config is asking for more, reject. The encoder still
         // saturates at the validator hard cap (`Limits::DEFAULT_MAX_QUANT_LOOP_ITERS`)
@@ -8500,41 +8522,30 @@ impl LossyEncoder {
             );
         }
 
-        // Construct the per-encode allocation budget. Streaming callers
-        // can attach a [`Limits`] via [`Self::with_limits`]; otherwise we
-        // apply the same soft default the request path uses (~4 GB).
-        // Mirrors the up-front working-set check in
-        // `EncodeRequest::encode_inner` so absurd dimensions get an early
-        // `LimitExceeded` instead of a confusing mid-encode failure.
-        let budget_cap = self
-            .limits
-            .as_ref()
-            .and_then(|l| l.max_memory_bytes())
-            .unwrap_or(Limits::default_max_memory_bytes(false));
-        let fallible = self.limits.as_ref().is_some_and(|l| l.fallible_alloc());
-        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
-        let est_bytes = (self.width as u64)
-            .checked_mul(self.height as u64)
-            .and_then(|n| n.checked_mul(40))
-            .ok_or_else(|| {
-                at!(EncodeError::LimitExceeded {
-                    message: format!(
-                        "image {}x{} too large for working-set estimate",
-                        self.width, self.height
-                    ),
-                })
-            })?;
-        if est_bytes > budget_cap {
-            return Err(at!(EncodeError::LimitExceeded {
-                message: format!(
-                    "estimated working set {est_bytes} bytes for {}x{} image \
-                     exceeds budget cap {budget_cap}",
-                    self.width, self.height
-                ),
-            }));
-        }
+        // Construct the per-encode allocation budget + thread choice.
+        // Streaming callers can attach a [`Limits`] via
+        // [`Self::with_limits`]; otherwise the path-aware soft default
+        // applies. Mirrors `EncodeRequest::encode_inner`: calibrated
+        // path/effort/thread-aware estimate, thread walk-down, rejection
+        // only when even the single-threaded estimate exceeds the cap.
+        let preflight = encode_preflight(
+            self.width,
+            self.height,
+            self.layout.bytes_per_pixel() as u8,
+            self.layout.has_alpha(),
+            false,
+            cfg.effort,
+            cfg.threads,
+            false,
+            self.limits.as_ref(),
+        )?;
+        let EncodePreflight {
+            budget,
+            threads,
+            estimated_peak_bytes,
+        } = preflight;
 
-        let (codestream, mut stats) = run_with_threads(cfg.threads, || {
+        let (codestream, mut stats) = run_with_threads(threads, || {
             let mut profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
             if let Some(max_size) = cfg.max_strategy_size {
                 if max_size < 16 {
@@ -8800,6 +8811,9 @@ impl LossyEncoder {
         .map_err(at_from)?;
 
         stats.codestream_size = codestream.len();
+        stats.budget_peak_bytes = budget.peak();
+        stats.threads_used = threads as u32;
+        stats.estimated_peak_bytes = estimated_peak_bytes;
 
         // Streaming LossyEncoder does not accept extra channels beyond
         // alpha; count alpha from layout.
@@ -9338,36 +9352,26 @@ impl LosslessEncoder {
         let w = self.width as usize;
         let h = self.height as usize;
 
-        // Construct the per-encode allocation budget. Mirrors the request
-        // path's up-front working-set check and propagates the cap through
-        // to the modular FrameEncoder for hot allocation sites.
-        let budget_cap = self
-            .limits
-            .as_ref()
-            .and_then(|l| l.max_memory_bytes())
-            .unwrap_or(Limits::default_max_memory_bytes(true));
-        let fallible = self.limits.as_ref().is_some_and(|l| l.fallible_alloc());
-        let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
-        let est_bytes = (self.width as u64)
-            .checked_mul(self.height as u64)
-            .and_then(|n| n.checked_mul(40))
-            .ok_or_else(|| {
-                at!(EncodeError::LimitExceeded {
-                    message: format!(
-                        "image {}x{} too large for working-set estimate",
-                        self.width, self.height
-                    ),
-                })
-            })?;
-        if est_bytes > budget_cap {
-            return Err(at!(EncodeError::LimitExceeded {
-                message: format!(
-                    "estimated working set {est_bytes} bytes for {}x{} image \
-                     exceeds budget cap {budget_cap}",
-                    self.width, self.height
-                ),
-            }));
-        }
+        // Construct the per-encode allocation budget + thread choice.
+        // Mirrors the request path's calibrated pre-flight and propagates
+        // the cap through to the modular FrameEncoder for hot allocation
+        // sites.
+        let preflight = encode_preflight(
+            self.width,
+            self.height,
+            self.layout.bytes_per_pixel() as u8,
+            self.layout.has_alpha(),
+            true,
+            cfg.effort,
+            cfg.threads,
+            false,
+            self.limits.as_ref(),
+        )?;
+        let EncodePreflight {
+            budget,
+            threads,
+            estimated_peak_bytes,
+        } = preflight;
 
         let mut image = ModularImage {
             channels: self.channels,
@@ -9376,7 +9380,7 @@ impl LosslessEncoder {
             has_alpha: self.has_alpha,
         };
 
-        let (codestream, mut stats) = run_with_threads(cfg.threads, || {
+        let (codestream, mut stats) = run_with_threads(threads, || {
             // Reconstruct interleaved pixels for patch detection (8-bit RGB only)
             let num_channels = self.layout.bytes_per_pixel();
             let can_use_patches = cfg.effective_patches()
@@ -9574,6 +9578,9 @@ impl LosslessEncoder {
         .map_err(at_from)?;
 
         stats.codestream_size = codestream.len();
+        stats.budget_peak_bytes = budget.peak();
+        stats.threads_used = threads as u32;
+        stats.estimated_peak_bytes = estimated_peak_bytes;
 
         // Streaming LosslessEncoder does not accept extra channels
         // beyond alpha; count alpha from layout.
@@ -9665,6 +9672,166 @@ impl LosslessConfig {
             limits: None,
         })
     }
+}
+
+// ── Memory-budget pre-flight (shared by all encode entry points) ────────────
+
+/// Outcome of [`encode_preflight`]: the per-encode budget plus the
+/// thread count the encode should run with and the estimate that
+/// admitted it. `pub(crate)` for the api_tests walk-down unit tests.
+pub(crate) struct EncodePreflight {
+    pub(crate) budget: alloc::sync::Arc<crate::budget::MemoryBudget>,
+    /// Thread count to hand to `run_with_threads`. Equal to the caller's
+    /// request when the estimate fits at that width; walked down toward 1
+    /// when it doesn't. 0 = ambient pool (kept only when the ambient
+    /// width's estimate fits — otherwise a concrete reduced count).
+    pub(crate) threads: usize,
+    /// Calibrated peak estimate (bytes) at the chosen thread count.
+    pub(crate) estimated_peak_bytes: u64,
+}
+
+/// Detected available system RAM in bytes (Linux `/proc/meminfo`
+/// `MemAvailable`). `None` on other platforms, in `no_std` builds, or
+/// when the read/parse fails — callers must treat `None` as "unknown",
+/// never as zero.
+#[cfg(all(feature = "std", target_os = "linux"))]
+fn available_ram_bytes() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            let kb: u64 = rest.trim().trim_end_matches(" kB").trim().parse().ok()?;
+            return Some(kb.saturating_mul(1024));
+        }
+    }
+    None
+}
+
+#[cfg(not(all(feature = "std", target_os = "linux")))]
+fn available_ram_bytes() -> Option<u64> {
+    None
+}
+
+/// Ambient worker-thread count for `threads == 0` (the current rayon
+/// pool's width — the pool `run_with_threads(0, …)` will execute on).
+#[cfg(feature = "parallel")]
+fn ambient_thread_count() -> usize {
+    rayon::current_num_threads().max(1)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn ambient_thread_count() -> usize {
+    1
+}
+
+/// Shared memory pre-flight for every encode entry point (one-shot
+/// request, streaming lossy/lossless finish, animation). Replaces the
+/// former flat `width × height × 40` estimate (effort-, path- and
+/// thread-blind — it admitted 108 MP lossy encodes that peak ≥ 30 GiB,
+/// measured `benchmarks/jxl_encode_mem_threads_2026-08-01.tsv`) with the
+/// calibrated [`crate::heuristics::estimate_encode_threaded`] model.
+///
+/// Semantics:
+/// - The budget cap is the caller's `Limits::max_memory_bytes` if set,
+///   else the path-aware default ([`Limits::default_max_memory_bytes`]).
+/// - The estimate is evaluated at the requested thread count
+///   (`requested_threads`, 0 = the ambient pool width). When it doesn't
+///   fit the cap — or the detected-available-RAM soft ceiling (×0.8, so
+///   an unset-limits caller on a busy box degrades threads instead of
+///   getting the box OOM-killed) — the thread count walks down until the
+///   estimate fits, flooring at 1.
+/// - **Rejection is budget-driven only**: the encode is refused
+///   (`LimitExceeded`) exactly when even the 1-thread estimate exceeds
+///   the budget cap. Availability only reduces threads, never rejects.
+/// - `admission_only`: entry points that cannot control their pool
+///   (animation frames run on the ambient pool) pass `true` — the
+///   1-thread admission check still applies but no thread walk-down is
+///   attempted and `threads` echoes the request.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_preflight(
+    width: u32,
+    height: u32,
+    input_bpp: u8,
+    has_alpha: bool,
+    is_lossless: bool,
+    effort: u8,
+    requested_threads: usize,
+    admission_only: bool,
+    limits: Option<&Limits>,
+) -> Result<EncodePreflight> {
+    let budget_cap = limits
+        .and_then(|l| l.max_memory_bytes())
+        .unwrap_or(Limits::default_max_memory_bytes(is_lossless));
+    let fallible = limits.is_some_and(|l| l.fallible_alloc());
+
+    let est_at = |threads: usize| -> Result<u64> {
+        crate::heuristics::estimate_encode_threaded(
+            width,
+            height,
+            input_bpp,
+            has_alpha,
+            is_lossless,
+            effort,
+            threads,
+        )
+        .map(|e| e.peak_memory_bytes)
+        .ok_or_else(|| {
+            at!(EncodeError::LimitExceeded {
+                message: format!("image {width}x{height} too large for working-set estimate"),
+            })
+        })
+    };
+
+    // Budget-driven admission floor: even a 1-thread encode must fit.
+    let est_t1 = est_at(1)?;
+    if est_t1 > budget_cap {
+        return Err(at!(EncodeError::LimitExceeded {
+            message: format!(
+                "estimated peak working set {est_t1} bytes for {width}x{height} \
+                 {} effort {effort} (single-threaded floor) exceeds memory \
+                 budget cap {budget_cap}; raise the cap via \
+                 Limits::with_max_memory_bytes if this encode is intended",
+                if is_lossless { "lossless" } else { "lossy" },
+            ),
+        }));
+    }
+
+    let (threads, estimated_peak_bytes) = if admission_only {
+        (requested_threads, est_t1)
+    } else {
+        // Thread choice target: the budget cap, additionally soft-capped
+        // by detected available RAM × 0.8 (availability shapes the thread
+        // count only — the rejection above is already done).
+        let thread_target = match available_ram_bytes() {
+            Some(avail) => budget_cap.min(avail.saturating_mul(4) / 5),
+            None => budget_cap,
+        };
+        let start = if requested_threads == 0 {
+            ambient_thread_count()
+        } else {
+            requested_threads
+        };
+        let mut t = start.max(1);
+        let mut est = est_at(t)?;
+        while t > 1 && est > thread_target {
+            t -= 1;
+            est = est_at(t)?;
+        }
+        if t == start {
+            // No reduction needed: preserve the caller's exact request
+            // (notably 0 = ambient pool, which `run_with_threads` treats
+            // specially — byte-and-pool-identical to the pre-existing
+            // behaviour).
+            (requested_threads, est)
+        } else {
+            (t, est)
+        }
+    };
+
+    Ok(EncodePreflight {
+        budget: crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible),
+        threads,
+        estimated_peak_bytes,
+    })
 }
 
 // ── Thread pool helper ──────────────────────────────────────────────────────

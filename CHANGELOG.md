@@ -27,7 +27,50 @@
   `::encode` via `.map_err(|e| e.decompose().0)`; now they return the traced `At`
   directly so the originating encode site survives in the error.
 
+### Fixed
+- **Per-tile AC-strategy scratch maps were full-image sized — a
+  px²/262144-byte QUADRATIC peak-memory term, ~44.5 GiB at 108 MP.**
+  `compute_ac_strategy_for_tiles` allocated an image-sized `AcStrategyMap`
+  per 64×64 tile and `parallel_map` held every tile's map alive until the
+  merge; this (not a per-thread term) is what kernel-OOM-killed 32 GiB
+  zensysbench fleet boxes at threads=1 on 108 MP encodes. Scratch maps are
+  now windowed to the tile rect (≤ 64 B each; byte-identical output —
+  hash-locks 53/53, Libjxl byte-lock 5/5). 108 MP lossy e5 t=1 peak RSS:
+  ≥ 44 GiB (cgroup-killed) → 5.65 GiB; 48 MP: 9.93 → 2.49 GiB. Measured
+  grids: `benchmarks/jxl_encode_mem_threads{,_postfix}_2026-08-01.{tsv,meta}`.
+
 ### Changed
+- **Encode pre-flight is now an honest, calibrated admission check with a
+  budget-driven thread walk-down** (was a flat `w×h×40` estimate,
+  effort/path/thread-blind, copied at five entry points — it admitted the
+  108 MP encodes above into kernel OOM kills). One shared
+  `encode_preflight` now serves the one-shot request, both streaming
+  finishes, and both animation paths: the calibrated
+  `heuristics::estimate_encode_threaded` estimate is evaluated at the
+  requested thread count (0 = ambient pool width), threads walk down until
+  the estimate fits the budget cap (and detected available RAM × 0.8 —
+  availability only reduces threads, never rejects), and the encode is
+  rejected (`LimitExceeded`, naming the bytes, the cap, and the
+  `Limits::with_max_memory_bytes` override) only when even the 1-thread
+  estimate exceeds the cap. `check_limits`' duplicate flat-40 memory
+  screen removed (the calibrated check is strictly stronger). At the
+  path-aware default caps this now cleanly rejects what cannot fit
+  (e.g. 108 MP lossy vs the 4 GiB default) instead of OOMing the host;
+  callers with real budgets pass `with_max_memory_bytes` as before.
+- **Memory model recalibrated at real large sizes** (12–108 MP zensysbench
+  corpus, d1.75 + d6.0, threads 1–16, post-quadratic-fix;
+  `benchmarks/jxl_encode_mem_threads_postfix_2026-08-01.tsv`): lossy
+  splits at e7 (`LOSSY_BPP_E7PLUS` = 135 B/px envelope — the q30 regime
+  measured up to 122 B/px and was never swept before; e ≤ 6 base stays
+  80), lossless base 76 → 92 and tree band 465 → 540 (2026-08-01 corpus
+  photo measured 83 / 490 B/px), and the lossy 2.5 MB/thread term is
+  re-confirmed and now UNCLAMPED past `max_useful_threads` in
+  `estimate_encode_threaded` (memory keeps growing where speedup
+  saturates — measured through t=16).
+- **`EncodeStats` reports the memory decision** (additive, non_exhaustive
+  pattern): `budget_peak_bytes()` (tracked reservation high-water),
+  `threads_used()` (post-walk-down count, 0 = ambient) and
+  `estimated_peak_bytes()` (the admitting estimate).
 - **CI clippy now runs with `--all-targets`** (and the pre-commit checklist
   matches): test/example/bench targets carry their own feature unification
   and lint surface — the zenjpeg nightly break and ~70 accumulated test-code

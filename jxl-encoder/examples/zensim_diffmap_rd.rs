@@ -308,8 +308,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // `--score-targets-outer <zensim|ssim2>` (targets from --zensim-targets,
     // in the arm metric's own units).
     let mut score_targets_outer: Option<String> = None;
-    let mut ssim2_bin =
-        "/home/lilith/work/zen/zenmetrics/target/release/zenmetrics".to_string();
+    let mut ssim2_bin = "/home/lilith/work/zen/zenmetrics/target/release/zenmetrics".to_string();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -741,8 +740,7 @@ fn run_score_target_outer(
                 let encode_ms = t0.elapsed().as_secs_f64() * 1000.0;
                 let bytes = encoded.len();
                 let decoded = decode_jxl_srgb_u8(&encoded, w, h)?;
-                let dist_png =
-                    decoded_dir.join(format!("{label}__{name}__t{t:.0}__outer{j}.png"));
+                let dist_png = decoded_dir.join(format!("{label}__{name}__t{t:.0}__outer{j}.png"));
                 image::RgbImage::from_raw(w, h, decoded.clone())
                     .ok_or("dec from_raw")?
                     .save(&dist_png)?;
@@ -752,7 +750,11 @@ fn run_score_target_outer(
                 let ts = Instant::now();
                 let ssim2 = ssim2_score_via_zenmetrics(ssim2_bin, &ref_png, &dist_png, out_dir);
                 let ssim2_ms = ts.elapsed().as_secs_f64() * 1000.0;
-                let judged = if metric_arm == "zensim" { zensim_a } else { ssim2 };
+                let judged = if metric_arm == "zensim" {
+                    zensim_a
+                } else {
+                    ssim2
+                };
                 manifest.push_str(&format!(
                     "{name}\t{class}\t{t:.0}\t{metric_arm}\t{j}\t{g:.6}\t{bytes}\t{judged:.3}\t{zensim_a:.3}\t{ssim2:.3}\t{encode_ms:.1}\t{judge_ms:.1}\t{ssim2_ms:.1}\n",
                 ));

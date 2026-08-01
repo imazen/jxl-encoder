@@ -1,0 +1,39 @@
+# jxl_encode_mem_threads_postfix_2026-08-01.tsv — peak-RSS grid AFTER the
+# per-tile AC-strategy quadratic fix (tile-windowed scratch maps).
+#
+# Same driver/probe/corpus/columns as jxl_encode_mem_threads_2026-08-01.meta
+# (scripts/mem_grid_sweep.sh, run-heavy --mem 44G, /usr/bin/time -v,
+# mem_grid_probe with Limits u64::MAX). Encoder state: the windowed
+# AcStrategyMap fix applied (hash-locks 53/53 + Libjxl byte-lock 5/5 +
+# identical out_bytes at 48 MP vs pre-fix — byte-identical output).
+# Additional post-fix spot cells (mp48 e5/e7 t=1, mp108 e5 t=1 first run)
+# in ~/tmp/memgrid/postfix_*.log; mp48 e5 delta 2.49 GiB / e7 2.82 GiB.
+#
+# HEADLINE (vs the pre-fix grid):
+#   mp108 lossy e5 t=1: >=44 GiB cgroup-killed  ->  5.65 GiB max RSS
+#   mp108 lossy e7 t=1: >=44 GiB cgroup-killed  ->  6.35 GiB max RSS
+#   mp48  lossy e5 t=1: 9.93 GiB                ->  2.49 GiB
+#   RSS is thread-FLAT at 108 MP (t 1/2/4 within 1 MiB).
+#
+# FIT (marginal delta_kb, i.e. excluding the caller's input buffer):
+#   lossy e5:  ~52 B/px dead-flat 12->108 MP, distance-invariant,
+#              zero intercept. Band beta 80 (kept for the 2026-06-23
+#              1024-sq bulge envelope) over-covers by >=1.5x at large sizes.
+#   lossy e7:  content-dependent 52-122 B/px (12 MP corpus photo = 122
+#              at d6.0; 20/48/108 MP photos = 59). New e>=7 band beta 135
+#              (envelope of max + >=10% margin). d1.75 measured <= d6.0.
+#   threads:   lossy 12 MP e7 rises 1423.5 -> 1461.8 MiB over t=1..16
+#              = 2.5 MB/thread exactly (the existing gamma constant),
+#              continuing past max_useful_threads=8 -> the model's
+#              per-thread term is now UNCLAMPED. All other lossy cells
+#              thread-flat; lossless t=8 BELOW t=1 (gamma stays 0).
+#   lossless:  e5 995 MiB (~83 B/px) -> base beta 92; e7 t=1 5.88 GiB
+#              (~490 B/px) -> tree beta 540 (1.4x content spread vs the
+#              2026-06-23 photo; envelope-of-max discipline).
+#   budget_peak (guarded sites): linear at every size; lossy e5 32.7 B/px,
+#              e7 41-91 B/px (content), lossless ~37 B/px (445 MiB @12 MP
+#              = 7.6% of the e7 tree-learn peak — tree-learning remains
+#              mostly unguarded; admission via the calibrated pre-flight
+#              is the operative protection).
+# Constants landed in jxl-encoder/src/heuristics.rs same day (LOSSY_BPP_E7PLUS,
+# LOSSLESS_BPP_BASE/TREE, unclamped estimate_encode_threaded mem term).

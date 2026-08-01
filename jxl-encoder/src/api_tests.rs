@@ -11305,3 +11305,123 @@ fn extra_channel_dim_shift_out_of_range_is_a_clean_error() {
         .unwrap_err();
     assert!(err.to_string().contains("dim_shift"), "unexpected: {err}");
 }
+
+// ── Memory pre-flight (encode_preflight) walk-down math ─────────────────────
+//
+// Unit tests for the 2026-08-01 calibrated pre-flight: budget-driven
+// admission floor (reject only when even threads=1 doesn't fit) and the
+// thread walk-down (largest thread count whose calibrated estimate fits
+// the cap). Uses the lossy path because its per-thread term (γ = 2.5 MB,
+// `heuristics::encode_threading_info`) makes the estimate strictly
+// monotone in threads; the estimates come from the same
+// `estimate_encode_threaded` the pre-flight consults, so the tests track
+// any future recalibration instead of hard-coding today's constants.
+mod encode_preflight_walkdown {
+    use crate::api::{Limits, encode_preflight};
+    use crate::heuristics::estimate_encode_threaded;
+
+    fn est(threads: usize) -> u64 {
+        estimate_encode_threaded(1024, 1024, 3, false, false, 7, threads)
+            .unwrap()
+            .peak_memory_bytes
+    }
+
+    /// The per-thread memory term is unclamped and strictly monotone —
+    /// the property the walk-down relies on (a clamped term would flatten
+    /// the estimate above max_useful_threads and hide reductions).
+    #[test]
+    fn estimate_monotone_in_threads() {
+        let e1 = est(1);
+        let e8 = est(8);
+        let e16 = est(16);
+        let e24 = est(24);
+        assert!(e1 < e8 && e8 < e16 && e16 < e24, "{e1} {e8} {e16} {e24}");
+        // 2.5 MB per added thread, past the max_useful_threads=8 clamp.
+        assert_eq!(e24 - e1, 2_500_000 * 23);
+    }
+
+    /// Cap below the single-threaded estimate → rejected (budget-driven
+    /// floor), with a message naming the bytes, the cap, and the
+    /// `with_max_memory_bytes` override.
+    #[test]
+    fn rejects_when_even_one_thread_does_not_fit() {
+        let cap = est(1) - 1;
+        let limits = Limits::new().with_max_memory_bytes(cap);
+        let err = encode_preflight(1024, 1024, 3, false, false, 7, 1, false, Some(&limits))
+            .err()
+            .expect("must reject below the t=1 floor");
+        let msg = err.to_string();
+        assert!(msg.contains("working set"), "{msg}");
+        assert!(
+            msg.contains("memory") && msg.contains("budget cap"),
+            "{msg}"
+        );
+        assert!(msg.contains("with_max_memory_bytes"), "{msg}");
+        assert!(msg.contains(&est(1).to_string()), "estimate bytes in {msg}");
+        assert!(msg.contains(&cap.to_string()), "cap in {msg}");
+    }
+
+    /// Cap between est(3) and est(4): a 16-thread request walks down to
+    /// exactly 3 threads (largest count whose estimate fits).
+    #[test]
+    fn walks_down_to_largest_fitting_thread_count() {
+        let cap = est(3);
+        let limits = Limits::new().with_max_memory_bytes(cap);
+        let pf = encode_preflight(1024, 1024, 3, false, false, 7, 16, false, Some(&limits))
+            .expect("est(1) fits, must admit");
+        assert_eq!(pf.threads, 3, "largest fitting thread count");
+        assert_eq!(pf.estimated_peak_bytes, est(3));
+    }
+
+    /// A request that already fits is passed through untouched — notably
+    /// `threads == 0` (ambient pool) stays 0, preserving the documented
+    /// run_with_threads contract byte-for-byte.
+    #[test]
+    fn no_reduction_preserves_requested_threads() {
+        let generous = Limits::new().with_max_memory_bytes(u64::MAX);
+        let pf = encode_preflight(1024, 1024, 3, false, false, 7, 0, false, Some(&generous))
+            .expect("generous cap must admit");
+        assert_eq!(pf.threads, 0, "ambient-pool request preserved");
+        let pf4 = encode_preflight(1024, 1024, 3, false, false, 7, 4, false, Some(&generous))
+            .expect("generous cap must admit");
+        assert_eq!(pf4.threads, 4, "explicit request preserved");
+    }
+
+    /// admission_only (animation): the t=1 floor still applies but no
+    /// walk-down is attempted and the request is echoed.
+    #[test]
+    fn admission_only_checks_floor_without_walkdown() {
+        let cap = est(1) - 1;
+        let limits = Limits::new().with_max_memory_bytes(cap);
+        assert!(
+            encode_preflight(1024, 1024, 3, false, false, 7, 1, true, Some(&limits)).is_err(),
+            "floor applies in admission_only mode"
+        );
+        let ok_limits = Limits::new().with_max_memory_bytes(est(1));
+        let pf = encode_preflight(1024, 1024, 3, false, false, 7, 1, true, Some(&ok_limits))
+            .expect("floor fits");
+        assert_eq!(pf.threads, 1);
+        assert_eq!(pf.estimated_peak_bytes, est(1));
+    }
+
+    /// No explicit Limits → the path-aware default cap governs admission:
+    /// a 108 MP lossy request (measured ≥ 44 GiB pre-fix, 5.9–6.7 GiB
+    /// post-fix — either way above the 4 GiB lossy default) is REJECTED
+    /// instead of being admitted into a kernel OOM kill (the 2026-07-31
+    /// zensysbench fleet failure this pre-flight replaces; the old flat
+    /// 40 B/px estimate admitted anything up to ~107 MP).
+    #[test]
+    fn default_cap_rejects_108mp_lossy() {
+        let err = encode_preflight(12000, 9000, 3, false, false, 5, 1, false, None)
+            .err()
+            .expect("108 MP lossy must not fit the 4 GiB default cap");
+        assert!(err.to_string().contains("with_max_memory_bytes"));
+        // With an explicit budget sized from the calibrated estimate the
+        // same encode is admitted.
+        let est108 = estimate_encode_threaded(12000, 9000, 3, false, false, 5, 1)
+            .unwrap()
+            .peak_memory_bytes;
+        let limits = Limits::new().with_max_memory_bytes(est108);
+        assert!(encode_preflight(12000, 9000, 3, false, false, 5, 1, false, Some(&limits)).is_ok());
+    }
+}

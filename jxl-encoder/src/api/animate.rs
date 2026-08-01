@@ -114,28 +114,23 @@ pub(crate) fn encode_animation_lossless(
     // Per-encode allocation budget. Spans the lifetime of the entire
     // animation: every per-frame allocation charges against the same cap,
     // so an attacker cannot multiply the working set by sending many
-    // oversized frames.
-    let budget_cap = limits
-        .and_then(|l| l.max_memory_bytes())
-        .unwrap_or(Limits::default_max_memory_bytes(true));
-    let fallible = limits.is_some_and(|l| l.fallible_alloc());
-    let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
-    let est_bytes = (width as u64)
-        .checked_mul(height as u64)
-        .and_then(|n| n.checked_mul(40))
-        .ok_or_else(|| {
-            at!(EncodeError::LimitExceeded {
-                message: format!("image {width}x{height} too large for working-set estimate"),
-            })
-        })?;
-    if est_bytes > budget_cap {
-        return Err(at!(EncodeError::LimitExceeded {
-            message: format!(
-                "estimated working set {est_bytes} bytes for {width}x{height} \
-                 image exceeds budget cap {budget_cap}"
-            ),
-        }));
-    }
+    // oversized frames. Admission-only pre-flight (`admission_only =
+    // true`, threads = 1): animation frames run on the ambient pool with
+    // no `run_with_threads` hook, so there is no thread count to walk
+    // down — the calibrated single-frame 1-thread estimate is the
+    // admission floor.
+    let preflight = super::encode_preflight(
+        width,
+        height,
+        layout.bytes_per_pixel() as u8,
+        layout.has_alpha(),
+        true,
+        cfg.effort,
+        1,
+        true,
+        limits,
+    )?;
+    let budget = preflight.budget;
 
     // Build file header with animation
     let sample_image = match layout {
@@ -587,28 +582,21 @@ pub(crate) fn encode_animation_lossy(
     let num_frames = frames.len();
 
     // Per-encode allocation budget. Spans the lifetime of the entire
-    // animation; see `encode_animation_lossless` for the reasoning.
-    let budget_cap = limits
-        .and_then(|l| l.max_memory_bytes())
-        .unwrap_or(Limits::default_max_memory_bytes(false));
-    let fallible = limits.is_some_and(|l| l.fallible_alloc());
-    let budget = crate::budget::MemoryBudget::with_alloc_policy(budget_cap, fallible);
-    let est_bytes = (width as u64)
-        .checked_mul(height as u64)
-        .and_then(|n| n.checked_mul(40))
-        .ok_or_else(|| {
-            at!(EncodeError::LimitExceeded {
-                message: format!("image {width}x{height} too large for working-set estimate"),
-            })
-        })?;
-    if est_bytes > budget_cap {
-        return Err(at!(EncodeError::LimitExceeded {
-            message: format!(
-                "estimated working set {est_bytes} bytes for {width}x{height} \
-                 image exceeds budget cap {budget_cap}"
-            ),
-        }));
-    }
+    // animation; see `encode_animation_lossless` for the reasoning
+    // (admission-only pre-flight: frames run on the ambient pool, no
+    // thread walk-down hook).
+    let preflight = super::encode_preflight(
+        width,
+        height,
+        layout.bytes_per_pixel() as u8,
+        layout.has_alpha(),
+        false,
+        cfg.effort,
+        1,
+        true,
+        limits,
+    )?;
+    let budget = preflight.budget;
 
     // Set up VarDCT encoder
     let mut profile = cfg.effective_profile_for_image((width as u64) * (height as u64));

@@ -768,3 +768,132 @@ fn path_aware_default_cap_lossless_higher() {
         "12MP lossless e7 typical ({typical}) should fit the 8 GiB lossless default"
     );
 }
+
+// ── 2026-08-01 calibrated pre-flight (honest size/effort/path/thread-aware
+//    estimate + budget-driven thread walk-down) ──────────────────────────────
+
+/// The pre-flight estimate is honest about big images: a 4096×4096 lossy
+/// e7 encode (calibrated t=1 estimate ≈ 2.4 GB — measured up to 122 B/px
+/// at e7, `benchmarks/jxl_encode_mem_threads_postfix_2026-08-01.tsv`)
+/// under a 256 MB cap is rejected UP FRONT with a message naming the
+/// estimated bytes, the cap, and the `with_max_memory_bytes` override —
+/// the old flat 40 B/px estimate (671 MB here) also rejected this cap,
+/// but admitted 108 MP encodes that peaked ≥ 44 GiB and got the process
+/// kernel-OOM-killed (zensysbench fleet, 2026-07-31). Synthetic pixels:
+/// the estimate is content-independent by design.
+#[test]
+fn honest_preflight_rejects_big_lossy_on_tight_cap() {
+    let (w, h) = (4096u32, 4096u32);
+    let pixels = vec![128u8; (w * h * 3) as usize];
+    let limits = Limits::new().with_max_memory_bytes(256 * 1024 * 1024);
+    let err = LossyConfig::new(4.0)
+        .with_effort(7)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_limits(&limits)
+        .encode(&pixels)
+        .expect_err("2.4 GB estimate must not fit a 256 MB cap");
+    let inner: &EncodeError = err.as_ref();
+    match inner {
+        EncodeError::LimitExceeded { message } => {
+            assert!(message.contains("working set"), "{message}");
+            assert!(message.contains("budget cap"), "{message}");
+            assert!(
+                message.contains("with_max_memory_bytes"),
+                "override hint missing: {message}"
+            );
+        }
+        other => panic!("expected LimitExceeded, got: {other:?}"),
+    }
+}
+
+/// Path-aware honesty without ANY explicit Limits: lossless e7
+/// tree-learning measures ~490 B/px (12 MP corpus photo, 2026-08-01), so
+/// a 4096×5120 (21 MP) lossless e7 request estimates ~11.4 GB — above
+/// the 8 GiB lossless default cap — and must be REJECTED cleanly instead
+/// of being admitted into a host OOM (the old flat estimate said 839 MB
+/// and admitted it). This is the 108-MP-on-a-32-GiB-box fleet failure in
+/// CI-sized miniature.
+#[test]
+fn default_cap_honest_rejection_lossless_e7_21mp() {
+    let (w, h) = (4096u32, 5120u32);
+    let pixels = vec![99u8; (w * h * 3) as usize];
+    let err = jxl_encoder::LosslessConfig::new()
+        .with_effort(7)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect_err("21 MP lossless e7 must exceed the 8 GiB default cap");
+    let inner: &EncodeError = err.as_ref();
+    match inner {
+        EncodeError::LimitExceeded { message } => {
+            assert!(message.contains("lossless"), "{message}");
+            assert!(message.contains("with_max_memory_bytes"), "{message}");
+        }
+        other => panic!("expected LimitExceeded, got: {other:?}"),
+    }
+}
+
+/// Budget-driven thread walk-down through the PUBLIC API: a 16-thread
+/// request under a cap sized to the 3-thread estimate encodes
+/// successfully with exactly 3 worker threads (largest fitting count),
+/// records the decision in `EncodeStats`, and the real tracked peak
+/// stays under the cap. The cap comes from the same
+/// `estimate_encode_threaded` the pre-flight consults, so the test
+/// tracks future recalibrations instead of pinning today's constants.
+#[test]
+fn thread_walkdown_reduces_and_succeeds() {
+    let (w, h) = (1024u32, 1024u32);
+    let mut pixels = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            pixels.push((x ^ y) as u8);
+            pixels.push((x.wrapping_add(y) / 3) as u8);
+            pixels.push((x.wrapping_mul(3) ^ y) as u8);
+        }
+    }
+    let cap = jxl_encoder::heuristics::estimate_encode_threaded(w, h, 3, false, false, 7, 3)
+        .unwrap()
+        .peak_memory_bytes;
+    let limits = Limits::new().with_max_memory_bytes(cap);
+    let result = LossyConfig::new(2.0)
+        .with_effort(7)
+        .with_threads(16)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_limits(&limits)
+        .encode_with_stats(&pixels)
+        .expect("walk-down must fit the encode under the cap");
+    let stats = result.stats();
+    assert_eq!(
+        stats.threads_used(),
+        3,
+        "16-thread request under an est(3)-sized cap must run at 3 threads"
+    );
+    assert_eq!(
+        stats.estimated_peak_bytes(),
+        cap,
+        "estimate at chosen threads"
+    );
+    assert!(
+        stats.budget_peak_bytes() > 0 && stats.budget_peak_bytes() <= cap,
+        "tracked peak {} within cap {cap}",
+        stats.budget_peak_bytes()
+    );
+    let data = result.data().expect("encoded bytes present");
+    assert_eq!(&data[..2], &[0xFF, 0x0A]);
+}
+
+/// `EncodeStats` exposes the budget peak on ordinary encodes (the slot
+/// the measurement grid used) — nonzero and below the default cap.
+#[test]
+fn stats_expose_budget_peak() {
+    let (w, h) = (256u32, 256u32);
+    let pixels = vec![70u8; (w * h * 3) as usize];
+    let result = LossyConfig::new(1.0)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode_with_stats(&pixels)
+        .expect("small encode succeeds");
+    let peak = result.stats().budget_peak_bytes();
+    assert!(
+        peak > 0 && peak < Limits::DEFAULT_MAX_MEMORY_BYTES,
+        "budget peak {peak} sane"
+    );
+}
