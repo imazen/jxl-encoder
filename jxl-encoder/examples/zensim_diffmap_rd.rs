@@ -158,6 +158,22 @@ static JUDGE: std::sync::OnceLock<zensim::ZensimProfile> = std::sync::OnceLock::
 
 fn judge_profile(bake_path: &str) -> zensim::ZensimProfile {
     *JUDGE.get_or_init(|| {
+        // Metric-matrix study (2026-07-31): `profile:<a|b|latest>` judges
+        // with the NAMED profile (the loop scorer is set to the same name
+        // by `set_rd_profile_env`) — the same-scorer judging contract,
+        // without mounting bytes.
+        if let Some(name) = bake_path.strip_prefix("profile:") {
+            return match name {
+                "b" => zensim::ZensimProfile::B,
+                "latest" => zensim::ZensimProfile::latest_preview(),
+                "a" =>
+                {
+                    #[allow(deprecated)]
+                    zensim::ZensimProfile::A
+                }
+                other => panic!("unsupported judge profile:{other}"),
+            };
+        }
         let bytes = std::fs::read(bake_path).expect("judge bake read");
         JUDGE_BYTES.set(bytes).expect("judge bytes once");
         let params = zensim::profile::ProfileParams::builder()
@@ -189,6 +205,67 @@ fn judge_score(bake_path: &str, ref_rgb: &[u8], dec_rgb: &[u8], w: u32, h: u32) 
     let rs = zensim::RgbSlice::new(&rp, w as usize, h as usize);
     let ds = zensim::RgbSlice::new(&dp, w as usize, h as usize);
     z.compute(&rs, &ds).map(|r| r.score()).unwrap_or(f64::NAN)
+}
+
+/// Metric-matrix study (2026-07-31): one place maps `--bake` to the loop's
+/// `JXL_ZENSIM_RD_PROFILE` — `profile:<a|b|latest>` selects a NAMED profile,
+/// anything else mounts bake bytes (`bake:<path>`, the prior studies' path).
+fn set_rd_profile_env(bake: &str) {
+    // SAFETY: edition-2024 set_var — single-threaded driver; all encodes run
+    // sequentially after this write.
+    unsafe {
+        if let Some(name) = bake.strip_prefix("profile:") {
+            std::env::set_var("JXL_ZENSIM_RD_PROFILE", name);
+        } else {
+            std::env::set_var("JXL_ZENSIM_RD_PROFILE", format!("bake:{bake}"));
+        }
+    }
+}
+
+/// Metric-matrix study (2026-07-31): SSIMULACRA2 via the canonical owner —
+/// shell zenmetrics `batch --metric ssim2` on (ref, dist) PNGs. Returns NaN
+/// on any failure (a recorded null per the protocol, never a silent skip).
+fn ssim2_score_via_zenmetrics(
+    bin: &str,
+    ref_png: &std::path::Path,
+    dist_png: &std::path::Path,
+    scratch_dir: &std::path::Path,
+) -> f64 {
+    let pairs = scratch_dir.join(".ssim2_pairs_tmp.tsv");
+    let out = scratch_dir.join(".ssim2_out_tmp.tsv");
+    let _ = fs::remove_file(&out);
+    if fs::write(
+        &pairs,
+        format!(
+            "ref_path\tdist_path\n{}\t{}\n",
+            ref_png.display(),
+            dist_png.display()
+        ),
+    )
+    .is_err()
+    {
+        return f64::NAN;
+    }
+    let status = std::process::Command::new(bin)
+        .args(["batch", "--metric", "ssim2", "--pairs"])
+        .arg(&pairs)
+        .arg("--output")
+        .arg(&out)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if !status.map(|s| s.success()).unwrap_or(false) {
+        return f64::NAN;
+    }
+    fs::read_to_string(&out)
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .nth(1)
+                .and_then(|l| l.split('\t').nth(2))
+                .and_then(|v| v.parse().ok())
+        })
+        .unwrap_or(f64::NAN)
 }
 
 /// Seed distance for the target controller (rough; the controller owns
@@ -227,10 +304,18 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut bake: Option<String> = None;
     // Efficiency study E7 (2026-07-31): bytes-target outer-loop mode.
     let mut bytes_targets_file: Option<String> = None;
+    // Metric-matrix study (2026-07-31): SCORE-target outer-loop mode —
+    // `--score-targets-outer <zensim|ssim2>` (targets from --zensim-targets,
+    // in the arm metric's own units).
+    let mut score_targets_outer: Option<String> = None;
+    let mut ssim2_bin =
+        "/home/lilith/work/zen/zenmetrics/target/release/zenmetrics".to_string();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--bytes-targets-file" => bytes_targets_file = args.next(),
+            "--score-targets-outer" => score_targets_outer = args.next(),
+            "--ssim2-bin" => ssim2_bin = args.next().unwrap_or(ssim2_bin),
             "--metric" => metric_s = args.next().unwrap_or(metric_s),
             "--label" => label = args.next().unwrap_or(label),
             "--out-dir" => out_dir = PathBuf::from(args.next().unwrap_or_default()),
@@ -269,6 +354,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             iters,
             &label,
             &out_dir,
+        );
+    }
+
+    if let Some(metric_arm) = &score_targets_outer {
+        return run_score_target_outer(
+            &corpus,
+            &zensim_targets,
+            metric_arm,
+            bake.as_deref()
+                .expect("--bake required for --score-targets-outer"),
+            iters,
+            &label,
+            &out_dir,
+            &ssim2_bin,
         );
     }
 
@@ -378,10 +477,10 @@ fn run_target_ab(
     let stats_tmp = out_dir.join(format!(".stats_tmp_{label}.tsv"));
 
     // One bake per process (the loop's RD_PROFILE OnceLock caches the first).
+    set_rd_profile_env(bake);
     // SAFETY: edition-2024 set_var — single-threaded driver; all encodes run
     // sequentially after these writes.
     unsafe {
-        std::env::set_var("JXL_ZENSIM_RD_PROFILE", format!("bake:{bake}"));
         std::env::set_var("JXL_ZENSIM_RD_STATS", &stats_tmp);
     }
 
@@ -560,5 +659,123 @@ fn run_bytes_target(
     }
     fs::write(&manifest_path, &manifest)?;
     eprintln!("[bytes_target] wrote {}", manifest_path.display());
+    Ok(())
+}
+
+/// Metric-matrix study (2026-07-31): SCORE targeting via an OUTER loop of
+/// full encodes — the mechanism arm of the model × mechanism matrix. The
+/// in-loop damped controller formula (loss-ratio^0.6, per-step clamp
+/// [1/1.35, 1.35], loss floors 0.05) is transplanted AS-IS onto the
+/// env-gated `JXL_ZENSIM_QF_GLOBAL_SCALE` actuator; the controller reads
+/// the DECODED-judged score of each full encode in the arm's metric
+/// (`zensim` = the mounted judge bake, in-process; `ssim2` = zenmetrics
+/// shelled on the decoded PNG). The inner loop runs redistribution-only
+/// (`JXL_ZENSIM_TARGET_SCORE` unset) at the caller's `--iters` (the study
+/// registers 1 — the minimum engagement that applies the actuator, since
+/// the scale lives inside the zensim loop gated on `zensim_iters > 0`).
+/// Encodes j = 0..=3: budget 3 = three controller steps after the seed
+/// encode, the step-count parallel of inner k=3. Both arms record BOTH
+/// metrics per iterate (feeds the F5 cross-metric endpoint).
+#[allow(clippy::too_many_arguments)]
+fn run_score_target_outer(
+    corpus: &[(String, String, String)],
+    targets: &[f64],
+    metric_arm: &str,
+    bake: &str,
+    iters: u32,
+    label: &str,
+    out_dir: &std::path::Path,
+    ssim2_bin: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use jxl_encoder::api::{EncoderStrategy, PerceptualMetric};
+    use jxl_encoder::{LossyConfig, PixelLayout};
+    const OUTER_ENCODES: u32 = 4; // j = 0..=3 — seed + 3 controller steps
+
+    assert!(
+        matches!(metric_arm, "zensim" | "ssim2"),
+        "--score-targets-outer must be zensim|ssim2"
+    );
+    let decoded_dir = out_dir.join("decoded");
+    let ref_dir = out_dir.join("ref");
+    fs::create_dir_all(&decoded_dir)?;
+    fs::create_dir_all(&ref_dir)?;
+    set_rd_profile_env(bake);
+    // SAFETY: edition-2024 set_var — single-threaded driver; all encodes run
+    // sequentially after these writes.
+    unsafe {
+        std::env::remove_var("JXL_ZENSIM_TARGET_SCORE");
+        std::env::remove_var("JXL_ZENSIM_MODEL_MAP");
+    }
+    let manifest_path = out_dir.join(format!("score_outer_{label}.tsv"));
+    let mut manifest = String::from(
+        "image\tclass\ttarget\tmetric\touter_iter\tqf_scale\tbytes\tjudged\tzensimA\tssim2\tencode_ms\tjudge_ms\tssim2_ms\n",
+    );
+    for (name, class, path) in corpus {
+        let (pixels, w, h) = load_rgb8(path)?;
+        let ref_png = ref_dir.join(format!("{name}.png"));
+        if !ref_png.exists() {
+            image::RgbImage::from_raw(w, h, pixels.clone())
+                .ok_or("ref from_raw")?
+                .save(&ref_png)?;
+        }
+        for &t in targets {
+            let seed_d = seed_distance_for_target(t);
+            let mut g: f64 = 1.0;
+            for j in 0..OUTER_ENCODES {
+                // SAFETY: sequential driver (as above).
+                unsafe {
+                    std::env::set_var("JXL_ZENSIM_QF_GLOBAL_SCALE", format!("{g}"));
+                    std::env::set_var(
+                        "JXL_ZENSIM_TRACE_ID",
+                        format!("{label}|{name}|{class}|{t:.0}|outer{j}"),
+                    );
+                }
+                let t0 = Instant::now();
+                let cfg = LossyConfig::new(seed_d)
+                    .with_strategy(EncoderStrategy::Zenjxl)
+                    .with_effort(EFFORT)
+                    .with_perceptual_metric(PerceptualMetric::Zensim)
+                    .with_butteraugli_iters(0)
+                    .with_zensim_iters(iters);
+                let encoded = cfg.encode(&pixels, w, h, PixelLayout::Rgb8)?;
+                let encode_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                let bytes = encoded.len();
+                let decoded = decode_jxl_srgb_u8(&encoded, w, h)?;
+                let dist_png =
+                    decoded_dir.join(format!("{label}__{name}__t{t:.0}__outer{j}.png"));
+                image::RgbImage::from_raw(w, h, decoded.clone())
+                    .ok_or("dec from_raw")?
+                    .save(&dist_png)?;
+                let tj = Instant::now();
+                let zensim_a = judge_score(bake, &pixels, &decoded, w, h);
+                let judge_ms = tj.elapsed().as_secs_f64() * 1000.0;
+                let ts = Instant::now();
+                let ssim2 = ssim2_score_via_zenmetrics(ssim2_bin, &ref_png, &dist_png, out_dir);
+                let ssim2_ms = ts.elapsed().as_secs_f64() * 1000.0;
+                let judged = if metric_arm == "zensim" { zensim_a } else { ssim2 };
+                manifest.push_str(&format!(
+                    "{name}\t{class}\t{t:.0}\t{metric_arm}\t{j}\t{g:.6}\t{bytes}\t{judged:.3}\t{zensim_a:.3}\t{ssim2:.3}\t{encode_ms:.1}\t{judge_ms:.1}\t{ssim2_ms:.1}\n",
+                ));
+                eprintln!(
+                    "  [outer {label}] {name} t={t:.0} j={j} g={g:.4} bytes={bytes} judged={judged:.2} (zA={zensim_a:.2} s2={ssim2:.2}) {encode_ms:.0}ms"
+                );
+                // The transplanted damped update (loss above target ⇒ too
+                // lossy ⇒ scale the field up ⇒ more bits). A non-finite
+                // judged score (failed scorer call) leaves g unchanged — the
+                // row's NaN is the recorded null.
+                if judged.is_finite() {
+                    let achieved_loss = (100.0 - judged).max(0.05);
+                    let target_loss = (100.0 - t).max(0.05);
+                    g *= ((achieved_loss / target_loss).powf(0.6)).clamp(1.0 / 1.35, 1.35);
+                }
+            }
+            // SAFETY: sequential driver (as above).
+            unsafe {
+                std::env::remove_var("JXL_ZENSIM_QF_GLOBAL_SCALE");
+            }
+        }
+    }
+    fs::write(&manifest_path, &manifest)?;
+    eprintln!("[score_outer] wrote {}", manifest_path.display());
     Ok(())
 }

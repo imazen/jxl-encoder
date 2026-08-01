@@ -560,6 +560,15 @@ impl VarDctEncoder {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.25);
+        // Metric-matrix study (2026-07-31): env-gated override of the damped
+        // controller's per-step clamp (the #70-item-1 gain/clamp co-sweep
+        // axis). Unset / 1.35 = shipped behavior (byte-identity gated in the
+        // study's R0); values <= 1.0 are ignored (a step clamp must exceed 1).
+        let ctrl_clamp: f64 = std::env::var("JXL_ZENSIM_CTRL_CLAMP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|c: &f64| c.is_finite() && *c > 1.0)
+            .unwrap_or(1.35);
         let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
         // Efficiency study (2026-07-31): per-COMPARE trace — one TSV line per
         // iteration: `trace_id  iter  score  qf_mean  qf_min  qf_max  iter_ms`.
@@ -1109,7 +1118,8 @@ impl VarDctEncoder {
             if let Some(tgt) = target_native {
                 let achieved_loss = (100.0 - zensim_score).max(0.05);
                 let target_loss = (100.0 - tgt).max(0.05);
-                let g = ((achieved_loss / target_loss).powf(0.6)).clamp(1.0 / 1.35, 1.35) as f32;
+                let g = ((achieved_loss / target_loss).powf(0.6)).clamp(1.0 / ctrl_clamp, ctrl_clamp)
+                    as f32;
                 for v in quant_field_float.iter_mut() {
                     *v = (*v * g).clamp(qf_lower, qf_higher);
                 }
