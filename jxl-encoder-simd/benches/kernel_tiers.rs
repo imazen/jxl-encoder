@@ -19,6 +19,9 @@
 
 use zenbench::prelude::*;
 
+// Used by the arch-gated bench bodies below; dead only in cfgs where every
+// kernel group compiles out (keeps `--workspace --all-targets` clippy green).
+#[allow(dead_code)]
 fn ramp(n: usize, seed: u32) -> Vec<f32> {
     let mut s = seed | 1;
     (0..n)
@@ -55,8 +58,18 @@ fn bench_kernels(suite: &mut Suite) {
         };
     }
 
-    dct!("dct_8x8", 64, jxl_encoder_simd::dct_8x8_neon, jxl_encoder_simd::dct_8x8_scalar);
-    dct!("dct_16x16", 256, jxl_encoder_simd::dct_16x16_neon, jxl_encoder_simd::dct_16x16_scalar);
+    dct!(
+        "dct_8x8",
+        64,
+        jxl_encoder_simd::dct_8x8_neon,
+        jxl_encoder_simd::dct_8x8_scalar
+    );
+    dct!(
+        "dct_16x16",
+        256,
+        jxl_encoder_simd::dct_16x16_neon,
+        jxl_encoder_simd::dct_16x16_scalar
+    );
     // NOTE dct_32x32 / idct_32x32 / dct_64x64 are absent: their `_neon`
     // variants exist but are not re-exported from lib.rs (internal dispatch
     // still reaches them), so a bench cannot name them.
@@ -155,7 +168,10 @@ fn bench_kernels(suite: &mut Suite) {
     // Entropy: a reduction over histogram counts.
     {
         let counts: &'static [i32] = Box::leak(
-            (0..4096).map(|i| ((i * 7919) % 997) as i32).collect::<Vec<i32>>().into_boxed_slice(),
+            (0..4096)
+                .map(|i| ((i * 7919) % 997) as i32)
+                .collect::<Vec<i32>>()
+                .into_boxed_slice(),
         );
         let total: usize = counts.iter().map(|c| *c as usize).sum();
         suite.compare("shannon_entropy/4096", move |g| {
@@ -189,9 +205,24 @@ fn bench_kernels(suite: &mut Suite) {
             });
         };
     }
-    dct2!("dct_16x8", 128, jxl_encoder_simd::dct_16x8_neon, jxl_encoder_simd::dct_16x8_scalar);
-    dct2!("dct_8x16", 128, jxl_encoder_simd::dct_8x16_neon, jxl_encoder_simd::dct_8x16_scalar);
-    dct2!("idct_16x16", 256, jxl_encoder_simd::idct_16x16_neon, jxl_encoder_simd::idct_16x16_scalar);
+    dct2!(
+        "dct_16x8",
+        128,
+        jxl_encoder_simd::dct_16x8_neon,
+        jxl_encoder_simd::dct_16x8_scalar
+    );
+    dct2!(
+        "dct_8x16",
+        128,
+        jxl_encoder_simd::dct_8x16_neon,
+        jxl_encoder_simd::dct_8x16_scalar
+    );
+    dct2!(
+        "idct_16x16",
+        256,
+        jxl_encoder_simd::idct_16x16_neon,
+        jxl_encoder_simd::idct_16x16_scalar
+    );
 
     // In-place plane sanitize: replaces non-finite values. Fed an ALL-FINITE
     // plane on purpose — the scalar form short-circuits nothing, but a plane
@@ -203,12 +234,16 @@ fn bench_kernels(suite: &mut Suite) {
         suite.compare("sanitize_finite/1MP", move |g| {
             g.throughput(Throughput::Bytes((N * 4) as u64));
             g.bench("neon", move |b| {
-                b.with_input(move || clean.to_vec())
-                    .run(move |mut p| { let r = jxl_encoder_simd::sanitize_finite_neon(t, &mut p); (p, r) })
+                b.with_input(move || clean.to_vec()).run(move |mut p| {
+                    let r = jxl_encoder_simd::sanitize_finite_neon(t, &mut p);
+                    (p, r)
+                })
             });
             g.bench("scalar", move |b| {
-                b.with_input(move || clean.to_vec())
-                    .run(move |mut p| { let r = jxl_encoder_simd::sanitize_finite_scalar(&mut p); (p, r) })
+                b.with_input(move || clean.to_vec()).run(move |mut p| {
+                    let r = jxl_encoder_simd::sanitize_finite_scalar(&mut p);
+                    (p, r)
+                })
             });
         });
     }
@@ -225,9 +260,12 @@ fn bench_kernels(suite: &mut Suite) {
         let xsb = W / 8;
 
         let base = ramp(W * H, 71);
-        let px: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&base, W, H, PAD).into_boxed_slice());
-        let py: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 73), W, H, PAD).into_boxed_slice());
-        let pb: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 79), W, H, PAD).into_boxed_slice());
+        let px: &'static [f32] =
+            Box::leak(jxl_encoder_simd::pad_plane(&base, W, H, PAD).into_boxed_slice());
+        let py: &'static [f32] =
+            Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 73), W, H, PAD).into_boxed_slice());
+        let pb: &'static [f32] =
+            Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 79), W, H, PAD).into_boxed_slice());
         // Positive inv_sigma so the filter actually runs (the test uses -1.0,
         // which is the "skip this block" sentinel — that would measure nothing).
         let isg: &'static [f32] = Box::leak(vec![0.7f32; xsb * (H / 8)].into_boxed_slice());
@@ -235,20 +273,47 @@ fn bench_kernels(suite: &mut Suite) {
         suite.compare("epf_step1/512x512", move |g| {
             g.throughput(Throughput::Bytes((W * H * 4 * 3) as u64));
             g.bench("neon", move |b| {
-                let (mut ox, mut oy, mut ob) = (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
+                let (mut ox, mut oy, mut ob) =
+                    (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
                 b.iter(move || {
                     jxl_encoder_simd::epf_step1_neon(
-                        t, px, py, pb, &mut ox, &mut oy, &mut ob, isg,
-                        xsb, W, H, stride, PAD, 1.65, 2.0 / 3.0,
+                        t,
+                        px,
+                        py,
+                        pb,
+                        &mut ox,
+                        &mut oy,
+                        &mut ob,
+                        isg,
+                        xsb,
+                        W,
+                        H,
+                        stride,
+                        PAD,
+                        1.65,
+                        2.0 / 3.0,
                     )
                 })
             });
             g.bench("scalar", move |b| {
-                let (mut ox, mut oy, mut ob) = (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
+                let (mut ox, mut oy, mut ob) =
+                    (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
                 b.iter(move || {
                     jxl_encoder_simd::epf_step1_scalar(
-                        px, py, pb, &mut ox, &mut oy, &mut ob, isg,
-                        xsb, W, H, stride, PAD, 1.65, 2.0 / 3.0,
+                        px,
+                        py,
+                        pb,
+                        &mut ox,
+                        &mut oy,
+                        &mut ob,
+                        isg,
+                        xsb,
+                        W,
+                        H,
+                        stride,
+                        PAD,
+                        1.65,
+                        2.0 / 3.0,
                     )
                 })
             });
@@ -256,8 +321,18 @@ fn bench_kernels(suite: &mut Suite) {
     }
 
     // ---- rectangular inverse DCTs + EPF step 2 + dequant ----
-    dct2!("idct_8x16", 128, jxl_encoder_simd::idct_8x16_neon, jxl_encoder_simd::idct_8x16_scalar);
-    dct2!("idct_16x8", 128, jxl_encoder_simd::idct_16x8_neon, jxl_encoder_simd::idct_16x8_scalar);
+    dct2!(
+        "idct_8x16",
+        128,
+        jxl_encoder_simd::idct_8x16_neon,
+        jxl_encoder_simd::idct_8x16_scalar
+    );
+    dct2!(
+        "idct_16x8",
+        128,
+        jxl_encoder_simd::idct_16x8_neon,
+        jxl_encoder_simd::idct_16x8_scalar
+    );
 
     // EPF step 2 — same signature as step 1, same known-good parameters, and
     // again a POSITIVE inv_sigma so the filter runs rather than taking the
@@ -268,28 +343,58 @@ fn bench_kernels(suite: &mut Suite) {
         const PAD: usize = 2;
         let stride = W + 2 * PAD;
         let xsb = W / 8;
-        let px: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 81), W, H, PAD).into_boxed_slice());
-        let py: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 83), W, H, PAD).into_boxed_slice());
-        let pb: &'static [f32] = Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 87), W, H, PAD).into_boxed_slice());
+        let px: &'static [f32] =
+            Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 81), W, H, PAD).into_boxed_slice());
+        let py: &'static [f32] =
+            Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 83), W, H, PAD).into_boxed_slice());
+        let pb: &'static [f32] =
+            Box::leak(jxl_encoder_simd::pad_plane(&ramp(W * H, 87), W, H, PAD).into_boxed_slice());
         let isg: &'static [f32] = Box::leak(vec![0.7f32; xsb * (H / 8)].into_boxed_slice());
 
         suite.compare("epf_step2/512x512", move |g| {
             g.throughput(Throughput::Bytes((W * H * 4 * 3) as u64));
             g.bench("neon", move |b| {
-                let (mut ox, mut oy, mut ob) = (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
+                let (mut ox, mut oy, mut ob) =
+                    (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
                 b.iter(move || {
                     jxl_encoder_simd::epf_step2_neon(
-                        t, px, py, pb, &mut ox, &mut oy, &mut ob, isg,
-                        xsb, W, H, stride, PAD, 1.65, 2.0 / 3.0,
+                        t,
+                        px,
+                        py,
+                        pb,
+                        &mut ox,
+                        &mut oy,
+                        &mut ob,
+                        isg,
+                        xsb,
+                        W,
+                        H,
+                        stride,
+                        PAD,
+                        1.65,
+                        2.0 / 3.0,
                     )
                 })
             });
             g.bench("scalar", move |b| {
-                let (mut ox, mut oy, mut ob) = (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
+                let (mut ox, mut oy, mut ob) =
+                    (vec![0f32; W * H], vec![0f32; W * H], vec![0f32; W * H]);
                 b.iter(move || {
                     jxl_encoder_simd::epf_step2_scalar(
-                        px, py, pb, &mut ox, &mut oy, &mut ob, isg,
-                        xsb, W, H, stride, PAD, 1.65, 2.0 / 3.0,
+                        px,
+                        py,
+                        pb,
+                        &mut ox,
+                        &mut oy,
+                        &mut ob,
+                        isg,
+                        xsb,
+                        W,
+                        H,
+                        stride,
+                        PAD,
+                        1.65,
+                        2.0 / 3.0,
                     )
                 })
             });
@@ -299,29 +404,64 @@ fn bench_kernels(suite: &mut Suite) {
     // Dequant: three planes of 64 coefficients, i32 -> f32 with per-plane
     // weights. Self-contained, no padding or block grid needed.
     {
-        let qx: &'static [i32; 64] = Box::leak(Box::new(core::array::from_fn(|i| (i as i32 % 41) - 20)));
-        let qy: &'static [i32; 64] = Box::leak(Box::new(core::array::from_fn(|i| (i as i32 % 37) - 18)));
-        let qb: &'static [i32; 64] = Box::leak(Box::new(core::array::from_fn(|i| (i as i32 % 31) - 15)));
-        let wx: &'static [f32; 64] = Box::leak(Box::new(core::array::from_fn(|i| 1.0 + i as f32 * 0.01)));
-        let wy: &'static [f32; 64] = Box::leak(Box::new(core::array::from_fn(|i| 1.0 + i as f32 * 0.02)));
-        let wb: &'static [f32; 64] = Box::leak(Box::new(core::array::from_fn(|i| 1.0 + i as f32 * 0.03)));
+        let qx: &'static [i32; 64] =
+            Box::leak(Box::new(core::array::from_fn(|i| (i as i32 % 41) - 20)));
+        let qy: &'static [i32; 64] =
+            Box::leak(Box::new(core::array::from_fn(|i| (i as i32 % 37) - 18)));
+        let qb: &'static [i32; 64] =
+            Box::leak(Box::new(core::array::from_fn(|i| (i as i32 % 31) - 15)));
+        let wx: &'static [f32; 64] =
+            Box::leak(Box::new(core::array::from_fn(|i| 1.0 + i as f32 * 0.01)));
+        let wy: &'static [f32; 64] =
+            Box::leak(Box::new(core::array::from_fn(|i| 1.0 + i as f32 * 0.02)));
+        let wb: &'static [f32; 64] =
+            Box::leak(Box::new(core::array::from_fn(|i| 1.0 + i as f32 * 0.03)));
 
         suite.compare("dequant_dct8", move |g| {
             g.bench("neon", move |b| {
-                let (mut ox, mut oy, mut ob) = (Box::new([0f32; 64]), Box::new([0f32; 64]), Box::new([0f32; 64]));
+                let (mut ox, mut oy, mut ob) = (
+                    Box::new([0f32; 64]),
+                    Box::new([0f32; 64]),
+                    Box::new([0f32; 64]),
+                );
                 b.iter(move || {
                     jxl_encoder_simd::dequant_dct8_neon(
-                        t, qx, qy, qb, wx, wy, wb, [1.0, 1.0, 1.0], 0.5, 0.5,
-                        &mut ox, &mut oy, &mut ob,
+                        t,
+                        qx,
+                        qy,
+                        qb,
+                        wx,
+                        wy,
+                        wb,
+                        [1.0, 1.0, 1.0],
+                        0.5,
+                        0.5,
+                        &mut ox,
+                        &mut oy,
+                        &mut ob,
                     )
                 })
             });
             g.bench("scalar", move |b| {
-                let (mut ox, mut oy, mut ob) = (Box::new([0f32; 64]), Box::new([0f32; 64]), Box::new([0f32; 64]));
+                let (mut ox, mut oy, mut ob) = (
+                    Box::new([0f32; 64]),
+                    Box::new([0f32; 64]),
+                    Box::new([0f32; 64]),
+                );
                 b.iter(move || {
                     jxl_encoder_simd::dequant_dct8_scalar(
-                        qx, qy, qb, wx, wy, wb, [1.0, 1.0, 1.0], 0.5, 0.5,
-                        &mut ox, &mut oy, &mut ob,
+                        qx,
+                        qy,
+                        qb,
+                        wx,
+                        wy,
+                        wb,
+                        [1.0, 1.0, 1.0],
+                        0.5,
+                        0.5,
+                        &mut ox,
+                        &mut oy,
+                        &mut ob,
                     )
                 })
             });
