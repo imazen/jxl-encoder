@@ -13,8 +13,9 @@
 //!   1. `--metric zensim` (+ ZENSIM_* env DiffmapOptions sweep)
 //!   2. `--metric cvvdp`  (cvvdp's own diffmap)
 //!   3. `--metric butteraugli` (the default baseline reference)
-//!  (Avenue 2 — the #33 structural diffmap — is a separate code path added to
-//!   the zensim loop; run it via `--metric zensim` once that env knob exists.)
+//!    (Avenue 2 — the #33 structural diffmap — is a separate code path added
+//!    to the zensim loop; run it via `--metric zensim` once that env knob
+//!    exists.)
 //!
 //! ## Run
 //!
@@ -377,7 +378,7 @@ fn run_target_ab(
     let stats_tmp = out_dir.join(format!(".stats_tmp_{label}.tsv"));
 
     // One bake per process (the loop's RD_PROFILE OnceLock caches the first).
-    // SAFETY (edition 2024 set_var): single-threaded driver; all encodes run
+    // SAFETY: edition-2024 set_var — single-threaded driver; all encodes run
     // sequentially after these writes.
     unsafe {
         std::env::set_var("JXL_ZENSIM_RD_PROFILE", format!("bake:{bake}"));
@@ -494,7 +495,7 @@ fn run_bytes_target(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const OUTER_BUDGET: u32 = 8;
     fs::create_dir_all(out_dir)?;
-    // SAFETY (edition 2024 set_var): single-threaded driver; all encodes run
+    // SAFETY: edition-2024 set_var — single-threaded driver; all encodes run
     // sequentially after these writes.
     unsafe {
         std::env::set_var("JXL_ZENSIM_RD_PROFILE", format!("bake:{bake}"));
