@@ -6,7 +6,11 @@
 # fresh (k3-last has no mm rows to derive from), controls carried behind the
 # same substrate probe as the 2026-08-01 study (which doubles as the
 # R0-identity gate for the folded-class integration changes).
-# Phases: probe fresh collect   (usage: run_23shot_sota944.sh <phase>|all)
+# Phases: probe fresh collect h3own   (usage: run_23shot_sota944.sh <phase>|all)
+# `h3own` (campaign appendix N.4, 2026-08-05): the candidate's OWN-map H3
+# magnitude-steering arm through the FUSED folded-944 compare — vs the
+# CARRIED W10L9_base rows (same cells, same stats owner). Runs after `probe`
+# passes on the current substrate.
 #
 # Build first (from repo root; heavy -> nice'd, own target dir):
 #   CARGO_TARGET_DIR=$HOME/tmp/jxlloop-target nice -n19 ionice -c3 \
@@ -123,6 +127,60 @@ if [ "$phase" = fresh ] || [ "$phase" = all ]; then
     say "EMIT_BEST k$K engagement W10L9_base: $diffn/$tot bitstreams differ from emit-last"
   done
   [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
+fi
+
+# ── h3own: candidate + OWN-map H3 magnitude steering through the FUSED
+#    folded-944 compare (campaign appendix N.4) x {k2,k3} x {last,best} ────
+if [ "$phase" = h3own ]; then
+  HD=$OUT/h3own
+  mkdir -p "$HD"
+  for mode in k2_last k2_best k3_last k3_best; do
+    K=${mode:1:1}
+    EB=()
+    [ "${mode#*_}" = best ] && EB=(JXL_ZENSIM_EMIT_BEST=1)
+    lbl=W10L9_h3own_${mode}
+    run_ab "$HD" "$lbl" "$CAND" h3-mag "$K" 70,80,88 \
+      JXL_ZENSIM_TARGET_TOL=-1 JXL_SAVE_BITSTREAM=1 \
+      ${EB[@]+"${EB[@]}"} \
+      JXL_ZENSIM_TRACE=$HD/trace_$lbl.tsv \
+      JXL_ZENSIM_ATTR_PROBE=$HD/probe_$lbl.tsv
+  done
+  # Engagement gates: h3 steers iterations 1..K => probe files exactly
+  # 27*K attr_iter lines; trace files exactly 27*(K+1) compare rows.
+  fail=0
+  for mode in k2_last k2_best k3_last k3_best; do
+    K=${mode:1:1}
+    n=$(wc -l < "$HD/probe_W10L9_h3own_${mode}.tsv" 2>/dev/null || echo 0)
+    want=$((27 * K))
+    say "ENGAGE W10L9_h3own_$mode probe=$n want=$want"
+    [ "$n" -eq "$want" ] || fail=1
+    tn=$(wc -l < "$HD/trace_W10L9_h3own_${mode}.tsv" 2>/dev/null || echo 0)
+    wantt=$((27 * (K + 1)))
+    say "TRACE  W10L9_h3own_$mode rows=$tn want=$wantt"
+    [ "$tn" -eq "$wantt" ] || fail=1
+  done
+  for K in 2 3; do
+    diffn=0; tot=0
+    for f in "$HD"/decoded/W10L9_h3own_k${K}_last__*.jxl; do
+      [ -f "$f" ] || continue
+      bn=$(basename "$f"); bb=${bn/_k${K}_last__/_k${K}_best__}
+      tot=$((tot + 1))
+      cmp -s "$f" "$HD/decoded/$bb" || diffn=$((diffn + 1))
+    done
+    say "EMIT_BEST k$K engagement W10L9_h3own: $diffn/$tot bitstreams differ from emit-last"
+  done
+  [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
+  # Committed cells TSV for the h3own study.
+  BD=$REPO/benchmarks
+  {
+    printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
+    for f in "$HD"/target_ab_*.tsv; do
+      [ -f "$f" ] || continue
+      run=$(basename "$f" .tsv); run=${run#target_ab_}
+      awk -F'\t' -v r="$run" 'NR>1 { print r "\t" $0 }' "$f"
+    done
+  } > "$BD/zensim_loop_h3own_sota944_2026-08-05.tsv"
+  wc -l "$BD/zensim_loop_h3own_sota944_2026-08-05.tsv" | tee -a "$LOG"
 fi
 
 # ── collect: concatenate committed TSV into benchmarks/ ───────────────────

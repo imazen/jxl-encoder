@@ -75,6 +75,29 @@ fn rd_map_profile() -> zensim::ZensimProfile {
     })
 }
 
+/// Appendix N (2026-08-05): the map-side profile for folded-class
+/// ATTR-family arms — `rd_map_profile` plus `extended_features`, because
+/// the fused folded-944 compare's v1 walk derives attribution coefficients
+/// from every basic stat. Walk config (weights / num_scales / blur) is
+/// still the builder defaults, so the redistribution-relevant geometry is
+/// unchanged; only stat coverage grows. The baseline folded arm keeps the
+/// plain `rd_map_profile` (byte-identity with appendix M).
+static RD_ATTR_MAP_PROFILE: std::sync::OnceLock<zensim::ZensimProfile> = std::sync::OnceLock::new();
+fn rd_attr_map_profile() -> zensim::ZensimProfile {
+    *RD_ATTR_MAP_PROFILE.get_or_init(|| {
+        let params = zensim::profile::ProfileParams::builder()
+            .skip_score_mapping(true)
+            .extrapolate_score(true)
+            .extended_features(true)
+            .build();
+        let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
+        zensim::ZensimProfile::Custom {
+            params,
+            name: "rd-attr-map-folded944",
+        }
+    })
+}
+
 /// `JXL_ZENSIM_RD_PROFILE=a|b|latest|bake:<path>` → (profile, n_inputs).
 /// n_inputs = 0 means "model-map unsupported for this profile" (A's feature
 /// regime is not probed; the shipped default needs no gradient).
@@ -532,13 +555,24 @@ impl VarDctEncoder {
         // input width — a pruned bake carries `FeatureTransform::Drop` and
         // must be handed its caller-width vector, never its internal width).
         let folded_class = rd_n_in >= 720;
-        let z = zensim::Zensim::new(if folded_class {
+        let model_map = std::env::var("JXL_ZENSIM_MODEL_MAP").ok();
+        let model_map_requested = matches!(model_map.as_deref(), Some(s) if !s.is_empty());
+        // Appendix N (2026-08-05): folded-class ATTR-FAMILY arms score+steer
+        // through the FUSED folded-944 compare
+        // (`compute_folded944_score_and_attribution`), whose v1 walk must
+        // compute every basic feature — so their map-side profile is the
+        // extended twin of `rd_map_profile` (same walk config + weights).
+        // The baseline folded arm keeps the plain map profile: its route is
+        // byte-identical to appendix M (the substrate probe's carried-rows
+        // guarantee).
+        let z = zensim::Zensim::new(if folded_class && model_map_requested {
+            rd_attr_map_profile()
+        } else if folded_class {
             rd_map_profile()
         } else {
             rd_profile
         })
         .with_parallel(false);
-        let model_map = std::env::var("JXL_ZENSIM_MODEL_MAP").ok();
         // C3b (task #67): `attr` steers iterations 2+ with the C3a FUSED
         // compare (`compute_with_ref_score_and_attribution` — ONE call =
         // score + attribution map, replacing the separate compare +
@@ -563,17 +597,32 @@ impl VarDctEncoder {
         // 23shot-sota944 loud guards (2026-08-05) — the loop69-registered
         // hazard was that an unknown JXL_ZENSIM_MODEL_MAP value fell through
         // to baseline SILENTLY (caught in-run there only by a control-arm
-        // mismatch). Three refusals replace the fall-through:
+        // mismatch). The refusals that replace the fall-through:
         //   1. unknown arm name        -> panic (typo'd arms never masquerade
         //      as baseline);
         //   2. arm set but rd_n_in == 0 (profile A / unprobed) -> panic (the
         //      arm would silently run as baseline);
-        //   3. arm set on a folded-class bake -> panic (the fused compare +
-        //      ModelSensitivity fold are 372-class only — a registered
-        //      limitation, not a silent downgrade).
+        //   3. a FOLD-family arm (signed/abs) on a folded-class bake -> panic:
+        //      the per-scale ModelSensitivity fold has no folded-class
+        //      integrands. ATTR-family arms on a folded-class bake are LIVE
+        //      since appendix N — they route through the fused folded-944
+        //      compare instead of panicking.
         // Empty string counts as unset (baseline), matching `remove_var`
         // drivers that clear the arm between runs.
-        let model_map_requested = matches!(model_map.as_deref(), Some(s) if !s.is_empty());
+        // #70 item 2: `JXL_ZENSIM_SINGLEPASS=1` routes the fused compare
+        // through zensim's stale-scalar single-pass entry
+        // (`compute_with_ref_score_and_attribution_stale`) — score +
+        // steering map from ONE pipeline pass. The map combines the CURRENT
+        // iterate's planes with the PREVIOUS compare's pooled scalars (the
+        // proven-free one-iterate-lag semantics; the session's first fused
+        // call primes via the fresh path). Default OFF = the fresh fused
+        // call, byte-identical to shipped behavior (R0-gated). The session
+        // lives per encode (one reference), created lazily at the first
+        // steered iteration. 372-class only (guarded below).
+        let singlepass = matches!(
+            std::env::var("JXL_ZENSIM_SINGLEPASS").ok().as_deref(),
+            Some("1" | "true" | "yes")
+        );
         if model_map_requested {
             let known = matches!(
                 model_map.as_deref(),
@@ -600,13 +649,25 @@ impl VarDctEncoder {
                  — the arm would silently run as baseline; refusing",
                 model_map.as_deref().unwrap_or_default()
             );
+            let fold_family = matches!(model_map.as_deref(), Some("signed") | Some("abs"));
             assert!(
-                !folded_class,
+                !(folded_class && fold_family),
                 "JXL_ZENSIM_MODEL_MAP='{}' requested on a folded-class bake \
-                 (probed width {rd_n_in}): map-steering arms are 372-class only \
-                 (fused compare + ModelSensitivity fold) — refusing the silent \
-                 downgrade to baseline",
+                 (probed width {rd_n_in}): the signed/abs ModelSensitivity \
+                 fold is 372-class only — use an attr-family arm \
+                 (attr|attr-stale|h1-signed|h2-ctrl|h3-mag|h3-mag-stale), \
+                 which routes through the fused folded-944 compare — \
+                 refusing the silent downgrade to baseline",
                 model_map.as_deref().unwrap_or_default()
+            );
+            // The stale-scalar single-pass session entry is 372-class; the
+            // fused folded-944 compare has no stale pipeline yet (appendix N
+            // registers it as the <=1.1x endpoint lever, not built).
+            assert!(
+                !(folded_class && singlepass),
+                "JXL_ZENSIM_SINGLEPASS=1 with a folded-class bake: the \
+                 stale-scalar single-pass entry is 372-class only — unset it \
+                 for folded-class attr arms (registered appendix N limitation)"
             );
         }
         let model_map_active = model_map_requested;
@@ -640,21 +701,12 @@ impl VarDctEncoder {
         // and the previous iteration's map for the stale arm.
         let mut attr_rgba: Vec<f32> = Vec::new();
         let mut prev_attr: Option<zensim::AttributionResult> = None;
-        // #70 item 2: `JXL_ZENSIM_SINGLEPASS=1` routes the fused compare
-        // through zensim's stale-scalar single-pass entry
-        // (`compute_with_ref_score_and_attribution_stale`) — score +
-        // steering map from ONE pipeline pass. The map combines the CURRENT
-        // iterate's planes with the PREVIOUS compare's pooled scalars (the
-        // proven-free one-iterate-lag semantics; the session's first fused
-        // call primes via the fresh path). Default OFF = the fresh fused
-        // call, byte-identical to shipped behavior (R0-gated). The session
-        // lives per encode (one reference), created lazily at the first
-        // steered iteration.
-        let singlepass = matches!(
-            std::env::var("JXL_ZENSIM_SINGLEPASS").ok().as_deref(),
-            Some("1" | "true" | "yes")
-        );
         let mut attr_session: Option<zensim::AttributionSession> = None;
+        // Appendix N: the fused folded-944 session (extraction scratch +
+        // walk retention, ~42 MB at 576² reused across compares), created
+        // lazily at the first folded-class steered iteration; one per
+        // encode.
+        let mut fused944_session: Option<zensim::Fused944Session> = None;
         // C3b target-seeking controller (shared by ALL arms so the A/B
         // isolates the steering map): `JXL_ZENSIM_TARGET_SCORE=<native
         // 0-100>` adds a damped global quant-field step toward the target
@@ -728,6 +780,10 @@ impl VarDctEncoder {
                 folded_src_rgba[i * 4 + 2] = linear_rgb[i * 3 + 2];
             }
         }
+        // Appendix N: the folded-class gradient probe's feature base — the
+        // FIRST compare's folded extraction (captured in the score branch,
+        // consumed once by the derivation block below).
+        let mut folded_feats_for_grad: Option<Vec<f64>> = None;
 
         // The deinterleaved planes are transient: only used to build the zensim
         // precomputed reference, then dropped.
@@ -904,7 +960,43 @@ impl VarDctEncoder {
                     zensim::PixelFormat::LinearF32Rgba,
                     zensim::AlphaMode::Opaque,
                 );
-                let (res, attr) = if singlepass {
+                let (res, attr, folded_score) = if folded_class {
+                    // Appendix N: the FUSED folded-944 compare — canonical
+                    // 944 extraction (features bitwise the standalone
+                    // extraction, G-N1) + the full-coverage attribution map
+                    // from ONE extraction pass; the score is the bake's own
+                    // forward over those features, exactly the baseline
+                    // folded score path. Failures PANIC (study path, loud
+                    // by design): the mount probe already proved the width,
+                    // and the swallow would silently emit the seed.
+                    let src_clean = zensim::StridedBytes::with_alpha_mode(
+                        bytemuck::cast_slice(&folded_src_rgba),
+                        width,
+                        height,
+                        width * 16,
+                        zensim::PixelFormat::LinearF32Rgba,
+                        zensim::AlphaMode::Opaque,
+                    );
+                    let sess = fused944_session.get_or_insert_with(zensim::Fused944Session::new);
+                    let (res, v2, attr) = z
+                        .compute_folded944_score_and_attribution(
+                            &src_clean,
+                            &precomputed,
+                            &src,
+                            s,
+                            sess,
+                        )
+                        .expect("fused folded-944 compare failed (loud by design)");
+                    let feats = v2.features();
+                    let sc = zensim::score_features_with_profile(
+                        rd_profile,
+                        &feats[..rd_n_in.min(feats.len())],
+                        width as u32,
+                        height as u32,
+                    )
+                    .expect("folded-class forward failed after a passing mount probe (wiring bug)");
+                    (res, attr, Some(sc))
+                } else if singlepass {
                     let sess = attr_session.get_or_insert_with(zensim::AttributionSession::new);
                     match z.compute_with_ref_score_and_attribution_stale(
                         &precomputed,
@@ -912,16 +1004,19 @@ impl VarDctEncoder {
                         s,
                         sess,
                     ) {
-                        Ok(r) => r,
+                        Ok((r, a)) => (r, a, None),
                         Err(_) => return Ok(current_params),
                     }
                 } else {
                     match z.compute_with_ref_score_and_attribution(&precomputed, &src, s) {
-                        Ok(r) => r,
+                        Ok((r, a)) => (r, a, None),
                         Err(_) => return Ok(current_params),
                     }
                 };
-                zensim_score = res.score();
+                zensim_score = match folded_score {
+                    Some(sc) => sc,
+                    None => res.score(),
+                };
                 measured_dist = res.approx_butteraugli() as f32;
                 // Stale arm: steer with the PREVIOUS iteration's map when
                 // one exists (first steered iteration uses the fresh map).
@@ -1040,6 +1135,14 @@ impl VarDctEncoder {
                         _ => z.compute_folded720_features(&src, &dst),
                     }
                     .expect("folded-class extraction failed (loud by design)");
+                    // Appendix N: a folded-class attr-family arm derives its
+                    // gradient from the FOLDED features (the bake's true
+                    // inputs) — capture the first compare's vector for the
+                    // probe below (the 372-class walk's features are the
+                    // wrong regime for a folded bake's forward).
+                    if model_map_active && model_s.is_none() {
+                        folded_feats_for_grad = Some(v2.features().to_vec());
+                    }
                     zensim::score_features_with_profile(
                         rd_profile,
                         v2.features(),
@@ -1087,12 +1190,22 @@ impl VarDctEncoder {
             // the production features→score runtime; `abs` fold = pass −|s|
             // through the signed ModelSensitivity fold). Iterations 2+ steer
             // with the model's own gradient.
-            if let (true, true, Some(dm_ref)) =
-                (model_map_active, model_s.is_none(), dm_result.as_ref())
-            {
-                let feats = dm_ref.result().features();
-                if feats.len() >= rd_n_in {
-                    let base: Vec<f64> = feats[..rd_n_in].to_vec();
+            if model_map_active && model_s.is_none() {
+                // Gradient base: folded-class arms use the FOLDED features
+                // captured by the first compare's score extraction (appendix
+                // N — the bake's true input regime); 372-class arms read the
+                // compare walk's features as before.
+                let base_opt: Option<Vec<f64>> = if folded_class {
+                    folded_feats_for_grad
+                        .take()
+                        .map(|f| f[..rd_n_in.min(f.len())].to_vec())
+                } else {
+                    dm_result.as_ref().and_then(|dm| {
+                        let feats = dm.result().features();
+                        (feats.len() >= rd_n_in).then(|| feats[..rd_n_in].to_vec())
+                    })
+                };
+                if let Some(base) = base_opt {
                     let sf = |f: &[f64]| {
                         zensim::score_features_with_profile(
                             rd_profile,

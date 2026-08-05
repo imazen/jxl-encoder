@@ -206,29 +206,38 @@ def cmd_summarize(a):
                              f"!= published F1 {MM_F1_OUTER_J3[run]}")
         models[run] = {"kind": kind, "label": label, "bake": bake, "cells": cells}
 
-    # SOTA-944 extension (2026-08-05): one extra fresh arm whose FOUR modes
+    # SOTA-944 extension (2026-08-05): extra fresh arms, each with FOUR modes
     # (k2_last/k2_best/k3_last/k3_best — k3_last is fresh, it has no mm rows)
-    # live in a second cells TSV. The owner is extended, never forked.
-    if a.extra_arm:
-        if not a.extra_cells:
-            raise SystemExit("--extra-arm requires --extra-cells")
-        extra = read_tsv(a.extra_cells)
-        extra_tsv_name = Path(a.extra_cells).name
-        cells = {}
-        for mode in ["k2_last", "k2_best", "k3_last", "k3_best"]:
-            run = f"{a.extra_arm}_{mode}"
-            rows = [r for r in extra if r["run"] == run]
-            if len(rows) != N_CELLS:
-                raise SystemExit(f"extra run {run}: {len(rows)} rows, want {N_CELLS}")
-            e = cells_stats(rows)
-            e["provenance"] = f"fresh-run {a.date} ({extra_tsv_name}, run={run})"
-            cells[MODE_KEY[mode]] = e
-        models[a.extra_arm] = {
-            "kind": "inner",
-            "label": a.extra_arm_label or a.extra_arm,
-            "bake": a.extra_arm_bake,
-            "cells": cells,
-        }
+    # in their own cells TSV. Repeatable (appendix N.4 adds the h3own arm as a
+    # second `--extra-arm ... --extra-cells ...` pair, positionally matched);
+    # the single-pair invocation is unchanged. The owner is extended, never
+    # forked.
+    extra_arms = a.extra_arm or []
+    extra_cells_paths = a.extra_cells or []
+    if extra_arms:
+        if len(extra_cells_paths) != len(extra_arms):
+            raise SystemExit("--extra-arm and --extra-cells must be given the same "
+                             f"number of times ({len(extra_arms)} vs {len(extra_cells_paths)})")
+        labels = a.extra_arm_label or []
+        bakes = a.extra_arm_bake or []
+        for i, (arm, cells_path) in enumerate(zip(extra_arms, extra_cells_paths)):
+            extra = read_tsv(cells_path)
+            extra_tsv_name = Path(cells_path).name
+            cells = {}
+            for mode in ["k2_last", "k2_best", "k3_last", "k3_best"]:
+                run = f"{arm}_{mode}"
+                rows = [r for r in extra if r["run"] == run]
+                if len(rows) != N_CELLS:
+                    raise SystemExit(f"extra run {run}: {len(rows)} rows, want {N_CELLS}")
+                e = cells_stats(rows)
+                e["provenance"] = f"fresh-run {a.date} ({extra_tsv_name}, run={run})"
+                cells[MODE_KEY[mode]] = e
+            models[arm] = {
+                "kind": "inner",
+                "label": labels[i] if i < len(labels) else arm,
+                "bake": bakes[i] if i < len(bakes) else None,
+                "cells": cells,
+            }
 
     out_name = Path(a.out_json).name if a.out_json else "zensim_loop_23shot_summary.json"
     out = {
@@ -257,8 +266,13 @@ def cmd_summarize(a):
                       "the folded-class loop route (canonical 944 extraction + full-bundle "
                       "forward; redistribution map identical to every *_base arm) — see "
                       "zensim_loop_23shot_sota944_2026-08-05.md; its per-compare cost carries "
-                      "a structural second pass (no fused 944 entry).")
-                     if a.extra_arm else "")),
+                      "a structural second pass (no fused 944 entry at that study's substrate).")
+                     if extra_arms else "")
+                  + ((" W10L9_h3own = the candidate steered by its OWN attribution map "
+                      "(h3-mag through the fused folded-944 compare, campaign appendix N; "
+                      "gradient probed at the first compare's folded features) — see "
+                      "zensim_loop_h3own_sota944_2026-08-05.tsv.")
+                     if "W10L9_h3own" in extra_arms else "")),
         "models": models,
     }
     if a.out_json:
@@ -295,12 +309,13 @@ def main():
     s.add_argument("--zensim-commit", default="?")
     s.add_argument("--date", default="2026-08-01",
                    help="summary 'date' field + fresh-run provenance date for --extra-arm")
-    s.add_argument("--extra-arm", default=None,
-                   help="key of one extra fresh arm (runs <key>_{k2_last,k2_best,k3_last,k3_best} in --extra-cells)")
-    s.add_argument("--extra-cells", default=None,
-                   help="cells TSV carrying the extra arm's four fresh modes")
-    s.add_argument("--extra-arm-label", default=None)
-    s.add_argument("--extra-arm-bake", default=None)
+    s.add_argument("--extra-arm", action="append", default=None,
+                   help="key of an extra fresh arm (runs <key>_{k2_last,k2_best,k3_last,k3_best} "
+                        "in the positionally-matching --extra-cells); repeatable")
+    s.add_argument("--extra-cells", action="append", default=None,
+                   help="cells TSV carrying the matching extra arm's four fresh modes; repeatable")
+    s.add_argument("--extra-arm-label", action="append", default=None)
+    s.add_argument("--extra-arm-bake", action="append", default=None)
     a = ap.parse_args()
     if a.cmd == "verify":
         sys.exit(cmd_verify(a))
