@@ -239,9 +239,7 @@ fn judge_score(bake_path: &str, ref_rgb: &[u8], dec_rgb: &[u8], w: u32, h: u32) 
             _ => z.compute_folded720_features(&rs, &ds),
         };
         return v2
-            .and_then(|r| {
-                zensim::score_features_with_profile(profile, r.features(), w, h)
-            })
+            .and_then(|r| zensim::score_features_with_profile(profile, r.features(), w, h))
             .unwrap_or(f64::NAN);
     }
     z.compute(&rs, &ds).map(|r| r.score()).unwrap_or(f64::NAN)
