@@ -523,6 +523,15 @@
   `test_stop_cancels_lossless_multigroup`.
 
 ### Added
+
+- **Fused folded-944 model-map steering in the zensim loop** (campaign appendix
+  N): `JXL_ZENSIM_MODEL_MAP` attr-family arms now run on folded-class (720/924/
+  944) bakes through zensim's fused `compute_folded944_score_and_attribution`
+  (one extraction pass = exact features + steering map), replacing the appendix
+  M panic; folded gradient probe at the bake's own feature regime; substrate
+  probe 27/27+108/108 bit-exact for the 372-class loop. First result: the
+  sota944 candidate's OWN-map h3 arm hits 17/27 ±2 at k3 (best inner census on
+  the board) at bytes ratio 0.978 vs its generic-map baseline (ca7aa75f).
 - **`sweep` module — config enumeration + computed unique-configs
   (`__expert`).** `LossySweep` / `LosslessSweep` closure-axis grids plus
   `unique_lossy_configs` / `unique_lossless_configs` enumerate a cartesian
