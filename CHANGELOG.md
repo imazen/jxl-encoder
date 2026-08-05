@@ -524,6 +524,13 @@
 
 ### Added
 
+- **Stale-map single-pass for folded-class attr arms** (zensim campaign
+  appendix P lever 2, b8a582e5): `JXL_ZENSIM_SINGLEPASS=1` on a folded-class
+  bake pays ONE fused compare (map cached), later steered iterations run the
+  score-only extraction + cached map — steered compares at iters ≥2 drop to
+  ~40-43 ms (v47A class; was 123-141 ms fresh), G-P5 27-cell decoded A/B
+  holds (census exact, sp-vs-base 18W/8L/1T @ 0.979). Runner phases
+  `h3ownsp` + `gainsweep`; ZENSIM_H3_GAIN sweep {5,10,20,40} → keep 10.
 - **Fused folded-944 model-map steering in the zensim loop** (campaign appendix
   N): `JXL_ZENSIM_MODEL_MAP` attr-family arms now run on folded-class (720/924/
   944) bakes through zensim's fused `compute_folded944_score_and_attribution`

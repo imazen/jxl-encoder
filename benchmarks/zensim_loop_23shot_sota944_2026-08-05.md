@@ -298,3 +298,99 @@ the naive unfused composition would cost ~183 ms/compare zensim-side.
   byte-carried; substrate fields → jxl `ca7aa75f` / zensim `c28d29b8`).
 - Runner: `run_23shot_sota944.sh h3own` phase; analyzer: repeatable
   `--extra-arm` (single-pair invocation unchanged).
+
+# THE PERF PROGRAM (2026-08-05, same day — zensim campaign appendix P)
+
+Registration: zensim `benchmarks/sota944_campaign_2026-08-03.md` APPENDIX P
+(`95a272c0`, pre-registered). Levers: (1) f32 pass-B in the fused folded-944
+entry (zensim `471ce401` — pass-B 65 → 7.3 ms, fused entry 150.4 → 62.0 ms
+zenbench, all four parity gates green, M3a 3-bake re-measure EXACT); (2) the
+stale-map single-pass in this repo's loop (`b8a582e5`).
+
+## Lever 2 — stale-map single-pass (G-P5/G-P6)
+
+`JXL_ZENSIM_SINGLEPASS=1` on a folded-class bake + attr-family arm now means:
+the FIRST steered iteration pays the fused compare (map cached); every later
+steered iteration is a score-only canonical extraction + forward steering with
+the cached map. Map sequence M1, M1, M1 vs fresh M1, M2, M3 — level control
+stays with the damped controller + sum-renormalization, so staleness affects
+allocation shape only.
+
+**Substrate gate**: probe phase PASS on the lever-1+2 substrate — 27/27 cells
++ 108/108 trace compares equal vs the committed mm TSVs (372-class loop
+unchanged). **G-P6 engagement**: probe lines 54/54 (k2) + 81/81 (k3), traces
+81/81 + 108/108; emit-best diverges on 4-5/27 cells (same class as fresh).
+
+**G-P5 (arm `W10L9_h3ownsp`, same 27-cell grid, decoded-judged, stats owner
+`analyze_23shot.py`) — the gate HOLDS:**
+
+| arm (k3) | ±2 last | med last | ±2 best | med best |
+|---|--:|--:|--:|--:|
+| W10L9_h3own (fresh maps, committed) | 17/27 | 1.73 | 17/27 | 1.66 |
+| **W10L9_h3ownsp (stale-map single-pass)** | **17/27** | 1.87 | **17/27** | 1.87 |
+
+- **Census holds EXACTLY** (k2 10/27 both; k3 17/27 both — still the best
+  inner census on the board). k2 medians identical (2.399 == 2.399).
+- **Paired per-cell k3_best sp-vs-fresh: 14W/8L/5T at bytes ratio 1.000** —
+  per-cell parity-or-better; the aggregate med moved 1.66 → 1.87 on
+  distribution shape, not dominance. Per-band census identical
+  (t70 5/9, t80 5/9, t88 7/9).
+- **The N.4 headline is preserved verbatim: sp vs W10L9_base 18W/8L/1T at
+  bytes 0.979** (fresh was 18W/8L/1T at 0.978).
+- k2 is BEHAVIORALLY IDENTICAL by construction (the only steered
+  redistribution uses the same fresh M1 in both arms): 25/27 cells
+  bit-identical vs the committed fresh TSV; the 2-3 differing cells are the
+  LEVER-1 f32-map tolerance-class effect, not staleness — verified by a
+  same-substrate fresh re-run of girl/t70 reproducing the sp values exactly
+  (err 2.235 / bytes 22805) with a bit-identical same-arm repeat (encoder
+  deterministic).
+- Default stays OFF (env-gated); `h3-mag-stale` (lagged-fresh) unchanged.
+
+## Lever 2 — the cost result (B-N2 read)
+
+27-cell k3 trace medians (576²; iteration wall incl. encode-side steps, the
+same instrument as every per-compare number in this file):
+
+| iter | N.R fresh (pre-P) | after lever 1 (fused, = sp iter 1) | after levers 1+2 (iters ≥2) |
+|---|--:|--:|--:|
+| 0 (probe, one-time) | 299.9 | 369.9-372.8¹ | unchanged |
+| 1 | 141.5 | **101.7-105.3** | (pays the one fused map) |
+| 2 | 129.1 | — | **41.4-42.7** |
+| 3 | 123.5 | — | **39.7-41.1** |
+
+¹ same one-time probe (baseline compare + 1888-forward gradient), busier box
+today; registered residual P.5.3.
+
+**Steered compares at iterations ≥2 land at ~40-43 ms — the v47A class
+(34.6 × 1.15-1.24) and BELOW the candidate's own unsteered baseline compare
+(51.8 ms)**, because the cheap path pays extraction+forward only (no Trained
+diffmap walk). Median steered compare (k3): 129.1 → 42.7 ms (3.0×). Whole
+k3_best encode medians: h3own fresh (pre-lever-1) encode 776.6 / loop 707.7 ms
+→ h3ownsp 649.0 / 565.8 ms; the one-time iter-0 probe (~370 ms) is now ~65%
+of loop wall — the dominant registered residual (P.5.3, out of scope here).
+
+## Lever 3 — ZENSIM_H3_GAIN sweep (registered curve; keep 10)
+
+k3 emit-best, fresh-map arm, 27 cells/gain
+(`benchmarks/zensim_loop_h3gain_sota944_2026-08-05.tsv`):
+
+| gain | ±2 | med \|err\| | med bytes | bands (±2 of 9: t70/t80/t88) |
+|---|--:|--:|--:|---|
+| 5 | 18/27 | 1.85 | 22279 | 5/5/8 |
+| 10 (committed h3own rows) | 17/27 | 1.66 | 22168 | 5/5/7 |
+| 20 | 16/27 | 1.81 | 21926 | 5/5/6 |
+| 40 | 15/27 | 1.78 | 22110 | 4/5/6 |
+
+Census is flat 5↔10 (single cell, and gain-10 rows sit across the lever-1
+substrate boundary whose f32-map effect moves 2-3 cells — not separable at
+n=27); it declines monotonically above 10. **Recommendation: keep
+ZENSIM_H3_GAIN=10** (no default change; the curve is the deliverable).
+
+## Deliverables (perf program)
+
+- `benchmarks/zensim_loop_h3ownsp_sota944_2026-08-05.tsv` (108 cells),
+  `benchmarks/zensim_loop_h3gain_sota944_2026-08-05.tsv` (81 cells), this
+  section; summary JSON regenerated by the owner with the `W10L9_h3ownsp`
+  arm added (all carried model stats verified identical; substrate → jxl
+  `b8a582e5` / zensim `471ce401`).
+- Runner phases `h3ownsp` + `gainsweep` (`run_23shot_sota944.sh`).
