@@ -206,10 +206,35 @@ def cmd_summarize(a):
                              f"!= published F1 {MM_F1_OUTER_J3[run]}")
         models[run] = {"kind": kind, "label": label, "bake": bake, "cells": cells}
 
+    # SOTA-944 extension (2026-08-05): one extra fresh arm whose FOUR modes
+    # (k2_last/k2_best/k3_last/k3_best — k3_last is fresh, it has no mm rows)
+    # live in a second cells TSV. The owner is extended, never forked.
+    if a.extra_arm:
+        if not a.extra_cells:
+            raise SystemExit("--extra-arm requires --extra-cells")
+        extra = read_tsv(a.extra_cells)
+        extra_tsv_name = Path(a.extra_cells).name
+        cells = {}
+        for mode in ["k2_last", "k2_best", "k3_last", "k3_best"]:
+            run = f"{a.extra_arm}_{mode}"
+            rows = [r for r in extra if r["run"] == run]
+            if len(rows) != N_CELLS:
+                raise SystemExit(f"extra run {run}: {len(rows)} rows, want {N_CELLS}")
+            e = cells_stats(rows)
+            e["provenance"] = f"fresh-run {a.date} ({extra_tsv_name}, run={run})"
+            cells[MODE_KEY[mode]] = e
+        models[a.extra_arm] = {
+            "kind": "inner",
+            "label": a.extra_arm_label or a.extra_arm,
+            "bake": a.extra_arm_bake,
+            "cells": cells,
+        }
+
+    out_name = Path(a.out_json).name if a.out_json else "zensim_loop_23shot_summary.json"
     out = {
         "schema": "zensim_loop_23shot_summary.v1",
-        "date": "2026-08-01",
-        "source": "jxl-encoder benchmarks/zensim_loop_23shot_summary_2026-08-01.json",
+        "date": a.date,
+        "source": f"jxl-encoder benchmarks/{out_name}",
         "matrix": {"refs": 9, "targets": [70, 80, 88], "n_cells": N_CELLS,
                    "within_tol": TOL,
                    "judge": "decode the emitted bitstream, score with the SAME metric that "
@@ -227,7 +252,13 @@ def cmd_summarize(a):
                   "steps, the step-count parallel of inner k=j); j*_best = best-of-<=j "
                   "(decoded-judged by construction). latest arm SKIPPED: proven 27/27 "
                   "byte-identical to B_base (mm mount-equivalence gate) — its numbers are "
-                  "B_base's. blend2L/bvls bakes are not on the gauntlet fulleval board."),
+                  "B_base's. blend2L/bvls bakes are not on the gauntlet fulleval board."
+                  + ((" W10L9_base (sota944 candidate, 944-class PRUNED bake) scores through "
+                      "the folded-class loop route (canonical 944 extraction + full-bundle "
+                      "forward; redistribution map identical to every *_base arm) — see "
+                      "zensim_loop_23shot_sota944_2026-08-05.md; its per-compare cost carries "
+                      "a structural second pass (no fused 944 entry).")
+                     if a.extra_arm else "")),
         "models": models,
     }
     if a.out_json:
@@ -262,6 +293,14 @@ def main():
     s.add_argument("--out-json", default=None)
     s.add_argument("--jxl-commit", default="?")
     s.add_argument("--zensim-commit", default="?")
+    s.add_argument("--date", default="2026-08-01",
+                   help="summary 'date' field + fresh-run provenance date for --extra-arm")
+    s.add_argument("--extra-arm", default=None,
+                   help="key of one extra fresh arm (runs <key>_{k2_last,k2_best,k3_last,k3_best} in --extra-cells)")
+    s.add_argument("--extra-cells", default=None,
+                   help="cells TSV carrying the extra arm's four fresh modes")
+    s.add_argument("--extra-arm-label", default=None)
+    s.add_argument("--extra-arm-bake", default=None)
     a = ap.parse_args()
     if a.cmd == "verify":
         sys.exit(cmd_verify(a))

@@ -121,8 +121,99 @@ no mm-study rows to derive from).
 
 ## Results
 
-*(filled after the runs; gates first, then the panel table, then the cost read,
-then which registered outcome fired)*
+Runs 2026-08-05 (~135 fresh encodes: 27 probe + 108 candidate, nice'd, ~90 s).
+Substrate: jxl `792378e1`+this-study's integration commit, zensim `17770775`
+(path dep, clean tree at origin/main). Data:
+`zensim_loop_23shot_sota944_2026-08-05.tsv` (fresh cells + probe) + the two mm
+TSVs + the 2026-08-01 TSV for carried entries; machine summary
+`zensim_loop_23shot_summary_2026-08-05.json`.
+
+**Gates — all green:**
+
+- **SUBSTRATE PROBE PASS** — fresh `v47A_base_k3_lastprobe` vs committed mm
+  rows: 27/27 cells equal (achieved_decoded/abs_err/bytes), 108/108 trace
+  compares equal. Carried controls valid AND the folded-class integration
+  changes provably did not alter the 372-class loop (the R0-identity read).
+- **Engagement PASS** — candidate probe files 0 lines on all 4 runs; traces
+  exactly 81/81/108/108 rows (27×(k+1)).
+- **Caller-width check (the task's first-priority hazard) — CONFIRMED + FIXED**:
+  the pre-existing probe (`[372, 300, 228, 156]`) returns 0 for the pruned
+  944-class bake, and the pre-existing mount would then have silently emitted
+  seed-quality bitstreams through the compare-error swallow. The smallest-first
+  probe resolves the candidate at its CALLER width 944 (not its internal 667);
+  the full-bundle forward (`score_features_with_profile` →
+  `caller_input_width()` sizing) scores it correctly — in-loop vs decoded-judged
+  transfer is tight (med |Δ| ≈ 0.1, e.g. city/t80 80.53 in-loop vs 80.55
+  decoded).
+- **Emit-best A/B (report)** — candidate bitstreams differing best-vs-last:
+  k2 6/27, k3 5/27 (oscillating-controller class, like B). The banked iterates
+  changed neither census nor median (no mover crossed ±2; the median cell was
+  unmoved — med_bytes did move, k2 23.3K→23.8K, confirming distinct rows).
+- **Analyze-owner regression** — the extended `analyze_23shot.py` byte-reproduces
+  the 2026-08-01 summary (all fields identical; only the self-referential
+  `source` filename differs when written under a new name).
+
+### The panel table — cells within ±2.0 (of 27) | median |err| | median bytes
+
+Candidate fresh; incumbents carried (ᶜ) from the 2026-08-01 summary
+(substrate-probe-verified). Full carried table: `zensim_loop_23shot_2026-08-01.md`.
+
+| model | k2 emit-last | k2 emit-best | k3 emit-last | k3 emit-best |
+|---|--:|--:|--:|--:|
+| v47A_base ᶜ     | 12/27 · 3.04 · 22.8K | 12/27 · 3.04 · 22.8K | 13/27 · 2.28 · 22.2K | 13/27 · 2.28 · 22.2K |
+| B_base ᶜ        | 13/27 · 2.23 · 26.4K | **14/27** · 1.94 · 26.4K | 14/27 · 1.89 · 26.3K | 15/27 · 1.89 · 26.3K |
+| **W10L9_base**  | 10/27 · 2.63 · 23.3K | 10/27 · 2.63 · 23.8K | **15/27 · 1.82** · 22.9K | **15/27 · 1.82** · 22.9K |
+
+Per-target (emit-best, within-±2 of 9 | median):
+
+| model | t70 k2 | t80 k2 | t88 k2 | t70 k3 | t80 k3 | t88 k3 |
+|---|--:|--:|--:|--:|--:|--:|
+| v47A_base  | 3/9 · 3.27 | 5/9 · 1.70 | 4/9 · 2.22 | 3/9 · 2.93 | 5/9 · 1.03 | 5/9 · 1.98 |
+| B_base     | 6/9 · 1.91 | 5/9 · 1.62 | 3/9 · 2.34 | 6/9 · 1.24 | 5/9 · 0.70 | 4/9 · 2.16 |
+| W10L9_base | 2/9 · 3.03 | 4/9 · 2.26 | 4/9 · 2.50 | 3/9 · 2.76 | 5/9 · 1.40 | **7/9** · 1.81 |
+
+Class split (emit-best): candidate photo 9/18 (k2) → **14/18 (k3, the best
+photo census of any inner arm**; B 13/18, v47A 12/18); nonphoto 1/9 both
+budgets — the sc_gui/sc_wiki t70/t80 cells overshoot for EVERY arm (achieved
+86-91 at t70; the 1.35-clamp controller cannot push screen content down to
+target in 2-3 steps from these seeds — the k2 worst-cell list is entirely this
+class plus cid1418519/t70).
+
+### Which registered outcome fired
+
+**Split verdict — (c) at budget 2, (b)-plus at budget 3; NOT (a) overall.**
+
+- **k2 emit-best: candidate 10/27 < v47A 12/27 < B 14/27** — worse than both
+  incumbents (outcome c). The 2-shot loop recommendation stays with shippedB.
+- **k3 emit-best: candidate 15/27 = B 15/27 > v47A 13/27**, with the best
+  inner-arm median (1.816 vs B 1.894) — registered tie-break favors the
+  candidate (outcome b, leaning a). At **k3 emit-last the candidate leads
+  outright: 15/27 vs B 14/27 / v47A 13/27** — the best inner-arm 3-shot
+  as-emitted census in the series.
+- Freeze-surface sentence: *the loop axis is filled — at budget 2 the
+  incumbent B remains the recommendation (14 vs 10); at budget 3 the candidate
+  ties B's census with the best median, the best photo census (14/18), and the
+  best near-lossless-band census (t88 7/9, vs 4/9 B / 5/9 v47A) — the
+  candidate's k3 t88 strength lands exactly in the HF weak zone the campaign
+  targets.* Honest nulls stand; nothing ships or swaps on this study alone.
+
+### Loop cost (same-session, 576²-class, medians over 27 cells)
+
+| run | ms/compare | loop_ms | encode_ms |
+|---|--:|--:|--:|
+| v47A_base_k3 (probe, fresh today) | 34.6 | 138.6 | 200.2 |
+| W10L9_base_k3_last | 51.8 | 207.0 | 276.3 |
+| W10L9_base_k2_last | 55.5 | 166.5 | 221.5 |
+
+**Candidate/v47A: 1.50× per compare, 1.38× whole-encode (k3).** The folded
+route pays the registered structural second pass (v1 diffmap walk for the map
++ the 944 streaming extraction for the score) and STILL lands at 1.5× — the
+C5 streaming foldapp extraction is the reason this is not 2-3×. The zensim
+forward-perf work (~25× faster forwards, pruning −25%) does not dominate
+end-to-end because extraction, not the MLP forward, is the per-compare cost —
+measured, as registered, not assumed. A fused folded-class compare (score +
+map in one walk) is the obvious future lever if the candidate's k3 profile
+motivates loop use.
 
 ## Limitations (registered)
 

@@ -33,16 +33,46 @@ fn rd_bake_bytes() -> &'static [u8] {
 static RD_PROFILE: std::sync::OnceLock<(zensim::ZensimProfile, usize)> = std::sync::OnceLock::new();
 
 /// Feature-width probe: the bakes we mount are exact-width, so the first width
-/// the forward accepts is the model's n_inputs (dependency-free — avoids a
-/// zenpredict dep just to read the header).
+/// the forward accepts is the model's caller-facing input width (dependency-free
+/// — avoids a zenpredict dep just to read the header).
+///
+/// 23shot-sota944 (2026-08-05): probes SMALLEST-FIRST. The forward accepts any
+/// width `>=` the bake's caller width (prefix branch) plus `caller == W + 4`
+/// (size axes), so the first accepted width is the tightest one. Largest-first
+/// with the folded widths in the list would resolve EVERY bake to 944 and break
+/// the ≤372 arms' gradient probes. Folded widths (720/924/944) route the loop
+/// through the folded-class score path below. Note a PRUNED bake
+/// (`FeatureTransform::Drop`) probes at its CALLER width, not its internal
+/// layer-0 width — exactly what the extraction must produce.
 fn rd_infer_n_inputs(profile: zensim::ZensimProfile) -> usize {
-    let feats = vec![0.0f64; 372];
-    for n in [372usize, 300, 228, 156] {
+    let feats = vec![0.0f64; 944];
+    for n in [156usize, 228, 300, 372, 720, 924, 944] {
         if zensim::score_features_with_profile(profile, &feats[..n], 64, 64).is_ok() {
             return n;
         }
     }
     0
+}
+
+/// Map-side profile for the folded-class score route: NO mlp, walk config
+/// (weights / num_scales / blur) identical to the bake mounts' builder
+/// defaults — so the Trained diffmap driving redistribution is the same map
+/// every `*_base` arm uses, and the mounted 944-class bake is the ONLY arm
+/// difference (it judges/controls; it cannot score through the 372-class
+/// compare, whose forward would fail and silently emit the seed).
+static RD_MAP_PROFILE: std::sync::OnceLock<zensim::ZensimProfile> = std::sync::OnceLock::new();
+fn rd_map_profile() -> zensim::ZensimProfile {
+    *RD_MAP_PROFILE.get_or_init(|| {
+        let params = zensim::profile::ProfileParams::builder()
+            .skip_score_mapping(true)
+            .extrapolate_score(true)
+            .build();
+        let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
+        zensim::ZensimProfile::Custom {
+            params,
+            name: "rd-map-folded",
+        }
+    })
 }
 
 /// `JXL_ZENSIM_RD_PROFILE=a|b|latest|bake:<path>` → (profile, n_inputs).
@@ -67,6 +97,16 @@ fn rd_profile_from_env() -> (zensim::ZensimProfile, usize) {
             name: "rd-bake",
         };
         let n_in = rd_infer_n_inputs(profile);
+        // 23shot-sota944 loud guard: a mounted bake whose forward accepts no
+        // probed width can never score — the loop's compare errors would then
+        // silently emit seed-quality bitstreams (`Err(_) => Ok(current_params)`).
+        // Refuse at mount instead.
+        assert!(
+            n_in != 0,
+            "JXL_ZENSIM_RD_PROFILE bake:{path}: the bake's forward accepts no \
+             probed feature width (156/228/300/372/720/924/944) — refusing to \
+             mount a bake that cannot score (silent mount = seed-quality output)"
+        );
         return (profile, n_in);
     }
     match v.as_str() {
@@ -481,7 +521,23 @@ impl VarDctEncoder {
         // the first iteration's features, fold per the 2026-07-18 coherence
         // matrix (signed for MLP gradients, abs for additive solves).
         let (rd_profile, rd_n_in) = *RD_PROFILE.get_or_init(rd_profile_from_env);
-        let z = zensim::Zensim::new(rd_profile).with_parallel(false);
+        // 23shot-sota944 (2026-08-05): folded-class (720/924/944) bakes cannot
+        // score through the 372-class compare below — its forward wants more
+        // features than that walk extracts, and the compare's `Err(_) =>
+        // Ok(current_params)` would silently emit the seed. Route: the
+        // redistribution map comes from the no-mlp map profile (identical walk
+        // config — same Trained diffmap as every `*_base` arm), and the score
+        // comes from the canonical folded extraction + the full-bundle forward
+        // (`score_features_with_profile`, which sizes by the bake's CALLER
+        // input width — a pruned bake carries `FeatureTransform::Drop` and
+        // must be handed its caller-width vector, never its internal width).
+        let folded_class = rd_n_in >= 720;
+        let z = zensim::Zensim::new(if folded_class {
+            rd_map_profile()
+        } else {
+            rd_profile
+        })
+        .with_parallel(false);
         let model_map = std::env::var("JXL_ZENSIM_MODEL_MAP").ok();
         // C3b (task #67): `attr` steers iterations 2+ with the C3a FUSED
         // compare (`compute_with_ref_score_and_attribution` — ONE call =
@@ -504,17 +560,56 @@ impl VarDctEncoder {
         // All three share the C3b attr arm's fused compare, controller,
         // qf bounds, and sum-renormalization — the A/B isolates the
         // redistribution rule.
-        let model_map_active = matches!(
-            model_map.as_deref(),
-            Some("signed")
-                | Some("abs")
-                | Some("attr")
-                | Some("attr-stale")
-                | Some("h1-signed")
-                | Some("h2-ctrl")
-                | Some("h3-mag")
-                | Some("h3-mag-stale")
-        ) && rd_n_in > 0;
+        // 23shot-sota944 loud guards (2026-08-05) — the loop69-registered
+        // hazard was that an unknown JXL_ZENSIM_MODEL_MAP value fell through
+        // to baseline SILENTLY (caught in-run there only by a control-arm
+        // mismatch). Three refusals replace the fall-through:
+        //   1. unknown arm name        -> panic (typo'd arms never masquerade
+        //      as baseline);
+        //   2. arm set but rd_n_in == 0 (profile A / unprobed) -> panic (the
+        //      arm would silently run as baseline);
+        //   3. arm set on a folded-class bake -> panic (the fused compare +
+        //      ModelSensitivity fold are 372-class only — a registered
+        //      limitation, not a silent downgrade).
+        // Empty string counts as unset (baseline), matching `remove_var`
+        // drivers that clear the arm between runs.
+        let model_map_requested = matches!(model_map.as_deref(), Some(s) if !s.is_empty());
+        if model_map_requested {
+            let known = matches!(
+                model_map.as_deref(),
+                Some("signed")
+                    | Some("abs")
+                    | Some("attr")
+                    | Some("attr-stale")
+                    | Some("h1-signed")
+                    | Some("h2-ctrl")
+                    | Some("h3-mag")
+                    | Some("h3-mag-stale")
+            );
+            assert!(
+                known,
+                "JXL_ZENSIM_MODEL_MAP='{}' is not a known arm \
+                 (signed|abs|attr|attr-stale|h1-signed|h2-ctrl|h3-mag|h3-mag-stale) \
+                 — refusing the silent fall-through to baseline",
+                model_map.as_deref().unwrap_or_default()
+            );
+            assert!(
+                rd_n_in > 0,
+                "JXL_ZENSIM_MODEL_MAP='{}' is set but the loop profile has no \
+                 probed feature width (JXL_ZENSIM_RD_PROFILE unset / profile A) \
+                 — the arm would silently run as baseline; refusing",
+                model_map.as_deref().unwrap_or_default()
+            );
+            assert!(
+                !folded_class,
+                "JXL_ZENSIM_MODEL_MAP='{}' requested on a folded-class bake \
+                 (probed width {rd_n_in}): map-steering arms are 372-class only \
+                 (fused compare + ModelSensitivity fold) — refusing the silent \
+                 downgrade to baseline",
+                model_map.as_deref().unwrap_or_default()
+            );
+        }
+        let model_map_active = model_map_requested;
         let attr_mode = matches!(
             model_map.as_deref(),
             Some("attr")
@@ -620,6 +715,20 @@ impl VarDctEncoder {
         let mut iter_ms: Vec<f64> = Vec::new();
         let mut compares_used = 0usize;
         let mut final_score = f64::NAN;
+        // Folded-class score route: the canonical folded extraction takes the
+        // SOURCE as an ImageSource per compare (streaming, no prepared-ref
+        // form since the C5 switchover), so build the tight LinearF32Rgba
+        // interleave of the clean source once per encode.
+        let mut folded_src_rgba: Vec<f32> = Vec::new();
+        if folded_class {
+            folded_src_rgba.resize(n * 4, 1.0);
+            for i in 0..n {
+                folded_src_rgba[i * 4] = linear_rgb[i * 3];
+                folded_src_rgba[i * 4 + 1] = linear_rgb[i * 3 + 1];
+                folded_src_rgba[i * 4 + 2] = linear_rgb[i * 3 + 2];
+            }
+        }
+
         // The deinterleaved planes are transient: only used to build the zensim
         // precomputed reference, then dropped.
         let precomputed = {
@@ -890,7 +999,57 @@ impl VarDctEncoder {
                     Ok(r) => r,
                     Err(_) => return Ok(current_params),
                 };
-                zensim_score = dm.score();
+                zensim_score = if folded_class {
+                    // Folded-class score: canonical 720/924/944 extraction over
+                    // (clean source, current recon) + full-bundle forward in
+                    // the bake's own units. Failures PANIC (study path, loud
+                    // by design): the mount probe already proved the width, so
+                    // an error here is a wiring bug, and the alternative — the
+                    // compare-error swallow above — silently emits the seed.
+                    let n_px = width * height;
+                    attr_rgba.resize(n_px * 4, 1.0);
+                    for y in 0..height {
+                        let row = y * padded_width;
+                        let out = y * width * 4;
+                        for x in 0..width {
+                            attr_rgba[out + x * 4] = recon_r[row + x];
+                            attr_rgba[out + x * 4 + 1] = recon_g[row + x];
+                            attr_rgba[out + x * 4 + 2] = recon_b[row + x];
+                            attr_rgba[out + x * 4 + 3] = 1.0;
+                        }
+                    }
+                    let src = zensim::StridedBytes::with_alpha_mode(
+                        bytemuck::cast_slice(&folded_src_rgba),
+                        width,
+                        height,
+                        width * 16,
+                        zensim::PixelFormat::LinearF32Rgba,
+                        zensim::AlphaMode::Opaque,
+                    );
+                    let dst = zensim::StridedBytes::with_alpha_mode(
+                        bytemuck::cast_slice(&attr_rgba),
+                        width,
+                        height,
+                        width * 16,
+                        zensim::PixelFormat::LinearF32Rgba,
+                        zensim::AlphaMode::Opaque,
+                    );
+                    let v2 = match rd_n_in {
+                        944 => z.compute_folded720_append2_features(&src, &dst),
+                        924 => z.compute_folded720_append_features(&src, &dst),
+                        _ => z.compute_folded720_features(&src, &dst),
+                    }
+                    .expect("folded-class extraction failed (loud by design)");
+                    zensim::score_features_with_profile(
+                        rd_profile,
+                        v2.features(),
+                        width as u32,
+                        height as u32,
+                    )
+                    .expect("folded-class forward failed after a passing mount probe (wiring bug)")
+                } else {
+                    dm.score()
+                };
                 let diffmap = dm.diffmap();
 
                 // RD-experiment: a SIGNED model-sensitivity map carries negative

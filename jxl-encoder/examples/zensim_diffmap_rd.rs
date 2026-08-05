@@ -154,16 +154,33 @@ static JUDGE_BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
 fn judge_bytes() -> &'static [u8] {
     JUDGE_BYTES.get().expect("judge bake set").as_slice()
 }
-static JUDGE: std::sync::OnceLock<zensim::ZensimProfile> = std::sync::OnceLock::new();
+/// (profile, probed caller width). Width 0 = named profile / non-folded route
+/// (the classic `z.compute` path). Width ≥ 720 = folded-class judge route.
+static JUDGE: std::sync::OnceLock<(zensim::ZensimProfile, usize)> = std::sync::OnceLock::new();
 
-fn judge_profile(bake_path: &str) -> zensim::ZensimProfile {
+/// 23shot-sota944 (2026-08-05): smallest-first width probe, mirroring the
+/// loop's `rd_infer_n_inputs` (vardct/zensim_loop.rs — the forward accepts any
+/// width ≥ the bake's caller width, so the FIRST accepted width is the tight
+/// one). Examples cannot reach the crate-private probe; keep the two lists in
+/// sync.
+fn probe_judge_width(profile: zensim::ZensimProfile) -> usize {
+    let feats = vec![0.0f64; 944];
+    for n in [156usize, 228, 300, 372, 720, 924, 944] {
+        if zensim::score_features_with_profile(profile, &feats[..n], 64, 64).is_ok() {
+            return n;
+        }
+    }
+    0
+}
+
+fn judge_profile(bake_path: &str) -> (zensim::ZensimProfile, usize) {
     *JUDGE.get_or_init(|| {
         // Metric-matrix study (2026-07-31): `profile:<a|b|latest>` judges
         // with the NAMED profile (the loop scorer is set to the same name
         // by `set_rd_profile_env`) — the same-scorer judging contract,
         // without mounting bytes.
         if let Some(name) = bake_path.strip_prefix("profile:") {
-            return match name {
+            let p = match name {
                 "b" => zensim::ZensimProfile::B,
                 "latest" => zensim::ZensimProfile::latest_preview(),
                 "a" =>
@@ -173,6 +190,7 @@ fn judge_profile(bake_path: &str) -> zensim::ZensimProfile {
                 }
                 other => panic!("unsupported judge profile:{other}"),
             };
+            return (p, 0);
         }
         let bytes = std::fs::read(bake_path).expect("judge bake read");
         JUDGE_BYTES.set(bytes).expect("judge bytes once");
@@ -184,15 +202,22 @@ fn judge_profile(bake_path: &str) -> zensim::ZensimProfile {
             .compute_iw_features(true)
             .build();
         let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
-        zensim::ZensimProfile::Custom {
+        let profile = zensim::ZensimProfile::Custom {
             params,
             name: "judge-bake",
-        }
+        };
+        let n_in = probe_judge_width(profile);
+        assert!(
+            n_in != 0,
+            "judge bake {bake_path}: forward accepts no probed feature width — \
+             every judged cell would be NaN; refusing"
+        );
+        (profile, n_in)
     })
 }
 
 fn judge_score(bake_path: &str, ref_rgb: &[u8], dec_rgb: &[u8], w: u32, h: u32) -> f64 {
-    let profile = judge_profile(bake_path);
+    let (profile, n_in) = judge_profile(bake_path);
     let z = zensim::Zensim::new(profile).with_parallel(false);
     let rp: Vec<[u8; 3]> = ref_rgb
         .chunks_exact(3)
@@ -204,6 +229,21 @@ fn judge_score(bake_path: &str, ref_rgb: &[u8], dec_rgb: &[u8], w: u32, h: u32) 
         .collect();
     let rs = zensim::RgbSlice::new(&rp, w as usize, h as usize);
     let ds = zensim::RgbSlice::new(&dp, w as usize, h as usize);
+    if n_in >= 720 {
+        // Folded-class judge (23shot-sota944): canonical 720/924/944
+        // extraction + full-bundle forward — the same-scorer contract for a
+        // bake the 372-class compare cannot score. NaN = recorded null.
+        let v2 = match n_in {
+            944 => z.compute_folded720_append2_features(&rs, &ds),
+            924 => z.compute_folded720_append_features(&rs, &ds),
+            _ => z.compute_folded720_features(&rs, &ds),
+        };
+        return v2
+            .and_then(|r| {
+                zensim::score_features_with_profile(profile, r.features(), w, h)
+            })
+            .unwrap_or(f64::NAN);
+    }
     z.compute(&rs, &ds).map(|r| r.score()).unwrap_or(f64::NAN)
 }
 

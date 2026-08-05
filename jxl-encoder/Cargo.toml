@@ -58,7 +58,11 @@ fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
 # diffmap-RD worktree (2026-07-18): custom-profiles enables mounting arbitrary
 # bakes (ZensimProfile::Custom) + DiffmapWeighting::ModelSensitivity for the
 # model-map RD experiment. Worktree-only — do not land on main without review.
-zensim = { version = "0.3.0", optional = true, features = ["custom-profiles"] }
+# 23shot-sota944 (2026-08-05): feature-regime-v2 enables the canonical folded
+# 720/924/944 extraction entries the folded-class loop score route calls
+# (compute_folded720_append2_features + siblings). Compile-time only for the
+# 372-class paths (substrate-probe gated).
+zensim = { version = "0.3.0", optional = true, features = ["custom-profiles", "feature-regime-v2"] }
 # zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
 # quantization loop (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5). Opt-in via
 # the `zensim-loop-gpu` cargo feature; requires CUDA runtime at build +
