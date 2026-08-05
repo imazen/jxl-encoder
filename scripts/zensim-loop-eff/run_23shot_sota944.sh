@@ -6,7 +6,12 @@
 # fresh (k3-last has no mm rows to derive from), controls carried behind the
 # same substrate probe as the 2026-08-01 study (which doubles as the
 # R0-identity gate for the folded-class integration changes).
-# Phases: probe fresh collect h3own   (usage: run_23shot_sota944.sh <phase>|all)
+# Phases: probe fresh collect h3own h3ownsp gainsweep
+#   (usage: run_23shot_sota944.sh <phase>|all)
+# `h3ownsp` (campaign appendix P lever 2, 2026-08-05): G-P5 — h3-mag +
+# JXL_ZENSIM_SINGLEPASS=1 (stale-map single-pass) vs the committed fresh
+# h3own rows. `gainsweep` (appendix P lever 3): ZENSIM_H3_GAIN ∈ {5,20,40}
+# × k3 emit-best on the fresh h3own arm.
 # `h3own` (campaign appendix N.4, 2026-08-05): the candidate's OWN-map H3
 # magnitude-steering arm through the FUSED folded-944 compare — vs the
 # CARRIED W10L9_base rows (same cells, same stats owner). Runs after `probe`
@@ -181,6 +186,95 @@ if [ "$phase" = h3own ]; then
     done
   } > "$BD/zensim_loop_h3own_sota944_2026-08-05.tsv"
   wc -l "$BD/zensim_loop_h3own_sota944_2026-08-05.tsv" | tee -a "$LOG"
+fi
+
+# ── h3ownsp: appendix P lever 2 gate G-P5 — the same h3own grid with
+#    JXL_ZENSIM_SINGLEPASS=1 (stale-map single-pass: first steered
+#    iteration fused + map cached, later iterations score-only extraction
+#    steering with the cached map). A/B vs the COMMITTED fresh h3own rows.
+if [ "$phase" = h3ownsp ]; then
+  HD=$OUT/h3ownsp
+  mkdir -p "$HD"
+  for mode in k2_last k2_best k3_last k3_best; do
+    K=${mode:1:1}
+    EB=()
+    [ "${mode#*_}" = best ] && EB=(JXL_ZENSIM_EMIT_BEST=1)
+    lbl=W10L9_h3ownsp_${mode}
+    run_ab "$HD" "$lbl" "$CAND" h3-mag "$K" 70,80,88 \
+      JXL_ZENSIM_TARGET_TOL=-1 JXL_SAVE_BITSTREAM=1 JXL_ZENSIM_SINGLEPASS=1 \
+      ${EB[@]+"${EB[@]}"} \
+      JXL_ZENSIM_TRACE=$HD/trace_$lbl.tsv \
+      JXL_ZENSIM_ATTR_PROBE=$HD/probe_$lbl.tsv
+  done
+  # Engagement gates: identical to the h3own phase — the cheap path still
+  # steers (and probes) every iteration 1..K.
+  fail=0
+  for mode in k2_last k2_best k3_last k3_best; do
+    K=${mode:1:1}
+    n=$(wc -l < "$HD/probe_W10L9_h3ownsp_${mode}.tsv" 2>/dev/null || echo 0)
+    want=$((27 * K))
+    say "ENGAGE W10L9_h3ownsp_$mode probe=$n want=$want"
+    [ "$n" -eq "$want" ] || fail=1
+    tn=$(wc -l < "$HD/trace_W10L9_h3ownsp_${mode}.tsv" 2>/dev/null || echo 0)
+    wantt=$((27 * (K + 1)))
+    say "TRACE  W10L9_h3ownsp_$mode rows=$tn want=$wantt"
+    [ "$tn" -eq "$wantt" ] || fail=1
+  done
+  for K in 2 3; do
+    diffn=0; tot=0
+    for f in "$HD"/decoded/W10L9_h3ownsp_k${K}_last__*.jxl; do
+      [ -f "$f" ] || continue
+      bn=$(basename "$f"); bb=${bn/_k${K}_last__/_k${K}_best__}
+      tot=$((tot + 1))
+      cmp -s "$f" "$HD/decoded/$bb" || diffn=$((diffn + 1))
+    done
+    say "EMIT_BEST k$K engagement W10L9_h3ownsp: $diffn/$tot bitstreams differ from emit-last"
+  done
+  [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
+  BD=$REPO/benchmarks
+  {
+    printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
+    for f in "$HD"/target_ab_*.tsv; do
+      [ -f "$f" ] || continue
+      run=$(basename "$f" .tsv); run=${run#target_ab_}
+      awk -F'\t' -v r="$run" 'NR>1 { print r "\t" $0 }' "$f"
+    done
+  } > "$BD/zensim_loop_h3ownsp_sota944_2026-08-05.tsv"
+  wc -l "$BD/zensim_loop_h3ownsp_sota944_2026-08-05.tsv" | tee -a "$LOG"
+fi
+
+# ── gainsweep: appendix P lever 3 — ZENSIM_H3_GAIN ∈ {5,20,40} × k3
+#    emit-best on the FRESH fused h3own arm (gain 10 = the committed h3own
+#    k3_best rows; registered as a sweep, no default change without the
+#    curve).
+if [ "$phase" = gainsweep ]; then
+  GD=$OUT/gainsweep
+  mkdir -p "$GD"
+  for gain in 5 20 40; do
+    lbl=W10L9_h3own_g${gain}_k3_best
+    run_ab "$GD" "$lbl" "$CAND" h3-mag 3 70,80,88 \
+      JXL_ZENSIM_TARGET_TOL=-1 JXL_SAVE_BITSTREAM=1 JXL_ZENSIM_EMIT_BEST=1 \
+      ZENSIM_H3_GAIN=$gain \
+      JXL_ZENSIM_TRACE=$GD/trace_$lbl.tsv \
+      JXL_ZENSIM_ATTR_PROBE=$GD/probe_$lbl.tsv
+  done
+  fail=0
+  for gain in 5 20 40; do
+    n=$(wc -l < "$GD/probe_W10L9_h3own_g${gain}_k3_best.tsv" 2>/dev/null || echo 0)
+    say "ENGAGE W10L9_h3own_g${gain}_k3_best probe=$n want=81"
+    [ "$n" -eq 81 ] || fail=1
+  done
+  [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
+  BD=$REPO/benchmarks
+  {
+    printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
+    for f in "$GD"/target_ab_*.tsv; do
+      [ -f "$f" ] || continue
+      run=$(basename "$f" .tsv); run=${run#target_ab_}
+      awk -F'\t' -v r="$run" 'NR>1 { print r "\t" $0 }' "$f"
+    done
+  } > "$BD/zensim_loop_h3gain_sota944_2026-08-05.tsv"
+  wc -l "$BD/zensim_loop_h3gain_sota944_2026-08-05.tsv" | tee -a "$LOG"
 fi
 
 # ── collect: concatenate committed TSV into benchmarks/ ───────────────────

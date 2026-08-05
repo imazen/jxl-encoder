@@ -618,7 +618,12 @@ impl VarDctEncoder {
         // call primes via the fresh path). Default OFF = the fresh fused
         // call, byte-identical to shipped behavior (R0-gated). The session
         // lives per encode (one reference), created lazily at the first
-        // steered iteration. 372-class only (guarded below).
+        // steered iteration.
+        // Appendix P lever 2: on a FOLDED-class bake the same env means the
+        // stale-MAP single-pass — the first steered iteration pays the
+        // fused folded-944 compare and caches its map; every later steered
+        // iteration is a score-only canonical extraction + forward steering
+        // with the cached map (marginal map cost ≈ 0; gate G-P5).
         let singlepass = matches!(
             std::env::var("JXL_ZENSIM_SINGLEPASS").ok().as_deref(),
             Some("1" | "true" | "yes")
@@ -660,15 +665,13 @@ impl VarDctEncoder {
                  refusing the silent downgrade to baseline",
                 model_map.as_deref().unwrap_or_default()
             );
-            // The stale-scalar single-pass session entry is 372-class; the
-            // fused folded-944 compare has no stale pipeline yet (appendix N
-            // registers it as the <=1.1x endpoint lever, not built).
-            assert!(
-                !(folded_class && singlepass),
-                "JXL_ZENSIM_SINGLEPASS=1 with a folded-class bake: the \
-                 stale-scalar single-pass entry is 372-class only — unset it \
-                 for folded-class attr arms (registered appendix N limitation)"
-            );
+            // Folded-class + SINGLEPASS is LIVE since appendix P lever 2:
+            // the stale-MAP single-pass (first steered iteration fused +
+            // map cached; later iterations score-only extraction steering
+            // with the cached map). The 372-class SINGLEPASS keeps its
+            // stale-SCALAR meaning (`compute_with_ref_score_and_attribution_stale`)
+            // unchanged. SINGLEPASS on a folded-class bake requires an
+            // attr-family arm (checked by the fold-family refusal above).
         }
         let model_map_active = model_map_requested;
         let attr_mode = matches!(
@@ -960,7 +963,42 @@ impl VarDctEncoder {
                     zensim::PixelFormat::LinearF32Rgba,
                     zensim::AlphaMode::Opaque,
                 );
-                let (res, attr, folded_score) = if folded_class {
+                // Appendix P lever 2 (stale-map single-pass): with
+                // `JXL_ZENSIM_SINGLEPASS=1` on a folded-class bake, only
+                // the FIRST steered iteration pays the fused compare (its
+                // map is cached in `prev_attr`); every later steered
+                // iteration is a SCORE-ONLY canonical extraction + forward
+                // (the identical score route the baseline folded arm uses)
+                // steering with the cached map — marginal map cost ≈ 0.
+                // Level control stays with the damped controller + shared
+                // sum-renormalization; staleness affects allocation SHAPE
+                // only (gate G-P5: the 27-cell decoded-judged A/B).
+                let stale_map_iter = folded_class && singlepass && prev_attr.is_some();
+                let (res, attr, folded_score) = if stale_map_iter {
+                    let src_clean = zensim::StridedBytes::with_alpha_mode(
+                        bytemuck::cast_slice(&folded_src_rgba),
+                        width,
+                        height,
+                        width * 16,
+                        zensim::PixelFormat::LinearF32Rgba,
+                        zensim::AlphaMode::Opaque,
+                    );
+                    let v2 = match rd_n_in {
+                        944 => z.compute_folded720_append2_features(&src_clean, &src),
+                        924 => z.compute_folded720_append_features(&src_clean, &src),
+                        _ => z.compute_folded720_features(&src_clean, &src),
+                    }
+                    .expect("folded-class extraction failed (loud by design)");
+                    let feats = v2.features();
+                    let sc = zensim::score_features_with_profile(
+                        rd_profile,
+                        &feats[..rd_n_in.min(feats.len())],
+                        width as u32,
+                        height as u32,
+                    )
+                    .expect("folded-class forward failed after a passing mount probe (wiring bug)");
+                    (None, None, Some(sc))
+                } else if folded_class {
                     // Appendix N: the FUSED folded-944 compare — canonical
                     // 944 extraction (features bitwise the standalone
                     // extraction, G-N1) + the full-coverage attribution map
@@ -995,7 +1033,7 @@ impl VarDctEncoder {
                         height as u32,
                     )
                     .expect("folded-class forward failed after a passing mount probe (wiring bug)");
-                    (res, attr, Some(sc))
+                    (Some(res), Some(attr), Some(sc))
                 } else if singlepass {
                     let sess = attr_session.get_or_insert_with(zensim::AttributionSession::new);
                     match z.compute_with_ref_score_and_attribution_stale(
@@ -1004,26 +1042,38 @@ impl VarDctEncoder {
                         s,
                         sess,
                     ) {
-                        Ok((r, a)) => (r, a, None),
+                        Ok((r, a)) => (Some(r), Some(a), None),
                         Err(_) => return Ok(current_params),
                     }
                 } else {
                     match z.compute_with_ref_score_and_attribution(&precomputed, &src, s) {
-                        Ok((r, a)) => (r, a, None),
+                        Ok((r, a)) => (Some(r), Some(a), None),
                         Err(_) => return Ok(current_params),
                     }
                 };
                 zensim_score = match folded_score {
                     Some(sc) => sc,
-                    None => res.score(),
+                    None => res
+                        .as_ref()
+                        .expect("non-folded arms carry a result")
+                        .score(),
                 };
-                measured_dist = res.approx_butteraugli() as f32;
+                // Log-only value; the score-only stale-map path runs no v1
+                // walk, so there is nothing to approximate — NaN, never 0.
+                measured_dist = res
+                    .as_ref()
+                    .map(|r| r.approx_butteraugli() as f32)
+                    .unwrap_or(f32::NAN);
                 // Stale arm: steer with the PREVIOUS iteration's map when
                 // one exists (first steered iteration uses the fresh map).
-                let steer_map = if attr_stale {
-                    prev_attr.as_ref().unwrap_or(&attr)
-                } else {
-                    &attr
+                // Stale-map single-pass iterations HAVE no fresh map — the
+                // cached one is the steering signal by construction.
+                let steer_map = match (&attr, attr_stale) {
+                    (Some(a), true) => prev_attr.as_ref().unwrap_or(a),
+                    (Some(a), false) => a,
+                    (None, _) => prev_attr
+                        .as_ref()
+                        .expect("stale-map single-pass without a cached map (wiring bug)"),
                 };
                 if h_arm.is_some() {
                     compute_tile_signed_attr(
@@ -1075,7 +1125,12 @@ impl VarDctEncoder {
                         );
                     }
                 }
-                if attr_stale {
+                // Cache the map: lagged-fresh for the `*-stale` arms; the
+                // FIRST fused map for the folded-class single-pass (later
+                // iterations produce none and keep reusing it).
+                if let Some(attr) = attr
+                    && (attr_stale || (folded_class && singlepass))
+                {
                     prev_attr = Some(attr);
                 }
                 drop(res);
