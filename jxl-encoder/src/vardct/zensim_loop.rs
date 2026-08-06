@@ -699,6 +699,22 @@ impl VarDctEncoder {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(10.0);
+        // A-Y1 (campaign appendix Y): adaptive H3 gain shapes. Unset/"fixed"
+        // = shipped constant gain (byte-identical); "decay" = gain·0.5^iter;
+        // "err" = gain·min(1, |err_i|/|err_0|) — error-proportional, needs a
+        // target (falls back to fixed without one).
+        let h3_gain_mode = std::env::var("ZENSIM_H3_GAIN_MODE").ok();
+        let mut h3_err0: Option<f64> = None;
+        // A-Y3 (campaign appendix Y): EMA blend of the H-arm per-tile query
+        // field across iterations — tile_q_i = α·fresh + (1−α)·prev, the
+        // middle point between the fresh and stale endpoints. Unset = OFF
+        // (byte-identical). Under stale-map single-pass the cached map makes
+        // this a near-no-op by construction.
+        let map_ema_alpha: Option<f32> = std::env::var("JXL_ZENSIM_MAP_EMA")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|a: &f32| a.is_finite() && *a > 0.0 && *a < 1.0);
+        let mut prev_tile_q: Vec<f32> = Vec::new();
         let mut model_s: Option<&'static [f64]> = None;
         // attr mode: interleaved LinearF32Rgba view of the recon (reused),
         // and the previous iteration's map for the stale arm.
@@ -757,6 +773,14 @@ impl VarDctEncoder {
             .and_then(|s| s.parse().ok())
             .filter(|c: &f64| c.is_finite() && *c > 1.0)
             .unwrap_or(1.35);
+        // A-Y2 (campaign appendix Y): env-gated override of the damped
+        // controller's exponent (shipped hard-coded 0.6). Unset / 0.6 =
+        // shipped behavior; values outside (0, 2] are ignored.
+        let ctrl_exp: f64 = std::env::var("JXL_ZENSIM_CTRL_EXP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|e: &f64| e.is_finite() && *e > 0.0 && *e <= 2.0)
+            .unwrap_or(0.6);
         let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
         // Efficiency study (2026-07-31): per-COMPARE trace — one TSV line per
         // iteration: `trace_id  iter  score  qf_mean  qf_min  qf_max  iter_ms`.
@@ -1084,6 +1108,17 @@ impl VarDctEncoder {
                         &mut tile_signed,
                         &mut tile_q,
                     );
+                    // A-Y3: EMA-blend the per-tile query field with the
+                    // previous iteration's (the fresh↔stale middle point).
+                    if let Some(a) = map_ema_alpha {
+                        if prev_tile_q.len() == tile_q.len() {
+                            for (q, p) in tile_q.iter_mut().zip(prev_tile_q.iter()) {
+                                *q = a * *q + (1.0 - a) * *p;
+                            }
+                        }
+                        prev_tile_q.clear();
+                        prev_tile_q.extend_from_slice(&tile_q);
+                    }
                     // tile_dist only feeds the shared log line on this path.
                     tile_dist.fill(target_distance);
                     h_steered = true;
@@ -1261,30 +1296,50 @@ impl VarDctEncoder {
                     })
                 };
                 if let Some(base) = base_opt {
-                    let sf = |f: &[f64]| {
-                        zensim::score_features_with_profile(
+                    // L-Y1 (campaign appendix Y): the batched FD-gradient
+                    // entry parses the bake once + reuses one predictor for
+                    // all 2·N forwards — bitwise-equal to the sequential
+                    // recipe (zensim gate `fd_gradient_bitwise_matches_
+                    // sequential`). `JXL_ZENSIM_FDPROBE=seq` keeps the
+                    // legacy per-probe path for A/B verification.
+                    let seq_probe = std::env::var("JXL_ZENSIM_FDPROBE").is_ok_and(|v| v == "seq");
+                    let mut s = if seq_probe {
+                        let sf = |f: &[f64]| {
+                            zensim::score_features_with_profile(
+                                rd_profile,
+                                f,
+                                width as u32,
+                                height as u32,
+                            )
+                            .unwrap_or(f64::NAN)
+                        };
+                        let mut s = vec![0.0f64; rd_n_in];
+                        let mut probe = base.clone();
+                        for (k, sk) in s.iter_mut().enumerate() {
+                            let eps = (base[k].abs() * 1e-3).max(1e-5);
+                            probe[k] = base[k] + eps;
+                            let up = sf(&probe);
+                            probe[k] = base[k] - eps;
+                            let dn = sf(&probe);
+                            probe[k] = base[k];
+                            *sk = if up.is_finite() && dn.is_finite() {
+                                (up - dn) / (2.0 * eps)
+                            } else {
+                                0.0
+                            };
+                        }
+                        s
+                    } else {
+                        // Err (model failed to parse) matches the sequential
+                        // recipe's all-NaN → all-zero gradient disposition.
+                        zensim::score_features_fd_gradient_with_profile(
                             rd_profile,
-                            f,
+                            &base,
                             width as u32,
                             height as u32,
                         )
-                        .unwrap_or(f64::NAN)
+                        .unwrap_or_else(|_| vec![0.0f64; rd_n_in])
                     };
-                    let mut s = vec![0.0f64; rd_n_in];
-                    let mut probe = base.clone();
-                    for (k, sk) in s.iter_mut().enumerate() {
-                        let eps = (base[k].abs() * 1e-3).max(1e-5);
-                        probe[k] = base[k] + eps;
-                        let up = sf(&probe);
-                        probe[k] = base[k] - eps;
-                        let dn = sf(&probe);
-                        probe[k] = base[k];
-                        *sk = if up.is_finite() && dn.is_finite() {
-                            (up - dn) / (2.0 * eps)
-                        } else {
-                            0.0
-                        };
-                    }
                     if model_map.as_deref() == Some("abs") {
                         for v in &mut s {
                             *v = -v.abs();
@@ -1436,8 +1491,23 @@ impl VarDctEncoder {
                     }
                     _ => {
                         // H3: step ∝ per-tile query_rect score-units, capped.
+                        // A-Y1: gain optionally adapts per iteration (the
+                        // default "fixed" reproduces the shipped constant).
+                        let h3_gain_eff: f32 = match h3_gain_mode.as_deref() {
+                            Some("decay") => h3_gain * 0.5f32.powi(iter as i32),
+                            Some("err") => {
+                                if let Some(tgt) = target_native {
+                                    let err_i = (zensim_score - tgt).abs();
+                                    let err0 = *h3_err0.get_or_insert(err_i.max(1e-9));
+                                    h3_gain * ((err_i / err0).min(1.0) as f32)
+                                } else {
+                                    h3_gain
+                                }
+                            }
+                            _ => h3_gain,
+                        };
                         for bi in 0..num_blocks {
-                            let factor = (1.0 + h3_gain * tile_q[bi])
+                            let factor = (1.0 + h3_gain_eff * tile_q[bi])
                                 .clamp(1.0 / params.factor_max, params.factor_max);
                             quant_field_float[bi] =
                                 (quant_field_float[bi] * factor).clamp(qf_lower, qf_higher);
@@ -1508,7 +1578,7 @@ impl VarDctEncoder {
             if let Some(tgt) = target_native {
                 let achieved_loss = (100.0 - zensim_score).max(0.05);
                 let target_loss = (100.0 - tgt).max(0.05);
-                let g = ((achieved_loss / target_loss).powf(0.6))
+                let g = ((achieved_loss / target_loss).powf(ctrl_exp))
                     .clamp(1.0 / ctrl_clamp, ctrl_clamp) as f32;
                 for v in quant_field_float.iter_mut() {
                     *v = (*v * g).clamp(qf_lower, qf_higher);
