@@ -1,0 +1,8 @@
+# Appendix Y Part-2 arm grid (A-Y1/A-Y2/A-Y3) — 2026-08-06
+# jxl-encoder commit: eb80d522 (arms build); zensim: 636ddbfe (via primary path dep)
+# box: WSL2 7950X, CONTENDED (sibling lanes; ms cols load-sensitive, value cols deterministic)
+# grid: 9 refs x targets {70,80,88}, 576^2, arms h3-mag (+ baseline controls), candidate bake
+#   W10L9_s4003_packed.bin, JXL_ZENSIM_EMIT_BEST=1, TOL=-1 (no early stop)
+# runs: run column = <arm>_<k>; envs: decay/errg = ZENSIM_H3_GAIN_MODE, ema05 = JXL_ZENSIM_MAP_EMA=0.5,
+#   expNNN = JXL_ZENSIM_CTRL_EXP=N.NN, clNNN = JXL_ZENSIM_CTRL_CLAMP=N.NN, base_* = --arms baseline
+# stats owner: analyze_23shot.cells_stats (az import); see campaign appendix Y.R2
