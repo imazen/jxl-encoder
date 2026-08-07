@@ -716,6 +716,18 @@ impl VarDctEncoder {
             .filter(|a: &f32| a.is_finite() && *a > 0.0 && *a < 1.0);
         let mut prev_tile_q: Vec<f32> = Vec::new();
         let mut model_s: Option<&'static [f64]> = None;
+        // Level-2 binned attribution (zensim d0f624eb): JXL var-DCT tiles
+        // are 8-px aligned and the loop reads the map ONLY through
+        // `query_rect` on tile rects (8-multiples or image-edge clamped),
+        // so `bin = 8` answers every steering query EXACTLY while the map
+        // fold + SAT shrink 64× and no full-resolution canvas/trim/SAT is
+        // built per compare. `ZENSIM_ATTR_BIN=1` restores the per-pixel
+        // path (byte-identical pre-L2 behavior) for A/B.
+        let attr_bin: usize = std::env::var("ZENSIM_ATTR_BIN")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|b: &usize| *b >= 1)
+            .unwrap_or(8);
         // attr mode: interleaved LinearF32Rgba view of the recon (reused),
         // and the previous iteration's map for the stale arm.
         let mut attr_rgba: Vec<f32> = Vec::new();
@@ -1041,12 +1053,13 @@ impl VarDctEncoder {
                     );
                     let sess = fused944_session.get_or_insert_with(zensim::Fused944Session::new);
                     let (res, v2, attr) = z
-                        .compute_folded944_score_and_attribution(
+                        .compute_folded944_score_and_attribution_binned(
                             &src_clean,
                             &precomputed,
                             &src,
                             s,
                             sess,
+                            attr_bin,
                         )
                         .expect("fused folded-944 compare failed (loud by design)");
                     let feats = v2.features();
@@ -1060,17 +1073,23 @@ impl VarDctEncoder {
                     (Some(res), Some(attr), Some(sc))
                 } else if singlepass {
                     let sess = attr_session.get_or_insert_with(zensim::AttributionSession::new);
-                    match z.compute_with_ref_score_and_attribution_stale(
+                    match z.compute_with_ref_score_and_attribution_stale_binned(
                         &precomputed,
                         &src,
                         s,
                         sess,
+                        attr_bin,
                     ) {
                         Ok((r, a)) => (Some(r), Some(a), None),
                         Err(_) => return Ok(current_params),
                     }
                 } else {
-                    match z.compute_with_ref_score_and_attribution(&precomputed, &src, s) {
+                    match z.compute_with_ref_score_and_attribution_binned(
+                        &precomputed,
+                        &src,
+                        s,
+                        attr_bin,
+                    ) {
                         Ok((r, a)) => (Some(r), Some(a), None),
                         Err(_) => return Ok(current_params),
                     }
