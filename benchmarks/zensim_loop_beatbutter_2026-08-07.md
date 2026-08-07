@@ -88,4 +88,64 @@ runner `scripts/zensim-loop-eff/run_beatbutter.sh`.
 
 ## Results
 
-(pending)
+Runs 2026-08-07 (~297 fresh encodes: bingate 4×27 + clampsweep 3×27 +
+confirmations 2×27 + emit-last legs 2×27; nice'd, box CONTENDED — HDR encode
+containers at load ~18/28, so ms columns are load-sensitive as registered in
+the series; value columns deterministic). Substrate: jxl `646967a3`
+(binned integration + this registration), zensim `d0f624eb` (path dep,
+origin/main). Data: `zensim_loop_beatbutter_2026-08-07.tsv` (405 rows, 15
+runs × 27 cells); regenerated summary
+`zensim_loop_23shot_summary_2026-08-07.json`.
+
+### Gates
+
+- **G-BB1 PASS (exact)** — bin=1 reproduces the committed exp100 to the
+  digit: k3 20/27 med 0.564, k2 17/27 med 1.395.
+- **G-BB2 PASS (exact)** — bin=8 is IDENTICAL to bin=1 at both budgets
+  (census, medians, med bytes all equal): the binned maps produced the same
+  tile decisions everywhere. `ZENSIM_ATTR_BIN=8` stays the default.
+  Per-compare ms delta is inside contended-box noise (±8% both directions at
+  576²) — the binned time win is the large-image regime (zensim L2 measured
+  −19% e2e at 12 MP); the 576² win is retained memory + decision-identity.
+- **G-BB3 WINNER: clamp 2.00** — dose-response 1.35→20/27, 1.60→21/27,
+  **2.00→24/27**, 2.50→23/27 (peak interior). Nonphoto class 3/9 → **7/9**
+  with photo unchanged (17/18); med |err| 0.564 → 0.535. **k2 confirmation
+  PASS**: 18/27 med 1.194 (vs 17/27 · 1.395 at clamp 1.35 — improves k2
+  too). Controller-only confirmation: baseline arm at exp1.0+cl2.0 posts
+  20/27 med 0.827 (vs 17/27 · 0.834 at cl1.35) — the default flip helps the
+  UNSTEERED path as well (+3 census, median neutral).
+- **G-BB4 — BEATS THE BUTTER LOOP at both budgets:**
+
+| | census | med \|err\| | med bytes |
+|---|--:|--:|--:|
+| **W10L9_h3ctrl2 k2** | **18/27** | **1.19** | 21.6K |
+| outer_zensimA j2 (butter) | 12/27 | 3.08 | 22.9K |
+| **W10L9_h3ctrl2 k3** | **24/27** | **0.54** | 21.6K |
+| outer_zensimA j3 (butter) | 14/27 | 1.94 | 21.9K |
+
+  — at inner-compare cost vs one FULL butteraugli-driven encode per outer
+  step. The frontier arm also beats every other arm in the series (best
+  prior inner: W10L9_h3own 17/27 k3; outer_ssim2 16/27 j3). Emit-last
+  census == emit-best at both budgets (the pure-proportional controller
+  converges; the last iterate is the internal best nearly everywhere).
+
+### Defaults ADOPTED (this commit)
+
+`JXL_ZENSIM_CTRL_EXP` default 0.6 → **1.0** and `JXL_ZENSIM_CTRL_CLAMP`
+default 1.35 → **2.00** in `zensim_loop.rs`, per the gates above (evidence
+on the steered arm at both budgets + the controller-only confirmation).
+`ZENSIM_ATTR_BIN=8` default confirmed. h3-mag steering remains opt-in via
+`JXL_ZENSIM_MODEL_MAP` (the silent product default is unchanged — flipping
+it was explicitly not claimed by this registration).
+
+### Residue (honest; verified per-cell)
+
+The 3 remaining k3 misses: **cid1418519/t70 (achieved 72.44, err 2.44),
+sc_wiki/t80 (83.06, err 3.06), sc_gui/t80 (82.94, err 2.94)** — the clamp
+CURED the worst screen-t70 cells at k3 (they now hit), and the residue is
+the milder overshoot band. k2's 9 misses are the screen t70/t80 class at
+2-step budget (sc_wiki/sc_gui t70 still land ≈ 80 — two steps cannot
+descend from seed-quality ≈ 91 even at clamp 2) plus cid1418519 t70/t80
+and sc_imessage t70/t80. A content-aware SEED distance (screen content
+seeds far too conservative) is the registered next lever, out of this
+study's scope.

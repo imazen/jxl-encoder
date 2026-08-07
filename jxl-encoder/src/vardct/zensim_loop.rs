@@ -777,22 +777,28 @@ impl VarDctEncoder {
         let mut best_iter = usize::MAX;
         let mut best_qf: Vec<f32> = Vec::new();
         // Metric-matrix study (2026-07-31): env-gated override of the damped
-        // controller's per-step clamp (the #70-item-1 gain/clamp co-sweep
-        // axis). Unset / 1.35 = shipped behavior (byte-identity gated in the
-        // study's R0); values <= 1.0 are ignored (a step clamp must exceed 1).
+        // Controller per-step clamp. DEFAULT 2.00 since the beats-butter
+        // study (2026-08-07): at exp 1.0 the clamp dose-response peaks at
+        // 2.0 (k3 census 20→24/27, nonphoto 3/9→7/9, photo unchanged,
+        // med |err| 0.564→0.535; 2.5 regresses to 23) — the old 1.35 could
+        // not descend far enough on the nonphoto overshoot class in 2-3
+        // steps. Controller-only confirmation ran in the same study.
+        // Values <= 1.0 are ignored (a step clamp must exceed 1).
         let ctrl_clamp: f64 = std::env::var("JXL_ZENSIM_CTRL_CLAMP")
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|c: &f64| c.is_finite() && *c > 1.0)
-            .unwrap_or(1.35);
-        // A-Y2 (campaign appendix Y): env-gated override of the damped
-        // controller's exponent (shipped hard-coded 0.6). Unset / 0.6 =
-        // shipped behavior; values outside (0, 2] are ignored.
+            .unwrap_or(2.00);
+        // Controller exponent. DEFAULT 1.0 (pure proportional) since the
+        // beats-butter study adopted the appendix-Y Part-2 result: monotone
+        // dose-response 0.45<<0.6<0.8<1.0>=1.2 at BOTH budgets, 26W/1L vs
+        // the old 0.6, med |err| 1.659→0.564 on the frontier arm;
+        // controller-only is 19W/4L. Values outside (0, 2] are ignored.
         let ctrl_exp: f64 = std::env::var("JXL_ZENSIM_CTRL_EXP")
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|e: &f64| e.is_finite() && *e > 0.0 && *e <= 2.0)
-            .unwrap_or(0.6);
+            .unwrap_or(1.0);
         let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
         // Efficiency study (2026-07-31): per-COMPARE trace — one TSV line per
         // iteration: `trace_id  iter  score  qf_mean  qf_min  qf_max  iter_ms`.
