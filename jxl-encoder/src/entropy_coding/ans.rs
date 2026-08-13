@@ -194,6 +194,21 @@ impl AnsEncoder {
     }
 
     /// Creates a new ANS encoder with pre-allocated capacity for `num_tokens` tokens.
+    ///
+    /// MEASURED 2026-08-13: on the lossless path this is the single largest
+    /// allocation outside tree learning — 398,131,200 bytes (380 MiB) at
+    /// 3840x2160, i.e. 2 x 24,883,200 tokens x 8 bytes. It is the dominant term
+    /// in the ~886 MiB peak floor that survives ANY reduction in tree-sample
+    /// count (verified by capping samples 100x: the peak stops falling at
+    /// ~886 MiB and a peak-moment backtrace lands here).
+    ///
+    /// The `2 *` is correct and the reservation is exact, so this is not a
+    /// sizing bug. The cost is the ELEMENT: `(u32, u8)` occupies 8 bytes after
+    /// padding for 5 bytes of payload. Splitting `bits` into parallel
+    /// `Vec<u32>` + `Vec<u8>` would cost 5 bytes per entry and cut ~149 MiB
+    /// here, at the price of touching every use site. Not attempted; recorded
+    /// because this is now the measured next target for lossless peak memory,
+    /// ahead of anything in the gather.
     pub fn with_capacity(num_tokens: usize) -> Self {
         Self {
             state: ANS_SIGNATURE << 16,
