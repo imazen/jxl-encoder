@@ -1756,6 +1756,54 @@ enum ThresholdStep {
     DivFloor,
 }
 
+/// Distinct property values collected WITHOUT retaining per-sample storage.
+///
+/// Second chunk of the gather-order change. `pre_quantize` currently needs a
+/// full `Vec<i32>` of every sample's value for a property in order to derive
+/// that property's thresholds; those 24 columns are ~1.14 GB of the ~2.07 GB
+/// 4K lossless e9 peak. But [`thresholds_from_sorted_unique`] proved the
+/// derivation needs only the DISTINCT values in ascending order, and the count
+/// of distinct values is bounded by the property's value range — tiny compared
+/// to the sample count. So a streaming collector replaces an O(samples) i32
+/// column with an O(distinct) set.
+///
+/// Byte-identity requires reproducing `pre_quantize`'s BRANCH CHOICE too, not
+/// just its value set: it selects the dense (present-bitmap) path when the
+/// value range is <= 4x the bucket count and the sparse (sort+dedup) path
+/// otherwise, and those two round the sub-sampling step differently. This
+/// tracks min/max alongside the set so the same choice can be made.
+#[derive(Default)]
+struct DistinctPropertyValues {
+    seen: alloc::collections::BTreeSet<i32>,
+    min: Option<i32>,
+    max: Option<i32>,
+}
+
+impl DistinctPropertyValues {
+    fn push(&mut self, v: i32) {
+        self.seen.insert(v);
+        self.min = Some(self.min.map_or(v, |m| m.min(v)));
+        self.max = Some(self.max.map_or(v, |m| m.max(v)));
+    }
+
+    /// Thresholds for this property, byte-identical to what `pre_quantize`
+    /// derives from the full per-sample column. `None` mirrors the
+    /// "<= 1 distinct value" early-out (empty thresholds, all-zero buckets).
+    fn thresholds(&self, max_buckets: usize) -> Option<Vec<i32>> {
+        let (min, max) = (self.min?, self.max?);
+        // BTreeSet iterates ascending, which is exactly what both branches
+        // produce (the bitmap walk is ascending; the sparse path sorts).
+        let ascending: Vec<i32> = self.seen.iter().copied().collect();
+        let range = max as i64 - min as i64 + 1;
+        let step_mode = if range <= (max_buckets * 4) as i64 {
+            ThresholdStep::DivCeil
+        } else {
+            ThresholdStep::DivFloor
+        };
+        thresholds_from_sorted_unique(ascending, max_buckets, step_mode)
+    }
+}
+
 /// Derive a property's threshold set from its SORTED ASCENDING DISTINCT values.
 ///
 /// Returns `None` when there are <= 1 distinct values (the caller emits an
@@ -9311,6 +9359,74 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// The gather-order change rests on ONE claim: thresholds derived from a
+    /// streaming DISTINCT-value set are bit-for-bit the ones derived from the
+    /// full per-sample column. If that fails, the whole approach dies — so it
+    /// is pinned here rather than discovered halfway through the refactor.
+    ///
+    /// Covers both `pre_quantize` branches (they round the sub-sampling step
+    /// differently) and the boundary between them: `range <= 4 * max_buckets`
+    /// selects dense, above selects sparse.
+    #[test]
+    fn distinct_value_collector_matches_full_column_thresholds() {
+        // Reference: exactly what pre_quantize does with the full column.
+        fn reference(vals: &[i32], max_buckets: usize) -> Option<Vec<i32>> {
+            let min = *vals.iter().min()?;
+            let max = *vals.iter().max()?;
+            let range = max as i64 - min as i64 + 1;
+            if range <= (max_buckets * 4) as i64 {
+                let mut present = vec![false; range as usize];
+                for &v in vals {
+                    present[(v - min) as usize] = true;
+                }
+                let uniq: Vec<i32> = present
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| **p)
+                    .map(|(i, _)| min + i as i32)
+                    .collect();
+                thresholds_from_sorted_unique(uniq, max_buckets, ThresholdStep::DivCeil)
+            } else {
+                let mut uniq = vals.to_vec();
+                uniq.sort_unstable();
+                uniq.dedup();
+                thresholds_from_sorted_unique(uniq, max_buckets, ThresholdStep::DivFloor)
+            }
+        }
+
+        // Deterministic pseudo-random spreads: dense-and-clustered, sparse-and-
+        // wide, single-valued, two-valued, exactly-at-the-branch-boundary, and
+        // negative values (property deltas are signed).
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for &max_buckets in &[16usize, 64, 256] {
+            let boundary = (max_buckets * 4) as i32;
+            for &spread in &[1i32, 2, boundary - 1, boundary, boundary + 1, 100_000] {
+                for &n in &[1usize, 2, 37, 1000] {
+                    let vals: Vec<i32> = (0..n)
+                        .map(|_| (next() % (spread.max(1) as u64)) as i32 - spread / 2)
+                        .collect();
+                    let mut c = DistinctPropertyValues::default();
+                    for &v in &vals {
+                        c.push(v);
+                    }
+                    assert_eq!(
+                        c.thresholds(max_buckets),
+                        reference(&vals, max_buckets),
+                        "mismatch: max_buckets={max_buckets} spread={spread} n={n}"
+                    );
+                }
+            }
+        }
+    }
+
     use super::*;
     use crate::modular::channel::ModularImage;
 
