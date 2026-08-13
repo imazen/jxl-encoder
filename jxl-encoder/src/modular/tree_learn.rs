@@ -719,6 +719,36 @@ impl TreeSamples {
         }
     }
 
+    /// Size every SoA column ONCE to an exact upper bound on the final sample
+    /// count, so no column ever reallocates during the gather/merge.
+    ///
+    /// This is the allocator-agnostic half of the peak-memory work. `reserve`
+    /// (amortized) grows a column by reallocating: the allocator must hold the
+    /// old and new buffers simultaneously, so a 48 MiB props column costs a
+    /// ~96 MiB transient and leaves a 48 MiB hole behind. Across 52 columns and
+    /// one growth per merge step that transient overshoot — and the resulting
+    /// churn of large freed blocks — is what dominates the peak, and it does so
+    /// on EVERY allocator (glibc, macOS libmalloc, jemalloc, mimalloc all pay
+    /// the copy; they differ only in how much of the hole they hand back).
+    /// `reserve_exact` against a known upper bound removes the growth entirely:
+    /// peak becomes exactly the data size.
+    ///
+    /// `upper_bound` must be >= the total samples ultimately appended. The
+    /// gather's per-channel `ceil(w*h / stride)` is such a bound (dedup and
+    /// skipped pixels only ever reduce the count), so over-estimating is safe
+    /// and merely leaves unused tail capacity.
+    pub(crate) fn reserve_exact_total(&mut self, upper_bound: usize) {
+        for v in &mut self.residual_tokens {
+            v.reserve_exact(upper_bound.saturating_sub(v.len()));
+        }
+        for v in &mut self.extra_bits {
+            v.reserve_exact(upper_bound.saturating_sub(v.len()));
+        }
+        for v in &mut self.props {
+            v.reserve_exact(upper_bound.saturating_sub(v.len()));
+        }
+    }
+
     /// Append all samples from `other` into `self`. Both must have the same
     /// predictor list and reference-channel count (the gather call site
     /// guarantees this; we debug-assert it).

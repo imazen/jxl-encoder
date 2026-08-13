@@ -33,12 +33,29 @@ use crate::error::Result;
 /// waves bounds that transient without changing the merged result (waves are
 /// consumed in ascending group order; `append_from` concatenates).
 ///
-/// 64 keeps every worker fed on the widest machines we target while capping
-/// the transient at ~64 groups of samples (~0.7 GB at the 4K/e9 per-group size
-/// of ~11.6 MiB, vs ~1.6 GB for a 135-group 4K frame). Lowering it further
-/// trades gather throughput for peak; raising it converges on the old
-/// all-at-once behaviour.
-const GATHER_MERGE_WAVE_GROUPS: usize = 64;
+/// The wave is the live transient: at the 4K/e9 per-group size of ~11.6 MiB,
+/// 64 groups is ~740 MB in flight, 16 is ~185 MB, 8 is ~93 MB. It only needs to
+/// be wide enough to keep the worker pool fed — the useful thread count is the
+/// floor, and anything past a small multiple of it buys throughput nothing
+/// while costing peak linearly. 16 covers our widest targets with slack.
+///
+/// Overridable at runtime via `JXL_TREE_GATHER_WAVE` (sweep knob; unset in
+/// production). The value is observationally invisible — waves are consumed in
+/// ascending group order, so the merged result is identical at every setting.
+const GATHER_MERGE_WAVE_GROUPS: usize = 16;
+
+/// `JXL_TREE_GATHER_WAVE=<n>` overrides [`GATHER_MERGE_WAVE_GROUPS`].
+fn gather_wave_groups() -> usize {
+    use std::sync::OnceLock;
+    static WAVE: OnceLock<usize> = OnceLock::new();
+    *WAVE.get_or_init(|| {
+        std::env::var("JXL_TREE_GATHER_WAVE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(GATHER_MERGE_WAVE_GROUPS)
+    })
+}
 
 const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
     split_exponent: 4,
@@ -642,7 +659,21 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         //
         // The wave is sized to keep every worker busy — an over-small wave
         // would serialize the gather at a barrier per wave.
-        let wave = GATHER_MERGE_WAVE_GROUPS.max(1);
+        //
+        // The accumulator is sized ONCE here, to an exact upper bound, so no
+        // column ever reallocates as waves are merged in. Growing it per wave
+        // would trade the old single duplicate for repeated 48 MiB-column
+        // reallocations — each holding old+new at once and leaving a hole —
+        // which costs more, and costs it on every allocator.
+        let gather_upper_bound: usize = images
+            .iter()
+            .flat_map(|img| img.channels.iter())
+            .map(|ch| (ch.width() * ch.height()).div_ceil(seed_stride.max(1)))
+            .sum::<usize>()
+            + samples.num_samples;
+        samples.reserve_exact_total(gather_upper_bound);
+
+        let wave = gather_wave_groups().max(1);
         let mut wave_start = 0usize;
         while wave_start < images.len() {
             let wave_len = wave.min(images.len() - wave_start);
@@ -686,10 +717,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                 }
                 local
             });
-            // Reserve this wave's capacity up-front to avoid Vec growth during
-            // the merge, then concatenate in deterministic group-index order.
-            let total_extra: usize = wave_samples.iter().map(|s| s.num_samples).sum();
-            samples.reserve(total_extra);
+            // No per-wave reserve: `reserve_exact_total` above already sized
+            // every column past the final count, so these appends never grow.
             for local in wave_samples {
                 samples.append_from(local);
             }
