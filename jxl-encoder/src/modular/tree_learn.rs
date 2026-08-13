@@ -961,23 +961,7 @@ impl TreeSamples {
                     );
                 }
 
-                // Assign each sample to a bucket using binary search
-                let num_thresholds = ts.len();
-                let mut bi = vec![0u8; n];
-                for (bi_val, &v) in bi.iter_mut().zip(props[..n].iter()) {
-                    let bucket = match ts.binary_search(&v) {
-                        Ok(pos) => pos,
-                        Err(pos) => {
-                            if pos == 0 {
-                                0
-                            } else {
-                                pos
-                            }
-                        }
-                    };
-                    *bi_val = bucket.min(num_thresholds) as u8;
-                }
-
+                let bi = bucketize_with_thresholds(&props[..n], &ts);
                 (ts, bi)
             });
 
@@ -1779,6 +1763,38 @@ enum ThresholdStep {
     DivCeil,
     /// Sparse branch (collected via sort + dedup).
     DivFloor,
+}
+
+/// Assign each value to its bucket against an ALREADY-KNOWN threshold set.
+///
+/// Extracted from `pre_quantize` because this is precisely what pass 2 of the
+/// gather-order change needs: once pass 1 has derived the thresholds from the
+/// streaming [`DistinctPropertyValues`] collectors, each group can be gathered
+/// and bucketized on the spot, appending u8 bucket indices to the accumulator
+/// and dropping that group's raw i32 properties immediately. The accumulator
+/// then never holds a full-resolution property column — which is ~1.14 GB of
+/// the ~2.07 GB 4K lossless e9 peak.
+///
+/// Byte-identical to the loop it replaces, including the `Err(0) => 0` edge
+/// (values below every threshold) and the `.min(num_thresholds)` clamp that
+/// keeps the index inside the bucket alphabet.
+fn bucketize_with_thresholds(values: &[i32], ts: &[i32]) -> Vec<u8> {
+    let num_thresholds = ts.len();
+    let mut bi = vec![0u8; values.len()];
+    for (bi_val, &v) in bi.iter_mut().zip(values.iter()) {
+        let bucket = match ts.binary_search(&v) {
+            Ok(pos) => pos,
+            Err(pos) => {
+                if pos == 0 {
+                    0
+                } else {
+                    pos
+                }
+            }
+        };
+        *bi_val = bucket.min(num_thresholds) as u8;
+    }
+    bi
 }
 
 /// Distinct property values collected WITHOUT retaining per-sample storage.
