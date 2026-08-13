@@ -3183,33 +3183,66 @@ fn dedup_samples_packed_sort(
     }
 
     let total_props = samples.total_num_properties();
-    let new_props_per_idx: Vec<Vec<i32>> = crate::parallel::parallel_map(total_props, |prop_idx| {
-        let old_props = &samples.props[prop_idx];
-        if old_props.is_empty() {
-            Vec::new()
-        } else {
-            unique_indices.iter().map(|&i| old_props[i]).collect()
+    // Compact the property columns in WAVES rather than building every new
+    // column before assigning any of them.
+    //
+    // The all-at-once form held the complete old set AND the complete new set
+    // simultaneously — a transient 2x of the single largest allocation in the
+    // encoder. At 3840x2160 lossless e9 the props columns are ~1.2 GB, so that
+    // rebuild alone put ~1.2 GB of duplicate on top of the peak, and dedup runs
+    // exactly where the peak is (the RSS timeline spikes during gather/merge/
+    // dedup, then falls for the 70 s tree build).
+    //
+    // Waves assign and drop each batch before building the next, bounding the
+    // duplicate to `DEDUP_COMPACT_WAVE` columns. Byte-identical: each column is
+    // gathered by the same `unique_indices` in the same order, and columns are
+    // independent of one another — only the interleaving of allocation and
+    // release changes.
+    //
+    // Not done in place (which would need no duplicate at all): the
+    // representatives in `unique_indices` are in sorted-KEY order, not
+    // ascending sample order, so a forward in-place compaction would read
+    // already-overwritten slots. Sorting them first would reorder the samples
+    // and change tie-breaks in the tree, so it is not a byte-identical option.
+    const DEDUP_COMPACT_WAVE: usize = 4;
+
+    let mut start = 0usize;
+    while start < total_props {
+        let end = (start + DEDUP_COMPACT_WAVE).min(total_props);
+        let new_props: Vec<Vec<i32>> = crate::parallel::parallel_map(end - start, |k| {
+            let old_props = &samples.props[start + k];
+            if old_props.is_empty() {
+                Vec::new()
+            } else {
+                unique_indices.iter().map(|&i| old_props[i]).collect()
+            }
+        });
+        for (k, np) in new_props.into_iter().enumerate() {
+            if !samples.props[start + k].is_empty() {
+                samples.props[start + k] = np; // old column dropped here
+            }
         }
-    });
-    for (prop_idx, new_props) in new_props_per_idx.into_iter().enumerate() {
-        if !samples.props[prop_idx].is_empty() {
-            samples.props[prop_idx] = new_props;
-        }
+        start = end;
     }
 
     let bi_total = pq.bucket_indices.len().min(total_props);
-    let new_bi_per_idx: Vec<Vec<u8>> = crate::parallel::parallel_map(bi_total, |prop_idx| {
-        let old_bi = &pq.bucket_indices[prop_idx];
-        if old_bi.is_empty() {
-            Vec::new()
-        } else {
-            unique_indices.iter().map(|&i| old_bi[i]).collect()
+    let mut start = 0usize;
+    while start < bi_total {
+        let end = (start + DEDUP_COMPACT_WAVE).min(bi_total);
+        let new_bi: Vec<Vec<u8>> = crate::parallel::parallel_map(end - start, |k| {
+            let old_bi = &pq.bucket_indices[start + k];
+            if old_bi.is_empty() {
+                Vec::new()
+            } else {
+                unique_indices.iter().map(|&i| old_bi[i]).collect()
+            }
+        });
+        for (k, nb) in new_bi.into_iter().enumerate() {
+            if !pq.bucket_indices[start + k].is_empty() {
+                pq.bucket_indices[start + k] = nb;
+            }
         }
-    });
-    for (prop_idx, new_bi) in new_bi_per_idx.into_iter().enumerate() {
-        if !pq.bucket_indices[prop_idx].is_empty() {
-            pq.bucket_indices[prop_idx] = new_bi;
-        }
+        start = end;
     }
 
     samples.num_samples = num_unique;
