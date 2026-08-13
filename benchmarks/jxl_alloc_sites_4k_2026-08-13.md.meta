@@ -1,0 +1,25 @@
+date: 2026-08-13
+host: macOS aarch64 (M-series), darwin 25.5.0
+jxl-encoder commit: 19c2f996
+zenjxl probe commit: a7427d2c (per-site profiler, JXL_ALLOC_SITES)
+cjxl: 0.12.0 homebrew {AppleClang 21.0.0.21000099}
+input: ~/tmp/4kmem/inputs/photo_3840x2160.{bin,ppm} (8.29 MP photo)
+
+reproduce (ours):
+  cd ~/work/zen/zenjxl
+  cargo build --release --example mem_probe_encode --features parallel
+  JXL_ALLOC_SITES=1 JXL_ALLOC_SITES_OUT=/tmp/sites.txt \
+    ./target/release/examples/mem_probe_encode \
+    ~/tmp/4kmem/inputs/photo_3840x2160.bin 3840 2160 lossless 7 100 1
+
+reproduce (cjxl): MallocStackLogging=lite cjxl ... + malloc_history at
+  >=95% of known peak RSS; harness ~/tmp/4kmem/heap_stacks.sh; classifier
+  buckets stacks by deepest jxl:: frame (TreeSamples/LearnTree/
+  CollectPixelSamples -> tree_learn; Channel::Create/PrepareStreamParams ->
+  channels; vector<jxl::Token>/ModularCompress -> tokens; PaddedBytes/
+  BitWriter -> output; ReadFile/PackedImage/CopyBuffer -> input;
+  PlaneBase::Allocate -> f32 planes).
+
+raw site dumps (regenerable, not committed): ~/tmp/4kmem/sites_lossless_e7.txt,
+  sites_lossless_e9.txt, sites_lossy_e7.txt, c_sites_lossless_e7.txt,
+  c_sites_lossless_e9.txt, c_sites_lossy_e7.txt
