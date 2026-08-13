@@ -566,9 +566,15 @@ mod tests {
     /// constant.
     ///
     /// Measured 3840x2160 (8.29 MP), RGB8, threads=1, worst case over
-    /// {photo, screen}, at jxl-encoder 08c0b9fa:
-    ///   lossless e7  peak_live 2766 MB      lossless e9  peak_live 3141 MB
+    /// {photo, screen}, at jxl-encoder b22d122e:
+    ///   lossless e7  peak_live 1966 MB      lossless e9  peak_live 2065 MB
     ///   lossy    e3  peak_live  412 MB      lossy    e9  peak_live  517 MB
+    ///
+    /// Re-measured after the 2026-08-13 lifetime fixes (b22d122e frees the
+    /// dead property columns before dedup rather than after). Keeping the
+    /// pre-fix numbers here would leave the gate looser than the encoder now
+    /// warrants, so it would stop catching a regression that gave the
+    /// reduction back.
     /// Provenance: benchmarks/jxl_ceiling_peaklive_4k_2026-08-13.tsv.meta.
     ///
     /// The MAX tier is separately required to clear the measured peak RSS, so
@@ -579,10 +585,10 @@ mod tests {
         const MB: u64 = 1024 * 1024;
         // (w, h, is_lossless, effort, measured peak_live, measured peak RSS)
         let cells: &[(u32, u32, bool, u8, u64, u64)] = &[
-            (3840, 2160, true, 7, 2766 * MB, 3980 * MB),
-            (3840, 2160, true, 9, 3141 * MB, 4522 * MB),
+            (3840, 2160, true, 7, 1966 * MB, 3484 * MB),
+            (3840, 2160, true, 9, 2065 * MB, 3326 * MB),
             (3840, 2160, false, 3, 412 * MB, 429 * MB),
-            (3840, 2160, false, 9, 517 * MB, 692 * MB),
+            (3840, 2160, false, 9, 517 * MB, 697 * MB),
         ];
         for &(w, h, lossless, effort, live, rss) in cells {
             let e = estimate_encode(w, h, 3, false, lossless, effort).unwrap();
