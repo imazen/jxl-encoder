@@ -602,6 +602,42 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         Vec::new()
     };
 
+    // Only STORE the property columns the tree learner will actually read.
+    //
+    // `params.properties` depends solely on the effort profile, not on sample
+    // content, so the needed set is known before gathering — and it is a strict
+    // subset at effort < 9: measured, e7 reads 9 of 24 columns while the gather
+    // filled all 24, leaving ~712 MiB of the 1139 MiB property mass at
+    // 3840x2160 gathered and never read. Unstored columns stay `Vec::new()`,
+    // which `swap_rows` already documents as a supported state.
+    //
+    // Derived from the SAME call the tree learner uses (mirrored just above for
+    // the gather hash), so the two cannot drift. If they ever did, the effect
+    // is a loud panic in `pre_quantize` (it would index an empty column), not
+    // silent corruption.
+    let store_props_mask: Option<Vec<bool>> = {
+        let needed = TreeLearningParams::from_profile(profile)
+            .with_ref_properties(num_refs, profile.effort)
+            .properties
+            .clone();
+        let total = TreeSamples::new_with_ref_channels(num_refs).total_num_properties();
+        let mut mask = vec![false; total];
+        for &prop_idx in &needed {
+            if prop_idx < total {
+                mask[prop_idx] = true;
+            }
+        }
+        if std::env::var_os("JXL_PROP_RANGE_STATS").is_some() {
+            eprintln!(
+                "[prop-mask] needed={} of total={} -> stored={}",
+                needed.len(),
+                total,
+                mask.iter().filter(|b| **b).count()
+            );
+        }
+        Some(mask)
+    };
+
     // Closure: gather samples for a given seed, with optional per-seed
     // stride override (RFC#45 chunk 3 + chunk 4). Seed 0 always uses the
     // canonical `stride` + `start_offset = 0` and the canonical
@@ -622,6 +658,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         // checks lengths; the SoA columns are predictor-indexed so they
         // must agree).
         let mut samples = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
+        samples.store_props_mask = store_props_mask.clone();
         // Self-repair re-gather (task #14): draw de-aliased randomized
         // samples instead of the fixed stride. `false` on the normal path
         // ⇒ byte-identical.

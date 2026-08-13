@@ -570,6 +570,18 @@ pub struct TreeSamples {
     /// Maximum number of reference channels across all channels in the image.
     /// 0 for squeeze mode or single-channel images.
     num_ref_channels: usize,
+    /// Which property columns to actually STORE. `None` = all of them.
+    ///
+    /// The tree learner only ever reads `params.properties`, which at effort 7
+    /// is 9 of the 24 columns the gather otherwise fills — the other 15 are
+    /// gathered, accumulated and never read (measured: ~712 MiB of the 1139 MiB
+    /// property mass at 3840x2160 e7). `params.properties` depends only on the
+    /// effort profile, not on sample content, so the needed set is known before
+    /// gathering. Unstored columns stay `Vec::new()`, which is an
+    /// already-supported state — see `swap_rows`, which documents that
+    /// production `TreeSamples` may carry empty columns for properties that
+    /// were not gathered.
+    pub(crate) store_props_mask: Option<alloc::vec::Vec<bool>>,
     /// When true, [`gather_channel_samples`] draws randomized (de-aliased)
     /// sample gaps for THIS gather regardless of the `JXL_TREE_SAMPLE_RANDOM`
     /// env default. Set by the cost-based tree self-repair (task #14, the
@@ -586,6 +598,14 @@ impl Default for TreeSamples {
 }
 
 impl TreeSamples {
+    /// Whether property column `idx` is stored (see `store_props_mask`).
+    #[inline]
+    pub(crate) fn stores_prop(&self, idx: usize) -> bool {
+        self.store_props_mask
+            .as_ref()
+            .is_none_or(|m| m.get(idx).copied().unwrap_or(true))
+    }
+
     /// Creates an empty TreeSamples structure with full 14-predictor candidate list
     /// and no reference channel properties.
     pub fn new() -> Self {
@@ -677,6 +697,7 @@ impl TreeSamples {
             sample_counts: Vec::new(),
             num_ref_channels,
             randomize_gather: false,
+            store_props_mask: None,
         }
     }
 
@@ -2060,7 +2081,9 @@ impl GatherRowStaging {
             samples.extra_bits[p].extend_from_slice(&self.ebits[p * cap..p * cap + n]);
         }
         for c in 0..self.total_props {
-            samples.props[c].extend_from_slice(&self.props[c * cap..c * cap + n]);
+            if samples.stores_prop(c) {
+                samples.props[c].extend_from_slice(&self.props[c * cap..c * cap + n]);
+            }
         }
         samples.num_samples += n;
         self.n = 0;
@@ -2183,6 +2206,7 @@ fn gather_channel_samples(
     };
 
     let max_refs = samples.num_ref_channels;
+    let store_mask = samples.store_props_mask.clone();
 
     // Cache field-counts referenced from the inner loop's dedup probe.
     let num_pred = samples.num_predictors();
@@ -2417,22 +2441,30 @@ fn gather_channel_samples(
                     samples.residual_tokens[pred_idx].push(local_tokens[pred_idx]);
                     samples.extra_bits[pred_idx].push(local_ebits[pred_idx]);
                 }
-                for (prop_list, &val) in samples
+                for (idx, (prop_list, &val)) in samples
                     .props
                     .iter_mut()
                     .zip(props.iter())
                     .take(NUM_PROPERTIES)
+                    .enumerate()
                 {
-                    prop_list.push(val);
+                    if store_mask.as_ref().is_none_or(|m: &alloc::vec::Vec<bool>| {
+                        m.get(idx).copied().unwrap_or(true)
+                    }) {
+                        prop_list.push(val);
+                    }
                 }
                 if max_refs > 0 {
                     for r in 0..max_refs {
                         let base = NUM_PROPERTIES + r * 4;
                         let off = r * 4;
-                        samples.props[base].push(local_ref_props[off]);
-                        samples.props[base + 1].push(local_ref_props[off + 1]);
-                        samples.props[base + 2].push(local_ref_props[off + 2]);
-                        samples.props[base + 3].push(local_ref_props[off + 3]);
+                        for k in 0..4 {
+                            if store_mask.as_ref().is_none_or(|m: &alloc::vec::Vec<bool>| {
+                                m.get(base + k).copied().unwrap_or(true)
+                            }) {
+                                samples.props[base + k].push(local_ref_props[off + k]);
+                            }
+                        }
                     }
                 }
                 samples.num_samples += 1;
