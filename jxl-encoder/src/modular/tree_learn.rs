@@ -3346,8 +3346,15 @@ fn dedup_samples_packed_sort(
     }
 
     // Walk sorted order, merge consecutive identical samples.
-    let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
-    let mut counts: Vec<u32> = Vec::with_capacity(n / 2);
+    // Reserved at `n`, not `n / 2`. The halved guess assumes dedup collapses
+    // about half the samples; on photo content it collapses almost NONE, so
+    // both vectors grow to ~n and realloc — and a realloc holds the old and new
+    // buffers at once. Measured at 3840x2160 lossless e9, that growth of
+    // `unique_indices` (8 bytes x 12.44M = 95 MiB) is the allocation that SETS
+    // the encode's peak (peak-moment backtrace). Reserving the true upper bound
+    // costs the same steady-state bytes and removes the transient entirely.
+    let mut unique_indices: Vec<usize> = Vec::with_capacity(n);
+    let mut counts: Vec<u32> = Vec::with_capacity(n);
 
     let first = order[0] as usize;
     unique_indices.push(first);
