@@ -1,0 +1,57 @@
+# Tree-sample-ceiling sweep: bytes vs peak RSS at 4K — 2026-08-13
+#
+# Sizes `EffortProfile::tree_max_samples_ceiling` (env override
+# `JXL_TREE_MAX_SAMPLES`). The ceiling caps the tree-learning sample budget
+# absolutely, so the gather stride grows with resolution instead of the merged
+# `TreeSamples` accumulator growing linearly with it. Companion to
+# `libjxl_vs_zenjxl_4k_2026-08-13.tsv{,.meta}` (which measures the gap and
+# attributes the memory).
+#
+# Host: macOS 26.5.2, Apple M4 Pro, 24 GiB. jxl-encoder 8205c895 + this change.
+# Cell: 3840x2160 (8.29 MP) photo mosaic, threads=1, peak RSS via
+#       `/usr/bin/time -l` (bytes). One encode per process.
+#
+# ===================== LOSSLESS e9 (cjxl: 4,392,315 B @ 306 MB, 23.8 s) =====
+#   ceiling      bytes     vs uncapped   vs cjxl    peak MB   wall s
+#   0 (uncapped) 4,246,312     —          -3.3%      4685      81.8
+#   4,000,000    4,322,232   +1.79%       -1.6%      2256      37.6
+#   2,000,000    4,370,048   +2.91%       -0.5%      1707      26.9
+#   1,000,000    4,410,640   +3.87%       +0.4%      1504      19.5
+#     500,000    4,464,839   +5.15%       +1.6%      1244      15.5
+#     250,000    4,503,311   +6.05%       +2.5%      1181      12.8
+#
+# ===================== LOSSLESS e7 (cjxl: 4,478,351 B @ 290 MB) =============
+#   0 (uncapped) 4,436,537     —          -0.9%      4679      14.6
+#   4,000,000    4,536,426   +2.25%       +1.3%      2072       7.1
+#   2,000,000    4,574,599   +3.11%       +2.1%      1525       5.9
+#   1,000,000    4,591,849   +3.50%       +2.5%      1301       4.9
+#     500,000    4,529,361   +2.09%       +1.1%      1432       4.3
+#     250,000    4,530,000   +2.11%       +1.2%      1378       3.9
+#   NOTE e7 is NON-MONOTONIC (500K beats 1M on bytes). That is the known
+#   stride-aliasing effect (CLAUDE.md #24 / ledger #33) interacting with the
+#   cost-based self-repair, not noise — a ceiling changes the stride, and some
+#   strides alias against content periodicity worse than others. Any shipped
+#   default must be picked on a corpus, not on this one image.
+#
+# ===================== LOSSY e9 (cjxl: 618,363 B @ 2527 MB) =================
+#   Every ceiling: 596,774 B, ~700 MB, ~5.4 s — BIT-IDENTICAL and flat.
+#   The ceiling does not touch the lossy path at all; lossy memory lives in
+#   VarDCT/buttloop. Lossy needs a separate investigation.
+#
+# ===================== WHY THE DEFAULT IS STILL 0 (uncapped) ===============
+# 1. It is a DIVERGENCE from libjxl, whose GatherTreeData also samples a pixel
+#    fraction with no absolute cap (CLAUDE.md: "e7 residual — x0.1 lever
+#    REFUTED at source"). Divergences here need a corpus-measured justification
+#    and a LIBJXL_DIVERGENCES.md row, not a single-image curve.
+# 2. It trades real bytes (+1.8% to +6.1% at e9). Per the global rule, a
+#    quality/size relaxation is the user's call, not the implementer's.
+# 3. Even at the tightest ceiling swept, peak is 1181 MB vs cjxl's 306 MB — the
+#    ceiling ALONE does not reach the goal, so picking a default now would pay
+#    the byte cost without winning the comparison.
+# 4. e7's non-monotonicity means the right value is content-dependent.
+#
+# If a default is wanted on this evidence, 2,000,000 is the defensible point at
+# e9: 4685 -> 1707 MB (2.7x less) and 81.8 -> 26.9 s (3.0x faster) while the
+# output stays 0.5% SMALLER than cjxl. It does not fix e7 or lossy.
+#
+# Columns: mode effort quality ceiling out_bytes peak_mb wall_s

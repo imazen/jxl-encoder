@@ -24,6 +24,22 @@ use crate::entropy_coding::token::Token as AnsToken;
 use crate::error::Result;
 
 /// Default HybridUint config for modular data: split_exponent=4, msb_in_token=2, lsb_in_token=0.
+/// How many groups' `TreeSamples` may be live at once during the tree-learning
+/// gather, before they are merged into the accumulator and dropped.
+///
+/// The gather is embarrassingly parallel across groups, but holding every
+/// group's samples until a single trailing merge doubles the peak: the
+/// per-group vec and the merged accumulator are both resident. Merging in
+/// waves bounds that transient without changing the merged result (waves are
+/// consumed in ascending group order; `append_from` concatenates).
+///
+/// 64 keeps every worker fed on the widest machines we target while capping
+/// the transient at ~64 groups of samples (~0.7 GB at the 4K/e9 per-group size
+/// of ~11.6 MiB, vs ~1.6 GB for a 135-group 4K frame). Lowering it further
+/// trades gather throughput for peak; raising it converges on the old
+/// all-at-once behaviour.
+const GATHER_MERGE_WAVE_GROUPS: usize = 64;
+
 const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
     split_exponent: 4,
     split: 16, // 1 << 4
@@ -606,9 +622,32 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                 );
             }
         }
-        // Per-group gather — embarrassingly parallel across groups.
-        let per_group_samples: Vec<TreeSamples> =
-            crate::parallel::parallel_map(images.len(), |group_idx| {
+        // Per-group gather — embarrassingly parallel across groups, but run in
+        // WAVES so only `wave` groups' samples are live at once.
+        //
+        // Gathering all groups into one `Vec<TreeSamples>` and merging
+        // afterwards costs a second full copy of every sample: the per-group
+        // vec and the merged accumulator are both alive during the merge. On a
+        // 4K lossless e9 encode that was the encoder's peak — the RSS timeline
+        // spiked to ~5.0 GB in the first 6 s (gather+merge) before settling to
+        // ~2.9 GB for the 70 s of actual tree learning. Merging each wave as it
+        // completes bounds the transient to `wave` groups instead of all of
+        // them, and the steady-state accumulator is unchanged.
+        //
+        // Byte-identical: waves are consumed in ascending group order and
+        // `append_from` is a concatenation, so the merged column order is
+        // exactly what the all-at-once merge produced. Each group's gather is
+        // independent (fresh `local`, `group_idx` passed explicitly, no
+        // cross-group state), so wave boundaries cannot change any sample.
+        //
+        // The wave is sized to keep every worker busy — an over-small wave
+        // would serialize the gather at a barrier per wave.
+        let wave = GATHER_MERGE_WAVE_GROUPS.max(1);
+        let mut wave_start = 0usize;
+        while wave_start < images.len() {
+            let wave_len = wave.min(images.len() - wave_start);
+            let wave_samples: Vec<TreeSamples> = crate::parallel::parallel_map(wave_len, |i| {
+                let group_idx = wave_start + i;
                 // Same per-seed predictor order as the meta init above.
                 let mut local = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
                 local.randomize_gather = randomize;
@@ -647,12 +686,14 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                 }
                 local
             });
-        // Reserve total capacity up-front to avoid Vec growth during merge,
-        // then concatenate in deterministic group-index order.
-        let total_extra: usize = per_group_samples.iter().map(|s| s.num_samples).sum();
-        samples.reserve(total_extra);
-        for local in per_group_samples {
-            samples.append_from(local);
+            // Reserve this wave's capacity up-front to avoid Vec growth during
+            // the merge, then concatenate in deterministic group-index order.
+            let total_extra: usize = wave_samples.iter().map(|s| s.num_samples).sum();
+            samples.reserve(total_extra);
+            for local in wave_samples {
+                samples.append_from(local);
+            }
+            wave_start += wave_len;
         }
         samples
     };

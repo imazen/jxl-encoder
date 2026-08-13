@@ -1,0 +1,93 @@
+# libjxl (cjxl 0.12.0) 4K encode peak-RSS baseline vs zenjxl — 2026-08-13
+#
+# Purpose: establish where our encoder stands against libjxl on ENCODE MEMORY at
+# 4K, since our own 4K measurement (zenjxl/benchmarks/zenjxl_encode_mem_4k_
+# 2026-08-13.tsv) showed lossless e7-e9 needing ~4.8 GB.
+#
+# Host: macOS 26.5.2, Apple M4 Pro (12 cores / 8 performance), 24 GiB RAM.
+# cjxl: homebrew jpeg-xl 0.12.0 (NEON, AppleClang 21).
+# zenjxl: 5a92f93 -> jxl-encoder 8205c895, release, --features encode,decode,parallel.
+#
+# MEASUREMENT: `/usr/bin/time -l` "maximum resident set size" (BYTES on macOS) —
+#   whole-process peak. Input is PPM for cjxl (not PNG) so its input-decode cost
+#   stays comparable to our probe's raw .bin read; content is the same 3840x2160
+#   mosaic of real corpus images, tiled at native scale.
+#
+# MATCHING: zenjxl quality 85 -> quality_to_distance(85) = 1.25, so cjxl runs
+#   -d 1.25 lossy / -d 0 lossless at the same effort. cjxl --num_threads=0
+#   (no multithreading) is reported as threads=1.
+#
+# ============================ HEADLINE ============================
+# Peak RSS, photo content, threads=1 (cjxl / zenjxl / ratio):
+#   lossy    e3    267 MB /  447 MB / 1.67x  WE LOSE
+#   lossy    e7    ~290 MB(*)/ 706 MB / 2.4x  WE LOSE
+#   lossy    e9   2527 MB /  719 MB / 0.28x  WE WIN 3.5x
+#   lossless e3    349 MB /  614 MB / 1.76x  WE LOSE
+#   lossless e7    290 MB / 4773 MB / 16.5x  WE LOSE BADLY
+#   lossless e9    306 MB / 4830 MB / 15.8x  WE LOSE BADLY
+#   (*) cjxl lossy e7 measured 413 MB at threads=8; the t1 cell is in the TSV.
+#
+# Compression at those cells is at PARITY OR BETTER for us — this is a pure
+# memory deficit, not a quality trade:
+#   lossless e7  ours 4,436,537 B vs cjxl 4,478,351 B  (ours 0.9% SMALLER)
+#   lossless e9  ours 4,246,312 B vs cjxl 4,392,315 B  (ours 3.3% SMALLER)
+#   lossy    e7  ours   626,146 B vs cjxl   624,826 B  (ours 0.2% larger)
+#   lossy    e9  ours   596,774 B vs cjxl   618,363 B  (ours 3.5% SMALLER)
+#
+# Note cjxl's lossy e9 is the outlier in ITS profile (2.5 GB — its butteraugli
+# loop), which is the one cell where we win by a wide margin.
+#
+# ======================= WHERE OUR MEMORY GOES =======================
+# Measured (not estimated) on 3840x2160 lossless e9, threads=1:
+#   * RSS timeline (200 ms sampling): peak ~5.0 GB is reached in the FIRST 6 s
+#     — the gather+merge — then settles to ~2.9 GB for the ~70 s of tree
+#     learning. So the peak is NOT the tree search.
+#   * `malloc_history -allBySize` at peak attributes:
+#       1.49 GB  TreeSamples::reserve  (24 props columns x 48 MiB + 2 x 14
+#                predictor columns x 12 MiB) = the merged sample accumulator,
+#                12.44 M samples x 124 B. THE largest live allocation.
+#        101 MB  ModularImage::extract_region (405 calls, per-group)
+#         95 MB  ModularImage::from_rgb8_with_budget
+#   * `heap` at peak: of a 3.4 GB footprint, ~1.95 GB is MALLOC_LARGE/SMALL
+#     "(empty)" — freed regions macOS libmalloc has not returned to the OS.
+#     Live nodes were 2.05 GB. So roughly HALF the peak is allocator retention
+#     driven by large-block churn, not live data.
+#
+# ROOT CAUSE of the linear growth: `max_tree_samples_from_profile` derives the
+# sample budget as a FRACTION of pixels (0.65 at e9), so the gather stride stays
+# 2 at every resolution and the accumulator grows linearly with the image. At
+# 4K that is 12.44 M samples = 1.5 GB. libjxl's GatherTreeData also samples a
+# fraction (CLAUDE.md, "e7 residual: x0.1 lever REFUTED at source"), so the
+# difference is not the fraction — it is that libjxl stores QUANTIZED property
+# buckets and dedups during gather, while we keep raw i32 props (96 of our
+# 124 B/sample) and our gather dedup collapses nothing on this content
+# (measured: samples == w*h*3/stride exactly, no reduction).
+#
+# ============================ WHAT SHIPPED ============================
+# 1. Wave-merged gather (byte-identical, verified: 4,246,312 B before and
+#    after). The per-group gather used to materialize EVERY group's TreeSamples
+#    into one Vec before a trailing merge, so the per-group vec and the merged
+#    accumulator were both resident. Now merged in waves of 64 groups.
+#    Effect at 4K/e9 t1: 5426 -> 5081 MB. Real but small — the accumulator, not
+#    the transient, dominates.
+# 2. `EffortProfile::tree_max_samples_ceiling` (+ `JXL_TREE_MAX_SAMPLES` env
+#    override) — an absolute cap that makes the stride grow with resolution.
+#    DEFAULT 0 (uncapped) — see the ceiling TSV for why it is not yet a default.
+#
+# ============================ NOT YET DONE ============================
+# The goal ("beat libjxl on both lossy and lossless") is NOT met. Remaining,
+# in measured priority order:
+#   a) props i32 -> quantized u8 buckets (96 -> 24 B/sample, 4x on the dominant
+#      array) — needs verifying nothing downstream reads raw props after
+#      bucketization.
+#   b) make gather-time dedup actually collapse rows (currently 0% on photos).
+#   c) lossy e3/e7 (1.7-2.4x over cjxl) was NOT investigated at all — the
+#      ceiling knob does not move lossy (bytes AND peak identical at every
+#      ceiling), so lossy's memory is in the VarDCT/buttloop path, a separate
+#      hunt.
+#   d) the ~750 MB of allocator-retained free memory at a tight ceiling is
+#      churn, not live data; it may look different under glibc on Linux (all
+#      prior calibration for this crate was measured on WSL2 x86-64).
+#
+# Columns: encoder content w h pixels mode effort distance threads rep
+#          out_bytes peak_rss_bytes wall_s

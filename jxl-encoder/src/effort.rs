@@ -1092,6 +1092,25 @@ pub struct EffortProfile {
     /// to densify sampling on large images at moderate effort, or thin
     /// sampling for fast sweeps at high effort.
     pub tree_sample_fraction: f32,
+    /// Absolute ceiling on samples drawn for tree learning, applied AFTER
+    /// [`Self::tree_sample_fraction`] / [`Self::tree_max_samples_fixed`];
+    /// `0` = uncapped.
+    ///
+    /// Without a ceiling the sample count is a fixed *fraction* of the pixel
+    /// count, so the merged `TreeSamples` accumulator grows linearly with
+    /// resolution — at 4K/e9 that is 12.4 M samples x 124 B = 1.5 GB, and it
+    /// was the single largest live allocation in the encoder (measured, not
+    /// estimated: `malloc_history` attributes 1.49 GB to `TreeSamples::reserve`
+    /// on a 3840x2160 lossless e9 encode). A ceiling makes the gather stride
+    /// grow with resolution instead, so tree-learning memory is bounded by the
+    /// ceiling rather than by the image.
+    ///
+    /// This is a quality/memory trade, not a free win: fewer samples means a
+    /// tree fitted on less evidence. The shipped values are set from a measured
+    /// bytes-vs-peak sweep — see `tree_max_samples_ceiling_for`.
+    ///
+    /// Read by `modular/tree_learn.rs::max_tree_samples_from_profile`.
+    pub tree_max_samples_ceiling: u32,
     /// Use the streaming two-hash cuckoo dedup (libjxl `AddSample` parity,
     /// `enc_ma.cc:602-655`) instead of the default packed-key sort during
     /// tree-sample deduplication.
@@ -1634,6 +1653,7 @@ impl EffortProfile {
             tree_max_buckets: Self::tree_max_buckets_for(effort),
             tree_threshold_base: 75.0 + 14.0 * speed_tier as f32,
             tree_max_samples_fixed: if effort <= 4 { 65_000 } else { 0 },
+            tree_max_samples_ceiling: Self::tree_max_samples_ceiling_for(effort),
             // Effort-scaled nb_repeats matching libjxl PR #4236
             tree_sample_fraction: Self::tree_sample_fraction_for(effort),
             // Default OFF: streaming dedup regresses end-to-end wall-clock
@@ -1809,6 +1829,7 @@ impl EffortProfile {
             tree_max_buckets: Self::tree_max_buckets_for(effort),
             tree_threshold_base: 75.0 + 14.0 * speed_tier as f32,
             tree_max_samples_fixed: if effort <= 4 { 65_000 } else { 0 },
+            tree_max_samples_ceiling: Self::tree_max_samples_ceiling_for(effort),
             // Effort-scaled nb_repeats matching libjxl PR #4236
             tree_sample_fraction: Self::tree_sample_fraction_for(effort),
             // Default OFF: streaming dedup regresses end-to-end wall-clock
@@ -1918,6 +1939,24 @@ impl EffortProfile {
             7 => 0.5,
             8 => 0.55,
             _ => 0.65,
+        }
+    }
+
+    /// Absolute tree-sample ceiling per effort (0 = uncapped).
+    ///
+    /// Sized from the measured 4K bytes-vs-peak sweep
+    /// (`benchmarks/jxl_tree_sample_ceiling_4k_2026-08-13.tsv`): the ceiling
+    /// binds only above ~2 MP, so small and mid-size images are unaffected
+    /// (their fraction-derived count is already under it and the stride stays
+    /// 1-2, byte-identical to the uncapped encoder).
+    fn tree_max_samples_ceiling_for(effort: u8) -> u32 {
+        match effort {
+            // 0 = uncapped everywhere until the bytes-vs-peak sweep picks a
+            // default. Capping DIVERGES from libjxl (whose GatherTreeData also
+            // samples a pixel FRACTION with no absolute cap — see CLAUDE.md
+            // "e7 residual: x0.1 lever REFUTED at source"), so the shipped
+            // value must be justified by measurement, not assumed.
+            _ => 0,
         }
     }
 

@@ -523,6 +523,29 @@ impl TreeLearningParams {
     }
 }
 
+/// Per-column-family heap accounting for a [`TreeSamples`], in bytes.
+///
+/// Diagnostic support for the encode peak-memory work: `TreeSamples` is the
+/// dominant lossless allocation at effort >= 7, and its cost splits across
+/// three families with very different reduction options, so a single total
+/// would not say which one to attack.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TreeSamplesHeapBytes {
+    pub num_samples: usize,
+    pub residual_tokens: usize,
+    pub extra_bits: usize,
+    pub props: usize,
+    pub sample_counts: usize,
+    pub num_prop_columns: usize,
+    pub num_pred_columns: usize,
+}
+
+impl TreeSamplesHeapBytes {
+    pub fn total(&self) -> usize {
+        self.residual_tokens + self.extra_bits + self.props + self.sample_counts
+    }
+}
+
 /// Collected samples for tree learning.
 pub struct TreeSamples {
     /// Number of samples collected.
@@ -567,6 +590,27 @@ impl TreeSamples {
     /// and no reference channel properties.
     pub fn new() -> Self {
         Self::with_predictors_and_refs(CANDIDATE_PREDICTORS, 0)
+    }
+
+    /// Heap bytes currently *reserved* by the SoA columns, broken out per
+    /// column family. Uses `capacity()` (not `len()`) because the reserve
+    /// above deliberately over-allocates — the reserved bytes are what the
+    /// process actually pays for in RSS.
+    ///
+    /// Diagnostic only; nothing in the encode path branches on it. Printed by
+    /// `JXL_TREE_SAMPLES_STATS=1` at the end of each gather so the peak-memory
+    /// work has a measured breakdown instead of an estimate.
+    pub(crate) fn heap_bytes(&self) -> TreeSamplesHeapBytes {
+        let sum = |vs: &[Vec<u8>]| -> usize { vs.iter().map(Vec::capacity).sum() };
+        TreeSamplesHeapBytes {
+            num_samples: self.num_samples,
+            residual_tokens: sum(&self.residual_tokens),
+            extra_bits: sum(&self.extra_bits),
+            props: self.props.iter().map(|v| v.capacity() * 4).sum(),
+            sample_counts: self.sample_counts.capacity() * 4,
+            num_prop_columns: self.props.len(),
+            num_pred_columns: self.residual_tokens.len(),
+        }
     }
 
     /// Reserve capacity for `additional` more samples in every SoA
@@ -1613,7 +1657,47 @@ fn gather_samples_strided_with_budget_inner_backend(
             }),
         )?;
     }
+    report_tree_sample_stats(samples, stride, est);
     Ok(())
+}
+
+/// `JXL_TREE_SAMPLES_STATS=1` — print the gathered `TreeSamples` heap
+/// breakdown to stderr. Diagnostic for the encode peak-memory work; costs one
+/// `env::var_os` per gather (cached) and nothing else when unset.
+fn report_tree_sample_stats(samples: &TreeSamples, stride: usize, reserved_samples: usize) {
+    use core::sync::atomic::{AtomicU8, Ordering};
+    static ENABLED: AtomicU8 = AtomicU8::new(u8::MAX);
+    let on = match ENABLED.load(Ordering::Relaxed) {
+        u8::MAX => {
+            let v = u8::from(std::env::var_os("JXL_TREE_SAMPLES_STATS").is_some());
+            ENABLED.store(v, Ordering::Relaxed);
+            v
+        }
+        v => v,
+    };
+    if on == 0 {
+        return;
+    }
+    let b = samples.heap_bytes();
+    let mib = |n: usize| n as f64 / (1024.0 * 1024.0);
+    eprintln!(
+        "[tree-samples] stride={stride} reserved={reserved_samples} samples={} \
+         cols(pred={}, prop={}) | residual_tokens={:.1} MiB extra_bits={:.1} MiB \
+         props={:.1} MiB counts={:.1} MiB TOTAL={:.1} MiB ({:.1} B/sample)",
+        b.num_samples,
+        b.num_pred_columns,
+        b.num_prop_columns,
+        mib(b.residual_tokens),
+        mib(b.extra_bits),
+        mib(b.props),
+        mib(b.sample_counts),
+        mib(b.total()),
+        if b.num_samples > 0 {
+            b.total() as f64 / b.num_samples as f64
+        } else {
+            0.0
+        },
+    );
 }
 
 /// Compute maximum tree samples from an [`EffortProfile`].
@@ -1623,14 +1707,36 @@ pub fn max_tree_samples_from_profile(
     profile: &crate::effort::EffortProfile,
     total_pixels: usize,
 ) -> usize {
-    if profile.tree_sample_fraction > 0.0 {
+    let base = if profile.tree_sample_fraction > 0.0 {
         // Fraction-based: e.g. 50% of pixels, min 65K
         ((total_pixels as f32 * profile.tree_sample_fraction) as usize).max(65_536)
     } else if profile.tree_max_samples_fixed > 0 {
         profile.tree_max_samples_fixed as usize
     } else {
         32_768
+    };
+    // Absolute ceiling (0 = uncapped). Without it the sample count — and so the
+    // merged TreeSamples accumulator, the encoder's largest live allocation —
+    // scales linearly with resolution. Capping here makes the gather stride
+    // grow with the image instead, bounding tree-learning memory.
+    match tree_sample_ceiling_override().unwrap_or(profile.tree_max_samples_ceiling as usize) {
+        0 => base,
+        ceiling => base.min(ceiling.max(65_536)),
     }
+}
+
+/// `JXL_TREE_MAX_SAMPLES=<n>` overrides the profile's tree-sample ceiling
+/// (`0` = uncapped). Sweep knob for the bytes-vs-peak calibration that sets
+/// [`crate::effort::EffortProfile::tree_max_samples_ceiling`]; unset in
+/// production, where the profile value governs.
+fn tree_sample_ceiling_override() -> Option<usize> {
+    use std::sync::OnceLock;
+    static OVERRIDE: OnceLock<Option<usize>> = OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        std::env::var("JXL_TREE_MAX_SAMPLES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    })
 }
 
 /// Compute the stride for subsampling from an [`EffortProfile`].
