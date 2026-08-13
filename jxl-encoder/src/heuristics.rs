@@ -566,18 +566,22 @@ mod tests {
     /// constant.
     ///
     /// Measured 3840x2160 (8.29 MP), RGB8, threads=1, worst case over
-    /// {photo, screen}, at jxl-encoder 51a0b473:
-    ///   lossless e7  peak_live 1966 MB (RSS 3361)  e9  peak_live 1966 MB (RSS 3114)
-    /// Both efforts now sit on the SAME peak_live floor — the accumulator's
-    /// token columns plus the modular image buffers, not the property columns.
+    /// {photo, screen}, at jxl-encoder 8b9b6121:
+    ///   lossless e7  peak_live 1366 MB (RSS 2342)  e9  peak_live 1734 MB (RSS 2529)
+    /// Both efforts now peak in the DEDUP phase (the W-word packed keys plus
+    /// the full-length token columns; per-site attribution in
+    /// benchmarks/jxl_alloc_sites_4k_2026-08-13.md) — the property columns
+    /// were first freed-before-dedup (b22d122e), then width-halved
+    /// (PropColumn i16, 8b9b6121), and the pack was cut from a fixed 64 B to
+    /// the rounded key width (d1074adc).
     ///   lossy    e3  peak_live  412 MB      lossy    e9  peak_live  517 MB
     ///
-    /// Re-measured after the 2026-08-13 lifetime fixes (b22d122e frees the
-    /// dead property columns before dedup rather than after). Keeping the
-    /// pre-fix numbers here would leave the gate looser than the encoder now
-    /// warrants, so it would stop catching a regression that gave the
-    /// reduction back.
-    /// Provenance: benchmarks/jxl_ceiling_peaklive_4k_2026-08-13.tsv.meta.
+    /// Keeping pre-fix numbers here would leave the gate looser than the
+    /// encoder now warrants, so it would stop catching a regression that gave
+    /// the reduction back. Re-measure and re-pin whenever an encode-path
+    /// buffer changes.
+    /// Provenance: benchmarks/jxl_ceiling_peaklive_4k_2026-08-13.tsv.meta +
+    /// benchmarks/jxl_alloc_sites_4k_2026-08-13.md.meta.
     ///
     /// The MAX tier is separately required to clear the measured peak RSS, so
     /// a caller sizing a hard cap from `peak_memory_bytes_max` still survives
@@ -587,8 +591,8 @@ mod tests {
         const MB: u64 = 1024 * 1024;
         // (w, h, is_lossless, effort, measured peak_live, measured peak RSS)
         let cells: &[(u32, u32, bool, u8, u64, u64)] = &[
-            (3840, 2160, true, 7, 1966 * MB, 3361 * MB),
-            (3840, 2160, true, 9, 1966 * MB, 3114 * MB),
+            (3840, 2160, true, 7, 1366 * MB, 2342 * MB),
+            (3840, 2160, true, 9, 1734 * MB, 2529 * MB),
             (3840, 2160, false, 3, 412 * MB, 429 * MB),
             (3840, 2160, false, 9, 517 * MB, 697 * MB),
         ];

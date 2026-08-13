@@ -98,3 +98,28 @@ Fix ladder implied by the numbers (exact-output-preserving first):
    exact variant measured +23–35% wall (refuted at 5% budget).
 4. **Group-streamed tree learning** (the libjxl design): the only path to
    ~300 MB parity; changes output; architectural.
+
+## Addendum: post-fix state (same day, commits d1074adc + 8b9b6121)
+
+Ladder items 1 and 2 shipped byte-identical with identical alloc counts:
+
+* **d1074adc** — dedup keys packed at the rounded word width
+  (`packed_sort_walk::<W>`, 40 B at e7 / 56 at e9, was fixed 64 B) +
+  u32 `unique_indices`. e9 1920 → 1871 MB; e7 unchanged (gather-bound).
+* **8b9b6121** — `PropColumn`: adaptive i16 property columns, promote to
+  i32 on first out-of-range value; width-generic pre-quantize.
+  e7 1871 → **1397 MB**, e9 1871 → **1774 MB**.
+
+Post-fix composition at the e7 peak (now the DEDUP phase): pack 474.6 MiB +
+image channels 189.8 + tokens/extras 332.2 + dedup outputs 142.5 + RCT clone
+94.9 + buckets ~107. The e9 peak is the same phase with its 24-property
+56 B pack (664 MiB). Worst-case cells over {photo, screen}, threads=1:
+e7 peak_live 1366 MiB / RSS 2342 MiB; e9 1734 / 2529 (pinned in
+`heuristics.rs::estimate_covers_measured_4k_cells_2026_08_13`).
+
+What remains vs cjxl's ~306 MB is the architecture, not per-line waste:
+whole-image gather + materialized dedup vs cjxl's per-group streamed
+learning on sampled u8-quantized keys with on-the-fly dedup (ladder items
+3-4). The exact-preserving per-line ladder is now mined out — every
+component at the peak instant is either the image itself, the samples at
+their minimal width, or the dedup working set at its minimal layout.

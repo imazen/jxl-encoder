@@ -27,6 +27,24 @@
   `::encode` via `.map_err(|e| e.decompose().0)`; now they return the traced `At`
   directly so the originating encode site survives in the error.
 
+### Changed
+- **4K lossless encode peak memory cut 55 % (e7) / 44 % (e9), byte-identical.**
+  Session of allocator-level fixes guided by a new per-site allocation
+  profiler (zenjxl `mem_probe_encode` `JXL_ALLOC_SITES=1`; attribution report
+  `benchmarks/jxl_alloc_sites_4k_2026-08-13.md`): free dead property columns
+  before dedup (b22d122e), wave the pre-quantize and gather merges, exact
+  dedup reservations (19c2f996), distinct-value collector instead of a
+  47.5 MiB per-property clone (3aa48c4d), ANS bits buffer split to parallel
+  u32/u8 columns (-142 MiB entropy floor), dedup keys packed at the rounded
+  word width instead of a fixed 64 B + u32 unique indices (d1074adc), and
+  adaptive i16 property columns that promote to i32 on first out-of-range
+  value (`PropColumn`, 8b9b6121). 3840x2160 peak_live: e7 3141 -> 1397 MB,
+  e9 3141 -> 1774 MB; peak RSS 5426 -> ~2342/2529 MB; wall and allocation
+  count unchanged. Both peaks now sit in the dedup phase. The remaining gap
+  to cjxl (~306 MB) is architectural: cjxl streams per group and holds
+  < 0.1 MiB of tree-learning state at peak (measured via malloc_history,
+  same report).
+
 ### Fixed
 - **Per-tile AC-strategy scratch maps were full-image sized — a
   px²/262144-byte QUADRATIC peak-memory term, ~44.5 GiB at 108 MP.**
