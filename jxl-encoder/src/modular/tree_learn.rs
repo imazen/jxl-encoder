@@ -719,6 +719,34 @@ impl TreeSamples {
         }
     }
 
+    /// Release the raw `props` columns, which are the largest thing this
+    /// struct owns (24 i32 columns = 96 of the ~124 B/sample; 1152 MiB of a
+    /// 4K/e9 encode).
+    ///
+    /// Only legal once `props` is provably dead. On the lossless main path
+    /// (`compute_best_tree_with_budget`) it is: that path consumes `props`
+    /// exactly twice — in `pre_quantize`, which projects it into
+    /// `PreQuantizedProps::bucket_indices`, and in `dedup_samples`, which
+    /// gathers compact — and thereafter partitions with
+    /// `PartitionKey::Bucket` only, reading `bucket_indices` rather than
+    /// `props`. That is the same precondition
+    /// [`tree_learn_split::SplittableSamples::skip_props_swap`] documents, and
+    /// the same call sites already pass `skip_props_swap = true`. `swap_rows`
+    /// explicitly tolerates empty parallel arrays, so the emptied columns stay
+    /// well-formed for the rest of the tree build.
+    ///
+    /// The multipliers path (`compute_best_tree_with_multipliers`) must NOT
+    /// call this — its static-prop axes use `PartitionKey::Property`, which
+    /// reads `props` directly.
+    pub(crate) fn free_props(&mut self) {
+        for v in &mut self.props {
+            // Both are needed: `clear` drops the length, `shrink_to_fit`
+            // returns the capacity. Only the second gives the memory back.
+            v.clear();
+            v.shrink_to_fit();
+        }
+    }
+
     /// Size every SoA column ONCE to an exact upper bound on the final sample
     /// count, so no column ever reallocates during the gather/merge.
     ///
@@ -3442,6 +3470,18 @@ pub(crate) fn compute_best_tree_with_budget(
     crate::profile_time!("tree/dedup_samples", {
         dedup_samples(samples, &mut pq, params);
     });
+
+    // `props` is dead from here: this path partitions with
+    // `PartitionKey::Bucket` exclusively (both call sites below pass
+    // `skip_props_swap = true`), so everything downstream reads
+    // `pq.bucket_indices`. Releasing it here drops the encoder's largest live
+    // allocation for the whole tree-build phase, which is also the longest
+    // phase. Gated on the chunk-3c escape hatch: with `JXL_DISABLE_CHUNK3C`
+    // set, `swap_rows` DOES swap props, so they must stay alive.
+    if !chunk3c_skip_is_disabled() {
+        samples.free_props();
+    }
+
     let n = samples.num_samples; // Update n to unique count
 
     let max_nodes = params.max_nodes;
