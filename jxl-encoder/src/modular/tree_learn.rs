@@ -955,9 +955,25 @@ impl TreeSamples {
                             None => return (Vec::new(), vec![0u8; n]),
                         }
                     } else {
-                        let mut sample_vals: Vec<i32> = props[..n].to_vec();
-                        sample_vals.sort_unstable();
-                        sample_vals.dedup();
+                        // Was `props[..n].to_vec()` + sort + dedup: a full
+                        // CLONE of the property column purely to reduce it to
+                        // its distinct values. At 3840x2160 that clone is
+                        // 47.5 MiB per property, and with PRE_QUANTIZE_WAVE
+                        // properties in flight it is the allocation that SET
+                        // the lossless peak (confirmed by a peak-moment
+                        // backtrace).
+                        //
+                        // `DistinctPropertyValues` yields the same ascending
+                        // distinct set in O(distinct) rather than O(samples).
+                        // It is the collector already proven bit-identical to
+                        // this reduction by
+                        // `distinct_value_collector_matches_full_column_thresholds`
+                        // and by the real-data assertion in this same closure.
+                        let mut collector = DistinctPropertyValues::default();
+                        for &v in &props[..n] {
+                            collector.push(v);
+                        }
+                        let sample_vals = collector.into_sorted_distinct();
                         match thresholds_from_sorted_unique(
                             sample_vals,
                             max_buckets,
@@ -1857,16 +1873,38 @@ fn bucketize_with_thresholds(values: &[i32], ts: &[i32]) -> Vec<u8> {
 /// tracks min/max alongside the set so the same choice can be made.
 #[derive(Default)]
 struct DistinctPropertyValues {
-    seen: alloc::collections::BTreeSet<i32>,
+    /// Amortized distinct set: values land in `buf`, sorted+deduped whenever it
+    /// exceeds `COMPACT_AT`. A `BTreeSet` was measured WORSE than the column it
+    /// replaces — per-node overhead dominates for i32 keys. A sorted Vec holds
+    /// the same information at 4 bytes per distinct value.
+    buf: Vec<i32>,
     min: Option<i32>,
     max: Option<i32>,
 }
 
 impl DistinctPropertyValues {
+    /// Compact once the buffer reaches this many entries, bounding the
+    /// collector at ~256 KB plus the distinct set regardless of sample count.
+    const COMPACT_AT: usize = 65_536;
+
     fn push(&mut self, v: i32) {
-        self.seen.insert(v);
+        self.buf.push(v);
+        if self.buf.len() >= Self::COMPACT_AT {
+            self.compact();
+        }
         self.min = Some(self.min.map_or(v, |m| m.min(v)));
         self.max = Some(self.max.map_or(v, |m| m.max(v)));
+    }
+
+    fn compact(&mut self) {
+        self.buf.sort_unstable();
+        self.buf.dedup();
+    }
+
+    /// Consume into the ascending distinct value set.
+    pub(crate) fn into_sorted_distinct(mut self) -> Vec<i32> {
+        self.compact();
+        self.buf
     }
 
     /// Thresholds for this property, byte-identical to what `pre_quantize`
@@ -1874,9 +1912,12 @@ impl DistinctPropertyValues {
     /// "<= 1 distinct value" early-out (empty thresholds, all-zero buckets).
     fn thresholds(&self, max_buckets: usize) -> Option<Vec<i32>> {
         let (min, max) = (self.min?, self.max?);
-        // BTreeSet iterates ascending, which is exactly what both branches
-        // produce (the bitmap walk is ascending; the sparse path sorts).
-        let ascending: Vec<i32> = self.seen.iter().copied().collect();
+        // After compaction `buf` IS the ascending distinct set — exactly what
+        // both branches produce (the bitmap walk is ascending; the sparse path
+        // sorts).
+        let mut ascending = self.buf.clone();
+        ascending.sort_unstable();
+        ascending.dedup();
         let range = max as i64 - min as i64 + 1;
         let step_mode = if range <= (max_buckets * 4) as i64 {
             ThresholdStep::DivCeil
