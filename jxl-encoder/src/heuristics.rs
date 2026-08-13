@@ -551,6 +551,54 @@ mod tests {
     /// content-tight, ≤ 2×; e7's band is an envelope of a 2.1× content
     /// spread, so its ceiling is looser at 3× on this content-light
     /// photo).
+    /// The LOSSLESS bands had no measured-cell coverage — only lossy did, via
+    /// the 108 MP test below — and the lossless e7-e9 band was found
+    /// under-predicting at 4K on 2026-08-13.
+    ///
+    /// Cells are the ALLOCATOR-AGNOSTIC peak (high-water mark of live
+    /// allocated bytes, from the counting global allocator in zenjxl's
+    /// examples/mem_probe_encode), NOT peak RSS. RSS is the wrong thing to
+    /// pin an estimate against: it folds in whatever the platform allocator
+    /// declined to return, so it swung 4161-4522 MB run-to-run on the same
+    /// binary and input here, while `peak_live` held at 3141 MB across both
+    /// runs AND both content classes. Pinning to RSS would make this test
+    /// flaky and would encode one allocator's retention policy as a codec
+    /// constant.
+    ///
+    /// Measured 3840x2160 (8.29 MP), RGB8, threads=1, worst case over
+    /// {photo, screen}, at jxl-encoder 08c0b9fa:
+    ///   lossless e7  peak_live 2766 MB      lossless e9  peak_live 3141 MB
+    ///   lossy    e3  peak_live  412 MB      lossy    e9  peak_live  517 MB
+    /// Provenance: benchmarks/jxl_ceiling_peaklive_4k_2026-08-13.tsv.meta.
+    ///
+    /// The MAX tier is separately required to clear the measured peak RSS, so
+    /// a caller sizing a hard cap from `peak_memory_bytes_max` still survives
+    /// an allocator that retains aggressively.
+    #[test]
+    fn estimate_covers_measured_4k_cells_2026_08_13() {
+        const MB: u64 = 1024 * 1024;
+        // (w, h, is_lossless, effort, measured peak_live, measured peak RSS)
+        let cells: &[(u32, u32, bool, u8, u64, u64)] = &[
+            (3840, 2160, true, 7, 2766 * MB, 3980 * MB),
+            (3840, 2160, true, 9, 3141 * MB, 4522 * MB),
+            (3840, 2160, false, 3, 412 * MB, 429 * MB),
+            (3840, 2160, false, 9, 517 * MB, 692 * MB),
+        ];
+        for &(w, h, lossless, effort, live, rss) in cells {
+            let e = estimate_encode(w, h, 3, false, lossless, effort).unwrap();
+            assert!(
+                e.peak_memory_bytes >= live,
+                "lossless={lossless} e{effort}: TYP {} under measured peak_live {live}",
+                e.peak_memory_bytes
+            );
+            assert!(
+                e.peak_memory_bytes_max >= rss,
+                "lossless={lossless} e{effort}: MAX {} under measured peak RSS {rss}",
+                e.peak_memory_bytes_max
+            );
+        }
+    }
+
     #[test]
     fn estimate_covers_measured_large_sizes_2026_08() {
         // 108 MP lossy e5 t=1: measured marginal 5_602_944 KiB + 324 MB input.
