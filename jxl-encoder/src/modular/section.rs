@@ -37,12 +37,31 @@ use crate::error::Result;
 /// 64 groups is ~740 MB in flight, 16 is ~185 MB, 8 is ~93 MB. It only needs to
 /// be wide enough to keep the worker pool fed — the useful thread count is the
 /// floor, and anything past a small multiple of it buys throughput nothing
-/// while costing peak linearly. 16 covers our widest targets with slack.
+/// while costing peak linearly.
+///
+/// MEASURED 2026-08-13: 16 was chosen by reasoning ("wide enough to keep the
+/// pool fed") and was wrong. A backtrace captured AT the instant `peak_live` is
+/// set — not from an RSS-polled snapshot, which samples a different moment and
+/// had been misattributing this — puts the lossless peak inside this very
+/// `parallel_map`. Re-swept with that knowledge (3840x2160 lossless,
+/// byte-identical at every setting, alloc count and wall time flat):
+///
+///   wave  e7 peak_live  e9 peak_live
+///     16      1966 MB      1966 MB
+///      8      1873 MB         -
+///      4      1851 MB      1898 MB
+///      2      1851 MB         -
+///      1      1851 MB         -
+///
+/// 4 captures the whole available reduction and flattens below it, so it is the
+/// knee rather than a guess. Wall is unchanged (14.7 s e7 / 84.0 s e9), so the
+/// extra barriers cost nothing measurable — the "keep every worker fed" concern
+/// that motivated 16 was unfounded at this width.
 ///
 /// Overridable at runtime via `JXL_TREE_GATHER_WAVE` (sweep knob; unset in
 /// production). The value is observationally invisible — waves are consumed in
 /// ascending group order, so the merged result is identical at every setting.
-const GATHER_MERGE_WAVE_GROUPS: usize = 16;
+const GATHER_MERGE_WAVE_GROUPS: usize = 4;
 
 /// `JXL_TREE_GATHER_WAVE=<n>` overrides [`GATHER_MERGE_WAVE_GROUPS`].
 fn gather_wave_groups() -> usize {
