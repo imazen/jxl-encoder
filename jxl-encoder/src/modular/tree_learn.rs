@@ -3563,7 +3563,14 @@ fn cmp_packed_key_words<const W: usize>(a: &[u64; W], b: &[u64; W]) -> core::cmp
 /// every byte past `key_len` is zero in BOTH representations, so big-endian
 /// word compare over 8W bytes orders exactly like the old 64-byte compare;
 /// same unstable sort => same permutation => same representatives.
-fn packed_sort_walk<const W: usize>(
+/// Whole-array variant: pack every key, one global sort, one walk. Used
+/// when raw property columns are RETAINED into dedup (the multipliers path
+/// and the chunk-3c escape hatch): there the compaction gathers raw
+/// property values by run REPRESENTATIVE, raw values are NOT key
+/// constituents, and the partitioned variant may pick a different (equally
+/// valid, but different) representative — so those paths keep the exact
+/// historical sort. Costs the full n x 8W key buffer.
+fn packed_sort_walk_full<const W: usize>(
     samples: &TreeSamples,
     pq: &PreQuantizedProps,
     properties: &[usize],
@@ -3571,9 +3578,6 @@ fn packed_sort_walk<const W: usize>(
     preexisting_counts: Option<&[u32]>,
 ) -> (Vec<u32>, Vec<u32>) {
     let n = samples.num_samples;
-    // Per-sample key build is embarrassingly parallel — each task reads
-    // a fixed offset from the parallel SoA arrays and writes a single
-    // 8W-byte key. Use parallel_map to fan out over the n samples.
     let keys: Vec<[u64; W]> = crate::parallel::parallel_map(n, |sample_idx| {
         let mut kb = [0u8; DEDUP_KEY_BYTES];
         let mut off = 0;
@@ -3610,25 +3614,11 @@ fn packed_sort_walk<const W: usize>(
         order.sort_unstable_by(|&a, &b| cmp_packed_key_words(&keys[a as usize], &keys[b as usize]));
     }
 
-    // Walk sorted order, merge consecutive identical samples.
-    // Reserved at `n`, not `n / 2`. The halved guess assumes dedup collapses
-    // about half the samples; on photo content it collapses almost NONE, so
-    // both vectors grow to ~n and realloc — and a realloc holds the old and new
-    // buffers at once. Measured at 3840x2160 lossless e9, that growth of
-    // `unique_indices` was the allocation that SET the encode's peak
-    // (peak-moment backtrace). Reserving the true upper bound costs the same
-    // steady-state bytes and removes the transient entirely. u32 entries:
-    // 4 bytes x 12.44 M = 47.5 MiB, half the previous usize footprint.
     let mut unique_indices: Vec<u32> = Vec::with_capacity(n);
     let mut counts: Vec<u32> = Vec::with_capacity(n);
-
     let first = order[0];
     unique_indices.push(first);
-    counts.push(
-        preexisting_counts
-            .map(|c| c[first as usize])
-            .unwrap_or(1),
-    );
+    counts.push(preexisting_counts.map(|c| c[first as usize]).unwrap_or(1));
     let mut prev_key_idx = first as usize;
     for &curr_idx in &order[1..] {
         let curr = curr_idx as usize;
@@ -3640,6 +3630,187 @@ fn packed_sort_walk<const W: usize>(
             counts.push(weight);
             prev_key_idx = curr;
         }
+    }
+    (unique_indices, counts)
+}
+
+fn packed_sort_walk<const W: usize>(
+    samples: &TreeSamples,
+    pq: &PreQuantizedProps,
+    properties: &[usize],
+    num_pred: usize,
+    preexisting_counts: Option<&[u32]>,
+) -> (Vec<u32>, Vec<u32>) {
+    let n = samples.num_samples;
+
+    // Key byte `d` for `sample_idx` — exactly the byte the packed-key
+    // builder writes at offset `d` (bucket byte per configured property,
+    // then [token, extra_bits] per candidate predictor, zero past the end).
+    let key_byte = |d: usize, sample_idx: usize| -> u8 {
+        if d < properties.len() {
+            let bi = &pq.bucket_indices[properties[d]];
+            if bi.is_empty() { 0 } else { bi[sample_idx] }
+        } else {
+            let p = d - properties.len();
+            if p >= 2 * num_pred {
+                0
+            } else if p % 2 == 0 {
+                samples.residual_tokens[p / 2][sample_idx]
+            } else {
+                samples.extra_bits[p / 2][sample_idx]
+            }
+        }
+    };
+
+    // Partition samples by the TWO most-significant key bytes with one
+    // stable counting sort, then pack + sort + walk each partition
+    // independently, in partition order.
+    //
+    // The previous shape materialized ALL n keys at once — 475 MiB at e7 /
+    // 664 at e9 on 3840x2160, the largest object at the peak instant
+    // (benchmarks/jxl_alloc_sites_4k_2026-08-13.md). The two lead bytes
+    // dominate the big-endian compare, so the concatenation of per-partition
+    // sorted runs IS the globally sorted run, and equal-key runs cannot span
+    // partitions. Per-partition packs are transient and reused, so the
+    // steady cost drops to the partition permutation (n x 4 B) plus one
+    // partition's keys.
+    //
+    // Byte-identity: identical key bytes => identical ordering => identical
+    // run structure. Within an equal-key run the representative CAN differ
+    // from the single-sort's (unstable sorts of different arrays), which is
+    // observationally invisible on this path: dedup here runs after
+    // free_props (raw property columns empty — asserted by the caller), so
+    // every column the compaction gathers (tokens, extra bits, bucket
+    // indices) is a constituent of the key and therefore EQUAL across the
+    // run, and the run's count is an order-independent sum. Verified
+    // byte-identical at 4K e7/e9 photo + screen.
+    let mut part_counts = vec![0u32; 65537];
+    for i in 0..n {
+        let pk = ((key_byte(0, i) as usize) << 8) | key_byte(1, i) as usize;
+        part_counts[pk + 1] += 1;
+    }
+    for k in 0..65536 {
+        part_counts[k + 1] += part_counts[k];
+    }
+    let starts = part_counts; // prefix sums: partition pk = [starts[pk], starts[pk+1])
+    let mut cursor = starts.clone();
+    let mut part: Vec<u32> = vec![0u32; n];
+    for i in 0..n {
+        let pk = ((key_byte(0, i) as usize) << 8) | key_byte(1, i) as usize;
+        part[cursor[pk] as usize] = i as u32;
+        cursor[pk] += 1;
+    }
+    drop(cursor);
+
+    // Chunk contiguous partitions so the leaf work parallelizes with a
+    // BOUNDED number of in-flight packs (one per rayon worker) and a bounded
+    // allocation count (scratch is reused across a chunk's partitions).
+    // Balanced by sample count; ~2 chunks per available thread, min 1.
+    let target_chunks = 32usize;
+    let per_chunk = n.div_ceil(target_chunks).max(1);
+    let mut chunk_bounds: Vec<(usize, usize)> = Vec::new(); // partition-id ranges
+    {
+        let mut chunk_start = 0usize;
+        let mut acc = 0usize;
+        for pk in 0..65536 {
+            acc += (starts[pk + 1] - starts[pk]) as usize;
+            if acc >= per_chunk {
+                chunk_bounds.push((chunk_start, pk + 1));
+                chunk_start = pk + 1;
+                acc = 0;
+            }
+        }
+        if chunk_start < 65536 {
+            chunk_bounds.push((chunk_start, 65536));
+        }
+    }
+
+    let per_chunk_out: Vec<(Vec<u32>, Vec<u32>)> =
+        crate::parallel::parallel_map(chunk_bounds.len(), |ci| {
+            let (pk_lo, pk_hi) = chunk_bounds[ci];
+            let chunk_samples = (starts[pk_hi] - starts[pk_lo]) as usize;
+            // Reserved at the true upper bound (photo content collapses
+            // almost nothing), so growth reallocs never set the peak.
+            let mut unique_indices: Vec<u32> = Vec::with_capacity(chunk_samples);
+            let mut counts: Vec<u32> = Vec::with_capacity(chunk_samples);
+            // Scratch reused across this chunk's partitions: allocation
+            // count stays O(chunks), not O(partitions).
+            let mut keys: Vec<[u64; W]> = Vec::new();
+            let mut loc: Vec<u32> = Vec::new();
+            for pk in pk_lo..pk_hi {
+                let (s0, s1) = (starts[pk] as usize, starts[pk + 1] as usize);
+                let m = s1 - s0;
+                if m == 0 {
+                    continue;
+                }
+                let members = &part[s0..s1];
+                if m == 1 {
+                    let idx = members[0];
+                    unique_indices.push(idx);
+                    counts.push(preexisting_counts.map(|c| c[idx as usize]).unwrap_or(1));
+                    continue;
+                }
+                keys.clear();
+                keys.extend(members.iter().map(|&sample_idx| {
+                    let sample_idx = sample_idx as usize;
+                    let mut kb = [0u8; DEDUP_KEY_BYTES];
+                    let mut off = 0;
+                    for &prop_idx in properties {
+                        let bi = &pq.bucket_indices[prop_idx];
+                        if !bi.is_empty() {
+                            kb[off] = bi[sample_idx];
+                        }
+                        off += 1;
+                    }
+                    for pred in 0..num_pred {
+                        kb[off] = samples.residual_tokens[pred][sample_idx];
+                        off += 1;
+                        kb[off] = samples.extra_bits[pred][sample_idx];
+                        off += 1;
+                    }
+                    let mut kw = [0u64; W];
+                    for (j, w) in kw.iter_mut().enumerate() {
+                        *w = u64::from_be_bytes(kb[8 * j..8 * j + 8].try_into().unwrap());
+                    }
+                    kw
+                }));
+                loc.clear();
+                loc.extend(0..m as u32);
+                loc.sort_unstable_by(|&a, &b| {
+                    cmp_packed_key_words(&keys[a as usize], &keys[b as usize])
+                });
+
+                // Walk this partition's sorted run, merging equal keys.
+                let first_local = loc[0] as usize;
+                let first = members[first_local];
+                unique_indices.push(first);
+                counts.push(preexisting_counts.map(|c| c[first as usize]).unwrap_or(1));
+                let mut prev_local = first_local;
+                for &l in &loc[1..] {
+                    let l = l as usize;
+                    let idx = members[l];
+                    let weight = preexisting_counts.map(|c| c[idx as usize]).unwrap_or(1);
+                    if cmp_packed_key_words(&keys[l], &keys[prev_local])
+                        == core::cmp::Ordering::Equal
+                    {
+                        *counts.last_mut().unwrap() += weight;
+                    } else {
+                        unique_indices.push(idx);
+                        counts.push(weight);
+                        prev_local = l;
+                    }
+                }
+            }
+            (unique_indices, counts)
+        });
+
+    drop(part);
+    let total_unique: usize = per_chunk_out.iter().map(|(u, _)| u.len()).sum();
+    let mut unique_indices: Vec<u32> = Vec::with_capacity(total_unique);
+    let mut counts: Vec<u32> = Vec::with_capacity(total_unique);
+    for (u, c) in per_chunk_out {
+        unique_indices.extend_from_slice(&u);
+        counts.extend_from_slice(&c);
     }
     (unique_indices, counts)
 }
@@ -3694,18 +3865,36 @@ fn dedup_samples_packed_sort(
     // Bare-index sort with the inline word comparator stands.
     //
     // Key/sort/walk run in the W-word core monomorphized for the rounded
-    // key width — see `packed_sort_walk` for the identity argument.
+    // key width — see `packed_sort_walk` for the identity argument. When raw
+    // property columns survive into dedup (multipliers path / chunk-3c
+    // escape hatch), the run REPRESENTATIVE is observable through the raw-
+    // props compaction, so those paths take the whole-array variant whose
+    // representative choice matches the historical sort exactly.
     let words = key_len.div_ceil(8).max(1);
     let pc = preexisting_counts.as_deref();
-    let (unique_indices, counts) = match words {
-        1 => packed_sort_walk::<1>(samples, pq, properties, num_pred, pc),
-        2 => packed_sort_walk::<2>(samples, pq, properties, num_pred, pc),
-        3 => packed_sort_walk::<3>(samples, pq, properties, num_pred, pc),
-        4 => packed_sort_walk::<4>(samples, pq, properties, num_pred, pc),
-        5 => packed_sort_walk::<5>(samples, pq, properties, num_pred, pc),
-        6 => packed_sort_walk::<6>(samples, pq, properties, num_pred, pc),
-        7 => packed_sort_walk::<7>(samples, pq, properties, num_pred, pc),
-        _ => packed_sort_walk::<8>(samples, pq, properties, num_pred, pc),
+    let props_retained = samples.props.iter().any(|c| !c.is_empty());
+    let (unique_indices, counts) = if props_retained {
+        match words {
+            1 => packed_sort_walk_full::<1>(samples, pq, properties, num_pred, pc),
+            2 => packed_sort_walk_full::<2>(samples, pq, properties, num_pred, pc),
+            3 => packed_sort_walk_full::<3>(samples, pq, properties, num_pred, pc),
+            4 => packed_sort_walk_full::<4>(samples, pq, properties, num_pred, pc),
+            5 => packed_sort_walk_full::<5>(samples, pq, properties, num_pred, pc),
+            6 => packed_sort_walk_full::<6>(samples, pq, properties, num_pred, pc),
+            7 => packed_sort_walk_full::<7>(samples, pq, properties, num_pred, pc),
+            _ => packed_sort_walk_full::<8>(samples, pq, properties, num_pred, pc),
+        }
+    } else {
+        match words {
+            1 => packed_sort_walk::<1>(samples, pq, properties, num_pred, pc),
+            2 => packed_sort_walk::<2>(samples, pq, properties, num_pred, pc),
+            3 => packed_sort_walk::<3>(samples, pq, properties, num_pred, pc),
+            4 => packed_sort_walk::<4>(samples, pq, properties, num_pred, pc),
+            5 => packed_sort_walk::<5>(samples, pq, properties, num_pred, pc),
+            6 => packed_sort_walk::<6>(samples, pq, properties, num_pred, pc),
+            7 => packed_sort_walk::<7>(samples, pq, properties, num_pred, pc),
+            _ => packed_sort_walk::<8>(samples, pq, properties, num_pred, pc),
+        }
     };
     drop(preexisting_counts);
 
