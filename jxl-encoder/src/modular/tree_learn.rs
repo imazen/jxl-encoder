@@ -871,8 +871,9 @@ impl TreeSamples {
         let mut wave_start = 0usize;
         while wave_start < params.properties.len() {
             let wave_end = (wave_start + PRE_QUANTIZE_WAVE).min(params.properties.len());
-            let wave: Vec<(Vec<i32>, Vec<u8>)> =
-                crate::parallel::parallel_map(wave_end - wave_start, |k| {
+            let wave: Vec<(Vec<i32>, Vec<u8>)> = crate::parallel::parallel_map(
+                wave_end - wave_start,
+                |k| {
                     let i = wave_start + k;
                     let prop_idx = params.properties[i];
                     let props = &self.props[prop_idx];
@@ -887,6 +888,13 @@ impl TreeSamples {
                         if v > max_val {
                             max_val = v;
                         }
+                    }
+                    if std::env::var_os("JXL_PROP_RANGE_STATS").is_some() {
+                        let fits16 =
+                            min_val >= i32::from(i16::MIN) && max_val <= i32::from(i16::MAX);
+                        eprintln!(
+                            "[prop-range] prop={prop_idx} min={min_val} max={max_val} fits_i16={fits16}"
+                        );
                     }
                     if min_val == max_val {
                         // Constant property — empty threshold set, all bucket 0
@@ -987,7 +995,8 @@ impl TreeSamples {
 
                     let bi = bucketize_with_thresholds(&props[..n], &ts);
                     (ts, bi)
-                });
+                },
+            );
             // The raw columns this wave consumed are now dead — release them
             // before the next wave allocates its bucket columns.
             for k in 0..(wave_end - wave_start) {
