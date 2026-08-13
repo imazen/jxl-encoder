@@ -1,0 +1,56 @@
+# Tree-sample ceiling vs ALLOCATOR-AGNOSTIC peak, + the lossy attribution
+# 2026-08-13, 3840x2160, threads=1, macOS/M4 Pro, jxl-encoder ea7bfd58.
+#
+# peak_live = high-water mark of LIVE allocated bytes, from the counting global
+# allocator in zenjxl's examples/mem_probe_encode. Unlike peak RSS it does not
+# include allocator retention, so it is the number a memory fix must move.
+#
+# ===================== LOSSLESS e9: THE CEILING PLATEAUS =====================
+#   ceiling     bytes      RSS MB   peak_live MB   allocs    wall s
+#   0 (uncap)   4,246,312    3831       3141       673,492    87.5
+#   2,000,000   4,370,048    1599        902       889,404    28.0
+#   1,000,000   4,410,640    1371        895       740,609    20.2
+#     500,000   4,464,839    1221        891       565,103    16.3
+#     250,000   4,503,311    1172        888       415,902    13.1
+#     125,000   4,555,885    1174        887       307,771    11.6
+#
+# THE KEY RESULT: peak_live falls 3141 -> 902 MB at ceiling 2M and then
+# PLATEAUS at ~890 MB no matter how much further the sample count is cut
+# (125K samples is 100x fewer than uncapped and buys 15 MB). So ~890 MB is a
+# FLOOR contributed by something other than the tree samples, and the sample
+# ceiling cannot reach cjxl's 306 MB on its own — it gets to ~2.9x, not 10.3x.
+# Anyone tuning this knob further for memory is wasting the bytes it costs.
+#
+# Wall time is a large WIN, not a regression: 87.5 -> 11.6 s (7.5x).
+#
+# ALLOC COUNT IS NON-MONOTONIC and must be watched: 673k uncapped -> 889k at
+# ceiling 2M (32% WORSE) -> 308k at 125K (54% better). A ceiling in the 1-2M
+# range trades bytes for allocations, which is the wrong trade on Windows.
+# Only ceilings <= 500K improve both axes at once.
+#
+# ===================== LOSSY e7: ATTRIBUTED =====================
+# Measured at 3840x2160 lossy e7 d1.25 t1: peak_live 517 MB, 360,793 allocs,
+# 2.22 s. cjxl at the same cell is ~290 MB RSS, so lossy is ~1.8x on the
+# allocator-agnostic peak (vs 16x for lossless — a different, smaller problem).
+#
+# malloc_history at peak, live bytes by site:
+#   182 MiB  120 calls  vardct::bitstream::tokenize_ac_group -> Vec<Token>
+#    34 MiB  268 calls  vardct::transform::TransformOutput::new
+#    34 MiB  268 calls  vardct::transform::TransformOutput::new
+#    34 MiB  268 calls  vardct::encoder::VarDctEncoder::encode_inner
+#    10 MiB   15 calls  entropy_coding token vectors
+#   (also on the top stack: api::ingest::srgb_u8_to_linear_f32)
+#
+# So 35% of the lossy peak is the per-group AC token vectors, ALL of which are
+# alive before the ANS build. This is the SAME structural shape as the lossless
+# accumulator (collect everything, then process) and it is already a known item
+# — CLAUDE.md's 2026-08-01 entry records it as the "remaining unguarded mass...
+# ~24 B/px, linear, all groups' tokens alive before ANS build", measured there
+# at ~1.15 GB at 48 MP. This measurement confirms it at 4K (22 B/px) and puts a
+# number on its share of the peak.
+#
+# The fix shape is the same wave/stream treatment already applied to the
+# tree-sample gather in 24b48dfe: build ANS histograms per group as tokens are
+# produced rather than holding every group's tokens to the end. Not attempted.
+#
+# Columns: ceiling out_bytes RSS_MB peak_live_MB allocs wall_s
