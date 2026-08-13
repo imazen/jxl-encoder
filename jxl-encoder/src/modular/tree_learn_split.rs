@@ -78,7 +78,7 @@ pub struct SplittableSamples<'a> {
     /// Per-predictor extra bits: `extra_bits[pred][sample]`.
     pub extra_bits: &'a mut [Vec<u8>],
     /// Per-property quantized values: `props[prop][sample]`.
-    pub props: &'a mut [Vec<i32>],
+    pub props: &'a mut [super::tree_learn::PropColumn],
     /// Per-property bucket indices: `bucket_indices[prop][sample]`.
     /// Mirrors `PreQuantizedProps::bucket_indices`.
     pub bucket_indices: &'a mut [Vec<u8>],
@@ -208,7 +208,7 @@ impl PartitionKey {
                     "PartitionKey::Property requires aligned `samples.props`; \
                      caller set skip_props_swap=true (use PartitionKey::Bucket instead)"
                 );
-                samples.props[prop_idx][row] <= val
+                samples.props[prop_idx].index_i32(row) <= val
             }
             PartitionKey::Bucket { prop_idx, val } => samples.bucket_indices[prop_idx][row] <= val,
         }
@@ -310,6 +310,7 @@ pub fn split_tree_samples_in_place(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modular::tree_learn::PropColumn;
     use alloc::vec;
 
     /// Build a `CanaryStorage` with a single predictor + single property +
@@ -319,13 +320,13 @@ mod tests {
     fn make_canary(n: usize) -> CanaryStorage {
         let mut residual_tokens = vec![Vec::with_capacity(n)];
         let mut extra_bits = vec![Vec::with_capacity(n)];
-        let mut props = vec![Vec::with_capacity(n)];
+        let mut props = vec![PropColumn::I32(Vec::with_capacity(n))];
         let mut bucket_indices = vec![Vec::with_capacity(n)];
         let mut sample_counts = Vec::with_capacity(n);
         for i in 0..n {
             residual_tokens[0].push(i as u8);
             extra_bits[0].push((i.wrapping_mul(7)) as u8);
-            props[0].push(i as i32);
+            props[0].push_i32(i as i32);
             bucket_indices[0].push((i & 0xff) as u8);
             sample_counts.push(i as u32 + 1);
         }
@@ -341,7 +342,7 @@ mod tests {
     struct CanaryStorage {
         residual_tokens: Vec<Vec<u8>>,
         extra_bits: Vec<Vec<u8>>,
-        props: Vec<Vec<i32>>,
+        props: Vec<PropColumn>,
         bucket_indices: Vec<Vec<u8>>,
         sample_counts: Vec<u32>,
     }
@@ -366,7 +367,7 @@ mod tests {
             let canary = self.residual_tokens[0][row];
             let i = canary as usize;
             assert_eq!(self.extra_bits[0][row], (i.wrapping_mul(7)) as u8);
-            assert_eq!(self.props[0][row], i as i32);
+            assert_eq!(self.props[0].index_i32(row), i as i32);
             assert_eq!(self.bucket_indices[0][row], (i & 0xff) as u8);
             assert_eq!(self.sample_counts[row], i as u32 + 1);
         }
@@ -479,7 +480,7 @@ mod tests {
         // Build storage where props[1][i] = i % 2 (even → 0, odd → 1).
         // Predicate "prop[1] <= 0" matches even canaries; 8 of them in [0..16).
         let mut storage = make_canary(16);
-        storage.props.push((0..16i32).map(|i| i % 2).collect());
+        storage.props.push(PropColumn::I32((0..16i32).map(|i| i % 2).collect()));
         storage
             .bucket_indices
             .push((0..16).map(|i| (i & 1) as u8).collect());
@@ -511,7 +512,7 @@ mod tests {
         // [0..4) and [12..16) untouched. Predicate "props[1] <= 0" matches
         // even canaries; 4 in [4..12) (4, 6, 8, 10).
         let mut storage = make_canary(16);
-        storage.props.push((0..16i32).map(|i| i % 2).collect());
+        storage.props.push(PropColumn::I32((0..16i32).map(|i| i % 2).collect()));
         storage
             .bucket_indices
             .push((0..16).map(|i| (i & 1) as u8).collect());
@@ -636,8 +637,8 @@ mod tests {
                     .collect()
             })
             .collect();
-        let mut props: Vec<Vec<i32>> = (0..num_props)
-            .map(|p| (0..n).map(|i| (i as i32) + (p as i32) * 1000).collect())
+        let mut props: Vec<PropColumn> = (0..num_props)
+            .map(|p| PropColumn::I32((0..n).map(|i| (i as i32) + (p as i32) * 1000).collect()))
             .collect();
         let mut bucket_indices: Vec<Vec<u8>> = (0..num_props)
             .map(|p| (0..n).map(|i| ((i + p) & 0xff) as u8).collect())
@@ -649,7 +650,7 @@ mod tests {
         let signature_at = |row: usize,
                             residual_tokens: &[Vec<u8>],
                             extra_bits: &[Vec<u8>],
-                            props: &[Vec<i32>],
+                            props: &[PropColumn],
                             bucket_indices: &[Vec<u8>],
                             sample_counts: &[u32]|
          -> (u64, u64) {
@@ -668,7 +669,7 @@ mod tests {
             for (p, col) in props.iter().enumerate() {
                 b = b
                     .wrapping_mul(37)
-                    .wrapping_add(col[row].wrapping_abs() as u64 ^ ((p as u64) << 4));
+                    .wrapping_add(col.index_i32(row).wrapping_abs() as u64 ^ ((p as u64) << 4));
             }
             for (p, col) in bucket_indices.iter().enumerate() {
                 b = b
@@ -729,12 +730,12 @@ mod tests {
         assert_eq!(returned, pos);
 
         // Predicate must hold on the left, fail on the right.
-        for (i, v) in props[0][..pos].iter().enumerate() {
-            assert!(*v <= 127, "row {i} should have props[0] <= 127 but is {v}");
+        for (i, v) in props[0].iter_i32().take(pos).enumerate() {
+            assert!(v <= 127, "row {i} should have props[0] <= 127 but is {v}");
         }
-        for (offset, v) in props[0][pos..n].iter().enumerate() {
+        for (offset, v) in props[0].iter_i32().take(n).skip(pos).enumerate() {
             let i = pos + offset;
-            assert!(*v > 127, "row {i} should have props[0] > 127 but is {v}");
+            assert!(v > 127, "row {i} should have props[0] > 127 but is {v}");
         }
 
         // SoA alignment check: every post-permutation row signature must
@@ -778,7 +779,7 @@ mod tests {
         }
         let val = 127i32;
         let expected_left_count = prop_col.iter().filter(|&&v| v <= val).count();
-        let mut props: Vec<Vec<i32>> = vec![prop_col.clone()];
+        let mut props: Vec<PropColumn> = vec![PropColumn::I32(prop_col.clone())];
         let mut bucket_indices: Vec<Vec<u8>> = vec![(0..n).map(|i| (i & 0xff) as u8).collect()];
         let mut sample_counts: Vec<u32> = (0..n).map(|i| (i as u32) + 1).collect();
 
@@ -802,16 +803,21 @@ mod tests {
         };
         assert_eq!(returned, expected_left_count);
 
-        for (i, v) in props[0][..expected_left_count].iter().enumerate() {
+        for (i, v) in props[0].iter_i32().take(expected_left_count).enumerate() {
             assert!(
-                *v <= val,
+                v <= val,
                 "row {i} should be left of split but props[0]={v}"
             );
         }
-        for (offset, v) in props[0][expected_left_count..n].iter().enumerate() {
+        for (offset, v) in props[0]
+            .iter_i32()
+            .take(n)
+            .skip(expected_left_count)
+            .enumerate()
+        {
             let i = expected_left_count + offset;
             assert!(
-                *v > val,
+                v > val,
                 "row {i} should be right of split but props[0]={v}"
             );
         }
@@ -832,7 +838,7 @@ mod tests {
         let mut residual_tokens: Vec<Vec<u8>> = vec![(0..n).map(|i| i as u8).collect()];
         let mut extra_bits: Vec<Vec<u8>> =
             vec![(0..n).map(|i| (i.wrapping_mul(7)) as u8).collect()];
-        let mut props: Vec<Vec<i32>> = vec![(0..n as i32).collect()];
+        let mut props: Vec<PropColumn> = vec![PropColumn::I32((0..n as i32).collect())];
         let mut bucket_indices: Vec<Vec<u8>> = vec![(0..n).map(|i| (i & 1) as u8).collect()];
         let mut sample_counts: Vec<u32> = (0..n).map(|i| i as u32 + 1).collect();
 
@@ -916,7 +922,7 @@ mod tests {
         let n = 8usize;
         let mut residual_tokens: Vec<Vec<u8>> = vec![(0..n).map(|i| i as u8).collect()];
         let mut extra_bits: Vec<Vec<u8>> = vec![(0..n).map(|i| i as u8).collect()];
-        let mut props: Vec<Vec<i32>> = vec![(0..n as i32).collect()];
+        let mut props: Vec<PropColumn> = vec![PropColumn::I32((0..n as i32).collect())];
         let mut bucket_indices: Vec<Vec<u8>> = vec![(0..n).map(|i| i as u8).collect()];
         let mut sample_counts: Vec<u32> = (0..n as u32).collect();
         let mut view = SplittableSamples {

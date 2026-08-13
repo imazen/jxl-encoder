@@ -546,6 +546,265 @@ impl TreeSamplesHeapBytes {
     }
 }
 
+/// One property's SoA column, stored at the narrowest width that has held
+/// every value pushed so far.
+///
+/// The raw property columns are the single largest allocation in a lossless
+/// encode (24 x i32 x 12.44 M samples = 1139 MiB at 3840x2160, and the peak
+/// instant of the whole encode per benchmarks/jxl_alloc_sites_4k_2026-08-13).
+/// Measured property ranges on 8-bit content all fit i16
+/// (JXL_PROP_RANGE_STATS: max |value| 1920 at 4K), which halves that peak —
+/// but ranges are content-dependent (16-bit sources, huge palettes), so the
+/// column PROMOTES to i32 in place the first time a value doesn't fit.
+/// Promotion preserves every stored value exactly, so downstream reads are
+/// identical whichever representation a column happens to be in:
+/// byte-identical output by construction.
+///
+/// Paths that need `&mut [i32]` views of retained columns (the borrowed-view
+/// tree builder, only reachable when the pre-quantize skip is disabled) call
+/// [`TreeSamples::ensure_props_i32`] first, which widens in place — those
+/// paths then see exactly the pre-refactor representation.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum PropColumn {
+    I16(Vec<i16>),
+    I32(Vec<i32>),
+}
+
+impl Default for PropColumn {
+    fn default() -> Self {
+        PropColumn::I16(Vec::new())
+    }
+}
+
+impl PropColumn {
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            PropColumn::I16(v) => v.len(),
+            PropColumn::I32(v) => v.len(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn capacity_bytes(&self) -> usize {
+        match self {
+            PropColumn::I16(v) => v.capacity() * 2,
+            PropColumn::I32(v) => v.capacity() * 4,
+        }
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        match self {
+            PropColumn::I16(v) => v.reserve(additional),
+            PropColumn::I32(v) => v.reserve(additional),
+        }
+    }
+
+    fn reserve_exact_to(&mut self, upper_bound: usize) {
+        match self {
+            PropColumn::I16(v) => v.reserve_exact(upper_bound.saturating_sub(v.len())),
+            PropColumn::I32(v) => v.reserve_exact(upper_bound.saturating_sub(v.len())),
+        }
+    }
+
+    /// Widen to i32 in place. No-op if already wide. Values are preserved
+    /// exactly; the transient (old i16 + new i32) is bounded by 1.5x one
+    /// column and only paid on content whose properties overflow i16.
+    fn promote(&mut self) {
+        if let PropColumn::I16(v) = self {
+            let wide: Vec<i32> = v.iter().map(|&x| x as i32).collect();
+            *self = PropColumn::I32(wide);
+        }
+    }
+
+    #[inline]
+    fn fits_i16(x: i32) -> bool {
+        x as i16 as i32 == x
+    }
+
+    #[inline]
+    pub(crate) fn push_i32(&mut self, x: i32) {
+        match self {
+            PropColumn::I32(v) => v.push(x),
+            PropColumn::I16(v) => {
+                if Self::fits_i16(x) {
+                    v.push(x as i16);
+                } else {
+                    self.promote();
+                    let PropColumn::I32(v) = self else {
+                        unreachable!()
+                    };
+                    v.push(x);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn extend_from_i32_slice(&mut self, src: &[i32]) {
+        if let PropColumn::I32(v) = self {
+            v.extend_from_slice(src);
+            return;
+        }
+        let done = {
+            let PropColumn::I16(v) = &mut *self else {
+                unreachable!()
+            };
+            v.reserve(src.len());
+            let mut i = 0;
+            while i < src.len() {
+                let x = src[i];
+                if Self::fits_i16(x) {
+                    v.push(x as i16);
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            i
+        };
+        if done < src.len() {
+            self.promote();
+            let PropColumn::I32(v) = self else {
+                unreachable!()
+            };
+            v.extend_from_slice(&src[done..]);
+        }
+    }
+
+    /// Append `other`'s values (draining it), matching `Vec::append` order.
+    fn append_column(&mut self, other: &mut PropColumn) {
+        match (&mut *self, &mut *other) {
+            (PropColumn::I16(d), PropColumn::I16(s)) => d.append(s),
+            (PropColumn::I32(d), PropColumn::I32(s)) => {
+                d.append(s);
+                return;
+            }
+            (PropColumn::I32(d), PropColumn::I16(s)) => {
+                d.extend(s.iter().map(|&x| x as i32));
+                s.clear();
+                return;
+            }
+            (PropColumn::I16(_), PropColumn::I32(_)) => {
+                self.promote();
+                let PropColumn::I32(d) = self else {
+                    unreachable!()
+                };
+                let PropColumn::I32(s) = other else {
+                    unreachable!()
+                };
+                d.append(s);
+                return;
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get_i32(&self, idx: usize) -> Option<i32> {
+        match self {
+            PropColumn::I16(v) => v.get(idx).map(|&x| x as i32),
+            PropColumn::I32(v) => v.get(idx).copied(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn index_i32(&self, idx: usize) -> i32 {
+        match self {
+            PropColumn::I16(v) => v[idx] as i32,
+            PropColumn::I32(v) => v[idx],
+        }
+    }
+
+    pub(crate) fn swap(&mut self, a: usize, b: usize) {
+        match self {
+            PropColumn::I16(v) => v.swap(a, b),
+            PropColumn::I32(v) => v.swap(a, b),
+        }
+    }
+
+    pub(crate) fn pop(&mut self) {
+        match self {
+            PropColumn::I16(v) => {
+                v.pop();
+            }
+            PropColumn::I32(v) => {
+                v.pop();
+            }
+        }
+    }
+
+    /// Gather `indices` into a fresh column of the SAME representation —
+    /// values were already proven to fit the current width.
+    fn gather_indices(&self, indices: &[u32]) -> PropColumn {
+        match self {
+            PropColumn::I16(v) => {
+                PropColumn::I16(indices.iter().map(|&i| v[i as usize]).collect())
+            }
+            PropColumn::I32(v) => {
+                PropColumn::I32(indices.iter().map(|&i| v[i as usize]).collect())
+            }
+        }
+    }
+
+    #[cfg(feature = "parallel-tree-learning")]
+    fn split_off_column(&mut self, mid: usize) -> PropColumn {
+        match self {
+            PropColumn::I16(v) => PropColumn::I16(v.split_off(mid)),
+            PropColumn::I32(v) => PropColumn::I32(v.split_off(mid)),
+        }
+    }
+
+    /// Iterate values as i32 regardless of representation.
+    /// (Consumed by tests; the production paths read via slices or
+    /// `index_i32`.)
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn iter_i32(&self) -> PropColIter<'_> {
+        match self {
+            PropColumn::I16(v) => PropColIter::I16(v.iter()),
+            PropColumn::I32(v) => PropColIter::I32(v.iter()),
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum PropColIter<'a> {
+    I16(core::slice::Iter<'a, i16>),
+    I32(core::slice::Iter<'a, i32>),
+}
+
+impl Iterator for PropColIter<'_> {
+    type Item = i32;
+    #[inline]
+    fn next(&mut self) -> Option<i32> {
+        match self {
+            PropColIter::I16(it) => it.next().map(|&x| x as i32),
+            PropColIter::I32(it) => it.next().copied(),
+        }
+    }
+}
+
+/// Property scalar for width-generic pre-quantization: the per-property
+/// scan/threshold/bucketize pipeline is monomorphized over the column's
+/// element type so an i16 column is processed without widening it first.
+trait PropScalar: Copy {
+    fn to_i32(self) -> i32;
+}
+impl PropScalar for i16 {
+    #[inline(always)]
+    fn to_i32(self) -> i32 {
+        self as i32
+    }
+}
+impl PropScalar for i32 {
+    #[inline(always)]
+    fn to_i32(self) -> i32 {
+        self
+    }
+}
+
 /// Collected samples for tree learning.
 pub struct TreeSamples {
     /// Number of samples collected.
@@ -561,9 +820,10 @@ pub struct TreeSamples {
     /// Fits in u8 (max ~14 bits for 8-bit image residuals).
     extra_bits: Vec<Vec<u8>>,
     /// Spec-matching property values: props[property_idx][sample_idx].
-    /// These are the actual (unquantized) property values.
+    /// These are the actual (unquantized) property values, stored at the
+    /// narrowest width that fits (see [`PropColumn`]).
     /// Length is `NUM_PROPERTIES + 4 * num_ref_channels` (base 16 + 4 per ref channel).
-    props: Vec<Vec<i32>>,
+    props: Vec<PropColumn>,
     /// Sample counts after deduplication: sample_counts[sample_idx].
     /// Before dedup, all 1s. After dedup, each unique sample's count of merged originals.
     sample_counts: Vec<u32>,
@@ -606,7 +866,7 @@ impl TreeSamples {
             num_samples: self.num_samples,
             residual_tokens: sum(&self.residual_tokens),
             extra_bits: sum(&self.extra_bits),
-            props: self.props.iter().map(|v| v.capacity() * 4).sum(),
+            props: self.props.iter().map(PropColumn::capacity_bytes).sum(),
             sample_counts: self.sample_counts.capacity() * 4,
             num_prop_columns: self.props.len(),
             num_pred_columns: self.residual_tokens.len(),
@@ -628,6 +888,18 @@ impl TreeSamples {
         }
         for v in &mut self.props {
             v.reserve(additional);
+        }
+    }
+
+    /// Widen every non-empty property column to i32 in place. Paths that
+    /// take `&mut [i32]` views of retained columns (the borrowed-view tree
+    /// builder) call this first; on the default path the raw columns are
+    /// already freed before the tree build, so it is a no-op.
+    pub(crate) fn ensure_props_i32(&mut self) {
+        for col in &mut self.props {
+            if !col.is_empty() {
+                col.promote();
+            }
         }
     }
 
@@ -673,7 +945,7 @@ impl TreeSamples {
             candidate_predictors: predictors,
             residual_tokens: vec![Vec::new(); num_predictors],
             extra_bits: vec![Vec::new(); num_predictors],
-            props: vec![Vec::new(); total_props],
+            props: vec![PropColumn::default(); total_props],
             sample_counts: Vec::new(),
             num_ref_channels,
             randomize_gather: false,
@@ -740,10 +1012,9 @@ impl TreeSamples {
     /// reads `props` directly.
     pub(crate) fn free_props(&mut self) {
         for v in &mut self.props {
-            // Both are needed: `clear` drops the length, `shrink_to_fit`
-            // returns the capacity. Only the second gives the memory back.
-            v.clear();
-            v.shrink_to_fit();
+            // Replacing with the default empty column drops the whole
+            // allocation (the clear + shrink_to_fit of the Vec era).
+            *v = PropColumn::default();
         }
     }
 
@@ -773,7 +1044,7 @@ impl TreeSamples {
             v.reserve_exact(upper_bound.saturating_sub(v.len()));
         }
         for v in &mut self.props {
-            v.reserve_exact(upper_bound.saturating_sub(v.len()));
+            v.reserve_exact_to(upper_bound);
         }
     }
 
@@ -818,7 +1089,7 @@ impl TreeSamples {
             dst.append(src);
         }
         for (dst, src) in self.props.iter_mut().zip(other.props.iter_mut()) {
-            dst.append(src);
+            dst.append_column(src);
         }
         self.sample_counts.append(&mut other.sample_counts);
         self.num_samples += other.num_samples;
@@ -876,148 +1147,29 @@ impl TreeSamples {
                 |k| {
                     let i = wave_start + k;
                     let prop_idx = params.properties[i];
-                    let props = &self.props[prop_idx];
-
-                    // Find min/max across ALL samples
-                    let mut min_val = i32::MAX;
-                    let mut max_val = i32::MIN;
-                    for &v in &props[..n] {
-                        if v < min_val {
-                            min_val = v;
-                        }
-                        if v > max_val {
-                            max_val = v;
-                        }
-                    }
-                    if std::env::var_os("JXL_PROP_RANGE_STATS").is_some() {
-                        let fits16 =
-                            min_val >= i32::from(i16::MIN) && max_val <= i32::from(i16::MAX);
-                        eprintln!(
-                            "[prop-range] prop={prop_idx} min={min_val} max={max_val} fits_i16={fits16}"
-                        );
-                    }
-                    if min_val == max_val {
-                        // Constant property — empty threshold set, all bucket 0
-                        return (Vec::new(), vec![0u8; n]);
-                    }
-
-                    // EX-J5 reinterpretation: Lloyd-Max bucket boundaries for the
-                    // three residual-energy proxy properties (4 = |N|, 5 = |W|,
-                    // 15 = wp_max_error). Same property indices, same bitstream
-                    // format — just better candidate splitvals derived from the
-                    // empirical sample distribution rather than uniform rank.
-                    //
-                    // Other 13 properties keep the cheap sort-quantile path: their
-                    // distributions are not energy-shaped (channel id, group id,
-                    // signed gradient differences ~symmetric around zero), so
-                    // Lloyd-Max would only add cost without compression payoff.
-                    if params.lloyd_max_buckets
-                        && (prop_idx == 4 || prop_idx == 5 || prop_idx == 15)
-                    {
-                        let ts = lloyd_max_thresholds(&props[..n], min_val, max_val, max_buckets);
-                        if ts.is_empty() {
-                            return (Vec::new(), vec![0u8; n]);
-                        }
-                        let num_thresholds = ts.len();
-                        let mut bi = vec![0u8; n];
-                        for (bi_val, &v) in bi.iter_mut().zip(props[..n].iter()) {
-                            let bucket = match ts.binary_search(&v) {
-                                Ok(pos) => pos,
-                                Err(pos) => pos,
-                            };
-                            *bi_val = bucket.min(num_thresholds) as u8;
-                        }
-                        return (ts, bi);
-                    }
-
-                    // Build threshold set from unique values
-                    let range = max_val as i64 - min_val as i64 + 1;
-                    let ts: Vec<i32>;
-
-                    if range <= (max_buckets * 4) as i64 {
-                        let range_usize = range as usize;
-                        let mut present = vec![false; range_usize];
-                        for i in 0..n {
-                            present[(props[i] - min_val) as usize] = true;
-                        }
-                        let mut unique_vals: Vec<i32> = present
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, p)| **p)
-                            .map(|(i, _)| min_val + i as i32)
-                            .collect();
-                        match thresholds_from_sorted_unique(
-                            unique_vals,
+                    // Width-generic: an i16 column is quantized without
+                    // widening it (the whole point of PropColumn).
+                    match &self.props[prop_idx] {
+                        PropColumn::I16(v) => quantize_prop_column(
+                            &v[..n],
+                            prop_idx,
                             max_buckets,
-                            ThresholdStep::DivCeil,
-                        ) {
-                            Some(t) => ts = t,
-                            None => return (Vec::new(), vec![0u8; n]),
-                        }
-                    } else {
-                        // Was `props[..n].to_vec()` + sort + dedup: a full
-                        // CLONE of the property column purely to reduce it to
-                        // its distinct values. At 3840x2160 that clone is
-                        // 47.5 MiB per property, and with PRE_QUANTIZE_WAVE
-                        // properties in flight it is the allocation that SET
-                        // the lossless peak (confirmed by a peak-moment
-                        // backtrace).
-                        //
-                        // `DistinctPropertyValues` yields the same ascending
-                        // distinct set in O(distinct) rather than O(samples).
-                        // It is the collector already proven bit-identical to
-                        // this reduction by
-                        // `distinct_value_collector_matches_full_column_thresholds`
-                        // and by the real-data assertion in this same closure.
-                        let mut collector = DistinctPropertyValues::default();
-                        for &v in &props[..n] {
-                            collector.push(v);
-                        }
-                        let sample_vals = collector.into_sorted_distinct();
-                        match thresholds_from_sorted_unique(
-                            sample_vals,
+                            params.lloyd_max_buckets,
+                        ),
+                        PropColumn::I32(v) => quantize_prop_column(
+                            &v[..n],
+                            prop_idx,
                             max_buckets,
-                            ThresholdStep::DivFloor,
-                        ) {
-                            Some(t) => ts = t,
-                            None => return (Vec::new(), vec![0u8; n]),
-                        }
+                            params.lloyd_max_buckets,
+                        ),
                     }
-
-                    // Real-data check of the gather-order change's core claim:
-                    // a streaming DISTINCT-value collector must derive exactly
-                    // these thresholds. The synthetic test
-                    // (`distinct_value_collector_matches_full_column_thresholds`)
-                    // covers both branches and their boundary, but only real
-                    // encodes exercise the actual property distributions — signed
-                    // gradient/wp deltas, position properties, per-ref-channel
-                    // columns — that the refactor has to reproduce. Costs nothing
-                    // in release; debug builds and the test suite exercise it on
-                    // every image they encode.
-                    #[cfg(debug_assertions)]
-                    {
-                        let mut collector = DistinctPropertyValues::default();
-                        for &v in &props[..n] {
-                            collector.push(v);
-                        }
-                        let streamed = collector.thresholds(max_buckets);
-                        debug_assert_eq!(
-                            streamed.as_deref(),
-                            Some(ts.as_slice()),
-                            "streaming distinct-value thresholds diverged from the \
-                         full-column derivation (prop n={n}, max_buckets={max_buckets})",
-                        );
-                    }
-
-                    let bi = bucketize_with_thresholds(&props[..n], &ts);
-                    (ts, bi)
                 },
             );
             // The raw columns this wave consumed are now dead — release them
             // before the next wave allocates its bucket columns.
             for k in 0..(wave_end - wave_start) {
                 let prop_idx = params.properties[wave_start + k];
-                self.props[prop_idx] = Vec::new();
+                self.props[prop_idx] = PropColumn::default();
             }
             per_prop.extend(wave);
             wave_start = wave_end;
@@ -1072,8 +1224,145 @@ impl TreeSamples {
 /// selection inside the MA-tree learner; the decoder reads whatever
 /// `splitval` the tree node ends up encoding, regardless of how it was
 /// chosen. Lloyd-Max-derived thresholds are 100 % spec-legal.
-fn lloyd_max_thresholds(
-    samples: &[i32],
+/// One property's pre-quantization: min/max scan, threshold derivation
+/// (dense present-scan / distinct-value collector / Lloyd-Max for the
+/// energy proxies), bucketize. Extracted verbatim from the pre_quantize
+/// closure and made width-generic over the column element; every
+/// comparison and threshold is computed on the i32 value, so an i16
+/// column produces byte-identical thresholds and buckets.
+fn quantize_prop_column<T: PropScalar>(
+    props: &[T],
+    prop_idx: usize,
+    max_buckets: usize,
+    lloyd_max_buckets: bool,
+) -> (Vec<i32>, Vec<u8>) {
+    let n = props.len();
+
+    // Find min/max across ALL samples
+    let mut min_val = i32::MAX;
+    let mut max_val = i32::MIN;
+    for &v in props {
+        let v = v.to_i32();
+        if v < min_val {
+            min_val = v;
+        }
+        if v > max_val {
+            max_val = v;
+        }
+    }
+    if std::env::var_os("JXL_PROP_RANGE_STATS").is_some() {
+        let fits16 = min_val >= i32::from(i16::MIN) && max_val <= i32::from(i16::MAX);
+        eprintln!("[prop-range] prop={prop_idx} min={min_val} max={max_val} fits_i16={fits16}");
+    }
+    if min_val == max_val {
+        // Constant property — empty threshold set, all bucket 0
+        return (Vec::new(), vec![0u8; n]);
+    }
+
+    // EX-J5 reinterpretation: Lloyd-Max bucket boundaries for the
+    // three residual-energy proxy properties (4 = |N|, 5 = |W|,
+    // 15 = wp_max_error). Same property indices, same bitstream
+    // format — just better candidate splitvals derived from the
+    // empirical sample distribution rather than uniform rank.
+    //
+    // Other 13 properties keep the cheap sort-quantile path: their
+    // distributions are not energy-shaped (channel id, group id,
+    // signed gradient differences ~symmetric around zero), so
+    // Lloyd-Max would only add cost without compression payoff.
+    if lloyd_max_buckets && (prop_idx == 4 || prop_idx == 5 || prop_idx == 15) {
+        let ts = lloyd_max_thresholds(props, min_val, max_val, max_buckets);
+        if ts.is_empty() {
+            return (Vec::new(), vec![0u8; n]);
+        }
+        let num_thresholds = ts.len();
+        let mut bi = vec![0u8; n];
+        for (bi_val, &v) in bi.iter_mut().zip(props.iter()) {
+            let bucket = match ts.binary_search(&v.to_i32()) {
+                Ok(pos) => pos,
+                Err(pos) => pos,
+            };
+            *bi_val = bucket.min(num_thresholds) as u8;
+        }
+        return (ts, bi);
+    }
+
+    // Build threshold set from unique values
+    let range = max_val as i64 - min_val as i64 + 1;
+    let ts: Vec<i32>;
+
+    if range <= (max_buckets * 4) as i64 {
+        let range_usize = range as usize;
+        let mut present = vec![false; range_usize];
+        for &v in props {
+            present[(v.to_i32() - min_val) as usize] = true;
+        }
+        let unique_vals: Vec<i32> = present
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| **p)
+            .map(|(i, _)| min_val + i as i32)
+            .collect();
+        match thresholds_from_sorted_unique(unique_vals, max_buckets, ThresholdStep::DivCeil) {
+            Some(t) => ts = t,
+            None => return (Vec::new(), vec![0u8; n]),
+        }
+    } else {
+        // Was `props[..n].to_vec()` + sort + dedup: a full
+        // CLONE of the property column purely to reduce it to
+        // its distinct values. At 3840x2160 that clone is
+        // 47.5 MiB per property, and with PRE_QUANTIZE_WAVE
+        // properties in flight it is the allocation that SET
+        // the lossless peak (confirmed by a peak-moment
+        // backtrace).
+        //
+        // `DistinctPropertyValues` yields the same ascending
+        // distinct set in O(distinct) rather than O(samples).
+        // It is the collector already proven bit-identical to
+        // this reduction by
+        // `distinct_value_collector_matches_full_column_thresholds`
+        // and by the real-data assertion below.
+        let mut collector = DistinctPropertyValues::default();
+        for &v in props {
+            collector.push(v.to_i32());
+        }
+        let sample_vals = collector.into_sorted_distinct();
+        match thresholds_from_sorted_unique(sample_vals, max_buckets, ThresholdStep::DivFloor) {
+            Some(t) => ts = t,
+            None => return (Vec::new(), vec![0u8; n]),
+        }
+    }
+
+    // Real-data check of the gather-order change's core claim:
+    // a streaming DISTINCT-value collector must derive exactly
+    // these thresholds. The synthetic test
+    // (`distinct_value_collector_matches_full_column_thresholds`)
+    // covers both branches and their boundary, but only real
+    // encodes exercise the actual property distributions — signed
+    // gradient/wp deltas, position properties, per-ref-channel
+    // columns — that the refactor has to reproduce. Costs nothing
+    // in release; debug builds and the test suite exercise it on
+    // every image they encode.
+    #[cfg(debug_assertions)]
+    {
+        let mut collector = DistinctPropertyValues::default();
+        for &v in props {
+            collector.push(v.to_i32());
+        }
+        let streamed = collector.thresholds(max_buckets);
+        debug_assert_eq!(
+            streamed.as_deref(),
+            Some(ts.as_slice()),
+            "streaming distinct-value thresholds diverged from the \
+                         full-column derivation (prop n={n}, max_buckets={max_buckets})",
+        );
+    }
+
+    let bi = bucketize_with_thresholds(props, &ts);
+    (ts, bi)
+}
+
+fn lloyd_max_thresholds<T: PropScalar>(
+    samples: &[T],
     min_val: i32,
     max_val: i32,
     max_buckets: usize,
@@ -1084,7 +1373,7 @@ fn lloyd_max_thresholds(
     let range = (max_val as i64 - min_val as i64 + 1) as usize;
     let mut hist = vec![0u32; range];
     for &v in samples {
-        hist[(v - min_val) as usize] += 1;
+        hist[(v.to_i32() - min_val) as usize] += 1;
     }
 
     // Compact histogram → unique values + counts.
@@ -1836,11 +2125,11 @@ enum ThresholdStep {
 /// Byte-identical to the loop it replaces, including the `Err(0) => 0` edge
 /// (values below every threshold) and the `.min(num_thresholds)` clamp that
 /// keeps the index inside the bucket alphabet.
-fn bucketize_with_thresholds(values: &[i32], ts: &[i32]) -> Vec<u8> {
+fn bucketize_with_thresholds<T: PropScalar>(values: &[T], ts: &[i32]) -> Vec<u8> {
     let num_thresholds = ts.len();
     let mut bi = vec![0u8; values.len()];
     for (bi_val, &v) in bi.iter_mut().zip(values.iter()) {
-        let bucket = match ts.binary_search(&v) {
+        let bucket = match ts.binary_search(&v.to_i32()) {
             Ok(pos) => pos,
             Err(pos) => {
                 if pos == 0 {
@@ -2101,7 +2390,7 @@ impl GatherRowStaging {
             samples.extra_bits[p].extend_from_slice(&self.ebits[p * cap..p * cap + n]);
         }
         for c in 0..self.total_props {
-            samples.props[c].extend_from_slice(&self.props[c * cap..c * cap + n]);
+            samples.props[c].extend_from_i32_slice(&self.props[c * cap..c * cap + n]);
         }
         samples.num_samples += n;
         self.n = 0;
@@ -2464,16 +2753,16 @@ fn gather_channel_samples(
                     .zip(props.iter())
                     .take(NUM_PROPERTIES)
                 {
-                    prop_list.push(val);
+                    prop_list.push_i32(val);
                 }
                 if max_refs > 0 {
                     for r in 0..max_refs {
                         let base = NUM_PROPERTIES + r * 4;
                         let off = r * 4;
-                        samples.props[base].push(local_ref_props[off]);
-                        samples.props[base + 1].push(local_ref_props[off + 1]);
-                        samples.props[base + 2].push(local_ref_props[off + 2]);
-                        samples.props[base + 3].push(local_ref_props[off + 3]);
+                        samples.props[base].push_i32(local_ref_props[off]);
+                        samples.props[base + 1].push_i32(local_ref_props[off + 1]);
+                        samples.props[base + 2].push_i32(local_ref_props[off + 2]);
+                        samples.props[base + 3].push_i32(local_ref_props[off + 3]);
                     }
                 }
                 samples.num_samples += 1;
@@ -2858,7 +3147,7 @@ impl GatherDedupTable {
             if prop >= total_props {
                 break;
             }
-            let v = samples.props[prop].get(idx).copied().unwrap_or(0) as i64 as u64;
+            let v = samples.props[prop].get_i32(idx).unwrap_or(0) as i64 as u64;
             h = h.wrapping_mul(HASH1_CONST).wrapping_add(v);
         }
         ((h >> 16) as u32) & self.mask
@@ -2873,7 +3162,7 @@ impl GatherDedupTable {
             if prop >= total_props {
                 break;
             }
-            let v = samples.props[prop].get(idx).copied().unwrap_or(0) as i64 as u64;
+            let v = samples.props[prop].get_i32(idx).unwrap_or(0) as i64 as u64;
             h = h.wrapping_mul(HASH2_CONST) ^ v;
         }
         for pred in 0..num_pred {
@@ -2917,7 +3206,7 @@ impl GatherDedupTable {
             if pa.is_empty() {
                 continue;
             }
-            if pa[a] != pa[b] {
+            if pa.index_i32(a) != pa.index_i32(b) {
                 return false;
             }
         }
@@ -3021,7 +3310,7 @@ impl GatherDedupTable {
             if pa.is_empty() {
                 continue;
             }
-            let vb = pa[b];
+            let vb = pa.index_i32(b);
             let va = if prop < NUM_PROPERTIES {
                 local_props[prop]
             } else {
@@ -3469,12 +3758,12 @@ fn dedup_samples_packed_sort(
     let mut start = 0usize;
     while start < total_props {
         let end = (start + DEDUP_COMPACT_WAVE).min(total_props);
-        let new_props: Vec<Vec<i32>> = crate::parallel::parallel_map(end - start, |k| {
+        let new_props: Vec<PropColumn> = crate::parallel::parallel_map(end - start, |k| {
             let old_props = &samples.props[start + k];
             if old_props.is_empty() {
-                Vec::new()
+                PropColumn::default()
             } else {
-                unique_indices.iter().map(|&i| old_props[i as usize]).collect()
+                old_props.gather_indices(&unique_indices)
             }
         });
         for (k, np) in new_props.into_iter().enumerate() {
@@ -3629,10 +3918,7 @@ fn dedup_samples_streaming(
         if old_props.is_empty() {
             continue;
         }
-        let new_props: Vec<i32> = unique_indices
-            .iter()
-            .map(|&i| old_props[i as usize])
-            .collect();
+        let new_props = old_props.gather_indices(&unique_indices);
         samples.props[prop_idx] = new_props;
     }
     for prop_idx in 0..total_props {
@@ -4622,7 +4908,7 @@ fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSample
 
     let mut right_residual_tokens: Vec<Vec<u8>> = Vec::with_capacity(num_pred);
     let mut right_extra_bits: Vec<Vec<u8>> = Vec::with_capacity(num_pred);
-    let mut right_props: Vec<Vec<i32>> = Vec::with_capacity(num_props);
+    let mut right_props: Vec<PropColumn> = Vec::with_capacity(num_props);
 
     for v in &mut samples.residual_tokens {
         if v.is_empty() {
@@ -4640,9 +4926,9 @@ fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSample
     }
     for v in &mut samples.props {
         if v.is_empty() {
-            right_props.push(Vec::new());
+            right_props.push(PropColumn::default());
         } else {
-            right_props.push(v.split_off(mid));
+            right_props.push(v.split_off_column(mid));
         }
     }
     let right_sample_counts = samples.sample_counts.split_off(mid);
@@ -5039,6 +5325,11 @@ impl<'a> BorrowedSamples<'a> {
         let len = samples.num_samples;
         let candidate_predictors = samples.candidate_predictors;
 
+        // The view needs `&mut [i32]` property slices; widen any narrow
+        // columns first (no-op on the default path, where raw columns are
+        // freed before the tree build).
+        samples.ensure_props_i32();
+
         // Slice each parallel array to `[..len]`. Empty arrays stay empty.
         let residual_tokens: alloc::vec::Vec<&'a mut [u8]> = samples
             .residual_tokens
@@ -5065,12 +5356,11 @@ impl<'a> BorrowedSamples<'a> {
         let props: alloc::vec::Vec<&'a mut [i32]> = samples
             .props
             .iter_mut()
-            .map(|v| {
-                if v.is_empty() {
-                    &mut v[..]
-                } else {
-                    &mut v[..len]
-                }
+            .map(|v| match v {
+                PropColumn::I32(v) if !v.is_empty() => &mut v[..len],
+                PropColumn::I32(v) => &mut v[..],
+                // ensure_props_i32 above widened every non-empty column.
+                PropColumn::I16(_) => &mut [][..],
             })
             .collect();
         let bucket_indices: alloc::vec::Vec<&'a mut [u8]> = pq
@@ -6445,9 +6735,9 @@ pub fn compute_best_tree_with_multipliers(
             // Static props are matched by raw value (not bucket index), so we
             // count matching samples on the fly — no sweep produced left_count.
             let splitval_i32 = splitval as i32;
-            let left_count = samples.props[axis][candidate.start..candidate.end]
-                .iter()
-                .filter(|&&v| v <= splitval_i32)
+            let col = &samples.props[axis];
+            let left_count = (candidate.start..candidate.end)
+                .filter(|&i| col.index_i32(i) <= splitval_i32)
                 .count();
             let abs_mid = partition_node_in_place(
                 samples,
@@ -10310,7 +10600,7 @@ mod tests {
         assert!(n > 0, "expected at least one unique sample");
 
         // Count left side using PartitionKey::Property semantics
-        let left_count = samples.props[3][..n].iter().filter(|&&v| v <= 1).count();
+        let left_count = samples.props[3].iter_i32().take(n).filter(|&v| v <= 1).count();
 
         let mid = partition_node_in_place(
             &mut samples,
@@ -10326,12 +10616,12 @@ mod tests {
         assert_eq!(mid, left_count);
 
         // Left side: x <= 1
-        for v in &samples.props[3][..mid] {
-            assert!(*v <= 1, "left-side row should have x<=1 but got {v}");
+        for v in samples.props[3].iter_i32().take(mid) {
+            assert!(v <= 1, "left-side row should have x<=1 but got {v}");
         }
         // Right side: x > 1
-        for v in &samples.props[3][mid..n] {
-            assert!(*v > 1, "right-side row should have x>1 but got {v}");
+        for v in samples.props[3].iter_i32().take(n).skip(mid) {
+            assert!(v > 1, "right-side row should have x>1 but got {v}");
         }
 
         // Re-verify SoA row alignment: every parallel array must hold values
