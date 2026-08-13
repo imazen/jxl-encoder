@@ -936,6 +936,31 @@ impl TreeSamples {
                     }
                 }
 
+                // Real-data check of the gather-order change's core claim:
+                // a streaming DISTINCT-value collector must derive exactly
+                // these thresholds. The synthetic test
+                // (`distinct_value_collector_matches_full_column_thresholds`)
+                // covers both branches and their boundary, but only real
+                // encodes exercise the actual property distributions — signed
+                // gradient/wp deltas, position properties, per-ref-channel
+                // columns — that the refactor has to reproduce. Costs nothing
+                // in release; debug builds and the test suite exercise it on
+                // every image they encode.
+                #[cfg(debug_assertions)]
+                {
+                    let mut collector = DistinctPropertyValues::default();
+                    for &v in &props[..n] {
+                        collector.push(v);
+                    }
+                    let streamed = collector.thresholds(max_buckets);
+                    debug_assert_eq!(
+                        streamed.as_deref(),
+                        Some(ts.as_slice()),
+                        "streaming distinct-value thresholds diverged from the \
+                         full-column derivation (prop n={n}, max_buckets={max_buckets})",
+                    );
+                }
+
                 // Assign each sample to a bucket using binary search
                 let num_thresholds = ts.len();
                 let mut bi = vec![0u8; n];
