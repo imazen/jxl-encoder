@@ -833,7 +833,7 @@ impl TreeSamples {
     /// energy proxies — use Lloyd-Max iterative clustering for bucket
     /// boundaries instead of sort-quantile picks. See
     /// [`lloyd_max_thresholds`].
-    fn pre_quantize(&self, params: &TreeLearningParams) -> PreQuantizedProps {
+    fn pre_quantize(&mut self, params: &TreeLearningParams) -> PreQuantizedProps {
         let max_buckets = params.max_property_values;
         let n = self.num_samples;
         let total_props = self.total_num_properties();
@@ -850,120 +850,153 @@ impl TreeSamples {
         // At effort 7 this fans out over 7 properties (one per tree-learning
         // candidate), with per-prop work O(n) for n up to ~1.5M samples on
         // 4.19 MP — each task is large enough to amortize rayon spawn cost.
-        let per_prop: Vec<(Vec<i32>, Vec<u8>)> =
-            crate::parallel::parallel_map(params.properties.len(), |i| {
-                let prop_idx = params.properties[i];
-                let props = &self.props[prop_idx];
+        // Waved so each property's RAW i32 column is released as soon as its
+        // bucket column exists.
+        //
+        // This is where the encoder peaks: entering pre_quantize the SoA holds
+        // ~1.54 GB (24 i32 property columns + the predictor token columns) at
+        // 4K lossless e9, and building all 24 bucket columns before releasing
+        // any raw column adds another ~298 MB on top. Freeing per wave trades
+        // that 298 MB overlap for `PRE_QUANTIZE_WAVE` columns' worth, and the
+        // raw column is dead the moment its buckets exist — everything
+        // downstream partitions on `bucket_indices` (the props free that used
+        // to happen before dedup is now redundant for these columns, and stays
+        // only for the chunk-3c escape hatch).
+        //
+        // Byte-identical: each property is quantized from exactly the same
+        // values, and properties are independent — only the interleaving of
+        // allocation and release changes.
+        const PRE_QUANTIZE_WAVE: usize = 4;
+        let mut per_prop: Vec<(Vec<i32>, Vec<u8>)> = Vec::with_capacity(params.properties.len());
+        let mut wave_start = 0usize;
+        while wave_start < params.properties.len() {
+            let wave_end = (wave_start + PRE_QUANTIZE_WAVE).min(params.properties.len());
+            let wave: Vec<(Vec<i32>, Vec<u8>)> =
+                crate::parallel::parallel_map(wave_end - wave_start, |k| {
+                    let i = wave_start + k;
+                    let prop_idx = params.properties[i];
+                    let props = &self.props[prop_idx];
 
-                // Find min/max across ALL samples
-                let mut min_val = i32::MAX;
-                let mut max_val = i32::MIN;
-                for &v in &props[..n] {
-                    if v < min_val {
-                        min_val = v;
+                    // Find min/max across ALL samples
+                    let mut min_val = i32::MAX;
+                    let mut max_val = i32::MIN;
+                    for &v in &props[..n] {
+                        if v < min_val {
+                            min_val = v;
+                        }
+                        if v > max_val {
+                            max_val = v;
+                        }
                     }
-                    if v > max_val {
-                        max_val = v;
-                    }
-                }
-                if min_val == max_val {
-                    // Constant property — empty threshold set, all bucket 0
-                    return (Vec::new(), vec![0u8; n]);
-                }
-
-                // EX-J5 reinterpretation: Lloyd-Max bucket boundaries for the
-                // three residual-energy proxy properties (4 = |N|, 5 = |W|,
-                // 15 = wp_max_error). Same property indices, same bitstream
-                // format — just better candidate splitvals derived from the
-                // empirical sample distribution rather than uniform rank.
-                //
-                // Other 13 properties keep the cheap sort-quantile path: their
-                // distributions are not energy-shaped (channel id, group id,
-                // signed gradient differences ~symmetric around zero), so
-                // Lloyd-Max would only add cost without compression payoff.
-                if params.lloyd_max_buckets && (prop_idx == 4 || prop_idx == 5 || prop_idx == 15) {
-                    let ts = lloyd_max_thresholds(&props[..n], min_val, max_val, max_buckets);
-                    if ts.is_empty() {
+                    if min_val == max_val {
+                        // Constant property — empty threshold set, all bucket 0
                         return (Vec::new(), vec![0u8; n]);
                     }
-                    let num_thresholds = ts.len();
-                    let mut bi = vec![0u8; n];
-                    for (bi_val, &v) in bi.iter_mut().zip(props[..n].iter()) {
-                        let bucket = match ts.binary_search(&v) {
-                            Ok(pos) => pos,
-                            Err(pos) => pos,
-                        };
-                        *bi_val = bucket.min(num_thresholds) as u8;
-                    }
-                    return (ts, bi);
-                }
 
-                // Build threshold set from unique values
-                let range = max_val as i64 - min_val as i64 + 1;
-                let ts: Vec<i32>;
+                    // EX-J5 reinterpretation: Lloyd-Max bucket boundaries for the
+                    // three residual-energy proxy properties (4 = |N|, 5 = |W|,
+                    // 15 = wp_max_error). Same property indices, same bitstream
+                    // format — just better candidate splitvals derived from the
+                    // empirical sample distribution rather than uniform rank.
+                    //
+                    // Other 13 properties keep the cheap sort-quantile path: their
+                    // distributions are not energy-shaped (channel id, group id,
+                    // signed gradient differences ~symmetric around zero), so
+                    // Lloyd-Max would only add cost without compression payoff.
+                    if params.lloyd_max_buckets
+                        && (prop_idx == 4 || prop_idx == 5 || prop_idx == 15)
+                    {
+                        let ts = lloyd_max_thresholds(&props[..n], min_val, max_val, max_buckets);
+                        if ts.is_empty() {
+                            return (Vec::new(), vec![0u8; n]);
+                        }
+                        let num_thresholds = ts.len();
+                        let mut bi = vec![0u8; n];
+                        for (bi_val, &v) in bi.iter_mut().zip(props[..n].iter()) {
+                            let bucket = match ts.binary_search(&v) {
+                                Ok(pos) => pos,
+                                Err(pos) => pos,
+                            };
+                            *bi_val = bucket.min(num_thresholds) as u8;
+                        }
+                        return (ts, bi);
+                    }
 
-                if range <= (max_buckets * 4) as i64 {
-                    let range_usize = range as usize;
-                    let mut present = vec![false; range_usize];
-                    for i in 0..n {
-                        present[(props[i] - min_val) as usize] = true;
-                    }
-                    let mut unique_vals: Vec<i32> = present
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, p)| **p)
-                        .map(|(i, _)| min_val + i as i32)
-                        .collect();
-                    match thresholds_from_sorted_unique(
-                        unique_vals,
-                        max_buckets,
-                        ThresholdStep::DivCeil,
-                    ) {
-                        Some(t) => ts = t,
-                        None => return (Vec::new(), vec![0u8; n]),
-                    }
-                } else {
-                    let mut sample_vals: Vec<i32> = props[..n].to_vec();
-                    sample_vals.sort_unstable();
-                    sample_vals.dedup();
-                    match thresholds_from_sorted_unique(
-                        sample_vals,
-                        max_buckets,
-                        ThresholdStep::DivFloor,
-                    ) {
-                        Some(t) => ts = t,
-                        None => return (Vec::new(), vec![0u8; n]),
-                    }
-                }
+                    // Build threshold set from unique values
+                    let range = max_val as i64 - min_val as i64 + 1;
+                    let ts: Vec<i32>;
 
-                // Real-data check of the gather-order change's core claim:
-                // a streaming DISTINCT-value collector must derive exactly
-                // these thresholds. The synthetic test
-                // (`distinct_value_collector_matches_full_column_thresholds`)
-                // covers both branches and their boundary, but only real
-                // encodes exercise the actual property distributions — signed
-                // gradient/wp deltas, position properties, per-ref-channel
-                // columns — that the refactor has to reproduce. Costs nothing
-                // in release; debug builds and the test suite exercise it on
-                // every image they encode.
-                #[cfg(debug_assertions)]
-                {
-                    let mut collector = DistinctPropertyValues::default();
-                    for &v in &props[..n] {
-                        collector.push(v);
+                    if range <= (max_buckets * 4) as i64 {
+                        let range_usize = range as usize;
+                        let mut present = vec![false; range_usize];
+                        for i in 0..n {
+                            present[(props[i] - min_val) as usize] = true;
+                        }
+                        let mut unique_vals: Vec<i32> = present
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, p)| **p)
+                            .map(|(i, _)| min_val + i as i32)
+                            .collect();
+                        match thresholds_from_sorted_unique(
+                            unique_vals,
+                            max_buckets,
+                            ThresholdStep::DivCeil,
+                        ) {
+                            Some(t) => ts = t,
+                            None => return (Vec::new(), vec![0u8; n]),
+                        }
+                    } else {
+                        let mut sample_vals: Vec<i32> = props[..n].to_vec();
+                        sample_vals.sort_unstable();
+                        sample_vals.dedup();
+                        match thresholds_from_sorted_unique(
+                            sample_vals,
+                            max_buckets,
+                            ThresholdStep::DivFloor,
+                        ) {
+                            Some(t) => ts = t,
+                            None => return (Vec::new(), vec![0u8; n]),
+                        }
                     }
-                    let streamed = collector.thresholds(max_buckets);
-                    debug_assert_eq!(
-                        streamed.as_deref(),
-                        Some(ts.as_slice()),
-                        "streaming distinct-value thresholds diverged from the \
+
+                    // Real-data check of the gather-order change's core claim:
+                    // a streaming DISTINCT-value collector must derive exactly
+                    // these thresholds. The synthetic test
+                    // (`distinct_value_collector_matches_full_column_thresholds`)
+                    // covers both branches and their boundary, but only real
+                    // encodes exercise the actual property distributions — signed
+                    // gradient/wp deltas, position properties, per-ref-channel
+                    // columns — that the refactor has to reproduce. Costs nothing
+                    // in release; debug builds and the test suite exercise it on
+                    // every image they encode.
+                    #[cfg(debug_assertions)]
+                    {
+                        let mut collector = DistinctPropertyValues::default();
+                        for &v in &props[..n] {
+                            collector.push(v);
+                        }
+                        let streamed = collector.thresholds(max_buckets);
+                        debug_assert_eq!(
+                            streamed.as_deref(),
+                            Some(ts.as_slice()),
+                            "streaming distinct-value thresholds diverged from the \
                          full-column derivation (prop n={n}, max_buckets={max_buckets})",
-                    );
-                }
+                        );
+                    }
 
-                let bi = bucketize_with_thresholds(&props[..n], &ts);
-                (ts, bi)
-            });
+                    let bi = bucketize_with_thresholds(&props[..n], &ts);
+                    (ts, bi)
+                });
+            // The raw columns this wave consumed are now dead — release them
+            // before the next wave allocates its bucket columns.
+            for k in 0..(wave_end - wave_start) {
+                let prop_idx = params.properties[wave_start + k];
+                self.props[prop_idx] = Vec::new();
+            }
+            per_prop.extend(wave);
+            wave_start = wave_end;
+        }
 
         // Stitch per-property results back into the global slots. Properties
         // not in `params.properties` remain empty `Vec::new()`, matching the
