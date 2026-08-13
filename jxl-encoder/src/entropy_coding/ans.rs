@@ -180,8 +180,17 @@ impl AnsEncSymbolInfo {
 pub struct AnsEncoder {
     /// ANS state (normalized to range).
     state: u32,
-    /// Accumulated output bits (stored reversed).
-    bits: Vec<(u32, u8)>, // (bits, nbits)
+    /// Accumulated output bits (stored reversed), as PARALLEL columns.
+    ///
+    /// Was `Vec<(u32, u8)>`, which pads to 8 bytes per entry to carry 5 bytes
+    /// of payload. On the lossless path this is the largest allocation outside
+    /// tree learning — 380 MiB at 3840x2160 (2 entries per token x 24.9M
+    /// tokens) and the dominant term in the peak floor that survives any
+    /// reduction in tree-sample count. Split into two columns it costs 5 bytes
+    /// per entry instead of 8, saving ~149 MiB there. The two vectors are
+    /// always pushed and read in lockstep, so index i is one entry.
+    bit_vals: Vec<u32>,
+    bit_widths: Vec<u8>,
 }
 
 impl AnsEncoder {
@@ -189,7 +198,8 @@ impl AnsEncoder {
     pub fn new() -> Self {
         Self {
             state: ANS_SIGNATURE << 16,
-            bits: Vec::new(),
+            bit_vals: Vec::new(),
+            bit_widths: Vec::new(),
         }
     }
 
@@ -212,7 +222,9 @@ impl AnsEncoder {
     pub fn with_capacity(num_tokens: usize) -> Self {
         Self {
             state: ANS_SIGNATURE << 16,
-            bits: Vec::with_capacity(num_tokens * 2), // ~2 entries per token (symbol + extra bits)
+            // ~2 entries per token (symbol + extra bits)
+            bit_vals: Vec::with_capacity(num_tokens * 2),
+            bit_widths: Vec::with_capacity(num_tokens * 2),
         }
     }
 
@@ -225,7 +237,8 @@ impl AnsEncoder {
 
         // Renormalization: if state is too large, emit 16 bits
         if (self.state >> (32 - ANS_LOG_TAB_SIZE)) >= freq {
-            self.bits.push((self.state & 0xFFFF, 16));
+            self.bit_vals.push(self.state & 0xFFFF);
+            self.bit_widths.push(16);
             self.state >>= 16;
         }
 
@@ -249,7 +262,8 @@ impl AnsEncoder {
     #[inline]
     pub fn push_bits(&mut self, bits: u32, nbits: u8) {
         if nbits > 0 {
-            self.bits.push((bits, nbits));
+            self.bit_vals.push(bits);
+            self.bit_widths.push(nbits);
         }
     }
 
@@ -262,14 +276,14 @@ impl AnsEncoder {
         eprintln!(
             "ANS finalize: state=0x{:08x}, {} bit chunks",
             self.state,
-            self.bits.len()
+            self.bit_vals.len()
         );
 
         // Write final state (32 bits)
         writer.write(32, self.state as u64)?;
 
         // Write accumulated bits in reverse order
-        for &(bits, nbits) in self.bits.iter().rev() {
+        for (&bits, &nbits) in self.bit_vals.iter().rev().zip(self.bit_widths.iter().rev()) {
             writer.write(nbits as usize, bits as u64)?;
         }
 
