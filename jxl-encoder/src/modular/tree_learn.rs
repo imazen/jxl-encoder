@@ -719,6 +719,16 @@ impl TreeSamples {
         }
     }
 
+    /// All raw property columns (empty for properties never gathered).
+    pub(crate) fn props_columns(&self) -> &[Vec<i32>] {
+        &self.props
+    }
+
+    /// One raw property column.
+    pub(crate) fn props_column(&self, prop_idx: usize) -> &[i32] {
+        &self.props[prop_idx]
+    }
+
     /// Release the raw `props` columns, which are the largest thing this
     /// struct owns (24 i32 columns = 96 of the ~124 B/sample; 1152 MiB of a
     /// 4K/e9 encode).
@@ -766,14 +776,29 @@ impl TreeSamples {
     /// skipped pixels only ever reduce the count), so over-estimating is safe
     /// and merely leaves unused tail capacity.
     pub(crate) fn reserve_exact_total(&mut self, upper_bound: usize) {
+        self.reserve_exact_total_with(upper_bound, true);
+    }
+
+    /// As [`Self::reserve_exact_total`], but `reserve_props = false` skips the
+    /// i32 property columns.
+    ///
+    /// The two-pass gather needs this. Its pass 2 bucketizes each group and
+    /// drops that group's raw properties before appending, so the accumulator's
+    /// property columns stay empty forever — reserving them would allocate
+    /// ~1.14 GB at 4K lossless e9 that is never written, defeating the entire
+    /// point of the two-pass. (Pass 1 skips the reserve altogether: its
+    /// accumulator receives nothing at all.)
+    pub(crate) fn reserve_exact_total_with(&mut self, upper_bound: usize, reserve_props: bool) {
         for v in &mut self.residual_tokens {
             v.reserve_exact(upper_bound.saturating_sub(v.len()));
         }
         for v in &mut self.extra_bits {
             v.reserve_exact(upper_bound.saturating_sub(v.len()));
         }
-        for v in &mut self.props {
-            v.reserve_exact(upper_bound.saturating_sub(v.len()));
+        if reserve_props {
+            for v in &mut self.props {
+                v.reserve_exact(upper_bound.saturating_sub(v.len()));
+            }
         }
     }
 
@@ -1811,7 +1836,7 @@ enum ThresholdStep {
 /// Byte-identical to the loop it replaces, including the `Err(0) => 0` edge
 /// (values below every threshold) and the `.min(num_thresholds)` clamp that
 /// keeps the index inside the bucket alphabet.
-fn bucketize_with_thresholds(values: &[i32], ts: &[i32]) -> Vec<u8> {
+pub(crate) fn bucketize_with_thresholds(values: &[i32], ts: &[i32]) -> Vec<u8> {
     let num_thresholds = ts.len();
     let mut bi = vec![0u8; values.len()];
     for (bi_val, &v) in bi.iter_mut().zip(values.iter()) {
@@ -1847,27 +1872,48 @@ fn bucketize_with_thresholds(values: &[i32], ts: &[i32]) -> Vec<u8> {
 /// otherwise, and those two round the sub-sampling step differently. This
 /// tracks min/max alongside the set so the same choice can be made.
 #[derive(Default)]
-struct DistinctPropertyValues {
-    seen: alloc::collections::BTreeSet<i32>,
+pub(crate) struct DistinctPropertyValues {
+    /// Amortized distinct set: values land in `buf`, which is sorted and
+    /// deduped whenever it exceeds `COMPACT_AT`. A `BTreeSet` was tried first
+    /// and measured WORSE than the raw column it replaces — per-node overhead
+    /// dominates for i32 keys, and 24 of them pushed the 4K lossless peak from
+    /// 1966 MB to 2260 MB. A sorted Vec holds the same information at 4 bytes
+    /// per distinct value with no per-element overhead.
+    buf: Vec<i32>,
     min: Option<i32>,
     max: Option<i32>,
 }
 
 impl DistinctPropertyValues {
-    fn push(&mut self, v: i32) {
-        self.seen.insert(v);
+    /// Compact once the buffer reaches this many entries. Bounds the collector
+    /// at ~256 KB plus the distinct set, independent of sample count.
+    const COMPACT_AT: usize = 65_536;
+
+    pub(crate) fn push(&mut self, v: i32) {
+        self.buf.push(v);
+        if self.buf.len() >= Self::COMPACT_AT {
+            self.compact();
+        }
         self.min = Some(self.min.map_or(v, |m| m.min(v)));
         self.max = Some(self.max.map_or(v, |m| m.max(v)));
+    }
+
+    fn compact(&mut self) {
+        self.buf.sort_unstable();
+        self.buf.dedup();
     }
 
     /// Thresholds for this property, byte-identical to what `pre_quantize`
     /// derives from the full per-sample column. `None` mirrors the
     /// "<= 1 distinct value" early-out (empty thresholds, all-zero buckets).
-    fn thresholds(&self, max_buckets: usize) -> Option<Vec<i32>> {
+    pub(crate) fn thresholds(&self, max_buckets: usize) -> Option<Vec<i32>> {
         let (min, max) = (self.min?, self.max?);
-        // BTreeSet iterates ascending, which is exactly what both branches
-        // produce (the bitmap walk is ascending; the sparse path sorts).
-        let ascending: Vec<i32> = self.seen.iter().copied().collect();
+        // Final compaction, then the buffer IS the ascending distinct set —
+        // exactly what both `pre_quantize` branches produce (the bitmap walk is
+        // ascending; the sparse path sorts).
+        let mut ascending = self.buf.clone();
+        ascending.sort_unstable();
+        ascending.dedup();
         let range = max as i64 - min as i64 + 1;
         let step_mode = if range <= (max_buckets * 4) as i64 {
             ThresholdStep::DivCeil
@@ -2488,7 +2534,7 @@ pub fn estimate_bits(counts: &[u32], total: u32) -> f64 {
 /// Pre-quantized property data for all properties across all samples.
 /// Computed once before tree building, eliminating per-node binary_search
 /// and threshold_set allocation.
-struct PreQuantizedProps {
+pub(crate) struct PreQuantizedProps {
     /// threshold_sets[prop_idx] = sorted unique thresholds for this property.
     threshold_sets: Vec<Vec<i32>>,
     /// bucket_indices[prop_idx][sample_idx] = bucket index (0..num_thresholds).
@@ -2497,6 +2543,14 @@ struct PreQuantizedProps {
 }
 
 impl PreQuantizedProps {
+    /// Build from thresholds + bucket columns produced by the two-pass gather.
+    pub(crate) fn from_parts(threshold_sets: Vec<Vec<i32>>, bucket_indices: Vec<Vec<u8>>) -> Self {
+        Self {
+            threshold_sets,
+            bucket_indices,
+        }
+    }
+
     /// Returns the number of thresholds for a property.
     fn num_thresholds(&self, prop_idx: usize) -> usize {
         self.threshold_sets[prop_idx].len()
@@ -3611,6 +3665,27 @@ pub(crate) fn compute_best_tree_with_budget(
     params: &TreeLearningParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Tree> {
+    compute_best_tree_with_optional_pq(samples, params, budget, None)
+}
+
+/// As [`compute_best_tree_with_budget`], but accepts an ALREADY-BUILT
+/// [`PreQuantizedProps`].
+///
+/// This is the entry point the two-pass gather needs. In that scheme pass 1
+/// derives the thresholds from streaming [`DistinctPropertyValues`] collectors
+/// and pass 2 bucketizes each group as it is gathered, so by the time the tree
+/// builder runs the bucket columns already exist and `samples.props` is empty —
+/// there is nothing left to pre-quantize, and the full-resolution i32 property
+/// columns (~1.14 GB at 4K lossless e9) were never materialized.
+///
+/// Passing `None` reproduces the single-pass behaviour exactly: pre-quantize
+/// from `samples.props` as before.
+pub(crate) fn compute_best_tree_with_optional_pq(
+    samples: &mut TreeSamples,
+    params: &TreeLearningParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    precomputed_pq: Option<PreQuantizedProps>,
+) -> crate::error::Result<Tree> {
     // Scale threshold by pixel_fraction, matching libjxl's required_cost formula.
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
     let threshold = params.split_threshold * required_cost;
@@ -3636,7 +3711,10 @@ pub(crate) fn compute_best_tree_with_budget(
     crate::budget::MemoryBudget::reserve_permanent_opt(budget, total_bytes)?;
 
     // Pre-quantize all properties globally (replaces per-node binary_search)
-    let mut pq = crate::profile_time!("tree/pre_quantize", { samples.pre_quantize(params) });
+    let mut pq = match precomputed_pq {
+        Some(pq) => pq,
+        None => crate::profile_time!("tree/pre_quantize", { samples.pre_quantize(params) }),
+    };
 
     // When `params.gather_dedup` was set, the gather loop already
     // populated `sample_counts`. Either: counts.len() == num_samples

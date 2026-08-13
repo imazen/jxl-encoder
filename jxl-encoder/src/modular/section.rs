@@ -44,6 +44,18 @@ use crate::error::Result;
 /// ascending group order, so the merged result is identical at every setting.
 const GATHER_MERGE_WAVE_GROUPS: usize = 16;
 
+/// What the gather accumulator should pre-size. See
+/// `TreeSamples::reserve_exact_total_with`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GatherReserve {
+    /// Single-pass: every column, including the i32 properties.
+    All,
+    /// Two-pass pass 2: properties stay empty, so only the token columns.
+    TokensOnly,
+    /// Two-pass pass 1: the accumulator is never appended to.
+    None,
+}
+
 /// `JXL_TREE_GATHER_WAVE=<n>` overrides [`GATHER_MERGE_WAVE_GROUPS`].
 fn gather_wave_groups() -> usize {
     use std::sync::OnceLock;
@@ -502,7 +514,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     use super::tree::count_contexts;
     use super::tree_learn::{
         MULTI_SEED_EARLY_OUT_PROBE_SEEDS, TreeLearningParams, TreeSamples,
-        collect_residuals_with_tree, compute_best_tree, compute_gather_stride_from_profile,
+        DistinctPropertyValues, PreQuantizedProps, bucketize_with_thresholds,
+        collect_residuals_with_tree, compute_best_tree, compute_best_tree_with_optional_pq,
+        compute_gather_stride_from_profile,
         derive_seeded_max_property_values, derive_seeded_params,
         derive_seeded_properties_truncation, derive_seeded_sample_fraction, derive_seeded_stride,
         estimate_token_cost, gather_samples_strided, gather_samples_strided_with_dedup_backend,
@@ -590,7 +604,18 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     // pre-RFC#45-chunk-2 gather. Higher seeds shift the offset, may use
     // a perturbed `seed_stride` (different sample density), and pick a
     // per-seed predictor permutation (chunk-4 evaluation-order variance).
-    let gather_for_seed = |seed: u64, seed_stride: usize, randomize: bool| -> TreeSamples {
+    // `on_local` decides what happens to each group's freshly-gathered samples:
+    // return `Some` to append them to the accumulator (single-pass behaviour),
+    // or `None` to consume and drop them. The two-pass gather uses `None` for
+    // its first pass — it only needs each group's property VALUES to feed the
+    // distinct-value collectors, so the group is dropped immediately and the
+    // full-resolution i32 property columns are never accumulated.
+    let gather_for_seed_with = |seed: u64,
+                                seed_stride: usize,
+                                randomize: bool,
+                                reserve: GatherReserve,
+                                on_local: &mut dyn FnMut(TreeSamples) -> Option<TreeSamples>|
+     -> TreeSamples {
         let start_offset = if seed_stride > 1 {
             (seed as usize) % seed_stride
         } else {
@@ -671,7 +696,15 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
             .map(|ch| (ch.width() * ch.height()).div_ceil(seed_stride.max(1)))
             .sum::<usize>()
             + samples.num_samples;
-        samples.reserve_exact_total(gather_upper_bound);
+        match reserve {
+            // Pass 1's accumulator receives nothing, so reserving it would be
+            // ~1.5 GB of untouched capacity.
+            GatherReserve::None => {}
+            GatherReserve::TokensOnly => {
+                samples.reserve_exact_total_with(gather_upper_bound, false)
+            }
+            GatherReserve::All => samples.reserve_exact_total(gather_upper_bound),
+        }
 
         let wave = gather_wave_groups().max(1);
         let mut wave_start = 0usize;
@@ -720,12 +753,20 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
             // No per-wave reserve: `reserve_exact_total` above already sized
             // every column past the final count, so these appends never grow.
             for local in wave_samples {
-                samples.append_from(local);
+                if let Some(keep) = on_local(local) {
+                    samples.append_from(keep);
+                }
             }
             wave_start += wave_len;
         }
         samples
     };
+
+    // Single-pass shape, unchanged: every group is appended.
+    let gather_for_seed =
+        |seed: u64, seed_stride: usize, randomize: bool| -> TreeSamples {
+            gather_for_seed_with(seed, seed_stride, randomize, GatherReserve::All, &mut Some)
+        };
 
     // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance), chunk 3
     // (broader variance: stride / split_threshold / property-order), chunk
@@ -958,12 +999,87 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         } else if let Some(ref riged) = riged_override {
             riged.clone()
         } else {
-            let mut samples = crate::profile_time!("modular/gather_samples", {
-                gather_for_seed(seed, seed_stride, false)
+            // TWO-PASS GATHER.
+            //
+            // Pass 1 gathers each group only to feed the streaming
+            // distinct-value collectors, then drops it, so the i32 property
+            // columns never accumulate — they were ~1.14 GB of the ~1.97 GB
+            // 4K lossless e9 peak. The thresholds derived from those
+            // collectors are bit-identical to the ones the single-pass path
+            // derives from the full columns (proven by
+            // `distinct_value_collector_matches_full_column_thresholds` and
+            // by the real-data assertion inside `pre_quantize`).
+            //
+            // Pass 2 gathers again and bucketizes each group on the spot
+            // against those known thresholds, appending u8 bucket indices and
+            // dropping the group's raw properties before the accumulator ever
+            // sees them.
+            //
+            // Costs one extra gather. The user accepted ~5 % wall for the
+            // memory reduction (2026-08-13).
+            let total_props = TreeSamples::new_with_ref_channels(num_refs).total_num_properties();
+            let mut collectors: Vec<DistinctPropertyValues> =
+                (0..total_props).map(|_| DistinctPropertyValues::default()).collect();
+            crate::profile_time!("modular/gather_pass1", {
+                gather_for_seed_with(seed, seed_stride, false, GatherReserve::None, &mut |local: TreeSamples| {
+                    for (prop_idx, col) in local.props_columns().iter().enumerate() {
+                        for &v in col.iter() {
+                            collectors[prop_idx].push(v);
+                        }
+                    }
+                    None
+                })
+            });
+
+            // Thresholds must be derived with the SAME bucket count the tree
+            // params will use, so build a probe params from an empty sample set
+            // (build_params reads only shape, not contents).
+            let probe = TreeSamples::new_with_ref_channels(num_refs);
+            let max_buckets = build_params(&probe).max_property_values;
+            let thresholds: Vec<Vec<i32>> = collectors
+                .iter()
+                .map(|c| c.thresholds(max_buckets).unwrap_or_default())
+                .collect();
+
+            // Reserve the bucket columns exactly once. Growing 24 columns of
+            // ~12.4M u8 by doubling would hold old+new during each realloc —
+            // the same transient that `reserve_exact_total` exists to avoid on
+            // the token columns.
+            let bucket_upper_bound: usize = images
+                .iter()
+                .flat_map(|img| img.channels.iter())
+                .map(|ch| (ch.width() * ch.height()).div_ceil(seed_stride.max(1)))
+                .sum();
+            let mut bucket_cols: Vec<Vec<u8>> = (0..total_props)
+                .map(|i| {
+                    let mut v = Vec::new();
+                    if !thresholds[i].is_empty() {
+                        v.reserve_exact(bucket_upper_bound);
+                    }
+                    v
+                })
+                .collect();
+            let mut samples = crate::profile_time!("modular/gather_pass2", {
+                gather_for_seed_with(seed, seed_stride, false, GatherReserve::TokensOnly, &mut |mut local: TreeSamples| {
+                    for prop_idx in 0..total_props {
+                        let col = local.props_column(prop_idx);
+                        if !col.is_empty() && !thresholds[prop_idx].is_empty() {
+                            bucket_cols[prop_idx]
+                                .extend_from_slice(&bucketize_with_thresholds(
+                                    col,
+                                    &thresholds[prop_idx],
+                                ));
+                        }
+                    }
+                    local.free_props();
+                    Some(local)
+                })
             });
             let params = build_params(&samples);
+            let pq = PreQuantizedProps::from_parts(thresholds, bucket_cols);
             crate::profile_time!("modular/compute_best_tree", {
-                compute_best_tree(&mut samples, &params)
+                compute_best_tree_with_optional_pq(&mut samples, &params, None, Some(pq))
+                    .expect("budget-less compute_best_tree must not return AllocationLimit")
             })
         };
 
