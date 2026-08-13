@@ -914,40 +914,26 @@ impl TreeSamples {
                         .filter(|(_, p)| **p)
                         .map(|(i, _)| min_val + i as i32)
                         .collect();
-                    if unique_vals.len() <= 1 {
-                        return (Vec::new(), vec![0u8; n]);
+                    match thresholds_from_sorted_unique(
+                        unique_vals,
+                        max_buckets,
+                        ThresholdStep::DivCeil,
+                    ) {
+                        Some(t) => ts = t,
+                        None => return (Vec::new(), vec![0u8; n]),
                     }
-                    unique_vals.pop();
-                    ts = if unique_vals.len() <= max_buckets {
-                        unique_vals
-                    } else {
-                        let step = unique_vals.len().div_ceil(max_buckets);
-                        unique_vals
-                            .iter()
-                            .step_by(step.max(1))
-                            .take(max_buckets)
-                            .copied()
-                            .collect()
-                    };
                 } else {
                     let mut sample_vals: Vec<i32> = props[..n].to_vec();
                     sample_vals.sort_unstable();
                     sample_vals.dedup();
-                    if sample_vals.len() <= 1 {
-                        return (Vec::new(), vec![0u8; n]);
+                    match thresholds_from_sorted_unique(
+                        sample_vals,
+                        max_buckets,
+                        ThresholdStep::DivFloor,
+                    ) {
+                        Some(t) => ts = t,
+                        None => return (Vec::new(), vec![0u8; n]),
                     }
-                    sample_vals.pop();
-                    ts = if sample_vals.len() <= max_buckets {
-                        sample_vals
-                    } else {
-                        let step = sample_vals.len() / max_buckets;
-                        sample_vals
-                            .iter()
-                            .step_by(step.max(1))
-                            .take(max_buckets)
-                            .copied()
-                            .collect()
-                    };
                 }
 
                 // Assign each sample to a bucket using binary search
@@ -1756,6 +1742,59 @@ fn report_tree_sample_stats(samples: &TreeSamples, stride: usize, reserved_sampl
             0.0
         },
     );
+}
+
+/// How the threshold sub-sampling step is rounded when there are more distinct
+/// values than buckets. The two `pre_quantize` branches round DIFFERENTLY and
+/// always have; the distinction is preserved verbatim here because changing it
+/// would move thresholds and therefore output bytes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ThresholdStep {
+    /// Dense branch (value range <= 4x buckets, collected via a present-bitmap).
+    DivCeil,
+    /// Sparse branch (collected via sort + dedup).
+    DivFloor,
+}
+
+/// Derive a property's threshold set from its SORTED ASCENDING DISTINCT values.
+///
+/// Returns `None` when there are <= 1 distinct values (the caller emits an
+/// empty threshold set and an all-zero bucket column).
+///
+/// This is deliberately factored out as a seam. Note what it needs: only the
+/// DISTINCT VALUE SET, in ascending order — not the per-sample values, and not
+/// even their counts. That is the load-bearing fact for the gather-order change
+/// (store quantized bucket indices during the gather instead of raw i32
+/// properties, as libjxl does): a histogram or present-bitmap pass can produce
+/// exactly this input without ever materializing an i32 column per sample, and
+/// the thresholds that come out are bit-for-bit the ones the current
+/// props-array path produces. The 24 i32 property columns are ~1.14 GB of the
+/// ~2.07 GB 4K lossless e9 peak, so that is the remaining lever.
+fn thresholds_from_sorted_unique(
+    mut unique_ascending: Vec<i32>,
+    max_buckets: usize,
+    step_mode: ThresholdStep,
+) -> Option<Vec<i32>> {
+    if unique_ascending.len() <= 1 {
+        return None;
+    }
+    // The largest distinct value can never be a split threshold (nothing sorts
+    // above it), so it is dropped before sub-sampling.
+    unique_ascending.pop();
+    Some(if unique_ascending.len() <= max_buckets {
+        unique_ascending
+    } else {
+        let step = match step_mode {
+            ThresholdStep::DivCeil => unique_ascending.len().div_ceil(max_buckets),
+            ThresholdStep::DivFloor => unique_ascending.len() / max_buckets,
+        };
+        unique_ascending
+            .iter()
+            .step_by(step.max(1))
+            .take(max_buckets)
+            .copied()
+            .collect()
+    })
 }
 
 /// Compute maximum tree samples from an [`EffortProfile`].
