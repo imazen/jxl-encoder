@@ -3237,8 +3237,8 @@ fn dedup_samples(
 /// `Vec<Vec<u8>>` bytes per side, dropping dedup wall-clock on a 4 MP photo
 /// from 8.4 s to 2.4 s (-72 %) vs the pre-packed-key closure path — issue #40
 /// follow-on (commit 61129874).
-/// Lexicographic compare of two packed dedup keys as big-endian u64
-/// words — the identical ordering function to `<[u8; 64]>::cmp`
+/// Lexicographic compare of two packed dedup keys stored as big-endian
+/// u64 words — the identical ordering function to `<[u8; 8 * W]>::cmp`
 /// (byte-wise memcmp) but inline with early exit on the first differing
 /// word, no libc call. Issue #41 "radix" chunk 1: `__memcmp` from this
 /// sort's comparator was 17.7 % / 10.0 % of CPU on the 12 MP / 1 MP
@@ -3248,17 +3248,111 @@ fn dedup_samples(
 /// radix sort is NOT order-safe here: the sort is unstable and the
 /// equal-key representative choice would change.)
 #[inline(always)]
-fn cmp_packed_key(a: &[u8; DEDUP_KEY_BYTES], b: &[u8; DEDUP_KEY_BYTES]) -> core::cmp::Ordering {
+fn cmp_packed_key_words<const W: usize>(a: &[u64; W], b: &[u64; W]) -> core::cmp::Ordering {
     let mut i = 0;
-    while i < DEDUP_KEY_BYTES {
-        let wa = u64::from_be_bytes(a[i..i + 8].try_into().unwrap());
-        let wb = u64::from_be_bytes(b[i..i + 8].try_into().unwrap());
-        if wa != wb {
-            return wa.cmp(&wb);
+    while i < W {
+        if a[i] != b[i] {
+            return a[i].cmp(&b[i]);
         }
-        i += 8;
+        i += 1;
     }
     core::cmp::Ordering::Equal
+}
+
+/// W-word core of [`dedup_samples_packed_sort`]: build one packed key per
+/// sample, sort indices by key, walk-and-merge equal runs. Returns
+/// `(unique_indices, counts)` with representatives in sorted-key order.
+///
+/// `W = ceil(key_len / 8)` — the key was previously a fixed `[u8; 64]`
+/// regardless of the real composite width (35 bytes at lossless e7:
+/// 7 property buckets + 2 x 14 predictor bytes), and at 12.44 M samples on
+/// 3840x2160 that fixed pack was 759 MiB sitting at the exact instant the
+/// encode peaks (per-site profiler, benchmarks/jxl_alloc_sites_4k_2026-08-13).
+/// Packing to the rounded word width cuts it proportionally (40 B at e7).
+///
+/// Byte-identity is structural: the first `key_len` bytes are identical and
+/// every byte past `key_len` is zero in BOTH representations, so big-endian
+/// word compare over 8W bytes orders exactly like the old 64-byte compare;
+/// same unstable sort => same permutation => same representatives.
+fn packed_sort_walk<const W: usize>(
+    samples: &TreeSamples,
+    pq: &PreQuantizedProps,
+    properties: &[usize],
+    num_pred: usize,
+    preexisting_counts: Option<&[u32]>,
+) -> (Vec<u32>, Vec<u32>) {
+    let n = samples.num_samples;
+    // Per-sample key build is embarrassingly parallel — each task reads
+    // a fixed offset from the parallel SoA arrays and writes a single
+    // 8W-byte key. Use parallel_map to fan out over the n samples.
+    let keys: Vec<[u64; W]> = crate::parallel::parallel_map(n, |sample_idx| {
+        let mut kb = [0u8; DEDUP_KEY_BYTES];
+        let mut off = 0;
+        for &prop_idx in properties {
+            let bi = &pq.bucket_indices[prop_idx];
+            if !bi.is_empty() {
+                kb[off] = bi[sample_idx];
+            }
+            off += 1;
+        }
+        for pred in 0..num_pred {
+            kb[off] = samples.residual_tokens[pred][sample_idx];
+            off += 1;
+            kb[off] = samples.extra_bits[pred][sample_idx];
+            off += 1;
+        }
+        let mut kw = [0u64; W];
+        for (j, w) in kw.iter_mut().enumerate() {
+            *w = u64::from_be_bytes(kb[8 * j..8 * j + 8].try_into().unwrap());
+        }
+        kw
+    });
+
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::slice::ParallelSliceMut;
+        order.par_sort_unstable_by(|&a, &b| {
+            cmp_packed_key_words(&keys[a as usize], &keys[b as usize])
+        });
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        order.sort_unstable_by(|&a, &b| cmp_packed_key_words(&keys[a as usize], &keys[b as usize]));
+    }
+
+    // Walk sorted order, merge consecutive identical samples.
+    // Reserved at `n`, not `n / 2`. The halved guess assumes dedup collapses
+    // about half the samples; on photo content it collapses almost NONE, so
+    // both vectors grow to ~n and realloc — and a realloc holds the old and new
+    // buffers at once. Measured at 3840x2160 lossless e9, that growth of
+    // `unique_indices` was the allocation that SET the encode's peak
+    // (peak-moment backtrace). Reserving the true upper bound costs the same
+    // steady-state bytes and removes the transient entirely. u32 entries:
+    // 4 bytes x 12.44 M = 47.5 MiB, half the previous usize footprint.
+    let mut unique_indices: Vec<u32> = Vec::with_capacity(n);
+    let mut counts: Vec<u32> = Vec::with_capacity(n);
+
+    let first = order[0];
+    unique_indices.push(first);
+    counts.push(
+        preexisting_counts
+            .map(|c| c[first as usize])
+            .unwrap_or(1),
+    );
+    let mut prev_key_idx = first as usize;
+    for &curr_idx in &order[1..] {
+        let curr = curr_idx as usize;
+        let weight = preexisting_counts.map(|c| c[curr]).unwrap_or(1);
+        if cmp_packed_key_words(&keys[curr], &keys[prev_key_idx]) == core::cmp::Ordering::Equal {
+            *counts.last_mut().unwrap() += weight;
+        } else {
+            unique_indices.push(curr_idx);
+            counts.push(weight);
+            prev_key_idx = curr;
+        }
+    }
+    (unique_indices, counts)
 }
 
 fn dedup_samples_packed_sort(
@@ -3295,88 +3389,36 @@ fn dedup_samples_packed_sort(
         DEDUP_KEY_BYTES,
     );
 
-    // Per-sample key build is embarrassingly parallel — each task reads
-    // a fixed offset from the parallel SoA arrays and writes a single
-    // 64-byte key. Use parallel_map to fan out over the n samples.
-    let keys: Vec<[u8; DEDUP_KEY_BYTES]> = crate::parallel::parallel_map(n, |sample_idx| {
-        let mut key = [0u8; DEDUP_KEY_BYTES];
-        let mut off = 0;
-        for &prop_idx in properties {
-            let bi = &pq.bucket_indices[prop_idx];
-            if !bi.is_empty() {
-                key[off] = bi[sample_idx];
-            }
-            off += 1;
-        }
-        for pred in 0..num_pred {
-            key[off] = samples.residual_tokens[pred][sample_idx];
-            off += 1;
-            key[off] = samples.extra_bits[pred][sample_idx];
-            off += 1;
-        }
-        key
-    });
-
     // Using u32 indices halves the memory footprint vs Vec<usize>; the
     // tree-learn sample cap (max_tree_samples_from_profile) tops out
-    // around 4 M entries, well within u32 range.
+    // around 12.5 M entries at 4K, well within u32 range.
     assert!(
         n <= u32::MAX as usize,
         "dedup_samples_packed_sort: n = {n} exceeds u32::MAX; widen key index type"
     );
-    // Using u32 indices halves the memory footprint vs Vec<usize>; the
-    // tree-learn sample cap (max_tree_samples_from_profile) tops out
-    // around 4 M entries, well within u32 range.
-    //
+
     // Sort-shape experiments (perf_sortloc_2026-06-10.meta): sorting
     // (first-word, index) PAIRS — identical ordering function, most
     // compares resolving in-element — measured NEUTRAL-TO-WORSE
     // (clic ~0 %, city12mp +1.8 %, terminal +2.4 %): the 4x element
     // movement inside pdqsort offsets the avoided random key loads.
     // Bare-index sort with the inline word comparator stands.
-    let mut order: Vec<u32> = (0..n as u32).collect();
-    #[cfg(feature = "parallel")]
-    {
-        use rayon::slice::ParallelSliceMut;
-        order.par_sort_unstable_by(|&a, &b| cmp_packed_key(&keys[a as usize], &keys[b as usize]));
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        order.sort_unstable_by(|&a, &b| cmp_packed_key(&keys[a as usize], &keys[b as usize]));
-    }
-
-    // Walk sorted order, merge consecutive identical samples.
-    // Reserved at `n`, not `n / 2`. The halved guess assumes dedup collapses
-    // about half the samples; on photo content it collapses almost NONE, so
-    // both vectors grow to ~n and realloc — and a realloc holds the old and new
-    // buffers at once. Measured at 3840x2160 lossless e9, that growth of
-    // `unique_indices` (8 bytes x 12.44M = 95 MiB) is the allocation that SETS
-    // the encode's peak (peak-moment backtrace). Reserving the true upper bound
-    // costs the same steady-state bytes and removes the transient entirely.
-    let mut unique_indices: Vec<usize> = Vec::with_capacity(n);
-    let mut counts: Vec<u32> = Vec::with_capacity(n);
-
-    let first = order[0] as usize;
-    unique_indices.push(first);
-    counts.push(preexisting_counts.as_ref().map(|c| c[first]).unwrap_or(1));
-    let mut prev_key_idx = first;
-    for &curr_idx in &order[1..] {
-        let curr = curr_idx as usize;
-        let weight = preexisting_counts.as_ref().map(|c| c[curr]).unwrap_or(1);
-        if cmp_packed_key(&keys[curr], &keys[prev_key_idx]) == core::cmp::Ordering::Equal {
-            *counts.last_mut().unwrap() += weight;
-        } else {
-            unique_indices.push(curr);
-            counts.push(weight);
-            prev_key_idx = curr;
-        }
-    }
-
-    // Free the packed-key buffer before compaction allocates new SoA
-    // columns — peak working set: keys (n × 64 B) + new SoA columns
-    // (n × ~70 B) = ~400 MB at 3 M samples; dropping `keys` cuts to ~200 MB.
-    drop(keys);
-    drop(order);
+    //
+    // Key/sort/walk run in the W-word core monomorphized for the rounded
+    // key width — see `packed_sort_walk` for the identity argument.
+    let words = key_len.div_ceil(8).max(1);
+    let pc = preexisting_counts.as_deref();
+    let (unique_indices, counts) = match words {
+        1 => packed_sort_walk::<1>(samples, pq, properties, num_pred, pc),
+        2 => packed_sort_walk::<2>(samples, pq, properties, num_pred, pc),
+        3 => packed_sort_walk::<3>(samples, pq, properties, num_pred, pc),
+        4 => packed_sort_walk::<4>(samples, pq, properties, num_pred, pc),
+        5 => packed_sort_walk::<5>(samples, pq, properties, num_pred, pc),
+        6 => packed_sort_walk::<6>(samples, pq, properties, num_pred, pc),
+        7 => packed_sort_walk::<7>(samples, pq, properties, num_pred, pc),
+        _ => packed_sort_walk::<8>(samples, pq, properties, num_pred, pc),
+    };
+    drop(preexisting_counts);
 
     let num_unique = unique_indices.len();
 
@@ -3391,8 +3433,8 @@ fn dedup_samples_packed_sort(
     let new_per_pred: Vec<(Vec<u8>, Vec<u8>)> = crate::parallel::parallel_map(num_pred, |pred| {
         let old_tokens = &samples.residual_tokens[pred];
         let old_ebits = &samples.extra_bits[pred];
-        let new_tokens: Vec<u8> = unique_indices.iter().map(|&i| old_tokens[i]).collect();
-        let new_ebits: Vec<u8> = unique_indices.iter().map(|&i| old_ebits[i]).collect();
+        let new_tokens: Vec<u8> = unique_indices.iter().map(|&i| old_tokens[i as usize]).collect();
+        let new_ebits: Vec<u8> = unique_indices.iter().map(|&i| old_ebits[i as usize]).collect();
         (new_tokens, new_ebits)
     });
     for (pred, (new_tokens, new_ebits)) in new_per_pred.into_iter().enumerate() {
@@ -3432,7 +3474,7 @@ fn dedup_samples_packed_sort(
             if old_props.is_empty() {
                 Vec::new()
             } else {
-                unique_indices.iter().map(|&i| old_props[i]).collect()
+                unique_indices.iter().map(|&i| old_props[i as usize]).collect()
             }
         });
         for (k, np) in new_props.into_iter().enumerate() {
@@ -3452,7 +3494,7 @@ fn dedup_samples_packed_sort(
             if old_bi.is_empty() {
                 Vec::new()
             } else {
-                unique_indices.iter().map(|&i| old_bi[i]).collect()
+                unique_indices.iter().map(|&i| old_bi[i as usize]).collect()
             }
         });
         for (k, nb) in new_bi.into_iter().enumerate() {
