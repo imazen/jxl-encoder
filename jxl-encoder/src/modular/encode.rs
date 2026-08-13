@@ -1485,6 +1485,52 @@ const RCT_CANDIDATES: &[u8] = &[
     1 * 7 + 5, // GBR + type 5
 ];
 
+/// How many RCT trials may hold a transformed image clone at once.
+///
+/// Each trial clones the WHOLE `ModularImage` (3 x w x h x i32 = ~100 MB at
+/// 4K), and the search fans out over 7 candidates at effort >= 7, so a plain
+/// `parallel_map` over all trials held ~700 MB of clones simultaneously — six
+/// of which are discarded moments later, since only the cheapest survives.
+///
+/// Running the trials in waves and reducing after each wave keeps only the
+/// running best plus the current wave, bounding the transient to
+/// `RCT_TRIAL_WAVE` clones. This is byte-identical: waves are processed in
+/// ascending candidate order and the reduce keeps the same strict-`<`
+/// "first wins" tie-break, so the winner and its image are unchanged.
+///
+/// 2 keeps the two costliest operations (clone + forward_rct) overlapped while
+/// cutting the transient ~3.5x at effort 7.
+const RCT_TRIAL_WAVE: usize = 2;
+
+/// Run the RCT trials in waves, keeping only the running best.
+///
+/// `trial` returns `Some((cost, transformed_image))` for candidate `i`, or
+/// `None` if that candidate failed. Returns the winning `(index, cost, image)`.
+fn best_rct_trial_waved(
+    num_to_try: usize,
+    trial: impl Fn(usize) -> Option<(f64, ModularImage)> + Sync,
+) -> Option<(usize, f64, ModularImage)> {
+    let mut best: Option<(usize, f64, ModularImage)> = None;
+    let mut start = 0usize;
+    while start < num_to_try {
+        let end = (start + RCT_TRIAL_WAVE).min(num_to_try);
+        let wave: Vec<Option<(f64, ModularImage)>> =
+            crate::parallel::parallel_map(end - start, |k| trial(start + k));
+        for (k, r) in wave.into_iter().enumerate() {
+            let Some((cost, img)) = r else { continue };
+            // Strict `<` preserves "first wins" on equal cost, and waves are
+            // consumed in ascending candidate order, so this matches the
+            // all-at-once reduce exactly.
+            if best.as_ref().is_none_or(|(_, bc, _)| cost < *bc) {
+                best = Some((start + k, cost, img));
+            }
+            // non-winning clones drop here
+        }
+        start = end;
+    }
+    best
+}
+
 /// Select the best RCT variant by trying candidates and picking the lowest cost.
 ///
 /// Returns the RctType and the transformed image. At effort 7, tries 7 RCT variants
@@ -1521,39 +1567,30 @@ pub(crate) fn select_best_rct(
     // the clone only), estimate_cost (pure read). Fan out across trials,
     // then reduce in trial order to preserve the deterministic tie-break
     // ("first wins" on equal cost, matching the previous serial logic).
-    let trial_results: Vec<Option<(f64, ModularImage)>> =
-        crate::parallel::parallel_map(num_to_try, |i| {
-            let rct_val = RCT_CANDIDATES[i];
-            let rct_type = RctType(rct_val);
-
-            if rct_type.is_noop() {
-                let cost = estimate_cost(image);
-                Some((cost, image.clone()))
+    let winner = best_rct_trial_waved(num_to_try, |i| {
+        let rct_type = RctType(RCT_CANDIDATES[i]);
+        if rct_type.is_noop() {
+            Some((estimate_cost(image), image.clone()))
+        } else {
+            let mut transformed = image.clone();
+            if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
+                let cost = estimate_cost(&transformed);
+                Some((cost, transformed))
             } else {
-                let mut transformed = image.clone();
-                if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
-                    let cost = estimate_cost(&transformed);
-                    Some((cost, transformed))
-                } else {
-                    None
-                }
+                None
             }
-        });
+        }
+    });
 
     let mut best_cost = f64::MAX;
     // Fallback (all-trials-failed) RCT matches the nb_rcts_to_try=0 fallback.
     let mut best_rct = RctType::GBR_SUBGR;
     let mut best_image = None;
-    for (i, result) in trial_results.into_iter().enumerate() {
-        let Some((cost, transformed)) = result else {
-            continue;
-        };
+    if let Some((i, cost, transformed)) = winner {
         let rct_val = RCT_CANDIDATES[i];
         let rct_type = RctType(rct_val);
         crate::trace::debug_eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
-        // Strict `<` preserves "first wins" tie-break since we iterate
-        // candidates in their original order.
-        if cost < best_cost {
+        {
             best_cost = cost;
             best_rct = rct_type;
             best_image = Some(transformed);
@@ -1609,33 +1646,26 @@ pub(crate) fn select_best_rct_at(
     // Each RCT trial is independent (clone + forward_rct + estimate_cost).
     // Fan out across trials and reduce in trial order to keep the
     // deterministic "first wins" tie-break on equal cost.
-    let trial_results: Vec<Option<(f64, ModularImage)>> =
-        crate::parallel::parallel_map(num_to_try, |i| {
-            let rct_val = RCT_CANDIDATES[i];
-            let rct_type = RctType(rct_val);
-
-            if rct_type.is_noop() {
-                let cost = estimate_cost(image);
-                Some((cost, image.clone()))
+    let winner = best_rct_trial_waved(num_to_try, |i| {
+        let rct_type = RctType(RCT_CANDIDATES[i]);
+        if rct_type.is_noop() {
+            Some((estimate_cost(image), image.clone()))
+        } else {
+            let mut transformed = image.clone();
+            if forward_rct(&mut transformed.channels, begin_c, rct_type).is_ok() {
+                let cost = estimate_cost(&transformed);
+                Some((cost, transformed))
             } else {
-                let mut transformed = image.clone();
-                if forward_rct(&mut transformed.channels, begin_c, rct_type).is_ok() {
-                    let cost = estimate_cost(&transformed);
-                    Some((cost, transformed))
-                } else {
-                    None
-                }
+                None
             }
-        });
+        }
+    });
 
     let mut best_cost = f64::MAX;
     // Fallback (all-trials-failed) RCT matches the nb_rcts_to_try=0 fallback.
     let mut best_rct = RctType::GBR_SUBGR;
     let mut best_image = None;
-    for (i, result) in trial_results.into_iter().enumerate() {
-        let Some((cost, transformed)) = result else {
-            continue;
-        };
+    if let Some((i, cost, transformed)) = winner {
         let rct_val = RCT_CANDIDATES[i];
         let rct_type = RctType(rct_val);
         crate::trace::debug_eprintln!(
@@ -1644,7 +1674,7 @@ pub(crate) fn select_best_rct_at(
             begin_c,
             cost
         );
-        if cost < best_cost {
+        {
             best_cost = cost;
             best_rct = rct_type;
             best_image = Some(transformed);
