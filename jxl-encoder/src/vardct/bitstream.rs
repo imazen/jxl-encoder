@@ -413,9 +413,40 @@ fn tokenize_ac_group(
     let mut full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
     let mut pass_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
 
-    // Initialize per-pass token vecs for this group
+    // Initialize per-pass token vecs for this group.
+    //
+    // The reservation used to be `region_blocks * 64 * 3` — one token per
+    // coefficient per channel, i.e. the theoretical maximum, which only occurs
+    // if every coefficient in the group is nonzero. Lossy AC is overwhelmingly
+    // zeros, so that over-reserved by ~9x: measured at 3840x2160 e7 d1.25, the
+    // 135 groups reserved 190 MiB and used 20 MiB (fill 0.108), wasting 169 MiB
+    // — about a third of the whole lossy encode's peak live bytes.
+    //
+    // `raw_nzeros` already carries the per-block nonzero count per channel, so
+    // a real bound is available for free: each block contributes at most its
+    // nonzero count plus one nzero-count token. `TOKEN_RESERVE_SLACK` covers
+    // the run/LZ77 tokens that bound does not model; if it is ever exceeded the
+    // Vec simply grows, so the slack is a performance knob, not a correctness
+    // one. Bounded by the old theoretical maximum so this can never reserve
+    // MORE than before.
+    let token_upper_bound = {
+        let mut n = 0usize;
+        for by in start_by..end_by {
+            for bx in start_bx..end_bx {
+                if !ac_strategy.is_first(bx, by) {
+                    continue;
+                }
+                for c in 0..3 {
+                    n += raw_nzeros[c][by][bx] as usize + 1;
+                }
+            }
+        }
+        const TOKEN_RESERVE_SLACK: usize = 5; // /4 => +25 %
+        let padded = n + n / 4 + TOKEN_RESERVE_SLACK * 64;
+        padded.min(region_blocks * 64 * 3)
+    };
     let mut pass_tokens: Vec<Vec<Token>> = (0..num_passes)
-        .map(|_| Vec::with_capacity(region_blocks * 64 * 3 / num_passes))
+        .map(|_| Vec::with_capacity(token_upper_bound.div_ceil(num_passes)))
         .collect();
 
     // For progressive encoding, allocate per-group local nzeros grids.
@@ -594,6 +625,16 @@ fn tokenize_ac_group(
         }
     }
 
+    if std::env::var_os("JXL_TOKEN_FILL_STATS").is_some() {
+        for (i, v) in pass_tokens.iter().enumerate() {
+            eprintln!(
+                "[token-fill] group={group_idx} pass={i} len={} cap={} fill={:.3}",
+                v.len(),
+                v.capacity(),
+                v.len() as f64 / v.capacity().max(1) as f64
+            );
+        }
+    }
     pass_tokens
 }
 
