@@ -3500,20 +3500,30 @@ pub(crate) fn compute_best_tree_with_budget(
     // hash kept them apart). Skipping it would leave those collisions
     // unmerged — find_best_split would then evaluate more unique rows
     // than necessary. We keep it but pass the pre-computed counts.
-    crate::profile_time!("tree/dedup_samples", {
-        dedup_samples(samples, &mut pq, params);
-    });
-
-    // `props` is dead from here: this path partitions with
-    // `PartitionKey::Bucket` exclusively (both call sites below pass
-    // `skip_props_swap = true`), so everything downstream reads
-    // `pq.bucket_indices`. Releasing it here drops the encoder's largest live
-    // allocation for the whole tree-build phase, which is also the longest
-    // phase. Gated on the chunk-3c escape hatch: with `JXL_DISABLE_CHUNK3C`
-    // set, `swap_rows` DOES swap props, so they must stay alive.
+    // `props` is dead the moment `pre_quantize` has projected it into
+    // `pq.bucket_indices`, which is BEFORE dedup — `dedup_samples` builds its
+    // packed composite keys from `bucket_indices`, never from `props`, and
+    // every partition afterwards uses `PartitionKey::Bucket` (both call sites
+    // below pass `skip_props_swap = true`).
+    //
+    // Releasing it here rather than after dedup matters because dedup IS the
+    // peak phase: it allocates an n x 64 B packed-key buffer plus a fresh set
+    // of SoA columns while the old ones are alive. Holding ~1.2 GB of
+    // already-dead property columns across that is the single largest avoidable
+    // overlap in the encoder. Freeing first also makes dedup's own props
+    // rebuild a no-op — every column is empty, so its `is_empty()` guards skip
+    // it — which removes that work and its transient entirely.
+    //
+    // Gated on the chunk-3c escape hatch: with `JXL_DISABLE_CHUNK3C` set,
+    // `swap_rows` DOES swap props, so they must stay alive AND stay aligned,
+    // which means dedup must keep compacting them.
     if !chunk3c_skip_is_disabled() {
         samples.free_props();
     }
+
+    crate::profile_time!("tree/dedup_samples", {
+        dedup_samples(samples, &mut pq, params);
+    });
 
     let n = samples.num_samples; // Update n to unique count
 
