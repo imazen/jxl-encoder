@@ -6355,16 +6355,119 @@ fn partition_node_in_place_borrowed(
     // Process-cached env-var override (`JXL_DISABLE_CHUNK3C=1`) — see
     // `chunk3c_skip_is_disabled` doc for rationale.
     let skip_props_swap = skip_props_swap && !chunk3c_skip_is_disabled();
-    swap_partition_borrowed(
-        samples,
-        start,
-        pos,
-        end,
-        prop_idx,
-        bucket_split,
-        skip_props_swap,
-    );
+    // Large ranges on the props-skipping (lossless) path take the STABLE
+    // gather partition: two streaming passes per column through a reused
+    // scratch instead of ~63 random element-swaps per misplaced row. Row
+    // order within each side differs from the swap walk, which is
+    // observationally invisible downstream (split sweeps and bucket counts
+    // are multiset aggregations; residuals read the image; contexts walk
+    // the tree) — verified byte-identical on the 4K photo/screen e7/e9
+    // cells. Retained-props paths keep the swap walk.
+    // Cost dispatch: the swap walk pays ~2 random accesses x ~40 columns per
+    // MISPLACED row; the gather pays 2 sequential passes x ~40 columns over
+    // the WHOLE range. Misplaced rows are bounded by the smaller side, so on
+    // lopsided splits (screens: near-empty sides) the swap walk wins by an
+    // order of magnitude, while on balanced splits (photos) the gather's
+    // streaming wins. Gather only when the smaller side is a meaningful
+    // fraction of the range (measured: screen e9 regressed +14% under a
+    // size-only dispatch; photo e7/e9 gained 5-8%).
+    const STABLE_GATHER_MIN: usize = 1 << 16;
+    let count = end - start;
+    let min_side = left_count.min(count - left_count);
+    if skip_props_swap && count >= STABLE_GATHER_MIN && min_side * 16 >= count {
+        stable_gather_partition_borrowed(samples, start, pos, end, prop_idx, bucket_split);
+    } else {
+        swap_partition_borrowed(
+            samples,
+            start,
+            pos,
+            end,
+            prop_idx,
+            bucket_split,
+            skip_props_swap,
+        );
+    }
     pos
+}
+
+/// Stable gather partition over a [`BorrowedSamples`] — see the dispatch
+/// comment in [`partition_node_in_place_borrowed`]. Requires the
+/// props-skipping path (props columns untouched).
+#[cfg(feature = "parallel-tree-learning")]
+fn stable_gather_partition_borrowed(
+    samples: &mut BorrowedSamples<'_>,
+    begin: usize,
+    pos: usize,
+    end: usize,
+    prop_idx: usize,
+    bucket_split: u8,
+) {
+    let n = end - begin;
+    thread_local! {
+        static SCRATCH: core::cell::RefCell<(
+            alloc::vec::Vec<u8>,
+            alloc::vec::Vec<u8>,
+            alloc::vec::Vec<u32>,
+        )> = const {
+            core::cell::RefCell::new((
+                alloc::vec::Vec::new(),
+                alloc::vec::Vec::new(),
+                alloc::vec::Vec::new(),
+            ))
+        };
+    }
+    SCRATCH.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        let (flags, col_scratch, u32_scratch) = &mut *borrow;
+        flags.clear();
+        flags.reserve(n);
+        flags.extend(
+            samples.bucket_indices[prop_idx][begin..end]
+                .iter()
+                .map(|&b| u8::from(b <= bucket_split)),
+        );
+        col_scratch.resize(n, 0);
+        u32_scratch.resize(n, 0);
+
+        let left_len = pos - begin;
+        let mut gather_u8 = |col: &mut [u8]| {
+            let src = &col[begin..end];
+            let mut l = 0usize;
+            let mut r = left_len;
+            for (i, &f) in flags.iter().enumerate() {
+                let dst = if f != 0 { &mut l } else { &mut r };
+                col_scratch[*dst] = src[i];
+                *dst += 1;
+            }
+            col[begin..end].copy_from_slice(&col_scratch[..n]);
+        };
+        for row in samples.residual_tokens.iter_mut() {
+            if !row.is_empty() {
+                gather_u8(row);
+            }
+        }
+        for row in samples.extra_bits.iter_mut() {
+            if !row.is_empty() {
+                gather_u8(row);
+            }
+        }
+        for row in samples.bucket_indices.iter_mut() {
+            if !row.is_empty() {
+                gather_u8(row);
+            }
+        }
+        {
+            let src = &samples.sample_counts[begin..end];
+            let mut l = 0usize;
+            let mut r = left_len;
+            for (i, &f) in flags.iter().enumerate() {
+                let dst = if f != 0 { &mut l } else { &mut r };
+                u32_scratch[*dst] = src[i];
+                *dst += 1;
+            }
+            samples.sample_counts[begin..end].copy_from_slice(&u32_scratch[..n]);
+        }
+    });
 }
 
 /// Hoare-style in-place partition over a [`BorrowedSamples`]. Mirrors
@@ -9139,7 +9242,15 @@ fn partition_node_in_place_with(
         skip_props_swap,
     };
     let pos = start + left_count;
-    tree_learn_split::split_tree_samples_in_place(&mut view, start, pos, end, key);
+    // Same stable-gather dispatch as the borrowed path (see
+    // `partition_node_in_place_borrowed`).
+    let count = end - start;
+    let min_side = left_count.min(count - left_count);
+    if skip_props_swap && count >= (1 << 16) && min_side * 16 >= count {
+        tree_learn_split::split_tree_samples_stable_gather(&mut view, start, pos, end, key);
+    } else {
+        tree_learn_split::split_tree_samples_in_place(&mut view, start, pos, end, key);
+    }
     pos
 }
 

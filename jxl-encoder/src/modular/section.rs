@@ -826,10 +826,21 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                     } else {
                         1.0
                     };
-                    let params = TreeLearningParams::from_profile(profile)
+                    let mut params = TreeLearningParams::from_profile(profile)
                         .with_ref_properties(num_refs, profile.effort)
                         .with_total_pixels(group_pixels)
                         .with_pixel_fraction(pixel_fraction);
+                    // Per-group CANDIDATES cap the search at e7 strength: a
+                    // 256x256 group's ~24k samples saturate the split search
+                    // long before the e8+ grids pay off, and the per-group
+                    // min() keeps any group where the deep global tree still
+                    // wins. Measured at 4K e9: hybrid wall -34% (photo) /
+                    // -37% (screen) for +0.18% / +0.49% bytes - both cells
+                    // remain smaller than the pure global tree (see
+                    // benchmarks/jxl_hybrid_trees_4k_2026-08-14.md).
+                    if profile.effort > 7 {
+                        params.max_property_values = params.max_property_values.min(32);
+                    }
                     let mut dup = local.clone();
                     Some(compute_best_tree(&mut dup, &params))
                 } else {

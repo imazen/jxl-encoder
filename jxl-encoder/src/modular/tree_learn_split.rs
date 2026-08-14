@@ -307,6 +307,101 @@ pub fn split_tree_samples_in_place(
     pos
 }
 
+/// Stable gather-based variant of [`split_tree_samples_in_place`] for LARGE
+/// ranges: precompute the left/right flag per row once, then move each
+/// parallel column through a reused scratch buffer with two sequential write
+/// cursors (left run, then right run) and copy back. Two streaming passes
+/// per column instead of the swap walk's ~63 random element-swaps per
+/// misplaced row — measured 9.6s of a 64s 4K e9 encode in the swap form.
+///
+/// ORDER NOTE: this partition is STABLE (each side keeps original row
+/// order), while the swap walk is not. Everything downstream is row-order
+/// invariant — split sweeps and bucket counts are multiset aggregations,
+/// residual collection reads the image, and context assignment walks the
+/// tree — so the produced tree and bitstream are identical (verified
+/// byte-for-byte on the 4K photo/screen e7/e9 cells). Only reachable with
+/// `skip_props_swap = true` (the lossless path): props stay untouched
+/// either way there, and the retained-props paths keep the swap walk whose
+/// intra-side order their historical bytes pin.
+pub fn split_tree_samples_stable_gather(
+    samples: &mut SplittableSamples<'_>,
+    begin: usize,
+    pos: usize,
+    end: usize,
+    key: PartitionKey,
+) -> usize {
+    debug_assert!(begin <= pos && pos <= end && end <= samples.len);
+    debug_assert!(
+        samples.skip_props_swap,
+        "stable gather partition requires the props-skipping (lossless) path"
+    );
+    let n = end - begin;
+
+    thread_local! {
+        static SCRATCH: core::cell::RefCell<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>, alloc::vec::Vec<u32>)> =
+            const { core::cell::RefCell::new((alloc::vec::Vec::new(), alloc::vec::Vec::new(), alloc::vec::Vec::new())) };
+    }
+    SCRATCH.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        let (flags, col_scratch, u32_scratch) = &mut *borrow;
+        flags.clear();
+        flags.reserve(n);
+        match key {
+            PartitionKey::Bucket { prop_idx, val } => {
+                let col = &samples.bucket_indices[prop_idx][begin..end];
+                flags.extend(col.iter().map(|&b| u8::from(b <= val)));
+            }
+            PartitionKey::Property { prop_idx, val } => {
+                let col = &samples.props[prop_idx];
+                flags.extend((begin..end).map(|i| u8::from(col.index_i32(i) <= val)));
+            }
+        }
+        col_scratch.resize(n, 0);
+        u32_scratch.resize(n, 0);
+
+        let mut gather_u8 = |col: &mut [u8]| {
+            let src = &col[begin..end];
+            let mut l = 0usize;
+            let mut r = pos - begin;
+            for (i, &f) in flags.iter().enumerate() {
+                // Branchless dual-cursor: exactly one cursor advances.
+                let dst = if f != 0 { &mut l } else { &mut r };
+                col_scratch[*dst] = src[i];
+                *dst += 1;
+            }
+            col[begin..end].copy_from_slice(&col_scratch[..n]);
+        };
+        for row in samples.residual_tokens.iter_mut() {
+            if !row.is_empty() {
+                gather_u8(row);
+            }
+        }
+        for row in samples.extra_bits.iter_mut() {
+            if !row.is_empty() {
+                gather_u8(row);
+            }
+        }
+        for row in samples.bucket_indices.iter_mut() {
+            if !row.is_empty() {
+                gather_u8(row);
+            }
+        }
+        {
+            let src = &samples.sample_counts[begin..end];
+            let mut l = 0usize;
+            let mut r = pos - begin;
+            for (i, &f) in flags.iter().enumerate() {
+                let dst = if f != 0 { &mut l } else { &mut r };
+                u32_scratch[*dst] = src[i];
+                *dst += 1;
+            }
+            samples.sample_counts[begin..end].copy_from_slice(&u32_scratch[..n]);
+        }
+    });
+
+    pos
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -910,6 +1005,84 @@ mod tests {
                 "extra_bits row {i} (orig {orig}) misaligned",
             );
         }
+    }
+
+    /// The stable gather partition must put exactly the predicate-true rows
+    /// on the left, preserve original order within each side, and keep every
+    /// parallel array row-aligned — on pseudo-random data large enough to be
+    /// representative. (The in-place swap walk is separately covered above;
+    /// byte-level equivalence of the two on real encodes is pinned by the
+    /// 4K photo/screen cells.)
+    #[test]
+    fn stable_gather_partitions_and_keeps_rows_aligned() {
+        let n = 4096usize;
+        let mut state: u32 = 0xabcd_1234;
+        let mut next = move || {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            state
+        };
+        let mut residual_tokens: Vec<Vec<u8>> = vec![Vec::with_capacity(n); 3];
+        let mut extra_bits: Vec<Vec<u8>> = vec![Vec::with_capacity(n); 3];
+        let mut props: Vec<PropColumn> = vec![PropColumn::I32(Vec::new())];
+        let mut bucket_indices: Vec<Vec<u8>> = vec![Vec::with_capacity(n)];
+        let mut sample_counts: Vec<u32> = Vec::with_capacity(n);
+        for i in 0..n {
+            let r = next();
+            for (p, col) in residual_tokens.iter_mut().enumerate() {
+                col.push(((r >> (p * 5)) & 0xff) as u8);
+            }
+            for (p, col) in extra_bits.iter_mut().enumerate() {
+                col.push(((r >> (p * 7 + 3)) & 0xff) as u8);
+            }
+            bucket_indices[0].push((r >> 24) as u8);
+            sample_counts.push(i as u32 + 1);
+        }
+        let val = 100u8;
+        let left_count = bucket_indices[0].iter().filter(|&&b| b <= val).count();
+
+        // Reference: original rows in stable order per side.
+        let sig = |i: usize,
+                   rt: &[Vec<u8>],
+                   eb: &[Vec<u8>],
+                   bi: &[Vec<u8>],
+                   sc: &[u32]|
+         -> (u8, u8, u8, u8, u8, u8, u8, u32) {
+            (
+                rt[0][i], rt[1][i], rt[2][i], eb[0][i], eb[1][i], eb[2][i], bi[0][i], sc[i],
+            )
+        };
+        let mut expected: Vec<_> = (0..n)
+            .filter(|&i| bucket_indices[0][i] <= val)
+            .map(|i| sig(i, &residual_tokens, &extra_bits, &bucket_indices, &sample_counts))
+            .collect();
+        expected.extend(
+            (0..n)
+                .filter(|&i| bucket_indices[0][i] > val)
+                .map(|i| sig(i, &residual_tokens, &extra_bits, &bucket_indices, &sample_counts)),
+        );
+
+        let mut view = SplittableSamples {
+            residual_tokens: &mut residual_tokens,
+            extra_bits: &mut extra_bits,
+            props: &mut props,
+            bucket_indices: &mut bucket_indices,
+            sample_counts: &mut sample_counts,
+            len: n,
+            skip_props_swap: true,
+        };
+        let pos = split_tree_samples_stable_gather(
+            &mut view,
+            0,
+            left_count,
+            n,
+            PartitionKey::Bucket { prop_idx: 0, val },
+        );
+        assert_eq!(pos, left_count);
+
+        let actual: Vec<_> = (0..n)
+            .map(|i| sig(i, &residual_tokens, &extra_bits, &bucket_indices, &sample_counts))
+            .collect();
+        assert_eq!(actual, expected, "stable order + row alignment");
     }
 
     /// Issue #40 chunk-3c: `skip_props_swap=true` with [`PartitionKey::Property`]
