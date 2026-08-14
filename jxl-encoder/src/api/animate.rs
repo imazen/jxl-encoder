@@ -303,6 +303,7 @@ pub(crate) fn encode_animation_lossless(
                          ec_override: Option<BlendMode>|
          -> FrameEncoderOptions {
             FrameEncoderOptions {
+                sectioned_trees: crate::api::SectionedTrees::Auto,
                 use_modular: true,
                 effort: cfg.effort,
                 use_ans: cfg.ans(),

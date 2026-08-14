@@ -809,16 +809,37 @@ fn honest_preflight_rejects_big_lossy_on_tight_cap() {
 /// Path-aware honesty without ANY explicit Limits: lossless e7
 /// tree-learning measures ~490 B/px (12 MP corpus photo, 2026-08-01), so
 /// a 4096×5120 (21 MP) lossless e7 request estimates ~11.4 GB — above
-/// the 8 GiB lossless default cap — and must be REJECTED cleanly instead
-/// of being admitted into a host OOM (the old flat estimate said 839 MB
-/// and admitted it). This is the 108-MP-on-a-32-GiB-box fleet failure in
-/// CI-sized miniature.
+/// the 8 GiB lossless default cap. CONTRACT CHANGE with the sectioned
+/// local-tree mode (imazen/jxl-encoder#96): the DEFAULT (`SectionedTrees::
+/// Auto`) no longer hard-rejects — it engages per-group trees, whose peak
+/// fits the cap, and the encode SUCCEEDS with the budget still enforced
+/// allocation-by-allocation. The anti-OOM property this test guards is
+/// therefore preserved AND strengthened (the user gets an image, not an
+/// error). The historical rejection contract survives verbatim under
+/// `SectionedTrees::Off` in the companion test below.
+#[test]
+fn default_cap_lossless_e7_21mp_engages_sectioned_instead_of_rejecting() {
+    let (w, h) = (4096u32, 5120u32);
+    let pixels = vec![99u8; (w * h * 3) as usize];
+    let bytes = jxl_encoder::LosslessConfig::new()
+        .with_effort(7)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("Auto must engage sectioned trees and fit the 8 GiB default cap");
+    assert!(!bytes.is_empty());
+}
+
+/// The pre-#96 rejection contract, pinned under `SectionedTrees::Off`:
+/// with the sectioned fallback disabled, a 21 MP lossless e7 request must
+/// still be REJECTED cleanly instead of admitted into a host OOM (the
+/// 108-MP-on-a-32-GiB-box fleet failure in CI-sized miniature).
 #[test]
 fn default_cap_honest_rejection_lossless_e7_21mp() {
     let (w, h) = (4096u32, 5120u32);
     let pixels = vec![99u8; (w * h * 3) as usize];
     let err = jxl_encoder::LosslessConfig::new()
         .with_effort(7)
+        .with_sectioned_trees(jxl_encoder::api::SectionedTrees::Off)
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&pixels)
         .expect_err("21 MP lossless e7 must exceed the 8 GiB default cap");

@@ -294,9 +294,35 @@ pub use container::*;
 /// See [`LossyConfig`] for the matching VarDCT-side knobs
 /// (`with_photon_noise_iso`, `with_original_distance`,
 /// `with_quant_ac_rescale`, etc.).
+/// Sectioned local-tree lossless encoding (imazen/jxl-encoder#96): learn one
+/// MA tree PER 256x256 GROUP instead of one whole-image tree. Peak encode
+/// memory drops to roughly the C-encoder level (4K photo e7: 834 -> 469 MB
+/// measured) because the whole-image sample accumulator never exists, with
+/// byte cost measured between -2.0% (photo e7) and +0.6% (photo e9).
+///
+/// `Auto` (the default) engages only when the encode's memory budget
+/// (`Limits::max_memory_bytes`, or the built-in lossless cap) cannot fit the
+/// whole-image estimate — ordinary encodes are byte-identical to previous
+/// releases; budget-capped and very large encodes transparently switch
+/// instead of failing allocation. v1 scope: tree-learning ANS encodes
+/// without meta channels (palette / ChannelCompact content falls back to the
+/// global tree).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SectionedTrees {
+    /// Engage when the memory budget requires it (default).
+    #[default]
+    Auto,
+    /// Never sectioned: always the whole-image global tree.
+    Off,
+    /// Always sectioned (where the v1 scope allows).
+    On,
+}
+
 #[derive(Clone, Debug)]
 pub struct LosslessConfig {
     effort: u8,
+    /// Sectioned local-tree mode selection. See [`SectionedTrees`].
+    sectioned_trees: SectionedTrees,
     mode: EncoderMode,
     /// Effort-derived knob: `None` inherits the effort schedule's
     /// `use_ans`; `Some(v)` is a caller override. The `Option` *is* the
@@ -476,10 +502,25 @@ impl Default for LosslessConfig {
 }
 
 impl LosslessConfig {
+    /// Sectioned local-tree mode selection — see [`SectionedTrees`].
+    /// Additive knob (imazen/jxl-encoder#96); `Auto` is the default and
+    /// keeps ordinary encodes byte-identical.
+    #[must_use]
+    pub fn with_sectioned_trees(mut self, mode: SectionedTrees) -> Self {
+        self.sectioned_trees = mode;
+        self
+    }
+
+    /// Current [`SectionedTrees`] selection.
+    pub fn sectioned_trees(&self) -> SectionedTrees {
+        self.sectioned_trees
+    }
+
     fn with_effort_level(effort: u8) -> Self {
         let profile = crate::effort::EffortProfile::lossless(effort, EncoderMode::Reference);
         Self {
             effort: profile.effort,
+            sectioned_trees: SectionedTrees::Auto,
             mode: EncoderMode::Reference,
             use_ans: None,
             tree_learning: None,
@@ -5877,7 +5918,16 @@ impl<'a> EncodeRequest<'a> {
             ConfigRef::Lossless(cfg) => (true, cfg.effort, cfg.threads),
             ConfigRef::Lossy(cfg) => (false, cfg.effort, cfg.threads),
         };
-        let preflight = encode_preflight(
+        // Sectioned-trees escape hatch: a lossless config whose knob is not
+        // Off can fall back to per-group trees when the whole-image estimate
+        // exceeds the budget cap, so admission must not hard-reject it.
+        let sectioned_available = match self.config {
+            ConfigRef::Lossless(cfg) => {
+                cfg.sectioned_trees() != crate::api::SectionedTrees::Off
+            }
+            ConfigRef::Lossy(_) => false,
+        };
+        let preflight = encode_preflight_with_sectioned(
             self.width,
             self.height,
             self.layout.bytes_per_pixel() as u8,
@@ -5887,6 +5937,7 @@ impl<'a> EncodeRequest<'a> {
             requested_threads,
             false,
             self.limits,
+            sectioned_available,
         )?;
         let EncodePreflight {
             budget,
@@ -6656,6 +6707,7 @@ impl<'a> EncodeRequest<'a> {
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
                 profile: smart_profile,
+                sectioned_trees: cfg.sectioned_trees,
                 modular_knobs: cfg.modular_knobs(),
                 modular_group_size_shift: cfg.effective_modular_group_size_shift(),
                 ..Default::default()
@@ -9771,6 +9823,40 @@ pub(crate) fn encode_preflight(
     admission_only: bool,
     limits: Option<&Limits>,
 ) -> Result<EncodePreflight> {
+    encode_preflight_with_sectioned(
+        width,
+        height,
+        input_bpp,
+        has_alpha,
+        is_lossless,
+        effort,
+        requested_threads,
+        admission_only,
+        limits,
+        false,
+    )
+}
+
+/// [`encode_preflight`] with the sectioned-trees escape hatch: when
+/// `sectioned_available` is true (lossless, [`SectionedTrees`] Auto/On),
+/// an over-cap whole-image estimate ADMITS instead of rejecting — the
+/// frame encoder's Auto gate will engage the sectioned path, whose peak
+/// (one group's tree-learn working set instead of the whole image's) sits
+/// far below the estimate, and the runtime `MemoryBudget` still enforces
+/// the cap allocation-by-allocation if content defeats that expectation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_preflight_with_sectioned(
+    width: u32,
+    height: u32,
+    input_bpp: u8,
+    has_alpha: bool,
+    is_lossless: bool,
+    effort: u8,
+    requested_threads: usize,
+    admission_only: bool,
+    limits: Option<&Limits>,
+    sectioned_available: bool,
+) -> Result<EncodePreflight> {
     let budget_cap = limits
         .and_then(|l| l.max_memory_bytes())
         .unwrap_or(Limits::default_max_memory_bytes(is_lossless));
@@ -9796,7 +9882,7 @@ pub(crate) fn encode_preflight(
 
     // Budget-driven admission floor: even a 1-thread encode must fit.
     let est_t1 = est_at(1)?;
-    if est_t1 > budget_cap {
+    if est_t1 > budget_cap && !(is_lossless && sectioned_available) {
         return Err(at!(EncodeError::LimitExceeded {
             message: format!(
                 "estimated peak working set {est_t1} bytes for {width}x{height} \

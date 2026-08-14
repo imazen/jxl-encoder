@@ -97,6 +97,12 @@ pub struct FrameEncoderOptions {
     /// encoder both fix VarDCT groups at 256). See
     /// [`crate::api::LosslessConfig::with_modular_group_size`].
     pub modular_group_size_shift: Option<u8>,
+    /// Sectioned local-tree lossless mode (imazen/jxl-encoder#96): per-group
+    /// MA trees instead of one whole-image tree. `Auto` (default) engages
+    /// only when the encode's memory budget cannot fit the global-tree
+    /// estimate — ordinary encodes stay byte-identical; budget-capped and
+    /// huge encodes get the ~C-parity peak instead of an allocation error.
+    pub sectioned_trees: crate::api::SectionedTrees,
     /// Optional custom DC quantization factors for the LfGlobal
     /// `LfQuantFactors` block (libjxl `DequantMatricesEncodeDC` in
     /// `enc_quant_weights.cc:144-180`). When `Some([x, y, b])`, writes
@@ -140,6 +146,7 @@ impl Default for FrameEncoderOptions {
             timecode: None,
             modular_knobs: super::palette::ModularKnobs::default(),
             modular_group_size_shift: None,
+            sectioned_trees: crate::api::SectionedTrees::Auto,
             dc_quant_custom: None,
         }
     }
@@ -673,6 +680,9 @@ impl FrameEncoder {
         stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
         let image = image_src.image();
+        // Captured before `image_src` is dropped at the end of step 0 — the
+        // sectioned-trees Auto gate below needs it after that point.
+        let image_has_alpha = image.has_alpha;
         // Cooperative cancellation entry checkpoint for the lossless/modular
         // heavy path (#77 cross-codec cancellation note). Further checkpoints
         // sit before MA tree learning and per group below. No-op / byte-
@@ -971,7 +981,28 @@ impl FrameEncoder {
         // meta channels (no palette / ChannelCompact), no custom DC quant,
         // no patches — everything else falls through to the global-tree
         // path unchanged. Dev gate: JXL_LOSSLESS_LOCAL_TREES=1.
-        let local_trees_mode = local_trees_mode_enabled()
+        let sectioned_requested = match std::env::var("JXL_LOSSLESS_LOCAL_TREES") {
+            // Runtime override for A/B work, same convention as the other
+            // behaviour hooks: "1" forces on, "0" forces off.
+            Ok(v) if v == "1" => true,
+            Ok(v) if v == "0" => false,
+            _ => match self.options.sectioned_trees {
+                crate::api::SectionedTrees::On => true,
+                crate::api::SectionedTrees::Off => false,
+                crate::api::SectionedTrees::Auto => self.budget.as_ref().is_some_and(|b| {
+                    crate::heuristics::estimate_encode(
+                        self.width as u32,
+                        self.height as u32,
+                        3,
+                        image_has_alpha,
+                        true,
+                        self.options.profile.effort,
+                    )
+                    .is_some_and(|e| e.peak_memory_bytes > b.cap())
+                }),
+            },
+        };
+        let local_trees_mode = sectioned_requested
             && meta_image.is_none()
             && global_transforms.full_palette.is_none()
             && global_transforms.compact_info.is_empty()
@@ -2698,9 +2729,6 @@ impl FrameEncoder {
 
     /// Returns the modular group dimension in pixels.
     ///
-    // (sectioned-tree mode gate is the free fn `local_trees_mode_enabled`
-    // below the impl.)
-
     /// Maps the optional `modular_group_size_shift` knob (libjxl
     /// `cjxl -g 0..3`) to a pixel dimension. When `None`, returns the
     /// historical 256-pixel default (shift = 1) so existing callers
@@ -2903,15 +2931,4 @@ mod tests {
         let bytes = writer.finish_with_padding();
         assert!(!bytes.is_empty());
     }
-}
-
-
-/// Dev gate for the sectioned-tree lossless memory mode
-/// (imazen/jxl-encoder#96): `JXL_LOSSLESS_LOCAL_TREES=1`. Read per encode
-/// (one getenv per multi-group frame — noise), deliberately NOT cached so
-/// the env-override tests can toggle it within one process. Default OFF —
-/// the global-tree path and every hash-lock stay byte-identical until the
-/// mode graduates to a config knob.
-pub(crate) fn local_trees_mode_enabled() -> bool {
-    std::env::var("JXL_LOSSLESS_LOCAL_TREES").is_ok_and(|v| v == "1")
 }
