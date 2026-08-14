@@ -56,6 +56,13 @@
   2.6 GB and ours stays at 375-434 MB.
 
 ### Added
+- **`SectionedTrees::Hybrid`: per-group best-of-both tree choice
+  (0c52a9d4).** Learns the global tree AND per-group trees (riding the
+  gather waves), writes each group with whichever section is smaller.
+  Beats both pure modes and cjxl on every measured 4K cell: photo e7
+  −2.25%, e9 −0.28%, screen e7 −7.79%, e9 −1.66% vs the global tree
+  (`benchmarks/jxl_hybrid_trees_4k_2026-08-14.md`); djxl decodes
+  pixel-exact. Opt-in; default output unchanged.
 - **`SectionedTrees` knob on `LosslessConfig` (`with_sectioned_trees`,
   additive API) with budget-driven `Auto` default (62251cc1).** Servers
   that set `Limits::max_memory_bytes` — and any encode too large for the
