@@ -55,6 +55,17 @@
   live set at the same cell; at lossy e9 cjxl's butteraugli loop uses
   2.6 GB and ours stays at 375-434 MB.
 
+### Changed
+- **Lossless tree learning 17-28% faster at 4K, byte-identical
+  (95deaabc, a6f61bd6).** Fixed the tensor-derivation profitability gate
+  (omitted the per-property factor; mid-size nodes re-accumulated
+  everything), added a cost-dispatched stable gather partition, in-place
+  tensor row reads, and support-trimmed sweep histograms. photo e9
+  84 -> 60.3 s, e7 14.4 -> 12.0 s (threads=1). Hybrid mode: per-group
+  learns capped at e7 strength above e7 — e9 hybrid −34-37% wall for
+  +0.2-0.5% bytes (still below the global tree). Phase data:
+  `benchmarks/jxl_tree_perf_2026-08-14.md`.
+
 ### Added
 - **`SectionedTrees::Hybrid`: per-group best-of-both tree choice
   (0c52a9d4).** Learns the global tree AND per-group trees (riding the
