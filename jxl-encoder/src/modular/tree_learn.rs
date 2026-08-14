@@ -5893,7 +5893,6 @@ fn find_best_split_borrowed(
     let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
     let bucket_starts = ws.bucket_starts.as_mut_slice();
     let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
-
     let num_props = if weighted_total >= 256 {
         params.properties.len()
     } else if weighted_total >= 32 {
@@ -6014,16 +6013,21 @@ fn find_best_split_borrowed(
                 penalty -= 1e-8;
             }
 
+            // Row accessor: in tensor-Use mode the per-bucket token rows are
+            // read STRAIGHT out of the tensor (contiguous, stride
+            // `effective_histo`) instead of being copied into the workspace —
+            // the copies were ~1 KB x buckets x preds x props per node.
+            let (row_data, row_base, row_stride): (&[u32], usize, usize);
             if let Some((layout, tensor)) = tensor_in {
                 let entry = &layout.prop_entries[prop_pos];
                 let nb = entry.num_buckets;
                 for b in 0..local_num_buckets {
-                    let src = entry.token_base + (pred * nb + bmin + b) * effective_histo;
-                    count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo]
-                        .copy_from_slice(&tensor.token_counts[src..src + effective_histo]);
                     extra_bits_increase[b] =
                         tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b];
                 }
+                row_data = &tensor.token_counts;
+                row_base = entry.token_base + (pred * nb + bmin) * effective_histo;
+                row_stride = effective_histo;
             } else {
                 let tokens = &samples.residual_tokens[pred][start..end];
                 let ebits = &samples.extra_bits[pred][start..end];
@@ -6033,20 +6037,22 @@ fn find_best_split_borrowed(
                 }
                 extra_bits_increase[..local_num_buckets].fill(0);
 
-                for local_bucket in 0..local_num_buckets {
-                    let bs = bucket_starts[local_bucket];
-                    let be = bucket_starts[local_bucket + 1];
-                    let ci_base = local_bucket * HISTO_PADDED;
-                    let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
-                    let mut eb_sum: u64 = 0;
-                    for &rel_off in &sorted_by_bucket[bs..be] {
-                        let tok = tokens[rel_off];
-                        let sc = sample_counts[rel_off];
-                        ci_slice[tok as usize & HISTO_MASK] += sc;
-                        eb_sum += ebits[rel_off] as u64 * sc as u64;
+                crate::profile_time!("tree/fbs_accumulate", {
+                    for local_bucket in 0..local_num_buckets {
+                        let bs = bucket_starts[local_bucket];
+                        let be = bucket_starts[local_bucket + 1];
+                        let ci_base = local_bucket * HISTO_PADDED;
+                        let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
+                        let mut eb_sum: u64 = 0;
+                        for &rel_off in &sorted_by_bucket[bs..be] {
+                            let tok = tokens[rel_off];
+                            let sc = sample_counts[rel_off];
+                            ci_slice[tok as usize & HISTO_MASK] += sc;
+                            eb_sum += ebits[rel_off] as u64 * sc as u64;
+                        }
+                        extra_bits_increase[local_bucket] = eb_sum;
                     }
-                    extra_bits_increase[local_bucket] = eb_sum;
-                }
+                });
 
                 if let Some((layout, tensor)) = capture.as_mut() {
                     let entry = &layout.prop_entries[prop_pos];
@@ -6060,14 +6066,19 @@ fn find_best_split_borrowed(
                             extra_bits_increase[b];
                     }
                 }
+                row_data = count_increase;
+                row_base = 0;
+                row_stride = HISTO_PADDED;
             }
+            let row_at = |b: usize| -> &[u32] {
+                &row_data[row_base + b * row_stride..row_base + b * row_stride + effective_histo]
+            };
 
             right_counts[..effective_histo].fill(0);
             let mut right_extra: u64 = 0;
             let mut right_total: u32 = weighted_total;
             for (local_bucket, &eb) in extra_bits_increase[..local_num_buckets].iter().enumerate() {
-                let ci_base = local_bucket * HISTO_PADDED;
-                let ci_row = &count_increase[ci_base..ci_base + effective_histo];
+                let ci_row = row_at(local_bucket);
                 for (rc, &ci) in right_counts[..effective_histo]
                     .iter_mut()
                     .zip(ci_row.iter())
@@ -6076,6 +6087,21 @@ fn find_best_split_borrowed(
                 }
                 right_extra += eb;
             }
+            // Token-support trim for the estimate calls below: every count
+            // beyond the node's highest token is zero on BOTH sides (left is
+            // a subset of the node), and zero entries contribute exactly 0.0
+            // in the SIMD estimate. Rounding the trim UP TO A MULTIPLE OF 4
+            // keeps the lane chunking of the surviving prefix — and the
+            // scalar-tail split — bit-identical to the untrimmed call, so
+            // costs (and therefore trees and bytes) are unchanged while the
+            // estimate does 1.5-2.5x less work on deep nodes.
+            let support = {
+                let mut hi = effective_histo;
+                while hi > 0 && right_counts[hi - 1] == 0 {
+                    hi -= 1;
+                }
+                hi.div_ceil(4).saturating_mul(4).min(effective_histo)
+            };
 
             if capture.is_some() && !cap_totals_done {
                 cap_totals[pred * effective_histo..(pred + 1) * effective_histo]
@@ -6087,19 +6113,24 @@ fn find_best_split_borrowed(
             let mut left_extra: u64 = 0;
             let mut left_total: u32 = 0;
 
+            let _sweep_guard = crate::profile_phases::PhaseGuard::new("tree/fbs_sweep");
             for local_k in 0..local_num_thresholds {
                 let bc = bucket_counts[local_k];
                 if bc == 0 {
                     continue;
                 }
 
-                let ci_base = local_k * HISTO_PADDED;
-                let ci_row = &count_increase[ci_base..ci_base + effective_histo];
-                for (i, &ci) in ci_row.iter().enumerate() {
-                    if ci > 0 {
-                        left_counts[i] += ci;
-                        right_counts[i] -= ci;
-                    }
+                // Branchless: zero rows add/sub zero. The plain zip loop
+                // autovectorizes (u32 lanes, no dependences) — the old
+                // `if ci > 0` guard was what kept LLVM scalar here.
+                let ci_row = row_at(local_k);
+                for ((l, r), &ci) in left_counts[..effective_histo]
+                    .iter_mut()
+                    .zip(right_counts[..effective_histo].iter_mut())
+                    .zip(ci_row.iter())
+                {
+                    *l = l.wrapping_add(ci);
+                    *r = r.wrapping_sub(ci);
                 }
                 left_extra += extra_bits_increase[local_k];
                 right_extra -= extra_bits_increase[local_k];
@@ -6110,12 +6141,10 @@ fn find_best_split_borrowed(
                     continue;
                 }
 
-                let l_bits =
-                    jxl_simd::estimate_bits_u32(&left_counts[..effective_histo], left_total)
-                        + left_extra as f64;
-                let r_bits =
-                    jxl_simd::estimate_bits_u32(&right_counts[..effective_histo], right_total)
-                        + right_extra as f64;
+                let l_bits = jxl_simd::estimate_bits_u32(&left_counts[..support], left_total)
+                    + left_extra as f64;
+                let r_bits = jxl_simd::estimate_bits_u32(&right_counts[..support], right_total)
+                    + right_extra as f64;
 
                 if l_bits + penalty < best_l_penalized[local_k] {
                     best_l_penalized[local_k] = l_bits + penalty;
@@ -6473,36 +6502,39 @@ fn build_subtree_sequential_borrowed(
         // PERF-HIST-SUB-LOSSLESS: same Use/Capture/Off dispatch as the main
         // sequential loop in `compute_best_tree_with_budget`.
         let node_tensor_in = candidate.tensor.take();
-        let mut capture_tensor: Option<NodeTensor> =
+        let mut capture_tensor: Option<NodeTensor> = crate::profile_time!("tree/tensor_zeroed", {
             if node_tensor_in.is_none() && tensor_capture_pays(tensor_layout, count) {
                 Some(NodeTensor::zeroed(tensor_layout))
             } else {
                 None
-            };
-        let best_split = with_workspace_dispatched(
-            params.parallel_small_image_fallback,
-            count,
-            histogram_size,
-            max_buckets,
-            |workspace| {
-                find_best_split_borrowed(
-                    samples,
-                    candidate.start,
-                    candidate.end,
-                    histogram_size,
-                    candidate.base_bits,
-                    params,
-                    candidate.best_predictor,
-                    threshold,
-                    workspace,
-                    match (&node_tensor_in, capture_tensor.as_mut()) {
-                        (Some(t), _) => TensorMode::Use(tensor_layout, t),
-                        (None, Some(t)) => TensorMode::Capture(tensor_layout, t),
-                        (None, None) => TensorMode::Off,
-                    },
-                )
-            },
-        );
+            }
+        });
+        let best_split = crate::profile_time!("tree/find_best_split_borrowed", {
+            with_workspace_dispatched(
+                params.parallel_small_image_fallback,
+                count,
+                histogram_size,
+                max_buckets,
+                |workspace| {
+                    find_best_split_borrowed(
+                        samples,
+                        candidate.start,
+                        candidate.end,
+                        histogram_size,
+                        candidate.base_bits,
+                        params,
+                        candidate.best_predictor,
+                        threshold,
+                        workspace,
+                        match (&node_tensor_in, capture_tensor.as_mut()) {
+                            (Some(t), _) => TensorMode::Use(tensor_layout, t),
+                            (None, Some(t)) => TensorMode::Capture(tensor_layout, t),
+                            (None, None) => TensorMode::Off,
+                        },
+                    )
+                },
+            )
+        });
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -6510,15 +6542,17 @@ fn build_subtree_sequential_borrowed(
                     bucket_for_splitval(&samples.threshold_sets[split.property], split.splitval);
                 // Issue #40 chunk-3c: borrowed lossless path — see
                 // `partition_node_in_place_borrowed` doc.
-                let abs_mid = partition_node_in_place_borrowed(
-                    samples,
-                    candidate.start,
-                    candidate.end,
-                    split.left_count,
-                    split.property,
-                    bucket_split as u8,
-                    true,
-                );
+                let abs_mid = crate::profile_time!("tree/partition_borrowed", {
+                    partition_node_in_place_borrowed(
+                        samples,
+                        candidate.start,
+                        candidate.end,
+                        split.left_count,
+                        split.property,
+                        bucket_split as u8,
+                        true,
+                    )
+                });
 
                 let lchild_idx = tree.len();
                 let rchild_idx = tree.len() + 1;
@@ -6551,19 +6585,21 @@ fn build_subtree_sequential_borrowed(
                 // larger child from this node's tensor (see the main loop).
                 let node_tensor = node_tensor_in.or(capture_tensor.take());
                 let (left_tensor, right_tensor) = match node_tensor {
-                    Some(parent_t) => derive_child_tensors_borrowed(
-                        samples,
-                        params,
-                        tensor_layout,
-                        histogram_size,
-                        candidate.start,
-                        abs_mid,
-                        candidate.end,
-                        parent_t,
-                        lb,
-                        rb,
-                        threshold,
-                    ),
+                    Some(parent_t) => crate::profile_time!("tree/derive_child_tensors", {
+                        derive_child_tensors_borrowed(
+                            samples,
+                            params,
+                            tensor_layout,
+                            histogram_size,
+                            candidate.start,
+                            abs_mid,
+                            candidate.end,
+                            parent_t,
+                            lb,
+                            rb,
+                            threshold,
+                        )
+                    }),
                     None => (None, None),
                 };
 
@@ -6661,30 +6697,32 @@ fn build_subtree_recursive_parallel_borrowed(
         } else {
             None
         };
-    let split = match with_workspace_dispatched(
-        params.parallel_small_image_fallback,
-        n,
-        histogram_size,
-        max_buckets,
-        |workspace| {
-            find_best_split_borrowed(
-                &samples,
-                0,
-                n,
-                histogram_size,
-                seed_base_bits,
-                params,
-                seed_predictor,
-                threshold,
-                workspace,
-                match (&node_tensor_in, capture_tensor.as_mut()) {
-                    (Some(t), _) => TensorMode::Use(tensor_layout, t),
-                    (None, Some(t)) => TensorMode::Capture(tensor_layout, t),
-                    (None, None) => TensorMode::Off,
-                },
-            )
-        },
-    ) {
+    let split = match crate::profile_time!("tree/find_best_split_borrowed", {
+        with_workspace_dispatched(
+            params.parallel_small_image_fallback,
+            n,
+            histogram_size,
+            max_buckets,
+            |workspace| {
+                find_best_split_borrowed(
+                    &samples,
+                    0,
+                    n,
+                    histogram_size,
+                    seed_base_bits,
+                    params,
+                    seed_predictor,
+                    threshold,
+                    workspace,
+                    match (&node_tensor_in, capture_tensor.as_mut()) {
+                        (Some(t), _) => TensorMode::Use(tensor_layout, t),
+                        (None, Some(t)) => TensorMode::Capture(tensor_layout, t),
+                        (None, None) => TensorMode::Off,
+                    },
+                )
+            },
+        )
+    }) {
         Some(s) if seed_base_bits - s.total_bits > threshold => s,
         _ => {
             let mut tree: Tree = alloc::vec::Vec::new();
@@ -6706,15 +6744,17 @@ fn build_subtree_recursive_parallel_borrowed(
     let bucket_split = bucket_for_splitval(&samples.threshold_sets[split.property], split.splitval);
     // Issue #40 chunk-3c: borrowed lossless root-split — see
     // `partition_node_in_place_borrowed` doc.
-    let abs_mid = partition_node_in_place_borrowed(
-        &mut samples,
-        0,
-        n,
-        split.left_count,
-        split.property,
-        bucket_split as u8,
-        true,
-    );
+    let abs_mid = crate::profile_time!("tree/partition_borrowed", {
+        partition_node_in_place_borrowed(
+            &mut samples,
+            0,
+            n,
+            split.left_count,
+            split.property,
+            bucket_split as u8,
+            true,
+        )
+    });
 
     // Carried from the split sweep (issue #64 side-costs rider); debug
     // builds re-derive + assert bitwise identity.
@@ -6738,7 +6778,8 @@ fn build_subtree_recursive_parallel_borrowed(
     // per-branch ownership across `parallel_join`.
     let node_tensor = node_tensor_in.or(capture_tensor.take());
     let (left_tensor, right_tensor) = match node_tensor {
-        Some(parent_t) => derive_child_tensors_borrowed(
+        Some(parent_t) => crate::profile_time!("tree/derive_child_tensors", {
+            derive_child_tensors_borrowed(
             &samples,
             params,
             tensor_layout,
@@ -6750,7 +6791,8 @@ fn build_subtree_recursive_parallel_borrowed(
             left_bits,
             right_bits,
             threshold,
-        ),
+            )
+        }),
         None => (None, None),
     };
 
@@ -7477,12 +7519,24 @@ enum TensorMode<'a> {
 }
 
 /// Profitability gate for deriving children at one split: the larger
-/// child's skipped per-sample work (≈ `larger_unique × num_preds` row
-/// visits across the property loop) must exceed one tensor-sized pass
-/// (`token_cells` ops ≈ the subtraction + the row copies). Mirrors the
-/// `.meta` plan's "n_larger × num_pred exceeds tensor_subtract cost".
+/// child's skipped per-sample work must exceed one tensor-sized pass
+/// (`token_cells` ops ≈ the subtraction + the row copies).
+///
+/// The skipped work is `larger_unique × num_preds` row visits PER
+/// PROPERTY — the split search re-walks the node's samples for every
+/// property in its loop — so the saving scales with the property count.
+/// The original gate omitted that factor, making the threshold ~num_props
+/// (≈24x at e9) too conservative: nodes between ~1.3k and ~32k samples
+/// re-accumulated everything even though a derived tensor was cheaper.
+/// Measured at 4K e9 photo this re-accumulation was 26s of a 77s encode.
+/// Byte-identical by construction: tensors carry exact integer sums, so
+/// WHICH nodes use them cannot change any cost or tree.
 fn tensor_derive_pays(layout: &TensorLayout, larger_unique: usize) -> bool {
-    (larger_unique as u64).saturating_mul(layout.num_preds as u64) > layout.token_cells as u64
+    let num_props = layout.prop_entries.len().max(1) as u64;
+    (larger_unique as u64)
+        .saturating_mul(layout.num_preds as u64)
+        .saturating_mul(num_props)
+        > layout.token_cells as u64
 }
 
 /// Capture gate for a node without a tensor: both children can only reach
@@ -7843,7 +7897,19 @@ struct SplitWorkspace {
     sorted_by_bucket: Vec<usize>,
     bucket_starts: Vec<usize>,
     bucket_write_pos: Vec<usize>,
+    /// Fused accumulation block for the borrowed split search: per-property,
+    /// ONE sequential pass over the node's samples scatter-adds every
+    /// candidate predictor's token histogram into
+    /// `[pred][bucket][HISTO_PADDED]` rows here (L1/L2-resident), replacing
+    /// `num_pred` separate passes with per-sample indirection — measured 74%
+    /// of find_best_split at 4K e9 before this existed.
+    pred_block: Vec<u32>,
+    /// `[pred][bucket]` extra-bit sums for the same fused pass.
+    pred_ebits: Vec<u64>,
 }
+
+/// Workspace capacity for candidate predictors (14 today; padded).
+const MAX_CAND_PRED_WS: usize = 16;
 
 /// Test-only allocation counter for [`SplitWorkspace::new`]. Used by the
 /// thread-local cache invariant test to prove that a full encode triggers
@@ -7898,6 +7964,8 @@ impl SplitWorkspace {
             sorted_by_bucket: vec![0usize; max_count],
             bucket_starts: vec![0usize; max_buckets + 2],
             bucket_write_pos: vec![0usize; max_buckets],
+            pred_block: vec![0u32; MAX_CAND_PRED_WS * max_buckets * HISTO_PADDED],
+            pred_ebits: vec![0u64; MAX_CAND_PRED_WS * max_buckets],
         }
     }
 
@@ -7941,6 +8009,10 @@ impl SplitWorkspace {
         self.left_counts.resize(histogram_size, 0u32);
         // Per-sample buffer — the dominant ~12 MB allocation at large n.
         self.sorted_by_bucket.resize(max_count, 0usize);
+        // Fused per-property accumulation block (borrowed split search).
+        self.pred_block
+            .resize(MAX_CAND_PRED_WS * max_buckets * HISTO_PADDED, 0u32);
+        self.pred_ebits.resize(MAX_CAND_PRED_WS * max_buckets, 0u64);
     }
 }
 
@@ -8335,20 +8407,19 @@ fn find_best_split(
                 penalty -= 1e-8;
             }
 
+            // Row accessor (mirrors find_best_split_borrowed): tensor-Use
+            // reads per-bucket rows straight from the tensor, no copies.
+            let (row_data, row_base, row_stride): (&[u32], usize, usize);
             if let Some((layout, tensor)) = tensor_in {
-                // Tensor path: this (prop, pred)'s per-bucket rows + extra-bit
-                // sums are copied out of the node's tensor — replacing BOTH
-                // the fill(0) below (same bytes written) and the O(n)
-                // per-sample accumulate (skipped entirely).
                 let entry = &layout.prop_entries[prop_pos];
                 let nb = entry.num_buckets;
                 for b in 0..local_num_buckets {
-                    let src = entry.token_base + (pred * nb + bmin + b) * effective_histo;
-                    count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo]
-                        .copy_from_slice(&tensor.token_counts[src..src + effective_histo]);
                     extra_bits_increase[b] =
                         tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b];
                 }
+                row_data = &tensor.token_counts;
+                row_base = entry.token_base + (pred * nb + bmin) * effective_histo;
+                row_stride = effective_histo;
             } else {
                 // Slice into the contiguous range [start..end) — sequential token
                 // and extra-bits reads, no per-index pointer chase across the
@@ -8400,36 +8471,23 @@ fn find_best_split(
                             extra_bits_increase[b];
                     }
                 }
+                row_data = count_increase;
+                row_base = 0;
+                row_stride = HISTO_PADDED;
             }
+            let row_at = |b: usize| -> &[u32] {
+                &row_data[row_base + b * row_stride..row_base + b * row_stride + effective_histo]
+            };
 
             // Build initial right histogram (all local buckets on the right
-            // side). LLVM auto-vectorizes this loop to SSE2 movdqu/paddd
-            // (4-wide u32 with 2× unroll) — see
-            // benchmarks/find_best_split_asm_post_6011f10_2026-05-17.txt
-            // lines 1320-1339 for the cargo-asm dump of the SSE2 codegen.
-            //
-            // Forcing AVX2 8-wide via a #[archmage::arcane] entry point
-            // (column-major iteration, dst held in ymm across all rows)
-            // was tried 2026-05-17 and asm-verified to use vpaddd ymm.
-            // Wall-clock impact at the gate cell (1.05 MP @ e9) was
-            // **zero**: median delta -0.2%, min delta 0.0% across 7
-            // paired samples (benchmarks/fbs_simd_ab_2026-05-17.{tsv,meta}).
-            //
-            // Root cause: this fold runs num_pred × num_props ≈ 176 times
-            // per node-split processing ~768 u32-adds each ≈ 5,280 cycles
-            // total — vs estimate_bits at ~739,200 cycles per split. The
-            // right-init fold is <1% of find_best_split's CPU; even
-            // infinite speedup is invisible at wall-clock scope. The next
-            // actionable gap lives in OTHER functions (find_best_predictor,
-            // compute_best_tree fan-out depth, pre_quantize, gather_samples,
-            // dedup_samples). See benchmarks/fbs_simd_ab_2026-05-17.meta
-            // for the full asm-evidenced post-mortem.
+            // side). Auto-vectorizes (see the 2026-05-17 asm post-mortem in
+            // benchmarks/fbs_simd_ab_2026-05-17.meta: this fold is <1% of
+            // find_best_split; estimate_bits dominates the sweep).
             right_counts[..effective_histo].fill(0);
             let mut right_extra: u64 = 0;
             let mut right_total: u32 = weighted_total;
             for (local_bucket, &eb) in extra_bits_increase[..local_num_buckets].iter().enumerate() {
-                let ci_base = local_bucket * HISTO_PADDED;
-                let ci_row = &count_increase[ci_base..ci_base + effective_histo];
+                let ci_row = row_at(local_bucket);
                 for (rc, &ci) in right_counts[..effective_histo]
                     .iter_mut()
                     .zip(ci_row.iter())
@@ -8438,6 +8496,21 @@ fn find_best_split(
                 }
                 right_extra += eb;
             }
+            // Token-support trim for the estimate calls below: every count
+            // beyond the node's highest token is zero on BOTH sides (left is
+            // a subset of the node), and zero entries contribute exactly 0.0
+            // in the SIMD estimate. Rounding the trim UP TO A MULTIPLE OF 4
+            // keeps the lane chunking of the surviving prefix — and the
+            // scalar-tail split — bit-identical to the untrimmed call, so
+            // costs (and therefore trees and bytes) are unchanged while the
+            // estimate does 1.5-2.5x less work on deep nodes.
+            let support = {
+                let mut hi = effective_histo;
+                while hi > 0 && right_counts[hi - 1] == 0 {
+                    hi -= 1;
+                }
+                hi.div_ceil(4).saturating_mul(4).min(effective_histo)
+            };
 
             if capture.is_some() && !cap_totals_done {
                 // The fully-initialized right histogram == the whole-node
@@ -8463,13 +8536,17 @@ fn find_best_split(
                 }
 
                 // Move bucket from right to left
-                let ci_base = local_k * HISTO_PADDED;
-                let ci_row = &count_increase[ci_base..ci_base + effective_histo];
-                for (i, &ci) in ci_row.iter().enumerate() {
-                    if ci > 0 {
-                        left_counts[i] += ci;
-                        right_counts[i] -= ci;
-                    }
+                // Branchless: zero rows add/sub zero. The plain zip loop
+                // autovectorizes (u32 lanes, no dependences) — the old
+                // `if ci > 0` guard was what kept LLVM scalar here.
+                let ci_row = row_at(local_k);
+                for ((l, r), &ci) in left_counts[..effective_histo]
+                    .iter_mut()
+                    .zip(right_counts[..effective_histo].iter_mut())
+                    .zip(ci_row.iter())
+                {
+                    *l = l.wrapping_add(ci);
+                    *r = r.wrapping_sub(ci);
                 }
                 left_extra += extra_bits_increase[local_k];
                 right_extra -= extra_bits_increase[local_k];
@@ -8487,12 +8564,10 @@ fn find_best_split(
                 // scalar `subsd` dep chain serialized the inner loop at ~25
                 // cycles/iter; SIMD breaks it into 2 independent f32 lanes
                 // and hides the fast_log2f latency).
-                let l_bits =
-                    jxl_simd::estimate_bits_u32(&left_counts[..effective_histo], left_total)
-                        + left_extra as f64;
-                let r_bits =
-                    jxl_simd::estimate_bits_u32(&right_counts[..effective_histo], right_total)
-                        + right_extra as f64;
+                let l_bits = jxl_simd::estimate_bits_u32(&left_counts[..support], left_total)
+                    + left_extra as f64;
+                let r_bits = jxl_simd::estimate_bits_u32(&right_counts[..support], right_total)
+                    + right_extra as f64;
 
                 // Predictor selection uses penalized cost (matching libjxl).
                 // Raw cost stored separately for the final split decision.
