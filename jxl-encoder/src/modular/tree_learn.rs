@@ -837,6 +837,17 @@ pub struct TreeSamples {
     /// re-gather. Only read during gather — its value in split/merge results is
     /// irrelevant. Default `false` ⇒ env-driven.
     pub(crate) randomize_gather: bool,
+    /// Per-column property mask: when set, gather stores ONLY the columns
+    /// marked active; the rest stay EMPTY (every consumer already skips
+    /// empty columns). The lossless global-tree path configures this to the
+    /// canonical `TreeLearningParams::properties` list — the only columns
+    /// pre-quantize/dedup/tree-build ever read there — which at 4K e7 leaves
+    /// 15-17 of 24 columns unstored (measured 570 -> ~170 MiB of props at
+    /// the gather peak). `None` (the default) stores everything, so every
+    /// other caller (multipliers path, tests) is unaffected. The seed
+    /// perturbations only permute or TRUNCATE the canonical list, so one
+    /// mask is a superset of every seed's read set.
+    pub(crate) active_props: Option<alloc::boxed::Box<[bool]>>,
 }
 
 impl Default for TreeSamples {
@@ -886,9 +897,38 @@ impl TreeSamples {
         for v in &mut self.extra_bits {
             v.reserve(additional);
         }
-        for v in &mut self.props {
-            v.reserve(additional);
+        for (c, v) in self.props.iter_mut().enumerate() {
+            if match &self.active_props {
+                None => true,
+                Some(m) => m.get(c).copied().unwrap_or(false),
+            } {
+                v.reserve(additional);
+            }
         }
+    }
+
+    /// Is property column `c` active for storage? (See `active_props`.)
+    #[inline]
+    pub(crate) fn prop_active(&self, c: usize) -> bool {
+        match &self.active_props {
+            None => true,
+            Some(m) => m.get(c).copied().unwrap_or(false),
+        }
+    }
+
+    /// Restrict stored property columns to `mask` (true = store). Call
+    /// BEFORE any samples are gathered; columns already holding data are not
+    /// retroactively dropped.
+    pub(crate) fn set_active_props(&mut self, mask: alloc::boxed::Box<[bool]>) {
+        debug_assert_eq!(mask.len(), self.props.len());
+        // An all-true mask is the unmasked configuration — store None so the
+        // per-push checks vanish (e9 configures every property; the mask must
+        // not tax the path it cannot help).
+        self.active_props = if mask.iter().all(|&b| b) {
+            None
+        } else {
+            Some(mask)
+        };
     }
 
     /// Widen every non-empty property column to i32 in place. Paths that
@@ -949,6 +989,7 @@ impl TreeSamples {
             sample_counts: Vec::new(),
             num_ref_channels,
             randomize_gather: false,
+            active_props: None,
         }
     }
 
@@ -986,8 +1027,13 @@ impl TreeSamples {
         for v in &mut self.extra_bits {
             v.reserve(additional);
         }
-        for v in &mut self.props {
-            v.reserve(additional);
+        for (c, v) in self.props.iter_mut().enumerate() {
+            if match &self.active_props {
+                None => true,
+                Some(m) => m.get(c).copied().unwrap_or(false),
+            } {
+                v.reserve(additional);
+            }
         }
     }
 
@@ -1043,8 +1089,13 @@ impl TreeSamples {
         for v in &mut self.extra_bits {
             v.reserve_exact(upper_bound.saturating_sub(v.len()));
         }
-        for v in &mut self.props {
-            v.reserve_exact_to(upper_bound);
+        for (c, v) in self.props.iter_mut().enumerate() {
+            if match &self.active_props {
+                None => true,
+                Some(m) => m.get(c).copied().unwrap_or(false),
+            } {
+                v.reserve_exact_to(upper_bound);
+            }
         }
     }
 
@@ -2390,7 +2441,9 @@ impl GatherRowStaging {
             samples.extra_bits[p].extend_from_slice(&self.ebits[p * cap..p * cap + n]);
         }
         for c in 0..self.total_props {
-            samples.props[c].extend_from_i32_slice(&self.props[c * cap..c * cap + n]);
+            if samples.prop_active(c) {
+                samples.props[c].extend_from_i32_slice(&self.props[c * cap..c * cap + n]);
+            }
         }
         samples.num_samples += n;
         self.n = 0;
@@ -2747,24 +2800,34 @@ fn gather_channel_samples(
                     samples.residual_tokens[pred_idx].push(local_tokens[pred_idx]);
                     samples.extra_bits[pred_idx].push(local_ebits[pred_idx]);
                 }
-                for (prop_list, &val) in samples
+                let active = samples.active_props.take();
+                let is_on = |c: usize| match &active {
+                    None => true,
+                    Some(m) => m.get(c).copied().unwrap_or(false),
+                };
+                for (c, (prop_list, &val)) in samples
                     .props
                     .iter_mut()
                     .zip(props.iter())
                     .take(NUM_PROPERTIES)
+                    .enumerate()
                 {
-                    prop_list.push_i32(val);
+                    if is_on(c) {
+                        prop_list.push_i32(val);
+                    }
                 }
                 if max_refs > 0 {
                     for r in 0..max_refs {
                         let base = NUM_PROPERTIES + r * 4;
                         let off = r * 4;
-                        samples.props[base].push_i32(local_ref_props[off]);
-                        samples.props[base + 1].push_i32(local_ref_props[off + 1]);
-                        samples.props[base + 2].push_i32(local_ref_props[off + 2]);
-                        samples.props[base + 3].push_i32(local_ref_props[off + 3]);
+                        for k in 0..4 {
+                            if is_on(base + k) {
+                                samples.props[base + k].push_i32(local_ref_props[off + k]);
+                            }
+                        }
                     }
                 }
+                samples.active_props = active;
                 samples.num_samples += 1;
                 // Seed the new unique row's count when dedup is active.
                 // For Phase 3 the table already pushed the canonical key
@@ -5134,6 +5197,7 @@ fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSample
         sample_counts: right_sample_counts,
         num_ref_channels: samples.num_ref_channels,
         randomize_gather: samples.randomize_gather,
+        active_props: samples.active_props.clone(),
     };
 
     (samples, right)

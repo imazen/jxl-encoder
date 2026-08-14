@@ -609,6 +609,18 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     // pre-RFC#45-chunk-2 gather. Higher seeds shift the offset, may use
     // a perturbed `seed_stride` (different sample density), and pick a
     // per-seed predictor permutation (chunk-4 evaluation-order variance).
+    // Property-column storage mask for this path: the canonical
+    // `TreeLearningParams::properties` list is the ONLY set of raw property
+    // columns pre-quantize/dedup/tree-build read here (seed perturbations
+    // permute or truncate it, never extend it), so the gather skips storing
+    // the rest — at 4K e7 that is 15-17 of 24 columns, ~400 MiB of the
+    // gather-phase peak. Columns outside the mask stay EMPTY, which every
+    // consumer already skips. See `TreeSamples::active_props`.
+    let active_prop_list: Vec<usize> = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .properties
+        .clone();
+
     let gather_for_seed = |seed: u64, seed_stride: usize, randomize: bool| -> TreeSamples {
         let start_offset = if seed_stride > 1 {
             (seed as usize) % seed_stride
@@ -622,6 +634,16 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         // checks lengths; the SoA columns are predictor-indexed so they
         // must agree).
         let mut samples = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
+        let active_mask: alloc::boxed::Box<[bool]> = {
+            let mut m = vec![false; samples.total_num_properties()].into_boxed_slice();
+            for &p in &active_prop_list {
+                if p < m.len() {
+                    m[p] = true;
+                }
+            }
+            m
+        };
+        samples.set_active_props(active_mask.clone());
         // Self-repair re-gather (task #14): draw de-aliased randomized
         // samples instead of the fixed stride. `false` on the normal path
         // ⇒ byte-identical.
@@ -700,6 +722,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                 let group_idx = wave_start + i;
                 // Same per-seed predictor order as the meta init above.
                 let mut local = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
+                local.set_active_props(active_mask.clone());
                 local.randomize_gather = randomize;
                 if enable_gather_dedup && seed == 0 {
                     let _ = gather_samples_strided_with_dedup_backend(
