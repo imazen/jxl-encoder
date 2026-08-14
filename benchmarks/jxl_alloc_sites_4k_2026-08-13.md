@@ -162,3 +162,21 @@ ownership whenever no perceptual loop can read it. All byte-identical.
 cell), e3 412 → 318, e9 517 → 434. Lossless untouched; its alloc count
 drops another 1,755 (per-CC stack allocs gone). cjxl lossy e9 remains
 2,649 MB (butteraugli loop) — we are 6× under there.
+
+## Addendum 4 (same day, commit 95b2a3e3): the sectioned mode is BUILT
+
+`JXL_LOSSLESS_LOCAL_TREES=1` (v1, env-gated, default off, imazen/jxl-encoder#96):
+per-group local MA trees, spec-conformant single frame, djxl pixel-exact,
+zenjxl-decoder roundtrip test. 4K photo threads=1, mode ON:
+
+| | peak_live | RSS | bytes | wall | allocs |
+|---|---|---|---|---|---|
+| e7 | 834 → **469 MB** | 1433 → 649 | −2.0% | −5% | −17% |
+| e9 | 1130 → **469 MB** | 1785 → 643 | +0.6% | −25% | −33% |
+
+The whole-image tree-learning working set — the dominant lossless term all
+session — is GONE from the peak. The mode's peak is the patches-detection
+phase (~380 MiB of opsin/background planes + DFS) plus the modular image
+built before it (95 MiB, reorderable). vs cjxl: live 469 vs ~211 classified
+live (2.2×), RSS 649 vs 304 (2.1×) — remaining closure is ordinary
+lifetime/strip work on the patches detector, tracked on #96.

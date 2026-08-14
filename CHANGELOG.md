@@ -55,6 +55,17 @@
   live set at the same cell; at lossy e9 cjxl's butteraugli loop uses
   2.6 GB and ours stays at 375-434 MB.
 
+### Added
+- **Sectioned local-tree lossless mode (`JXL_LOSSLESS_LOCAL_TREES=1`,
+  experimental, default off).** Every PassGroup modular stream carries its
+  own MA tree learned from that group's samples (`use_global_tree = false`),
+  eliminating the whole-image tree-learning working set from the peak: 4K
+  photo e7 peak_live 834 -> 469 MB with 2.0% FEWER bytes and 17% fewer
+  allocations; e9 1130 -> 469 MB, 25% faster, 33% fewer allocations.
+  Spec-standard single frame, djxl pixel-exact; default path byte-identical
+  (hash-locks unchanged). v1 scope + follow-ups: imazen/jxl-encoder#96
+  (95b2a3e3).
+
 ### Fixed
 - **Per-tile AC-strategy scratch maps were full-image sized — a
   px²/262144-byte QUADRATIC peak-memory term, ~44.5 GiB at 108 MP.**
