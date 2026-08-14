@@ -514,6 +514,45 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     hf_stream_id_base: u32,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<GlobalModularState> {
+    write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
+        images,
+        writer,
+        profile,
+        transforms,
+        use_lz77,
+        lz77_method,
+        dc_quant_custom,
+        meta_image,
+        knobs,
+        hf_stream_id_base,
+        budget,
+        None,
+    )
+}
+
+/// [`write_global_modular_section_with_tree_dc_quant_knobs`] plus the hybrid
+/// per-group tree hook (imazen/jxl-encoder#96): when `hybrid_local_trees` is
+/// `Some`, each group's wave-gathered samples are ALSO used to learn a
+/// per-group local tree (on a clone, before they merge into the global
+/// accumulator — the gather is paid once), returned indexed by group. The
+/// caller then writes, per group, whichever of {global-tree section,
+/// local-tree section} is smaller. Only the canonical single-seed,
+/// no-self-repair path learns local trees; otherwise the vec stays None.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    transforms: GlobalTransforms,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+    meta_image: Option<&ModularImage>,
+    knobs: &super::palette::ModularKnobs,
+    hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    hybrid_local_trees: Option<&mut alloc::vec::Vec<Option<super::tree::Tree>>>,
+) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
     use super::predictor::WeightedPredictorParams;
@@ -621,6 +660,18 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         .properties
         .clone();
 
+    // Hybrid per-group tree learning (see the _hybrid entry doc). The slot
+    // is filled by the wave loop below on the canonical gather only.
+    // Gated to the canonical single-seed path only. Self-repair does NOT
+    // disqualify: per-group candidates come from the seed-0 FIXED gather and
+    // are self-contained sections — if repair later swaps the global tree,
+    // the per-group min() still only ever replaces a group when the local
+    // section is measured smaller.
+    let hybrid_learn_enabled =
+        hybrid_local_trees.is_some() && profile.tree_learn_seeds.max(1) == 1;
+    let hybrid_slot: core::cell::RefCell<alloc::vec::Vec<Option<super::tree::Tree>>> =
+        core::cell::RefCell::new(alloc::vec![None; if hybrid_learn_enabled { images.len() } else { 0 }]);
+
     let gather_for_seed = |seed: u64, seed_stride: usize, randomize: bool| -> TreeSamples {
         let start_offset = if seed_stride > 1 {
             (seed as usize) % seed_stride
@@ -718,7 +769,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         let mut wave_start = 0usize;
         while wave_start < images.len() {
             let wave_len = wave.min(images.len() - wave_start);
-            let wave_samples: Vec<TreeSamples> = crate::parallel::parallel_map(wave_len, |i| {
+            let hybrid_learn_this_gather = hybrid_learn_enabled && seed == 0 && !randomize;
+            let wave_samples: Vec<(TreeSamples, Option<super::tree::Tree>)> =
+                crate::parallel::parallel_map(wave_len, |i| {
                 let group_idx = wave_start + i;
                 // Same per-seed predictor order as the meta init above.
                 let mut local = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
@@ -757,11 +810,39 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
                         &wp_params,
                     );
                 }
-                local
+                // Hybrid: learn this group's local tree from a CLONE of the
+                // just-gathered samples (compute_best_tree consumes them);
+                // the original merges into the global accumulator untouched.
+                // The clone + learn ride the same parallel wave, so the extra
+                // in-flight memory is bounded by the wave width.
+                let local_tree = if hybrid_learn_this_gather {
+                    let group_pixels: usize = images[group_idx]
+                        .channels
+                        .iter()
+                        .map(|c| c.width() * c.height())
+                        .sum();
+                    let pixel_fraction = if group_pixels > 0 {
+                        local.total_gathered_weight() as f64 / group_pixels as f64
+                    } else {
+                        1.0
+                    };
+                    let params = TreeLearningParams::from_profile(profile)
+                        .with_ref_properties(num_refs, profile.effort)
+                        .with_total_pixels(group_pixels)
+                        .with_pixel_fraction(pixel_fraction);
+                    let mut dup = local.clone();
+                    Some(compute_best_tree(&mut dup, &params))
+                } else {
+                    None
+                };
+                (local, local_tree)
             });
             // No per-wave reserve: `reserve_exact_total` above already sized
             // every column past the final count, so these appends never grow.
-            for local in wave_samples {
+            for (i, (local, ltree)) in wave_samples.into_iter().enumerate() {
+                if let Some(t) = ltree {
+                    hybrid_slot.borrow_mut()[wave_start + i] = Some(t);
+                }
                 samples.append_from(local);
             }
             wave_start += wave_len;
@@ -1361,6 +1442,11 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
 
     writer.zero_pad_to_byte();
 
+    // Hand the wave-learned per-group trees to the hybrid caller.
+    if let Some(out) = hybrid_local_trees {
+        *out = hybrid_slot.into_inner();
+    }
+
     Ok(GlobalModularState::AnsWithTree {
         code,
         tree,
@@ -1570,9 +1656,55 @@ pub fn write_group_modular_section_local_tree(
     let tree = compute_best_tree(&mut samples, &params);
     drop(samples);
 
+    write_group_modular_section_local_tree_with_tree(
+        group_image,
+        stream_id,
+        profile,
+        use_lz77,
+        lz77_method,
+        rct_type,
+        &tree,
+        &wp_params,
+        writer,
+        budget,
+    )
+}
+
+/// [`write_group_modular_section_local_tree`] with a PRE-LEARNED tree and
+/// the WP params it was learned under (the hybrid path learns per-group
+/// trees during the global gather — the same wp_params as the global tree —
+/// and must write those in this group's header so decode prediction and
+/// property 15 match the tree's training data).
+#[allow(private_interfaces)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_group_modular_section_local_tree_with_tree(
+    group_image: &ModularImage,
+    stream_id: u32,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    rct_type: Option<RctType>,
+    tree: &super::tree::Tree,
+    wp_params: &super::predictor::WeightedPredictorParams,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> Result<()> {
+    use super::encode::{write_num_transforms, write_tree, write_wp_header};
+    use super::tree::count_contexts;
+    use super::tree_learn::collect_residuals_with_tree_with_budget;
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+
+    let total_pixels: usize = group_image
+        .channels
+        .iter()
+        .map(|c| c.width() * c.height())
+        .sum();
+
     let tokens =
-        collect_residuals_with_tree_with_budget(group_image, &tree, stream_id, &wp_params, budget)?;
-    let num_contexts = count_contexts(&tree) as usize;
+        collect_residuals_with_tree_with_budget(group_image, tree, stream_id, wp_params, budget)?;
+    let num_contexts = count_contexts(tree) as usize;
 
     // Same LZ77 construction as the single-group tree writer.
     let dist_multiplier = group_image
@@ -1605,7 +1737,7 @@ pub fn write_group_modular_section_local_tree(
 
     // GroupHeader: local tree, the wp params used above, per-group RCT.
     writer.write(1, 0)?; // use_global_tree = false
-    write_wp_header(writer, &wp_params)?;
+    write_wp_header(writer, wp_params)?;
     let num_transforms = u32::from(rct_type.is_some());
     write_num_transforms(writer, num_transforms)?;
     if let Some(rct) = rct_type {
@@ -1613,7 +1745,7 @@ pub fn write_group_modular_section_local_tree(
     }
 
     // Local tree + its entropy code, exactly the single-group serialization.
-    write_tree(writer, &tree)?;
+    write_tree(writer, tree)?;
     if ans_num_contexts > 1 {
         write_lz77_header(lz77_params.as_ref(), writer)?;
         write_entropy_code_ans(&code, writer)?;

@@ -981,28 +981,43 @@ impl FrameEncoder {
         // meta channels (no palette / ChannelCompact), no custom DC quant,
         // no patches — everything else falls through to the global-tree
         // path unchanged. Dev gate: JXL_LOSSLESS_LOCAL_TREES=1.
-        let sectioned_requested = match std::env::var("JXL_LOSSLESS_LOCAL_TREES") {
+        #[derive(PartialEq, Clone, Copy)]
+        enum TreeMode {
+            Global,
+            Sectioned,
+            Hybrid,
+        }
+        let tree_mode = match std::env::var("JXL_LOSSLESS_LOCAL_TREES") {
             // Runtime override for A/B work, same convention as the other
-            // behaviour hooks: "1" forces on, "0" forces off.
-            Ok(v) if v == "1" => true,
-            Ok(v) if v == "0" => false,
+            // behaviour hooks: "1" forces sectioned, "0" forces global,
+            // "hybrid" forces the per-group best-of-both selection.
+            Ok(v) if v == "1" => TreeMode::Sectioned,
+            Ok(v) if v == "0" => TreeMode::Global,
+            Ok(v) if v == "hybrid" => TreeMode::Hybrid,
             _ => match self.options.sectioned_trees {
-                crate::api::SectionedTrees::On => true,
-                crate::api::SectionedTrees::Off => false,
-                crate::api::SectionedTrees::Auto => self.budget.as_ref().is_some_and(|b| {
-                    crate::heuristics::estimate_encode(
-                        self.width as u32,
-                        self.height as u32,
-                        3,
-                        image_has_alpha,
-                        true,
-                        self.options.profile.effort,
-                    )
-                    .is_some_and(|e| e.peak_memory_bytes > b.cap())
-                }),
+                crate::api::SectionedTrees::On => TreeMode::Sectioned,
+                crate::api::SectionedTrees::Off => TreeMode::Global,
+                crate::api::SectionedTrees::Hybrid => TreeMode::Hybrid,
+                crate::api::SectionedTrees::Auto => {
+                    if self.budget.as_ref().is_some_and(|b| {
+                        crate::heuristics::estimate_encode(
+                            self.width as u32,
+                            self.height as u32,
+                            3,
+                            image_has_alpha,
+                            true,
+                            self.options.profile.effort,
+                        )
+                        .is_some_and(|e| e.peak_memory_bytes > b.cap())
+                    }) {
+                        TreeMode::Sectioned
+                    } else {
+                        TreeMode::Global
+                    }
+                }
             },
         };
-        let local_trees_mode = sectioned_requested
+        let local_trees_mode = tree_mode == TreeMode::Sectioned
             && meta_image.is_none()
             && global_transforms.full_palette.is_none()
             && global_transforms.compact_info.is_empty()
@@ -1010,6 +1025,10 @@ impl FrameEncoder {
             && self.options.dc_quant_custom.is_none()
             && self.options.use_tree_learning
             && self.options.use_ans;
+
+        // Per-group trees learned during the global gather (hybrid mode);
+        // empty unless TreeMode::Hybrid reaches the tree-learning arm.
+        let mut hybrid_trees: Vec<Option<super::tree::Tree>> = Vec::new();
 
         // Step 2: Write LfGlobal section (patches + tree + histogram)
         let mut lf_global_writer = BitWriter::new();
@@ -1061,18 +1080,26 @@ impl FrameEncoder {
             // (libjxl `cjxl -P N` / `--modular_predictor`) by routing
             // through the `_knobs` variant, which builds a single-leaf
             // tree pinned to the requested predictor when set.
-            Some(super::section::write_global_modular_section_with_tree_knobs(
-                &group_images,
-                &mut lf_global_writer,
-                &self.options.profile, // effort-dependent tree params
-                global_transforms,
-                self.options.enable_lz77,
-                self.options.lz77_method,
-                meta_image.as_ref(),
-                &self.options.modular_knobs,
-                super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
-                self.budget.as_ref(),
-            )?)
+            Some(
+                super::section::write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
+                    &group_images,
+                    &mut lf_global_writer,
+                    &self.options.profile, // effort-dependent tree params
+                    global_transforms,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
+                    None,
+                    meta_image.as_ref(),
+                    &self.options.modular_knobs,
+                    super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
+                    self.budget.as_ref(),
+                    if tree_mode == TreeMode::Hybrid {
+                        Some(&mut hybrid_trees)
+                    } else {
+                        None
+                    },
+                )?,
+            )
         } else {
             // Standard path: collect residuals using the requested predictor
             // (libjxl `cjxl -P` / `--modular_predictor`). No per-channel WP
@@ -1114,6 +1141,13 @@ impl FrameEncoder {
             "MULTI_GROUP: LfGlobal section = {} bytes",
             lf_global_data.len()
         );
+        if std::env::var_os("JXL_SECTION_SIZES").is_some() {
+            eprintln!(
+                "[section-size] mode={} lf_global bytes={}",
+                if local_trees_mode { "local" } else { "global" },
+                lf_global_data.len()
+            );
+        }
 
         // Step 3: HfGlobal is empty for modular encoding (0 bytes)
         let hf_global_data: Vec<u8> = Vec::new();
@@ -1169,12 +1203,25 @@ impl FrameEncoder {
                     &mut group_writer,
                     budget,
                 )?;
+                if std::env::var_os("JXL_SECTION_SIZES").is_some() {
+                    eprintln!(
+                        "[section-size] mode=local group={} bytes={}",
+                        group_idx,
+                        group_writer.bits_written().div_ceil(8)
+                    );
+                }
                 Ok(group_writer.finish())
             })?
         } else {
             let global_state = global_state
                 .as_ref()
                 .expect("global-tree path always builds GlobalModularState");
+            let global_wp = match global_state {
+                super::section::GlobalModularState::AnsWithTree { wp_params, .. } => {
+                    Some(*wp_params)
+                }
+                _ => None,
+            };
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
                 let group_idx = flat_idx / num_passes;
                 let group_image = &group_images[group_idx];
@@ -1189,11 +1236,45 @@ impl FrameEncoder {
                     budget,
                 )?;
 
+                // Hybrid: also write this group as a self-contained local-tree
+                // stream (tree learned during the gather wave) and keep
+                // whichever section is smaller. Ties keep global (stability;
+                // shared histograms cost nothing extra).
+                if let (Some(Some(ltree)), Some(wp)) =
+                    (hybrid_trees.get(group_idx), global_wp.as_ref())
+                {
+                    let mut local_writer = BitWriter::new();
+                    super::section::write_group_modular_section_local_tree_with_tree(
+                        group_image,
+                        group_idx as u32 + per_group_id_offset,
+                        &self.options.profile,
+                        self.options.enable_lz77,
+                        self.options.lz77_method,
+                        None,
+                        ltree,
+                        wp,
+                        &mut local_writer,
+                        budget,
+                    )?;
+                    if local_writer.bits_written().div_ceil(8)
+                        < group_writer.bits_written().div_ceil(8)
+                    {
+                        group_writer = local_writer;
+                    }
+                }
+
                 crate::trace::debug_eprintln!(
                     "MULTI_GROUP: PassGroup {} section = {} bytes",
                     group_idx,
                     group_writer.bits_written() / 8,
                 );
+                if std::env::var_os("JXL_SECTION_SIZES").is_some() {
+                    eprintln!(
+                        "[section-size] mode=global group={} bytes={}",
+                        group_idx,
+                        group_writer.bits_written().div_ceil(8)
+                    );
+                }
                 Ok(group_writer.finish())
             })?
         };

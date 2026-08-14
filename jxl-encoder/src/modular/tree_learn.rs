@@ -806,6 +806,7 @@ impl PropScalar for i32 {
 }
 
 /// Collected samples for tree learning.
+#[derive(Clone)]
 pub struct TreeSamples {
     /// Number of samples collected.
     pub num_samples: usize,

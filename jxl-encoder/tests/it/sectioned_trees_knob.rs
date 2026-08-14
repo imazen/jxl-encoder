@@ -71,6 +71,24 @@ fn sectioned_knob_engages_and_roundtrips_and_auto_is_budget_driven() {
     assert_eq!(decode_rgb(&off, w, h), pixels, "global-tree roundtrip");
     assert_eq!(decode_rgb(&on, w, h), pixels, "sectioned roundtrip");
 
+    // Hybrid: per-group best-of-both. Must round-trip pixel-exact and be
+    // no larger than either pure mode (ties keep the global stream, so
+    // equality with `off` is legal when no group wins locally).
+    let hybrid = encode(
+        &pixels,
+        w as u32,
+        h as u32,
+        LosslessConfig::new().with_sectioned_trees(SectionedTrees::Hybrid),
+    );
+    assert!(
+        hybrid.len() <= off.len() && hybrid.len() <= on.len(),
+        "hybrid ({}) must be <= global ({}) and <= sectioned ({})",
+        hybrid.len(),
+        off.len(),
+        on.len()
+    );
+    assert_eq!(decode_rgb(&hybrid, w, h), pixels, "hybrid roundtrip");
+
     // Auto + a cap below the whole-image estimate (512x512 e7 lossless
     // estimates well above 32 MiB) engages the sectioned path instead of
     // failing the encode.

@@ -316,6 +316,13 @@ pub enum SectionedTrees {
     Off,
     /// Always sectioned (where the v1 scope allows).
     On,
+    /// Learn BOTH the global tree and per-group trees, and write each
+    /// group with whichever is smaller (per-group `use_global_tree`
+    /// choice — measured −2.25% (e7) / −0.25% (e9) vs the global tree on
+    /// the 4K photo cell, ≥ global on every content class by
+    /// construction). Uses global-mode memory; the per-group learns ride
+    /// the gather waves in parallel.
+    Hybrid,
 }
 
 #[derive(Clone, Debug)]
