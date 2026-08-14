@@ -5256,6 +5256,7 @@ fn split_owned_from_borrowed(
         sample_counts: core::mem::take(&mut samples.sample_counts),
         num_ref_channels: samples.num_ref_channels,
         randomize_gather: samples.randomize_gather,
+        active_props: samples.active_props.clone(),
     };
     let taken_pq = PreQuantizedProps {
         threshold_sets: core::mem::take(&mut pq.threshold_sets),
@@ -5610,8 +5611,13 @@ impl<'a> BorrowedSamples<'a> {
             .props
             .iter_mut()
             .map(|v| match v {
-                PropColumn::I32(v) if !v.is_empty() => &mut v[..len],
-                PropColumn::I32(v) => &mut v[..],
+                PropColumn::I32(v) => {
+                    if v.is_empty() {
+                        &mut v[..]
+                    } else {
+                        &mut v[..len]
+                    }
+                }
                 // ensure_props_i32 above widened every non-empty column.
                 PropColumn::I16(_) => &mut [][..],
             })

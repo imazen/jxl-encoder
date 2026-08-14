@@ -962,6 +962,24 @@ impl FrameEncoder {
         // (per-site profiler, benchmarks/jxl_alloc_sites_4k_2026-08-13.md).
         drop(source_image_owned);
 
+        // Sectioned-tree lossless memory mode (imazen/jxl-encoder#96): every
+        // PassGroup stream carries its OWN tree + histograms
+        // (use_global_tree = false) learned from that group's samples only,
+        // and the LfGlobal carries no tree and an empty global stream. Peak
+        // memory becomes the image copies plus one group's tree-learn
+        // working set. v1 scope: plain tree-learning ANS encodes with no
+        // meta channels (no palette / ChannelCompact), no custom DC quant,
+        // no patches — everything else falls through to the global-tree
+        // path unchanged. Dev gate: JXL_LOSSLESS_LOCAL_TREES=1.
+        let local_trees_mode = local_trees_mode_enabled()
+            && meta_image.is_none()
+            && global_transforms.full_palette.is_none()
+            && global_transforms.compact_info.is_empty()
+            && patches.is_none()
+            && self.options.dc_quant_custom.is_none()
+            && self.options.use_tree_learning
+            && self.options.use_ans;
+
         // Step 2: Write LfGlobal section (patches + tree + histogram)
         let mut lf_global_writer = BitWriter::new();
 
@@ -974,7 +992,17 @@ impl FrameEncoder {
             )?;
         }
 
-        let global_state = if self.options.dc_quant_custom.is_some() {
+        let global_state = if local_trees_mode {
+            // LfGlobal for the sectioned mode: the proven global-tree byte
+            // shape with a trivial single-leaf tree stream 0 never uses for
+            // pixels (all image-sized channels are group-streamed). Global
+            // transforms (RCT) are signaled here exactly as on the
+            // global-tree path. libjxl reads stream 0's GroupHeader because
+            // its global image lists every channel, so a bare has_tree=0
+            // LfGlobal is NOT sufficient (djxl rejects it; measured).
+            super::section::write_local_trees_lf_global(&mut lf_global_writer, global_transforms)?;
+            None
+        } else if self.options.dc_quant_custom.is_some() {
             // When the caller supplied custom DC quant (patches ref frame at
             // lossy distance), always use the tree-learning `_dc_quant_knobs`
             // variant — it is the only multi-group path that writes a
@@ -983,7 +1011,7 @@ impl FrameEncoder {
             // `all_default = true`. Sending custom dc_quant through it would
             // silently emit spec defaults and the decoder would dequantize
             // with the wrong scale, corrupting the patches.
-            super::section::write_global_modular_section_with_tree_dc_quant_knobs(
+            Some(super::section::write_global_modular_section_with_tree_dc_quant_knobs(
                 &group_images,
                 &mut lf_global_writer,
                 &self.options.profile,
@@ -995,14 +1023,14 @@ impl FrameEncoder {
                 &self.options.modular_knobs,
                 super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
                 self.budget.as_ref(),
-            )?
+            )?)
         } else if self.options.use_tree_learning && self.options.use_ans {
             // Tree learning path: gather samples, learn tree, build multi-context ANS.
             // Honours [`super::palette::ModularKnobs::modular_predictor`]
             // (libjxl `cjxl -P N` / `--modular_predictor`) by routing
             // through the `_knobs` variant, which builds a single-leaf
             // tree pinned to the requested predictor when set.
-            super::section::write_global_modular_section_with_tree_knobs(
+            Some(super::section::write_global_modular_section_with_tree_knobs(
                 &group_images,
                 &mut lf_global_writer,
                 &self.options.profile, // effort-dependent tree params
@@ -1013,7 +1041,7 @@ impl FrameEncoder {
                 &self.options.modular_knobs,
                 super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
                 self.budget.as_ref(),
-            )?
+            )?)
         } else {
             // Standard path: collect residuals using the requested predictor
             // (libjxl `cjxl -P` / `--modular_predictor`). No per-channel WP
@@ -1039,7 +1067,7 @@ impl FrameEncoder {
                 histogram.iter().filter(|&&c| c > 0).count()
             );
 
-            super::section::write_global_modular_section_with_predictor(
+            Some(super::section::write_global_modular_section_with_predictor(
                 &all_residuals,
                 &histogram,
                 max_token,
@@ -1047,7 +1075,7 @@ impl FrameEncoder {
                 self.options.use_ans,
                 global_transforms,
                 predictor_id,
-            )?
+            )?)
         };
         let lf_global_data = lf_global_writer.finish();
 
@@ -1093,7 +1121,29 @@ impl FrameEncoder {
         }
         // PassGroup sections — parallelizable (each group writes to its own BitWriter)
         let budget = self.budget.as_ref();
-        let pass_group_data: Vec<Vec<u8>> =
+        let pass_group_data: Vec<Vec<u8>> = if local_trees_mode {
+            crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
+                let group_idx = flat_idx / num_passes;
+                let group_image = &group_images[group_idx];
+                let mut group_writer = BitWriter::new();
+                super::section::write_group_modular_section_local_tree(
+                    group_image,
+                    group_idx as u32 + per_group_id_offset,
+                    &self.options.profile,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
+                    // Global transforms (RCT) ride in the LfGlobal GroupHeader
+                    // exactly like the global-tree path — none per group.
+                    None,
+                    &mut group_writer,
+                    budget,
+                )?;
+                Ok(group_writer.finish())
+            })?
+        } else {
+            let global_state = global_state
+                .as_ref()
+                .expect("global-tree path always builds GlobalModularState");
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
                 let group_idx = flat_idx / num_passes;
                 let group_image = &group_images[group_idx];
@@ -1101,7 +1151,7 @@ impl FrameEncoder {
                 let mut group_writer = BitWriter::new();
                 write_group_modular_section_idx(
                     group_image,
-                    &global_state,
+                    global_state,
                     group_idx as u32 + per_group_id_offset,
                     &group_transforms[group_idx],
                     &mut group_writer,
@@ -1114,7 +1164,8 @@ impl FrameEncoder {
                     group_writer.bits_written() / 8,
                 );
                 Ok(group_writer.finish())
-            })?;
+            })?
+        };
 
         // Step 6: Collect all section sizes in correct order and write TOC
         // JXL spec order: LfGlobal, LfGroup[0..num_lf_groups], HfGlobal, PassGroup[0..num_groups*num_passes]
@@ -2647,6 +2698,9 @@ impl FrameEncoder {
 
     /// Returns the modular group dimension in pixels.
     ///
+    // (sectioned-tree mode gate is the free fn `local_trees_mode_enabled`
+    // below the impl.)
+
     /// Maps the optional `modular_group_size_shift` knob (libjxl
     /// `cjxl -g 0..3`) to a pixel dimension. When `None`, returns the
     /// historical 256-pixel default (shift = 1) so existing callers
@@ -2849,4 +2903,15 @@ mod tests {
         let bytes = writer.finish_with_padding();
         assert!(!bytes.is_empty());
     }
+}
+
+
+/// Dev gate for the sectioned-tree lossless memory mode
+/// (imazen/jxl-encoder#96): `JXL_LOSSLESS_LOCAL_TREES=1`. Read per encode
+/// (one getenv per multi-group frame — noise), deliberately NOT cached so
+/// the env-override tests can toggle it within one process. Default OFF —
+/// the global-tree path and every hash-lock stay byte-identical until the
+/// mode graduates to a config knob.
+pub(crate) fn local_trees_mode_enabled() -> bool {
+    std::env::var("JXL_LOSSLESS_LOCAL_TREES").is_ok_and(|v| v == "1")
 }

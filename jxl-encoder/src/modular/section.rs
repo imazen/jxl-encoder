@@ -1462,6 +1462,171 @@ fn collect_group_residuals_with_predictor(
 // `pub(crate) mod section` (re-exported only inside `pub(crate) mod encode`),
 // so it is not externally reachable despite the `pub` keyword. The budget
 // param is an internal allocation-policy detail.
+/// LfGlobal for the sectioned-tree mode: byte-shape-identical to the proven
+/// global-tree LfGlobal (has_tree = 1, tree, single-context histograms,
+/// GroupHeader, empty meta-token ANS stream) but with a TRIVIAL single-leaf
+/// tree that stream 0 never uses for pixels — every image-sized channel is
+/// group-streamed, and the pass groups carry their own local trees. Global
+/// transforms (RCT) are signaled here exactly like the global-tree path, so
+/// decoders apply them at full-image reconstruction as today.
+pub(crate) fn write_local_trees_lf_global(
+    writer: &mut BitWriter,
+    transforms: GlobalTransforms,
+) -> Result<()> {
+    use super::encode::{write_tree, write_wp_header};
+    use super::predictor::WeightedPredictorParams;
+
+    let tree = super::tree::simple_tree(super::predictor::Predictor::Gradient);
+    // The histogram must be buildable (a zero-count context cannot
+    // normalize), so derive the 1-context code from one dummy token; the
+    // stream itself still carries ZERO tokens (just the ANS final state).
+    let seed_tokens =
+        alloc::vec![crate::entropy_coding::token::Token::new(0, 0)];
+    let code = build_entropy_code_ans(&seed_tokens, 1);
+    let tokens: alloc::vec::Vec<crate::entropy_coding::token::Token> = alloc::vec::Vec::new();
+
+    crate::f16::write_lf_quant(writer, None)?;
+    writer.write(1, 1)?; // has_tree
+    write_tree(writer, &tree)?;
+    write_ans_modular_header(writer, &code)?;
+    // GroupHeader for the (channel-empty at this stream) global modular image.
+    writer.write(1, 1)?; // use_global_tree = true (the trivial tree above)
+    write_wp_header(writer, &WeightedPredictorParams::default())?;
+    write_global_transforms_full(writer, &transforms)?;
+    // Empty meta-token ANS stream: the 32-bit final state that keeps every
+    // decoder's begin()/final-state check happy (same rationale as the
+    // global-tree writer's zero-meta case).
+    write_tokens_ans(&tokens, &code, None, writer)?;
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
+/// Writes a PassGroup modular section that carries its OWN MA tree and
+/// histograms (`use_global_tree = false`) — the sectioned-tree lossless
+/// memory mode (imazen/jxl-encoder#96).
+///
+/// The stream is fully self-contained: GroupHeader (local tree, wp params,
+/// optional per-group RCT descriptor), the tree learned from THIS group's
+/// samples only, its entropy code, then the group's tokens. Peak memory for
+/// the whole encode becomes the image copies plus ONE group's tree-learn
+/// working set instead of the whole-image sample accumulator — measured
+/// tradeoff in `benchmarks/jxl_sectioned_tree_tradeoff_2026-08-13.md`.
+///
+/// The caller writes an LfGlobal with `has_tree = 0` and NO global stream
+/// content (grammar: decoders early-out on the empty global channel set
+/// before reading a GroupHeader, so global transforms cannot be signaled
+/// there — which is why the RCT descriptor rides in each group's header;
+/// RCT is pointwise per pixel, so per-group application is equivalent).
+#[allow(private_interfaces)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_group_modular_section_local_tree(
+    group_image: &ModularImage,
+    stream_id: u32,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    rct_type: Option<RctType>,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> Result<()> {
+    use super::encode::{write_num_transforms, write_tree, write_wp_header};
+    use super::predictor::WeightedPredictorParams;
+    use super::tree::count_contexts;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree_with_budget,
+        compute_best_tree, compute_gather_stride_from_profile, gather_samples_strided,
+        max_ref_channels,
+    };
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+
+    // v1 keeps the default WP parameter set (no per-group search): the
+    // params used for learning are the params written in this group's
+    // header, so encode and decode agree by construction.
+    let wp_params = WeightedPredictorParams::default();
+    let total_pixels: usize = group_image
+        .channels
+        .iter()
+        .map(|c| c.width() * c.height())
+        .sum();
+    let stride = compute_gather_stride_from_profile(total_pixels, profile);
+    let num_refs = max_ref_channels(group_image);
+
+    // Learn this group's tree from this group's samples only. Property 1
+    // (group id) is the spec stream id, matching what the residual
+    // collector below feeds the tree at encode time.
+    let mut samples = TreeSamples::new_with_ref_channels(num_refs);
+    gather_samples_strided(&mut samples, group_image, stream_id, 0, stride, &wp_params);
+    let pixel_fraction = if total_pixels > 0 {
+        samples.total_gathered_weight() as f64 / total_pixels as f64
+    } else {
+        1.0
+    };
+    let params = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .with_total_pixels(total_pixels)
+        .with_pixel_fraction(pixel_fraction);
+    let tree = compute_best_tree(&mut samples, &params);
+    drop(samples);
+
+    let tokens =
+        collect_residuals_with_tree_with_budget(group_image, &tree, stream_id, &wp_params, budget)?;
+    let num_contexts = count_contexts(&tree) as usize;
+
+    // Same LZ77 construction as the single-group tree writer.
+    let dist_multiplier = group_image
+        .channels
+        .iter()
+        .map(|c| c.width())
+        .max()
+        .unwrap_or(0) as i32;
+    let (tokens, lz77_params) = if use_lz77 {
+        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier, budget)? {
+            Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+            None => (tokens, None),
+        }
+    } else {
+        (tokens, None)
+    };
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+    let code = build_entropy_code_ans_with_options(
+        &tokens,
+        ans_num_contexts,
+        true,
+        true,
+        lz77_params.as_ref(),
+        Some(total_pixels),
+    );
+
+    // GroupHeader: local tree, the wp params used above, per-group RCT.
+    writer.write(1, 0)?; // use_global_tree = false
+    write_wp_header(writer, &wp_params)?;
+    let num_transforms = u32::from(rct_type.is_some());
+    write_num_transforms(writer, num_transforms)?;
+    if let Some(rct) = rct_type {
+        write_rct_transform(writer, 0, rct)?;
+    }
+
+    // Local tree + its entropy code, exactly the single-group serialization.
+    write_tree(writer, &tree)?;
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
+        write_entropy_code_ans(&code, writer)?;
+    } else {
+        write_ans_modular_header(writer, &code)?;
+    }
+    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
+    // Sections are byte-delimited by the TOC; pad to the byte boundary like
+    // every other section writer does before the caller's `finish()`.
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
 #[allow(private_interfaces)]
 pub fn write_group_modular_section(
     group_image: &ModularImage,

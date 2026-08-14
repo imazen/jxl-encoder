@@ -52,6 +52,7 @@ pub(crate) fn corpus_file(rel: &str) -> String {
 
 mod dispatch_2c_afv_screenshot;
 mod hdr16_tree_lift;
+mod local_trees_roundtrip;
 mod strategy_def_prototype_env_fallback;
 mod strategy_env_fallback;
 mod w44_166_decoder_roundtrip;
