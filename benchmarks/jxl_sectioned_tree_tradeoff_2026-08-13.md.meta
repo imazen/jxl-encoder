@@ -1,0 +1,6 @@
+date: 2026-08-13
+host: macOS aarch64, jxl-encoder 3e237d11 (+4b464975 lossy fixes), zenjxl probe 1ea1feb8
+method: python tile slicer (~/tmp/4kmem/tiles*/), per-tile
+  mem_probe_encode lossless e7/e9 threads=1; totals = sum(bytes), max(peak_live).
+inputs: photo_3840x2160.bin, screen_3840x2160.bin (the session's 4K cells)
+cjxl reference: benchmarks-external libjxl_4k_2026-08-13.tsv (cjxl 0.12.0)
