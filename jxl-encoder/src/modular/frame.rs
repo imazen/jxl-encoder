@@ -1187,6 +1187,17 @@ impl FrameEncoder {
         // PassGroup sections — parallelizable (each group writes to its own BitWriter)
         let budget = self.budget.as_ref();
         let pass_group_data: Vec<Vec<u8>> = if local_trees_mode {
+            // Whole-image-equivalent stride for every per-group gather (see
+            // the local writer's stride note).
+            let full_pixels: usize = group_images
+                .iter()
+                .flat_map(|img| img.channels.iter())
+                .map(|c| c.width() * c.height())
+                .sum();
+            let stride = super::tree_learn::compute_gather_stride_from_profile(
+                full_pixels,
+                &self.options.profile,
+            );
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
                 let group_idx = flat_idx / num_passes;
                 let group_image = &group_images[group_idx];
@@ -1200,6 +1211,7 @@ impl FrameEncoder {
                     // Global transforms (RCT) ride in the LfGlobal GroupHeader
                     // exactly like the global-tree path — none per group.
                     None,
+                    Some(stride),
                     &mut group_writer,
                     budget,
                 )?;
@@ -1240,6 +1252,13 @@ impl FrameEncoder {
                 // stream (tree learned during the gather wave) and keep
                 // whichever section is smaller. Ties keep global (stability;
                 // shared histograms cost nothing extra).
+                // NOTE (measured, do not re-add): skipping the local attempt
+                // for tiny global sections (< 512 B) LOSES 4.4-7.5 KB per 4K
+                // image for ~zero wall — tiny groups are where self-contained
+                // local sections (single-leaf tree + ~100 B) beat the shared
+                // stream, and the wall cost lives in the wave-time LEARNS,
+                // not these writes. A wall filter must gate the learn, which
+                // needs a pre-gather signal.
                 if let (Some(Some(ltree)), Some(wp)) =
                     (hybrid_trees.get(group_idx), global_wp.as_ref())
                 {

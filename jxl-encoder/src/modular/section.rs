@@ -1623,6 +1623,7 @@ pub fn write_group_modular_section_local_tree(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     rct_type: Option<RctType>,
+    gather_stride: Option<usize>,
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
@@ -1647,7 +1648,13 @@ pub fn write_group_modular_section_local_tree(
         .iter()
         .map(|c| c.width() * c.height())
         .sum();
-    let stride = compute_gather_stride_from_profile(total_pixels, profile);
+    // Whole-image-equivalent gather stride when the caller provides it, so
+    // per-group sample density tracks the full-image profile rather than
+    // the group's own pixel count. (At 4K e7/e9 the two formulas coincide -
+    // measured byte-identical - but they diverge at other size/effort
+    // points and the full-image density is the calibrated one.)
+    let stride = gather_stride
+        .unwrap_or_else(|| compute_gather_stride_from_profile(total_pixels, profile));
     let num_refs = max_ref_channels(group_image);
 
     // Learn this group's tree from this group's samples only. Property 1

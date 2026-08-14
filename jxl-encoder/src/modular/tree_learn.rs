@@ -6043,14 +6043,25 @@ fn find_best_split_borrowed(
                         let be = bucket_starts[local_bucket + 1];
                         let ci_base = local_bucket * HISTO_PADDED;
                         let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
-                        let mut eb_sum: u64 = 0;
-                        for &rel_off in &sorted_by_bucket[bs..be] {
-                            let tok = tokens[rel_off];
-                            let sc = sample_counts[rel_off];
-                            ci_slice[tok as usize & HISTO_MASK] += sc;
-                            eb_sum += ebits[rel_off] as u64 * sc as u64;
+                        if be - bs >= ACCUM_4WAY_MIN_RUN {
+                            extra_bits_increase[local_bucket] = accumulate_run_4way(
+                                &sorted_by_bucket[bs..be],
+                                tokens,
+                                ebits,
+                                sample_counts,
+                                ci_slice,
+                                HISTO_MASK,
+                            );
+                        } else {
+                            let mut eb_sum: u64 = 0;
+                            for &rel_off in &sorted_by_bucket[bs..be] {
+                                let tok = tokens[rel_off];
+                                let sc = sample_counts[rel_off];
+                                ci_slice[tok as usize & HISTO_MASK] += sc;
+                                eb_sum += ebits[rel_off] as u64 * sc as u64;
+                            }
+                            extra_bits_increase[local_bucket] = eb_sum;
                         }
-                        extra_bits_increase[local_bucket] = eb_sum;
                     }
                 });
 
@@ -7652,6 +7663,43 @@ fn tensor_capture_pays(layout: &TensorLayout, unique_count: usize) -> bool {
         && tensor_derive_pays(layout, unique_count)
 }
 
+/// Accumulate one (predictor, bucket) run's token histogram + extra-bit sum
+/// with FOUR interleaved sub-histograms, merged at the end. Token
+/// distributions are peaked, so the plain loop serializes on the
+/// read-modify-write of the same few counters (4-5 cycle dependent adds);
+/// round-robin striping breaks the chain. u32/u64 adds are order-free, so
+/// the merged result is bit-identical to the sequential loop. Only pays for
+/// longer runs — callers gate on run length and keep the plain loop below
+/// the threshold.
+#[inline]
+fn accumulate_run_4way(
+    idxs: &[usize],
+    tokens: &[u8],
+    ebits: &[u8],
+    sample_counts: &[u32],
+    row: &mut [u32],
+    mask: usize,
+) -> u64 {
+    let mut sub = [[0u32; HISTO_PADDED]; 4];
+    let mut eb = [0u64; 4];
+    let mut lane = 0usize;
+    for &rel_off in idxs {
+        let tok = tokens[rel_off] as usize & mask;
+        let sc = sample_counts[rel_off];
+        sub[lane & 3][tok] += sc;
+        eb[lane & 3] += ebits[rel_off] as u64 * sc as u64;
+        lane += 1;
+    }
+    for (i, r) in row.iter_mut().enumerate() {
+        *r += sub[0][i] + sub[1][i] + sub[2][i] + sub[3][i];
+    }
+    eb[0] + eb[1] + eb[2] + eb[3]
+}
+
+/// Run-length threshold for [`accumulate_run_4way`]: below this the 4x
+/// sub-histogram zero/merge overhead exceeds the dependency-chain savings.
+const ACCUM_4WAY_MIN_RUN: usize = 256;
+
 /// Builds a node's [`NodeTensor`] from its sample rows `[start..end)`.
 /// `out` MUST be zeroed (fresh from [`NodeTensor::zeroed`]).
 ///
@@ -7729,14 +7777,26 @@ fn build_node_tensor(
                         }
                         let row_base = entry.token_base + (pred * nb + b) * histogram_size;
                         let row = &mut out.token_counts[row_base..row_base + histogram_size];
-                        let mut eb_sum: u64 = 0;
-                        for &rel_off in &sorted_by_bucket[bs..be] {
-                            let tok = tokens[rel_off] as usize;
-                            let sc = sample_counts[rel_off];
-                            debug_assert!(tok < histogram_size);
-                            row[tok] += sc;
-                            eb_sum += ebits[rel_off] as u64 * sc as u64;
-                        }
+                        let eb_sum = if be - bs >= ACCUM_4WAY_MIN_RUN {
+                            accumulate_run_4way(
+                                &sorted_by_bucket[bs..be],
+                                tokens,
+                                ebits,
+                                sample_counts,
+                                row,
+                                HISTO_MASK,
+                            )
+                        } else {
+                            let mut eb_sum: u64 = 0;
+                            for &rel_off in &sorted_by_bucket[bs..be] {
+                                let tok = tokens[rel_off] as usize;
+                                let sc = sample_counts[rel_off];
+                                debug_assert!(tok < histogram_size);
+                                row[tok] += sc;
+                                eb_sum += ebits[rel_off] as u64 * sc as u64;
+                            }
+                            eb_sum
+                        };
                         out.ebit_sums[entry.ebit_base + pred * nb + b] = eb_sum;
                     }
                 }
@@ -7811,14 +7871,26 @@ fn build_node_tensor_borrowed(
                         }
                         let row_base = entry.token_base + (pred * nb + b) * histogram_size;
                         let row = &mut out.token_counts[row_base..row_base + histogram_size];
-                        let mut eb_sum: u64 = 0;
-                        for &rel_off in &sorted_by_bucket[bs..be] {
-                            let tok = tokens[rel_off] as usize;
-                            let sc = sample_counts[rel_off];
-                            debug_assert!(tok < histogram_size);
-                            row[tok] += sc;
-                            eb_sum += ebits[rel_off] as u64 * sc as u64;
-                        }
+                        let eb_sum = if be - bs >= ACCUM_4WAY_MIN_RUN {
+                            accumulate_run_4way(
+                                &sorted_by_bucket[bs..be],
+                                tokens,
+                                ebits,
+                                sample_counts,
+                                row,
+                                HISTO_MASK,
+                            )
+                        } else {
+                            let mut eb_sum: u64 = 0;
+                            for &rel_off in &sorted_by_bucket[bs..be] {
+                                let tok = tokens[rel_off] as usize;
+                                let sc = sample_counts[rel_off];
+                                debug_assert!(tok < histogram_size);
+                                row[tok] += sc;
+                                eb_sum += ebits[rel_off] as u64 * sc as u64;
+                            }
+                            eb_sum
+                        };
                         out.ebit_sums[entry.ebit_base + pred * nb + b] = eb_sum;
                     }
                 }
