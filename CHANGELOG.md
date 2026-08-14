@@ -56,8 +56,16 @@
   2.6 GB and ours stays at 375-434 MB.
 
 ### Added
-- **Sectioned local-tree lossless mode (`JXL_LOSSLESS_LOCAL_TREES=1`,
-  experimental, default off).** Every PassGroup modular stream carries its
+- **`SectionedTrees` knob on `LosslessConfig` (`with_sectioned_trees`,
+  additive API) with budget-driven `Auto` default (62251cc1).** Servers
+  that set `Limits::max_memory_bytes` — and any encode too large for the
+  built-in cap — transparently switch to per-group trees and SUCCEED
+  within the budget instead of returning `LimitExceeded` (a 21 MP
+  lossless e7 encode now completes inside the 8 GiB default cap; the old
+  rejection contract is pinned under `SectionedTrees::Off`). Ordinary
+  encodes stay byte-identical.
+- **Sectioned local-tree lossless mode (`JXL_LOSSLESS_LOCAL_TREES=1`
+  runtime override; production selection via `SectionedTrees`).** Every PassGroup modular stream carries its
   own MA tree learned from that group's samples (`use_global_tree = false`),
   eliminating the whole-image tree-learning working set from the peak: 4K
   photo e7 peak_live 834 -> 469 MB with 2.0% FEWER bytes and 17% fewer
