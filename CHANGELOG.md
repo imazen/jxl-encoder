@@ -47,6 +47,13 @@
   byte-identical at every step. The remaining ~2.7x gap to cjxl (~306 MB)
   is architectural: cjxl streams per group and holds < 0.1 MiB of
   tree-learning state at peak (measured via malloc_history, same report).
+- **4K lossy encode peak memory cut 27 % (photo e7 517 -> 375 MB), byte-
+  identical.** The text-patch DFS stack packed to flat u32 indices in one
+  reused buffer (was 128 MiB of per-CC pair Vecs at the peak) and the
+  linear-RGB input freed right after the XYB conversion when no perceptual
+  loop can read it (`LinearSource` ownership) (4b464975). 1.13x cjxl's
+  live set at the same cell; at lossy e9 cjxl's butteraugli loop uses
+  2.6 GB and ours stays at 375-434 MB.
 
 ### Fixed
 - **Per-tile AC-strategy scratch maps were full-image sized — a

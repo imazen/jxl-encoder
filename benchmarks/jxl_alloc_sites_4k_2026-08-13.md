@@ -148,3 +148,17 @@ samples), the samples' bucket/prop columns at minimal width, the per-group
 image copies (the working image), and the dedup outputs. Below ~800 MB the
 design itself must change (per-group streamed learning on sampled
 quantized keys — the cjxl architecture).
+
+## Addendum 3 (same day, commit 4b464975 — the lossy round)
+
+The lossy peak (patches/AQ phase) got the same treatment: the text-patch
+DFS stack packed to flat u32 indices in one reused buffer (was per-CC
+(u32,u32) Vecs doubling to 128 MiB live on photo content), and the
+interleaved linear-RGB input freed right after XYB via `LinearSource`
+ownership whenever no perceptual loop can read it. All byte-identical.
+
+4K peak_live, worst over {photo, screen}, loop-free build: lossy e7
+528 → 443 MB (photo 517 → 375 — 1.13× cjxl's ~330 MiB live at the same
+cell), e3 412 → 318, e9 517 → 434. Lossless untouched; its alloc count
+drops another 1,755 (per-CC stack allocs gone). cjxl lossy e9 remains
+2,649 MB (butteraugli loop) — we are 6× under there.

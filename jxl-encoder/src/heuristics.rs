@@ -575,7 +575,9 @@ mod tests {
     /// dedup keys packed at the rounded width (d1074adc) then partitioned by
     /// the two lead bytes (5119668d); both whole-image copies freed before
     /// tree learning (3e237d11).
-    ///   lossy    e3  peak_live  412 MB      lossy    e9  peak_live  517 MB
+    ///   lossy    e3  peak_live  318 MB (RSS 429)  e9  peak_live  434 MB (RSS 714)
+    /// (lossy re-measured at 4b464975 after the patches-DFS/linear-lifetime
+    /// fixes; worst over {photo, screen}, loop-free probe build)
     ///
     /// Keeping pre-fix numbers here would leave the gate looser than the
     /// encoder now warrants, so it would stop catching a regression that gave
@@ -594,8 +596,8 @@ mod tests {
         let cells: &[(u32, u32, bool, u8, u64, u64)] = &[
             (3840, 2160, true, 7, 873 * MB, 1433 * MB),
             (3840, 2160, true, 9, 1104 * MB, 1785 * MB),
-            (3840, 2160, false, 3, 412 * MB, 429 * MB),
-            (3840, 2160, false, 9, 517 * MB, 697 * MB),
+            (3840, 2160, false, 3, 318 * MB, 429 * MB),
+            (3840, 2160, false, 9, 434 * MB, 714 * MB),
         ];
         for &(w, h, lossless, effort, live, rss) in cells {
             let e = estimate_encode(w, h, 3, false, lossless, effort).unwrap();
