@@ -61,3 +61,32 @@ e7 hybrid 27.3 → 23.3 s at identical bytes.
 accumulate on sub-gate nodes 9.4 s, tensor derivation 14.5 s (its smaller-
 child build shares the accumulate shape), ~6 s dark recursion overhead;
 hybrid double-writes (skip-tiny-group pre-filter still unimplemented).
+
+## Round 2 addendum (4bb86298): tail items + the libjxl wall gap
+
+4-way accumulate striping (order-free integer adds, run >= 256) landed in
+both hot accumulate sites: screen e9 18.0 → 16.5 s (−8%), photo e9
+56.6 → 54.8. Sectioned per-group gathers take the whole-image stride
+(byte-identical at 4K; diverges at other sizes). REFUTED with data:
+hybrid skip-tiny-group write filter (loses 4.4-7.5 KB — tiny groups are
+where ~100 B self-contained sections beat the shared stream — for ~zero
+wall; the cost is the wave-time learns).
+
+### Standing vs cjxl 0.12 (photo 4K, same machine)
+
+| cell | cjxl | ours global | ours sectioned | ratio (best mode) |
+|---|---|---|---|---|
+| lossless e7 t=1 | 3.82 s | 11.3 | 10.9 | 2.9x |
+| lossless e9 t=1 | 23.1 s | 54.8 | 42.5 | 1.8x |
+| lossless e7 t=8 | 0.61 s | 7.9 | **1.84** | 3.0x |
+| lossless e9 t=8 | 3.51 s | 52.0 | **6.33** | 1.8x |
+| lossy e3 t=1 | 0.18 s | 0.30 | — | 1.7x (patches OFF at e3; falcon fast-path gap) |
+| lossy e7 t=1 | 2.45 s | ~2.1 | — | **we win** |
+| lossy e9 t=1 | 10.0 s | 5.5 | — | **we win** |
+
+The remaining lossless gap vs cjxl is per-sample work density (14
+predictors tokenized per gathered sample, two WP walks per group in the
+sectioned writer) plus the global mode's whole-image learn — cjxl's
+streaming default simply never does that work. Session-cumulative walls
+vs the 2026-08-13 baseline: photo e9 84 → 54.8 (−35%), e7 14.4 → 11.3
+(−22%), every step byte-identical.
