@@ -6685,8 +6685,12 @@ impl<'a> EncodeRequest<'a> {
             ColorEncoding::srgb()
         };
         frame_encoder
-            .encode_modular_with_patches(
-                &image,
+            .encode_modular_with_patches_src(
+                // Ownership lets the multi-group path free the pre-transform
+                // image after its step-0 transforms - one full-image i32 copy
+                // off the tree-learning peak. Nothing here reads `image`
+                // after this call.
+                crate::modular::frame::ImageSource::Owned(image),
                 &color_encoding,
                 &mut writer,
                 patches_data.as_ref(),

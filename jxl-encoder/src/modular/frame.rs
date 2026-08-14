@@ -164,6 +164,28 @@ pub struct FrameEncoder {
     pub(crate) budget: Option<alloc::sync::Arc<crate::budget::MemoryBudget>>,
 }
 
+/// A modular image handed to the frame encoder either by reference or by
+/// value. Owned input lets the multi-group encoder FREE the pre-transform
+/// image as soon as its step-0 transforms (palette / ChannelCompact / RCT)
+/// have produced the working copies — measured 94.9 MiB held needlessly
+/// through the 4K tree-learning peak when borrowed
+/// (benchmarks/jxl_alloc_sites_4k_2026-08-13.md). Borrowed input keeps the
+/// historical lifetime (the caller's copy survives the call).
+pub(crate) enum ImageSource<'a> {
+    Borrowed(&'a ModularImage),
+    Owned(ModularImage),
+}
+
+impl ImageSource<'_> {
+    #[inline]
+    pub(crate) fn image(&self) -> &ModularImage {
+        match self {
+            ImageSource::Borrowed(i) => i,
+            ImageSource::Owned(i) => i,
+        }
+    }
+}
+
 impl FrameEncoder {
     /// Creates a new frame encoder.
     pub fn new(width: usize, height: usize, options: FrameEncoderOptions) -> Self {
@@ -331,8 +353,31 @@ impl FrameEncoder {
         patches: Option<&crate::vardct::patches::PatchesData>,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        self.encode_modular_with_patches_src(
+            ImageSource::Borrowed(image),
+            color_encoding,
+            writer,
+            patches,
+            stop,
+        )
+    }
+
+    /// [`Self::encode_modular_with_patches`] over an [`ImageSource`]: pass
+    /// `ImageSource::Owned` and the multi-group path frees the pre-transform
+    /// image the moment its step-0 transforms complete — one whole-image i32
+    /// copy (94.9 MiB at 4K) removed from the tree-learning peak. Borrowed
+    /// input behaves exactly as before.
+    pub(crate) fn encode_modular_with_patches_src(
+        &self,
+        image_src: ImageSource<'_>,
+        color_encoding: &ColorEncoding,
+        writer: &mut BitWriter,
+        patches: Option<&crate::vardct::patches::PatchesData>,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<()> {
+        let image = image_src.image();
         if patches.is_none() {
-            return self.encode_modular(image, color_encoding, writer, stop);
+            return self.encode_modular_src(image_src, color_encoding, writer, stop);
         }
         let patches = patches.unwrap();
 
@@ -443,7 +488,7 @@ impl FrameEncoder {
         } else {
             // Multi-group with patches: patches section goes into LfGlobal.
             // Squeeze + patches is not yet supported; use non-squeeze multi-group path.
-            self.encode_modular_multi_group_inner(image, writer, Some(patches), stop)?;
+            self.encode_modular_multi_group_inner(image_src, writer, Some(patches), stop)?;
         }
 
         Ok(())
@@ -457,6 +502,19 @@ impl FrameEncoder {
         writer: &mut BitWriter,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        self.encode_modular_src(ImageSource::Borrowed(image), _color_encoding, writer, stop)
+    }
+
+    /// [`Self::encode_modular`] over an [`ImageSource`] — see
+    /// [`Self::encode_modular_with_patches_src`] for why owned input matters.
+    pub(crate) fn encode_modular_src(
+        &self,
+        image_src: ImageSource<'_>,
+        _color_encoding: &ColorEncoding,
+        writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<()> {
+        let image = image_src.image();
         // Coarse cancellation check at the modular encode boundary. Polled
         // once here so the single-group path (tree learning + entropy coding
         // can run for seconds at e9) is cancellable; the multi-group dispatch
@@ -583,7 +641,7 @@ impl FrameEncoder {
             }
         } else {
             // Multi-group: separate TOC entries for global and each group
-            self.encode_modular_multi_group(image, writer, stop)?;
+            self.encode_modular_multi_group(image_src, writer, stop)?;
         }
 
         Ok(())
@@ -598,22 +656,23 @@ impl FrameEncoder {
     /// - Section 2+num_lf_groups..: PassGroup (GroupHeader + pixel data per 256x256 region)
     fn encode_modular_multi_group(
         &self,
-        image: &ModularImage,
+        image_src: ImageSource<'_>,
         writer: &mut BitWriter,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
-        self.encode_modular_multi_group_inner(image, writer, None, stop)
+        self.encode_modular_multi_group_inner(image_src, writer, None, stop)
     }
 
     /// Inner multi-group encoder that accepts optional patches.
     /// When patches are provided, writes patches section at the start of LfGlobal.
     fn encode_modular_multi_group_inner(
         &self,
-        image: &ModularImage,
+        image_src: ImageSource<'_>,
         writer: &mut BitWriter,
         patches: Option<&crate::vardct::patches::PatchesData>,
         stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        let image = image_src.image();
         // Cooperative cancellation entry checkpoint for the lossless/modular
         // heavy path (#77 cross-codec cancellation note). Further checkpoints
         // sit before MA tree learning and per group below. No-op / byte-
@@ -874,6 +933,12 @@ impl FrameEncoder {
             compact_info = Vec::new();
         };
 
+        // Step 0 is the last reader of the pre-transform image. When the
+        // caller handed us ownership, free it here — otherwise the original
+        // full-image i32 copy (94.9 MiB at 4K) sits under the whole
+        // tree-learning peak with no remaining reader.
+        drop(image_src);
+
         let global_transforms = super::section::GlobalTransforms {
             full_palette: full_palette_info,
             compact_info,
@@ -890,6 +955,12 @@ impl FrameEncoder {
             let group_image = source_image_owned.extract_region(x_start, y_start, x_end, y_end)?;
             group_images.push(group_image);
         }
+        // Everything downstream reads the per-group images (and the meta
+        // image); the whole-image transformed copy is dead the moment the
+        // split completes. Holding it through tree learning kept a third
+        // full-image i32 copy (94.9 MiB at 4K) at the exact peak instant
+        // (per-site profiler, benchmarks/jxl_alloc_sites_4k_2026-08-13.md).
+        drop(source_image_owned);
 
         // Step 2: Write LfGlobal section (patches + tree + histogram)
         let mut lf_global_writer = BitWriter::new();
@@ -1148,7 +1219,12 @@ impl FrameEncoder {
             Some(r) => r,
             None => {
                 // Lossy palette not beneficial, fall back to standard multi-group
-                return self.encode_modular_multi_group_inner(image, writer, None, None);
+                return self.encode_modular_multi_group_inner(
+                    ImageSource::Borrowed(image),
+                    writer,
+                    None,
+                    None,
+                );
             }
         };
 
@@ -2507,7 +2583,7 @@ impl FrameEncoder {
             }
         } else {
             // Multi-group: use the standard multi-group encoder (no patches in body)
-            self.encode_modular_multi_group_inner(image, writer, None, None)?;
+            self.encode_modular_multi_group_inner(ImageSource::Borrowed(image), writer, None, None)?;
         }
 
         Ok(())
