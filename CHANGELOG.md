@@ -38,12 +38,15 @@
   u32/u8 columns (-142 MiB entropy floor), dedup keys packed at the rounded
   word width instead of a fixed 64 B + u32 unique indices (d1074adc), and
   adaptive i16 property columns that promote to i32 on first out-of-range
-  value (`PropColumn`, 8b9b6121). 3840x2160 peak_live: e7 3141 -> 1397 MB,
-  e9 3141 -> 1774 MB; peak RSS 5426 -> ~2342/2529 MB; wall and allocation
-  count unchanged. Both peaks now sit in the dedup phase. The remaining gap
-  to cjxl (~306 MB) is architectural: cjxl streams per group and holds
-  < 0.1 MiB of tree-learning state at peak (measured via malloc_history,
-  same report).
+  value (`PropColumn`, 8b9b6121), dedup partitioned by the two lead key
+  bytes so only one partition's pack is ever live (5119668d), gather storing
+  only the configured property columns (21684778), and both whole-image
+  copies freed before tree learning (`ImageSource`, 3e237d11). 3840x2160
+  peak_live: e7 3141 -> 834 MB (-73%), e9 3141 -> 1130 MB (-64%); peak RSS
+  5426 -> 1433/1785 MB; wall and allocation count unchanged, output
+  byte-identical at every step. The remaining ~2.7x gap to cjxl (~306 MB)
+  is architectural: cjxl streams per group and holds < 0.1 MiB of
+  tree-learning state at peak (measured via malloc_history, same report).
 
 ### Fixed
 - **Per-tile AC-strategy scratch maps were full-image sized — a

@@ -123,3 +123,28 @@ learning on sampled u8-quantized keys with on-the-fly dedup (ladder items
 3-4). The exact-preserving per-line ladder is now mined out — every
 component at the peak instant is either the image itself, the samples at
 their minimal width, or the dedup working set at its minimal layout.
+
+## Addendum 2 (same day, commits 5119668d + 21684778 + 3e237d11)
+
+Three more profiler-guided exact chunks, each byte-identical on all four
+cells with allocation counts flat:
+
+* **5119668d** — dedup partitioned by the two lead key bytes (stable
+  counting sort; per-partition pack/sort/walk with reused scratch). Only
+  one partition's pack is ever live. photo e7 1397 → 1288, e9 1774 → 1324.
+* **21684778** — the gather stores only the configured property columns
+  (`TreeSamples::active_props`); at e7 that is 9 of 24. photo e7 → 1028,
+  e9 unchanged (all 24 configured).
+* **3e237d11** — both whole-image i32 copies freed before tree learning
+  (`ImageSource` ownership + drop of the transformed copy after the
+  per-group split). photo e7 → **834 MB**, e9 → **1130 MB**.
+
+Worst-case cells over {photo, screen}: e7 peak_live 873 MiB / RSS 1433;
+e9 1104 / 1785. Session cumulative from 3141 MB peak_live / 5426 RSS:
+**e7 −73 %, e9 −64 %**, wall and allocs unchanged. Factor vs cjxl ~306 MB:
+2.7× (e7) / 3.7× (e9). What remains at the peak: the per-predictor token
+columns (332 MiB — inherent to evaluating 14 predictors over 12.4 M
+samples), the samples' bucket/prop columns at minimal width, the per-group
+image copies (the working image), and the dedup outputs. Below ~800 MB the
+design itself must change (per-group streamed learning on sampled
+quantized keys — the cjxl architecture).

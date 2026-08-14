@@ -566,14 +566,15 @@ mod tests {
     /// constant.
     ///
     /// Measured 3840x2160 (8.29 MP), RGB8, threads=1, worst case over
-    /// {photo, screen}, at jxl-encoder 8b9b6121:
-    ///   lossless e7  peak_live 1366 MB (RSS 2342)  e9  peak_live 1734 MB (RSS 2529)
-    /// Both efforts now peak in the DEDUP phase (the W-word packed keys plus
-    /// the full-length token columns; per-site attribution in
-    /// benchmarks/jxl_alloc_sites_4k_2026-08-13.md) — the property columns
-    /// were first freed-before-dedup (b22d122e), then width-halved
-    /// (PropColumn i16, 8b9b6121), and the pack was cut from a fixed 64 B to
-    /// the rounded key width (d1074adc).
+    /// {photo, screen}, at jxl-encoder 3e237d11:
+    ///   lossless e7  peak_live  873 MB (RSS 1433)  e9  peak_live 1104 MB (RSS 1785)
+    /// The peak is the gather/dedup working set at its minimal exact layout
+    /// (per-site attribution in benchmarks/jxl_alloc_sites_4k_2026-08-13.md):
+    /// property columns freed-before-dedup (b22d122e), width-halved
+    /// (PropColumn i16, 8b9b6121), masked to the configured set (21684778);
+    /// dedup keys packed at the rounded width (d1074adc) then partitioned by
+    /// the two lead bytes (5119668d); both whole-image copies freed before
+    /// tree learning (3e237d11).
     ///   lossy    e3  peak_live  412 MB      lossy    e9  peak_live  517 MB
     ///
     /// Keeping pre-fix numbers here would leave the gate looser than the
@@ -591,8 +592,8 @@ mod tests {
         const MB: u64 = 1024 * 1024;
         // (w, h, is_lossless, effort, measured peak_live, measured peak RSS)
         let cells: &[(u32, u32, bool, u8, u64, u64)] = &[
-            (3840, 2160, true, 7, 1366 * MB, 2342 * MB),
-            (3840, 2160, true, 9, 1734 * MB, 2529 * MB),
+            (3840, 2160, true, 7, 873 * MB, 1433 * MB),
+            (3840, 2160, true, 9, 1104 * MB, 1785 * MB),
             (3840, 2160, false, 3, 412 * MB, 429 * MB),
             (3840, 2160, false, 9, 517 * MB, 697 * MB),
         ];
