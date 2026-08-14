@@ -1126,6 +1126,15 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     let mut stat_accepted = 0u32;
     let mut stat_accepted_pixels = 0u64;
 
+    // One reused DFS stack of FLAT u32 indices. Entries were (u32, u32)
+    // pairs in a per-CC Vec; on photo content one giant connected component
+    // grew that Vec through doubling reallocs to 128 MiB at the exact encode
+    // peak (per-site profiler). Flat indices halve the entry to 4 bytes and
+    // the reused buffer kills the per-CC realloc churn. The traversal order
+    // is IDENTICAL — (x, y) <-> y * stride + x is bijective for x < width —
+    // so the border-order-sensitive accept logic sees the same sequence.
+    debug_assert!(n <= u32::MAX as usize, "patches DFS: flat index needs u64");
+    let mut stack: Vec<u32> = Vec::new();
     for start_y in 0..height {
         for start_x in 0..width {
             let si = start_y * stride + start_x;
@@ -1134,8 +1143,8 @@ pub(crate) fn find_text_like_patches_with_min_peak(
             }
 
             // DFS — always completes full CC (no early bounding box exit).
-            // Use u32 stack entries (8 bytes) matching libjxl's pair<uint32_t, uint32_t>.
-            let mut stack: Vec<(u32, u32)> = vec![(start_x as u32, start_y as u32)];
+            stack.clear();
+            stack.push(si as u32);
             let mut min_x = start_x;
             let mut max_x = start_x;
             let mut min_y = start_y;
@@ -1145,8 +1154,10 @@ pub(crate) fn find_text_like_patches_with_min_peak(
             // Cache reference background color to avoid re-reading 3 arrays per border check.
             let mut ref_bg: [f32; 3] = [0.0; 3];
 
-            while let Some((px32, py32)) = stack.pop() {
-                let (px, py) = (px32 as usize, py32 as usize);
+            while let Some(pi32) = stack.pop() {
+                let pi = pi32 as usize;
+                let (px, py) = (pi % stride, pi / stride);
+                let (px32, py32) = (px as u32, py as u32);
                 // Same upgrade as the BFS pop above: assert! instead of
                 // skip-on-bounds-failure. Stack memory corruption was the
                 // v09/v11 cause; removing `unsafe-performance` in PR #34
@@ -1156,7 +1167,6 @@ pub(crate) fn find_text_like_patches_with_min_peak(
                     "patches DFS pop: stack entry out of range \
                      (px={px}, py={py}, width={width}, height={height})"
                 );
-                let pi = py * stride + px;
                 assert!(
                     pi < visited.len(),
                     "patches DFS pop: derived flat index out of range \
@@ -1199,7 +1209,7 @@ pub(crate) fn find_text_like_patches_with_min_peak(
                         // Foreground neighbor — push to stack (skip if already visited
                         // to avoid redundant pop/check cycles from duplicate pushes)
                         if !visited[ni] {
-                            stack.push((nx as u32, ny as u32));
+                            stack.push(ni as u32);
                         }
                     } else if !rejected {
                         // Background neighbor — track border consistency

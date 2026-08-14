@@ -7696,7 +7696,16 @@ impl<'a> EncodeRequest<'a> {
         };
 
         let output = enc
-            .encode_with_extras_stop(encode_w, encode_h, &encode_rgb, &extras_vec, self.stop)
+            .encode_with_extras_stop_src(
+                encode_w,
+                encode_h,
+                // Ownership lets the encoder free the linear buffer after
+                // the XYB conversion on loop-free efforts; nothing here
+                // reads `encode_rgb` after this call.
+                crate::vardct::encoder::LinearSource::Owned(encode_rgb),
+                &extras_vec,
+                self.stop,
+            )
             .map_err(EncodeError::from)?;
 
         #[cfg(feature = "butteraugli-loop")]

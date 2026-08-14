@@ -3407,7 +3407,7 @@ impl VarDctEncoder {
                         expected_alpha
                     )));
                 }
-                self.encode_inner(width, height, linear_rgb, &[ec], stop)
+                self.encode_inner(width, height, LinearSource::Borrowed(linear_rgb), &[ec], stop)
             }
         }
     }
@@ -3436,6 +3436,23 @@ impl VarDctEncoder {
         self.encode_with_extras_stop(width, height, linear_rgb, extras, None)
     }
 
+    /// Like [`encode_with_extras_stop`](Self::encode_with_extras_stop) but
+    /// over a [`LinearSource`]: pass `LinearSource::Owned` and the encoder
+    /// frees the linear-RGB buffer right after the XYB conversion whenever no
+    /// perceptual refinement loop needs it (every effort below the loop
+    /// band) - one full-image f32 interleaved copy (94.9 MiB at 4K) off the
+    /// lossy peak. Borrowed input keeps the historical lifetime.
+    pub(crate) fn encode_with_extras_stop_src(
+        &self,
+        width: usize,
+        height: usize,
+        linear_src: LinearSource<'_>,
+        extras: &[crate::api::ExtraChannel<'_>],
+        stop: Option<&dyn Stop>,
+    ) -> Result<VarDctOutput> {
+        self.encode_with_extras_stop_impl(width, height, linear_src, extras, stop)
+    }
+
     /// Like [`encode_with_extras`](Self::encode_with_extras) but polls `stop`
     /// at coarse (per-group) boundaries during entropy coding. With `None`
     /// (or an `Unstoppable` token) the emitted bytes are identical.
@@ -3444,6 +3461,17 @@ impl VarDctEncoder {
         width: usize,
         height: usize,
         linear_rgb: &[f32],
+        extras: &[crate::api::ExtraChannel<'_>],
+        stop: Option<&dyn Stop>,
+    ) -> Result<VarDctOutput> {
+        self.encode_with_extras_stop_impl(width, height, LinearSource::Borrowed(linear_rgb), extras, stop)
+    }
+
+    fn encode_with_extras_stop_impl(
+        &self,
+        width: usize,
+        height: usize,
+        linear_src: LinearSource<'_>,
         extras: &[crate::api::ExtraChannel<'_>],
         stop: Option<&dyn Stop>,
     ) -> Result<VarDctOutput> {
@@ -3473,7 +3501,7 @@ impl VarDctEncoder {
         }
 
         self.check_alpha_squeeze_supported(&views, Some((width, height)))?;
-        self.encode_inner(width, height, linear_rgb, &views, stop)
+        self.encode_inner(width, height, linear_src, &views, stop)
     }
 
     /// Chunk-2.b gate (multi-group + dim_shift consolidation).
@@ -3636,10 +3664,11 @@ impl VarDctEncoder {
         &self,
         width: usize,
         height: usize,
-        linear_rgb: &[f32],
+        mut linear_src: LinearSource<'_>,
         extras: &[super::extras::VardctExtra<'_>],
         stop: Option<&dyn Stop>,
     ) -> Result<VarDctOutput> {
+        let linear_rgb = linear_src.slice();
         // Earliest cancellation checkpoint — polled BEFORE any encode work, on
         // EVERY entropy path (two-pass, single-pass, and the `num_sections == 4`
         // single-group fast path). The per-group checkpoints further down add
@@ -3714,39 +3743,39 @@ impl VarDctEncoder {
         // Now Sanitize actively rewrites non-finite values to 0.0
         // (~12.5 GB/s), then runs the rest of the pipeline on a clean
         // buffer; the downstream XYB scan stays as defense-in-depth.
-        let sanitized_linear_rgb_storage: Option<alloc::vec::Vec<f32>> =
-            match self.non_finite_action {
-                crate::api::NonFiniteAction::Error => {
-                    if !jxl_simd::is_finite_plane(linear_rgb) {
-                        return Err(crate::error::Error::InvalidInput(
-                            "non-finite (NaN / ±Inf) value detected in linear-RGB input. \
+        match self.non_finite_action {
+            crate::api::NonFiniteAction::Error => {
+                if !jxl_simd::is_finite_plane(linear_src.slice()) {
+                    return Err(crate::error::Error::InvalidInput(
+                        "non-finite (NaN / ±Inf) value detected in linear-RGB input. \
                              Use LossyConfig::with_non_finite_action(NonFiniteAction::Sanitize) \
                              to silently scrub non-finite values to 0.0 instead."
-                                .into(),
-                        ));
-                    }
-                    None
+                            .into(),
+                    ));
                 }
-                crate::api::NonFiniteAction::Sanitize => {
-                    // sanitize_finite needs &mut, but the caller-supplied
-                    // buffer is borrowed. Clone-and-sanitize when (and
-                    // only when) Sanitize mode is selected. For 8-bit /
-                    // 16-bit pixel layouts there are never non-finite
-                    // values, so most callers stay on the Error fast path.
-                    let mut owned: alloc::vec::Vec<f32> = linear_rgb.to_vec();
-                    let _ = jxl_simd::sanitize_finite(&mut owned);
-                    Some(owned)
-                }
-            };
-        let linear_rgb: &[f32] = sanitized_linear_rgb_storage
-            .as_deref()
-            .unwrap_or(linear_rgb);
+            }
+            crate::api::NonFiniteAction::Sanitize => {
+                // sanitize_finite needs &mut, but the caller-supplied
+                // buffer may be borrowed. Clone-and-sanitize when (and
+                // only when) Sanitize mode is selected. For 8-bit /
+                // 16-bit pixel layouts there are never non-finite
+                // values, so most callers stay on the Error fast path.
+                let mut owned: alloc::vec::Vec<f32> = linear_src.slice().to_vec();
+                let _ = jxl_simd::sanitize_finite(&mut owned);
+                linear_src = LinearSource::Owned(owned);
+            }
+        }
 
         // Convert to XYB with edge-replicated padding to block boundaries.
         // This allows SIMD to process full blocks without bounds checking.
         let _t_xyb = std::time::Instant::now();
-        let (mut xyb_x, mut xyb_y, mut xyb_b) =
-            self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb)?;
+        let (mut xyb_x, mut xyb_y, mut xyb_b) = self.convert_to_xyb_padded(
+            width,
+            height,
+            padded_width,
+            padded_height,
+            linear_src.slice(),
+        )?;
         let _ms_xyb = _t_xyb.elapsed().as_secs_f64() * 1000.0;
 
         // Defense-in-depth XYB scan. Catches downstream-bug non-finite
@@ -3754,6 +3783,34 @@ impl VarDctEncoder {
         // XYB) — should never fire on the encode-fresh path because
         // forward_xyb is finite-output-for-finite-input.
         validate_xyb_planes(self.non_finite_action, &mut xyb_x, &mut xyb_y, &mut xyb_b)?;
+
+        // The linear buffer's only readers past this point are the
+        // perceptual refinement loops. When none can run (every effort
+        // below the loop band), free an owned buffer NOW - it otherwise
+        // sits under the patches/AQ phase, which is where the lossy
+        // encode peaks (benchmarks/jxl_alloc_sites_4k_2026-08-13.md).
+        // `iters > 0` is conservative: the adaptive paths only reduce
+        // iteration counts, never raise them from zero.
+        let need_linear = {
+            #[allow(unused_mut)]
+            let mut need = false;
+            #[cfg(feature = "butteraugli-loop")]
+            {
+                need = need || self.butteraugli_iters > 0;
+            }
+            #[cfg(feature = "ssim2-loop")]
+            {
+                need = need || self.ssim2_iters > 0;
+            }
+            #[cfg(feature = "zensim-loop")]
+            {
+                need = need || self.zensim_iters > 0;
+            }
+            need
+        };
+        if !need_linear {
+            linear_src.release();
+        }
 
         // Noise parameters. Four sources, in priority order
         // (matches libjxl enc_frame.cc:680-689):
@@ -5577,7 +5634,7 @@ impl VarDctEncoder {
                     // path.
                     params = self.ssim2_refine_quant_field_with_iters(
                         effective_buttloop_iters,
-                        linear_rgb,
+                        linear_src.slice(),
                         width,
                         height,
                         &xyb_x,
@@ -5647,7 +5704,7 @@ impl VarDctEncoder {
                 // mask_p25-high content). Bench artifacts:
                 // `benchmarks/w44_150_mask_p25_admission_2026-05-21.{tsv,meta}`.
                 params = self.butteraugli_refine_quant_field(
-                    linear_rgb,
+                    linear_src.slice(),
                     width,
                     height,
                     &xyb_x,
@@ -5788,7 +5845,7 @@ impl VarDctEncoder {
         if self.ssim2_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
             params = self.ssim2_refine_quant_field(
-                linear_rgb,
+                linear_src.slice(),
                 width,
                 height,
                 &xyb_x,
@@ -5815,7 +5872,7 @@ impl VarDctEncoder {
         if self.zensim_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
             params = self.zensim_refine_quant_field(
-                linear_rgb,
+                linear_src.slice(),
                 width,
                 height,
                 &xyb_x,
@@ -7291,6 +7348,34 @@ impl VarDctEncoder {
             None,
             None,
         )
+    }
+}
+
+/// Linear-RGB input handed to the VarDCT encoder either by reference or by
+/// value. Owned input lets [`VarDctEncoder::encode_with_extras_stop_src`]
+/// free the buffer right after the XYB conversion when no perceptual
+/// refinement loop will read it - one full-image interleaved f32 copy
+/// (94.9 MiB at 3840x2160) removed from the lossy peak, which sits in the
+/// patches/AQ phase. Borrowed input keeps the historical lifetime.
+pub(crate) enum LinearSource<'a> {
+    Borrowed(&'a [f32]),
+    Owned(alloc::vec::Vec<f32>),
+}
+
+impl LinearSource<'_> {
+    #[inline]
+    pub(crate) fn slice(&self) -> &[f32] {
+        match self {
+            LinearSource::Borrowed(v) => v,
+            LinearSource::Owned(v) => v,
+        }
+    }
+
+    /// Free an owned buffer (no-op when borrowed). The source reads as an
+    /// empty slice afterwards; callers only release once every reader is
+    /// statically known not to run.
+    fn release(&mut self) {
+        *self = LinearSource::Borrowed(&[]);
     }
 }
 
@@ -8913,3 +8998,5 @@ mod tests {
         assert_eq!(W44_169_NARROW_MAX_DISTANCE, 5.0);
     }
 }
+
+
