@@ -1061,19 +1061,21 @@ impl FrameEncoder {
             // `all_default = true`. Sending custom dc_quant through it would
             // silently emit spec defaults and the decoder would dequantize
             // with the wrong scale, corrupting the patches.
-            Some(super::section::write_global_modular_section_with_tree_dc_quant_knobs(
-                &group_images,
-                &mut lf_global_writer,
-                &self.options.profile,
-                global_transforms,
-                self.options.enable_lz77,
-                self.options.lz77_method,
-                self.options.dc_quant_custom,
-                meta_image.as_ref(),
-                &self.options.modular_knobs,
-                super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
-                self.budget.as_ref(),
-            )?)
+            Some(
+                super::section::write_global_modular_section_with_tree_dc_quant_knobs(
+                    &group_images,
+                    &mut lf_global_writer,
+                    &self.options.profile,
+                    global_transforms,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
+                    self.options.dc_quant_custom,
+                    meta_image.as_ref(),
+                    &self.options.modular_knobs,
+                    super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
+                    self.budget.as_ref(),
+                )?,
+            )
         } else if self.options.use_tree_learning && self.options.use_ans {
             // Tree learning path: gather samples, learn tree, build multi-context ANS.
             // Honours [`super::palette::ModularKnobs::modular_predictor`]
@@ -1239,6 +1241,15 @@ impl FrameEncoder {
                 let group_image = &group_images[group_idx];
 
                 let mut group_writer = BitWriter::new();
+                // WP-cache fusion (hybrid): when this group also gets a
+                // local-tree rewrite below, the global-section collect
+                // records its WP walk so the rewrite's collect skips the
+                // WP state machine — one walk per group instead of two.
+                let hybrid_entry = match (hybrid_trees.get(group_idx), global_wp.as_ref()) {
+                    (Some(Some(ltree)), Some(wp)) => Some((ltree, wp)),
+                    _ => None,
+                };
+                let mut wp_cache = super::tree_learn::WpCache::new();
                 write_group_modular_section_idx(
                     group_image,
                     global_state,
@@ -1246,6 +1257,11 @@ impl FrameEncoder {
                     &group_transforms[group_idx],
                     &mut group_writer,
                     budget,
+                    if hybrid_entry.is_some() {
+                        super::tree_learn::WpCacheMode::Fill(&mut wp_cache)
+                    } else {
+                        super::tree_learn::WpCacheMode::Off
+                    },
                 )?;
 
                 // Hybrid: also write this group as a self-contained local-tree
@@ -1259,14 +1275,11 @@ impl FrameEncoder {
                 // stream, and the wall cost lives in the wave-time LEARNS,
                 // not these writes. A wall filter must gate the learn, which
                 // needs a pre-gather signal.
-                if let (Some(Some(ltree)), Some(wp)) =
-                    (hybrid_trees.get(group_idx), global_wp.as_ref())
-                {
+                if let Some((ltree, wp)) = hybrid_entry {
                     let mut local_writer = BitWriter::new();
                     super::section::write_group_modular_section_local_tree_with_tree(
                         group_image,
                         group_idx as u32 + per_group_id_offset,
-                        &self.options.profile,
                         self.options.enable_lz77,
                         self.options.lz77_method,
                         None,
@@ -1274,6 +1287,7 @@ impl FrameEncoder {
                         wp,
                         &mut local_writer,
                         budget,
+                        super::tree_learn::WpCacheMode::Read(&wp_cache),
                     )?;
                     if local_writer.bits_written().div_ceil(8)
                         < group_writer.bits_written().div_ceil(8)
@@ -2765,7 +2779,12 @@ impl FrameEncoder {
             }
         } else {
             // Multi-group: use the standard multi-group encoder (no patches in body)
-            self.encode_modular_multi_group_inner(ImageSource::Borrowed(image), writer, None, None)?;
+            self.encode_modular_multi_group_inner(
+                ImageSource::Borrowed(image),
+                writer,
+                None,
+                None,
+            )?;
         }
 
         Ok(())

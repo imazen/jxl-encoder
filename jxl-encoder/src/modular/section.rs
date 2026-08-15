@@ -667,10 +667,11 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     // are self-contained sections — if repair later swaps the global tree,
     // the per-group min() still only ever replaces a group when the local
     // section is measured smaller.
-    let hybrid_learn_enabled =
-        hybrid_local_trees.is_some() && profile.tree_learn_seeds.max(1) == 1;
+    let hybrid_learn_enabled = hybrid_local_trees.is_some() && profile.tree_learn_seeds.max(1) == 1;
     let hybrid_slot: core::cell::RefCell<alloc::vec::Vec<Option<super::tree::Tree>>> =
-        core::cell::RefCell::new(alloc::vec![None; if hybrid_learn_enabled { images.len() } else { 0 }]);
+        core::cell::RefCell::new(
+            alloc::vec![None; if hybrid_learn_enabled { images.len() } else { 0 }],
+        );
 
     let gather_for_seed = |seed: u64, seed_stride: usize, randomize: bool| -> TreeSamples {
         let start_offset = if seed_stride > 1 {
@@ -772,82 +773,82 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             let hybrid_learn_this_gather = hybrid_learn_enabled && seed == 0 && !randomize;
             let wave_samples: Vec<(TreeSamples, Option<super::tree::Tree>)> =
                 crate::parallel::parallel_map(wave_len, |i| {
-                let group_idx = wave_start + i;
-                // Same per-seed predictor order as the meta init above.
-                let mut local = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
-                local.set_active_props(active_mask.clone());
-                local.randomize_gather = randomize;
-                if enable_gather_dedup && seed == 0 {
-                    let _ = gather_samples_strided_with_dedup_backend(
-                        &mut local,
-                        &images[group_idx],
-                        group_idx as u32 + per_group_id_offset,
-                        0,
-                        seed_stride,
-                        &wp_params,
-                        None,
-                        true,
-                        enable_phase3,
-                        &dedup_properties,
-                    );
-                } else if start_offset == 0 {
-                    gather_samples_strided(
-                        &mut local,
-                        &images[group_idx],
-                        group_idx as u32 + per_group_id_offset,
-                        0,
-                        seed_stride,
-                        &wp_params,
-                    );
-                } else {
-                    gather_samples_strided_with_offset(
-                        &mut local,
-                        &images[group_idx],
-                        group_idx as u32 + per_group_id_offset,
-                        0,
-                        seed_stride,
-                        start_offset,
-                        &wp_params,
-                    );
-                }
-                // Hybrid: learn this group's local tree from a CLONE of the
-                // just-gathered samples (compute_best_tree consumes them);
-                // the original merges into the global accumulator untouched.
-                // The clone + learn ride the same parallel wave, so the extra
-                // in-flight memory is bounded by the wave width.
-                let local_tree = if hybrid_learn_this_gather {
-                    let group_pixels: usize = images[group_idx]
-                        .channels
-                        .iter()
-                        .map(|c| c.width() * c.height())
-                        .sum();
-                    let pixel_fraction = if group_pixels > 0 {
-                        local.total_gathered_weight() as f64 / group_pixels as f64
+                    let group_idx = wave_start + i;
+                    // Same per-seed predictor order as the meta init above.
+                    let mut local = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
+                    local.set_active_props(active_mask.clone());
+                    local.randomize_gather = randomize;
+                    if enable_gather_dedup && seed == 0 {
+                        let _ = gather_samples_strided_with_dedup_backend(
+                            &mut local,
+                            &images[group_idx],
+                            group_idx as u32 + per_group_id_offset,
+                            0,
+                            seed_stride,
+                            &wp_params,
+                            None,
+                            true,
+                            enable_phase3,
+                            &dedup_properties,
+                        );
+                    } else if start_offset == 0 {
+                        gather_samples_strided(
+                            &mut local,
+                            &images[group_idx],
+                            group_idx as u32 + per_group_id_offset,
+                            0,
+                            seed_stride,
+                            &wp_params,
+                        );
                     } else {
-                        1.0
-                    };
-                    let mut params = TreeLearningParams::from_profile(profile)
-                        .with_ref_properties(num_refs, profile.effort)
-                        .with_total_pixels(group_pixels)
-                        .with_pixel_fraction(pixel_fraction);
-                    // Per-group CANDIDATES cap the search at e7 strength: a
-                    // 256x256 group's ~24k samples saturate the split search
-                    // long before the e8+ grids pay off, and the per-group
-                    // min() keeps any group where the deep global tree still
-                    // wins. Measured at 4K e9: hybrid wall -34% (photo) /
-                    // -37% (screen) for +0.18% / +0.49% bytes - both cells
-                    // remain smaller than the pure global tree (see
-                    // benchmarks/jxl_hybrid_trees_4k_2026-08-14.md).
-                    if profile.effort > 7 {
-                        params.max_property_values = params.max_property_values.min(32);
+                        gather_samples_strided_with_offset(
+                            &mut local,
+                            &images[group_idx],
+                            group_idx as u32 + per_group_id_offset,
+                            0,
+                            seed_stride,
+                            start_offset,
+                            &wp_params,
+                        );
                     }
-                    let mut dup = local.clone();
-                    Some(compute_best_tree(&mut dup, &params))
-                } else {
-                    None
-                };
-                (local, local_tree)
-            });
+                    // Hybrid: learn this group's local tree from a CLONE of the
+                    // just-gathered samples (compute_best_tree consumes them);
+                    // the original merges into the global accumulator untouched.
+                    // The clone + learn ride the same parallel wave, so the extra
+                    // in-flight memory is bounded by the wave width.
+                    let local_tree = if hybrid_learn_this_gather {
+                        let group_pixels: usize = images[group_idx]
+                            .channels
+                            .iter()
+                            .map(|c| c.width() * c.height())
+                            .sum();
+                        let pixel_fraction = if group_pixels > 0 {
+                            local.total_gathered_weight() as f64 / group_pixels as f64
+                        } else {
+                            1.0
+                        };
+                        let mut params = TreeLearningParams::from_profile(profile)
+                            .with_ref_properties(num_refs, profile.effort)
+                            .with_total_pixels(group_pixels)
+                            .with_pixel_fraction(pixel_fraction);
+                        // Per-group CANDIDATES cap the search at e7 strength: a
+                        // 256x256 group's ~24k samples saturate the split search
+                        // long before the e8+ grids pay off, and the per-group
+                        // min() keeps any group where the deep global tree still
+                        // wins. Measured at 4K e9: hybrid wall -34% (photo) /
+                        // -37% (screen) for +0.18% / +0.49% bytes - both cells
+                        // remain smaller than the pure global tree (see
+                        // benchmarks/jxl_hybrid_trees_4k_2026-08-14.md).
+                        if profile.effort > 7 {
+                            params.max_property_values = params.max_property_values.min(32);
+                        }
+                        let mut dup = local.clone();
+                        Some(compute_best_tree(&mut dup, &params))
+                    } else {
+                        None
+                    };
+                    (local, local_tree)
+                });
             // No per-wave reserve: `reserve_exact_total` above already sized
             // every column past the final count, so these appends never grow.
             for (i, (local, ltree)) in wave_samples.into_iter().enumerate() {
@@ -1577,8 +1578,7 @@ pub(crate) fn write_local_trees_lf_global(
     // The histogram must be buildable (a zero-count context cannot
     // normalize), so derive the 1-context code from one dummy token; the
     // stream itself still carries ZERO tokens (just the ANS final state).
-    let seed_tokens =
-        alloc::vec![crate::entropy_coding::token::Token::new(0, 0)];
+    let seed_tokens = alloc::vec![crate::entropy_coding::token::Token::new(0, 0)];
     let code = build_entropy_code_ans(&seed_tokens, 1);
     let tokens: alloc::vec::Vec<crate::entropy_coding::token::Token> = alloc::vec::Vec::new();
 
@@ -1627,17 +1627,12 @@ pub fn write_group_modular_section_local_tree(
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
-    use super::encode::{write_num_transforms, write_tree, write_wp_header};
     use super::predictor::WeightedPredictorParams;
-    use super::tree::count_contexts;
     use super::tree_learn::{
-        TreeLearningParams, TreeSamples, collect_residuals_with_tree_with_budget,
-        compute_best_tree, compute_gather_stride_from_profile, gather_samples_strided,
+        TreeLearningParams, TreeSamples, WpCache, WpCacheMode, compute_best_tree,
+        compute_gather_stride_from_profile, gather_samples_strided_filling_wp_cache,
         max_ref_channels,
     };
-    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
-    use crate::entropy_coding::encode::write_entropy_code_ans;
-    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
 
     // v1 keeps the default WP parameter set (no per-group search): the
     // params used for learning are the params written in this group's
@@ -1653,15 +1648,27 @@ pub fn write_group_modular_section_local_tree(
     // the group's own pixel count. (At 4K e7/e9 the two formulas coincide -
     // measured byte-identical - but they diverge at other size/effort
     // points and the full-image density is the calibrated one.)
-    let stride = gather_stride
-        .unwrap_or_else(|| compute_gather_stride_from_profile(total_pixels, profile));
+    let stride =
+        gather_stride.unwrap_or_else(|| compute_gather_stride_from_profile(total_pixels, profile));
     let num_refs = max_ref_channels(group_image);
 
     // Learn this group's tree from this group's samples only. Property 1
     // (group id) is the spec stream id, matching what the residual
     // collector below feeds the tree at encode time.
     let mut samples = TreeSamples::new_with_ref_channels(num_refs);
-    gather_samples_strided(&mut samples, group_image, stream_id, 0, stride, &wp_params);
+    // WP-cache fusion: the gather's WP walk records its per-pixel outputs
+    // so the residual collect below skips the WP state machine — one WP
+    // walk per group instead of two. Values (and bytes) are identical.
+    let mut wp_cache = WpCache::new();
+    gather_samples_strided_filling_wp_cache(
+        &mut samples,
+        group_image,
+        stream_id,
+        0,
+        stride,
+        &wp_params,
+        &mut wp_cache,
+    );
     let pixel_fraction = if total_pixels > 0 {
         samples.total_gathered_weight() as f64 / total_pixels as f64
     } else {
@@ -1677,7 +1684,6 @@ pub fn write_group_modular_section_local_tree(
     write_group_modular_section_local_tree_with_tree(
         group_image,
         stream_id,
-        profile,
         use_lz77,
         lz77_method,
         rct_type,
@@ -1685,6 +1691,7 @@ pub fn write_group_modular_section_local_tree(
         &wp_params,
         writer,
         budget,
+        WpCacheMode::Read(&wp_cache),
     )
 }
 
@@ -1698,7 +1705,6 @@ pub fn write_group_modular_section_local_tree(
 pub fn write_group_modular_section_local_tree_with_tree(
     group_image: &ModularImage,
     stream_id: u32,
-    profile: &crate::effort::EffortProfile,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     rct_type: Option<RctType>,
@@ -1706,10 +1712,11 @@ pub fn write_group_modular_section_local_tree_with_tree(
     wp_params: &super::predictor::WeightedPredictorParams,
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    wp_cache: super::tree_learn::WpCacheMode<'_>,
 ) -> Result<()> {
     use super::encode::{write_num_transforms, write_tree, write_wp_header};
     use super::tree::count_contexts;
-    use super::tree_learn::collect_residuals_with_tree_with_budget;
+    use super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp;
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
     use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
@@ -1720,8 +1727,15 @@ pub fn write_group_modular_section_local_tree_with_tree(
         .map(|c| c.width() * c.height())
         .sum();
 
-    let tokens =
-        collect_residuals_with_tree_with_budget(group_image, tree, stream_id, wp_params, budget)?;
+    let tokens = collect_residuals_with_tree_offset_with_budget_wp(
+        group_image,
+        tree,
+        stream_id,
+        0,
+        wp_params,
+        budget,
+        wp_cache,
+    )?;
     let num_contexts = count_contexts(tree) as usize;
 
     // Same LZ77 construction as the single-group tree writer.
@@ -1732,7 +1746,14 @@ pub fn write_group_modular_section_local_tree_with_tree(
         .max()
         .unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
-        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier, budget)? {
+        match apply_lz77(
+            &tokens,
+            num_contexts,
+            false,
+            lz77_method,
+            dist_multiplier,
+            budget,
+        )? {
             Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
             None => (tokens, None),
         }
@@ -1791,6 +1812,7 @@ pub fn write_group_modular_section(
         &GroupTransforms::none(),
         writer,
         budget,
+        super::tree_learn::WpCacheMode::Off,
     )
 }
 
@@ -1825,6 +1847,7 @@ pub fn write_group_modular_section_idx(
     transforms: &GroupTransforms,
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    wp_cache: super::tree_learn::WpCacheMode<'_>,
 ) -> Result<()> {
     crate::trace::debug_eprintln!(
         "GROUP_MODULAR [bit {}]: Starting group section ({}x{}, compact={}, rct={:?})",
@@ -1906,13 +1929,19 @@ pub fn write_group_modular_section_idx(
             // Collect residuals using the learned tree (multi-context).
             // Per-group images use 0-based channel indices (matching the decoder,
             // which builds per-group images with only non-meta channels).
+            // Same values as the budget-less collect wrapper; the _wp
+            // variant threads the WpCacheMode (hybrid fills here so the
+            // local-tree rewrite of this group skips its WP walk).
             let tokens = crate::profile_time!("modular/collect_residuals_per_group", {
-                super::tree_learn::collect_residuals_with_tree(
+                super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
                     group_image,
                     tree,
                     group_idx,
+                    0,
                     wp_params,
-                )
+                    None,
+                    wp_cache,
+                )?
             });
             // Per-section LZ77 (issue #69 item 1): re-apply the exact
             // transform the global histogram was built over — same method,

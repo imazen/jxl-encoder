@@ -740,12 +740,8 @@ impl PropColumn {
     /// values were already proven to fit the current width.
     fn gather_indices(&self, indices: &[u32]) -> PropColumn {
         match self {
-            PropColumn::I16(v) => {
-                PropColumn::I16(indices.iter().map(|&i| v[i as usize]).collect())
-            }
-            PropColumn::I32(v) => {
-                PropColumn::I32(indices.iter().map(|&i| v[i as usize]).collect())
-            }
+            PropColumn::I16(v) => PropColumn::I16(indices.iter().map(|&i| v[i as usize]).collect()),
+            PropColumn::I32(v) => PropColumn::I32(indices.iter().map(|&i| v[i as usize]).collect()),
         }
     }
 
@@ -1194,9 +1190,8 @@ impl TreeSamples {
         let mut wave_start = 0usize;
         while wave_start < params.properties.len() {
             let wave_end = (wave_start + PRE_QUANTIZE_WAVE).min(params.properties.len());
-            let wave: Vec<(Vec<i32>, Vec<u8>)> = crate::parallel::parallel_map(
-                wave_end - wave_start,
-                |k| {
+            let wave: Vec<(Vec<i32>, Vec<u8>)> =
+                crate::parallel::parallel_map(wave_end - wave_start, |k| {
                     let i = wave_start + k;
                     let prop_idx = params.properties[i];
                     // Width-generic: an i16 column is quantized without
@@ -1215,8 +1210,7 @@ impl TreeSamples {
                             params.lloyd_max_buckets,
                         ),
                     }
-                },
-            );
+                });
             // The raw columns this wave consumed are now dead — release them
             // before the next wave allocates its bucket columns.
             for k in 0..(wave_end - wave_start) {
@@ -1773,6 +1767,7 @@ pub fn gather_samples_strided_with_offset(
         wp_params,
         None,
         None,
+        None,
     )
     .expect("budget-less gather_samples_strided_with_offset must not return AllocationLimit")
 }
@@ -1934,6 +1929,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
                 table: &mut table,
                 properties: &hashed_props,
             }),
+            None,
         )
     } else {
         let mut table = if dedup_properties.is_empty() {
@@ -1951,6 +1947,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
             wp_params,
             budget,
             Some(GatherDedupBackend::Phase2(&mut table)),
+            None,
         )
     }
 }
@@ -2043,6 +2040,7 @@ pub(crate) fn gather_samples_strided_with_budget_inner(
         wp_params,
         budget,
         dedup_table.map(GatherDedupBackend::Phase2),
+        None,
     )
 }
 
@@ -2066,6 +2064,7 @@ fn gather_samples_strided_with_budget_inner_backend(
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     mut dedup_backend: Option<GatherDedupBackend<'_>>,
+    mut wp_cache: Option<&mut WpCache>,
 ) -> crate::error::Result<()> {
     // Upper-bound gathered-sample count: ceil(w*h / stride) per channel
     // (dedup backends merge some pushes away — over-reserve is fine).
@@ -2107,10 +2106,41 @@ fn gather_samples_strided_with_budget_inner_backend(
                     GatherDedupBackend::Phase3 { table, properties }
                 }
             }),
+            wp_cache.as_mut().map(|c| c.channel_fill_mut(ch_idx)),
         )?;
     }
     report_tree_sample_stats(samples, stride, est);
     Ok(())
+}
+
+/// [`gather_samples_strided`] that additionally records the WP walk's
+/// per-pixel outputs into `cache` for reuse by a later residual collect
+/// over the same image (see [`WpCache`]). Gathered samples are
+/// byte-identical to the plain variant — recording observes the walk, it
+/// never alters it.
+pub(crate) fn gather_samples_strided_filling_wp_cache(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+    stride: usize,
+    wp_params: &WeightedPredictorParams,
+    cache: &mut WpCache,
+) {
+    cache.ensure_channels(image.channels.len());
+    gather_samples_strided_with_budget_inner_backend(
+        samples,
+        image,
+        group_id,
+        channel_offset,
+        stride,
+        0,
+        wp_params,
+        None,
+        None,
+        Some(cache),
+    )
+    .expect("budget-less gather_samples_strided_filling_wp_cache must not return AllocationLimit")
 }
 
 /// `JXL_TREE_SAMPLES_STATS=1` — print the gathered `TreeSamples` heap
@@ -2531,11 +2561,16 @@ fn gather_channel_samples(
     ref_channel_indices: &[usize],
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     dedup_backend: Option<GatherDedupBackend<'_>>,
+    mut wp_cache_ch: Option<(&mut Vec<i64>, &mut Vec<i32>)>,
 ) -> crate::error::Result<()> {
     let width = channel.width();
     let height = channel.height();
     if width == 0 || height == 0 {
         return Ok(());
+    }
+    if let Some((p, m)) = wp_cache_ch.as_mut() {
+        p.reserve(width * height);
+        m.reserve(width * height);
     }
 
     // WP state for computing weighted predictions and property 15
@@ -2614,6 +2649,14 @@ fn gather_channel_samples(
             // values/state sequence as the separate calls — the update
             // always ran immediately after predict here.
             let (wp_pred, wp_max_error) = wp_state.predict_property_update(pixel, x, y, width, &n);
+            // WP-cache fusion: record the walk's outputs so the later
+            // residual collect over this image can skip the WP state
+            // machine (see [`WpCache`]). Branch-not-taken on the default
+            // path; recording changes no computed value.
+            if let Some((fp, fm)) = wp_cache_ch.as_mut() {
+                fp.push(wp_pred);
+                fm.push(wp_max_error);
+            }
 
             // Subsample: only gather every stride-th pixel
             if subsample_counter == 0 {
@@ -3975,8 +4018,14 @@ fn dedup_samples_packed_sort(
     let new_per_pred: Vec<(Vec<u8>, Vec<u8>)> = crate::parallel::parallel_map(num_pred, |pred| {
         let old_tokens = &samples.residual_tokens[pred];
         let old_ebits = &samples.extra_bits[pred];
-        let new_tokens: Vec<u8> = unique_indices.iter().map(|&i| old_tokens[i as usize]).collect();
-        let new_ebits: Vec<u8> = unique_indices.iter().map(|&i| old_ebits[i as usize]).collect();
+        let new_tokens: Vec<u8> = unique_indices
+            .iter()
+            .map(|&i| old_tokens[i as usize])
+            .collect();
+        let new_ebits: Vec<u8> = unique_indices
+            .iter()
+            .map(|&i| old_ebits[i as usize])
+            .collect();
         (new_tokens, new_ebits)
     });
     for (pred, (new_tokens, new_ebits)) in new_per_pred.into_iter().enumerate() {
@@ -6894,17 +6943,17 @@ fn build_subtree_recursive_parallel_borrowed(
     let (left_tensor, right_tensor) = match node_tensor {
         Some(parent_t) => crate::profile_time!("tree/derive_child_tensors", {
             derive_child_tensors_borrowed(
-            &samples,
-            params,
-            tensor_layout,
-            histogram_size,
-            0,
-            abs_mid,
-            n,
-            parent_t,
-            left_bits,
-            right_bits,
-            threshold,
+                &samples,
+                params,
+                tensor_layout,
+                histogram_size,
+                0,
+                abs_mid,
+                n,
+                parent_t,
+                left_bits,
+                right_bits,
+                threshold,
             )
         }),
         None => (None, None),
@@ -9358,6 +9407,67 @@ pub fn collect_residuals_with_tree(
     collect_residuals_with_tree_offset(image, tree, group_id, 0, wp_params)
 }
 
+/// Per-image cache of the weighted predictor's per-pixel outputs
+/// (`wp_pred`, `wp_max_error`), filled by one WP walk and reused by a
+/// later one over the same image.
+///
+/// The WP state machine (sub-predictor mixing + per-pixel error-row
+/// updates) is the expensive shared prefix of both the sample-gather
+/// walk and the residual-collect walk. Its outputs depend only on
+/// (image, wp_params) — both walks visit every pixel of every channel
+/// in scan order — so the second walk can skip the state machine and
+/// read the recorded pair instead. This is what makes the sectioned
+/// writer's gather+collect effectively a single WP walk, and hybrid's
+/// global+local double collect a single one.
+///
+/// Memory: 12 bytes/pixel/channel (~0.8 MiB for a 256x256 RGB group),
+/// transient per group. Do NOT hold one per group across a whole-image
+/// wave (that's ~300 MiB at 4K — the reason the global path doesn't
+/// fuse its whole-image gather with its stream-0 collect).
+#[derive(Default)]
+pub(crate) struct WpCache {
+    wp_pred: Vec<Vec<i64>>,
+    wp_max_error: Vec<Vec<i32>>,
+}
+
+impl WpCache {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    fn ensure_channels(&mut self, n: usize) {
+        if self.wp_pred.len() < n {
+            self.wp_pred.resize_with(n, Vec::new);
+            self.wp_max_error.resize_with(n, Vec::new);
+        }
+    }
+
+    fn channel(&self, idx: usize) -> (&[i64], &[i32]) {
+        (&self.wp_pred[idx], &self.wp_max_error[idx])
+    }
+
+    fn channel_fill_mut(&mut self, idx: usize) -> (&mut Vec<i64>, &mut Vec<i32>) {
+        self.ensure_channels(idx + 1);
+        let p = &mut self.wp_pred[idx];
+        let m = &mut self.wp_max_error[idx];
+        p.clear();
+        m.clear();
+        (p, m)
+    }
+}
+
+/// How a WP-walk consumer interacts with a [`WpCache`].
+pub(crate) enum WpCacheMode<'a> {
+    /// No cache involvement (the default everywhere).
+    Off,
+    /// Run the WP state machine normally AND record its per-pixel
+    /// outputs for a later `Read` walk on the same image.
+    Fill(&'a mut WpCache),
+    /// Skip the WP state machine; read the recorded outputs. The cache
+    /// MUST have been filled from the same (image, wp_params).
+    Read(&'a WpCache),
+}
+
 /// `collect_residuals_with_tree` with explicit allocation budget.
 ///
 /// Per-channel `WeightedPredictorState` scratch is reserved against the
@@ -9370,7 +9480,15 @@ pub(crate) fn collect_residuals_with_tree_with_budget(
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
-    collect_residuals_with_tree_offset_with_budget(image, tree, group_id, 0, wp_params, budget)
+    collect_residuals_with_tree_offset_with_budget_wp(
+        image,
+        tree,
+        group_id,
+        0,
+        wp_params,
+        budget,
+        WpCacheMode::Off,
+    )
 }
 
 /// Collect residuals using a learned tree, with a channel index offset.
@@ -9413,6 +9531,31 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
     channel_offset: u32,
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
+    collect_residuals_with_tree_offset_with_budget_wp(
+        image,
+        tree,
+        group_id,
+        channel_offset,
+        wp_params,
+        budget,
+        WpCacheMode::Off,
+    )
+}
+
+/// [`collect_residuals_with_tree_offset_with_budget`] with a
+/// [`WpCacheMode`]: `Read` skips the per-pixel WP state machine using a
+/// cache filled by an earlier walk over the same image; `Fill` runs it
+/// normally and records the outputs for a later walk.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn collect_residuals_with_tree_offset_with_budget_wp(
+    image: &ModularImage,
+    tree: &Tree,
+    group_id: u32,
+    channel_offset: u32,
+    wp_params: &WeightedPredictorParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    mut wp_cache: WpCacheMode<'_>,
 ) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
     use crate::entropy_coding::token::Token as AnsToken;
 
@@ -9465,7 +9608,36 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
             Vec::new()
         };
 
-        let mut wp_state = WeightedPredictorState::new_with_budget(wp_params, width, budget)?;
+        // WP-cache fusion: in Read mode the WP state machine never runs —
+        // (wp_pred, wp_max_error) come from the cache an earlier walk over
+        // this image filled; in Fill mode it runs as usual and the outputs
+        // are recorded. Values are identical either way, so tokens (and
+        // bytes) are unaffected.
+        let cache_read: Option<(&[i64], &[i32])> = match &wp_cache {
+            WpCacheMode::Read(c) => {
+                let (p, m) = c.channel(ch_idx);
+                debug_assert_eq!(p.len(), width * height, "WpCache/image walk mismatch");
+                debug_assert_eq!(m.len(), width * height, "WpCache/image walk mismatch");
+                Some((p, m))
+            }
+            _ => None,
+        };
+        let mut cache_fill: Option<(&mut Vec<i64>, &mut Vec<i32>)> = match &mut wp_cache {
+            WpCacheMode::Fill(c) => {
+                let (p, m) = c.channel_fill_mut(ch_idx);
+                p.reserve(width * height);
+                m.reserve(width * height);
+                Some((p, m))
+            }
+            _ => None,
+        };
+        let mut wp_state = if cache_read.is_some() {
+            None
+        } else {
+            Some(WeightedPredictorState::new_with_budget(
+                wp_params, width, budget,
+            )?)
+        };
         let mut prev_gradient: i32;
 
         // ── Issue #41 chunk B2: 3-pass row restructure ──────────────────
@@ -9501,8 +9673,19 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
                 // Fused WP predict + error update (issue #41 item 2):
                 // nothing between the legacy predict(x) and update(x)
                 // read WP state, so fusing preserves the sequence.
-                let (wp_pred, wp_max_error) =
-                    wp_state.predict_property_update(pixel, x, y, width, &n);
+                let (wp_pred, wp_max_error) = if let Some((preds, mes)) = cache_read {
+                    (preds[y * width + x], mes[y * width + x])
+                } else {
+                    let st = wp_state
+                        .as_mut()
+                        .expect("wp_state exists whenever the cache is not read");
+                    let r = st.predict_property_update(pixel, x, y, width, &n);
+                    if let Some((fp, fm)) = cache_fill.as_mut() {
+                        fp.push(r.0);
+                        fm.push(r.1);
+                    }
+                    r
+                };
 
                 let row_props = &mut props_row[x * prop_stride..x * prop_stride + prop_stride];
                 compute_spec_properties_into(
@@ -10408,7 +10591,6 @@ mod tests {
         }
     }
 
-    use super::*;
     use crate::modular::channel::ModularImage;
 
     #[test]
@@ -11118,7 +11300,11 @@ mod tests {
         assert!(n > 0, "expected at least one unique sample");
 
         // Count left side using PartitionKey::Property semantics
-        let left_count = samples.props[3].iter_i32().take(n).filter(|&v| v <= 1).count();
+        let left_count = samples.props[3]
+            .iter_i32()
+            .take(n)
+            .filter(|&v| v <= 1)
+            .count();
 
         let mid = partition_node_in_place(
             &mut samples,

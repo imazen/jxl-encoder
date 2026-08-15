@@ -575,7 +575,9 @@ mod tests {
         // Build storage where props[1][i] = i % 2 (even → 0, odd → 1).
         // Predicate "prop[1] <= 0" matches even canaries; 8 of them in [0..16).
         let mut storage = make_canary(16);
-        storage.props.push(PropColumn::I32((0..16i32).map(|i| i % 2).collect()));
+        storage
+            .props
+            .push(PropColumn::I32((0..16i32).map(|i| i % 2).collect()));
         storage
             .bucket_indices
             .push((0..16).map(|i| (i & 1) as u8).collect());
@@ -607,7 +609,9 @@ mod tests {
         // [0..4) and [12..16) untouched. Predicate "props[1] <= 0" matches
         // even canaries; 4 in [4..12) (4, 6, 8, 10).
         let mut storage = make_canary(16);
-        storage.props.push(PropColumn::I32((0..16i32).map(|i| i % 2).collect()));
+        storage
+            .props
+            .push(PropColumn::I32((0..16i32).map(|i| i % 2).collect()));
         storage
             .bucket_indices
             .push((0..16).map(|i| (i & 1) as u8).collect());
@@ -899,10 +903,7 @@ mod tests {
         assert_eq!(returned, expected_left_count);
 
         for (i, v) in props[0].iter_i32().take(expected_left_count).enumerate() {
-            assert!(
-                v <= val,
-                "row {i} should be left of split but props[0]={v}"
-            );
+            assert!(v <= val, "row {i} should be left of split but props[0]={v}");
         }
         for (offset, v) in props[0]
             .iter_i32()
@@ -911,10 +912,7 @@ mod tests {
             .enumerate()
         {
             let i = expected_left_count + offset;
-            assert!(
-                v > val,
-                "row {i} should be right of split but props[0]={v}"
-            );
+            assert!(v > val, "row {i} should be right of split but props[0]={v}");
         }
     }
 
@@ -1053,13 +1051,25 @@ mod tests {
         };
         let mut expected: Vec<_> = (0..n)
             .filter(|&i| bucket_indices[0][i] <= val)
-            .map(|i| sig(i, &residual_tokens, &extra_bits, &bucket_indices, &sample_counts))
+            .map(|i| {
+                sig(
+                    i,
+                    &residual_tokens,
+                    &extra_bits,
+                    &bucket_indices,
+                    &sample_counts,
+                )
+            })
             .collect();
-        expected.extend(
-            (0..n)
-                .filter(|&i| bucket_indices[0][i] > val)
-                .map(|i| sig(i, &residual_tokens, &extra_bits, &bucket_indices, &sample_counts)),
-        );
+        expected.extend((0..n).filter(|&i| bucket_indices[0][i] > val).map(|i| {
+            sig(
+                i,
+                &residual_tokens,
+                &extra_bits,
+                &bucket_indices,
+                &sample_counts,
+            )
+        }));
 
         let mut view = SplittableSamples {
             residual_tokens: &mut residual_tokens,
@@ -1080,7 +1090,15 @@ mod tests {
         assert_eq!(pos, left_count);
 
         let actual: Vec<_> = (0..n)
-            .map(|i| sig(i, &residual_tokens, &extra_bits, &bucket_indices, &sample_counts))
+            .map(|i| {
+                sig(
+                    i,
+                    &residual_tokens,
+                    &extra_bits,
+                    &bucket_indices,
+                    &sample_counts,
+                )
+            })
             .collect();
         assert_eq!(actual, expected, "stable order + row alignment");
     }

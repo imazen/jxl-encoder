@@ -5929,9 +5929,7 @@ impl<'a> EncodeRequest<'a> {
         // Off can fall back to per-group trees when the whole-image estimate
         // exceeds the budget cap, so admission must not hard-reject it.
         let sectioned_available = match self.config {
-            ConfigRef::Lossless(cfg) => {
-                cfg.sectioned_trees() != crate::api::SectionedTrees::Off
-            }
+            ConfigRef::Lossless(cfg) => cfg.sectioned_trees() != crate::api::SectionedTrees::Off,
             ConfigRef::Lossy(_) => false,
         };
         let preflight = encode_preflight_with_sectioned(

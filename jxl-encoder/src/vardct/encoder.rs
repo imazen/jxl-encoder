@@ -3407,7 +3407,13 @@ impl VarDctEncoder {
                         expected_alpha
                     )));
                 }
-                self.encode_inner(width, height, LinearSource::Borrowed(linear_rgb), &[ec], stop)
+                self.encode_inner(
+                    width,
+                    height,
+                    LinearSource::Borrowed(linear_rgb),
+                    &[ec],
+                    stop,
+                )
             }
         }
     }
@@ -3464,7 +3470,13 @@ impl VarDctEncoder {
         extras: &[crate::api::ExtraChannel<'_>],
         stop: Option<&dyn Stop>,
     ) -> Result<VarDctOutput> {
-        self.encode_with_extras_stop_impl(width, height, LinearSource::Borrowed(linear_rgb), extras, stop)
+        self.encode_with_extras_stop_impl(
+            width,
+            height,
+            LinearSource::Borrowed(linear_rgb),
+            extras,
+            stop,
+        )
     }
 
     fn encode_with_extras_stop_impl(
@@ -8998,5 +9010,3 @@ mod tests {
         assert_eq!(W44_169_NARROW_MAX_DISTANCE, 5.0);
     }
 }
-
-
