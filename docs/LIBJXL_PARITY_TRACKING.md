@@ -13,7 +13,7 @@ Measured numbers: 3840x2160 mosaics, t=1, macOS M4 Pro
 |---|---|---|---|
 | residual tokens | 2 B/pred: {u8 tok, u8 nbits}, extra bits NOT stored | 2 B/pred: tokens u8 + ebits u8 columns | ≈ parity per predictor |
 | predictor count | **2** at all default lossless efforts (`Predictor::Best` = {Weighted, Gradient}, enc_modular.cc:642-644); 14 only at Glacier `Predictor::Variable` | 14 always (pre-2026-08-15); `JXL_GLOBAL_TREE_PREDICTORS=auto` probe-tree selection keeps 7-9 | **structural gap, now bridged by probe-tree pruning; our 7-9 > their 2 is an RD choice (we beat cjxl bytes 6-46%)** |
-| properties | u8 PRE-QUANTIZED buckets at gather (≤256, QuantizeProperty LUT enc_ma.h:109-119); statics (channel, group) u32 | raw i16/i32 columns at gather → pre_quantize → u8 buckets; raw freed per wave-of-4 then fully pre-dedup | theirs never materializes raw (thresholds from the 10% CollectPixelSamples pre-pass); ours holds raw through gather+prequant — remaining gather-phase gap |
+| properties | u8 PRE-QUANTIZED buckets at gather (≤256, QuantizeProperty LUT enc_ma.h:109-119); statics (channel, group) u32 | e8+: u8 buckets at gather (exact distinct-value pre-walk = byte-identical thresholds; raw columns never materialize — 2026-08-15); e≤7: raw i16/i32 → pre_quantize, waved free | **BRIDGED at e8+** (different mechanism, same effect: their subsampled pre-pass thresholds vs our exact pre-walk — ours keeps bytes identical) |
 | dedup | streaming 2-position open hash at gather, u16 counts (saturate+evict) | post-gather packed-key sort (adaptive 2-byte+refined partitions), u32 counts | ours measured faster than our own streaming port (+3-8% wall); count width 2 B theirs vs 4 ours |
 | per-unique bytes | e7 19 B, e9 28 B (P=2) | e7 ~35 B, e9 ~46 B at 14 preds; ~21-27 B at auto 7-9 | bridged by auto |
 
@@ -50,7 +50,7 @@ item.
 | axis | cjxl 0.12 | ours 2026-08-14 | ours now (auto) | status |
 |---|---|---|---|---|
 | lossless e7 photo peak_live | ~290-306 MB RSS | 834 MB | **564 MB** | 1.8-1.9× over; next: gather-time bucketization (their pre-pass model) |
-| lossless e9 photo peak_live | ~306 MB | 1130 MB | **965 MB** | biggest residual: raw props + tokens through gather |
+| lossless e9 photo peak_live | ~306 MB | 1130 MB | **849 MB** (screen 786) | raw props removed (exact bucketize); next: token columns + image floor |
 | lossless e7 photo wall | 3.82 s | 11.3 s | **8.1 s** | 2.1× |
 | lossless e9 photo wall | 23.1 s | 54.8 s | **46.4 s** | 2.0× (sectioned mode: 30.2 s = 1.31×) |
 | lossless bytes | baseline | −6.2% (photo) −36..46% (screen) | ≈ same (auto ±0.1%) | we win |

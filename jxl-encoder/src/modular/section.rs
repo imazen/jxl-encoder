@@ -765,12 +765,52 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 // derived from the probe's RAW columns with the MAIN
                 // params (full max_property_values) BEFORE the probe
                 // learn consumes them.
-                if super::tree_learn::gather_bucketize_env() {
-                    let tparams = TreeLearningParams::from_profile(profile)
-                        .with_ref_properties(num_refs, profile.effort);
-                    bucketize_plan = Some(alloc::sync::Arc::new(
-                        super::tree_learn::thresholds_from_samples(&probe, &tparams),
-                    ));
+                // DEFAULT: Exact gather-time bucketization at e>=8 —
+                // byte-identical (verified exact on all 4 mosaic cells)
+                // with the raw-props arena removed from the accumulator:
+                // 4K e9 peak_live photo 965->849 MB, screen 978->786 MB,
+                // wall within +/-4%. e7's raw props are not its peak
+                // (-8 MB for +1-5% wall), so it stays Off by default.
+                // Env overrides: off | probe | exact.
+                let bucketize_mode = super::tree_learn::gather_bucketize_env().or({
+                    if profile.effort >= 8 {
+                        Some(super::tree_learn::GatherBucketizeMode::Exact)
+                    } else {
+                        None
+                    }
+                });
+                match bucketize_mode {
+                    Some(super::tree_learn::GatherBucketizeMode::ProbeThresholds) => {
+                        let tparams = TreeLearningParams::from_profile(profile)
+                            .with_ref_properties(num_refs, profile.effort);
+                        bucketize_plan = Some(alloc::sync::Arc::new(
+                            super::tree_learn::thresholds_from_samples(&probe, &tparams),
+                        ));
+                    }
+                    Some(super::tree_learn::GatherBucketizeMode::Exact) if !enable_gather_dedup => {
+                        // Exact mode: distinct-value pre-walk over the SAME
+                        // sampled pixels -> today's exact thresholds ->
+                        // byte-identical output with no raw prop columns in
+                        // the accumulator. (gather-dedup expert path
+                        // excluded: its thresholds run over post-dedup
+                        // rows.)
+                        let tparams = TreeLearningParams::from_profile(profile)
+                            .with_ref_properties(num_refs, profile.effort);
+                        bucketize_plan = Some(alloc::sync::Arc::new(
+                            super::tree_learn::exact_bucketize_plan(
+                                meta_image,
+                                images,
+                                per_group_id_offset,
+                                stride,
+                                &wp_params,
+                                &tparams,
+                                num_refs,
+                            ),
+                        ));
+                        #[cfg(feature = "std")]
+                        super::tree_learn::walk_debug_dump("exact");
+                    }
+                    _ => {}
                 }
                 let probe_tree = compute_best_tree(&mut probe, &probe_params);
                 Some(super::tree_learn::predictors_used_by_tree(&probe_tree))
@@ -1316,6 +1356,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             let (mut samples, pre_pq) = crate::profile_time!("modular/gather_samples", {
                 gather_for_seed(seed, seed_stride, false)
             });
+            #[cfg(feature = "std")]
+            super::tree_learn::walk_debug_dump("gather");
             let params = build_params(&samples);
             crate::profile_time!("modular/compute_best_tree", {
                 match pre_pq {

@@ -1489,6 +1489,178 @@ pub(crate) struct GatherBucketizePlan {
     pub(crate) keep_raw: alloc::vec::Vec<bool>,
 }
 
+/// EXACT gather-time-bucketization plan (`JXL_GATHER_BUCKETIZE=exact`,
+/// and the default-path candidate): walk the SAME sampled pixels the
+/// main gather will visit (same per-group WP state, same stride gate,
+/// same `prev_gradient` update discipline) collecting each learned
+/// property's DISTINCT VALUE SET — which is the entire input
+/// `quantize_prop_column`'s threshold derivation consumes
+/// ([`DistinctPropertyValues::thresholds`], proven bit-identical to the
+/// full-column reduction). The resulting thresholds — and therefore the
+/// bucket columns, the tree, and the bytes — are IDENTICAL to the
+/// raw-gather + pre_quantize pipeline, while the accumulator's raw
+/// property columns never materialize.
+///
+/// Excluded (fall back to raw gather): Lloyd-Max properties when the
+/// expert flag is on (Lloyd reads raw values, not distincts), and the
+/// gather-dedup expert path (thresholds there run over post-dedup rows).
+pub(crate) fn exact_bucketize_plan(
+    meta_image: Option<&super::channel::ModularImage>,
+    images: &[super::channel::ModularImage],
+    per_group_id_offset: u32,
+    stride: usize,
+    wp_params: &super::predictor::WeightedPredictorParams,
+    params: &TreeLearningParams,
+    num_ref_channels: usize,
+) -> GatherBucketizePlan {
+    let total_props = NUM_PROPERTIES + 4 * num_ref_channels;
+    let mut active = vec![false; total_props];
+    let mut needs_ref = false;
+    for &p in &params.properties {
+        if p < total_props {
+            active[p] = true;
+            if p >= NUM_PROPERTIES {
+                needs_ref = true;
+            }
+        }
+    }
+    // Per-group collectors in parallel, merged in group order (distinct
+    // sets are order-insensitive; merge keeps them exact).
+    let mut collectors: Vec<DistinctPropertyValues> = (0..total_props)
+        .map(|_| DistinctPropertyValues::default())
+        .collect();
+    let mut walk_image = |image: &super::channel::ModularImage,
+                          group_id: u32,
+                          collectors: &mut [DistinctPropertyValues]| {
+        for (ch_idx, channel) in image.channels.iter().enumerate() {
+            let width = channel.width();
+            let height = channel.height();
+            if width == 0 || height == 0 {
+                continue;
+            }
+            let ref_channel_indices: Vec<usize> = if needs_ref && num_ref_channels > 0 {
+                find_ref_channels(image, ch_idx)
+            } else {
+                Vec::new()
+            };
+            let mut wp_state = WeightedPredictorState::new(wp_params, width);
+            let mut prev_gradient: i32 = 0;
+            let mut subsample_counter: usize = 0;
+            for y in 0..height {
+                prev_gradient = 0;
+                for x in 0..width {
+                    let pixel = channel.get(x, y);
+                    let n = Neighbors::gather(channel, x, y);
+                    let (_wp_pred, wp_max_error) =
+                        wp_state.predict_property_update(pixel, x, y, width, &n);
+                    if subsample_counter == 0 {
+                        subsample_counter = stride.saturating_sub(1);
+                        let props = compute_spec_properties(
+                            ch_idx as u32,
+                            group_id,
+                            x,
+                            y,
+                            &n,
+                            prev_gradient,
+                            wp_max_error,
+                        );
+                        prev_gradient = props[9];
+                        #[cfg(feature = "std")]
+                        if walk_debug_enabled() {
+                            walk_debug_accum(group_id, ch_idx as u32, props[8]);
+                        }
+                        for (p, &v) in props.iter().enumerate() {
+                            if active[p] {
+                                collectors[p].push(v);
+                            }
+                        }
+                        if needs_ref {
+                            // Mirror the gather's ZERO-PADDED ref scratch:
+                            // every sampled pixel contributes to EVERY ref
+                            // slot — channels with fewer (or zero) ref
+                            // channels contribute the scratch's zeros
+                            // (gather pushes its zero-initialized
+                            // local_ref_props for all num_refs slots).
+                            for r in 0..num_ref_channels {
+                                let base = NUM_PROPERTIES + r * 4;
+                                if base + 3 >= total_props {
+                                    break;
+                                }
+                                let vals = match ref_channel_indices.get(r) {
+                                    Some(&ref_ch_idx) => {
+                                        let ref_ch = &image.channels[ref_ch_idx];
+                                        let v = ref_ch.get(x, y);
+                                        let ref_left = if x > 0 { ref_ch.get(x - 1, y) } else { 0 };
+                                        let ref_top = if y > 0 {
+                                            ref_ch.get(x, y - 1)
+                                        } else {
+                                            ref_left
+                                        };
+                                        let ref_topleft = if x > 0 && y > 0 {
+                                            ref_ch.get(x - 1, y - 1)
+                                        } else {
+                                            ref_left
+                                        };
+                                        let ref_predicted =
+                                            crate::vardct::dc_coding::clamped_gradient(
+                                                ref_top,
+                                                ref_left,
+                                                ref_topleft,
+                                            );
+                                        [
+                                            v.wrapping_abs(),
+                                            v,
+                                            v.wrapping_sub(ref_predicted).wrapping_abs(),
+                                            v.wrapping_sub(ref_predicted),
+                                        ]
+                                    }
+                                    None => [0, 0, 0, 0],
+                                };
+                                for (k, &rv) in vals.iter().enumerate() {
+                                    if active[base + k] {
+                                        collectors[base + k].push(rv);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Track the gradient at NON-sampled pixels too —
+                        // the gather does (prop 8 = W - prev_gradient
+                        // reads the gradient of the previous pixel in
+                        // scan order, sampled or not).
+                        prev_gradient = n.w.wrapping_add(n.n).wrapping_sub(n.nw);
+                        subsample_counter -= 1;
+                    }
+                }
+            }
+        }
+    };
+    if let Some(meta) = meta_image {
+        walk_image(meta, 0, &mut collectors);
+    }
+    for (gi, image) in images.iter().enumerate() {
+        walk_image(image, gi as u32 + per_group_id_offset, &mut collectors);
+    }
+    let mut sets = vec![Vec::new(); total_props];
+    let mut keep_raw = vec![false; total_props];
+    for &p in &params.properties {
+        if p >= total_props {
+            continue;
+        }
+        if params.lloyd_max_buckets && (p == 4 || p == 5 || p == 15) {
+            keep_raw[p] = true; // Lloyd reads raw values.
+            continue;
+        }
+        sets[p] = collectors[p]
+            .thresholds(params.max_property_values)
+            .unwrap_or_default();
+    }
+    GatherBucketizePlan {
+        threshold_sets: sets,
+        keep_raw,
+    }
+}
+
 /// Bucketize one raw property column against a threshold set — the same
 /// `binary_search` mapping `pre_quantize` / `bucket_for_value` use, so a
 /// gather-time-bucketized column is element-identical to what
@@ -1530,12 +1702,67 @@ pub(crate) fn bucketize_column(col: &PropColumn, n: usize, ts: &[i32]) -> alloc:
 /// Output-changing (probe-sample thresholds vs full-population) — reads
 /// per encode, corpus-gated before any default flip.
 #[cfg(feature = "std")]
-pub(crate) fn gather_bucketize_env() -> bool {
-    std::env::var("JXL_GATHER_BUCKETIZE").is_ok_and(|v| v == "1")
+pub(crate) fn gather_bucketize_env() -> Option<GatherBucketizeMode> {
+    match std::env::var("JXL_GATHER_BUCKETIZE").ok()?.trim() {
+        "1" | "probe" => Some(GatherBucketizeMode::ProbeThresholds),
+        "2" | "exact" => Some(GatherBucketizeMode::Exact),
+        "0" | "off" => Some(GatherBucketizeMode::Off),
+        _ => None,
+    }
 }
 #[cfg(not(feature = "std"))]
-pub(crate) fn gather_bucketize_env() -> bool {
-    false
+pub(crate) fn gather_bucketize_env() -> Option<GatherBucketizeMode> {
+    None
+}
+
+/// `JXL_WALK_DEBUG=1` diagnostic — per-(group, channel) sample count and
+/// prop-8 hash from the exact-bucketize pre-walk and the real gather;
+/// mismatch printing for the byte-identity work. Cheap when unset.
+#[cfg(feature = "std")]
+pub(crate) fn walk_debug_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("JXL_WALK_DEBUG").is_some())
+}
+#[cfg(feature = "std")]
+#[allow(clippy::type_complexity)]
+fn walk_debug_map() -> &'static std::sync::Mutex<std::collections::BTreeMap<(u32, u32), (u64, u64)>>
+{
+    use std::sync::{Mutex, OnceLock};
+    static M: OnceLock<Mutex<std::collections::BTreeMap<(u32, u32), (u64, u64)>>> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(std::collections::BTreeMap::new()))
+}
+#[cfg(feature = "std")]
+pub(crate) fn walk_debug_accum(group_id: u32, channel_idx: u32, prop8: i32) {
+    let mut m = walk_debug_map().lock().unwrap();
+    let e = m.entry((group_id, channel_idx)).or_insert((0, 0));
+    e.0 += 1;
+    e.1 = (e.1 ^ (prop8 as u32 as u64)).wrapping_mul(0x100000001b3);
+}
+#[cfg(feature = "std")]
+pub(crate) fn walk_debug_dump(tag: &str) {
+    if !walk_debug_enabled() {
+        return;
+    }
+    let mut m = walk_debug_map().lock().unwrap();
+    for ((g, c), (n, h)) in m.iter() {
+        eprintln!("[walk-{tag}] g={g} ch={c} n={n} h={h:x}");
+    }
+    m.clear();
+}
+
+/// Gather-time bucketization mode (see [`gather_bucketize_env`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GatherBucketizeMode {
+    /// Raw property gather + learn-time pre_quantize (historical path).
+    Off,
+    /// Thresholds from the auto probe's raw samples (experimental —
+    /// output-changing, threshold-sensitivity noise; see
+    /// benchmarks/jxl_probe_prune_2026-08-15.md).
+    ProbeThresholds,
+    /// Thresholds from an exact distinct-value pre-walk — BYTE-IDENTICAL
+    /// to Off, raw property columns never materialize in the accumulator.
+    Exact,
 }
 
 fn quantize_prop_column<T: PropScalar>(
@@ -2934,6 +3161,10 @@ fn gather_channel_samples(
 
                 // Update prev_gradient for next pixel
                 prev_gradient = props[9]; // gradient = W + N - NW
+                #[cfg(feature = "std")]
+                if walk_debug_enabled() {
+                    walk_debug_accum(group_id, channel_idx, props[8]);
+                }
 
                 // Stack scratch for predictor outputs. Filled below.
                 let mut local_tokens = [0u8; MAX_CAND_PRED];
@@ -4741,6 +4972,37 @@ fn build_tree_from_prequantized(
     mut pq: PreQuantizedProps,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Tree> {
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_PQ_HASH").is_some() {
+        for (p, bi) in pq.bucket_indices.iter().enumerate() {
+            if bi.is_empty() && pq.threshold_sets[p].is_empty() {
+                continue;
+            }
+            let mut h: u64 = 0xcbf29ce484222325;
+            for &b in bi {
+                h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+            }
+            let mut th: u64 = 0xcbf29ce484222325;
+            for &t in &pq.threshold_sets[p] {
+                h = (h ^ t as u32 as u64).wrapping_mul(0x100000001b3);
+                th = (th ^ t as u32 as u64).wrapping_mul(0x100000001b3);
+            }
+            eprintln!(
+                "[pq-hash] prop={p} n={} ts_len={} bh={h:x} th={th:x}",
+                bi.len(),
+                pq.threshold_sets[p].len()
+            );
+        }
+        let mut ch: u64 = 0xcbf29ce484222325;
+        for &c in &samples.sample_counts {
+            ch = (ch ^ c as u64).wrapping_mul(0x100000001b3);
+        }
+        eprintln!(
+            "[pq-hash] n_samples={} counts_h={ch:x} preds={}",
+            samples.num_samples,
+            samples.num_predictors()
+        );
+    }
     // Same acceptance threshold as the pre-seam header (libjxl
     // required_cost formula) — recomputed here so both entries share it.
     let required_cost = params.pixel_fraction * 0.9 + 0.1;

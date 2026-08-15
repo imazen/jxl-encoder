@@ -65,3 +65,26 @@ reads props[0]/props[1] AFTER pre_quantize, whose per-wave raw free
 LossyConfig::with_lf_frame(true). Fixed: `pre_quantize_retaining(&[0,1])`
 on that path; regression test
 tests/it/lf_frame_multipliers_regression.rs (panicked before fix).
+
+## EXACT gather-time bucketization (default at e>=8, same day)
+
+The probe-threshold noise above prompted the exact variant: thresholds
+derive from the ENTIRE input `quantize_prop_column` consumes — the
+per-property distinct-value set — collected by a pre-walk over the SAME
+sampled pixels (same WP state, same stride gate, same per-pixel
+prev_gradient tracking, zero-padded ref slots). Buckets, tree, bytes:
+IDENTICAL by construction; verified exact on all 4 mosaic cells + suite
+12/12 (hash-locks green after two walk-replication bugs were found by
+per-(group,channel) prop-hash bisection: the else-branch per-pixel
+gradient update, and the gather's zero-padded ref scratch).
+
+| cell (t=1) | bytes | peak_live | wall |
+|---|---|---|---|
+| photo e9 | identical | 965 -> 849 MB | 47.8 -> 48.9 s (+2%) |
+| screen e9 | identical | 978 -> 786 MB | 15.2 -> 16.5 s (+8%) |
+| photo e7 (env opt-in) | identical | 564 -> 556 MB | +1% |
+| screen e7 (env opt-in) | identical | ~flat | +5% |
+
+DEFAULT: Exact at effort >= 8 (raw-props arena was 570 of 965 MB at e9);
+e7 stays Off (its peak is elsewhere; the pre-walk costs 1-5% wall for
+~8 MB). JXL_GATHER_BUCKETIZE=off|probe|exact overrides.

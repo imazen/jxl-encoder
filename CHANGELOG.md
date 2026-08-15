@@ -12,6 +12,10 @@
 - Lossless dedup: adaptive partition refinement + waved predictor
   compaction — byte-identical, default-path peak_live 834→729 MB (e7) /
   1130→1094 MB (e9) at 4K (4486e5e1).
+- Lossless e8+ property columns now gather as u8 buckets (exact
+  distinct-value pre-walk; byte-identical, raw-props arena removed):
+  4K e9 peak_live photo 965→849 MB, screen 978→786 MB, wall +2-8%
+  (`JXL_GATHER_BUCKETIZE` overrides) (this round).
 - Lossless global tree learn now probe-prunes its predictor set BY
   DEFAULT at effort >= 7 (`JXL_GLOBAL_TREE_PREDICTORS=off|K|auto`
   overrides): a capped probe tree's leaf usage selects 7-9 of 14
