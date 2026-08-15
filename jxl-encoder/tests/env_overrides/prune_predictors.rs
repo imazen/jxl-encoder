@@ -53,8 +53,10 @@ fn prune_k2_still_roundtrips_pixel_exact() {
     let (w, h) = (512usize, 512usize);
     let pixels = prng_rgb(w, h);
     // Hardest prune the knob allows: Weighted + 1 static predictor.
+    // SAFETY: env_serial() guarantees exclusive env access in this binary.
     unsafe { std::env::set_var("JXL_TREE_PRUNE_PREDICTORS", "2") };
     let bytes = encode_sectioned(&pixels, w as u32, h as u32);
+    // SAFETY: env_serial() guarantees exclusive env access in this binary.
     unsafe { std::env::remove_var("JXL_TREE_PRUNE_PREDICTORS") };
     assert_eq!(
         decode_pixels(&bytes, w, h),
@@ -68,12 +70,16 @@ fn prune_env_matches_default_and_full_set_roundtrips() {
     let _guard = env_serial();
     let (w, h) = (512usize, 512usize);
     let pixels = prng_rgb(w, h);
+    // SAFETY: env_serial() guarantees exclusive env access in this binary.
     unsafe { std::env::remove_var("JXL_TREE_PRUNE_PREDICTORS") };
     let default_bytes = encode_sectioned(&pixels, w as u32, h as u32);
+    // SAFETY: env_serial() guarantees exclusive env access in this binary.
     unsafe { std::env::set_var("JXL_TREE_PRUNE_PREDICTORS", "8") };
     let explicit_k8 = encode_sectioned(&pixels, w as u32, h as u32);
+    // SAFETY: env_serial() guarantees exclusive env access in this binary.
     unsafe { std::env::set_var("JXL_TREE_PRUNE_PREDICTORS", "14") };
     let full_set = encode_sectioned(&pixels, w as u32, h as u32);
+    // SAFETY: env_serial() guarantees exclusive env access in this binary.
     unsafe { std::env::remove_var("JXL_TREE_PRUNE_PREDICTORS") };
     // The unset default IS K=8: explicit 8 must be byte-identical.
     assert_eq!(default_bytes, explicit_k8, "env K=8 == unset default");
