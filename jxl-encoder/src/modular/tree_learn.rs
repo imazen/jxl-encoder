@@ -1025,6 +1025,16 @@ impl TreeSamples {
         self.candidate_predictors.len()
     }
 
+    /// Gather-time bucketization: convert property `p`'s raw column to u8
+    /// buckets against `ts` (same mapping as [`bucketize_column`]) and
+    /// FREE the raw column. Used by the wave merge so the accumulator
+    /// never holds raw property data.
+    pub(crate) fn bucketize_and_strip_prop(&mut self, p: usize, ts: &[i32]) -> alloc::vec::Vec<u8> {
+        let out = bucketize_column(&self.props[p], self.num_samples, ts);
+        self.props[p] = PropColumn::default();
+        out
+    }
+
     /// Root-level coding cost of each candidate predictor over the
     /// gathered samples: Shannon cost of its (dedup-weighted) token
     /// histogram plus its total extra bits. This is the single-context
@@ -1414,6 +1424,120 @@ impl TreeSamples {
 /// closure and made width-generic over the column element; every
 /// comparison and threshold is computed on the i32 value, so an i16
 /// column produces byte-identical thresholds and buckets.
+/// Derive the per-property THRESHOLD SETS the main tree learn will use,
+/// from an already-gathered (probe) sample set's raw columns — the
+/// gather-time-bucketization analog of libjxl's `PreQuantizeProperties`
+/// over its `CollectPixelSamples` pre-pass (enc_ma.cc:821-1029). Uses
+/// the MAIN params (full `max_property_values`, Lloyd flags), not the
+/// capped probe-learn params. Properties outside `params.properties` or
+/// with empty probe columns get empty sets (constant/unused).
+pub(crate) fn thresholds_from_samples(
+    probe: &TreeSamples,
+    params: &TreeLearningParams,
+) -> GatherBucketizePlan {
+    let n = probe.num_samples;
+    let mut sets = vec![Vec::new(); probe.total_num_properties()];
+    let mut keep_raw = vec![false; probe.total_num_properties()];
+    for &prop_idx in &params.properties {
+        if prop_idx >= probe.props.len() {
+            continue;
+        }
+        let ts = match &probe.props[prop_idx] {
+            PropColumn::I16(v) if !v.is_empty() => {
+                quantize_prop_column(
+                    &v[..n],
+                    prop_idx,
+                    params.max_property_values,
+                    params.lloyd_max_buckets,
+                )
+                .0
+            }
+            PropColumn::I32(v) if !v.is_empty() => {
+                quantize_prop_column(
+                    &v[..n],
+                    prop_idx,
+                    params.max_property_values,
+                    params.lloyd_max_buckets,
+                )
+                .0
+            }
+            _ => Vec::new(),
+        };
+        // A threshold set that UNDERFILLS its bucket budget means the
+        // probe saw a discrete distribution (fewer distinct values than
+        // buckets) — the full population may hold distinct values the
+        // probe missed entirely, and quantile thresholds from the probe
+        // then cost real bytes (screen e9 measured +9.1 % with all
+        // columns bucketized vs +/-0 with discrete columns kept raw and
+        // quantized from the full population at learn time). Smooth
+        // (budget-filling) distributions bucketize safely.
+        keep_raw[prop_idx] = ts.len() + 1 < params.max_property_values;
+        sets[prop_idx] = ts;
+    }
+    GatherBucketizePlan {
+        threshold_sets: sets,
+        keep_raw,
+    }
+}
+
+/// Probe-derived plan for gather-time bucketization: per-property
+/// threshold sets plus which properties must stay RAW in the accumulator
+/// (discrete distributions the probe cannot faithfully quantize — they
+/// pre-quantize from the full population at learn time instead).
+pub(crate) struct GatherBucketizePlan {
+    pub(crate) threshold_sets: alloc::vec::Vec<alloc::vec::Vec<i32>>,
+    pub(crate) keep_raw: alloc::vec::Vec<bool>,
+}
+
+/// Bucketize one raw property column against a threshold set — the same
+/// `binary_search` mapping `pre_quantize` / `bucket_for_value` use, so a
+/// gather-time-bucketized column is element-identical to what
+/// `pre_quantize` would have produced FROM THE SAME THRESHOLDS.
+pub(crate) fn bucketize_column(col: &PropColumn, n: usize, ts: &[i32]) -> alloc::vec::Vec<u8> {
+    let mut out = vec![0u8; n];
+    if ts.is_empty() {
+        return out;
+    }
+    let num_thresholds = ts.len();
+    match col {
+        PropColumn::I16(v) => {
+            for (o, &x) in out.iter_mut().zip(v[..n].iter()) {
+                let b = match ts.binary_search(&(x as i32)) {
+                    Ok(pos) => pos,
+                    Err(pos) => pos,
+                };
+                *o = b.min(num_thresholds) as u8;
+            }
+        }
+        PropColumn::I32(v) => {
+            for (o, &x) in out.iter_mut().zip(v[..n].iter()) {
+                let b = match ts.binary_search(&x) {
+                    Ok(pos) => pos,
+                    Err(pos) => pos,
+                };
+                *o = b.min(num_thresholds) as u8;
+            }
+        }
+    }
+    out
+}
+
+/// `JXL_GATHER_BUCKETIZE=1` — gather-time property bucketization for the
+/// probe-pruned global path: property columns enter the ACCUMULATOR as
+/// u8 buckets (thresholds from the probe gather) instead of raw i16/i32,
+/// removing the largest remaining gather-phase mass (raw props arena =
+/// 570 of 965 MB at 4K e9, benchmarks/jxl_probe_prune_2026-08-15.md).
+/// Output-changing (probe-sample thresholds vs full-population) — reads
+/// per encode, corpus-gated before any default flip.
+#[cfg(feature = "std")]
+pub(crate) fn gather_bucketize_env() -> bool {
+    std::env::var("JXL_GATHER_BUCKETIZE").is_ok_and(|v| v == "1")
+}
+#[cfg(not(feature = "std"))]
+pub(crate) fn gather_bucketize_env() -> bool {
+    false
+}
+
 fn quantize_prop_column<T: PropScalar>(
     props: &[T],
     prop_idx: usize,
@@ -3072,12 +3196,12 @@ pub fn estimate_bits(counts: &[u32], total: u32) -> f64 {
 /// Pre-quantized property data for all properties across all samples.
 /// Computed once before tree building, eliminating per-node binary_search
 /// and threshold_set allocation.
-struct PreQuantizedProps {
+pub(crate) struct PreQuantizedProps {
     /// threshold_sets[prop_idx] = sorted unique thresholds for this property.
-    threshold_sets: Vec<Vec<i32>>,
+    pub(crate) threshold_sets: Vec<Vec<i32>>,
     /// bucket_indices[prop_idx][sample_idx] = bucket index (0..num_thresholds).
     /// Bucket k means: threshold_set[k-1] < value <= threshold_set[k].
-    bucket_indices: Vec<Vec<u8>>,
+    pub(crate) bucket_indices: Vec<Vec<u8>>,
 }
 
 impl PreQuantizedProps {
@@ -4561,7 +4685,75 @@ pub(crate) fn compute_best_tree_with_budget(
     crate::budget::MemoryBudget::reserve_permanent_opt(budget, total_bytes)?;
 
     // Pre-quantize all properties globally (replaces per-node binary_search)
-    let mut pq = crate::profile_time!("tree/pre_quantize", { samples.pre_quantize(params) });
+    let pq = crate::profile_time!("tree/pre_quantize", { samples.pre_quantize(params) });
+    build_tree_from_prequantized(samples, params, pq, budget)
+}
+
+/// [`compute_best_tree`] for a caller that ALREADY holds bucketized
+/// property columns + threshold sets (gather-time bucketization,
+/// `JXL_GATHER_BUCKETIZE` — thresholds derived from the probe gather,
+/// buckets built at wave-merge; the raw property columns never
+/// materialize in the accumulator). Skips `pre_quantize` entirely.
+pub(crate) fn compute_best_tree_prequantized(
+    samples: &mut TreeSamples,
+    params: &TreeLearningParams,
+    mut pq: PreQuantizedProps,
+) -> Tree {
+    // Keep-raw columns (discrete distributions the probe could not
+    // faithfully quantize) arrive raw: pre-quantize them here from the
+    // FULL population — exactly what pre_quantize would do — and free
+    // the raw column, wave-style.
+    for &prop_idx in &params.properties {
+        if prop_idx >= samples.props.len()
+            || !pq.bucket_indices[prop_idx].is_empty()
+            || samples.props[prop_idx].is_empty()
+        {
+            continue;
+        }
+        let n = samples.num_samples;
+        let (ts, bi) = match &samples.props[prop_idx] {
+            PropColumn::I16(v) => quantize_prop_column(
+                &v[..n],
+                prop_idx,
+                params.max_property_values,
+                params.lloyd_max_buckets,
+            ),
+            PropColumn::I32(v) => quantize_prop_column(
+                &v[..n],
+                prop_idx,
+                params.max_property_values,
+                params.lloyd_max_buckets,
+            ),
+        };
+        pq.threshold_sets[prop_idx] = ts;
+        pq.bucket_indices[prop_idx] = bi;
+        samples.props[prop_idx] = PropColumn::default();
+    }
+    build_tree_from_prequantized(samples, params, pq, None)
+        .expect("budget-less compute_best_tree_prequantized must not return AllocationLimit")
+}
+
+/// Shared tail of [`compute_best_tree_with_budget`]: everything after
+/// property pre-quantization (free raw props, dedup, split recursion).
+fn build_tree_from_prequantized(
+    samples: &mut TreeSamples,
+    params: &TreeLearningParams,
+    mut pq: PreQuantizedProps,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Tree> {
+    // Same acceptance threshold as the pre-seam header (libjxl
+    // required_cost formula) — recomputed here so both entries share it.
+    let required_cost = params.pixel_fraction * 0.9 + 0.1;
+    let threshold = params.split_threshold * required_cost;
+    if samples.num_samples == 0 {
+        return Ok(vec![PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Gradient,
+            context_id: 0,
+            multiplier: 1,
+            ..Default::default()
+        }]);
+    }
 
     // When `params.gather_dedup` was set, the gather loop already
     // populated `sample_counts`. Either: counts.len() == num_samples

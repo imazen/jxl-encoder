@@ -706,6 +706,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             None
         }
     });
+    let mut bucketize_plan: Option<alloc::sync::Arc<super::tree_learn::GatherBucketizePlan>> = None;
     let pruned_predictors: Option<alloc::vec::Vec<super::predictor::Predictor>> = match selection {
         Some(k)
             if k != super::tree_learn::GLOBAL_TREE_PREDICTORS_OFF
@@ -760,6 +761,17 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 probe_params.max_property_values = probe_params
                     .max_property_values
                     .min(if profile.effort >= 8 { 64 } else { 32 });
+                // Gather-time bucketization thresholds (env-gated):
+                // derived from the probe's RAW columns with the MAIN
+                // params (full max_property_values) BEFORE the probe
+                // learn consumes them.
+                if super::tree_learn::gather_bucketize_env() {
+                    let tparams = TreeLearningParams::from_profile(profile)
+                        .with_ref_properties(num_refs, profile.effort);
+                    bucketize_plan = Some(alloc::sync::Arc::new(
+                        super::tree_learn::thresholds_from_samples(&probe, &tparams),
+                    ));
+                }
                 let probe_tree = compute_best_tree(&mut probe, &probe_params);
                 Some(super::tree_learn::predictors_used_by_tree(&probe_tree))
             } else {
@@ -774,12 +786,22 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         _ => None,
     };
 
-    let gather_for_seed = |seed: u64, seed_stride: usize, randomize: bool| -> TreeSamples {
+    let gather_for_seed = |seed: u64,
+                           seed_stride: usize,
+                           randomize: bool|
+     -> (TreeSamples, Option<super::tree_learn::PreQuantizedProps>) {
         let start_offset = if seed_stride > 1 {
             (seed as usize) % seed_stride
         } else {
             0
         };
+        // Gather-time bucketization (JXL_GATHER_BUCKETIZE + auto probe):
+        // the ACCUMULATOR's property columns never materialize — locals
+        // gather raw (transient, wave-bounded), the merge converts each
+        // learned column to u8 buckets against the probe-derived
+        // thresholds. Removes the raw-props arena (570 of 965 MB at 4K
+        // e9) from the accumulator peak.
+        let bucketize = bucketize_plan.clone();
         // Chunk 4: predictor-order shuffle — seed 0 yields the canonical
         // `CANDIDATE_PREDICTORS`, higher seeds rotate through 3 alternate
         // permutations. All TreeSamples merged via `append_from` MUST use
@@ -800,41 +822,95 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             }
             m
         };
-        samples.set_active_props(active_mask.clone());
+        if let Some(plan) = bucketize.as_deref() {
+            // Bucketized columns never materialize raw in the accumulator;
+            // keep-raw (discrete) columns stay active and pre-quantize at
+            // learn time from the full population.
+            let mut m = vec![false; samples.total_num_properties()].into_boxed_slice();
+            for &p in &active_prop_list {
+                if p < m.len() && plan.keep_raw.get(p).copied().unwrap_or(false) {
+                    m[p] = true;
+                }
+            }
+            samples.set_active_props(m);
+        } else {
+            samples.set_active_props(active_mask.clone());
+        }
+        let mut acc_buckets: alloc::vec::Vec<alloc::vec::Vec<u8>> = if bucketize.is_some() {
+            vec![Vec::new(); samples.total_num_properties()]
+        } else {
+            Vec::new()
+        };
+        // Convert a raw-gathered local's learned columns to buckets,
+        // strip its raw columns, and append everything else.
+        let convert_strip_append = |samples: &mut TreeSamples,
+                                    acc_buckets: &mut alloc::vec::Vec<alloc::vec::Vec<u8>>,
+                                    plan: &super::tree_learn::GatherBucketizePlan,
+                                    mut local: TreeSamples| {
+            for &p in &active_prop_list {
+                if plan.keep_raw.get(p).copied().unwrap_or(false) {
+                    // Raw column rides along in append_from below.
+                    continue;
+                }
+                let block = local.bucketize_and_strip_prop(p, &plan.threshold_sets[p]);
+                acc_buckets[p].extend_from_slice(&block);
+            }
+            samples.append_from(local);
+        };
         // Self-repair re-gather (task #14): draw de-aliased randomized
         // samples instead of the fixed stride. `false` on the normal path
         // ⇒ byte-identical.
         samples.randomize_gather = randomize;
-        // Meta channels first.
-        if let Some(meta) = meta_image {
-            if enable_gather_dedup && seed == 0 {
-                // Gather-time dedup only honors the canonical seed-0 path.
-                // Higher seeds skip dedup — the post-sort arbiter still
-                // collapses bucket-equivalent rows downstream.
-                let _ = gather_samples_strided_with_dedup_backend(
-                    &mut samples,
-                    meta,
-                    0,
-                    0,
-                    seed_stride,
-                    &wp_params,
-                    None,
-                    true,
-                    enable_phase3,
-                    &dedup_properties,
-                );
-            } else if start_offset == 0 {
-                gather_samples_strided(&mut samples, meta, 0, 0, seed_stride, &wp_params);
-            } else {
-                gather_samples_strided_with_offset(
-                    &mut samples,
-                    meta,
-                    0,
-                    0,
-                    seed_stride,
-                    start_offset,
-                    &wp_params,
-                );
+        // Meta channels first. Variant selection is unchanged; bucketized
+        // mode targets a transient raw local that converts+appends, the
+        // default targets the accumulator directly (byte-identical path).
+        {
+            let mut meta_local: Option<TreeSamples> = bucketize.as_ref().map(|_| {
+                let mut m = match &pruned_predictors {
+                    Some(list) => TreeSamples::new_with_owned_predictors(list.clone(), num_refs),
+                    None => TreeSamples::new_with_predictor_order_for_seed(num_refs, seed),
+                };
+                m.set_active_props(active_mask.clone());
+                m.randomize_gather = randomize;
+                m
+            });
+            let target: &mut TreeSamples = match meta_local.as_mut() {
+                Some(m) => m,
+                None => &mut samples,
+            };
+            if let Some(meta) = meta_image {
+                if enable_gather_dedup && seed == 0 {
+                    // Gather-time dedup only honors the canonical seed-0 path.
+                    // Higher seeds skip dedup — the post-sort arbiter still
+                    // collapses bucket-equivalent rows downstream.
+                    let _ = gather_samples_strided_with_dedup_backend(
+                        target,
+                        meta,
+                        0,
+                        0,
+                        seed_stride,
+                        &wp_params,
+                        None,
+                        true,
+                        enable_phase3,
+                        &dedup_properties,
+                    );
+                } else if start_offset == 0 {
+                    gather_samples_strided(target, meta, 0, 0, seed_stride, &wp_params);
+                } else {
+                    gather_samples_strided_with_offset(
+                        target,
+                        meta,
+                        0,
+                        0,
+                        seed_stride,
+                        start_offset,
+                        &wp_params,
+                    );
+                }
+            }
+            if let (Some(m), Some(plan)) = (meta_local, bucketize.as_deref()) {
+                convert_strip_append(&mut samples, &mut acc_buckets, plan, m);
             }
         }
         // Per-group gather — embarrassingly parallel across groups, but run in
@@ -870,6 +946,15 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             .sum::<usize>()
             + samples.num_samples;
         samples.reserve_exact_total(gather_upper_bound);
+        if let Some(plan) = bucketize.as_deref() {
+            // Bucket columns share the accumulator's no-realloc guarantee.
+            for &p in &active_prop_list {
+                if !plan.keep_raw.get(p).copied().unwrap_or(false) {
+                    let cur = acc_buckets[p].len();
+                    acc_buckets[p].reserve_exact(gather_upper_bound.saturating_sub(cur));
+                }
+            }
+        }
 
         let wave = gather_wave_groups().max(1);
         let mut wave_start = 0usize;
@@ -973,11 +1058,28 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 if let Some(t) = ltree {
                     hybrid_slot.borrow_mut()[wave_start + i] = Some(t);
                 }
-                samples.append_from(local);
+                match bucketize.as_deref() {
+                    Some(plan) => convert_strip_append(&mut samples, &mut acc_buckets, plan, local),
+                    None => samples.append_from(local),
+                }
             }
             wave_start += wave_len;
         }
-        samples
+        let pre_pq = bucketize.map(|plan| {
+            // Keep-raw columns get EMPTY sets here — the learn-time
+            // partial pre-quantize fills them from the full population.
+            let mut sets = plan.threshold_sets.clone();
+            for (p, ts) in sets.iter_mut().enumerate() {
+                if plan.keep_raw.get(p).copied().unwrap_or(false) {
+                    ts.clear();
+                }
+            }
+            super::tree_learn::PreQuantizedProps {
+                threshold_sets: sets,
+                bucket_indices: acc_buckets,
+            }
+        });
+        (samples, pre_pq)
     };
 
     // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance), chunk 3
@@ -1211,12 +1313,17 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         } else if let Some(ref riged) = riged_override {
             riged.clone()
         } else {
-            let mut samples = crate::profile_time!("modular/gather_samples", {
+            let (mut samples, pre_pq) = crate::profile_time!("modular/gather_samples", {
                 gather_for_seed(seed, seed_stride, false)
             });
             let params = build_params(&samples);
             crate::profile_time!("modular/compute_best_tree", {
-                compute_best_tree(&mut samples, &params)
+                match pre_pq {
+                    Some(pq) => {
+                        super::tree_learn::compute_best_tree_prequantized(&mut samples, &params, pq)
+                    }
+                    None => compute_best_tree(&mut samples, &params),
+                }
             })
         };
 
@@ -1298,9 +1405,16 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 cached_winner_code = Some(code_a);
                 (all_tokens, nb_meta_tokens, group_ranges, tree)
             } else {
-                let mut samples_r = gather_for_seed(seed, seed_stride, true);
+                let (mut samples_r, pre_pq_r) = gather_for_seed(seed, seed_stride, true);
                 let params_r = build_params(&samples_r);
-                let tree_r = compute_best_tree(&mut samples_r, &params_r);
+                let tree_r = match pre_pq_r {
+                    Some(pq) => super::tree_learn::compute_best_tree_prequantized(
+                        &mut samples_r,
+                        &params_r,
+                        pq,
+                    ),
+                    None => compute_best_tree(&mut samples_r, &params_r),
+                };
                 let (tokens_r, meta_r, ranges_r) =
                     crate::profile_time!("modular/collect_residuals_global", {
                         collect_for_tree(&tree_r)
