@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- Sectioned lossless mode: per-group predictor pruning default-on at K=8
+  — wall −25/−26% (4K e7/e9 t=1), bytes ±0.04%; `JXL_TREE_PRUNE_PREDICTORS`
+  overrides (d2444010). WP-cache fusion halves per-group WP walks in
+  sectioned/hybrid, byte-identical (ecf83e55). Lossy XYB cbrt Newton
+  vectorized in f64x4, byte-identical, xyb phase −40% (a5d1dfe3).
+
 ### QUEUED BREAKING CHANGES
 <!-- Batched for the next major (0.4.0). Do NOT ship piecemeal. -->
 - **0.4.0 will narrow the public API surface.** `cargo semver-checks` vs
