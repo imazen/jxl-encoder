@@ -808,7 +808,10 @@ pub struct TreeSamples {
     pub num_samples: usize,
     /// Candidate predictor list. Full 14 predictors for normal mode,
     /// just `[Zero]` for squeeze mode (matching libjxl enc_modular.cc:629-633).
-    candidate_predictors: &'static [Predictor],
+    /// `Cow::Borrowed` for every static list (the default, the seeded
+    /// orders, squeeze); `Cow::Owned` only after per-group predictor
+    /// pruning ([`Self::prune_to_top_predictors`]) rewrites the set.
+    candidate_predictors: alloc::borrow::Cow<'static, [Predictor]>,
     /// Residual token per predictor: residual_tokens[predictor_idx][sample_idx].
     /// Tokens fit in u8 (max ~55 for HybridUint {4,2,0} on 8-bit data).
     residual_tokens: Vec<Vec<u8>>,
@@ -979,7 +982,7 @@ impl TreeSamples {
         let total_props = NUM_PROPERTIES + 4 * num_ref_channels;
         Self {
             num_samples: 0,
-            candidate_predictors: predictors,
+            candidate_predictors: alloc::borrow::Cow::Borrowed(predictors),
             residual_tokens: vec![Vec::new(); num_predictors],
             extra_bits: vec![Vec::new(); num_predictors],
             props: vec![PropColumn::default(); total_props],
@@ -998,6 +1001,100 @@ impl TreeSamples {
     /// Returns the number of candidate predictors.
     pub fn num_predictors(&self) -> usize {
         self.candidate_predictors.len()
+    }
+
+    /// Root-level coding cost of each candidate predictor over the
+    /// gathered samples: Shannon cost of its (dedup-weighted) token
+    /// histogram plus its total extra bits. This is the single-context
+    /// cost the tree learner starts from — the same `estimate_bits_u32`
+    /// the split search uses, evaluated once per predictor at the root.
+    pub(crate) fn predictor_root_costs(&self) -> alloc::vec::Vec<f64> {
+        let weighted = !self.sample_counts.is_empty();
+        let n = self.num_samples;
+        let mut costs = alloc::vec::Vec::with_capacity(self.num_predictors());
+        for p in 0..self.num_predictors() {
+            let tokens = &self.residual_tokens[p][..n];
+            let ebits = &self.extra_bits[p][..n];
+            let mut hist = [0u32; 256];
+            let mut total: u64 = 0;
+            let mut ebits_sum: u64 = 0;
+            if weighted {
+                let counts = &self.sample_counts[..n];
+                for i in 0..n {
+                    let c = counts[i];
+                    hist[tokens[i] as usize] += c;
+                    ebits_sum += (ebits[i] as u64) * (c as u64);
+                    total += c as u64;
+                }
+            } else {
+                for i in 0..n {
+                    hist[tokens[i] as usize] += 1;
+                    ebits_sum += ebits[i] as u64;
+                }
+                total = n as u64;
+            }
+            debug_assert!(total <= u32::MAX as u64, "weighted total overflows u32");
+            let hist_bits = jxl_simd::estimate_bits_u32(&hist, total as u32);
+            costs.push(hist_bits + ebits_sum as f64);
+        }
+        costs
+    }
+
+    /// Prune the candidate predictor set to the `keep` cheapest by
+    /// [`Self::predictor_root_costs`], always retaining
+    /// [`Predictor::Weighted`] (its value is context-dependent — the WP
+    /// max-error property splits on it — so root cost under-ranks it).
+    /// Drops the pruned predictors' token/extra-bit columns and rewrites
+    /// the candidate list (relative order preserved). No-op when
+    /// `keep >= num_predictors()` or `keep == 0`.
+    ///
+    /// Output-changing: the learned tree can only choose among surviving
+    /// predictors. Callers must be on a path whose bytes are not
+    /// hash-locked (per-group sectioned / hybrid learns).
+    pub(crate) fn prune_to_top_predictors(&mut self, keep: usize) {
+        let n = self.num_predictors();
+        if keep == 0 || keep >= n {
+            return;
+        }
+        let costs = self.predictor_root_costs();
+        let mut order: alloc::vec::Vec<usize> = (0..n).collect();
+        order.sort_by(|&a, &b| costs[a].total_cmp(&costs[b]));
+        let mut keep_mask = alloc::vec![false; n];
+        let mut kept = 0usize;
+        if let Some(wi) = self
+            .candidate_predictors
+            .iter()
+            .position(|&p| p == Predictor::Weighted)
+        {
+            keep_mask[wi] = true;
+            kept = 1;
+        }
+        for &i in &order {
+            if kept >= keep {
+                break;
+            }
+            if !keep_mask[i] {
+                keep_mask[i] = true;
+                kept += 1;
+            }
+        }
+        let new_list: alloc::vec::Vec<Predictor> = self
+            .candidate_predictors
+            .iter()
+            .zip(keep_mask.iter())
+            .filter_map(|(&p, &k)| k.then_some(p))
+            .collect();
+        let take_kept = |cols: &mut alloc::vec::Vec<alloc::vec::Vec<u8>>| {
+            let old = core::mem::take(cols);
+            *cols = old
+                .into_iter()
+                .zip(keep_mask.iter())
+                .filter_map(|(c, &k)| k.then_some(c))
+                .collect();
+        };
+        take_kept(&mut self.residual_tokens);
+        take_kept(&mut self.extra_bits);
+        self.candidate_predictors = alloc::borrow::Cow::Owned(new_list);
     }
 
     /// Total gathered weight across all samples. Equals `num_samples`
@@ -2615,7 +2712,7 @@ fn gather_channel_samples(
     // identical-order alias), the per-pixel predictor loop uses the
     // straight-line [`Predictor::predict_all_canonical`] instead of 14
     // match dispatches. Checked once per channel, not per pixel.
-    let canonical_preds = samples.candidate_predictors == CANDIDATE_PREDICTORS;
+    let canonical_preds = samples.candidate_predictors.as_ref() == CANDIDATE_PREDICTORS;
 
     // Issue #41 chunk B1: row staging on the default (no-dedup) path —
     // see [`GatherRowStaging`]. ~0.3 MB scratch at width 4096.
@@ -4748,20 +4845,20 @@ pub(crate) fn compute_best_tree_with_budget(
 
     while let Some(mut candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
 
         let count = candidate.end - candidate.start;
         if count < 2 {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
 
         // Early termination gate: if base_bits is already below threshold,
         // no split can save enough bits. Matches libjxl enc_ma.cc:304.
         if candidate.base_bits <= threshold {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
 
@@ -4909,7 +5006,7 @@ pub(crate) fn compute_best_tree_with_budget(
                 });
             }
             _ => {
-                finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             }
         }
     }
@@ -5046,16 +5143,16 @@ fn build_subtree_sequential(
 
     while let Some(candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes_budget {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
         let count = candidate.end - candidate.start;
         if count < 2 {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
         if candidate.base_bits <= threshold {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
 
@@ -5148,7 +5245,7 @@ fn build_subtree_sequential(
                 });
             }
             _ => {
-                finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             }
         }
     }
@@ -5240,7 +5337,7 @@ fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSample
 
     let right = TreeSamples {
         num_samples: right_n,
-        candidate_predictors: samples.candidate_predictors,
+        candidate_predictors: samples.candidate_predictors.clone(),
         residual_tokens: right_residual_tokens,
         extra_bits: right_extra_bits,
         props: right_props,
@@ -5299,7 +5396,7 @@ fn split_owned_from_borrowed(
     // Move the parallel-array data out of the parent; non-array fields stay.
     let taken_samples = TreeSamples {
         num_samples: n,
-        candidate_predictors: samples.candidate_predictors,
+        candidate_predictors: samples.candidate_predictors.clone(),
         residual_tokens: core::mem::take(&mut samples.residual_tokens),
         extra_bits: core::mem::take(&mut samples.extra_bits),
         props: core::mem::take(&mut samples.props),
@@ -5376,7 +5473,11 @@ fn build_subtree_recursive_parallel(
             tensor: None,
         };
         tree.push(PropertyDecisionNode::default());
-        finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
+        finalize_leaf(
+            &mut tree,
+            &leaf_candidate,
+            &samples.candidate_predictors[..],
+        );
         return tree;
     }
 
@@ -5425,7 +5526,11 @@ fn build_subtree_recursive_parallel(
                 tensor: None,
             };
             tree.push(PropertyDecisionNode::default());
-            finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
+            finalize_leaf(
+                &mut tree,
+                &leaf_candidate,
+                &samples.candidate_predictors[..],
+            );
             return tree;
         }
     };
@@ -5616,7 +5721,7 @@ struct BorrowedSamples<'a> {
     /// duration of tree building).
     threshold_sets: &'a [alloc::vec::Vec<i32>],
     /// Candidate predictor list; mirrors `TreeSamples::candidate_predictors`.
-    candidate_predictors: &'static [Predictor],
+    candidate_predictors: &'a [Predictor],
     /// Logical sample count (== slice length for non-empty parallel arrays).
     len: usize,
 }
@@ -5627,7 +5732,6 @@ impl<'a> BorrowedSamples<'a> {
     /// `TreeSamples + PreQuantizedProps` pair.
     fn from_owned(samples: &'a mut TreeSamples, pq: &'a mut PreQuantizedProps) -> Self {
         let len = samples.num_samples;
-        let candidate_predictors = samples.candidate_predictors;
 
         // The view needs `&mut [i32]` property slices; widen any narrow
         // columns first (no-op on the default path, where raw columns are
@@ -5684,6 +5788,9 @@ impl<'a> BorrowedSamples<'a> {
             })
             .collect();
         let sample_counts = &mut samples.sample_counts[..len];
+        // Disjoint-field immutable reborrow; placed after the last
+        // whole-struct `&mut` use (`ensure_props_i32`).
+        let candidate_predictors: &'a [Predictor] = &samples.candidate_predictors;
 
         Self {
             residual_tokens,
@@ -6649,16 +6756,16 @@ fn build_subtree_sequential_borrowed(
 
     while let Some(mut candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes_budget {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
         let count = candidate.end - candidate.start;
         if count < 2 {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
         if candidate.base_bits <= threshold {
-            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             continue;
         }
 
@@ -6786,7 +6893,7 @@ fn build_subtree_sequential_borrowed(
                 });
             }
             _ => {
-                finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
             }
         }
     }
@@ -6843,7 +6950,11 @@ fn build_subtree_recursive_parallel_borrowed(
             tensor: None,
         };
         tree.push(PropertyDecisionNode::default());
-        finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
+        finalize_leaf(
+            &mut tree,
+            &leaf_candidate,
+            &samples.candidate_predictors[..],
+        );
         return tree;
     }
 
@@ -6899,7 +7010,11 @@ fn build_subtree_recursive_parallel_borrowed(
                 tensor: None,
             };
             tree.push(PropertyDecisionNode::default());
-            finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
+            finalize_leaf(
+                &mut tree,
+                &leaf_candidate,
+                &samples.candidate_predictors[..],
+            );
             return tree;
         }
     };
@@ -9454,6 +9569,26 @@ impl WpCache {
         m.clear();
         (p, m)
     }
+}
+
+/// `JXL_TREE_PRUNE_PREDICTORS=K` — per-group predictor pruning strength
+/// for the sectioned / hybrid per-group tree learns (#96 next-gen item):
+/// each group's learn keeps only the K root-cheapest candidate predictors
+/// (Weighted always retained). Unset or K >= 14 ⇒ off (byte-identical
+/// default). Runtime behavior override per the lossy-low hygiene rule.
+#[cfg(feature = "std")]
+pub(crate) fn tree_prune_predictors_env() -> Option<usize> {
+    // Deliberately uncached (unlike the OnceLock hooks): read once per
+    // per-group learn (~hundreds per image), and the env_overrides test
+    // binary relies on set-then-encode working within one process.
+    std::env::var("JXL_TREE_PRUNE_PREDICTORS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&k| k >= 1)
+}
+#[cfg(not(feature = "std"))]
+pub(crate) fn tree_prune_predictors_env() -> Option<usize> {
+    None
 }
 
 /// How a WP-walk consumer interacts with a [`WpCache`].
@@ -12784,7 +12919,7 @@ mod tests {
         while let Some(candidate) = stack.pop() {
             let count = candidate.end - candidate.start;
             if tree.len() + 2 > params.max_nodes || count < 2 || candidate.base_bits <= threshold {
-                finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
                 continue;
             }
             let mut ws = SplitWorkspace::new(count, histogram_size, max_buckets);
@@ -12864,7 +12999,7 @@ mod tests {
                     });
                 }
                 _ => {
-                    finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
+                    finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
                 }
             }
         }

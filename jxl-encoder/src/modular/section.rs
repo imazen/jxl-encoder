@@ -565,7 +565,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         derive_seeded_properties_truncation, derive_seeded_sample_fraction, derive_seeded_stride,
         estimate_token_cost, gather_samples_strided, gather_samples_strided_with_dedup_backend,
         gather_samples_strided_with_offset, max_ref_channels, multi_seed_early_out_after_probe,
-        stride_for_seeded_sample_fraction,
+        stride_for_seeded_sample_fraction, tree_prune_predictors_env,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -843,6 +843,12 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                             params.max_property_values = params.max_property_values.min(32);
                         }
                         let mut dup = local.clone();
+                        // #96 next-gen: per-group predictor pruning of the
+                        // learn CLONE only (opt-in env; the global
+                        // accumulator keeps the full candidate set).
+                        if let Some(k) = tree_prune_predictors_env() {
+                            dup.prune_to_top_predictors(k);
+                        }
                         Some(compute_best_tree(&mut dup, &params))
                     } else {
                         None
@@ -1616,6 +1622,13 @@ pub(crate) fn write_local_trees_lf_global(
 /// RCT is pointwise per pixel, so per-group application is equivalent).
 #[allow(private_interfaces)]
 #[allow(clippy::too_many_arguments)]
+/// Default per-group predictor-pruning strength for the sectioned
+/// local-tree writer: keep the 8 root-cheapest candidate predictors
+/// (Weighted always retained) out of 14. See the call site below for the
+/// measured trade; hybrid per-group learns keep the full set by default
+/// (RD-max mode) and honor the same env override.
+pub(crate) const SECTIONED_PRUNE_PREDICTORS_K: usize = 8;
+
 pub fn write_group_modular_section_local_tree(
     group_image: &ModularImage,
     stream_id: u32,
@@ -1678,6 +1691,16 @@ pub fn write_group_modular_section_local_tree(
         .with_ref_properties(num_refs, profile.effort)
         .with_total_pixels(total_pixels)
         .with_pixel_fraction(pixel_fraction);
+    // #96 next-gen: per-group predictor pruning — DEFAULT-ON for the
+    // sectioned writer at K = 8. Measured (4K, t=1, photo mosaic,
+    // benchmarks/jxl_pred_prune_2026-08-14.md): bytes -0.03% (e7) /
+    // +0.04% (e9) — noise-level — for wall -25% / -26%; K=6 saves -34%
+    // but costs +0.06% at e9, kept as an env choice. The sectioned mode
+    // is the memory/production mode and its bytes are not hash-locked;
+    // JXL_TREE_PRUNE_PREDICTORS=K overrides (>= 14 disables).
+    let prune_k =
+        super::tree_learn::tree_prune_predictors_env().unwrap_or(SECTIONED_PRUNE_PREDICTORS_K);
+    samples.prune_to_top_predictors(prune_k);
     let tree = compute_best_tree(&mut samples, &params);
     drop(samples);
 
