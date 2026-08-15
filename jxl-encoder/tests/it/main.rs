@@ -57,6 +57,7 @@ mod jbrd_roundtrip_conformance;
 mod jpeg_public_api;
 mod jpeg_reencoding;
 mod jpeg_transcode_roundtrip;
+mod lf_frame_multipliers_regression;
 mod lf_quality;
 mod llf_invariants;
 mod lloyd_max_buckets_roundtrip;

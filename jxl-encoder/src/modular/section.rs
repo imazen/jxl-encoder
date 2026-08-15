@@ -673,6 +673,107 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             alloc::vec![None; if hybrid_learn_enabled { images.len() } else { 0 }],
         );
 
+    // Probe-pruned global gather (JXL_GLOBAL_TREE_PREDICTORS, alg-parity
+    // item — libjxl's default lossless learns its tree over exactly
+    // {Weighted, Gradient}; see `global_tree_predictors_env`). Every
+    // downstream phase shrinks with the predictor count — gather
+    // tokenization, the token/ebit columns (2 B/sample/predictor, the
+    // largest accumulator family), the dedup key width, and the split
+    // search's per-bucket histogram sweeps.
+    //
+    // `auto` selects by PROBE TREE: learn a small capped tree from a
+    // ~1/16 sample (every 4th group, 4x stride) with all 14 candidates,
+    // then keep the predictors its leaves actually use. Root-cost ranking
+    // is REFUTED as the selector (2026-08-15,
+    // benchmarks/jxl_probe_prune_2026-08-15.md): predictor value is
+    // leaf-conditional — screen trees put 64/890 leaves on Zero, whose
+    // root cost is 15.9x worse than Gradient's, and fixed K=4 costs
+    // screens +3.4 % bytes. The probe tree exercises the real contextual
+    // machinery, so its leaf histogram is the honest selector. Numeric K
+    // stays as the blunt A/B dial (root-cost top-K). Gated to the
+    // canonical single-seed path (multi-seed e10/e11 keeps all 14 — its
+    // seeds permute the canonical list). Env unset => full 14,
+    // byte-identical.
+    // DEFAULT: `auto` at effort >= 7 (corpus-validated 2026-08-15 — 18
+    // images / 5 classes: total −0.005%, mean −0.033%, worst +0.16%, for
+    // wall −6..−29% and peak_live −130..−165 MB at 4K; e5/e6 measured
+    // +0.07..0.09% bytes for ~zero win, so they stay full-14). Env
+    // overrides both ways (`off`/`14` disables, `auto`/K forces).
+    let selection = super::tree_learn::global_tree_predictors_env().or({
+        if profile.effort >= 7 {
+            Some(super::tree_learn::GLOBAL_TREE_PREDICTORS_AUTO)
+        } else {
+            None
+        }
+    });
+    let pruned_predictors: Option<alloc::vec::Vec<super::predictor::Predictor>> = match selection {
+        Some(k)
+            if k != super::tree_learn::GLOBAL_TREE_PREDICTORS_OFF
+                && profile.tree_learn_seeds.max(1) == 1 =>
+        {
+            if k == super::tree_learn::GLOBAL_TREE_PREDICTORS_AUTO {
+                // e8+ trees are deep (max_property_values 128-256):
+                // resolve the probe tree denser there or its leaf set
+                // under-represents the tail predictors (screen e9
+                // measured +0.6 % at the e7 probe density).
+                let probe_group_stride: usize = if profile.effort >= 8 { 2 } else { 4 };
+                const PROBE_PIXEL_STRIDE_MULT: usize = 4;
+                let mut probe = TreeSamples::new_with_ref_channels(num_refs);
+                {
+                    let mut m = vec![false; probe.total_num_properties()].into_boxed_slice();
+                    for &pi in &active_prop_list {
+                        if pi < m.len() {
+                            m[pi] = true;
+                        }
+                    }
+                    probe.set_active_props(m);
+                }
+                let probe_stride = stride.saturating_mul(PROBE_PIXEL_STRIDE_MULT);
+                let mut gi = 0usize;
+                while gi < images.len() {
+                    gather_samples_strided(
+                        &mut probe,
+                        &images[gi],
+                        gi as u32 + per_group_id_offset,
+                        0,
+                        probe_stride,
+                        &wp_params,
+                    );
+                    gi += probe_group_stride;
+                }
+                let probe_pixels: usize = images
+                    .iter()
+                    .step_by(probe_group_stride)
+                    .flat_map(|img| img.channels.iter())
+                    .map(|c| c.width() * c.height())
+                    .sum();
+                let mut probe_params = TreeLearningParams::from_profile(profile)
+                    .with_ref_properties(num_refs, profile.effort)
+                    .with_total_pixels(probe_pixels.max(1))
+                    .with_pixel_fraction(if probe_pixels > 0 {
+                        probe.total_gathered_weight() as f64 / probe_pixels as f64
+                    } else {
+                        1.0
+                    });
+                // Capped like the hybrid per-group learns: the probe
+                // tree needs coarse structure, not e9 depth.
+                probe_params.max_property_values = probe_params
+                    .max_property_values
+                    .min(if profile.effort >= 8 { 64 } else { 32 });
+                let probe_tree = compute_best_tree(&mut probe, &probe_params);
+                Some(super::tree_learn::predictors_used_by_tree(&probe_tree))
+            } else {
+                const GLOBAL_PROBE_STRIDE_MULT: usize = 16;
+                Some(super::tree_learn::probe_prune_candidates(
+                    images,
+                    stride.saturating_mul(GLOBAL_PROBE_STRIDE_MULT),
+                    k,
+                ))
+            }
+        }
+        _ => None,
+    };
+
     let gather_for_seed = |seed: u64, seed_stride: usize, randomize: bool| -> TreeSamples {
         let start_offset = if seed_stride > 1 {
             (seed as usize) % seed_stride
@@ -684,8 +785,12 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         // permutations. All TreeSamples merged via `append_from` MUST use
         // the SAME predictor order (the assert at append_from line 506-510
         // checks lengths; the SoA columns are predictor-indexed so they
-        // must agree).
-        let mut samples = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
+        // must agree). The probe-pruned list (seed 0 only — the gate above
+        // guarantees single-seed when set) replaces the canonical order.
+        let mut samples = match &pruned_predictors {
+            Some(list) => TreeSamples::new_with_owned_predictors(list.clone(), num_refs),
+            None => TreeSamples::new_with_predictor_order_for_seed(num_refs, seed),
+        };
         let active_mask: alloc::boxed::Box<[bool]> = {
             let mut m = vec![false; samples.total_num_properties()].into_boxed_slice();
             for &p in &active_prop_list {
@@ -774,8 +879,15 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             let wave_samples: Vec<(TreeSamples, Option<super::tree::Tree>)> =
                 crate::parallel::parallel_map(wave_len, |i| {
                     let group_idx = wave_start + i;
-                    // Same per-seed predictor order as the meta init above.
-                    let mut local = TreeSamples::new_with_predictor_order_for_seed(num_refs, seed);
+                    // Same per-seed predictor order as the meta init above
+                    // (or the probe-pruned list when active — columns must
+                    // agree for append_from).
+                    let mut local = match &pruned_predictors {
+                        Some(list) => {
+                            TreeSamples::new_with_owned_predictors(list.clone(), num_refs)
+                        }
+                        None => TreeSamples::new_with_predictor_order_for_seed(num_refs, seed),
+                    };
                     local.set_active_props(active_mask.clone());
                     local.randomize_gather = randomize;
                     if enable_gather_dedup && seed == 0 {

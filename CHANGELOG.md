@@ -2,7 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+- Lossy-modular multipliers path (`with_lf_frame(true)`) panicked (index
+  OOB) reading static prop columns freed by pre_quantize's wave-free
+  (51a0b473 regression); retained via `pre_quantize_retaining` +
+  regression test (this round).
+
 ### Changed
+- Lossless dedup: adaptive partition refinement + waved predictor
+  compaction — byte-identical, default-path peak_live 834→729 MB (e7) /
+  1130→1094 MB (e9) at 4K (4486e5e1).
+- Lossless global tree learn now probe-prunes its predictor set BY
+  DEFAULT at effort >= 7 (`JXL_GLOBAL_TREE_PREDICTORS=off|K|auto`
+  overrides): a capped probe tree's leaf usage selects 7-9 of 14
+  candidates per image — 4K wall −6..−29%, peak_live −130..−165 MB,
+  bytes −0.005% total / worst +0.16% on the 18-image stratified corpus
+  (this round).
 - Sectioned lossless mode: per-group predictor pruning default-on at K=8
   — wall −25/−26% (4K e7/e9 t=1), bytes ±0.04%; `JXL_TREE_PRUNE_PREDICTORS`
   overrides (d2444010). WP-cache fusion halves per-group WP walks in

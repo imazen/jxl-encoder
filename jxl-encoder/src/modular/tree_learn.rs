@@ -976,6 +976,28 @@ impl TreeSamples {
         Self::with_predictors_and_refs(order, num_ref_channels)
     }
 
+    /// Creates an empty TreeSamples with an OWNED (pruned) predictor list.
+    /// Used by the probe-pruned global gather (`JXL_GLOBAL_TREE_PREDICTORS`):
+    /// the list is a subset of [`CANDIDATE_PREDICTORS`] in canonical order.
+    pub(crate) fn new_with_owned_predictors(
+        predictors: alloc::vec::Vec<Predictor>,
+        num_ref_channels: usize,
+    ) -> Self {
+        let num_predictors = predictors.len();
+        let total_props = NUM_PROPERTIES + 4 * num_ref_channels;
+        Self {
+            num_samples: 0,
+            candidate_predictors: alloc::borrow::Cow::Owned(predictors),
+            residual_tokens: vec![Vec::new(); num_predictors],
+            extra_bits: vec![Vec::new(); num_predictors],
+            props: vec![PropColumn::default(); total_props],
+            sample_counts: Vec::new(),
+            num_ref_channels,
+            randomize_gather: false,
+            active_props: None,
+        }
+    }
+
     /// Creates an empty TreeSamples with a custom predictor list and ref channel count.
     fn with_predictors_and_refs(predictors: &'static [Predictor], num_ref_channels: usize) -> Self {
         let num_predictors = predictors.len();
@@ -1250,6 +1272,22 @@ impl TreeSamples {
     /// boundaries instead of sort-quantile picks. See
     /// [`lloyd_max_thresholds`].
     fn pre_quantize(&mut self, params: &TreeLearningParams) -> PreQuantizedProps {
+        self.pre_quantize_retaining(params, &[])
+    }
+
+    /// [`Self::pre_quantize`] that RETAINS the raw columns named in
+    /// `retain_raw` through the per-wave free. The multipliers path
+    /// (`compute_best_tree_with_multipliers`) reads `props[0]`/`props[1]`
+    /// (channel, group id) AFTER pre-quantization for its forced static
+    /// splits — the unconditional wave-free (51a0b473) emptied them and
+    /// its `index_i32` panicked out of bounds
+    /// (tests/it/lf_frame_multipliers_regression.rs). Every other caller
+    /// passes `&[]` and keeps the full free.
+    fn pre_quantize_retaining(
+        &mut self,
+        params: &TreeLearningParams,
+        retain_raw: &[usize],
+    ) -> PreQuantizedProps {
         let max_buckets = params.max_property_values;
         let n = self.num_samples;
         let total_props = self.total_num_properties();
@@ -1309,10 +1347,13 @@ impl TreeSamples {
                     }
                 });
             // The raw columns this wave consumed are now dead — release them
-            // before the next wave allocates its bucket columns.
+            // before the next wave allocates its bucket columns. Columns in
+            // `retain_raw` stay (the multipliers path reads them post-quant).
             for k in 0..(wave_end - wave_start) {
                 let prop_idx = params.properties[wave_start + k];
-                self.props[prop_idx] = PropColumn::default();
+                if !retain_raw.contains(&prop_idx) {
+                    self.props[prop_idx] = PropColumn::default();
+                }
             }
             per_prop.extend(wave);
             wave_start = wave_end;
@@ -5155,6 +5196,23 @@ pub(crate) fn compute_best_tree_with_budget(
         max_nodes,
     );
 
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_TREE_DUMP_PREDS").is_some() {
+        let mut leaf_pred = [0u32; 16];
+        let mut leaves = 0u32;
+        for node in tree.iter() {
+            if node.property < 0 {
+                leaf_pred[(node.predictor as usize).min(15)] += 1;
+                leaves += 1;
+            }
+        }
+        eprintln!("[tree-preds] nodes={} leaves={leaves}", tree.len());
+        for (pi, &c) in leaf_pred.iter().enumerate() {
+            if c > 0 {
+                eprintln!("[tree-preds]   pred_{pi}: {c} leaves");
+            }
+        }
+    }
     Ok(tree)
 }
 
@@ -7299,7 +7357,10 @@ pub fn compute_best_tree_with_multipliers(
         }];
     }
 
-    let mut pq = samples.pre_quantize(params);
+    // Retain the static axes' RAW columns: the forced-split scan below
+    // reads props[0]/props[1] after pre-quantization (see
+    // pre_quantize_retaining — freeing them was a shipped panic).
+    let mut pq = samples.pre_quantize_retaining(params, &[0, 1]);
     dedup_samples(samples, &mut pq, params);
     let n = samples.num_samples;
 
@@ -9690,6 +9751,246 @@ pub(crate) fn tree_prune_predictors_env() -> Option<usize> {
 pub(crate) fn tree_prune_predictors_env() -> Option<usize> {
     None
 }
+
+/// `JXL_GLOBAL_TREE_PREDICTORS` — probe-pruned GLOBAL tree-learn gather
+/// (alg-parity item, libjxl learns over 2 predictors at default lossless
+/// efforts — `Predictor::Best` = {Weighted, Gradient},
+/// libjxl enc_modular.cc:644): `auto` (the e7+ DEFAULT) selects the
+/// predictor set from a capped probe tree's leaf usage; a numeric K
+/// selects the root-cost top K-1 statics plus Weighted (A/B dial);
+/// `14`/`off` disables pruning (full canonical set — the e5/e6 default,
+/// where the accumulator is small and the probe overhead cancels the
+/// savings; measured 2026-08-15, benchmarks/jxl_probe_prune_2026-08-15.md).
+#[cfg(feature = "std")]
+pub(crate) fn global_tree_predictors_env() -> Option<usize> {
+    let v = std::env::var("JXL_GLOBAL_TREE_PREDICTORS").ok()?;
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("auto") {
+        return Some(GLOBAL_TREE_PREDICTORS_AUTO);
+    }
+    if v.eq_ignore_ascii_case("off") {
+        return Some(GLOBAL_TREE_PREDICTORS_OFF);
+    }
+    match v.parse::<usize>() {
+        Ok(k) if k >= CANDIDATE_PREDICTORS.len() => Some(GLOBAL_TREE_PREDICTORS_OFF),
+        Ok(k) => Some(k.max(2)),
+        Err(_) => None,
+    }
+}
+#[cfg(not(feature = "std"))]
+pub(crate) fn global_tree_predictors_env() -> Option<usize> {
+    None
+}
+
+/// Sentinel: pruning explicitly disabled (`off` / K >= 14).
+pub(crate) const GLOBAL_TREE_PREDICTORS_OFF: usize = 0;
+
+/// Probe the 13 STATIC candidate predictors (everything except
+/// `Predictor::Weighted`) over a strided pixel subset of `images` and
+/// return the pruned candidate list: Weighted plus the statics that earn
+/// their column, in canonical [`CANDIDATE_PREDICTORS`] order.
+///
+/// The probe runs NO weighted-predictor state machine (static predictors
+/// read only the 2-row neighborhood), so its cost is a strided neighbor
+/// walk — a small fraction of one gather's tokenization work, with none
+/// of the WP walk. Weighted is retained unconditionally (its per-pixel
+/// value is context-dependent; a probe cost would under-rank it — same
+/// reasoning as [`TreeSamples::prune_to_top_predictors`]).
+///
+/// Selection is CONTEXT-CONDITIONAL, not root-ranked: samples are binned
+/// by a cheap activity context (bit-length of |W - N|, 8 bins — the
+/// flat-run vs gradient vs texture axis the learned tree's own splits
+/// approximate), each predictor is scored per bin, and the kept set is
+/// the union of every bin's within-margin winners (bins below a mass
+/// floor are ignored). Root-cost ranking is REFUTED for this decision
+/// (measured 2026-08-15, benchmarks/jxl_probe_prune_2026-08-15.md): on
+/// screen content the root concentrates on {Gradient, Select} while the
+/// tree's leaves lean on flat-context predictors (Zero ranks 15.9x worse
+/// than Gradient at the root yet screen bytes regress +3.4 % without
+/// it), and on photos the root spread is wide while a tiny set costs
+/// ~0.2 %. Context-conditional scoring recovers exactly the per-content
+/// set the tree needs.
+pub(crate) fn probe_prune_candidates(
+    images: &[super::channel::ModularImage],
+    probe_stride: usize,
+    keep: usize,
+) -> alloc::vec::Vec<Predictor> {
+    const PROBE_CTX: usize = 8;
+    let stride = probe_stride.max(1);
+    let n_cand = CANDIDATE_PREDICTORS.len();
+    // hist[pred][ctx][token], ebits[pred][ctx], totals[ctx]
+    let mut hists = vec![[0u32; 256]; n_cand * PROBE_CTX];
+    let mut ebits = vec![0u64; n_cand * PROBE_CTX];
+    let mut totals = [0u64; PROBE_CTX];
+    for image in images {
+        for channel in &image.channels {
+            let width = channel.width();
+            let height = channel.height();
+            if width == 0 || height == 0 {
+                continue;
+            }
+            let mut counter = 0usize;
+            for y in 0..height {
+                for x in 0..width {
+                    if counter != 0 {
+                        counter -= 1;
+                        continue;
+                    }
+                    counter = stride - 1;
+                    let pixel = channel.get(x, y);
+                    let n = Neighbors::gather(channel, x, y);
+                    let activity = (n.w - n.n).unsigned_abs();
+                    let ctx = (32 - activity.leading_zeros()).min(PROBE_CTX as u32 - 1) as usize;
+                    totals[ctx] += 1;
+                    for (ci, &pred) in CANDIDATE_PREDICTORS.iter().enumerate() {
+                        if pred == Predictor::Weighted {
+                            continue;
+                        }
+                        let residual = pixel - pred.predict_from_neighbors(&n);
+                        let packed = pack_signed(residual);
+                        let (token, _eb, num_extra) = GATHER_HYBRID_UINT.encode(packed);
+                        let slot = ci * PROBE_CTX + ctx;
+                        hists[slot][(token as usize).min(255)] += 1;
+                        ebits[slot] += num_extra as u64;
+                    }
+                }
+            }
+        }
+    }
+    let grand_total: u64 = totals.iter().sum();
+    let mass_floor = grand_total / PROBE_CTX_MASS_FLOOR_DIV as u64;
+    let mut keep_mask = [false; 16];
+    let mut per_ctx_summary: alloc::vec::Vec<(usize, u64, alloc::vec::Vec<(usize, f64)>)> =
+        Vec::new();
+    for ctx in 0..PROBE_CTX {
+        if totals[ctx] == 0 || totals[ctx] < mass_floor {
+            continue;
+        }
+        let mut costs: alloc::vec::Vec<(usize, f64)> = Vec::with_capacity(n_cand);
+        for ci in 0..n_cand {
+            if CANDIDATE_PREDICTORS[ci] == Predictor::Weighted {
+                continue;
+            }
+            let slot = ci * PROBE_CTX + ctx;
+            debug_assert!(totals[ctx] <= u32::MAX as u64);
+            let c =
+                jxl_simd::estimate_bits_u32(&hists[slot], totals[ctx] as u32) + ebits[slot] as f64;
+            costs.push((ci, c));
+        }
+        costs.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let best = costs.first().map(|c| c.1).unwrap_or(0.0);
+        for &(ci, c) in &costs {
+            if c <= best * PROBE_CTX_MARGIN {
+                keep_mask[ci] = true;
+            }
+        }
+        per_ctx_summary.push((ctx, totals[ctx], costs));
+    }
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_PROBE_COSTS").is_some() {
+        for (ctx, total, costs) in &per_ctx_summary {
+            let best = costs.first().map(|c| c.1).unwrap_or(0.0);
+            let names: alloc::vec::Vec<String> = costs
+                .iter()
+                .take(5)
+                .map(|&(ci, c)| {
+                    format!(
+                        "{:?}={:.3}",
+                        CANDIDATE_PREDICTORS[ci],
+                        if best > 0.0 { c / best } else { 0.0 }
+                    )
+                })
+                .collect();
+            eprintln!("[probe-ctx] ctx={ctx} n={total} {}", names.join(" "));
+        }
+    }
+    // Fixed-K mode (numeric env): overrides the union with a plain
+    // global top-K by summed cost — kept for A/B against `auto`.
+    if keep != GLOBAL_TREE_PREDICTORS_AUTO {
+        let mut costs: alloc::vec::Vec<(usize, f64)> = Vec::with_capacity(n_cand);
+        for ci in 0..n_cand {
+            if CANDIDATE_PREDICTORS[ci] == Predictor::Weighted {
+                continue;
+            }
+            let mut c = 0.0;
+            for ctx in 0..PROBE_CTX {
+                if totals[ctx] == 0 {
+                    continue;
+                }
+                let slot = ci * PROBE_CTX + ctx;
+                c += jxl_simd::estimate_bits_u32(&hists[slot], totals[ctx] as u32)
+                    + ebits[slot] as f64;
+            }
+            costs.push((ci, c));
+        }
+        costs.sort_by(|a, b| a.1.total_cmp(&b.1));
+        keep_mask = [false; 16];
+        for &(ci, _) in costs.iter().take(keep.saturating_sub(1)) {
+            keep_mask[ci] = true;
+        }
+    }
+    let list: alloc::vec::Vec<Predictor> = CANDIDATE_PREDICTORS
+        .iter()
+        .enumerate()
+        .filter_map(|(ci, &p)| (p == Predictor::Weighted || keep_mask[ci]).then_some(p))
+        .collect();
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_PROBE_COSTS").is_some() {
+        eprintln!("[probe-keep] {} predictors: {:?}", list.len(), list);
+    }
+    list
+}
+
+/// Per-context within-margin keep threshold for the `auto` union rule.
+pub(crate) const PROBE_CTX_MARGIN: f64 = 1.015;
+/// A context participates in selection when it holds at least
+/// 1/this of the probed samples.
+pub(crate) const PROBE_CTX_MASS_FLOOR_DIV: usize = 64;
+
+/// Predictors a learned tree's leaves actually use, with a mass floor —
+/// the `auto` probe-tree selector (see the section.rs call site): keep
+/// every predictor holding at least `leaves/64` leaves (min 2), always
+/// including [`Predictor::Weighted`], in canonical
+/// [`CANDIDATE_PREDICTORS`] order. The floor drops one-off leaves whose
+/// contexts the final tree can re-serve with a surviving predictor at
+/// negligible cost.
+pub(crate) fn predictors_used_by_tree(tree: &Tree) -> alloc::vec::Vec<Predictor> {
+    let mut leaf_count = [0u32; 16];
+    let mut leaves = 0u32;
+    for node in tree.iter() {
+        if node.property < 0 {
+            leaf_count[(node.predictor as usize).min(15)] += 1;
+            leaves += 1;
+        }
+    }
+    // Small probe trees under-resolve leaf-tail predictors (measured
+    // 2026-08-15: NOAA text page +1.69 %, flat dashboard +1.06 % bytes
+    // with floor 2 — benchmarks/jxl_probe_prune_2026-08-15.md): below
+    // 512 leaves, keep EVERY predictor the probe tree used at all.
+    let floor = if leaves < 512 {
+        1
+    } else {
+        (leaves / 128).max(2)
+    };
+    let list: alloc::vec::Vec<Predictor> = CANDIDATE_PREDICTORS
+        .iter()
+        .filter(|&&p| p == Predictor::Weighted || leaf_count[p as usize] >= floor)
+        .copied()
+        .collect();
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_PROBE_COSTS").is_some() {
+        eprintln!(
+            "[probe-tree] leaves={leaves} floor={floor} keep {}: {:?}",
+            list.len(),
+            list
+        );
+    }
+    list
+}
+
+/// Sentinel `keep` value for [`probe_prune_candidates`]'s content-adaptive
+/// mode (`JXL_GLOBAL_TREE_PREDICTORS=auto`).
+pub(crate) const GLOBAL_TREE_PREDICTORS_AUTO: usize = usize::MAX;
 
 /// How a WP-walk consumer interacts with a [`WpCache`].
 pub(crate) enum WpCacheMode<'a> {
