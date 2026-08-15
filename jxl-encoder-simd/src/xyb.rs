@@ -95,12 +95,14 @@ pub fn linear_rgb_to_xyb_batch(
 
     // Dispatch through incant! — picks the best magetypes-generated variant
     // at runtime. Falls through to `_scalar` on platforms without a SIMD
-    // token. Pure-f32 body — `v4` (AVX-512) compiles fine here; gated on
-    // the `avx512` cargo feature so default builds keep `v3` as the
-    // x86_64 ceiling.
+    // token. Tier list omits `v4` (AVX-512) because the body now uses
+    // `f64x4` for the vectorized cube-root Newton iterations and magetypes
+    // has no `F64x4Backend` for `X64V4Token` (same constraint + precedent
+    // as `pixel_loss.rs`); `v3` is the x86_64 ceiling. This kernel's `v4`
+    // variant was f32x8-wide anyway, so nothing narrows.
     incant!(
         forward_xyb_impl(r, g, b, x_out, y_out, b_out, n),
-        [v4, v3, neon, wasm128, scalar]
+        [v3, neon, wasm128, scalar]
     )
 }
 
@@ -171,6 +173,21 @@ pub fn xyb_to_linear_rgb_batch(
 }
 
 // --- Scalar cube root helper ---
+
+/// The integer-bit-trick initial guess + f64 promotion shared by
+/// [`cbrt_fast`] and the vectorized Newton path in `forward_xyb_impl`.
+/// Returns `(t0, x as f64)`. Note: no zero early-out here — the
+/// vectorized caller applies the x == 0 fixup after the iterations,
+/// producing exactly `cbrt_fast`'s 0.0.
+#[inline(always)]
+fn cbrt_newton_init(x: f32) -> (f64, f64) {
+    const B1: u32 = 709_958_130;
+    let ui = x.to_bits();
+    let sign = ui & 0x8000_0000;
+    let hx = ui & 0x7FFF_FFFF;
+    let approx = hx / 3 + B1;
+    (f64::from(f32::from_bits(sign | approx)), f64::from(x))
+}
 
 /// Newton-Raphson cube root with bit-manipulation initial guess.
 /// 2 iterations in f64 gives ~1e-7 relative error.
@@ -365,14 +382,20 @@ pub fn inverse_xyb_scalar(
 //
 // FMA association: outermost is `m00 * r + (m01 * g + (m02 * b + bias0))`,
 // matching the pre-consolidation AVX2/NEON/WASM bodies bit-for-bit. The
-// cube root extracts each lane to scalar, runs `cbrt_fast` (f64 Newton-
-// Raphson), and rebuilds an `f32x8`. This is the same scalar-cbrt pattern
-// the pre-consolidation AVX2 body used — proven precision-critical for
-// XYB encoding. **Do not** replace with a SIMD `cbrt_lowp`; the f64
-// Newton-Raphson is the discipline this kernel relies on for hash-lock
-// byte-identity through downstream quantization.
+// cube root keeps `cbrt_fast`'s exact f64 Newton-Raphson math — integer
+// initial guess per lane (scalar, cheap), then the two Newton iterations
+// run in `f64x4` with the SAME per-lane IEEE operations in the SAME
+// order (`(t*t)*t`, `(x+x)+r`, `(x+r)+r`, `(t*num)/den` — plain
+// mul/add/div, NO fma), so every lane is bit-identical to the scalar
+// `cbrt_fast` and hash-locks are unaffected. What the vectorization buys
+// is pipelined f64 division (the walk's latency bottleneck: 2 divides
+// per element). **Do not** replace with a SIMD `cbrt_lowp` and do not
+// re-associate or fma-fuse the Newton arithmetic; the f64 op-for-op
+// discipline is what this kernel relies on for hash-lock byte-identity
+// through downstream quantization. `v4` omitted: no `F64x4Backend` for
+// `X64V4Token` (pixel_loss.rs precedent).
 
-#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(f32x8, f64x4), v3, neon, wasm128, scalar)]
 #[allow(clippy::too_many_arguments)]
 pub fn forward_xyb_impl(
     token: Token,
@@ -421,19 +444,81 @@ pub fn forward_xyb_impl(
         let mixed1 = mixed1.max(zero);
         let mixed2 = mixed2.max(zero);
 
-        // Cube root: extract to scalar, Newton-Raphson, reload — precision
-        // critical pattern from fast-ssim2 / pre-consolidation AVX2 body.
+        // Cube root — `cbrt_fast`'s math, vectorized (see module note
+        // above): scalar integer initial guess per lane, then the two
+        // f64 Newton iterations in f64x4 (6 groups of 4 across the 24
+        // lane-values). Plain mul/add/div in the scalar op order — each
+        // lane is bit-identical to `cbrt_fast`, including the x == 0
+        // fixup (scalar's early return).
         let m0_arr = mixed0.to_array();
         let m1_arr = mixed1.to_array();
         let m2_arr = mixed2.to_array();
+        let mut init_t = [0.0f64; 24];
+        let mut init_x = [0.0f64; 24];
+        for j in 0..8 {
+            let (t, xf) = cbrt_newton_init(m0_arr[j]);
+            init_t[j] = t;
+            init_x[j] = xf;
+            let (t, xf) = cbrt_newton_init(m1_arr[j]);
+            init_t[8 + j] = t;
+            init_x[8 + j] = xf;
+            let (t, xf) = cbrt_newton_init(m2_arr[j]);
+            init_t[16 + j] = t;
+            init_x[16 + j] = xf;
+        }
+        let mut out24 = [0.0f32; 24];
+        for grp in 0..6 {
+            let base4 = grp * 4;
+            let t0 = f64x4::from_array(
+                token,
+                [
+                    init_t[base4],
+                    init_t[base4 + 1],
+                    init_t[base4 + 2],
+                    init_t[base4 + 3],
+                ],
+            );
+            let x = f64x4::from_array(
+                token,
+                [
+                    init_x[base4],
+                    init_x[base4 + 1],
+                    init_x[base4 + 2],
+                    init_x[base4 + 3],
+                ],
+            );
+            let x2 = x + x; // (x + x) — matches scalar `xf64 + xf64`
+            // First Newton iteration: t = (t * ((x+x) + r)) / ((x + r) + r)
+            let r0 = (t0 * t0) * t0;
+            let t1 = (t0 * (x2 + r0)) / ((x + r0) + r0);
+            // Second Newton iteration
+            let r1 = (t1 * t1) * t1;
+            let t2 = (t1 * (x2 + r1)) / ((x + r1) + r1);
+            let arr = t2.to_array();
+            out24[base4] = arr[0] as f32;
+            out24[base4 + 1] = arr[1] as f32;
+            out24[base4 + 2] = arr[2] as f32;
+            out24[base4 + 3] = arr[3] as f32;
+        }
+        // Scalar `cbrt_fast` early-returns 0.0 for x == 0; apply the
+        // same fixup (the Newton path would produce a tiny nonzero).
+        for j in 0..8 {
+            if m0_arr[j] == 0.0 {
+                out24[j] = 0.0;
+            }
+            if m1_arr[j] == 0.0 {
+                out24[8 + j] = 0.0;
+            }
+            if m2_arr[j] == 0.0 {
+                out24[16 + j] = 0.0;
+            }
+        }
         let mut c0 = [0.0f32; 8];
         let mut c1 = [0.0f32; 8];
         let mut c2 = [0.0f32; 8];
-        for j in 0..8 {
-            c0[j] = cbrt_fast(m0_arr[j]);
-            c1[j] = cbrt_fast(m1_arr[j]);
-            c2[j] = cbrt_fast(m2_arr[j]);
-        }
+        c0.copy_from_slice(&out24[..8]);
+        c1.copy_from_slice(&out24[8..16]);
+        c2.copy_from_slice(&out24[16..24]);
         let l = f32x8::from_array(token, c0) + neg_cbrt0;
         let m = f32x8::from_array(token, c1) + neg_cbrt1;
         let s = f32x8::from_array(token, c2) + neg_cbrt2;
