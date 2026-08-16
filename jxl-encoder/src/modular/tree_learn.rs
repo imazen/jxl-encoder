@@ -6845,29 +6845,60 @@ fn find_best_split_borrowed(
                 extra_bits_increase[..local_num_buckets].fill(0);
 
                 crate::profile_time!("tree/fbs_accumulate", {
-                    for local_bucket in 0..local_num_buckets {
-                        let bs = bucket_starts[local_bucket];
-                        let be = bucket_starts[local_bucket + 1];
-                        let ci_base = local_bucket * HISTO_PADDED;
-                        let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
-                        if be - bs >= ACCUM_4WAY_MIN_RUN {
-                            extra_bits_increase[local_bucket] = accumulate_run_4way(
-                                &sorted_by_bucket[bs..be],
-                                tokens,
-                                ebits,
-                                sample_counts,
-                                ci_slice,
-                                HISTO_MASK,
-                            );
-                        } else {
-                            let mut eb_sum: u64 = 0;
-                            for &rel_off in &sorted_by_bucket[bs..be] {
-                                let tok = tokens[rel_off];
-                                let sc = sample_counts[rel_off];
-                                ci_slice[tok as usize & HISTO_MASK] += sc;
-                                eb_sum += ebits[rel_off] as u64 * sc as u64;
+                    // Per-bucket accumulation into DISJOINT count_increase
+                    // slices — bit-identical under any execution order, so
+                    // large nodes fan the buckets across the pool (the
+                    // root levels of the recursion are otherwise the t=8
+                    // Amdahl tail: find_best_split measured ~1.5-thread
+                    // effective parallelism at 4K e7 t=8).
+                    #[cfg(feature = "parallel")]
+                    let par = count >= FBS_ACCUM_PAR_MIN_ROWS && local_num_buckets >= 8;
+                    #[cfg(not(feature = "parallel"))]
+                    let par = false;
+                    let accum_one =
+                        |local_bucket: usize, ci_slice: &mut [u32], eb_out: &mut u64| {
+                            let bs = bucket_starts[local_bucket];
+                            let be = bucket_starts[local_bucket + 1];
+                            if be - bs >= ACCUM_4WAY_MIN_RUN {
+                                *eb_out = accumulate_run_4way(
+                                    &sorted_by_bucket[bs..be],
+                                    tokens,
+                                    ebits,
+                                    sample_counts,
+                                    ci_slice,
+                                    HISTO_MASK,
+                                );
+                            } else {
+                                let mut eb_sum: u64 = 0;
+                                for &rel_off in &sorted_by_bucket[bs..be] {
+                                    let tok = tokens[rel_off];
+                                    let sc = sample_counts[rel_off];
+                                    ci_slice[tok as usize & HISTO_MASK] += sc;
+                                    eb_sum += ebits[rel_off] as u64 * sc as u64;
+                                }
+                                *eb_out = eb_sum;
                             }
-                            extra_bits_increase[local_bucket] = eb_sum;
+                        };
+                    if par {
+                        #[cfg(feature = "parallel")]
+                        {
+                            use rayon::prelude::*;
+                            count_increase[..local_num_buckets * HISTO_PADDED]
+                                .par_chunks_mut(HISTO_PADDED)
+                                .zip(extra_bits_increase[..local_num_buckets].par_iter_mut())
+                                .enumerate()
+                                .for_each(|(local_bucket, (ci_slice, eb_out))| {
+                                    accum_one(local_bucket, ci_slice, eb_out)
+                                });
+                        }
+                    } else {
+                        for local_bucket in 0..local_num_buckets {
+                            let ci_base = local_bucket * HISTO_PADDED;
+                            let (ci_slice, eb_out) = (
+                                &mut count_increase[ci_base..ci_base + HISTO_PADDED],
+                                &mut extra_bits_increase[local_bucket],
+                            );
+                            accum_one(local_bucket, ci_slice, eb_out);
                         }
                     }
                 });
@@ -7234,6 +7265,62 @@ fn stable_gather_partition_borrowed(
             ))
         };
     }
+    // Column-parallel fan-out for LARGE nodes (the root levels are the
+    // t=8 Amdahl tail): every column's stable gather is independent given
+    // the shared flags, and each rayon worker carries its own scratch via
+    // for_each_init — bit-identical to the sequential order.
+    #[cfg(feature = "parallel")]
+    if n >= GATHER_PARTITION_PAR_MIN_ROWS {
+        use rayon::prelude::*;
+        let flags: alloc::vec::Vec<u8> = samples.bucket_indices[prop_idx][begin..end]
+            .iter()
+            .map(|&b| u8::from(b <= bucket_split))
+            .collect();
+        let left_len = pos - begin;
+        let mut cols: alloc::vec::Vec<&mut [u8]> = alloc::vec::Vec::new();
+        for row in samples.residual_tokens.iter_mut() {
+            if !row.is_empty() {
+                cols.push(&mut row[begin..end]);
+            }
+        }
+        for row in samples.extra_bits.iter_mut() {
+            if !row.is_empty() {
+                cols.push(&mut row[begin..end]);
+            }
+        }
+        for row in samples.bucket_indices.iter_mut() {
+            if !row.is_empty() {
+                cols.push(&mut row[begin..end]);
+            }
+        }
+        cols.par_iter_mut()
+            .for_each_init(alloc::vec::Vec::<u8>::new, |scratch, col| {
+                scratch.resize(n, 0);
+                let mut l = 0usize;
+                let mut r = left_len;
+                for (i, &f) in flags.iter().enumerate() {
+                    let dst = if f != 0 { &mut l } else { &mut r };
+                    scratch[*dst] = col[i];
+                    *dst += 1;
+                }
+                col.copy_from_slice(&scratch[..n]);
+            });
+        // Single u32 column (sample_counts): sequential — one column's
+        // gather is not worth a fork.
+        {
+            let mut scratch32 = alloc::vec![0u32; n];
+            let src = &samples.sample_counts[begin..end];
+            let mut l = 0usize;
+            let mut r = left_len;
+            for (i, &f) in flags.iter().enumerate() {
+                let dst = if f != 0 { &mut l } else { &mut r };
+                scratch32[*dst] = src[i];
+                *dst += 1;
+            }
+            samples.sample_counts[begin..end].copy_from_slice(&scratch32[..n]);
+        }
+        return;
+    }
     SCRATCH.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let (flags, col_scratch, u32_scratch) = &mut *borrow;
@@ -7287,6 +7374,11 @@ fn stable_gather_partition_borrowed(
         }
     });
 }
+
+/// Minimum node rows before the stable-gather partition fans columns
+/// across the pool (per-worker scratch via for_each_init).
+#[cfg(feature = "parallel")]
+const GATHER_PARTITION_PAR_MIN_ROWS: usize = 1 << 20;
 
 /// Hoare-style in-place partition over a [`BorrowedSamples`]. Mirrors
 /// [`tree_learn_split::split_tree_samples_in_place`] but operates on borrowed
@@ -8517,6 +8609,12 @@ fn accumulate_run_4way(
 /// Run-length threshold for [`accumulate_run_4way`]: below this the 4x
 /// sub-histogram zero/merge overhead exceeds the dependency-chain savings.
 const ACCUM_4WAY_MIN_RUN: usize = 256;
+
+/// Minimum node rows before `find_best_split_borrowed`'s per-bucket
+/// accumulation fans buckets across the rayon pool (disjoint output
+/// slices — bit-identical; below this the spawn overhead loses).
+#[cfg(feature = "parallel")]
+const FBS_ACCUM_PAR_MIN_ROWS: usize = 1 << 18;
 
 /// Builds a node's [`NodeTensor`] from its sample rows `[start..end)`.
 /// `out` MUST be zeroed (fresh from [`NodeTensor::zeroed`]).

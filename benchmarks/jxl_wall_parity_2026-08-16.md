@@ -57,3 +57,34 @@ within-node parallel histogram accumulation for large nodes
 (byte-identical: order-free integer adds; attacks BOTH t=8 tails),
 learn-core width (predictor set K, corpus-gated), pre_quantize +
 gather micro-costs, probe gather parallelization.
+
+## Round 1b: within-node data-parallel inner loops (byte-identical)
+
+fbs_accumulate now fans BUCKETS across the pool for nodes >= 256k rows
+(disjoint count_increase slices — identical under any order), and the
+stable-gather partition fans COLUMNS for nodes >= 1M rows (per-worker
+scratch via for_each_init). Measured t=8 e7 3.06 / e9 21.6 — WITHIN
+NOISE of before. Attribution: the t=8 critical path is spread across
+the still-sequential per-prop passes — the per-prop bucket counting
+sort (`sorted_by_bucket`, O(n) x props per node level), the swap
+partition (taken on lopsided root splits where the gather variant's
+cost model declines), derive_child_tensors, and the sweep. The
+per-PROP outer parallelization (own workspace per prop, deterministic
+candidate fold in prop order, hoisted capture totals) is the next
+structural item — it covers all of these at once for the root levels.
+
+## Cumulative standing (photo 4K, bytes identical, suite 12/12)
+
+| cell | cjxl | turn start | now | target |
+|---|---|---|---|---|
+| e7 t=1 | 3.82 | 8.4-8.6 | **7.55** (1.98x) | 4.97 |
+| e9 t=1 | 23.1 | ~48 | **46.3** (2.00x) | 30.0 |
+| e7 t=8 (production zenjxl) | 0.61 | ~7.9 (seq learn) | **3.06** (5.0x) | 0.79 |
+| e9 t=8 | 3.51 | ~52 | **21.6** (6.2x) | 4.56 |
+
+Remaining ladder to 1.3x, in EV order: (1) per-prop parallel
+find_best_split (t=8 root levels; also derive/partition/sorts);
+(2) learn width — predictor set tightening under the corpus gate
+(t=1: learn is 47-57% of wall, cost ~linear in K); (3) rct_select
+(362 ms), patches gate at lossless (157 ms), prequant (581 ms);
+(4) e9's exact-bucketize pre-walk overlap with the probe walk.
