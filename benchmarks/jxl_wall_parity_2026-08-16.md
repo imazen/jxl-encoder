@@ -88,3 +88,23 @@ find_best_split (t=8 root levels; also derive/partition/sorts);
 (t=1: learn is 47-57% of wall, cost ~linear in K); (3) rct_select
 (362 ms), patches gate at lossless (157 ms), prequant (581 ms);
 (4) e9's exact-bucketize pre-walk overlap with the probe walk.
+
+## Round 1c: coverage-gated keep cap (output-changing, corpus-gated)
+
+Cap the auto keep-set to the top-5 statics WHEN they already carry
+>= 90 % of the probe tree's static leaf mass (photos concentrate:
+mosaic photo = 90.8 %; spread trees decline — a tree-SIZE gate was
+REFUTED first: screen e9's 589-leaf spread tree got capped and cost
++11.4 % bytes; coverage is the content signal, size is not).
+
+| cell (t=1) | before | after | bytes |
+|---|---|---|---|
+| photo e7 | 7.55 s | **7.10 s** (1.86x) | +0.10 % |
+| photo e9 | 46.3 s | **42.3 s** (1.83x) | **−0.07 %** |
+| photo e9 peak_live | 997 MB | **784 MB** | — |
+| photo e9 t=8 | 21.6 s | **19.1 s** | — |
+| screens e7/e9 | unchanged | unchanged | 0 (cap declines) |
+
+18-image corpus: total +0.047 % vs prior default, 4/18 images move,
+worst +0.18 % (9094 illustration); djxl decodes the new default
+PIXEL-EXACT; hash-lock regenerated (1 fixture), suite 12/12.

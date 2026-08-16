@@ -10563,10 +10563,49 @@ pub(crate) fn predictors_used_by_tree(tree: &Tree) -> alloc::vec::Vec<Predictor>
     } else {
         (leaves / 128).max(2)
     };
+    let mut keep = [false; 16];
+    for (pi, &c) in leaf_count.iter().enumerate() {
+        keep[pi] = c >= floor;
+    }
+    // CONCENTRATED probe trees (photo-like content — where the learn is
+    // ~50 % of t=1 wall and its cost is ~linear in the predictor count):
+    // cap the kept STATICS to the top few by probe-leaf share, but ONLY
+    // when those top statics already carry >= 92 % of the static leaf
+    // mass — the cap then provably drops <= 8 % of the probe tree's
+    // predictor usage. Spread trees (screens/documents lean on
+    // predictor variety; screen e9 measured +11.4 % bytes under a
+    // tree-SIZE-gated cap — size is NOT a content discriminator)
+    // decline the cap automatically. Corpus-gated 2026-08-16
+    // (benchmarks/jxl_wall_parity_2026-08-16.md).
+    const BIG_TREE_KEEP_STATICS: usize = 5;
+    const KEEP_CAP_MIN_COVERAGE_PCT: u64 = 90;
+    if leaves >= 512 {
+        let mut by_share: alloc::vec::Vec<(usize, u32)> = leaf_count
+            .iter()
+            .enumerate()
+            .filter(|&(pi, &c)| {
+                keep[pi] && c > 0 && CANDIDATE_PREDICTORS.get(pi) != Some(&Predictor::Weighted)
+            })
+            .map(|(pi, &c)| (pi, c))
+            .collect();
+        by_share.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let static_total: u64 = by_share.iter().map(|&(_, c)| c as u64).sum();
+        let top_mass: u64 = by_share
+            .iter()
+            .take(BIG_TREE_KEEP_STATICS)
+            .map(|&(_, c)| c as u64)
+            .sum();
+        if static_total > 0 && top_mass * 100 >= static_total * KEEP_CAP_MIN_COVERAGE_PCT {
+            for &(pi, _) in by_share.iter().skip(BIG_TREE_KEEP_STATICS) {
+                keep[pi] = false;
+            }
+        }
+    }
     let list: alloc::vec::Vec<Predictor> = CANDIDATE_PREDICTORS
         .iter()
-        .filter(|&&p| p == Predictor::Weighted || leaf_count[p as usize] >= floor)
-        .copied()
+        .enumerate()
+        .filter(|&(pi, &p)| p == Predictor::Weighted || keep[pi])
+        .map(|(_, &p)| p)
         .collect();
     #[cfg(feature = "std")]
     if std::env::var_os("JXL_PROBE_COSTS").is_some() {
