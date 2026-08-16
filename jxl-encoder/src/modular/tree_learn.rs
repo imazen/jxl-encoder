@@ -222,6 +222,15 @@ const CANDIDATE_PREDICTORS_SQUEEZE: &[Predictor] = &[Predictor::Zero];
 /// - Kitten (e8): first 10 properties, max 96 property values, threshold 89
 /// - Tortoise (e9/e10): all properties, max 256 property values, threshold 75
 pub struct TreeLearningParams {
+    /// Skip the post-gather dedup pass entirely (`sample_counts` become
+    /// all-1s). BYTE-IDENTICAL to deduplicating: every consumer is
+    /// weight-linear — histograms sum duplicate rows to exactly what the
+    /// merged row contributes via its count, partition invariants are
+    /// multiset-based, and split acceptance uses weighted totals. Set by
+    /// the section writer when the probe's own dedup measured a HIGH
+    /// unique ratio (photo-like content), where the sort pass costs more
+    /// than the row reduction saves in the learn. Default false.
+    pub skip_dedup: bool,
     /// Properties to consider for splits, in priority order.
     /// Includes base properties (0..16) and optionally reference channel
     /// properties (16+). Changed from `&'static [usize]` to `Vec<usize>` to
@@ -407,6 +416,7 @@ impl TreeLearningParams {
         let num_props = (profile.tree_num_properties as usize).min(order.len());
 
         Self {
+            skip_dedup: false,
             properties: order[..num_props].to_vec(),
             max_property_values: profile.tree_max_buckets as usize,
             split_threshold: profile.tree_threshold_base as f64,
@@ -458,6 +468,7 @@ impl TreeLearningParams {
         };
 
         Self {
+            skip_dedup: false,
             properties: order[..num_props].to_vec(),
             max_property_values,
             split_threshold: threshold_base,
@@ -1749,6 +1760,24 @@ pub(crate) fn walk_debug_dump(tag: &str) {
         eprintln!("[walk-{tag}] g={g} ch={c} n={n} h={h:x}");
     }
     m.clear();
+}
+
+/// `JXL_SKIP_DEDUP=0|1` — force the post-gather dedup on (0) or off (1)
+/// regardless of the probe's unique-ratio dispatch. A/B + ops override;
+/// both settings are byte-identical (see
+/// `TreeLearningParams::skip_dedup`); they trade dedup wall against
+/// learn rows (and, at e9, ~150 MB of accumulator peak).
+#[cfg(feature = "std")]
+pub(crate) fn skip_dedup_env() -> Option<bool> {
+    match std::env::var("JXL_SKIP_DEDUP").ok()?.trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+#[cfg(not(feature = "std"))]
+pub(crate) fn skip_dedup_env() -> Option<bool> {
+    None
 }
 
 /// Gather-time bucketization mode (see [`gather_bucketize_env`]).
@@ -4108,6 +4137,16 @@ fn dedup_samples(
     pq: &mut PreQuantizedProps,
     params: &TreeLearningParams,
 ) {
+    if params.skip_dedup {
+        // Byte-identical no-op path (see TreeLearningParams::skip_dedup):
+        // rows stay unmerged with weight 1 each. Preserve gather-time
+        // counts if a dedup backend already populated them.
+        let n = samples.num_samples;
+        if samples.sample_counts.len() != n {
+            samples.sample_counts = vec![1; n];
+        }
+        return;
+    }
     if params.use_streaming_dedup {
         dedup_samples_streaming(samples, pq, params);
     } else {
@@ -11014,6 +11053,7 @@ pub fn estimate_token_cost(tokens: &[crate::entropy_coding::token::Token]) -> f6
 pub fn derive_seeded_params(base: &TreeLearningParams, seed: u64) -> TreeLearningParams {
     let clone_params = |b: &TreeLearningParams| -> TreeLearningParams {
         TreeLearningParams {
+            skip_dedup: b.skip_dedup,
             properties: b.properties.clone(),
             max_property_values: b.max_property_values,
             split_threshold: b.split_threshold,

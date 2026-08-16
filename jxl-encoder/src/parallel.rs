@@ -9,6 +9,19 @@
 
 use crate::error::Result;
 
+/// Worker-pool width the `parallel` feature will actually use — 1 when
+/// the feature is off. Perf-dispatch signal only (e.g. the dedup
+/// dispatch trades a parallel sort pass against sequential root-learn
+/// rows); NEVER branch output-affecting logic on it.
+#[cfg(feature = "parallel")]
+pub fn effective_threads() -> usize {
+    rayon::current_num_threads().max(1)
+}
+#[cfg(not(feature = "parallel"))]
+pub fn effective_threads() -> usize {
+    1
+}
+
 /// Map `f` over `0..n`, collecting results in index order.
 ///
 /// Uses `rayon::par_iter` when the `parallel` feature is enabled,

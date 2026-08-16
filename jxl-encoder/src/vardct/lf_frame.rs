@@ -420,6 +420,7 @@ fn encode_lf_frame_multi_group(
                 &mut group_writer,
                 budget,
                 crate::modular::tree_learn::WpCacheMode::Off,
+                None,
             )?;
             pass_group_data.push(group_writer.finish());
         }

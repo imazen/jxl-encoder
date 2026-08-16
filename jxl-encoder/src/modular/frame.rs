@@ -1236,6 +1236,12 @@ impl FrameEncoder {
                 }
                 _ => None,
             };
+            let token_store = match global_state {
+                super::section::GlobalModularState::AnsWithTree { group_tokens, .. } => {
+                    group_tokens.as_ref()
+                }
+                _ => None,
+            };
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
                 let group_idx = flat_idx / num_passes;
                 let group_image = &group_images[group_idx];
@@ -1250,6 +1256,28 @@ impl FrameEncoder {
                     _ => None,
                 };
                 let mut wp_cache = super::tree_learn::WpCache::new();
+                // Pre-collected group tokens (byte-identical reuse). The
+                // hybrid path still collects fresh — its local-tree
+                // rewrite needs the WP cache the collect fills. Alignment
+                // guard: the store's ranges were built over the LfGlobal
+                // writer's group images; on paths where those differ from
+                // THIS loop's images (squeeze channel grouping, multiple
+                // passes) the per-group token count no longer equals the
+                // group's pixel count — fall back to a fresh collect
+                // (the pre-guard mismatch indexed out of bounds:
+                // issue68 e9 noise regression tests).
+                let pre_collected = match (&hybrid_entry, token_store) {
+                    (None, Some(store))
+                        if num_passes == 1 && store.group_ranges.len() == num_groups =>
+                    {
+                        store
+                            .group_ranges
+                            .get(group_idx)
+                            .filter(|r| r.end <= store.tokens.len())
+                            .map(|r| &store.tokens[r.clone()])
+                    }
+                    _ => None,
+                };
                 write_group_modular_section_idx(
                     group_image,
                     global_state,
@@ -1262,6 +1290,7 @@ impl FrameEncoder {
                     } else {
                         super::tree_learn::WpCacheMode::Off
                     },
+                    pre_collected,
                 )?;
 
                 // Hybrid: also write this group as a self-contained local-tree

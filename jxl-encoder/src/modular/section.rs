@@ -177,7 +177,22 @@ pub enum GlobalModularState {
         /// `dist_multiplier = max(section channel widths)`. `None` means
         /// LZ77 is off for this frame (the pre-#69 behaviour).
         lz77: Option<SectionLz77>,
+        /// The whole-image token stream `collect_for_tree` already
+        /// produced for cost scoring + histogram building, with each
+        /// group's range. Group writes REUSE these instead of
+        /// re-collecting (the collect was 12% of e7 wall — a second
+        /// full WP walk + tree traversal for tokens that already
+        /// existed). ~8 B/pixel, alive through Step 3/4 regardless, so
+        /// retaining it through the writes stays under the encode peak.
+        group_tokens: Option<GroupTokenStore>,
     },
+}
+
+/// Pre-collected whole-image token stream + per-group ranges carried by
+/// [`GlobalModularState::AnsWithTree`] (see its `group_tokens` doc).
+pub struct GroupTokenStore {
+    pub tokens: Vec<crate::entropy_coding::token::Token>,
+    pub group_ranges: Vec<core::ops::Range<usize>>,
 }
 
 /// Per-section LZ77 configuration carried by
@@ -1327,6 +1342,18 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             // Per-seed parameter variance — seed 0 is a no-op clone.
             let mut params =
                 derive_seeded_params(&base_params, seed).with_pixel_fraction(pixel_fraction);
+            // Dedup ALWAYS runs by default. Skipping it (byte-identical —
+            // see TreeLearningParams::skip_dedup) was hypothesised as a
+            // win on high-unique content and REFUTED 2026-08-16: 4K photo
+            // e7 t=1 ballooned 7.55 -> 11.6 s with the skip — the
+            // packed-key SORT is a cache-layout transform the split
+            // search depends on (key-sorted rows give the accumulate
+            // loops bucket-coherent access), not just row reduction. At
+            // e9 the skip measured a small win (46.3 -> 44.9 s, +150 MB
+            // peak) — an unexplained asymmetry; do not re-add a dispatch
+            // without explaining it (benchmarks/jxl_wall_parity_2026-08-16.md).
+            // JXL_SKIP_DEDUP=1 remains the A/B hatch.
+            params.skip_dedup = super::tree_learn::skip_dedup_env() == Some(true);
             // Chunk-6 dim A — split-bucket-count override (seeds 8..=11).
             // Seeds 0..=7 return None → canonical bucket count preserved.
             if let Some(buckets) = derive_seeded_max_property_values(seed) {
@@ -1598,6 +1625,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         let mut transformed = Vec::with_capacity(all_tokens.len());
         transformed.extend(try_lz77(&all_tokens[..nb_meta_tokens], meta_dm)?);
         let transformed_nb_meta = transformed.len();
+        let mut transformed_ranges = Vec::with_capacity(group_ranges.len());
         for (g, range) in group_ranges.iter().enumerate() {
             let dm = images[g]
                 .channels
@@ -1605,7 +1633,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 .map(|c| c.width())
                 .max()
                 .unwrap_or(0) as i32;
+            let start = transformed.len();
             transformed.extend(try_lz77(&all_tokens[range.clone()], dm)?);
+            transformed_ranges.push(start..transformed.len());
         }
         // Header params come from the same (num_contexts, force_huffman)
         // construction apply_lz77 uses internally, so min_symbol/min_length
@@ -1613,7 +1643,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         if transformed.iter().any(|t| t.is_lz77_length()) {
             let mut params = Lz77Params::new(num_contexts, false);
             params.enabled = true;
-            Some((transformed, transformed_nb_meta, params))
+            Some((transformed, transformed_nb_meta, transformed_ranges, params))
         } else {
             // No section materialized a reference: without refs the
             // transform is the identity, so drop it and write the
@@ -1623,9 +1653,14 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     } else {
         None
     };
-    let (all_tokens, nb_meta_tokens, lz77_params) = match lz77_applied {
-        Some((tokens, nb_meta, params)) => (tokens, nb_meta, Some(params)),
-        None => (all_tokens, nb_meta_tokens, None),
+    // From here on (all_tokens, nb_meta_tokens, group_ranges) are the
+    // FINAL WIRE stream + its per-section ranges — LZ77-transformed when
+    // the transform materialized a reference, raw otherwise. The state's
+    // group_tokens carries exactly this pair, so per-group section writes
+    // can emit their slice directly (no re-collect, no LZ77 re-apply).
+    let (all_tokens, nb_meta_tokens, group_ranges, lz77_params) = match lz77_applied {
+        Some((tokens, nb_meta, ranges, params)) => (tokens, nb_meta, ranges, Some(params)),
+        None => (all_tokens, nb_meta_tokens, group_ranges, None),
     };
     let ans_num_contexts = if lz77_params.is_some() {
         num_contexts + 1
@@ -1738,6 +1773,10 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         tree,
         wp_params,
         lz77: lz77_params.map(|p| (lz77_method, p)),
+        group_tokens: Some(GroupTokenStore {
+            tokens: all_tokens,
+            group_ranges,
+        }),
     })
 }
 
@@ -2104,6 +2143,7 @@ pub fn write_group_modular_section(
         writer,
         budget,
         super::tree_learn::WpCacheMode::Off,
+        None,
     )
 }
 
@@ -2139,6 +2179,7 @@ pub fn write_group_modular_section_idx(
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     wp_cache: super::tree_learn::WpCacheMode<'_>,
+    pre_collected: Option<&[crate::entropy_coding::token::Token]>,
 ) -> Result<()> {
     crate::trace::debug_eprintln!(
         "GROUP_MODULAR [bit {}]: Starting group section ({}x{}, compact={}, rct={:?})",
@@ -2216,54 +2257,105 @@ pub fn write_group_modular_section_idx(
             tree,
             wp_params,
             lz77,
+            group_tokens: _,
         } => {
             // Collect residuals using the learned tree (multi-context).
             // Per-group images use 0-based channel indices (matching the decoder,
             // which builds per-group images with only non-meta channels).
-            // Same values as the budget-less collect wrapper; the _wp
-            // variant threads the WpCacheMode (hybrid fills here so the
-            // local-tree rewrite of this group skips its WP walk).
-            let tokens = crate::profile_time!("modular/collect_residuals_per_group", {
-                super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
-                    group_image,
-                    tree,
-                    group_idx,
-                    0,
-                    wp_params,
-                    None,
-                    wp_cache,
-                )?
-            });
-            // Per-section LZ77 (issue #69 item 1): re-apply the exact
-            // transform the global histogram was built over — same method,
-            // same num_contexts (from the same tree), and this section's
-            // dist_multiplier (max channel width of THIS group, matching
-            // the decoder's fresh per-section LZ77 state). apply_lz77 is
-            // deterministic, so this stream is identical to the
-            // histogram-time slice in the global section.
-            let (tokens, lz77_params) = match lz77 {
-                Some((method, params)) => {
-                    let dist_multiplier = group_image
-                        .channels
-                        .iter()
-                        .map(|c| c.width())
-                        .max()
-                        .unwrap_or(0) as i32;
-                    let num_contexts = super::tree::count_contexts(tree) as usize;
-                    let transformed = match crate::entropy_coding::lz77::apply_lz77(
-                        &tokens,
-                        num_contexts,
-                        false,
-                        *method,
-                        dist_multiplier,
-                        budget,
-                    )? {
-                        Some((lz77_tokens, _)) => lz77_tokens,
-                        None => tokens,
-                    };
-                    (transformed, Some(params))
+            // Reuse the pre-collected whole-image tokens when the state
+            // carries them (byte-identical: collect_for_tree produced
+            // exactly these, per group, in the same order); otherwise
+            // collect fresh. The _wp variant threads the WpCacheMode
+            // (hybrid fills here so the local-tree rewrite of this group
+            // skips its WP walk) — reuse skips that walk entirely, so
+            // hybrid's Fill request degrades to a fresh collect.
+            #[cfg(feature = "std")]
+            let pre_collected = if std::env::var_os("JXL_TOKEN_REUSE_OFF").is_some() {
+                None
+            } else {
+                pre_collected
+            };
+            #[cfg(feature = "std")]
+            if std::env::var_os("JXL_TOKEN_REUSE_VERIFY").is_some() {
+                if let Some(slice) = pre_collected {
+                    let fresh =
+                        super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+                            group_image,
+                            tree,
+                            group_idx,
+                            0,
+                            wp_params,
+                            None,
+                            super::tree_learn::WpCacheMode::Off,
+                        )?;
+                    if fresh.len() != slice.len() {
+                        eprintln!(
+                            "[token-verify] g={group_idx} LEN fresh={} reused={}",
+                            fresh.len(),
+                            slice.len()
+                        );
+                    } else if let Some(i) = (0..fresh.len())
+                        .find(|&i| format!("{:?}", fresh[i]) != format!("{:?}", slice[i]))
+                    {
+                        eprintln!(
+                            "[token-verify] g={group_idx} first diff at {i}: fresh={:?} reused={:?}",
+                            fresh[i], slice[i]
+                        );
+                    }
                 }
-                None => (tokens, None),
+            }
+            // Pre-collected slices are the WIRE stream — the state stores
+            // the post-LZ77 tokens with matching ranges, so reuse skips
+            // BOTH the collect (a full WP walk) and the per-section LZ77
+            // re-apply. The fresh path collects raw and re-applies the
+            // exact transform the global histogram was built over — same
+            // method, same num_contexts (from the same tree), this
+            // section's dist_multiplier (max channel width of THIS group,
+            // matching the decoder's fresh per-section LZ77 state);
+            // apply_lz77 is deterministic, so the fresh stream equals the
+            // histogram-time slice either way.
+            let (tokens, lz77_params) = match (pre_collected, &wp_cache) {
+                (Some(slice), super::tree_learn::WpCacheMode::Off) => {
+                    (slice.to_vec(), lz77.as_ref().map(|(_, p)| p))
+                }
+                _ => {
+                    let tokens = crate::profile_time!("modular/collect_residuals_per_group", {
+                        super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+                            group_image,
+                            tree,
+                            group_idx,
+                            0,
+                            wp_params,
+                            None,
+                            wp_cache,
+                        )?
+                    });
+                    match lz77 {
+                        Some((method, params)) => {
+                            let dist_multiplier = group_image
+                                .channels
+                                .iter()
+                                .map(|c| c.width())
+                                .max()
+                                .unwrap_or(0)
+                                as i32;
+                            let num_contexts = super::tree::count_contexts(tree) as usize;
+                            let transformed = match crate::entropy_coding::lz77::apply_lz77(
+                                &tokens,
+                                num_contexts,
+                                false,
+                                *method,
+                                dist_multiplier,
+                                budget,
+                            )? {
+                                Some((lz77_tokens, _)) => lz77_tokens,
+                                None => tokens,
+                            };
+                            (transformed, Some(params))
+                        }
+                        None => (tokens, None),
+                    }
+                }
             };
             crate::profile_time!("modular/write_tokens_per_group", {
                 write_tokens_ans(&tokens, code, lz77_params, writer)?;
