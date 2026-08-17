@@ -71,8 +71,7 @@ mod gather_ebits_lut_tests {
             let (tok, _eb, num_extra) = GATHER_HYBRID_UINT.encode(v);
             assert!(tok < 256, "gather token overflow for value {v}");
             assert_eq!(
-                GATHER_EBITS_LUT[tok as usize] as u32,
-                num_extra,
+                GATHER_EBITS_LUT[tok as usize] as u32, num_extra,
                 "LUT mismatch at value {v} (token {tok})"
             );
             seen[tok as usize] = true;

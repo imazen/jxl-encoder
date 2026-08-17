@@ -1677,6 +1677,11 @@ pub struct ZenanalyzeProxies {
     pub luma_var: f32,
 }
 
+/// Order-free integer fold for the zenanalyze strip results.
+fn fold_usize(parts: alloc::vec::Vec<usize>) -> usize {
+    parts.into_iter().sum()
+}
+
 impl ZenanalyzeProxies {
     /// Compute proxies from an 8-bit sRGB pixel buffer. Layout (R, G, B
     /// byte offsets within the pixel) is described by `r_off`, `g_off`,
@@ -1693,6 +1698,20 @@ impl ZenanalyzeProxies {
         g_off: usize,
         b_off: usize,
     ) -> Self {
+        // EXACT-INTEGER reformulation (2026-08-17): every accumulator is
+        // an integer sum of per-pixel integer terms, so the result is
+        // deterministic under ANY execution order — strips parallelize
+        // with zero result drift, forever. The previous f64 accumulation
+        // chains were order-sensitive (unparallelizable exactly) and 5-8x
+        // slower; values differ from the f64 version at ulp level, which
+        // the 18-image corpus gate verified as byte-neutral
+        // (benchmarks/jxl_wall_parity_2026-08-16.md round 3).
+        //
+        //   rg   = r - g                    (i64 sum, u64 sq-sum)
+        //   yb2  = r + g - 2b  (= 2*yb)     (i64 sum, u64 sq-sum; /2 at the end)
+        //   yl_k = 299r + 587g + 114b       (= 1000 * BT.601 luma; /1000 at the end)
+        // Bounds at 8.3 MP: |rg| <= 255 -> sq-sum <= 5.4e11; |yb2| <= 510 ->
+        // <= 2.2e12; yl_k <= 255_000 -> sq-sum <= 5.4e17 — all << u64::MAX.
         let n_pix = (width * height) as f64;
         if n_pix == 0.0 {
             return Self {
@@ -1703,48 +1722,78 @@ impl ZenanalyzeProxies {
             };
         }
 
-        // --- M3 colourfulness + W44-176 luma_var: one pass over pixels -----
-        let mut rg_sum = 0.0_f64;
-        let mut rg_sq_sum = 0.0_f64;
-        let mut yb_sum = 0.0_f64;
-        let mut yb_sq_sum = 0.0_f64;
-        // W44-176: BT.601 luma sum + sum-of-squares (running variance via
-        // E[Y²] − μ_Y²). Same per-pixel arithmetic as the Sobel edge_density
-        // helper below — folded into this first pass to avoid an extra
-        // O(W·H) sweep at the discriminator site.
-        let mut y_sum = 0.0_f64;
-        let mut y_sq_sum = 0.0_f64;
-        for y in 0..height {
-            for x in 0..width {
-                let off = (y * width + x) * bpp;
-                let r = pixels[off + r_off] as f64;
-                let g = pixels[off + g_off] as f64;
-                let b = pixels[off + b_off] as f64;
-                let rg = r - g;
-                let yb = 0.5 * (r + g) - b;
-                rg_sum += rg;
-                rg_sq_sum += rg * rg;
-                yb_sum += yb;
-                yb_sq_sum += yb * yb;
-                let yl = 0.299 * r + 0.587 * g + 0.114 * b;
-                y_sum += yl;
-                y_sq_sum += yl * yl;
-            }
+        let px_row = width * bpp;
+        #[derive(Default, Clone, Copy)]
+        struct StripSums {
+            rg: i64,
+            rg_sq: u64,
+            yb2: i64,
+            yb2_sq: u64,
+            yl_k: u64,
+            yl_k_sq: u64,
         }
-        let mu_rg = rg_sum / n_pix;
-        let mu_yb = yb_sum / n_pix;
-        let var_rg = (rg_sq_sum / n_pix - mu_rg * mu_rg).max(0.0);
-        let var_yb = (yb_sq_sum / n_pix - mu_yb * mu_yb).max(0.0);
-        let m3 = (var_rg + var_yb).sqrt() + 0.3 * (mu_rg * mu_rg + mu_yb * mu_yb).sqrt();
-        let mu_y = y_sum / n_pix;
-        let luma_var = (y_sq_sum / n_pix - mu_y * mu_y).max(0.0) as f32;
+        let row_sums = |y0: usize, y1: usize| -> StripSums {
+            let mut a = StripSums::default();
+            for y in y0..y1 {
+                let row = &pixels[y * px_row..y * px_row + px_row];
+                for px in row.chunks_exact(bpp) {
+                    let r = px[r_off] as i64;
+                    let g = px[g_off] as i64;
+                    let b = px[b_off] as i64;
+                    let rg = r - g;
+                    let yb2 = r + g - 2 * b;
+                    let yl = (299 * r + 587 * g + 114 * b) as u64;
+                    a.rg += rg;
+                    a.rg_sq += (rg * rg) as u64;
+                    a.yb2 += yb2;
+                    a.yb2_sq += (yb2 * yb2) as u64;
+                    a.yl_k += yl;
+                    a.yl_k_sq += yl * yl;
+                }
+            }
+            a
+        };
+        const STRIP_ROWS: usize = 64;
+        let n_strips = height.div_ceil(STRIP_ROWS);
+        let fold = |parts: alloc::vec::Vec<StripSums>| -> StripSums {
+            let mut t = StripSums::default();
+            for p in parts {
+                t.rg += p.rg;
+                t.rg_sq += p.rg_sq;
+                t.yb2 += p.yb2;
+                t.yb2_sq += p.yb2_sq;
+                t.yl_k += p.yl_k;
+                t.yl_k_sq += p.yl_k_sq;
+            }
+            t
+        };
+        let sums = fold(crate::parallel::parallel_map(n_strips, |si| {
+            let y0 = si * STRIP_ROWS;
+            row_sums(y0, (y0 + STRIP_ROWS).min(height))
+        }));
 
-        // --- flat_color_block_ratio: per-8×8-block channel range -----------
+        // Exact-integer sums -> the same statistics the f64 version
+        // computed. yb = yb2/2: mu_yb = mu_yb2/2, var_yb = var_yb2/4.
+        // yl = yl_k/1000: mu /1e3, var /1e6.
+        let mu_rg = sums.rg as f64 / n_pix;
+        let var_rg = (sums.rg_sq as f64 / n_pix - mu_rg * mu_rg).max(0.0);
+        let mu_yb2 = sums.yb2 as f64 / n_pix;
+        let var_yb2 = (sums.yb2_sq as f64 / n_pix - mu_yb2 * mu_yb2).max(0.0);
+        let mu_yb = mu_yb2 * 0.5;
+        let var_yb = var_yb2 * 0.25;
+        let m3 = (var_rg + var_yb).sqrt() + 0.3 * (mu_rg * mu_rg + mu_yb * mu_yb).sqrt();
+        let mu_ylk = sums.yl_k as f64 / n_pix;
+        let var_ylk = (sums.yl_k_sq as f64 / n_pix - mu_ylk * mu_ylk).max(0.0);
+        let luma_var = (var_ylk * 1e-6) as f32;
+
+        // --- flat_color_block_ratio: per-8x8-block channel range -----------
+        // Integer min/max + an order-free count: parallel over block rows,
+        // identical to the sequential pass.
         let blocks_x = width / 8;
         let blocks_y = height / 8;
-        let mut flat_blocks = 0usize;
         let total_blocks = blocks_x * blocks_y;
-        for by in 0..blocks_y {
+        let flat_blocks: usize = fold_usize(crate::parallel::parallel_map(blocks_y, |by| {
+            let mut flat = 0usize;
             for bx in 0..blocks_x {
                 let mut r_min = 255u8;
                 let mut r_max = 0u8;
@@ -1753,39 +1802,25 @@ impl ZenanalyzeProxies {
                 let mut b_min = 255u8;
                 let mut b_max = 0u8;
                 for dy in 0..8 {
-                    for dx in 0..8 {
-                        let off = ((by * 8 + dy) * width + (bx * 8 + dx)) * bpp;
-                        let r = pixels[off + r_off];
-                        let g = pixels[off + g_off];
-                        let b = pixels[off + b_off];
-                        if r < r_min {
-                            r_min = r;
-                        }
-                        if r > r_max {
-                            r_max = r;
-                        }
-                        if g < g_min {
-                            g_min = g;
-                        }
-                        if g > g_max {
-                            g_max = g;
-                        }
-                        if b < b_min {
-                            b_min = b;
-                        }
-                        if b > b_max {
-                            b_max = b;
-                        }
+                    let row = &pixels[((by * 8 + dy) * width + bx * 8) * bpp..];
+                    for px in row.chunks_exact(bpp).take(8) {
+                        let r = px[r_off];
+                        let g = px[g_off];
+                        let b = px[b_off];
+                        r_min = r_min.min(r);
+                        r_max = r_max.max(r);
+                        g_min = g_min.min(g);
+                        g_max = g_max.max(g);
+                        b_min = b_min.min(b);
+                        b_max = b_max.max(b);
                     }
                 }
-                let r_range = (r_max as i32) - (r_min as i32);
-                let g_range = (g_max as i32) - (g_min as i32);
-                let b_range = (b_max as i32) - (b_min as i32);
-                if r_range <= 4 && g_range <= 4 && b_range <= 4 {
-                    flat_blocks += 1;
+                if (r_max - r_min) <= 4 && (g_max - g_min) <= 4 && (b_max - b_min) <= 4 {
+                    flat += 1;
                 }
             }
-        }
+            flat
+        }));
         let fcbr = if total_blocks > 0 {
             flat_blocks as f32 / total_blocks as f32
         } else {
@@ -1793,33 +1828,51 @@ impl ZenanalyzeProxies {
         };
 
         // --- W44-96 edge_density: Sobel gradient on BT.601 luma -----------
-        // Iterate interior pixels (skip 1-pixel border to avoid out-of-bounds).
-        // Square-magnitude threshold = 900 corresponds to magnitude > 30,
-        // matching the W44-96 probe `edge_density()` helper exactly.
+        // Integer Sobel on yl_k (= 1000x luma): gradients scale by 1000, so
+        // the squared-magnitude threshold scales by 1e6 (900 -> 9e8). Rows
+        // parallelize with a per-strip luma line cache (3 rolling rows).
         let edge_density = if width >= 3 && height >= 3 {
-            let luma = |y: usize, x: usize| -> f32 {
-                let off = (y * width + x) * bpp;
-                0.299 * pixels[off + r_off] as f32
-                    + 0.587 * pixels[off + g_off] as f32
-                    + 0.114 * pixels[off + b_off] as f32
+            let luma_row = |y: usize, out: &mut [i64]| {
+                let row = &pixels[y * px_row..y * px_row + px_row];
+                for (o, px) in out.iter_mut().zip(row.chunks_exact(bpp)) {
+                    *o = 299 * px[r_off] as i64 + 587 * px[g_off] as i64 + 114 * px[b_off] as i64;
+                }
             };
             let interior = (width - 2) * (height - 2);
-            let mut edges = 0usize;
-            for y in 1..(height - 1) {
-                for x in 1..(width - 1) {
-                    let gx = -luma(y - 1, x - 1) - 2.0 * luma(y, x - 1) - luma(y + 1, x - 1)
-                        + luma(y - 1, x + 1)
-                        + 2.0 * luma(y, x + 1)
-                        + luma(y + 1, x + 1);
-                    let gy = -luma(y - 1, x - 1) - 2.0 * luma(y - 1, x) - luma(y - 1, x + 1)
-                        + luma(y + 1, x - 1)
-                        + 2.0 * luma(y + 1, x)
-                        + luma(y + 1, x + 1);
-                    if gx * gx + gy * gy > 900.0 {
-                        edges += 1;
+            const EDGE_STRIP_ROWS: usize = 64;
+            let n_estrips = (height - 2).div_ceil(EDGE_STRIP_ROWS);
+            let edges: usize = fold_usize(crate::parallel::parallel_map(n_estrips, |si| {
+                let y_lo = 1 + si * EDGE_STRIP_ROWS;
+                let y_hi = (y_lo + EDGE_STRIP_ROWS).min(height - 1);
+                let mut rows = [
+                    alloc::vec![0i64; width],
+                    alloc::vec![0i64; width],
+                    alloc::vec![0i64; width],
+                ];
+                luma_row(y_lo - 1, &mut rows[0]);
+                luma_row(y_lo, &mut rows[1]);
+                let mut count = 0usize;
+                for y in y_lo..y_hi {
+                    luma_row(y + 1, &mut rows[(y + 1) % 3]);
+                    let above = &rows[(y - 1) % 3];
+                    let here = &rows[y % 3];
+                    let below = &rows[(y + 1) % 3];
+                    for x in 1..(width - 1) {
+                        let gx = -above[x - 1] - 2 * here[x - 1] - below[x - 1]
+                            + above[x + 1]
+                            + 2 * here[x + 1]
+                            + below[x + 1];
+                        let gy = -above[x - 1] - 2 * above[x] - above[x + 1]
+                            + below[x - 1]
+                            + 2 * below[x]
+                            + below[x + 1];
+                        if gx * gx + gy * gy > 900_000_000 {
+                            count += 1;
+                        }
                     }
                 }
-            }
+                count
+            }));
             if interior > 0 {
                 edges as f32 / interior as f32
             } else {
