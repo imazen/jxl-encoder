@@ -111,17 +111,18 @@ pub(crate) enum PredictorDecision {
 /// and runs `estimate_bits_u32`).
 #[inline]
 pub(crate) fn predictor_extra_bits_lower_bound(
-    extra_bits: &[u8],
+    tokens: &[u8],
+    ebits_for_token: &[u8; 256],
     sample_counts: &[u32],
     start: usize,
     end: usize,
 ) -> f64 {
     debug_assert!(start <= end, "start must not exceed end");
     debug_assert!(
-        end <= extra_bits.len(),
-        "end out of range for extra_bits: end={}, len={}",
+        end <= tokens.len(),
+        "end out of range for tokens: end={}, len={}",
         end,
-        extra_bits.len()
+        tokens.len()
     );
     debug_assert!(
         end <= sample_counts.len(),
@@ -130,17 +131,19 @@ pub(crate) fn predictor_extra_bits_lower_bound(
         sample_counts.len()
     );
     debug_assert_eq!(
-        extra_bits.len(),
+        tokens.len(),
         sample_counts.len(),
-        "extra_bits / sample_counts must be parallel SoA slices"
+        "tokens / sample_counts must be parallel SoA slices"
     );
 
-    let eb = &extra_bits[start..end];
+    let tk = &tokens[start..end];
     let sc = &sample_counts[start..end];
     let mut acc: u64 = 0;
     // Zip-iterate so the bounds check is elided by the matched zip pair.
-    for (&e, &c) in eb.iter().zip(sc.iter()) {
-        acc += e as u64 * c as u64;
+    // Per-sample extra bits are a pure function of the token
+    // (GATHER_EBITS_LUT) — the dedicated column no longer exists.
+    for (&t, &c) in tk.iter().zip(sc.iter()) {
+        acc += ebits_for_token[t as usize] as u64 * c as u64;
     }
     acc as f64
 }
@@ -180,24 +183,20 @@ mod tests {
     /// `jxl_simd::estimate_bits_scalar_f64`.
     fn full_entropy_reference(
         tokens: &[u8],
-        extra_bits: &[u8],
+        ebits_lut: &[u8; 256],
         sample_counts: &[u32],
         histogram_size: usize,
     ) -> f64 {
         let mut counts = vec![0u32; histogram_size];
         let mut total: u32 = 0;
         let mut tot_extra: u64 = 0;
-        for ((&t, &eb), &c) in tokens
-            .iter()
-            .zip(extra_bits.iter())
-            .zip(sample_counts.iter())
-        {
+        for (&t, &c) in tokens.iter().zip(sample_counts.iter()) {
             let tok = t as usize;
             if tok < histogram_size {
                 counts[tok] += c;
                 total += c;
             }
-            tot_extra += eb as u64 * c as u64;
+            tot_extra += ebits_lut[tok] as u64 * c as u64;
         }
         if total == 0 {
             return tot_extra as f64;
@@ -217,12 +216,13 @@ mod tests {
     /// The canonical invariant the primitive must satisfy.
     fn assert_lb_sound(
         tokens: &[u8],
-        extra_bits: &[u8],
+        ebits_lut: &[u8; 256],
         sample_counts: &[u32],
         histogram_size: usize,
     ) {
-        let lb = predictor_extra_bits_lower_bound(extra_bits, sample_counts, 0, tokens.len());
-        let full = full_entropy_reference(tokens, extra_bits, sample_counts, histogram_size);
+        let lb =
+            predictor_extra_bits_lower_bound(tokens, ebits_lut, sample_counts, 0, tokens.len());
+        let full = full_entropy_reference(tokens, ebits_lut, sample_counts, histogram_size);
         assert!(
             lb <= full + 1e-9,
             "lower bound {} exceeded full cost {} (delta {})",
@@ -241,14 +241,14 @@ mod tests {
     #[test]
     fn lb_uniform_zero_extra() {
         let tokens = vec![7u8; 256];
-        let extra_bits = vec![0u8; 256];
+        let lut = [0u8; 256];
         let sample_counts = vec![1u32; 256];
-        assert_lb_sound(&tokens, &extra_bits, &sample_counts, 32);
+        assert_lb_sound(&tokens, &lut, &sample_counts, 32);
 
-        let lb = predictor_extra_bits_lower_bound(&extra_bits, &sample_counts, 0, 256);
+        let lb = predictor_extra_bits_lower_bound(&tokens, &lut, &sample_counts, 0, 256);
         assert_eq!(lb, 0.0, "all-zero extra_bits must yield lb=0");
 
-        let full = full_entropy_reference(&tokens, &extra_bits, &sample_counts, 32);
+        let full = full_entropy_reference(&tokens, &lut, &sample_counts, 32);
         // Single-symbol histogram: each term is `count * (-log2(1)) = 0`.
         assert!(
             full.abs() < 1e-6,
@@ -267,27 +267,27 @@ mod tests {
         // 100 samples: 80 at token 0 (eb=2), 15 at token 1 (eb=4), 5 at
         // token 2 (eb=6).
         let mut tokens = Vec::with_capacity(100);
-        let mut extra_bits = Vec::with_capacity(100);
+        let mut lut = [0u8; 256];
+        lut[0] = 2;
+        lut[1] = 4;
+        lut[2] = 6;
         for _ in 0..80 {
             tokens.push(0);
-            extra_bits.push(2);
         }
         for _ in 0..15 {
             tokens.push(1);
-            extra_bits.push(4);
         }
         for _ in 0..5 {
             tokens.push(2);
-            extra_bits.push(6);
         }
         let sample_counts = vec![1u32; 100];
-        assert_lb_sound(&tokens, &extra_bits, &sample_counts, 16);
+        assert_lb_sound(&tokens, &lut, &sample_counts, 16);
 
-        let lb = predictor_extra_bits_lower_bound(&extra_bits, &sample_counts, 0, 100);
+        let lb = predictor_extra_bits_lower_bound(&tokens, &lut, &sample_counts, 0, 100);
         let expected_lb = (80 * 2 + 15 * 4 + 5 * 6) as f64;
         assert_eq!(lb, expected_lb, "lb computation must match scalar sum");
 
-        let full = full_entropy_reference(&tokens, &extra_bits, &sample_counts, 16);
+        let full = full_entropy_reference(&tokens, &lut, &sample_counts, 16);
         // Skewed 80/15/5 histogram has positive entropy; full > lb.
         assert!(
             full > lb + 1.0,
@@ -303,13 +303,15 @@ mod tests {
     // ---------------------------------------------------------------------
     #[test]
     fn lb_empty_range() {
-        let extra_bits = vec![1u8, 2, 3, 4];
+        let tokens = vec![0u8, 1, 2, 3];
+        let mut lut = [0u8; 256];
+        lut[..4].copy_from_slice(&[1, 2, 3, 4]);
         let sample_counts = vec![1u32; 4];
-        let lb = predictor_extra_bits_lower_bound(&extra_bits, &sample_counts, 2, 2);
+        let lb = predictor_extra_bits_lower_bound(&tokens, &lut, &sample_counts, 2, 2);
         assert_eq!(lb, 0.0, "empty range must produce lb=0");
 
         // Also: a non-empty buffer with empty range still works.
-        let lb2 = predictor_extra_bits_lower_bound(&extra_bits, &sample_counts, 0, 0);
+        let lb2 = predictor_extra_bits_lower_bound(&tokens, &lut, &sample_counts, 0, 0);
         assert_eq!(lb2, 0.0);
     }
 
@@ -323,19 +325,21 @@ mod tests {
     fn lb_partial_range() {
         // tokens, extra_bits, sample_counts of length 10. Pick window [3..8).
         let tokens: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-        let extra_bits: Vec<u8> = vec![10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        let mut lut = [0u8; 256];
+        for (t, e) in lut.iter_mut().enumerate().take(10) {
+            *e = (10 * (t + 1)) as u8;
+        }
         let sample_counts: Vec<u32> = vec![2, 2, 2, 2, 2, 2, 2, 2, 2, 2];
 
         // Window: i ∈ [3..8) => contributions 40*2 + 50*2 + 60*2 + 70*2 + 80*2 = 600.
-        let lb = predictor_extra_bits_lower_bound(&extra_bits, &sample_counts, 3, 8);
+        let lb = predictor_extra_bits_lower_bound(&tokens, &lut, &sample_counts, 3, 8);
         assert_eq!(lb, 600.0);
 
         // Sound bound on the same window: build a reference cost restricted
         // to that window and confirm lb <= full.
         let window_tokens = &tokens[3..8];
-        let window_eb = &extra_bits[3..8];
         let window_sc = &sample_counts[3..8];
-        let full = full_entropy_reference(window_tokens, window_eb, window_sc, 16);
+        let full = full_entropy_reference(window_tokens, &lut, window_sc, 16);
         assert!(
             lb <= full + 1e-9,
             "partial-range lb violated soundness: lb={}, full={}",
@@ -353,11 +357,12 @@ mod tests {
     fn lb_high_sample_counts_post_dedup() {
         // After dedup, a few unique samples carry large counts.
         let tokens = vec![0u8, 1, 2, 3];
-        let extra_bits = vec![5u8, 7, 11, 13];
+        let mut lut = [0u8; 256];
+        lut[..4].copy_from_slice(&[5, 7, 11, 13]);
         let sample_counts = vec![1_000_000u32, 250_000, 100_000, 50_000];
-        assert_lb_sound(&tokens, &extra_bits, &sample_counts, 16);
+        assert_lb_sound(&tokens, &lut, &sample_counts, 16);
 
-        let lb = predictor_extra_bits_lower_bound(&extra_bits, &sample_counts, 0, 4);
+        let lb = predictor_extra_bits_lower_bound(&tokens, &lut, &sample_counts, 0, 4);
         let expected = (5u64 * 1_000_000 + 7 * 250_000 + 11 * 100_000 + 13 * 50_000) as f64;
         assert_eq!(lb, expected, "high-count u64 accumulation");
     }
@@ -370,9 +375,13 @@ mod tests {
     fn lb_pseudo_random_stress() {
         let n = 1024;
         let mut tokens = Vec::with_capacity(n);
-        let mut extra_bits = Vec::with_capacity(n);
         let mut sample_counts = Vec::with_capacity(n);
-        // splitmix64 with a fixed seed for determinism.
+        // splitmix64 with a fixed seed for determinism; per-TOKEN ebits
+        // (the production shape — ebits are a pure function of the token).
+        let mut lut = [0u8; 256];
+        for (t, e) in lut.iter_mut().enumerate() {
+            *e = ((t.wrapping_mul(37) >> 2) & 0x0f) as u8;
+        }
         let mut state: u64 = 0xdeadbeefcafef00d;
         for _ in 0..n {
             state = state.wrapping_add(0x9e3779b97f4a7c15);
@@ -381,10 +390,9 @@ mod tests {
             z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
             z ^= z >> 31;
             tokens.push((z & 0x1f) as u8);
-            extra_bits.push(((z >> 8) & 0x0f) as u8);
             sample_counts.push(((z >> 16) & 0x7) as u32 + 1);
         }
-        assert_lb_sound(&tokens, &extra_bits, &sample_counts, 64);
+        assert_lb_sound(&tokens, &lut, &sample_counts, 64);
     }
 
     // ---------------------------------------------------------------------

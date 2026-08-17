@@ -28,6 +28,64 @@ const GATHER_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
     lsb_in_token: 2,
 };
 
+/// Extra-bit count per gather token under [`GATHER_HYBRID_UINT`].
+///
+/// `HybridUintConfig::encode`'s `num_extra` is a PURE FUNCTION of the
+/// token for a fixed config: 0 below the split, else
+/// `(s - m - l) + ((token - split) >> (m + l))`. The per-sample
+/// `extra_bits` columns the gather used to store (2 B/sample/predictor —
+/// 75 MB at a 4K e9 root, plus 1 B/predictor of every dedup key) were
+/// therefore fully redundant with the token columns; every consumer now
+/// reads this table instead. Pinned against the real encoder by
+/// `ebits_lut_matches_hybrid_config`.
+const GATHER_EBITS_LUT: [u8; 256] = {
+    let mut lut = [0u8; 256];
+    let mut t = 16usize;
+    while t < 256 {
+        // s - m - l = 4 - 1 - 2 = 1; (token - split) >> (m + l) = >> 3.
+        lut[t] = (1 + ((t - 16) >> 3)) as u8;
+        t += 1;
+    }
+    lut
+};
+
+/// `num_extra` for a gather token (see [`GATHER_EBITS_LUT`]).
+#[inline(always)]
+fn gather_token_ebits(token: u8) -> u8 {
+    GATHER_EBITS_LUT[token as usize]
+}
+
+#[cfg(test)]
+mod gather_ebits_lut_tests {
+    use super::*;
+
+    /// Pin [`GATHER_EBITS_LUT`] to the real config: for every value whose
+    /// encode produces token t, `num_extra` must equal `LUT[t]` — and
+    /// every possible token byte must be covered by some value (tokens
+    /// beyond the config's reachable range keep LUT-formula values, which
+    /// no sample can carry).
+    #[test]
+    fn ebits_lut_matches_hybrid_config() {
+        let mut seen = [false; 256];
+        for v in 0u32..2_000_000 {
+            let (tok, _eb, num_extra) = GATHER_HYBRID_UINT.encode(v);
+            assert!(tok < 256, "gather token overflow for value {v}");
+            assert_eq!(
+                GATHER_EBITS_LUT[tok as usize] as u32,
+                num_extra,
+                "LUT mismatch at value {v} (token {tok})"
+            );
+            seen[tok as usize] = true;
+        }
+        // Also spot-check the extreme end of u32.
+        for v in [u32::MAX, u32::MAX - 1, 1 << 31, (1 << 31) + 12345] {
+            let (tok, _eb, num_extra) = GATHER_HYBRID_UINT.encode(v);
+            assert_eq!(GATHER_EBITS_LUT[tok as usize] as u32, num_extra);
+        }
+        assert!(seen[0] && seen[15] && seen[16], "low tokens unreached");
+    }
+}
+
 /// Number of properties used in tree learning (spec indices 0..16).
 const NUM_PROPERTIES: usize = 16;
 
@@ -544,7 +602,6 @@ impl TreeLearningParams {
 pub(crate) struct TreeSamplesHeapBytes {
     pub num_samples: usize,
     pub residual_tokens: usize,
-    pub extra_bits: usize,
     pub props: usize,
     pub sample_counts: usize,
     pub num_prop_columns: usize,
@@ -553,7 +610,7 @@ pub(crate) struct TreeSamplesHeapBytes {
 
 impl TreeSamplesHeapBytes {
     pub fn total(&self) -> usize {
-        self.residual_tokens + self.extra_bits + self.props + self.sample_counts
+        self.residual_tokens + self.props + self.sample_counts
     }
 }
 
@@ -826,10 +883,6 @@ pub struct TreeSamples {
     /// Residual token per predictor: residual_tokens[predictor_idx][sample_idx].
     /// Tokens fit in u8 (max ~55 for HybridUint {4,2,0} on 8-bit data).
     residual_tokens: Vec<Vec<u8>>,
-    /// Extra bits per predictor: extra_bits[predictor_idx][sample_idx].
-    /// These are the HybridUint extra bits (non-token part), matching libjxl's ResidualToken.nbits.
-    /// Fits in u8 (max ~14 bits for 8-bit image residuals).
-    extra_bits: Vec<Vec<u8>>,
     /// Spec-matching property values: props[property_idx][sample_idx].
     /// These are the actual (unquantized) property values, stored at the
     /// narrowest width that fits (see [`PropColumn`]).
@@ -887,7 +940,6 @@ impl TreeSamples {
         TreeSamplesHeapBytes {
             num_samples: self.num_samples,
             residual_tokens: sum(&self.residual_tokens),
-            extra_bits: sum(&self.extra_bits),
             props: self.props.iter().map(PropColumn::capacity_bytes).sum(),
             sample_counts: self.sample_counts.capacity() * 4,
             num_prop_columns: self.props.len(),
@@ -903,9 +955,6 @@ impl TreeSamples {
     /// byte-identical.
     pub(crate) fn reserve_additional(&mut self, additional: usize) {
         for v in &mut self.residual_tokens {
-            v.reserve(additional);
-        }
-        for v in &mut self.extra_bits {
             v.reserve(additional);
         }
         for (c, v) in self.props.iter_mut().enumerate() {
@@ -1000,7 +1049,6 @@ impl TreeSamples {
             num_samples: 0,
             candidate_predictors: alloc::borrow::Cow::Owned(predictors),
             residual_tokens: vec![Vec::new(); num_predictors],
-            extra_bits: vec![Vec::new(); num_predictors],
             props: vec![PropColumn::default(); total_props],
             sample_counts: Vec::new(),
             num_ref_channels,
@@ -1017,7 +1065,6 @@ impl TreeSamples {
             num_samples: 0,
             candidate_predictors: alloc::borrow::Cow::Borrowed(predictors),
             residual_tokens: vec![Vec::new(); num_predictors],
-            extra_bits: vec![Vec::new(); num_predictors],
             props: vec![PropColumn::default(); total_props],
             sample_counts: Vec::new(),
             num_ref_channels,
@@ -1057,7 +1104,6 @@ impl TreeSamples {
         let mut costs = alloc::vec::Vec::with_capacity(self.num_predictors());
         for p in 0..self.num_predictors() {
             let tokens = &self.residual_tokens[p][..n];
-            let ebits = &self.extra_bits[p][..n];
             let mut hist = [0u32; 256];
             let mut total: u64 = 0;
             let mut ebits_sum: u64 = 0;
@@ -1066,13 +1112,13 @@ impl TreeSamples {
                 for i in 0..n {
                     let c = counts[i];
                     hist[tokens[i] as usize] += c;
-                    ebits_sum += (ebits[i] as u64) * (c as u64);
+                    ebits_sum += (gather_token_ebits(tokens[i]) as u64) * (c as u64);
                     total += c as u64;
                 }
             } else {
                 for i in 0..n {
                     hist[tokens[i] as usize] += 1;
-                    ebits_sum += ebits[i] as u64;
+                    ebits_sum += gather_token_ebits(tokens[i]) as u64;
                 }
                 total = n as u64;
             }
@@ -1136,7 +1182,6 @@ impl TreeSamples {
                 .collect();
         };
         take_kept(&mut self.residual_tokens);
-        take_kept(&mut self.extra_bits);
         self.candidate_predictors = alloc::borrow::Cow::Owned(new_list);
     }
 
@@ -1159,9 +1204,6 @@ impl TreeSamples {
     /// up-front — avoids `Vec` reallocations during the gather hot loop.
     pub(crate) fn reserve(&mut self, additional: usize) {
         for v in &mut self.residual_tokens {
-            v.reserve(additional);
-        }
-        for v in &mut self.extra_bits {
             v.reserve(additional);
         }
         for (c, v) in self.props.iter_mut().enumerate() {
@@ -1223,9 +1265,6 @@ impl TreeSamples {
         for v in &mut self.residual_tokens {
             v.reserve_exact(upper_bound.saturating_sub(v.len()));
         }
-        for v in &mut self.extra_bits {
-            v.reserve_exact(upper_bound.saturating_sub(v.len()));
-        }
         for (c, v) in self.props.iter_mut().enumerate() {
             if match &self.active_props {
                 None => true,
@@ -1271,9 +1310,6 @@ impl TreeSamples {
             .iter_mut()
             .zip(other.residual_tokens.iter_mut())
         {
-            dst.append(src);
-        }
-        for (dst, src) in self.extra_bits.iter_mut().zip(other.extra_bits.iter_mut()) {
             dst.append(src);
         }
         for (dst, src) in self.props.iter_mut().zip(other.props.iter_mut()) {
@@ -2682,13 +2718,12 @@ fn report_tree_sample_stats(samples: &TreeSamples, stride: usize, reserved_sampl
     let mib = |n: usize| n as f64 / (1024.0 * 1024.0);
     eprintln!(
         "[tree-samples] stride={stride} reserved={reserved_samples} samples={} \
-         cols(pred={}, prop={}) | residual_tokens={:.1} MiB extra_bits={:.1} MiB \
+         cols(pred={}, prop={}) | residual_tokens={:.1} MiB \
          props={:.1} MiB counts={:.1} MiB TOTAL={:.1} MiB ({:.1} B/sample)",
         b.num_samples,
         b.num_pred_columns,
         b.num_prop_columns,
         mib(b.residual_tokens),
-        mib(b.extra_bits),
         mib(b.props),
         mib(b.sample_counts),
         mib(b.total()),
@@ -2987,7 +3022,6 @@ impl GatherRowStaging {
         debug_assert_eq!(samples.props.len(), self.total_props);
         for p in 0..self.num_pred {
             samples.residual_tokens[p].extend_from_slice(&self.tokens[p * cap..p * cap + n]);
-            samples.extra_bits[p].extend_from_slice(&self.ebits[p * cap..p * cap + n]);
         }
         for c in 0..self.total_props {
             if samples.prop_active(c) {
@@ -3306,7 +3340,6 @@ fn gather_channel_samples(
                     Some(GatherDedupBackend::Phase2(tbl)) => tbl.try_merge_local(
                         samples,
                         &local_tokens[..num_pred],
-                        &local_ebits[..num_pred],
                         &props,
                         &local_ref_props[..4 * max_refs],
                     ),
@@ -3364,7 +3397,6 @@ fn gather_channel_samples(
                 // No dedup or miss: push everything to SoA columns.
                 for pred_idx in 0..num_pred {
                     samples.residual_tokens[pred_idx].push(local_tokens[pred_idx]);
-                    samples.extra_bits[pred_idx].push(local_ebits[pred_idx]);
                 }
                 let active = samples.active_props.take();
                 let is_on = |c: usize| match &active {
@@ -3639,8 +3671,6 @@ fn pack_sample_key(
     for pred in 0..num_pred {
         key[off] = samples.residual_tokens[pred][sample_idx];
         off += 1;
-        key[off] = samples.extra_bits[pred][sample_idx];
-        off += 1;
     }
     key
 }
@@ -3769,7 +3799,7 @@ impl GatherDedupTable {
                 .wrapping_add(samples.residual_tokens[pred][idx] as u64);
             h = h
                 .wrapping_mul(HASH1_CONST)
-                .wrapping_add(samples.extra_bits[pred][idx] as u64);
+                .wrapping_add(gather_token_ebits(samples.residual_tokens[pred][idx]) as u64);
         }
         for &prop in &self.properties {
             let prop = prop as usize;
@@ -3796,7 +3826,8 @@ impl GatherDedupTable {
         }
         for pred in 0..num_pred {
             h = h.wrapping_mul(HASH2_CONST) ^ (samples.residual_tokens[pred][idx] as u64);
-            h = h.wrapping_mul(HASH2_CONST) ^ (samples.extra_bits[pred][idx] as u64);
+            h = h.wrapping_mul(HASH2_CONST)
+                ^ (gather_token_ebits(samples.residual_tokens[pred][idx]) as u64);
         }
         ((h >> 16) as u32) & self.mask
     }
@@ -3816,9 +3847,6 @@ impl GatherDedupTable {
     ) -> bool {
         for pred in 0..num_pred {
             if samples.residual_tokens[pred][a] != samples.residual_tokens[pred][b] {
-                return false;
-            }
-            if samples.extra_bits[pred][a] != samples.extra_bits[pred][b] {
                 return false;
             }
         }
@@ -3854,12 +3882,15 @@ impl GatherDedupTable {
     fn hash1_local(
         &self,
         local_tokens: &[u8],
-        local_ebits: &[u8],
         local_props: &[i32; NUM_PROPERTIES],
         local_ref_props: &[i32],
     ) -> u32 {
         let mut h: u64 = HASH1_CONST;
-        for (&t, &e) in local_tokens.iter().zip(local_ebits.iter()) {
+        // ebits are a pure function of the token (GATHER_EBITS_LUT); the
+        // hash keeps the historical ebits term so stored-side and
+        // local-side hashes stay identical.
+        for &t in local_tokens.iter() {
+            let e = gather_token_ebits(t);
             h = h.wrapping_mul(HASH1_CONST).wrapping_add(t as u64);
             h = h.wrapping_mul(HASH1_CONST).wrapping_add(e as u64);
         }
@@ -3884,7 +3915,6 @@ impl GatherDedupTable {
     fn hash2_local(
         &self,
         local_tokens: &[u8],
-        local_ebits: &[u8],
         local_props: &[i32; NUM_PROPERTIES],
         local_ref_props: &[i32],
     ) -> u32 {
@@ -3903,9 +3933,9 @@ impl GatherDedupTable {
             };
             h = h.wrapping_mul(HASH2_CONST) ^ v;
         }
-        for (&t, &e) in local_tokens.iter().zip(local_ebits.iter()) {
+        for &t in local_tokens.iter() {
             h = h.wrapping_mul(HASH2_CONST) ^ (t as u64);
-            h = h.wrapping_mul(HASH2_CONST) ^ (e as u64);
+            h = h.wrapping_mul(HASH2_CONST) ^ (gather_token_ebits(t) as u64);
         }
         ((h >> 16) as u32) & self.mask
     }
@@ -3918,7 +3948,6 @@ impl GatherDedupTable {
     fn is_same_local(
         &self,
         local_tokens: &[u8],
-        local_ebits: &[u8],
         local_props: &[i32; NUM_PROPERTIES],
         local_ref_props: &[i32],
         samples: &TreeSamples,
@@ -3927,9 +3956,6 @@ impl GatherDedupTable {
         let num_pred = local_tokens.len();
         for pred in 0..num_pred {
             if local_tokens[pred] != samples.residual_tokens[pred][b] {
-                return false;
-            }
-            if local_ebits[pred] != samples.extra_bits[pred][b] {
                 return false;
             }
         }
@@ -3973,17 +3999,14 @@ impl GatherDedupTable {
         &mut self,
         samples: &TreeSamples,
         local_tokens: &[u8],
-        local_ebits: &[u8],
         local_props: &[i32; NUM_PROPERTIES],
         local_ref_props: &[i32],
     ) -> Option<u32> {
-        let pos1 =
-            self.hash1_local(local_tokens, local_ebits, local_props, local_ref_props) as usize;
+        let pos1 = self.hash1_local(local_tokens, local_props, local_ref_props) as usize;
         let s1 = self.slots[pos1];
         if s1 != DEDUP_EMPTY
             && self.is_same_local(
                 local_tokens,
-                local_ebits,
                 local_props,
                 local_ref_props,
                 samples,
@@ -3992,13 +4015,11 @@ impl GatherDedupTable {
         {
             return Some(s1);
         }
-        let pos2 =
-            self.hash2_local(local_tokens, local_ebits, local_props, local_ref_props) as usize;
+        let pos2 = self.hash2_local(local_tokens, local_props, local_ref_props) as usize;
         let s2 = self.slots[pos2];
         if s2 != DEDUP_EMPTY
             && self.is_same_local(
                 local_tokens,
-                local_ebits,
                 local_props,
                 local_ref_props,
                 samples,
@@ -4082,9 +4103,6 @@ impl GatherDedupTable {
     #[allow(dead_code)]
     fn pop_last_sample(samples: &mut TreeSamples) {
         for v in &mut samples.residual_tokens {
-            v.pop();
-        }
-        for v in &mut samples.extra_bits {
             v.pop();
         }
         for v in &mut samples.props {
@@ -4230,8 +4248,6 @@ fn packed_sort_walk_full<const W: usize>(
         for pred in 0..num_pred {
             kb[off] = samples.residual_tokens[pred][sample_idx];
             off += 1;
-            kb[off] = samples.extra_bits[pred][sample_idx];
-            off += 1;
         }
         let mut kw = [0u64; W];
         for (j, w) in kw.iter_mut().enumerate() {
@@ -4291,12 +4307,10 @@ fn packed_sort_walk<const W: usize>(
             if bi.is_empty() { 0 } else { bi[sample_idx] }
         } else {
             let p = d - properties.len();
-            if p >= 2 * num_pred {
+            if p >= num_pred {
                 0
-            } else if p % 2 == 0 {
-                samples.residual_tokens[p / 2][sample_idx]
             } else {
-                samples.extra_bits[p / 2][sample_idx]
+                samples.residual_tokens[p][sample_idx]
             }
         }
     };
@@ -4490,8 +4504,6 @@ fn packed_sort_walk<const W: usize>(
                     for pred in 0..num_pred {
                         kb[off] = samples.residual_tokens[pred][sample_idx];
                         off += 1;
-                        kb[off] = samples.extra_bits[pred][sample_idx];
-                        off += 1;
                     }
                     let mut kw = [0u64; W];
                     for (j, w) in kw.iter_mut().enumerate() {
@@ -4566,7 +4578,10 @@ fn dedup_samples_packed_sort(
     let num_pred = samples.num_predictors();
     let properties = &params.properties;
 
-    let key_len = properties.len() + 2 * num_pred;
+    // Predictor ebits are a pure function of the token (GATHER_EBITS_LUT),
+    // so keys carry ONE byte per predictor — same equivalence classes,
+    // narrower sort keys.
+    let key_len = properties.len() + num_pred;
     debug_assert!(
         key_len <= DEDUP_KEY_BYTES,
         "dedup composite key needs {} bytes, DEDUP_KEY_BYTES = {}",
@@ -4644,24 +4659,16 @@ fn dedup_samples_packed_sort(
     let mut start = 0usize;
     while start < num_pred {
         let end = (start + DEDUP_COMPACT_WAVE).min(num_pred);
-        let new_per_pred: Vec<(Vec<u8>, Vec<u8>)> =
-            crate::parallel::parallel_map(end - start, |k| {
-                let pred = start + k;
-                let old_tokens = &samples.residual_tokens[pred];
-                let old_ebits = &samples.extra_bits[pred];
-                let new_tokens: Vec<u8> = unique_indices
-                    .iter()
-                    .map(|&i| old_tokens[i as usize])
-                    .collect();
-                let new_ebits: Vec<u8> = unique_indices
-                    .iter()
-                    .map(|&i| old_ebits[i as usize])
-                    .collect();
-                (new_tokens, new_ebits)
-            });
-        for (k, (new_tokens, new_ebits)) in new_per_pred.into_iter().enumerate() {
+        let new_per_pred: Vec<Vec<u8>> = crate::parallel::parallel_map(end - start, |k| {
+            let pred = start + k;
+            let old_tokens = &samples.residual_tokens[pred];
+            unique_indices
+                .iter()
+                .map(|&i| old_tokens[i as usize])
+                .collect()
+        });
+        for (k, new_tokens) in new_per_pred.into_iter().enumerate() {
             samples.residual_tokens[start + k] = new_tokens; // old dropped here
-            samples.extra_bits[start + k] = new_ebits;
         }
         start = end;
     }
@@ -4777,7 +4784,10 @@ fn dedup_samples_streaming(
     let num_pred = samples.num_predictors();
     let properties = &params.properties;
 
-    let key_len = properties.len() + 2 * num_pred;
+    // Predictor ebits are a pure function of the token (GATHER_EBITS_LUT),
+    // so keys carry ONE byte per predictor — same equivalence classes,
+    // narrower sort keys.
+    let key_len = properties.len() + num_pred;
     debug_assert!(
         key_len <= DEDUP_KEY_BYTES,
         "dedup composite key needs {} bytes, DEDUP_KEY_BYTES = {}",
@@ -4834,17 +4844,11 @@ fn dedup_samples_streaming(
     // first-seen order.
     for pred in 0..num_pred {
         let old_tokens = &samples.residual_tokens[pred];
-        let old_ebits = &samples.extra_bits[pred];
         let new_tokens: Vec<u8> = unique_indices
             .iter()
             .map(|&i| old_tokens[i as usize])
             .collect();
-        let new_ebits: Vec<u8> = unique_indices
-            .iter()
-            .map(|&i| old_ebits[i as usize])
-            .collect();
         samples.residual_tokens[pred] = new_tokens;
-        samples.extra_bits[pred] = new_ebits;
     }
     let total_props = samples.total_num_properties();
     for prop_idx in 0..total_props {
@@ -4930,9 +4934,6 @@ pub(crate) fn compute_best_tree_with_budget(
     params: &TreeLearningParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Tree> {
-    // Scale threshold by pixel_fraction, matching libjxl's required_cost formula.
-    let required_cost = params.pixel_fraction * 0.9 + 0.1;
-    let threshold = params.split_threshold * required_cost;
     let n = samples.num_samples;
     if n == 0 {
         return Ok(vec![PropertyDecisionNode {
@@ -5957,7 +5958,6 @@ fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSample
     let num_props = samples.props.len();
 
     let mut right_residual_tokens: Vec<Vec<u8>> = Vec::with_capacity(num_pred);
-    let mut right_extra_bits: Vec<Vec<u8>> = Vec::with_capacity(num_pred);
     let mut right_props: Vec<PropColumn> = Vec::with_capacity(num_props);
 
     for v in &mut samples.residual_tokens {
@@ -5965,13 +5965,6 @@ fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSample
             right_residual_tokens.push(Vec::new());
         } else {
             right_residual_tokens.push(v.split_off(mid));
-        }
-    }
-    for v in &mut samples.extra_bits {
-        if v.is_empty() {
-            right_extra_bits.push(Vec::new());
-        } else {
-            right_extra_bits.push(v.split_off(mid));
         }
     }
     for v in &mut samples.props {
@@ -5990,7 +5983,6 @@ fn split_tree_samples_owned(mut samples: TreeSamples, mid: usize) -> (TreeSample
         num_samples: right_n,
         candidate_predictors: samples.candidate_predictors.clone(),
         residual_tokens: right_residual_tokens,
-        extra_bits: right_extra_bits,
         props: right_props,
         sample_counts: right_sample_counts,
         num_ref_channels: samples.num_ref_channels,
@@ -6049,7 +6041,6 @@ fn split_owned_from_borrowed(
         num_samples: n,
         candidate_predictors: samples.candidate_predictors.clone(),
         residual_tokens: core::mem::take(&mut samples.residual_tokens),
-        extra_bits: core::mem::take(&mut samples.extra_bits),
         props: core::mem::take(&mut samples.props),
         sample_counts: core::mem::take(&mut samples.sample_counts),
         num_ref_channels: samples.num_ref_channels,
@@ -6358,8 +6349,6 @@ fn build_subtree_recursive_parallel(
 struct BorrowedSamples<'a> {
     /// Per-predictor residual tokens: `residual_tokens[pred][sample]`.
     residual_tokens: alloc::vec::Vec<&'a mut [u8]>,
-    /// Per-predictor extra bits: `extra_bits[pred][sample]`.
-    extra_bits: alloc::vec::Vec<&'a mut [u8]>,
     /// Per-property quantized values: `props[prop][sample]`. May be empty
     /// for properties outside `params.properties`.
     props: alloc::vec::Vec<&'a mut [i32]>,
@@ -6392,17 +6381,6 @@ impl<'a> BorrowedSamples<'a> {
         // Slice each parallel array to `[..len]`. Empty arrays stay empty.
         let residual_tokens: alloc::vec::Vec<&'a mut [u8]> = samples
             .residual_tokens
-            .iter_mut()
-            .map(|v| {
-                if v.is_empty() {
-                    &mut v[..]
-                } else {
-                    &mut v[..len]
-                }
-            })
-            .collect();
-        let extra_bits: alloc::vec::Vec<&'a mut [u8]> = samples
-            .extra_bits
             .iter_mut()
             .map(|v| {
                 if v.is_empty() {
@@ -6445,7 +6423,6 @@ impl<'a> BorrowedSamples<'a> {
 
         Self {
             residual_tokens,
-            extra_bits,
             props,
             bucket_indices,
             sample_counts,
@@ -6475,19 +6452,6 @@ impl<'a> BorrowedSamples<'a> {
                 let (l, r) = slice.split_at_mut(mid);
                 left_residual_tokens.push(l);
                 right_residual_tokens.push(r);
-            }
-        }
-
-        let mut left_extra_bits = alloc::vec::Vec::with_capacity(self.extra_bits.len());
-        let mut right_extra_bits = alloc::vec::Vec::with_capacity(self.extra_bits.len());
-        for slice in self.extra_bits {
-            if slice.is_empty() {
-                left_extra_bits.push(&mut [][..]);
-                right_extra_bits.push(&mut [][..]);
-            } else {
-                let (l, r) = slice.split_at_mut(mid);
-                left_extra_bits.push(l);
-                right_extra_bits.push(r);
             }
         }
 
@@ -6521,7 +6485,6 @@ impl<'a> BorrowedSamples<'a> {
 
         let left = BorrowedSamples {
             residual_tokens: left_residual_tokens,
-            extra_bits: left_extra_bits,
             props: left_props,
             bucket_indices: left_bucket_indices,
             sample_counts: left_sample_counts,
@@ -6531,7 +6494,6 @@ impl<'a> BorrowedSamples<'a> {
         };
         let right = BorrowedSamples {
             residual_tokens: right_residual_tokens,
-            extra_bits: right_extra_bits,
             props: right_props,
             bucket_indices: right_bucket_indices,
             sample_counts: right_sample_counts,
@@ -6858,7 +6820,6 @@ fn eval_split_prop_borrowed(
             row_stride = effective_histo;
         } else {
             let tokens = &samples.residual_tokens[pred][start..end];
-            let ebits = &samples.extra_bits[pred][start..end];
 
             for b in 0..local_num_buckets {
                 count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
@@ -6879,7 +6840,6 @@ fn eval_split_prop_borrowed(
                         *eb_out = accumulate_run_4way(
                             &sorted_by_bucket[bs..be],
                             tokens,
-                            ebits,
                             sample_counts,
                             ci_slice,
                             HISTO_MASK,
@@ -6891,7 +6851,7 @@ fn eval_split_prop_borrowed(
                             let tok = tokens[rel_off];
                             let sc = sample_counts[rel_off];
                             ci_slice[tok as usize & HISTO_MASK] += sc;
-                            eb_sum += ebits[rel_off] as u64 * sc as u64;
+                            eb_sum += gather_token_ebits(tok) as u64 * sc as u64;
                         }
                         *eb_out = eb_sum;
                     }
@@ -7414,13 +7374,13 @@ fn compute_predictor_entropy_borrowed(
     counts_buf: &mut [u32],
 ) -> f64 {
     let tokens = &samples.residual_tokens[predictor_idx][start..end];
-    let ebits = &samples.extra_bits[predictor_idx][start..end];
     let sample_counts = &samples.sample_counts[start..end];
     counts_buf[..histogram_size].fill(0);
     let mut total = 0u32;
     let mut tot_extra: u64 = 0;
 
-    for ((&tok, &eb), &count) in tokens.iter().zip(ebits.iter()).zip(sample_counts.iter()) {
+    for (&tok, &count) in tokens.iter().zip(sample_counts.iter()) {
+        let eb = gather_token_ebits(tok);
         let tok = tok as usize;
         if tok < histogram_size {
             counts_buf[tok] += count;
@@ -7568,11 +7528,6 @@ fn stable_gather_partition_borrowed(
                 cols.push(&mut row[begin..end]);
             }
         }
-        for row in samples.extra_bits.iter_mut() {
-            if !row.is_empty() {
-                cols.push(&mut row[begin..end]);
-            }
-        }
         for row in samples.bucket_indices.iter_mut() {
             if !row.is_empty() {
                 cols.push(&mut row[begin..end]);
@@ -7632,11 +7587,6 @@ fn stable_gather_partition_borrowed(
             col[begin..end].copy_from_slice(&col_scratch[..n]);
         };
         for row in samples.residual_tokens.iter_mut() {
-            if !row.is_empty() {
-                gather_u8(row);
-            }
-        }
-        for row in samples.extra_bits.iter_mut() {
             if !row.is_empty() {
                 gather_u8(row);
             }
@@ -7725,11 +7675,6 @@ fn swap_rows_borrowed(
         return;
     }
     for row in samples.residual_tokens.iter_mut() {
-        if !row.is_empty() {
-            row.swap(a, b);
-        }
-    }
-    for row in samples.extra_bits.iter_mut() {
         if !row.is_empty() {
             row.swap(a, b);
         }
@@ -8870,7 +8815,6 @@ fn tensor_capture_pays(layout: &TensorLayout, unique_count: usize) -> bool {
 fn accumulate_run_4way(
     idxs: &[u32],
     tokens: &[u8],
-    ebits: &[u8],
     sample_counts: &[u32],
     row: &mut [u32],
     mask: usize,
@@ -8880,10 +8824,10 @@ fn accumulate_run_4way(
     let mut lane = 0usize;
     for &rel_off in idxs {
         let rel_off = rel_off as usize;
-        let tok = tokens[rel_off] as usize & mask;
+        let tok = tokens[rel_off];
         let sc = sample_counts[rel_off];
-        sub[lane & 3][tok] += sc;
-        eb[lane & 3] += ebits[rel_off] as u64 * sc as u64;
+        sub[lane & 3][tok as usize & mask] += sc;
+        eb[lane & 3] += gather_token_ebits(tok) as u64 * sc as u64;
         lane += 1;
     }
     for (i, r) in row.iter_mut().enumerate() {
@@ -8970,7 +8914,6 @@ fn build_node_tensor(
 
                 for pred in 0..num_pred {
                     let tokens = &samples.residual_tokens[pred][start..end];
-                    let ebits = &samples.extra_bits[pred][start..end];
                     for b in 0..nb {
                         let bs = bucket_starts[b];
                         let be = bucket_starts[b + 1];
@@ -8983,7 +8926,6 @@ fn build_node_tensor(
                             accumulate_run_4way(
                                 &sorted_by_bucket[bs..be],
                                 tokens,
-                                ebits,
                                 sample_counts,
                                 row,
                                 HISTO_MASK,
@@ -8992,11 +8934,12 @@ fn build_node_tensor(
                             let mut eb_sum: u64 = 0;
                             for &rel_off in &sorted_by_bucket[bs..be] {
                                 let rel_off = rel_off as usize;
-                                let tok = tokens[rel_off] as usize;
+                                let tok8 = tokens[rel_off];
+                                let tok = tok8 as usize;
                                 let sc = sample_counts[rel_off];
                                 debug_assert!(tok < histogram_size);
                                 row[tok] += sc;
-                                eb_sum += ebits[rel_off] as u64 * sc as u64;
+                                eb_sum += gather_token_ebits(tok8) as u64 * sc as u64;
                             }
                             eb_sum
                         };
@@ -9065,7 +9008,6 @@ fn build_node_tensor_borrowed(
 
                 for pred in 0..num_pred {
                     let tokens = &samples.residual_tokens[pred][start..end];
-                    let ebits = &samples.extra_bits[pred][start..end];
                     for b in 0..nb {
                         let bs = bucket_starts[b];
                         let be = bucket_starts[b + 1];
@@ -9078,7 +9020,6 @@ fn build_node_tensor_borrowed(
                             accumulate_run_4way(
                                 &sorted_by_bucket[bs..be],
                                 tokens,
-                                ebits,
                                 sample_counts,
                                 row,
                                 HISTO_MASK,
@@ -9087,11 +9028,12 @@ fn build_node_tensor_borrowed(
                             let mut eb_sum: u64 = 0;
                             for &rel_off in &sorted_by_bucket[bs..be] {
                                 let rel_off = rel_off as usize;
-                                let tok = tokens[rel_off] as usize;
+                                let tok8 = tokens[rel_off];
+                                let tok = tok8 as usize;
                                 let sc = sample_counts[rel_off];
                                 debug_assert!(tok < histogram_size);
                                 row[tok] += sc;
-                                eb_sum += ebits[rel_off] as u64 * sc as u64;
+                                eb_sum += gather_token_ebits(tok8) as u64 * sc as u64;
                             }
                             eb_sum
                         };
@@ -9808,7 +9750,6 @@ fn find_best_split(
                 // and extra-bits reads, no per-index pointer chase across the
                 // whole SoA.
                 let tokens = &samples.residual_tokens[pred][start..end];
-                let ebits = &samples.extra_bits[pred][start..end];
 
                 // Clear only effective_histo entries per bucket (HISTO_PADDED stride
                 // leaves gaps that are never read). Same total bytes as original code.
@@ -9834,7 +9775,7 @@ fn find_best_split(
                         let tok = tokens[rel_off];
                         let sc = sample_counts[rel_off];
                         ci_slice[tok as usize & HISTO_MASK] += sc;
-                        eb_sum += ebits[rel_off] as u64 * sc as u64;
+                        eb_sum += gather_token_ebits(tok) as u64 * sc as u64;
                     }
                     extra_bits_increase[local_bucket] = eb_sum;
                 }
@@ -10102,7 +10043,8 @@ fn find_best_predictor(
         let mut best_bits = f64::MAX;
         for pred_idx in 0..num_pred {
             let lb = predictor_extra_bits_lower_bound(
-                &samples.extra_bits[pred_idx],
+                &samples.residual_tokens[pred_idx],
+                &GATHER_EBITS_LUT,
                 &samples.sample_counts,
                 start,
                 end,
@@ -10217,7 +10159,8 @@ fn find_best_predictor(
     // the per-predictor SoA slices and uses no shared state.
     let lbs: Vec<f64> = crate::parallel::parallel_map(num_pred, |pred_idx| {
         predictor_extra_bits_lower_bound(
-            &samples.extra_bits[pred_idx],
+            &samples.residual_tokens[pred_idx],
+            &GATHER_EBITS_LUT,
             &samples.sample_counts,
             start,
             end,
@@ -10332,7 +10275,8 @@ fn find_best_predictor(
     // Byte-identical to the unconditional loop.
     for pred_idx in 0..num_pred {
         let lb = predictor_extra_bits_lower_bound(
-            &samples.extra_bits[pred_idx],
+            &samples.residual_tokens[pred_idx],
+            &GATHER_EBITS_LUT,
             &samples.sample_counts,
             start,
             end,
@@ -10419,7 +10363,6 @@ fn compute_predictor_entropy(
     counts_buf: &mut [u32],
 ) -> f64 {
     let tokens = &samples.residual_tokens[predictor_idx][start..end];
-    let ebits = &samples.extra_bits[predictor_idx][start..end];
     let sample_counts = &samples.sample_counts[start..end];
     counts_buf[..histogram_size].fill(0);
     let mut total = 0u32;
@@ -10428,7 +10371,8 @@ fn compute_predictor_entropy(
     // Zip-iterate: contiguous reads over three parallel slices. Bounds-check
     // elimination via the matched zip; no `[idx]` indexing into the parent
     // arrays.
-    for ((&tok, &eb), &count) in tokens.iter().zip(ebits.iter()).zip(sample_counts.iter()) {
+    for (&tok, &count) in tokens.iter().zip(sample_counts.iter()) {
+        let eb = gather_token_ebits(tok);
         let tok = tok as usize;
         if tok < histogram_size {
             counts_buf[tok] += count;
@@ -10515,7 +10459,6 @@ fn partition_node_in_place_with(
     let skip_props_swap = skip_props_swap && !chunk3c_skip_is_disabled();
     let mut view = tree_learn_split::SplittableSamples {
         residual_tokens: &mut samples.residual_tokens,
-        extra_bits: &mut samples.extra_bits,
         props: &mut samples.props,
         bucket_indices: &mut pq.bucket_indices,
         sample_counts: &mut samples.sample_counts,
@@ -12797,7 +12740,6 @@ mod tests {
         assert_eq!(total_count, 16, "permutation must preserve total weight");
         for pred in 0..samples.num_predictors() {
             assert_eq!(samples.residual_tokens[pred].len(), n);
-            assert_eq!(samples.extra_bits[pred].len(), n);
         }
     }
 
@@ -12844,7 +12786,6 @@ mod tests {
                 }
                 for pred in 0..num_pred {
                     key.push(samples.residual_tokens[pred][i]);
-                    key.push(samples.extra_bits[pred][i]);
                 }
                 *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
             }
@@ -12966,7 +12907,6 @@ mod tests {
                 }
                 for pred in 0..num_pred {
                     key.push(samples.residual_tokens[pred][i]);
-                    key.push(samples.extra_bits[pred][i]);
                 }
                 *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
             }
@@ -13126,7 +13066,6 @@ mod tests {
                 }
                 for pred in 0..num_pred {
                     key.push(samples.residual_tokens[pred][i]);
-                    key.push(samples.extra_bits[pred][i]);
                 }
                 *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
             }
@@ -13236,7 +13175,6 @@ mod tests {
 
         assert_eq!(legacy.num_samples, offset0.num_samples);
         assert_eq!(legacy.residual_tokens, offset0.residual_tokens);
-        assert_eq!(legacy.extra_bits, offset0.extra_bits);
         assert_eq!(legacy.props, offset0.props);
     }
 
