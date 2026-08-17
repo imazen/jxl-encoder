@@ -222,3 +222,45 @@ patches 62 (BFS claims 25-30 order-locked + eval 10 + dfs 11 + dispatch
 e>=7 (enc_heuristics.cc kSquirrel); ours at e5-6 is the deliberate
 screenshot-RD divergence (W36-3), so the photo-cell patches cost is the
 price of that divergence when the mask-median dispatch admits the scan.
+
+## Round 4 (2026-08-17) — x64 ground truth + cross-arch determinism
+
+**CI had been red since 2026-08-06.** Three root causes fixed (commits
+4413f91c, 69820a7e): the mult-4 support trim (AVX2 8-wide split violation),
+44 clippy -D warnings (local runs had dropped the -D), and — the deep one —
+ARCH-DIVERGENT entropy kernels: hand-written estimate_bits_u32 / 
+shannon_entropy_bits grouped accumulators by native register width
+(AVX2 8 vs NEON 4), so f32 low bits differed by arch and flipped near-tie
+FBS splits, predictor keep-sets, and ANS clustering merges. Both kernels
+are now ONE canonical magetypes body each (fixed virtual accumulator
+mapping + fixed combine tree, lane-pure on every tier) — cross-arch
+bit-identical BY CONSTRUCTION. Verified: 4K photo e5 sha256-IDENTICAL on
+Ryzen 7900X (AVX2) vs Apple Silicon (NEON); hash-locks 53/53 on both
+arches from one sidecar; byte-lock 5/5 unchanged; rd-regression green.
+Diagnosis method per user directive: source reading + per-stage hash dumps
+on real x64 (lilith-lianli) — NO emulation (Rosetta hides AVX2).
+
+**x64 wall ladder (Ryzen 7900X, cjxl v0.12.0 GCC AVX2, 4K photo, best-of-3):**
+
+| cell | cjxl | ours | ratio | (Mac/NEON ratio) |
+|---|---|---|---|---|
+| lossy e3 t1 / t8 | 0.26 / 0.15 | 0.37 / 0.16 | 1.45× / **1.05×** | 1.40× / 1.14× |
+| lossy e5 t1 / t8 | 0.95 / 0.27 | 1.66 / 0.53 | **1.74× / 1.96×** | 0.94× / 1.38× |
+| lossy e7 t1 / t8 | 1.73 / 0.48 | 2.07 / 0.59 | 1.20× / 1.24× | 0.73× / 0.85× |
+| lossless e7 t1 / t8 | 3.34 / 0.52 | 6.84 / 2.39 | 2.05× / 4.61× | 1.70× / 4.5× |
+| lossless e9 t1 / t8 | 17.5 / 2.46 | 35.4 / 12.7 | 2.02× / 5.17× | 1.65× / 5.2× |
+
+Bytes: lossy ours +2.2% at e5 (630328 vs 616985 — the known e5 RD gap,
+see the DCT4X4 divergence row), e7 +0.2%; lossless ours WINS −0.9% e7 /
+−3.4% e9.
+
+**Reading:** the Mac wins at e5/e7 were partly weak-NEON-cjxl artifacts —
+cjxl's AVX2 build is ~1.5× faster than its NEON build at e5 while ours is
+~1.2× SLOWER on AVX2 than NEON. x64 is the arch that matters and the
+ladder to close is the x64 one. The x64 e5-t1 perf profile matches the
+arm64 shape (find_best_16x16 23% self, patches sequential BFS/DFS 9% at
+t1, DCT kernels) — no AVX2-specific pathology; the identified levers
+(fused IDENTITY/DCT2X2 evals in the 8×8 search, acstrat lean-down,
+lossless t8 root-parallel learning) apply to both arches and should be
+measured on x64 (bench clone: lilith-lianli ~/work/zen/jxl-encoder--x64verify,
+cjxl v0.12.0 at ~/tmp/libjxl-bench/build/tools/cjxl).
