@@ -352,7 +352,7 @@ const W44_164_FCBR_SCREENSHOT_MIN: f32 = 0.35;
 /// thumbnail content AND (b) `adapt_to_image_content` short-circuits
 /// anyway. Skipping the proxy compute saves the O(W·H) scan on the
 /// throwaway-small inputs.
-const W44_164_MIN_PIXELS: u64 = crate::effort::CONTENT_CLASS_MIN_PIXELS;
+pub(crate) const W44_164_MIN_PIXELS: u64 = crate::effort::CONTENT_CLASS_MIN_PIXELS;
 
 /// W44-164: derive an [`crate::effort::ImageContentClass`] from the
 /// caller-supplied 8-bit sRGB pixel buffer when the auto-classifier

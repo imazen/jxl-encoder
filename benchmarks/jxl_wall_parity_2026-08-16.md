@@ -108,3 +108,45 @@ REFUTED first: screen e9's 589-leaf spread tree got capped and cost
 18-image corpus: total +0.047 % vs prior default, 4/18 images move,
 worst +0.18 % (9094 illustration); djxl decodes the new default
 PIXEL-EXACT; hash-lock regenerated (1 fixture), suite 12/12.
+
+## Round 2 (2026-08-17): per-prop parallel FBS + lossy setup fixes
+
+**Lossless** (photo 4K, bytes identical, suite 12/12):
+per-property parallel find_best_split (one evaluator body shared by the
+sequential and parallel dispatches; ordered fold reproduces the strict-<
+selection, block-capture for the tensor, first-in-order cap_totals;
+bounded waves of 4 pooled workspaces at >= 1M-row nodes) + u32
+bucket-sort indices (halves the largest workspace member — a cache win
+even at t=1):
+
+| cell | before | after | ratio |
+|---|---|---|---|
+| e7 t=1 | 7.10 | **6.51 s** | 1.70x |
+| e9 t=1 | 42.3 | **38.2 s** | 1.65x |
+| e7 t=8 | 2.92 | **2.74 s** | 4.5x |
+| e9 t=8 | 19.1 | **18.2 s** | 5.2x |
+
+**Lossy** (photo 4K PPM, d=1.25, best-of-3; bytes identical everywhere):
+the low-effort wall gap was NOT the core (e3 t=8 inner 68 ms ~= cjxl's
+whole run) but pre-inner setup: the content classifier ran a FULL-IMAGE
+zenanalyze sweep (78 ms — more than the e3 core) on every encode while
+its only consumer fires at e5-6; and the encoder then computed the
+IDENTICAL sweep again for enc.zenanalyze_proxies. Banded the classifier
+to its consumer's exact gates and shared ONE sweep between both
+consumers; parallelized the sRGB u8->linear ingest LUT.
+
+| cell | was | now | cjxl | ratio |
+|---|---|---|---|---|
+| e3 t=1 | 0.27 | **0.21 s** | 0.15 | 1.40x |
+| e3 t=8 | 0.14 | **0.08 s** | 0.07 | **1.14x** |
+| e5 t=1 | 1.55 | **1.49 s** | 1.47 | **1.01x** |
+| e5 t=8 | 0.60 | **0.53 s** | 0.26 | 2.04x |
+| e7 t=1 | 2.04 | **1.99 s** | 2.63 | **0.76x — win** |
+| e7 t=8 | 0.66 | **0.60 s** | 0.52 | **1.15x** |
+
+Remaining ladder: e5-t8 tail = patches_detect 162 ms (not scaling),
+the shared proxy sweep 78 ms (f64 sum chains — exact parallelization
+impossible, needs a corpus-gated deterministic-strip version),
+quant_field 58 ms (flat across threads); e3-t1 last ~8 % = two-pass
+entropy build; lossless t=8 root levels beyond the prop fan-out;
+lossless e9 t=1 38.2 -> 30.0.

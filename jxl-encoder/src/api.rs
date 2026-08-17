@@ -7258,8 +7258,24 @@ impl<'a> EncodeRequest<'a> {
                 && !cfg.has_internal_overrides()
                 && cfg.resolve_improvements().content_class_auto_classify
         };
-        let auto_content_class = if class_consumed {
-            auto_classify_content_class_from_layout(pixels, self.width, self.height, self.layout)
+        // ONE shared zenanalyze-proxy sweep for BOTH consumers (the
+        // classifier here and `enc.zenanalyze_proxies` below): the
+        // classifier is `compute_w44_91_zenanalyze_proxies` + a pure
+        // threshold (`classify_from_proxies`), and the encoder computed
+        // the identical full-image pass again ~60 lines later — 2 x
+        // ~78 ms at 4K e5. The band is the union of both consumers'
+        // gates (class band eff 5-6 is a subset of the proxies band).
+        let shared_proxies = if cfg.effort() >= 5 || cfg.distance >= 2.0 {
+            compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout)
+        } else {
+            None
+        };
+        let auto_content_class = if class_consumed
+            && (w as u64) * (h as u64) >= crate::api::content_detect::W44_164_MIN_PIXELS
+        {
+            shared_proxies
+                .as_ref()
+                .map(crate::api::content_detect::classify_from_proxies)
         } else {
             None
         };
@@ -7267,6 +7283,8 @@ impl<'a> EncodeRequest<'a> {
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!("encode_lossy: content_class={:?}", _t_cc.elapsed());
         }
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _t_prof = std::time::Instant::now();
         let mut profile = cfg.effective_profile_for_image_with_smoothness_and_class(
             (w as u64) * (h as u64),
             smooth_photo_for_dct64,
@@ -7435,11 +7453,7 @@ impl<'a> EncodeRequest<'a> {
         // e3/e4/e5 × d1.0/d3.0. If a future consumer fires below this
         // band, widen the predicate (the gate registry rows carry the
         // bands).
-        enc.zenanalyze_proxies = if cfg.effort >= 5 || cfg.distance >= 2.0 {
-            compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout)
-        } else {
-            None
-        };
+        enc.zenanalyze_proxies = shared_proxies;
         // Streaming refactor #11 chunk 6: thread the caller-selected
         // [`Buffering`] policy into VarDctEncoder so the per-region
         // precompute dispatch (precomputed.rs:compute_with_budget_and_buffering)
@@ -7790,6 +7804,10 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!("encode_lossy: post-class-setup={:?}", _t_prof.elapsed());
+        }
         #[cfg(feature = "__env_var_diagnostics")]
         let _t_pre = std::time::Instant::now();
         #[cfg(feature = "__env_var_diagnostics")]
