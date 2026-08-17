@@ -321,7 +321,15 @@ macro_rules! debug_eprintln {
 #[macro_export]
 #[cfg(not(feature = "trace-bitstream"))]
 macro_rules! debug_eprintln {
-    ($($arg:tt)*) => {};
+    // The `if false` arm type-checks (and therefore "uses") the arguments
+    // without evaluating them, so values that are only read by trace output
+    // don't trip unused-assignment lints in non-trace builds; the dead
+    // branch compiles away entirely.
+    ($($arg:tt)*) => {
+        if false {
+            let _ = format_args!($($arg)*);
+        }
+    };
 }
 
 // Re-export macros at crate level

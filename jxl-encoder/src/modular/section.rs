@@ -410,7 +410,7 @@ pub(crate) fn modular_hf_stream_id_base(num_lf_groups: u32) -> u32 {
 /// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
 #[allow(dead_code)]
 // public wrapper retained for API stability;
-// internal callers route through `write_global_modular_section_with_tree_knobs`
+// internal callers route through `write_global_modular_section_with_tree_dc_quant_knobs`
 #[allow(clippy::too_many_arguments)] // mirrors the knobs variant's signature
 pub fn write_global_modular_section_with_tree(
     images: &[ModularImage],
@@ -433,50 +433,6 @@ pub fn write_global_modular_section_with_tree(
         None,
         meta_image,
         &super::palette::ModularKnobs::default(),
-        hf_stream_id_base,
-        budget,
-    )
-}
-
-/// Knob-aware variant of [`write_global_modular_section_with_tree`].
-///
-/// When [`super::palette::ModularKnobs::modular_predictor`] resolves to a
-/// concrete `0..=13` predictor (excluding `5` Gradient — the default
-/// keeps the legacy ID3 path for hash-lock parity, and `14`/`15` are
-/// libjxl's `Best`/`Variable` meta-modes that explicitly request
-/// per-leaf selection), the tree learner is skipped entirely and a
-/// single-leaf tree with the requested predictor is emitted. Per-group
-/// residual collection in [`write_group_modular_section`] picks up the
-/// override via the [`GlobalModularState::AnsWithTree`] tree handle,
-/// keeping the bitstream self-consistent end-to-end.
-///
-/// Mirrors libjxl `cjxl -P N` / `--modular_predictor`: forcing the leaf
-/// predictor in the tree-learn path matches the libjxl behaviour where
-/// `options.predictor` overrides what would otherwise be the tree
-/// learner's per-leaf choice.
-#[allow(clippy::too_many_arguments)]
-pub fn write_global_modular_section_with_tree_knobs(
-    images: &[ModularImage],
-    writer: &mut BitWriter,
-    profile: &crate::effort::EffortProfile,
-    transforms: GlobalTransforms,
-    use_lz77: bool,
-    lz77_method: crate::entropy_coding::lz77::Lz77Method,
-    meta_image: Option<&ModularImage>,
-    knobs: &super::palette::ModularKnobs,
-    hf_stream_id_base: u32,
-    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
-) -> Result<GlobalModularState> {
-    write_global_modular_section_with_tree_dc_quant_knobs(
-        images,
-        writer,
-        profile,
-        transforms,
-        use_lz77,
-        lz77_method,
-        None,
-        meta_image,
-        knobs,
         hf_stream_id_base,
         budget,
     )
@@ -513,7 +469,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
 
 /// Knob-aware + LfFrame-aware variant of
 /// [`write_global_modular_section_with_tree`]. See
-/// [`write_global_modular_section_with_tree_knobs`] for the override
+/// [`write_global_modular_section_with_tree_dc_quant_knobs`] for the override
 /// semantics.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
@@ -1936,6 +1892,7 @@ pub(crate) fn write_local_trees_lf_global(
 /// (RD-max mode) and honor the same env override.
 pub(crate) const SECTIONED_PRUNE_PREDICTORS_K: usize = 8;
 
+#[allow(clippy::too_many_arguments)]
 pub fn write_group_modular_section_local_tree(
     group_image: &ModularImage,
     stream_id: u32,
@@ -2171,6 +2128,7 @@ impl GroupTransforms {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn write_group_modular_section_idx(
     group_image: &ModularImage,
     state: &GlobalModularState,
@@ -2276,32 +2234,31 @@ pub fn write_group_modular_section_idx(
                 pre_collected
             };
             #[cfg(feature = "std")]
-            if std::env::var_os("JXL_TOKEN_REUSE_VERIFY").is_some() {
-                if let Some(slice) = pre_collected {
-                    let fresh =
-                        super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
-                            group_image,
-                            tree,
-                            group_idx,
-                            0,
-                            wp_params,
-                            None,
-                            super::tree_learn::WpCacheMode::Off,
-                        )?;
-                    if fresh.len() != slice.len() {
-                        eprintln!(
-                            "[token-verify] g={group_idx} LEN fresh={} reused={}",
-                            fresh.len(),
-                            slice.len()
-                        );
-                    } else if let Some(i) = (0..fresh.len())
-                        .find(|&i| format!("{:?}", fresh[i]) != format!("{:?}", slice[i]))
-                    {
-                        eprintln!(
-                            "[token-verify] g={group_idx} first diff at {i}: fresh={:?} reused={:?}",
-                            fresh[i], slice[i]
-                        );
-                    }
+            if std::env::var_os("JXL_TOKEN_REUSE_VERIFY").is_some()
+                && let Some(slice) = pre_collected
+            {
+                let fresh = super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+                    group_image,
+                    tree,
+                    group_idx,
+                    0,
+                    wp_params,
+                    None,
+                    super::tree_learn::WpCacheMode::Off,
+                )?;
+                if fresh.len() != slice.len() {
+                    eprintln!(
+                        "[token-verify] g={group_idx} LEN fresh={} reused={}",
+                        fresh.len(),
+                        slice.len()
+                    );
+                } else if let Some(i) = (0..fresh.len())
+                    .find(|&i| format!("{:?}", fresh[i]) != format!("{:?}", slice[i]))
+                {
+                    eprintln!(
+                        "[token-verify] g={group_idx} first diff at {i}: fresh={:?} reused={:?}",
+                        fresh[i], slice[i]
+                    );
                 }
             }
             // Pre-collected slices are the WIRE stream — the state stores

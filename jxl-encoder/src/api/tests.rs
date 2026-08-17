@@ -4,6 +4,7 @@
 //! Unit tests for the public API surface (`super` = `crate::api`).
 //! Extracted verbatim from api.rs on 2026-07-14 (no test-body changes).
 
+use super::content_detect::auto_classify_content_class_from_layout;
 use super::*;
 
 // ─── ec_resampling helper (A1 audit "Pixel formats / extras") ──

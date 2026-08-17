@@ -436,8 +436,8 @@ fn tokenize_ac_group(
                 if !ac_strategy.is_first(bx, by) {
                     continue;
                 }
-                for c in 0..3 {
-                    n += raw_nzeros[c][by][bx] as usize + 1;
+                for plane in raw_nzeros.iter() {
+                    n += plane[by][bx] as usize + 1;
                 }
             }
         }

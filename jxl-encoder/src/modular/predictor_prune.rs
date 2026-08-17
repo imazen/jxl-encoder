@@ -271,15 +271,9 @@ mod tests {
         lut[0] = 2;
         lut[1] = 4;
         lut[2] = 6;
-        for _ in 0..80 {
-            tokens.push(0);
-        }
-        for _ in 0..15 {
-            tokens.push(1);
-        }
-        for _ in 0..5 {
-            tokens.push(2);
-        }
+        tokens.extend(core::iter::repeat_n(0u8, 80));
+        tokens.extend(core::iter::repeat_n(1u8, 15));
+        tokens.extend(core::iter::repeat_n(2u8, 5));
         let sample_counts = vec![1u32; 100];
         assert_lb_sound(&tokens, &lut, &sample_counts, 16);
 

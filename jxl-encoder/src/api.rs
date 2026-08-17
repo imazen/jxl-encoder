@@ -242,10 +242,8 @@ pub use quality::*;
 #[cfg(test)]
 pub(crate) use quality::interp_quality;
 mod content_detect;
+pub(crate) use content_detect::detect_smooth_photo_for_dct64_from_layout;
 pub use content_detect::downsample_channel_u8;
-pub(crate) use content_detect::{
-    auto_classify_content_class_from_layout, detect_smooth_photo_for_dct64_from_layout,
-};
 // `classify_from_proxies` is exercised only by api/tests.rs; re-export it at
 // the api level under cfg(test) so those tests reach it via `use super::*`.
 #[cfg(test)]
@@ -2948,7 +2946,7 @@ impl LossyConfig {
     /// Variant of [`Self::effective_profile_for_image_with_smoothness`]
     /// that also takes a caller-computed
     /// [`crate::effort::ImageContentClass`] from the W44-164 auto-
-    /// classifier ([`auto_classify_content_class_from_layout`]).
+    /// classifier (`classify_from_proxies`).
     ///
     /// Precedence (highest → lowest):
     /// 1. `self.content_class` (caller-set via `with_content_class`)

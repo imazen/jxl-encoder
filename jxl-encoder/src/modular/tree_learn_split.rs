@@ -959,7 +959,7 @@ mod tests {
             state = state.wrapping_mul(1664525).wrapping_add(1013904223);
             state
         };
-        let mut residual_tokens: Vec<Vec<u8>> = vec![Vec::with_capacity(n); 3];
+        let mut residual_tokens: Vec<Vec<u8>> = (0..3).map(|_| Vec::with_capacity(n)).collect();
         let mut props: Vec<PropColumn> = vec![PropColumn::I32(Vec::new())];
         let mut bucket_indices: Vec<Vec<u8>> = vec![Vec::with_capacity(n)];
         let mut sample_counts: Vec<u32> = Vec::with_capacity(n);

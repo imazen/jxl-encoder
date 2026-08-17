@@ -748,12 +748,10 @@ impl PropColumn {
             (PropColumn::I16(d), PropColumn::I16(s)) => d.append(s),
             (PropColumn::I32(d), PropColumn::I32(s)) => {
                 d.append(s);
-                return;
             }
             (PropColumn::I32(d), PropColumn::I16(s)) => {
                 d.extend(s.iter().map(|&x| x as i32));
                 s.clear();
-                return;
             }
             (PropColumn::I16(_), PropColumn::I32(_)) => {
                 self.promote();
@@ -764,7 +762,6 @@ impl PropColumn {
                     unreachable!()
                 };
                 d.append(s);
-                return;
             }
         }
     }
@@ -1201,6 +1198,9 @@ impl TreeSamples {
     ///
     /// Optional micro-optimization for callers that know the total sample count
     /// up-front — avoids `Vec` reallocations during the gather hot loop.
+    /// (No default-path caller since the exact-bucketize seam; kept for the
+    /// sized-gather callers behind the parallel features and for tests.)
+    #[allow(dead_code)]
     pub(crate) fn reserve(&mut self, additional: usize) {
         for v in &mut self.residual_tokens {
             v.reserve(additional);
@@ -1575,9 +1575,9 @@ pub(crate) fn exact_bucketize_plan(
     let mut collectors: Vec<DistinctPropertyValues> = (0..total_props)
         .map(|_| DistinctPropertyValues::default())
         .collect();
-    let mut walk_image = |image: &super::channel::ModularImage,
-                          group_id: u32,
-                          collectors: &mut [DistinctPropertyValues]| {
+    let walk_image = |image: &super::channel::ModularImage,
+                      group_id: u32,
+                      collectors: &mut [DistinctPropertyValues]| {
         for (ch_idx, channel) in image.channels.iter().enumerate() {
             let width = channel.width();
             let height = channel.height();
@@ -1590,10 +1590,9 @@ pub(crate) fn exact_bucketize_plan(
                 Vec::new()
             };
             let mut wp_state = WeightedPredictorState::new(wp_params, width);
-            let mut prev_gradient: i32 = 0;
             let mut subsample_counter: usize = 0;
             for y in 0..height {
-                prev_gradient = 0;
+                let mut prev_gradient: i32 = 0;
                 for x in 0..width {
                     let pixel = channel.get(x, y);
                     let n = Neighbors::gather(channel, x, y);
@@ -3394,8 +3393,11 @@ fn gather_channel_samples(
                 }
 
                 // No dedup or miss: push everything to SoA columns.
-                for pred_idx in 0..num_pred {
-                    samples.residual_tokens[pred_idx].push(local_tokens[pred_idx]);
+                for (col, &tok) in samples.residual_tokens[..num_pred]
+                    .iter_mut()
+                    .zip(local_tokens.iter())
+                {
+                    col.push(tok);
                 }
                 let active = samples.active_props.take();
                 let is_on = |c: usize| match &active {
@@ -3952,9 +3954,8 @@ impl GatherDedupTable {
         samples: &TreeSamples,
         b: usize,
     ) -> bool {
-        let num_pred = local_tokens.len();
-        for pred in 0..num_pred {
-            if local_tokens[pred] != samples.residual_tokens[pred][b] {
+        for (&tok, col) in local_tokens.iter().zip(samples.residual_tokens.iter()) {
+            if tok != col[b] {
                 return false;
             }
         }
@@ -5009,7 +5010,7 @@ fn build_tree_from_prequantized(
     samples: &mut TreeSamples,
     params: &TreeLearningParams,
     mut pq: PreQuantizedProps,
-    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    _budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Tree> {
     #[cfg(feature = "std")]
     if std::env::var_os("JXL_PQ_HASH").is_some() {
@@ -5479,20 +5480,20 @@ fn build_tree_from_prequantized(
 
     while let Some(mut candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             continue;
         }
 
         let count = candidate.end - candidate.start;
         if count < 2 {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             continue;
         }
 
         // Early termination gate: if base_bits is already below threshold,
         // no split can save enough bits. Matches libjxl enc_ma.cc:304.
         if candidate.base_bits <= threshold {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             continue;
         }
 
@@ -5640,7 +5641,7 @@ fn build_tree_from_prequantized(
                 });
             }
             _ => {
-                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             }
         }
     }
@@ -5794,16 +5795,16 @@ fn build_subtree_sequential(
 
     while let Some(candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes_budget {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             continue;
         }
         let count = candidate.end - candidate.start;
         if count < 2 {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             continue;
         }
         if candidate.base_bits <= threshold {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             continue;
         }
 
@@ -5896,7 +5897,7 @@ fn build_subtree_sequential(
                 });
             }
             _ => {
-                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             }
         }
     }
@@ -6114,11 +6115,7 @@ fn build_subtree_recursive_parallel(
             tensor: None,
         };
         tree.push(PropertyDecisionNode::default());
-        finalize_leaf(
-            &mut tree,
-            &leaf_candidate,
-            &samples.candidate_predictors[..],
-        );
+        finalize_leaf(&mut tree, &leaf_candidate, &samples.candidate_predictors);
         return tree;
     }
 
@@ -6167,11 +6164,7 @@ fn build_subtree_recursive_parallel(
                 tensor: None,
             };
             tree.push(PropertyDecisionNode::default());
-            finalize_leaf(
-                &mut tree,
-                &leaf_candidate,
-                &samples.candidate_predictors[..],
-            );
+            finalize_leaf(&mut tree, &leaf_candidate, &samples.candidate_predictors);
             return tree;
         }
     };
@@ -6568,7 +6561,6 @@ mod mabsplit_dump {
 #[cfg(feature = "parallel-tree-learning")]
 struct PropEvalShared<'a, 'b> {
     samples: &'a BorrowedSamples<'b>,
-    params: &'a TreeLearningParams,
     start: usize,
     end: usize,
     count: usize,
@@ -6647,7 +6639,6 @@ fn eval_split_prop_borrowed(
 ) -> PropOutcome {
     let PropEvalShared {
         samples,
-        params: _,
         start,
         end,
         count,
@@ -6811,9 +6802,9 @@ fn eval_split_prop_borrowed(
         if let Some((layout, tensor)) = tensor_in {
             let entry = &layout.prop_entries[prop_pos];
             let nb = entry.num_buckets;
-            for b in 0..local_num_buckets {
-                extra_bits_increase[b] = tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b];
-            }
+            let eb_base = entry.ebit_base + pred * nb + bmin;
+            extra_bits_increase[..local_num_buckets]
+                .copy_from_slice(&tensor.ebit_sums[eb_base..eb_base + local_num_buckets]);
             row_data = &tensor.token_counts;
             row_base = entry.token_base + (pred * nb + bmin) * effective_histo;
             row_stride = effective_histo;
@@ -6868,14 +6859,14 @@ fn eval_split_prop_borrowed(
                             });
                     }
                 } else {
-                    for local_bucket in 0..local_num_buckets {
-                        let ci_base = local_bucket * HISTO_PADDED;
-                        let (ci_slice, eb_out) = (
-                            &mut count_increase[ci_base..ci_base + HISTO_PADDED],
-                            &mut extra_bits_increase[local_bucket],
-                        );
-                        accum_one(local_bucket, ci_slice, eb_out);
-                    }
+                    count_increase
+                        .chunks_exact_mut(HISTO_PADDED)
+                        .zip(extra_bits_increase.iter_mut())
+                        .take(local_num_buckets)
+                        .enumerate()
+                        .for_each(|(local_bucket, (ci_slice, eb_out))| {
+                            accum_one(local_bucket, ci_slice, eb_out)
+                        });
                 }
             });
 
@@ -6909,15 +6900,23 @@ fn eval_split_prop_borrowed(
             }
             right_extra += eb;
         }
-        // Token-support trim (see the sequential history): zero tail
-        // contributes exactly 0.0; rounding to a multiple of 4 keeps the
-        // SIMD lane chunking bit-identical.
+        // Token-support trim: zero tail contributes exactly 0.0 ONLY when
+        // every retained element keeps the same SIMD execution path as the
+        // full-length call. The estimate kernels process 0-anchored vector
+        // blocks of their lane stride plus a scalar tail, and the WIDEST
+        // stride is 8 (AVX2 f32x8; NEON/WASM are 4-wide) — so the trim
+        // must round to a multiple of 8. A multiple-of-4 trim (the
+        // 2026-08-15..16 form) moved partial-block elements from the f32
+        // vector body into the f64 scalar tail ON AVX2 ONLY, silently
+        // diverging x64 trees from aarch64 (CI hash-locks + the BestSplit
+        // rider debug-asserts caught it; aarch64 was unaffected because
+        // 4-wide splits are preserved at multiples of 4).
         let support = {
             let mut hi = effective_histo;
             while hi > 0 && right_counts[hi - 1] == 0 {
                 hi -= 1;
             }
-            hi.div_ceil(4).saturating_mul(4).min(effective_histo)
+            hi.div_ceil(8).saturating_mul(8).min(effective_histo)
         };
 
         if capture_on && tensor_in.is_none() {
@@ -7149,7 +7148,6 @@ fn find_best_split_borrowed(
     // caller's workspace — one body, no drift.
     let shared = PropEvalShared {
         samples,
-        params,
         start,
         end,
         count,
@@ -7174,63 +7172,62 @@ fn find_best_split_borrowed(
     #[cfg(not(feature = "parallel"))]
     let prop_parallel = false;
 
-    let mut apply_outcome =
-        |o: PropOutcome,
-         best: &mut Option<BestSplit>,
-         best_bits: &mut f64,
-         capture: &mut Option<(&TensorLayout, &mut NodeTensor)>,
-         cap_totals: &mut Vec<u32>,
-         cap_total_ebits: &mut Vec<u64>,
-         cap_totals_done: &mut bool,
-         cap_single_bucket: &mut Vec<(usize, usize)>| {
-            if let Some((totals, tebits)) = o.totals {
-                if !*cap_totals_done {
-                    cap_totals.copy_from_slice(&totals);
-                    cap_total_ebits.copy_from_slice(&tebits);
-                    *cap_totals_done = true;
+    let apply_outcome = |o: PropOutcome,
+                         best: &mut Option<BestSplit>,
+                         best_bits: &mut f64,
+                         capture: &mut Option<(&TensorLayout, &mut NodeTensor)>,
+                         cap_totals: &mut Vec<u32>,
+                         cap_total_ebits: &mut Vec<u64>,
+                         cap_totals_done: &mut bool,
+                         cap_single_bucket: &mut Vec<(usize, usize)>| {
+        if let Some((totals, tebits)) = o.totals
+            && !*cap_totals_done
+        {
+            cap_totals.copy_from_slice(&totals);
+            cap_total_ebits.copy_from_slice(&tebits);
+            *cap_totals_done = true;
+        }
+        if let Some(bmin) = o.single_bucket
+            && let Some((layout, tensor)) = capture.as_mut()
+        {
+            let entry = &layout.prop_entries[o.prop_pos];
+            tensor.unique[entry.bucket_base + bmin] = count as u32;
+            tensor.weighted[entry.bucket_base + bmin] = weighted_total;
+            cap_single_bucket.push((o.prop_pos, bmin));
+        }
+        if let Some(blk) = o.capture_block
+            && let Some((layout, tensor)) = capture.as_mut()
+        {
+            let entry = &layout.prop_entries[o.prop_pos];
+            let nb = entry.num_buckets;
+            let lnb = blk.local_num_buckets;
+            let bmin = blk.bmin;
+            tensor.unique[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
+                .copy_from_slice(&blk.unique);
+            tensor.weighted[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
+                .copy_from_slice(&blk.weighted);
+            for pred in 0..num_pred {
+                for b in 0..lnb {
+                    let dst = entry.token_base + (pred * nb + bmin + b) * effective_histo;
+                    let src = (pred * lnb + b) * effective_histo;
+                    tensor.token_counts[dst..dst + effective_histo]
+                        .copy_from_slice(&blk.tokens[src..src + effective_histo]);
+                    tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b] =
+                        blk.ebits[pred * lnb + b];
                 }
             }
-            if let Some(bmin) = o.single_bucket {
-                if let Some((layout, tensor)) = capture.as_mut() {
-                    let entry = &layout.prop_entries[o.prop_pos];
-                    tensor.unique[entry.bucket_base + bmin] = count as u32;
-                    tensor.weighted[entry.bucket_base + bmin] = weighted_total;
-                    cap_single_bucket.push((o.prop_pos, bmin));
-                }
-            }
-            if let Some(blk) = o.capture_block {
-                if let Some((layout, tensor)) = capture.as_mut() {
-                    let entry = &layout.prop_entries[o.prop_pos];
-                    let nb = entry.num_buckets;
-                    let lnb = blk.local_num_buckets;
-                    let bmin = blk.bmin;
-                    tensor.unique[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
-                        .copy_from_slice(&blk.unique);
-                    tensor.weighted[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
-                        .copy_from_slice(&blk.weighted);
-                    for pred in 0..num_pred {
-                        for b in 0..lnb {
-                            let dst = entry.token_base + (pred * nb + bmin + b) * effective_histo;
-                            let src = (pred * lnb + b) * effective_histo;
-                            tensor.token_counts[dst..dst + effective_histo]
-                                .copy_from_slice(&blk.tokens[src..src + effective_histo]);
-                            tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b] =
-                                blk.ebits[pred * lnb + b];
-                        }
-                    }
-                }
-            }
-            if let Some((total, cand)) = o.candidate {
-                if total < *best_bits {
-                    *best_bits = total;
-                    *best = Some(cand);
-                }
-            }
-            #[cfg(feature = "__env_var_diagnostics")]
-            if let Some(mp) = o.mab_prop_best {
-                mab_per_prop.push((o.prop_idx as u8, mp));
-            }
-        };
+        }
+        if let Some((total, cand)) = o.candidate
+            && total < *best_bits
+        {
+            *best_bits = total;
+            *best = Some(cand);
+        }
+        #[cfg(feature = "__env_var_diagnostics")]
+        if let Some(mp) = o.mab_prop_best {
+            mab_per_prop.push((o.prop_idx as u8, mp));
+        }
+    };
 
     if prop_parallel {
         #[cfg(feature = "parallel")]
@@ -7728,16 +7725,16 @@ fn build_subtree_sequential_borrowed(
 
     while let Some(mut candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes_budget {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
         }
         let count = candidate.end - candidate.start;
         if count < 2 {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
         }
         if candidate.base_bits <= threshold {
-            finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
         }
 
@@ -7865,7 +7862,7 @@ fn build_subtree_sequential_borrowed(
                 });
             }
             _ => {
-                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+                finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             }
         }
     }
@@ -7922,11 +7919,7 @@ fn build_subtree_recursive_parallel_borrowed(
             tensor: None,
         };
         tree.push(PropertyDecisionNode::default());
-        finalize_leaf(
-            &mut tree,
-            &leaf_candidate,
-            &samples.candidate_predictors[..],
-        );
+        finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
         return tree;
     }
 
@@ -7982,11 +7975,7 @@ fn build_subtree_recursive_parallel_borrowed(
                 tensor: None,
             };
             tree.push(PropertyDecisionNode::default());
-            finalize_leaf(
-                &mut tree,
-                &leaf_candidate,
-                &samples.candidate_predictors[..],
-            );
+            finalize_leaf(&mut tree, &leaf_candidate, samples.candidate_predictors);
             return tree;
         }
     };
@@ -8820,14 +8809,12 @@ fn accumulate_run_4way(
 ) -> u64 {
     let mut sub = [[0u32; HISTO_PADDED]; 4];
     let mut eb = [0u64; 4];
-    let mut lane = 0usize;
-    for &rel_off in idxs {
+    for (lane, &rel_off) in idxs.iter().enumerate() {
         let rel_off = rel_off as usize;
         let tok = tokens[rel_off];
         let sc = sample_counts[rel_off];
         sub[lane & 3][tok as usize & mask] += sc;
         eb[lane & 3] += gather_token_ebits(tok) as u64 * sc as u64;
-        lane += 1;
     }
     for (i, r) in row.iter_mut().enumerate() {
         *r += sub[0][i] + sub[1][i] + sub[2][i] + sub[3][i];
@@ -9737,10 +9724,9 @@ fn find_best_split(
             if let Some((layout, tensor)) = tensor_in {
                 let entry = &layout.prop_entries[prop_pos];
                 let nb = entry.num_buckets;
-                for b in 0..local_num_buckets {
-                    extra_bits_increase[b] =
-                        tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b];
-                }
+                let eb_base = entry.ebit_base + pred * nb + bmin;
+                extra_bits_increase[..local_num_buckets]
+                    .copy_from_slice(&tensor.ebit_sums[eb_base..eb_base + local_num_buckets]);
                 row_data = &tensor.token_counts;
                 row_base = entry.token_base + (pred * nb + bmin) * effective_histo;
                 row_stride = effective_histo;
@@ -9833,7 +9819,9 @@ fn find_best_split(
                 while hi > 0 && right_counts[hi - 1] == 0 {
                     hi -= 1;
                 }
-                hi.div_ceil(4).saturating_mul(4).min(effective_histo)
+                // Multiple of 8 = the widest estimate-kernel lane stride;
+                // see the borrowed-path trim comment for the x64 incident.
+                hi.div_ceil(8).saturating_mul(8).min(effective_histo)
             };
 
             if capture.is_some() && !cap_totals_done {
@@ -10686,21 +10674,20 @@ pub(crate) fn probe_prune_candidates(
     let grand_total: u64 = totals.iter().sum();
     let mass_floor = grand_total / PROBE_CTX_MASS_FLOOR_DIV as u64;
     let mut keep_mask = [false; 16];
-    let mut per_ctx_summary: alloc::vec::Vec<(usize, u64, alloc::vec::Vec<(usize, f64)>)> =
-        Vec::new();
-    for ctx in 0..PROBE_CTX {
-        if totals[ctx] == 0 || totals[ctx] < mass_floor {
+    let mut per_ctx_summary: ProbeCtxSummary = Vec::new();
+    for (ctx, &ctx_total) in totals.iter().enumerate() {
+        if ctx_total == 0 || ctx_total < mass_floor {
             continue;
         }
         let mut costs: alloc::vec::Vec<(usize, f64)> = Vec::with_capacity(n_cand);
-        for ci in 0..n_cand {
-            if CANDIDATE_PREDICTORS[ci] == Predictor::Weighted {
+        for (ci, &cand) in CANDIDATE_PREDICTORS.iter().enumerate().take(n_cand) {
+            if cand == Predictor::Weighted {
                 continue;
             }
             let slot = ci * PROBE_CTX + ctx;
-            debug_assert!(totals[ctx] <= u32::MAX as u64);
+            debug_assert!(ctx_total <= u32::MAX as u64);
             let c =
-                jxl_simd::estimate_bits_u32(&hists[slot], totals[ctx] as u32) + ebits[slot] as f64;
+                jxl_simd::estimate_bits_u32(&hists[slot], ctx_total as u32) + ebits[slot] as f64;
             costs.push((ci, c));
         }
         costs.sort_by(|a, b| a.1.total_cmp(&b.1));
@@ -10734,17 +10721,17 @@ pub(crate) fn probe_prune_candidates(
     // global top-K by summed cost — kept for A/B against `auto`.
     if keep != GLOBAL_TREE_PREDICTORS_AUTO {
         let mut costs: alloc::vec::Vec<(usize, f64)> = Vec::with_capacity(n_cand);
-        for ci in 0..n_cand {
-            if CANDIDATE_PREDICTORS[ci] == Predictor::Weighted {
+        for (ci, &cand) in CANDIDATE_PREDICTORS.iter().enumerate().take(n_cand) {
+            if cand == Predictor::Weighted {
                 continue;
             }
             let mut c = 0.0;
-            for ctx in 0..PROBE_CTX {
-                if totals[ctx] == 0 {
+            for (ctx, &ctx_total) in totals.iter().enumerate() {
+                if ctx_total == 0 {
                     continue;
                 }
                 let slot = ci * PROBE_CTX + ctx;
-                c += jxl_simd::estimate_bits_u32(&hists[slot], totals[ctx] as u32)
+                c += jxl_simd::estimate_bits_u32(&hists[slot], ctx_total as u32)
                     + ebits[slot] as f64;
             }
             costs.push((ci, c));
@@ -10766,6 +10753,9 @@ pub(crate) fn probe_prune_candidates(
     }
     list
 }
+
+/// Per-context probe summary rows: `(ctx, total, [(candidate, cost)])`.
+type ProbeCtxSummary = alloc::vec::Vec<(usize, u64, alloc::vec::Vec<(usize, f64)>)>;
 
 /// Per-context within-margin keep threshold for the `auto` union rule.
 pub(crate) const PROBE_CTX_MARGIN: f64 = 1.015;
@@ -14181,7 +14171,7 @@ mod tests {
         while let Some(candidate) = stack.pop() {
             let count = candidate.end - candidate.start;
             if tree.len() + 2 > params.max_nodes || count < 2 || candidate.base_bits <= threshold {
-                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+                finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
                 continue;
             }
             let mut ws = SplitWorkspace::new(count, histogram_size, max_buckets);
@@ -14261,7 +14251,7 @@ mod tests {
                     });
                 }
                 _ => {
-                    finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors[..]);
+                    finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
                 }
             }
         }

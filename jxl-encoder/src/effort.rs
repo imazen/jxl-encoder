@@ -1949,15 +1949,14 @@ impl EffortProfile {
     /// binds only above ~2 MP, so small and mid-size images are unaffected
     /// (their fraction-derived count is already under it and the stride stays
     /// 1-2, byte-identical to the uncapped encoder).
-    fn tree_max_samples_ceiling_for(effort: u8) -> u32 {
-        match effort {
-            // 0 = uncapped everywhere until the bytes-vs-peak sweep picks a
-            // default. Capping DIVERGES from libjxl (whose GatherTreeData also
-            // samples a pixel FRACTION with no absolute cap — see CLAUDE.md
-            // "e7 residual: x0.1 lever REFUTED at source"), so the shipped
-            // value must be justified by measurement, not assumed.
-            _ => 0,
-        }
+    fn tree_max_samples_ceiling_for(_effort: u8) -> u32 {
+        // 0 = uncapped everywhere until the bytes-vs-peak sweep picks a
+        // default. Capping DIVERGES from libjxl (whose GatherTreeData also
+        // samples a pixel FRACTION with no absolute cap — see CLAUDE.md
+        // "e7 residual: x0.1 lever REFUTED at source"), so the shipped
+        // value must be justified by measurement, not assumed. When a
+        // per-effort table lands, restore the `match effort` here.
+        0
     }
 
     fn tree_max_buckets_for(effort: u8) -> u16 {

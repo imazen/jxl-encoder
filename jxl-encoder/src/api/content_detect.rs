@@ -354,29 +354,11 @@ const W44_164_FCBR_SCREENSHOT_MIN: f32 = 0.35;
 /// throwaway-small inputs.
 pub(crate) const W44_164_MIN_PIXELS: u64 = crate::effort::CONTENT_CLASS_MIN_PIXELS;
 
-/// W44-164: derive an [`crate::effort::ImageContentClass`] from the
-/// caller-supplied 8-bit sRGB pixel buffer when the auto-classifier
-/// dispatch is active. Returns `None` for layouts where the proxy
-/// would be unreliable (16-bit, linear-f32, grayscale, HDR), for
-/// images below the pixel threshold, and for content sitting in the
-/// fcbr deadband between the photo ceiling and screenshot floor
-/// (`fcbr` ∈ [0.10, [`W44_164_FCBR_SCREENSHOT_MIN`])) — in those
-/// cases the dispatch falls through to the existing default profile
-/// (no class adapter fires).
-///
-/// Discriminator (see module-level prose above for the source data):
-///
-/// - `fcbr >= W44_164_FCBR_SCREENSHOT_MIN (= 0.35)` → `Screenshot`
-/// - `fcbr < 0.10 AND m3_colourfulness >= 5.0` → `Photo`
-/// - else → `None`
-///
-/// The `m3 >= 5.0` photo floor excludes pure-grayscale gradients
-/// (which have m3 ≈ 0); they sit in the `Unknown` bucket where the
-/// adapter is a no-op today anyway.
-///
-/// **Layout dispatch**: only the 8-bit sRGB layouts (`Rgb8`, `Rgba8`,
-/// `Bgr8`, `Bgra8`) compute the proxies — for everything else this
-/// returns `None` (same surface as `compute_w44_91_zenanalyze_proxies`).
+/// Layout-dispatching classifier entry — the original W44-164 surface,
+/// now decomposed in production into `compute_w44_91_zenanalyze_proxies`
+/// plus [`classify_from_proxies`] (one shared sweep). Kept under
+/// `cfg(test)` as the unit-test surface for the discriminator + size gate.
+#[cfg(test)]
 #[must_use]
 pub(crate) fn auto_classify_content_class_from_layout(
     pixels: &[u8],
