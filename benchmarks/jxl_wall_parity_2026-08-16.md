@@ -264,3 +264,41 @@ t1, DCT kernels) — no AVX2-specific pathology; the identified levers
 lossless t8 root-parallel learning) apply to both arches and should be
 measured on x64 (bench clone: lilith-lianli ~/work/zen/jxl-encoder--x64verify,
 cjxl v0.12.0 at ~/tmp/libjxl-bench/build/tools/cjxl).
+
+## Next chunk (queued, precise): vectorized IDENTITY/DCT2X2 special transforms
+
+Target: the 23%-self find_best_16x16 bucket (both arches; x64 e5 t1
+perf + Mac sampler agree). libjxl's edge on these evals is vectorized
+enc/dec special transforms (enc_transforms-inl.h); ours are scalar
+(`jxl-encoder/src/vardct/dct/special.rs` — ping-pong'd 2f789ea6, still
+scalar). Per-eval pipeline cost at e5 = fwd transform + entropy_estimate_coeffs
+(SIMD ✓) + inverse transform + pixel_domain_loss (SIMD ✓) × 3 channels
+× ~260K evals at 4K; the scalar fwd/inv transforms are the non-SIMD
+remainder.
+
+Implementation notes (worked out 2026-08-17):
+- DCT2X2 fwd: transpose_8x8_regs (exists in jxl_simd::dct8) turns
+  adjacent-column cells into REGISTER pairs: vs=c0+c1, vd=c0−c1
+  (element-wise), then per-lane pair ops via swap-adjacent permute:
+  r00=(vs+swap01(vs))·¼ even lanes, r01=(vs−swap01(vs))·¼,
+  r10/r11 from vd — all element-mapped (no accumulation trees), so
+  per-arch shuffle implementations CANNOT introduce cross-arch drift
+  (determinism note: shuffles only route operands; the butterfly
+  arithmetic order is fixed in code).
+- Quadrant scatter stays transposed until the final transpose-back, or
+  fold the scatter into the (already needed) output store permutation.
+- IDENTITY fwd: the interleaved (y+iy*2, x+ix*2) layout = 2-way
+  interleave both dims — magetypes interleave_lo/interleave_hi +
+  from_halves/split cover it; ref-pixel broadcast per 4x4 sub-block =
+  blend of two splats; DC/corner fixups scalar (4 lanes each).
+- Inverse variants mirror forward (idct2 passes = same butterflies
+  unscaled; inverse identity = residual-sum + adds).
+- Safe intrinsics: raw arch intrinsics are SAFE inside #[arcane]
+  (target_feature 1.1) — jxl-encoder-simd/src/dct4.rs is the precedent.
+- Gate: bytes must stay byte-identical per arch AND cross-arch (the
+  canonical-kernel discipline); hash-locks + a 4K mosaic A/B on BOTH
+  machines (bench box: lilith-lianli ~/work/zen/jxl-encoder--x64verify).
+
+Expected: −60..90ms t1 / −15..25ms t8 at 4K e5 on each arch (the scalar
+transform+inverse share of the 23% bucket), plus the same relative cut
+at e6+ where the variant set doubles.
