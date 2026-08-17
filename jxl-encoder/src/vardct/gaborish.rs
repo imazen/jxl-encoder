@@ -64,6 +64,20 @@ fn compute_weights(mul: f64) -> (f32, f32, f32, f32, f32, f32) {
 /// Dispatches to SIMD-accelerated implementation via jxl_simd.
 fn apply_channel(data: &mut [f32], scratch: &mut [f32], width: usize, height: usize, mul: f64) {
     let (wc, wr, wd, w_big_r, wl, w_big_d) = compute_weights(mul);
+    // Strip-parallel dispatch: bit-identical to the whole-image call (see
+    // `adaptive_quant::gaborish_5x5_strip_parallel` — 2-row halo covers the
+    // 5x5 vertical reach, halo rows are discarded, unchanged width keeps
+    // the SIMD lane pattern identical). Perf-only dispatch.
+    if crate::parallel::effective_threads() > 1 && height >= 192 {
+        let out = super::adaptive_quant::gaborish_5x5_strip_parallel(
+            &data[..width * height],
+            width,
+            height,
+            [wc, wr, wd, w_big_r, wl, w_big_d],
+        );
+        data[..width * height].copy_from_slice(&out);
+        return;
+    }
     jxl_simd::gaborish_5x5_channel(
         data, scratch, width, height, wc, wr, wd, w_big_r, wl, w_big_d,
     );

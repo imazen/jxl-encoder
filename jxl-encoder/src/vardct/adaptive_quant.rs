@@ -215,10 +215,27 @@ pub(crate) fn compute_mask1x1_with_budget(
     // permanent — mask1x1 has caller-owned lifetime, scratch is dropped here
     // but at peak we need 2*n*4 budget to allocate them simultaneously.
     crate::budget::MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 2))?;
-    let mut mask1x1 = vec![0.0_f32; n];
 
-    // SIMD-accelerated per-pixel masking (neighbor avg → gamma ratio → log1p → reciprocal)
-    jxl_simd::compute_mask1x1(xyb_y, width, height, &mut mask1x1);
+    // Strip-parallel dispatch: both kernels below are pure per-pixel
+    // functions of their input with row-local horizontal SIMD, so a
+    // full-width strip computed with enough halo rows to cover the
+    // vertical stencil reach (1 for the raw mask, 2 for the 5x5 blur)
+    // is BIT-IDENTICAL to the whole-image call on the kept rows: the
+    // sub-buffer edge clamp only fires on halo rows (discarded) or
+    // where it coincides with the true image edge (edge strips carry
+    // no outer halo, so the clamp is the image clamp), and the
+    // unchanged row width keeps the SIMD lane pattern identical.
+    // Perf-only dispatch — output is identical on either path.
+    let strip_parallel = crate::parallel::effective_threads() > 1 && height >= 192;
+    let mut mask1x1 = if strip_parallel {
+        compute_mask1x1_strip_parallel(xyb_y, width, height)
+    } else {
+        let mut mask1x1 = vec![0.0_f32; n];
+
+        // SIMD-accelerated per-pixel masking (neighbor avg → gamma ratio → log1p → reciprocal)
+        jxl_simd::compute_mask1x1(xyb_y, width, height, &mut mask1x1);
+        mask1x1
+    };
 
     // Apply Symmetric5 blur using SIMD gaborish kernel with mask1x1 weights.
     // The gaborish_5x5_channel kernel has the same 5x5 weight pattern:
@@ -236,21 +253,103 @@ pub(crate) fn compute_mask1x1_with_budget(
     let sum = 1.0 + 4.0 * (W_R + W_D + W_R2 + W_D2 + 2.0 * W_L);
     let inv_sum = 1.0 / sum;
 
-    let mut scratch = vec![0.0_f32; width * height];
-    jxl_simd::gaborish_5x5_channel(
-        &mut mask1x1,
-        &mut scratch,
-        width,
-        height,
+    let weights = [
         inv_sum,        // wc (center)
         inv_sum * W_R,  // wr (orthogonal dist 1)
         inv_sum * W_D,  // wd (diagonal dist 1)
         inv_sum * W_R2, // w_big_r (orthogonal dist 2)
         inv_sum * W_L,  // wl (knight's move)
         inv_sum * W_D2, // w_big_d (diagonal dist 2)
-    );
+    ];
+    if strip_parallel {
+        mask1x1 = gaborish_5x5_strip_parallel(&mask1x1, width, height, weights);
+    } else {
+        let mut scratch = vec![0.0_f32; width * height];
+        jxl_simd::gaborish_5x5_channel(
+            &mut mask1x1,
+            &mut scratch,
+            width,
+            height,
+            weights[0],
+            weights[1],
+            weights[2],
+            weights[3],
+            weights[4],
+            weights[5],
+        );
+    }
 
     Ok(mask1x1)
+}
+
+/// Strip-parallel raw mask1x1 — bit-identical to the whole-image
+/// `jxl_simd::compute_mask1x1` call (see the dispatch comment at the call
+/// site: 1-row halo covers the vertical stencil reach; halo rows are
+/// discarded; unchanged width keeps lanes identical).
+fn compute_mask1x1_strip_parallel(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
+    const STRIP_ROWS: usize = 64;
+    let n_strips = height.div_ceil(STRIP_ROWS);
+    let strips: Vec<Vec<f32>> = crate::parallel::parallel_map(n_strips, |si| {
+        let ky0 = si * STRIP_ROWS;
+        let ky1 = (ky0 + STRIP_ROWS).min(height);
+        let ty0 = ky0.saturating_sub(1);
+        let ty1 = (ky1 + 1).min(height);
+        let sub_h = ty1 - ty0;
+        let mut sub_out = vec![0.0_f32; sub_h * width];
+        jxl_simd::compute_mask1x1(&xyb_y[ty0 * width..ty1 * width], width, sub_h, &mut sub_out);
+        sub_out.drain(..(ky0 - ty0) * width);
+        sub_out.truncate((ky1 - ky0) * width);
+        sub_out
+    });
+    let mut out = Vec::with_capacity(width * height);
+    for s in strips {
+        out.extend_from_slice(&s);
+    }
+    out
+}
+
+/// Strip-parallel 5x5 mask blur — bit-identical to the whole-image
+/// `jxl_simd::gaborish_5x5_channel` call (2-row halo covers the 5x5
+/// vertical reach; the kernel's y<2 / y>=h-2 scalar border rows land
+/// exactly on discarded halo rows for interior strips and on the true
+/// image border for edge strips, matching the whole-image path).
+pub(super) fn gaborish_5x5_strip_parallel(
+    raw: &[f32],
+    width: usize,
+    height: usize,
+    w: [f32; 6],
+) -> Vec<f32> {
+    const STRIP_ROWS: usize = 64;
+    let n_strips = height.div_ceil(STRIP_ROWS);
+    let strips: Vec<Vec<f32>> = crate::parallel::parallel_map(n_strips, |si| {
+        let ky0 = si * STRIP_ROWS;
+        let ky1 = (ky0 + STRIP_ROWS).min(height);
+        let ty0 = ky0.saturating_sub(2);
+        let ty1 = (ky1 + 2).min(height);
+        let sub_h = ty1 - ty0;
+        let mut sub_data = raw[ty0 * width..ty1 * width].to_vec();
+        let mut scratch = vec![0.0_f32; sub_h * width];
+        jxl_simd::gaborish_5x5_channel(
+            &mut sub_data,
+            &mut scratch,
+            width,
+            sub_h,
+            w[0],
+            w[1],
+            w[2],
+            w[3],
+            w[4],
+            w[5],
+        );
+        sub_data.drain(..(ky0 - ty0) * width);
+        sub_data.truncate((ky1 - ky0) * width);
+        sub_data
+    });
+    let mut out = Vec::with_capacity(width * height);
+    for s in strips {
+        out.extend_from_slice(&s);
+    }
+    out
 }
 
 // symmetric5_blur_mask1x1 replaced by jxl_simd::gaborish_5x5_channel with

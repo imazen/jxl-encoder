@@ -1462,8 +1462,11 @@ fn patches_dispatch_block_mask_median(
     // width AND stride, so the contiguous fast-path almost always
     // wins). The strided repack is dimension-driven, so route it through
     // the runtime fallible-alloc policy; byte-identical when infallible.
-    let y_contig: Vec<f32> = if stride == width {
-        xyb_y[..width * height].to_vec()
+    // Contiguous input needs no repack — pass the slice straight through
+    // (identical bytes to the previous owned copy).
+    let y_contig_owned: Vec<f32>;
+    let y_contig: &[f32] = if stride == width {
+        &xyb_y[..width * height]
     } else {
         let mut buf = crate::budget::vec_with_capacity_fallible(
             budget.is_some_and(|b| b.is_fallible()),
@@ -1473,17 +1476,21 @@ fn patches_dispatch_block_mask_median(
             let row_start = y * stride;
             buf.extend_from_slice(&xyb_y[row_start..row_start + width]);
         }
-        buf
+        y_contig_owned = buf;
+        &y_contig_owned
     };
-    let mask1x1 = super::adaptive_quant::compute_mask1x1(&y_contig, width, height);
+    let mask1x1 = super::adaptive_quant::compute_mask1x1(y_contig, width, height);
     let blocks_per_row = width / 8;
     let blocks_per_col = height / 8;
     if blocks_per_row == 0 || blocks_per_col == 0 {
         return Ok(None);
     }
     let n_blocks = blocks_per_row * blocks_per_col;
-    let mut block_means: Vec<f32> = Vec::with_capacity(n_blocks);
-    for by in 0..blocks_per_col {
+    // Per-block means are independent (in-block accumulation order
+    // unchanged); block rows parallelize with an order-preserving
+    // flatten — identical values, identical order.
+    let mean_rows: Vec<Vec<f32>> = crate::parallel::parallel_map(blocks_per_col, |by| {
+        let mut row_means = Vec::with_capacity(blocks_per_row);
         for bx in 0..blocks_per_row {
             let mut sum: f64 = 0.0;
             let mut count: usize = 0;
@@ -1506,8 +1513,13 @@ fn patches_dispatch_block_mask_median(
             } else {
                 1.0
             };
-            block_means.push(mean);
+            row_means.push(mean);
         }
+        row_means
+    });
+    let mut block_means: Vec<f32> = Vec::with_capacity(n_blocks);
+    for row in mean_rows {
+        block_means.extend_from_slice(&row);
     }
     let mid = block_means.len() / 2;
     block_means.select_nth_unstable_by(mid, |a, b| {
@@ -4037,6 +4049,14 @@ impl VarDctEncoder {
                     .unwrap_or(true)
                 }
             };
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "patches: dispatch={:.1}ms scan={}",
+                _t_patches.elapsed().as_secs_f64() * 1000.0,
+                should_scan_patches
+            );
+        }
         let mut patches_data = if should_scan_patches {
             super::patches::find_and_build_with_per_patch_gate(
                 [&xyb_x, &xyb_y, &xyb_b],
@@ -4051,6 +4071,13 @@ impl VarDctEncoder {
         } else {
             None
         };
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "patches: dispatch+scan={:.1}ms",
+                _t_patches.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         // Cost-benefit gating for experimental mode only.
         // libjxl uses patches unconditionally when detected (no cost check),
         // so reference mode skips this to match.

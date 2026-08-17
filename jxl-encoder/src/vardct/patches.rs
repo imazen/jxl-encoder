@@ -891,6 +891,8 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     min_peak: i32,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Vec<PatchInfo>> {
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _t_steps = std::time::Instant::now();
     let cs = if is_xyb {
         PatchColorspaceInfo::xyb()
     } else {
@@ -909,22 +911,33 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     let n = stride * height;
 
     // Step 1: Find flat 4×4 blocks (all 16 pixels identical color).
-    let mut is_flat = vec![false; bw * bh];
-    for by in 0..bh {
-        for bx in 0..bw {
-            is_flat[by * bw + bx] = is_flat_block(&xyb_ref, stride, bx, by);
+    // Each block's flatness is a pure function of its pixels, so the
+    // per-block-row map is order-free — parallel rows produce the
+    // identical `is_flat` plane.
+    let is_flat: Vec<bool> = crate::parallel::parallel_map(bh, |by| {
+        let mut row = vec![false; bw];
+        for (bx, cell) in row.iter_mut().enumerate() {
+            *cell = is_flat_block(&xyb_ref, stride, bx, by);
         }
-    }
+        row
+    })
+    .into_iter()
+    .flatten()
+    .collect();
 
     // Step 2: Screenshot-like detection (block-level).
     // Central block must be flat. Count 3×3 neighbor block origins (single pixel
     // at top-left of each block) with same color. Must have 8+ of 9 matching.
     // Matches libjxl: py from 1 to ph-3 inclusive, px from 1 to pw-2 inclusive.
-    let mut is_screenshot_like = vec![false; bw * bh];
-    let mut num_seeds = 0u32;
-    // bh.saturating_sub(2) as exclusive end → by goes from 1 to bh-3 inclusive
-    for by in 1..bh.saturating_sub(2) {
-        // bw.saturating_sub(1) as exclusive end → bx goes from 1 to bw-2 inclusive
+    // Per-block predicate over read-only `is_flat` + pixels: order-free,
+    // so block rows parallelize; `num_seeds` is an order-free sum.
+    // bh.saturating_sub(2) as exclusive end → by goes from 1 to bh-3
+    // inclusive; bx from 1 to bw-2 inclusive (matches libjxl).
+    let interior_rows = bh.saturating_sub(2).saturating_sub(1);
+    let seed_rows: Vec<(Vec<bool>, u32)> = crate::parallel::parallel_map(interior_rows, |ri| {
+        let by = ri + 1;
+        let mut row = vec![false; bw];
+        let mut row_seeds = 0u32;
         for bx in 1..bw.saturating_sub(1) {
             if !is_flat[by * bw + bx] {
                 continue;
@@ -947,12 +960,27 @@ pub(crate) fn find_text_like_patches_with_min_peak(
                 }
             }
             if num_same >= SCREENSHOT_FLAT_NEIGHBOR_RATIO {
-                is_screenshot_like[by * bw + bx] = true;
-                num_seeds += 1;
+                row[bx] = true;
+                row_seeds += 1;
             }
         }
+        (row, row_seeds)
+    });
+    let mut is_screenshot_like = vec![false; bw * bh];
+    let mut num_seeds = 0u32;
+    for (ri, (row, row_seeds)) in seed_rows.into_iter().enumerate() {
+        let by = ri + 1;
+        is_screenshot_like[by * bw..(by + 1) * bw].copy_from_slice(&row);
+        num_seeds += row_seeds;
     }
 
+    #[cfg(feature = "__env_var_diagnostics")]
+    if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+        eprintln!(
+            "patches-scan: steps12-done at {:.1}ms",
+            _t_steps.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     debug_rect!(
         "patches/seeds",
         0,
@@ -1096,6 +1124,13 @@ pub(crate) fn find_text_like_patches_with_min_peak(
             }
         }
     }
+    #[cfg(feature = "__env_var_diagnostics")]
+    if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+        eprintln!(
+            "patches-scan: bfs-done at {:.1}ms",
+            _t_steps.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     let bg_count = is_background.iter().filter(|&&b| b).count();
     debug_rect!(
         "patches/bfs",
@@ -1113,6 +1148,13 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     // all subsequent must match reference via background image colors.
     // `n = stride * height` (~1 MB bool plane at 1 MP) — same fallible-alloc
     // policy as the BFS planes above; byte-identical when infallible.
+    #[cfg(feature = "__env_var_diagnostics")]
+    if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+        eprintln!(
+            "patches-scan: dfs-start at {:.1}ms",
+            _t_steps.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     let mut visited = crate::budget::try_alloc_zeroed_permanent::<bool>(budget, n)?;
     let mut patches: Vec<(QuantizedPatch, u32, u32)> = Vec::new();
 
@@ -1454,6 +1496,13 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     );
 
     // W44-20 instrumentation: snapshot per-stage counts for diagnostic harnesses.
+    #[cfg(feature = "__env_var_diagnostics")]
+    if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+        eprintln!(
+            "patches-scan: dfs-done at {:.1}ms",
+            _t_steps.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     set_last_patches_detect_stats(LastPatchesDetectStats {
         num_seeds,
         bg_count,
