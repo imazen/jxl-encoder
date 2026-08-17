@@ -6602,6 +6602,476 @@ mod mabsplit_dump {
     }
 }
 
+/// Shared per-node context for [`eval_split_prop_borrowed`] — everything
+/// the per-property split evaluation reads but never writes.
+#[cfg(feature = "parallel-tree-learning")]
+struct PropEvalShared<'a, 'b> {
+    samples: &'a BorrowedSamples<'b>,
+    params: &'a TreeLearningParams,
+    start: usize,
+    end: usize,
+    count: usize,
+    effective_histo: usize,
+    weighted_total: u32,
+    sample_counts: &'a [u32],
+    num_pred: usize,
+    parent_predictor: usize,
+    weighted_idx: usize,
+    zero_idx: usize,
+    change_pred_penalty: f64,
+    base_bits: f64,
+    tensor_in: Option<(&'a TensorLayout, &'a NodeTensor)>,
+    capture_on: bool,
+}
+
+/// Capture-mode aggregates one property evaluation produced, copied into
+/// the node tensor by the ordered fold (per-prop tensor regions are
+/// disjoint; values identical to the historical direct writes).
+#[cfg(feature = "parallel-tree-learning")]
+struct PropCaptureBlock {
+    bmin: usize,
+    local_num_buckets: usize,
+    unique: alloc::vec::Vec<u32>,
+    weighted: alloc::vec::Vec<u32>,
+    /// pred-major: `[pred][local_bucket][token]`.
+    tokens: alloc::vec::Vec<u32>,
+    /// pred-major: `[pred][local_bucket]`.
+    ebits: alloc::vec::Vec<u64>,
+}
+
+/// One property's split-evaluation result (see the fold in
+/// [`find_best_split_borrowed`] for the ordered-merge equivalence notes).
+#[cfg(feature = "parallel-tree-learning")]
+struct PropOutcome {
+    prop_pos: usize,
+    #[cfg_attr(not(feature = "__env_var_diagnostics"), allow(dead_code))]
+    prop_idx: usize,
+    /// This property's best candidate STRICTLY below `base_bits`, if any.
+    candidate: Option<(f64, BestSplit)>,
+    /// Capture mode: the node collapsed to one bucket on this property.
+    single_bucket: Option<usize>,
+    /// Capture mode: per-(pred, bucket) aggregates.
+    capture_block: Option<PropCaptureBlock>,
+    /// Capture mode, full-accumulate props only: per-pred FULL-NODE token
+    /// histograms + ebit totals (prop-independent — fold keeps the first
+    /// in prop order, matching the historical `cap_totals_done` gate).
+    totals: Option<(alloc::vec::Vec<u32>, alloc::vec::Vec<u64>)>,
+    #[cfg(feature = "__env_var_diagnostics")]
+    mab_prop_best: Option<f64>,
+}
+
+/// Whether the MAB split-dump diagnostic sink is active (its per-prop
+/// record order assumes sequential evaluation — the parallel path is
+/// gated off while it runs).
+#[cfg(all(feature = "parallel", feature = "__env_var_diagnostics"))]
+fn mab_sink_active() -> bool {
+    mabsplit_dump::sink().is_some()
+}
+#[cfg(all(feature = "parallel", not(feature = "__env_var_diagnostics")))]
+fn mab_sink_active() -> bool {
+    false
+}
+
+/// Evaluate ONE property's candidate splits for a node — the extracted
+/// body of [`find_best_split_borrowed`]'s historical per-prop loop,
+/// shared verbatim by its sequential and parallel dispatches. All node
+/// state arrives via [`PropEvalShared`]; all results leave via
+/// [`PropOutcome`]; `ws` is scratch only.
+#[cfg(feature = "parallel-tree-learning")]
+fn eval_split_prop_borrowed(
+    sh: &PropEvalShared<'_, '_>,
+    prop_pos: usize,
+    prop_idx: usize,
+    ws: &mut SplitWorkspace,
+) -> PropOutcome {
+    let PropEvalShared {
+        samples,
+        params: _,
+        start,
+        end,
+        count,
+        effective_histo,
+        weighted_total,
+        sample_counts,
+        num_pred,
+        parent_predictor,
+        weighted_idx,
+        zero_idx,
+        change_pred_penalty,
+        base_bits,
+        tensor_in,
+        capture_on,
+    } = *sh;
+    let mut out = PropOutcome {
+        prop_pos,
+        prop_idx,
+        candidate: None,
+        single_bucket: None,
+        capture_block: None,
+        totals: None,
+        #[cfg(feature = "__env_var_diagnostics")]
+        mab_prop_best: None,
+    };
+
+    let num_thresholds = samples.num_thresholds(prop_idx);
+    if num_thresholds == 0 {
+        return out;
+    }
+
+    let pq_buckets = &samples.bucket_indices[prop_idx][start..end];
+    let threshold_set = &samples.threshold_sets[prop_idx];
+
+    let count_increase = ws.count_increase.as_mut_slice();
+    let extra_bits_increase = ws.extra_bits_increase.as_mut_slice();
+    let bucket_counts = ws.bucket_counts.as_mut_slice();
+    let right_counts = ws.right_counts.as_mut_slice();
+    let left_counts = ws.left_counts.as_mut_slice();
+    let best_l_cost = ws.best_l_cost.as_mut_slice();
+    let best_r_cost = ws.best_r_cost.as_mut_slice();
+    let best_l_penalized = ws.best_l_penalized.as_mut_slice();
+    let best_r_penalized = ws.best_r_penalized.as_mut_slice();
+    let best_l_pred = ws.best_l_pred.as_mut_slice();
+    let best_r_pred = ws.best_r_pred.as_mut_slice();
+    let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
+    let bucket_starts = ws.bucket_starts.as_mut_slice();
+    let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
+
+    let (bmin, bmax) = if let Some((layout, tensor)) = tensor_in {
+        let entry = &layout.prop_entries[prop_pos];
+        debug_assert_eq!(entry.prop_idx, prop_idx);
+        let uni = &tensor.unique[entry.bucket_base..entry.bucket_base + entry.num_buckets];
+        let Some(first) = uni.iter().position(|&c| c != 0) else {
+            return out;
+        };
+        let last = uni
+            .iter()
+            .rposition(|&c| c != 0)
+            .expect("nonzero unique count exists");
+        (first, last)
+    } else {
+        let mut bmin: u8 = u8::MAX;
+        let mut bmax: u8 = 0;
+        for &b in pq_buckets {
+            if b < bmin {
+                bmin = b;
+            }
+            if b > bmax {
+                bmax = b;
+            }
+        }
+        (bmin as usize, bmax as usize)
+    };
+    if bmin == bmax {
+        if capture_on {
+            out.single_bucket = Some(bmin);
+        }
+        return out;
+    }
+
+    let local_num_buckets = bmax - bmin + 1;
+    let local_num_thresholds = bmax - bmin;
+
+    let mut cap_block = if capture_on && tensor_in.is_none() {
+        Some(PropCaptureBlock {
+            bmin,
+            local_num_buckets,
+            unique: alloc::vec![0u32; local_num_buckets],
+            weighted: alloc::vec![0u32; local_num_buckets],
+            tokens: alloc::vec![0u32; num_pred * local_num_buckets * effective_histo],
+            ebits: alloc::vec![0u64; num_pred * local_num_buckets],
+        })
+    } else {
+        None
+    };
+
+    if let Some((layout, tensor)) = tensor_in {
+        let entry = &layout.prop_entries[prop_pos];
+        bucket_counts[..local_num_buckets].copy_from_slice(
+            &tensor.weighted
+                [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets],
+        );
+        let uni =
+            &tensor.unique[entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets];
+        bucket_starts[0] = 0;
+        for b in 0..local_num_buckets {
+            bucket_starts[b + 1] = bucket_starts[b] + uni[b] as usize;
+        }
+    } else {
+        let mut unique_per_bucket = [0u32; 256];
+        bucket_counts[..local_num_buckets].fill(0);
+        for (offset, &b) in pq_buckets.iter().enumerate() {
+            let local_b = (b as usize) - bmin;
+            unique_per_bucket[local_b] += 1;
+            bucket_counts[local_b] += sample_counts[offset];
+        }
+
+        bucket_starts[0] = 0;
+        for b in 0..local_num_buckets {
+            bucket_starts[b + 1] = bucket_starts[b] + unique_per_bucket[b] as usize;
+        }
+
+        bucket_write_pos[..local_num_buckets].copy_from_slice(&bucket_starts[..local_num_buckets]);
+        for (offset, &b) in pq_buckets.iter().enumerate() {
+            let local_b = (b as usize) - bmin;
+            sorted_by_bucket[bucket_write_pos[local_b]] = offset as u32;
+            bucket_write_pos[local_b] += 1;
+        }
+
+        if let Some(blk) = cap_block.as_mut() {
+            blk.unique
+                .copy_from_slice(&unique_per_bucket[..local_num_buckets]);
+            blk.weighted
+                .copy_from_slice(&bucket_counts[..local_num_buckets]);
+        }
+    }
+
+    best_l_cost[..local_num_thresholds].fill(f64::MAX);
+    best_r_cost[..local_num_thresholds].fill(f64::MAX);
+    best_l_penalized[..local_num_thresholds].fill(f64::MAX);
+    best_r_penalized[..local_num_thresholds].fill(f64::MAX);
+    best_l_pred[..local_num_thresholds].fill(0);
+    best_r_pred[..local_num_thresholds].fill(0);
+
+    for pred in 0..num_pred {
+        let mut penalty: f64 = 0.0;
+        if pred != parent_predictor && parent_predictor != weighted_idx {
+            penalty = change_pred_penalty;
+        }
+        if pred == weighted_idx {
+            penalty += 1e-8;
+        } else if pred == zero_idx {
+            penalty -= 1e-8;
+        }
+
+        // Row accessor: in tensor-Use mode the per-bucket token rows are
+        // read STRAIGHT out of the tensor (contiguous, stride
+        // `effective_histo`) instead of being copied into the workspace.
+        let (row_data, row_base, row_stride): (&[u32], usize, usize);
+        if let Some((layout, tensor)) = tensor_in {
+            let entry = &layout.prop_entries[prop_pos];
+            let nb = entry.num_buckets;
+            for b in 0..local_num_buckets {
+                extra_bits_increase[b] = tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b];
+            }
+            row_data = &tensor.token_counts;
+            row_base = entry.token_base + (pred * nb + bmin) * effective_histo;
+            row_stride = effective_histo;
+        } else {
+            let tokens = &samples.residual_tokens[pred][start..end];
+            let ebits = &samples.extra_bits[pred][start..end];
+
+            for b in 0..local_num_buckets {
+                count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
+            }
+            extra_bits_increase[..local_num_buckets].fill(0);
+
+            crate::profile_time!("tree/fbs_accumulate", {
+                // Per-bucket accumulation into DISJOINT count_increase
+                // slices — bit-identical under any execution order.
+                #[cfg(feature = "parallel")]
+                let par = count >= FBS_ACCUM_PAR_MIN_ROWS && local_num_buckets >= 8;
+                #[cfg(not(feature = "parallel"))]
+                let par = false;
+                let accum_one = |local_bucket: usize, ci_slice: &mut [u32], eb_out: &mut u64| {
+                    let bs = bucket_starts[local_bucket];
+                    let be = bucket_starts[local_bucket + 1];
+                    if be - bs >= ACCUM_4WAY_MIN_RUN {
+                        *eb_out = accumulate_run_4way(
+                            &sorted_by_bucket[bs..be],
+                            tokens,
+                            ebits,
+                            sample_counts,
+                            ci_slice,
+                            HISTO_MASK,
+                        );
+                    } else {
+                        let mut eb_sum: u64 = 0;
+                        for &rel_off in &sorted_by_bucket[bs..be] {
+                            let rel_off = rel_off as usize;
+                            let tok = tokens[rel_off];
+                            let sc = sample_counts[rel_off];
+                            ci_slice[tok as usize & HISTO_MASK] += sc;
+                            eb_sum += ebits[rel_off] as u64 * sc as u64;
+                        }
+                        *eb_out = eb_sum;
+                    }
+                };
+                if par {
+                    #[cfg(feature = "parallel")]
+                    {
+                        use rayon::prelude::*;
+                        count_increase[..local_num_buckets * HISTO_PADDED]
+                            .par_chunks_mut(HISTO_PADDED)
+                            .zip(extra_bits_increase[..local_num_buckets].par_iter_mut())
+                            .enumerate()
+                            .for_each(|(local_bucket, (ci_slice, eb_out))| {
+                                accum_one(local_bucket, ci_slice, eb_out)
+                            });
+                    }
+                } else {
+                    for local_bucket in 0..local_num_buckets {
+                        let ci_base = local_bucket * HISTO_PADDED;
+                        let (ci_slice, eb_out) = (
+                            &mut count_increase[ci_base..ci_base + HISTO_PADDED],
+                            &mut extra_bits_increase[local_bucket],
+                        );
+                        accum_one(local_bucket, ci_slice, eb_out);
+                    }
+                }
+            });
+
+            if let Some(blk) = cap_block.as_mut() {
+                for b in 0..local_num_buckets {
+                    let dst = (pred * local_num_buckets + b) * effective_histo;
+                    blk.tokens[dst..dst + effective_histo].copy_from_slice(
+                        &count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo],
+                    );
+                    blk.ebits[pred * local_num_buckets + b] = extra_bits_increase[b];
+                }
+            }
+            row_data = count_increase;
+            row_base = 0;
+            row_stride = HISTO_PADDED;
+        }
+        let row_at = |b: usize| -> &[u32] {
+            &row_data[row_base + b * row_stride..row_base + b * row_stride + effective_histo]
+        };
+
+        right_counts[..effective_histo].fill(0);
+        let mut right_extra: u64 = 0;
+        let mut right_total: u32 = weighted_total;
+        for (local_bucket, &eb) in extra_bits_increase[..local_num_buckets].iter().enumerate() {
+            let ci_row = row_at(local_bucket);
+            for (rc, &ci) in right_counts[..effective_histo]
+                .iter_mut()
+                .zip(ci_row.iter())
+            {
+                *rc += ci;
+            }
+            right_extra += eb;
+        }
+        // Token-support trim (see the sequential history): zero tail
+        // contributes exactly 0.0; rounding to a multiple of 4 keeps the
+        // SIMD lane chunking bit-identical.
+        let support = {
+            let mut hi = effective_histo;
+            while hi > 0 && right_counts[hi - 1] == 0 {
+                hi -= 1;
+            }
+            hi.div_ceil(4).saturating_mul(4).min(effective_histo)
+        };
+
+        if capture_on && tensor_in.is_none() {
+            let (totals, tebits) = out.totals.get_or_insert_with(|| {
+                (
+                    alloc::vec![0u32; num_pred * effective_histo],
+                    alloc::vec![0u64; num_pred],
+                )
+            });
+            totals[pred * effective_histo..(pred + 1) * effective_histo]
+                .copy_from_slice(&right_counts[..effective_histo]);
+            tebits[pred] = right_extra;
+        }
+
+        left_counts[..effective_histo].fill(0);
+        let mut left_extra: u64 = 0;
+        let mut left_total: u32 = 0;
+
+        let _sweep_guard = crate::profile_phases::PhaseGuard::new("tree/fbs_sweep");
+        for local_k in 0..local_num_thresholds {
+            let bc = bucket_counts[local_k];
+            if bc == 0 {
+                continue;
+            }
+
+            let ci_row = row_at(local_k);
+            for ((l, r), &ci) in left_counts[..effective_histo]
+                .iter_mut()
+                .zip(right_counts[..effective_histo].iter_mut())
+                .zip(ci_row.iter())
+            {
+                *l = l.wrapping_add(ci);
+                *r = r.wrapping_sub(ci);
+            }
+            left_extra += extra_bits_increase[local_k];
+            right_extra -= extra_bits_increase[local_k];
+            left_total += bc;
+            right_total -= bc;
+
+            if left_total == 0 || right_total == 0 {
+                continue;
+            }
+
+            let l_bits = jxl_simd::estimate_bits_u32(&left_counts[..support], left_total)
+                + left_extra as f64;
+            let r_bits = jxl_simd::estimate_bits_u32(&right_counts[..support], right_total)
+                + right_extra as f64;
+
+            if l_bits + penalty < best_l_penalized[local_k] {
+                best_l_penalized[local_k] = l_bits + penalty;
+                best_l_cost[local_k] = l_bits;
+                best_l_pred[local_k] = pred;
+            }
+            if r_bits + penalty < best_r_penalized[local_k] {
+                best_r_penalized[local_k] = r_bits + penalty;
+                best_r_cost[local_k] = r_bits;
+                best_r_pred[local_k] = pred;
+            }
+        }
+    }
+
+    out.capture_block = cap_block;
+
+    #[cfg(feature = "__env_var_diagnostics")]
+    let mut mab_prop_best = f64::MAX;
+    let mut local_best_bits = base_bits;
+    for local_k in 0..local_num_thresholds {
+        if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
+            continue;
+        }
+
+        let total = best_l_cost[local_k] + best_r_cost[local_k];
+        #[cfg(feature = "__env_var_diagnostics")]
+        if total < mab_prop_best {
+            mab_prop_best = total;
+        }
+
+        if total < local_best_bits {
+            local_best_bits = total;
+            let global_k = bmin + local_k;
+            let left_count = bucket_starts[local_k + 1];
+            out.candidate = Some((
+                total,
+                BestSplit {
+                    property: prop_idx,
+                    splitval: threshold_set[global_k],
+                    left_predictor: best_l_pred[local_k],
+                    right_predictor: best_r_pred[local_k],
+                    total_bits: total,
+                    left_count,
+                    left_bits: best_l_cost[local_k],
+                    right_bits: best_r_cost[local_k],
+                },
+            ));
+        }
+    }
+    #[cfg(feature = "__env_var_diagnostics")]
+    if mab_prop_best < f64::MAX {
+        out.mab_prop_best = Some(mab_prop_best);
+    }
+    out
+}
+
+/// Minimum node rows before [`find_best_split_borrowed`] fans PROPERTIES
+/// across the pool. Only root-scale nodes qualify; the transient cost is
+/// up to [`FBS_PROP_WAVE`] pooled workspaces for the call's duration.
+#[cfg(feature = "parallel")]
+const FBS_PROP_PAR_MIN_ROWS: usize = 1 << 20;
+/// Concurrent-property bound for the parallel dispatch (bounds pooled
+/// workspace memory, not correctness).
+#[cfg(feature = "parallel")]
+const FBS_PROP_WAVE: usize = 4;
+
 /// Borrowed-view counterpart to [`find_best_split`]. Operates on the live
 /// range `[start..end)` of a [`BorrowedSamples`].
 ///
@@ -6685,21 +7155,11 @@ fn find_best_split_borrowed(
         cap_totals = vec![0u32; num_pred * effective_histo];
         cap_total_ebits = vec![0u64; num_pred];
     }
+    // Workspace sizing for the parallel prop dispatch's pooled scratch —
+    // matches every caller's `SplitWorkspace::new` third argument.
+    #[cfg(feature = "parallel")]
+    let max_buckets_for_ws = params.max_property_values + 1;
 
-    let count_increase = ws.count_increase.as_mut_slice();
-    let extra_bits_increase = ws.extra_bits_increase.as_mut_slice();
-    let bucket_counts = ws.bucket_counts.as_mut_slice();
-    let right_counts = ws.right_counts.as_mut_slice();
-    let left_counts = ws.left_counts.as_mut_slice();
-    let best_l_cost = ws.best_l_cost.as_mut_slice();
-    let best_r_cost = ws.best_r_cost.as_mut_slice();
-    let best_l_penalized = ws.best_l_penalized.as_mut_slice();
-    let best_r_penalized = ws.best_r_penalized.as_mut_slice();
-    let best_l_pred = ws.best_l_pred.as_mut_slice();
-    let best_r_pred = ws.best_r_pred.as_mut_slice();
-    let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
-    let bucket_starts = ws.bucket_starts.as_mut_slice();
-    let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
     let num_props = if weighted_total >= 256 {
         params.properties.len()
     } else if weighted_total >= 32 {
@@ -6708,342 +7168,167 @@ fn find_best_split_borrowed(
         params.properties.len().min(2)
     };
 
-    for (prop_pos, &prop_idx) in params.properties[..num_props].iter().enumerate() {
-        let num_thresholds = samples.num_thresholds(prop_idx);
-        if num_thresholds == 0 {
-            continue;
-        }
+    // ── Per-property evaluation ─────────────────────────────────────────
+    //
+    // Each property's split search is independent given the shared node
+    // context; results merge through an ORDERED fold that reproduces the
+    // historical in-loop bookkeeping exactly:
+    //   - candidate selection: the sequential loop kept the first
+    //     candidate strictly below the running best in (prop, threshold)
+    //     order. Folding per-prop LOCAL bests (each scored against
+    //     base_bits) in prop order with the same strict `<` selects the
+    //     same winner: the earliest prop attaining the global minimum.
+    //   - capture: per-(prop) tensor regions are disjoint; workers fill
+    //     local blocks and the fold copies them — same values, order
+    //     irrelevant.
+    //   - cap_totals: sequentially, the FIRST full-accumulate prop wrote
+    //     the per-pred full-node histograms (prop-independent values).
+    //     Every full-accumulate outcome now carries them; the fold keeps
+    //     the first in prop order.
+    // Large nodes fan the props across the pool (bounded waves, pooled
+    // workspaces); the sequential path runs the SAME evaluator with the
+    // caller's workspace — one body, no drift.
+    let shared = PropEvalShared {
+        samples,
+        params,
+        start,
+        end,
+        count,
+        effective_histo,
+        weighted_total,
+        sample_counts,
+        num_pred,
+        parent_predictor,
+        weighted_idx,
+        zero_idx,
+        change_pred_penalty,
+        base_bits,
+        tensor_in,
+        capture_on: capture.is_some(),
+    };
 
-        let pq_buckets = &samples.bucket_indices[prop_idx][start..end];
-        let threshold_set = &samples.threshold_sets[prop_idx];
+    #[cfg(feature = "parallel")]
+    let prop_parallel = num_props >= 4
+        && count >= FBS_PROP_PAR_MIN_ROWS
+        && rayon::current_num_threads() >= 4
+        && !mab_sink_active();
+    #[cfg(not(feature = "parallel"))]
+    let prop_parallel = false;
 
-        let (bmin, bmax) = if let Some((layout, tensor)) = tensor_in {
-            let entry = &layout.prop_entries[prop_pos];
-            debug_assert_eq!(entry.prop_idx, prop_idx);
-            let uni = &tensor.unique[entry.bucket_base..entry.bucket_base + entry.num_buckets];
-            let Some(first) = uni.iter().position(|&c| c != 0) else {
-                continue;
-            };
-            let last = uni
-                .iter()
-                .rposition(|&c| c != 0)
-                .expect("nonzero unique count exists");
-            (first, last)
-        } else {
-            let mut bmin: u8 = u8::MAX;
-            let mut bmax: u8 = 0;
-            for &b in pq_buckets {
-                if b < bmin {
-                    bmin = b;
+    let mut apply_outcome =
+        |o: PropOutcome,
+         best: &mut Option<BestSplit>,
+         best_bits: &mut f64,
+         capture: &mut Option<(&TensorLayout, &mut NodeTensor)>,
+         cap_totals: &mut Vec<u32>,
+         cap_total_ebits: &mut Vec<u64>,
+         cap_totals_done: &mut bool,
+         cap_single_bucket: &mut Vec<(usize, usize)>| {
+            if let Some((totals, tebits)) = o.totals {
+                if !*cap_totals_done {
+                    cap_totals.copy_from_slice(&totals);
+                    cap_total_ebits.copy_from_slice(&tebits);
+                    *cap_totals_done = true;
                 }
-                if b > bmax {
-                    bmax = b;
-                }
             }
-            (bmin as usize, bmax as usize)
-        };
-        if bmin == bmax {
-            if let Some((layout, tensor)) = capture.as_mut() {
-                let entry = &layout.prop_entries[prop_pos];
-                debug_assert_eq!(entry.prop_idx, prop_idx);
-                tensor.unique[entry.bucket_base + bmin] = count as u32;
-                tensor.weighted[entry.bucket_base + bmin] = weighted_total;
-                cap_single_bucket.push((prop_pos, bmin));
-            }
-            continue;
-        }
-
-        let local_num_buckets = bmax - bmin + 1;
-        let local_num_thresholds = bmax - bmin;
-
-        if let Some((layout, tensor)) = tensor_in {
-            let entry = &layout.prop_entries[prop_pos];
-            bucket_counts[..local_num_buckets].copy_from_slice(
-                &tensor.weighted
-                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets],
-            );
-            let uni = &tensor.unique
-                [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets];
-            bucket_starts[0] = 0;
-            for b in 0..local_num_buckets {
-                bucket_starts[b + 1] = bucket_starts[b] + uni[b] as usize;
-            }
-        } else {
-            let mut unique_per_bucket = [0u32; 256];
-            bucket_counts[..local_num_buckets].fill(0);
-            for (offset, &b) in pq_buckets.iter().enumerate() {
-                let local_b = (b as usize) - bmin;
-                unique_per_bucket[local_b] += 1;
-                bucket_counts[local_b] += sample_counts[offset];
-            }
-
-            bucket_starts[0] = 0;
-            for b in 0..local_num_buckets {
-                bucket_starts[b + 1] = bucket_starts[b] + unique_per_bucket[b] as usize;
-            }
-
-            bucket_write_pos[..local_num_buckets]
-                .copy_from_slice(&bucket_starts[..local_num_buckets]);
-            for (offset, &b) in pq_buckets.iter().enumerate() {
-                let local_b = (b as usize) - bmin;
-                sorted_by_bucket[bucket_write_pos[local_b]] = offset;
-                bucket_write_pos[local_b] += 1;
-            }
-
-            if let Some((layout, tensor)) = capture.as_mut() {
-                let entry = &layout.prop_entries[prop_pos];
-                debug_assert_eq!(entry.prop_idx, prop_idx);
-                tensor.unique
-                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets]
-                    .copy_from_slice(&unique_per_bucket[..local_num_buckets]);
-                tensor.weighted
-                    [entry.bucket_base + bmin..entry.bucket_base + bmin + local_num_buckets]
-                    .copy_from_slice(&bucket_counts[..local_num_buckets]);
-            }
-        }
-
-        best_l_cost[..local_num_thresholds].fill(f64::MAX);
-        best_r_cost[..local_num_thresholds].fill(f64::MAX);
-        best_l_penalized[..local_num_thresholds].fill(f64::MAX);
-        best_r_penalized[..local_num_thresholds].fill(f64::MAX);
-        best_l_pred[..local_num_thresholds].fill(0);
-        best_r_pred[..local_num_thresholds].fill(0);
-
-        for pred in 0..num_pred {
-            let mut penalty: f64 = 0.0;
-            if pred != parent_predictor && parent_predictor != weighted_idx {
-                penalty = change_pred_penalty;
-            }
-            if pred == weighted_idx {
-                penalty += 1e-8;
-            } else if pred == zero_idx {
-                penalty -= 1e-8;
-            }
-
-            // Row accessor: in tensor-Use mode the per-bucket token rows are
-            // read STRAIGHT out of the tensor (contiguous, stride
-            // `effective_histo`) instead of being copied into the workspace —
-            // the copies were ~1 KB x buckets x preds x props per node.
-            let (row_data, row_base, row_stride): (&[u32], usize, usize);
-            if let Some((layout, tensor)) = tensor_in {
-                let entry = &layout.prop_entries[prop_pos];
-                let nb = entry.num_buckets;
-                for b in 0..local_num_buckets {
-                    extra_bits_increase[b] =
-                        tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b];
-                }
-                row_data = &tensor.token_counts;
-                row_base = entry.token_base + (pred * nb + bmin) * effective_histo;
-                row_stride = effective_histo;
-            } else {
-                let tokens = &samples.residual_tokens[pred][start..end];
-                let ebits = &samples.extra_bits[pred][start..end];
-
-                for b in 0..local_num_buckets {
-                    count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
-                }
-                extra_bits_increase[..local_num_buckets].fill(0);
-
-                crate::profile_time!("tree/fbs_accumulate", {
-                    // Per-bucket accumulation into DISJOINT count_increase
-                    // slices — bit-identical under any execution order, so
-                    // large nodes fan the buckets across the pool (the
-                    // root levels of the recursion are otherwise the t=8
-                    // Amdahl tail: find_best_split measured ~1.5-thread
-                    // effective parallelism at 4K e7 t=8).
-                    #[cfg(feature = "parallel")]
-                    let par = count >= FBS_ACCUM_PAR_MIN_ROWS && local_num_buckets >= 8;
-                    #[cfg(not(feature = "parallel"))]
-                    let par = false;
-                    let accum_one =
-                        |local_bucket: usize, ci_slice: &mut [u32], eb_out: &mut u64| {
-                            let bs = bucket_starts[local_bucket];
-                            let be = bucket_starts[local_bucket + 1];
-                            if be - bs >= ACCUM_4WAY_MIN_RUN {
-                                *eb_out = accumulate_run_4way(
-                                    &sorted_by_bucket[bs..be],
-                                    tokens,
-                                    ebits,
-                                    sample_counts,
-                                    ci_slice,
-                                    HISTO_MASK,
-                                );
-                            } else {
-                                let mut eb_sum: u64 = 0;
-                                for &rel_off in &sorted_by_bucket[bs..be] {
-                                    let tok = tokens[rel_off];
-                                    let sc = sample_counts[rel_off];
-                                    ci_slice[tok as usize & HISTO_MASK] += sc;
-                                    eb_sum += ebits[rel_off] as u64 * sc as u64;
-                                }
-                                *eb_out = eb_sum;
-                            }
-                        };
-                    if par {
-                        #[cfg(feature = "parallel")]
-                        {
-                            use rayon::prelude::*;
-                            count_increase[..local_num_buckets * HISTO_PADDED]
-                                .par_chunks_mut(HISTO_PADDED)
-                                .zip(extra_bits_increase[..local_num_buckets].par_iter_mut())
-                                .enumerate()
-                                .for_each(|(local_bucket, (ci_slice, eb_out))| {
-                                    accum_one(local_bucket, ci_slice, eb_out)
-                                });
-                        }
-                    } else {
-                        for local_bucket in 0..local_num_buckets {
-                            let ci_base = local_bucket * HISTO_PADDED;
-                            let (ci_slice, eb_out) = (
-                                &mut count_increase[ci_base..ci_base + HISTO_PADDED],
-                                &mut extra_bits_increase[local_bucket],
-                            );
-                            accum_one(local_bucket, ci_slice, eb_out);
-                        }
-                    }
-                });
-
+            if let Some(bmin) = o.single_bucket {
                 if let Some((layout, tensor)) = capture.as_mut() {
-                    let entry = &layout.prop_entries[prop_pos];
+                    let entry = &layout.prop_entries[o.prop_pos];
+                    tensor.unique[entry.bucket_base + bmin] = count as u32;
+                    tensor.weighted[entry.bucket_base + bmin] = weighted_total;
+                    cap_single_bucket.push((o.prop_pos, bmin));
+                }
+            }
+            if let Some(blk) = o.capture_block {
+                if let Some((layout, tensor)) = capture.as_mut() {
+                    let entry = &layout.prop_entries[o.prop_pos];
                     let nb = entry.num_buckets;
-                    for b in 0..local_num_buckets {
-                        let dst = entry.token_base + (pred * nb + bmin + b) * effective_histo;
-                        tensor.token_counts[dst..dst + effective_histo].copy_from_slice(
-                            &count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo],
-                        );
-                        tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b] =
-                            extra_bits_increase[b];
+                    let lnb = blk.local_num_buckets;
+                    let bmin = blk.bmin;
+                    tensor.unique[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
+                        .copy_from_slice(&blk.unique);
+                    tensor.weighted[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
+                        .copy_from_slice(&blk.weighted);
+                    for pred in 0..num_pred {
+                        for b in 0..lnb {
+                            let dst = entry.token_base + (pred * nb + bmin + b) * effective_histo;
+                            let src = (pred * lnb + b) * effective_histo;
+                            tensor.token_counts[dst..dst + effective_histo]
+                                .copy_from_slice(&blk.tokens[src..src + effective_histo]);
+                            tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b] =
+                                blk.ebits[pred * lnb + b];
+                        }
                     }
                 }
-                row_data = count_increase;
-                row_base = 0;
-                row_stride = HISTO_PADDED;
             }
-            let row_at = |b: usize| -> &[u32] {
-                &row_data[row_base + b * row_stride..row_base + b * row_stride + effective_histo]
-            };
-
-            right_counts[..effective_histo].fill(0);
-            let mut right_extra: u64 = 0;
-            let mut right_total: u32 = weighted_total;
-            for (local_bucket, &eb) in extra_bits_increase[..local_num_buckets].iter().enumerate() {
-                let ci_row = row_at(local_bucket);
-                for (rc, &ci) in right_counts[..effective_histo]
-                    .iter_mut()
-                    .zip(ci_row.iter())
-                {
-                    *rc += ci;
-                }
-                right_extra += eb;
-            }
-            // Token-support trim for the estimate calls below: every count
-            // beyond the node's highest token is zero on BOTH sides (left is
-            // a subset of the node), and zero entries contribute exactly 0.0
-            // in the SIMD estimate. Rounding the trim UP TO A MULTIPLE OF 4
-            // keeps the lane chunking of the surviving prefix — and the
-            // scalar-tail split — bit-identical to the untrimmed call, so
-            // costs (and therefore trees and bytes) are unchanged while the
-            // estimate does 1.5-2.5x less work on deep nodes.
-            let support = {
-                let mut hi = effective_histo;
-                while hi > 0 && right_counts[hi - 1] == 0 {
-                    hi -= 1;
-                }
-                hi.div_ceil(4).saturating_mul(4).min(effective_histo)
-            };
-
-            if capture.is_some() && !cap_totals_done {
-                cap_totals[pred * effective_histo..(pred + 1) * effective_histo]
-                    .copy_from_slice(&right_counts[..effective_histo]);
-                cap_total_ebits[pred] = right_extra;
-            }
-
-            left_counts[..effective_histo].fill(0);
-            let mut left_extra: u64 = 0;
-            let mut left_total: u32 = 0;
-
-            let _sweep_guard = crate::profile_phases::PhaseGuard::new("tree/fbs_sweep");
-            for local_k in 0..local_num_thresholds {
-                let bc = bucket_counts[local_k];
-                if bc == 0 {
-                    continue;
-                }
-
-                // Branchless: zero rows add/sub zero. The plain zip loop
-                // autovectorizes (u32 lanes, no dependences) — the old
-                // `if ci > 0` guard was what kept LLVM scalar here.
-                let ci_row = row_at(local_k);
-                for ((l, r), &ci) in left_counts[..effective_histo]
-                    .iter_mut()
-                    .zip(right_counts[..effective_histo].iter_mut())
-                    .zip(ci_row.iter())
-                {
-                    *l = l.wrapping_add(ci);
-                    *r = r.wrapping_sub(ci);
-                }
-                left_extra += extra_bits_increase[local_k];
-                right_extra -= extra_bits_increase[local_k];
-                left_total += bc;
-                right_total -= bc;
-
-                if left_total == 0 || right_total == 0 {
-                    continue;
-                }
-
-                let l_bits = jxl_simd::estimate_bits_u32(&left_counts[..support], left_total)
-                    + left_extra as f64;
-                let r_bits = jxl_simd::estimate_bits_u32(&right_counts[..support], right_total)
-                    + right_extra as f64;
-
-                if l_bits + penalty < best_l_penalized[local_k] {
-                    best_l_penalized[local_k] = l_bits + penalty;
-                    best_l_cost[local_k] = l_bits;
-                    best_l_pred[local_k] = pred;
-                }
-                if r_bits + penalty < best_r_penalized[local_k] {
-                    best_r_penalized[local_k] = r_bits + penalty;
-                    best_r_cost[local_k] = r_bits;
-                    best_r_pred[local_k] = pred;
+            if let Some((total, cand)) = o.candidate {
+                if total < *best_bits {
+                    *best_bits = total;
+                    *best = Some(cand);
                 }
             }
-        }
-
-        if capture.is_some() {
-            cap_totals_done = true;
-        }
-
-        #[cfg(feature = "__env_var_diagnostics")]
-        let mut mab_prop_best = f64::MAX;
-        for local_k in 0..local_num_thresholds {
-            if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
-                continue;
-            }
-
-            let total = best_l_cost[local_k] + best_r_cost[local_k];
             #[cfg(feature = "__env_var_diagnostics")]
-            if total < mab_prop_best {
-                mab_prop_best = total;
+            if let Some(mp) = o.mab_prop_best {
+                mab_per_prop.push((o.prop_idx as u8, mp));
             }
+        };
 
-            if total < best_bits {
-                best_bits = total;
-                let global_k = bmin + local_k;
-                let left_count = bucket_starts[local_k + 1];
-                best = Some(BestSplit {
-                    property: prop_idx,
-                    splitval: threshold_set[global_k],
-                    left_predictor: best_l_pred[local_k],
-                    right_predictor: best_r_pred[local_k],
-                    total_bits: total,
-                    left_count,
-                    left_bits: best_l_cost[local_k],
-                    right_bits: best_r_cost[local_k],
-                });
+    if prop_parallel {
+        #[cfg(feature = "parallel")]
+        {
+            // Bounded waves + a pooled workspace set: at most
+            // FBS_PROP_WAVE workspaces exist per call, allocated lazily
+            // and dropped at fold end (the per-node transient is
+            // wave x ~workspace size; only root-scale nodes take this
+            // path).
+            let ws_pool: std::sync::Mutex<alloc::vec::Vec<SplitWorkspace>> =
+                std::sync::Mutex::new(alloc::vec::Vec::new());
+            let props: alloc::vec::Vec<(usize, usize)> = params.properties[..num_props]
+                .iter()
+                .enumerate()
+                .map(|(pos, &idx)| (pos, idx))
+                .collect();
+            for wave in props.chunks(FBS_PROP_WAVE) {
+                let outcomes: alloc::vec::Vec<PropOutcome> =
+                    crate::parallel::parallel_map(wave.len(), |i| {
+                        let (prop_pos, prop_idx) = wave[i];
+                        let mut wsl = {
+                            let mut pool = ws_pool.lock().unwrap();
+                            pool.pop().unwrap_or_else(|| {
+                                SplitWorkspace::new(count, histogram_size, max_buckets_for_ws)
+                            })
+                        };
+                        let o = eval_split_prop_borrowed(&shared, prop_pos, prop_idx, &mut wsl);
+                        ws_pool.lock().unwrap().push(wsl);
+                        o
+                    });
+                for o in outcomes {
+                    apply_outcome(
+                        o,
+                        &mut best,
+                        &mut best_bits,
+                        &mut capture,
+                        &mut cap_totals,
+                        &mut cap_total_ebits,
+                        &mut cap_totals_done,
+                        &mut cap_single_bucket,
+                    );
+                }
             }
         }
-        #[cfg(feature = "__env_var_diagnostics")]
-        if mabsplit_dump::sink().is_some() && mab_prop_best < f64::MAX {
-            mab_per_prop.push((prop_idx as u8, mab_prop_best));
+    } else {
+        for (prop_pos, &prop_idx) in params.properties[..num_props].iter().enumerate() {
+            let o = eval_split_prop_borrowed(&shared, prop_pos, prop_idx, ws);
+            apply_outcome(
+                o,
+                &mut best,
+                &mut best_bits,
+                &mut capture,
+                &mut cap_totals,
+                &mut cap_total_ebits,
+                &mut cap_totals_done,
+                &mut cap_single_bucket,
+            );
         }
     }
 
@@ -8583,7 +8868,7 @@ fn tensor_capture_pays(layout: &TensorLayout, unique_count: usize) -> bool {
 /// the threshold.
 #[inline]
 fn accumulate_run_4way(
-    idxs: &[usize],
+    idxs: &[u32],
     tokens: &[u8],
     ebits: &[u8],
     sample_counts: &[u32],
@@ -8594,6 +8879,7 @@ fn accumulate_run_4way(
     let mut eb = [0u64; 4];
     let mut lane = 0usize;
     for &rel_off in idxs {
+        let rel_off = rel_off as usize;
         let tok = tokens[rel_off] as usize & mask;
         let sc = sample_counts[rel_off];
         sub[lane & 3][tok] += sc;
@@ -8678,7 +8964,7 @@ fn build_node_tensor(
                 }
                 bucket_write_pos[..nb].copy_from_slice(&bucket_starts[..nb]);
                 for (offset, &b) in pq_buckets.iter().enumerate() {
-                    sorted_by_bucket[bucket_write_pos[b as usize]] = offset;
+                    sorted_by_bucket[bucket_write_pos[b as usize]] = offset as u32;
                     bucket_write_pos[b as usize] += 1;
                 }
 
@@ -8705,6 +8991,7 @@ fn build_node_tensor(
                         } else {
                             let mut eb_sum: u64 = 0;
                             for &rel_off in &sorted_by_bucket[bs..be] {
+                                let rel_off = rel_off as usize;
                                 let tok = tokens[rel_off] as usize;
                                 let sc = sample_counts[rel_off];
                                 debug_assert!(tok < histogram_size);
@@ -8772,7 +9059,7 @@ fn build_node_tensor_borrowed(
                 }
                 bucket_write_pos[..nb].copy_from_slice(&bucket_starts[..nb]);
                 for (offset, &b) in pq_buckets.iter().enumerate() {
-                    sorted_by_bucket[bucket_write_pos[b as usize]] = offset;
+                    sorted_by_bucket[bucket_write_pos[b as usize]] = offset as u32;
                     bucket_write_pos[b as usize] += 1;
                 }
 
@@ -8799,6 +9086,7 @@ fn build_node_tensor_borrowed(
                         } else {
                             let mut eb_sum: u64 = 0;
                             for &rel_off in &sorted_by_bucket[bs..be] {
+                                let rel_off = rel_off as usize;
                                 let tok = tokens[rel_off] as usize;
                                 let sc = sample_counts[rel_off];
                                 debug_assert!(tok < histogram_size);
@@ -8985,7 +9273,11 @@ struct SplitWorkspace {
     best_r_penalized: Vec<f64>,
     best_l_pred: Vec<usize>,
     best_r_pred: Vec<usize>,
-    sorted_by_bucket: Vec<usize>,
+    // u32 row indices: node row counts are < 4G by construction, and at
+    // a 12.4M-row root this array is 50 MB instead of 100 — the largest
+    // single workspace member (and the blocker for per-prop pooled
+    // workspaces).
+    sorted_by_bucket: Vec<u32>,
     bucket_starts: Vec<usize>,
     bucket_write_pos: Vec<usize>,
     /// Fused accumulation block for the borrowed split search: per-property,
@@ -9052,7 +9344,7 @@ impl SplitWorkspace {
             best_r_penalized: vec![f64::MAX; max_buckets],
             best_l_pred: vec![0usize; max_buckets],
             best_r_pred: vec![0usize; max_buckets],
-            sorted_by_bucket: vec![0usize; max_count],
+            sorted_by_bucket: vec![0u32; max_count],
             bucket_starts: vec![0usize; max_buckets + 2],
             bucket_write_pos: vec![0usize; max_buckets],
             pred_block: vec![0u32; MAX_CAND_PRED_WS * max_buckets * HISTO_PADDED],
@@ -9099,7 +9391,7 @@ impl SplitWorkspace {
         self.right_counts.resize(histogram_size, 0u32);
         self.left_counts.resize(histogram_size, 0u32);
         // Per-sample buffer — the dominant ~12 MB allocation at large n.
-        self.sorted_by_bucket.resize(max_count, 0usize);
+        self.sorted_by_bucket.resize(max_count, 0u32);
         // Fused per-property accumulation block (borrowed split search).
         self.pred_block
             .resize(MAX_CAND_PRED_WS * max_buckets * HISTO_PADDED, 0u32);
@@ -9457,7 +9749,7 @@ fn find_best_split(
                 let local_b = (b as usize) - bmin;
                 // Store RELATIVE offset; downstream loops add `start` when
                 // indexing the parent SoA arrays.
-                sorted_by_bucket[bucket_write_pos[local_b]] = offset;
+                sorted_by_bucket[bucket_write_pos[local_b]] = offset as u32;
                 bucket_write_pos[local_b] += 1;
             }
 
@@ -9538,6 +9830,7 @@ fn find_best_split(
                     // ci_slice[tok & HISTO_MASK]: bitmask guarantees < HISTO_PADDED = ci_slice.len()
                     // Each unique sample contributes its count (dedup weight).
                     for &rel_off in &sorted_by_bucket[bs..be] {
+                        let rel_off = rel_off as usize;
                         let tok = tokens[rel_off];
                         let sc = sample_counts[rel_off];
                         ci_slice[tok as usize & HISTO_MASK] += sc;
