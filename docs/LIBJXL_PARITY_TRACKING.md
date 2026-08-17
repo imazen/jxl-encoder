@@ -45,17 +45,32 @@ splits. Ours: differs (no direct equivalent of the decode-speed
 preferences) — NOT yet at parity, tracked as a future RD/decode-speed
 item.
 
-## Standing measured gaps (4K, t=1, default path)
+## Standing measured gaps (4K, default path, 2026-08-17)
 
-| axis | cjxl 0.12 | ours 2026-08-14 | ours now (auto) | status |
+Memory (t=1, heaptrack-verified ladder, benchmarks/jxl_wall_parity_2026-08-16.md):
+
+| axis | cjxl 0.12 | ours 2026-08-14 | ours 2026-08-17 | status |
 |---|---|---|---|---|
-| lossless e7 photo peak_live | ~290-306 MB RSS | 834 MB | **564 MB** | 1.8-1.9× over; next: gather-time bucketization (their pre-pass model) |
-| lossless e9 photo peak_live | ~306 MB | 1130 MB | **849 MB** (screen 786) | raw props removed (exact bucketize); next: token columns + image floor |
-| lossless e7 photo wall | 3.82 s | 11.3 s | **8.1 s** | 2.1× |
-| lossless e9 photo wall | 23.1 s | 54.8 s | **46.4 s** | 2.0× (sectioned mode: 30.2 s = 1.31×) |
-| lossless bytes | baseline | −6.2% (photo) −36..46% (screen) | ≈ same (auto ±0.1%) | we win |
+| lossless e7 photo peak_live | ~290-306 MB RSS | 834 MB | **548 MB** | 1.8× over; next: token-column narrowing + image floor |
+| lossless e9 photo peak_live | ~306 MB | 1130 MB | **687 MB** (screen 676) | ebits columns eliminated (LUT), exact bucketize, probe-prune |
+| lossless bytes | baseline | −6.2% photo, −36..46% screen | same | we win |
 
-Remaining structural items to parity: (1) gather-time property
-bucketization via a threshold pre-pass (kills raw prop columns AND
-narrows dedup keys — their design); (2) u16 saturating dedup counts;
-(3) decode-speed-aware split preferences (RD/decode axis, not memory).
+Wall (best-of-3, cjxl 0.12 same box; lossless from round 1c/2, lossy round 3):
+
+| cell | cjxl | ours | ratio |
+|---|---|---|---|
+| lossless e7 t1 | 3.82 s | 6.51 s | 1.70× |
+| lossless e9 t1 | 23.1 s | 38.2 s | 1.65× |
+| lossless e7 t8 | 0.65 s | 2.74 s | 4.5× |
+| lossless e9 t8 | 3.5 s | 18.2 s | 5.2× |
+| lossy e3 t1 / t8 | 0.15 / 0.07 | 0.21 / 0.08 | 1.40× / 1.14× |
+| lossy e5 t1 / t8 | 1.47 / 0.26 | **1.38** / 0.36 | **0.94× win** / 1.38× |
+| lossy e7 t1 / t8 | 2.63 / 0.52 | **1.92** / **0.44** | **0.73× / 0.85× — wins** |
+
+Remaining structural items to parity: (1) lossless t8 — tree-learn root
+levels parallelize only across props today (their per-group trees are
+embarrassingly parallel; our single global tree is the divergence that
+WINS bytes but serializes learning); (2) u16 saturating dedup counts;
+(3) decode-speed-aware split preferences (RD/decode axis, not memory);
+(4) lossy e5-t8 residue: acstrat per-block kernel cost (candidate set at
+parity), two-pass entropy, order-locked patches BFS claims.

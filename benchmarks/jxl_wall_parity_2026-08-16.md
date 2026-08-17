@@ -150,3 +150,75 @@ impossible, needs a corpus-gated deterministic-strip version),
 quant_field 58 ms (flat across threads); e3-t1 last ~8 % = two-pass
 entropy build; lossless t=8 root levels beyond the prop fan-out;
 lossless e9 t=1 38.2 -> 30.0.
+
+## Round 3 (2026-08-17) — zenanalyze exact-integer + patches/mask parallelization
+
+Commits 5efbc487 (zenanalyze), 45d3e5ec (strip-parallel mask/gaborish +
+scan steps), f0c1538a (BFS + per-CC DFS). ALL byte-identical: photo e5
+cell locked per-step; screen e5 (217164) / screen e7 (217108) / photo e7
+(626146) / photo d1 e7 (757382) A/B'd against a parent-commit baseline
+binary (jj workspace build of 5efbc487); suite 12/12 + Libjxl byte-lock
+each commit.
+
+**1. Zenanalyze proxies (5efbc487).** The round-2 "78 ms, exact
+parallelization impossible" item is CLOSED by reformulating the sweep in
+exact integers — rg=r−g, yb2=r+g−2b (=2·yb), yl_k=299r+587g+114b
+(=1000·luma), integer Sobel threshold 900e6 — integer sums are
+order-free, so strips parallelize with zero drift, forever. Value drift
+vs the old f64 chains is ulp-level; gate: fcbr is bit-exact and every
+consumer threshold margin on the 18-image corpus (m3 vs 5/24/25/80, ed
+vs 0.7, lv vs bands; JXL_PROXY_DEBUG prints them) is 100-10000x the
+drift bound — no gate can flip. content_class 78 -> 9.8 ms,
+conv+setup 128 -> 20 ms.
+
+**2. Strip-with-halo kernel parallelization (45d3e5ec).**
+compute_mask1x1 (raw mask + 5x5 blur) and gaborish apply_channel now
+dispatch to full-width strips with halo rows calling the UNCHANGED
+jxl_simd whole-buffer kernels: halo rows absorb the sub-buffer edge
+clamps and are discarded; unchanged row width keeps the SIMD lane
+pattern identical -> bit-identical by construction (the PAD=3 region
+path's 1-ULP lane-repack drift does NOT apply). quant_field 57 -> 46 ms,
+patches dispatch 23.6 -> 9.8 ms (also: contiguous repack skipped,
+per-block means parallel). Patches scan steps 1+2 (flat blocks + seeds):
+pure per-block predicates, parallel rows, 141 -> 127 ms scan.
+
+**3. Patches BFS + DFS (f0c1538a).** BFS: level-synchronous — per level,
+candidate accepts (functions of the claimant's source only) evaluate in
+parallel; claims apply sequentially in exact (pop, k) order. Photo: 66
+levels, max 1.66M wide, 3.5M pops, 45 -> 41 ms. DFS: union-by-min CC
+labeling (strip-parallel union-find; roots ARE the sequential outer
+scan's start pixels in order) + parallel per-CC replays that TERMINATE
+at first rejection (sequential accept-state is frozen past `rejected`;
+post-rejection flooding only fed the `visited` plane the parallel path
+replaces). Giant photo CCs collapse to bounded prefixes: 77-90 -> 11 ms.
+Patches phase total 165 -> 62.5 ms.
+
+**REFUTED (2026-08-17): owner-computes parallel BFS claim pass.** The
+sequential claim residue is ~25-30 ms. Two variants measured: (a) row-band
+workers each scanning ALL entries — the 8x redundant scan cancels the
+win (claim 28.4 vs 29.3 ms); (b) bucketing candidates by target band
+during eval — the per-candidate bucket pushes moved the cost INTO eval
+(eval 10.3 -> 19, claim -> 20; net 39 vs 39 ms). The claim pass is
+order-locked and its per-claim work is already near-memcpy; do not
+re-attempt without a fundamentally different decomposition.
+
+**Lossy ladder after round 3** (photo 4K d1.25, best-of-3, bytes
+identical everywhere):
+
+| cell | round 2 | now | cjxl | ratio |
+|---|---|---|---|---|
+| e3 t=1 | 0.21 | 0.21 s | 0.15 | 1.40x |
+| e3 t=8 | 0.08 | 0.08 s | 0.07 | **1.14x** |
+| e5 t=1 | 1.49 | **1.38 s** | 1.47 | **0.94x — win** |
+| e5 t=8 | 0.53 | **0.36 s** | 0.26 | 1.38x |
+| e7 t=1 | 1.99 | **1.92 s** | 2.63 | **0.73x — win** |
+| e7 t=8 | 0.60 | **0.44 s** | 0.52 | **0.85x — win** |
+
+e5-t8 remaining (inner 352 ms): acstrat 126 (per-block 8x8 search —
+candidate set verified AT PARITY with libjxl kHare: non_aligned_eval
+e6+ both sides; next lever is kernel-level), entropy 62 (two-pass),
+patches 62 (BFS claims 25-30 order-locked + eval 10 + dfs 11 + dispatch
+9), quant_field 46, xform 23. Note libjxl gates its patches detector at
+e>=7 (enc_heuristics.cc kSquirrel); ours at e5-6 is the deliberate
+screenshot-RD divergence (W36-3), so the photo-cell patches cost is the
+price of that divergence when the mask-median dispatch admits the scan.

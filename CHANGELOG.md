@@ -9,6 +9,17 @@
   regression test (this round).
 
 ### Changed
+
+- Zenanalyze content proxies rewritten as exact-integer strip-parallel sums
+  (order-free => deterministic under any thread count): 4K sweep 78 -> 9.8 ms,
+  lossy setup 128 -> 20 ms; corpus-gated byte-neutral (5efbc487)
+- mask1x1 + gaborish kernels strip-parallelized via halo strips into the
+  unchanged jxl_simd whole-buffer kernels, bit-identical; patches scan
+  steps 1-2 + dispatch parallelized (45d3e5ec)
+- Patches detector BFS level-synchronous parallel eval + union-find per-CC
+  DFS replay with rejection truncation, byte-identical: patches phase
+  165 -> 62.5 ms at 4K; lossy 4K photo walls now e5 t1 0.94x / e7 t1 0.73x /
+  e7 t8 0.85x cjxl (wins), e5 t8 1.38x (f0c1538a)
 - Lossless dedup: adaptive partition refinement + waved predictor
   compaction — byte-identical, default-path peak_live 834→729 MB (e7) /
   1130→1094 MB (e9) at 4K (4486e5e1).
