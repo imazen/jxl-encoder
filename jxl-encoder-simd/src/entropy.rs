@@ -407,46 +407,30 @@ pub fn fast_powf(base: f32, exponent: f32) -> f32 {
     fast_pow2f(fast_log2f(base) * exponent)
 }
 
-/// Compute Shannon entropy of a histogram: -sum(count * log2(count / total)).
+/// Shannon entropy (bits) of a histogram of i32 counts.
 ///
-/// Returns total entropy in bits. Excludes zero counts and the case where
-/// a single count equals total (entropy contribution = 0).
-///
-/// Uses fast_log2f approximation (~3e-7 relative error per log2 call).
+/// CANONICAL ARCH-STABLE KERNEL (2026-08-17): identical bit pattern on
+/// every tier — 0-anchored 8-element blocks with the same lane formula
+/// (magetypes polyfills `f32x8` lane-pure on 4-wide arches), one virtual
+/// 8-lane accumulator (`acc_id = i & 7`), a FIXED scalar combine tree,
+/// and an identical scalar f64-free tail. The pre-2026-08-17 hand-written
+/// kernels grouped by native register width (AVX2 8 vs NEON 4), which made
+/// ANS clustering decisions flip between x86_64 and aarch64 on near-ties.
+/// Changing the block width, mapping, combine tree, or tail split changes
+/// encoded bytes on every arch — regenerate hash-locks deliberately.
 #[inline]
 pub fn shannon_entropy_bits(counts: &[i32], total_count: usize) -> f32 {
     if total_count == 0 {
         return 0.0;
     }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return shannon_entropy_avx2(token, counts, total_count);
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::NeonToken::summon() {
-            return shannon_entropy_neon(token, counts, total_count);
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
-            return shannon_entropy_wasm128(token, counts, total_count);
-        }
-    }
-
-    shannon_entropy_scalar(counts, total_count)
+    incant!(
+        shannon_entropy_impl(counts, total_count),
+        [v4, v3, neon, wasm128, scalar]
+    )
 }
 
-/// Scalar Shannon entropy using fast_log2f.
+/// Scalar Shannon entropy using fast_log2f (historical per-element
+/// formula; NOT bit-equal to the canonical kernel's accumulation).
 #[inline]
 pub fn shannon_entropy_scalar(counts: &[i32], total_count: usize) -> f32 {
     let inv_total = 1.0 / total_count as f32;
@@ -465,24 +449,16 @@ pub fn shannon_entropy_scalar(counts: &[i32], total_count: usize) -> f32 {
     entropy
 }
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-#[archmage::arcane]
-pub fn shannon_entropy_avx2(
-    token: archmage::X64V3Token,
-    counts: &[i32],
-    total_count: usize,
-) -> f32 {
-    use magetypes::simd::{f32x8, i32x8};
-
+#[magetypes(define(f32x8, i32x8), v4, v3, neon, wasm128, scalar)]
+pub fn shannon_entropy_impl(token: Token, counts: &[i32], total_count: usize) -> f32 {
     let inv_total_v = f32x8::splat(token, 1.0 / total_count as f32);
     let total_f_v = f32x8::splat(token, total_count as f32);
     let zero_f = f32x8::zero(token);
+    let one = f32x8::splat(token, 1.0);
     let mut acc = f32x8::zero(token);
 
     // fast_log2f constants
     let offset = i32x8::splat(token, 0x3f2a_aaab_u32 as i32);
-    let one = f32x8::splat(token, 1.0);
     let p0 = f32x8::splat(token, LOG2_P0);
     let p1 = f32x8::splat(token, LOG2_P1);
     let p2 = f32x8::splat(token, LOG2_P2);
@@ -490,56 +466,49 @@ pub fn shannon_entropy_avx2(
     let q1 = f32x8::splat(token, LOG2_Q1);
     let q2 = f32x8::splat(token, LOG2_Q2);
 
-    #[allow(clippy::too_many_arguments)]
-    #[inline(always)]
-    fn fast_log2f_x8(
-        x: f32x8,
-        offset: i32x8,
-        p0: f32x8,
-        p1: f32x8,
-        p2: f32x8,
-        q0: f32x8,
-        q1: f32x8,
-        q2: f32x8,
-        one: f32x8,
-    ) -> f32x8 {
-        let x_bits: i32x8 = x.bitcast_i32x8();
-        let exp_bits = x_bits - offset;
-        let exp_shifted = exp_bits.shr_arithmetic::<23>();
-        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
-        let mantissa = mantissa_bits.bitcast_f32x8();
-        let exp_val = exp_shifted.to_f32x8();
-        let frac = mantissa - one;
-        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
-        num / den + exp_val
-    }
-
     let chunks = counts.len() / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
         let c_i = i32x8::from_slice(token, &counts[base..]);
         let c_f = c_i.to_f32x8();
 
-        // Compare in f32 space (blend needs f32 masks)
         let nonzero_mask = c_f.simd_gt(zero_f);
         let not_total_mask = c_f.simd_ne(total_f_v);
-        // Combine masks: multiply 1.0/0.0 selects
         let nz_float = f32x8::blend(nonzero_mask, one, zero_f);
         let nt_float = f32x8::blend(not_total_mask, one, zero_f);
-        let valid_mask = nz_float * nt_float; // 1.0 where valid, 0.0 where not
+        let valid_mask = nz_float * nt_float;
 
-        // For log2, we need count > 0 to avoid log2(0). Use max(count, 1) for safe input.
         let safe_c = f32x8::blend(nonzero_mask, c_f, one);
         let prob = safe_c * inv_total_v;
-        let log2_prob = fast_log2f_x8(prob, offset, p0, p1, p2, q0, q1, q2, one);
+        let log2_prob = {
+            let x_bits: i32x8 = prob.bitcast_i32x8();
+            let exp_bits = x_bits - offset;
+            let exp_shifted = exp_bits.shr_arithmetic::<23>();
+            let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+            let mantissa = mantissa_bits.bitcast_f32x8();
+            let exp_val = exp_shifted.to_f32x8();
+            let frac = mantissa - one;
+            let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+            let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+            num / den + exp_val
+        };
 
-        // contribution = -count * log2(count/total), masked to 0 where invalid
         let contribution = c_f * log2_prob * valid_mask;
         acc -= contribution;
     }
 
-    // Handle remainder (scalar)
+    // Canonical combine: FIXED scalar tree over the 8 virtual lanes.
+    let mut lanes = [0.0f32; 8];
+    acc.store(&mut lanes);
+    let s4 = [
+        lanes[0] + lanes[4],
+        lanes[1] + lanes[5],
+        lanes[2] + lanes[6],
+        lanes[3] + lanes[7],
+    ];
+    let simd_sum = (s4[0] + s4[2]) + (s4[1] + s4[3]);
+
+    // Scalar tail — identical formula on every tier.
     let mut scalar_sum = 0.0f32;
     let inv_total = 1.0 / total_count as f32;
     let total_f = total_count as f32;
@@ -552,231 +521,48 @@ pub fn shannon_entropy_avx2(
         }
     }
 
-    acc.reduce_add() + scalar_sum
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline]
-#[archmage::arcane]
-pub fn shannon_entropy_neon(token: archmage::NeonToken, counts: &[i32], total_count: usize) -> f32 {
-    use magetypes::simd::{f32x4, i32x4};
-
-    let inv_total_v = f32x4::splat(token, 1.0 / total_count as f32);
-    let total_f_v = f32x4::splat(token, total_count as f32);
-    let zero_f = f32x4::zero(token);
-    let mut acc = f32x4::zero(token);
-
-    let offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
-    let one = f32x4::splat(token, 1.0);
-    let p0 = f32x4::splat(token, LOG2_P0);
-    let p1 = f32x4::splat(token, LOG2_P1);
-    let p2 = f32x4::splat(token, LOG2_P2);
-    let q0 = f32x4::splat(token, LOG2_Q0);
-    let q1 = f32x4::splat(token, LOG2_Q1);
-    let q2 = f32x4::splat(token, LOG2_Q2);
-
-    #[inline(always)]
-    fn fast_log2f_x4(
-        x: f32x4,
-        offset: i32x4,
-        p0: f32x4,
-        p1: f32x4,
-        p2: f32x4,
-        q0: f32x4,
-        q1: f32x4,
-        q2: f32x4,
-        one: f32x4,
-    ) -> f32x4 {
-        let x_bits: i32x4 = x.bitcast_i32x4();
-        let exp_bits = x_bits - offset;
-        let exp_shifted = exp_bits.shr_arithmetic::<23>();
-        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
-        let mantissa = mantissa_bits.bitcast_f32x4();
-        let exp_val = exp_shifted.to_f32x4();
-        let frac = mantissa - one;
-        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
-        num / den + exp_val
-    }
-
-    let chunks = counts.len() / 4;
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let c_i = i32x4::from_slice(token, &counts[base..]);
-        let c_f = c_i.to_f32x4();
-
-        // Compare in f32 space (blend needs f32 masks)
-        let nonzero_mask = c_f.simd_gt(zero_f);
-        let not_total_mask = c_f.simd_ne(total_f_v);
-        let nz_float = f32x4::blend(nonzero_mask, one, zero_f);
-        let nt_float = f32x4::blend(not_total_mask, one, zero_f);
-        let valid_mask = nz_float * nt_float;
-
-        let safe_c = f32x4::blend(nonzero_mask, c_f, one);
-        let prob = safe_c * inv_total_v;
-        let log2_prob = fast_log2f_x4(prob, offset, p0, p1, p2, q0, q1, q2, one);
-
-        let contribution = c_f * log2_prob * valid_mask;
-        acc -= contribution;
-    }
-
-    let mut scalar_sum = 0.0f32;
-    let inv_total = 1.0 / total_count as f32;
-    let total_f = total_count as f32;
-    for &count in &counts[chunks * 4..] {
-        if count > 0 {
-            let c = count as f32;
-            if c != total_f {
-                scalar_sum -= c * fast_log2f(c * inv_total);
-            }
-        }
-    }
-
-    acc.reduce_add() + scalar_sum
-}
-
-#[cfg(target_arch = "wasm32")]
-#[inline]
-#[archmage::arcane]
-pub fn shannon_entropy_wasm128(
-    token: archmage::Wasm128Token,
-    counts: &[i32],
-    total_count: usize,
-) -> f32 {
-    use magetypes::simd::{f32x4, i32x4};
-
-    let inv_total_v = f32x4::splat(token, 1.0 / total_count as f32);
-    let total_f_v = f32x4::splat(token, total_count as f32);
-    let zero_f = f32x4::zero(token);
-    let mut acc = f32x4::zero(token);
-
-    let offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
-    let one = f32x4::splat(token, 1.0);
-    let p0 = f32x4::splat(token, LOG2_P0);
-    let p1 = f32x4::splat(token, LOG2_P1);
-    let p2 = f32x4::splat(token, LOG2_P2);
-    let q0 = f32x4::splat(token, LOG2_Q0);
-    let q1 = f32x4::splat(token, LOG2_Q1);
-    let q2 = f32x4::splat(token, LOG2_Q2);
-
-    #[inline(always)]
-    fn fast_log2f_x4(
-        x: f32x4,
-        offset: i32x4,
-        p0: f32x4,
-        p1: f32x4,
-        p2: f32x4,
-        q0: f32x4,
-        q1: f32x4,
-        q2: f32x4,
-        one: f32x4,
-    ) -> f32x4 {
-        let x_bits: i32x4 = x.bitcast_i32x4();
-        let exp_bits = x_bits - offset;
-        let exp_shifted = exp_bits.shr_arithmetic::<23>();
-        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
-        let mantissa = mantissa_bits.bitcast_f32x4();
-        let exp_val = exp_shifted.to_f32x4();
-        let frac = mantissa - one;
-        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
-        num / den + exp_val
-    }
-
-    let chunks = counts.len() / 4;
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let c_i = i32x4::from_slice(token, &counts[base..]);
-        let c_f = c_i.to_f32x4();
-
-        // Compare in f32 space (blend needs f32 masks)
-        let nonzero_mask = c_f.simd_gt(zero_f);
-        let not_total_mask = c_f.simd_ne(total_f_v);
-        let nz_float = f32x4::blend(nonzero_mask, one, zero_f);
-        let nt_float = f32x4::blend(not_total_mask, one, zero_f);
-        let valid_mask = nz_float * nt_float;
-
-        let safe_c = f32x4::blend(nonzero_mask, c_f, one);
-        let prob = safe_c * inv_total_v;
-        let log2_prob = fast_log2f_x4(prob, offset, p0, p1, p2, q0, q1, q2, one);
-
-        let contribution = c_f * log2_prob * valid_mask;
-        acc -= contribution;
-    }
-
-    let mut scalar_sum = 0.0f32;
-    let inv_total = 1.0 / total_count as f32;
-    let total_f = total_count as f32;
-    for &count in &counts[chunks * 4..] {
-        if count > 0 {
-            let c = count as f32;
-            if c != total_f {
-                scalar_sum -= c * fast_log2f(c * inv_total);
-            }
-        }
-    }
-
-    acc.reduce_add() + scalar_sum
+    simd_sum + scalar_sum
 }
 
 // ============================================================================
 // Tree-learning estimate_bits (probability-floor cost for find_best_split)
 // ============================================================================
 
-/// Compute libjxl-style EstimateBits cost over a histogram of u32 counts.
+/// Estimate the coded-bit cost of a symbol histogram (`counts`, `total`).
 ///
-/// Returns `-sum_{c > 0} c * log2(max(c / total, 1/4096))`, where the
-/// 1/4096 floor matches libjxl's ANS 12-bit precision floor (see
-/// `enc_ma.cc:54-71`). This is the cost function used inside `find_best_split`
-/// for tree-learning split candidate ranking — called O(B * H) times per
-/// property per node, ~22k+ times per node-build on real photos.
+/// CANONICAL ARCH-STABLE KERNEL (2026-08-17): every tier — AVX-512, AVX2,
+/// NEON, WASM128, scalar — computes the identical bit pattern:
 ///
-/// **Numerical contract:** the SIMD path performs the same fast_log2f
-/// polynomial as scalar but accumulates in 8 (AVX2) or 4 (NEON/WASM) lanes
-/// and reduces with tree-add at the end. The result differs from a strictly
-/// serial scalar sum by a small number of ULPs in the f64 mantissa. Callers
-/// that need byte-identical sums to the pre-SIMD scalar formulation should
-/// pin via [`estimate_bits_scalar_f64`].
+/// * elements are processed in 0-anchored 8-element blocks with the SAME
+///   f32 lane formula on every tier (magetypes polyfills `f32x8` as
+///   lane-pure `f32x4` pairs on 4-wide arches);
+/// * each element feeds virtual accumulator `i & 15` (blocks alternate
+///   between two `f32x8` accumulators), so the accumulation grouping no
+///   longer depends on the native register width — the pre-2026-08-17
+///   hand-written kernels grouped by native width (AVX2 `i & 15` vs NEON
+///   `i & 7`), which made x86_64 and aarch64 disagree in the low bits and
+///   flipped near-tie tree-learner decisions (3 hash-lock fixtures);
+/// * the 16 virtual accumulators combine through one FIXED scalar tree;
+/// * the `< 8` tail uses the identical scalar f64 formula on every tier.
 ///
-/// Zero-count entries are handled by giving them a safe input (1.0) for log2
-/// and a zero multiplier (the `c` factor), so they contribute 0.0 without
-/// branching.
+/// Any change to the block width, accumulator mapping, combine tree, or
+/// tail split changes ENCODED BYTES on every arch at once — regenerate the
+/// hash-lock sidecar deliberately, never as a side effect.
 #[inline]
 pub fn estimate_bits_u32(counts: &[u32], total: u32) -> f64 {
     if total == 0 {
         return 0.0;
     }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::X64V3Token::summon() {
-            return estimate_bits_u32_avx2(token, counts, total);
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::NeonToken::summon() {
-            return estimate_bits_u32_neon(token, counts, total);
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use archmage::SimdToken;
-        if let Some(token) = archmage::Wasm128Token::summon() {
-            return estimate_bits_u32_wasm128(token, counts, total);
-        }
-    }
-
-    estimate_bits_scalar_f64(counts, total)
+    incant!(
+        estimate_bits_u32_impl(counts, total),
+        [v4, v3, neon, wasm128, scalar]
+    )
 }
 
-/// Scalar reference for [`estimate_bits_u32`]. Sums in iteration order using
-/// f64 accumulation, mirroring the historical scalar implementation. Useful as
-/// the reference for parity tests and as a fallback when no SIMD is available.
+/// Scalar reference for [`estimate_bits_u32`]'s historical per-element
+/// formula. Sums in iteration order using f64 accumulation. NOT bit-equal
+/// to the canonical kernel (different accumulator structure); kept for
+/// tests and as documentation of the underlying formula.
 #[inline]
 pub fn estimate_bits_scalar_f64(counts: &[u32], total: u32) -> f64 {
     if total == 0 {
@@ -794,12 +580,8 @@ pub fn estimate_bits_scalar_f64(counts: &[u32], total: u32) -> f64 {
     bits
 }
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-#[archmage::arcane]
-pub fn estimate_bits_u32_avx2(token: archmage::X64V3Token, counts: &[u32], total: u32) -> f64 {
-    use magetypes::simd::{f32x8, i32x8};
-
+#[magetypes(define(f32x8, i32x8, u32x8), v4, v3, neon, wasm128, scalar)]
+pub fn estimate_bits_u32_impl(token: Token, counts: &[u32], total: u32) -> f64 {
     let total_f = total as f32;
     let inv_total = f32x8::splat(token, 1.0 / total_f);
     let min_prob = f32x8::splat(token, 1.0 / 4096.0);
@@ -815,265 +597,105 @@ pub fn estimate_bits_u32_avx2(token: archmage::X64V3Token, counts: &[u32], total
     let q1 = f32x8::splat(token, LOG2_Q1);
     let q2 = f32x8::splat(token, LOG2_Q2);
 
-    #[allow(clippy::too_many_arguments)]
-    #[inline(always)]
-    fn fast_log2f_x8(
-        x: f32x8,
-        offset: i32x8,
-        p0: f32x8,
-        p1: f32x8,
-        p2: f32x8,
-        q0: f32x8,
-        q1: f32x8,
-        q2: f32x8,
-        one: f32x8,
-    ) -> f32x8 {
-        let x_bits: i32x8 = x.bitcast_i32x8();
-        let exp_bits = x_bits - offset;
-        let exp_shifted = exp_bits.shr_arithmetic::<23>();
-        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
-        let mantissa = mantissa_bits.bitcast_f32x8();
-        let exp_val = exp_shifted.to_f32x8();
-        let frac = mantissa - one;
-        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
-        num / den + exp_val
-    }
+    // fast_log2f (log2 via integer bit manipulation) is inlined at each
+    // use site below — lane-pure, so every tier computes identical
+    // per-element values.
 
-    // Two independent f32 accumulators to break the serial dep chain
-    // further; reduce at end.
-    let mut acc0 = f32x8::zero(token);
-    let mut acc1 = f32x8::zero(token);
-
-    let chunks = counts.len() / 8;
-    let mut chunk = 0;
-    while chunk + 1 < chunks {
-        let base0 = chunk * 8;
-        let base1 = (chunk + 1) * 8;
-        // u32 → i32 bitcast → f32 convert. Valid counts are << 2^31.
-        let c0_f = magetypes::simd::u32x8::from_slice(token, &counts[base0..base0 + 8])
+    let mut acc_a = f32x8::zero(token);
+    let mut acc_b = f32x8::zero(token);
+    let blocks = counts.len() / 8;
+    let mut blk = 0usize;
+    while blk + 1 < blocks {
+        let base_a = blk * 8;
+        let base_b = base_a + 8;
+        let ca = u32x8::from_slice(token, &counts[base_a..base_a + 8])
             .bitcast_i32x8()
             .to_f32x8();
-        let c1_f = magetypes::simd::u32x8::from_slice(token, &counts[base1..base1 + 8])
+        let cb = u32x8::from_slice(token, &counts[base_b..base_b + 8])
             .bitcast_i32x8()
             .to_f32x8();
-
-        let nz0 = c0_f.simd_gt(zero_f);
-        let nz1 = c1_f.simd_gt(zero_f);
-        // safe_c = 1.0 where c == 0, c otherwise — feeds log2 a positive value.
-        let safe0 = f32x8::blend(nz0, c0_f, one);
-        let safe1 = f32x8::blend(nz1, c1_f, one);
-        // prob = max(c / total, 1/4096)
-        let raw_p0 = safe0 * inv_total;
-        let raw_p1 = safe1 * inv_total;
-        let p_clipped0 = raw_p0.max(min_prob);
-        let p_clipped1 = raw_p1.max(min_prob);
-        let l0 = fast_log2f_x8(p_clipped0, offset, p0, p1, p2, q0, q1, q2, one);
-        let l1 = fast_log2f_x8(p_clipped1, offset, p0, p1, p2, q0, q1, q2, one);
-        // contribution = c * log2(p) — zero-count entries multiply 0 * anything = 0.
-        // We do NOT mask by nz here because c_f == 0 already zeros the product.
-        acc0 -= c0_f * l0;
-        acc1 -= c1_f * l1;
-        chunk += 2;
+        let nza = ca.simd_gt(zero_f);
+        let nzb = cb.simd_gt(zero_f);
+        let sa = f32x8::blend(nza, ca, one);
+        let sb = f32x8::blend(nzb, cb, one);
+        let pa = (sa * inv_total).max(min_prob);
+        let pb = (sb * inv_total).max(min_prob);
+        let la = {
+            let x_bits: i32x8 = pa.bitcast_i32x8();
+            let exp_bits = x_bits - offset;
+            let exp_shifted = exp_bits.shr_arithmetic::<23>();
+            let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+            let mantissa = mantissa_bits.bitcast_f32x8();
+            let exp_val = exp_shifted.to_f32x8();
+            let frac = mantissa - one;
+            let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+            let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+            num / den + exp_val
+        };
+        let lb = {
+            let x_bits: i32x8 = pb.bitcast_i32x8();
+            let exp_bits = x_bits - offset;
+            let exp_shifted = exp_bits.shr_arithmetic::<23>();
+            let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+            let mantissa = mantissa_bits.bitcast_f32x8();
+            let exp_val = exp_shifted.to_f32x8();
+            let frac = mantissa - one;
+            let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+            let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+            num / den + exp_val
+        };
+        acc_a -= ca * la;
+        acc_b -= cb * lb;
+        blk += 2;
     }
-    while chunk < chunks {
-        let base = chunk * 8;
-        let c_f = magetypes::simd::u32x8::from_slice(token, &counts[base..base + 8])
+    if blk < blocks {
+        // Trailing lone block has an even index — virtual accs 0-7 (acc_a).
+        let base = blk * 8;
+        let c = u32x8::from_slice(token, &counts[base..base + 8])
             .bitcast_i32x8()
             .to_f32x8();
-        let nz = c_f.simd_gt(zero_f);
-        let safe = f32x8::blend(nz, c_f, one);
-        let raw_p = safe * inv_total;
-        let p_clipped = raw_p.max(min_prob);
-        let l = fast_log2f_x8(p_clipped, offset, p0, p1, p2, q0, q1, q2, one);
-        acc0 -= c_f * l;
-        chunk += 1;
+        let nz = c.simd_gt(zero_f);
+        let sc = f32x8::blend(nz, c, one);
+        let pc = (sc * inv_total).max(min_prob);
+        let lc = {
+            let x_bits: i32x8 = pc.bitcast_i32x8();
+            let exp_bits = x_bits - offset;
+            let exp_shifted = exp_bits.shr_arithmetic::<23>();
+            let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+            let mantissa = mantissa_bits.bitcast_f32x8();
+            let exp_val = exp_shifted.to_f32x8();
+            let frac = mantissa - one;
+            let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+            let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+            num / den + exp_val
+        };
+        acc_a -= c * lc;
     }
 
-    // Horizontal reduction in f32 then promote to f64.
-    let acc_f32 = (acc0 + acc1).reduce_add();
+    // Canonical combine: virtual acc j pairs with j+8, then a fixed scalar
+    // tree — identical on every tier.
+    let mut arr_a = [0.0f32; 8];
+    let mut arr_b = [0.0f32; 8];
+    acc_a.store(&mut arr_a);
+    acc_b.store(&mut arr_b);
+    let mut s8 = [0.0f32; 8];
+    for j in 0..8 {
+        s8[j] = arr_a[j] + arr_b[j];
+    }
+    let s4 = [s8[0] + s8[4], s8[1] + s8[5], s8[2] + s8[6], s8[3] + s8[7]];
+    let acc_f32 = (s4[0] + s4[2]) + (s4[1] + s4[3]);
     let mut bits = acc_f32 as f64;
 
-    // Handle tail (< 8 entries) in scalar with the exact same formula. The
-    // total impact is at most 7 scalar log2 calls per estimate_bits invocation.
+    // Scalar f64 tail (< 8 entries) — identical formula on every tier.
     let total_f64 = total as f64;
     let min_prob_f64 = 1.0 / 4096.0;
-    for &c in &counts[chunks * 8..] {
+    for &c in &counts[blocks * 8..] {
         if c > 0 {
             let p = (c as f64 / total_f64).max(min_prob_f64);
             bits -= c as f64 * fast_log2f(p as f32) as f64;
         }
     }
 
-    bits
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline]
-#[archmage::arcane]
-pub fn estimate_bits_u32_neon(token: archmage::NeonToken, counts: &[u32], total: u32) -> f64 {
-    use magetypes::simd::{f32x4, i32x4};
-
-    let total_f = total as f32;
-    let inv_total = f32x4::splat(token, 1.0 / total_f);
-    let min_prob = f32x4::splat(token, 1.0 / 4096.0);
-    let zero_f = f32x4::zero(token);
-    let one = f32x4::splat(token, 1.0);
-
-    let offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
-    let p0 = f32x4::splat(token, LOG2_P0);
-    let p1 = f32x4::splat(token, LOG2_P1);
-    let p2 = f32x4::splat(token, LOG2_P2);
-    let q0 = f32x4::splat(token, LOG2_Q0);
-    let q1 = f32x4::splat(token, LOG2_Q1);
-    let q2 = f32x4::splat(token, LOG2_Q2);
-
-    #[allow(clippy::too_many_arguments)]
-    #[inline(always)]
-    fn fast_log2f_x4(
-        x: f32x4,
-        offset: i32x4,
-        p0: f32x4,
-        p1: f32x4,
-        p2: f32x4,
-        q0: f32x4,
-        q1: f32x4,
-        q2: f32x4,
-        one: f32x4,
-    ) -> f32x4 {
-        let x_bits: i32x4 = x.bitcast_i32x4();
-        let exp_bits = x_bits - offset;
-        let exp_shifted = exp_bits.shr_arithmetic::<23>();
-        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
-        let mantissa = mantissa_bits.bitcast_f32x4();
-        let exp_val = exp_shifted.to_f32x4();
-        let frac = mantissa - one;
-        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
-        num / den + exp_val
-    }
-
-    let mut acc0 = f32x4::zero(token);
-    let mut acc1 = f32x4::zero(token);
-    let chunks = counts.len() / 4;
-    let mut chunk = 0;
-    while chunk + 1 < chunks {
-        let base0 = chunk * 4;
-        let base1 = (chunk + 1) * 4;
-        let c0_f = magetypes::simd::u32x4::from_slice(token, &counts[base0..base0 + 4])
-            .bitcast_i32x4()
-            .to_f32x4();
-        let c1_f = magetypes::simd::u32x4::from_slice(token, &counts[base1..base1 + 4])
-            .bitcast_i32x4()
-            .to_f32x4();
-        let nz0 = c0_f.simd_gt(zero_f);
-        let nz1 = c1_f.simd_gt(zero_f);
-        let safe0 = f32x4::blend(nz0, c0_f, one);
-        let safe1 = f32x4::blend(nz1, c1_f, one);
-        let p_clipped0 = (safe0 * inv_total).max(min_prob);
-        let p_clipped1 = (safe1 * inv_total).max(min_prob);
-        let l0 = fast_log2f_x4(p_clipped0, offset, p0, p1, p2, q0, q1, q2, one);
-        let l1 = fast_log2f_x4(p_clipped1, offset, p0, p1, p2, q0, q1, q2, one);
-        acc0 -= c0_f * l0;
-        acc1 -= c1_f * l1;
-        chunk += 2;
-    }
-    while chunk < chunks {
-        let base = chunk * 4;
-        let c_f = magetypes::simd::u32x4::from_slice(token, &counts[base..base + 4])
-            .bitcast_i32x4()
-            .to_f32x4();
-        let nz = c_f.simd_gt(zero_f);
-        let safe = f32x4::blend(nz, c_f, one);
-        let p_clipped = (safe * inv_total).max(min_prob);
-        let l = fast_log2f_x4(p_clipped, offset, p0, p1, p2, q0, q1, q2, one);
-        acc0 -= c_f * l;
-        chunk += 1;
-    }
-
-    let acc_f32 = (acc0 + acc1).reduce_add();
-    let mut bits = acc_f32 as f64;
-
-    let total_f64 = total as f64;
-    let min_prob_f64 = 1.0 / 4096.0;
-    for &c in &counts[chunks * 4..] {
-        if c > 0 {
-            let p = (c as f64 / total_f64).max(min_prob_f64);
-            bits -= c as f64 * fast_log2f(p as f32) as f64;
-        }
-    }
-
-    bits
-}
-
-#[cfg(target_arch = "wasm32")]
-#[inline]
-#[archmage::arcane]
-pub fn estimate_bits_u32_wasm128(token: archmage::Wasm128Token, counts: &[u32], total: u32) -> f64 {
-    use magetypes::simd::{f32x4, i32x4};
-
-    let total_f = total as f32;
-    let inv_total = f32x4::splat(token, 1.0 / total_f);
-    let min_prob = f32x4::splat(token, 1.0 / 4096.0);
-    let zero_f = f32x4::zero(token);
-    let one = f32x4::splat(token, 1.0);
-
-    let offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
-    let p0 = f32x4::splat(token, LOG2_P0);
-    let p1 = f32x4::splat(token, LOG2_P1);
-    let p2 = f32x4::splat(token, LOG2_P2);
-    let q0 = f32x4::splat(token, LOG2_Q0);
-    let q1 = f32x4::splat(token, LOG2_Q1);
-    let q2 = f32x4::splat(token, LOG2_Q2);
-
-    #[allow(clippy::too_many_arguments)]
-    #[inline(always)]
-    fn fast_log2f_x4(
-        x: f32x4,
-        offset: i32x4,
-        p0: f32x4,
-        p1: f32x4,
-        p2: f32x4,
-        q0: f32x4,
-        q1: f32x4,
-        q2: f32x4,
-        one: f32x4,
-    ) -> f32x4 {
-        let x_bits: i32x4 = x.bitcast_i32x4();
-        let exp_bits = x_bits - offset;
-        let exp_shifted = exp_bits.shr_arithmetic::<23>();
-        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
-        let mantissa = mantissa_bits.bitcast_f32x4();
-        let exp_val = exp_shifted.to_f32x4();
-        let frac = mantissa - one;
-        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
-        num / den + exp_val
-    }
-
-    let mut acc = f32x4::zero(token);
-    let chunks = counts.len() / 4;
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-        let c_f = magetypes::simd::u32x4::from_slice(token, &counts[base..base + 4])
-            .bitcast_i32x4()
-            .to_f32x4();
-        let nz = c_f.simd_gt(zero_f);
-        let safe = f32x4::blend(nz, c_f, one);
-        let p_clipped = (safe * inv_total).max(min_prob);
-        let l = fast_log2f_x4(p_clipped, offset, p0, p1, p2, q0, q1, q2, one);
-        acc -= c_f * l;
-    }
-
-    let mut bits = acc.reduce_add() as f64;
-    let total_f64 = total as f64;
-    let min_prob_f64 = 1.0 / 4096.0;
-    for &c in &counts[chunks * 4..] {
-        if c > 0 {
-            let p = (c as f64 / total_f64).max(min_prob_f64);
-            bits -= c as f64 * fast_log2f(p as f32) as f64;
-        }
-    }
     bits
 }
 

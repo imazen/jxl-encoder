@@ -3,6 +3,17 @@
 ## [Unreleased]
 
 ### Fixed
+
+- CROSS-ARCH BYTE IDENTITY: `estimate_bits_u32` + `shannon_entropy_bits`
+  rewritten as canonical arch-stable magetypes kernels — fixed virtual
+  accumulator mapping + fixed combine tree on every tier, so x86_64 (AVX2)
+  and aarch64 (NEON) produce bit-identical costs. The hand-written per-arch
+  kernels grouped by native register width, flipping near-tie tree-learner
+  and ANS-clustering decisions between arches (3 hash-lock fixtures; CI red
+  since 2026-08-06). Verified: 4K photo e5 encode sha256-IDENTICAL on
+  Ryzen 7900X vs Apple Silicon; hash-locks 53/53 on both from one sidecar;
+  Libjxl byte-lock 5/5 unchanged; rd-regression green. Sidecar regenerated
+  (6 cells shifted at ulp-scale estimator rounding)
 - Lossy-modular multipliers path (`with_lf_frame(true)`) panicked (index
   OOB) reading static prop columns freed by pre_quantize's wave-free
   (51a0b473 regression); retained via `pre_quantize_retaining` +

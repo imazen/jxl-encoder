@@ -331,7 +331,7 @@ pub use dct64::{dct_32x64_avx2, dct_64x32_avx2, dct_64x64_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use dequant::dequant_dct8_avx2;
 #[cfg(target_arch = "x86_64")]
-pub use entropy::{entropy_coeffs_avx2, shannon_entropy_avx2};
+pub use entropy::{entropy_coeffs_avx2, shannon_entropy_impl_v3 as shannon_entropy_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use epf::{epf_step1_avx2, epf_step2_avx2};
 #[cfg(target_arch = "x86_64")]
@@ -376,7 +376,7 @@ pub use dct16::{dct_8x16_neon, dct_16x8_neon, dct_16x16_neon};
 #[cfg(target_arch = "aarch64")]
 pub use dequant::dequant_dct8_neon;
 #[cfg(target_arch = "aarch64")]
-pub use entropy::{entropy_coeffs_neon, shannon_entropy_neon};
+pub use entropy::{entropy_coeffs_neon, shannon_entropy_impl_neon as shannon_entropy_neon};
 #[cfg(target_arch = "aarch64")]
 pub use epf::{epf_step1_neon, epf_step2_neon};
 #[cfg(target_arch = "aarch64")]

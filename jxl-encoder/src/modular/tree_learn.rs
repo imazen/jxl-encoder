@@ -7172,62 +7172,63 @@ fn find_best_split_borrowed(
     #[cfg(not(feature = "parallel"))]
     let prop_parallel = false;
 
-    let apply_outcome = |o: PropOutcome,
-                         best: &mut Option<BestSplit>,
-                         best_bits: &mut f64,
-                         capture: &mut Option<(&TensorLayout, &mut NodeTensor)>,
-                         cap_totals: &mut Vec<u32>,
-                         cap_total_ebits: &mut Vec<u64>,
-                         cap_totals_done: &mut bool,
-                         cap_single_bucket: &mut Vec<(usize, usize)>| {
-        if let Some((totals, tebits)) = o.totals
-            && !*cap_totals_done
-        {
-            cap_totals.copy_from_slice(&totals);
-            cap_total_ebits.copy_from_slice(&tebits);
-            *cap_totals_done = true;
-        }
-        if let Some(bmin) = o.single_bucket
-            && let Some((layout, tensor)) = capture.as_mut()
-        {
-            let entry = &layout.prop_entries[o.prop_pos];
-            tensor.unique[entry.bucket_base + bmin] = count as u32;
-            tensor.weighted[entry.bucket_base + bmin] = weighted_total;
-            cap_single_bucket.push((o.prop_pos, bmin));
-        }
-        if let Some(blk) = o.capture_block
-            && let Some((layout, tensor)) = capture.as_mut()
-        {
-            let entry = &layout.prop_entries[o.prop_pos];
-            let nb = entry.num_buckets;
-            let lnb = blk.local_num_buckets;
-            let bmin = blk.bmin;
-            tensor.unique[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
-                .copy_from_slice(&blk.unique);
-            tensor.weighted[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
-                .copy_from_slice(&blk.weighted);
-            for pred in 0..num_pred {
-                for b in 0..lnb {
-                    let dst = entry.token_base + (pred * nb + bmin + b) * effective_histo;
-                    let src = (pred * lnb + b) * effective_histo;
-                    tensor.token_counts[dst..dst + effective_histo]
-                        .copy_from_slice(&blk.tokens[src..src + effective_histo]);
-                    tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b] =
-                        blk.ebits[pred * lnb + b];
+    let mut apply_outcome =
+        |o: PropOutcome,
+         best: &mut Option<BestSplit>,
+         best_bits: &mut f64,
+         capture: &mut Option<(&TensorLayout, &mut NodeTensor)>,
+         cap_totals: &mut Vec<u32>,
+         cap_total_ebits: &mut Vec<u64>,
+         cap_totals_done: &mut bool,
+         cap_single_bucket: &mut Vec<(usize, usize)>| {
+            if let Some((totals, tebits)) = o.totals
+                && !*cap_totals_done
+            {
+                cap_totals.copy_from_slice(&totals);
+                cap_total_ebits.copy_from_slice(&tebits);
+                *cap_totals_done = true;
+            }
+            if let Some(bmin) = o.single_bucket
+                && let Some((layout, tensor)) = capture.as_mut()
+            {
+                let entry = &layout.prop_entries[o.prop_pos];
+                tensor.unique[entry.bucket_base + bmin] = count as u32;
+                tensor.weighted[entry.bucket_base + bmin] = weighted_total;
+                cap_single_bucket.push((o.prop_pos, bmin));
+            }
+            if let Some(blk) = o.capture_block
+                && let Some((layout, tensor)) = capture.as_mut()
+            {
+                let entry = &layout.prop_entries[o.prop_pos];
+                let nb = entry.num_buckets;
+                let lnb = blk.local_num_buckets;
+                let bmin = blk.bmin;
+                tensor.unique[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
+                    .copy_from_slice(&blk.unique);
+                tensor.weighted[entry.bucket_base + bmin..entry.bucket_base + bmin + lnb]
+                    .copy_from_slice(&blk.weighted);
+                for pred in 0..num_pred {
+                    for b in 0..lnb {
+                        let dst = entry.token_base + (pred * nb + bmin + b) * effective_histo;
+                        let src = (pred * lnb + b) * effective_histo;
+                        tensor.token_counts[dst..dst + effective_histo]
+                            .copy_from_slice(&blk.tokens[src..src + effective_histo]);
+                        tensor.ebit_sums[entry.ebit_base + pred * nb + bmin + b] =
+                            blk.ebits[pred * lnb + b];
+                    }
                 }
             }
-        }
-        if let Some((total, cand)) = o.candidate
-            && total < *best_bits
-        {
-            *best_bits = total;
-            *best = Some(cand);
-        }
-        #[cfg(feature = "__env_var_diagnostics")]
-        if let Some(mp) = o.mab_prop_best {
-            mab_per_prop.push((o.prop_idx as u8, mp));
-        }
-    };
+            if let Some((total, cand)) = o.candidate
+                && total < *best_bits
+            {
+                *best_bits = total;
+                *best = Some(cand);
+            }
+            #[cfg(feature = "__env_var_diagnostics")]
+            if let Some(mp) = o.mab_prop_best {
+                mab_per_prop.push((o.prop_idx as u8, mp));
+            }
+        };
 
     if prop_parallel {
         #[cfg(feature = "parallel")]

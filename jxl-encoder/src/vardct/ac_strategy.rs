@@ -2670,6 +2670,13 @@ pub(crate) fn compute_ac_strategy_for_tiles(
     // heaptrack `ht_mp48_e5_t1`). Windowing is byte-identical: every
     // process_tile read/write is tile-bounded and the merge only reads
     // the tile rect (hash-locks + Libjxl byte-lock verify).
+    // Pooled per-worker scratch: EntropyEstScratch is ~82 KB zero-filled,
+    // and a fresh one per tile cost ~167 MB of alloc+memset per 4K encode
+    // (~3 % of e5 t1 wall in the sampler). Contents are overwritten before
+    // every read (the buffers carry no cross-tile state; the pixels_8x8
+    // cache is keyed by ABSOLUTE block coords, which tiles never share,
+    // and is re-sentineled on reuse anyway) — byte-identical.
+    let scratch_pool: std::sync::Mutex<Vec<EntropyEstScratch>> = std::sync::Mutex::new(Vec::new());
     let tile_results = crate::parallel::parallel_map(tile_list.len(), |tile_idx| {
         let (tile_bx, tile_by) = tile_list[tile_idx];
         let tile_w = TILE_DIM_IN_BLOCKS.min(xsize_blocks - tile_bx);
@@ -2683,7 +2690,11 @@ pub(crate) fn compute_ac_strategy_for_tiles(
             tile_w,
             tile_h,
         );
-        let mut scratch = EntropyEstScratch::new();
+        let mut scratch = {
+            let mut pool = scratch_pool.lock().unwrap();
+            pool.pop().unwrap_or_else(EntropyEstScratch::new)
+        };
+        scratch.pixels_8x8_pos = (usize::MAX, usize::MAX);
 
         process_tile(
             &xyb,
@@ -2705,6 +2716,7 @@ pub(crate) fn compute_ac_strategy_for_tiles(
             &mut scratch,
         );
 
+        scratch_pool.lock().unwrap().push(scratch);
         local_strategy
     });
 
