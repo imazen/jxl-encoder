@@ -77,8 +77,10 @@ pub fn identity_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
 #[inline(always)]
 fn dct2_top_block_first<const S: usize>(block: &[f32; 64], out: &mut [f32; 64]) {
     let num_2x2 = S / 2;
-    let mut temp = [0.0f32; 64];
-
+    // `block` and `out` are distinct buffers, so butterflies write straight
+    // to `out` — no intermediate temp / copy-back pass. Identical values in
+    // identical order; only positions inside SxS are written (the caller
+    // relies on out-of-region preservation for multi-pass composition).
     for y in 0..num_2x2 {
         for x in 0..num_2x2 {
             let c00 = block[y * 2 * 8 + x * 2];
@@ -91,16 +93,11 @@ fn dct2_top_block_first<const S: usize>(block: &[f32; 64], out: &mut [f32; 64]) 
             let r10 = (c00 - c01 + c10 - c11) * 0.25;
             let r11 = (c00 - c01 - c10 + c11) * 0.25;
 
-            temp[y * 8 + x] = r00;
-            temp[y * 8 + num_2x2 + x] = r01;
-            temp[(y + num_2x2) * 8 + x] = r10;
-            temp[(y + num_2x2) * 8 + num_2x2 + x] = r11;
+            out[y * 8 + x] = r00;
+            out[y * 8 + num_2x2 + x] = r01;
+            out[(y + num_2x2) * 8 + x] = r10;
+            out[(y + num_2x2) * 8 + num_2x2 + x] = r11;
         }
-    }
-
-    // Copy S×S region from temp to output
-    for y in 0..S {
-        out[y * 8..y * 8 + S].copy_from_slice(&temp[y * 8..y * 8 + S]);
     }
 }
 
@@ -111,30 +108,29 @@ fn dct2_top_block_first<const S: usize>(block: &[f32; 64], out: &mut [f32; 64]) 
 #[inline(always)]
 fn dct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
     let num_2x2 = S / 2;
-    let mut temp = [0.0f32; 64];
-
+    // Read-snapshot instead of temp-write + copy-back: reads and writes
+    // overlap within the SxS region, so butterflies read the snapshot and
+    // write `data` directly — one 256 B copy replaces the temp fill AND
+    // the copy-back pass. Values and write order unchanged; positions
+    // outside SxS are never written (multi-pass composition contract).
+    let snap = *data;
     for y in 0..num_2x2 {
         for x in 0..num_2x2 {
-            let c00 = data[y * 2 * 8 + x * 2];
-            let c01 = data[y * 2 * 8 + x * 2 + 1];
-            let c10 = data[(y * 2 + 1) * 8 + x * 2];
-            let c11 = data[(y * 2 + 1) * 8 + x * 2 + 1];
+            let c00 = snap[y * 2 * 8 + x * 2];
+            let c01 = snap[y * 2 * 8 + x * 2 + 1];
+            let c10 = snap[(y * 2 + 1) * 8 + x * 2];
+            let c11 = snap[(y * 2 + 1) * 8 + x * 2 + 1];
 
             let r00 = (c00 + c01 + c10 + c11) * 0.25;
             let r01 = (c00 + c01 - c10 - c11) * 0.25;
             let r10 = (c00 - c01 + c10 - c11) * 0.25;
             let r11 = (c00 - c01 - c10 + c11) * 0.25;
 
-            temp[y * 8 + x] = r00;
-            temp[y * 8 + num_2x2 + x] = r01;
-            temp[(y + num_2x2) * 8 + x] = r10;
-            temp[(y + num_2x2) * 8 + num_2x2 + x] = r11;
+            data[y * 8 + x] = r00;
+            data[y * 8 + num_2x2 + x] = r01;
+            data[(y + num_2x2) * 8 + x] = r10;
+            data[(y + num_2x2) * 8 + num_2x2 + x] = r11;
         }
-    }
-
-    // Copy only S×S region back (preserving positions outside S×S)
-    for y in 0..S {
-        data[y * 8..y * 8 + S].copy_from_slice(&temp[y * 8..y * 8 + S]);
     }
 }
 
@@ -225,15 +221,15 @@ pub fn inverse_identity_transform(coefficients: &[f32; 64], pixels: &mut [f32; 6
 #[inline(always)]
 fn idct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
     let num_2x2 = S / 2;
-    let mut temp = [0.0f32; 64];
-
+    // Read-snapshot + direct writes (see `dct2_top_block_inplace`).
+    let snap = *data;
     for y in 0..num_2x2 {
         for x in 0..num_2x2 {
             // Read from quadrant positions
-            let c00 = data[y * 8 + x];
-            let c01 = data[y * 8 + num_2x2 + x];
-            let c10 = data[(y + num_2x2) * 8 + x];
-            let c11 = data[(y + num_2x2) * 8 + num_2x2 + x];
+            let c00 = snap[y * 8 + x];
+            let c01 = snap[y * 8 + num_2x2 + x];
+            let c10 = snap[(y + num_2x2) * 8 + x];
+            let c11 = snap[(y + num_2x2) * 8 + num_2x2 + x];
 
             // Inverse Hadamard (no x0.25)
             let r00 = c00 + c01 + c10 + c11;
@@ -241,17 +237,12 @@ fn idct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
             let r10 = c00 - c01 + c10 - c11;
             let r11 = c00 - c01 - c10 + c11;
 
-            // Write to interleaved 2x2 positions in temp
-            temp[y * 2 * 8 + x * 2] = r00;
-            temp[y * 2 * 8 + x * 2 + 1] = r01;
-            temp[(y * 2 + 1) * 8 + x * 2] = r10;
-            temp[(y * 2 + 1) * 8 + x * 2 + 1] = r11;
+            // Write to interleaved 2x2 positions
+            data[y * 2 * 8 + x * 2] = r00;
+            data[y * 2 * 8 + x * 2 + 1] = r01;
+            data[(y * 2 + 1) * 8 + x * 2] = r10;
+            data[(y * 2 + 1) * 8 + x * 2 + 1] = r11;
         }
-    }
-
-    // Copy only S×S region back to data (preserving positions outside S×S)
-    for y in 0..S {
-        data[y * 8..y * 8 + S].copy_from_slice(&temp[y * 8..y * 8 + S]);
     }
 }
 
