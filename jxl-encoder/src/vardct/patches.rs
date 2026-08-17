@@ -58,6 +58,13 @@ pub(crate) const VERY_SIMILAR_THRESHOLD: f32 = 0.03;
 /// Maximum BFS distance from seed for background detection.
 pub(crate) const DISTANCE_LIMIT: usize = 50;
 
+/// Level-synchronous parallel BFS dispatch floor: below this many entries
+/// in a level the per-level fan-out overhead exceeds the similarity-eval
+/// win. Perf-only dispatch — both paths are byte-identical by construction.
+const BFS_LEVEL_PAR_MIN_ENTRIES: usize = 1 << 12;
+/// Entries per parallel work item in the level evaluation pass.
+const BFS_LEVEL_PAR_CHUNK: usize = 1 << 10;
+
 /// Minimum occurrences for a patch to be worth encoding.
 pub(crate) const MIN_PATCH_OCCURRENCES: usize = 2;
 
@@ -863,6 +870,409 @@ fn is_flat_block(xyb: &[&[f32]; 3], stride: usize, bx: usize, by: usize) -> bool
 /// need distance-aware tightening (e.g. low-distance lossy encoding where
 /// the W2-5 chunk 1 relaxation to `kMinPeak = 1` admits non-amortizing
 /// patches) should use [`find_text_like_patches_with_min_peak`].
+/// Outcome of replaying one connected component's DFS (parallel path).
+enum CcOutcome {
+    RejectNoBorder,
+    RejectInconsistent,
+    RejectTooLarge,
+    RejectNoSimilar,
+    RejectLowPeak,
+    Accept(Box<(QuantizedPatch, u32, u32)>),
+}
+
+/// Read-only context shared by every per-CC replay.
+struct CcReplayCtx<'a> {
+    xyb: &'a [&'a [f32]; 3],
+    background: [&'a [f32]; 3],
+    is_background: &'a [bool],
+    width: usize,
+    height: usize,
+    stride: usize,
+    cs: &'a PatchColorspaceInfo,
+    min_peak: i32,
+}
+
+/// Replay window half-reach: before a CC is rejected its bounding box is
+/// < MAX_PATCH_SIZE in both axes and contains the start pixel, so every
+/// pixel popped or pushed pre-rejection lies within start ± (MAX_PATCH_SIZE
+/// + 1). One extra column/row of margin keeps the mapping total.
+const CC_WIN_REACH: usize = MAX_PATCH_SIZE + 2;
+const CC_WIN: usize = 2 * CC_WIN_REACH + 1;
+
+/// Parallel-path pixel floor: below this the sequential scan wins.
+/// Perf-only dispatch — both DFS paths are byte-identical by construction.
+const DFS_CC_PAR_MIN_PIXELS: usize = 1 << 20;
+
+/// Replay one CC's DFS from its row-major-min start pixel `si` — the exact
+/// pixel the sequential outer scan would start it from.
+///
+/// Identical to the sequential body with one shortcut: the sequential loop
+/// keeps flooding after `rejected` becomes true ONLY to mark `visited` for
+/// the outer scan (the accept-state — `found_border` / `all_similar` — is
+/// frozen because border checks are gated on `!rejected`, and the bbox only
+/// feeds debug output past that point). The parallel path derives CC starts
+/// from the union-find labeling instead of `visited`, so the replay can
+/// TERMINATE at the first rejected pop with the final classification.
+fn replay_cc(ctx: &CcReplayCtx<'_>, si: usize) -> CcOutcome {
+    let width = ctx.width;
+    let height = ctx.height;
+    let stride = ctx.stride;
+    let cs = ctx.cs;
+    let xyb_ref = ctx.xyb;
+    let start_x = si % stride;
+    let start_y = si / stride;
+    let wx0 = start_x.saturating_sub(CC_WIN_REACH);
+    let wy0 = start_y.saturating_sub(CC_WIN_REACH);
+    let mut win_visited = [false; CC_WIN * CC_WIN];
+    let vis_idx = |px: usize, py: usize| -> usize {
+        let dx = px.wrapping_sub(wx0);
+        let dy = py.wrapping_sub(wy0);
+        assert!(
+            dx < CC_WIN && dy < CC_WIN,
+            "patches CC replay: pixel outside the pre-rejection window \
+             (px={px}, py={py}, start=({start_x},{start_y}))"
+        );
+        dy * CC_WIN + dx
+    };
+    let stride_i = stride as isize;
+    let neighbor_offsets: [isize; 8] = [
+        -stride_i - 1,
+        -stride_i,
+        -stride_i + 1,
+        -1,
+        1,
+        stride_i - 1,
+        stride_i,
+        stride_i + 1,
+    ];
+    let mut stack: Vec<u32> = Vec::with_capacity(128);
+    stack.push(si as u32);
+    let mut min_x = start_x;
+    let mut max_x = start_x;
+    let mut min_y = start_y;
+    let mut max_y = start_y;
+    let mut found_border = false;
+    let mut all_similar = true;
+    let mut ref_bg: [f32; 3] = [0.0; 3];
+
+    while let Some(pi32) = stack.pop() {
+        let pi = pi32 as usize;
+        let (px, py) = (pi % stride, pi / stride);
+        let vi = vis_idx(px, py);
+        if win_visited[vi] {
+            continue;
+        }
+        win_visited[vi] = true;
+        min_x = min_x.min(px);
+        max_x = max_x.max(px);
+        min_y = min_y.min(py);
+        max_y = max_y.max(py);
+
+        let rejected =
+            !all_similar || max_x - min_x >= MAX_PATCH_SIZE || max_y - min_y >= MAX_PATCH_SIZE;
+        if rejected {
+            // Frozen classification (see fn docs).
+            return if !found_border {
+                CcOutcome::RejectNoBorder
+            } else if !all_similar {
+                CcOutcome::RejectInconsistent
+            } else {
+                CcOutcome::RejectTooLarge
+            };
+        }
+
+        for k in 0..8 {
+            let (ddx, ddy) = NEIGHBORS_8[k];
+            let nx = px as i32 + ddx;
+            let ny = py as i32 + ddy;
+            if (nx as usize) >= width || (ny as usize) >= height {
+                continue;
+            }
+            let ni = (pi as isize + neighbor_offsets[k]) as usize;
+            if !ctx.is_background[ni] {
+                if !win_visited[vis_idx(nx as usize, ny as usize)] {
+                    stack.push(ni as u32);
+                }
+            } else {
+                // Border consistency — identical to the sequential body
+                // (reachable only while !rejected).
+                if !found_border {
+                    ref_bg = [
+                        ctx.background[0][ni],
+                        ctx.background[1][ni],
+                        ctx.background[2][ni],
+                    ];
+                    found_border = true;
+                } else {
+                    let bg_next = [
+                        ctx.background[0][ni],
+                        ctx.background[1][ni],
+                        ctx.background[2][ni],
+                    ];
+                    if color_distance(&ref_bg, &bg_next, cs) > VERY_SIMILAR_THRESHOLD {
+                        all_similar = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // CC completed without rejection: the sequential end-of-CC filters.
+    if !found_border
+        || !all_similar
+        || max_x - min_x >= MAX_PATCH_SIZE
+        || max_y - min_y >= MAX_PATCH_SIZE
+    {
+        return if !found_border {
+            CcOutcome::RejectNoBorder
+        } else if !all_similar {
+            CcOutcome::RejectInconsistent
+        } else {
+            CcOutcome::RejectTooLarge
+        };
+    }
+
+    let cc_w = max_x - min_x + 1;
+    let cc_h = max_y - min_y + 1;
+    let ref_color = ref_bg;
+
+    // has_similar check — identical to the sequential body.
+    let mut has_similar = false;
+    let hs_min_y = min_y.saturating_sub(HAS_SIMILAR_RADIUS);
+    let hs_max_y = (max_y + HAS_SIMILAR_RADIUS + 1).min(height);
+    let hs_min_x = min_x.saturating_sub(HAS_SIMILAR_RADIUS);
+    let hs_max_x = (max_x + HAS_SIMILAR_RADIUS + 1).min(width);
+    'outer: for iy in hs_min_y..hs_max_y {
+        let row_start = iy * stride;
+        for ix in hs_min_x..hs_max_x {
+            if weighted_distance_to_color_idx(xyb_ref, row_start + ix, &ref_color, cs)
+                <= HAS_SIMILAR_THRESHOLD
+            {
+                has_similar = true;
+                break 'outer;
+            }
+        }
+    }
+    if !has_similar {
+        return CcOutcome::RejectNoSimilar;
+    }
+
+    // Quantize — identical to the sequential body.
+    let patch_n = cc_w * cc_h;
+    let mut qpixels = [vec![0i8; patch_n], vec![0i8; patch_n], vec![0i8; patch_n]];
+    let mut fpixels = [
+        vec![0.0f32; patch_n],
+        vec![0.0f32; patch_n],
+        vec![0.0f32; patch_n],
+    ];
+    let mut is_small = true;
+    let mut too_big = false;
+    for dy in 0..cc_h {
+        for dx in 0..cc_w {
+            let ix = min_x + dx;
+            let iy = min_y + dy;
+            let src_i = iy * stride + ix;
+            let dst_i = dy * cc_w + dx;
+            for c in 0..3 {
+                let val = xyb_ref[c][src_i] - ref_color[c];
+                fpixels[c][dst_i] = val;
+                let q = safe_trunc_to_i32(val / cs.channel_dequant[c]);
+                if !(-128..=127).contains(&q) {
+                    too_big = true;
+                }
+                qpixels[c][dst_i] = q.clamp(-128, 127) as i8;
+                is_small &= q < ctx.min_peak && q > -ctx.min_peak;
+            }
+        }
+    }
+    if too_big || is_small {
+        return CcOutcome::RejectLowPeak;
+    }
+
+    CcOutcome::Accept(Box::new((
+        QuantizedPatch {
+            xsize: cc_w,
+            ysize: cc_h,
+            pixels: qpixels,
+            fpixels,
+        },
+        min_x as u32,
+        min_y as u32,
+    )))
+}
+
+/// Union-by-min connected-component labeling over the foreground
+/// (`!is_background`, x < width) with 8-connectivity. Returns the flat
+/// indices of each CC's row-major-min pixel in ascending order — exactly
+/// the start pixels (and order) of the sequential outer DFS scan.
+fn patches_cc_min_starts(
+    is_background: &[bool],
+    width: usize,
+    height: usize,
+    stride: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<u32>> {
+    const BG: u32 = u32::MAX;
+    const STRIP: usize = 64;
+    let n = stride * height;
+    // Transient u32 parent plane (n * 4 bytes), dropped on return.
+    let _g = crate::budget::MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4))?;
+    let mut parent: Vec<u32> = vec![BG; n];
+    let n_strips = height.div_ceil(STRIP);
+
+    // Phase 1: strip-local union-by-min. Each worker owns a disjoint
+    // row-strip chunk of `parent`; every union stays inside the strip
+    // (W within the row, NW/N/NE only when the row above is in-strip),
+    // so finds index only the local chunk. A final flatten leaves every
+    // in-strip chain at one hop.
+    fn find_local(chunk: &mut [u32], base: usize, mut i: u32) -> u32 {
+        loop {
+            let p = chunk[i as usize - base];
+            if p == i {
+                return i;
+            }
+            let gp = chunk[p as usize - base];
+            chunk[i as usize - base] = gp;
+            i = gp;
+        }
+    }
+    let phase1 = |si: usize, chunk: &mut [u32]| {
+        let base = si * STRIP * stride;
+        let y_lo = si * STRIP;
+        let y_hi = (y_lo + STRIP).min(height);
+        for y in y_lo..y_hi {
+            for x in 0..width {
+                let gi = y * stride + x;
+                if is_background[gi] {
+                    continue;
+                }
+                chunk[gi - base] = gi as u32;
+                if x > 0 && !is_background[gi - 1] {
+                    let ra = find_local(chunk, base, gi as u32);
+                    let rb = find_local(chunk, base, (gi - 1) as u32);
+                    if ra < rb {
+                        chunk[rb as usize - base] = ra;
+                    } else if rb < ra {
+                        chunk[ra as usize - base] = rb;
+                    }
+                }
+                if y > y_lo {
+                    let x_lo = x.saturating_sub(1);
+                    let x_hi = (x + 2).min(width);
+                    for nxx in x_lo..x_hi {
+                        let ni = gi - stride - x + nxx;
+                        if !is_background[ni] {
+                            let ra = find_local(chunk, base, gi as u32);
+                            let rb = find_local(chunk, base, ni as u32);
+                            if ra < rb {
+                                chunk[rb as usize - base] = ra;
+                            } else if rb < ra {
+                                chunk[ra as usize - base] = rb;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for y in y_lo..y_hi {
+            for x in 0..width {
+                let gi = y * stride + x;
+                if !is_background[gi] {
+                    let r = find_local(chunk, base, gi as u32);
+                    chunk[gi - base] = r;
+                }
+            }
+        }
+    };
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        parent
+            .par_chunks_mut(STRIP * stride)
+            .enumerate()
+            .for_each(|(si, chunk)| phase1(si, chunk));
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        for (si, chunk) in parent.chunks_mut(STRIP * stride).enumerate() {
+            phase1(si, chunk);
+        }
+    }
+
+    // Phase 2: sequential cross-strip unions along strip boundary rows
+    // (path-halving finds over the now-global parent).
+    fn find_halving(parent: &mut [u32], mut i: u32) -> u32 {
+        loop {
+            let p = parent[i as usize];
+            if p == i {
+                return i;
+            }
+            let gp = parent[p as usize];
+            parent[i as usize] = gp;
+            i = gp;
+        }
+    }
+    for sb in 1..n_strips {
+        let y = sb * STRIP;
+        if y >= height {
+            break;
+        }
+        for x in 0..width {
+            let gi = y * stride + x;
+            if is_background[gi] {
+                continue;
+            }
+            let x_lo = x.saturating_sub(1);
+            let x_hi = (x + 2).min(width);
+            for nxx in x_lo..x_hi {
+                let ni = gi - stride - x + nxx;
+                if !is_background[ni] {
+                    let ra = find_halving(&mut parent, gi as u32);
+                    let rb = find_halving(&mut parent, ni as u32);
+                    if ra < rb {
+                        parent[rb as usize] = ra;
+                    } else if rb < ra {
+                        parent[ra as usize] = rb;
+                    }
+                }
+            }
+        }
+    }
+
+    // Phase 3: collect roots (read-only finds — no mutation, so strips
+    // parallelize). Per-strip lists are ascending; strips concatenate in
+    // order, so the result is ascending without a sort.
+    let start_lists: Vec<Vec<u32>> = {
+        let parent_ro: &[u32] = &parent;
+        crate::parallel::parallel_map(n_strips, |si| {
+            let y_lo = si * STRIP;
+            let y_hi = (y_lo + STRIP).min(height);
+            let mut out = Vec::new();
+            for y in y_lo..y_hi {
+                for x in 0..width {
+                    let gi = y * stride + x;
+                    if is_background[gi] {
+                        continue;
+                    }
+                    let mut r = gi as u32;
+                    loop {
+                        let pr = parent_ro[r as usize];
+                        if pr == r {
+                            break;
+                        }
+                        r = pr;
+                    }
+                    if r as usize == gi {
+                        out.push(r);
+                    }
+                }
+            }
+            out
+        })
+    };
+    Ok(start_lists.concat())
+}
+
 pub(crate) fn find_text_like_patches(
     xyb: [&[f32]; 3],
     width: usize,
@@ -1047,80 +1457,175 @@ pub(crate) fn find_text_like_patches_with_min_peak(
         stride_i,
         stride_i + 1,
     ];
-    let mut queue_front = 0;
-    while queue_front < queue.len() {
-        let (cx, cy, sx, sy) = queue[queue_front];
-        queue_front += 1;
-        let (cxu, cyu) = (cx as usize, cy as usize);
-        let (sxu, syu) = (sx as usize, sy as usize);
-
-        // SECURITY: every queue entry that this loop pops was pushed
-        // earlier with `(nx as usize) < width && (ny as usize) < height`
-        // bound-checked at push time, so cxu/cyu/sxu/syu are always in
-        // range — UNLESS the queue's heap memory was corrupted by an
-        // OOB write from elsewhere (the v09/v11 sweep cause, traced to
-        // the `unsafe-performance` feature and removed in PR #34).
-        //
-        // Convert from "skip on bounds failure (DoS protection)" to
-        // unconditional `assert!` because the upstream cause is no
-        // longer reachable on the post-PR-#34 chain. If a future
-        // regression re-introduces queue corruption, surface it loudly.
-        // The 270-encode trigger-fixture sweep confirmed this never
-        // fires on legitimate input.
-        assert!(
-            cxu < width && cyu < height && sxu < width && syu < height,
-            "patches BFS pop: queue entry out of range — possible upstream \
-             corruption (cxu={cxu}, cyu={cyu}, sxu={sxu}, syu={syu}, \
-             width={width}, height={height})"
-        );
-        let ci = cyu * stride + cxu;
-        let si = syu * stride + sxu;
-        assert!(
-            ci < background[0].len() && si < xyb_ref[0].len(),
-            "patches BFS pop: derived flat index out of range — possible \
-             stride mismatch (ci={ci}, si={si}, n={})",
-            background[0].len()
-        );
-
-        // Cache source color once per queue entry (avoids re-reading xyb[c][si]
-        // for every neighbor — up to 9 bounds-checked reads per entry).
-        let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
-        for c in 0..3 {
-            background[c][ci] = src_color[c];
+    // ── BFS execution ───────────────────────────────────────────────────
+    //
+    // The FIFO queue is naturally level-synchronous: seeds occupy
+    // [0, S), their accepted children [S, ...), and so on. Sequential
+    // semantics per pop: write `background[ci] = src_color`, then for
+    // each neighbor in k-order claim it iff in-bounds, not yet
+    // background (INCLUDING claims made earlier in the same level),
+    // within Manhattan 50 of the source, and color-similar to the
+    // source. The expensive per-candidate work (the weighted color
+    // distance) depends only on the candidate pixel and the claimant's
+    // source — never on claim state — so a level's candidates evaluate
+    // in parallel; claims then apply SEQUENTIALLY in (pop, k) order,
+    // reproducing the exact sequential claim resolution. Wasted evals
+    // (candidates an earlier same-level pop claims first) change no
+    // output. The `parallel` fallback and this path are byte-identical.
+    let bfs_parallel = crate::parallel::effective_threads() > 1;
+    if bfs_parallel {
+        let mut level: Vec<(u32, u32, u32, u32)> = core::mem::take(&mut queue);
+        let mut next: Vec<(u32, u32, u32, u32)> = Vec::new();
+        while !level.is_empty() {
+            // Per-level dispatch: narrow frontiers (below the fan-out
+            // floor) evaluate sequentially — same math, same claim
+            // pass, byte-identical either way.
+            let chunk = BFS_LEVEL_PAR_CHUNK;
+            let n_chunks = level.len().div_ceil(chunk);
+            let level_parallel = level.len() >= BFS_LEVEL_PAR_MIN_ENTRIES;
+            let eval_chunk = |ci: usize| {
+                let lo = ci * chunk;
+                let hi = (lo + chunk).min(level.len());
+                let mut out = Vec::with_capacity(hi - lo);
+                for &(cx, cy, sx, sy) in &level[lo..hi] {
+                    let si = sy as usize * stride + sx as usize;
+                    let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
+                    let ci_flat = cy as usize * stride + cx as usize;
+                    let mut mask = 0u8;
+                    for k in 0..8 {
+                        let (dx, dy) = NEIGHBORS_8[k];
+                        let nx = cx as i32 + dx;
+                        let ny = cy as i32 + dy;
+                        if (nx as usize) >= width || (ny as usize) >= height {
+                            continue;
+                        }
+                        let ni = (ci_flat as isize + neighbor_offsets[k]) as usize;
+                        let manhattan =
+                            (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
+                        if manhattan > DISTANCE_LIMIT as u32 {
+                            continue;
+                        }
+                        if weighted_distance_to_color_idx(&xyb_ref, ni, &src_color, &cs)
+                            <= SIMILAR_THRESHOLD
+                        {
+                            mask |= 1 << k;
+                        }
+                    }
+                    out.push(mask);
+                }
+                out
+            };
+            let masks: Vec<Vec<u8>> = if level_parallel {
+                crate::parallel::parallel_map(n_chunks, eval_chunk)
+            } else {
+                (0..n_chunks).map(eval_chunk).collect()
+            };
+            // Sequential claim application in exact (pop, k) order.
+            let mut mask_iter = masks.iter().flat_map(|v| v.iter().copied());
+            for &(cx, cy, sx, sy) in &level {
+                let mask = mask_iter.next().unwrap_or(0);
+                let ci = cy as usize * stride + cx as usize;
+                let si = sy as usize * stride + sx as usize;
+                for c in 0..3 {
+                    background[c][ci] = xyb_ref[c][si];
+                }
+                if mask == 0 {
+                    continue;
+                }
+                for k in 0..8 {
+                    if mask & (1 << k) == 0 {
+                        continue;
+                    }
+                    let (dx, dy) = NEIGHBORS_8[k];
+                    let nx = cx as i32 + dx;
+                    let ny = cy as i32 + dy;
+                    let ni = (ci as isize + neighbor_offsets[k]) as usize;
+                    if !is_background[ni] {
+                        is_background[ni] = true;
+                        next.push((nx as u32, ny as u32, sx, sy));
+                    }
+                }
+            }
+            level = core::mem::take(&mut next);
         }
+    } else {
+        let mut queue_front = 0;
+        while queue_front < queue.len() {
+            let (cx, cy, sx, sy) = queue[queue_front];
+            queue_front += 1;
+            let (cxu, cyu) = (cx as usize, cy as usize);
+            let (sxu, syu) = (sx as usize, sy as usize);
 
-        // 8-connected expansion
-        for k in 0..8 {
-            let (dx, dy) = NEIGHBORS_8[k];
-            let nx = cx as i32 + dx;
-            let ny = cy as i32 + dy;
-            // Unsigned boundary check: negative values wrap to huge usize, exceeding width/height.
-            if (nx as usize) >= width || (ny as usize) >= height {
-                continue;
-            }
-            // Flat index via pre-computed stride offset (avoids nyu * stride + nxu multiply).
-            let ni = (ci as isize + neighbor_offsets[k]) as usize;
-            // The (nx, ny) range check above + the pre-computed stride
-            // offsets guarantee ni < n on every legitimate path. Assert
-            // loudly — we no longer skip silently.
+            // SECURITY: every queue entry that this loop pops was pushed
+            // earlier with `(nx as usize) < width && (ny as usize) < height`
+            // bound-checked at push time, so cxu/cyu/sxu/syu are always in
+            // range — UNLESS the queue's heap memory was corrupted by an
+            // OOB write from elsewhere (the v09/v11 sweep cause, traced to
+            // the `unsafe-performance` feature and removed in PR #34).
+            //
+            // Convert from "skip on bounds failure (DoS protection)" to
+            // unconditional `assert!` because the upstream cause is no
+            // longer reachable on the post-PR-#34 chain. If a future
+            // regression re-introduces queue corruption, surface it loudly.
+            // The 270-encode trigger-fixture sweep confirmed this never
+            // fires on legitimate input.
             assert!(
-                ni < is_background.len(),
-                "patches BFS neighbor: flat index out of range \
-                 (ni={ni}, n={})",
-                is_background.len()
+                cxu < width && cyu < height && sxu < width && syu < height,
+                "patches BFS pop: queue entry out of range — possible upstream \
+                 corruption (cxu={cxu}, cyu={cyu}, sxu={sxu}, syu={syu}, \
+                 width={width}, height={height})"
             );
-            if is_background[ni] {
-                continue;
+            let ci = cyu * stride + cxu;
+            let si = syu * stride + sxu;
+            assert!(
+                ci < background[0].len() && si < xyb_ref[0].len(),
+                "patches BFS pop: derived flat index out of range — possible \
+                 stride mismatch (ci={ci}, si={si}, n={})",
+                background[0].len()
+            );
+
+            // Cache source color once per queue entry (avoids re-reading xyb[c][si]
+            // for every neighbor — up to 9 bounds-checked reads per entry).
+            let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
+            for c in 0..3 {
+                background[c][ci] = src_color[c];
             }
-            // Manhattan distance from source (not current!) to candidate
-            let manhattan = (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
-            if manhattan > DISTANCE_LIMIT as u32 {
-                continue;
-            }
-            // Similarity: compare source pixel to candidate pixel (L1 weighted)
-            if weighted_distance_to_color_idx(&xyb_ref, ni, &src_color, &cs) <= SIMILAR_THRESHOLD {
-                is_background[ni] = true;
-                queue.push((nx as u32, ny as u32, sx, sy));
+
+            // 8-connected expansion
+            for k in 0..8 {
+                let (dx, dy) = NEIGHBORS_8[k];
+                let nx = cx as i32 + dx;
+                let ny = cy as i32 + dy;
+                // Unsigned boundary check: negative values wrap to huge usize, exceeding width/height.
+                if (nx as usize) >= width || (ny as usize) >= height {
+                    continue;
+                }
+                // Flat index via pre-computed stride offset (avoids nyu * stride + nxu multiply).
+                let ni = (ci as isize + neighbor_offsets[k]) as usize;
+                // The (nx, ny) range check above + the pre-computed stride
+                // offsets guarantee ni < n on every legitimate path. Assert
+                // loudly — we no longer skip silently.
+                assert!(
+                    ni < is_background.len(),
+                    "patches BFS neighbor: flat index out of range \
+                     (ni={ni}, n={})",
+                    is_background.len()
+                );
+                if is_background[ni] {
+                    continue;
+                }
+                // Manhattan distance from source (not current!) to candidate
+                let manhattan = (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
+                if manhattan > DISTANCE_LIMIT as u32 {
+                    continue;
+                }
+                // Similarity: compare source pixel to candidate pixel (L1 weighted)
+                if weighted_distance_to_color_idx(&xyb_ref, ni, &src_color, &cs)
+                    <= SIMILAR_THRESHOLD
+                {
+                    is_background[ni] = true;
+                    queue.push((nx as u32, ny as u32, sx, sy));
+                }
             }
         }
     }
@@ -1155,7 +1660,6 @@ pub(crate) fn find_text_like_patches_with_min_peak(
             _t_steps.elapsed().as_secs_f64() * 1000.0
         );
     }
-    let mut visited = crate::budget::try_alloc_zeroed_permanent::<bool>(budget, n)?;
     let mut patches: Vec<(QuantizedPatch, u32, u32)> = Vec::new();
 
     // Diagnostic counters (zero-cost when debug-rect is disabled)
@@ -1168,251 +1672,292 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     let mut stat_accepted = 0u32;
     let mut stat_accepted_pixels = 0u64;
 
-    // One reused DFS stack of FLAT u32 indices. Entries were (u32, u32)
-    // pairs in a per-CC Vec; on photo content one giant connected component
-    // grew that Vec through doubling reallocs to 128 MiB at the exact encode
-    // peak (per-site profiler). Flat indices halve the entry to 4 bytes and
-    // the reused buffer kills the per-CC realloc churn. The traversal order
-    // is IDENTICAL — (x, y) <-> y * stride + x is bijective for x < width —
-    // so the border-order-sensitive accept logic sees the same sequence.
-    debug_assert!(n <= u32::MAX as usize, "patches DFS: flat index needs u64");
-    let mut stack: Vec<u32> = Vec::new();
-    for start_y in 0..height {
-        for start_x in 0..width {
-            let si = start_y * stride + start_x;
-            if is_background[si] || visited[si] {
-                continue;
+    // ── DFS execution ───────────────────────────────────────────────────
+    // Parallel path: CC starts come from a union-by-min labeling (each
+    // root IS the row-major-min pixel the sequential scan starts from);
+    // per-CC replays are independent (disjoint pixel sets, read-only
+    // shared planes) and truncate at rejection — see `replay_cc`.
+    // Sequential fallback keeps the original scan. Byte-identical.
+    let dfs_parallel = crate::parallel::effective_threads() > 1 && n >= DFS_CC_PAR_MIN_PIXELS;
+    if dfs_parallel {
+        let starts = patches_cc_min_starts(&is_background, width, height, stride, budget)?;
+        let ctx = CcReplayCtx {
+            xyb: &xyb_ref,
+            background: [&background[0], &background[1], &background[2]],
+            is_background: &is_background,
+            width,
+            height,
+            stride,
+            cs: &cs,
+            min_peak,
+        };
+        let outcomes: Vec<CcOutcome> =
+            crate::parallel::parallel_map(starts.len(), |i| replay_cc(&ctx, starts[i] as usize));
+        stat_raw_ccs = starts.len() as u32;
+        for oc in outcomes {
+            match oc {
+                CcOutcome::RejectNoBorder => stat_reject_no_border += 1,
+                CcOutcome::RejectInconsistent => stat_reject_inconsistent += 1,
+                CcOutcome::RejectTooLarge => stat_reject_too_large += 1,
+                CcOutcome::RejectNoSimilar => stat_reject_no_similar += 1,
+                CcOutcome::RejectLowPeak => stat_reject_low_peak += 1,
+                CcOutcome::Accept(b) => {
+                    let (patch, px, py) = *b;
+                    stat_accepted += 1;
+                    stat_accepted_pixels += (patch.xsize * patch.ysize) as u64;
+                    patches.push((patch, px, py));
+                }
             }
-
-            // DFS — always completes full CC (no early bounding box exit).
-            stack.clear();
-            stack.push(si as u32);
-            let mut min_x = start_x;
-            let mut max_x = start_x;
-            let mut min_y = start_y;
-            let mut max_y = start_y;
-            let mut found_border = false;
-            let mut all_similar = true;
-            // Cache reference background color to avoid re-reading 3 arrays per border check.
-            let mut ref_bg: [f32; 3] = [0.0; 3];
-
-            while let Some(pi32) = stack.pop() {
-                let pi = pi32 as usize;
-                let (px, py) = (pi % stride, pi / stride);
-                let (px32, py32) = (px as u32, py as u32);
-                // Same upgrade as the BFS pop above: assert! instead of
-                // skip-on-bounds-failure. Stack memory corruption was the
-                // v09/v11 cause; removing `unsafe-performance` in PR #34
-                // closes the upstream bug, so the assert can be loud.
-                assert!(
-                    px < width && py < height,
-                    "patches DFS pop: stack entry out of range \
-                     (px={px}, py={py}, width={width}, height={height})"
-                );
-                assert!(
-                    pi < visited.len(),
-                    "patches DFS pop: derived flat index out of range \
-                     (pi={pi}, n={})",
-                    visited.len()
-                );
-                if visited[pi] {
+        }
+    } else {
+        let mut visited = crate::budget::try_alloc_zeroed_permanent::<bool>(budget, n)?;
+        // One reused DFS stack of FLAT u32 indices. Entries were (u32, u32)
+        // pairs in a per-CC Vec; on photo content one giant connected component
+        // grew that Vec through doubling reallocs to 128 MiB at the exact encode
+        // peak (per-site profiler). Flat indices halve the entry to 4 bytes and
+        // the reused buffer kills the per-CC realloc churn. The traversal order
+        // is IDENTICAL — (x, y) <-> y * stride + x is bijective for x < width —
+        // so the border-order-sensitive accept logic sees the same sequence.
+        debug_assert!(n <= u32::MAX as usize, "patches DFS: flat index needs u64");
+        let mut stack: Vec<u32> = Vec::new();
+        for start_y in 0..height {
+            for start_x in 0..width {
+                let si = start_y * stride + start_x;
+                if is_background[si] || visited[si] {
                     continue;
                 }
-                visited[pi] = true;
-                min_x = min_x.min(px);
-                max_x = max_x.max(px);
-                min_y = min_y.min(py);
-                max_y = max_y.max(py);
 
-                // Once rejected (inconsistent border or oversized), skip border checks
-                // but still complete DFS to mark all CC pixels as visited.
-                let rejected = !all_similar
-                    || max_x - min_x >= MAX_PATCH_SIZE
-                    || max_y - min_y >= MAX_PATCH_SIZE;
+                // DFS — always completes full CC (no early bounding box exit).
+                stack.clear();
+                stack.push(si as u32);
+                let mut min_x = start_x;
+                let mut max_x = start_x;
+                let mut min_y = start_y;
+                let mut max_y = start_y;
+                let mut found_border = false;
+                let mut all_similar = true;
+                // Cache reference background color to avoid re-reading 3 arrays per border check.
+                let mut ref_bg: [f32; 3] = [0.0; 3];
 
-                // 8-connected neighbors (kSearchRadius=1, skip self)
-                for k in 0..8 {
-                    let (ddx, ddy) = NEIGHBORS_8[k];
-                    let nx = px32 as i32 + ddx;
-                    let ny = py32 as i32 + ddy;
-                    // Unsigned boundary check: negative wraps to huge usize.
-                    if (nx as usize) >= width || (ny as usize) >= height {
+                while let Some(pi32) = stack.pop() {
+                    let pi = pi32 as usize;
+                    let (px, py) = (pi % stride, pi / stride);
+                    let (px32, py32) = (px as u32, py as u32);
+                    // Same upgrade as the BFS pop above: assert! instead of
+                    // skip-on-bounds-failure. Stack memory corruption was the
+                    // v09/v11 cause; removing `unsafe-performance` in PR #34
+                    // closes the upstream bug, so the assert can be loud.
+                    assert!(
+                        px < width && py < height,
+                        "patches DFS pop: stack entry out of range \
+                     (px={px}, py={py}, width={width}, height={height})"
+                    );
+                    assert!(
+                        pi < visited.len(),
+                        "patches DFS pop: derived flat index out of range \
+                     (pi={pi}, n={})",
+                        visited.len()
+                    );
+                    if visited[pi] {
                         continue;
                     }
-                    // Flat index via pre-computed stride offset.
-                    let ni = (pi as isize + neighbor_offsets[k]) as usize;
-                    assert!(
-                        ni < is_background.len(),
-                        "patches DFS neighbor: flat index out of range \
-                         (ni={ni}, n={})",
-                        is_background.len()
-                    );
-                    if !is_background[ni] {
-                        // Foreground neighbor — push to stack (skip if already visited
-                        // to avoid redundant pop/check cycles from duplicate pushes)
-                        if !visited[ni] {
-                            stack.push(ni as u32);
+                    visited[pi] = true;
+                    min_x = min_x.min(px);
+                    max_x = max_x.max(px);
+                    min_y = min_y.min(py);
+                    max_y = max_y.max(py);
+
+                    // Once rejected (inconsistent border or oversized), skip border checks
+                    // but still complete DFS to mark all CC pixels as visited.
+                    let rejected = !all_similar
+                        || max_x - min_x >= MAX_PATCH_SIZE
+                        || max_y - min_y >= MAX_PATCH_SIZE;
+
+                    // 8-connected neighbors (kSearchRadius=1, skip self)
+                    for k in 0..8 {
+                        let (ddx, ddy) = NEIGHBORS_8[k];
+                        let nx = px32 as i32 + ddx;
+                        let ny = py32 as i32 + ddy;
+                        // Unsigned boundary check: negative wraps to huge usize.
+                        if (nx as usize) >= width || (ny as usize) >= height {
+                            continue;
                         }
-                    } else if !rejected {
-                        // Background neighbor — track border consistency
-                        // (only when CC hasn't been rejected yet)
-                        if !found_border {
-                            ref_bg = [background[0][ni], background[1][ni], background[2][ni]];
-                            found_border = true;
-                        } else {
-                            // is_similar_b: compare cached reference bg color
-                            // to this neighbor's bg color (VERY_SIMILAR_THRESHOLD)
-                            let bg_next = [background[0][ni], background[1][ni], background[2][ni]];
-                            if color_distance(&ref_bg, &bg_next, &cs) > VERY_SIMILAR_THRESHOLD {
-                                all_similar = false;
+                        // Flat index via pre-computed stride offset.
+                        let ni = (pi as isize + neighbor_offsets[k]) as usize;
+                        assert!(
+                            ni < is_background.len(),
+                            "patches DFS neighbor: flat index out of range \
+                         (ni={ni}, n={})",
+                            is_background.len()
+                        );
+                        if !is_background[ni] {
+                            // Foreground neighbor — push to stack (skip if already visited
+                            // to avoid redundant pop/check cycles from duplicate pushes)
+                            if !visited[ni] {
+                                stack.push(ni as u32);
+                            }
+                        } else if !rejected {
+                            // Background neighbor — track border consistency
+                            // (only when CC hasn't been rejected yet)
+                            if !found_border {
+                                ref_bg = [background[0][ni], background[1][ni], background[2][ni]];
+                                found_border = true;
+                            } else {
+                                // is_similar_b: compare cached reference bg color
+                                // to this neighbor's bg color (VERY_SIMILAR_THRESHOLD)
+                                let bg_next =
+                                    [background[0][ni], background[1][ni], background[2][ni]];
+                                if color_distance(&ref_bg, &bg_next, &cs) > VERY_SIMILAR_THRESHOLD {
+                                    all_similar = false;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            stat_raw_ccs += 1;
+                stat_raw_ccs += 1;
 
-            // Filter: must have border, consistent border, within max patch size
-            if !found_border
-                || !all_similar
-                || max_x - min_x >= MAX_PATCH_SIZE
-                || max_y - min_y >= MAX_PATCH_SIZE
-            {
-                if !found_border {
-                    stat_reject_no_border += 1;
-                } else if !all_similar {
-                    stat_reject_inconsistent += 1;
-                } else {
-                    stat_reject_too_large += 1;
-                }
-                let reason = if !found_border {
-                    "no border"
-                } else if !all_similar {
-                    "inconsistent border"
-                } else {
-                    "too large"
-                };
-                debug_rect!(
-                    "patches/cc_reject",
-                    min_x,
-                    min_y,
-                    max_x - min_x + 1,
-                    max_y - min_y + 1,
-                    "CC rejected: {reason}"
-                );
-                continue;
-            }
-
-            let cc_w = max_x - min_x + 1;
-            let cc_h = max_y - min_y + 1;
-
-            // Use cached border/reference color from DFS (ref_bg)
-            let ref_color = ref_bg;
-
-            // has_similar check: expanded bounding box (±kHasSimilarRadius) must
-            // contain at least one pixel similar to ref color (in opsin image).
-            // Uses row-based flat-index iteration to avoid per-pixel y*stride multiply.
-            let mut has_similar = false;
-            let hs_min_y = min_y.saturating_sub(HAS_SIMILAR_RADIUS);
-            let hs_max_y = (max_y + HAS_SIMILAR_RADIUS + 1).min(height);
-            let hs_min_x = min_x.saturating_sub(HAS_SIMILAR_RADIUS);
-            let hs_max_x = (max_x + HAS_SIMILAR_RADIUS + 1).min(width);
-            'outer: for iy in hs_min_y..hs_max_y {
-                let row_start = iy * stride;
-                for ix in hs_min_x..hs_max_x {
-                    if weighted_distance_to_color_idx(&xyb_ref, row_start + ix, &ref_color, &cs)
-                        <= HAS_SIMILAR_THRESHOLD
-                    {
-                        has_similar = true;
-                        break 'outer;
+                // Filter: must have border, consistent border, within max patch size
+                if !found_border
+                    || !all_similar
+                    || max_x - min_x >= MAX_PATCH_SIZE
+                    || max_y - min_y >= MAX_PATCH_SIZE
+                {
+                    if !found_border {
+                        stat_reject_no_border += 1;
+                    } else if !all_similar {
+                        stat_reject_inconsistent += 1;
+                    } else {
+                        stat_reject_too_large += 1;
                     }
+                    let reason = if !found_border {
+                        "no border"
+                    } else if !all_similar {
+                        "inconsistent border"
+                    } else {
+                        "too large"
+                    };
+                    debug_rect!(
+                        "patches/cc_reject",
+                        min_x,
+                        min_y,
+                        max_x - min_x + 1,
+                        max_y - min_y + 1,
+                        "CC rejected: {reason}"
+                    );
+                    continue;
                 }
-            }
-            if !has_similar {
-                stat_reject_no_similar += 1;
-                debug_rect!(
-                    "patches/cc_reject",
-                    min_x,
-                    min_y,
-                    cc_w,
-                    cc_h,
-                    "CC rejected: no similar pixel in expanded bbox"
-                );
-                continue;
-            }
 
-            // Quantize the patch: pixel_value = opsin[pixel] - ref_color
-            let patch_n = cc_w * cc_h;
-            let mut qpixels = [vec![0i8; patch_n], vec![0i8; patch_n], vec![0i8; patch_n]];
-            let mut fpixels = [
-                vec![0.0f32; patch_n],
-                vec![0.0f32; patch_n],
-                vec![0.0f32; patch_n],
-            ];
-            let mut is_small = true;
-            let mut too_big = false;
-            for dy in 0..cc_h {
-                for dx in 0..cc_w {
-                    let ix = min_x + dx;
-                    let iy = min_y + dy;
-                    let src_i = iy * stride + ix;
-                    let dst_i = dy * cc_w + dx;
-                    for c in 0..3 {
-                        let val = xyb[c][src_i] - ref_color[c];
-                        fpixels[c][dst_i] = val;
-                        let q = safe_trunc_to_i32(val / cs.channel_dequant[c]);
-                        // Reject patch if any value overflows i8 range (libjxl b6e9d19)
-                        if !(-128..=127).contains(&q) {
-                            too_big = true;
+                let cc_w = max_x - min_x + 1;
+                let cc_h = max_y - min_y + 1;
+
+                // Use cached border/reference color from DFS (ref_bg)
+                let ref_color = ref_bg;
+
+                // has_similar check: expanded bounding box (±kHasSimilarRadius) must
+                // contain at least one pixel similar to ref color (in opsin image).
+                // Uses row-based flat-index iteration to avoid per-pixel y*stride multiply.
+                let mut has_similar = false;
+                let hs_min_y = min_y.saturating_sub(HAS_SIMILAR_RADIUS);
+                let hs_max_y = (max_y + HAS_SIMILAR_RADIUS + 1).min(height);
+                let hs_min_x = min_x.saturating_sub(HAS_SIMILAR_RADIUS);
+                let hs_max_x = (max_x + HAS_SIMILAR_RADIUS + 1).min(width);
+                'outer: for iy in hs_min_y..hs_max_y {
+                    let row_start = iy * stride;
+                    for ix in hs_min_x..hs_max_x {
+                        if weighted_distance_to_color_idx(&xyb_ref, row_start + ix, &ref_color, &cs)
+                            <= HAS_SIMILAR_THRESHOLD
+                        {
+                            has_similar = true;
+                            break 'outer;
                         }
-                        qpixels[c][dst_i] = q.clamp(-128, 127) as i8;
-                        // Use boolean check instead of abs() to avoid i32::MIN panic
-                        // (libjxl 2f10c05). `min_peak` is the caller-supplied
-                        // kMinPeak override (see `find_text_like_patches_with_min_peak`).
-                        is_small &= q < min_peak && q > -min_peak;
                     }
                 }
-            }
+                if !has_similar {
+                    stat_reject_no_similar += 1;
+                    debug_rect!(
+                        "patches/cc_reject",
+                        min_x,
+                        min_y,
+                        cc_w,
+                        cc_h,
+                        "CC rejected: no similar pixel in expanded bbox"
+                    );
+                    continue;
+                }
 
-            // Reject patches where quantized values overflow i8 (libjxl b6e9d19)
-            if too_big {
-                stat_reject_low_peak += 1;
-                continue;
-            }
+                // Quantize the patch: pixel_value = opsin[pixel] - ref_color
+                let patch_n = cc_w * cc_h;
+                let mut qpixels = [vec![0i8; patch_n], vec![0i8; patch_n], vec![0i8; patch_n]];
+                let mut fpixels = [
+                    vec![0.0f32; patch_n],
+                    vec![0.0f32; patch_n],
+                    vec![0.0f32; patch_n],
+                ];
+                let mut is_small = true;
+                let mut too_big = false;
+                for dy in 0..cc_h {
+                    for dx in 0..cc_w {
+                        let ix = min_x + dx;
+                        let iy = min_y + dy;
+                        let src_i = iy * stride + ix;
+                        let dst_i = dy * cc_w + dx;
+                        for c in 0..3 {
+                            let val = xyb[c][src_i] - ref_color[c];
+                            fpixels[c][dst_i] = val;
+                            let q = safe_trunc_to_i32(val / cs.channel_dequant[c]);
+                            // Reject patch if any value overflows i8 range (libjxl b6e9d19)
+                            if !(-128..=127).contains(&q) {
+                                too_big = true;
+                            }
+                            qpixels[c][dst_i] = q.clamp(-128, 127) as i8;
+                            // Use boolean check instead of abs() to avoid i32::MIN panic
+                            // (libjxl 2f10c05). `min_peak` is the caller-supplied
+                            // kMinPeak override (see `find_text_like_patches_with_min_peak`).
+                            is_small &= q < min_peak && q > -min_peak;
+                        }
+                    }
+                }
 
-            // kMinPeak check: reject patches where all quantized magnitudes < min_peak
-            if is_small {
-                stat_reject_low_peak += 1;
+                // Reject patches where quantized values overflow i8 (libjxl b6e9d19)
+                if too_big {
+                    stat_reject_low_peak += 1;
+                    continue;
+                }
+
+                // kMinPeak check: reject patches where all quantized magnitudes < min_peak
+                if is_small {
+                    stat_reject_low_peak += 1;
+                    debug_rect!(
+                        "patches/cc_reject",
+                        min_x,
+                        min_y,
+                        cc_w,
+                        cc_h,
+                        "CC rejected: all values < {min_peak}"
+                    );
+                    continue;
+                }
+
+                stat_accepted += 1;
+                stat_accepted_pixels += (cc_w * cc_h) as u64;
                 debug_rect!(
-                    "patches/cc_reject",
+                    "patches/cc_accept",
                     min_x,
                     min_y,
                     cc_w,
                     cc_h,
-                    "CC rejected: all values < {min_peak}"
+                    "CC accepted: {cc_w}x{cc_h}"
                 );
-                continue;
+
+                let patch = QuantizedPatch {
+                    xsize: cc_w,
+                    ysize: cc_h,
+                    pixels: qpixels,
+                    fpixels,
+                };
+                patches.push((patch, min_x as u32, min_y as u32));
             }
-
-            stat_accepted += 1;
-            stat_accepted_pixels += (cc_w * cc_h) as u64;
-            debug_rect!(
-                "patches/cc_accept",
-                min_x,
-                min_y,
-                cc_w,
-                cc_h,
-                "CC accepted: {cc_w}x{cc_h}"
-            );
-
-            let patch = QuantizedPatch {
-                xsize: cc_w,
-                ysize: cc_h,
-                pixels: qpixels,
-                fpixels,
-            };
-            patches.push((patch, min_x as u32, min_y as u32));
         }
     }
 
