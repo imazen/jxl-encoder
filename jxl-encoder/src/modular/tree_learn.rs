@@ -7172,6 +7172,9 @@ fn find_best_split_borrowed(
     #[cfg(not(feature = "parallel"))]
     let prop_parallel = false;
 
+    // `mut` is load-bearing only under `__env_var_diagnostics` (the
+    // mab_per_prop capture); other cfgs see an immutable closure.
+    #[cfg_attr(not(feature = "__env_var_diagnostics"), allow(unused_mut))]
     let mut apply_outcome =
         |o: PropOutcome,
          best: &mut Option<BestSplit>,

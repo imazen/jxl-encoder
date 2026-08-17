@@ -415,7 +415,7 @@ pub use dct16::{dct_8x16_wasm128, dct_16x8_wasm128, dct_16x16_wasm128};
 #[cfg(target_arch = "wasm32")]
 pub use dequant::dequant_dct8_wasm128;
 #[cfg(target_arch = "wasm32")]
-pub use entropy::{entropy_coeffs_wasm128, shannon_entropy_wasm128};
+pub use entropy::{entropy_coeffs_wasm128, shannon_entropy_impl_wasm128 as shannon_entropy_wasm128};
 #[cfg(target_arch = "wasm32")]
 pub use epf::{epf_step1_wasm128, epf_step2_wasm128};
 #[cfg(target_arch = "wasm32")]
