@@ -1312,6 +1312,7 @@ fn main() {
     } // end if !is_pnm
 
     // Read image (PNG or PNM single frame)
+    let _t_load = Instant::now();
     let (width, height, color_type, bit_depth, data, source_gamma, cicp) = if is_pnm {
         let (w, h, ct, bd, d) = match read_pnm(&args.input) {
             Ok(result) => result,
@@ -1441,6 +1442,10 @@ fn main() {
     );
 
     // Encode using new API
+    if std::env::var_os("CJXLRS_TIMING").is_some() {
+        eprintln!("[cli-timing] load+parse: {:?}", _t_load.elapsed());
+    }
+    let _t_enc = Instant::now();
     let encoded = if distance > 0.0 && lossy_supported {
         // Lossy VarDCT path — effort sets defaults, flags override
         let mut cfg = LossyConfig::new(distance)
@@ -2039,6 +2044,9 @@ fn main() {
     };
 
     let encode_time = start.elapsed();
+    if std::env::var_os("CJXLRS_TIMING").is_some() {
+        eprintln!("[cli-timing] encode-arm total: {:?}", _t_enc.elapsed());
+    }
 
     // Write the output unless the encode arm proved it already streamed the
     // bytes to disk. (Never key this off the CLI flags: arms that fall back

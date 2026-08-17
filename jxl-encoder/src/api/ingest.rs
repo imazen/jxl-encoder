@@ -61,6 +61,26 @@ pub(crate) fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
     let num_pixels = data.len() / channels;
     let mut out = vec![0.0f32; num_pixels * 3];
     let lut = &SRGB_U8_TO_LINEAR;
+    // Row-strip parallel fill (disjoint chunks, same values — exact).
+    // The sequential loop was ~50 ms at 4K and sat OUTSIDE encode_inner,
+    // the single biggest piece of the lossy e3 CLI-vs-core wall gap.
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        const STRIP_PX: usize = 1 << 14;
+        if num_pixels >= STRIP_PX * 4 {
+            out.par_chunks_mut(3 * STRIP_PX)
+                .zip(data.par_chunks(channels * STRIP_PX))
+                .for_each(|(o, d)| {
+                    for (px, rgb) in d.chunks_exact(channels).zip(o.chunks_exact_mut(3)) {
+                        rgb[0] = lut[px[0] as usize];
+                        rgb[1] = lut[px[1] as usize];
+                        rgb[2] = lut[px[2] as usize];
+                    }
+                });
+            return out;
+        }
+    }
     // zip chunks to eliminate output bounds checks; u8 index into [f32; 256] is always in bounds
     for (px, rgb) in data.chunks_exact(channels).zip(out.chunks_exact_mut(3)) {
         rgb[0] = lut[px[0] as usize];

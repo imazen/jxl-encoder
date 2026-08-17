@@ -6870,6 +6870,8 @@ impl<'a> EncodeRequest<'a> {
                 ),
             });
         }
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _t_conv = std::time::Instant::now();
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
@@ -7176,6 +7178,10 @@ impl<'a> EncodeRequest<'a> {
                 (linear, None, true)
             }
         };
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!("encode_lossy: conversion={:?}", _t_conv.elapsed());
+        }
 
         // HLG forward OOTF (issue #73 follow-up — libjxl ApplyHlgOotf
         // parity). hlg_*_to_linear produce SCENE light (inverse OETF
@@ -7216,8 +7222,16 @@ impl<'a> EncodeRequest<'a> {
         // `StrategyOverrides::smooth_photo_dct64_hint = Some(_)`
         // (via `with_strategy_overrides`) always wins over the auto
         // value (resolved inside `effective_profile_*`).
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _t_an = std::time::Instant::now();
         let smooth_photo_for_dct64 =
             detect_smooth_photo_for_dct64_from_layout(pixels, self.width, self.height, self.layout);
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!("encode_lossy: smooth_detect={:?}", _t_an.elapsed());
+        }
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _t_cc = std::time::Instant::now();
         // W44-164 Smart-Zenjxl chunk 1: cheap zenanalyze-proxy-based
         // ImageContentClass auto-classifier. Only computes on 8-bit sRGB
         // layouts and images >= CONTENT_CLASS_MIN_PIXELS (= 65,536 px).
@@ -7227,8 +7241,32 @@ impl<'a> EncodeRequest<'a> {
         // `with_content_class(Some(...))` explicitly. See
         // `auto_classify_content_class_from_layout` for the
         // discriminator definition.
-        let auto_content_class =
-            auto_classify_content_class_from_layout(pixels, self.width, self.height, self.layout);
+        // BAND THE COMPUTATION to its single consumer's gates
+        // (`EffortProfile::adapt_to_image_content`, the only reader of
+        // this value): the class adapter fires ONLY at effort 5-6 with
+        // auto-classification enabled by the strategy, no caller-set
+        // class, no expert overrides, and a lossy distance. Everywhere
+        // else the classifier's full-image analysis (78 ms at 4K — more
+        // than the whole e3 encode core) was computed and discarded —
+        // the exact failure the lossy-low hygiene rule names. Skipping
+        // under precisely the adapter's own gates is byte-identical by
+        // construction.
+        let class_consumed = {
+            let eff = cfg.effort();
+            (eff == 5 || eff == 6)
+                && cfg.content_class.is_none()
+                && !cfg.has_internal_overrides()
+                && cfg.resolve_improvements().content_class_auto_classify
+        };
+        let auto_content_class = if class_consumed {
+            auto_classify_content_class_from_layout(pixels, self.width, self.height, self.layout)
+        } else {
+            None
+        };
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!("encode_lossy: content_class={:?}", _t_cc.elapsed());
+        }
         let mut profile = cfg.effective_profile_for_image_with_smoothness_and_class(
             (w as u64) * (h as u64),
             smooth_photo_for_dct64,
@@ -7752,6 +7790,12 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _t_pre = std::time::Instant::now();
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!("encode_lossy: conv+setup={:?}", _t_conv.elapsed());
+        }
         let output = enc
             .encode_with_extras_stop_src(
                 encode_w,
@@ -7765,6 +7809,10 @@ impl<'a> EncodeRequest<'a> {
             )
             .map_err(EncodeError::from)?;
 
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!("encode_lossy: inner-call={:?}", _t_pre.elapsed());
+        }
         #[cfg(feature = "butteraugli-loop")]
         let butteraugli_iters_actual = cfg.butteraugli_iters();
         #[cfg(not(feature = "butteraugli-loop"))]
