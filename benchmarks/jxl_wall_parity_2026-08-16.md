@@ -420,3 +420,13 @@ via the crash fix + parallel LZ77 (5.4 -> 0.74 s) + FBS floors +
 unbounded forks. e7 t8 2.96 s (5.6x) — dominated by gather+tree on a
 smaller tree where the old fork depth already sufficed; sectioned mode
 (1.49 s measured) remains its lever.
+
+## e3 attribution note (2026-08-18, closing the round-5 open item)
+
+Honest CLIC photo, t1: CLI load 22 ms + encode 174 ms (cjxl total
+~170 ms incl its load). Inner 154 ms = entropy 111 (single-pass
+tokenize + static write, 72%), xform 21, xyb 13, cfl 5 — acstrat/
+patches/quant_field are all ~0 at e3. Closing e3's 1.37x is therefore a
+tokenizer/writer kernel campaign (same class as the e5 acstrat eval
+loops), not a structural/dispatch fix; parked behind the sign-off-gated
+levers (sectioned Auto policy, DCT4X4-at-e5 RD study).
