@@ -9334,7 +9334,7 @@ fn build_node_tensor_borrowed_parallel(
     };
     for wave in parts.chunks_mut(FBS_PROP_WAVE) {
         use rayon::prelude::*;
-        wave.par_iter_mut().for_each(&work);
+        wave.par_iter_mut().for_each(work);
     }
 }
 
