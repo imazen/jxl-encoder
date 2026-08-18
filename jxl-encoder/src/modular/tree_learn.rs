@@ -1699,8 +1699,24 @@ pub(crate) fn exact_bucketize_plan(
     if let Some(meta) = meta_image {
         walk_image(meta, 0, &mut collectors);
     }
-    for (gi, image) in images.iter().enumerate() {
-        walk_image(image, gi as u32 + per_group_id_offset, &mut collectors);
+    // Per-image collectors walk in PARALLEL (each image owns its own
+    // collector set; the walk only reads the image) and merge in image
+    // order afterwards — the distinct sets are order-insensitive, so the
+    // merged thresholds are identical to the sequential walk's. This was
+    // a full sequential per-pixel WP re-walk per group image (~a second
+    // gather) and a measured slice of the e9 gather+prequant wall.
+    let per_image: Vec<Vec<DistinctPropertyValues>> =
+        crate::parallel::parallel_map(images.len(), |gi| {
+            let mut local: Vec<DistinctPropertyValues> = (0..total_props)
+                .map(|_| DistinctPropertyValues::default())
+                .collect();
+            walk_image(&images[gi], gi as u32 + per_group_id_offset, &mut local);
+            local
+        });
+    for local in &per_image {
+        for (main, l) in collectors.iter_mut().zip(local.iter()) {
+            main.merge(l);
+        }
     }
     let mut sets = vec![Vec::new(); total_props];
     let mut keep_raw = vec![false; total_props];
@@ -2824,6 +2840,22 @@ impl DistinctPropertyValues {
     /// Compact once the buffer reaches this many entries, bounding the
     /// collector at ~256 KB plus the distinct set regardless of sample count.
     const COMPACT_AT: usize = 65_536;
+
+    /// Merge another collector's values into this one. The distinct SET is
+    /// order-insensitive (thresholds consume only the set), so merging
+    /// per-image collectors in any order yields the same thresholds as the
+    /// sequential single-collector walk.
+    fn merge(&mut self, other: &DistinctPropertyValues) {
+        for &v in &other.buf {
+            self.push(v);
+        }
+        if let Some(m) = other.min {
+            self.min = Some(self.min.map_or(m, |x| x.min(m)));
+        }
+        if let Some(m) = other.max {
+            self.max = Some(self.max.map_or(m, |x| x.max(m)));
+        }
+    }
 
     fn push(&mut self, v: i32) {
         self.buf.push(v);
