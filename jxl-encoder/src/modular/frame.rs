@@ -1042,6 +1042,8 @@ impl FrameEncoder {
             )?;
         }
 
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _fr_t0 = std::time::Instant::now();
         let global_state = if local_trees_mode {
             // LfGlobal for the sectioned mode: the proven global-tree byte
             // shape with a trivial single-leaf tree stream 0 never uses for
@@ -1186,8 +1188,17 @@ impl FrameEncoder {
         if let Some(s) = stop {
             s.check().map_err(|_| crate::error::Error::Cancelled)?;
         }
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "frame: write_global={:.1}ms",
+                _fr_t0.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         // PassGroup sections — parallelizable (each group writes to its own BitWriter)
         let budget = self.budget.as_ref();
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _fr_t_groups = std::time::Instant::now();
         let pass_group_data: Vec<Vec<u8>> = if local_trees_mode {
             // Whole-image-equivalent stride for every per-group gather (see
             // the local writer's stride note).
@@ -1350,6 +1361,13 @@ impl FrameEncoder {
             section_sizes.push(data.len());
         }
         section_sizes.push(hf_global_data.len());
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "frame: group_passes={:.1}ms",
+                _fr_t_groups.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         for data in &pass_group_data {
             section_sizes.push(data.len());
         }

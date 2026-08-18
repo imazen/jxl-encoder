@@ -1397,10 +1397,19 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         // group g's slice of `all_tokens` — kept so the per-section LZ77
         // transform below can re-slice the winning seed's streams without
         // holding a second per-group copy.
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _ll_t_collect0 = std::time::Instant::now();
         let (all_tokens, nb_meta_tokens, group_ranges) =
             crate::profile_time!("modular/collect_residuals_global", {
                 collect_for_tree(&tree)
             });
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "lossless-tail: collect={:.1}ms",
+                _ll_t_collect0.elapsed().as_secs_f64() * 1000.0
+            );
+        }
 
         // Content-agnostic self-repair (task #14, #24): our fixed-stride sample
         // gather can ALIAS against periodic content (document text-line
@@ -1573,6 +1582,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     //   group_id, same num_contexts, same dist_multiplier), so the
     //   histogram-time slices and the write-time streams stay in lockstep.
     let lz77_applied = if use_lz77 {
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _ll_t_lz = std::time::Instant::now();
         use crate::entropy_coding::lz77::{Lz77Params, apply_lz77};
         let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Result<Vec<AnsToken>> {
             if tokens.is_empty() {
@@ -1599,18 +1610,35 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         transformed.extend(try_lz77(&all_tokens[..nb_meta_tokens], meta_dm)?);
         let transformed_nb_meta = transformed.len();
         let mut transformed_ranges = Vec::with_capacity(group_ranges.len());
-        for (g, range) in group_ranges.iter().enumerate() {
-            let dm = images[g]
-                .channels
-                .iter()
-                .map(|c| c.width())
-                .max()
-                .unwrap_or(0) as i32;
+        // Per-group transforms are independent (apply_lz77 is a pure
+        // function of (tokens, dist_multiplier) — the write-time lockstep
+        // contract above depends on exactly that), so groups fan across
+        // the pool and concatenate in group order: byte-identical to the
+        // sequential loop, which was 5.4 s of the 4K e9 t8 wall.
+        let per_group: Vec<Result<Vec<AnsToken>>> =
+            crate::parallel::parallel_map(group_ranges.len(), |g| {
+                let dm = images[g]
+                    .channels
+                    .iter()
+                    .map(|c| c.width())
+                    .max()
+                    .unwrap_or(0) as i32;
+                try_lz77(&all_tokens[group_ranges[g].clone()], dm)
+            });
+        for one in per_group {
+            let toks = one?;
             let start = transformed.len();
-            transformed.extend(try_lz77(&all_tokens[range.clone()], dm)?);
+            transformed.extend(toks);
             transformed_ranges.push(start..transformed.len());
         }
         // Header params come from the same (num_contexts, force_huffman)
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "lossless-tail: lz77={:.1}ms",
+                _ll_t_lz.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         // construction apply_lz77 uses internally, so min_symbol/min_length
         // agree across all sections (same contract as the squeeze path).
         if transformed.iter().any(|t| t.is_lz77_length()) {
@@ -1650,6 +1678,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     // count_contexts(tree)`, same clustering/uint flags, `lz77_params = None`.
     // So the cached code is byte-for-byte what this build would produce; the
     // `!use_lz77` guard is a belt-and-braces assertion of that invariant.
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _ll_t_ans0 = std::time::Instant::now();
     let code = crate::profile_time!("modular/build_ans_code", {
         match cached_winner_code.take() {
             Some(cached) if !use_lz77 => cached,
@@ -1663,6 +1693,13 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             ),
         }
     });
+    #[cfg(feature = "__env_var_diagnostics")]
+    if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+        eprintln!(
+            "lossless-tail: ans_build={:.1}ms",
+            _ll_t_ans0.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 
     // Per-seed diagnostics are emitted inside the loop via the
     // `MULTI_SEED_TREE_PICK` trace; here we just summarise the picked tree.

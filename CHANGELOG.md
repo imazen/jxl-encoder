@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Latent rayon work-stealing panic in tree-learning's thread-local
+  workspace ("RefCell already borrowed") — shipped main panicked 3/5
+  interleaved rounds at 4K lossless e9 t8 on x64; fixed with a per-thread
+  workspace stack (09c582cf)
+
 - CROSS-ARCH BYTE IDENTITY: `estimate_bits_u32` + `shannon_entropy_bits`
   rewritten as canonical arch-stable magetypes kernels — fixed virtual
   accumulator mapping + fixed combine tree on every tier, so x86_64 (AVX2)
@@ -20,6 +25,20 @@
   regression test (this round).
 
 ### Changed
+
+- Lossless tree-learning parallel structure (all byte-identical): parallel
+  stable dedup-refinement scatter (f8adc43f), per-prop node-tensor build +
+  chunked subtract (2c54af38), column-parallel prequant bucketize +
+  per-image parallel exact-bucketize pre-walk (09c582cf, fa82501e; x64 e9
+  gather+prequant 5.0 -> 2.8 s). Wall-neutral at e7/e9 t8 in interleaved
+  A/B (the tree critical chain dominates); internal stamps and crash-free
+  operation are the wins. Sectioned-trees corpus study recorded
+  (benchmarks/lossless_sectioned_vs_global_x64_2026-08-18.*): -41..-66%
+  wall at ~0% median bytes, Auto-policy extension awaiting sign-off
+- Vectorized IDENTITY/DCT2X2 special transforms (bit-exact, both arches;
+  355e8d0e) + canonical-f32 pixel_domain_loss (libjxl-parity precision,
+  47929d7b); acstrat eval counters exposed the benchmark-mosaic screenshot
+  misclassification -> honest-photo ladders (round 5, 9784a8bf)
 
 - Zenanalyze content proxies rewritten as exact-integer strip-parallel sums
   (order-free => deterministic under any thread count): 4K sweep 78 -> 9.8 ms,
