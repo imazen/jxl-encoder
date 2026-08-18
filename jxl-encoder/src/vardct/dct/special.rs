@@ -21,48 +21,7 @@
 /// Output: `coefficients` in stride-8 layout.
 #[inline(always)]
 pub fn identity_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
-    // Process 2x2 grid of 4x4 sub-blocks
-    for y in 0..2usize {
-        for x in 0..2usize {
-            // Compute block DC (average of 16 pixels)
-            let mut block_dc = 0.0f32;
-            for iy in 0..4 {
-                for ix in 0..4 {
-                    block_dc += pixels[(y * 4 + iy) * 8 + x * 4 + ix];
-                }
-            }
-            block_dc *= 1.0 / 16.0;
-
-            // Reference pixel: (1,1) in each 4x4 sub-block
-            let ref_pixel = pixels[(y * 4 + 1) * 8 + x * 4 + 1];
-
-            // Store AC coefficients: pixel - reference pixel
-            // Coefficient layout: interleaved at (y + iy*2, x + ix*2) positions
-            for iy in 0..4usize {
-                for ix in 0..4usize {
-                    if ix == 1 && iy == 1 {
-                        continue; // Skip ref pixel position
-                    }
-                    coefficients[(y + iy * 2) * 8 + x + ix * 2] =
-                        pixels[(y * 4 + iy) * 8 + x * 4 + ix] - ref_pixel;
-                }
-            }
-
-            // Copy corner coefficient, then store DC at (y, x)
-            coefficients[(y + 2) * 8 + x + 2] = coefficients[y * 8 + x];
-            coefficients[y * 8 + x] = block_dc;
-        }
-    }
-
-    // Merge 2x2 block DCs with Hadamard transform (x0.25)
-    let block00 = coefficients[0];
-    let block01 = coefficients[1];
-    let block10 = coefficients[8];
-    let block11 = coefficients[9];
-    coefficients[0] = (block00 + block01 + block10 + block11) * 0.25;
-    coefficients[1] = (block00 + block01 - block10 - block11) * 0.25;
-    coefficients[8] = (block00 - block01 + block10 - block11) * 0.25;
-    coefficients[9] = (block00 - block01 - block10 + block11) * 0.25;
+    jxl_simd::identity_from_pixels(pixels, coefficients);
 }
 
 // =============================================================================
@@ -140,12 +99,7 @@ fn dct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
 /// Output: `coefficients` in stride-8 layout.
 #[inline(always)]
 pub fn dct2x2_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
-    // Pass 1: read from pixels, write directly to coefficients
-    dct2_top_block_first::<8>(pixels, coefficients);
-
-    // Passes 2 and 3: in-place on coefficients
-    dct2_top_block_inplace::<4>(coefficients);
-    dct2_top_block_inplace::<2>(coefficients);
+    jxl_simd::dct2x2_from_pixels(pixels, coefficients);
 }
 
 // =============================================================================
@@ -161,52 +115,7 @@ pub fn dct2x2_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
 /// Input/Output: stride-8 layout.
 #[inline(always)]
 pub fn inverse_identity_transform(coefficients: &[f32; 64], pixels: &mut [f32; 64]) {
-    // Inverse Hadamard on DC positions (no x0.25 scaling — this is the inverse)
-    let block00 = coefficients[0];
-    let block01 = coefficients[1];
-    let block10 = coefficients[8];
-    let block11 = coefficients[9];
-    let dcs = [
-        block00 + block01 + block10 + block11,
-        block00 + block01 - block10 - block11,
-        block00 - block01 + block10 - block11,
-        block00 - block01 - block10 + block11,
-    ];
-
-    for y in 0..2usize {
-        for x in 0..2usize {
-            let block_dc = dcs[y * 2 + x];
-
-            // Sum all residual coefficients (skip [0][0] which is DC)
-            let mut residual_sum = 0.0f32;
-            for iy in 0..4usize {
-                for ix in 0..4usize {
-                    if ix == 0 && iy == 0 {
-                        continue;
-                    }
-                    residual_sum += coefficients[(y + iy * 2) * 8 + x + ix * 2];
-                }
-            }
-
-            // Derive reference pixel: dc - residual_sum/16
-            let ref_pixel = block_dc - residual_sum * (1.0 / 16.0);
-            pixels[(4 * y + 1) * 8 + 4 * x + 1] = ref_pixel;
-
-            // Reconstruct all other pixels: coefficient + ref_pixel
-            for iy in 0..4usize {
-                for ix in 0..4usize {
-                    if ix == 1 && iy == 1 {
-                        continue;
-                    }
-                    pixels[(y * 4 + iy) * 8 + x * 4 + ix] =
-                        coefficients[(y + iy * 2) * 8 + x + ix * 2] + ref_pixel;
-                }
-            }
-
-            // Corner pixel comes from the saved position
-            pixels[y * 4 * 8 + x * 4] = coefficients[(y + 2) * 8 + x + 2] + ref_pixel;
-        }
-    }
+    jxl_simd::identity_to_pixels(coefficients, pixels);
 }
 
 // =============================================================================
@@ -251,9 +160,5 @@ fn idct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
 /// Input/Output: stride-8 layout.
 #[inline(always)]
 pub fn inverse_dct2x2_transform(coefficients: &[f32; 64], pixels: &mut [f32; 64]) {
-    // Copy input to output, then do inplace passes on output
-    *pixels = *coefficients;
-    idct2_top_block_inplace::<2>(pixels);
-    idct2_top_block_inplace::<4>(pixels);
-    idct2_top_block_inplace::<8>(pixels);
+    jxl_simd::dct2x2_to_pixels(coefficients, pixels);
 }

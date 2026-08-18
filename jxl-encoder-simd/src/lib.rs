@@ -228,6 +228,7 @@ mod noise;
 mod pixel_loss;
 mod quantize;
 mod sanitize;
+mod special8x8;
 mod transpose;
 mod xyb;
 
@@ -273,6 +274,11 @@ pub use noise::denoise_channel;
 pub use pixel_loss::pixel_domain_loss;
 pub use quantize::{quantize_block_dct8, quantize_block_large};
 pub use sanitize::{is_finite_plane, sanitize_finite};
+pub use special8x8::{
+    dct2x2_from_pixels, dct2x2_from_pixels_scalar, dct2x2_to_pixels, dct2x2_to_pixels_scalar,
+    identity_from_pixels, identity_from_pixels_scalar, identity_to_pixels,
+    identity_to_pixels_scalar,
+};
 pub use transpose::transpose_8x8;
 pub use xyb::{linear_rgb_to_xyb_batch, xyb_to_linear_rgb_batch, xyb_to_linear_rgb_planar};
 
