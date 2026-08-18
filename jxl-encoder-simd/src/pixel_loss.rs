@@ -79,7 +79,7 @@ pub fn pixel_domain_loss(
             block_width,
             block_height,
         ),
-        [v3, neon, wasm128, scalar]
+        [v4, v3, neon, wasm128, scalar]
     )
 }
 
@@ -87,6 +87,9 @@ pub fn pixel_domain_loss(
 // Scalar fallback
 // ============================================================================
 
+/// Scalar emulation of the canonical kernel — 8 virtual f32 lanes
+/// (lane = dx & 7) + the same fixed combine tree, so it is bit-identical
+/// to every SIMD tier (used as the parity-test reference).
 #[inline]
 pub fn pixel_domain_loss_scalar(
     pixel_error: &[f32],
@@ -97,21 +100,35 @@ pub fn pixel_domain_loss_scalar(
     block_width: usize,
     block_height: usize,
 ) -> f64 {
-    let mut channel_loss = 0.0f64;
+    let mut lanes = [0.0f32; 8];
     for py in 0..block_height {
         let mask_row_start = mask_row_base + py * mask_stride;
         let error_row_start = py * block_width;
-        for px in 0..block_width {
-            let mask_val = mask[mask_row_start + px];
-            let error_val = pixel_error[error_row_start + px];
-            let masked = (mask_val + mask_offset) * error_val;
-            let m2 = (masked * masked) as f64;
-            let m4 = m2 * m2;
-            let m8 = m4 * m4;
-            channel_loss += m8;
+        let mask_row = &mask[mask_row_start..mask_row_start + block_width];
+        let error_row = &pixel_error[error_row_start..error_row_start + block_width];
+        for (chunk_i, (mask_chunk, error_chunk)) in mask_row
+            .chunks_exact(8)
+            .zip(error_row.chunks_exact(8))
+            .enumerate()
+        {
+            let _ = chunk_i;
+            for j in 0..8 {
+                let masked = (mask_chunk[j] + mask_offset) * error_chunk[j];
+                let m2 = masked * masked;
+                let m4 = m2 * m2;
+                let m8 = m4 * m4;
+                lanes[j] += m8;
+            }
         }
     }
-    channel_loss
+    let s4 = [
+        lanes[0] + lanes[4],
+        lanes[1] + lanes[5],
+        lanes[2] + lanes[6],
+        lanes[3] + lanes[7],
+    ];
+    let total = (s4[0] + s4[2]) + (s4[1] + s4[3]);
+    total as f64
 }
 
 // ============================================================================
@@ -144,8 +161,22 @@ pub fn pixel_domain_loss_scalar(
 // `x²·x²·x²` chain, **not** a single `powi(8)` — preserving libjxl's
 // rounding behaviour exactly.
 
-#[magetypes(define(f32x8, f64x4), v3, neon, wasm128, scalar)]
-#[allow(clippy::too_many_arguments)]
+/// Canonical arch-stable pixel-domain loss (2026-08-18): PURE f32 like
+/// libjxl `EstimateEntropy` (enc_ac_strategy.cc masku loop — masku*err,
+/// then three squarings to the 8th power, f32 accumulate). The previous
+/// body promoted to f64x4 after m² — BOTH a libjxl divergence (they never
+/// leave f32) and the hottest cost in the per-candidate estimate (f64
+/// converts + twice the accumulate width; perf-annotate showed the
+/// cvtps2pd/mulpd chains inside the find_best_16x16 bucket).
+///
+/// Determinism contract (same as the canonical entropy kernels): ONE
+/// f32x8 accumulator (lane = dx & 7 — row chunks are 8-aligned since
+/// block_width is a multiple of 8), lane-pure ops on every tier
+/// (magetypes polyfills 4-wide arches as f32x4 pairs), and a FIXED
+/// scalar combine tree — bit-identical across x86_64/aarch64/wasm/scalar
+/// by construction. Changing the accumulator structure or tree changes
+/// encoded bytes on every arch at once.
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
 pub fn pixel_domain_loss_impl(
     token: Token,
     pixel_error: &[f32],
@@ -157,8 +188,7 @@ pub fn pixel_domain_loss_impl(
     block_height: usize,
 ) -> f64 {
     let offset_v = f32x8::splat(token, mask_offset);
-    let mut acc_lo = f64x4::zero(token);
-    let mut acc_hi = f64x4::zero(token);
+    let mut acc = f32x8::zero(token);
 
     for py in 0..block_height {
         let mask_row_start = mask_row_base + py * mask_stride;
@@ -171,59 +201,29 @@ pub fn pixel_domain_loss_impl(
             let mask_v = f32x8::from_slice(token, mask_chunk);
             let error_v = f32x8::from_slice(token, error_chunk);
 
-            // masked = (mask + offset) * error (in f32)
-            let masked_v = (mask_v + offset_v) * error_v;
-
-            // m2 = masked * masked (in f32, will promote to f64 next)
-            let m2_v = masked_v * masked_v;
-
-            // Promote f32x8 → 2× f64x4 via array round-trip. Lane order
-            // preserved: lanes 0..4 → m2_lo, lanes 4..8 → m2_hi.
-            //
-            // On AVX2 LLVM folds the store + scalar-extend + load chain
-            // into a `vcvtps2pd` pair (same emitted code as the prior
-            // `_mm256_castps256_ps128 + _mm256_cvtps_pd` path).
-            //
-            // On NEON / WASM128 f64x4 is 2× f64x2 polyfill, so each
-            // half becomes its own f64x2 register.
-            let m2_arr = m2_v.to_array();
-            let m2_lo = f64x4::from_array(
-                token,
-                [
-                    m2_arr[0] as f64,
-                    m2_arr[1] as f64,
-                    m2_arr[2] as f64,
-                    m2_arr[3] as f64,
-                ],
-            );
-            let m2_hi = f64x4::from_array(
-                token,
-                [
-                    m2_arr[4] as f64,
-                    m2_arr[5] as f64,
-                    m2_arr[6] as f64,
-                    m2_arr[7] as f64,
-                ],
-            );
-
-            // m4 = m2 * m2, m8 = m4 * m4 (in f64) — manual x²·x²·x²
-            // chain. **Do not** replace with `powi(8)`; that uses a
-            // different reduction order and breaks bit-for-bit parity
-            // with libjxl's `EstimateEntropy` and the pre-consolidation
-            // hand-written bodies.
-            let m4_lo = m2_lo * m2_lo;
-            let m4_hi = m2_hi * m2_hi;
-            let m8_lo = m4_lo * m4_lo;
-            let m8_hi = m4_hi * m4_hi;
-
-            acc_lo += m8_lo;
-            acc_hi += m8_hi;
+            // libjxl order: masku = mask + offset; in = masku * err;
+            // in = in*in (x3) -> masked^8, all f32.
+            let masked = (mask_v + offset_v) * error_v;
+            let m2 = masked * masked;
+            let m4 = m2 * m2;
+            let m8 = m4 * m4;
+            acc += m8;
         }
     }
 
-    // Horizontal sum: per-half reduce + final scalar add, matching the
-    // pre-consolidation AVX2 body's `acc_lo.reduce_add() + acc_hi.reduce_add()`.
-    acc_lo.reduce_add() + acc_hi.reduce_add()
+    // Canonical combine: FIXED scalar tree over the 8 virtual lanes,
+    // promoted to f64 only at the very end (the caller's channel-mul
+    // stays f64).
+    let mut lanes = [0.0f32; 8];
+    acc.store(&mut lanes);
+    let s4 = [
+        lanes[0] + lanes[4],
+        lanes[1] + lanes[5],
+        lanes[2] + lanes[6],
+        lanes[3] + lanes[7],
+    ];
+    let total = (s4[0] + s4[2]) + (s4[1] + s4[3]);
+    total as f64
 }
 
 // ============================================================================
