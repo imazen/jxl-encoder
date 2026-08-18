@@ -406,3 +406,17 @@ chain of giant skewed nodes — intra-node parallelism is now saturated
 byte-identical deep-fork needs budget-binding-free semantics (fork only
 while per-side budget provably exceeds any subtree's node ceiling).
 Sectioned mode stays the big lever (awaiting Auto-policy sign-off).
+
+## Round 8 (2026-08-18) — byte-identical unbounded forking closes the arc
+
+The round-7 caveat inverted into the fix: since the per-side max_nodes
+halving is the only fork-shape output influence, fork with an UNBOUNDED
+budget (gated max_nodes >= 2^19) + unlimited depth and post-check the
+finished tree, falling back to the exact sequential engine in the
+never-observed bind case. Interleaved 5-sample A/B, bytes identical on
+every sample: x64 e9 t8 13.05 -> 11.33 s median (5/5 wins). Cumulative
+e9-t8 arc (honest baselines): 18.0 -> 11.3 s x64 = 7.3x -> 4.6x cjxl,
+via the crash fix + parallel LZ77 (5.4 -> 0.74 s) + FBS floors +
+unbounded forks. e7 t8 2.96 s (5.6x) — dominated by gather+tree on a
+smaller tree where the old fork depth already sufficed; sectioned mode
+(1.49 s measured) remains its lever.

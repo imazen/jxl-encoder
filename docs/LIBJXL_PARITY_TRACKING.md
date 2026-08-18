@@ -67,10 +67,16 @@ Wall (best-of-3, cjxl 0.12 same box; lossless from round 1c/2, lossy round 3):
 | lossy e5 t1 / t8 | 1.47 / 0.26 | **1.38** / 0.36 | **0.94× win** / 1.38× |
 | lossy e7 t1 / t8 | 2.63 / 0.52 | **1.92** / **0.44** | **0.73× / 0.85× — wins** |
 
-Remaining structural items to parity: (1) lossless t8 — tree-learn root
-levels parallelize only across props today (their per-group trees are
-embarrassingly parallel; our single global tree is the divergence that
-WINS bytes but serializes learning); (2) u16 saturating dedup counts;
-(3) decode-speed-aware split preferences (RD/decode axis, not memory);
-(4) lossy e5-t8 residue: acstrat per-block kernel cost (candidate set at
-parity), two-pass entropy, order-locked patches BFS claims.
+2026-08-18 lossless-t8 update (rounds 6-8, all byte-identical): the
+work-stealing RefCell crash fixed; dedup refinement scatter, tensor
+build, prequant bucketize + pre-walk, and the per-group LZ77 transform
+parallelized; FBS floors lowered; unbounded subtree forking (budget-slack
+proof + sequential fallback). x64 4K e9 t8: 18.0 -> 11.3 s (7.3x -> 4.6x
+cjxl); e7 t8 ~2.96 s (5.6x). Honest-photo lossy ladders (round 5): e5
+1.11x t1 / 1.30x t8. Remaining structural items: (1) lossless t8 tree
+CHAIN (giant skewed nodes; intra-node parallelism saturated) — the
+sectioned/per-group mode is the measured lever (-41..-66% wall at ~0%
+median bytes; Auto-policy extension awaiting owner sign-off); (2) u16
+saturating dedup counts; (3) decode-speed-aware split preferences;
+(4) lossy e5-t8 residue (acstrat kernel cost, candidate set at parity;
+DCT4X4-at-e5 KNOWN-GAP needs its own RD study).

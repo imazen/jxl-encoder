@@ -5511,7 +5511,12 @@ fn build_tree_from_prequantized(
                     // 18,747 nodes vs the >=2^19 gate). Whenever the budget
                     // would not have bound — i.e. always in practice — any
                     // fork shape yields the identical tree.
-                    let unbounded_fork = max_nodes >= (1 << 19);
+                    // Debug builds keep the bounded depth-5 schedule: the
+                    // unbounded fan-out is a release-perf feature, and under
+                    // coverage/debug instrumentation the extra task volume
+                    // measured ~2x on the CI Coverage job. Output is
+                    // identical either way (budgets never bind at depth 5).
+                    let unbounded_fork = !cfg!(debug_assertions) && max_nodes >= (1 << 19);
                     let (fork_budget, fork_depth) = if unbounded_fork {
                         (usize::MAX / 4, u32::MAX)
                     } else {
