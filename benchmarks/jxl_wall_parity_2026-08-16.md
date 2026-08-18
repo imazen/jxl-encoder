@@ -302,3 +302,41 @@ Implementation notes (worked out 2026-08-17):
 Expected: −60..90ms t1 / −15..25ms t8 at 4K e5 on each arch (the scalar
 transform+inverse share of the 23% bucket), plus the same relative cut
 at e6+ where the variant set doubles.
+
+## Round 5 (2026-08-18) — the mosaic was lying: benchmark-content correction
+
+**Finding (via new `__env_var_diagnostics` acstrat eval counters, dumped by
+`__JXL_ENC_PHASE_TIMING`):** the 4K "photo" mosaic used by every wall round
+has fcbr = 0.456 (flat tile padding) → the W44-164 classifier calls it
+SCREENSHOT → the chunk-2c AFV lift fires at e5 d1.25 → **10.2 single-block
+evals per 8x8 block instead of ~3** (1.32M vs 417K at 4K) → acstrat t1
+830 → 477 ms with `JXL_DISPATCH_AFV_SCREENSHOT_DISABLE=1`. ~26% of the
+mosaic's e5 t1 encode was the screenshot pipeline running on photo content;
+the patches-scan admission (mask median > 60) compounds it. The mosaic
+stays as the MEMORY/stress cell it was built to be, but wall-parity claims
+must use honestly-classified content.
+
+**Corrected ladders — real photo (CLIC 2048x1365, fcbr 0.0 → Photo class):**
+
+| cell | x64 cjxl | x64 ours | x64 ratio | Mac ratio |
+|---|---|---|---|---|
+| e3 t1 / t8 | 0.17 / 0.11 | 0.24 / 0.14 | 1.37x / 1.27x | 1.60x / 1.61x |
+| e5 t1 / t8 | 0.44 / 0.15 | 0.48 / 0.20 | **1.11x / 1.30x** | **0.70x** / 1.23x |
+| e7 t1 / t8 | 0.79 / 0.24 | 1.04 / 0.32 | 1.32x / 1.32x | 0.84x / 1.10x |
+
+Bytes: e3 +0.8%, e5 **+0.42%**, e7 +0.28% — near RD parity on honest
+photo content (the mosaic's +2.2% at e5 was substantially the misfiring
+screenshot lift SPENDING bytes on non-screenshot content).
+
+**Product-quality caveat recorded:** the fcbr >= 0.35 discriminator admits
+collages / flat-padded photo mosaics into the screenshot pipeline (this
+mosaic 0.456; girl-lossless 0.376). On such content the 2c lift pays 3.4x
+eval volume and measured +bytes — a p25-style guard (task #12 precedent)
+is the candidate fix, gated on its own corpus study. Kernel rounds
+completed meanwhile, both byte-identical and cross-arch-verified:
+vectorized IDENTITY/DCT2X2 (355e8d0e, find_best_16x16 self 23->20.5%) and
+canonical-f32 pixel_domain_loss (47929d7b, libjxl-parity precision);
+neither moved walls materially — per-op kernel math is NOT where the
+remaining honest-photo gap lives (e3/e7 ~1.3x: two-pass entropy + acstrat
+volume at e7; lossless unchanged: content-agnostic, t8 4.6-5.2x stands as
+the top structural item).

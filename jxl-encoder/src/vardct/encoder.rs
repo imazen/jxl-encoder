@@ -6287,6 +6287,21 @@ impl VarDctEncoder {
                 eprintln!(
                     "encode_inner: total={_ms_total:.1} xyb={_ms_xyb:.1} patches={_ms_patches:.1} splines={_ms_splines:.1} quant_field={_ms_quant_field:.1} gaborish={_ms_gaborish:.1} cfl1={_ms_cfl1:.1} acstrat={_ms_acstrat:.1} cfl2={_ms_cfl2:.1} buttloop={_ms_buttloop:.1} xform={_ms_xform:.1} sharp={_ms_sharp:.1} entropy={_ms_entropy:.1}",
                 );
+                {
+                    use core::sync::atomic::Ordering;
+                    let evals = &super::ac_strategy::ESTIMATE_EVALS_BY_BLOCKS;
+                    let mut parts = alloc::string::String::new();
+                    let mut total = 0u64;
+                    for (nb, c) in evals.iter().enumerate() {
+                        let v = c.swap(0, Ordering::Relaxed);
+                        if v > 0 {
+                            total += v;
+                            parts.push_str(&alloc::format!(" {nb}blk={v}"));
+                        }
+                    }
+                    let lanes = super::ac_strategy::ESTIMATE_COEFF_LANES.swap(0, Ordering::Relaxed);
+                    eprintln!("acstrat evals: total={total}{parts} coeff_lanes={lanes}");
+                }
             }
             crate::debug_rect::flush("");
             return Ok(VarDctOutput {

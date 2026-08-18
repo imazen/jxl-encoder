@@ -112,6 +112,17 @@ fn force_unfused_dct8_entropy() -> bool {
     v
 }
 
+/// Diagnostic estimate-call volume counters (`__env_var_diagnostics` only):
+/// index = covered blocks of the evaluated strategy (1 = 8x8-class, 2 =
+/// 16x8/8x16, 4 = 16x16, ...). Dumped + reset by the
+/// `__JXL_ENC_PHASE_TIMING` block at encode end.
+#[cfg(feature = "__env_var_diagnostics")]
+pub(super) static ESTIMATE_EVALS_BY_BLOCKS: [core::sync::atomic::AtomicU64; 65] =
+    [const { core::sync::atomic::AtomicU64::new(0) }; 65];
+#[cfg(feature = "__env_var_diagnostics")]
+pub(super) static ESTIMATE_COEFF_LANES: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+
 /// Pre-allocated scratch buffers for entropy estimation.
 /// Avoids per-call heap allocations in the hot `estimate_entropy_full` loop.
 pub(super) struct EntropyEstScratch {
@@ -1013,6 +1024,12 @@ fn estimate_entropy_full_impl(
     let cx = COVERED_X[raw_strategy as usize];
     let cy = COVERED_Y[raw_strategy as usize];
     let num_blocks = cx * cy;
+    #[cfg(feature = "__env_var_diagnostics")]
+    {
+        use core::sync::atomic::Ordering;
+        ESTIMATE_EVALS_BY_BLOCKS[num_blocks.min(64)].fetch_add(1, Ordering::Relaxed);
+        ESTIMATE_COEFF_LANES.fetch_add((num_blocks * DCT_BLOCK_SIZE * 3) as u64, Ordering::Relaxed);
+    }
     let size = num_blocks * DCT_BLOCK_SIZE;
 
     // Use different constants based on whether we're using pixel-domain loss
