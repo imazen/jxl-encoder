@@ -371,3 +371,38 @@ its Auto-policy extension awaits owner sign-off). Next structural
 candidates for the global path: critical-chain-aware scheduling (walk
 the heavy spine inline while forking light siblings), gather+prequant
 wall (the e9 exact-bucketize pre-walk), and the collect/entropy tail.
+
+## Round 7 (2026-08-18) — LZ77 attribution win, floors, final ladders
+
+Completing the wall attribution found the real e9 tail: the Optimal-parse
+LZ77 section transform ran per-group slices SEQUENTIALLY — 5.37 s of the
+4K e9 t8 wall. Per-group parallel (byte-identical by the same purity the
+write-time lockstep re-application depends on): lz77 5372 -> ~735 ms both
+machines (3d4505c0). FBS parallel floors lowered (interleaved 5-sample
+A/B: e7 -2.0%, e9 -4.6% median; 606a88a3). Complete e9 t8 wall map:
+gather+prequant 2.8 + tree ~9 + lz77 0.74 + collect/ans 0.4 + group
+passes 0.02 s.
+
+**Final x64 lossless ladder (4K photo, cjxl v0.12):**
+
+| cell | cjxl | ours | ratio | (round-4 ratio) |
+|---|---|---|---|---|
+| e7 t1 / t8 | 3.31 / 0.53 | 6.86 / 2.96 | 2.07x / 5.64x | 2.05x / 4.61x* |
+| e9 t1 / t8 | 17.5 / 2.49 | 35.1 / 12.8 | 2.01x / **5.15x** | 2.02x / 7.3x† |
+
+(*round-4 e7-t8 inherited crash-truncated samples; †corrected honest
+baseline was ~7.3x.) Bytes unchanged: we win -0.9% e7 / -3.4% e9.
+
+**Fork-depth caveat (refutes my own round-6 note):** JXL_TREE_PAR_DEPTH=12
++ FLOOR=2048 measures 11.0-11.4 s e9 t8 (-13%) but CHANGES BYTES
+(+7664 B): the per-side max_nodes halving BINDS at deep forks and caps
+subtrees. Fork depth is byte-invariant only while that budget stays
+slack — the env overrides are tradeoff knobs, not free wins; comments
+corrected in effort.rs.
+
+Remaining global-tree structure: the tree phase (~9 s e9 t8) is the
+chain of giant skewed nodes — intra-node parallelism is now saturated
+(props, buckets, accumulate, tensors, partition all fan out); a
+byte-identical deep-fork needs budget-binding-free semantics (fork only
+while per-side budget provably exceeds any subtree's node ceiling).
+Sectioned mode stays the big lever (awaiting Auto-policy sign-off).

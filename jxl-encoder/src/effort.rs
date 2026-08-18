@@ -1978,12 +1978,13 @@ impl EffortProfile {
     /// budget at high effort lets rayon saturate idle workers; at low effort
     /// the floor terminates fanout early so the extra budget is harmless.
     fn tree_parallel_max_depth_for(effort: u8) -> u32 {
-        // 2026-08-18: deepening 5/4 -> 10/8 was MEASURED and kept only as
-        // the JXL_TREE_PAR_DEPTH override — e9 t8 4K moved just ~3% (the
-        // recursion's scaling cap is the giant upper-level nodes, not fork
-        // count; see benchmarks/jxl_wall_parity_2026-08-16.md round 6).
-        // Output is fork-depth-invariant (canonical node numbering), so
-        // the override is byte-safe for experiments.
+        // JXL_TREE_PAR_DEPTH override for experiments. CAUTION (measured
+        // 2026-08-18): output is fork-depth-invariant ONLY while the
+        // per-side max_nodes budget halving never BINDS — at depth 12 on
+        // 4K e9 the halved budget (max_nodes / 2^depth) caps subtrees and
+        // CHANGES BYTES (+0.18% for -13% wall; a tradeoff knob, not a
+        // free win). The shipped 5/4 schedule keeps the budget slack, so
+        // default output matches the sequential engine exactly.
         let base = if effort >= 8 { 5 } else { 4 };
         #[cfg(feature = "std")]
         if let Some(v) = std::env::var("JXL_TREE_PAR_DEPTH")
@@ -1998,7 +1999,7 @@ impl EffortProfile {
     /// Subtree-size floor below which parallel fork is skipped.
     fn tree_parallel_floor_for(effort: u8) -> usize {
         // Floor override for experiments: JXL_TREE_PAR_FLOOR (see the
-        // depth note above; byte-safe).
+        // depth note above — the same budget-binding caveat applies).
         let base = if effort >= 8 { 8_192 } else { 16_384 };
         #[cfg(feature = "std")]
         if let Some(v) = std::env::var("JXL_TREE_PAR_FLOOR")
