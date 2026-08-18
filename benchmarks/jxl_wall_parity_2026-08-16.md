@@ -340,3 +340,34 @@ neither moved walls materially — per-op kernel math is NOT where the
 remaining honest-photo gap lives (e3/e7 ~1.3x: two-pass entropy + acstrat
 volume at e7; lossless unchanged: content-agnostic, t8 4.6-5.2x stands as
 the top structural item).
+
+## Round 6 (2026-08-18) — lossless t8: a latent crash, honest walls, and the sectioned lever
+
+**Crash found and fixed (09c582cf):** `with_thread_local_workspace` held
+its RefCell borrow across the closure; rayon work-stealing re-entry
+panicked. Interleaved 5-round x64 A/B/C at 4K e9 t8: shipped main
+panicked 3/5 rounds (~14 s in, rc=101), pre-dedup 1/5 — latent since the
+per-prop FBS wave, widened by tensor-parallel. Fixed with a per-thread
+workspace stack (take/put-back, cap 3); 5/5 clean, bytes identical.
+
+**Honest wall re-baseline (the round-5/6 perf claims corrected):** with
+interleaved 5-sample A/B/C on the x64 box, the dedup refinement scatter,
+per-prop tensor build, and column-parallel bucketize are ALL wall-neutral
+at 4K: e7 t8 ~3.1 s and e9 t8 ~17.5-18.3 s on every arm. The tensor
+commit's "-31%" was one lucky sample (Mac variance is ±8%; two of the
+box's "fast" samples were the crash dying early). Internal stamps did
+move (dedup 452 -> 225 ms; the changes are byte-identical and stay), but
+the WALL at t8 is dominated by the tree recursion's critical chain of
+giant skewed nodes plus gather+prequant (x64 e9: gather+prequant ~5 s,
+tree ~7.5 s, rest ~6 s), and none of the intra-node parallelizations so
+far shorten that chain materially.
+
+**Standing state, 4K photo x64 t8:** global-tree lossless e7 3.1 s
+(cjxl 0.52, 6.0x), e9 ~18 s (cjxl 2.46, 7.3x) — worse ratios than round
+4 recorded because those cells inherited crash-truncated samples.
+**The proven lever is the sectioned/per-group mode** (round-5 study:
+e7 t8 1.49 s on the Mac mosaic, corpus median -44% wall at +0.0% bytes;
+its Auto-policy extension awaits owner sign-off). Next structural
+candidates for the global path: critical-chain-aware scheduling (walk
+the heavy spine inline while forking light siblings), gather+prequant
+wall (the e9 exact-bucketize pre-walk), and the collect/entropy tail.
