@@ -5498,6 +5498,26 @@ fn build_tree_from_prequantized(
                     // below `params.parallel_recursion_floor`.
                     let max_parallel_depth: u32 = params.parallel_max_depth;
 
+                    // Byte-identical DEEP forking (2026-08-18): the per-side
+                    // max_nodes halving is the ONLY fork-depth-dependent
+                    // output influence — when it binds, deep forks change
+                    // trees (round-7 caveat, +7664 B at depth 12). So the
+                    // borrowed path forks with an UNBOUNDED per-side budget
+                    // and effectively unlimited depth (the recursion floor
+                    // stays the granularity control), and the post-splice
+                    // check below falls back to the exact sequential engine
+                    // in the astronomically rare case the finished tree
+                    // exceeds `max_nodes` (largest tree ever measured:
+                    // 18,747 nodes vs the >=2^19 gate). Whenever the budget
+                    // would not have bound — i.e. always in practice — any
+                    // fork shape yields the identical tree.
+                    let unbounded_fork = max_nodes >= (1 << 19);
+                    let (fork_budget, fork_depth) = if unbounded_fork {
+                        (usize::MAX / 4, u32::MAX)
+                    } else {
+                        (per_side_budget, max_parallel_depth)
+                    };
+
                     // Issue #42 (2026-05-25): on small inputs (< 1 MP, e ≤ 7,
                     // gated by `params.parallel_small_image_fallback`), dispatch
                     // to the owned-clone path. The borrowed-view path's per-fork
@@ -5582,11 +5602,11 @@ fn build_tree_from_prequantized(
                                     left_view,
                                     params,
                                     threshold,
-                                    per_side_budget,
+                                    fork_budget,
                                     histogram_size,
                                     left_predictor,
                                     lb,
-                                    max_parallel_depth,
+                                    fork_depth,
                                     &tensor_layout,
                                     left_tensor,
                                 )
@@ -5596,11 +5616,11 @@ fn build_tree_from_prequantized(
                                     right_view,
                                     params,
                                     threshold,
-                                    per_side_budget,
+                                    fork_budget,
                                     histogram_size,
                                     right_predictor,
                                     rb,
-                                    max_parallel_depth,
+                                    fork_depth,
                                     &tensor_layout,
                                     right_tensor,
                                 )
@@ -5622,12 +5642,33 @@ fn build_tree_from_prequantized(
                         ..Default::default()
                     };
 
-                    // Restore samples for downstream code (validation etc.
-                    // do not read `samples` after this point — the build
-                    // sequence is finished; only `assign_sequential_contexts`
-                    // and `validate_tree_djxl` follow). Clear the stack so
-                    // the fallthrough loop below sees nothing.
-                    stack.clear();
+                    if unbounded_fork && tree.len() > max_nodes {
+                        // The unbounded fork exceeded the true cap — the ONLY
+                        // case where fork shape could alter output. Discard
+                        // and rebuild through the exact sequential engine
+                        // below (budget checks in DFS order); the permuted
+                        // sample arrangement is output-invariant (all node
+                        // statistics are order-free sums).
+                        tree.clear();
+                        tree.push(PropertyDecisionNode::default());
+                        stack.clear();
+                        stack.push(SplitCandidate {
+                            node_idx: 0,
+                            start: 0,
+                            end: n,
+                            best_predictor: root_predictor,
+                            base_bits: root_bits,
+                            multiplier: None,
+                            tensor: None,
+                        });
+                    } else {
+                        // Restore samples for downstream code (validation etc.
+                        // do not read `samples` after this point — the build
+                        // sequence is finished; only `assign_sequential_contexts`
+                        // and `validate_tree_djxl` follow). Clear the stack so
+                        // the fallthrough loop below sees nothing.
+                        stack.clear();
+                    }
                 }
                 _ => {
                     // No beneficial root split — push the root candidate back
