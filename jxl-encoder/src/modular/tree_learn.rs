@@ -7194,7 +7194,7 @@ fn eval_split_prop_borrowed(
 /// across the pool. Only root-scale nodes qualify; the transient cost is
 /// up to [`FBS_PROP_WAVE`] pooled workspaces for the call's duration.
 #[cfg(feature = "parallel")]
-const FBS_PROP_PAR_MIN_ROWS: usize = 1 << 20;
+const FBS_PROP_PAR_MIN_ROWS: usize = 1 << 18;
 /// Concurrent-property bound for the parallel dispatch (bounds pooled
 /// workspace memory, not correctness).
 #[cfg(feature = "parallel")]
@@ -9030,7 +9030,7 @@ const ACCUM_4WAY_MIN_RUN: usize = 256;
 /// accumulation fans buckets across the rayon pool (disjoint output
 /// slices — bit-identical; below this the spawn overhead loses).
 #[cfg(feature = "parallel")]
-const FBS_ACCUM_PAR_MIN_ROWS: usize = 1 << 18;
+const FBS_ACCUM_PAR_MIN_ROWS: usize = 1 << 16;
 
 /// Builds a node's [`NodeTensor`] from its sample rows `[start..end)`.
 /// `out` MUST be zeroed (fresh from [`NodeTensor::zeroed`]).
@@ -9164,7 +9164,7 @@ fn build_node_tensor_borrowed(
     // Values are identical to the sequential loop (independent per-prop
     // work, same in-prop order); waves of 4 bound the workspace transient
     // like the FBS prop wave.
-    #[cfg(feature = "parallel")]
+    #[cfg(all(feature = "parallel", feature = "parallel-tree-learning"))]
     if count >= TENSOR_BUILD_PAR_MIN_ROWS
         && crate::parallel::effective_threads() > 1
         && params.properties.len() >= 2
@@ -9256,13 +9256,13 @@ fn build_node_tensor_borrowed(
 }
 
 /// Row floor for the per-prop parallel tensor build.
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", feature = "parallel-tree-learning"))]
 const TENSOR_BUILD_PAR_MIN_ROWS: usize = 1 << 18;
 
 /// Per-prop parallel counterpart of [`build_node_tensor_borrowed`] — see
 /// the dispatch comment there. Byte-identical: per-prop work is
 /// independent and writes disjoint tensor regions.
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", feature = "parallel-tree-learning"))]
 fn build_node_tensor_borrowed_parallel(
     samples: &BorrowedSamples<'_>,
     params: &TreeLearningParams,
