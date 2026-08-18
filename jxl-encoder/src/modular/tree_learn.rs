@@ -8848,6 +8848,32 @@ impl NodeTensor {
         debug_assert_eq!(self.ebit_sums.len(), smaller.ebit_sums.len());
         debug_assert_eq!(self.weighted.len(), smaller.weighted.len());
         debug_assert_eq!(self.unique.len(), smaller.unique.len());
+        // Elementwise integer subtraction — order-free, so big tensors
+        // chunk across the pool (the derive sits on the tree recursion's
+        // critical chain); small ones keep the plain loops.
+        #[cfg(feature = "parallel")]
+        if self.token_counts.len() >= (1 << 20) && crate::parallel::effective_threads() > 1 {
+            use rayon::prelude::*;
+            const CH: usize = 1 << 18;
+            self.token_counts
+                .par_chunks_mut(CH)
+                .zip(smaller.token_counts.par_chunks(CH))
+                .for_each(|(aa, bb)| {
+                    for (a, b) in aa.iter_mut().zip(bb.iter()) {
+                        *a -= b;
+                    }
+                });
+            for (a, b) in self.ebit_sums.iter_mut().zip(smaller.ebit_sums.iter()) {
+                *a -= b;
+            }
+            for (a, b) in self.weighted.iter_mut().zip(smaller.weighted.iter()) {
+                *a -= b;
+            }
+            for (a, b) in self.unique.iter_mut().zip(smaller.unique.iter()) {
+                *a -= b;
+            }
+            return;
+        }
         for (a, b) in self
             .token_counts
             .iter_mut()
@@ -9082,6 +9108,30 @@ fn build_node_tensor_borrowed(
     debug_assert_eq!(histogram_size, layout.histo);
     let sample_counts = &samples.sample_counts[start..end];
     let max_buckets = params.max_property_values + 1;
+    // Per-prop parallel build for big nodes (the derive sits on the tree
+    // recursion's critical chain): every prop writes ONLY its own tensor
+    // regions — the layout bases are gap-free prefix sums in entry order,
+    // so the four arrays partition per prop via successive split_at_mut —
+    // and reads (bucket_indices / tokens / counts) are shared immutably.
+    // Values are identical to the sequential loop (independent per-prop
+    // work, same in-prop order); waves of 4 bound the workspace transient
+    // like the FBS prop wave.
+    #[cfg(feature = "parallel")]
+    if count >= TENSOR_BUILD_PAR_MIN_ROWS
+        && crate::parallel::effective_threads() > 1
+        && params.properties.len() >= 2
+    {
+        build_node_tensor_borrowed_parallel(
+            samples,
+            params,
+            layout,
+            histogram_size,
+            start,
+            end,
+            out,
+        );
+        return;
+    }
     with_workspace_dispatched(
         params.parallel_small_image_fallback,
         count,
@@ -9155,6 +9205,137 @@ fn build_node_tensor_borrowed(
             }
         },
     );
+}
+
+/// Row floor for the per-prop parallel tensor build.
+#[cfg(feature = "parallel")]
+const TENSOR_BUILD_PAR_MIN_ROWS: usize = 1 << 18;
+
+/// Per-prop parallel counterpart of [`build_node_tensor_borrowed`] — see
+/// the dispatch comment there. Byte-identical: per-prop work is
+/// independent and writes disjoint tensor regions.
+#[cfg(feature = "parallel")]
+fn build_node_tensor_borrowed_parallel(
+    samples: &BorrowedSamples<'_>,
+    params: &TreeLearningParams,
+    layout: &TensorLayout,
+    histogram_size: usize,
+    start: usize,
+    end: usize,
+    out: &mut NodeTensor,
+) {
+    let count = end - start;
+    let num_pred = samples.num_predictors();
+    let sample_counts = &samples.sample_counts[start..end];
+    let max_buckets = params.max_property_values + 1;
+
+    // Partition the four tensor arrays per prop entry (prefix-ordered).
+    struct PropOut<'t> {
+        uni: &'t mut [u32],
+        wei: &'t mut [u32],
+        tok: &'t mut [u32],
+        ebs: &'t mut [u64],
+    }
+    let mut parts: Vec<(usize, PropOut)> = Vec::with_capacity(layout.prop_entries.len());
+    {
+        let mut uni_rest: &mut [u32] = &mut out.unique;
+        let mut wei_rest: &mut [u32] = &mut out.weighted;
+        let mut tok_rest: &mut [u32] = &mut out.token_counts;
+        let mut ebs_rest: &mut [u64] = &mut out.ebit_sums;
+        for (prop_pos, entry) in layout.prop_entries.iter().enumerate() {
+            let nb = entry.num_buckets;
+            let (u, ur) = uni_rest.split_at_mut(nb);
+            uni_rest = ur;
+            let (w, wr) = wei_rest.split_at_mut(nb);
+            wei_rest = wr;
+            let (t, tr) = tok_rest.split_at_mut(num_pred * nb * layout.histo);
+            tok_rest = tr;
+            let (e, er) = ebs_rest.split_at_mut(num_pred * nb);
+            ebs_rest = er;
+            if nb > 0 {
+                parts.push((
+                    prop_pos,
+                    PropOut {
+                        uni: u,
+                        wei: w,
+                        tok: t,
+                        ebs: e,
+                    },
+                ));
+            }
+        }
+    }
+
+    let ws_pool: std::sync::Mutex<Vec<SplitWorkspace>> = std::sync::Mutex::new(Vec::new());
+    let work = |(prop_pos, po): &mut (usize, PropOut)| {
+        let prop_pos = *prop_pos;
+        let entry = &layout.prop_entries[prop_pos];
+        let prop_idx = entry.prop_idx;
+        let nb = entry.num_buckets;
+        let mut ws = {
+            let mut pool = ws_pool.lock().unwrap();
+            pool.pop()
+                .unwrap_or_else(|| SplitWorkspace::new(count, histogram_size, max_buckets))
+        };
+        let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
+        let bucket_starts = ws.bucket_starts.as_mut_slice();
+        let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
+        let pq_buckets = &samples.bucket_indices[prop_idx][start..end];
+
+        for (offset, &b) in pq_buckets.iter().enumerate() {
+            po.uni[b as usize] += 1;
+            po.wei[b as usize] += sample_counts[offset];
+        }
+        bucket_starts[0] = 0;
+        for b in 0..nb {
+            bucket_starts[b + 1] = bucket_starts[b] + po.uni[b] as usize;
+        }
+        bucket_write_pos[..nb].copy_from_slice(&bucket_starts[..nb]);
+        for (offset, &b) in pq_buckets.iter().enumerate() {
+            sorted_by_bucket[bucket_write_pos[b as usize]] = offset as u32;
+            bucket_write_pos[b as usize] += 1;
+        }
+
+        for pred in 0..num_pred {
+            let tokens = &samples.residual_tokens[pred][start..end];
+            for b in 0..nb {
+                let bs = bucket_starts[b];
+                let be = bucket_starts[b + 1];
+                if bs == be {
+                    continue;
+                }
+                let row_base = (pred * nb + b) * histogram_size;
+                let row = &mut po.tok[row_base..row_base + histogram_size];
+                let eb_sum = if be - bs >= ACCUM_4WAY_MIN_RUN {
+                    accumulate_run_4way(
+                        &sorted_by_bucket[bs..be],
+                        tokens,
+                        sample_counts,
+                        row,
+                        HISTO_MASK,
+                    )
+                } else {
+                    let mut eb_sum: u64 = 0;
+                    for &rel_off in &sorted_by_bucket[bs..be] {
+                        let rel_off = rel_off as usize;
+                        let tok8 = tokens[rel_off];
+                        let tok = tok8 as usize;
+                        let sc = sample_counts[rel_off];
+                        debug_assert!(tok < histogram_size);
+                        row[tok] += sc;
+                        eb_sum += gather_token_ebits(tok8) as u64 * sc as u64;
+                    }
+                    eb_sum
+                };
+                po.ebs[pred * nb + b] = eb_sum;
+            }
+        }
+        ws_pool.lock().unwrap().push(ws);
+    };
+    for wave in parts.chunks_mut(FBS_PROP_WAVE) {
+        use rayon::prelude::*;
+        wave.par_iter_mut().for_each(&work);
+    }
 }
 
 /// Shared per-split derivation gate + smaller/larger bookkeeping. Returns
