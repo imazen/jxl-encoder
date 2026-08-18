@@ -742,6 +742,17 @@ struct Args {
 /// with downstream group boundaries.
 const STREAM_CHUNK_ROWS: u32 = 64;
 
+#[cfg(feature = "profile-phases")]
+fn dump_phase_snapshot() {
+    let mut snap = jxl_encoder::profile_phases::take_snapshot();
+    snap.sort_by_key(|&(_, ns)| core::cmp::Reverse(ns));
+    for (phase, ns) in snap.iter().take(20) {
+        eprintln!("[phase] {phase}: {:.1}ms", *ns as f64 / 1e6);
+    }
+}
+#[cfg(not(feature = "profile-phases"))]
+fn dump_phase_snapshot() {}
+
 fn main() {
     let args = Args::parse();
 
@@ -917,6 +928,7 @@ fn main() {
                     output_size as f64 / input_size as f64,
                     output_size as f64 / input_size as f64 * 100.0
                 );
+                dump_phase_snapshot();
                 println!("Time:        {:.2?}", encode_time);
             } else {
                 println!("{}", args.output.display());
@@ -977,6 +989,7 @@ fn main() {
                     output_size as f64 / input_size as f64,
                     output_size as f64 / input_size as f64 * 100.0
                 );
+                dump_phase_snapshot();
                 println!("Time:        {:.2?}", encode_time);
                 println!();
                 println!(
@@ -1296,6 +1309,7 @@ fn main() {
                             0.0
                         }
                     );
+                    dump_phase_snapshot();
                     println!("Time:        {:.2?}", encode_time);
                 } else {
                     println!("{}", args.output.display());
@@ -2081,6 +2095,7 @@ fn main() {
         println!("Input size:  {} bytes", input_size);
         println!("Output size: {} bytes", output_size);
         println!("Ratio:       {:.2}x", ratio);
+        dump_phase_snapshot();
         println!("Time:        {:.2?}", encode_time);
     } else {
         println!("{}", args.output.display());
