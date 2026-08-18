@@ -4289,6 +4289,111 @@ fn packed_sort_walk_full<const W: usize>(
     (unique_indices, counts)
 }
 
+/// One stable counting-sort level of the dedup partition refinement:
+/// scatter `seg`'s elements into `temp` ordered by `byte_of`, returning the
+/// 257-entry prefix table. Large segments run a DETERMINISTIC parallel
+/// form (see the call-site comment): per-chunk histograms, then the output
+/// is split into (byte, chunk)-ordered disjoint sub-slices and chunks
+/// scatter concurrently — bitwise the same permutation as the sequential
+/// loop at any thread count. Small segments use the sequential loop.
+fn refine_scatter_level(
+    seg: &[u32],
+    temp: &mut [u32],
+    byte_of: impl Fn(u32) -> u8 + Sync,
+) -> [u32; 257] {
+    let m = seg.len();
+    debug_assert_eq!(temp.len(), m);
+
+    const PAR_MIN: usize = 1 << 19;
+    let threads = crate::parallel::effective_threads();
+    if threads > 1 && m >= PAR_MIN {
+        #[cfg(feature = "parallel")]
+        {
+            let n_chunks = threads * 2;
+            let chunk_len = m.div_ceil(n_chunks);
+            let chunk_ranges: Vec<(usize, usize)> = (0..n_chunks)
+                .map(|c| (c * chunk_len, ((c + 1) * chunk_len).min(m)))
+                .filter(|(lo, hi)| hi > lo)
+                .collect();
+            // Pass 1: per-chunk byte histograms (parallel).
+            let hists: Vec<[u32; 256]> = crate::parallel::parallel_map(chunk_ranges.len(), |ci| {
+                let (lo, hi) = chunk_ranges[ci];
+                let mut h = [0u32; 256];
+                for &i in &seg[lo..hi] {
+                    h[byte_of(i) as usize] += 1;
+                }
+                h
+            });
+            // Global prefix table + per-(byte, chunk) offsets.
+            let mut cnt = [0u32; 257];
+            for h in &hists {
+                for b in 0..256 {
+                    cnt[b + 1] += h[b];
+                }
+            }
+            for b in 0..256 {
+                cnt[b + 1] += cnt[b];
+            }
+            // Split `temp` into (byte, chunk)-ordered disjoint sub-slices:
+            // within byte b, chunk c's elements land contiguously after
+            // chunks < c — exactly the sequential stable order.
+            let mut out_slices: Vec<Vec<&mut [u32]>> = (0..chunk_ranges.len())
+                .map(|_| Vec::with_capacity(256))
+                .collect();
+            {
+                let mut rest: &mut [u32] = temp;
+                for b in 0..256 {
+                    for (ci, h) in hists.iter().enumerate() {
+                        let take = h[b] as usize;
+                        let (piece, r) = rest.split_at_mut(take);
+                        rest = r;
+                        out_slices[ci].push(piece);
+                    }
+                }
+                debug_assert!(rest.is_empty());
+            }
+            // out_slices[ci][b] — but pushed in b-major order; each chunk's
+            // vec is indexed by b because we pushed exactly one piece per b.
+            // Pass 2: parallel scatter, each chunk into its own sub-slices.
+            struct ChunkTask<'a> {
+                lo: usize,
+                hi: usize,
+                slices: Vec<&'a mut [u32]>,
+            }
+            let tasks: Vec<ChunkTask> = chunk_ranges
+                .iter()
+                .zip(out_slices)
+                .map(|(&(lo, hi), slices)| ChunkTask { lo, hi, slices })
+                .collect();
+            use rayon::prelude::*;
+            tasks.into_par_iter().for_each(|mut t| {
+                let mut fill = [0usize; 256];
+                for &i in &seg[t.lo..t.hi] {
+                    let b = byte_of(i) as usize;
+                    t.slices[b][fill[b]] = i;
+                    fill[b] += 1;
+                }
+            });
+            return cnt;
+        }
+    }
+
+    let mut cnt = [0u32; 257];
+    for &i in seg.iter() {
+        cnt[byte_of(i) as usize + 1] += 1;
+    }
+    for b in 0..256 {
+        cnt[b + 1] += cnt[b];
+    }
+    let mut cur = cnt;
+    for &i in seg.iter() {
+        let b = byte_of(i) as usize;
+        temp[cur[b] as usize] = i;
+        cur[b] += 1;
+    }
+    cnt
+}
+
 fn packed_sort_walk<const W: usize>(
     samples: &TreeSamples,
     pq: &PreQuantizedProps,
@@ -4380,6 +4485,19 @@ fn packed_sort_walk<const W: usize>(
         // the LIFO pops them ascending, keeping `parts_final` sorted by
         // key prefix. `temp` is one reusable scatter buffer, freed before
         // any key pack exists.
+        //
+        // 2026-08-18: the level scatter of OVERSIZED partitions runs
+        // through `refine_scatter_level`, which parallelizes the stable
+        // counting sort DETERMINISTICALLY when the segment is large (a
+        // 4K photo puts ~89 % of samples in one partition, so 3-6
+        // sequential 8M-element rescatter levels dominated dedup wall at
+        // t8 — 452 ms scaling only 1.76x). Chunked two-pass form: per-
+        // chunk byte histograms, then the output is `split_at_mut` into
+        // (byte, chunk)-ordered disjoint sub-slices and every chunk
+        // scatters its elements in parallel. Stability is preserved
+        // exactly (within a byte, elements stay in chunk order = original
+        // order), so the permutation — and therefore every downstream
+        // byte — is identical to the sequential form at any thread count.
         let mut temp: Vec<u32> = Vec::new();
         let mut stack: Vec<(u32, u32, u32)> = Vec::new();
         for pk in 0..65536usize {
@@ -4400,21 +4518,10 @@ fn packed_sort_walk<const W: usize>(
                     continue;
                 }
                 let seg = &mut part[s as usize..e as usize];
-                let mut cnt = [0u32; 257];
-                for &i in seg.iter() {
-                    cnt[key_byte(depth as usize, i as usize) as usize + 1] += 1;
-                }
-                for b in 0..256 {
-                    cnt[b + 1] += cnt[b];
-                }
                 temp.clear();
                 temp.resize(m, 0);
-                let mut cur = cnt;
-                for &i in seg.iter() {
-                    let b = key_byte(depth as usize, i as usize) as usize;
-                    temp[cur[b] as usize] = i;
-                    cur[b] += 1;
-                }
+                let cnt =
+                    refine_scatter_level(seg, &mut temp, |i| key_byte(depth as usize, i as usize));
                 seg.copy_from_slice(&temp);
                 for b in (0..256).rev() {
                     let (cs, ce) = (s + cnt[b], s + cnt[b + 1]);
@@ -5101,6 +5208,10 @@ fn build_tree_from_prequantized(
         samples.free_props();
     }
 
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _bt_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _bt_t0 = std::time::Instant::now();
     crate::profile_time!("tree/dedup_samples", {
         dedup_samples(samples, &mut pq, params);
     });
@@ -5126,6 +5237,8 @@ fn build_tree_from_prequantized(
     let mut entropy_counts = vec![0u32; histogram_size];
 
     // Start with root node
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _bt_t_dedup = std::time::Instant::now();
     let root_predictor = crate::profile_time!("tree/find_best_predictor", {
         find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts)
     });
@@ -5706,6 +5819,15 @@ fn build_tree_from_prequantized(
                 eprintln!("[tree-preds]   pred_{pi}: {c} leaves");
             }
         }
+    }
+    #[cfg(feature = "__env_var_diagnostics")]
+    if _bt_dbg {
+        eprintln!(
+            "tree-build: dedup={:.1}ms rest(root-costs+recursion+prune)={:.1}ms nodes={}",
+            (_bt_t_dedup - _bt_t0).as_secs_f64() * 1000.0,
+            _bt_t_dedup.elapsed().as_secs_f64() * 1000.0,
+            tree.len()
+        );
     }
     Ok(tree)
 }

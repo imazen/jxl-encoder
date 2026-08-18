@@ -594,6 +594,10 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     // merge is provably at-or-below the post-sort merge in
     // aggressiveness — every gather-time match would also have collapsed
     // under the bucket-key sort, just possibly with other rows.
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _ll_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _ll_t0 = std::time::Instant::now();
     let enable_gather_dedup = profile.gather_dedup;
     // Phase 3 of issue #41: switch the gather-time dedup table to
     // [`InlineDedupTable`]. Only meaningful when `enable_gather_dedup` is
@@ -1342,14 +1346,25 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             #[cfg(feature = "std")]
             super::tree_learn::walk_debug_dump("gather");
             let params = build_params(&samples);
-            crate::profile_time!("modular/compute_best_tree", {
+            #[cfg(feature = "__env_var_diagnostics")]
+            let _ll_t_gather_done = std::time::Instant::now();
+            let t = crate::profile_time!("modular/compute_best_tree", {
                 match pre_pq {
                     Some(pq) => {
                         super::tree_learn::compute_best_tree_prequantized(&mut samples, &params, pq)
                     }
                     None => compute_best_tree(&mut samples, &params),
                 }
-            })
+            });
+            #[cfg(feature = "__env_var_diagnostics")]
+            if _ll_dbg {
+                eprintln!(
+                    "lossless: gather+prequant={:.1}ms tree={:.1}ms",
+                    (_ll_t_gather_done - _ll_t0).as_secs_f64() * 1000.0,
+                    _ll_t_gather_done.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            t
         };
 
         if force_predictor.is_none() && riged_override.is_none() {
