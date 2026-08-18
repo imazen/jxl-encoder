@@ -1,0 +1,23 @@
+Sectioned-vs-global lossless tree study — x64 t8, 2026-08-18
+Machine: lilith-lianli (Ryzen 9 7900X, 24C, Ubuntu), threads=8, best-of-2.
+Build: jxl-encoder main 10f1e674; cjxl v0.12.0 (GCC, AVX2).
+Inputs: the 13 CORE picks of benchmarks/lossless_bench_set_2026-06-10.tsv,
+fetched as imazen-26-png-v3 SDR renders (codec-corpus.r2.imazen.org —
+NOTE: png-v3 re-renders, not the original bench_input PNGs; deltas are
+self-consistent, absolute bytes not comparable to the 2026-06-10 runs).
+Modes: global (default), sect (JXL_LOSSLESS_LOCAL_TREES=1), cjxl ref.
+
+Medians (sect vs global): e5 wall -40.8% bytes +0.0% (6/13 byte-wins);
+e7 -44.5% / +0.0% (4/13); e9 -65.7% / +1.9% (3/13).
+vs cjxl bytes: sect -0.3/-1.5/-2.2% vs global +0.3/-2.6/-2.7% (e5/7/9).
+Content split: sectioned wins big on docs/gray scans + the 5336
+stride-alias class (-14..-65%); loses on patents/clipart/painting
+(+5..+20% worst at e9). RD-frontier: at e9-t8 sectioned dominates
+(bytes ~equal vs cjxl at 2.3x wall vs global's 6.9x).
+
+RECOMMENDATION (needs owner sign-off — default flip changes bytes):
+extend SectionedTrees::Auto beyond the memory gate to pick Sectioned at
+effort <= 7 when threads > 1 (median-byte-neutral, -40%+ wall), keep
+Global at e9 (bytes crown), consider a cheap per-group hybrid at e9
+later (hybrid measured best-bytes 4,238,301 on the 4K photo but pays
+both learns). Env A/B hook: JXL_LOSSLESS_LOCAL_TREES=0/1/hybrid.
