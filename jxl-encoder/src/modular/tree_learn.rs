@@ -1083,9 +1083,25 @@ impl TreeSamples {
     /// buckets against `ts` (same mapping as [`bucketize_column`]) and
     /// FREE the raw column. Used by the wave merge so the accumulator
     /// never holds raw property data.
-    pub(crate) fn bucketize_and_strip_prop(&mut self, p: usize, ts: &[i32]) -> alloc::vec::Vec<u8> {
-        let out = bucketize_column(&self.props[p], self.num_samples, ts);
-        self.props[p] = PropColumn::default();
+    /// Bucketize + strip a SET of prop columns. Columns are independent,
+    /// so they fan across the pool (x64 measured ~150 ms/column at 4K e9 —
+    /// the sequential loop was ~4.5 s of the gather+prequant wall there);
+    /// per-column output is identical to [`Self::bucketize_and_strip_prop`]
+    /// and the returned blocks keep the input order.
+    pub(crate) fn bucketize_and_strip_props(
+        &mut self,
+        props: &[usize],
+        threshold_sets: &[alloc::vec::Vec<i32>],
+    ) -> alloc::vec::Vec<(usize, alloc::vec::Vec<u8>)> {
+        let n = self.num_samples;
+        let out: alloc::vec::Vec<(usize, alloc::vec::Vec<u8>)> =
+            crate::parallel::parallel_map(props.len(), |i| {
+                let p = props[i];
+                (p, bucketize_column(&self.props[p], n, &threshold_sets[p]))
+            });
+        for &(p, _) in out.iter() {
+            self.props[p] = PropColumn::default();
+        }
         out
     }
 
@@ -9655,8 +9671,8 @@ impl SplitWorkspace {
 // ceiling on the parallel path (see
 // `memory/rayon_modular_groups_2026-05-16.md`).
 thread_local! {
-    static SPLIT_WORKSPACE_CACHE: core::cell::RefCell<Option<SplitWorkspace>> =
-        const { core::cell::RefCell::new(None) };
+    static SPLIT_WORKSPACE_CACHE: core::cell::RefCell<alloc::vec::Vec<SplitWorkspace>> =
+        const { core::cell::RefCell::new(alloc::vec::Vec::new()) };
 }
 
 /// Borrow this thread's cached [`SplitWorkspace`], grow it to fit
@@ -9664,24 +9680,35 @@ thread_local! {
 /// to `f`. The workspace stays in the cache after `f` returns, ready for
 /// the next `find_best_split` on the same thread.
 ///
-/// The closure runs while the `RefCell` is mutably borrowed — calling this
-/// function reentrantly from the same thread (e.g. recursing into another
-/// helper that also wants the workspace) will panic. The current call
-/// sites are leaf-level (`find_best_split` only) so reentrancy is not
-/// possible.
+/// The workspace is TAKEN out of the cell for the closure's duration and
+/// put back afterwards (2026-08-18): rayon work-stealing can run another
+/// task on this thread while `f` is still on the stack — with a held
+/// `borrow_mut` that re-entry PANICKED ("RefCell already borrowed", hit
+/// by the column-parallel prequant bucketize whose stolen tasks landed on
+/// workers parked inside an enclosing workspace scope). With take/put-back
+/// the re-entrant caller simply finds the cell empty and allocates a
+/// fresh workspace — correct, race-free (thread-local), and the put-back
+/// keeps the LAST workspace cached for the next call.
 fn with_thread_local_workspace<R>(
     max_count: usize,
     histogram_size: usize,
     max_buckets: usize,
     f: impl FnOnce(&mut SplitWorkspace) -> R,
 ) -> R {
+    let mut ws = SPLIT_WORKSPACE_CACHE
+        .with(|cell| cell.borrow_mut().pop())
+        .unwrap_or_else(|| SplitWorkspace::new(max_count, histogram_size, max_buckets));
+    ws.reset_for(max_count, histogram_size, max_buckets);
+    let out = f(&mut ws);
     SPLIT_WORKSPACE_CACHE.with(|cell| {
-        let mut borrowed = cell.borrow_mut();
-        let ws = borrowed
-            .get_or_insert_with(|| SplitWorkspace::new(max_count, histogram_size, max_buckets));
-        ws.reset_for(max_count, histogram_size, max_buckets);
-        f(ws)
-    })
+        let mut stack = cell.borrow_mut();
+        // Bound the per-thread cache: work-stealing nesting depth is tiny
+        // in practice; 3 covers it without unbounded retention.
+        if stack.len() < 3 {
+            stack.push(ws);
+        }
+    });
+    out
 }
 
 /// Dispatch between the thread-local cache and a per-call

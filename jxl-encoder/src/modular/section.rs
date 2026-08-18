@@ -862,12 +862,14 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                                     acc_buckets: &mut alloc::vec::Vec<alloc::vec::Vec<u8>>,
                                     plan: &super::tree_learn::GatherBucketizePlan,
                                     mut local: TreeSamples| {
-            for &p in &active_prop_list {
-                if plan.keep_raw.get(p).copied().unwrap_or(false) {
-                    // Raw column rides along in append_from below.
-                    continue;
-                }
-                let block = local.bucketize_and_strip_prop(p, &plan.threshold_sets[p]);
+            let todo: alloc::vec::Vec<usize> = active_prop_list
+                .iter()
+                .copied()
+                .filter(|&p| !plan.keep_raw.get(p).copied().unwrap_or(false))
+                .collect();
+            // Column-parallel bucketize (see bucketize_and_strip_props);
+            // append order = `todo` order, same as the sequential loop.
+            for (p, block) in local.bucketize_and_strip_props(&todo, &plan.threshold_sets) {
                 acc_buckets[p].extend_from_slice(&block);
             }
             samples.append_from(local);
