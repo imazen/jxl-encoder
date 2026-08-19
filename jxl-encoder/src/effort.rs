@@ -2568,7 +2568,7 @@ impl EffortProfile {
         // Aggressive and `false` for `EncoderStrategy::Libjxl`, so ANDing keeps
         // the effort gate on Zenjxl and clears it on Libjxl. (`LossyInternal
         // Params::cfl_keep_best` still overrides afterwards for expert A/B.)
-        self.cfl_keep_best = self.cfl_keep_best && resolved.cfl_keep_best;
+        self.cfl_keep_best = self.cfl_keep_best && resolved.cfl_keep_best.unwrap_or(true);
     }
 
     /// Content-class-aware per-image adapter (RFC #45 pick #4 chunk 1).

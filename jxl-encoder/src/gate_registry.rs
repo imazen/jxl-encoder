@@ -113,6 +113,13 @@ fn parse_bool_one(s: &str) -> Option<bool> {
 /// disable it without rebuilding. The original `parse_bool_one` only
 /// accepts `1` (force-on) which couldn't reach OFF when the default is
 /// already ON.
+/// `Option<bool>`-typed twin of [`parse_bool_zero_or_one`] for tri-state
+/// gates (type default `None` keeps the env reachable when strategies
+/// don't pin). `1` -> `Some(Some(true))`, `0` -> `Some(Some(false))`.
+fn parse_opt_bool_zero_or_one(s: &str) -> Option<Option<bool>> {
+    parse_bool_zero_or_one(s).map(Some)
+}
+
 fn parse_bool_zero_or_one(s: &str) -> Option<bool> {
     match s {
         "1" => Some(true),
@@ -220,7 +227,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_newton_libjxl_parity = true,
             // #74 task #10: keep-best CfL Pass-2 guard OFF on Libjxl
             // (byte parity — libjxl has no such guard).
-            cfl_keep_best = false,
+            cfl_keep_best = Some(false),
             // W44-AUDIT-5 Phase 2 (Mode C): MUST stay `false` on Libjxl —
             // `cfl_newton_libjxl_parity = true` (above) takes priority
             // inside the SIMD kernel. Strict cjxl byte-parity is required
@@ -308,7 +315,7 @@ jxl_encoder_macros::strategy_def! {
             // libjxl-parity Newton (W44-183 measured 25/27 regressions).
             cfl_newton_libjxl_parity = false,
             // #74 task #10: keep-best CfL Pass-2 guard ON (rate win, not a parity strategy).
-            cfl_keep_best = true,
+            cfl_keep_best = None,
             // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY. LeanFaster
             // mirrors Zenjxl per the standing pattern. See Zenjxl
             // preset for the HONEST-STOP narrative.
@@ -383,7 +390,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_newton_libjxl_parity = false,
             // #74 task #10: keep-best CfL Pass-2 guard ON (default; ships the
             // aliased-line-art rate win, quality-neutral).
-            cfl_keep_best = true,
+            cfl_keep_best = None,
             // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY on Zenjxl. The
             // Phase 2 3-mode bisect (`benchmarks/w44_audit_5_phase2_mode_bisect_2026-05-24.tsv`,
             // codec_wiki e7 d=4 + 1418519 + 1531677) measured Mode C =
@@ -476,7 +483,7 @@ jxl_encoder_macros::strategy_def! {
             high_colour_class_exclude = true,
             cfl_newton_libjxl_parity = false,
             // #74 task #10: keep-best CfL Pass-2 guard ON.
-            cfl_keep_best = true,
+            cfl_keep_best = None,
             // W44-AUDIT-5 Phase 2 (Mode C): OPT-IN ONLY. Aggressive
             // mirrors Zenjxl per the standing pattern; bench measured
             // byte-identical to Mode A on the codec_wiki + 2 photo cells
@@ -717,8 +724,17 @@ jxl_encoder_macros::strategy_def! {
         /// fixes the aliased-line-art over-fit (Pass-2's L2 fit scatters small
         /// non-zero residuals on hard color edges). Quality-neutral (CfL recon
         /// error is bounded by ±0.5 quant-step regardless of the multiplier).
-        cfl_keep_best: bool {
-            env_hook = "JXL_CFL_KEEP_BEST" => parse_bool_one,
+        /// Tri-state (2026-08-19): `None` = follow the effort default
+        /// (ON at e7+), `Some(x)` = strategy pin. The macro's env layer
+        /// only fires while the field equals its TYPE default, so a
+        /// plain `bool` pinned `true` by every non-Libjxl strategy made
+        /// `JXL_CFL_KEEP_BEST` structurally inert (nightly-gate
+        /// cell-1025469 attribution needed force-off and found the
+        /// hook dead). `None` on Zenjxl/Aggressive/LeanFaster keeps the
+        /// env reachable; `Some(false)` pins Libjxl byte-parity
+        /// (deliberately env-immune).
+        cfl_keep_best: Option<bool> {
+            env_hook = "JXL_CFL_KEEP_BEST" => parse_opt_bool_zero_or_one,
             divergence_section = "C",
             divergence_row_ref = "#74 keep-best CfL Pass-2 guard (per-tile Pass-1/Pass-2 rate pick; Zenjxl/Aggressive on, Libjxl off)",
         },

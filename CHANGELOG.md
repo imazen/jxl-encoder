@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- `JXL_CFL_KEEP_BEST` env hook was structurally inert: the strategy_def
+  env layer only fires while a gate equals its TYPE default, and a plain
+  `bool` pinned `true` by every non-Libjxl strategy could never match.
+  Gate is now tri-state `Option<bool>` (`None` = follow the e7+ effort
+  default, env-reachable; Libjxl pins `Some(false)`, env-immune).
+  Default output byte-identical (hash-locks 49/49 x3 configs); `=0`
+  force-off verified live on the nightly-gate cell A/B
+
+
 - Latent rayon work-stealing panic in tree-learning's thread-local
   workspace ("RefCell already borrowed") — shipped main panicked 3/5
   interleaved rounds at 4K lossless e9 t8 on x64; fixed with a per-thread

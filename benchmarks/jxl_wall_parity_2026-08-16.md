@@ -458,3 +458,25 @@ Nightly-gate note (pre-existing, unrelated): the zenjxl RD gate has been
 red since 2026-07-15 on cell 1025469 e9 d=2 (ours_ssim2 -0.3459 vs slack
 -0.300, deterministic every night). Bracketed to 7a6ca462..50dec9bc
 (41 commits, Jul 14-15); attribution in progress this round.
+
+### Round 9 addendum — nightly-gate cell 1025469 attribution (decision pending)
+
+Local reproduction (aarch64): -0.3524 (CI x64: -0.3459). A/B via a
+hardcoded registry flip, then re-verified through the repaired env hook:
+
+| config | bytes | ssim2 | butteraugli |
+|---|---|---|---|
+| locked baseline (2026-06-11) | 20203 | 78.5006 | 2.0731 |
+| main, keep-best ON (default) | 19518 | 78.1482 | 2.0591 |
+| main, keep-best OFF | 19524 | 78.2025 | 2.0164 |
+
+Attribution: keep-best CfL (f5aa60b9, Jul 14) contributes only -0.054 of
+the -0.352 ssim2 drift; the remaining -0.298 accumulated Jun-11..Jul-14
+inside slack (nightly was green through Jul 14 and tipped Jul 15). The
+cell today spends 0.35 ssim2 to save 685 bytes (-3.83% -> -7.09% vs
+cjxl) at BETTER butteraugli — deliberate rate-seeking, not corruption.
+Disabling keep-best would pass the gate by 0.002 ssim2 (one hair) while
+giving back the #74 aliased-line-art win — not a fix. Recommendation:
+rebaseline the gate (needs owner sign-off; module doc procedure).
+Found + fixed en route: JXL_CFL_KEEP_BEST was structurally inert
+(strategy_def env layer vs strategy-pinned bool) — now tri-state.
