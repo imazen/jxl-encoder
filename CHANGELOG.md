@@ -26,6 +26,20 @@
 
 ### Changed
 
+- `SectionedTrees::Auto` (lossless) now selects SECTIONED per-group trees
+  at effort <= 7 when the encode runs multi-threaded (`parallel` feature,
+  >1 effective thread); effort >= 8 and single-threaded runs keep the
+  GLOBAL tree. Measured (x64, 12-image mixed corpus): e5/e7 wall -41/-44%
+  at +-0.0% median bytes; e9 keeps global (its -66% wall costs +1.9%
+  bytes). Memory-pressure escape unchanged. Output at lossless e<=7 now
+  depends on thread configuration under `parallel` builds (mode choice
+  only; each mode is thread-count-invariant) — pin
+  `with_sectioned_trees(Off/On)` or `JXL_LOSSLESS_LOCAL_TREES=0/1` for
+  config-independent bytes. Policy in `modular::frame::auto_tree_mode`;
+  hash-locks pin the mode per cell, incl. a new sectioned-engine cell
+  verified pixel-exact by djxl + jxl-rs + jxl-oxide (this round)
+
+
 - Lossless tree-learning parallel structure (all byte-identical): parallel
   stable dedup-refinement scatter (f8adc43f), per-prop node-tensor build +
   chunked subtract (2c54af38), column-parallel prequant bucketize +

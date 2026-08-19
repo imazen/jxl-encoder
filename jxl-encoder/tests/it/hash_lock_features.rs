@@ -17,6 +17,7 @@
 //!
 //! Then verify the new output decodes correctly with djxl, jxl-rs, and jxl-oxide.
 
+use jxl_encoder::api::SectionedTrees;
 use jxl_encoder::bit_writer::BitWriter;
 use jxl_encoder::headers::color_encoding::{ColorEncoding, RenderingIntent};
 use jxl_encoder::headers::extra_channels::ExtraChannelInfo;
@@ -872,10 +873,36 @@ fn lossless_defaults_rgb_48x48_noise() {
 #[test]
 fn lossless_mg_rgb_512x512_noise_e7() {
     let data = LosslessConfig::new()
+        // Pinned: this cell locks GLOBAL-tree bytes; since the 2026-08-19
+        // Auto policy, an unpinned e7 encode under a parallel multi-thread
+        // build (e.g. workspace feature unification) resolves to Sectioned.
+        .with_sectioned_trees(SectionedTrees::Off)
         .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
         "lossless_mg_rgb_512x512_noise_e7",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Sectioned-trees twin of the e7 noise cell: locks the PER-GROUP-trees
+/// engine's bytes (mode pinned On). Sectioned output is a pure function
+/// of (pixels, options) — per-group learn/encode is group-local and the
+/// merge is index-ordered — so the lock holds at any thread count.
+#[test]
+fn lossless_mg_rgb_512x512_noise_e7_sectioned() {
+    let data = LosslessConfig::new()
+        .with_sectioned_trees(SectionedTrees::On)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_512x512_noise_e7_sectioned",
         &data,
         512,
         512,
@@ -895,6 +922,8 @@ fn lossless_mg_rgb_512x512_noise_e7() {
 fn lossless_mg_rgb_512x512_noise_e5() {
     let data = LosslessConfig::new()
         .with_effort(5)
+        // Pinned global — see lossless_mg_rgb_512x512_noise_e7.
+        .with_sectioned_trees(SectionedTrees::Off)
         .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
@@ -937,6 +966,8 @@ fn lossless_mg_rgb_512x512_tiled_e8() {
 fn lossless_mg_rgb16_512x512_ramp_e5() {
     let data = LosslessConfig::new()
         .with_effort(5)
+        // Pinned global — see lossless_mg_rgb_512x512_noise_e7.
+        .with_sectioned_trees(SectionedTrees::Off)
         .encode(&ramp_noise_rgb16_512x512(), 512, 512, PixelLayout::Rgb16)
         .unwrap();
     assert_hashes(

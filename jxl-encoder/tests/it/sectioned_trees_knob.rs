@@ -63,10 +63,22 @@ fn sectioned_knob_engages_and_roundtrips_and_auto_is_budget_driven() {
         LosslessConfig::new().with_sectioned_trees(SectionedTrees::On),
     );
 
-    assert_eq!(
-        default, off,
-        "Auto under the default cap must match Off at this size"
-    );
+    // Auto policy (owner-approved 2026-08-19): sectioned at effort <= 7
+    // when the encode runs multi-threaded, global otherwise. This binary
+    // builds WITHOUT the `parallel` feature in CI (threads signal = 1),
+    // so Auto must match Off here; under an ad-hoc `--features parallel`
+    // run on a multi-core host it must match On instead.
+    if cfg!(feature = "parallel") {
+        assert_eq!(
+            default, on,
+            "Auto at e<=7 with parallel threads must match On (2026-08-19 policy)"
+        );
+    } else {
+        assert_eq!(
+            default, off,
+            "Auto without parallel threads must match Off at this size"
+        );
+    }
     assert_ne!(on, off, "On must actually change the bitstream");
     assert_eq!(decode_rgb(&off, w, h), pixels, "global-tree roundtrip");
     assert_eq!(decode_rgb(&on, w, h), pixels, "sectioned roundtrip");

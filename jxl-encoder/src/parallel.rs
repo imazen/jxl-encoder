@@ -10,9 +10,12 @@
 use crate::error::Result;
 
 /// Worker-pool width the `parallel` feature will actually use — 1 when
-/// the feature is off. Perf-dispatch signal only (e.g. the dedup
-/// dispatch trades a parallel sort pass against sequential root-learn
-/// rows); NEVER branch output-affecting logic on it.
+/// the feature is off. Perf-dispatch signal (e.g. the dedup dispatch
+/// trades a parallel sort pass against sequential root-learn rows);
+/// do NOT branch output-affecting logic on it, with ONE sanctioned
+/// exception: the owner-approved `SectionedTrees::Auto` policy
+/// (`modular::frame::auto_tree_mode`, 2026-08-19) deliberately keys the
+/// lossless e<=7 tree mode on the configured encode width.
 #[cfg(feature = "parallel")]
 pub fn effective_threads() -> usize {
     rayon::current_num_threads().max(1)

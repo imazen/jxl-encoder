@@ -430,3 +430,31 @@ patches/quant_field are all ~0 at e3. Closing e3's 1.37x is therefore a
 tokenizer/writer kernel campaign (same class as the e5 acstrat eval
 loops), not a structural/dispatch fix; parked behind the sign-off-gated
 levers (sectioned Auto policy, DCT4X4-at-e5 RD study).
+
+## Round 9 (2026-08-19) — SectionedTrees::Auto extension ships (e<=7 multi-thread -> sectioned)
+
+Owner sign-off: "extend sectioned auto, effort<=7 threads>1, keep e9
+global." Policy: `modular::frame::auto_tree_mode(effort, threads,
+memory_pressure)` — memory-pressure escape unchanged (always sectioned);
+effort <= 7 with >1 effective thread sectioned; everything else global.
+Default-features builds (no `parallel`) report 1 thread and keep global
+everywhere, so the shared hash-lock sidecar stays valid; the study bytes
+(benchmarks/lossless_sectioned_vs_global_x64_2026-08-18.tsv) carry the
+expected new-default walls: 4K photo lossless e7 t8 5.66 -> 1.49 s
+(2.8x cjxl t8), e5 t8 3.55 -> 1.16 s, at study-median +-0.0% bytes.
+e9 keeps the -0.9%/-3.4% byte wins from the global tree.
+
+Verification shipped with the change: policy unit matrix
+(`tree_mode_tests::auto_policy_matrix`); knob test now branches on
+cfg(parallel); env roundtrip test pins its global arms with
+JXL_LOSSLESS_LOCAL_TREES=0 and gained jxl-rs decode assertions; three
+global-path hash-lock cells pinned `SectionedTrees::Off`; NEW hash-lock
+cell `lossless_mg_rgb_512x512_noise_e7_sectioned` (786563 B) locks the
+sectioned engine and PROVES thread-count invariance (t1-recorded
+fingerprint matched by a 10-thread parallel build); that bitstream
+decodes pixel-exact in djxl 0.12, jxl-rs, and jxl-oxide.
+
+Nightly-gate note (pre-existing, unrelated): the zenjxl RD gate has been
+red since 2026-07-15 on cell 1025469 e9 d=2 (ours_ssim2 -0.3459 vs slack
+-0.300, deterministic every night). Bracketed to 7a6ca462..50dec9bc
+(41 commits, Jul 14-15); attribution in progress this round.

@@ -15,6 +15,65 @@ use crate::error::Result;
 use crate::headers::ColorEncoding;
 use crate::headers::frame_header::{BlendMode, FrameCrop, FrameHeader};
 
+/// Lossless tree-learning mode for one frame (see the gate in the frame
+/// writer): one learned GLOBAL tree (bytes-first), per-group SECTIONED
+/// trees (wall-first), or HYBRID (learn both, keep the cheaper — pays
+/// both learns).
+#[derive(PartialEq, Clone, Copy, Debug)]
+enum TreeMode {
+    Global,
+    Sectioned,
+    Hybrid,
+}
+
+/// `SectionedTrees::Auto` policy. Owner-approved 2026-08-19 on the
+/// 13-pick corpus study (benchmarks/lossless_sectioned_vs_global_x64_
+/// 2026-08-18.*): SECTIONED at effort <= 7 when the encode runs with
+/// more than one thread (-41..-44% wall at +0.0% median bytes), GLOBAL
+/// at e8+ (the bytes crown: e9 sectioned costs +1.9% median). The
+/// memory-pressure escape (estimated peak over the budget cap) keeps
+/// overriding to sectioned at any effort, as before.
+///
+/// `threads` is the encode's effective worker count — inside a scoped
+/// rayon pool (the CLI's --threads, or a library caller's
+/// `ThreadPool::install`) that is the configured width. OUTPUT at
+/// lossless e <= 7 therefore depends on the thread configuration by
+/// design (single-threaded encodes keep the global tree: sectioned's
+/// per-image byte variance buys nothing without the wall win). Pin
+/// `with_sectioned_trees(On/Off)` for thread-invariant output.
+fn auto_tree_mode(effort: u8, threads: usize, memory_pressure: bool) -> TreeMode {
+    if memory_pressure {
+        return TreeMode::Sectioned;
+    }
+    if effort <= 7 && threads > 1 {
+        return TreeMode::Sectioned;
+    }
+    TreeMode::Global
+}
+
+#[cfg(test)]
+mod tree_mode_tests {
+    use super::{TreeMode, auto_tree_mode};
+
+    #[test]
+    fn auto_policy_matrix() {
+        // effort <= 7 + threads > 1 => sectioned
+        for e in [1u8, 3, 5, 7] {
+            assert_eq!(auto_tree_mode(e, 8, false), TreeMode::Sectioned, "e{e} t8");
+            // single-threaded stays global
+            assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Global, "e{e} t1");
+        }
+        // e8+ stays global regardless of threads
+        for e in [8u8, 9, 10, 11] {
+            assert_eq!(auto_tree_mode(e, 8, false), TreeMode::Global, "e{e} t8");
+            assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Global, "e{e} t1");
+        }
+        // memory pressure overrides everything (the pre-existing escape)
+        assert_eq!(auto_tree_mode(9, 1, true), TreeMode::Sectioned);
+        assert_eq!(auto_tree_mode(3, 1, true), TreeMode::Sectioned);
+    }
+}
+
 /// Options for frame encoding.
 #[derive(Debug, Clone)]
 pub struct FrameEncoderOptions {
@@ -981,12 +1040,6 @@ impl FrameEncoder {
         // meta channels (no palette / ChannelCompact), no custom DC quant,
         // no patches — everything else falls through to the global-tree
         // path unchanged. Dev gate: JXL_LOSSLESS_LOCAL_TREES=1.
-        #[derive(PartialEq, Clone, Copy)]
-        enum TreeMode {
-            Global,
-            Sectioned,
-            Hybrid,
-        }
         let tree_mode = match std::env::var("JXL_LOSSLESS_LOCAL_TREES") {
             // Runtime override for A/B work, same convention as the other
             // behaviour hooks: "1" forces sectioned, "0" forces global,
@@ -999,7 +1052,7 @@ impl FrameEncoder {
                 crate::api::SectionedTrees::Off => TreeMode::Global,
                 crate::api::SectionedTrees::Hybrid => TreeMode::Hybrid,
                 crate::api::SectionedTrees::Auto => {
-                    if self.budget.as_ref().is_some_and(|b| {
+                    let memory_pressure = self.budget.as_ref().is_some_and(|b| {
                         crate::heuristics::estimate_encode(
                             self.width as u32,
                             self.height as u32,
@@ -1009,11 +1062,12 @@ impl FrameEncoder {
                             self.options.profile.effort,
                         )
                         .is_some_and(|e| e.peak_memory_bytes > b.cap())
-                    }) {
-                        TreeMode::Sectioned
-                    } else {
-                        TreeMode::Global
-                    }
+                    });
+                    auto_tree_mode(
+                        self.options.profile.effort,
+                        crate::parallel::effective_threads(),
+                        memory_pressure,
+                    )
                 }
             },
         };
