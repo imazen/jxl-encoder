@@ -58,7 +58,7 @@ fn probe(name: &str) {
     let mut r_f = Vec::with_capacity(n);
     let mut g_f = Vec::with_capacity(n);
     let mut b_f = Vec::with_capacity(n);
-    for px in raw.chunks_exact(3) {
+    for px in raw.as_chunks::<3>().0 {
         r_f.push(px[0] as f32);
         g_f.push(px[1] as f32);
         b_f.push(px[2] as f32);
@@ -151,7 +151,7 @@ fn main() {
             let mut r_f = Vec::with_capacity(n);
             let mut g_f = Vec::with_capacity(n);
             let mut b_f = Vec::with_capacity(n);
-            for px in raw.chunks_exact(3) {
+            for px in raw.as_chunks::<3>().0 {
                 r_f.push(px[0] as f32);
                 g_f.push(px[1] as f32);
                 b_f.push(px[2] as f32);

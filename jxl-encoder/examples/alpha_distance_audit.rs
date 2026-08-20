@@ -346,7 +346,12 @@ fn alpha_err(input_rgba: &[u8], decoded_rgba: &[u8]) -> (f64, u32) {
     let mut sum: u64 = 0;
     let mut maxe: u32 = 0;
     let mut n: u64 = 0;
-    for (a, b) in input_rgba.chunks_exact(4).zip(decoded_rgba.chunks_exact(4)) {
+    for (a, b) in input_rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(decoded_rgba.as_chunks::<4>().0)
+    {
         let e = (a[3] as i32 - b[3] as i32).unsigned_abs();
         sum += e as u64;
         if e > maxe {
@@ -361,7 +366,12 @@ fn rgb_mae(input_rgba: &[u8], decoded_rgba: &[u8]) -> f64 {
     assert_eq!(input_rgba.len(), decoded_rgba.len());
     let mut sum: u64 = 0;
     let mut n: u64 = 0;
-    for (a, b) in input_rgba.chunks_exact(4).zip(decoded_rgba.chunks_exact(4)) {
+    for (a, b) in input_rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(decoded_rgba.as_chunks::<4>().0)
+    {
         for c in 0..3 {
             let e = (a[c] as i32 - b[c] as i32).unsigned_abs() as u64;
             sum += e;

@@ -1303,9 +1303,7 @@ pub(crate) fn apply_lossy_palette_with_budget(
         error_rows[0] = core::mem::take(&mut error_rows[1]);
         error_rows[1] = core::mem::take(&mut error_rows[2]);
         error_rows[2] = tmp;
-        for v in &mut error_rows[2] {
-            *v = [0.0; 3];
-        }
+        error_rows[2].fill([0.0; 3]);
     }
 
     // If no deltas were actually used, set predictor to Zero

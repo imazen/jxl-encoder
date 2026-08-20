@@ -39,7 +39,9 @@ fn decode_rgb(bytes: &[u8], w: usize, h: usize) -> Vec<u8> {
     let d = zenjxl_decoder::decode(bytes).expect("decode");
     assert_eq!((d.width, d.height, d.channels), (w, h, 4));
     d.data
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| [px[0], px[1], px[2]])
         .collect()
 }

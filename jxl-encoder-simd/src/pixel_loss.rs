@@ -106,10 +106,9 @@ pub fn pixel_domain_loss_scalar(
         let error_row_start = py * block_width;
         let mask_row = &mask[mask_row_start..mask_row_start + block_width];
         let error_row = &pixel_error[error_row_start..error_row_start + block_width];
-        for (chunk_i, (mask_chunk, error_chunk)) in mask_row
-            .chunks_exact(8)
-            .zip(error_row.chunks_exact(8))
-            .enumerate()
+        let (mask_chunks, _) = mask_row.as_chunks::<8>();
+        let (error_chunks, _) = error_row.as_chunks::<8>();
+        for (chunk_i, (mask_chunk, error_chunk)) in mask_chunks.iter().zip(error_chunks).enumerate()
         {
             let _ = chunk_i;
             for j in 0..8 {
@@ -197,7 +196,9 @@ pub fn pixel_domain_loss_impl(
         let mask_row = &mask[mask_row_start..mask_row_start + block_width];
         let error_row = &pixel_error[error_row_start..error_row_start + block_width];
 
-        for (mask_chunk, error_chunk) in mask_row.chunks_exact(8).zip(error_row.chunks_exact(8)) {
+        let (mask_chunks, _) = mask_row.as_chunks::<8>();
+        let (error_chunks, _) = error_row.as_chunks::<8>();
+        for (mask_chunk, error_chunk) in mask_chunks.iter().zip(error_chunks) {
             let mask_v = f32x8::from_slice(token, mask_chunk);
             let error_v = f32x8::from_slice(token, error_chunk);
 

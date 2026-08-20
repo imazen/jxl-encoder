@@ -7076,7 +7076,9 @@ fn eval_split_prop_borrowed(
                     }
                 } else {
                     count_increase
-                        .chunks_exact_mut(HISTO_PADDED)
+                        .as_chunks_mut::<HISTO_PADDED>()
+                        .0
+                        .iter_mut()
                         .zip(extra_bits_increase.iter_mut())
                         .take(local_num_buckets)
                         .enumerate()

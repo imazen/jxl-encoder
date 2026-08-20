@@ -136,7 +136,7 @@ fn alpha_only(rgba: &[u8]) -> Vec<u8> {
 /// Extract just the RGB bytes (drop every 4th).
 fn rgb_only(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len() * 3 / 4);
-    for ch in rgba.chunks_exact(4) {
+    for ch in rgba.as_chunks::<4>().0 {
         out.extend_from_slice(&ch[..3]);
     }
     out

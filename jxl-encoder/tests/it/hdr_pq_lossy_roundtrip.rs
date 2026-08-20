@@ -69,7 +69,9 @@ fn pq_ramp_rgb16(w: usize, h: usize) -> Vec<u8> {
 
 fn pq_linear_img(samples: &[u16], w: usize, h: usize) -> Img<Vec<RGB<f32>>> {
     let px: Vec<RGB<f32>> = samples
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             let f = |v: u16| (pq_eotf(v as f32 / 65535.0) / PEAK_NITS).min(1.0);
             RGB::new(f(c[0]), f(c[1]), f(c[2]))
@@ -107,7 +109,9 @@ fn encode_and_score(pixels: &[u8], w: usize, h: usize, d: f32) -> (f64, Vec<u8>)
         .collect();
 
     let src_u16: Vec<u16> = pixels
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_ne_bytes([c[0], c[1]]))
         .collect();
     let r = pq_linear_img(&src_u16, w, h);

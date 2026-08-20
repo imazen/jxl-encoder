@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(w, 2);
         assert_eq!(h, 2);
         assert_eq!(out.len(), 2 * 2 * 3);
-        for chunk in out.chunks_exact(3) {
+        for chunk in out.as_chunks::<3>().0 {
             assert!((chunk[0] - 0.5).abs() < 1e-6);
             assert!((chunk[1] - 0.25).abs() < 1e-6);
             assert!((chunk[2] - 0.75).abs() < 1e-6);

@@ -218,14 +218,18 @@ fn hlg_lossy_quality_tracks_distance_multigroup() {
         let fb = render.image_all_channels();
         let to_img = |vals: &[f32]| -> Img<Vec<RGB<f32>>> {
             let px: Vec<RGB<f32>> = vals
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|c| RGB::new(hlg_inv_oetf(c[0]), hlg_inv_oetf(c[1]), hlg_inv_oetf(c[2])))
                 .collect();
             Img::new(px, w, h)
         };
         let dec: Vec<f32> = fb.buf().to_vec();
         let src: Vec<f32> = pixels
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_ne_bytes([c[0], c[1]]) as f32 / 65535.0)
             .collect();
         let params = ButteraugliParams::default().with_intensity_target(1_000.0);
@@ -256,7 +260,9 @@ fn pq_f32_layout_matches_integer_plus_ce() {
     let (w, h) = (256usize, 256usize);
     let u16_px = hdr_ramp_rgb16(w, h, 0.7);
     let f32_px: Vec<u8> = u16_px
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .flat_map(|c| (u16::from_ne_bytes([c[0], c[1]]) as f32 / 65535.0).to_le_bytes())
         .collect();
 
@@ -333,7 +339,9 @@ fn lossless_pixels_invariant_under_pq_tag() {
     };
 
     let src: Vec<u16> = pixels
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_ne_bytes([c[0], c[1]]))
         .collect();
     let dt = decode_u16(&tagged);
@@ -361,7 +369,7 @@ fn rgba16_pq_lossy_roundtrips_sane() {
     let (w, h) = (256usize, 256usize);
     let rgb = hdr_ramp_rgb16(w, h, 0.6);
     let mut rgba = Vec::with_capacity(w * h * 8);
-    for (i, px) in rgb.chunks_exact(6).enumerate() {
+    for (i, px) in rgb.as_chunks::<6>().0.iter().enumerate() {
         rgba.extend_from_slice(px);
         let a: u16 = if i % 7 == 0 { 0xC000 } else { 0xFFFF };
         rgba.extend_from_slice(&a.to_ne_bytes());

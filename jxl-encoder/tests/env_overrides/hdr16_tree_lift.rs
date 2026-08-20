@@ -82,7 +82,9 @@ fn lift_fires_and_is_suppressable() {
 
     // 8-bit input is untouched by the gate: byte-identical both arms.
     let pixels8: Vec<u8> = pixels
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| (u16::from_ne_bytes([c[0], c[1]]) >> 8) as u8)
         .collect();
     // SAFETY: this test holds env_serial(); no other thread touches the environment.

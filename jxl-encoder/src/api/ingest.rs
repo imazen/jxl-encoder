@@ -72,7 +72,7 @@ pub(crate) fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
             out.par_chunks_mut(3 * STRIP_PX)
                 .zip(data.par_chunks(channels * STRIP_PX))
                 .for_each(|(o, d)| {
-                    for (px, rgb) in d.chunks_exact(channels).zip(o.chunks_exact_mut(3)) {
+                    for (px, rgb) in d.chunks_exact(channels).zip(o.as_chunks_mut::<3>().0) {
                         rgb[0] = lut[px[0] as usize];
                         rgb[1] = lut[px[1] as usize];
                         rgb[2] = lut[px[2] as usize];
@@ -82,7 +82,7 @@ pub(crate) fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
         }
     }
     // zip chunks to eliminate output bounds checks; u8 index into [f32; 256] is always in bounds
-    for (px, rgb) in data.chunks_exact(channels).zip(out.chunks_exact_mut(3)) {
+    for (px, rgb) in data.chunks_exact(channels).zip(out.as_chunks_mut::<3>().0) {
         rgb[0] = lut[px[0] as usize];
         rgb[1] = lut[px[1] as usize];
         rgb[2] = lut[px[2] as usize];
@@ -129,7 +129,7 @@ pub(crate) fn hlg_ootf_luminances(
 /// distance-flat).
 pub(crate) fn apply_hlg_forward_ootf(rgb: &mut [f32], luminances: [f32; 3], gamma: f32) {
     let [lr, lg, lb] = luminances;
-    for px in rgb.chunks_exact_mut(3) {
+    for px in rgb.as_chunks_mut::<3>().0 {
         let luminance = px[0] * lr + px[1] * lg + px[2] * lb;
         let ratio = luminance.powf(gamma - 1.0);
         if ratio.is_finite() {
@@ -412,7 +412,7 @@ pub(crate) fn cmyk_u8_to_linear_f32_rgb(cmy: &[u8], k: &[u8]) -> Vec<f32> {
     debug_assert_eq!(cmy.len(), k.len() * 3);
     let inv = 1.0f32 / 255.0;
     let mut out = Vec::with_capacity(k.len() * 3);
-    for (px, &kv) in cmy.chunks_exact(3).zip(k.iter()) {
+    for (px, &kv) in cmy.as_chunks::<3>().0.iter().zip(k.iter()) {
         let one_minus_k = 1.0 - (kv as f32) * inv;
         out.push((1.0 - (px[0] as f32) * inv) * one_minus_k);
         out.push((1.0 - (px[1] as f32) * inv) * one_minus_k);
@@ -429,7 +429,7 @@ pub(crate) fn cmyk_u16_to_linear_f32_rgb(cmy: &[u8], k: &[u16], u16_max: f32) ->
     debug_assert_eq!(cmy_u16.len(), k.len() * 3);
     let inv = 1.0f32 / u16_max;
     let mut out = Vec::with_capacity(k.len() * 3);
-    for (px, &kv) in cmy_u16.chunks_exact(3).zip(k.iter()) {
+    for (px, &kv) in cmy_u16.as_chunks::<3>().0.iter().zip(k.iter()) {
         let one_minus_k = 1.0 - (kv as f32) * inv;
         out.push((1.0 - (px[0] as f32) * inv) * one_minus_k);
         out.push((1.0 - (px[1] as f32) * inv) * one_minus_k);
@@ -866,7 +866,9 @@ pub(crate) fn unpremultiply_alpha_inplace(linear_rgb_interleaved: &mut [f32], al
     const K_SMALL_ALPHA: f32 = 1.0_f32 / ((1u32 << 26) as f32);
     debug_assert_eq!(linear_rgb_interleaved.len(), alpha_u8.len() * 3);
     for (rgb, &a) in linear_rgb_interleaved
-        .chunks_exact_mut(3)
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
         .zip(alpha_u8.iter())
     {
         let a_f = (a as f32) / 255.0;

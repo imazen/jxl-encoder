@@ -80,7 +80,12 @@ fn roundtrip_psnr(rgb: &[u8], w: u32, h: u32, distance: f32) -> f64 {
     );
 
     let mut sse = 0.0f64;
-    for (src, dst) in rgb.chunks_exact(3).zip(decoded.data.chunks_exact(4)) {
+    for (src, dst) in rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(decoded.data.as_chunks::<4>().0)
+    {
         for c in 0..3 {
             let d = src[c] as i32 - dst[c] as i32;
             sse += (d * d) as f64;

@@ -2439,7 +2439,7 @@ fn read_png(
     // PNG stores 16-bit samples as big-endian. Our encoder expects native-endian u16.
     // On little-endian platforms, swap each u16's bytes.
     if info.bit_depth == png::BitDepth::Sixteen && cfg!(target_endian = "little") {
-        for pair in buf.chunks_exact_mut(2) {
+        for pair in buf.as_chunks_mut::<2>().0 {
             pair.swap(0, 1);
         }
     }
@@ -2573,7 +2573,7 @@ fn read_pnm(
 
     // PNM 16-bit is big-endian. Convert to native-endian (same as PNG path).
     if bytes_per_sample == 2 && cfg!(target_endian = "little") {
-        for pair in data.chunks_exact_mut(2) {
+        for pair in data.as_chunks_mut::<2>().0 {
             pair.swap(0, 1);
         }
     }
@@ -2766,7 +2766,7 @@ fn read_apng(path: &PathBuf) -> Result<Option<ApngResult>, Box<dyn std::error::E
         } else {
             // Strip alpha → RGB8
             let mut rgb = Vec::with_capacity(canvas_pixels * 3);
-            for px in canvas.chunks_exact(4) {
+            for px in canvas.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&px[..3]);
             }
             rgb

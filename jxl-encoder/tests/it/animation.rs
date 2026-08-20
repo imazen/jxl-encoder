@@ -1158,14 +1158,10 @@ fn rgba_invisible_noise_64() -> Vec<u8> {
             // noisy color pattern that should be smeared away.
             let visible = (16..48).contains(&y);
             let alpha = if visible { 255 } else { 0 };
-            let r;
-            let g;
-            let b;
-            if visible {
+
+            let (r, g, b) = if visible {
                 let t = (x as f32) / 63.0;
-                r = ((1.0 - t) * 255.0) as u8;
-                g = 0;
-                b = (t * 255.0) as u8;
+                (((1.0 - t) * 255.0) as u8, 0, (t * 255.0) as u8)
             } else {
                 // Pseudo-random noise (deterministic) — high-frequency
                 // garbage in the invisible region. xorshift mix on
@@ -1174,10 +1170,12 @@ fn rgba_invisible_noise_64() -> Vec<u8> {
                 s ^= s << 13;
                 s ^= s >> 17;
                 s ^= s << 5;
-                r = (s & 0xFF) as u8;
-                g = ((s >> 8) & 0xFF) as u8;
-                b = ((s >> 16) & 0xFF) as u8;
-            }
+                (
+                    (s & 0xFF) as u8,
+                    ((s >> 8) & 0xFF) as u8,
+                    ((s >> 16) & 0xFF) as u8,
+                )
+            };
             pixels.push(r);
             pixels.push(g);
             pixels.push(b);
@@ -1278,7 +1276,9 @@ fn rgba_pair_for_premul_test() -> (Vec<u8>, Vec<u8>) {
         }
     }
     let premul: Vec<u8> = straight
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|px| {
             let af = px[3] as f32 / 255.0;
             // Premultiply in linear space then re-encode to sRGB

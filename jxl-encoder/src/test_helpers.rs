@@ -667,10 +667,7 @@ pub fn calculate_ssim2(
     use imgref::ImgVec;
 
     // Convert original to [u8; 3] array format
-    let original_rgb: Vec<[u8; 3]> = original
-        .chunks_exact(3)
-        .map(|rgb| [rgb[0], rgb[1], rgb[2]])
-        .collect();
+    let original_rgb: Vec<[u8; 3]> = original.as_chunks::<3>().0.to_vec();
 
     // Convert decoded f32 back to u8 for comparison
     // (decoded is already in sRGB, just scale to 0-255)

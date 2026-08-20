@@ -425,7 +425,7 @@ fn decode_jxl_linear_rgb(bytes: &[u8]) -> Option<(usize, usize, Vec<f32>)> {
         Some((w, h, buf))
     } else {
         let mut rgb = Vec::with_capacity(w * h * 3);
-        for px in buf.chunks_exact(4) {
+        for px in buf.as_chunks::<4>().0 {
             rgb.extend_from_slice(&px[..3]);
         }
         Some((w, h, rgb))
@@ -456,7 +456,7 @@ fn srgb_u8_to_linear_planar(rgb_u8: &[u8], w: usize, h: usize) -> (Vec<f32>, Vec
     let mut r = Vec::with_capacity(n);
     let mut g = Vec::with_capacity(n);
     let mut b = Vec::with_capacity(n);
-    for px in rgb_u8.chunks_exact(3) {
+    for px in rgb_u8.as_chunks::<3>().0 {
         r.push(srgb_to_linear(px[0]));
         g.push(srgb_to_linear(px[1]));
         b.push(srgb_to_linear(px[2]));
@@ -470,7 +470,7 @@ fn interleaved_to_planar(rgb: &[f32], w: usize, h: usize) -> (Vec<f32>, Vec<f32>
     let mut rp = Vec::with_capacity(n);
     let mut gp = Vec::with_capacity(n);
     let mut bp = Vec::with_capacity(n);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0 {
         rp.push(px[0]);
         gp.push(px[1]);
         bp.push(px[2]);
@@ -515,7 +515,9 @@ fn measure_encoded(
     }
     // butteraugli wants Img<RGB<f32>>
     let dec_rgb: Vec<RGB<f32>> = dec
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| RGB::new(c[0], c[1], c[2]))
         .collect();
     let dec_img = Img::new(dec_rgb, w, h);
@@ -717,7 +719,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Reference linear (for the metric).
         let orig_planar = srgb_u8_to_linear_planar(&rgb_u8, w, h);
         let orig_rgb: Vec<RGB<f32>> = rgb_u8
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|px| {
                 RGB::new(
                     srgb_to_linear(px[0]),

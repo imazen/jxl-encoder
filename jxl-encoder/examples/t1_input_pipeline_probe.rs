@@ -256,7 +256,9 @@ fn main() {
     // distorted_jxl) and (ref_bu vs distorted_jxl). The DELTA in butteraugli
     // scores is the impact of the reference precision difference.
     let to_rgb = |v: &[f32]| -> Vec<RGB<f32>> {
-        v.chunks_exact(3)
+        v.as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| RGB::new(c[0], c[1], c[2]))
             .collect()
     };

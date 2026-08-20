@@ -290,7 +290,12 @@ fn compute_psnr_rgb_and_luma(source_rgb: &[u8], decoded_rgb: &[u8]) -> (f32, f32
     let mut sse_g = 0.0_f64;
     let mut sse_b = 0.0_f64;
     let mut sse_y = 0.0_f64;
-    for (s, d) in source_rgb.chunks_exact(3).zip(decoded_rgb.chunks_exact(3)) {
+    for (s, d) in source_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(decoded_rgb.as_chunks::<3>().0)
+    {
         let dr = s[0] as f64 - d[0] as f64;
         let dg = s[1] as f64 - d[1] as f64;
         let db = s[2] as f64 - d[2] as f64;

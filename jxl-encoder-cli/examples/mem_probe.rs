@@ -92,7 +92,7 @@ fn main() {
             let buf = img.to_rgba16();
             let raw = buf.as_raw(); // RGBA interleaved
             let mut bytes = Vec::with_capacity(raw.len() * 2);
-            for px in raw.chunks_exact(4) {
+            for px in raw.as_chunks::<4>().0 {
                 let g = px[1];
                 bytes.extend_from_slice(&px[0].to_ne_bytes());
                 bytes.extend_from_slice(&px[1].to_ne_bytes());
@@ -111,7 +111,7 @@ fn main() {
         }
         (_, "rgba") => {
             let mut buf = img.to_rgba8().into_raw();
-            for px in buf.chunks_exact_mut(4) {
+            for px in buf.as_chunks_mut::<4>().0 {
                 px[3] = px[1]; // alpha := green
             }
             (buf, PixelLayout::Rgba8)

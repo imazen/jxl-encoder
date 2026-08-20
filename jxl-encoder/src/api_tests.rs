@@ -4028,14 +4028,8 @@ mod dual_decoder_butteraugli_tests {
         use imgref::ImgVec;
 
         // Convert to [u8; 3] arrays
-        let original_rgb: Vec<[u8; 3]> = original
-            .chunks_exact(3)
-            .map(|c| [c[0], c[1], c[2]])
-            .collect();
-        let decoded_rgb: Vec<[u8; 3]> = decoded
-            .chunks_exact(3)
-            .map(|c| [c[0], c[1], c[2]])
-            .collect();
+        let original_rgb: Vec<[u8; 3]> = original.as_chunks::<3>().0.to_vec();
+        let decoded_rgb: Vec<[u8; 3]> = decoded.as_chunks::<3>().0.to_vec();
 
         let original_img = ImgVec::new(original_rgb, width, height);
         let decoded_img = ImgVec::new(decoded_rgb, width, height);

@@ -505,11 +505,15 @@ fn ssim2_srgb(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f
     use imgref::ImgVec;
 
     let orig: Vec<[u8; 3]> = original
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2]])
         .collect();
     let dec: Vec<[u8; 3]> = decoded
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2]])
         .collect();
 

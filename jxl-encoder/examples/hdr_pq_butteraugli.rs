@@ -39,7 +39,9 @@ fn load_pq_linear(path: &str) -> Img<Vec<RGB<f32>>> {
     let (w, h) = (img.width() as usize, img.height() as usize);
     let px: Vec<RGB<f32>> = img
         .as_raw()
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             let f = |v: u16| (pq_eotf(v as f32 / 65535.0) / PEAK_NITS).min(1.0);
             RGB::new(f(c[0]), f(c[1]), f(c[2]))

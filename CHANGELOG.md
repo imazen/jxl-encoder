@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- CI red on rustc 1.98.0 (stable updated 2026-08-18): the new
+  `clippy::chunks_exact_to_as_chunks` + slice-fill lints fired across
+  the workspace (SIMD pixel_loss kernel, ingest, palette, tree_learn,
+  resampling, tests, examples). All sites converted to `as_chunks` /
+  `.fill()` — output BYTE-IDENTICAL (hash-locks 49/49 in default and
+  parallel configs), MSRV 1.89 check clean. One documented allow where
+  the chunk size is `size_of::<T>()` (generic const exprs unstable)
+
 - Nightly RD gate coverage extended 12 -> 21 cells (owner-approved):
   reserved-digit CID22 images (val/test holdout endings 1/3/5/7/9)
   replaced by train-legal picks; NEW coverage for e3, aggressive d3.5

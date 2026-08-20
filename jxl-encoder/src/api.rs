@@ -70,6 +70,9 @@ pub(crate) fn cast_pixel_lanes<T: bytemuck::AnyBitPattern>(
     match bytemuck::try_cast_slice::<u8, T>(pixels) {
         Ok(lanes) => alloc::borrow::Cow::Borrowed(lanes),
         Err(_) => alloc::borrow::Cow::Owned(
+            // `as_chunks::<{size_of::<T>()}>()` needs unstable
+            // generic_const_exprs; the lint's suggestion can't apply here.
+            #[allow(clippy::chunks_exact_to_as_chunks)]
             pixels
                 .chunks_exact(core::mem::size_of::<T>())
                 .map(bytemuck::pod_read_unaligned::<T>)
