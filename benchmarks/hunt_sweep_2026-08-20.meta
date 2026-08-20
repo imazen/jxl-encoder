@@ -1,0 +1,21 @@
+# W44-170 comprehensive cjxl-parity sweep
+date: 2026-08-20
+commit: b03b2aacf114b24b8fe41588db1e0f639500fcec
+host: lilith-lianli
+cjxl_version: cjxl v0.12.0 a7a9c78 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+manifest: /home/lilith/tmp/one_img_manifest.tsv
+corpus_dir: /home/lilith/tmp/hunt-corpus
+strategies: ["zenjxl"]
+distance_grid: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
+efforts: [3, 5, 7, 9]
+time_iters: 1
+smoke: false
+wall_seconds: 11.6
+wall_minutes: 0.2
+cells_failed: 0
+decoder: jxl-oxide (srgb_linear)
+metrics: butteraugli_linear (default params); fast_ssim2 (sRGB u8 from linear)
+tsv_outputs:
+  zenjxl: /home/lilith/tmp/hunt_sweep_2026-08-20_zenjxl_2026-08-20.tsv
+reproducer (full sweep):
+  cargo run -p jxl-encoder --release --features 'parallel butteraugli-loop ssim2-loop' --example w44_170_cjxl_step025_sweep -- --corpus-manifest /home/lilith/tmp/one_img_manifest.tsv --output-prefix /home/lilith/tmp/hunt_sweep_2026-08-20 --strategies zenjxl,libjxl

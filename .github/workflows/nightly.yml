@@ -44,9 +44,10 @@ jobs:
       - name: Sparse-checkout codec corpus (test images only)
         run: |
           set -euxo pipefail
-          # The full imazen/codec-corpus repo is ~2.2 GB; we only need 9 PNG
-          # files (~2.4 MB) for the 12 locked cells. Sparse-checkout fetches
-          # only the paths the test reads.
+          # The full imazen/codec-corpus repo is ~2.2 GB; we only need the
+          # CID22 + gb82-sc PNGs for the 21 locked cells (the imazen-26
+          # cells are fetched from R2 in the next step). Sparse-checkout
+          # fetches only the paths the tests read.
           mkdir -p "$RUNNER_TEMP/codec-corpus"
           cd "$RUNNER_TEMP/codec-corpus"
           git init -q

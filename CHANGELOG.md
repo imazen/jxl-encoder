@@ -4,6 +4,26 @@
 
 ### Fixed
 
+- Nightly RD gate coverage extended 12 -> 21 cells (owner-approved):
+  reserved-digit CID22 images (val/test holdout endings 1/3/5/7/9)
+  replaced by train-legal picks; NEW coverage for e3, aggressive d3.5
+  (incl. the windows95 overshoot-contract sentinel), and doc / aliased-
+  plot / web-screenshot / ai-product / manuscript-scan content classes
+  from sha256-pinned imazen-26 R2 fetches. Verified green on aarch64 +
+  x64
+
+### Added
+
+- imazen-26 train-legal worst-performer hunt
+  (benchmarks/imazen26_hunt_2026-08-20.md): 588-cell lossy sweep +
+  lossless pass on 21 per-stratum picks. ROOT-CAUSED: the W44-109
+  adaptive-quant qf-seed lift misfires at d>=2 on screenshot-classified
+  non-screenshot content (8028 product-page capture +48%, 6006 bilevel
+  patent scan +40% — both collapse to cjxl parity with the lift
+  neutralized, single-knob A/B). Second finding: ai-clipart 9016 is
+  knob-independently off the Pareto front at e7/e9 (cjxl strictly
+  dominates); third: e3 carries a broad +2-3% bytes band
+
 - Nightly zenjxl RD gate rebaselined (owner-approved): red since 2026-07-15
   on cell 1025469 e9 d=2 (-0.3459 ssim2 vs -0.30 slack). 7 of 12 cells
   drifted Jun-11..Aug-19, every one to FEWER bytes at small ssim2 spends
