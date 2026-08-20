@@ -64,6 +64,12 @@ jobs:
           CID22/CID22-512/validation/297394.png
           CID22/CID22-512/validation/3637739.png
           CID22/CID22-512/validation/7062219.png
+          CID22/CID22-512/validation/1279330.png
+          CID22/CID22-512/validation/2079234.png
+          CID22/CID22-512/validation/2253934.png
+          CID22/CID22-512/validation/2775196.png
+          CID22/CID22-512/validation/3156482.png
+          CID22/CID22-512/validation/6292444.png
           gb82-sc/codec_wiki.png
           gb82-sc/graph.png
           gb82-sc/imac_g3.png
@@ -72,6 +78,11 @@ jobs:
           EOF
           git pull --depth=1 origin main
           ls -la CID22/CID22-512/validation/ gb82-sc/
+
+      - name: Fetch imazen-26 gate images (R2, sha256-pinned)
+        env:
+          CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
+        run: ./scripts/hunt/fetch_imazen26_gate_files.sh
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
