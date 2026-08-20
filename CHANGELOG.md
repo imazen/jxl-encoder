@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Nightly zenjxl RD gate rebaselined (owner-approved): red since 2026-07-15
+  on cell 1025469 e9 d=2 (-0.3459 ssim2 vs -0.30 slack). 7 of 12 cells
+  drifted Jun-11..Aug-19, every one to FEWER bytes at small ssim2 spends
+  and flat-or-better butteraugli (rate-seeking, not corruption); keep-best
+  CfL contributes only -0.054 of the failing cell's drift. cjxl reference
+  values unchanged; fresh ours values measured on x64
+
 - `JXL_CFL_KEEP_BEST` env hook was structurally inert: the strategy_def
   env layer only fires while a gate equals its TYPE default, and a plain
   `bool` pinned `true` by every non-Libjxl strategy could never match.

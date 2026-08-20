@@ -124,8 +124,21 @@ use std::time::Instant;
 // unchanged (same cjxl 0.12.0 run). base_ours_ms values are NOT
 // refreshed (debug-only, no assertion; measured-under-load walls are
 // not anchor-grade per benchmarks/REVISIT_QUEUE_2026-06-11.md).
-const BASELINE_COMMIT_SHA: &str = "420b6a9aa9d5a8a74359c04596b03836cd1c6583";
-const BASELINE_DATE: &str = "2026-06-11";
+// Rebaselined 2026-08-20 (owner-approved 2026-08-20, "ok to rebaseline"):
+// nightly red since 2026-07-15 on 1025469 e9 d=2 (ssim2 -0.3459 vs -0.30
+// slack). Attribution (bench round 9 addendum, 2026-08-19): keep-best CfL
+// (f5aa60b9, Jul 14) contributes only -0.054; the rest accumulated
+// Jun-11..Jul-14 inside slack. 7 of 12 cells drifted, every one to FEWER
+// bytes (windows95 e7/e8 -2.8/-2.7pp, 1418519 e6 -4.6pp, 1475938 e9
+// -1.6pp, 1025469 e9 -3.3pp) at small ssim2 spends and flat-or-better
+// butteraugli — deliberate rate-seeking, not corruption. cjxl reference
+// values unchanged (same cjxl 0.12.0 run); base_ours_ms/delta_ms NOT
+// refreshed (debug-only / wide-slack, per the 2026-06-11 precedent).
+// Fresh ours values measured on x64 (Ryzen 7900X, matches CI runner
+// bit-for-bit on bytes; encoder bytes are cross-arch stable since the
+// canonical entropy kernels).
+const BASELINE_COMMIT_SHA: &str = "b03b2aacf114b24b8fe41588db1e0f639500fcec";
+const BASELINE_DATE: &str = "2026-08-20";
 
 // ── Slack tolerances ───────────────────────────────────────────────────────
 
@@ -190,13 +203,13 @@ const LOCKED_CELLS: &[LockedCell] = &[
         base_cjxl_bytes: 38010,
         base_ours_ssim2: 88.4938,
         base_cjxl_ssim2: 88.1120,
-        base_ours_bfly: 1.402900,
+        base_ours_bfly: 1.4029,
         base_cjxl_bfly: 1.408793,
         base_ours_ms: 135.905,
         base_cjxl_ms: 304.971,
         base_delta_bytes_pct: 2.034,
         base_delta_ssim2: 0.3818,
-        base_delta_bfly_pct: -0.419,
+        base_delta_bfly_pct: -0.418,
         base_delta_ms_pct: -88.61,
     },
     LockedCell {
@@ -209,7 +222,7 @@ const LOCKED_CELLS: &[LockedCell] = &[
         base_cjxl_bytes: 104752,
         base_ours_ssim2: 91.9682,
         base_cjxl_ssim2: 91.6778,
-        base_ours_bfly: 0.805500,
+        base_ours_bfly: 0.8055,
         base_cjxl_bfly: 0.822214,
         base_ours_ms: 225.011,
         base_cjxl_ms: 472.802,
@@ -228,13 +241,13 @@ const LOCKED_CELLS: &[LockedCell] = &[
         base_cjxl_bytes: 133671,
         base_ours_ssim2: 94.3520,
         base_cjxl_ssim2: 92.2658,
-        base_ours_bfly: 0.745000,
+        base_ours_bfly: 0.7450,
         base_cjxl_bfly: 0.755738,
         base_ours_ms: 1646.3,
         base_cjxl_ms: 1014.0,
         base_delta_bytes_pct: -61.328,
         base_delta_ssim2: 2.0862,
-        base_delta_bfly_pct: -1.424,
+        base_delta_bfly_pct: -1.421,
         base_delta_ms_pct: -73.23,
     },
     // ── e6 ────────────────────────────────────────────────────────────
@@ -244,17 +257,17 @@ const LOCKED_CELLS: &[LockedCell] = &[
         relative_path: "CID22/CID22-512/validation/1418519.png",
         effort: 6,
         distance: 2.0,
-        base_ours_bytes: 15433,
+        base_ours_bytes: 14773,
         base_cjxl_bytes: 14404,
-        base_ours_ssim2: 83.5071,
+        base_ours_ssim2: 83.3672,
         base_cjxl_ssim2: 81.9194,
-        base_ours_bfly: 2.147500,
+        base_ours_bfly: 2.1236,
         base_cjxl_bfly: 2.150974,
         base_ours_ms: 313.1,
         base_cjxl_ms: 616.6,
-        base_delta_bytes_pct: 7.144,
-        base_delta_ssim2: 1.5877,
-        base_delta_bfly_pct: -0.163,
+        base_delta_bytes_pct: 2.562,
+        base_delta_ssim2: 1.4478,
+        base_delta_bfly_pct: -1.273,
         base_delta_ms_pct: -92.80,
     },
     LockedCell {
@@ -267,7 +280,7 @@ const LOCKED_CELLS: &[LockedCell] = &[
         base_cjxl_bytes: 27993,
         base_ours_ssim2: 95.2080,
         base_cjxl_ssim2: 95.0728,
-        base_ours_bfly: 0.346800,
+        base_ours_bfly: 0.3468,
         base_cjxl_bfly: 0.389995,
         base_ours_ms: 429.3,
         base_cjxl_ms: 369.2,
@@ -283,17 +296,17 @@ const LOCKED_CELLS: &[LockedCell] = &[
         relative_path: "CID22/CID22-512/validation/1531677.png",
         effort: 7,
         distance: 3.0,
-        base_ours_bytes: 31438,
+        base_ours_bytes: 31437,
         base_cjxl_bytes: 32698,
-        base_ours_ssim2: 65.3129,
+        base_ours_ssim2: 65.3190,
         base_cjxl_ssim2: 65.2641,
-        base_ours_bfly: 3.361900,
+        base_ours_bfly: 3.3619,
         base_cjxl_bfly: 3.261528,
         base_ours_ms: 478.2,
         base_cjxl_ms: 528.1,
-        base_delta_bytes_pct: -3.853,
-        base_delta_ssim2: 0.0488,
-        base_delta_bfly_pct: 3.078,
+        base_delta_bytes_pct: -3.857,
+        base_delta_ssim2: 0.0549,
+        base_delta_bfly_pct: 3.077,
         base_delta_ms_pct: -89.88,
     },
     LockedCell {
@@ -306,13 +319,13 @@ const LOCKED_CELLS: &[LockedCell] = &[
         base_cjxl_bytes: 55869,
         base_ours_ssim2: 78.4071,
         base_cjxl_ssim2: 77.9000,
-        base_ours_bfly: 2.347900,
+        base_ours_bfly: 2.3479,
         base_cjxl_bfly: 2.336734,
         base_ours_ms: 329.8,
         base_cjxl_ms: 402.2,
         base_delta_bytes_pct: 1.691,
         base_delta_ssim2: 0.5071,
-        base_delta_bfly_pct: 0.477,
+        base_delta_bfly_pct: 0.478,
         base_delta_ms_pct: -87.69,
     },
     LockedCell {
@@ -321,17 +334,17 @@ const LOCKED_CELLS: &[LockedCell] = &[
         relative_path: "gb82-sc/windows95.png",
         effort: 7,
         distance: 0.5,
-        base_ours_bytes: 49124,
+        base_ours_bytes: 47745,
         base_cjxl_bytes: 45869,
-        base_ours_ssim2: 94.0592,
+        base_ours_ssim2: 94.0465,
         base_cjxl_ssim2: 93.9788,
-        base_ours_bfly: 0.554800,
+        base_ours_bfly: 0.5547,
         base_cjxl_bfly: 0.748572,
         base_ours_ms: 388.5,
         base_cjxl_ms: 553.6,
-        base_delta_bytes_pct: 7.096,
-        base_delta_ssim2: 0.0804,
-        base_delta_bfly_pct: -25.884,
+        base_delta_bytes_pct: 4.090,
+        base_delta_ssim2: 0.0677,
+        base_delta_bfly_pct: -25.899,
         base_delta_ms_pct: -89.61,
     },
     // ── e8 (buttloop on) ──────────────────────────────────────────────
@@ -341,17 +354,17 @@ const LOCKED_CELLS: &[LockedCell] = &[
         relative_path: "CID22/CID22-512/validation/1420710.png",
         effort: 8,
         distance: 2.0,
-        base_ours_bytes: 51657,
+        base_ours_bytes: 51655,
         base_cjxl_bytes: 52481,
         base_ours_ssim2: 76.5142,
         base_cjxl_ssim2: 77.0121,
-        base_ours_bfly: 2.343100,
+        base_ours_bfly: 2.3431,
         base_cjxl_bfly: 2.495016,
         base_ours_ms: 1024.9,
         base_cjxl_ms: 1745.3,
-        base_delta_bytes_pct: -1.570,
+        base_delta_bytes_pct: -1.574,
         base_delta_ssim2: -0.4979,
-        base_delta_bfly_pct: -6.088,
+        base_delta_bfly_pct: -6.089,
         base_delta_ms_pct: -91.70,
     },
     LockedCell {
@@ -360,17 +373,17 @@ const LOCKED_CELLS: &[LockedCell] = &[
         relative_path: "gb82-sc/windows95.png",
         effort: 8,
         distance: 0.5,
-        base_ours_bytes: 45909,
+        base_ours_bytes: 44671,
         base_cjxl_bytes: 53534,
-        base_ours_ssim2: 93.7581,
+        base_ours_ssim2: 93.7644,
         base_cjxl_ssim2: 94.1815,
-        base_ours_bfly: 0.551800,
+        base_ours_bfly: 0.5584,
         base_cjxl_bfly: 0.623475,
         base_ours_ms: 1550.4,
         base_cjxl_ms: 1709.5,
-        base_delta_bytes_pct: -14.243,
-        base_delta_ssim2: -0.4234,
-        base_delta_bfly_pct: -11.494,
+        base_delta_bytes_pct: -16.556,
+        base_delta_ssim2: -0.4171,
+        base_delta_bfly_pct: -10.437,
         base_delta_ms_pct: -91.74,
     },
     // ── e9 (max effort) ───────────────────────────────────────────────
@@ -380,17 +393,17 @@ const LOCKED_CELLS: &[LockedCell] = &[
         relative_path: "CID22/CID22-512/validation/1475938.png",
         effort: 9,
         distance: 1.0,
-        base_ours_bytes: 32099,
+        base_ours_bytes: 31573,
         base_cjxl_bytes: 32355,
-        base_ours_ssim2: 87.6275,
+        base_ours_ssim2: 87.3768,
         base_cjxl_ssim2: 87.9583,
-        base_ours_bfly: 1.171100,
+        base_ours_bfly: 1.1583,
         base_cjxl_bfly: 1.101691,
         base_ours_ms: 1437.5,
         base_cjxl_ms: 2608.7,
-        base_delta_bytes_pct: -0.791,
-        base_delta_ssim2: -0.3308,
-        base_delta_bfly_pct: 6.303,
+        base_delta_bytes_pct: -2.417,
+        base_delta_ssim2: -0.5815,
+        base_delta_bfly_pct: 5.138,
         base_delta_ms_pct: -90.94,
     },
     LockedCell {
@@ -399,26 +412,26 @@ const LOCKED_CELLS: &[LockedCell] = &[
         relative_path: "CID22/CID22-512/validation/1025469.png",
         effort: 9,
         distance: 2.0,
-        base_ours_bytes: 20203,
+        base_ours_bytes: 19518,
         base_cjxl_bytes: 21008,
-        base_ours_ssim2: 78.5006,
+        base_ours_ssim2: 78.1547,
         base_cjxl_ssim2: 78.8558,
-        base_ours_bfly: 2.073100,
+        base_ours_bfly: 2.0591,
         base_cjxl_bfly: 2.075254,
         base_ours_ms: 1792.3,
         base_cjxl_ms: 2570.6,
-        base_delta_bytes_pct: -3.832,
-        base_delta_ssim2: -0.3552,
-        base_delta_bfly_pct: -0.102,
+        base_delta_bytes_pct: -7.093,
+        base_delta_ssim2: -0.7011,
+        base_delta_bfly_pct: -0.778,
         base_delta_ms_pct: -90.84,
     },
 ];
 
 /// Aggregate over the 12 locked cells (mean of per-cell deltas).
 /// Computed offline from [`LOCKED_CELLS`] (verified at test runtime).
-const BASELINE_MEAN_BYTES_PCT: f64 = -5.274;
-const BASELINE_MEAN_DELTA_SSIM2: f64 = 0.2925;
-const BASELINE_MEAN_DELTA_BFLY_PCT: f64 = -4.069;
+const BASELINE_MEAN_BYTES_PCT: f64 = -6.507;
+const BASELINE_MEAN_DELTA_SSIM2: f64 = 0.2311;
+const BASELINE_MEAN_DELTA_BFLY_PCT: f64 = -4.228;
 const BASELINE_MEAN_MS_PCT: f64 = -88.92;
 
 // ── Corpus + I/O ───────────────────────────────────────────────────────────
