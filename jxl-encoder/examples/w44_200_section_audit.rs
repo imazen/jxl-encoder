@@ -412,15 +412,42 @@ fn main() {
     )
     .unwrap();
 
+    // Optional CLI override: `<image.png> <distance> [label]` audits an
+    // arbitrary cell instead of the historical W44-200 pair (added for
+    // the 2026-08-21 mechanism-2 9016 investigation; the no-arg default
+    // is unchanged).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cells: Vec<(String, String, f32)> = if args.len() >= 2 {
+        let label = args
+            .get(2)
+            .cloned()
+            .unwrap_or_else(|| "CLI_CELL".to_string());
+        vec![(
+            label,
+            args[0].clone(),
+            args[1].parse().expect("distance f32"),
+        )]
+    } else {
+        vec![
+            (
+                "3637739_LOSER".to_string(),
+                IMG_3637739.to_string(),
+                DISTANCE,
+            ),
+            (
+                "1418519_WINNER".to_string(),
+                IMG_1418519.to_string(),
+                DISTANCE,
+            ),
+        ]
+    };
     let mut all_results = Vec::new();
-    for (label, src) in [
-        ("3637739_LOSER", IMG_3637739),
-        ("1418519_WINNER", IMG_1418519),
-    ] {
+    for (label, src, distance) in &cells {
+        let (label, src) = (label.as_str(), src.as_str());
         let results = run_cell(
             label,
             Path::new(src),
-            DISTANCE,
+            *distance,
             EFFORT,
             &dump_path,
             &hfg_dump_path,
