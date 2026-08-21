@@ -1,0 +1,19 @@
+# Quiet callgrind re-profile — issue #64 step-0 confirmation (2026-08-21)
+# Box: devbox WSL2 7950X, idle (valgrind single-threaded, --threads 1)
+# Commit: dbc2e583 (main). Command per cell:
+#   valgrind --tool=callgrind ./target/release/cjxl-rs <img> out.jxl -q 100 -e 5 --threads 1
+# Cells: 5332 NOAA doc 2550x3300 (8.4 MP), 8106 web screenshot 1440x900.
+#
+# Confirms ADDENDUM-4 ranking with quiet absolute shares (Ir self-cost),
+# near-identical across both classes:
+#   WeightedPredictorState::predict_and_properties  16.4% / 15.6%
+#   collect_residuals_with_tree_offset_with_budget  11.2% / 10.3%
+#   Neighbors::gather (2 instantiations)             6.2% /  5.8%
+#   estimate_cost (incl. cmp.rs attribution)         6.3% /  5.9%
+#   find_text_like_patches_with_min_peak             3.4% /  3.3%  (load-bearing per issue #72 — NOT waste)
+#   gather_samples_strided inner                     2.2% /  2.1%
+#   find_best_split: NOT in top-14 at e5 on either class ("not split-bound" confirmed)
+# Verdict: the June share-swing question is settled for the doc/screenshot
+# classes at e5 — collect/gather/WP cores dominate; no computed-and-
+# discarded waste found. Next lever on #64 remains MABSplit (photo/e7
+# split-bound cells) and WP-core work, not gather SIMD (stays rejected).

@@ -1,0 +1,60 @@
+--------------------------------------------------------------------------------
+Profile data file '/home/lilith/tmp/cg_5332_e5.out' (creator: callgrind-3.26.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 8791842485
+Trigger: Program termination
+Profiled target:  ./target/release/cjxl-rs /home/lilith/work/codec-corpus/imazen-26/5300-noaa-hurricane-documents/5332_noaa_nhc-al132023-lee_p01_2550x3300.png /home/lilith/tmp/cg.jxl -q 100 -e 5 --threads 1 (PID 2823422, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       99
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                      
+--------------------------------------------------------------------------------
+56,325,962,389 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+9,257,530,636 (16.44%)  work/zen/jxl-encoder/jxl-encoder/src/modular/predictor.rs:<jxl_encoder::modular::predictor::WeightedPredictorState>::predict_and_property [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+6,316,208,848 (11.21%)  work/zen/jxl-encoder/jxl-encoder/src/modular/tree_learn.rs:jxl_encoder::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+2,069,686,620 ( 3.67%)  work/zen/jxl-encoder/jxl-encoder/src/modular/predictor.rs:<jxl_encoder::modular::predictor::Neighbors>::gather [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+2,020,463,059 ( 3.59%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:jxl_encoder::modular::encode::estimate_cost
+1,932,207,278 ( 3.43%)  work/zen/jxl-encoder/jxl-encoder/src/vardct/patches.rs:jxl_encoder::vardct::patches::find_text_like_patches_with_min_peak [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+1,730,467,258 ( 3.07%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:jxl_encoder::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp
+1,514,959,469 ( 2.69%)  work/zen/jxl-encoder/jxl-encoder/src/modular/encode.rs:jxl_encoder::modular::encode::estimate_cost [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+1,404,208,260 ( 2.49%)  work/zen/jxl-encoder/jxl-encoder/src/modular/channel.rs:<jxl_encoder::modular::predictor::Neighbors>::gather
+1,225,659,330 ( 2.18%)  work/zen/jxl-encoder/jxl-encoder/src/modular/predictor.rs:jxl_encoder::modular::tree_learn::gather_samples_strided_with_budget_inner_backend
+1,176,690,264 ( 2.09%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/uint_macros.rs:<jxl_encoder::modular::predictor::WeightedPredictorState>::predict_and_property
+1,077,704,954 ( 1.91%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+1,059,894,000 ( 1.88%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:<jxl_encoder::modular::predictor::WeightedPredictorState>::predict_and_property
+  960,259,886 ( 1.70%)  work/zen/jxl-encoder/jxl-encoder/src/entropy_coding/encode.rs:jxl_encoder::entropy_coding::encode::encode_token_value_with_config [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+  909,244,427 ( 1.61%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/int_macros.rs:jxl_encoder::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp
+  908,820,000 ( 1.61%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/int_macros.rs:<jxl_encoder::modular::predictor::WeightedPredictorState>::predict_and_property
+  890,615,710 ( 1.58%)  work/zen/jxl-encoder/jxl-encoder/src/modular/predictor.rs:jxl_encoder::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp
+  862,538,062 ( 1.53%)  work/zen/jxl-encoder/jxl-encoder/src/entropy_coding/ans.rs:jxl_encoder::entropy_coding::encode_ans::write_tokens_ans
+  807,418,932 ( 1.43%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:jxl_encoder::modular::encode::estimate_cost
+  781,131,976 ( 1.39%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:<jxl_encoder::modular::predictor::WeightedPredictorState>::predict_and_property
+  758,099,910 ( 1.35%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:jxl_encoder::entropy_coding::encode_ans::write_tokens_ans
+  701,707,440 ( 1.25%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:<jxl_encoder::modular::predictor::Neighbors>::gather
+  689,766,900 ( 1.22%)  work/zen/jxl-encoder/jxl-encoder/src/modular/tree_learn.rs:jxl_encoder::modular::tree_learn::gather_samples_strided_with_budget_inner_backend [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+  657,025,382 ( 1.17%)  work/zen/jxl-encoder/jxl-encoder/src/entropy_coding/encode_ans.rs:jxl_encoder::entropy_coding::encode_ans::write_tokens_ans [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+  632,374,850 ( 1.12%)  work/zen/jxl-encoder/jxl-encoder/src/entropy_coding/histogram.rs:<jxl_encoder::entropy_coding::histogram::Histogram>::add [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+  591,229,023 ( 1.05%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/collections/btree/search.rs:<jxl_encoder::entropy_coding::encode_ans::AccumulatedAnsData>::add_tokens
+  579,049,410 ( 1.03%)  work/zen/jxl-encoder/jxl-encoder/src/modular/channel.rs:jxl_encoder::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp
+  557,412,455 ( 0.99%)  work/zen/jxl-encoder/jxl-encoder/src/modular/tree_learn.rs:jxl_encoder::modular::tree_learn::dedup_samples_packed_sort [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+  431,328,630 ( 0.77%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/num/uint_macros.rs:jxl_encoder::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp
+  412,772,236 ( 0.73%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cmp.rs:jxl_encoder::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp
+  406,694,598 ( 0.72%)  work/zen/jxl-encoder/jxl-encoder/src/entropy_coding/hybrid_uint.rs:jxl_encoder::modular::encode::estimate_cost
+  369,691,556 ( 0.66%)  work/zen/jxl-encoder/jxl-encoder/src/entropy_coding/hybrid_uint.rs:jxl_encoder::entropy_coding::encode::encode_token_value_with_config
+  336,793,140 ( 0.60%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:jxl_encoder::modular::tree_learn::gather_samples_strided_with_budget_inner_backend
+  302,952,597 ( 0.54%)  work/zen/jxl-encoder/jxl-encoder/src/modular/tree_learn.rs:jxl_encoder::modular::tree_learn::estimate_token_cost [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
+  302,940,000 ( 0.54%)  work/zen/jxl-encoder/jxl-encoder/src/modular/predictor.rs:jxl_encoder::modular::encode::estimate_cost
+  279,126,352 ( 0.50%)  .rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/collections/btree/map/entry.rs:<alloc::collections::btree::map::entry::Entry<u32, u32>>::or_insert [/home/lilith/work/zen/jxl-encoder/target/release/cjxl-rs]
