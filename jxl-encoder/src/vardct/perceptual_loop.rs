@@ -1230,8 +1230,25 @@ impl VarDctEncoder {
             BUTTLOOP_QF_SEED_SCALE_MIN_DISTANCE,
             buttloop_qf_seed_scale_min_distance,
         );
+        // W44-230 (2026-08-20): textured-low-colour exclude — the e8/e9
+        // buttloop twin of the e5-7 W44-109-side exclude in
+        // `perceptual_tuning::resolved_adaptive_quant_qf_seed_scale_with_policy`.
+        // Photo-in-screenshot-clothing / scan-texture content (high
+        // luma_var, sparse edges) leaks the low-colour sub-band and takes
+        // the 4x seed with +26..48% bytes vs cjxl at e9 d>=2 (8028 /
+        // 6006, `benchmarks/imazen26_hunt_2026-08-20.md`). Same
+        // discriminator + env escape as the tuning-side exclude.
+        let w44_230_env =
+            std::env::var_os("JXL_W44_230_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
+        let w44_230_textured = self.resolved_improvements.textured_low_colour_exclude
+            && !w44_230_env
+            && w44_108_low_colour
+            && super::perceptual_tuning::w44_230_is_textured_low_colour(
+                self.zenanalyze_proxies.as_ref(),
+            );
         let auto_gate_fires = is_screenshot
             && low_colour_p25_ok
+            && !w44_230_textured
             && (target_distance >= buttloop_min_distance
                 || (w44_108_low_colour
                     && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
@@ -3826,6 +3843,109 @@ mod tuning_tests {
         }
     }
 
+    fn proxies_edge(
+        luma_var: f32,
+        fcbr: f32,
+        m3: f32,
+        edge_density: f32,
+    ) -> crate::vardct::encoder::ZenanalyzeProxies {
+        crate::vardct::encoder::ZenanalyzeProxies {
+            m3_colourfulness: m3,
+            flat_color_block_ratio: fcbr,
+            edge_density,
+            luma_var,
+        }
+    }
+
+    /// W44-230 exclude matrix: probe-measured proxies from the
+    /// 2026-08-20 imazen-26 train-legal hunt
+    /// (`benchmarks/imazen26_hunt_2026-08-20.md`). Sub-band cell
+    /// (d=2.0, low-colour, saturated p25) so the W44-108 path admits;
+    /// the W44-230 exclude must then fire ONLY on the textured
+    /// misfires.
+    #[test]
+    fn w44_230_excludes_textured_misfires_keeps_ui_winners() {
+        let cells = [
+            // (name, lv, fcbr, m3, edge, expect_excluded)
+            ("8028_product_capture", 3889.0, 0.801, 11.01, 0.099, true),
+            ("6006_bilevel_scan", 3245.0, 0.875, 0.0, 0.055, true),
+            ("imac_g3", 5244.0, 0.775, 14.29, 0.131, false),
+            ("windows", 3434.0, 0.769, 20.04, 0.129, false),
+            ("imac_dark", 3303.0, 0.728, 20.96, 0.152, false),
+            ("gmessages", 1046.0, 0.899, 10.16, 0.048, false),
+            ("gui", 1051.0, 0.858, 10.05, 0.069, false),
+            ("graph", 415.0, 0.809, 11.75, 0.079, false),
+            ("8106_web_text", 1430.0, 0.738, 19.92, 0.151, false),
+        ];
+        for (name, lv, fcbr, m3, edge, expect_excluded) in cells {
+            let p = proxies_edge(lv, fcbr, m3, edge);
+            let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+                7,
+                0,
+                true,
+                2.0,
+                Some(m3),
+                Some(99.0), // saturated p25 — the task-12 gate admits
+                crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+                Some(&p),
+                false, // terminal_class_exclude off — isolate W44-230
+                false, // high_colour_class_exclude
+                true,  // textured_low_colour_exclude ON (Zenjxl default)
+            );
+            if expect_excluded {
+                assert_eq!(scale, 1.0, "{name} must be excluded by W44-230");
+            } else {
+                assert_eq!(
+                    scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
+                    "{name} must keep the W44-109 lift"
+                );
+            }
+        }
+    }
+
+    /// W44-230 off (Libjxl/LeanFaster) preserves pre-W44-230 behaviour
+    /// on the misfire proxies.
+    #[test]
+    fn w44_230_exclude_off_preserves_lift() {
+        let p = proxies_edge(3889.0, 0.801, 11.01, 0.099);
+        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+            7,
+            0,
+            true,
+            2.0,
+            Some(11.01),
+            Some(99.0),
+            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            Some(&p),
+            false,
+            false,
+            false, // textured_low_colour_exclude OFF
+        );
+        assert_eq!(scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7);
+    }
+
+    /// W44-230 is scoped to the LOW-COLOUR band: a high-colour cell with
+    /// textured proxies is untouched by it (the high-colour main band
+    /// stays ledger-#32 territory).
+    #[test]
+    fn w44_230_high_colour_band_unaffected() {
+        let p = proxies_edge(4149.0, 0.780, 43.88, 0.092); // 9016 proxies
+        let scale = resolved_adaptive_quant_qf_seed_scale_with_policy(
+            7,
+            0,
+            true,
+            4.0, // main band
+            Some(43.88),
+            None,
+            crate::api::AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            Some(&p),
+            false,
+            false,
+            true, // W44-230 ON — must not fire outside low-colour
+        );
+        assert_eq!(scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7);
+    }
+
     #[test]
     fn w44_176_is_terminal_class_terminal_fires() {
         // terminal proxies (W44-176 probe): luma_var=1706, fcbr=0.833
@@ -3912,6 +4032,7 @@ mod tuning_tests {
             Some(&p),
             true,  // terminal_class_exclude
             false, // high_colour_class_exclude
+            false, // textured_low_colour_exclude (W44-230 has its own tests)
         );
         assert_eq!(
             scale, 1.0,
@@ -3936,6 +4057,7 @@ mod tuning_tests {
             Some(&p),
             false, // terminal_class_exclude OFF
             false, // high_colour_class_exclude
+            false, // textured_low_colour_exclude (W44-230 has its own tests)
         );
         assert_eq!(
             scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
@@ -3968,6 +4090,7 @@ mod tuning_tests {
                 Some(&p),
                 true,  // terminal_class_exclude ON
                 false, // high_colour_class_exclude
+                false, // textured_low_colour_exclude (W44-230 has its own tests)
             );
             assert_eq!(
                 scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,

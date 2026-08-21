@@ -221,6 +221,7 @@ jxl_encoder_macros::strategy_def! {
             // itself is already off via `adaptive_quant_qf_seed = Off`,
             // making this a redundancy guard).
             high_colour_class_exclude = false,
+            textured_low_colour_exclude = false,
             // Section C CfL Newton: flip to libjxl bit-exact params.
             // Safe here because every other divergence is also flipped
             // (no W44-29..W44-172 calibration to throw off).
@@ -310,6 +311,7 @@ jxl_encoder_macros::strategy_def! {
             // `adaptive_quant_qf_seed = Off` so this is a redundancy
             // guard like terminal_class_exclude above.
             high_colour_class_exclude = false,
+            textured_low_colour_exclude = false,
             // W44-184: NOT a per-image gate; LeanFaster keeps Zenjxl's
             // cost-model calibration which is incompatible with the
             // libjxl-parity Newton (W44-183 measured 25/27 regressions).
@@ -387,6 +389,7 @@ jxl_encoder_macros::strategy_def! {
             // of the +44% bytes wedge at e7 d=4). Composes with the
             // W44-176 terminal exclude via OR.
             high_colour_class_exclude = true,
+            textured_low_colour_exclude = true,
             cfl_newton_libjxl_parity = false,
             // #74 task #10: keep-best CfL Pass-2 guard ON (default; ships the
             // aliased-line-art rate win, quality-neutral).
@@ -481,6 +484,7 @@ jxl_encoder_macros::strategy_def! {
             // for the next opt-in chunk with a too-narrow auto-
             // discriminator for the Zenjxl bundle).
             high_colour_class_exclude = true,
+            textured_low_colour_exclude = true,
             cfl_newton_libjxl_parity = false,
             // #74 task #10: keep-best CfL Pass-2 guard ON.
             cfl_keep_best = None,
@@ -686,6 +690,18 @@ jxl_encoder_macros::strategy_def! {
         high_colour_class_exclude: bool {
             divergence_section = "B",
             divergence_row_ref = "W44-AUDIT-6 high-colour-class exclude from W44-109",
+        },
+
+        /// W44-230 (2026-08-20): exclude textured-content low-colour
+        /// "screenshots" (photo-in-screenshot-clothing, scan texture)
+        /// from the W44-109 adaptive-quant qf-seed lift: high BT.601
+        /// luma variance WITHOUT the dense UI edges true screenshots
+        /// have. Third companion of `terminal_class_exclude` /
+        /// `high_colour_class_exclude`; composes via OR inside the
+        /// W44-109 gate. Section B.
+        textured_low_colour_exclude: bool {
+            divergence_section = "B",
+            divergence_row_ref = "W44-230 textured-low-colour exclude from W44-109",
         },
 
         // ── Section C CfL Newton parity ──────────────────────────────
@@ -1257,6 +1273,12 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "B",
         row_ref: "W44-AUDIT-6 high-colour-class exclude from W44-109",
         raw: __CUSTOM_DIVERGENCE_HIGH_COLOUR_CLASS_EXCLUDE,
+    },
+    DivergenceEntry {
+        gate_name: "textured_low_colour_exclude",
+        section: "B",
+        row_ref: "W44-230 textured-low-colour exclude from W44-109",
+        raw: __CUSTOM_DIVERGENCE_TEXTURED_LOW_COLOUR_EXCLUDE,
     },
     // Section C — CfL Newton parity
     DivergenceEntry {

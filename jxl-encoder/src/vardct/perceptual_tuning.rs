@@ -339,6 +339,35 @@ pub const W44_176_TERMINAL_CLASS_LUMA_VAR_MAX: f32 = 2200.0;
 /// design + probe corpus + safety margins.
 pub const W44_176_TERMINAL_CLASS_FCBR_MIN: f32 = 0.70;
 
+/// W44-230 (2026-08-20): textured-low-colour exclude — `luma_var` lower
+/// bound. Excludes photo-in-screenshot-clothing / scan-texture content
+/// from the W44-109 lift inside the W44-108 low-colour band (m3 < 24).
+///
+/// Discriminator design (imazen-26 train-legal hunt,
+/// `benchmarks/imazen26_hunt_2026-08-20.md`): the misfires carry HIGH
+/// luma variance with SPARSE edges (photographic / scan texture), while
+/// every high-variance SHIP winner has dense UI edges:
+///
+/// - MISFIRE (exclude): 8028 product-page capture (lv 3889, edge 0.099,
+///   e7 d2 +47.7% bytes vs cjxl), 6006 bilevel patent scan (lv 3245,
+///   edge 0.055, +39.8%) — both collapse to cjxl parity with the lift
+///   off (`benchmarks/hunt_knob_probe_2026-08-20.tsv`).
+/// - KEEP (winners): imac_g3 lv 5244 edge 0.131, windows lv 3434 edge
+///   0.129, imac_dark lv 3303 edge 0.152 (edge above the cut);
+///   terminal lv 1706, 8106 lv 1430, gmessages/gui lv ~1050, graph
+///   lv 415 (lv below the cut).
+///
+/// Thresholds at the geometric midpoints (the 2026-06-12 m3-ceiling
+/// precedent): lv cut sqrt(1706 x 3245) = 2353 (nearest keep -27%,
+/// nearest exclude +27%); edge cut sqrt(0.099 x 0.129) = 0.113
+/// (nearest exclude -13%, nearest keep +14%).
+pub const W44_230_TEXTURED_LOW_COLOUR_LUMA_VAR_MIN: f32 = 2353.0;
+
+/// W44-230: textured-low-colour exclude — `edge_density` upper bound.
+/// See [`W44_230_TEXTURED_LOW_COLOUR_LUMA_VAR_MIN`] for the full
+/// discriminator design + probe corpus + margins.
+pub const W44_230_TEXTURED_LOW_COLOUR_EDGE_DENSITY_MAX: f32 = 0.113;
+
 /// W44-109: maximum effort at which the screenshot-class adaptive-quant
 /// pre-scale fires. Mirrors the W44-105 buttloop seed-scale mechanism
 /// but at adaptive_quant time, before the buttloop runs (the buttloop
@@ -690,6 +719,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
         /* proxies */ None,
         /* terminal_class_exclude */ false,
         /* high_colour_class_exclude */ false,
+        /* textured_low_colour_exclude */ false,
     )
 }
 
@@ -704,6 +734,25 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
 /// narrow — it only fires when both proxies are present AND in the
 /// terminal band, otherwise the W44-108 sub-gate behaviour is
 /// preserved.
+/// W44-230: does this image look like textured CONTENT wearing
+/// screenshot clothing (photo-in-a-UI-frame, scan texture) rather than
+/// a true flat-UI screenshot? High BT.601 luma variance WITHOUT the
+/// dense edges genuine UI text/chrome produces. Scoped by the caller
+/// to the W44-108 low-colour band. Returns `false` when proxies are
+/// absent (non-sRGB-u8 layouts) — fail-open preserves pre-W44-230
+/// behaviour there. See
+/// [`W44_230_TEXTURED_LOW_COLOUR_LUMA_VAR_MIN`] for design + margins.
+#[inline]
+pub(crate) fn w44_230_is_textured_low_colour(
+    proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
+) -> bool {
+    let Some(p) = proxies else {
+        return false;
+    };
+    p.luma_var >= W44_230_TEXTURED_LOW_COLOUR_LUMA_VAR_MIN
+        && p.edge_density <= W44_230_TEXTURED_LOW_COLOUR_EDGE_DENSITY_MAX
+}
+
 #[inline]
 pub(crate) fn w44_176_is_terminal_class(
     proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
@@ -745,6 +794,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
     terminal_class_exclude: bool,
     high_colour_class_exclude: bool,
+    textured_low_colour_exclude: bool,
 ) -> f32 {
     // Off policy short-circuits before the gate evaluation: Libjxl
     // strategy never pre-scales.
@@ -803,6 +853,23 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     let exclude_env =
         std::env::var_os("JXL_W44_176_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
     if terminal_class_exclude && !exclude_env && w44_176_is_terminal_class(proxies) {
+        return 1.0;
+    }
+    // W44-230: textured-low-colour exclude — suppress the lift when the
+    // low-colour band admitted textured CONTENT (photo-in-screenshot-
+    // clothing, scan texture: high luma_var + sparse edges). Measured on
+    // the 2026-08-20 imazen-26 train-legal hunt: 8028 e7 d2 +47.7% /
+    // 6006 e7 d2 +39.8% bytes vs cjxl with butteraugli overshoot and
+    // distance-monotonicity breaks; both land at cjxl parity with the
+    // lift off. Env hook for A/B: `JXL_W44_230_DISABLE=1` forces the
+    // exclude OFF.
+    let w44_230_env =
+        std::env::var_os("JXL_W44_230_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
+    if textured_low_colour_exclude
+        && !w44_230_env
+        && w44_108_low_colour
+        && w44_230_is_textured_low_colour(proxies)
+    {
         return 1.0;
     }
     // W44-AUDIT-6 Phase 1+3: high-colour-class exclude

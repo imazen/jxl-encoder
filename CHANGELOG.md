@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- W44-230: the screenshot qf-seed lift no longer misfires on textured
+  content wearing screenshot clothing (product-page captures, bilevel
+  scan texture) — new low-colour-band exclude on `luma_var >= 2353 AND
+  edge_density <= 0.113`, wired in BOTH lift paths (W44-109 e<=7 and
+  the e8/e9 buttloop seed). Hunt misfires collapse to cjxl
+  parity-or-better at every effort (8028 mean +16.4% -> -2.7%, 6006
+  +14.2% -> -1.3%); gb82-sc protection set byte-identical (132 cells,
+  0 diffs); RD gate zero-drift. Env escape JXL_W44_230_DISABLE=1
+
 - CI red on rustc 1.98.0 (stable updated 2026-08-18): the new
   `clippy::chunks_exact_to_as_chunks` + slice-fill lints fired across
   the workspace (SIMD pixel_loss kernel, ingest, palette, tree_learn,

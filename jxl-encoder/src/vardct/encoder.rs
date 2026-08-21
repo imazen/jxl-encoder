@@ -4560,6 +4560,8 @@ impl VarDctEncoder {
             // (their proxies fail the M3 >= 80 discriminator).
             let terminal_class_exclude = self.resolved_improvements.terminal_class_exclude;
             let high_colour_class_exclude = self.resolved_improvements.high_colour_class_exclude;
+            let textured_low_colour_exclude =
+                self.resolved_improvements.textured_low_colour_exclude;
             let qf_pre_scale =
                 super::perceptual_tuning::resolved_adaptive_quant_qf_seed_scale_with_policy(
                     self.effort,
@@ -4575,6 +4577,7 @@ impl VarDctEncoder {
                     self.zenanalyze_proxies.as_ref(),
                     terminal_class_exclude,
                     high_colour_class_exclude,
+                    textured_low_colour_exclude,
                 );
             if qf_pre_scale != 1.0 {
                 // W44-145 INVESTIGATION HONEST-STOP (2026-05-21): per-block
