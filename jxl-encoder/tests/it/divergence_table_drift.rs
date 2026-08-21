@@ -91,7 +91,7 @@ use std::path::PathBuf;
 /// W44-AUDIT-5 Phase 3 added `cfl_pass1_screenshot_x0_start` Section C gate → 30.
 /// W44-AUDIT-9 / SA-G Fix C added `cfl_zero_for_search` Section C gate → 31.
 /// #74 task #10 added `cfl_keep_best` Section C gate → 32.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 32;
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 33;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -239,7 +239,7 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
 }
 
 /// Acceptance gate (a) — macro-emitted divergence-entry count matches
-/// the expected 24-gate count. Catches "added a gate to macro but didn't
+/// the expected 33-gate count. Catches "added a gate to macro but didn't
 /// list it in ALL_DIVERGENCE_ENTRIES".
 #[test]
 fn divergence_gate_count_matches_expected() {
