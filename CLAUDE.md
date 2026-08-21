@@ -550,10 +550,17 @@ measurement at equal or better coverage.
   on WSL2 swing ±120 MB from glibc adaptive-arena policy — pin
   `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072` for memory A/Bs.
   (issue #64 chunk 1, benchmarks/perf_hist_sub{,_lossless}_2026-06-10.meta)
-- Lossless-graphics gap vs cjxl (#74 "match always") is HETEROGENEOUS and
-  correlates with background dominance (top_color_pct): sparse docs > ~80 %
-  LOSE (5336 +26 %, 5340 +6 %, 5342 +9 %), lower win (5334 −53 %, 5324 −25 %),
-  palette-friendly win big (8222 499-colour −68 %). Four global levers RULED
+- Lossless-graphics gap vs cjxl (#74 "match always") — RE-MEASURED
+  2026-08-21 (`benchmarks/noaa_lossless_refresh_2026-08-21.tsv`, 22
+  train-legal NOAA docs, HEAD b21cba67): **at e7 we now WIN every doc**
+  (−1.1 % to −75 %, 5336 −11.8 %, 5340 −9.5 %, 5342 −2.9 %; the July
+  "+29.6 % e7 residual" claim is stale — property-pre-quant parity thread
+  CLOSED, no work needed). At e5 a small tail still loses: 5332 +11.9 %,
+  5342 +9.5 %, 5338 +7.2 %, 5326 +8.1 %, 5336 +0.5 % (self-repair
+  holding). Historical record (2026-07-14, pre-self-repair-arc): sparse
+  docs > ~80 % top_color_pct lost 5336 +26 %, 5340 +6 %, 5342 +9 %;
+  lower won (5334 −53 %, 5324 −25 %), palette-friendly won big (8222
+  499-colour −68 %). Four global levers RULED
   OUT (2026-07-14, don't re-try): context-map ANS+LZ77 writer is ALREADY at
   parity; histogram cap 128→256 is a NO-OP (clustering picks cost-optimal
   ≤128; CLUSTERS_LIMIT=256); global tree-threshold sweep helps ONLY the 5336
