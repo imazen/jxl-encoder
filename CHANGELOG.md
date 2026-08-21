@@ -91,6 +91,9 @@
 
 ### Changed
 
+- MSRV raised 1.89 -> 1.93 (zenanalyze 0.2.0 dependency; matches the
+  house 'Rust 1.93+' policy)
+
 - `SectionedTrees::Auto` (lossless) now selects SECTIONED per-group trees
   at effort <= 7 when the encode runs multi-threaded (`parallel` feature,
   >1 effective thread); effort >= 8 and single-threaded runs keep the

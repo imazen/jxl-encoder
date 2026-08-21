@@ -7,7 +7,7 @@ license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 repository = "https://github.com/imazen/jxl-encoder"
 homepage = "https://github.com/imazen/jxl-encoder"
 authors = ["Lilith River"]
-rust-version = "1.89"
+rust-version = "1.93"
 publish = false
 
 [lints]

@@ -49,7 +49,7 @@ license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 repository = "https://github.com/imazen/jxl-encoder"
 homepage = "https://github.com/imazen/jxl-encoder"
 authors = ["Lilith River"]
-rust-version = "1.89"
+rust-version = "1.93"
 
 # Use imazen/jxl-oxide fork until the fix in commit fd4e2c3 lands upstream.
 # The fork carries a patch that lets jxl-oxide accept multi-group VarDCT/patches
