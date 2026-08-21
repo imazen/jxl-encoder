@@ -767,6 +767,10 @@ required-features = ["butteraugli-loop"]
 # Score pre-encoded .jxl files vs a source PNG (jxl-oxide-linear + Rust
 # butteraugli + fast-ssim2). Reusable A/B quality validator for out-of-band arms.
 [[example]]
+name = "ssim2_png_pair"
+required-features = ["ssim2-loop"]
+
+[[example]]
 name = "score_jxl_files"
 path = "examples/score_jxl_files.rs"
 required-features = ["butteraugli-loop"]
