@@ -2177,6 +2177,56 @@ pub fn adjust_quant_field(ac_strategy: &AcStrategyMap, quant_field: &mut [u8]) {
     adjust_quant_field_with_distance(ac_strategy, quant_field, 0.0);
 }
 
+/// W44-232: re-integerize the u8 raw-quant field for MULTI-BLOCK covered
+/// cells from the already-adjusted FLOAT field.
+///
+/// libjxl reduces the multi-block quant field on the float field and
+/// integerizes once (`AdjustQuantField` → `SetQuantFieldRect`). Adjusting
+/// the u8 field independently double-rounds (integerize → reduce → round),
+/// which flipped the per-block raw quant by ±1 on 10-20 % of ≥2-block
+/// strategies (mechanism-2 value diff, cells 7063/9016, 2026-08-21:
+/// every diverging coefficient traced to a qac 7-vs-8 style flip; both
+/// directions occur — coarser = quality holes on 1-D chart content,
+/// finer = wasted bytes). Call this AFTER
+/// [`adjust_quant_field_float_with_distance`] instead of running the u8
+/// adjust beside it. Single-block cells are left untouched — the float
+/// adjust never modifies them, so re-rounding would be a no-op by
+/// construction (and skipping them keeps this immune to any later
+/// `inv_scale` drift).
+///
+/// The u8 [`adjust_quant_field_with_distance`] remains for the
+/// pre-quantized rate-control entry points (`encode_from_precomputed*`),
+/// which receive an externally-built u8 field with no float counterpart.
+pub fn requantize_multiblock_from_float(
+    ac_strategy: &AcStrategyMap,
+    quant_field_float: &[f32],
+    quant_field: &mut [u8],
+    inv_scale: f32,
+) {
+    let xsize_blocks = ac_strategy.xsize_blocks;
+    for by in 0..ac_strategy.ysize_blocks {
+        for bx in 0..ac_strategy.xsize_blocks {
+            if !ac_strategy.is_first(bx, by) {
+                continue;
+            }
+            let cx = ac_strategy.covered_blocks_x(bx, by);
+            let cy = ac_strategy.covered_blocks_y(bx, by);
+            if cx == 1 && cy == 1 {
+                continue;
+            }
+            for iy in 0..cy {
+                for ix in 0..cx {
+                    let idx = (by + iy) * xsize_blocks + bx + ix;
+                    // Same round-to-nearest as `quantize_quant_field`
+                    // (libjxl ClampVal: trunc(qf*inv_scale + 0.5)).
+                    let val = (quant_field_float[idx] * inv_scale + 0.5) as i32;
+                    quant_field[idx] = val.clamp(1, 255) as u8;
+                }
+            }
+        }
+    }
+}
+
 // ─── Top-level API ──────────────────────────────────────────────────────────
 
 /// Process a single tile's AC strategy selection.
@@ -2878,6 +2928,42 @@ mod tests {
         assert_eq!(qf[4], 5);
         // Other blocks unchanged
         assert_eq!(qf[1], 2);
+    }
+
+    /// W44-232: the multi-block quant-field reduction must run on the FLOAT
+    /// field with ONE final integerization (libjxl AdjustQuantField →
+    /// SetQuantFieldRect). Reducing the already-integerized u8 field
+    /// double-rounds and flips the block's raw quant by ±1 — the
+    /// mechanism-2 root cause (cells 7063/9016, 2026-08-21). This vector
+    /// reproduces the exact observed 7-vs-8 flip.
+    #[test]
+    fn w44_232_float_adjust_then_requantize_beats_u8_double_round() {
+        let mut map = AcStrategyMap::new_dct8(4, 4);
+        map.set(0, 0, RAW_STRATEGY_DCT16X16); // 2x2 covered => mean/max blend
+
+        let mut qff = vec![3.0f32; 16];
+        for &idx in &[0usize, 1, 4, 5] {
+            qff[idx] = 7.3;
+        }
+        qff[5] = 8.3;
+
+        // d=3.0 => mean_max_mixer ~0.1775. Float blend:
+        // 0.1775*8.3 + 0.8225*(7.55) = 7.683 -> requantize 8.
+        let mut qf_new = crate::vardct::adaptive_quant::quantize_quant_field(&qff, 1.0);
+        let mut qff_adj = qff.clone();
+        adjust_quant_field_float_with_distance(&map, &mut qff_adj, 3.0);
+        requantize_multiblock_from_float(&map, &qff_adj, &mut qf_new, 1.0);
+        for &idx in &[0usize, 1, 4, 5] {
+            assert_eq!(qf_new[idx], 8, "float-order path at covered cell {idx}");
+        }
+        // Non-covered cell untouched by requantize (round(3.0*1.0+0.5)=3).
+        assert_eq!(qf_new[10], 3);
+
+        // The legacy u8-space adjust on the same input double-rounds to 7:
+        // u8 {7,7,7,8} -> blend 0.1775*8 + 0.8225*7.25 = 7.383 -> 7.
+        let mut qf_old = crate::vardct::adaptive_quant::quantize_quant_field(&qff, 1.0);
+        adjust_quant_field_with_distance(&map, &mut qf_old, 3.0);
+        assert_eq!(qf_old[0], 7, "u8 double-round path (kept for rate-control)");
     }
 
     #[test]

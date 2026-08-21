@@ -2102,15 +2102,19 @@ impl VarDctEncoder {
             )
         };
 
-        super::ac_strategy::adjust_quant_field_with_distance(
-            &ac_strategy,
-            &mut quant_field,
-            self.distance,
-        );
+        // W44-232: float-adjust then re-integerize covered cells — libjxl's
+        // AdjustQuantField → SetQuantFieldRect order. The previous u8-space
+        // adjust double-rounded (±1 raw-quant flips on large blocks).
         super::ac_strategy::adjust_quant_field_float_with_distance(
             &ac_strategy,
             &mut quant_field_float,
             self.distance,
+        );
+        super::ac_strategy::requantize_multiblock_from_float(
+            &ac_strategy,
+            &quant_field_float,
+            &mut quant_field,
+            params.inv_scale,
         );
 
         // CfL pass 2: recompute CfL map using actual AC strategies and per-block

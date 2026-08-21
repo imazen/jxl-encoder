@@ -5,7 +5,7 @@
 //! Main tiny encoder implementation.
 
 use super::ac_strategy::{
-    AcStrategyMap, adjust_quant_field_float_with_distance, adjust_quant_field_with_distance,
+    AcStrategyMap, adjust_quant_field_float_with_distance,
     compute_ac_strategy,
 };
 use super::adaptive_quant::quantize_quant_field;
@@ -5588,9 +5588,18 @@ impl VarDctEncoder {
 
         // Adjust quant field for multi-block transforms.
         // At low distances uses max, at high distances blends toward mean for better quality.
-        // Adjust BOTH u8 and float fields (libjxl adjusts float before SetQuantField).
-        adjust_quant_field_with_distance(&ac_strategy, &mut quant_field, self.distance);
+        // W44-232: libjxl reduces on the FLOAT field then integerizes once
+        // (AdjustQuantField → SetQuantFieldRect). Adjust the float field and
+        // re-integerize the covered cells from it — the previous independent
+        // u8-space adjust double-rounded and flipped raw quant ±1 on 10-20 %
+        // of large blocks (mechanism-2 root cause, 2026-08-21).
         adjust_quant_field_float_with_distance(&ac_strategy, &mut quant_field_float, self.distance);
+        super::ac_strategy::requantize_multiblock_from_float(
+            &ac_strategy,
+            &quant_field_float,
+            &mut quant_field,
+            params.inv_scale,
+        );
 
         // CfL pass 2: recompute CfL map using actual AC strategies and per-block
         // quantization weighting. Uses the same FindBestMultiplier as pass 1 but
@@ -6922,7 +6931,11 @@ impl VarDctEncoder {
 
         // Copy and adjust quant field for multi-block transforms
         let mut quant_field = quant_field.to_vec();
-        adjust_quant_field_with_distance(&precomputed.ac_strategy, &mut quant_field, self.distance);
+        super::ac_strategy::adjust_quant_field_with_distance(
+            &precomputed.ac_strategy,
+            &mut quant_field,
+            self.distance,
+        );
 
         // Compute distance params from effort profile
         let mut params = match self.original_distance {
@@ -7415,7 +7428,11 @@ impl VarDctEncoder {
         // `transform_and_quantize` would have applied internally before
         // calling encode_two_pass.
         let mut quant_field = quant_field.to_vec();
-        adjust_quant_field_with_distance(&precomputed.ac_strategy, &mut quant_field, self.distance);
+        super::ac_strategy::adjust_quant_field_with_distance(
+            &precomputed.ac_strategy,
+            &mut quant_field,
+            self.distance,
+        );
 
         let mut params = match self.original_distance {
             Some(orig) if orig > self.distance => {
