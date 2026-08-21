@@ -417,15 +417,19 @@ fn main() {
     // the 2026-08-21 mechanism-2 9016 investigation; the no-arg default
     // is unchanged).
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let cells: Vec<(String, String, f32)> = if args.len() >= 2 {
+    let cells: Vec<(String, String, f32, u8)> = if args.len() >= 2 {
         let label = args
             .get(2)
             .cloned()
             .unwrap_or_else(|| "CLI_CELL".to_string());
+        let effort: u8 = args
+            .get(3)
+            .map_or(EFFORT, |v| v.parse().expect("effort u8"));
         vec![(
             label,
             args[0].clone(),
             args[1].parse().expect("distance f32"),
+            effort,
         )]
     } else {
         vec![
@@ -433,22 +437,24 @@ fn main() {
                 "3637739_LOSER".to_string(),
                 IMG_3637739.to_string(),
                 DISTANCE,
+                EFFORT,
             ),
             (
                 "1418519_WINNER".to_string(),
                 IMG_1418519.to_string(),
                 DISTANCE,
+                EFFORT,
             ),
         ]
     };
     let mut all_results = Vec::new();
-    for (label, src, distance) in &cells {
+    for (label, src, distance, effort) in &cells {
         let (label, src) = (label.as_str(), src.as_str());
         let results = run_cell(
             label,
             Path::new(src),
             *distance,
-            EFFORT,
+            *effort,
             &dump_path,
             &hfg_dump_path,
             &co_dump_path,
