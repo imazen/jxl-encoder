@@ -389,6 +389,15 @@ fn run_cell(
     results
 }
 
+/// `$HOME/tmp` — the only sanctioned scratch root (`/tmp` is wiped
+/// mid-session; CLAUDE.md "/tmp IS BANNED"). Falls back to the system
+/// temp dir only when `$HOME` is unset.
+fn scratch_root() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("tmp"))
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 fn main() {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -409,9 +418,18 @@ fn main() {
     } else {
         bench_dir.join("w44_200_section_audit_2026-05-22.tsv")
     };
-    let dump_path = PathBuf::from("/tmp/w44_200_ours_subsection_dump.tsv");
-    let hfg_dump_path = PathBuf::from("/tmp/w44_200_ours_hfglobal_dump.tsv");
-    let co_dump_path = PathBuf::from("/tmp/w44_200_ours_coefforder_dump.tsv");
+    // Scratch dumps live under `$HOME/tmp` (never `/tmp` — it gets wiped
+    // mid-session; see CLAUDE.md) in a label-scoped dir so a new cell run
+    // never clobbers an earlier cell's dumps.
+    let dump_label = cli_args
+        .get(2)
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_else(|| "2026-05-22".to_string());
+    let scratch = scratch_root().join(format!("w44_200_dumps_{dump_label}"));
+    std::fs::create_dir_all(&scratch).expect("mkdir w44_200 scratch");
+    let dump_path = scratch.join("ours_subsection_dump.tsv");
+    let hfg_dump_path = scratch.join("ours_hfglobal_dump.tsv");
+    let co_dump_path = scratch.join("ours_coefforder_dump.tsv");
     let _ = std::fs::remove_file(&dump_path);
     let _ = std::fs::remove_file(&hfg_dump_path);
     let _ = std::fs::remove_file(&co_dump_path);
@@ -589,5 +607,7 @@ fn print_delta_table(results: &[CellResult]) {
     eprintln!("NOTE: For single-group images (512×512), cjxl emits ONE combined");
     eprintln!("section under TocGroupKind::All (counted in `all` column). OURS likewise");
     eprintln!("emits one combined section for single-group/single-pass — sub-section");
-    eprintln!("breakdown for OURS comes from /tmp/w44_200_ours_subsection_dump.tsv.");
+    eprintln!(
+        "breakdown for OURS comes from $HOME/tmp/w44_200_dumps_<label>/ours_subsection_dump.tsv."
+    );
 }

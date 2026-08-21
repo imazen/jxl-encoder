@@ -22,7 +22,7 @@
 //!   way that DOESN'T happen on 1418519 (the WINNER baseline)?
 //!
 //! Output: benchmarks/w44_199_3637739_ac_dump_2026-05-22.tsv
-//!         /tmp/w44_199_dumps/<image>_e7_d4_{ours,cjxl}/per_block_*.tsv
+//!         $HOME/tmp/w44_199_dumps_<label>/<image>_e7_d4_{ours,cjxl}/per_block_*.tsv
 //!
 //! Run:
 //!   cargo run -p jxl-encoder --release \
@@ -183,7 +183,7 @@ fn encode_cjxl(
     effort: u8,
     dump_dir: Option<&Path>,
 ) -> Option<(Vec<u8>, f64)> {
-    let tmp = std::env::temp_dir().join(format!(
+    let tmp = scratch_root().join(format!(
         "w44_199_cjxl_{}_e{}_d{}.jxl",
         src_png.file_stem().unwrap().to_string_lossy(),
         effort,
@@ -394,6 +394,15 @@ fn run_one(
     }
 }
 
+/// `$HOME/tmp` — the only sanctioned scratch root (`/tmp` is wiped
+/// mid-session; CLAUDE.md "/tmp IS BANNED"). Falls back to the system
+/// temp dir only when `$HOME` is unset.
+fn scratch_root() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("tmp"))
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 fn main() {
     // CLI override: `<image.png> <distance> <label> [effort]` dumps an
     // arbitrary cell to label-derived outputs (2026-08-21 mechanism-2
@@ -405,11 +414,11 @@ fn main() {
         let label = args[2].to_ascii_lowercase();
         tsv_path = out_dir.join(format!("w44_199_ac_dump_{label}.tsv"));
         meta_path = out_dir.join(format!("w44_199_ac_dump_{label}.meta"));
-        dump_root = PathBuf::from(format!("/home/lilith/tmp/w44_199_dumps_{label}"));
+        dump_root = scratch_root().join(format!("w44_199_dumps_{label}"));
     } else {
         tsv_path = out_dir.join("w44_199_3637739_ac_dump_2026-05-22.tsv");
         meta_path = out_dir.join("w44_199_3637739_ac_dump_2026-05-22.meta");
-        dump_root = PathBuf::from("/tmp/w44_199_dumps");
+        dump_root = scratch_root().join("w44_199_dumps");
     }
     std::fs::create_dir_all(&dump_root).expect("mkdir dumps");
 
@@ -476,10 +485,10 @@ fn main() {
 #       Honest-stop and propose Candidate (c) buttloop next.
 #
 # Per-block strategy dumps (libjxl-wire space, both sides):
-#   /tmp/w44_199_dumps/3637739_LOSER_e{EFFORT}_d{distance_i}_ours/per_block_ours.tsv
-#   /tmp/w44_199_dumps/3637739_LOSER_e{EFFORT}_d{distance_i}_cjxl/per_block_libjxl.tsv
-#   /tmp/w44_199_dumps/1418519_WINNER_e{EFFORT}_d{distance_i}_ours/per_block_ours.tsv
-#   /tmp/w44_199_dumps/1418519_WINNER_e{EFFORT}_d{distance_i}_cjxl/per_block_libjxl.tsv
+#   $HOME/tmp/w44_199_dumps/3637739_LOSER_e{EFFORT}_d{distance_i}_ours/per_block_ours.tsv
+#   $HOME/tmp/w44_199_dumps/3637739_LOSER_e{EFFORT}_d{distance_i}_cjxl/per_block_libjxl.tsv
+#   $HOME/tmp/w44_199_dumps/1418519_WINNER_e{EFFORT}_d{distance_i}_ours/per_block_ours.tsv
+#   $HOME/tmp/w44_199_dumps/1418519_WINNER_e{EFFORT}_d{distance_i}_cjxl/per_block_libjxl.tsv
 #
 # 3x3 spatial region grid (region indices (ry, rx) where (0,0)=top-left):
 #   top: r00 r01 r02
