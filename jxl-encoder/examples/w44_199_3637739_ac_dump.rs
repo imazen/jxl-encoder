@@ -287,20 +287,27 @@ fn measure(
     })
 }
 
-fn run_one(src_path: &Path, label: &str, tsv: &mut std::fs::File, dump_root: &Path) {
+fn run_one(
+    src_path: &Path,
+    label: &str,
+    tsv: &mut std::fs::File,
+    dump_root: &Path,
+    distance: f32,
+    effort: u8,
+) {
     let (rgb, w, h) = load_png(src_path).unwrap_or_else(|| panic!("load {}", src_path.display()));
     eprintln!("=== {} ({}x{}) ===", label, w, h);
     let orig_lin = rgb_to_linear_img(&rgb, w, h);
     let orig_srgb = rgb_to_srgb_arr3(&rgb, w, h);
 
     // OURS with W44-76 dump
-    let ours_dump = dump_root.join(format!("{}_e{}_d{}_ours", label, EFFORT, DISTANCE as i32));
+    let ours_dump = dump_root.join(format!("{}_e{}_d{}_ours", label, effort, distance as i32));
     std::fs::create_dir_all(&ours_dump).unwrap();
     // SAFETY: single-threaded harness, child encode runs sequentially.
     unsafe {
         std::env::set_var("JXL_W44_76_PER_BLOCK_DUMP", &ours_dump);
     }
-    let Some((ours_bytes, ours_ms)) = encode_ours(&rgb, w, h, DISTANCE, EFFORT) else {
+    let Some((ours_bytes, ours_ms)) = encode_ours(&rgb, w, h, distance, effort) else {
         eprintln!("  ours encode FAILED");
         return;
     };
@@ -317,9 +324,9 @@ fn run_one(src_path: &Path, label: &str, tsv: &mut std::fs::File, dump_root: &Pa
     );
 
     // CJXL with W44-76 dump
-    let cjxl_dump = dump_root.join(format!("{}_e{}_d{}_cjxl", label, EFFORT, DISTANCE as i32));
+    let cjxl_dump = dump_root.join(format!("{}_e{}_d{}_cjxl", label, effort, distance as i32));
     std::fs::create_dir_all(&cjxl_dump).unwrap();
-    let Some((cjxl_bytes, cjxl_ms)) = encode_cjxl(src_path, DISTANCE, EFFORT, Some(&cjxl_dump))
+    let Some((cjxl_bytes, cjxl_ms)) = encode_cjxl(src_path, distance, effort, Some(&cjxl_dump))
     else {
         eprintln!("  cjxl encode FAILED");
         return;
@@ -343,7 +350,7 @@ fn run_one(src_path: &Path, label: &str, tsv: &mut std::fs::File, dump_root: &Pa
         write!(
             tsv,
             "{}\t{}\t{}\t{}\t{}\t{:.2}\t{:.6}\t{:.4}",
-            label, enc_label, EFFORT, DISTANCE, r.bytes, r.encode_ms, r.global_bfly, r.global_ssim2
+            label, enc_label, effort, distance, r.bytes, r.encode_ms, r.global_bfly, r.global_ssim2
         )
         .unwrap();
         for ry in 0..3 {
@@ -379,10 +386,22 @@ fn run_one(src_path: &Path, label: &str, tsv: &mut std::fs::File, dump_root: &Pa
 }
 
 fn main() {
+    // CLI override: `<image.png> <distance> <label> [effort]` dumps an
+    // arbitrary cell to label-derived outputs (2026-08-21 mechanism-2
+    // extension); no-arg default = the historical W44-199 pair.
+    let args: Vec<String> = std::env::args().skip(1).collect();
     let out_dir = PathBuf::from("/home/lilith/work/zen/jxl-encoder/benchmarks");
-    let tsv_path = out_dir.join("w44_199_3637739_ac_dump_2026-05-22.tsv");
-    let meta_path = out_dir.join("w44_199_3637739_ac_dump_2026-05-22.meta");
-    let dump_root = PathBuf::from("/tmp/w44_199_dumps");
+    let (tsv_path, meta_path, dump_root);
+    if args.len() >= 3 {
+        let label = args[2].to_ascii_lowercase();
+        tsv_path = out_dir.join(format!("w44_199_ac_dump_{label}.tsv"));
+        meta_path = out_dir.join(format!("w44_199_ac_dump_{label}.meta"));
+        dump_root = PathBuf::from(format!("/home/lilith/tmp/w44_199_dumps_{label}"));
+    } else {
+        tsv_path = out_dir.join("w44_199_3637739_ac_dump_2026-05-22.tsv");
+        meta_path = out_dir.join("w44_199_3637739_ac_dump_2026-05-22.meta");
+        dump_root = PathBuf::from("/tmp/w44_199_dumps");
+    }
     std::fs::create_dir_all(&dump_root).expect("mkdir dumps");
 
     let mut tsv = OpenOptions::new()
@@ -399,12 +418,25 @@ fn main() {
     )
     .unwrap();
 
-    let cases: &[(&str, &str)] = &[
-        ("3637739_LOSER", IMG_3637739),
-        ("1418519_WINNER", IMG_1418519),
-    ];
-    for (label, path) in cases {
-        run_one(Path::new(path), label, &mut tsv, &dump_root);
+    let cases: Vec<(String, String, f32, u8)> = if args.len() >= 3 {
+        let d: f32 = args[1].parse().expect("distance f32");
+        let e: u8 = args
+            .get(3)
+            .map_or(EFFORT, |v| v.parse().expect("effort u8"));
+        vec![(args[2].clone(), args[0].clone(), d, e)]
+    } else {
+        vec![
+            ("3637739_LOSER".into(), IMG_3637739.into(), DISTANCE, EFFORT),
+            (
+                "1418519_WINNER".into(),
+                IMG_1418519.into(),
+                DISTANCE,
+                EFFORT,
+            ),
+        ]
+    };
+    for (label, path, d, e) in &cases {
+        run_one(Path::new(path), label, &mut tsv, &dump_root, *d, *e);
     }
 
     eprintln!();
