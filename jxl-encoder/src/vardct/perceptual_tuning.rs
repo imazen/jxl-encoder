@@ -833,7 +833,14 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     // stay byte-identical. `None` (the legacy wrapper / callers that don't
     // thread p25) maps to `true` → behaviour unchanged there. See
     // [`BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25`].
-    let low_colour_p25_ok = !w44_108_low_colour
+    // W44-231 training hook: `JXL_QFSEED_P25_DISABLE=1` bypasses the
+    // task-12 p25 exclude so the learned-admission label harness can
+    // measure the raw-band lift on p25-excluded content. No production
+    // effect when unset.
+    let p25_env =
+        std::env::var_os("JXL_QFSEED_P25_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
+    let low_colour_p25_ok = p25_env
+        || !w44_108_low_colour
         || mask1x1_p25.is_none_or(|p25| p25 >= BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25);
     let gate_fires = low_colour_p25_ok
         && (target_distance >= min_distance

@@ -1211,7 +1211,11 @@ impl VarDctEncoder {
         // `mask1x1 == None` (non-screenshot / mask not materialised) →
         // `true`, preserving pre-fix behaviour. See
         // [`BUTTLOOP_QF_SEED_SCALE_SUB_BAND_MIN_P25`].
-        let low_colour_p25_ok = !w44_108_low_colour
+        // W44-231 training hook — see the tuning-side twin.
+        let p25_env =
+            std::env::var_os("JXL_QFSEED_P25_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
+        let low_colour_p25_ok = p25_env
+            || !w44_108_low_colour
             || match mask1x1 {
                 Some(m) => {
                     super::encoder::percentile_mask1x1(
