@@ -142,6 +142,12 @@ pub fn dump_block(
 // `JXL_W44_201_COEFFS_STRATEGY=<wire>` (default: 5 = DCT32X32) and
 // `JXL_W44_201_COEFFS_CHANNEL=<c>` (default: 1 = Y). One TSV per
 // caller-invocation is overwritten; zero overhead when env var unset.
+//
+// W44-76 value-diff extension (2026-08-21): strategy/channel `255` =
+// WILDCARD (dump everything). When either target is 255 the rows carry
+// the full 6-col `bx\tby\tstrategy\tchannel\tpos\tvalue` format matching
+// the instrumented-cjxl `per_block_libjxl_coeffs.tsv`; targeted mode
+// keeps the legacy 4-col format for the W44-201 example's parser.
 
 #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
 static COEFFS_STATE: Mutex<Option<CoeffsDumpState>> = Mutex::new(None);
@@ -212,7 +218,11 @@ fn ensure_coeffs_initialized(dir: &std::path::Path) {
         "# W44-201 per-position coefficient dump (strategy_wire={}, channel={})",
         target_strategy_wire, target_channel
     );
-    let _ = writeln!(bw, "bx\tby\tposition\tvalue");
+    if target_strategy_wire == 255 || target_channel == 255 {
+        let _ = writeln!(bw, "bx\tby\tstrategy\tchannel\tpos\tvalue");
+    } else {
+        let _ = writeln!(bw, "bx\tby\tposition\tvalue");
+    }
     *guard = Some(CoeffsDumpState {
         file: bw,
         rows: 0,
@@ -237,24 +247,41 @@ pub fn dump_coeffs(bx: usize, by: usize, raw_strategy: u8, channel: usize, full_
     let mut guard = COEFFS_STATE.lock().unwrap();
     let Some(state) = guard.as_mut() else { return };
     let strategy_wire = STRATEGY_CODE_LUT[raw_strategy as usize];
-    if strategy_wire != state.target_strategy_wire {
+    let wildcard = state.target_strategy_wire == 255 || state.target_channel == 255;
+    if state.target_strategy_wire != 255 && strategy_wire != state.target_strategy_wire {
         return;
     }
-    if channel as u8 != state.target_channel {
+    if state.target_channel != 255 && channel as u8 != state.target_channel {
         return;
     }
     use std::io::Write;
     // Emit a sentinel row per block first so we can count blocks even when
     // all coefficients are zero (which DOES happen at high distances on
     // very smooth tiles). pos=-1, value=0 marks "block exists".
-    let _ = writeln!(state.file, "{}\t{}\t-1\t0", bx, by);
+    if wildcard {
+        let _ = writeln!(
+            state.file,
+            "{}\t{}\t{}\t{}\t-1\t0",
+            bx, by, strategy_wire, channel
+        );
+    } else {
+        let _ = writeln!(state.file, "{}\t{}\t-1\t0", bx, by);
+    }
     state.rows += 1;
     for (pos, &v) in full_block.iter().enumerate() {
         if v != 0 {
             // Only dump non-zero positions to keep file size manageable.
             // For zero-vs-nonzero comparison, that's all we need; the
             // post-processor reconstructs the per-position zero count.
-            let _ = writeln!(state.file, "{}\t{}\t{}\t{}", bx, by, pos, v);
+            if wildcard {
+                let _ = writeln!(
+                    state.file,
+                    "{}\t{}\t{}\t{}\t{}\t{}",
+                    bx, by, strategy_wire, channel, pos, v
+                );
+            } else {
+                let _ = writeln!(state.file, "{}\t{}\t{}\t{}", bx, by, pos, v);
+            }
             state.rows += 1;
         }
     }

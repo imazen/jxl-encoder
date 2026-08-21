@@ -304,8 +304,14 @@ fn run_one(
     let ours_dump = dump_root.join(format!("{}_e{}_d{}_ours", label, effort, distance as i32));
     std::fs::create_dir_all(&ours_dump).unwrap();
     // SAFETY: single-threaded harness, child encode runs sequentially.
+    // W44-76 value diff (2026-08-21): the W44-201 coeff dump in wildcard
+    // mode (255/255) emits per_position_coeffs.tsv with the same 6-col
+    // format as the instrumented cjxl's per_block_libjxl_coeffs.tsv.
     unsafe {
         std::env::set_var("JXL_W44_76_PER_BLOCK_DUMP", &ours_dump);
+        std::env::set_var("JXL_W44_201_COEFFS_DUMP", &ours_dump);
+        std::env::set_var("JXL_W44_201_COEFFS_STRATEGY", "255");
+        std::env::set_var("JXL_W44_201_COEFFS_CHANNEL", "255");
     }
     let Some((ours_bytes, ours_ms)) = encode_ours(&rgb, w, h, distance, effort) else {
         eprintln!("  ours encode FAILED");
@@ -313,6 +319,9 @@ fn run_one(
     };
     unsafe {
         std::env::remove_var("JXL_W44_76_PER_BLOCK_DUMP");
+        std::env::remove_var("JXL_W44_201_COEFFS_DUMP");
+        std::env::remove_var("JXL_W44_201_COEFFS_STRATEGY");
+        std::env::remove_var("JXL_W44_201_COEFFS_CHANNEL");
     }
     let Some(ours_r) = measure(&ours_bytes, ours_ms, &orig_lin, &orig_srgb, w, h) else {
         eprintln!("  ours measure FAILED");
