@@ -48,8 +48,14 @@ fn main() {
             ColorPrimaries::BT709,
         )
         .expect("source Rgb");
-        let distorted = Rgb::new(dec, w, h, TransferCharacteristic::SRGB, ColorPrimaries::BT709)
-            .expect("distorted Rgb");
+        let distorted = Rgb::new(
+            dec,
+            w,
+            h,
+            TransferCharacteristic::SRGB,
+            ColorPrimaries::BT709,
+        )
+        .expect("distorted Rgb");
         let ssim2 = compute_frame_ssimulacra2(source, distorted).expect("ssim2");
         println!("{label}\tssim2={ssim2:.4}");
     }

@@ -5,8 +5,7 @@
 //! Main tiny encoder implementation.
 
 use super::ac_strategy::{
-    AcStrategyMap, adjust_quant_field_float_with_distance,
-    compute_ac_strategy,
+    AcStrategyMap, adjust_quant_field_float_with_distance, compute_ac_strategy,
 };
 use super::adaptive_quant::quantize_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map};
