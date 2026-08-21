@@ -20,7 +20,7 @@ path = "src/main.rs"
 
 [features]
 profile-phases = ["jxl_encoder/profile-phases"]
-default = ["jxl_encoder/std", "butteraugli-loop", "parallel", "parallel-tree-learning"]
+default = ["jxl_encoder/std", "jxl_encoder/learned-admission", "butteraugli-loop", "parallel", "parallel-tree-learning"]
 debug-tokens = ["jxl_encoder/debug-tokens"]
 # W44-27 diagnostic: per-block AdjustQuantBlockAC firing-rate counters
 investigate-adjust-quant-block-ac = ["jxl_encoder/investigate-adjust-quant-block-ac"]
