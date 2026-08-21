@@ -123,3 +123,4 @@ zensim-gpu = { path = "../zenmetrics/crates/zensim-gpu" }
 # but pinning to 0.3.x here keeps the dep tree consistent with
 # zensim-gpu.
 zensim = { path = "../zensim/zensim" }
+zenanalyze = { path = "../zenanalyze" }

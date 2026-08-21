@@ -37,6 +37,7 @@ pub(crate) mod perceptual_loop;
 // from `perceptual_loop` (which is gated behind `butteraugli-loop`). The core
 // encoder + the `tuning::buttloop` re-export reference these symbols
 // unconditionally, so this module must compile in encode-only builds.
+pub(crate) mod learned_admission;
 pub(crate) mod perceptual_tuning;
 /// Backward-compat alias for the pre-Phase-4 module name. New code SHOULD
 /// import from `crate::vardct::perceptual_loop`; this alias exists so

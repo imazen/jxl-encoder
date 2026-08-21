@@ -91,7 +91,7 @@ use std::path::PathBuf;
 /// W44-AUDIT-5 Phase 3 added `cfl_pass1_screenshot_x0_start` Section C gate → 30.
 /// W44-AUDIT-9 / SA-G Fix C added `cfl_zero_for_search` Section C gate → 31.
 /// #74 task #10 added `cfl_keep_best` Section C gate → 32.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 33;
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 34;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");

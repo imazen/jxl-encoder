@@ -151,6 +151,22 @@ def main():
     print(export_text(tree, feature_names=header, max_depth=args.tree_depth))
     imp = sorted(zip(rf.feature_importances_, header), reverse=True)[:12]
     print("rf top features:", [(n, round(v, 3)) for v, n in imp])
+    threshold_curve(rf, XV, yv, vnames)
+
+
+def threshold_curve(rf, XV, yv, vnames):
+    """Confident-BAD exclude operating points: block iff P(bad) >= t."""
+    if len(yv) == 0:
+        return
+    pb = rf.predict_proba(XV)[:, 0]  # P(class 0 = BAD)
+    print("\nconfident-BAD exclude curve (block iff P(bad) >= t):")
+    print("t     blocked  bad-blocked  good-blocked  block-precision")
+    for t in (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95):
+        sel = pb >= t
+        nb = int(sel.sum()); bb = int((sel & (yv == 0)).sum()); gb = int((sel & (yv == 1)).sum())
+        prec = bb / nb if nb else float("nan")
+        lost = [vnames[i] for i in range(len(yv)) if sel[i] and yv[i] == 1]
+        print(f"{t:.2f}  {nb:7d}  {bb:11d}  {gb:12d}  {prec:14.2f}  lost={lost}")
 
 if __name__ == "__main__":
     main()

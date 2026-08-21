@@ -222,6 +222,7 @@ jxl_encoder_macros::strategy_def! {
             // making this a redundancy guard).
             high_colour_class_exclude = false,
             textured_low_colour_exclude = false,
+            learned_subband_exclude = false,
             // Section C CfL Newton: flip to libjxl bit-exact params.
             // Safe here because every other divergence is also flipped
             // (no W44-29..W44-172 calibration to throw off).
@@ -312,6 +313,7 @@ jxl_encoder_macros::strategy_def! {
             // guard like terminal_class_exclude above.
             high_colour_class_exclude = false,
             textured_low_colour_exclude = false,
+            learned_subband_exclude = false,
             // W44-184: NOT a per-image gate; LeanFaster keeps Zenjxl's
             // cost-model calibration which is incompatible with the
             // libjxl-parity Newton (W44-183 measured 25/27 regressions).
@@ -390,6 +392,7 @@ jxl_encoder_macros::strategy_def! {
             // W44-176 terminal exclude via OR.
             high_colour_class_exclude = true,
             textured_low_colour_exclude = true,
+            learned_subband_exclude = true,
             cfl_newton_libjxl_parity = false,
             // #74 task #10: keep-best CfL Pass-2 guard ON (default; ships the
             // aliased-line-art rate win, quality-neutral).
@@ -485,6 +488,7 @@ jxl_encoder_macros::strategy_def! {
             // discriminator for the Zenjxl bundle).
             high_colour_class_exclude = true,
             textured_low_colour_exclude = true,
+            learned_subband_exclude = true,
             cfl_newton_libjxl_parity = false,
             // #74 task #10: keep-best CfL Pass-2 guard ON.
             cfl_keep_best = None,
@@ -702,6 +706,19 @@ jxl_encoder_macros::strategy_def! {
         textured_low_colour_exclude: bool {
             divergence_section = "B",
             divergence_row_ref = "W44-230 textured-low-colour exclude from W44-109",
+        },
+
+        /// W44-231 (2026-08-21): LEARNED sub-band lift admission — a
+        /// 4-feature logistic (zenanalyze features) trained on
+        /// TRAIN-digit imazen-26 only, deployed as a confident-BAD
+        /// exclude (P(bad) >= 0.90) for the d < 3.5 qf-seed band.
+        /// Held-out (val digits): 12 blocks, 12/12 correct, zero
+        /// strict-good losses. Fourth companion exclude; composes via
+        /// OR. Requires the `learned-admission` cargo feature (absent
+        /// => fail-open). Section B.
+        learned_subband_exclude: bool {
+            divergence_section = "B",
+            divergence_row_ref = "W44-231 learned sub-band lift admission",
         },
 
         // ── Section C CfL Newton parity ──────────────────────────────
@@ -1279,6 +1296,12 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "B",
         row_ref: "W44-230 textured-low-colour exclude from W44-109",
         raw: __CUSTOM_DIVERGENCE_TEXTURED_LOW_COLOUR_EXCLUDE,
+    },
+    DivergenceEntry {
+        gate_name: "learned_subband_exclude",
+        section: "B",
+        row_ref: "W44-231 learned sub-band lift admission",
+        raw: __CUSTOM_DIVERGENCE_LEARNED_SUBBAND_EXCLUDE,
     },
     // Section C — CfL Newton parity
     DivergenceEntry {

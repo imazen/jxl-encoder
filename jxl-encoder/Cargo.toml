@@ -22,6 +22,11 @@ include = ["/src/**", "/examples/*.rs", "/tests/*.rs", "/tests/*.txt", "/LICENSE
 autoexamples = false
 
 [dependencies]
+# W44-231: learned qf-seed sub-band admission (4-feature logistic on
+# zenanalyze features). Optional + default-on via `learned-admission`.
+# Local sibling is 0.2.0 (crates.io 0.1.0 is older) — workspace
+# [patch.crates-io] routes to ../zenanalyze until 0.2.0 publishes.
+zenanalyze = { version = "0.2.0", optional = true }
 enough = "0.4.3"
 once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
 hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
@@ -122,6 +127,8 @@ cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "
 cvvdp-cpu = { package = "cvvdp", path = "../../zenmetrics/crates/cvvdp", default-features = false, features = ["std", "parallel"], optional = true }
 
 [features]
+# W44-231 learned qf-seed sub-band admission (see vardct/learned_admission.rs)
+learned-admission = ["dep:zenanalyze", "std"]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
 # Dev-only: archmage/testable_dispatch lets benches/tier_isolation.rs disable
 # the baseline SIMD token (NEON on aarch64) so the scalar arm is real rather
@@ -346,7 +353,7 @@ profile-phases = ["std"]
 # pay zero cost — the override layer compiles to nothing and consumers
 # read the const directly. Pulls `serde` + `postcard` only when enabled.
 tuning-override = ["std", "dep:serde", "dep:postcard"]
-default = ["std", "butteraugli-loop"]
+default = ["std", "butteraugli-loop", "learned-admission"]
 
 # HDR 16-bit tree-budget probe (issue #72) — sweeps LosslessInternalParams
 # tree budgets on the hdr-crops-512 corpus for the budgeted-e5 design.

@@ -1250,9 +1250,18 @@ impl VarDctEncoder {
             && super::perceptual_tuning::w44_230_is_textured_low_colour(
                 self.zenanalyze_proxies.as_ref(),
             );
+        // W44-231: learned sub-band admission (buttloop twin of the
+        // tuning-side exclude; same scope, same env escape, fail-open).
+        let w44_231_env =
+            std::env::var_os("JXL_W44_231_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
+        let w44_231_bad = !w44_231_env
+            && w44_108_low_colour
+            && target_distance < buttloop_min_distance
+            && self.learned_subband_bad == Some(true);
         let auto_gate_fires = is_screenshot
             && low_colour_p25_ok
             && !w44_230_textured
+            && !w44_231_bad
             && (target_distance >= buttloop_min_distance
                 || (w44_108_low_colour
                     && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
@@ -3895,6 +3904,7 @@ mod tuning_tests {
                 false, // terminal_class_exclude off — isolate W44-230
                 false, // high_colour_class_exclude
                 true,  // textured_low_colour_exclude ON (Zenjxl default)
+                None,  // learned_subband_bad (W44-231 tests cover)
             );
             if expect_excluded {
                 assert_eq!(scale, 1.0, "{name} must be excluded by W44-230");
@@ -3924,6 +3934,7 @@ mod tuning_tests {
             false,
             false,
             false, // textured_low_colour_exclude OFF
+            None,  // learned_subband_bad
         );
         assert_eq!(scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7);
     }
@@ -3946,6 +3957,7 @@ mod tuning_tests {
             false,
             false,
             true, // W44-230 ON — must not fire outside low-colour
+            None, // learned_subband_bad
         );
         assert_eq!(scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7);
     }
@@ -4037,6 +4049,7 @@ mod tuning_tests {
             true,  // terminal_class_exclude
             false, // high_colour_class_exclude
             false, // textured_low_colour_exclude (W44-230 has its own tests)
+            None,  // learned_subband_bad (W44-231 has its own tests)
         );
         assert_eq!(
             scale, 1.0,
@@ -4062,6 +4075,7 @@ mod tuning_tests {
             false, // terminal_class_exclude OFF
             false, // high_colour_class_exclude
             false, // textured_low_colour_exclude (W44-230 has its own tests)
+            None,  // learned_subband_bad (W44-231 has its own tests)
         );
         assert_eq!(
             scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,
@@ -4095,6 +4109,7 @@ mod tuning_tests {
                 true,  // terminal_class_exclude ON
                 false, // high_colour_class_exclude
                 false, // textured_low_colour_exclude (W44-230 has its own tests)
+                None,  // learned_subband_bad (W44-231 has its own tests)
             );
             assert_eq!(
                 scale, DEFAULT_ADAPTIVE_QUANT_SCREENSHOT_QF_SEED_SCALE_E7,

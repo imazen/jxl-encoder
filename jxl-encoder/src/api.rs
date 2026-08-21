@@ -7271,6 +7271,22 @@ impl<'a> EncodeRequest<'a> {
         } else {
             None
         };
+        // W44-231: learned sub-band lift admission (confident-BAD model,
+        // vardct::learned_admission). Only consulted by the d < 3.5
+        // qf-seed band, so compute inside the same band as the proxies
+        // and only when the image is proxy-eligible (sRGB-u8 layouts —
+        // reuse the proxies presence as the eligibility signal).
+        #[cfg(feature = "learned-admission")]
+        let learned_subband_bad = if shared_proxies.is_some()
+            && cfg.resolve_improvements().learned_subband_exclude
+            && cfg.distance >= 2.0
+        {
+            crate::vardct::learned_admission::extract_rgb8_verdict(pixels, w, h, self.layout)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "learned-admission"))]
+        let learned_subband_bad: Option<bool> = None;
         #[cfg(feature = "__env_var_diagnostics")]
         if std::env::var_os("JXL_PROXY_DEBUG").is_some() {
             if let Some(p) = shared_proxies.as_ref() {
@@ -7464,6 +7480,7 @@ impl<'a> EncodeRequest<'a> {
         // band, widen the predicate (the gate registry rows carry the
         // bands).
         enc.zenanalyze_proxies = shared_proxies;
+        enc.learned_subband_bad = learned_subband_bad;
         // Streaming refactor #11 chunk 6: thread the caller-selected
         // [`Buffering`] policy into VarDctEncoder so the per-region
         // precompute dispatch (precomputed.rs:compute_with_budget_and_buffering)

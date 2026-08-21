@@ -2528,6 +2528,11 @@ pub struct VarDctEncoder {
     /// proxy isn't well-defined (16-bit, linear-f32, grayscale, HDR) —
     /// the existing W44-29 gate retains full coverage of those layouts.
     pub(crate) zenanalyze_proxies: Option<ZenanalyzeProxies>,
+    /// W44-231: learned sub-band lift admission verdict — `Some(true)` =
+    /// the confident-BAD model says exclude the qf-seed lift in the
+    /// d < 3.5 band on this image. Computed once alongside the shared
+    /// proxies sweep (api.rs); `None` = fail-open (no exclude).
+    pub(crate) learned_subband_bad: Option<bool>,
     /// Streaming-refactor buffering policy (jxl-encoder#11).
     ///
     /// Mirrors libjxl `JXL_ENC_FRAME_SETTING_BUFFERING` integers via
@@ -2703,6 +2708,7 @@ impl Default for VarDctEncoder {
             // existing hash-lock byte-identical). API layer populates
             // for 8-bit sRGB layouts.
             zenanalyze_proxies: None,
+            learned_subband_bad: None,
             buffering: crate::api::Buffering::default(),
             // W44-130 Chunk D: default to the Zenjxl-equivalent resolved
             // policy (matches `EncoderStrategy::Zenjxl`'s
@@ -2864,6 +2870,7 @@ impl VarDctEncoder {
             // existing hash-lock byte-identical). API layer populates
             // for 8-bit sRGB layouts.
             zenanalyze_proxies: None,
+            learned_subband_bad: None,
             buffering: crate::api::Buffering::default(),
             // W44-130 Chunk D: default to the Zenjxl-equivalent resolved
             // policy. Populated by the API layer via
@@ -4578,6 +4585,7 @@ impl VarDctEncoder {
                     terminal_class_exclude,
                     high_colour_class_exclude,
                     textured_low_colour_exclude,
+                    self.learned_subband_bad,
                 );
             if qf_pre_scale != 1.0 {
                 // W44-145 INVESTIGATION HONEST-STOP (2026-05-21): per-block

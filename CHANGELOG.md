@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- W44-231: LEARNED qf-seed sub-band lift admission — a 4-feature
+  logistic over zenanalyze features (new default-on `learned-admission`
+  feature, dep: zenanalyze), trained on train-digit imazen-26 only,
+  deployed as a strictly-narrowing confident-BAD exclude (P(bad)>=0.90)
+  for the d<3.5 low-colour band. Held-out (val digits): 12 blocks,
+  12/12 correct, zero strict-good losses (the hand W44-230 box caught
+  2/37 on the same set). Main band untouched; fail-open; env escape
+  JXL_W44_231_DISABLE=1. Model artifact + full label-evolution record
+  in benchmarks/
+
 ### Fixed
 
 - W44-230: the screenshot qf-seed lift no longer misfires on textured

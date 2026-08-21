@@ -720,6 +720,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale(
         /* terminal_class_exclude */ false,
         /* high_colour_class_exclude */ false,
         /* textured_low_colour_exclude */ false,
+        /* learned_subband_bad */ None,
     )
 }
 
@@ -795,6 +796,7 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
     terminal_class_exclude: bool,
     high_colour_class_exclude: bool,
     textured_low_colour_exclude: bool,
+    learned_subband_bad: Option<bool>,
 ) -> f32 {
     // Off policy short-circuits before the gate evaluation: Libjxl
     // strategy never pre-scales.
@@ -876,6 +878,23 @@ pub(crate) fn resolved_adaptive_quant_qf_seed_scale_with_policy(
         && !w44_230_env
         && w44_108_low_colour
         && w44_230_is_textured_low_colour(proxies)
+    {
+        return 1.0;
+    }
+    // W44-231: learned sub-band admission - confident-BAD verdict from
+    // the 4-feature logistic (vardct::learned_admission), computed once
+    // per encode in api.rs. Scoped to the SUB-BAND leg only (low-colour
+    // AND d below the main-band threshold): the model's training grid
+    // (e7 d2.5 / e9 d3.0) lies entirely in the W44-108 re-admission
+    // region; the d >= 3.5 main band (W44-174 text-sharpness
+    // calibration) keeps its ship behaviour. Env escape:
+    // JXL_W44_231_DISABLE=1. Fail-open: verdict None => no exclude.
+    let w44_231_env =
+        std::env::var_os("JXL_W44_231_DISABLE").is_some_and(|v| v != "0" && !v.is_empty());
+    if !w44_231_env
+        && w44_108_low_colour
+        && target_distance < min_distance
+        && learned_subband_bad == Some(true)
     {
         return 1.0;
     }

@@ -1,0 +1,34 @@
+{
+ "campaign": "W44-231 learned qf-seed sub-band admission (confident-BAD exclude), 4-feature",
+ "date": "2026-08-21",
+ "train_images": 109,
+ "train_good": 24,
+ "label": "STRICT-GOOD: ssim2_rawband >= cjxl AND bytes_rawband <= cjxl (e7 d2.5; +e9 d3.0 first 322)",
+ "features": [
+  "DistinctColorBins",
+  "EdgeSlopeStdev",
+  "LaplacianVarianceP99",
+  "LaplacianVariance"
+ ],
+ "scaler_mean": [
+  1009.183486238532,
+  53.55080788073394,
+  193.9816513761468,
+  7.566871137614677
+ ],
+ "scaler_std": [
+  1822.8402234135247,
+  16.111159501516457,
+  76.6682333952717,
+  11.431857529368601
+ ],
+ "coef": [
+  -1.5669324650626908,
+  1.1320089704636354,
+  1.0816678244783846,
+  -0.4850365534200645
+ ],
+ "intercept": -1.0811107227737673,
+ "block_threshold_p_bad": 0.9,
+ "note": "P(bad) = 1 - sigmoid(coef . zscore(x) + intercept)"
+}
