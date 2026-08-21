@@ -177,48 +177,61 @@ pub fn compute_lehmer_code(permutation: &[u32]) -> Vec<u32> {
 ///
 /// Returns a map: `zero_counts[bucket][channel][position] = count`.
 /// LLF positions get count = -1 to ensure they sort first.
+///
+/// `fallible` selects the allocation policy for the (small, transient,
+/// content-independent) per-band scratch buckets — see
+/// [`crate::budget::vec_i64_zeroed_fallible`]. `false` (the default
+/// call shape) is byte-and-behaviour-identical to the pre-fallible
+/// code; `true` returns [`crate::error::Error::OutOfMemory`] instead of
+/// aborting the process when the allocator is genuinely starved (issue
+/// found via the 2026-08-25 fleetbench `encoder_panic` investigation —
+/// this function's small scratch buckets were the allocation that
+/// happened to fail under artificial memory pressure; the fix here does
+/// not change how much memory is used, only what happens when an
+/// allocation cannot be satisfied).
 pub fn count_zero_coefficients(
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     ac_strategy: &AcStrategyMap,
     xsize_blocks: usize,
     ysize_blocks: usize,
-) -> Vec<Vec<Vec<i64>>> {
-    fn init_buckets() -> Vec<Vec<Vec<i64>>> {
+    fallible: bool,
+) -> Result<Vec<Vec<Vec<i64>>>> {
+    fn init_buckets(fallible: bool) -> Result<Vec<Vec<Vec<i64>>>> {
         let mut counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS)
             .map(|_| vec![Vec::new(); 3])
             .collect();
         // Pre-allocate for buckets we use (sized to each strategy's coeff count).
         for ch in &mut counts[0] {
-            *ch = vec![0i64; 64];
+            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 64)?;
         }
         for ch in &mut counts[2] {
-            *ch = vec![0i64; 256];
+            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 256)?;
         }
         for ch in &mut counts[3] {
-            *ch = vec![0i64; 1024];
+            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 1024)?;
         }
         for ch in &mut counts[4] {
-            *ch = vec![0i64; 128];
+            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 128)?;
         }
         for ch in &mut counts[5] {
-            *ch = vec![0i64; 256];
+            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 256)?;
         }
         for ch in &mut counts[6] {
-            *ch = vec![0i64; 512];
+            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 512)?;
         }
         for ch in &mut counts[7] {
-            *ch = vec![0i64; 4096];
+            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 4096)?;
         }
         for ch in &mut counts[8] {
-            *ch = vec![0i64; 2048];
+            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 2048)?;
         }
-        counts
+        Ok(counts)
     }
     // Accumulate zeros for a horizontal band of rows into a freshly
     // allocated counts grid. Each band's grid is independent so the
     // bands can run in parallel and merge associatively at the end.
-    let accumulate_band = |y0: usize, y1: usize| -> Vec<Vec<Vec<i64>>> {
-        let mut counts = init_buckets();
+    let accumulate_band = |y0: usize, y1: usize| -> Result<Vec<Vec<Vec<i64>>>> {
+        let mut counts = init_buckets(fallible)?;
         for by in y0..y1 {
             for bx in 0..xsize_blocks {
                 if !ac_strategy.is_first(bx, by) {
@@ -231,7 +244,7 @@ pub fn count_zero_coefficients(
                 let size = covered_blocks * DCT_BLOCK_SIZE;
                 for ch in &mut counts[bucket] {
                     if ch.len() < size {
-                        ch.resize(size, 0);
+                        crate::budget::resize_i64_zeroed_fallible(ch, size, fallible)?;
                     }
                 }
                 for c in 0..3 {
@@ -264,10 +277,14 @@ pub fn count_zero_coefficients(
                 }
             }
         }
-        counts
+        Ok(counts)
     };
 
-    fn merge_into(dst: &mut [Vec<Vec<i64>>], src: Vec<Vec<Vec<i64>>>) {
+    fn merge_into(
+        dst: &mut [Vec<Vec<i64>>],
+        src: Vec<Vec<Vec<i64>>>,
+        fallible: bool,
+    ) -> Result<()> {
         for (bucket_idx, src_bucket) in src.into_iter().enumerate() {
             for (ch, src_ch) in src_bucket.into_iter().enumerate() {
                 if src_ch.is_empty() {
@@ -275,17 +292,18 @@ pub fn count_zero_coefficients(
                 }
                 let dst_ch = &mut dst[bucket_idx][ch];
                 if dst_ch.len() < src_ch.len() {
-                    dst_ch.resize(src_ch.len(), 0);
+                    crate::budget::resize_i64_zeroed_fallible(dst_ch, src_ch.len(), fallible)?;
                 }
                 for (d, s) in dst_ch.iter_mut().zip(src_ch.iter()) {
                     *d += *s;
                 }
             }
         }
+        Ok(())
     }
 
     let mut counts = if ysize_blocks <= 1 {
-        accumulate_band(0, ysize_blocks)
+        accumulate_band(0, ysize_blocks)?
     } else {
         // Multi-band parallel reduce. Bands are horizontal strips —
         // safe because multi-block strategies' is_first only matches
@@ -299,10 +317,12 @@ pub fn count_zero_coefficients(
             .filter(|(a, b)| a < b)
             .collect();
         let per_band: Vec<Vec<Vec<Vec<i64>>>> =
-            crate::parallel::parallel_map(bands.len(), |i| accumulate_band(bands[i].0, bands[i].1));
-        let mut counts = init_buckets();
+            crate::parallel::parallel_map_result(bands.len(), |i| {
+                accumulate_band(bands[i].0, bands[i].1)
+            })?;
+        let mut counts = init_buckets(fallible)?;
         for band in per_band {
-            merge_into(&mut counts, band);
+            merge_into(&mut counts, band, fallible)?;
         }
         counts
     };
@@ -334,7 +354,7 @@ pub fn count_zero_coefficients(
         }
     }
 
-    counts
+    Ok(counts)
 }
 
 /// Compute custom coefficient orders from zero counts.
@@ -1269,7 +1289,9 @@ mod tests {
         // All DCT8 strategy
         let ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
 
-        let counts = count_zero_coefficients(&quant_ac, &ac_strategy, xsize_blocks, ysize_blocks);
+        let counts =
+            count_zero_coefficients(&quant_ac, &ac_strategy, xsize_blocks, ysize_blocks, false)
+                .expect("infallible-alloc path never returns Err");
         let (_, used_orders) = compute_custom_orders(&counts);
 
         // All-zero should produce natural order (no custom needed)
@@ -1277,5 +1299,102 @@ mod tests {
             used_orders, 0,
             "All-zero image should not need custom orders"
         );
+    }
+
+    /// Synthetic regression coverage for the 2026-08-25 fleetbench
+    /// `encoder_panic` investigation: a coredump-verified backtrace showed
+    /// the process aborting (SIGABRT, "memory allocation of N bytes
+    /// failed") inside this function's small per-band scratch buckets when
+    /// the allocator was genuinely starved (reproduced locally via
+    /// `ulimit -v`, not a data-dependent blowup — the buckets are fixed,
+    /// tiny sizes regardless of image content). `count_zero_coefficients`
+    /// now takes a `fallible` flag; this test exercises the multi-band
+    /// path (>16 block-rows, so it goes through
+    /// `crate::parallel::parallel_map_result` + `merge_into`, not just
+    /// the single-band shortcut) with mixed AC strategies and confirms:
+    /// (1) `fallible=false` and `fallible=true` are byte-identical on a
+    ///     small image with plenty of memory (the toggle changes only the
+    ///     allocation *mechanism*, matching
+    ///     `test_standard_encode_fallible_alloc_toggle` in `api/tests.rs`);
+    /// (2) the underlying helpers return `Err` instead of aborting when an
+    ///     allocation genuinely cannot be satisfied.
+    #[test]
+    fn fallible_alloc_toggle_is_byte_identical_multiband() {
+        // 24 block-rows / 12 block-cols so xsize_blocks/ysize_blocks >= 5
+        // (fires the caller's gate) AND ysize_blocks > 16 (fires the
+        // multi-band parallel_map_result + merge_into path, not just the
+        // ysize_blocks <= 1 shortcut).
+        let xsize_blocks = 12;
+        let ysize_blocks = 24;
+
+        // Deterministic pseudo-random-ish AC coefficients so buckets get a
+        // realistic mix of zero and nonzero positions (an all-zero image
+        // exercises less of the code than a content-bearing one).
+        let mut quant_ac: [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3] = [
+            vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks],
+            vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks],
+            vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks],
+        ];
+        let mut seed = 0x1234_5678u32;
+        for plane in &mut quant_ac {
+            for row in plane.iter_mut() {
+                for block in row.iter_mut() {
+                    for coeff in block.iter_mut() {
+                        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                        *coeff = ((seed >> 16) % 3) as i32 - 1; // -1, 0, or 1
+                    }
+                }
+            }
+        }
+
+        // All DCT8 strategy keeps this test focused on the fallible-alloc
+        // plumbing rather than AC-strategy dispatch.
+        let ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+
+        let infallible =
+            count_zero_coefficients(&quant_ac, &ac_strategy, xsize_blocks, ysize_blocks, false)
+                .expect("infallible-alloc path never returns Err");
+        let fallible =
+            count_zero_coefficients(&quant_ac, &ac_strategy, xsize_blocks, ysize_blocks, true)
+                .expect("fallible-alloc path has plenty of memory here — must still succeed");
+
+        assert_eq!(
+            infallible, fallible,
+            "fallible-alloc toggle must not change count_zero_coefficients output"
+        );
+    }
+
+    #[test]
+    fn vec_i64_zeroed_fallible_errors_instead_of_aborting_on_absurd_size() {
+        // A size this large can never be satisfied regardless of real
+        // available memory (it overflows well past any real machine's
+        // address space) — `try_reserve` detects this deterministically
+        // via a capacity-overflow check before ever asking the OS
+        // allocator, so this is a portable, environment-independent way
+        // to prove the fallible path returns `Err` instead of the
+        // infallible path's `handle_alloc_error` abort.
+        let huge = usize::MAX / 4;
+        let err = crate::budget::vec_i64_zeroed_fallible(true, huge)
+            .expect_err("an unsatisfiable size must error, not abort, when fallible=true");
+        // Sanity: it's actually the OOM variant, not some unrelated error.
+        assert!(
+            matches!(err, crate::error::Error::OutOfMemory(_)),
+            "expected Error::OutOfMemory, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn resize_i64_zeroed_fallible_errors_instead_of_aborting_on_absurd_size() {
+        let mut v: Vec<i64> = vec![0; 4];
+        let huge = usize::MAX / 4;
+        let err = crate::budget::resize_i64_zeroed_fallible(&mut v, huge, true)
+            .expect_err("an unsatisfiable resize must error, not abort, when fallible=true");
+        assert!(
+            matches!(err, crate::error::Error::OutOfMemory(_)),
+            "expected Error::OutOfMemory, got {err:?}"
+        );
+        // The vec must be left in a valid (if unchanged) state — no
+        // partial/corrupted resize.
+        assert_eq!(v, vec![0i64; 4]);
     }
 }

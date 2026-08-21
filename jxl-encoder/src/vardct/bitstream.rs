@@ -2927,7 +2927,8 @@ impl VarDctEncoder {
                     ac_strategy,
                     xsize_blocks,
                     ysize_blocks,
-                );
+                    self.budget.as_ref().is_some_and(|b| b.is_fallible()),
+                )?;
                 let (orders, used) = super::coeff_order::compute_custom_orders_with_options(
                     &zero_counts,
                     // W44-201: skip buckets 3 (DCT32x32) and 6

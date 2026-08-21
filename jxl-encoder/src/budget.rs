@@ -408,6 +408,43 @@ pub(crate) fn vec_f32_zeroed_fallible(fallible: bool, len: usize) -> Result<Vec<
     }
 }
 
+/// Allocate a zero-filled `Vec<i64>` of `len`, honoring a runtime
+/// fallible-allocation policy. Same shape as [`vec_f32_zeroed_fallible`]
+/// (see its docs) — reserves nothing against a [`MemoryBudget`]; used for
+/// the small per-strategy zero-coefficient count buckets in
+/// `vardct::coeff_order`, which are transient scratch (freed well before
+/// the encode returns) rather than sustained working-set the budget
+/// tracks.
+pub(crate) fn vec_i64_zeroed_fallible(fallible: bool, len: usize) -> Result<Vec<i64>> {
+    if fallible {
+        let mut v: Vec<i64> = Vec::new();
+        v.try_reserve_exact(len)?;
+        v.resize(len, 0);
+        Ok(v)
+    } else {
+        Ok(vec![0i64; len])
+    }
+}
+
+/// Grow `v` to `new_len` with zero-fill, honoring a runtime
+/// fallible-allocation policy. `Vec::resize` only allocates when
+/// `new_len` exceeds the current capacity, so the fallible branch
+/// reserves the delta via `try_reserve` before calling the same
+/// `resize` the infallible branch uses — behaviourally identical to
+/// plain `resize` when it fits, [`Error::OutOfMemory`] instead of
+/// aborting when it does not.
+pub(crate) fn resize_i64_zeroed_fallible(
+    v: &mut Vec<i64>,
+    new_len: usize,
+    fallible: bool,
+) -> Result<()> {
+    if fallible && new_len > v.len() {
+        v.try_reserve(new_len - v.len())?;
+    }
+    v.resize(new_len, 0);
+    Ok(())
+}
+
 /// Reserve `len * size_of::<T>()` permanently against `budget`, then allocate a
 /// zeroed `Vec<T>`, honoring the budget's **runtime** fallible-allocation
 /// policy ([`MemoryBudget::is_fallible`]):
