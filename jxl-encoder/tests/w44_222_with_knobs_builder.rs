@@ -113,6 +113,15 @@ fn w44_222_with_knobs_builder_full_sequence() {
          if this fails, another test in the same binary installed a tuning earlier"
     );
 
+    // W44-231 isolation: the learned sub-band exclude blocks the
+    // qf-seed lift on this screenshot fixture, which would starve the
+    // buttloop_aq_balance knob of any byte effect at d2.0 e5 — this
+    // test verifies KNOB WIRING, not lift policy. Standalone test
+    // binary => process-local env is safe (same contract as the
+    // tuning-override targets).
+    // SAFETY: single-threaded at this point; no concurrent env readers.
+    unsafe { std::env::set_var("JXL_W44_231_DISABLE", "1") };
+
     let (rgb, w, h) = load_screenshot();
 
     // Encode A: no `.with_knobs()` at all → no install attempted.

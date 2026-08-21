@@ -991,6 +991,10 @@ impl TreeSamples {
     /// take `&mut [i32]` views of retained columns (the borrowed-view tree
     /// builder) call this first; on the default path the raw columns are
     /// already freed before the tree build, so it is a no-op.
+    #[cfg_attr(
+        not(feature = "parallel-tree-learning"),
+        allow(dead_code) // sole caller (the borrowed-view builder's from_owned) is feature-gated
+    )]
     pub(crate) fn ensure_props_i32(&mut self) {
         for col in &mut self.props {
             if !col.is_empty() {
