@@ -396,7 +396,19 @@ fn main() {
         .to_path_buf();
     let bench_dir = workspace.join("benchmarks");
     std::fs::create_dir_all(&bench_dir).ok();
-    let tsv_path = bench_dir.join("w44_200_section_audit_2026-05-22.tsv");
+    // CLI-arg runs write a label-derived TSV so the historical May-22
+    // audit data can never be clobbered by a new cell run.
+    let cli_args: Vec<String> = std::env::args().skip(1).collect();
+    let tsv_path = if cli_args.len() >= 2 {
+        let label = cli_args
+            .get(2)
+            .map(|s| s.as_str())
+            .unwrap_or("CLI_CELL")
+            .to_ascii_lowercase();
+        bench_dir.join(format!("w44_200_section_audit_{label}.tsv"))
+    } else {
+        bench_dir.join("w44_200_section_audit_2026-05-22.tsv")
+    };
     let dump_path = PathBuf::from("/tmp/w44_200_ours_subsection_dump.tsv");
     let hfg_dump_path = PathBuf::from("/tmp/w44_200_ours_hfglobal_dump.tsv");
     let co_dump_path = PathBuf::from("/tmp/w44_200_ours_coefforder_dump.tsv");
