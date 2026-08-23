@@ -99,6 +99,16 @@ def main():
     both = sorted(set(ours) & set(cjxl))
     strat_disagree = sum(1 for k in both if ours[k][0] != cjxl[k][0])
     compared = [k for k in both if ours[k][0] == cjxl[k][0]]
+    # Blind-spot guard: cjxl's dump has no sentinel rows, so a block that is
+    # ALL-ZERO on the cjxl side never appears there — any energy we spend on
+    # such a block is invisible to the join above. Count it explicitly.
+    ours_only = set(ours) - set(cjxl)
+    ours_only_energy = {}
+    for k in ours_only:
+        e = sum(abs(v) for v in ours[k][1].values())
+        if e:
+            ours_only_energy[k[2]] = ours_only_energy.get(k[2], 0) + e
+    ours_only_nonzero = sum(1 for k in ours_only if ours[k][1])
 
     # global tallies (per channel), per-region, per-strategy
     def zero_stats():
@@ -177,8 +187,11 @@ def main():
     lines = [f"# W44-76 value diff {args.label}: ours={args.ours_dir} "
              f"cjxl={args.cjxl_dir}",
              f"# blocks both={len(both)} strat_disagree={strat_disagree} "
-             f"compared={len(compared)} ours_only={len(set(ours) - set(cjxl))} "
+             f"compared={len(compared)} ours_only={len(ours_only)} "
              f"cjxl_only={len(set(cjxl) - set(ours))}",
+             f"# ours_only blocks WITH nonzero coeffs (invisible to the join, "
+             f"cjxl all-zero there): {ours_only_nonzero}; |energy| by channel "
+             f"{{ch: e}} = {dict(sorted(ours_only_energy.items()))}",
              "\t".join(hdr)]
     for r in rows:
         lines.append("\t".join(

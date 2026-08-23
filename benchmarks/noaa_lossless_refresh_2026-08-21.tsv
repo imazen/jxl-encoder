@@ -13,8 +13,8 @@ id	effort	ours	cjxl	delta_pct
 5310	7	131185	138484	
 5312	5	224503	402720	
 5312	7	234525	368294	
-5314	5	234525	368294	
-5314	7	234525	368294	
+5314	5	NA	NA	encode_fail (devbox corpus copy corrupt: sha d0bfe8a9.. vs manifest 7d552aed.., 54% zero bytes; the earlier numbers were a stale-temp-file readout of 5312 — see ab_env_cells.sh)
+5314	7	NA	NA	encode_fail (devbox corpus copy corrupt: sha d0bfe8a9.. vs manifest 7d552aed.., 54% zero bytes; the earlier numbers were a stale-temp-file readout of 5312 — see ab_env_cells.sh)
 5316	5	287308	383665	
 5316	7	245671	355585	
 5318	5	193784	340523	
