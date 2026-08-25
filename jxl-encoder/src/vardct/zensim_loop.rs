@@ -806,10 +806,15 @@ impl VarDctEncoder {
         // used only when ε̂ < 0 and the last two scales differ, else the power
         // law is the fallback (and the mandatory first-iterate step). The
         // existing clamp still bounds the step. Default OFF (opt-in A/B arm).
+        // Budget-optimal default (user directive 2026-08-25 "adjust defaults to
+        // be optimal based on budget"): ON. Measured on the shipped C recipe
+        // (benchmarks/zensim_secant_2026-08-25.md) — +3 k2 census, −55%/−71%
+        // median error, no regression, at BOTH budgets. `JXL_ZENSIM_SECANT=0`
+        // opts back to the pure power law.
         let secant_enabled: bool = std::env::var("JXL_ZENSIM_SECANT")
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+            .unwrap_or(true);
         let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
         // Efficiency study (2026-07-31): per-COMPARE trace — one TSV line per
         // iteration: `trace_id  iter  score  qf_mean  qf_min  qf_max  iter_ms`.
