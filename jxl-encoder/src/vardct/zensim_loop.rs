@@ -799,6 +799,17 @@ impl VarDctEncoder {
             .and_then(|s| s.parse().ok())
             .filter(|e: &f64| e.is_finite() && *e > 0.0 && *e <= 2.0)
             .unwrap_or(1.0);
+        // Diffmap secant (plan §5.1, 2026-08-25): the global step uses a
+        // measured elasticity ε̂ = Δln L / Δln S from the last two iterates
+        // instead of the fixed-exponent power law. In THIS codebase higher
+        // quant_field = more bits = LESS loss, so ε̂ is NEGATIVE; the secant is
+        // used only when ε̂ < 0 and the last two scales differ, else the power
+        // law is the fallback (and the mandatory first-iterate step). The
+        // existing clamp still bounds the step. Default OFF (opt-in A/B arm).
+        let secant_enabled: bool = std::env::var("JXL_ZENSIM_SECANT")
+            .ok()
+            .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
         // Efficiency study (2026-07-31): per-COMPARE trace — one TSV line per
         // iteration: `trace_id  iter  score  qf_mean  qf_min  qf_max  iter_ms`.
@@ -812,6 +823,13 @@ impl VarDctEncoder {
         let mut iter_ms: Vec<f64> = Vec::new();
         let mut compares_used = 0usize;
         let mut final_score = f64::NAN;
+        // Secant controller state (JXL_ZENSIM_SECANT): cumulative ln of the
+        // controller's applied global scale (the g-product; the redistribution
+        // is sum-preserving so it does not move global scale) + the previous
+        // iterate's (ln S, ln L). NaN until the first controller step runs.
+        let mut cum_log_s = 0.0f64;
+        let mut prev_log_s = f64::NAN;
+        let mut prev_log_l = f64::NAN;
         // Folded-class score route: the canonical folded extraction takes the
         // SOURCE as an ImageSource per compare (streaming, no prepared-ref
         // form since the C5 switchover), so build the tight LinearF32Rgba
@@ -1604,10 +1622,33 @@ impl VarDctEncoder {
             if let Some(tgt) = target_native {
                 let achieved_loss = (100.0 - zensim_score).max(0.05);
                 let target_loss = (100.0 - tgt).max(0.05);
-                let g = ((achieved_loss / target_loss).powf(ctrl_exp))
-                    .clamp(1.0 / ctrl_clamp, ctrl_clamp) as f32;
+                let cur_log_l = achieved_loss.ln();
+                // Power-law step: the default, and the secant's fallback.
+                let g_pow = (achieved_loss / target_loss).powf(ctrl_exp);
+                let g_raw = if secant_enabled
+                    && prev_log_l.is_finite()
+                    && (cum_log_s - prev_log_s).abs() > 1e-6
+                {
+                    // ε̂ = Δln L / Δln S; valid only when loss falls as scale
+                    // rises (ε̂ < 0). Step: ln S_target = ln S + (ln L_t − ln L)/ε̂.
+                    let eps_hat = (cur_log_l - prev_log_l) / (cum_log_s - prev_log_s);
+                    if eps_hat < -1e-6 {
+                        ((target_loss.ln() - cur_log_l) / eps_hat).exp()
+                    } else {
+                        g_pow
+                    }
+                } else {
+                    g_pow
+                };
+                let g = g_raw.clamp(1.0 / ctrl_clamp, ctrl_clamp);
+                // Record the iterate (S, L) at which this score was measured,
+                // then advance the cumulative scale by the applied step.
+                prev_log_s = cum_log_s;
+                prev_log_l = cur_log_l;
+                cum_log_s += g.ln();
+                let gf = g as f32;
                 for v in quant_field_float.iter_mut() {
-                    *v = (*v * g).clamp(qf_lower, qf_higher);
+                    *v = (*v * gf).clamp(qf_lower, qf_higher);
                 }
             }
         }
