@@ -1598,8 +1598,9 @@ impl VarDctEncoder {
 
             // C3b: damped global step toward the native-score target.
             // Loss (100 − score) above target ⇒ too lossy ⇒ scale the whole
-            // field up (more bits). Exponent 0.6 + 1.35 clamp = stable
-            // convergence in 3-5 iterations on 576² content.
+            // field up (more bits). Defaults JXL_ZENSIM_CTRL_EXP=1.0 +
+            // JXL_ZENSIM_CTRL_CLAMP=2.00 (adopted 2026-08-07, campaign
+            // appendix AB.3; the earlier 0.6 / 1.35 was superseded there).
             if let Some(tgt) = target_native {
                 let achieved_loss = (100.0 - zensim_score).max(0.05);
                 let target_loss = (100.0 - tgt).max(0.05);
