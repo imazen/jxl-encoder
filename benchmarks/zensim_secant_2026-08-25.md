@@ -69,3 +69,26 @@ re-run is the rigorous confirmation. (2) v47A bake, not the frontier
 2. The **min-|Δln L| guard** (fall back to power-law when the loss barely moved)
    to kill the intermediate overshoot — a one-line refinement, re-A/B.
 3. If both hold: a controller-default proposal (user-gated, per AB.3 convention).
+
+## Min-|Δln L| guard (2026-08-25) — kills the overshoot, improves the median
+
+Added `&& (cur_log_l − prev_log_l).abs() > 1e-3` to the secant condition: when
+consecutive iterates barely move the loss, ε̂ is a divide-by-noise, so fall back
+to the power law. Re-A/B (same 9×3 corpus, v47A+h3-mag):
+
+| arm | k | emit | census | med \|err\| |
+|---|--:|---|--:|--:|
+| ctrl | 2 | best | 16/27 | 1.428 |
+| secant (no guard) | 2 | best | 17/27 | 0.951 |
+| **secant (guard)** | 2 | best | **17/27** | **0.734** |
+| secant (no guard) | 2 | last | 15/27 | 1.057 |
+| **secant (guard)** | 2 | last | **16/27** | **0.951** |
+| ctrl | 3 | best | 22/27 | 0.433 |
+| **secant (guard)** | 3 | best | 22/27 | **0.297** |
+
+The guard is strictly ≥ the un-guarded arm on every cell: it restores emit-last
+to control parity (15→16 at k2) AND tightens emit-best median (0.951→0.734 at
+k2). k3 is unchanged (the overshoot was a k2 phenomenon). **The guarded secant
+beats the power-law controller on median error at both budgets (−49% k2-best,
+−33% k2-last, −31% k3-best) and the k2 census (+1), with no regression.** This is
+the shipped form of the arm (still default OFF). Committed here + `bbc2354c`.

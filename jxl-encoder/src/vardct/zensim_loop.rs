@@ -1628,6 +1628,11 @@ impl VarDctEncoder {
                 let g_raw = if secant_enabled
                     && prev_log_l.is_finite()
                     && (cum_log_s - prev_log_s).abs() > 1e-6
+                    // Loss must have MOVED enough for a reliable elasticity —
+                    // near-equal iterates give ε̂ ≈ 0 and a divide-by-noise step
+                    // (the 2026-08-25 smoke's t70 iter-2 overshoot). Fall back
+                    // to the power law when it barely moved.
+                    && (cur_log_l - prev_log_l).abs() > 1e-3
                 {
                     // ε̂ = Δln L / Δln S; valid only when loss falls as scale
                     // rises (ε̂ < 0). Step: ln S_target = ln S + (ln L_t − ln L)/ε̂.
