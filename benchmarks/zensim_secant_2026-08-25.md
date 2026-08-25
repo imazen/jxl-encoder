@@ -92,3 +92,25 @@ k2). k3 is unchanged (the overshoot was a k2 phenomenon). **The guarded secant
 beats the power-law controller on median error at both budgets (−49% k2-best,
 −33% k2-last, −31% k3-best) and the k2 census (+1), with no regression.** This is
 the shipped form of the arm (still default OFF). Committed here + `bbc2354c`.
+
+## Frontier confirmation — C's shipped bake (2026-08-25)
+
+Re-ran the guarded-secant A/B on the SHIPPED recipe (Profile C's bake
+`c_sdr_mlp944_corrmix_2026-08-05.bin` + h3-mag) — the ship-relevant question.
+Internal-score census, emit-best, same 9×3 corpus:
+
+| k | arm | census | med \|err\| |
+|--:|---|--:|--:|
+| 2 | ctrl | 19/27 | 1.021 |
+| 2 | **secant** | **22/27** | **0.458** |
+| 3 | ctrl | 24/27 | 0.578 |
+| 3 | **secant** | **25/27** | **0.169** |
+
+**On the shipped bake the win is larger than on v47A: k2 +3 census (22 vs 19),
+−55% median (0.458 vs 1.021); k3 +1 census (25 vs 24), −71% median (0.169 vs
+0.578).** The C bake mounts in the folded-944 loop (verified) and the secant
+helps it at both budgets on both census and median. Same caveats stand
+(internal-score, n=27, one gain/clamp; decoded-judged confirmation registered),
+but the direction + magnitude on the shipped recipe are compelling. The diffmap
+secant is a measured jxl-loop-efficiency improvement, default OFF pending the
+decoded-judged pass + a controller-default proposal (user-gated).
