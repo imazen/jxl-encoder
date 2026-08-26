@@ -15,7 +15,7 @@
  },
  "substrate": {
   "jxl_encoder": "24b20eed",
-  "zensim": "unresolved",
+  "zensim": "ca3ef0c0 (path-dep HEAD)",
   "mm_study": "jxl 475f50ad+instr, zensim 402f4e63 (probe-verified numerically identical for the loop)"
  },
  "notes": "Each arm's within-\u00b12.0 is in its OWN metric's units \u2014 counts are NOT unit-comparable across metrics (the mm study's F5 carries the shared-scale read). k2/k3 = inner-loop budget (--iters k; k+1 compares, the emitted bitstream is the last (emit_last) or internally-best (emit_best, JXL_ZENSIM_EMIT_BEST=1) measured iterate; judged decoded either way). Outer j2/j3 = as-emitted full encode at outer_iter j (seed + j controller steps, the step-count parallel of inner k=j); j*_best = best-of-<=j (decoded-judged by construction). latest arm SKIPPED: proven 27/27 byte-identical to B_base (mm mount-equivalence gate) \u2014 its numbers are B_base's. blend2L/bvls bakes are not on the gauntlet fulleval board.",
