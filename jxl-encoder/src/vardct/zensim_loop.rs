@@ -223,6 +223,20 @@ impl ZensimParams {
 /// L16 (as butteraugli uses) would be too aggressive for SSIM-based diffmap
 /// values which already have 11×11 spatial smoothing.
 #[allow(clippy::too_many_arguments)]
+/// C10 fail-loud (plan §5, 2026-08-26): the 372-class compare paths used to swallow
+/// every error as `Err(_) => Ok(seed)`, silently emitting a SEED-QUALITY bitstream —
+/// indistinguishable from a converged encode at the call site. A compare failure is a
+/// wiring bug (mount probes and width guards run earlier), so it panics with the arm
+/// name, like the folded-class routes have since 23shot-sota944.
+fn loud_compare<T, E: std::fmt::Debug>(r: Result<T, E>, what: &str) -> T {
+    match r {
+        Ok(v) => v,
+        Err(e) => panic!(
+            "zensim loop {what} compare failed (loud by design; the old `Err(_) =>              Ok(seed)` silently emitted a seed-quality bitstream): {e:?}"
+        ),
+    }
+}
+
 fn compute_tile_dist(
     diffmap: &[f32],
     width: usize,
@@ -858,15 +872,10 @@ impl VarDctEncoder {
         let precomputed = {
             let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
             let (src_r, src_g, src_b) = deinterleave_rgb(linear_rgb, n);
-            match z.precompute_reference_linear_planar(
-                [&src_r, &src_g, &src_b],
-                width,
-                height,
-                width,
-            ) {
-                Ok(r) => r,
-                Err(_) => return Ok(initial_params.clone()),
-            }
+            loud_compare(
+                z.precompute_reference_linear_planar([&src_r, &src_g, &src_b], width, height, width),
+                "precompute_reference_linear_planar (372-class reference precompute)",
+            )
             // src_r/g/b drop here; _g releases the reservation.
         };
 
@@ -1102,25 +1111,31 @@ impl VarDctEncoder {
                     (Some(res), Some(attr), Some(sc))
                 } else if singlepass {
                     let sess = attr_session.get_or_insert_with(zensim::AttributionSession::new);
-                    match z.compute_with_ref_score_and_attribution_stale_binned(
-                        &precomputed,
-                        &src,
-                        s,
-                        sess,
-                        attr_bin,
-                    ) {
-                        Ok((r, a)) => (Some(r), Some(a), None),
-                        Err(_) => return Ok(current_params),
+                    {
+                        let (r, a) = loud_compare(
+                            z.compute_with_ref_score_and_attribution_stale_binned(
+                                &precomputed,
+                                &src,
+                                s,
+                                sess,
+                                attr_bin,
+                            ),
+                            "compute_with_ref_score_and_attribution_stale_binned (372-class stale single-pass arm)",
+                        );
+                        (Some(r), Some(a), None)
                     }
                 } else {
-                    match z.compute_with_ref_score_and_attribution_binned(
-                        &precomputed,
-                        &src,
-                        s,
-                        attr_bin,
-                    ) {
-                        Ok((r, a)) => (Some(r), Some(a), None),
-                        Err(_) => return Ok(current_params),
+                    {
+                        let (r, a) = loud_compare(
+                            z.compute_with_ref_score_and_attribution_binned(
+                                &precomputed,
+                                &src,
+                                s,
+                                attr_bin,
+                            ),
+                            "compute_with_ref_score_and_attribution_binned (372-class fused arm)",
+                        );
+                        (Some(r), Some(a), None)
                     }
                 };
                 zensim_score = match folded_score {
@@ -1221,17 +1236,17 @@ impl VarDctEncoder {
             } else {
                 // Step 5: Zensim comparison → global score + per-pixel diffmap.
                 // Pass planar linear RGB directly — no RGBA interleaving, no byte cast.
-                let dm = match z.compute_with_ref_and_diffmap_linear_planar(
-                    &precomputed,
-                    [&recon_r, &recon_g, &recon_b],
-                    width,
-                    height,
-                    padded_width, // stride = padded_width (encoder pads rows for SIMD)
-                    diffmap_opts,
-                ) {
-                    Ok(r) => r,
-                    Err(_) => return Ok(current_params),
-                };
+                let dm = loud_compare(
+                    z.compute_with_ref_and_diffmap_linear_planar(
+                        &precomputed,
+                        [&recon_r, &recon_g, &recon_b],
+                        width,
+                        height,
+                        padded_width, // stride = padded_width (encoder pads rows for SIMD)
+                        diffmap_opts,
+                    ),
+                    "compute_with_ref_and_diffmap_linear_planar (372-class two-pass diffmap arm)",
+                );
                 zensim_score = if folded_class {
                     // Folded-class score: canonical 720/924/944 extraction over
                     // (clean source, current recon) + full-bundle forward in
@@ -1428,6 +1443,7 @@ impl VarDctEncoder {
                     0,
                     width,
                     height,
+                    // bfly≈NaN on the stale score-only arm (no v1 walk to approximate) — expected, log-only.
                     "iter={}/{} zensim={:.2} bfly≈{:.3} target={:.3} gs={} qf_avg={:.4} qf=[{:.4};{:.4}] td_max={:.2}",
                     iter,
                     iters,
@@ -1731,4 +1747,13 @@ fn deinterleave_rgb(rgb: &[f32], n: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
         b[i] = rgb[i * 3 + 2];
     }
     (r, g, b)
+}
+
+#[cfg(test)]
+mod c10_loud_tests {
+    #[test]
+    #[should_panic(expected = "compare failed")]
+    fn forced_compare_failure_panics_with_arm_name() {
+        super::loud_compare::<(), &str>(Err("forced"), "unit-test-arm (forced failure)");
+    }
 }

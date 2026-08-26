@@ -72,20 +72,63 @@ macro_rules! skip_without_binary {
     };
 }
 
+/// First candidate that actually RUNS (`--version` exits 0), cached per tool.
+/// A binary can exist yet be dead — the 2026-08-26 failure class was the
+/// historical libjxl build whose OpenEXR 2.5 shared libs left the system, so
+/// existence checks pass while every invocation fails. Probing once per test
+/// process makes the helper immune to any single build tree rotting.
+fn first_running(env_key: &str, candidates: &[&str]) -> String {
+    if let Ok(p) = std::env::var(env_key) {
+        return p; // explicit override wins unconditionally (and fails loud if broken)
+    }
+    for c in candidates {
+        if std::process::Command::new(c)
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return (*c).to_string();
+        }
+    }
+    // Nothing runs: return the first candidate so the caller's error names a path.
+    candidates[0].to_string()
+}
+
 /// Returns the path to the djxl binary.
 ///
-/// Uses `DJXL_PATH` env var, falling back to the libjxl build directory.
+/// Uses `DJXL_PATH` env var, else the first candidate build that runs.
 pub fn djxl_path() -> String {
-    std::env::var("DJXL_PATH")
-        .unwrap_or_else(|_| "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl".into())
+    static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        first_running(
+            "DJXL_PATH",
+            &[
+                "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
+                "/home/lilith/work/libjxl-build/tools/djxl",
+                "/usr/bin/djxl",
+            ],
+        )
+    })
+    .clone()
 }
 
 /// Returns the path to the cjxl binary.
 ///
-/// Uses `CJXL_PATH` env var, falling back to the libjxl build directory.
+/// Uses `CJXL_PATH` env var, else the first candidate build that runs.
 pub fn cjxl_path() -> String {
-    std::env::var("CJXL_PATH")
-        .unwrap_or_else(|_| "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl".into())
+    static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        first_running(
+            "CJXL_PATH",
+            &[
+                "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl",
+                "/home/lilith/work/libjxl-build/tools/cjxl",
+                "/usr/bin/cjxl",
+            ],
+        )
+    })
+    .clone()
 }
 
 /// Returns the path to the jxl_cli binary (jxl-rs decoder).
