@@ -79,3 +79,8 @@ substrate; `zensim_loop_23shot_sota944_2026-08-26.tsv`) and folded into the
 `h3ownsp` — the board's LOOP_BAKE_MAP skips absent keys gracefully, so
 W10L9_s4003_packed's scoreboard primary falls back to the fresh `W10L9_base`
 until then. Do NOT cite the 08-05/08-07 W10L9 loop rows as current-loop numbers.
+
+**W10L9_h3ctrl2 re-measured fresh too** (`run_beatbutter.sh h3ctrl2fresh` — the
+exp100/clamp-2.00/bin-8 recipe on the current substrate;
+`zensim_loop_h3ctrl2_2026-08-26.tsv`). The 08-26 summary now carries BOTH board
+arms fresh; only h3own/h3ownsp (appendix N/P levers) remain old-substrate.

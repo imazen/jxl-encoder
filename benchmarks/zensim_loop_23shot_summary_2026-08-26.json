@@ -299,6 +299,41 @@
      "provenance": "fresh-run 2026-08-26 (zensim_loop_23shot_sota944_2026-08-26.tsv, run=W10L9_base_k3_best)"
     }
    }
+  },
+  "W10L9_h3ctrl2": {
+   "kind": "inner",
+   "label": "THE ADOPTED-DEFAULTS frontier arm (beats-butter study): candidate + OWN-map h3-mag + CTRL_EXP 1.0 + CTRL_CLAMP 2.0 + binned attribution (bin=8, zensim L2)",
+   "bake": "W10L9_s4003_packed.bin",
+   "cells": {
+    "k2_emit_last": {
+     "within2": 23,
+     "n_cells": 27,
+     "med_abs_err": 0.567,
+     "med_bytes": 21446.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ctrl2_2026-08-26.tsv, run=W10L9_h3ctrl2_k2_last)"
+    },
+    "k2_emit_best": {
+     "within2": 22,
+     "n_cells": 27,
+     "med_abs_err": 0.534,
+     "med_bytes": 21446.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ctrl2_2026-08-26.tsv, run=W10L9_h3ctrl2_k2_best)"
+    },
+    "k3_emit_last": {
+     "within2": 25,
+     "n_cells": 27,
+     "med_abs_err": 0.355,
+     "med_bytes": 21344.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ctrl2_2026-08-26.tsv, run=W10L9_h3ctrl2_k3_last)"
+    },
+    "k3_emit_best": {
+     "within2": 25,
+     "n_cells": 27,
+     "med_abs_err": 0.344,
+     "med_bytes": 21446.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ctrl2_2026-08-26.tsv, run=W10L9_h3ctrl2_k3_best)"
+    }
+   }
   }
  }
 }

@@ -75,5 +75,22 @@ if [ "$phase" = clampsweep ] || [ "$phase" = all ]; then
   say "clampsweep encodes done"
 fi
 
+if [ "$phase" = h3ctrl2fresh ]; then
+  # 2026-08-26: fresh re-measure of the ADOPTED frontier arm (summary key W10L9_h3ctrl2 =
+  # exp100 + CTRL_CLAMP 2.00 + ATTR_BIN 8) on the current secant-on-default substrate —
+  # the 08-07 rows are old-substrate (see zensim_loop_23shot_STALE_2026-08-26.md).
+  D=$OUT/h3ctrl2fresh; mkdir -p "$D"
+  for k in 2 3; do
+    run_ab "$D" "W10L9_h3ctrl2_k${k}_best" h3-mag "$k" "${COMMON[@]}" \
+      ZENSIM_ATTR_BIN=8 JXL_ZENSIM_CTRL_CLAMP=2.00 \
+      JXL_ZENSIM_TRACE=$D/trace_h3ctrl2_k${k}_best.tsv
+    run_ab "$D" "W10L9_h3ctrl2_k${k}_last" h3-mag "$k" \
+      JXL_ZENSIM_TARGET_TOL=-1 JXL_ZENSIM_CTRL_EXP=1.00 \
+      ZENSIM_ATTR_BIN=8 JXL_ZENSIM_CTRL_CLAMP=2.00 \
+      JXL_ZENSIM_TRACE=$D/trace_h3ctrl2_k${k}_last.tsv
+  done
+  say "h3ctrl2fresh done: $(ls $D/target_ab_W10L9_h3ctrl2_*.tsv 2>/dev/null | wc -l)/4 TSVs"
+fi
+
 say "phase(s) '$phase' complete; collect via analyze_23shot.cells_stats over $OUT/*/*.tsv"
 touch "$OUT/PHASE_${phase}.done"
