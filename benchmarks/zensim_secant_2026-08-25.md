@@ -152,11 +152,15 @@ C944_sec1_k3_last: mean(achieved-target)=-0.294 median=-0.085 cells_under_by_0.5
 within ±1% of S0" and every secant arm sits at +1.8..+2.0%. Census + median
 pass decisively; the bytes bar FAILS, so per the pre-registered rule the arm
 is REPORTED, not adopted (it stays default OFF — the default flip was
-user-gated regardless). Mechanism, honest read: the control UNDERSHOOTS the
-target (negative mean achieved−target); the secant lands nearer the requested
-quality, and closer-to-target at a higher quality costs bytes — the +1.9% is
-largely *hitting the target the caller asked for*, not waste. The ±1% bytes
-bar as frozen conflates rate discipline with the target-hitting error it was
-meant to protect. Open (registered, not decided): either a rate-matched read
-(equal achieved → bytes ratio, the mm-F3 shape) or a rule amendment — both
-user-visible, neither taken unilaterally.
+user-gated regardless). Mechanism — CORRECTED against the bias table above
+(an earlier revision claimed the control undershoots; the data says
+otherwise): the control lands HIGH on mean (k2 +1.8/+1.9, median +0.6/+0.7)
+while the secant lands nearer zero (k2 mean ≈ +1.0, median ≈ −0.2; k3 mean
+≈ −0.2). Aggregate bias therefore does NOT explain the secant's +1.9% bytes —
+an arm sitting at HIGHER achieved quality would be expected to cost more, not
+fewer, bytes than one at target. The bytes delta lives in the per-cell
+distribution (both arms miss low on 5-9 cells; which cells land where differs
+by arm), so only a rate-matched per-cell read (equal achieved → bytes ratio,
+the mm-F3 shape) can say whether the +1.9% is waste or reallocation. Open
+(registered, not decided): that rate-matched read, and/or a bytes-bar
+amendment — both user-visible, neither taken unilaterally.
