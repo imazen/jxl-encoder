@@ -42,3 +42,19 @@ invalid on the current substrate, so a clean refresh must:
 Until then, the gauntlet's `--loop-targeting` should keep reading the 2026-08-05
 summary WITH THIS CAVEAT: it is a snapshot of the `b8a582e5` loop, not the shipped
 secant-on-by-default loop. This is the current criterion-4 gap for jxl.
+
+## Update: the h3-mag 2× probe is BENIGN (loop converges correctly)
+
+Checked the fresh h3 arm census numbers (`~/tmp/23shot/run/fresh/
+target_ab_v47A_h3g20c135_k3_best.tsv`): the `v47A_h3g20c135` loop **converges
+tightly to target** on every cell — city 70/80/88 → 69.36/80.01/87.68, dog →
+69.30/80.10/87.54, girl → 68.38/79.95/88.20. So the H3-magnitude steering is
+functionally sound on the current loop; the doubled attr-probe (108 vs 54, 162 vs
+81) is an INSTRUMENTATION count change, NOT a steering regression. The engagement
+gate's `want=27·K` for the h3 arm is simply stale — the fix is `want=54·K` (or
+gating on convergence, not probe count), pending a one-line confirmation of WHY
+the probe now emits twice per (cell×iter) in the h3 path (the write at
+`zensim_loop.rs:1186` fires once per attr-steered iteration; the h3 path enters it
+twice). This removes the "steering regression?" branch: the clean refresh is now
+(1) run fresh k3-emit-last + outer, (2) teach analyze_23shot.py to read them, and
+(3) bump the h3 gate `want` — no loop fix needed.
