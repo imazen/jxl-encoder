@@ -6,7 +6,7 @@
 # fresh (k3-last has no mm rows to derive from), controls carried behind the
 # same substrate probe as the 2026-08-01 study (which doubles as the
 # R0-identity gate for the folded-class integration changes).
-# Phases: probe fresh collect h3own h3ownsp gainsweep
+# Phases: probe fresh collect h3own h3ownsp gainsweep secant
 #   (usage: run_23shot_sota944.sh <phase>|all)
 # `h3ownsp` (campaign appendix P lever 2, 2026-08-05): G-P5 — h3-mag +
 # JXL_ZENSIM_SINGLEPASS=1 (stale-map single-pass) vs the committed fresh
@@ -297,4 +297,85 @@ if [ "$phase" = collect ] || [ "$phase" = all ]; then
   wc -l "$BD/zensim_loop_23shot_sota944_2026-08-05.tsv" | tee -a "$LOG"
 fi
 
-say "phase '$phase' complete"
+say "phase '$phase' complete"\n
+
+# ── secant: the registered DECODED-JUDGED A/B for the guarded diffmap secant
+#    (benchmarks/zensim_secant_2026-08-25.md "Next" #1). Frontier C bake
+#    (Profile C, c_sdr_mlp944_corrmix) + h3-mag, K in {2,3} x {last,best} x
+#    JXL_ZENSIM_SECANT in {0,1}. The 08-25 tables were INTERNAL-score; this
+#    phase judges on the instrument's achieved_decoded/abs_err columns.
+if [ "$phase" = secant ]; then
+  SD=$OUT/secant
+  mkdir -p "$SD"
+  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
+  [ -f "$CBAKE" ] || { say "STOP: C bake missing at $CBAKE"; exit 1; }
+  for sec in 0 1; do
+    for mode in k2_last k2_best k3_last k3_best; do
+      K=${mode:1:1}
+      EB=()
+      [ "${mode#*_}" = best ] && EB=(JXL_ZENSIM_EMIT_BEST=1)
+      lbl=C944_sec${sec}_${mode}
+      run_ab "$SD" "$lbl" "$CBAKE" h3-mag "$K" 70,80,88 \
+        JXL_ZENSIM_TARGET_TOL=-1 JXL_SAVE_BITSTREAM=1 JXL_ZENSIM_SECANT=$sec \
+        ${EB[@]+"${EB[@]}"} \
+        JXL_ZENSIM_TRACE=$SD/trace_$lbl.tsv \
+        JXL_ZENSIM_ATTR_PROBE=$SD/probe_$lbl.tsv
+    done
+  done
+  # Engagement gates: h3-mag steers 1..K => probe exactly 27*K lines; trace
+  # exactly 27*(K+1) compare rows — for EVERY arm.
+  fail=0
+  for sec in 0 1; do
+    for mode in k2_last k2_best k3_last k3_best; do
+      K=${mode:1:1}
+      n=$(wc -l < "$SD/probe_C944_sec${sec}_${mode}.tsv" 2>/dev/null || echo 0)
+      want=$((27 * K))
+      say "ENGAGE C944_sec${sec}_$mode probe=$n want=$want"
+      [ "$n" -eq "$want" ] || fail=1
+      tn=$(wc -l < "$SD/trace_C944_sec${sec}_${mode}.tsv" 2>/dev/null || echo 0)
+      wantt=$((27 * (K + 1)))
+      say "TRACE  C944_sec${sec}_$mode rows=$tn want=$wantt"
+      [ "$tn" -eq "$wantt" ] || fail=1
+    done
+  done
+  # Secant-engagement: sec1 must CHANGE bitstreams vs sec0 somewhere at each K
+  # (the 08-25 smoke's divergence proof, now as a gate — a silent fall-through
+  # to the power law would make the whole A/B a null comparison).
+  for K in 2 3; do
+    diffn=0; tot=0
+    for f in "$SD"/decoded/C944_sec0_k${K}_last__*.jxl; do
+      [ -f "$f" ] || continue
+      bn=$(basename "$f"); bb=${bn/_sec0_/_sec1_}
+      tot=$((tot + 1))
+      cmp -s "$f" "$SD/decoded/$bb" || diffn=$((diffn + 1))
+    done
+    say "SECANT-ENGAGE k$K: $diffn/$tot bitstreams differ sec0-vs-sec1"
+    [ "$diffn" -ge 1 ] || fail=1
+  done
+  [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
+  # Committed cells TSV.
+  BD=$REPO/benchmarks
+  {
+    printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
+    for f in "$SD"/target_ab_*.tsv; do
+      [ -f "$f" ] || continue
+      run=$(basename "$f" .tsv); run=${run#target_ab_}
+      awk -F'\t' -v r="$run" 'NR>1 { print r "\t" $0 }' "$f"
+    done
+  } > "$BD/zensim_loop_secant_decoded_2026-08-26.tsv"
+  wc -l "$BD/zensim_loop_secant_decoded_2026-08-26.tsv" | tee -a "$LOG"
+  # Decoded verdict (derived from the instrument's OWN achieved_decoded/abs_err
+  # columns — census within +-2.0 + median |err| + total bytes per arm).
+  python3 - "$BD/zensim_loop_secant_decoded_2026-08-26.tsv" <<'PYV' | tee "$SD/verdict.txt" | tee -a "$LOG"
+import csv, statistics, sys
+rows = list(csv.DictReader(open(sys.argv[1]), delimiter="\t"))
+arms = sorted({r["run"] for r in rows})
+print(f"{'arm':28s} n census<=2 med|err| bytes")
+for a in arms:
+    rs = [r for r in rows if r["run"] == a]
+    errs = [abs(float(r["abs_err"])) for r in rs]
+    cen = sum(1 for e in errs if e <= 2.0)
+    tb = sum(int(r["bytes"]) for r in rs)
+    print(f"{a:28s} {len(rs):2d} {cen:2d}/27 {statistics.median(errs):8.3f} {tb}")
+PYV
+fi
