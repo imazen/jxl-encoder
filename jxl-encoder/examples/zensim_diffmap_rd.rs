@@ -318,6 +318,63 @@ fn seed_distance_for_target(t: f64) -> f32 {
     }
 }
 
+/// Zq-seed-head arm (registered wave: benchmarks/zq_seed_wave_2026-08-26.md).
+/// With `JXL_ZENSIM_SEED_HEAD=1`, extract the head's 8 zenanalyze features and
+/// seed iteration 1 at `quality_to_distance(head_q0)`; any failure (env unset,
+/// extraction error, non-finite) falls back to the staircase (G-J3).
+fn seed_distance(t: f64, pixels: &[u8], w: u32, h: u32) -> f32 {
+    let on = std::env::var("JXL_ZENSIM_SEED_HEAD")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    if !on {
+        return seed_distance_for_target(t);
+    }
+    seed_head_distance(t, pixels, w, h).unwrap_or_else(|| seed_distance_for_target(t))
+}
+
+fn seed_head_distance(t: f64, pixels: &[u8], w: u32, h: u32) -> Option<f32> {
+    use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
+    let set = FeatureSet::just(AnalysisFeature::FlatColorBlockRatio)
+        .with(AnalysisFeature::GradientFraction)
+        .with(AnalysisFeature::DistinctColorBins)
+        .with(AnalysisFeature::HighFreqEnergyRatio)
+        .with(AnalysisFeature::AqMapStd)
+        .with(AnalysisFeature::GrayscaleScore)
+        .with(AnalysisFeature::LumaHistogramEntropy)
+        .with(AnalysisFeature::QuantSurvivalY);
+    let query = AnalysisQuery::new(set);
+    let a = zenanalyze::try_analyze_features_rgb8(pixels, w, h, &query).ok()?;
+    let g = |f: AnalysisFeature| -> Option<f32> {
+        if let Some(v) = a.get_f32(f) {
+            if v.is_nan() {
+                return None;
+            }
+            return Some(v);
+        }
+        match a.get(f)? {
+            zenanalyze::feature::FeatureValue::U32(x) => Some(x as f32),
+            zenanalyze::feature::FeatureValue::F32(x) if !x.is_nan() => Some(x),
+            _ => None,
+        }
+    };
+    let feats = [
+        g(AnalysisFeature::FlatColorBlockRatio)?,
+        g(AnalysisFeature::GradientFraction)?,
+        g(AnalysisFeature::DistinctColorBins)?,
+        g(AnalysisFeature::HighFreqEnergyRatio)?,
+        g(AnalysisFeature::AqMapStd)?,
+        g(AnalysisFeature::GrayscaleScore)?,
+        g(AnalysisFeature::LumaHistogramEntropy)?,
+        g(AnalysisFeature::QuantSurvivalY)?,
+    ];
+    let q0 = jxl_encoder::zq_seed::predict_q0_from_features(
+        &feats,
+        t,
+        u64::from(w) * u64::from(h),
+    )?;
+    Some(jxl_encoder::api::quality_to_distance(q0))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut metric_s = "zensim".to_string();
     let mut label = "zensim_v47_default".to_string();
@@ -550,7 +607,7 @@ fn run_target_ab(
                     );
                 }
                 let _ = fs::remove_file(&stats_tmp);
-                let seed_d = seed_distance_for_target(t);
+                let seed_d = seed_distance(t, &pixels, w, h);
                 let t0 = Instant::now();
                 let cfg = LossyConfig::new(seed_d)
                     .with_strategy(EncoderStrategy::Zenjxl)
@@ -756,7 +813,7 @@ fn run_score_target_outer(
                 .save(&ref_png)?;
         }
         for &t in targets {
-            let seed_d = seed_distance_for_target(t);
+            let seed_d = seed_distance(t, &pixels, w, h);
             let mut g: f64 = 1.0;
             for j in 0..OUTER_ENCODES {
                 // SAFETY: sequential driver (as above).
