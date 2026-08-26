@@ -716,7 +716,9 @@ impl VarDctEncoder {
         // A-Y1 (campaign appendix Y): adaptive H3 gain shapes. Unset/"fixed"
         // = shipped constant gain (byte-identical); "decay" = gain·0.5^iter;
         // "err" = gain·min(1, |err_i|/|err_0|) — error-proportional, needs a
-        // target (falls back to fixed without one).
+        // target (falls back to fixed without one). "tile-secant" = plan §5
+        // arm S3: per-tile measured elasticity after 2 iterates (see the
+        // s3_* state below).
         let h3_gain_mode = std::env::var("ZENSIM_H3_GAIN_MODE").ok();
         let mut h3_err0: Option<f64> = None;
         // A-Y3 (campaign appendix Y): EMA blend of the H-arm per-tile query
@@ -729,6 +731,16 @@ impl VarDctEncoder {
             .and_then(|s| s.parse().ok())
             .filter(|a: &f32| a.is_finite() && *a > 0.0 && *a < 1.0);
         let mut prev_tile_q: Vec<f32> = Vec::new();
+        // S3 per-tile secant gain (plan §5 arm S3, 2026-08-26; env
+        // ZENSIM_H3_GAIN_MODE=tile-secant): after two steered iterates the
+        // binned map gives each tile's measured elasticity
+        // |Δ tile_q / Δ ln qf|, replacing the constant gain (clamped [2,40];
+        // constant until 2 iterates or when a tile's qf barely moved). The
+        // pairing is (tile_q_i, ln qf at the START of iterate i) — the field
+        // that PRODUCED the iterate's encode, snapshotted at the fill site.
+        let mut s3_prev_tile_q: Vec<f32> = Vec::new();
+        let mut s3_prev_lnqf: Vec<f32> = Vec::new();
+        let mut s3_cur_lnqf: Vec<f32> = Vec::new();
         let mut model_s: Option<&'static [f64]> = None;
         // Level-2 binned attribution (zensim d0f624eb): JXL var-DCT tiles
         // are 8-px aligned and the loop reads the map ONLY through
@@ -1182,6 +1194,14 @@ impl VarDctEncoder {
                         prev_tile_q.clear();
                         prev_tile_q.extend_from_slice(&tile_q);
                     }
+                    // S3: snapshot the per-tile ln(qf) that PRODUCED this
+                    // iterate's encode (quant_field_float is still that field
+                    // here — redistribution runs later in the iteration).
+                    if h3_gain_mode.as_deref() == Some("tile-secant") {
+                        s3_cur_lnqf.clear();
+                        s3_cur_lnqf
+                            .extend(quant_field_float.iter().map(|&v| v.max(1e-9).ln()));
+                    }
                     // tile_dist only feeds the shared log line on this path.
                     tile_dist.fill(target_distance);
                     h_steered = true;
@@ -1570,11 +1590,41 @@ impl VarDctEncoder {
                             }
                             _ => h3_gain,
                         };
+                        let s3 = h3_gain_mode.as_deref() == Some("tile-secant")
+                            && s3_prev_tile_q.len() == num_blocks
+                            && s3_prev_lnqf.len() == num_blocks
+                            && s3_cur_lnqf.len() == num_blocks;
                         for bi in 0..num_blocks {
-                            let factor = (1.0 + h3_gain_eff * tile_q[bi])
+                            // S3: measured per-tile elasticity replaces the
+                            // constant once two iterates exist; a tile whose
+                            // qf barely moved keeps the constant (divide-by-
+                            // noise guard, same shape as the secant's).
+                            let gain_bi = if s3 {
+                                let dlnqf = s3_cur_lnqf[bi] - s3_prev_lnqf[bi];
+                                if dlnqf.abs() > 1e-4 {
+                                    ((tile_q[bi] - s3_prev_tile_q[bi]) / dlnqf)
+                                        .abs()
+                                        .clamp(2.0, 40.0)
+                                } else {
+                                    h3_gain_eff
+                                }
+                            } else {
+                                h3_gain_eff
+                            };
+                            let factor = (1.0 + gain_bi * tile_q[bi])
                                 .clamp(1.0 / params.factor_max, params.factor_max);
                             quant_field_float[bi] =
                                 (quant_field_float[bi] * factor).clamp(qf_lower, qf_higher);
+                        }
+                        // S3: advance the iterate pair (this iterate's map +
+                        // the field that produced it) for the next gain.
+                        if h3_gain_mode.as_deref() == Some("tile-secant")
+                            && s3_cur_lnqf.len() == num_blocks
+                        {
+                            s3_prev_tile_q.clear();
+                            s3_prev_tile_q.extend_from_slice(&tile_q);
+                            s3_prev_lnqf.clear();
+                            s3_prev_lnqf.extend_from_slice(&s3_cur_lnqf);
                         }
                     }
                 }
