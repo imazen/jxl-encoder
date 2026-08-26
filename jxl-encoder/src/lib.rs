@@ -80,6 +80,7 @@ pub mod validation;
 #[cfg(test)]
 mod validation_tests;
 pub mod vardct;
+pub mod zq_seed;
 
 #[cfg(feature = "convenience")]
 pub mod convenience;
