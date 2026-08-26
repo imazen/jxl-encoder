@@ -6,7 +6,7 @@
 # fresh (k3-last has no mm rows to derive from), controls carried behind the
 # same substrate probe as the 2026-08-01 study (which doubles as the
 # R0-identity gate for the folded-class integration changes).
-# Phases: probe fresh collect h3own h3ownsp gainsweep secant
+# Phases: probe fresh collect h3own h3ownsp gainsweep secant s3gain
 #   (usage: run_23shot_sota944.sh <phase>|all)
 # `h3ownsp` (campaign appendix P lever 2, 2026-08-05): G-P5 — h3-mag +
 # JXL_ZENSIM_SINGLEPASS=1 (stale-map single-pass) vs the committed fresh
@@ -297,7 +297,7 @@ if [ "$phase" = collect ] || [ "$phase" = all ]; then
   wc -l "$BD/zensim_loop_23shot_sota944_2026-08-05.tsv" | tee -a "$LOG"
 fi
 
-say "phase '$phase' complete"\n
+say "phase '$phase' complete"
 
 # ── secant: the registered DECODED-JUDGED A/B for the guarded diffmap secant
 #    (benchmarks/zensim_secant_2026-08-25.md "Next" #1). Frontier C bake
@@ -377,5 +377,82 @@ for a in arms:
     cen = sum(1 for e in errs if e <= 2.0)
     tb = sum(int(r["bytes"]) for r in rs)
     print(f"{a:28s} {len(rs):2d} {cen:2d}/27 {statistics.median(errs):8.3f} {tb}")
+PYV
+fi
+
+# ── s3gain: plan §5 arm S3 (per-tile secant gain, ZENSIM_H3_GAIN_MODE=
+#    tile-secant) vs fixed gain, SAME substrate (fresh controls — the secant
+#    phase's sec0 rows are a different binary). Global secant OFF in both
+#    arms to isolate the gain axis. K in {2,3}, emit-best (the S3 endpoint
+#    reads census + bytes; per-cell rows feed the rate-matched analysis).
+if [ "$phase" = s3gain ]; then
+  SD=$OUT/s3gain
+  mkdir -p "$SD"
+  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
+  [ -f "$CBAKE" ] || { say "STOP: C bake missing at $CBAKE"; exit 1; }
+  for gm in fixed tilesec; do
+    GME=()
+    [ "$gm" = tilesec ] && GME=(ZENSIM_H3_GAIN_MODE=tile-secant)
+    for K in 2 3; do
+      lbl=C944_${gm}_k${K}_best
+      run_ab "$SD" "$lbl" "$CBAKE" h3-mag "$K" 70,80,88 \
+        JXL_ZENSIM_TARGET_TOL=-1 JXL_SAVE_BITSTREAM=1 JXL_ZENSIM_SECANT=0 \
+        JXL_ZENSIM_EMIT_BEST=1 \
+        ${GME[@]+"${GME[@]}"} \
+        JXL_ZENSIM_TRACE=$SD/trace_$lbl.tsv \
+        JXL_ZENSIM_ATTR_PROBE=$SD/probe_$lbl.tsv
+    done
+  done
+  fail=0
+  for gm in fixed tilesec; do
+    for K in 2 3; do
+      n=$(wc -l < "$SD/probe_C944_${gm}_k${K}_best.tsv" 2>/dev/null || echo 0)
+      want=$((27 * K))
+      say "ENGAGE C944_${gm}_k${K}_best probe=$n want=$want"
+      [ "$n" -eq "$want" ] || fail=1
+      tn=$(wc -l < "$SD/trace_C944_${gm}_k${K}_best.tsv" 2>/dev/null || echo 0)
+      wantt=$((27 * (K + 1)))
+      say "TRACE  C944_${gm}_k${K}_best rows=$tn want=$wantt"
+      [ "$tn" -eq "$wantt" ] || fail=1
+    done
+  done
+  # S3-engagement: tile-secant fires from the 2nd steered iterate, so at
+  # K=2/3 the arms must diverge somewhere; a silent fall-through to the
+  # constant gain would null the A/B.
+  for K in 2 3; do
+    diffn=0; tot=0
+    for f in "$SD"/decoded/C944_fixed_k${K}_best__*.jxl; do
+      [ -f "$f" ] || continue
+      bn=$(basename "$f"); bb=${bn/_fixed_/_tilesec_}
+      tot=$((tot + 1))
+      cmp -s "$f" "$SD/decoded/$bb" || diffn=$((diffn + 1))
+    done
+    say "S3-ENGAGE k$K: $diffn/$tot bitstreams differ fixed-vs-tilesec"
+    [ "$diffn" -ge 1 ] || fail=1
+  done
+  [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
+  BD=$REPO/benchmarks
+  {
+    printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
+    for f in "$SD"/target_ab_*.tsv; do
+      [ -f "$f" ] || continue
+      run=$(basename "$f" .tsv); run=${run#target_ab_}
+      awk -F'\t' -v r="$run" 'NR>1 { print r "\t" $0 }' "$f"
+    done
+  } > "$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv"
+  wc -l "$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv" | tee -a "$LOG"
+  python3 - "$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv" <<'PYV' | tee "$SD/verdict.txt" | tee -a "$LOG"
+import csv, statistics, sys
+rows = list(csv.DictReader(open(sys.argv[1]), delimiter="\t"))
+arms = sorted({r["run"] for r in rows})
+print(f"{'arm':26s} n census<=2 med|err| bytes  nonphoto<=2")
+for a in arms:
+    rs = [r for r in rows if r["run"] == a]
+    errs = [abs(float(r["abs_err"])) for r in rs]
+    cen = sum(1 for e in errs if e <= 2.0)
+    npc = sum(1 for r in rs if r["class"] == "nonphoto" and abs(float(r["abs_err"])) <= 2.0)
+    npn = sum(1 for r in rs if r["class"] == "nonphoto")
+    tb = sum(int(r["bytes"]) for r in rs)
+    print(f"{a:26s} {len(rs):2d} {cen:2d}/27 {statistics.median(errs):8.3f} {tb} {npc}/{npn}")
 PYV
 fi
