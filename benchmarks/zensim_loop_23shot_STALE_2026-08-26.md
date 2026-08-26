@@ -71,3 +71,11 @@ k3_best v47A 24/27 · B 26/27 · bvls 25/27 · blend2L 25/27 · h3 18/27; k2_bes
 21/23/18/23/14. Notable vs 2026-08-05: the h3-mag arm lost its k2 edge on this
 substrate (14/27 vs base 21/27) — the secant-on-default change moved the frontier;
 gauntlet's `--loop-targeting` should point at the 2026-08-26 summary.
+
+**W10L9_base re-measured fresh** (run_23shot_sota944.sh fresh on the current
+substrate; `zensim_loop_23shot_sota944_2026-08-26.tsv`) and folded into the
+2026-08-26 summary via `--extra-arm`. Still awaiting fresh re-measure:
+`W10L9_h3ctrl2` (the adopted frontier arm; beatbutter runner), `h3own`,
+`h3ownsp` — the board's LOOP_BAKE_MAP skips absent keys gracefully, so
+W10L9_s4003_packed's scoreboard primary falls back to the fresh `W10L9_base`
+until then. Do NOT cite the 08-05/08-07 W10L9 loop rows as current-loop numbers.
