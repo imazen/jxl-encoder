@@ -58,3 +58,16 @@ the probe now emits twice per (cell×iter) in the h3 path (the write at
 twice). This removes the "steering regression?" branch: the clean refresh is now
 (1) run fresh k3-emit-last + outer, (2) teach analyze_23shot.py to read them, and
 (3) bump the h3 gate `want` — no loop fix needed.
+
+## REFRESHED (same day): the current-loop census is now measured
+
+`benchmarks/zensim_loop_23shot_summary_2026-08-26.json` is the ALL-FRESH census on
+the current loop (jxl 24b20eed, secant on by default): 5 arms × {k2_last, k2_best,
+k3_last, k3_best} measured fresh (`zensim_loop_23shot_2026-08-26.tsv`, 567 rows =
+21 runs × 27 cells) + outer j2/j3 re-run fresh via `run_mm.sh outer`
+(`zensim_outer_{zensimA,ssim2}_2026-08-26.tsv`) — zero mm-derived entries, both
+published-anchor asserts correctly skipped on fresh inputs. Headline within±2:
+k3_best v47A 24/27 · B 26/27 · bvls 25/27 · blend2L 25/27 · h3 18/27; k2_best
+21/23/18/23/14. Notable vs 2026-08-05: the h3-mag arm lost its k2 edge on this
+substrate (14/27 vs base 21/27) — the secant-on-default change moved the frontier;
+gauntlet's `--loop-targeting` should point at the 2026-08-26 summary.

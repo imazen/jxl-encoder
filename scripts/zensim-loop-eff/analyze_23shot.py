@@ -304,6 +304,10 @@ def main():
     s.add_argument("--fresh-cells", required=True)
     s.add_argument("--mm-cells", required=True)
     s.add_argument("--mm-outer", required=True)
+    s.add_argument("--fresh-outer-zensima", default=None,
+                   help="fresh outer_zensimA score TSV (skips mm derivation + its anchor)")
+    s.add_argument("--fresh-outer-ssim2", default=None,
+                   help="fresh outer_ssim2 score TSV (skips mm derivation + its anchor)")
     s.add_argument("--out-json", default=None)
     s.add_argument("--jxl-commit", default="?")
     s.add_argument("--zensim-commit", default="?")

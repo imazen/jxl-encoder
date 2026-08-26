@@ -169,8 +169,8 @@ if [ "$phase" = collect ] || [ "$phase" = all ]; then
       run=$(basename "$f" .tsv); run=${run#target_ab_}
       awk -F'\t' -v r="$run" 'NR>1 { print r "\t" $0 }' "$f"
     done
-  } > "$BD/zensim_loop_23shot_2026-08-01.tsv"
-  wc -l "$BD/zensim_loop_23shot_2026-08-01.tsv" | tee -a "$LOG"
+  } > "$BD/${COLLECT_NAME:-zensim_loop_23shot_2026-08-01.tsv}"
+  wc -l "$BD/${COLLECT_NAME:-zensim_loop_23shot_2026-08-01.tsv}" | tee -a "$LOG"
 fi
 
 say "phase '$phase' complete"
