@@ -156,13 +156,14 @@ if [ "$phase" = h3own ]; then
   for mode in k2_last k2_best k3_last k3_best; do
     K=${mode:1:1}
     n=$(wc -l < "$HD/probe_W10L9_h3own_${mode}.tsv" 2>/dev/null || echo 0)
-    # 2026-08-26: h3 attr-probe emits 2x/(cell*iter) on the current loop — measured benign
-    want=$((54 * K))
+    # 2026-08-26 MEASURED on the current loop: these own-map h3 arms emit exactly 27*K
+    # probe lines (NO doubling here — the 2x is recipe-dependent: present in the generic
+    # v47A_h3g20c135 + exp100 recipes, absent in these phases).
+    want=$((27 * K))
     say "ENGAGE W10L9_h3own_$mode probe=$n want=$want"
     [ "$n" -eq "$want" ] || fail=1
     tn=$(wc -l < "$HD/trace_W10L9_h3own_${mode}.tsv" 2>/dev/null || echo 0)
-    # 2026-08-26: trace compare-rows also doubled on the current loop (same benign 2x)
-    wantt=$((54 * (K + 1)))
+    wantt=$((27 * (K + 1)))
     say "TRACE  W10L9_h3own_$mode rows=$tn want=$wantt"
     [ "$tn" -eq "$wantt" ] || fail=1
   done
@@ -214,13 +215,14 @@ if [ "$phase" = h3ownsp ]; then
   for mode in k2_last k2_best k3_last k3_best; do
     K=${mode:1:1}
     n=$(wc -l < "$HD/probe_W10L9_h3ownsp_${mode}.tsv" 2>/dev/null || echo 0)
-    # 2026-08-26: h3 attr-probe emits 2x/(cell*iter) on the current loop — measured benign
-    want=$((54 * K))
+    # 2026-08-26 MEASURED on the current loop: these own-map h3 arms emit exactly 27*K
+    # probe lines (NO doubling here — the 2x is recipe-dependent: present in the generic
+    # v47A_h3g20c135 + exp100 recipes, absent in these phases).
+    want=$((27 * K))
     say "ENGAGE W10L9_h3ownsp_$mode probe=$n want=$want"
     [ "$n" -eq "$want" ] || fail=1
     tn=$(wc -l < "$HD/trace_W10L9_h3ownsp_${mode}.tsv" 2>/dev/null || echo 0)
-    # 2026-08-26: trace compare-rows also doubled on the current loop (same benign 2x)
-    wantt=$((54 * (K + 1)))
+    wantt=$((27 * (K + 1)))
     say "TRACE  W10L9_h3ownsp_$mode rows=$tn want=$wantt"
     [ "$tn" -eq "$wantt" ] || fail=1
   done

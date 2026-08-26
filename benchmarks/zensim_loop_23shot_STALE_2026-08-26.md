@@ -90,3 +90,12 @@ run_23shot_sota944.sh (engagement wants updated to the measured benign 2× for
 probes AND trace rows); all four W10L9 arms + the 5 panel arms + outer j2/j3 now
 carry 2026-08-26 current-substrate provenance in the summary. Nothing derived,
 nothing old-substrate remains.
+
+**CORRECTION (same day):** the h3own/h3ownsp engagement wants were briefly
+patched to 54·K on the assumption the attr-probe doubling applied there — the
+run itself refuted that (probe=54 at k2 = exactly 27·K): **the 2× is
+recipe-dependent** — present in the generic-map v47A_h3g20c135 and the exp100
+recipes, ABSENT in the own-map h3 phases. Wants reverted to 27·K. Also measured:
+`W10L9_h3own` rows are IDENTICAL (modulo run name) to `W10L9_h3ctrl2` on this
+substrate — the adopted defaults are exp 1.0 / clamp 2.0, so the two names now
+resolve to ONE config; do not count them as independent evidence.
