@@ -42,3 +42,23 @@ PASS ⇒ consts module `jxl-encoder/src/zq_seed.rs` (pure fn, q-domain, callers
 bridge via `quality_to_distance`), seed wiring in the A/B binary, census A/B
 TSV committed here, plan/memory updated. FAIL ⇒ numbers committed here; the
 staircase stays.
+
+## RESULT — G-J2 **FAIL** as registered; the staircase stays (2026-08-26)
+Census A/B ran per registration (27 cells, v47 bake, baseline arm, k2
+emit-best, TOL=-1; current loop defaults; head engagement PROVEN: 25 distinct
+`seed_d` values vs the staircase's 2). Fit diagnostics G-J1: val |q0−q*|
+p50 7.09 / p90 21.68.
+
+- median decoded |err|: staircase **0.832** vs head **0.785** — improvement
+  **5.6%**, below the frozen ≥15% bar ⇒ **FAIL**.
+- ±2 hits: 21/27 → 22/27 (no regression); iters fixed at 3 compares both arms.
+- Per class: photo 0.600 → 0.554 (already near-converged from the staircase);
+  **nonphoto 1.836 → 0.907 (−51%)** — a real, one-sided effect.
+
+Per the frozen endgame the staircase stays the default; the head module
+(`src/zq_seed.rs`) and the driver wiring remain in-tree, env-gated OFF
+(`JXL_ZENSIM_SEED_HEAD=1`), as A/B instrumentation. **Registered future
+lever (NOT re-gated here):** the improvement is concentrated in nonphoto —
+a class-conditional seed (head for nonphoto, staircase for photo) would need
+its own registered wave with the same bar. TSVs:
+`zq_census_ab_{stair,head}_2026-08-26.tsv`.
