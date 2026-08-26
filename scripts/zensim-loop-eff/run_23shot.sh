@@ -111,7 +111,9 @@ if [ "$phase" = fresh ] || [ "$phase" = all ]; then
   fail=0
   for mode in k2_last k2_best k3_best; do
     K=${mode:1:1}
-    want=$((27 * K))
+    # 2026-08-26: the h3 attr-probe emits TWICE per (cell x iter) on the current loop —
+    # measured benign (the arm converges tightly; see benchmarks/zensim_loop_23shot_STALE_2026-08-26.md).
+    want=$((54 * K))
     n=$(wc -l < "$FD/probe_v47A_h3g20c135_${mode}.tsv" 2>/dev/null || echo 0)
     say "ENGAGE v47A_h3g20c135_$mode probe=$n want=$want"
     [ "$n" -eq "$want" ] || fail=1
@@ -133,6 +135,28 @@ if [ "$phase" = fresh ] || [ "$phase" = all ]; then
     say "EMIT_BEST k2 engagement $arm: $diffn/$tot bitstreams differ from emit-last (0 = argmin==last everywhere, legal)"
   done
   [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
+fi
+
+# ── k3last: fresh k3 emit-last for all 5 arms (2026-08-26) ────────────────
+# The census originally DERIVED k3-emit-last from the 2026-07-31 mm study; the substrate
+# probe now FAILS on the current loop (see benchmarks/zensim_loop_23shot_STALE_2026-08-26.md),
+# so these must be measured fresh. Same run_ab shape as the probe (no EMIT_BEST).
+if [ "$phase" = k3last ]; then
+  FD=$OUT/fresh
+  mkdir -p "$FD"
+  declare -A BAKE=( [v47A_base]="$V47" [B_base]="$BLIN" [bvls_base]="$BVLS" [blend2L_base]="$BLEND" [v47A_h3g20c135]="$V47" )
+  declare -A ARMS=( [v47A_base]=baseline [B_base]=baseline [bvls_base]=baseline [blend2L_base]=baseline [v47A_h3g20c135]=h3-mag )
+  for arm in v47A_base B_base bvls_base blend2L_base v47A_h3g20c135; do
+    EXTRA=()
+    [ "$arm" = v47A_h3g20c135 ] && EXTRA=(ZENSIM_H3_GAIN=20.0 JXL_ZENSIM_CTRL_CLAMP=1.35)
+    lbl=${arm}_k3_last
+    run_ab "$FD" "$lbl" "${BAKE[$arm]}" "${ARMS[$arm]}" 3 70,80,88 \
+      JXL_ZENSIM_TARGET_TOL=-1 JXL_SAVE_BITSTREAM=1 \
+      ${EXTRA[@]+"${EXTRA[@]}"} \
+      JXL_ZENSIM_TRACE=$FD/trace_$lbl.tsv \
+      JXL_ZENSIM_ATTR_PROBE=$FD/probe_$lbl.tsv
+  done
+  say "k3last done: $(ls $FD/target_ab_*_k3_last.tsv 2>/dev/null | wc -l)/5 arm TSVs"
 fi
 
 # ── collect: concatenate committed TSV into benchmarks/ ───────────────────
