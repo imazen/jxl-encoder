@@ -99,3 +99,9 @@ recipes, ABSENT in the own-map h3 phases. Wants reverted to 27·K. Also measured
 `W10L9_h3own` rows are IDENTICAL (modulo run name) to `W10L9_h3ctrl2` on this
 substrate — the adopted defaults are exp 1.0 / clamp 2.0, so the two names now
 resolve to ONE config; do not count them as independent evidence.
+
+**Precision on the h3own≡h3ctrl2 identity (measured):** 108/108 cells carry
+IDENTICAL bytes, achieved_decoded, iters_used and seed_d across the two arms —
+the payload is bit-for-bit one config; only wall-clock telemetry columns
+(encode_ms/loop_ms/ms_per_compare) differ, which is what a raw file diff trips
+on. "One config, two names" stands, now with the exact measurement.
