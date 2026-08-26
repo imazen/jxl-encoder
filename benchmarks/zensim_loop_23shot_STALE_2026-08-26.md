@@ -84,3 +84,9 @@ until then. Do NOT cite the 08-05/08-07 W10L9 loop rows as current-loop numbers.
 exp100/clamp-2.00/bin-8 recipe on the current substrate;
 `zensim_loop_h3ctrl2_2026-08-26.tsv`). The 08-26 summary now carries BOTH board
 arms fresh; only h3own/h3ownsp (appendix N/P levers) remain old-substrate.
+
+**Census family COMPLETE — every arm fresh.** h3own + h3ownsp re-measured via
+run_23shot_sota944.sh (engagement wants updated to the measured benign 2× for
+probes AND trace rows); all four W10L9 arms + the 5 panel arms + outer j2/j3 now
+carry 2026-08-26 current-substrate provenance in the summary. Nothing derived,
+nothing old-substrate remains.

@@ -15,10 +15,10 @@
  },
  "substrate": {
   "jxl_encoder": "24b20eed",
-  "zensim": "23172dc7 (path-dep HEAD)",
+  "zensim": "dd8a3d66 (path-dep HEAD)",
   "mm_study": "jxl 475f50ad+instr, zensim 402f4e63 (probe-verified numerically identical for the loop)"
  },
- "notes": "Each arm's within-\u00b12.0 is in its OWN metric's units \u2014 counts are NOT unit-comparable across metrics (the mm study's F5 carries the shared-scale read). k2/k3 = inner-loop budget (--iters k; k+1 compares, the emitted bitstream is the last (emit_last) or internally-best (emit_best, JXL_ZENSIM_EMIT_BEST=1) measured iterate; judged decoded either way). Outer j2/j3 = as-emitted full encode at outer_iter j (seed + j controller steps, the step-count parallel of inner k=j); j*_best = best-of-<=j (decoded-judged by construction). latest arm SKIPPED: proven 27/27 byte-identical to B_base (mm mount-equivalence gate) \u2014 its numbers are B_base's. blend2L/bvls bakes are not on the gauntlet fulleval board. W10L9_base (sota944 candidate, 944-class PRUNED bake) scores through the folded-class loop route (canonical 944 extraction + full-bundle forward; redistribution map identical to every *_base arm) \u2014 see zensim_loop_23shot_sota944_2026-08-05.md; its per-compare cost carries a structural second pass (no fused 944 entry at that study's substrate).",
+ "notes": "Each arm's within-\u00b12.0 is in its OWN metric's units \u2014 counts are NOT unit-comparable across metrics (the mm study's F5 carries the shared-scale read). k2/k3 = inner-loop budget (--iters k; k+1 compares, the emitted bitstream is the last (emit_last) or internally-best (emit_best, JXL_ZENSIM_EMIT_BEST=1) measured iterate; judged decoded either way). Outer j2/j3 = as-emitted full encode at outer_iter j (seed + j controller steps, the step-count parallel of inner k=j); j*_best = best-of-<=j (decoded-judged by construction). latest arm SKIPPED: proven 27/27 byte-identical to B_base (mm mount-equivalence gate) \u2014 its numbers are B_base's. blend2L/bvls bakes are not on the gauntlet fulleval board. W10L9_base (sota944 candidate, 944-class PRUNED bake) scores through the folded-class loop route (canonical 944 extraction + full-bundle forward; redistribution map identical to every *_base arm) \u2014 see zensim_loop_23shot_sota944_2026-08-05.md; its per-compare cost carries a structural second pass (no fused 944 entry at that study's substrate). W10L9_h3own = the candidate steered by its OWN attribution map (h3-mag through the fused folded-944 compare, campaign appendix N; gradient probed at the first compare's folded features) \u2014 see zensim_loop_h3own_sota944_2026-08-05.tsv.",
  "models": {
   "v47A_base": {
    "kind": "inner",
@@ -332,6 +332,76 @@
      "med_abs_err": 0.344,
      "med_bytes": 21446.0,
      "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ctrl2_2026-08-26.tsv, run=W10L9_h3ctrl2_k3_best)"
+    }
+   }
+  },
+  "W10L9_h3own": {
+   "kind": "inner",
+   "label": "sota944 candidate + OWN-map h3-mag steering via the fused folded-944 compare (appendix N)",
+   "bake": "W10L9_s4003_packed.bin",
+   "cells": {
+    "k2_emit_last": {
+     "within2": 23,
+     "n_cells": 27,
+     "med_abs_err": 0.567,
+     "med_bytes": 21446.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3own_2026-08-26.tsv, run=W10L9_h3own_k2_last)"
+    },
+    "k2_emit_best": {
+     "within2": 22,
+     "n_cells": 27,
+     "med_abs_err": 0.534,
+     "med_bytes": 21446.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3own_2026-08-26.tsv, run=W10L9_h3own_k2_best)"
+    },
+    "k3_emit_last": {
+     "within2": 25,
+     "n_cells": 27,
+     "med_abs_err": 0.355,
+     "med_bytes": 21344.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3own_2026-08-26.tsv, run=W10L9_h3own_k3_last)"
+    },
+    "k3_emit_best": {
+     "within2": 25,
+     "n_cells": 27,
+     "med_abs_err": 0.344,
+     "med_bytes": 21446.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3own_2026-08-26.tsv, run=W10L9_h3own_k3_best)"
+    }
+   }
+  },
+  "W10L9_h3ownsp": {
+   "kind": "inner",
+   "label": "sota944 candidate + OWN-map h3-mag, STALE-MAP SINGLE-PASS (appendix P lever 2: one fused compare, later iterations score-only + cached map)",
+   "bake": "W10L9_s4003_packed.bin",
+   "cells": {
+    "k2_emit_last": {
+     "within2": 23,
+     "n_cells": 27,
+     "med_abs_err": 0.567,
+     "med_bytes": 21446.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ownsp_2026-08-26.tsv, run=W10L9_h3ownsp_k2_last)"
+    },
+    "k2_emit_best": {
+     "within2": 22,
+     "n_cells": 27,
+     "med_abs_err": 0.534,
+     "med_bytes": 21446.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ownsp_2026-08-26.tsv, run=W10L9_h3ownsp_k2_best)"
+    },
+    "k3_emit_last": {
+     "within2": 23,
+     "n_cells": 27,
+     "med_abs_err": 0.429,
+     "med_bytes": 21471.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ownsp_2026-08-26.tsv, run=W10L9_h3ownsp_k3_last)"
+    },
+    "k3_emit_best": {
+     "within2": 24,
+     "n_cells": 27,
+     "med_abs_err": 0.344,
+     "med_bytes": 21303.0,
+     "provenance": "fresh-run 2026-08-26 (zensim_loop_h3ownsp_2026-08-26.tsv, run=W10L9_h3ownsp_k3_best)"
     }
    }
   }
