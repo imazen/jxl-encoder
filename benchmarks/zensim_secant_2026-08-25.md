@@ -114,3 +114,49 @@ helps it at both budgets on both census and median. Same caveats stand
 but the direction + magnitude on the shipped recipe are compelling. The diffmap
 secant is a measured jxl-loop-efficiency improvement, default OFF pending the
 decoded-judged pass + a controller-default proposal (user-gated).
+
+## DECODED-JUDGED A/B — registered confirmation (2026-08-26, phase `secant` of run_23shot_sota944.sh)
+
+The registered "Next #1": same frontier C bake + h3-mag, 9×3 corpus, but judged
+on the instrument's `achieved_decoded`/`abs_err` columns instead of the loop's
+internal score. Engagement gates all passed (probe 27·K, trace 27·(K+1) per
+arm; sec1 bitstreams differ from sec0 in 23/27 cells at k2, 27/27 at k3).
+Cells TSV: `benchmarks/zensim_loop_secant_decoded_2026-08-26.tsv` (216 rows).
+
+| arm | census ≤2 | med \|err\| | bytes (sum) |
+|---|--:|--:|--:|
+| ctrl k2 best | 18/27 | 1.174 | 757,194 |
+| **secant k2 best** | **22/27** | **0.534** | 772,134 (+1.97%) |
+| ctrl k2 last | 18/27 | 1.174 | 755,018 |
+| **secant k2 last** | **23/27** | **0.567** | 769,527 (+1.92%) |
+| ctrl k3 best | 24/27 | 0.566 | 756,471 |
+| **secant k3 best** | **25/27** | **0.344** | 771,183 (+1.94%) |
+| ctrl k3 last | 24/27 | 0.566 | 755,211 |
+| **secant k3 last** | **25/27** | **0.355** | 768,538 (+1.76%) |
+
+**Decoded confirms the internal-score read on accuracy: k2 census +4/+5, k2
+median −55%, k3 census +1, k3 median −39%.** Achieved-bias per arm:
+
+```
+C944_sec0_k2_best: mean(achieved-target)=+1.949 median=+0.716 cells_under_by_0.5+=5
+C944_sec0_k2_last: mean(achieved-target)=+1.836 median=+0.613 cells_under_by_0.5+=7
+C944_sec0_k3_best: mean(achieved-target)=+0.354 median=-0.043 cells_under_by_0.5+=7
+C944_sec0_k3_last: mean(achieved-target)=+0.274 median=-0.264 cells_under_by_0.5+=8
+C944_sec1_k2_best: mean(achieved-target)=+1.100 median=-0.149 cells_under_by_0.5+=7
+C944_sec1_k2_last: mean(achieved-target)=+0.911 median=-0.278 cells_under_by_0.5+=9
+C944_sec1_k3_best: mean(achieved-target)=-0.185 median=-0.125 cells_under_by_0.5+=5
+C944_sec1_k3_last: mean(achieved-target)=-0.294 median=-0.085 cells_under_by_0.5+=8
+```
+
+**Frozen-rule verdict (§5.2): NOT ADVANCED.** The S1 rule requires "bytes
+within ±1% of S0" and every secant arm sits at +1.8..+2.0%. Census + median
+pass decisively; the bytes bar FAILS, so per the pre-registered rule the arm
+is REPORTED, not adopted (it stays default OFF — the default flip was
+user-gated regardless). Mechanism, honest read: the control UNDERSHOOTS the
+target (negative mean achieved−target); the secant lands nearer the requested
+quality, and closer-to-target at a higher quality costs bytes — the +1.9% is
+largely *hitting the target the caller asked for*, not waste. The ±1% bytes
+bar as frozen conflates rate discipline with the target-hitting error it was
+meant to protect. Open (registered, not decided): either a rate-matched read
+(equal achieved → bytes ratio, the mm-F3 shape) or a rule amendment — both
+user-visible, neither taken unilaterally.
