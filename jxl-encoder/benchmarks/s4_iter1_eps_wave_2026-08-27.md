@@ -127,7 +127,7 @@ Threshold 40 is the mapping's flat-region boundary (q2d: q30→d6 vs q50→d4
   bridge-invalid cells (owner-q0 < 40 or slope ≤ 0) removed the nonphoto
   poison while keeping the t88 nonphoto wins.
 
-## FINAL PROPOSAL (user-gated — nothing flips without an explicit yes)
+## FINAL PROPOSAL — ★ APPROVED + WIRED 2026-08-28 (explicit user yes, AskUserQuestion)
 Ship form = **B3**: per-image iteration-1 ε̂ from (i) the 8-feature slope
 head (coefficients in `s4_b2_refit.py` output, `b2_slope_fit.json`), (ii)
 DQ at the shipped `zq_seed` q0 via public `quality_to_distance`, (iii) the
@@ -135,4 +135,4 @@ bridge-validity guard (q0 ≥ 40 AND slope > 0, else ε̂ ≡ −1). All inputs 
 in-binary-cheap (the zq_seed features are already extracted when the seed
 head is on). Wiring on a yes: a `zq_seed`-style consts module for the slope
 head + the ε̂ computation at loop entry, env-gated, default decided by the
-user. Until then everything stays instrument-side (census driver + tables).
+user. Wired 2026-08-28: `src/s4_eps.rs` (consts from `b2_slope_fit.json` + the frozen unit bridge verbatim; slope-head hand-computation test + guard tests + DQ-sign test) — the loop's `JXL_ZENSIM_CTRL_EXP` default now consults the prior when a score target is set (nearest head for t≥75, all registered guards keep 1.0; env still wins outright; `JXL_ZENSIM_S4_EPS=0` = kill switch; non-learned-admission builds keep the constant).

@@ -820,10 +820,34 @@ impl VarDctEncoder {
         // dose-response 0.45<<0.6<0.8<1.0>=1.2 at BOTH budgets, 26W/1L vs
         // the old 0.6, med |err| 1.659→0.564 on the frontier arm;
         // controller-only is 19W/4L. Values outside (0, 2] are ignored.
+        // S4 arm-B3 per-image default (USER-APPROVED wiring 2026-08-28;
+        // census FULL PASS, benchmarks/s4_iter1_eps_wave_2026-08-27.md): when
+        // the env is unset and a score target is set, the elasticity prior
+        // supplies the exponent (registered guards keep 1.0 elsewhere).
+        // `JXL_ZENSIM_CTRL_EXP` still wins outright; `JXL_ZENSIM_S4_EPS=0`
+        // disables the prior without touching anything else.
         let ctrl_exp: f64 = std::env::var("JXL_ZENSIM_CTRL_EXP")
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|e: &f64| e.is_finite() && *e > 0.0 && *e <= 2.0)
+            .or_else(|| {
+                if matches!(
+                    std::env::var("JXL_ZENSIM_S4_EPS").ok().as_deref(),
+                    Some("0" | "false" | "off")
+                ) {
+                    return None;
+                }
+                let t = target_native?;
+                #[cfg(feature = "learned-admission")]
+                {
+                    crate::s4_eps::iter1_ctrl_exp_linear_rgb(linear_rgb, width, height, t)
+                }
+                #[cfg(not(feature = "learned-admission"))]
+                {
+                    let _ = t;
+                    None
+                }
+            })
             .unwrap_or(1.0);
         // Diffmap secant (plan §5.1, 2026-08-25): the global step uses a
         // measured elasticity ε̂ = Δln L / Δln S from the last two iterates

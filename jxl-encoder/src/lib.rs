@@ -81,6 +81,8 @@ pub mod validation;
 mod validation_tests;
 pub mod vardct;
 pub mod zq_seed;
+#[cfg(feature = "zensim-loop")]
+pub(crate) mod s4_eps;
 
 #[cfg(feature = "convenience")]
 pub mod convenience;
