@@ -164,3 +164,27 @@ by arm), so only a rate-matched per-cell read (equal achieved → bytes ratio,
 the mm-F3 shape) can say whether the +1.9% is waste or reallocation. Open
 (registered, not decided): that rate-matched read, and/or a bytes-bar
 amendment — both user-visible, neither taken unilaterally.
+
+## S3 per-tile secant gain — decoded A/B (2026-08-26, phase `s3gain`)
+
+Plan §5 arm S3 (`ZENSIM_H3_GAIN_MODE=tile-secant`, jxl-encoder ca32d08f):
+per-tile gain = measured |Δ tile_q / Δ ln qf| clamped [2,40] after two steered
+iterates. C bake + h3-mag, global secant OFF in both arms (gain axis
+isolated), fresh same-substrate controls, emit-best. Structural finding first:
+**at K=2 tile-secant cannot reach any bitstream** (the gain first differs at
+the 2nd steered iterate and only the NEXT encode would carry it) — measured
+exactly so: k2 arms byte-identical 27/27 (a free identity control); k3
+diverges 25/27. Cells: `benchmarks/zensim_loop_s3gain_decoded_2026-08-26.tsv`.
+
+| arm | census ≤2 | med \|err\| | bytes | nonphoto ≤2 |
+|---|--:|--:|--:|--:|
+| fixed k3 best | 24/27 | 0.566 | 756,471 | 7/9 |
+| **tile-secant k3 best** | **25/27** | **0.534** | 759,394 (+0.39%) | **8/9** |
+
+**k3: every registered S3 column improves** — census +1, nonphoto census +1
+(the S3 endpoint), median −5.7%, bytes +0.39% (inside the ±1% bar). Modest
+but uniformly positive; the §5.2 decision rule's k2 clause cannot apply to
+S3 (structurally inert at k2). Default stays OFF; adoption (likely composed
+with the global secant) is a user-gated proposal after the rate-matched
+question above is settled. Next registered: S3×S1 composition (tile gain +
+global secant together) and S4.
