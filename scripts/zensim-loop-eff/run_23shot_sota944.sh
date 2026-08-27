@@ -416,9 +416,12 @@ if [ "$phase" = s3gain ]; then
       [ "$tn" -eq "$wantt" ] || fail=1
     done
   done
-  # S3-engagement: tile-secant fires from the 2nd steered iterate, so at
-  # K=2/3 the arms must diverge somewhere; a silent fall-through to the
-  # constant gain would null the A/B.
+  # S3-engagement, structural (measured 2026-08-26): the per-tile gain first
+  # DIFFERS from fixed at the 2nd steered iterate, and a redistribution only
+  # reaches a bitstream via the NEXT encode — so at K=2 (steered iters 1,2;
+  # no encode after iter 2) tile-secant CANNOT change any emitted bitstream:
+  # k2 must be IDENTICAL (0 diffs — a free structural identity control), and
+  # k3 must diverge somewhere (first run: k2 0/27, k3 25/27).
   for K in 2 3; do
     diffn=0; tot=0
     for f in "$SD"/decoded/C944_fixed_k${K}_best__*.jxl; do
@@ -428,7 +431,11 @@ if [ "$phase" = s3gain ]; then
       cmp -s "$f" "$SD/decoded/$bb" || diffn=$((diffn + 1))
     done
     say "S3-ENGAGE k$K: $diffn/$tot bitstreams differ fixed-vs-tilesec"
-    [ "$diffn" -ge 1 ] || fail=1
+    if [ "$K" -eq 2 ]; then
+      [ "$diffn" -eq 0 ] || { say "k2 must be identical by construction"; fail=1; }
+    else
+      [ "$diffn" -ge 1 ] || fail=1
+    fi
   done
   [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
   BD=$REPO/benchmarks
