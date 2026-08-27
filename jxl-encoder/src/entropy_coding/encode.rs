@@ -176,9 +176,23 @@ pub fn write_token(
     let prefix_idx = code.context_map[token.context() as usize] as usize;
     let pc = &code.prefix_codes[prefix_idx];
 
-    // Get the Huffman code for this token
+    // Get the Huffman code for this token. A token beyond the table's
+    // alphabet used to index-panic here; a codeless symbol (depth 0 in a
+    // multi-symbol code) silently wrote only the extra bits — the zenjpeg
+    // #194 zero-bit mechanism (sweep issue #97). Both are loud errors now.
     let tok = sym as usize;
-    let depth = pc.depths[tok] as usize;
+    let Some(&depth_u8) = pc.depths.get(tok) else {
+        return Err(crate::error::Error::InvalidInput(alloc::format!(
+            "token symbol {tok} exceeds the prefix-code alphabet"
+        )));
+    };
+    let depth = depth_u8 as usize;
+    if depth == 0 && !crate::entropy_coding::encode_huffman::has_single_used_symbol(&pc.depths) {
+        return Err(crate::error::Error::InvalidInput(alloc::format!(
+            "prefix code has no bits for symbol {tok} — emitting it would \
+             silently corrupt the stream"
+        )));
+    }
     let bits = pc.bits[tok] as u64;
 
     // Combine Huffman bits and extra bits

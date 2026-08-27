@@ -885,7 +885,12 @@ impl VarDctEncoder {
             let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
             let (src_r, src_g, src_b) = deinterleave_rgb(linear_rgb, n);
             loud_compare(
-                z.precompute_reference_linear_planar([&src_r, &src_g, &src_b], width, height, width),
+                z.precompute_reference_linear_planar(
+                    [&src_r, &src_g, &src_b],
+                    width,
+                    height,
+                    width,
+                ),
                 "precompute_reference_linear_planar (372-class reference precompute)",
             )
             // src_r/g/b drop here; _g releases the reservation.
@@ -1199,8 +1204,7 @@ impl VarDctEncoder {
                     // here — redistribution runs later in the iteration).
                     if h3_gain_mode.as_deref() == Some("tile-secant") {
                         s3_cur_lnqf.clear();
-                        s3_cur_lnqf
-                            .extend(quant_field_float.iter().map(|&v| v.max(1e-9).ln()));
+                        s3_cur_lnqf.extend(quant_field_float.iter().map(|&v| v.max(1e-9).ln()));
                     }
                     // tile_dist only feeds the shared log line on this path.
                     tile_dist.fill(target_distance);

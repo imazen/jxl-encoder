@@ -2,7 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- `write_token`/`write_tokens` no longer silently corrupt streams on codeless symbols: an out-of-alphabet token now returns `Error::InvalidInput` instead of index-panicking, and a depth-0 symbol in a multi-symbol prefix code errors loudly instead of emitting zero Huffman bits (the zenjpeg #194 mechanism; sweep issue #97)
+- Static DC prefix codes now have Kraft-validity + used-symbol assertions in `test_static_codes_exist` (#97)
+
 ### Added
+- Every hash-lock feature-matrix cell is now decoded in-process with jxl-oxide (dimensions asserted, frame rendered) in both check and update modes, so a regen can never lock undecodable bytes (#97)
 
 - W44-231: LEARNED qf-seed sub-band lift admission — a 4-feature
   logistic over zenanalyze features (new default-on `learned-admission`

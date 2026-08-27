@@ -555,7 +555,7 @@ fn store_huffman_tree(depths: &[u8], num: usize, writer: &mut BitWriter) -> Resu
 /// end of a section, a bitstream DESYNC anywhere else. Both sides
 /// (header + emission) now derive singleton-ness from the same
 /// depths-scan, so they cannot disagree.
-pub(super) fn has_single_used_symbol(depths: &[u8]) -> bool {
+pub(crate) fn has_single_used_symbol(depths: &[u8]) -> bool {
     depths.iter().filter(|&&d| d > 0).count() == 1
 }
 
@@ -1217,10 +1217,25 @@ pub fn write_tokens(
         let prefix_idx = code.context_map[token.context() as usize] as usize;
         let pc = &code.prefix_codes[prefix_idx];
         let tok = sym as usize;
+        // Bounds + coverage guards (sweep issue #97): an out-of-alphabet
+        // token index-panicked; a codeless symbol in a multi-symbol code
+        // silently wrote only its extra bits (zero Huffman bits) — the
+        // zenjpeg #194 mechanism. Loud errors instead.
         let depth = if zero_bit[prefix_idx] {
             0
         } else {
-            pc.depths[tok] as usize
+            let Some(&d) = pc.depths.get(tok) else {
+                return Err(crate::error::Error::InvalidInput(alloc::format!(
+                    "token symbol {tok} exceeds the prefix-code alphabet"
+                )));
+            };
+            if d == 0 {
+                return Err(crate::error::Error::InvalidInput(alloc::format!(
+                    "prefix code has no bits for symbol {tok} — emitting it \
+                     would silently corrupt the stream"
+                )));
+            }
+            d as usize
         };
         let bits = if depth == 0 { 0 } else { pc.bits[tok] as u64 };
         let data = bits | ((encoded.bits as u64) << depth);

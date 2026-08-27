@@ -367,11 +367,8 @@ fn seed_head_distance(t: f64, pixels: &[u8], w: u32, h: u32) -> Option<f32> {
         g(AnalysisFeature::LumaHistogramEntropy)?,
         g(AnalysisFeature::QuantSurvivalY)?,
     ];
-    let q0 = jxl_encoder::zq_seed::predict_q0_from_features(
-        &feats,
-        t,
-        u64::from(w) * u64::from(h),
-    )?;
+    let q0 =
+        jxl_encoder::zq_seed::predict_q0_from_features(&feats, t, u64::from(w) * u64::from(h))?;
     Some(jxl_encoder::api::quality_to_distance(q0))
 }
 

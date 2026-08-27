@@ -201,6 +201,26 @@ fn assert_hashes(
         bit_depth_16,
     );
 
+    // A hash lock alone blesses whatever bytes the encoder produced — the
+    // zenjpeg locked-values suite green-lit undecodable output for months
+    // that way (sweep issue #97). Decode EVERY cell in-process with
+    // jxl-oxide, in both check and update modes, so neither a regression
+    // nor a regen can ever lock undecodable bytes.
+    {
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(data))
+            .unwrap_or_else(|e| panic!("{name}: jxl-oxide header parse failed: {e:?}"));
+        let header = image.image_header();
+        assert_eq!(
+            (header.size.width, header.size.height),
+            (width, height),
+            "{name}: decoded dimensions"
+        );
+        image
+            .render_frame(0)
+            .unwrap_or_else(|e| panic!("{name}: jxl-oxide render failed: {e:?}"));
+    }
+
     if is_update_mode() {
         use std::io::Write;
         let mut f = std::fs::OpenOptions::new()

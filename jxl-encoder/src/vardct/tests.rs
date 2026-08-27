@@ -90,11 +90,27 @@ fn test_static_codes_exist() {
         static_codes::NUM_DC_PREFIX_CODES
     );
 
-    // Verify DC prefix codes have reasonable depths
-    for code in &static_codes::DC_PREFIX_CODES {
+    // Verify DC prefix codes have reasonable depths AND form valid prefix
+    // codes: Kraft sum over used symbols must not exceed 1 (an over-full
+    // code cannot decode), and codes with several used symbols must satisfy
+    // it exactly-enough that every used symbol is reachable. A depth-0 entry
+    // in a multi-symbol code is a codeless symbol — write_token now errors
+    // on those instead of silently emitting zero bits (sweep issue #97).
+    for (i, code) in static_codes::DC_PREFIX_CODES.iter().enumerate() {
+        let mut kraft_num = 0u64; // in units of 2^-15
+        let mut used = 0usize;
         for &depth in &code.depths {
             assert!(depth <= 15, "Huffman depth {} exceeds maximum 15", depth);
+            if depth > 0 {
+                kraft_num += 1u64 << (15 - depth);
+                used += 1;
+            }
         }
+        assert!(used > 0, "DC prefix code {i} has no used symbols");
+        assert!(
+            kraft_num <= 1u64 << 15,
+            "DC prefix code {i} is over-full (Kraft sum {kraft_num}/32768)"
+        );
     }
 
     // Verify AC static codes are properly defined
