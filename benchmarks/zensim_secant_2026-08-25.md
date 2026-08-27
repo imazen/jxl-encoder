@@ -188,3 +188,27 @@ S3 (structurally inert at k2). Default stays OFF; adoption (likely composed
 with the global secant) is a user-gated proposal after the rate-matched
 question above is settled. Next registered: S3×S1 composition (tile gain +
 global secant together) and S4.
+
+## S3×S1 composition — decoded A/B (2026-08-27, phase `s3s1`)
+
+Global guarded secant + per-tile gain together, k3 emit-best, same-binary
+controls (joined from the s3gain TSV). Cells:
+`benchmarks/zensim_loop_s3s1_decoded_2026-08-27.tsv` (engagement: tile gain
+still moves bitstreams under the secant).
+
+| arm | census ≤2 | med \|err\| | bytes | nonphoto ≤2 |
+|---|--:|--:|--:|--:|
+| fixed | 24/27 | 0.566 | 756,471 | 7/9 |
+| secant+fixed | 25/27 | 0.344 | 771,183 (+1.94%) | 7/9 |
+| tile-secant | 25/27 | 0.534 | 759,394 (+0.39%) | **8/9** |
+| **secant+tile-secant** | 25/27 | **0.328** | 772,120 (+2.07%) | 7/9 |
+
+Reading: the composition takes the best MEDIAN of any arm (−42% vs fixed;
+−4.7% vs secant alone — small and additive-shaped), census ties at 25/27
+everywhere above fixed, bytes are owned by the GLOBAL secant (+1.9-2.1%
+whenever it is on; tile gain alone stays +0.39%), and the tile gain's
+nonphoto +1 does NOT survive under the global secant (7/9, not 8/9). So the
+axes trade: tile-secant alone = the in-bar bytes arm with the nonphoto win;
+composition = the accuracy-median arm with the secant's bytes signature.
+No adoption (all default OFF; the bytes-bar / rate-matched question from the
+global-secant section governs both secant-bearing arms). S4 remains.
