@@ -76,3 +76,17 @@ form). Ship form would need the slope prior refit on cheap in-binary
 features (zq_seed's 8 zenanalyze features are the natural basis — module
 already in-tree) + its own census at the same bar, then a default wiring
 decision. Registered as the follow-up; NOT run tonight.
+
+## B2 (ship-form) — REGISTERED before fit/census (2026-08-27, same night)
+Arm B2 = the same iter-1 ε̂ mechanism with SHIP-FEASIBLE inputs:
+- slope_t{80,88} REFIT on the zq_seed 8-feature basis (in-binary-cheap
+  zenanalyze features), same frozen ridge protocol as the 190-feature fit
+  (λ on val, test once, constant baseline reported); features joined
+  REF-ONLY from the 07-01 canonical root on (origin_id, width, height) —
+  ref features are q- and root-vintage-independent.
+- DQ evaluated at the SHIPPED `zq_seed::predict_q0_from_features` q0 (the
+  seed owner's prediction), NOT a parallel qseed model — one seed owner.
+- Census: same 27 cells, same control arm A (same substrate, same night,
+  reuse registered), same bar: PASS iff ≥15% overall median |err|
+  improvement AND ±2 hits not regressed. B2 exists to answer: does the
+  27.0% table win survive the cheap-feature + owner-seed form?
