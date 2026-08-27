@@ -222,7 +222,6 @@ impl ZensimParams {
 /// L4 norm is a compromise: mean would ignore spatial peaks (missing bad pixels),
 /// L16 (as butteraugli uses) would be too aggressive for SSIM-based diffmap
 /// values which already have 11×11 spatial smoothing.
-#[allow(clippy::too_many_arguments)]
 /// C10 fail-loud (plan §5, 2026-08-26): the 372-class compare paths used to swallow
 /// every error as `Err(_) => Ok(seed)`, silently emitting a SEED-QUALITY bitstream —
 /// indistinguishable from a converged encode at the call site. A compare failure is a
@@ -237,6 +236,7 @@ fn loud_compare<T, E: std::fmt::Debug>(r: Result<T, E>, what: &str) -> T {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_tile_dist(
     diffmap: &[f32],
     width: usize,
