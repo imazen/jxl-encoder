@@ -116,3 +116,23 @@ Gates: the same overall bar (≥15%, hits not regressed) **PLUS nonphoto
 median must not regress vs A** (the per-class tooth B2 showed is needed).
 Threshold 40 is the mapping's flat-region boundary (q2d: q30→d6 vs q50→d4
 — curvature concentrates below ~40), fixed here before the run.
+
+## B3 RESULT — FULL PASS on the stricter bars; best arm of the wave (2026-08-27)
+(A3 control rerun again byte-identical 27/27.)
+- overall median |err|: A 0.832 → B3 **0.527** = **36.7%** (B1 27.0%, B2
+  25.7%); ±2 hits 21→**22** ✓; **nonphoto 1.836→1.593 (now IMPROVES)** ✓;
+  photo 0.600→0.427. Per t: t80 0.527→0.420, t88 0.832→0.434, t70 unchanged.
+  Touched 14 cells: 9W/5L/0T.
+- The guard did exactly what the B2 diagnosis predicted: dropping the
+  bridge-invalid cells (owner-q0 < 40 or slope ≤ 0) removed the nonphoto
+  poison while keeping the t88 nonphoto wins.
+
+## FINAL PROPOSAL (user-gated — nothing flips without an explicit yes)
+Ship form = **B3**: per-image iteration-1 ε̂ from (i) the 8-feature slope
+head (coefficients in `s4_b2_refit.py` output, `b2_slope_fit.json`), (ii)
+DQ at the shipped `zq_seed` q0 via public `quality_to_distance`, (iii) the
+bridge-validity guard (q0 ≥ 40 AND slope > 0, else ε̂ ≡ −1). All inputs are
+in-binary-cheap (the zq_seed features are already extracted when the seed
+head is on). Wiring on a yes: a `zq_seed`-style consts module for the slope
+head + the ε̂ computation at loop entry, env-gated, default decided by the
+user. Until then everything stays instrument-side (census driver + tables).

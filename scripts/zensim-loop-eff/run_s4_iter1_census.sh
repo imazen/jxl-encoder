@@ -9,10 +9,11 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN=${ZDR_BIN:-${CARGO_TARGET_DIR:-$HOME/tmp/jxlloop-target}/release/examples/zensim_diffmap_rd}
 S4=${S4_OUT:-/mnt/v/output/jxl-encoder/s4-iter1-eps-2026-08-27}
 V47=${V47_BAKE:-$HOME/work/zen/zensim/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
-TAB=$S4/ctrl_exp_table.tsv
+TAB=${TAB_PATH:-$S4/ctrl_exp_table.tsv}
+SUF=${ARM_SUFFIX:-}
 CORPUS=$S4/corpus9.tsv
 RUN="nice -n19 ionice -c3"
-LOG=$S4/census.log
+LOG=$S4/census$SUF.log
 say() { echo "[$(date -u +%FT%TZ)] $*" | tee -a "$LOG"; }
 exp_for() { # exp_for <name> <t>  -> table exp or 1.0 (loud on miss for t80/88)
   local e
@@ -23,8 +24,8 @@ exp_for() { # exp_for <name> <t>  -> table exp or 1.0 (loud on miss for t80/88)
   fi
   echo "$e"
 }
-mkdir -p "$S4/A" "$S4/B"
-: > "$S4/cells_A.tsv"; : > "$S4/cells_B.tsv"
+mkdir -p "$S4/A$SUF" "$S4/B$SUF"
+: > "$S4/cells_A$SUF.tsv"; : > "$S4/cells_B$SUF.tsv"
 first=1
 while IFS=$'\t' read -r path name class; do
   for t in 70 80 88; do
@@ -32,17 +33,17 @@ while IFS=$'\t' read -r path name class; do
     printf '%s\t%s\t%s\n' "$path" "$name" "$class" > "$one"
     for arm in A B; do
       if [ "$arm" = A ] || [ "$t" = 70 ]; then EXPV=1.0; else EXPV=$(exp_for "$name" "$t"); fi
-      lbl=${name}_t${t}_${arm}
+      lbl=${name}_t${t}_${arm}${SUF}
       env JXL_ZENSIM_TARGET_TOL=-1 JXL_ZENSIM_EMIT_BEST=1 JXL_ZENSIM_CTRL_EXP=$EXPV \
         $RUN "$BIN" --corpus-file "$one" --zensim-targets "$t" \
         --arms baseline --bake "$V47" --iters 2 --label "$lbl" \
-        --out-dir "$S4/$arm" >> "$LOG" 2>&1
-      f=$S4/$arm/target_ab_$lbl.tsv
+        --out-dir "$S4/$arm$SUF" >> "$LOG" 2>&1
+      f=$S4/$arm$SUF/target_ab_$lbl.tsv
       [ -s "$f" ] || { say "MISSING OUTPUT $f — census void"; exit 1; }
-      if [ $first = 1 ]; then head -1 "$f" | sed 's/^/exp\t/' | tee -a "$S4/cells_A.tsv" >> "$S4/cells_B.tsv"; first=0; fi
-      tail -n +2 "$f" | sed "s/^/$EXPV\t/" >> "$S4/cells_$arm.tsv"
+      if [ $first = 1 ]; then head -1 "$f" | sed 's/^/exp\t/' | tee -a "$S4/cells_A$SUF.tsv" >> "$S4/cells_B$SUF.tsv"; first=0; fi
+      tail -n +2 "$f" | sed "s/^/$EXPV\t/" >> "$S4/cells_$arm$SUF.tsv"
       say "cell $lbl exp=$EXPV done"
     done
   done
 done < "$CORPUS"
-say "census complete: $(($(wc -l < "$S4/cells_A.tsv")-1))+$(($(wc -l < "$S4/cells_B.tsv")-1)) cells"
+say "census complete: $(($(wc -l < "$S4/cells_A$SUF.tsv")-1))+$(($(wc -l < "$S4/cells_B$SUF.tsv")-1)) cells"
