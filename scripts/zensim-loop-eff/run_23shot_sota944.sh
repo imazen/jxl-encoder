@@ -370,18 +370,7 @@ if [ "$phase" = secant ]; then
   wc -l "$BD/zensim_loop_secant_decoded_2026-08-26.tsv" | tee -a "$LOG"
   # Decoded verdict (derived from the instrument's OWN achieved_decoded/abs_err
   # columns — census within +-2.0 + median |err| + total bytes per arm).
-  python3 - "$BD/zensim_loop_secant_decoded_2026-08-26.tsv" <<'PYV' | tee "$SD/verdict.txt" | tee -a "$LOG"
-import csv, statistics, sys
-rows = list(csv.DictReader(open(sys.argv[1]), delimiter="\t"))
-arms = sorted({r["run"] for r in rows})
-print(f"{'arm':28s} n census<=2 med|err| bytes")
-for a in arms:
-    rs = [r for r in rows if r["run"] == a]
-    errs = [abs(float(r["abs_err"])) for r in rs]
-    cen = sum(1 for e in errs if e <= 2.0)
-    tb = sum(int(r["bytes"]) for r in rs)
-    print(f"{a:28s} {len(rs):2d} {cen:2d}/27 {statistics.median(errs):8.3f} {tb}")
-PYV
+  python3 "$REPO/scripts/zensim-loop-eff/verdict_23shot_cells.py" "$BD/zensim_loop_secant_decoded_2026-08-26.tsv" | tee "$SD/verdict.txt" | tee -a "$LOG"
 fi
 
 # ── s3gain: plan §5 arm S3 (per-tile secant gain, ZENSIM_H3_GAIN_MODE=
@@ -456,20 +445,7 @@ if [ "$phase" = s3gain ]; then
     done
   } > "$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv"
   wc -l "$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv" | tee -a "$LOG"
-  python3 - "$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv" <<'PYV' | tee "$SD/verdict.txt" | tee -a "$LOG"
-import csv, statistics, sys
-rows = list(csv.DictReader(open(sys.argv[1]), delimiter="\t"))
-arms = sorted({r["run"] for r in rows})
-print(f"{'arm':26s} n census<=2 med|err| bytes  nonphoto<=2")
-for a in arms:
-    rs = [r for r in rows if r["run"] == a]
-    errs = [abs(float(r["abs_err"])) for r in rs]
-    cen = sum(1 for e in errs if e <= 2.0)
-    npc = sum(1 for r in rs if r["class"] == "nonphoto" and abs(float(r["abs_err"])) <= 2.0)
-    npn = sum(1 for r in rs if r["class"] == "nonphoto")
-    tb = sum(int(r["bytes"]) for r in rs)
-    print(f"{a:26s} {len(rs):2d} {cen:2d}/27 {statistics.median(errs):8.3f} {tb} {npc}/{npn}")
-PYV
+  python3 "$REPO/scripts/zensim-loop-eff/verdict_23shot_cells.py" "$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv" | tee "$SD/verdict.txt" | tee -a "$LOG"
 fi
 
 
@@ -528,20 +504,5 @@ if [ "$phase" = s3s1 ]; then
     done
   } > "$BD/zensim_loop_s3s1_decoded_2026-08-27.tsv"
   wc -l "$BD/zensim_loop_s3s1_decoded_2026-08-27.tsv" | tee -a "$LOG"
-  python3 - "$BD/zensim_loop_s3s1_decoded_2026-08-27.tsv" "$CTRL_TSV" <<'PYV' | tee "$SD/verdict.txt" | tee -a "$LOG"
-import csv, statistics, sys
-rows = []
-for f in sys.argv[1:3]:
-    rows += list(csv.DictReader(open(f), delimiter="\t"))
-arms = sorted({r["run"] for r in rows if r["run"].endswith("k3_best")})
-print(f"{'arm':28s} n census<=2 med|err| bytes  nonphoto<=2")
-for a in arms:
-    rs = [r for r in rows if r["run"] == a]
-    errs = [abs(float(r["abs_err"])) for r in rs]
-    cen = sum(1 for e in errs if e <= 2.0)
-    npc = sum(1 for r in rs if r["class"] == "nonphoto" and abs(float(r["abs_err"])) <= 2.0)
-    npn = sum(1 for r in rs if r["class"] == "nonphoto")
-    tb = sum(int(r["bytes"]) for r in rs)
-    print(f"{a:28s} {len(rs):2d} {cen:2d}/27 {statistics.median(errs):8.3f} {tb} {npc}/{npn}")
-PYV
+  python3 "$REPO/scripts/zensim-loop-eff/verdict_23shot_cells.py" "$BD/zensim_loop_s3s1_decoded_2026-08-27.tsv" "$CTRL_TSV" | tee "$SD/verdict.txt" | tee -a "$LOG"
 fi
