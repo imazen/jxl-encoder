@@ -90,3 +90,29 @@ Arm B2 = the same iter-1 ε̂ mechanism with SHIP-FEASIBLE inputs:
   reuse registered), same bar: PASS iff ≥15% overall median |err|
   improvement AND ±2 hits not regressed. B2 exists to answer: does the
   27.0% table win survive the cheap-feature + owner-seed form?
+
+## B2 RESULT — formal PASS, honest per-class FAIL on nonphoto (2026-08-27)
+Determinism check came free: the fresh control rerun (A2) is byte-identical
+to A on 27/27 rows — control reuse is airtight on this substrate.
+- overall median |err|: A 0.832 → B2 **0.618** (**25.7%**, bar ≥15% ✓);
+  ±2 hits 21/27 → 21/27 (no regression ✓). Fit level: the 8-feature slope
+  refit BEATS the 190-feature fit on test (t80 ratio 0.587 vs 0.690, t88
+  0.713 vs 0.822 — heavier shrinkage, less overfit).
+- Per class (diagnostic): photo 0.600→0.427 (≈B1); **nonphoto 1.836→4.173 —
+  SEVERE regression** (B1: 1.943). Per t: t80 0.527→0.420, t88 0.832→0.434
+  (better than B1's 0.607), t70 unchanged.
+- **Mechanism (diagnosed, not guessed)**: the owner head seeds screens at
+  q0 = 1–29, inside `quality_to_distance`'s low-q flat region where
+  dlog d/dlog q → 0; the bridge then yields |ε̂| ≫ 1 and exp clamps to 0.25 —
+  the SMALLEST first steps on exactly the overshoot class that needs the
+  largest descents. B1 avoided this because its 190-feature qseed put the
+  DQ evaluation at q 35–53.
+- B2 as-is does NOT go into the ship proposal despite the formal PASS.
+
+## B3 — REGISTERED before run (2026-08-27; stricter bar, not looser)
+Arm B3 = B2 with the bridge-validity guard: the prior applies ONLY when
+owner-q0 ≥ 40 AND predicted slope > 0; all other cells keep exp 1.0.
+Gates: the same overall bar (≥15%, hits not regressed) **PLUS nonphoto
+median must not regress vs A** (the per-class tooth B2 showed is needed).
+Threshold 40 is the mapping's flat-region boundary (q2d: q30→d6 vs q50→d4
+— curvature concentrates below ~40), fixed here before the run.
