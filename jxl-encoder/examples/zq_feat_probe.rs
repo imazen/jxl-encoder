@@ -46,7 +46,11 @@ fn main() {
         let px = u64::from(w) * u64::from(h);
         let q80 = jxl_encoder::zq_seed::predict_q0_from_features(&feats, 80.0, px);
         let q88 = jxl_encoder::zq_seed::predict_q0_from_features(&feats, 88.0, px);
-        let fs = feats.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join("\t");
+        let fs = feats
+            .iter()
+            .map(|v| format!("{v}"))
+            .collect::<Vec<_>>()
+            .join("\t");
         println!(
             "{path}\t{fs}\t{}\t{}",
             q80.map_or("nan".into(), |v| format!("{v}")),

@@ -31,14 +31,28 @@ const LN1P_INDEX: usize = 2;
 
 /// (mu, sd, w[9] with intercept last) per head, from `b2_slope_fit.json`.
 const T80: ([f64; 8], [f64; 8], [f64; 9]) = (
-    [0.204472, 0.196569, 6.532981, 0.305915, 1.336029, 0.402614, 3.283066, 0.120037],
-    [0.209853, 0.147014, 1.360047, 0.36495, 0.618007, 0.337086, 0.836921, 0.075154],
-    [-6.684126, -6.921484, -2.216326, 5.003041, -2.919902, -1.876923, 3.943367, -3.70396, 32.29655],
+    [
+        0.204472, 0.196569, 6.532981, 0.305915, 1.336029, 0.402614, 3.283066, 0.120037,
+    ],
+    [
+        0.209853, 0.147014, 1.360047, 0.36495, 0.618007, 0.337086, 0.836921, 0.075154,
+    ],
+    [
+        -6.684126, -6.921484, -2.216326, 5.003041, -2.919902, -1.876923, 3.943367, -3.70396,
+        32.29655,
+    ],
 );
 const T88: ([f64; 8], [f64; 8], [f64; 9]) = (
-    [0.384648, 0.212174, 6.142343, 0.229882, 1.763971, 0.587992, 2.740513, 0.088714],
-    [0.213994, 0.156557, 1.313925, 0.233934, 0.455524, 0.299188, 0.839728, 0.061458],
-    [-10.430866, -5.418874, 0.798541, 0.599832, 2.108624, -0.272945, 2.687273, -1.730443, 27.766547],
+    [
+        0.384648, 0.212174, 6.142343, 0.229882, 1.763971, 0.587992, 2.740513, 0.088714,
+    ],
+    [
+        0.213994, 0.156557, 1.313925, 0.233934, 0.455524, 0.299188, 0.839728, 0.061458,
+    ],
+    [
+        -10.430866, -5.418874, 0.798541, 0.599832, 2.108624, -0.272945, 2.687273, -1.730443,
+        27.766547,
+    ],
 );
 
 /// dscore/dlogq slope prediction for the nearest fitted head. `None` when
@@ -129,7 +143,10 @@ pub(crate) fn iter1_ctrl_exp_linear_rgb(
         };
         (e * 255.0 + 0.5) as u8
     }
-    let rgb: Vec<u8> = linear_rgb[..width * height * 3].iter().map(|&v| srgb8(v)).collect();
+    let rgb: Vec<u8> = linear_rgb[..width * height * 3]
+        .iter()
+        .map(|&v| srgb8(v))
+        .collect();
     const FEATS: [AnalysisFeature; 8] = [
         AnalysisFeature::FlatColorBlockRatio,
         AnalysisFeature::GradientFraction,
@@ -144,7 +161,13 @@ pub(crate) fn iter1_ctrl_exp_linear_rgb(
     for f in &FEATS[1..] {
         set = set.with(*f);
     }
-    let a = zenanalyze::try_analyze_features_rgb8(&rgb, width as u32, height as u32, &AnalysisQuery::new(set)).ok()?;
+    let a = zenanalyze::try_analyze_features_rgb8(
+        &rgb,
+        width as u32,
+        height as u32,
+        &AnalysisQuery::new(set),
+    )
+    .ok()?;
     let mut fv = [0.0f32; 8];
     for (i, feat) in FEATS.iter().enumerate() {
         fv[i] = a.get_f32(*feat).or_else(|| match a.get(*feat)? {

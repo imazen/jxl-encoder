@@ -75,14 +75,14 @@ pub mod trace;
 // Re-exports owned by their source-of-truth modules; the optional
 // `tuning-override` feature adds a `runtime` submodule with a postcard
 // runtime override layer for the sweep runner.
+#[cfg(feature = "zensim-loop")]
+pub(crate) mod s4_eps;
 pub mod tuning;
 pub mod validation;
 #[cfg(test)]
 mod validation_tests;
 pub mod vardct;
 pub mod zq_seed;
-#[cfg(feature = "zensim-loop")]
-pub(crate) mod s4_eps;
 
 #[cfg(feature = "convenience")]
 pub mod convenience;
