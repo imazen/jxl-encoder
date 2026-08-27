@@ -39,6 +39,32 @@ bytes at SSIM2 parity, 20 images). This wave re-measures on the CURRENT loop.
 - PASS = both gates for BOTH judges. FAIL → the redistribution default
   becomes a PROPOSAL to revisit (user-gated; no default flip here).
 
-## Results
+## Results — FULL PASS (all four gates, both judges)
 
-(filled after the run)
+**Runtime amendment (pre-judging, recorded):** judges ran the CPU
+implementations (`ssim2`, `butteraugli`) — this distro has no CUDA userspace
+(the fleet's GPU-only rule is a criterion-1 DATA hygiene rule; for a paired
+local A/B the CPU implementations compute the same metrics and any impl bias
+cancels across arms). Metric identity unchanged from registration.
+
+n=27 paired cells (G-V PASS; 27/27 both arms emitted + judged):
+
+| paired median | value | reading |
+|---|---|---|
+| ΔSSIM2 (R−N) | **+0.138** | redistribution IMPROVES the independent judge |
+| Δbutter_max | +0.0128 | marginal worsening (lower-better metric) |
+| Δbutter_pnorm3 | +0.0025 | ~noise |
+| Δbytes % | **−0.91%** | redistribution SHRINKS output |
+| Δ\|zensim err\| | +0.031 | target-hitting unchanged |
+
+- **G-RD1 ssim2 PASS** (better judge AND fewer bytes — RD-POSITIVE, not merely
+  not-dominated); **G-RD1 butter PASS** (bytes decreased).
+- **G-RD2**: strictly-dominated cells 0/27 (ssim2), 3/27 (butter_max) vs the
+  ≤25% (6.75) bar — PASS both.
+- Modern confirmation of the 2026-03-08 tuning-sweep result (+1.262 SSIM2 @
+  +1.10% size; e8 −4.61% bytes at parity): the shipped zensim redistribution
+  does not game zensim at the independent judges' expense — it buys ssim2
+  quality per byte. Per-cell table:
+  `benchmarks/zensim_loop_rd_deltas_2026-08-27.tsv`; raw scores + decoded
+  arms: `/mnt/v/output/jxl-encoder/rd-judges-2026-08-27/`.
+
