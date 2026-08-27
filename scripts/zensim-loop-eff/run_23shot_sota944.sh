@@ -6,7 +6,7 @@
 # fresh (k3-last has no mm rows to derive from), controls carried behind the
 # same substrate probe as the 2026-08-01 study (which doubles as the
 # R0-identity gate for the folded-class integration changes).
-# Phases: probe fresh collect h3own h3ownsp gainsweep secant s3gain
+# Phases: probe fresh collect h3own h3ownsp gainsweep secant s3gain s3s1
 #   (usage: run_23shot_sota944.sh <phase>|all)
 # `h3ownsp` (campaign appendix P lever 2, 2026-08-05): G-P5 — h3-mag +
 # JXL_ZENSIM_SINGLEPASS=1 (stale-map single-pass) vs the committed fresh
@@ -469,5 +469,79 @@ for a in arms:
     npn = sum(1 for r in rs if r["class"] == "nonphoto")
     tb = sum(int(r["bytes"]) for r in rs)
     print(f"{a:26s} {len(rs):2d} {cen:2d}/27 {statistics.median(errs):8.3f} {tb} {npc}/{npn}")
+PYV
+fi
+
+
+# ── s3s1: the registered S3xS1 COMPOSITION (global guarded secant + per-tile
+#    secant gain together), k3 emit-best only (S3 is structurally inert at k2;
+#    the k2 composition is S1 alone). Controls: the s3gain phase's fixed/
+#    tilesec k3 rows — SAME harness binary (this phase refuses to run if the
+#    s3gain TSV is absent, so the comparison is never cross-substrate).
+if [ "$phase" = s3s1 ]; then
+  SD=$OUT/s3s1
+  [ -d "$SD" ] && mv "$SD" "$SD.bak.$(date -u +%s)"
+  mkdir -p "$SD"
+  BD=$REPO/benchmarks
+  CTRL_TSV=$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv
+  [ -f "$CTRL_TSV" ] || { say "STOP: run the s3gain phase first (same-substrate controls)"; exit 1; }
+  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
+  [ -f "$CBAKE" ] || { say "STOP: C bake missing at $CBAKE"; exit 1; }
+  for gm in fixed tilesec; do
+    GME=()
+    [ "$gm" = tilesec ] && GME=(ZENSIM_H3_GAIN_MODE=tile-secant)
+    lbl=C944_sec1${gm}_k3_best
+    run_ab "$SD" "$lbl" "$CBAKE" h3-mag 3 70,80,88 \
+      JXL_ZENSIM_TARGET_TOL=-1 JXL_SAVE_BITSTREAM=1 JXL_ZENSIM_SECANT=1 \
+      JXL_ZENSIM_EMIT_BEST=1 \
+      ${GME[@]+"${GME[@]}"} \
+      JXL_ZENSIM_TRACE=$SD/trace_$lbl.tsv \
+      JXL_ZENSIM_ATTR_PROBE=$SD/probe_$lbl.tsv
+  done
+  fail=0
+  for gm in fixed tilesec; do
+    n=$(wc -l < "$SD/probe_C944_sec1${gm}_k3_best.tsv" 2>/dev/null || echo 0)
+    say "ENGAGE C944_sec1${gm}_k3_best probe=$n want=81"
+    [ "$n" -eq 81 ] || fail=1
+    tn=$(wc -l < "$SD/trace_C944_sec1${gm}_k3_best.tsv" 2>/dev/null || echo 0)
+    say "TRACE  C944_sec1${gm}_k3_best rows=$tn want=108"
+    [ "$tn" -eq 108 ] || fail=1
+  done
+  # Composition engagement: the tile gain must still change bitstreams under
+  # the global secant at k3.
+  diffn=0; tot=0
+  for f in "$SD"/decoded/C944_sec1fixed_k3_best__*.jxl; do
+    [ -f "$f" ] || continue
+    bn=$(basename "$f"); bb=${bn/_sec1fixed_/_sec1tilesec_}
+    tot=$((tot + 1))
+    cmp -s "$f" "$SD/decoded/$bb" || diffn=$((diffn + 1))
+  done
+  say "S3S1-ENGAGE k3: $diffn/$tot bitstreams differ sec1fixed-vs-sec1tilesec"
+  [ "$diffn" -ge 1 ] || fail=1
+  [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
+  {
+    printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
+    for f in "$SD"/target_ab_*.tsv; do
+      [ -f "$f" ] || continue
+      run=$(basename "$f" .tsv); run=${run#target_ab_}
+      awk -F'\t' -v r="$run" 'NR>1 { print r "\t" $0 }' "$f"
+    done
+  } > "$BD/zensim_loop_s3s1_decoded_2026-08-27.tsv"
+  wc -l "$BD/zensim_loop_s3s1_decoded_2026-08-27.tsv" | tee -a "$LOG"
+  python3 - "$BD/zensim_loop_s3s1_decoded_2026-08-27.tsv" "$CTRL_TSV" <<'PYV' | tee "$SD/verdict.txt" | tee -a "$LOG"
+import csv, statistics, sys
+rows = []
+for f in sys.argv[1:3]:
+    rows += list(csv.DictReader(open(f), delimiter="\t"))
+arms = sorted({r["run"] for r in rows if r["run"].endswith("k3_best")})
+print(f"{'arm':28s} n census<=2 med|err| bytes  nonphoto<=2")
+for a in arms:
+    rs = [r for r in rows if r["run"] == a]
+    errs = [abs(float(r["abs_err"])) for r in rs]
+    cen = sum(1 for e in errs if e <= 2.0)
+    npc = sum(1 for r in rs if r["class"] == "nonphoto" and abs(float(r["abs_err"])) <= 2.0)
+    npn = sum(1 for r in rs if r["class"] == "nonphoto")
+    tb = sum(int(r["bytes"]) for r in rs)
+    print(f"{a:28s} {len(rs):2d} {cen:2d}/27 {statistics.median(errs):8.3f} {tb} {npc}/{npn}")
 PYV
 fi
