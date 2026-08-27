@@ -11310,6 +11310,163 @@ fn extra_channel_dim_shift_out_of_range_is_a_clean_error() {
 // monotone in threads; the estimates come from the same
 // `estimate_encode_threaded` the pre-flight consults, so the tests track
 // any future recalibration instead of hard-coding today's constants.
+/// imazen/jxl-encoder#96: pre-flight on the SECTIONED band where the
+/// frame encoder's gate will run per-group trees. Before 2026-08-27 a
+/// lossless config whose knob was not `Off` was admitted UNBOUNDED (no
+/// estimate for the sectioned path existed, so the whole-image rejection
+/// was simply skipped) and `EncodeStats::estimated_peak_bytes` reported
+/// the whole-image number the encode never used.
+mod encode_preflight_sectioned {
+    use crate::api::{Limits, SectionedTrees, encode_preflight_with_sectioned};
+    use crate::heuristics::{estimate_encode_sectioned, estimate_encode_threaded};
+
+    fn whole(w: u32, h: u32, e: u8, t: usize) -> u64 {
+        estimate_encode_threaded(w, h, 3, false, true, e, t)
+            .unwrap()
+            .peak_memory_bytes
+    }
+    fn sect(w: u32, h: u32, e: u8, t: usize) -> u64 {
+        estimate_encode_sectioned(w, h, 3, false, e, t)
+            .unwrap()
+            .peak_memory_bytes
+    }
+    fn pf(
+        w: u32,
+        h: u32,
+        e: u8,
+        t: usize,
+        cap: Option<u64>,
+        mode: SectionedTrees,
+    ) -> crate::api::Result<crate::api::EncodePreflight> {
+        let limits = cap.map(|c| Limits::new().with_max_memory_bytes(c));
+        encode_preflight_with_sectioned(w, h, 3, false, true, e, t, false, limits.as_ref(), mode)
+    }
+
+    /// Admission is bounded again: with `On` (and with `Auto`, whose
+    /// memory-pressure arm resolves to the same path) a 60000×60000
+    /// lossless e7 request — whose SECTIONED floor is ~280 GB — is
+    /// rejected under the 8 GiB default cap, naming the sectioned path.
+    #[test]
+    fn absurd_dimensions_rejected_on_the_sectioned_floor() {
+        for mode in [SectionedTrees::On, SectionedTrees::Auto] {
+            let err = pf(60000, 60000, 7, 1, None, mode)
+                .err()
+                .unwrap_or_else(|| panic!("{mode:?}: 3.6 GP lossless must not be admitted"));
+            let msg = err.to_string();
+            assert!(msg.contains("sectioned local trees"), "{mode:?}: {msg}");
+            assert!(msg.contains("with_max_memory_bytes"), "{msg}");
+            assert!(msg.contains(&sect(60000, 60000, 7, 1).to_string()), "{msg}");
+        }
+    }
+
+    /// `Off` keeps the historical whole-image contract verbatim (no
+    /// sectioned wording, whole-image bytes in the message).
+    #[test]
+    fn off_uses_the_whole_image_band() {
+        let err = pf(4096, 5120, 7, 1, None, SectionedTrees::Off)
+            .err()
+            .expect("21 MP lossless e7 exceeds the 8 GiB default cap on the whole-image band");
+        let msg = err.to_string();
+        assert!(!msg.contains("sectioned"), "{msg}");
+        assert!(msg.contains(&whole(4096, 5120, 7, 1).to_string()), "{msg}");
+        // Hybrid learns the global tree too — whole-image memory.
+        assert!(pf(4096, 5120, 7, 1, None, SectionedTrees::Hybrid).is_err());
+    }
+
+    /// `Auto` under memory pressure (whole-image estimate above the cap)
+    /// is admitted on the sectioned estimate, which is what
+    /// `estimated_peak_bytes` reports — it must fit the cap it was
+    /// admitted under (the old code reported the ~11 GB whole-image
+    /// figure for an encode admitted into an 8 GiB cap).
+    #[test]
+    fn auto_under_pressure_is_admitted_on_the_sectioned_estimate() {
+        let p = pf(4096, 5120, 7, 1, None, SectionedTrees::Auto).expect("21 MP e7 Auto admits");
+        let cap = Limits::default_max_memory_bytes(true);
+        assert!(
+            whole(4096, 5120, 7, 1) > cap,
+            "premise: whole-image estimate over the cap"
+        );
+        assert_eq!(p.estimated_peak_bytes, sect(4096, 5120, 7, 1));
+        assert!(
+            p.estimated_peak_bytes <= cap,
+            "{} > cap {cap}",
+            p.estimated_peak_bytes
+        );
+        // e9 has no thread policy: same pressure arm at any thread count.
+        let p9 = pf(4096, 5120, 9, 8, None, SectionedTrees::Auto).expect("21 MP e9 Auto admits");
+        assert_eq!(p9.estimated_peak_bytes, sect(4096, 5120, 9, 8));
+    }
+
+    /// Without pressure `Auto` mirrors the frame encoder's gate: the
+    /// global tree at e9 (any threads) and at e7 single-threaded; the
+    /// sectioned band at e7 multi-threaded when the `parallel` feature
+    /// (the encoder's effective-thread signal) is on.
+    #[test]
+    fn auto_without_pressure_mirrors_the_frame_gate() {
+        let generous = Some(u64::MAX);
+        let p = pf(1024, 1024, 9, 8, generous, SectionedTrees::Auto).unwrap();
+        assert_eq!(
+            p.estimated_peak_bytes,
+            whole(1024, 1024, 9, 8),
+            "e9 keeps the global tree"
+        );
+        let p = pf(1024, 1024, 7, 1, generous, SectionedTrees::Auto).unwrap();
+        assert_eq!(
+            p.estimated_peak_bytes,
+            whole(1024, 1024, 7, 1),
+            "e7 t=1 keeps the global tree"
+        );
+        let p = pf(1024, 1024, 7, 8, generous, SectionedTrees::Auto).unwrap();
+        let expect = if cfg!(feature = "parallel") {
+            sect(1024, 1024, 7, 8)
+        } else {
+            whole(1024, 1024, 7, 8)
+        };
+        assert_eq!(
+            p.estimated_peak_bytes, expect,
+            "e7 t=8 follows the thread policy"
+        );
+        // Explicit On: sectioned regardless of threads / effort in band.
+        let p = pf(1024, 1024, 9, 1, generous, SectionedTrees::On).unwrap();
+        assert_eq!(p.estimated_peak_bytes, sect(1024, 1024, 9, 1));
+    }
+
+    /// The measured single-worker excess (12 MP: one worker peaks ABOVE
+    /// two): a cap sized to sect(2) admits an 8-thread `On` request and
+    /// walks it down to exactly 2 — never into the larger 1-worker
+    /// estimate — while a 1-thread request for the same cap is rejected
+    /// on its own (higher) floor.
+    #[test]
+    fn floor_is_the_minimum_over_one_and_two_workers() {
+        let (w, h) = (4000, 3000);
+        let (s1, s2) = (sect(w, h, 7, 1), sect(w, h, 7, 2));
+        assert!(s2 < s1, "premise: 12 MP sectioned t=2 {s2} below t=1 {s1}");
+        let p = pf(w, h, 7, 8, Some(s2), SectionedTrees::On).expect("admitted on the t=2 floor");
+        assert_eq!(p.threads, 2);
+        assert_eq!(p.estimated_peak_bytes, s2);
+        let err = pf(w, h, 7, 1, Some(s2), SectionedTrees::On)
+            .err()
+            .expect("a 1-thread request cannot reach the t=2 floor");
+        assert!(err.to_string().contains(&s1.to_string()), "{err}");
+    }
+
+    /// The sectioned estimate grows with the pool width (one group's
+    /// tree-learn set per worker), so a cap between sect(3) and sect(4)
+    /// walks a 16-thread `On` request down to exactly 3 threads.
+    #[test]
+    fn walks_down_on_the_sectioned_per_thread_term() {
+        let (w, h) = (2048, 2048);
+        let s3 = sect(w, h, 9, 3);
+        assert!(
+            s3 < sect(w, h, 9, 4) && sect(w, h, 9, 1) < s3,
+            "monotone in threads"
+        );
+        let p = pf(w, h, 9, 16, Some(s3), SectionedTrees::On).expect("sect(1) fits");
+        assert_eq!(p.threads, 3, "largest fitting thread count");
+        assert_eq!(p.estimated_peak_bytes, s3);
+    }
+}
+
 mod encode_preflight_walkdown {
     use crate::api::{Limits, encode_preflight};
     use crate::heuristics::estimate_encode_threaded;

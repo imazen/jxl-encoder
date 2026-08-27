@@ -423,6 +423,140 @@ pub fn estimate_encode_threaded(
     Some(e)
 }
 
+// ── Sectioned local-tree lossless mode (imazen/jxl-encoder#96) ─────────────
+
+/// Effort band the sectioned estimate is calibrated for: the tree-learning
+/// efforts 7–9 (the sectioned path only exists where tree learning runs,
+/// and e ≥ 10 was not swept — callers keep the whole-image band there).
+#[must_use]
+pub(crate) fn sectioned_estimate_available(effort: u8) -> bool {
+    (7..=9).contains(&effort)
+}
+
+/// Sectioned-mode fixed overhead by effort: the working set of ONE group's
+/// tree learn at the effort's params, which is what a tiny image pays in
+/// full. Measured 64×64 real-photo crop, threads=1 (2026-08-27,
+/// `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`): e7 5.9 MiB, e9 25.3 MiB
+/// peak_live (29.7 MiB at 12 workers). Set with margin; e8 shares the e9
+/// value (unswept, e9 is the band's top).
+const SECTIONED_FIXED_E7: u64 = 8 << 20;
+const SECTIONED_FIXED_E9: u64 = 32 << 20;
+
+/// Sectioned-mode per-pixel floor, bytes/pixel of marginal working set.
+/// The sectioned peak is NOT the tree learn (that is per-group and rides
+/// the per-thread term) but the whole-image phases before it — the
+/// modular image copies plus the patches-detection planes. Measured
+/// (2026-08-27, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`, real
+/// content, sectioned path verified engaged via `JXL_SECTION_SIZES`):
+///   - photo (imazen-26 1403, crops 2048² / 3840×2160 / 4000×3000),
+///     threads ≥ 4: flat ≈ 48 B/px (192 / 380 / 550 MiB marginal);
+///     threads = 1: an extra size-growing phase above 4 MP — 0 at 2048²,
+///     +114 MiB at 8.3 MP (62.5 B/px), +271 MiB at 12 MP (71.7 B/px),
+///     the same bytes at e7 and e9 (a pre-tree phase) — unattributed as
+///     of 2026-08-27 (follow-up on #96), NOT measured beyond 12 MP.
+///   - screenshot (qoi reddit.com 1313×8008, 10.5 MP): 60.5–61.8 B/px at
+///     every thread count (606 / 620 MiB marginal), no t=1 excess.
+///
+/// The two floors are the envelopes over both classes with ≥ 10 % margin.
+///
+/// Content the v1 scope hands back to the GLOBAL tree (palette /
+/// ChannelCompact / patches — e.g. gb82-sc `imac_dark` 2940×1912, which
+/// writes 0 local sections under `On`) costs the global path's working
+/// set instead: 85.6 (e7) / 137.7 (e9) B/px measured. That is covered by the
+/// MAX tier (`MULT_MAX`), not by TYP — the pre-flight cannot see content,
+/// and the runtime `MemoryBudget` still enforces the cap on that path.
+const SECTIONED_BPP_THREADS1: f64 = 80.0;
+const SECTIONED_BPP_MULTI: f64 = 68.0;
+
+/// Per-worker term: each in-flight group learns its own tree (and
+/// `parallel-tree-learning` forks owned per-side clones inside it), so
+/// the peak grows with the pool width — the axis the thread-invariant
+/// whole-image band never had. Measured slope 1024² real photo, t=1→12
+/// (the cell where the per-group sets are not hidden under the floor):
+/// e7 (150954 − 52261) KiB / 11 = 8.8 MiB/thread, e9 (430537 − 74376)
+/// KiB / 11 = 31.6 MiB/thread — one 256² group at the effort's learn
+/// params (screenshot crops: 4.9 / 28.6 MiB/thread). Set
+/// with margin; additive and UNCLAMPED past the group count (a 1-group
+/// image still grows ≈ 3 MiB/thread from the intra-group forks, so the
+/// additive form over-predicts tiny multi-threaded encodes — the safe
+/// direction — rather than under-predicting them).
+const SECTIONED_PER_THREAD_E7: u64 = 12 << 20;
+const SECTIONED_PER_THREAD_E9: u64 = 36 << 20;
+
+/// Alpha extra-channel terms (rgba − rgb, 2026-08-27 rgba cells — alpha
+/// := the source's green plane, worst-case entropy — see the sweep
+/// .meta): the pre-tree floor grows only +4.0 B/px at 3840×2160 (both
+/// efforts, t=1 and t=8) and on the 1313×4096 screenshot crop, but at
+/// 1024² threads=1 the 4-channel group learn adds 16.0 (e7) / 25.5 (e9)
+/// B/px, and the per-worker group set grows ×1.23 (e7) / ×1.44 (e9)
+/// (1024², t=1→8). Modelled as a flat per-pixel term (envelope of the
+/// t=1 cells, over-predicting large images — the safe direction) plus a
+/// ×1.5 per-thread factor.
+const SECTIONED_BPP_ALPHA: f64 = 28.0;
+const SECTIONED_PER_THREAD_ALPHA_NUM: u64 = 3;
+const SECTIONED_PER_THREAD_ALPHA_DEN: u64 = 2;
+
+/// Peak-memory estimate for a lossless encode that runs the SECTIONED
+/// local-tree mode ([`crate::api::SectionedTrees`] `On`, or `Auto` where
+/// its gate engages — imazen/jxl-encoder#96) at `cores` worker threads.
+///
+/// `peak = input + fixed(effort) + floor(threads)·pixels +
+/// per_thread(effort)·(cores − 1)`, all terms measured on real content
+/// (photo + screenshot crops, tiny → 12 MP, threads 1/4/8/12, e7/e9;
+/// `benchmarks/jxl_sectioned_mem_2026-08-27.tsv` + `.meta`). Only valid
+/// where [`sectioned_estimate_available`] holds; `time_ms` /
+/// `output_bytes` are the whole-image figures (the mode is measured
+/// byte-neutral at the median and faster, so they remain upper bounds).
+/// Returns `None` only on dimension overflow.
+#[must_use]
+pub(crate) fn estimate_encode_sectioned(
+    width: u32,
+    height: u32,
+    input_bpp: u8,
+    has_alpha: bool,
+    effort: u8,
+    cores: usize,
+) -> Option<EncodeEstimate> {
+    debug_assert!(sectioned_estimate_available(effort));
+    let base = estimate_encode(width, height, input_bpp, has_alpha, true, effort)?;
+    let pixels = (width as u64).checked_mul(height as u64)?;
+    let input = pixels.checked_mul(input_bpp as u64)?;
+    let cores = cores.max(1) as u64;
+    let (fixed, mut per_thread) = if effort >= 8 {
+        (SECTIONED_FIXED_E9, SECTIONED_PER_THREAD_E9)
+    } else {
+        (SECTIONED_FIXED_E7, SECTIONED_PER_THREAD_E7)
+    };
+    if has_alpha {
+        per_thread = per_thread * SECTIONED_PER_THREAD_ALPHA_NUM / SECTIONED_PER_THREAD_ALPHA_DEN;
+    }
+    let mut bpp = if cores > 1 {
+        SECTIONED_BPP_MULTI
+    } else {
+        SECTIONED_BPP_THREADS1
+    };
+    if has_alpha {
+        // One more image-sized plane through the pre-tree phases and one
+        // more channel per group learn (per-thread factor applied above).
+        // Pinned by the rgba cells of the 2026-08-27 sweep (see
+        // `sectioned_estimate_covers_measured_cells_2026_08_27`).
+        bpp += SECTIONED_BPP_ALPHA;
+    }
+    let working = fixed
+        .checked_add((pixels as f64 * bpp) as u64)?
+        .checked_add(per_thread.checked_mul(cores - 1)?)?;
+    let typical = input.checked_add(working)?;
+    let min = input + (working as f64 * MULT_MIN) as u64;
+    let max = input.checked_add((working as f64 * MULT_MAX) as u64)?;
+    Some(EncodeEstimate {
+        peak_memory_bytes_min: min,
+        peak_memory_bytes: typical,
+        peak_memory_bytes_max: max,
+        time_ms: base.time_ms,
+        output_bytes: base.output_bytes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -698,5 +832,174 @@ mod tests {
             lossy_rgb, lossy_rgba,
             "lossy alpha must not change working set"
         );
+    }
+
+    /// imazen/jxl-encoder#96 sectioned-mode cells, 2026-08-27, macOS/M-series
+    /// laptop, jxl-encoder d7fc8f7e + this change's probe
+    /// (`jxl-encoder-cli/examples/mem_probe`, counting global allocator —
+    /// `peak_live` = high-water of LIVE bytes across `encode()`, input
+    /// buffer included, same definition as the 2026-08-13 4K cells).
+    /// Provenance: `benchmarks/jxl_sectioned_mem_2026-08-27.tsv` + `.meta`
+    /// (`scripts/mem_sectioned_sweep.sh`). Real content only: imazen-26
+    /// png-v3 photo 1403 (4000×3000) and its top-left crops; qoi-benchmark
+    /// `screenshot_web/reddit.com.png` (1313×8008) and crops; gb82-sc
+    /// `imac_dark.png` (2940×1912). `SectionedTrees::On`; the sectioned
+    /// path verified engaged (`JXL_SECTION_SIZES`) on the photo/reddit
+    /// cells and verified FALLING BACK to the global tree on imac_dark.
+    ///
+    /// Contract: TYP covers every sectioned-engaged cell (the admission
+    /// floor and the thread walk-down use TYP) and stays a tight cover
+    /// (< 2.5× — the additive per-thread term over-predicts when the
+    /// in-flight group sets sit under the pre-tree floor; see the
+    /// constants' notes); MAX covers the v1-scope fallback content, which
+    /// TYP does not model. Re-measure and re-pin whenever the sectioned
+    /// writer, the patches detector or the modular image lifetime changes.
+    #[test]
+    fn sectioned_estimate_covers_measured_cells_2026_08_27() {
+        const KB: u64 = 1024;
+        // (w, h, has_alpha, effort, threads, measured peak_live KiB)
+        let sectioned_cells: &[(u32, u32, bool, u8, usize, u64)] = &[
+            // photo 1403 crops
+            (64, 64, false, 7, 1, 6010),
+            (64, 64, false, 9, 1, 25868),
+            (64, 64, false, 9, 12, 30400),
+            (256, 256, false, 9, 12, 99933),
+            (1024, 1024, false, 7, 1, 52261),
+            (1024, 1024, false, 7, 12, 150954),
+            (1024, 1024, false, 9, 1, 74376),
+            (1024, 1024, false, 9, 12, 430537),
+            (2048, 2048, false, 9, 1, 208957),
+            (2048, 2048, false, 9, 12, 396710),
+            (3840, 2160, false, 7, 1, 530187),
+            (3840, 2160, false, 7, 4, 413315),
+            (3840, 2160, false, 9, 12, 479149),
+            (4000, 3000, false, 7, 1, 875430),
+            (4000, 3000, false, 9, 1, 875430),
+            (4000, 3000, false, 7, 12, 597937),
+            (4000, 3000, false, 9, 12, 597937),
+            // reddit.com screenshot crops
+            (256, 256, false, 9, 12, 66261),
+            (1313, 4096, false, 9, 12, 351990),
+            (1313, 8008, false, 7, 1, 651769),
+            (1313, 8008, false, 9, 12, 665660),
+            // rgba (alpha := green): photo 1403 crops + reddit crop
+            (1024, 1024, true, 7, 1, 69670),
+            (1024, 1024, true, 7, 8, 146332),
+            (1024, 1024, true, 9, 1, 101554),
+            (1024, 1024, true, 9, 8, 404080),
+            (3840, 2160, true, 7, 1, 570687),
+            (3840, 2160, true, 7, 8, 551044),
+            (3840, 2160, true, 9, 1, 570687),
+            (3840, 2160, true, 9, 8, 551044),
+            (1313, 4096, true, 7, 8, 357262),
+        ];
+        for &(w, h, alpha, effort, threads, live_kb) in sectioned_cells {
+            let bpp = if alpha { 4 } else { 3 };
+            let e = estimate_encode_sectioned(w, h, bpp, alpha, effort, threads).unwrap();
+            let live = live_kb * KB;
+            assert!(
+                e.peak_memory_bytes >= live,
+                "{w}x{h} alpha={alpha} e{effort} t{threads}: TYP {} under measured peak_live {live}",
+                e.peak_memory_bytes
+            );
+            if (w as u64) * (h as u64) >= 2_000_000 {
+                assert!(
+                    e.peak_memory_bytes < live * 5 / 2,
+                    "{w}x{h} alpha={alpha} e{effort} t{threads}: TYP {} not a tight cover of {live} (≥ 2.5×)",
+                    e.peak_memory_bytes
+                );
+            }
+        }
+        // v1-scope fallback content (global tree under `On`): MAX covers it.
+        let fallback_cells: &[(u32, u32, u8, usize, u64)] = &[
+            (2940, 1912, 7, 1, 486110),
+            (2940, 1912, 9, 1, 772396),
+            (2940, 1912, 9, 12, 772476),
+        ];
+        for &(w, h, effort, threads, live_kb) in fallback_cells {
+            let e = estimate_encode_sectioned(w, h, 3, false, effort, threads).unwrap();
+            assert!(
+                e.peak_memory_bytes_max >= live_kb * KB,
+                "{w}x{h} e{effort} t{threads} (global fallback): MAX {} under measured {}",
+                e.peak_memory_bytes_max,
+                live_kb * KB
+            );
+        }
+    }
+
+    /// The sectioned arm is what makes large lossless encodes admissible:
+    /// it sits far below the whole-image band at 4K / 12 MP / 21 MP e7,
+    /// grows strictly with the pool width (one group's learn per worker
+    /// — the axis the whole-image band lacks), and is only offered in
+    /// the calibrated tree-learning band.
+    #[test]
+    fn sectioned_estimate_shape() {
+        for &(w, h) in &[(3840u32, 2160u32), (4000, 3000), (4096, 5120)] {
+            for e in 7..=9 {
+                let whole = estimate_encode(w, h, 3, false, true, e)
+                    .unwrap()
+                    .peak_memory_bytes;
+                let sect = estimate_encode_sectioned(w, h, 3, false, e, 1)
+                    .unwrap()
+                    .peak_memory_bytes;
+                assert!(
+                    sect * 3 < whole,
+                    "{w}x{h} e{e}: sectioned {sect} vs whole {whole}"
+                );
+            }
+        }
+        let at = |t| {
+            estimate_encode_sectioned(2048, 2048, 3, false, 9, t)
+                .unwrap()
+                .peak_memory_bytes
+        };
+        assert!(
+            at(2) < at(3) && at(3) < at(8) && at(8) < at(24),
+            "monotone from 2 workers"
+        );
+        assert_eq!(
+            at(24) - at(2),
+            SECTIONED_PER_THREAD_E9 * 22,
+            "unclamped per-thread term"
+        );
+        assert_eq!(
+            at(0),
+            at(1),
+            "0 = ambient is estimated at the 1-thread floor by the caller"
+        );
+        // The measured single-worker excess: above ~4 MP one worker peaks
+        // HIGHER than two (the pre-flight's admission floor is therefore
+        // min over {1, 2} workers, not the 1-thread figure alone); small
+        // images are monotone from t=1 since the per-thread term dominates.
+        assert!(at(1) > at(2), "2048² e9: t=1 floor band above t=2");
+        let small = |t| {
+            estimate_encode_sectioned(1024, 1024, 3, false, 9, t)
+                .unwrap()
+                .peak_memory_bytes
+        };
+        assert!(small(1) < small(2), "1024² e9: per-thread term dominates");
+        // Alpha adds a per-pixel term (input_bpp held equal to isolate it)
+        // at one worker, and scales the per-thread term ×1.5 beyond that.
+        let rgb = |t| {
+            estimate_encode_sectioned(2048, 2048, 4, false, 9, t)
+                .unwrap()
+                .peak_memory_bytes
+        };
+        let rgba = |t| {
+            estimate_encode_sectioned(2048, 2048, 4, true, 9, t)
+                .unwrap()
+                .peak_memory_bytes
+        };
+        assert_eq!(
+            rgba(1) - rgb(1),
+            (2048u64 * 2048) * SECTIONED_BPP_ALPHA as u64
+        );
+        assert_eq!(
+            (rgba(5) - rgba(1)) - (rgb(5) - rgb(1)),
+            SECTIONED_PER_THREAD_E9 / 2 * 4,
+            "alpha per-thread factor"
+        );
+        assert!(!sectioned_estimate_available(6) && !sectioned_estimate_available(10));
+        assert!((7..=9).all(sectioned_estimate_available));
     }
 }

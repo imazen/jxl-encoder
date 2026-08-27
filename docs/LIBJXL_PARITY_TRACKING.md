@@ -80,3 +80,42 @@ median bytes; Auto-policy extension awaiting owner sign-off); (2) u16
 saturating dedup counts; (3) decode-speed-aware split preferences;
 (4) lossy e5-t8 residue (acstrat kernel cost, candidate set at parity;
 DCT4X4-at-e5 KNOWN-GAP needs its own RD study).
+
+## Memory-model standing (2026-08-27, imazen/jxl-encoder#96 estimator arm)
+
+Allocator-agnostic `peak_live` (counting global allocator, input buffer
+included), real content, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`
+(macOS laptop, jxl-encoder d7fc8f7e; `scripts/mem_sectioned_sweep.sh`):
+
+| cell (RGB8, lossless, peak_live MiB) | global t=1 | sectioned t=1 | sectioned t≥4 |
+|---|---|---|---|
+| photo 3840×2160 e7 | 786 (96.4 B/px marginal) | 518 (62.5 B/px) | 404 (48.0 B/px) |
+| photo 3840×2160 e9 | 1029 (127.0 B/px) | 518 | 404 (t=12: 468) |
+| photo 4000×3000 e7 | 1117 (94.6 B/px) | 855 (71.7 B/px) | 584 (48.0 B/px) |
+| photo 4000×3000 e9 | 1517 (129.5 B/px) | 855 | 584 |
+| reddit.com 1313×8008 e7 | 888 | 636 (60.5 B/px) | 650 (61.8 B/px) |
+| imac_dark 2940×1912 e7/e9 | — | 475 / 754 (**global fallback** — 0 local sections; 85.6 / 137.7 B/px) | same |
+
+Consequences recorded in `heuristics.rs`:
+
+- `estimate_encode_sectioned` (new, `pub(crate)`): `input + fixed(e) +
+  floor(threads)·px + per_thread(e)·(t−1)` — fixed 8/32 MB (e7/e9),
+  floor 80 B/px at t=1 / 68 B/px multi-threaded, per-thread 12/36 MiB
+  (one 256² group's learn; `parallel-tree-learning` forks inside it).
+  TYP covers every sectioned-engaged cell (< 2.5× at ≥ 2 MP); MAX
+  (1.8×) covers the v1-scope palette/ChannelCompact/patches fallback
+  content, which the pre-flight cannot see.
+- **Whole-image band is stale-high ~5×**: `LOSSLESS_BPP_TREE = 540` was
+  anchored on the 2026-08-01 12 MP cell (490 B/px) BEFORE the thirteen
+  August reductions; today's global path measures 95–98 (e7) / 121–130
+  (e9) B/px from 4 MP to 12 MP on this photo (imac_dark e9: 138). Not recalibrated here
+  (needs the full size × effort × content grid with ≥ 2 classes per
+  the sweep discipline; this run has 1 photo + 2 screens at t=1 only).
+  Until then `Auto`'s memory-pressure gate and `LosslessConfig::
+  estimate_encode` over-predict the global path by ~4–5× at e7–e9.
+- **Sectioned t=1 excess, unattributed**: with ONE worker the sectioned
+  peak carries an extra size-growing pre-tree phase (0 at 2048², +114 MiB
+  at 8.3 MP, +271 MiB at 12 MP, identical at e7 and e9) that vanishes at
+  ≥ 4 workers (t=2: see the sweep TSV `photo full e7 t2` row). Attribute with `JXL_ALLOC_SITES` (zenjxl `mem_probe_encode`)
+  before the next lifetime round; it is the sectioned mode's own
+  memory-parity residual now that the tree phase is per-group.

@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Fixed
+- Lossless pre-flight is bounded again under the sectioned local-tree mode (imazen/jxl-encoder#96): `SectionedTrees::On`/`Auto` requests are admitted, thread-walked and reported (`EncodeStats::estimated_peak_bytes`) on a calibrated SECTIONED estimate (`heuristics::estimate_encode_sectioned`, measured 2026-08-27 on real photo/screenshot crops 64² → 12 MP × e7/e9 × threads 1–12, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`) instead of skipping admission outright and reporting the whole-image figure the encode never used; absurd dimensions are rejected on the sectioned floor with a message naming it
+- Streaming `LosslessEncoder` honours `LosslessConfig::with_sectioned_trees` (its frame options silently defaulted to `Auto` regardless of the config) and uses the same sectioned-aware pre-flight as the one-shot request (#96)
+- `SectionedTrees::Auto` rustdoc now states the 2026-08-19 thread policy (sectioned at e ≤ 7 with > 1 worker), not only the memory-pressure arm (#96)
+
+### Added
+- `jxl-encoder-cli/examples/mem_probe`: allocator-agnostic `peak_live_kb` / `marginal_live_kb` / `allocs` columns from a counting global allocator (portable — the `VmHWM` columns are Linux-only), a `tree` argument (`auto|global|sectioned|hybrid`) and `MEM_PROBE_CROP=WxH` real-content crops; `scripts/mem_sectioned_sweep.sh` drives the resumable size × effort × threads × content grid (#96)
 - `write_token`/`write_tokens` no longer silently corrupt streams on codeless symbols: an out-of-alphabet token now returns `Error::InvalidInput` instead of index-panicking, and a depth-0 symbol in a multi-symbol prefix code errors loudly instead of emitting zero Huffman bits (the zenjpeg #194 mechanism; sweep issue #97)
 - Static DC prefix codes now have Kraft-validity + used-symbol assertions in `test_static_codes_exist` (#97)
 

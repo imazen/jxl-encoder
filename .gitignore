@@ -80,3 +80,4 @@ zen-metrics-bin
 # Regenerable via scripts/zenjxl-tuning-sweep/run_all_analyses.py — keep the
 # .tsv / .md / .json results, not the plot images.
 benchmarks/**/*.png
+.jj/

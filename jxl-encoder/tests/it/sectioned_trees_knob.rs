@@ -118,3 +118,43 @@ fn sectioned_knob_engages_and_roundtrips_and_auto_is_budget_driven() {
         "Auto under a tight budget must produce the sectioned bitstream"
     );
 }
+
+/// The streaming `LosslessEncoder` honours the same knob as the one-shot
+/// request. Before 2026-08-27 its `FrameEncoderOptions` left
+/// `sectioned_trees` at the `Auto` default regardless of the config, so
+/// `with_sectioned_trees(On)` / `(Off)` were silently ignored on that
+/// path (and its pre-flight admitted on the whole-image band only).
+/// Pinned by byte-equality with the one-shot encode under each explicit
+/// mode — the two modes differ from each other (asserted), so whichever
+/// one `Auto` would have resolved to, a dropped knob shows up.
+#[test]
+fn streaming_encoder_honours_sectioned_knob() {
+    let (w, h) = (512usize, 512usize);
+    let pixels = prng_rgb(w, h);
+    let mut by_mode = Vec::new();
+    for mode in [SectionedTrees::Off, SectionedTrees::On] {
+        let oneshot = encode(
+            &pixels,
+            w as u32,
+            h as u32,
+            LosslessConfig::new().with_sectioned_trees(mode),
+        );
+        let mut enc = LosslessConfig::new()
+            .with_effort(7)
+            .with_sectioned_trees(mode)
+            .encoder(w as u32, h as u32, PixelLayout::Rgb8)
+            .expect("streaming encoder");
+        enc.push_rows(&pixels, h as u32).expect("push rows");
+        let streamed = enc.finish().expect("streaming finish");
+        assert_eq!(
+            streamed, oneshot,
+            "streaming LosslessEncoder must produce the one-shot bitstream under {mode:?}"
+        );
+        assert_eq!(decode_rgb(&streamed, w, h), pixels, "{mode:?} roundtrip");
+        by_mode.push(streamed);
+    }
+    assert_ne!(
+        by_mode[0], by_mode[1],
+        "Off and On must differ (else the check is vacuous)"
+    );
+}

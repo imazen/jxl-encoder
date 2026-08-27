@@ -1433,6 +1433,9 @@ pub fn verify_histogram_serialization(code: &OwnedAnsEntropyCode, label: &str) -
 ///
 /// Returns Ok(()) if all decoded symbols match, or Err with details of first mismatch.
 /// This is the critical invariant test for ANS encoding correctness.
+// Callers (modular/encode.rs) are `#[cfg(debug_assertions)]`, so release
+// builds see no use — keep it out of `clippy --release -D warnings`.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Result<()> {
     use crate::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
 

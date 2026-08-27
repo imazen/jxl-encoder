@@ -1,0 +1,79 @@
+# Sectioned local-tree lossless mode — allocator-agnostic peak_live grid
+# 2026-08-27, imazen/jxl-encoder#96 (estimator arm `heuristics::estimate_encode_sectioned`)
+#
+# Machine: macOS laptop (Apple Silicon, 12 cores, 24 GB, shared with other
+# agents — every cell ran under `nice -n 19`; wall_ms is indicative only).
+# Build: jxl-encoder main d7fc8f7e + this change (probe
+# `jxl-encoder-cli/examples/mem_probe`, release, cli default features =
+# parallel + parallel-tree-learning + butteraugli-loop + learned-admission).
+# Driver: `scripts/mem_sectioned_sweep.sh <out.tsv> <photo> <screen> [screen2]`
+# (resumable; stage 2 appended the rgba + t=2 cells).
+#
+# Columns: content src crop w h mode effort threads tree rc bytes wall_ms
+#   live_pre_kb peak_live_kb marginal_live_kb allocs est_typ_kb est_max_kb
+#   peak_live_kb  = high-water mark of LIVE allocated bytes across encode(),
+#                   KiB, from the probe's counting global allocator — the
+#                   caller's pixel buffer is live and counted (same definition
+#                   as the 2026-08-13 4K cells from zenjxl mem_probe_encode).
+#   live_pre_kb   = live bytes just before encode() (≈ the input buffer).
+#   marginal_live_kb = peak_live − live_pre (the encoder's own working set).
+#   est_typ/max_kb = the WHOLE-IMAGE `estimate_encode` prediction (the
+#                   pre-existing band) for the same cell, for comparison.
+#   tree          = SectionedTrees::{On=sectioned, Off=global}; crops are
+#                   top-left regions of the source (real content, no resample).
+#
+# Inputs (all real content):
+#   photo   imazen-26 png-v3 1400-lilith-nature/1403_nature_large-tree-canopy
+#           ..._4000x3000.sdr.png (https://codec-corpus.r2.imazen.org/imazen-26-png-v3/…)
+#   screen  codec-corpus qoi-benchmark/screenshot_web/reddit.com.png (1313x8008)
+#   screen2 codec-corpus gb82-sc/imac_dark.png (2940x1912)
+#   rgba rows: alpha := the source GREEN plane (deterministic, worst-case entropy).
+#
+# Path verification (JXL_SECTION_SIZES=1): photo and reddit cells write
+# `mode=local` sections (sectioned engaged); imac_dark FULL writes 0 local
+# sections under `On` — it falls back to the global tree (v1 scope:
+# palette / ChannelCompact / patches), so its rows measure the GLOBAL path.
+#
+# ===================== FINDINGS (drive the constants in heuristics.rs) =====
+#
+# 1. Sectioned peak = pre-tree floor + per-worker group learn, NOT the tree.
+#    photo, threads >= 4, marginal: 2048² 192 MiB, 3840x2160 380 MiB,
+#    4000x3000 550 MiB = flat 48.0 B/px (e7 == e9 byte-for-byte).
+#    reddit 1313x8008: 606 (t=1) / 620 MiB (t>=4) = 60.5 / 61.8 B/px.
+#    -> SECTIONED_BPP_MULTI = 68 (61.8 × 1.10).
+#
+# 2. threads=1 carries an extra size-growing pre-tree phase on the photo:
+#    0 at 2048² (192 MiB both), +114 MiB at 3840x2160 (494 MiB = 62.5 B/px),
+#    +271 MiB at 4000x3000 (821 MiB = 71.7 B/px); identical at e7 and e9;
+#    ABSENT at t=2 (584 MiB, same as t>=4) and on the screenshot.
+#    UNATTRIBUTED (follow-up: JXL_ALLOC_SITES on zenjxl mem_probe_encode).
+#    -> SECTIONED_BPP_THREADS1 = 80 (71.7 × 1.10). Not measured beyond 12 MP.
+#
+# 3. Per-worker term (1024², where the group sets are not hidden under the
+#    floor), t=1 -> 12: photo e7 (150954−52261)/11 = 8.8 MiB/thread,
+#    e9 (430537−74376)/11 = 31.6 MiB/thread; reddit crop 4.9 / 28.6.
+#    -> SECTIONED_PER_THREAD_E7 = 12 MiB, _E9 = 36 MiB (additive, unclamped;
+#    over-predicts up to 2.1× at 3840x2160 e9 t=12 where the sets sit under
+#    the floor — safe direction; a max(floor, copies + t·group) shape is the
+#    tighter follow-up).
+#
+# 4. Fixed (64² crop, t=1): e7 5.9 MiB, e9 25.3 MiB (29.7 at t=12).
+#    -> SECTIONED_FIXED_E7 = 8 MiB, _E9 = 32 MiB.
+#
+# 5. Alpha (rgba − rgb marginal): 3840x2160 +4.0 B/px at every (effort, t);
+#    1313x4096 screen +4.0; 1024² t=1 +16.0 (e7) / +25.5 (e9) B/px (the
+#    4-channel group learn); per-thread ×1.23 (e7) / ×1.44 (e9).
+#    -> SECTIONED_BPP_ALPHA = 28, per-thread ×1.5 with alpha.
+#
+# 6. Global-tree context (t=1, marginal): photo 2048² 98.1 / 121.2 B/px
+#    (e7/e9), 3840x2160 96.4 / 127.0, 4000x3000 94.6 / 129.5; reddit
+#    1313x8008 e7 85.6; imac_dark (fallback) 85.6 / 137.7. t=8 within
+#    ±1 % of t=1 (thread-invariant, as modelled). The pre-existing
+#    LOSSLESS_BPP_TREE = 540 is ~5× stale-high (anchored 2026-08-01 before
+#    the August lifetime reductions) — NOT recalibrated here (1 photo class
+#    at t=1 is below the sweep discipline's coverage bar); recorded in
+#    docs/LIBJXL_PARITY_TRACKING.md as the next memory-model item.
+#
+# 7. Sectioned vs whole-image estimate at the admission boundary:
+#    4096x5120 e7 (21 MP): whole-image TYP ≈ 11.4 GB (rejects on the 8 GiB
+#    lossless default cap under `Off`); sectioned TYP at t=1 ≈ 1.75 GB.

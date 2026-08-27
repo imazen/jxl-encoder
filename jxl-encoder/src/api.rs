@@ -301,13 +301,17 @@ pub use container::*;
 /// measured) because the whole-image sample accumulator never exists, with
 /// byte cost measured between -2.0% (photo e7) and +0.6% (photo e9).
 ///
-/// `Auto` (the default) engages only when the encode's memory budget
+/// `Auto` (the default) engages when the encode's memory budget
 /// (`Limits::max_memory_bytes`, or the built-in lossless cap) cannot fit the
-/// whole-image estimate — ordinary encodes are byte-identical to previous
-/// releases; budget-capped and very large encodes transparently switch
-/// instead of failing allocation. v1 scope: tree-learning ANS encodes
-/// without meta channels (palette / ChannelCompact content falls back to the
-/// global tree).
+/// whole-image estimate — budget-capped and very large encodes transparently
+/// switch instead of failing allocation — and, since 2026-08-19, at effort
+/// <= 7 whenever the encode runs with more than one worker thread (measured
+/// median-byte-neutral for -40 %+ wall on the 13-pick corpus study,
+/// `benchmarks/lossless_sectioned_vs_global_x64_2026-08-18.*`). Output at
+/// lossless e <= 7 therefore depends on the thread configuration by design;
+/// pin `On` / `Off` for thread-invariant bytes. v1 scope: tree-learning ANS
+/// encodes without meta channels (palette / ChannelCompact content falls
+/// back to the global tree).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SectionedTrees {
     /// Engage when the memory budget requires it (default).
@@ -1511,6 +1515,15 @@ impl LosslessConfig {
     /// these settings. Mirrors the zen per-codec pattern
     /// ([`crate::heuristics::EncodeEstimate`]). `None` only on dimension
     /// overflow.
+    ///
+    /// This is the WHOLE-IMAGE tree-learning band, thread-independent. An
+    /// encode that runs the sectioned local-tree mode
+    /// ([`SectionedTrees`] `On`, or `Auto` under memory pressure / at
+    /// effort <= 7 with several workers) peaks well below it (measured
+    /// 2026-08-27, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`); the
+    /// pre-flight and [`EncodeStats::estimated_peak_bytes`] use that
+    /// sectioned estimate, so a cap sized from this method is
+    /// conservative for the default path.
     pub fn estimate_encode(
         &self,
         width: u32,
@@ -5926,12 +5939,13 @@ impl<'a> EncodeRequest<'a> {
             ConfigRef::Lossless(cfg) => (true, cfg.effort, cfg.threads),
             ConfigRef::Lossy(cfg) => (false, cfg.effort, cfg.threads),
         };
-        // Sectioned-trees escape hatch: a lossless config whose knob is not
-        // Off can fall back to per-group trees when the whole-image estimate
-        // exceeds the budget cap, so admission must not hard-reject it.
-        let sectioned_available = match self.config {
-            ConfigRef::Lossless(cfg) => cfg.sectioned_trees() != crate::api::SectionedTrees::Off,
-            ConfigRef::Lossy(_) => false,
+        // Sectioned local trees (imazen/jxl-encoder#96): a lossless config
+        // whose knob can engage per-group trees is admitted and estimated
+        // on the sectioned band where the frame encoder's gate will pick
+        // it (see `encode_preflight_with_sectioned`).
+        let sectioned = match self.config {
+            ConfigRef::Lossless(cfg) => cfg.sectioned_trees(),
+            ConfigRef::Lossy(_) => SectionedTrees::Off,
         };
         let preflight = encode_preflight_with_sectioned(
             self.width,
@@ -5943,7 +5957,7 @@ impl<'a> EncodeRequest<'a> {
             requested_threads,
             false,
             self.limits,
-            sectioned_available,
+            sectioned,
         )?;
         let EncodePreflight {
             budget,
@@ -9519,7 +9533,7 @@ impl LosslessEncoder {
         // Mirrors the request path's calibrated pre-flight and propagates
         // the cap through to the modular FrameEncoder for hot allocation
         // sites.
-        let preflight = encode_preflight(
+        let preflight = encode_preflight_with_sectioned(
             self.width,
             self.height,
             self.layout.bytes_per_pixel() as u8,
@@ -9529,6 +9543,7 @@ impl LosslessEncoder {
             cfg.threads,
             false,
             self.limits.as_ref(),
+            cfg.sectioned_trees(),
         )?;
         let EncodePreflight {
             budget,
@@ -9695,6 +9710,11 @@ impl LosslessEncoder {
                     lossy_palette: cfg.lossy_palette,
                     encoder_mode: cfg.mode,
                     profile: smart_profile,
+                    // imazen/jxl-encoder#96: the streaming path honours the
+                    // same sectioned-trees knob as the one-shot request
+                    // (it defaulted to `Auto` here regardless of the config
+                    // before 2026-08-27).
+                    sectioned_trees: cfg.sectioned_trees(),
                     modular_knobs: cfg.modular_knobs(),
                     modular_group_size_shift: cfg.effective_modular_group_size_shift(),
                     ..Default::default()
@@ -9931,17 +9951,35 @@ pub(crate) fn encode_preflight(
         requested_threads,
         admission_only,
         limits,
-        false,
+        SectionedTrees::Off,
     )
 }
 
-/// [`encode_preflight`] with the sectioned-trees escape hatch: when
-/// `sectioned_available` is true (lossless, [`SectionedTrees`] Auto/On),
-/// an over-cap whole-image estimate ADMITS instead of rejecting — the
-/// frame encoder's Auto gate will engage the sectioned path, whose peak
-/// (one group's tree-learn working set instead of the whole image's) sits
-/// far below the estimate, and the runtime `MemoryBudget` still enforces
-/// the cap allocation-by-allocation if content defeats that expectation.
+/// [`encode_preflight`] aware of the lossless sectioned local-tree mode
+/// (imazen/jxl-encoder#96). `sectioned` is the config's
+/// [`SectionedTrees`] knob; the estimate consulted for admission, the
+/// thread walk-down and `EncodeStats::estimated_peak_bytes` is the one for
+/// the tree mode the modular frame encoder will ACTUALLY run at that
+/// thread count (a mirror of its gate — see `path_est_at` below), so:
+///
+/// - `On` / `Auto`-under-pressure / `Auto`-e≤7-multithreaded → the
+///   calibrated sectioned estimate
+///   ([`crate::heuristics::estimate_encode_sectioned`]: image-copy +
+///   pre-tree-phase floor plus one group's tree-learn working set per
+///   worker), which is far below the whole-image band — a 21 MP e7
+///   lossless encode is admitted under the 8 GiB default cap because its
+///   sectioned peak fits, not because admission was switched off.
+/// - Everything else (`Off`, `Hybrid`, non-lossless, efforts outside the
+///   calibrated 7–9 band, `Auto` where the gate keeps the global tree) →
+///   the whole-image estimate, exactly as [`encode_preflight`].
+///
+/// Rejection stays budget-driven: the encode is refused only when the
+/// 1-thread estimate of the path that would run exceeds the cap. The
+/// runtime `MemoryBudget` still enforces the cap allocation-by-allocation
+/// for content the sectioned v1 scope hands back to the global tree
+/// (palette / ChannelCompact / patches — the estimate is then an
+/// under-prediction, and the encode fails cleanly mid-way rather than
+/// exceeding the cap).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_preflight_with_sectioned(
     width: u32,
@@ -9953,14 +9991,19 @@ pub(crate) fn encode_preflight_with_sectioned(
     requested_threads: usize,
     admission_only: bool,
     limits: Option<&Limits>,
-    sectioned_available: bool,
+    sectioned: SectionedTrees,
 ) -> Result<EncodePreflight> {
     let budget_cap = limits
         .and_then(|l| l.max_memory_bytes())
         .unwrap_or(Limits::default_max_memory_bytes(is_lossless));
     let fallible = limits.is_some_and(|l| l.fallible_alloc());
 
-    let est_at = |threads: usize| -> Result<u64> {
+    let overflow = || {
+        at!(EncodeError::LimitExceeded {
+            message: format!("image {width}x{height} too large for working-set estimate"),
+        })
+    };
+    let whole_at = |threads: usize| -> Result<u64> {
         crate::heuristics::estimate_encode_threaded(
             width,
             height,
@@ -9971,23 +10014,89 @@ pub(crate) fn encode_preflight_with_sectioned(
             threads,
         )
         .map(|e| e.peak_memory_bytes)
-        .ok_or_else(|| {
-            at!(EncodeError::LimitExceeded {
-                message: format!("image {width}x{height} too large for working-set estimate"),
-            })
-        })
+        .ok_or_else(overflow)
     };
 
-    // Budget-driven admission floor: even a 1-thread encode must fit.
-    let est_t1 = est_at(1)?;
-    if est_t1 > budget_cap && !(is_lossless && sectioned_available) {
+    // The sectioned arm exists for lossless tree-learning encodes in the
+    // calibrated effort band, with a knob that can engage it. `Hybrid`
+    // learns the global tree too (global-mode memory), so it keeps the
+    // whole-image estimate.
+    let sectioned_arm = is_lossless
+        && crate::heuristics::sectioned_estimate_available(effort)
+        && matches!(sectioned, SectionedTrees::On | SectionedTrees::Auto);
+    // Mirror of the frame encoder's `Auto` gate
+    // (`modular::frame::auto_tree_mode` + its `memory_pressure` input,
+    // which estimates at the same 3-byte input term regardless of layout):
+    // sectioned when the whole-image estimate does not fit the cap, or at
+    // effort <= 7 with more than one worker (2026-08-19 policy). Without
+    // the `parallel` feature the encoder's effective thread count is
+    // always 1, so the thread arm cannot fire there.
+    let auto_pressure = sectioned_arm
+        && matches!(sectioned, SectionedTrees::Auto)
+        && crate::heuristics::estimate_encode(width, height, 3, has_alpha, true, effort)
+            .is_some_and(|e| e.peak_memory_bytes > budget_cap);
+    let sectioned_engages = |threads: usize| -> bool {
+        sectioned_arm
+            && match sectioned {
+                SectionedTrees::On => true,
+                SectionedTrees::Auto => {
+                    auto_pressure
+                        || (cfg!(feature = "parallel") && effort <= 7 && threads.max(1) > 1)
+                }
+                SectionedTrees::Off | SectionedTrees::Hybrid => false,
+            }
+    };
+    // Estimate for the tree mode that will run at `threads`.
+    let path_est_at = |threads: usize| -> Result<(u64, bool)> {
+        if sectioned_engages(threads) {
+            crate::heuristics::estimate_encode_sectioned(
+                width, height, input_bpp, has_alpha, effort, threads,
+            )
+            .map(|e| (e.peak_memory_bytes, true))
+            .ok_or_else(overflow)
+        } else {
+            whole_at(threads).map(|e| (e, false))
+        }
+    };
+
+    let start = if requested_threads == 0 {
+        ambient_thread_count()
+    } else {
+        requested_threads
+    }
+    .max(1);
+
+    // Budget-driven admission floor: the smallest estimate the walk-down
+    // can reach must fit. That is the 1-thread figure — except on the
+    // sectioned band, where ONE worker measures a size-growing pre-tree
+    // excess that two workers do not (2026-08-27: 12 MP e7 855 vs 584
+    // MiB), so when the request allows ≥ 2 workers the floor is the
+    // smaller of the 1- and 2-worker estimates and the walk-down below
+    // stops at 2 rather than stepping into the larger 1-worker peak.
+    let (est_t1, t1_sectioned) = path_est_at(1)?;
+    let (est_floor, floor_sectioned) = if !admission_only && start >= 2 {
+        let (est_t2, t2_sectioned) = path_est_at(2)?;
+        if est_t2 < est_t1 {
+            (est_t2, t2_sectioned)
+        } else {
+            (est_t1, t1_sectioned)
+        }
+    } else {
+        (est_t1, t1_sectioned)
+    };
+    if est_floor > budget_cap {
         return Err(at!(EncodeError::LimitExceeded {
             message: format!(
-                "estimated peak working set {est_t1} bytes for {width}x{height} \
-                 {} effort {effort} (single-threaded floor) exceeds memory \
+                "estimated peak working set {est_floor} bytes for {width}x{height} \
+                 {}{} effort {effort} (minimum-thread floor) exceeds memory \
                  budget cap {budget_cap}; raise the cap via \
                  Limits::with_max_memory_bytes if this encode is intended",
                 if is_lossless { "lossless" } else { "lossy" },
+                if floor_sectioned {
+                    " (sectioned local trees)"
+                } else {
+                    ""
+                },
             ),
         }));
     }
@@ -10002,16 +10111,20 @@ pub(crate) fn encode_preflight_with_sectioned(
             Some(avail) => budget_cap.min(avail.saturating_mul(4) / 5),
             None => budget_cap,
         };
-        let start = if requested_threads == 0 {
-            ambient_thread_count()
-        } else {
-            requested_threads
-        };
-        let mut t = start.max(1);
-        let mut est = est_at(t)?;
+        let mut t = start;
+        let mut est = path_est_at(t)?.0;
         while t > 1 && est > thread_target {
+            // Walking down only helps while the estimate falls: a
+            // thread-invariant band (lossless global, γ = 0) or the
+            // sectioned 1-worker excess would otherwise trade wall time
+            // for no memory (or for MORE), and could step an admitted
+            // request into an estimate above the cap.
+            let next = path_est_at(t - 1)?.0;
+            if next >= est {
+                break;
+            }
             t -= 1;
-            est = est_at(t)?;
+            est = next;
         }
         if t == start {
             // No reduction needed: preserve the caller's exact request
