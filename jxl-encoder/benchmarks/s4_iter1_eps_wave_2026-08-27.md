@@ -48,3 +48,31 @@ secant ON (current defaults). Arm A control: all cells exp=1.0. Arm B: table.
 PASS ⇒ propose (user-gated, never flipped by me) a shipped per-image iter-1
 ε̂ source; FAIL ⇒ numbers committed here, S4 closes, the constant stays.
 Either way: census TSVs + driver committed, zensim plan + memory updated.
+
+## RESULT — G-J2 **PASS** as registered (2026-08-27, same night)
+
+Census ran per registration (54 cells; driver
+`scripts/zensim-loop-eff/run_s4_iter1_census.sh`; table + both cell TSVs
+committed alongside). Substrate validity came free twice: arm A's overall
+median 0.832 EQUALS the zq census staircase control exactly, and the t70
+cells (both arms exp 1.0 by registration) are identical.
+
+- median decoded |err|: control **0.832** vs eps-prior **0.607** —
+  improvement **27.0%**, over the frozen ≥15% bar ⇒ **PASS**.
+- ±2 hits: 21/27 → 22/27 (no regression). Engagement: 18 touched cells,
+  16 distinct exponents, 12W / 4L / 2T; touched-only median 0.672 → 0.408.
+- Per t: t80 0.527→0.347 (−34%), t88 0.832→0.607 (−27%), t70 unchanged (by
+  construction).
+- **Honest asymmetry**: the win is PHOTO-concentrated (0.600→0.408, −32%);
+  nonphoto median 1.836→1.943 (+5.8%, 3-ref class, includes untouched t70
+  cells) — the nonphoto residual is controller/undershoot-class, not
+  first-step-exponent, territory. Opposite concentration to the zq seed
+  head's (−51% nonphoto). The two levers are complementary, not redundant.
+
+## PROPOSAL (user-gated — nothing flips without an explicit yes)
+Mechanism validated: per-image iteration-1 ε̂ beats the ε̂≡−1 assumption.
+The census arm consumed the OFFLINE 190-feature table (instrument-only
+form). Ship form would need the slope prior refit on cheap in-binary
+features (zq_seed's 8 zenanalyze features are the natural basis — module
+already in-tree) + its own census at the same bar, then a default wiring
+decision. Registered as the follow-up; NOT run tonight.

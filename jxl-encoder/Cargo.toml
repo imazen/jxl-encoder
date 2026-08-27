@@ -1754,6 +1754,10 @@ required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop"
 # external independent panel (zen-metrics compare). `--metric cvvdp` needs
 # the cvvdp-loop-cpu feature too (the match arm is cfg-gated).
 [[example]]
+name = "q2d_probe"
+path = "examples/q2d_probe.rs"
+
+[[example]]
 name = "zensim_diffmap_rd"
 path = "examples/zensim_diffmap_rd.rs"
 required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop", "parallel"]
