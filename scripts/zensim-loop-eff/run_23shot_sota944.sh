@@ -306,6 +306,10 @@ say "phase '$phase' complete"
 #    phase judges on the instrument's achieved_decoded/abs_err columns.
 if [ "$phase" = secant ]; then
   SD=$OUT/secant
+  # The harness APPENDS to JXL_ZENSIM_TRACE/ATTR_PROBE files, so a rerun on a
+  # populated dir doubles every gate count (measured 2026-08-27: probe 108
+  # want 54). Preserve any prior run, then start clean.
+  [ -d "$SD" ] && mv "$SD" "$SD.bak.$(date -u +%s)"
   mkdir -p "$SD"
   CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
   [ -f "$CBAKE" ] || { say "STOP: C bake missing at $CBAKE"; exit 1; }
@@ -387,6 +391,10 @@ fi
 #    reads census + bytes; per-cell rows feed the rate-matched analysis).
 if [ "$phase" = s3gain ]; then
   SD=$OUT/s3gain
+  # The harness APPENDS to JXL_ZENSIM_TRACE/ATTR_PROBE files, so a rerun on a
+  # populated dir doubles every gate count (measured 2026-08-27: probe 108
+  # want 54). Preserve any prior run, then start clean.
+  [ -d "$SD" ] && mv "$SD" "$SD.bak.$(date -u +%s)"
   mkdir -p "$SD"
   CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
   [ -f "$CBAKE" ] || { say "STOP: C bake missing at $CBAKE"; exit 1; }
