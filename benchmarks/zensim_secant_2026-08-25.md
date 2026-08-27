@@ -212,3 +212,42 @@ axes trade: tile-secant alone = the in-bar bytes arm with the nonphoto win;
 composition = the accuracy-median arm with the secant's bytes signature.
 No adoption (all default OFF; the bytes-bar / rate-matched question from the
 global-secant section governs both secant-bearing arms). S4 remains.
+
+## Rate-matched read (2026-08-27) — the registered open question, ANSWERED
+
+`scripts/zensim-loop-eff/secant_rate_matched.py` applies the mm-F3 rule
+verbatim (bytes ratio vs same-model baseline at EQUAL achieved, |Δachieved| ≤
+0.5 per (image, target) cell, numpy median, n stated) to the committed decoded
+TSVs:
+
+| pair | n matched | med bytes ratio | med Δachieved | unmatched |
+|---|--:|--:|--:|--:|
+| secant k2 best vs ctrl | 8 | **1.0000** | +0.000 | 19 |
+| secant k2 last vs ctrl | 9 | **1.0000** | +0.000 | 18 |
+| secant k3 best vs ctrl | 12 | **1.0003** | −0.007 | 15 |
+| secant k3 last vs ctrl | 10 | **0.9943** | −0.022 | 17 |
+| tile-secant k3 vs fixed | 22 | 1.0020 | +0.000 | 5 |
+| sec1+tile vs sec1fixed | 23 | 1.0008 | +0.000 | 4 |
+
+**At equal achieved quality the secant is rate-NEUTRAL** (0.994–1.0003) — the
++1.9% aggregate-bytes penalty is entirely the cost of landing where the caller
+asked, not compression waste. The frozen ±1% TOTAL-bytes bar conflated rate
+discipline with the target-hitting error the arm exists to fix; this read
+separates them, in the owner's own F3 shape.
+
+Honest caveats: (1) matched-n is thin for the secant pairs (8–12 of 27) with
+a structural selection effect — the excluded cells are exactly where the
+secant moved achieved by >0.5 (i.e. where the control missed worst), so the
+matched subset under-represents the arm's largest accuracy wins while fairly
+pricing its bytes. (2) tile-secant matches 22/27 (its achieved barely moves)
+at 1.0020 — consistent with its in-bar +0.39% aggregate.
+
+### ADOPTION PROPOSAL (user-gated — no default flips without a ruling)
+
+Evidence now on file: decoded k2 census +4..+5/27, med −49..−55%; k3 med
+−31..−71% (v47A + C bake); overshoot killed by the min-|ΔlnL| guard;
+engagement proven; **bytes rate-neutral at equal achieved**. Proposed:
+`JXL_ZENSIM_SECANT=1` (guarded secant) becomes the loop default, power-law
+retained as the documented fallback + first step. The per-tile gain
+(`tile-secant`) stays opt-in (its win is smaller and nonphoto-conditional).
+Awaiting the user's yes/no; nothing ships on this note.
