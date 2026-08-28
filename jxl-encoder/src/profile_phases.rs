@@ -98,6 +98,14 @@ mod inner {
             PhaseGuard
         }
     }
+
+    /// Explicit no-op `Drop` so call sites may `drop(guard)` to end a
+    /// phase early (a coarse guard spanning several `let` bindings) in
+    /// both cfgs without tripping `clippy::drop_non_drop`.
+    impl Drop for PhaseGuard {
+        #[inline(always)]
+        fn drop(&mut self) {}
+    }
 }
 
 pub use inner::{PhaseGuard, record, reset, take_snapshot};

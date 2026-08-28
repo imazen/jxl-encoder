@@ -5268,6 +5268,7 @@ fn build_tree_from_prequantized(
         dedup_samples(samples, &mut pq, params);
     });
 
+    let _pg_setup = crate::profile_phases::PhaseGuard::new("tree/z_setup_hist_layout");
     let n = samples.num_samples; // Update n to unique count
 
     let max_nodes = params.max_nodes;
@@ -5332,6 +5333,7 @@ fn build_tree_from_prequantized(
     let tensor_layout = TensorLayout::new(params, samples.num_predictors(), histogram_size, |p| {
         pq.num_thresholds(p)
     });
+    drop(_pg_setup);
 
     // ── Parallel tree learning (chunk-1 POC, issue #41 follow-on) ────────────
     //
@@ -5348,6 +5350,7 @@ fn build_tree_from_prequantized(
     // detached tail length); on a 4.19 MP image with ~1.3M post-dedup samples,
     // the two clones cost ~50-100 ms total — negligible vs the multi-second
     // tree-build that follows.
+    let _pg_ptl = crate::profile_phases::PhaseGuard::new("tree/z_ptl_root_block");
     #[cfg(feature = "parallel-tree-learning")]
     {
         // Effort-tuned via `params.parallel_root_threshold` (see
@@ -5383,7 +5386,15 @@ fn build_tree_from_prequantized(
         // documented in commit `cb5e202`. Resurrecting the owned-clone
         // path to fix the +6.2% borrowed-view regression on top of
         // that is tracked separately (see CLAUDE.md / the audit memory).
-        if n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold {
+        // Single-worker pools skip the fork engine entirely: with one
+        // thread `parallel_join` runs both sides sequentially anyway, so
+        // the owned per-side clones / borrowed views and per-fork
+        // bookkeeping are pure overhead over the sequential loop below
+        // (bitstream-equivalent by construction; measured on the #96
+        // sectioned e7 path, 135 per-group learns at threads=1).
+        let single_worker = crate::parallel::effective_threads() <= 1;
+        if !single_worker && n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold
+        {
             // Pop the root candidate and try its split.
             let root_candidate = stack.pop().expect("root candidate just pushed");
             // PERF-HIST-SUB-LOSSLESS: capture the root's tensor while its
@@ -5688,7 +5699,9 @@ fn build_tree_from_prequantized(
             }
         }
     }
+    drop(_pg_ptl);
 
+    let _pg_grow = crate::profile_phases::PhaseGuard::new("tree/z_grow_loop");
     while let Some(mut candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes {
             finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);

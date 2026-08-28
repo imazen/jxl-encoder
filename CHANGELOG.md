@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- Lossless tree learning skips the parallel fork engine on single-worker pools (`effective_threads() <= 1`) and runs the sequential grow loop directly — byte-identical (the two engines are bitstream-equivalent by construction; verified on the 8.3 MP photo, imac_dark and reddit cells) and 3.5 % less learn wall at threads=1 on both the global and the sectioned path (#96)
+- Sectioned group size measured (128 / 256 / 512 / 1024, `benchmarks/jxl_sectioned_group_size_2026-08-28.{tsv,meta}`): no size dominates (512 buys 1.0–1.3 % on photo/palette-screenshot and loses 3.1 % on a tall web screenshot; 1024 costs +50–60 % peak with ≥ 4 workers), so the 256 default stays; `with_modular_group_size` remains the per-call knob (#96)
+- Wall standing recorded vs cjxl v0.12 on the aarch64 laptop (`benchmarks/jxl_sectioned_prune_k_2026-08-28.meta`, `jxl_sectioned_phases_2026-08-28.tsv`): sectioned e9 is at 1.08× (t=1) / 1.10× (t=8) — inside the ≤ 1.3× target; e7 is at 1.59× / 1.65×, structurally the per-group split search (K=8 kept predictors vs libjxl's 2); the per-group prune K=6/4 sweep is recorded and rejected as the default (≤ −13 % wall for up to +1.35 % bytes on palette content). `profile-phases` now also times the sectioned writer (`sectioned/gather|prune_predictors|learn|collect|lz77|ans_build|write`) and three coarse `tree/z_*` guards inside the learner (#96)
+
 ### Fixed
 - Lossless patches detection no longer inflates the single-thread encode peak (imazen/jxl-encoder#96): the connected-component scan takes the bounded union-by-min labeling path at ≥ 1 MP on every thread count instead of a scanning DFS whose flat-index stack grew through doubling reallocs on photo content (one foreground component). This was the entire "sectioned t=1 excess" of the 2026-08-27 memory sweep — attributed with a `MEM_PROBE_PATCHES=0` A/B: 12 MP lossless e7/e9 `SectionedTrees::On` at threads=1 peak_live 855 → 584 MiB, 8.3 MP 518 → 404 MiB, bytes identical everywhere (`benchmarks/jxl_sectioned_mem_t1excess_2026-08-28.{tsv,meta}`); the sectioned estimator's threads=1 floor drops 80 → 68 B/px (= the multi-thread floor) so single-thread lossless admission at a memory cap is ~13 % more permissive
 - `mem_probe` gains `MEM_PROBE_PATCHES=0|1` and `MEM_PROBE_GROUP_SHIFT=0..=3` for lossless attribution / group-size runs (#96)

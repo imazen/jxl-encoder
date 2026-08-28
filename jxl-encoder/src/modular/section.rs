@@ -2102,15 +2102,17 @@ pub fn write_group_modular_section_local_tree(
     // so the residual collect below skips the WP state machine — one WP
     // walk per group instead of two. Values (and bytes) are identical.
     let mut wp_cache = WpCache::new();
-    gather_samples_strided_filling_wp_cache(
-        &mut samples,
-        group_image,
-        stream_id,
-        0,
-        stride,
-        &wp_params,
-        &mut wp_cache,
-    );
+    crate::profile_time!("sectioned/gather", {
+        gather_samples_strided_filling_wp_cache(
+            &mut samples,
+            group_image,
+            stream_id,
+            0,
+            stride,
+            &wp_params,
+            &mut wp_cache,
+        )
+    });
     let pixel_fraction = if total_pixels > 0 {
         samples.total_gathered_weight() as f64 / total_pixels as f64
     } else {
@@ -2129,8 +2131,12 @@ pub fn write_group_modular_section_local_tree(
     // JXL_TREE_PRUNE_PREDICTORS=K overrides (>= 14 disables).
     let prune_k =
         super::tree_learn::tree_prune_predictors_env().unwrap_or(SECTIONED_PRUNE_PREDICTORS_K);
-    samples.prune_to_top_predictors(prune_k);
-    let tree = compute_best_tree(&mut samples, &params);
+    crate::profile_time!("sectioned/prune_predictors", {
+        samples.prune_to_top_predictors(prune_k)
+    });
+    let tree = crate::profile_time!("sectioned/learn", {
+        compute_best_tree(&mut samples, &params)
+    });
     drop(samples);
 
     write_group_modular_section_local_tree_with_tree(
@@ -2179,15 +2185,17 @@ pub fn write_group_modular_section_local_tree_with_tree(
         .map(|c| c.width() * c.height())
         .sum();
 
-    let tokens = collect_residuals_with_tree_offset_with_budget_wp(
-        group_image,
-        tree,
-        stream_id,
-        0,
-        wp_params,
-        budget,
-        wp_cache,
-    )?;
+    let tokens = crate::profile_time!("sectioned/collect", {
+        collect_residuals_with_tree_offset_with_budget_wp(
+            group_image,
+            tree,
+            stream_id,
+            0,
+            wp_params,
+            budget,
+            wp_cache,
+        )
+    })?;
     let num_contexts = count_contexts(tree) as usize;
 
     // Same LZ77 construction as the single-group tree writer.
@@ -2198,14 +2206,16 @@ pub fn write_group_modular_section_local_tree_with_tree(
         .max()
         .unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
-        match apply_lz77(
-            &tokens,
-            num_contexts,
-            false,
-            lz77_method,
-            dist_multiplier,
-            budget,
-        )? {
+        match crate::profile_time!("sectioned/lz77", {
+            apply_lz77(
+                &tokens,
+                num_contexts,
+                false,
+                lz77_method,
+                dist_multiplier,
+                budget,
+            )
+        })? {
             Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
             None => (tokens, None),
         }
@@ -2217,14 +2227,16 @@ pub fn write_group_modular_section_local_tree_with_tree(
     } else {
         num_contexts
     };
-    let code = build_entropy_code_ans_with_options(
-        &tokens,
-        ans_num_contexts,
-        true,
-        true,
-        lz77_params.as_ref(),
-        Some(total_pixels),
-    );
+    let code = crate::profile_time!("sectioned/ans_build", {
+        build_entropy_code_ans_with_options(
+            &tokens,
+            ans_num_contexts,
+            true,
+            true,
+            lz77_params.as_ref(),
+            Some(total_pixels),
+        )
+    });
 
     // GroupHeader: local tree, the wp params used above, per-group RCT.
     writer.write(1, 0)?; // use_global_tree = false
@@ -2236,14 +2248,16 @@ pub fn write_group_modular_section_local_tree_with_tree(
     }
 
     // Local tree + its entropy code, exactly the single-group serialization.
-    write_tree(writer, tree)?;
-    if ans_num_contexts > 1 {
-        write_lz77_header(lz77_params.as_ref(), writer)?;
-        write_entropy_code_ans(&code, writer)?;
-    } else {
-        write_ans_modular_header(writer, &code)?;
-    }
-    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
+    crate::profile_time!("sectioned/write", {
+        write_tree(writer, tree)?;
+        if ans_num_contexts > 1 {
+            write_lz77_header(lz77_params.as_ref(), writer)?;
+            write_entropy_code_ans(&code, writer)?;
+        } else {
+            write_ans_modular_header(writer, &code)?;
+        }
+        write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
+    });
     // Sections are byte-delimited by the TOC; pad to the byte boundary like
     // every other section writer does before the caller's `finish()`.
     writer.zero_pad_to_byte();

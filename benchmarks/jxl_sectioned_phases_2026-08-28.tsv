@@ -1,0 +1,44 @@
+# profile-phases breakdown, lossless e7 threads=1, photo 3840x2160 crop (imazen-26 1403), cjxl-rs --features profile-phases (release, target/prof)  host=mac  date=2026-08-28  commit=528cf6f1+wip
+# columns: phase, sectioned_fork_engine_ms (before the single-worker gate), sectioned_single_worker_gate_ms (after), global_tree_ms (before; compute_best_tree 7366.6 after). Phases nest (sectioned/learn contains tree/*; tree/z_* are coarse guards added 2026-08-28).
+phase	sectioned_before_ms	sectioned_after_ms	global_before_ms
+modular/build_ans_code			539.0
+modular/collect_residuals_global			1053.0
+modular/compute_best_tree			7639.2
+modular/gather_samples			637.5
+modular/patches_detect	95.5	98.4	99.3
+modular/rct_select	367.6	364.3	365.2
+modular/wp_params_search			0.0
+modular/write_tokens_per_group			247.9
+sectioned/ans_build	576.0	569.5	
+sectioned/collect	479.9	478.1	
+sectioned/gather	886.4	886.6	
+sectioned/learn	8791.6	8482.6	
+sectioned/lz77	113.5	111.9	
+sectioned/prune_predictors	99.1	98.8	
+sectioned/write	254.7	254.8	
+tree/compute_predictor_entropy		7.0	5.2
+tree/dedup_samples	569.1	567.5	950.7
+tree/derive_child_tensors	1017.2		2275.9
+tree/fbs_accumulate	1489.6		700.9
+tree/fbs_sweep	1360.7		351.1
+tree/find_best_predictor	76.5	76.3	53.3
+tree/find_best_split		4739.6	
+tree/find_best_split_borrowed	3975.6		1604.8
+tree/partition		1228.4	
+tree/partition_borrowed	1151.2		1673.1
+tree/pre_quantize	521.5	521.5	881.5
+tree/tensor_zeroed	9.4		6.0
+tree/z_grow_loop		7308.9	
+tree/z_ptl_root_block	7615.2	0.0	
+tree/z_setup_hist_layout	84.6	84.3	
+# wall standing on this host (mem_probe release, same crop) vs cjxl v0.12.0 NEON — see jxl_sectioned_prune_k_2026-08-28.meta:
+# cjxl e7 t1 wall_s=7.25 bytes=10800094
+# cjxl e7 t8 wall_s=1.12 bytes=10800094
+# cjxl e9 t1 wall_s=42.08 bytes=10769760
+# cjxl e9 t8 wall_s=6.03 bytes=10769760
+# cjxl e1 t1 wall_s=0.14 (load floor upper bound)
+# ours-sectioned e7 t1 wall_ms=11515.3 bytes=10891264
+# ours-sectioned e7 t8 wall_ms=1846.9 bytes=10891264
+# ours-sectioned e9 t1 wall_ms=45275.3 bytes=10820203
+# ours-sectioned e9 t8 wall_ms=6624.0 bytes=10820203
+# ours-global e7 t8 wall_ms=4193.5 bytes=10624731

@@ -1,0 +1,30 @@
+jxl_sectioned_prune_k_2026-08-28.tsv — per-group predictor-prune strength
+(SECTIONED_PRUNE_PREDICTORS_K, env JXL_TREE_PRUNE_PREDICTORS) re-measured on
+three contents for the #96 "wall <= 1.3x cjxl" item. Host: mac (aarch64 laptop,
+12 cores), release mem_probe, lossless e7, SectionedTrees::On.
+
+Wall standing vs cjxl v0.12.0 (NEON) on the same host, photo 3840x2160 crop,
+~/tmp/jxl96-wall.tsv (cjxl wall = whole process incl. PNG load <= 0.14 s):
+  e7 t=1: cjxl 7.25 s / ours sectioned 11.5 s = 1.59x   (bytes +0.84 %)
+  e7 t=8: cjxl 1.12 s / ours 1.85 s            = 1.65x
+  e9 t=1: cjxl 42.1 s / ours 45.3 s            = 1.08x   (bytes +0.47 %)   <= 1.3x MET
+  e9 t=8: cjxl 6.03 s / ours 6.62 s            = 1.10x                     <= 1.3x MET
+  (global tree e7 t=8: 4.19 s, bytes -1.6 % vs cjxl)
+
+K sweep (bytes vs K=8 / wall vs K=8):
+  photo  K=6  -0.001 % / -12.7 % (t1) -9.7 % (t8);  K=4  +0.02 % / -27 % / -20 %
+  imac   K=6  +0.20 %  /  -4.0 % / -1 %;            K=4  +1.35 % / -11 % / -4 %
+  reddit K=6  +0.14 %  /  -7.2 % / -17 %;           K=4  +0.55 % / -15 % / -24 %
+Peak_live is K-invariant (the pre-tree floor dominates).
+
+Verdict: K=6 is not the 1.3x lever at e7 (needs -18 % on photo t=1; K=6 gives
+-13 % there and only -4 % on the palette screenshot), and K=4 costs +1.35 % on
+imac_dark. Default stays K=8 (Auto's e<=7 multi-thread output is byte-policy
+bound: median-neutral vs the global tree). The e7 residual is structural: the
+profile-phases breakdown (cjxl-rs --features profile-phases, sectioned e7 t=1,
+same crop) puts tree/find_best_split at 4.0 s (K=8 kept predictors vs libjxl's
+2-predictor learn — an RD choice we keep: sectioned bytes beat cjxl at e7 on
+photo by 0.8 % less than global's 1.6 % win) + dedup/pre_quantize 1.1 s + rct
+0.4 s + patches 0.1 s, with the remaining ~5.9 s in gather / collect / ANS /
+write (instrumented in the same commit — see the .tsv sibling
+jxl_sectioned_phases_2026-08-28.tsv).

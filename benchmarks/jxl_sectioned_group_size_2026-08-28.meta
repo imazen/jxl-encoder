@@ -1,0 +1,29 @@
+jxl_sectioned_group_size_2026-08-28.tsv — modular group dimension sweep for the
+sectioned local-tree lossless mode (SectionedTrees::On, e7, RGB8), the #96
+residual item "group-size tuning". Group dim = 128 << shift via
+LosslessConfig::with_modular_group_size (cjxl -g). Host: mac (aarch64 laptop,
+12 cores), release mem_probe, allocator-agnostic peak_live (input included).
+djxl v0.12.0 decode + ImageMagick `compare -metric AE` against the source crop:
+AE=0 on every t=1 cell (all four group sizes round-trip pixel-exact in the
+sectioned mode; t=4 bitstreams are identical bytes to t=1 by construction).
+
+Sources: photo = imazen-26 1403 nature 4000x3000 top-left 3840x2160 crop;
+imac = gb82-sc imac_dark 2940x1912 (palette + patches); reddit =
+qoi-benchmark screenshot_web/reddit.com.png 1313x8008.
+
+Bytes vs the 256 default (shift 1):
+  photo   : 128 +1.70 %   512 -1.31 %   1024 -2.14 %
+  imac    : 128 +5.50 %   512 -1.00 %   1024 +1.21 %
+  reddit  : 128 +1.05 %   512 +3.13 %   1024 +5.48 %
+Peak_live: identical at t=1 for every group size (the pre-tree floor
+dominates); at t=4 the 1024 groups raise the peak +49 % (photo 413 -> 618 MiB),
++61 % (imac 358 -> 577 MiB), +2.6 % (reddit) — one 1024² group's learn per
+worker. Wall: flat within noise except imac 512/1024 (+16 % / +20 % at t=1).
+
+Verdict: no group size dominates — 512 buys 1.0-1.3 % on photo/imac and loses
+3.1 % on the tall screenshot, 1024 buys 2.1 % on photo but loses on both
+screenshots and costs +50-60 % peak with >= 4 workers. The 256 default stays
+(byte-identical for existing encodes); callers wanting the photo bytes can set
+with_modular_group_size(Some(2)) explicitly. Not re-tried at e9 (the sectioned
+mode is Auto's e <= 7 policy; e9 sectioned is opt-in) — a future e9 sweep
+should include the memory axis at t >= 4 first.

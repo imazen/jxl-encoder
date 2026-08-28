@@ -9,7 +9,8 @@
 //! whole-process RSS which is inflated by a ~126 MB binary/decode floor.
 //!
 //! Usage: mem_probe <png> <lossy|lossless> <effort> <distance> <8|16> [rgb|rgba] [threads] [tree]
-//! Env (lossless): MEM_PROBE_CROP=WxH, MEM_PROBE_PATCHES=0|1, MEM_PROBE_GROUP_SHIFT=0..=3
+//! Env: MEM_PROBE_CROP=WxH, MEM_PROBE_OUT=<file.jxl>; lossless-only: MEM_PROBE_PATCHES=0|1,
+//! MEM_PROBE_GROUP_SHIFT=0..=3
 //! Prints: `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> bytes=<n> \
 //!          threads=<n> est_min_kb=<n> est_typ_kb=<n> est_max_kb=<n> est_time_ms=<f> \
 //!          tree=<s> live_pre_kb=<n> peak_live_kb=<n> marginal_live_kb=<n> allocs=<n>`
@@ -313,7 +314,14 @@ fn main() {
     let peak_live = counting_alloc::PEAK_LIVE.load(Ordering::Relaxed);
     let allocs = counting_alloc::COUNT.load(Ordering::Relaxed);
     let len = match encoded {
-        Ok(d) => d.len(),
+        Ok(d) => {
+            // `MEM_PROBE_OUT=path` keeps the bitstream for out-of-process
+            // decoder checks (djxl) — written AFTER the peak is sampled.
+            if let Ok(out) = std::env::var("MEM_PROBE_OUT") {
+                std::fs::write(&out, &d).expect("MEM_PROBE_OUT write");
+            }
+            d.len()
+        }
         Err(e) => {
             eprintln!("encode failed: {e}");
             0

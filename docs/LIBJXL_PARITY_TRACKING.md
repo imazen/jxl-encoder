@@ -67,6 +67,26 @@ Wall (best-of-3, cjxl 0.12 same box; lossless from round 1c/2, lossy round 3):
 | lossy e5 t1 / t8 | 1.47 / 0.26 | **1.38** / 0.36 | **0.94× win** / 1.38× |
 | lossy e7 t1 / t8 | 2.63 / 0.52 | **1.92** / **0.44** | **0.73× / 0.85× — wins** |
 
+2026-08-28 sectioned standing on the aarch64 laptop (cjxl v0.12.0 NEON, photo
+3840×2160 crop, `benchmarks/jxl_sectioned_prune_k_2026-08-28.meta`):
+
+| cell (lossless, SectionedTrees::On) | cjxl | ours | ratio | bytes vs cjxl |
+|---|---|---|---|---|
+| e7 t=1 | 7.25 s | 11.5 s | 1.59× | +0.84 % |
+| e7 t=8 | 1.12 s | 1.85 s | 1.65× | +0.84 % |
+| e9 t=1 | 42.1 s | 45.3 s | **1.08×** (≤ 1.3× met) | +0.47 % |
+| e9 t=8 | 6.03 s | 6.62 s | **1.10×** (≤ 1.3× met) | +0.47 % |
+
+e7 phase split (`jxl_sectioned_phases_2026-08-28.tsv`, t=1, 11.5 s): per-group
+tree learn 8.5 s (find_best_split 4.7 s, partition 1.2 s, dedup 0.6 s,
+pre_quantize 0.5 s), gather 0.9 s, ANS build 0.6 s, collect 0.5 s, RCT 0.4 s,
+write 0.25 s, LZ77 0.1 s, patches 0.1 s. The e7 gap is the split search over
+K=8 kept predictors (libjxl learns over 2); K=6 / K=4 measured (−13 % / −27 %
+wall on photo, but +0.20 % / +1.35 % bytes on imac_dark) and NOT defaulted.
+Single-worker pools now bypass the fork engine (byte-identical, −3.5 % learn
+wall on both paths). Group size 128–1024 measured: 256 stays
+(`jxl_sectioned_group_size_2026-08-28.meta`).
+
 2026-08-18 lossless-t8 update (rounds 6-8, all byte-identical): the
 work-stealing RefCell crash fixed; dedup refinement scatter, tensor
 build, prequant bucketize + pre-walk, and the per-group LZ77 transform
