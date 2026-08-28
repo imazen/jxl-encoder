@@ -179,7 +179,7 @@ if [ "$phase" = h3own ]; then
   done
   [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
   # Committed cells TSV for the h3own study.
-  BD=$REPO/benchmarks
+  BD=${TS_BD:-$REPO/benchmarks}
   {
     printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
     for f in "$HD"/target_ab_*.tsv; do
@@ -237,7 +237,7 @@ if [ "$phase" = h3ownsp ]; then
     say "EMIT_BEST k$K engagement W10L9_h3ownsp: $diffn/$tot bitstreams differ from emit-last"
   done
   [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
-  BD=$REPO/benchmarks
+  BD=${TS_BD:-$REPO/benchmarks}
   {
     printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
     for f in "$HD"/target_ab_*.tsv; do
@@ -271,7 +271,7 @@ if [ "$phase" = gainsweep ]; then
     [ "$n" -eq 81 ] || fail=1
   done
   [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
-  BD=$REPO/benchmarks
+  BD=${TS_BD:-$REPO/benchmarks}
   {
     printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
     for f in "$GD"/target_ab_*.tsv; do
@@ -285,7 +285,7 @@ fi
 
 # ── collect: concatenate committed TSV into benchmarks/ ───────────────────
 if [ "$phase" = collect ] || [ "$phase" = all ]; then
-  BD=$REPO/benchmarks
+  BD=${TS_BD:-$REPO/benchmarks}
   {
     printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
     for f in "$OUT"/probe/target_ab_*.tsv "$OUT"/fresh/target_ab_*.tsv; do
@@ -358,7 +358,7 @@ if [ "$phase" = secant ]; then
   done
   [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
   # Committed cells TSV.
-  BD=$REPO/benchmarks
+  BD=${TS_BD:-$REPO/benchmarks}
   {
     printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
     for f in "$SD"/target_ab_*.tsv; do
@@ -435,7 +435,7 @@ if [ "$phase" = s3gain ]; then
     fi
   done
   [ "$fail" -eq 0 ] || { say "ENGAGEMENT GATE FAIL — STOP"; exit 1; }
-  BD=$REPO/benchmarks
+  BD=${TS_BD:-$REPO/benchmarks}
   {
     printf 'run\timage\tclass\ttarget\tarm\tbake\tseed_d\tachieved_inloop\titers_used\tachieved_decoded\tabs_err\tbytes\tencode_ms\tloop_ms\tms_per_compare\n'
     for f in "$SD"/target_ab_*.tsv; do
@@ -458,7 +458,7 @@ if [ "$phase" = s3s1 ]; then
   SD=$OUT/s3s1
   [ -d "$SD" ] && mv "$SD" "$SD.bak.$(date -u +%s)"
   mkdir -p "$SD"
-  BD=$REPO/benchmarks
+  BD=${TS_BD:-$REPO/benchmarks}
   CTRL_TSV=$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv
   [ -f "$CTRL_TSV" ] || { say "STOP: run the s3gain phase first (same-substrate controls)"; exit 1; }
   CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
