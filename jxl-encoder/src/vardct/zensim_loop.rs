@@ -45,8 +45,8 @@ fn map_profile_from_env() -> Option<(zensim::ZensimProfile, usize)> {
         if path.is_empty() {
             return None;
         }
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("JXL_ZENSIM_MAP_BAKE {path}: {e}"));
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("JXL_ZENSIM_MAP_BAKE {path}: {e}"));
         MAP_BAKE_BYTES.set(bytes).expect("map bake set once");
         let params = zensim::profile::ProfileParams::builder()
             .mlp(map_bake_bytes)
@@ -1457,8 +1457,8 @@ impl VarDctEncoder {
                     let seq_probe = std::env::var("JXL_ZENSIM_FDPROBE").is_ok_and(|v| v == "seq");
                     // Split-role: gradient (the map) through the MAP bake when
                     // mounted; scoring stays on rd_profile everywhere else.
-                    let (grad_profile, grad_n_in) = map_profile_from_env()
-                        .unwrap_or((rd_profile, rd_n_in));
+                    let (grad_profile, grad_n_in) =
+                        map_profile_from_env().unwrap_or((rd_profile, rd_n_in));
                     assert!(
                         grad_n_in == rd_n_in,
                         "JXL_ZENSIM_MAP_BAKE width {grad_n_in} != scoring width {rd_n_in} — \
