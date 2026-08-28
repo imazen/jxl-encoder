@@ -1884,39 +1884,150 @@ fn collect_group_residuals_with_predictor(
 // so it is not externally reachable despite the `pub` keyword. The budget
 // param is an internal allocation-policy detail.
 /// LfGlobal for the sectioned-tree mode: byte-shape-identical to the proven
-/// global-tree LfGlobal (has_tree = 1, tree, single-context histograms,
-/// GroupHeader, empty meta-token ANS stream) but with a TRIVIAL single-leaf
-/// tree that stream 0 never uses for pixels — every image-sized channel is
-/// group-streamed, and the pass groups carry their own local trees. Global
-/// transforms (RCT) are signaled here exactly like the global-tree path, so
-/// decoders apply them at full-image reconstruction as today.
+/// global-tree LfGlobal (has_tree = 1, tree, histograms, GroupHeader,
+/// meta-token ANS stream) — every image-sized channel is group-streamed and
+/// the pass groups carry their own local trees, so stream 0 only ever codes
+/// the META channels (full-image palette / ChannelCompact palettes, issue
+/// #96 residual scope). Global transforms (palette, ChannelCompact, RCT) are
+/// signaled here exactly like the global-tree path, so decoders apply them
+/// at full-image reconstruction as today.
+///
+/// * `meta_image == None` (no palette / compaction): the tree is a TRIVIAL
+///   single-leaf Gradient tree with a one-context code and ZERO tokens
+///   (just the ANS final state) — unchanged v1 bytes.
+/// * `meta_image == Some(..)`: the tree is learned from the meta channels'
+///   own samples (they are tiny — `nb_colors × num_c` — so the gather is
+///   unstrided and the learn costs microseconds) and stream 0 carries their
+///   tokens, the same `collect_residuals_with_tree` + LZ77 + ANS chain the
+///   sectioned group writer uses with stream id 0 (property 1 = 0 is what
+///   decoders evaluate for the global stream). Before this arm any
+///   palette/compact content silently fell back to the whole-image global
+///   tree under `SectionedTrees::On` (measured: imac_dark wrote 0 local
+///   sections, 85.6 / 137.7 B/px peak vs the sectioned 48–72 B/px floor).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_local_trees_lf_global(
     writer: &mut BitWriter,
     transforms: GlobalTransforms,
+    meta_image: Option<&ModularImage>,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     use super::encode::{write_tree, write_wp_header};
     use super::predictor::WeightedPredictorParams;
+    use super::tree::count_contexts;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, WpCache, WpCacheMode,
+        collect_residuals_with_tree_offset_with_budget_wp, compute_best_tree,
+        gather_samples_strided_filling_wp_cache, max_ref_channels,
+    };
+    use crate::entropy_coding::encode::{
+        build_entropy_code_ans_with_options, write_entropy_code_ans,
+    };
+    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
 
-    let tree = super::tree::simple_tree(super::predictor::Predictor::Gradient);
-    // The histogram must be buildable (a zero-count context cannot
-    // normalize), so derive the 1-context code from one dummy token; the
-    // stream itself still carries ZERO tokens (just the ANS final state).
-    let seed_tokens = alloc::vec![crate::entropy_coding::token::Token::new(0, 0)];
-    let code = build_entropy_code_ans(&seed_tokens, 1);
-    let tokens: alloc::vec::Vec<crate::entropy_coding::token::Token> = alloc::vec::Vec::new();
+    let wp_params = WeightedPredictorParams::default();
+    let meta_pixels: usize = meta_image
+        .map(|m| m.channels.iter().map(|c| c.width() * c.height()).sum())
+        .unwrap_or(0);
+
+    let (tree, tokens, lz77_params) = match meta_image {
+        Some(meta) if meta_pixels > 0 => {
+            // Learn stream 0's tree from the meta channels only (stride 1:
+            // the whole palette is a handful of KiB at most).
+            let num_refs = max_ref_channels(meta);
+            let mut samples = TreeSamples::new_with_ref_channels(num_refs);
+            let mut wp_cache = WpCache::new();
+            gather_samples_strided_filling_wp_cache(
+                &mut samples,
+                meta,
+                0,
+                0,
+                1,
+                &wp_params,
+                &mut wp_cache,
+            );
+            let params = TreeLearningParams::from_profile(profile)
+                .with_ref_properties(num_refs, profile.effort)
+                .with_total_pixels(meta_pixels)
+                .with_pixel_fraction(1.0);
+            let tree = compute_best_tree(&mut samples, &params);
+            drop(samples);
+            let tokens = collect_residuals_with_tree_offset_with_budget_wp(
+                meta,
+                &tree,
+                0,
+                0,
+                &wp_params,
+                budget,
+                WpCacheMode::Read(&wp_cache),
+            )?;
+            let num_contexts = count_contexts(&tree) as usize;
+            let dist_multiplier = meta.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
+            let (tokens, lz77_params) = if use_lz77 {
+                match apply_lz77(
+                    &tokens,
+                    num_contexts,
+                    false,
+                    lz77_method,
+                    dist_multiplier,
+                    budget,
+                )? {
+                    Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+                    None => (tokens, None),
+                }
+            } else {
+                (tokens, None)
+            };
+            (tree, tokens, lz77_params)
+        }
+        _ => {
+            // The histogram must be buildable (a zero-count context cannot
+            // normalize); the trivial code below is derived from one dummy
+            // token while the stream itself carries ZERO tokens.
+            let tree = super::tree::simple_tree(super::predictor::Predictor::Gradient);
+            (tree, alloc::vec::Vec::new(), None)
+        }
+    };
+    let num_contexts = count_contexts(&tree) as usize;
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+    let code = if tokens.is_empty() {
+        let seed_tokens = alloc::vec![crate::entropy_coding::token::Token::new(0, 0)];
+        build_entropy_code_ans(&seed_tokens, 1)
+    } else {
+        build_entropy_code_ans_with_options(
+            &tokens,
+            ans_num_contexts,
+            true,
+            true,
+            lz77_params.as_ref(),
+            Some(meta_pixels),
+        )
+    };
 
     crate::f16::write_lf_quant(writer, None)?;
     writer.write(1, 1)?; // has_tree
     write_tree(writer, &tree)?;
-    write_ans_modular_header(writer, &code)?;
-    // GroupHeader for the (channel-empty at this stream) global modular image.
-    writer.write(1, 1)?; // use_global_tree = true (the trivial tree above)
-    write_wp_header(writer, &WeightedPredictorParams::default())?;
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
+        write_entropy_code_ans(&code, writer)?;
+    } else {
+        write_ans_modular_header(writer, &code)?;
+    }
+    // GroupHeader for the global modular image (meta channels only).
+    writer.write(1, 1)?; // use_global_tree = true (the tree above)
+    write_wp_header(writer, &wp_params)?;
     write_global_transforms_full(writer, &transforms)?;
-    // Empty meta-token ANS stream: the 32-bit final state that keeps every
-    // decoder's begin()/final-state check happy (same rationale as the
-    // global-tree writer's zero-meta case).
-    write_tokens_ans(&tokens, &code, None, writer)?;
+    // Meta-token ANS stream. With no meta channels this is the empty
+    // stream's 32-bit final state that keeps every decoder's
+    // begin()/final-state check happy (same rationale as the global-tree
+    // writer's zero-meta case).
+    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
     writer.zero_pad_to_byte();
     Ok(())
 }

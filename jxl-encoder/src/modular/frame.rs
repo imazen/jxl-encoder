@@ -1036,10 +1036,15 @@ impl FrameEncoder {
         // (use_global_tree = false) learned from that group's samples only,
         // and the LfGlobal carries no tree and an empty global stream. Peak
         // memory becomes the image copies plus one group's tree-learn
-        // working set. v1 scope: plain tree-learning ANS encodes with no
-        // meta channels (no palette / ChannelCompact), no custom DC quant,
-        // no patches — everything else falls through to the global-tree
-        // path unchanged. Dev gate: JXL_LOSSLESS_LOCAL_TREES=1.
+        // working set. Scope: tree-learning ANS encodes, including the
+        // full-image palette / ChannelCompact meta channels (stream 0
+        // learns its own tiny tree from them — 2026-08-28, the v1 fallback
+        // left every paletted screenshot on the whole-image path) and the
+        // patches dictionary (subtracted before this frame encoder runs;
+        // the LfGlobal patches section precedes the modular stream exactly
+        // as on the global path). Only custom DC quant (the lossy-modular
+        // patches ref-frame path) and the non-tree/non-ANS modes fall
+        // through to the global-tree path. Dev gate: JXL_LOSSLESS_LOCAL_TREES=1.
         let tree_mode = match std::env::var("JXL_LOSSLESS_LOCAL_TREES") {
             // Runtime override for A/B work, same convention as the other
             // behaviour hooks: "1" forces sectioned, "0" forces global,
@@ -1072,10 +1077,6 @@ impl FrameEncoder {
             },
         };
         let local_trees_mode = tree_mode == TreeMode::Sectioned
-            && meta_image.is_none()
-            && global_transforms.full_palette.is_none()
-            && global_transforms.compact_info.is_empty()
-            && patches.is_none()
             && self.options.dc_quant_custom.is_none()
             && self.options.use_tree_learning
             && self.options.use_ans;
@@ -1100,13 +1101,24 @@ impl FrameEncoder {
         let _fr_t0 = std::time::Instant::now();
         let global_state = if local_trees_mode {
             // LfGlobal for the sectioned mode: the proven global-tree byte
-            // shape with a trivial single-leaf tree stream 0 never uses for
-            // pixels (all image-sized channels are group-streamed). Global
-            // transforms (RCT) are signaled here exactly as on the
-            // global-tree path. libjxl reads stream 0's GroupHeader because
-            // its global image lists every channel, so a bare has_tree=0
-            // LfGlobal is NOT sufficient (djxl rejects it; measured).
-            super::section::write_local_trees_lf_global(&mut lf_global_writer, global_transforms)?;
+            // shape; stream 0 codes ONLY the meta channels (palette /
+            // ChannelCompact — with its own tiny learned tree) or, without
+            // them, a trivial single-leaf tree it never uses for pixels
+            // (all image-sized channels are group-streamed). Global
+            // transforms (palette, compact, RCT) are signaled here exactly
+            // as on the global-tree path. libjxl reads stream 0's
+            // GroupHeader because its global image lists every channel, so
+            // a bare has_tree=0 LfGlobal is NOT sufficient (djxl rejects
+            // it; measured).
+            super::section::write_local_trees_lf_global(
+                &mut lf_global_writer,
+                global_transforms,
+                meta_image.as_ref(),
+                &self.options.profile,
+                self.options.enable_lz77,
+                self.options.lz77_method,
+                self.budget.as_ref(),
+            )?;
             None
         } else if self.options.dc_quant_custom.is_some() {
             // When the caller supplied custom DC quant (patches ref frame at

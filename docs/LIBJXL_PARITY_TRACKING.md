@@ -94,7 +94,7 @@ included), real content, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`
 | photo 4000×3000 e7 | 1117 (94.6 B/px) | 855 (71.7 B/px) | 584 (48.0 B/px) |
 | photo 4000×3000 e9 | 1517 (129.5 B/px) | 855 | 584 |
 | reddit.com 1313×8008 e7 | 888 | 636 (60.5 B/px) | 650 (61.8 B/px) |
-| imac_dark 2940×1912 e7/e9 | — | 475 / 754 (**global fallback** — 0 local sections; 85.6 / 137.7 B/px) | same |
+| imac_dark 2940×1912 e7/e9 | 475 / 754 (85.6 / 137.7 B/px) | **340 / 340** (58.9 B/px; 96/96 local sections since 2026-08-28 — was a global fallback with 0 local sections, `jxl_sectioned_mem_meta_2026-08-28.tsv`) | 350 / 350 |
 
 Consequences recorded in `heuristics.rs`:
 
@@ -102,9 +102,12 @@ Consequences recorded in `heuristics.rs`:
   floor(threads)·px + per_thread(e)·(t−1)` — fixed 8/32 MB (e7/e9),
   floor 80 B/px at t=1 / 68 B/px multi-threaded, per-thread 12/36 MiB
   (one 256² group's learn; `parallel-tree-learning` forks inside it).
-  TYP covers every sectioned-engaged cell (< 2.5× at ≥ 2 MP); MAX
-  (1.8×) covers the v1-scope palette/ChannelCompact/patches fallback
-  content, which the pre-flight cannot see.
+  TYP covers every sectioned-engaged cell (< 2.5× at ≥ 2 MP), including
+  palette/ChannelCompact/patches content since the 2026-08-28 meta-channel
+  arm (stream 0 learns its own tree from the meta channels; the patches
+  dictionary rides in LfGlobal as on the global path). MAX (1.8×) still
+  covers the 2026-08-27 fallback peaks so a regression to the whole-image
+  tree stays inside the admitted envelope.
 - **Whole-image band is stale-high ~5×**: `LOSSLESS_BPP_TREE = 540` was
   anchored on the 2026-08-01 12 MP cell (490 B/px) BEFORE the thirteen
   August reductions; today's global path measures 95–98 (e7) / 121–130

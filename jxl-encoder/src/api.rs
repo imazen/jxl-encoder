@@ -309,9 +309,11 @@ pub use container::*;
 /// median-byte-neutral for -40 %+ wall on the 13-pick corpus study,
 /// `benchmarks/lossless_sectioned_vs_global_x64_2026-08-18.*`). Output at
 /// lossless e <= 7 therefore depends on the thread configuration by design;
-/// pin `On` / `Off` for thread-invariant bytes. v1 scope: tree-learning ANS
-/// encodes without meta channels (palette / ChannelCompact content falls
-/// back to the global tree).
+/// pin `On` / `Off` for thread-invariant bytes. Scope: tree-learning ANS
+/// encodes, including palette / ChannelCompact content (the meta channels
+/// are coded in the global stream with their own tiny tree) and the
+/// lossless patches dictionary; only custom-DC-quant (lossy-modular) and
+/// the non-tree / non-ANS modes keep the whole-image tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SectionedTrees {
     /// Engage when the memory budget requires it (default).
@@ -319,7 +321,7 @@ pub enum SectionedTrees {
     Auto,
     /// Never sectioned: always the whole-image global tree.
     Off,
-    /// Always sectioned (where the v1 scope allows).
+    /// Always sectioned (tree-learning ANS encodes; see the type docs).
     On,
     /// Learn BOTH the global tree and per-group trees, and write each
     /// group with whichever is smaller (per-group `use_global_tree`
@@ -9976,10 +9978,11 @@ pub(crate) fn encode_preflight(
 /// Rejection stays budget-driven: the encode is refused only when the
 /// 1-thread estimate of the path that would run exceeds the cap. The
 /// runtime `MemoryBudget` still enforces the cap allocation-by-allocation
-/// for content the sectioned v1 scope hands back to the global tree
-/// (palette / ChannelCompact / patches — the estimate is then an
-/// under-prediction, and the encode fails cleanly mid-way rather than
-/// exceeding the cap).
+/// on the paths the sectioned writer does not cover (custom DC quant,
+/// non-tree / non-ANS modes — the estimate is then an under-prediction,
+/// and the encode fails cleanly mid-way rather than exceeding the cap).
+/// Palette / ChannelCompact / patches content has run sectioned since
+/// 2026-08-28 and is inside the calibrated band.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_preflight_with_sectioned(
     width: u32,

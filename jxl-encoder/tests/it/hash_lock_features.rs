@@ -1008,6 +1008,11 @@ fn lossless_mg_rgb16_512x512_ramp_e5() {
 #[test]
 fn lossless_mg_rgb_512x512_palette_e7() {
     let data = LosslessConfig::new()
+        // Pinned global — see lossless_mg_rgb_512x512_noise_e7. Since
+        // 2026-08-28 the sectioned writer covers palette/ChannelCompact
+        // content too, so an unpinned e7 encode under a parallel build
+        // resolves Auto -> Sectioned here as well (it fell back before).
+        .with_sectioned_trees(SectionedTrees::Off)
         .encode(&blocky17_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
@@ -1063,11 +1068,39 @@ fn lossy_mg_rgb_512x512_noise_e7_d1() {
     );
 }
 
+/// Sectioned-trees twin of the palette cell: locks the stream-0
+/// meta-channel layout the sectioned writer emits since 2026-08-28 (the
+/// palette meta channel coded in LfGlobal with its own learned tree,
+/// index channel per-group local trees). Mode pinned On; thread-invariant
+/// like the noise twin.
+#[test]
+fn lossless_mg_rgb_512x512_palette_e7_sectioned() {
+    let data = LosslessConfig::new()
+        .with_sectioned_trees(SectionedTrees::On)
+        .encode(&blocky17_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_512x512_palette_e7_sectioned",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
 /// Multi-group lossless RGBA: alpha extra channel splits per-group while
 /// the full-image palette engages on the RGB channels.
 #[test]
 fn lossless_mg_rgba_512x512_blocky_e7() {
     let data = LosslessConfig::new()
+        // Pinned global — see lossless_mg_rgb_512x512_noise_e7. Since
+        // 2026-08-28 the sectioned writer covers palette/ChannelCompact
+        // content too, so an unpinned e7 encode under a parallel build
+        // resolves Auto -> Sectioned here as well (it fell back before).
+        .with_sectioned_trees(SectionedTrees::Off)
         .encode(&blocky17_rgba_512x512(), 512, 512, PixelLayout::Rgba8)
         .unwrap();
     assert_hashes(
@@ -1087,6 +1120,11 @@ fn lossless_mg_rgba_512x512_blocky_e7() {
 #[test]
 fn lossless_mg_gray_512x512_bilevel_e7() {
     let data = LosslessConfig::new()
+        // Pinned global — see lossless_mg_rgb_512x512_noise_e7. Since
+        // 2026-08-28 the sectioned writer covers palette/ChannelCompact
+        // content too, so an unpinned e7 encode under a parallel build
+        // resolves Auto -> Sectioned here as well (it fell back before).
+        .with_sectioned_trees(SectionedTrees::Off)
         .encode(&bilevel_gray_512x512(), 512, 512, PixelLayout::Gray8)
         .unwrap();
     assert_hashes(

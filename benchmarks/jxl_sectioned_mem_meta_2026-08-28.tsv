@@ -1,0 +1,11 @@
+# mem_probe re-measure after the sectioned meta-channel/patches arm (imazen/jxl-encoder#96)  commit=278bf3e3+wip  host=mac  date=2026-08-28T21:10Z
+# cmd: JXL_SECTION_SIZES=1 target/release/examples/mem_probe codec-corpus/gb82-sc/imac_dark.png lossless <e> 0 8 rgb <t> <tree>  (release build of the WIP tree; see .meta)
+content	src	crop	w	h	mode	effort	threads	tree	rc	bytes	wall_ms	live_pre_kb	peak_live_kb	marginal_live_kb	allocs	est_typ_kb	est_max_kb
+screen2	imac_dark.png	full	2940	1912	lossless	7	1	sectioned	0	431853	2779.8	16469	347628	331159	354378	2997199	5368676
+screen2	imac_dark.png	full	2940	1912	lossless	7	4	sectioned	0	431853	957.3	16469	357866	341396	370465	2997199	5368676
+screen2	imac_dark.png	full	2940	1912	lossless	7	12	sectioned	0	431853	700.9	16469	357924	341455	370787	2997199	5368676
+screen2	imac_dark.png	full	2940	1912	lossless	9	1	sectioned	0	416750	10545.8	16469	347628	331158	419920	2997199	5368676
+screen2	imac_dark.png	full	2940	1912	lossless	9	4	sectioned	0	416750	3089.8	16469	357866	341396	435979	2997199	5368676
+screen2	imac_dark.png	full	2940	1912	lossless	9	12	sectioned	0	416750	1684.0	16469	357924	341455	436343	2997199	5368676
+screen2	imac_dark.png	full	2940	1912	lossless	7	1	global	0	430990	3730.2	16469	486110	469641	334894	2997199	5368676
+screen2	imac_dark.png	full	2940	1912	lossless	9	1	global	0	396800	13233.3	16469	772396	755927	385136	2997199	5368676

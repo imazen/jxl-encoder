@@ -459,12 +459,16 @@ const SECTIONED_FIXED_E9: u64 = 32 << 20;
 ///
 /// The two floors are the envelopes over both classes with ≥ 10 % margin.
 ///
-/// Content the v1 scope hands back to the GLOBAL tree (palette /
-/// ChannelCompact / patches — e.g. gb82-sc `imac_dark` 2940×1912, which
-/// writes 0 local sections under `On`) costs the global path's working
-/// set instead: 85.6 (e7) / 137.7 (e9) B/px measured. That is covered by the
-/// MAX tier (`MULT_MAX`), not by TYP — the pre-flight cannot see content,
-/// and the runtime `MemoryBudget` still enforces the cap on that path.
+/// Palette / ChannelCompact / patches content engages the sectioned
+/// writer too since 2026-08-28 (stream 0 codes the meta channels with its
+/// own tiny tree; the patches dictionary precedes the modular stream as
+/// on the global path): gb82-sc `imac_dark` 2940×1912 — which wrote 0
+/// local sections under `On` before — now measures 58.9 B/px marginal at
+/// e7 AND e9, t=1 (347.6 MiB peak_live vs 486 / 772 MiB global;
+/// `benchmarks/jxl_sectioned_mem_meta_2026-08-28.tsv`), under the floors
+/// above. Only the lossy-modular custom-DC-quant path and the non-tree /
+/// non-ANS modes still take the global tree under `On`; the runtime
+/// `MemoryBudget` enforces the cap allocation-by-allocation there.
 const SECTIONED_BPP_THREADS1: f64 = 80.0;
 const SECTIONED_BPP_MULTI: f64 = 68.0;
 
@@ -845,14 +849,17 @@ mod tests {
     /// `screenshot_web/reddit.com.png` (1313×8008) and crops; gb82-sc
     /// `imac_dark.png` (2940×1912). `SectionedTrees::On`; the sectioned
     /// path verified engaged (`JXL_SECTION_SIZES`) on the photo/reddit
-    /// cells and verified FALLING BACK to the global tree on imac_dark.
+    /// cells; the imac_dark (palette + patches screenshot) cells were
+    /// re-measured 2026-08-28 once the sectioned writer covered meta
+    /// channels and patches (`benchmarks/jxl_sectioned_mem_meta_2026-08-28.tsv`)
+    /// — before that they fell back to the global tree and were only
+    /// MAX-covered.
     ///
     /// Contract: TYP covers every sectioned-engaged cell (the admission
     /// floor and the thread walk-down use TYP) and stays a tight cover
     /// (< 2.5× — the additive per-thread term over-predicts when the
     /// in-flight group sets sit under the pre-tree floor; see the
-    /// constants' notes); MAX covers the v1-scope fallback content, which
-    /// TYP does not model. Re-measure and re-pin whenever the sectioned
+    /// constants' notes). Re-measure and re-pin whenever the sectioned
     /// writer, the patches detector or the modular image lifetime changes.
     #[test]
     fn sectioned_estimate_covers_measured_cells_2026_08_27() {
@@ -892,6 +899,14 @@ mod tests {
             (3840, 2160, true, 9, 1, 570687),
             (3840, 2160, true, 9, 8, 551044),
             (1313, 4096, true, 7, 8, 357262),
+            // imac_dark (gb82-sc screenshot: full palette/compact + patches),
+            // sectioned-engaged since 2026-08-28 (96/96 local sections)
+            (2940, 1912, false, 7, 1, 347628),
+            (2940, 1912, false, 7, 4, 357866),
+            (2940, 1912, false, 7, 12, 357924),
+            (2940, 1912, false, 9, 1, 347628),
+            (2940, 1912, false, 9, 4, 357866),
+            (2940, 1912, false, 9, 12, 357924),
         ];
         for &(w, h, alpha, effort, threads, live_kb) in sectioned_cells {
             let bpp = if alpha { 4 } else { 3 };
@@ -910,17 +925,20 @@ mod tests {
                 );
             }
         }
-        // v1-scope fallback content (global tree under `On`): MAX covers it.
-        let fallback_cells: &[(u32, u32, u8, usize, u64)] = &[
+        // The 2026-08-27 global-fallback peaks of the same imac_dark cells
+        // (486110 / 772396 / 772476 KiB) are what the meta-channel arm
+        // removed; MAX must still cover them so a regression to the
+        // fallback stays inside the admitted envelope.
+        let former_fallback_cells: &[(u32, u32, u8, usize, u64)] = &[
             (2940, 1912, 7, 1, 486110),
             (2940, 1912, 9, 1, 772396),
             (2940, 1912, 9, 12, 772476),
         ];
-        for &(w, h, effort, threads, live_kb) in fallback_cells {
+        for &(w, h, effort, threads, live_kb) in former_fallback_cells {
             let e = estimate_encode_sectioned(w, h, 3, false, effort, threads).unwrap();
             assert!(
                 e.peak_memory_bytes_max >= live_kb * KB,
-                "{w}x{h} e{effort} t{threads} (global fallback): MAX {} under measured {}",
+                "{w}x{h} e{effort} t{threads} (former global fallback): MAX {} under measured {}",
                 e.peak_memory_bytes_max,
                 live_kb * KB
             );

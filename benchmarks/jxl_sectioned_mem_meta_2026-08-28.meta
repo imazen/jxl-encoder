@@ -1,0 +1,28 @@
+jxl_sectioned_mem_meta_2026-08-28.tsv — imac_dark (gb82-sc, 2940x1912 RGB8, 5.62 MP,
+palette/ChannelCompact + patches content) re-measured after the sectioned mode
+learned to code meta channels in stream 0 and to run with the patches dictionary
+(imazen/jxl-encoder#96 residual scope, 2026-08-28).
+
+host: mac (aarch64 laptop, 12 cores), release build, allocator-agnostic
+peak_live via mem_probe's counting global allocator (input buffer included in
+live_pre_kb; marginal_live_kb = peak_live_kb - live_pre_kb). One process per
+cell. est_* columns are the WHOLE-IMAGE `estimate_encode` band (not the
+sectioned arm) exactly as mem_probe prints them.
+
+Before (2026-08-27 grid, jxl_sectioned_mem_2026-08-27.tsv rows 99-106): the same
+cells under SectionedTrees::On wrote 0 local sections (global-tree fallback):
+peak_live 486110 KiB (e7) / 772396 KiB (e9) at every thread count.
+
+After: 96/96 groups local (JXL_SECTION_SIZES), LfGlobal 6215 B.
+  e7: peak_live 347628 KiB t=1 (58.9 B/px marginal), 357866 t=4, 357924 t=12;
+      bytes 431853 vs global 430990 (+0.20 %); wall 2.78 s vs 3.73 s global t=1.
+  e9: peak_live identical to e7 (347628 / 357866 / 357924) vs global 772396;
+      bytes 416750 vs global 396800 (+5.0 % — the known e8+ sectioned byte
+      cost; Auto keeps the global tree at e8+ unless the budget forces it).
+No t=1 excess on this content (t=1 < t=4), unlike the 12 MP photo cells.
+Sectioned estimator TYP (heuristics::estimate_encode_sectioned) covers every
+cell within 1.4-1.7x — pinned in heuristics.rs
+sectioned_estimate_covers_measured_cells_2026_08_27 (imac_dark rows moved from
+the MAX-only fallback list to the TYP-covered list).
+djxl / jxl-rs / zenjxl-decoder pixel-exact on the new it-binary fixtures
+(tests/it/sectioned_trees_knob.rs: palette, ChannelCompact, patches).
