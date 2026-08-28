@@ -3137,6 +3137,15 @@ name = "beardoil_d2_probe"
 path = "examples/beardoil_d2_probe.rs"
 required-features = ["__expert"]
 
+# #45 effort-ladder shift (2026-08-28): bytes + wall per tier e9..=e13 on
+# the imazen-26 gate fixtures at 256² / 1024² / 4 MP, lossless + lossy d1
+# + lossy resampling=2 (the e10 iterative downsampler). Every stream is
+# decoded in-process with jxl-oxide. See `just effort-ladder-bench`.
+[[example]]
+name = "effort_ladder_shift"
+path = "examples/effort_ladder_shift.rs"
+required-features = ["std"]
+
 [[bench]]
 name = "tier_isolation"
 harness = false

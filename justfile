@@ -116,6 +116,13 @@ update-hashes:
     rm -f jxl-encoder/tests/hash_lock_expected.txt
     UPDATE_HASHES=1 cargo test --test it hash_lock_features -- --test-threads=1
 
+# Effort-ladder bench (#45, 2026-08-28): bytes + wall per tier e9..=e13 on
+# the imazen-26 gate fixtures (fetch: CODEC_CORPUS_DIR=... scripts/hunt/
+# fetch_imazen26_gate_files.sh). EFFORTS/SIZES/MODES/FIXTURES/THREADS env
+# knobs — see the example's header. 4 MP e11-e13 lossless cells take minutes.
+effort-ladder-bench:
+    nice -n 19 cargo run --release -p jxl-encoder --features parallel --example effort_ladder_shift
+
 # Compare quality vs cjxl (uses committed reference CSV, ~2 min)
 quality-compare:
     cargo test -p jxl-encoder --test it quality_compare --release -- --ignored --nocapture
