@@ -158,27 +158,69 @@ const LOSSY_BPP_E7PLUS: f64 = 135.0;
 /// these B/px hold at the large sizes where memory matters. The e10 value is
 /// retained from the 2026-06-14 grid (e ≥ 10 not re-swept since).
 ///
-/// 2026-08-01 re-measure on the 12 MP zensysbench corpus photo
-/// (`benchmarks/jxl_encode_mem_threads_postfix_2026-08-01.tsv`): e5
-/// marginal 995 MiB (≈ 83 B/px — the prior 76 under-covered by 7 %;
-/// raised to 92, +12 % margin) and e7 marginal 5.88 GiB at threads=1
-/// (≈ 490 B/px — the prior 465 under-covered by 4 %; raised to 540,
-/// +11 % margin — content spread vs the 2026-06-23 photo's 4.19 GiB is
-/// 1.4×, and β is the envelope-of-max per the calibration discipline).
-/// Threads=8 measured BELOW threads=1 (4.59 GiB) — lossless stays
-/// thread-invariant in the model (γ = 0, anchored at the t=1 max).
+/// 2026-08-28 RECALIBRATION (imazen/jxl-encoder#96 follow-up,
+/// `benchmarks/jxl_lossless_band_2026-08-28.{tsv,meta}`): the thirteen
+/// August memory reductions (dedup partitioning, probe-tree predictor
+/// pruning, exact gather-time bucketization, wire-stream token reuse, the
+/// patches-scan fix, …) left the 2026-08-01 anchors (`base 92 / e6 235 /
+/// tree 540 / e10 620` B/px, from a 490 B/px 12 MP e7 cell) 3–5× stale-
+/// high, so `Auto`'s memory-pressure gate and `estimate_encode` over-
+/// predicted the global path by that factor. Re-measured with the
+/// allocator-agnostic `peak_live` probe, threads=1, three content classes
+/// (imazen-26 1403 photo 64² → 12 MP crops, gb82-sc imac_dark 5.6 MP,
+/// qoi reddit.com 1313×4096 / ×8008), marginal B/px:
+///
+/// | effort | photo 1 MP | photo 4 MP | photo 8.3 MP | photo 12 MP | imac | reddit |
+/// |---|---|---|---|---|---|---|
+/// | e5 | 73.1 | — | — | 70.3 | 66.7 | 66.7 |
+/// | e6 | 79.4 | — | — | 72.3 | 62.2 | 67.8 |
+/// | e7 | 105.5 | 98.1 | 96.4 | 94.6 | 85.6 | 86.6 / 85.6 |
+/// | e8 | 114.1 | — | — | 100.2 | 87.3 | 87.9 |
+/// | e9 | 141.3 | 121.2 | 127.0 | 129.5 | 137.7 | 129.7 / 130.2 |
+/// | e10 | 236.0 | 129.1 | — | — | — | — |
+///
+/// The bands are the per-effort envelopes with ≥ 10 % margin (e6 keeps a
+/// small step over e5 — measured 79 vs 73 at 1 MP; e7 and e8 share one;
+/// e9 is its own). The intercept
+/// is effort-dependent (256² cells: e7 20.5 MB, e8 25.9 MB, e9 67.3 MB,
+/// e10 67.3 MB; 64² e7 6.0 MB) — see [`lossless_fixed_overhead`]. e10's
+/// multi-seed learn carries a ~150 MB size-independent term on top of a
+/// ≈ 91 B/px slope (1 → 4 MP fit), modelled as the 160 MiB intercept +
+/// the e9 slope. Lossless stays thread-invariant in the model (γ = 0):
+/// the 2026-08-27 sweep measured threads ≥ 4 at or below t=1.
 const LOSSLESS_BPP_BASE: f64 = 92.0;
-const LOSSLESS_BPP_E6: f64 = 235.0;
-const LOSSLESS_BPP_TREE: f64 = 540.0;
-const LOSSLESS_BPP_E10: f64 = 620.0;
+const LOSSLESS_BPP_E6: f64 = 100.0;
+const LOSSLESS_BPP_TREE: f64 = 128.0;
+const LOSSLESS_BPP_E9: f64 = 160.0;
+const LOSSLESS_BPP_E10: f64 = 160.0;
+
+/// Lossless size-independent term by effort band (2026-08-28 grid, see
+/// the band note above): the tree learner's fixed working set grows with
+/// the effort's params (e9's split workspace + tensors ≈ 64 MB even on a
+/// 256² image; e10's multi-seed ≈ 150 MB).
+#[must_use]
+fn lossless_fixed_overhead(effort: u8) -> u64 {
+    if effort >= 10 {
+        160 << 20
+    } else if effort >= 9 {
+        64 << 20
+    } else if effort >= 7 {
+        24 << 20
+    } else {
+        LOSSLESS_FIXED_OVERHEAD
+    }
+}
 
 /// Extra marginal working set for a lossless encode with an alpha
-/// extra-channel (the 4th channel goes through tree-learning). Measured
-/// +226…255 B/px, flat across effort (2026-06-14, rgb-vs-rgba sweep). The
-/// lossy path's alpha (modular extra-channel alongside VarDCT) adds only
-/// +2…5 B/px — within noise — so there is no lossy alpha term; the alpha
-/// input buffer's extra byte/px is already counted via `input_bpp`.
-const LOSSLESS_BPP_ALPHA: f64 = 230.0;
+/// extra-channel (the 4th channel goes through tree-learning). Re-measured
+/// 2026-08-28 (rgba − rgb marginal, alpha := the source's green plane,
+/// photo 1403): e7 +37.3 B/px at 1 MP / +33.5 at 8.3 MP, e9 +62.8 / +27.1
+/// — envelope +62.8, set with margin (was 230 from the 2026-06-14 sweep,
+/// pre-reductions). The lossy path's alpha (modular extra-channel
+/// alongside VarDCT) adds only +2…5 B/px — within noise — so there is no
+/// lossy alpha term; the alpha input buffer's extra byte/px is already
+/// counted via `input_bpp`.
+const LOSSLESS_BPP_ALPHA: f64 = 72.0;
 
 /// Content-spread multipliers around the typical (median) estimate.
 /// `max` 1.8 is kept as the MAX-tier multiplier: the 2026-06-23 size sweep
@@ -247,6 +289,8 @@ fn bytes_per_pixel(is_lossless: bool, effort: u8) -> f64 {
     if is_lossless {
         if effort >= 10 {
             LOSSLESS_BPP_E10
+        } else if effort >= 9 {
+            LOSSLESS_BPP_E9
         } else if effort >= 7 {
             LOSSLESS_BPP_TREE
         } else if effort == 6 {
@@ -270,8 +314,8 @@ fn bytes_per_pixel(is_lossless: bool, effort: u8) -> f64 {
 ///   per-pixel working set is on top and is `bpp`-independent (f32
 ///   internals dominate).
 /// * `has_alpha` — whether the layout carries an alpha extra-channel. For
-///   lossless this adds a substantial per-pixel term (the 4th channel goes
-///   through tree-learning, +230 B/px); for lossy it is negligible.
+///   lossless this adds a per-pixel term (the 4th channel goes through
+///   tree-learning, +72 B/px band); for lossy it is negligible.
 /// * `is_lossless`, `effort` — select the calibration stratum.
 ///
 /// Returns `None` only on dimension overflow.
@@ -287,7 +331,7 @@ pub fn estimate_encode(
     let pixels = (width as u64).checked_mul(height as u64)?;
     let input = pixels.checked_mul(input_bpp as u64)?;
     let fixed = if is_lossless {
-        LOSSLESS_FIXED_OVERHEAD
+        lossless_fixed_overhead(effort)
     } else {
         LOSSY_FIXED_OVERHEAD
     };
@@ -608,9 +652,11 @@ mod tests {
              (want [meas, 2·meas))",
             lossy.peak_memory_bytes
         );
-        // lossless e7: measured ~4186 MB working + ~34 MB input.
+        // lossless e7: measured 1_108_269 KiB working + ~34 MB input
+        // (2026-08-28 re-measure of the same photo; the 2026-06-23 figure
+        // was 4186 MiB, before the August reductions).
         let ll = estimate_encode(px12.0, px12.1, 3, false, true, 7).unwrap();
-        let measured_ll = (4186u64 << 20) + input12;
+        let measured_ll = 1_108_269u64 * 1024 + input12;
         assert!(
             measured_ll <= ll.peak_memory_bytes_max,
             "lossless e7 12MP measured {measured_ll} exceeds MAX {} — UNSAFE",
@@ -652,13 +698,18 @@ mod tests {
             lossy9 < lossy7 * 2,
             "lossy buttloop must NOT be a 2× memory step (measured ≈ e7 working set)"
         );
-        // Lossless ramps e5 < e6 < e7 (e6 ≈ 215 B/px partial-search,
-        // e7 ≈ 430 full tree-learning) and steps again at e10
-        // (fine_grained_step, ~620 B/px).
+        // Lossless ramps e5 < e6 < e7 (2026-08-28 bands: e6 100 B/px
+        // partial-search, e7 128 full tree-learning) and steps again at
+        // e10 (multi-seed: 160 B/px + a 160 MiB intercept).
         assert!(ll6 > ll5, "lossless e6 above e5 base");
         assert!(ll7 > ll6, "lossless full tree-learning step at e7");
         assert!(ll10 > ll7, "lossless e10 step above the e7-e9 band");
-        assert!(ll7 > lossy9, "lossless e7 heavier than lossy e9");
+        // NOTE: the pre-2026-08-28 `ll7 > lossy9` ordering held only
+        // because the lossless band was 4-5× stale-high; the lossy e ≥ 7
+        // band (135 B/px, a d6.0 envelope) now sits above the re-anchored
+        // lossless e7 band (128 B/px) in the MODEL even though the
+        // measured 12 MP peaks still order lossless e7 (1.14 GB) above
+        // lossy e9 (0.94 GB) — see `estimate_safely_covers_measured_12mp`.
     }
 
     /// Encode time is effort-aware (the flat-throughput model was wrong):
@@ -790,9 +841,11 @@ mod tests {
             "e7 108MP TYP {} runaway (≥3× measured {m_e7})",
             e7.peak_memory_bytes
         );
-        // 12 MP lossless e7 t=1: measured marginal 5_879_984 KiB (the
-        // 2026-08-01 corpus photo, 1.4× the 2026-06-23 one — β re-anchored).
-        let m_ll = 5_879_984u64 * 1024 + 4000 * 3000 * 3;
+        // 12 MP lossless e7 t=1: measured marginal 1_108_269 KiB (the
+        // 2026-08-01 corpus photo re-measured 2026-08-28 after the August
+        // reductions — the 2026-08-01 figure was 5_879_984 KiB; β
+        // re-anchored, `benchmarks/jxl_lossless_band_2026-08-28.tsv`).
+        let m_ll = 1_108_269u64 * 1024 + 4000 * 3000 * 3;
         let ll = estimate_encode(4000, 3000, 3, false, true, 7).unwrap();
         assert!(
             ll.peak_memory_bytes >= m_ll,
@@ -815,13 +868,84 @@ mod tests {
         assert_eq!(t16 - t1, 2_500_000 * 15, "unclamped per-thread term");
     }
 
-    /// Alpha adds a substantial lossless per-pixel term (~+230 B/px, the
-    /// 4th channel through tree-learning) but is negligible for lossy.
+    /// Whole-image (global-tree) lossless band, 2026-08-28 recalibration
+    /// grid (`benchmarks/jxl_lossless_band_2026-08-28.{tsv,meta}`,
+    /// threads=1, allocator-agnostic peak_live incl. the input buffer):
+    /// TYP covers every cell and is a tight cover (< 2.5×) at ≥ 1 MP.
+    #[test]
+    fn lossless_estimate_covers_measured_cells_2026_08_28() {
+        const KB: u64 = 1024;
+        // (w, h, has_alpha, effort, measured peak_live KiB)
+        let cells: &[(u32, u32, bool, u8, u64)] = &[
+            // photo 1403 crops
+            (64, 64, false, 7, 6010),
+            (256, 256, false, 7, 20745),
+            (1024, 1024, false, 7, 111109),
+            (2048, 2048, false, 7, 413912),
+            (3840, 2160, false, 7, 804904),
+            (4000, 3000, false, 7, 1143426),
+            (1024, 1024, false, 5, 77966),
+            (4000, 3000, false, 5, 859031),
+            (1024, 1024, false, 6, 84396),
+            (4000, 3000, false, 6, 882621),
+            (256, 256, false, 8, 26103),
+            (1024, 1024, false, 8, 119959),
+            (4000, 3000, false, 8, 1209079),
+            (256, 256, false, 9, 67316),
+            (1024, 1024, false, 9, 147813),
+            (2048, 2048, false, 9, 508750),
+            (3840, 2160, false, 9, 1053230),
+            (4000, 3000, false, 9, 1553020),
+            (256, 256, false, 10, 67333),
+            (1024, 1024, false, 10, 244742),
+            (2048, 2048, false, 10, 541108),
+            // rgba (alpha := green)
+            (1024, 1024, true, 7, 150367),
+            (1024, 1024, true, 9, 213110),
+            (3840, 2160, true, 7, 1084576),
+            (3840, 2160, true, 9, 1281103),
+            // gb82-sc imac_dark (palette + patches screenshot)
+            (2940, 1912, false, 5, 382546),
+            (2940, 1912, false, 6, 357844),
+            (2940, 1912, false, 7, 486110),
+            (2940, 1912, false, 8, 495594),
+            (2940, 1912, false, 9, 772396),
+            // qoi reddit.com screenshot
+            (1313, 4096, false, 7, 470541),
+            (1313, 8008, false, 5, 715897),
+            (1313, 8008, false, 6, 727010),
+            (1313, 8008, false, 7, 909647),
+            (1313, 8008, false, 8, 933119),
+            (1313, 4096, false, 9, 696734),
+            (1313, 8008, false, 9, 1367236),
+        ];
+        for &(w, h, alpha, effort, live_kb) in cells {
+            let bpp = if alpha { 4 } else { 3 };
+            let e = estimate_encode(w, h, bpp, alpha, true, effort).unwrap();
+            let live = live_kb * KB;
+            assert!(
+                e.peak_memory_bytes >= live,
+                "{w}x{h} alpha={alpha} e{effort}: TYP {} under measured peak_live {live}",
+                e.peak_memory_bytes
+            );
+            if (w as u64) * (h as u64) >= 1_000_000 {
+                assert!(
+                    e.peak_memory_bytes < live * 5 / 2,
+                    "{w}x{h} alpha={alpha} e{effort}: TYP {} not a tight cover of {live} (≥ 2.5×)",
+                    e.peak_memory_bytes
+                );
+            }
+        }
+    }
+
+    /// Alpha adds a lossless per-pixel term (+72 B/px band over the
+    /// measured +27…63, the 4th channel through tree-learning) but is
+    /// negligible for lossy.
     #[test]
     fn alpha_term_lossless_only() {
         let (w, h) = (4096, 4096);
         let px = (w as u64) * (h as u64);
-        // lossless: rgba working set ~+230 B/px over rgb (input_bpp held
+        // lossless: rgba working set +72 B/px over rgb (input_bpp held
         // equal to isolate the working-set term, not the input buffer).
         let ll_rgb = estimate_encode(w, h, 3, false, true, 7)
             .unwrap()
@@ -831,8 +955,8 @@ mod tests {
             .peak_memory_bytes;
         let delta = ll_rgba - ll_rgb;
         assert!(
-            delta >= px * 200 && delta <= px * 260,
-            "lossless alpha term {delta} not ~230 B/px of {px}px"
+            delta >= px * 63 && delta <= px * 80,
+            "lossless alpha term {delta} not ~72 B/px of {px}px"
         );
         // lossy: alpha is folded into nothing (only the input byte counts,
         // held equal here), so the working set is unchanged.
@@ -963,7 +1087,7 @@ mod tests {
     }
 
     /// The sectioned arm is what makes large lossless encodes admissible:
-    /// it sits far below the whole-image band at 4K / 12 MP / 21 MP e7,
+    /// it sits well below the whole-image band at 4K / 12 MP / 21 MP e7,
     /// grows strictly with the pool width (one group's learn per worker
     /// — the axis the whole-image band lacks), and is only offered in
     /// the calibrated tree-learning band.
@@ -977,8 +1101,11 @@ mod tests {
                 let sect = estimate_encode_sectioned(w, h, 3, false, e, 1)
                     .unwrap()
                     .peak_memory_bytes;
+                // Measured ratio ≈ 0.44–0.54 (4K / 12 MP, e7 / e9) on the
+                // 2026-08-28 bands; the old `< whole / 3` held only against
+                // the stale-high whole-image band.
                 assert!(
-                    sect * 3 < whole,
+                    sect * 3 < whole * 2,
                     "{w}x{h} e{e}: sectioned {sect} vs whole {whole}"
                 );
             }

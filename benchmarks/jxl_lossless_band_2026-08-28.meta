@@ -1,0 +1,38 @@
+jxl_lossless_band_2026-08-28.tsv — re-measure of the whole-image (global-tree)
+lossless working set that `heuristics::estimate_encode` models as
+`input + fixed(e) + bpp(e) * px`, after the August 2026 memory reductions had
+left the 2026-08-01 anchors (base 92 / e6 235 / tree 540 / e10 620 B/px, from a
+490 B/px 12 MP e7 cell) 3-5x stale-high — the "whole-image band is stale-high"
+finding of the 2026-08-27 sectioned sweep.
+
+Sources (real content, three classes): photo = imazen-26 1403 nature 4000x3000
+sdr PNG and its top-left crops 64², 256², 1024², 2048², 3840x2160; imac =
+gb82-sc imac_dark.png 2940x1912 (full palette + patches screenshot); reddit =
+qoi-benchmark screenshot_web/reddit.com.png 1313x8008 and its 1313x4096 crop.
+Efforts 5-10 (e10 photo only, to 4 MP), threads=1, SectionedTrees::Off
+(global tree). Host: mac aarch64 laptop, release mem_probe.
+
+Marginal B/px (peak_live - live_pre, per pixel):
+  e5 : photo 73.1 (1 MP) / 70.3 (12 MP); imac 66.7; reddit 66.7
+  e6 : photo 79.4 / 72.3; imac 62.2; reddit 67.8
+  e7 : photo 105.5 / 98.1 / 96.4 / 94.6 (1 / 4 / 8.3 / 12 MP); imac 85.6; reddit 86.6 / 85.6
+  e8 : photo 114.1 / 100.2 (1 / 12 MP); imac 87.3; reddit 87.9
+  e9 : photo 141.3 / 121.2 / 127.0 / 129.5; imac 137.7; reddit 129.7 / 130.2
+  e10: photo 236.0 (1 MP) / 129.1 (4 MP)  — a ~150 MB size-independent multi-seed term
+Intercepts (256² cells, marginal): e7 20.5 MB, e8 25.9 MB, e9 67.3 MB, e10 67.3 MB
+(64² e7: 6.0 MB).
+Alpha (rgba - rgb marginal): e7 +37.3 B/px (1 MP) / +33.5 (8.3 MP); e9 +62.8 / +27.1.
+
+New constants (heuristics.rs): LOSSLESS_BPP_BASE 92 (kept), _E6 92 (was 235),
+_TREE (e7-e8) 128 (was 540), _E9 160 (new), _E10 160 (was 620) with
+lossless_fixed_overhead(e): 16 MiB (e<=6) / 24 MiB (e7-8) / 64 MiB (e9) /
+160 MiB (e>=10); LOSSLESS_BPP_ALPHA 72 (was 230). Every cell is TYP-covered and
+tight (< 2.5x) at >= 1 MP (heuristics::tests::
+lossless_estimate_covers_measured_cells_2026_08_28).
+
+Consequences: `LosslessConfig::estimate_encode` and the `Auto` memory-pressure
+gate drop ~4x for e7-e9 (12 MP e7 TYP 6.4 GB -> 1.6 GB, measured peak_live 1.14
+GB); at the 8 GiB lossless default cap, whole-image e7 admits up to ~65 MP
+(was ~15.7 MP), so the tests that pinned the default-cap behaviour moved to
+49 MP (path-aware cap relation), 21 MP under an explicit 2 GiB cap (Auto
+engages sectioned / Off rejects) and 72 MP (default-cap rejection under Off).

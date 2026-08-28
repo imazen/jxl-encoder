@@ -734,10 +734,12 @@ fn issue_93_buttloop_precompute_charged_against_budget() {
 }
 
 /// Path-aware default cap (2026-06-14): lossless is a heavier memory
-/// regime than lossy (MA tree-learning ~440 B/px vs ~85–300), so the
-/// lossless default cap is 8 GiB vs lossy's 4 GiB. A 12 MP lossless e7
-/// encode's *typical* peak (~5.5 GB, calibrated) exceeds the lossy
-/// default but fits the lossless default — the whole reason for the split.
+/// regime than lossy at the large sizes where memory matters, so the
+/// lossless default cap is 8 GiB vs lossy's 4 GiB. Under the 2026-08-28
+/// recalibrated band (e7 tree learning 128 B/px + 24 MiB; it was 540
+/// B/px before the August reductions) a 49 MP lossless e7 encode's
+/// *typical* peak (~6.4 GB) exceeds the lossy default but fits the
+/// lossless default — the relationship the split exists for.
 // Deliberately pins the constant relationship between the two default caps.
 #[allow(clippy::assertions_on_constants)]
 #[test]
@@ -756,16 +758,16 @@ fn path_aware_default_cap_lossless_higher() {
     );
     let typical = jxl_encoder::LosslessConfig::new()
         .with_effort(7)
-        .estimate_encode(3000, 4000, PixelLayout::Rgb8)
+        .estimate_encode(7000, 7000, PixelLayout::Rgb8)
         .unwrap()
         .peak_memory_bytes;
     assert!(
         typical > Limits::DEFAULT_MAX_MEMORY_BYTES,
-        "12MP lossless e7 typical ({typical}) should exceed the 4 GiB lossy default"
+        "49MP lossless e7 typical ({typical}) should exceed the 4 GiB lossy default"
     );
     assert!(
         typical < Limits::DEFAULT_MAX_MEMORY_BYTES_LOSSLESS,
-        "12MP lossless e7 typical ({typical}) should fit the 8 GiB lossless default"
+        "49MP lossless e7 typical ({typical}) should fit the 8 GiB lossless default"
     );
 }
 
@@ -806,43 +808,61 @@ fn honest_preflight_rejects_big_lossy_on_tight_cap() {
     }
 }
 
-/// Path-aware honesty without ANY explicit Limits: lossless e7
-/// tree-learning measures ~490 B/px (12 MP corpus photo, 2026-08-01), so
-/// a 4096×5120 (21 MP) lossless e7 request estimates ~11.4 GB — above
-/// the 8 GiB lossless default cap. CONTRACT CHANGE with the sectioned
-/// local-tree mode (imazen/jxl-encoder#96): the DEFAULT (`SectionedTrees::
-/// Auto`) no longer hard-rejects — it engages per-group trees, whose peak
-/// fits the cap, and the encode SUCCEEDS with the budget still enforced
-/// allocation-by-allocation. The anti-OOM property this test guards is
-/// therefore preserved AND strengthened (the user gets an image, not an
-/// error). The historical rejection contract survives verbatim under
-/// `SectionedTrees::Off` in the companion test below.
+/// Memory-pressure arm of `SectionedTrees::Auto` (imazen/jxl-encoder#96):
+/// a 4096×5120 (21 MP) lossless e7 request estimates ~2.8 GB on the
+/// whole-image band (2026-08-28 recalibration: 128 B/px + 24 MiB; the
+/// stale 540 B/px band said 11.4 GB, above even the 8 GiB default cap, so
+/// this cell used to exercise the default cap). Under an explicit 2 GiB
+/// cap the DEFAULT (`Auto`) does not hard-reject — it engages per-group
+/// trees, whose ~1.5 GB sectioned estimate fits, and the encode SUCCEEDS
+/// with the budget still enforced allocation-by-allocation. The
+/// rejection contract survives verbatim under `SectionedTrees::Off` in
+/// the companion tests below.
 #[test]
 fn default_cap_lossless_e7_21mp_engages_sectioned_instead_of_rejecting() {
     let (w, h) = (4096u32, 5120u32);
     let pixels = vec![99u8; (w * h * 3) as usize];
+    let limits = Limits::new().with_max_memory_bytes(2 << 30);
     let bytes = jxl_encoder::LosslessConfig::new()
         .with_effort(7)
         .encode_request(w, h, PixelLayout::Rgb8)
+        .with_limits(&limits)
         .encode(&pixels)
-        .expect("Auto must engage sectioned trees and fit the 8 GiB default cap");
+        .expect("Auto must engage sectioned trees and fit a 2 GiB cap");
     assert!(!bytes.is_empty());
+    // Same cap, sectioned disabled: the whole-image estimate (~2.8 GB)
+    // is honestly rejected.
+    let err = jxl_encoder::LosslessConfig::new()
+        .with_effort(7)
+        .with_sectioned_trees(jxl_encoder::api::SectionedTrees::Off)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_limits(&limits)
+        .encode(&pixels)
+        .expect_err("21 MP lossless e7 on the whole-image band must exceed a 2 GiB cap");
+    let inner: &EncodeError = err.as_ref();
+    assert!(
+        matches!(inner, EncodeError::LimitExceeded { .. }),
+        "expected LimitExceeded, got: {inner:?}"
+    );
 }
 
-/// The pre-#96 rejection contract, pinned under `SectionedTrees::Off`:
-/// with the sectioned fallback disabled, a 21 MP lossless e7 request must
-/// still be REJECTED cleanly instead of admitted into a host OOM (the
-/// 108-MP-on-a-32-GiB-box fleet failure in CI-sized miniature).
+/// The pre-#96 rejection contract without ANY explicit Limits, pinned
+/// under `SectionedTrees::Off`: a 9000×8000 (72 MP) lossless e7 request
+/// estimates ~9.4 GB on the 2026-08-28 whole-image band — above the 8 GiB
+/// lossless default cap — and must be REJECTED cleanly up front instead
+/// of admitted into a host OOM (the 108-MP-on-a-32-GiB-box fleet failure
+/// in CI-sized miniature). The pre-flight rejects before any encoder
+/// allocation, so the 216 MB pixel buffer is the test's only cost.
 #[test]
-fn default_cap_honest_rejection_lossless_e7_21mp() {
-    let (w, h) = (4096u32, 5120u32);
-    let pixels = vec![99u8; (w * h * 3) as usize];
+fn default_cap_honest_rejection_lossless_e7_72mp() {
+    let (w, h) = (9000u32, 8000u32);
+    let pixels = vec![99u8; (w as usize) * (h as usize) * 3];
     let err = jxl_encoder::LosslessConfig::new()
         .with_effort(7)
         .with_sectioned_trees(jxl_encoder::api::SectionedTrees::Off)
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&pixels)
-        .expect_err("21 MP lossless e7 must exceed the 8 GiB default cap");
+        .expect_err("72 MP lossless e7 must exceed the 8 GiB default cap");
     let inner: &EncodeError = err.as_ref();
     match inner {
         EncodeError::LimitExceeded { message } => {

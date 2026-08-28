@@ -355,6 +355,12 @@ set `Limits::with_max_memory_bytes` higher (or `Some(u64::MAX)`).
 lossless encodes. Both remain fixed ceilings (still not dimension-scaled);
 the 5 internal budget-cap sites select by path; explicit
 `with_max_memory_bytes` still wins. Commit nvupmply.
+**Update 2026-08-28 (#96):** the lossless band is re-anchored on a
+three-class grid after the August memory reductions — e7–e8 128 B/px,
+e9 160, e6 92, alpha +72, effort-dependent intercepts
+(`benchmarks/jxl_lossless_band_2026-08-28.{tsv,meta}`); the "~440 B/px"
+figure above is the 2026-06 measurement. At the 8 GiB lossless cap the
+whole-image path now admits up to ~65 MP at e7.
 
 ### RESOLVED 2026-06-11: `gpu-butteraugli` did not compile — two cubecl universes
 

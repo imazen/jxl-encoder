@@ -1499,8 +1499,9 @@ impl LosslessConfig {
     ) -> Option<u64> {
         // Conservative upper bound = the calibrated `max`. The previous
         // term-by-term model under-reported ~14x at e7+ (it modelled the
-        // MA tree-learning working set as 8 B/px; measured ~440). See
-        // [`Self::estimate_encode`].
+        // MA tree-learning working set as 8 B/px; measured ~440 in
+        // 2026-06, ~95-140 after the August 2026 reductions — the band is
+        // re-anchored per `heuristics.rs`). See [`Self::estimate_encode`].
         crate::heuristics::estimate_encode(
             width,
             height,

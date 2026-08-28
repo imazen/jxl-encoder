@@ -11363,14 +11363,16 @@ mod encode_preflight_sectioned {
     /// sectioned wording, whole-image bytes in the message).
     #[test]
     fn off_uses_the_whole_image_band() {
-        let err = pf(4096, 5120, 7, 1, None, SectionedTrees::Off)
+        // 72 MP: ~9.4 GB on the 2026-08-28 whole-image band (the 21 MP
+        // cell this test used to pin fits the cap since the recalibration).
+        let err = pf(9000, 8000, 7, 1, None, SectionedTrees::Off)
             .err()
-            .expect("21 MP lossless e7 exceeds the 8 GiB default cap on the whole-image band");
+            .expect("72 MP lossless e7 exceeds the 8 GiB default cap on the whole-image band");
         let msg = err.to_string();
         assert!(!msg.contains("sectioned"), "{msg}");
-        assert!(msg.contains(&whole(4096, 5120, 7, 1).to_string()), "{msg}");
+        assert!(msg.contains(&whole(9000, 8000, 7, 1).to_string()), "{msg}");
         // Hybrid learns the global tree too — whole-image memory.
-        assert!(pf(4096, 5120, 7, 1, None, SectionedTrees::Hybrid).is_err());
+        assert!(pf(9000, 8000, 7, 1, None, SectionedTrees::Hybrid).is_err());
     }
 
     /// `Auto` under memory pressure (whole-image estimate above the cap)
@@ -11380,21 +11382,22 @@ mod encode_preflight_sectioned {
     /// figure for an encode admitted into an 8 GiB cap).
     #[test]
     fn auto_under_pressure_is_admitted_on_the_sectioned_estimate() {
-        let p = pf(4096, 5120, 7, 1, None, SectionedTrees::Auto).expect("21 MP e7 Auto admits");
+        // 72 MP (2026-08-28 bands: whole ~9.4 GB > 8 GiB, sectioned ~5.1 GB).
+        let p = pf(9000, 8000, 7, 1, None, SectionedTrees::Auto).expect("72 MP e7 Auto admits");
         let cap = Limits::default_max_memory_bytes(true);
         assert!(
-            whole(4096, 5120, 7, 1) > cap,
+            whole(9000, 8000, 7, 1) > cap,
             "premise: whole-image estimate over the cap"
         );
-        assert_eq!(p.estimated_peak_bytes, sect(4096, 5120, 7, 1));
+        assert_eq!(p.estimated_peak_bytes, sect(9000, 8000, 7, 1));
         assert!(
             p.estimated_peak_bytes <= cap,
             "{} > cap {cap}",
             p.estimated_peak_bytes
         );
         // e9 has no thread policy: same pressure arm at any thread count.
-        let p9 = pf(4096, 5120, 9, 8, None, SectionedTrees::Auto).expect("21 MP e9 Auto admits");
-        assert_eq!(p9.estimated_peak_bytes, sect(4096, 5120, 9, 8));
+        let p9 = pf(9000, 8000, 9, 8, None, SectionedTrees::Auto).expect("72 MP e9 Auto admits");
+        assert_eq!(p9.estimated_peak_bytes, sect(9000, 8000, 9, 8));
     }
 
     /// Without pressure `Auto` mirrors the frame encoder's gate: the
