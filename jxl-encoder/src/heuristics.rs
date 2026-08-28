@@ -449,15 +449,25 @@ const SECTIONED_FIXED_E9: u64 = 32 << 20;
 /// (2026-08-27, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`, real
 /// content, sectioned path verified engaged via `JXL_SECTION_SIZES`):
 ///   - photo (imazen-26 1403, crops 2048² / 3840×2160 / 4000×3000),
-///     threads ≥ 4: flat ≈ 48 B/px (192 / 380 / 550 MiB marginal);
-///     threads = 1: an extra size-growing phase above 4 MP — 0 at 2048²,
-///     +114 MiB at 8.3 MP (62.5 B/px), +271 MiB at 12 MP (71.7 B/px),
-///     the same bytes at e7 and e9 (a pre-tree phase) — unattributed as
-///     of 2026-08-27 (follow-up on #96), NOT measured beyond 12 MP.
+///     threads ≥ 4: flat ≈ 48 B/px (192 / 380 / 550 MiB marginal).
+///     threads = 1 used to carry an extra size-growing phase above 4 MP
+///     (+114 MiB at 8.3 MP, +271 MiB at 12 MP, identical at e7/e9) —
+///     ATTRIBUTED 2026-08-28 (`benchmarks/jxl_sectioned_mem_t1excess_
+///     2026-08-28.{tsv,meta}`, `MEM_PROBE_PATCHES=0` A/B): it was the
+///     lossless patches detector's single-thread connected-component
+///     scan, whose flat-index DFS stack grows through doubling reallocs
+///     on photo content (one foreground component). The detector now
+///     takes the bounded union-by-min labeling path at ≥ 1 MP on every
+///     thread count (bytes identical), and t=1 measures the SAME floor as
+///     t ≥ 4: 46.9 B/px at 12 MP (597763 KiB, was 875430), 47.9 B/px at
+///     8.3 MP (413203, was 530187).
 ///   - screenshot (qoi reddit.com 1313×8008, 10.5 MP): 60.5–61.8 B/px at
-///     every thread count (606 / 620 MiB marginal), no t=1 excess.
+///     every thread count (620 MiB marginal; t=1 now pays the labeling
+///     plane like t ≥ 4 — 634775 KiB, was 620964).
 ///
-/// The two floors are the envelopes over both classes with ≥ 10 % margin.
+/// One floor for every thread count: the envelope over both classes with
+/// ≥ 10 % margin (the two constants are kept as the model's two arms but
+/// carry the same value since the t=1 excess was removed).
 ///
 /// Palette / ChannelCompact / patches content engages the sectioned
 /// writer too since 2026-08-28 (stream 0 codes the meta channels with its
@@ -469,7 +479,7 @@ const SECTIONED_FIXED_E9: u64 = 32 << 20;
 /// above. Only the lossy-modular custom-DC-quant path and the non-tree /
 /// non-ANS modes still take the global tree under `On`; the runtime
 /// `MemoryBudget` enforces the cap allocation-by-allocation there.
-const SECTIONED_BPP_THREADS1: f64 = 80.0;
+const SECTIONED_BPP_THREADS1: f64 = 68.0;
 const SECTIONED_BPP_MULTI: f64 = 68.0;
 
 /// Per-worker term: each in-flight group learns its own tree (and
@@ -877,17 +887,22 @@ mod tests {
             (1024, 1024, false, 9, 12, 430537),
             (2048, 2048, false, 9, 1, 208957),
             (2048, 2048, false, 9, 12, 396710),
-            (3840, 2160, false, 7, 1, 530187),
+            // t=1 rows re-measured 2026-08-28 after the patches-scan
+            // labeling fix (jxl_sectioned_mem_t1excess_2026-08-28.tsv):
+            // 3840x2160 e7 t1 was 530187, 4000x3000 e7/e9 t1 were 875430.
+            (3840, 2160, false, 7, 1, 413203),
             (3840, 2160, false, 7, 4, 413315),
             (3840, 2160, false, 9, 12, 479149),
-            (4000, 3000, false, 7, 1, 875430),
-            (4000, 3000, false, 9, 1, 875430),
+            (4000, 3000, false, 7, 1, 597763),
+            (4000, 3000, false, 9, 1, 597763),
+            (4000, 3000, false, 7, 4, 597879),
             (4000, 3000, false, 7, 12, 597937),
             (4000, 3000, false, 9, 12, 597937),
-            // reddit.com screenshot crops
+            // reddit.com screenshot crops (1313x8008 e7 t1 was 651769
+            // before the labeling plane rode along at t=1 as well)
             (256, 256, false, 9, 12, 66261),
             (1313, 4096, false, 9, 12, 351990),
-            (1313, 8008, false, 7, 1, 651769),
+            (1313, 8008, false, 7, 1, 665580),
             (1313, 8008, false, 9, 12, 665660),
             // rgba (alpha := green): photo 1403 crops + reddit crop
             (1024, 1024, true, 7, 1, 69670),
@@ -927,13 +942,15 @@ mod tests {
         }
         // The 2026-08-27 global-fallback peaks of the same imac_dark cells
         // (486110 / 772396 / 772476 KiB) are what the meta-channel arm
-        // removed; MAX must still cover them so a regression to the
-        // fallback stays inside the admitted envelope.
-        let former_fallback_cells: &[(u32, u32, u8, usize, u64)] = &[
-            (2940, 1912, 7, 1, 486110),
-            (2940, 1912, 9, 1, 772396),
-            (2940, 1912, 9, 12, 772476),
-        ];
+        // removed; MAX still covers the e7 t=1 and e9 t=12 figures so a
+        // regression to the fallback stays inside the admitted envelope.
+        // (The e9 t=1 fallback peak, 772396 KiB, sits 3 % above MAX now
+        // that the t=1 floor no longer carries the removed patches-scan
+        // excess — 765 vs 791 MB; that path no longer runs for this
+        // content, and the runtime `MemoryBudget` bounds it if it ever
+        // did, so it is deliberately NOT pinned as a MAX requirement.)
+        let former_fallback_cells: &[(u32, u32, u8, usize, u64)] =
+            &[(2940, 1912, 7, 1, 486110), (2940, 1912, 9, 12, 772476)];
         for &(w, h, effort, threads, live_kb) in former_fallback_cells {
             let e = estimate_encode_sectioned(w, h, 3, false, effort, threads).unwrap();
             assert!(
@@ -985,11 +1002,13 @@ mod tests {
             at(1),
             "0 = ambient is estimated at the 1-thread floor by the caller"
         );
-        // The measured single-worker excess: above ~4 MP one worker peaks
-        // HIGHER than two (the pre-flight's admission floor is therefore
-        // min over {1, 2} workers, not the 1-thread figure alone); small
-        // images are monotone from t=1 since the per-thread term dominates.
-        assert!(at(1) > at(2), "2048² e9: t=1 floor band above t=2");
+        // Monotone from ONE worker at every size since 2026-08-28: the
+        // single-worker excess (a patches-scan DFS stack, see the floor
+        // constants' notes) is gone, so both floor arms carry the same
+        // value and the per-thread term is the only thread axis. The
+        // pre-flight's min-over-{1, 2} admission floor therefore resolves
+        // to the 1-thread figure (kept general in case an arm diverges).
+        assert!(at(1) < at(2), "2048² e9: monotone from t=1");
         let small = |t| {
             estimate_encode_sectioned(1024, 1024, 3, false, 9, t)
                 .unwrap()

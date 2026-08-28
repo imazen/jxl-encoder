@@ -89,11 +89,11 @@ included), real content, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`
 
 | cell (RGB8, lossless, peak_live MiB) | global t=1 | sectioned t=1 | sectioned t≥4 |
 |---|---|---|---|
-| photo 3840×2160 e7 | 786 (96.4 B/px marginal) | 518 (62.5 B/px) | 404 (48.0 B/px) |
-| photo 3840×2160 e9 | 1029 (127.0 B/px) | 518 | 404 (t=12: 468) |
-| photo 4000×3000 e7 | 1117 (94.6 B/px) | 855 (71.7 B/px) | 584 (48.0 B/px) |
-| photo 4000×3000 e9 | 1517 (129.5 B/px) | 855 | 584 |
-| reddit.com 1313×8008 e7 | 888 | 636 (60.5 B/px) | 650 (61.8 B/px) |
+| photo 3840×2160 e7 | 786 (96.4 B/px marginal) | **404** (47.9 B/px; was 518 before the 2026-08-28 patches-scan fix) | 404 (48.0 B/px) |
+| photo 3840×2160 e9 | 1029 (127.0 B/px) | 404 (was 518) | 404 (t=12: 468) |
+| photo 4000×3000 e7 | 1117 (94.6 B/px) | **584** (46.9 B/px; was 855) | 584 (48.0 B/px) |
+| photo 4000×3000 e9 | 1517 (129.5 B/px) | 584 (was 855) | 584 |
+| reddit.com 1313×8008 e7 | 888 | 650 (61.8 B/px; was 636 — t=1 now pays the labeling plane too) | 650 (61.8 B/px) |
 | imac_dark 2940×1912 e7/e9 | 475 / 754 (85.6 / 137.7 B/px) | **340 / 340** (58.9 B/px; 96/96 local sections since 2026-08-28 — was a global fallback with 0 local sections, `jxl_sectioned_mem_meta_2026-08-28.tsv`) | 350 / 350 |
 
 Consequences recorded in `heuristics.rs`:
@@ -116,9 +116,16 @@ Consequences recorded in `heuristics.rs`:
   the sweep discipline; this run has 1 photo + 2 screens at t=1 only).
   Until then `Auto`'s memory-pressure gate and `LosslessConfig::
   estimate_encode` over-predict the global path by ~4–5× at e7–e9.
-- **Sectioned t=1 excess, unattributed**: with ONE worker the sectioned
-  peak carries an extra size-growing pre-tree phase (0 at 2048², +114 MiB
-  at 8.3 MP, +271 MiB at 12 MP, identical at e7 and e9) that vanishes at
-  ≥ 4 workers (t=2: see the sweep TSV `photo full e7 t2` row). Attribute with `JXL_ALLOC_SITES` (zenjxl `mem_probe_encode`)
-  before the next lifetime round; it is the sectioned mode's own
-  memory-parity residual now that the tree phase is per-group.
+- **Sectioned t=1 excess — ATTRIBUTED AND REMOVED (2026-08-28)**: the
+  extra size-growing single-worker phase (+114 MiB at 8.3 MP, +271 MiB at
+  12 MP, identical at e7/e9) was the lossless patches detector's
+  single-thread connected-component scan (`vardct/patches.rs`): its
+  flat-index DFS stack grows through doubling reallocs on photo content
+  (one foreground component) and sat at the encode peak; at t ≥ 2 the
+  bounded union-by-min labeling + per-CC replay path ran instead. A/B via
+  `MEM_PROBE_PATCHES=0` (`benchmarks/jxl_sectioned_mem_t1excess_2026-08-28.{tsv,meta}`)
+  pinned it; the labeled path now runs at ≥ 1 MP on every thread count
+  (bytes identical — hash-locks, the lossy/lossless patches fixtures and
+  imac_dark/reddit/photo bytes unchanged). 12 MP e7/e9 sectioned t=1:
+  855 → 584 MiB; 8.3 MP: 518 → 404 MiB. The sectioned floor is one value
+  for every thread count now (`SECTIONED_BPP_THREADS1` = `_MULTI` = 68).

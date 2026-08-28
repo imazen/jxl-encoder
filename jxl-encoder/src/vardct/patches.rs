@@ -1472,8 +1472,18 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     // reproducing the exact sequential claim resolution. Wasted evals
     // (candidates an earlier same-level pop claims first) change no
     // output. The `parallel` fallback and this path are byte-identical.
-    let bfs_parallel = crate::parallel::effective_threads() > 1;
-    if bfs_parallel {
+    // Level-synchronous on EVERY thread count (imazen/jxl-encoder#96,
+    // 2026-08-28): the former single-thread arm walked one FIFO that
+    // retained every visited pixel until the fill finished (16 B per
+    // background pixel + Vec doubling — measured +271 MiB at 12 MP,
+    // +114 MiB at 8.3 MP, the whole "sectioned t=1 excess" of the
+    // 2026-08-27 sweep, absent at t>=2 only because this path ran there).
+    // The level walk keeps just the current frontier and its children.
+    // `level_parallel` still gates the parallel evaluation of wide
+    // frontiers; below `effective_threads() > 1` everything evaluates
+    // sequentially — same math, same claim order, byte-identical.
+    let bfs_threads = crate::parallel::effective_threads() > 1;
+    {
         let mut level: Vec<(u32, u32, u32, u32)> = core::mem::take(&mut queue);
         let mut next: Vec<(u32, u32, u32, u32)> = Vec::new();
         while !level.is_empty() {
@@ -1482,7 +1492,7 @@ pub(crate) fn find_text_like_patches_with_min_peak(
             // pass, byte-identical either way.
             let chunk = BFS_LEVEL_PAR_CHUNK;
             let n_chunks = level.len().div_ceil(chunk);
-            let level_parallel = level.len() >= BFS_LEVEL_PAR_MIN_ENTRIES;
+            let level_parallel = bfs_threads && level.len() >= BFS_LEVEL_PAR_MIN_ENTRIES;
             let eval_chunk = |ci: usize| {
                 let lo = ci * chunk;
                 let hi = (lo + chunk).min(level.len());
@@ -1548,86 +1558,6 @@ pub(crate) fn find_text_like_patches_with_min_peak(
             }
             level = core::mem::take(&mut next);
         }
-    } else {
-        let mut queue_front = 0;
-        while queue_front < queue.len() {
-            let (cx, cy, sx, sy) = queue[queue_front];
-            queue_front += 1;
-            let (cxu, cyu) = (cx as usize, cy as usize);
-            let (sxu, syu) = (sx as usize, sy as usize);
-
-            // SECURITY: every queue entry that this loop pops was pushed
-            // earlier with `(nx as usize) < width && (ny as usize) < height`
-            // bound-checked at push time, so cxu/cyu/sxu/syu are always in
-            // range — UNLESS the queue's heap memory was corrupted by an
-            // OOB write from elsewhere (the v09/v11 sweep cause, traced to
-            // the `unsafe-performance` feature and removed in PR #34).
-            //
-            // Convert from "skip on bounds failure (DoS protection)" to
-            // unconditional `assert!` because the upstream cause is no
-            // longer reachable on the post-PR-#34 chain. If a future
-            // regression re-introduces queue corruption, surface it loudly.
-            // The 270-encode trigger-fixture sweep confirmed this never
-            // fires on legitimate input.
-            assert!(
-                cxu < width && cyu < height && sxu < width && syu < height,
-                "patches BFS pop: queue entry out of range — possible upstream \
-                 corruption (cxu={cxu}, cyu={cyu}, sxu={sxu}, syu={syu}, \
-                 width={width}, height={height})"
-            );
-            let ci = cyu * stride + cxu;
-            let si = syu * stride + sxu;
-            assert!(
-                ci < background[0].len() && si < xyb_ref[0].len(),
-                "patches BFS pop: derived flat index out of range — possible \
-                 stride mismatch (ci={ci}, si={si}, n={})",
-                background[0].len()
-            );
-
-            // Cache source color once per queue entry (avoids re-reading xyb[c][si]
-            // for every neighbor — up to 9 bounds-checked reads per entry).
-            let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
-            for c in 0..3 {
-                background[c][ci] = src_color[c];
-            }
-
-            // 8-connected expansion
-            for k in 0..8 {
-                let (dx, dy) = NEIGHBORS_8[k];
-                let nx = cx as i32 + dx;
-                let ny = cy as i32 + dy;
-                // Unsigned boundary check: negative values wrap to huge usize, exceeding width/height.
-                if (nx as usize) >= width || (ny as usize) >= height {
-                    continue;
-                }
-                // Flat index via pre-computed stride offset (avoids nyu * stride + nxu multiply).
-                let ni = (ci as isize + neighbor_offsets[k]) as usize;
-                // The (nx, ny) range check above + the pre-computed stride
-                // offsets guarantee ni < n on every legitimate path. Assert
-                // loudly — we no longer skip silently.
-                assert!(
-                    ni < is_background.len(),
-                    "patches BFS neighbor: flat index out of range \
-                     (ni={ni}, n={})",
-                    is_background.len()
-                );
-                if is_background[ni] {
-                    continue;
-                }
-                // Manhattan distance from source (not current!) to candidate
-                let manhattan = (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
-                if manhattan > DISTANCE_LIMIT as u32 {
-                    continue;
-                }
-                // Similarity: compare source pixel to candidate pixel (L1 weighted)
-                if weighted_distance_to_color_idx(&xyb_ref, ni, &src_color, &cs)
-                    <= SIMILAR_THRESHOLD
-                {
-                    is_background[ni] = true;
-                    queue.push((nx as u32, ny as u32, sx, sy));
-                }
-            }
-        }
     }
     #[cfg(feature = "__env_var_diagnostics")]
     if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
@@ -1678,8 +1608,20 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     // per-CC replays are independent (disjoint pixel sets, read-only
     // shared planes) and truncate at rejection — see `replay_cc`.
     // Sequential fallback keeps the original scan. Byte-identical.
-    let dfs_parallel = crate::parallel::effective_threads() > 1 && n >= DFS_CC_PAR_MIN_PIXELS;
-    if dfs_parallel {
+    //
+    // The labeled path is taken at >= 1 MP on EVERY thread count
+    // (imazen/jxl-encoder#96, 2026-08-28): the scanning DFS must complete
+    // each connected component to mark `visited`, and on photo content
+    // the whole foreground is ONE component whose flat-index stack grows
+    // through doubling reallocs — measured +277 MiB at 12 MP and +117 MiB
+    // at 8.3 MP over the tree-learning peak (the entire "sectioned t=1
+    // excess" of the 2026-08-27 sweep; absent at t >= 2 only because
+    // this labeled path ran there). Union-by-min labeling costs a
+    // bounded u32 plane (4 B/px) and per-CC replays truncate at
+    // rejection; `parallel_map` degrades to a sequential map with one
+    // worker, so the single-thread result is the same bytes.
+    let dfs_labeled = n >= DFS_CC_PAR_MIN_PIXELS;
+    if dfs_labeled {
         let starts = patches_cc_min_starts(&is_background, width, height, stride, budget)?;
         let ctx = CcReplayCtx {
             xyb: &xyb_ref,

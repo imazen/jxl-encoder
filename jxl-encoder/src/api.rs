@@ -10070,12 +10070,13 @@ pub(crate) fn encode_preflight_with_sectioned(
     .max(1);
 
     // Budget-driven admission floor: the smallest estimate the walk-down
-    // can reach must fit. That is the 1-thread figure — except on the
-    // sectioned band, where ONE worker measures a size-growing pre-tree
-    // excess that two workers do not (2026-08-27: 12 MP e7 855 vs 584
-    // MiB), so when the request allows ≥ 2 workers the floor is the
-    // smaller of the 1- and 2-worker estimates and the walk-down below
-    // stops at 2 rather than stepping into the larger 1-worker peak.
+    // can reach must fit. Taken as the smaller of the 1- and 2-worker
+    // estimates when the request allows ≥ 2 workers: the sectioned band
+    // once measured a single-worker excess two workers did not have
+    // (2026-08-27: 12 MP e7 855 vs 584 MiB — the patches detector's DFS
+    // stack, removed 2026-08-28, both arms now carry one floor), and the
+    // min form keeps the walk-down below from ever stepping into a larger
+    // estimate should an arm diverge again.
     let (est_t1, t1_sectioned) = path_est_at(1)?;
     let (est_floor, floor_sectioned) = if !admission_only && start >= 2 {
         let (est_t2, t2_sectioned) = path_est_at(2)?;

@@ -1,0 +1,38 @@
+jxl_sectioned_mem_t1excess_2026-08-28.tsv — attribution and removal of the
+"sectioned t=1 excess" from the 2026-08-27 sweep (jxl_sectioned_mem_2026-08-27.tsv).
+
+Sources: photo = imazen-26 1403_nature_large-tree-canopy 4000x3000 sdr PNG
+(crops from the top-left corner via MEM_PROBE_CROP); imac = gb82-sc imac_dark.png
+(2940x1912); reddit = qoi-benchmark screenshot_web/reddit.com.png (1313x8008).
+Host: mac (aarch64 laptop, 12 cores), release build, allocator-agnostic peak_live
+from mem_probe's counting global allocator (input buffer included; marginal =
+peak_live - live_pre). Lossless RGB8.
+
+phase=before (commit bd9ab2d6): the A/B `patches=1` vs `patches=0` at threads=1
+isolates the excess to the lossless patches pre-pass — 12 MP e7 sectioned t=1
+875430 vs 597763 KiB (+271 MiB), 8.3 MP 530187 vs 413203 (+114 MiB), 4 MP no
+difference; at t=4 patches on == off (597879). Bytes identical with patches
+on/off on the photo (the detector finds nothing there — it ran only to allocate).
+
+Cause (vardct/patches.rs): with effective_threads()==1 the connected-component
+extraction ran the scanning DFS, which must complete every component to mark
+`visited`; on photo content the whole foreground is one component, so the
+flat-index stack grows through doubling reallocs (~23 B/px at 12 MP) at the
+encode peak. With >1 worker the union-by-min labeling + per-CC replay path
+(bounded u32 parent plane, replays truncate at rejection) ran instead. The
+background BFS FIFO (also thread-gated) was converted to the level-synchronous
+walk on every thread count in the same change; it was NOT the excess (measured
+first: no peak change), but it retained every visited pixel until the fill ended.
+
+phase=after: labeled path at >= 1 MP on every thread count. 12 MP e7 and e9
+sectioned t=1 597763 KiB (= t=4), 8.3 MP 413203, reddit 1313x8008 665580 (was
+651769: the t=1 run now carries the 4 B/px labeling plane like t>=4 — 665602),
+imac_dark 357844 (was 347628, same reason). Bytes identical in every cell
+(photo e7 14029781 / e9 13910206, global e7 13766081 / e9 13317443, imac
+431853 / 396800, reddit 1497875). Tests: `cargo test -p jxl-encoder --test it`
+green (hash-locks incl. the lossy patches e7 lock, animation patches, the
+sectioned patches fixture), lib + doctests green.
+
+Consequence for the estimator: SECTIONED_BPP_THREADS1 80 -> 68 B/px
+(= SECTIONED_BPP_MULTI); the measured-cell pins in heuristics.rs updated to
+the after values.

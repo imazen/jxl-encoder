@@ -11431,23 +11431,26 @@ mod encode_preflight_sectioned {
         assert_eq!(p.estimated_peak_bytes, sect(1024, 1024, 9, 1));
     }
 
-    /// The measured single-worker excess (12 MP: one worker peaks ABOVE
-    /// two): a cap sized to sect(2) admits an 8-thread `On` request and
-    /// walks it down to exactly 2 — never into the larger 1-worker
-    /// estimate — while a 1-thread request for the same cap is rejected
-    /// on its own (higher) floor.
+    /// The admission floor is the minimum over {1, 2} workers. Since the
+    /// 2026-08-28 patches-scan fix the sectioned band is monotone from one
+    /// worker (12 MP: t=1 597763 KiB = t=4; the former t=1 excess was the
+    /// detector's DFS stack), so the floor is the 1-worker figure: a cap
+    /// sized to sect(1) admits an 8-thread `On` request and walks it all
+    /// the way down to 1 worker; one byte less is rejected naming that
+    /// floor and the sectioned band.
     #[test]
     fn floor_is_the_minimum_over_one_and_two_workers() {
         let (w, h) = (4000, 3000);
         let (s1, s2) = (sect(w, h, 7, 1), sect(w, h, 7, 2));
-        assert!(s2 < s1, "premise: 12 MP sectioned t=2 {s2} below t=1 {s1}");
-        let p = pf(w, h, 7, 8, Some(s2), SectionedTrees::On).expect("admitted on the t=2 floor");
-        assert_eq!(p.threads, 2);
-        assert_eq!(p.estimated_peak_bytes, s2);
-        let err = pf(w, h, 7, 1, Some(s2), SectionedTrees::On)
+        assert!(s1 < s2, "premise: 12 MP sectioned t=1 {s1} below t=2 {s2}");
+        let p = pf(w, h, 7, 8, Some(s1), SectionedTrees::On).expect("admitted on the t=1 floor");
+        assert_eq!(p.threads, 1);
+        assert_eq!(p.estimated_peak_bytes, s1);
+        let err = pf(w, h, 7, 8, Some(s1 - 1), SectionedTrees::On)
             .err()
-            .expect("a 1-thread request cannot reach the t=2 floor");
+            .expect("one byte under the 1-worker floor cannot be admitted");
         assert!(err.to_string().contains(&s1.to_string()), "{err}");
+        assert!(err.to_string().contains("sectioned local trees"), "{err}");
     }
 
     /// The sectioned estimate grows with the pool width (one group's

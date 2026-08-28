@@ -9,6 +9,7 @@
 //! whole-process RSS which is inflated by a ~126 MB binary/decode floor.
 //!
 //! Usage: mem_probe <png> <lossy|lossless> <effort> <distance> <8|16> [rgb|rgba] [threads] [tree]
+//! Env (lossless): MEM_PROBE_CROP=WxH, MEM_PROBE_PATCHES=0|1, MEM_PROBE_GROUP_SHIFT=0..=3
 //! Prints: `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> bytes=<n> \
 //!          threads=<n> est_min_kb=<n> est_typ_kb=<n> est_max_kb=<n> est_time_ms=<f> \
 //!          tree=<s> live_pre_kb=<n> peak_live_kb=<n> marginal_live_kb=<n> allocs=<n>`
@@ -279,13 +280,26 @@ fn main() {
     let t0 = Instant::now();
     // `with_threads(n)`: n>=1 installs a dedicated n-thread rayon pool for
     // the parallel stages (the vCPU axis); n=1 forces sequential.
+    // Optional lossless knobs for attribution / tuning runs (#96):
+    // `MEM_PROBE_PATCHES=0|1` overrides the effort default for the
+    // lossless patches pre-pass; `MEM_PROBE_GROUP_SHIFT=0..=3` sets the
+    // modular group dimension {128, 256, 512, 1024}.
+    let patches_override: Option<bool> = std::env::var("MEM_PROBE_PATCHES").ok().map(|v| v != "0");
+    let group_shift: Option<u8> = std::env::var("MEM_PROBE_GROUP_SHIFT")
+        .ok()
+        .map(|v| v.parse::<u8>().expect("MEM_PROBE_GROUP_SHIFT=0..=3"));
     let encoded = if is_lossless {
-        LosslessConfig::new()
+        let mut cfg = LosslessConfig::new()
             .with_effort(effort)
             .with_threads(threads)
-            .with_sectioned_trees(sectioned)
-            .encode_request(w, h, layout)
-            .encode(&pixels)
+            .with_sectioned_trees(sectioned);
+        if let Some(p) = patches_override {
+            cfg = cfg.with_patches(p);
+        }
+        if let Some(g) = group_shift {
+            cfg = cfg.with_modular_group_size(Some(g));
+        }
+        cfg.encode_request(w, h, layout).encode(&pixels)
     } else {
         LossyConfig::new(distance)
             .with_effort(effort)

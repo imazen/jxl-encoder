@@ -1,0 +1,20 @@
+# sectioned t=1 excess attribution (imazen/jxl-encoder#96)  host=mac  date=2026-08-28  probe=jxl-encoder-cli/examples/mem_probe (release), one process per cell
+# before: commit bd9ab2d6 (labeled CC path only at effective_threads()>1); after: this commit (labeled path at >=1 MP on every thread count)
+# cmd: MEM_PROBE_CROP=<crop> MEM_PROBE_PATCHES=<0|1> mem_probe <png> lossless <e> 0 8 rgb <t> <tree>
+phase	content	crop	patches	threads	effort	tree	bytes	wall_ms	peak_live_kb	marginal_live_kb
+before	photo	4000x3000	1	1	7	sectioned	14029781	17027.7	875430	840273
+before	photo	4000x3000	0	1	7	sectioned	14029781	16602.3	597763	562606
+before	photo	4000x3000	1	4	7	sectioned	14029781	4614.1	597879	562721
+before	photo	4000x3000	0	4	7	sectioned	14029781	4719.8	597879	562721
+before	photo	3840x2160	1	1	7	sectioned	10891264	13706.4	530187	505886
+before	photo	3840x2160	0	1	7	sectioned	10891264	11933.2	413203	388902
+before	photo	2048x2048	1	1	7	sectioned	5504136	6034.6	208957	196668
+before	photo	2048x2048	0	1	7	sectioned	5504136	5951.8	208957	196668
+after	photo	4000x3000	1	1	7	sectioned	14029781	15987.7	597763	562606
+after	photo	4000x3000	1	1	9	sectioned	13910206	62905.3	597763	562606
+after	photo	3840x2160	1	1	7	sectioned	10891264	11463.3	413203	388902
+after	photo	4000x3000	1	1	7	global	13766081	15625.7	1143426	1108269
+after	photo	4000x3000	1	1	9	global	13317443	76611.2	1553020	1517863
+after	imac	2940x1912	1	1	7	sectioned	431853	2713.8	357844	341375
+after	imac	2940x1912	1	1	9	global	396800	12754.0	772396	755927
+after	reddit	1313x8008	1	1	7	sectioned	1497875	5453.4	665580	634775
