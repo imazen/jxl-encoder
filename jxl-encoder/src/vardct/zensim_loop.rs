@@ -29,6 +29,47 @@ static RD_BAKE_BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
 fn rd_bake_bytes() -> &'static [u8] {
     RD_BAKE_BYTES.get().expect("rd bake bytes set").as_slice()
 }
+/// Split-role experiment (2026-08-28, balance campaign): `JXL_ZENSIM_MAP_BAKE=
+/// <path>` mounts a SECOND bake whose FD gradient drives the model map / H3
+/// steering while `JXL_ZENSIM_RD_PROFILE` keeps scoring. Unset => byte-identical
+/// to the single-bake path (the gradient profile is rd_profile as before).
+static MAP_BAKE_BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+fn map_bake_bytes() -> &'static [u8] {
+    MAP_BAKE_BYTES.get().expect("map bake bytes set").as_slice()
+}
+static MAP_PROFILE: std::sync::OnceLock<Option<(zensim::ZensimProfile, usize)>> =
+    std::sync::OnceLock::new();
+fn map_profile_from_env() -> Option<(zensim::ZensimProfile, usize)> {
+    *MAP_PROFILE.get_or_init(|| {
+        let path = std::env::var("JXL_ZENSIM_MAP_BAKE").ok()?;
+        if path.is_empty() {
+            return None;
+        }
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("JXL_ZENSIM_MAP_BAKE {path}: {e}"));
+        MAP_BAKE_BYTES.set(bytes).expect("map bake set once");
+        let params = zensim::profile::ProfileParams::builder()
+            .mlp(map_bake_bytes)
+            .skip_score_mapping(true)
+            .extrapolate_score(true)
+            .extended_features(true)
+            .compute_iw_features(true)
+            .build();
+        let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
+        let profile = zensim::ZensimProfile::Custom {
+            params,
+            name: "map-bake",
+        };
+        let n_in = rd_infer_n_inputs(profile);
+        assert!(
+            n_in != 0,
+            "JXL_ZENSIM_MAP_BAKE {path}: the bake's forward accepts no probed \
+             feature width — refusing a silent baseline fall-through"
+        );
+        eprintln!("zensim_loop: SPLIT-ROLE map bake mounted ({path}, n_in={n_in})");
+        Some((profile, n_in))
+    })
+}
 /// Resolved (profile, n_inputs) for the RD experiment — computed once per process.
 static RD_PROFILE: std::sync::OnceLock<(zensim::ZensimProfile, usize)> = std::sync::OnceLock::new();
 
@@ -1414,10 +1455,19 @@ impl VarDctEncoder {
                     // sequential`). `JXL_ZENSIM_FDPROBE=seq` keeps the
                     // legacy per-probe path for A/B verification.
                     let seq_probe = std::env::var("JXL_ZENSIM_FDPROBE").is_ok_and(|v| v == "seq");
+                    // Split-role: gradient (the map) through the MAP bake when
+                    // mounted; scoring stays on rd_profile everywhere else.
+                    let (grad_profile, grad_n_in) = map_profile_from_env()
+                        .unwrap_or((rd_profile, rd_n_in));
+                    assert!(
+                        grad_n_in == rd_n_in,
+                        "JXL_ZENSIM_MAP_BAKE width {grad_n_in} != scoring width {rd_n_in} — \
+                         the FD base features are extracted at the scoring regime"
+                    );
                     let mut s = if seq_probe {
                         let sf = |f: &[f64]| {
                             zensim::score_features_with_profile(
-                                rd_profile,
+                                grad_profile,
                                 f,
                                 width as u32,
                                 height as u32,
@@ -1444,7 +1494,7 @@ impl VarDctEncoder {
                         // Err (model failed to parse) matches the sequential
                         // recipe's all-NaN → all-zero gradient disposition.
                         zensim::score_features_fd_gradient_with_profile(
-                            rd_profile,
+                            grad_profile,
                             &base,
                             width as u32,
                             height as u32,
