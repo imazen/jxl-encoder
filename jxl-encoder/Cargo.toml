@@ -3149,6 +3149,16 @@ name = "effort_ladder_shift"
 path = "examples/effort_ladder_shift.rs"
 required-features = ["std"]
 
+# #45 task T1 (2026-08-30): A/B for the colour-space DOMAIN of the
+# `with_resampling(N)` encoder-side downsampler. Grid over effort ×
+# resampling × distance on CID22-512 + the synthetic hash-lock fixture,
+# with a libjxl `cjxl` reference arm. Every stream decoded in-process with
+# jxl-oxide in linear sRGB and scored with the in-process Rust butteraugli.
+[[example]]
+name = "resampling_domain_ab"
+path = "examples/resampling_domain_ab.rs"
+required-features = ["std"]
+
 [[bench]]
 name = "tier_isolation"
 harness = false

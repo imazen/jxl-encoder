@@ -16,23 +16,144 @@
 //! and the iterative 2× refinement (`enc_heuristics.cc:425-780`,
 //! `DownsampleImage2_Iterative` — used at effort ≥ 10 to mirror libjxl's
 //! `speed_tier <= kGlacier` gate at `enc_frame.cc:752`; issue #45).
+//!
+//! # All three run in the XYB (opsin) domain
+//!
+//! The decoder's upsampling stage runs on the XYB planes **before** the
+//! inverse colour transform (libjxl `dec_cache.cc` adds
+//! `GetUpsamplingStage` ahead of `GetXYBStage`; jxl-oxide matches), and
+//! libjxl's encoder correspondingly downsamples the **opsin** image —
+//! `enc_frame.cc:740-763` `DownsampleColorChannels(..., Image3F* opsin)`
+//! dispatches sharper-2× / iterative-2× / plain-box-N on `color` *after*
+//! `ToXYB` has converted it in place (`enc_frame.cc:1610,1648`).
+//! Averaging does not commute with the XYB nonlinearity, so a downsample
+//! applied to linear RGB pre-XYB optimises a round trip the decoder never
+//! performs. Measured cost of getting this wrong (CID22-512 × 4, d1–d10,
+//! in-process Rust butteraugli over a jxl-oxide `srgb_linear` decode —
+//! `benchmarks/jxl_resampling_domain_2026-08-30.tsv`): linear-domain 2×
+//! scored bfly 21.3–22.8 where cjxl scores 12.8–14.5 on the same cells.
+//!
+//! The public wrappers therefore take and return **interleaved linear
+//! RGB** (the pipeline's currency) but convert to opsin, filter each
+//! opsin plane, and convert back — see [`to_opsin_planes`] /
+//! [`from_opsin_planes`]. The per-plane primitives
+//! ([`box_downsample_plane`], [`sharper_downsample_2x_plane`],
+//! [`iterative_downsample_2x_plane`]) are domain-agnostic and are what
+//! the arithmetic unit tests pin.
 
 extern crate alloc;
 use alloc::vec::Vec;
 
-/// Box-filter downsample interleaved RGB (3 channels per pixel) by
-/// an integer factor. Output dimensions are
-/// `(width.div_ceil(factor), height.div_ceil(factor))` and each
-/// output sample is the unweighted mean of the up to `factor × factor`
-/// source samples that fall inside its footprint (clipped at the
-/// right / bottom edges).
+/// Deinterleave linear RGB and convert to the three opsin (XYB) planes.
+///
+/// **SCALAR opsin pair, deliberately**: the dispatched SIMD variants are
+/// ULP-divergent across arches by design (see
+/// `docs/SIMD_PARITY_KNOWN_DIVERGENCES.md`) and the downsamplers here feed
+/// the encoder directly, so per-pixel ULP noise becomes different encoded
+/// bytes — the first CI run of the `lossy_mg_rgb_512x512_noise_r2_e10`
+/// lock measured x86_64 80303 B vs aarch64 80215 B before this was pinned
+/// to the scalar pair. `forward_xyb_scalar` / `inverse_xyb_scalar` are
+/// pure fma + fixed-iteration Newton cbrt (correctly-rounded IEEE ops),
+/// bit-identical on every platform; the conversion cost is negligible
+/// next to the filters.
+///
+/// Conversion uses the unit-intensity opsin pair — exact for the SDR
+/// default (`intensity_target = 255` ⇒ `intensity_mul = 1.0`); HDR
+/// intensity targets downsample in a slightly-rescaled domain (bounded,
+/// encoder-side only).
+fn to_opsin_planes(rgb_interleaved: &[f32], n: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    debug_assert_eq!(rgb_interleaved.len(), n * 3);
+    let mut plane_r = alloc::vec![0.0_f32; n];
+    let mut plane_g = alloc::vec![0.0_f32; n];
+    let mut plane_b = alloc::vec![0.0_f32; n];
+    for i in 0..n {
+        plane_r[i] = rgb_interleaved[i * 3];
+        plane_g[i] = rgb_interleaved[i * 3 + 1];
+        plane_b[i] = rgb_interleaved[i * 3 + 2];
+    }
+    let mut xyb_x = alloc::vec![0.0_f32; n];
+    let mut xyb_y = alloc::vec![0.0_f32; n];
+    let mut xyb_b = alloc::vec![0.0_f32; n];
+    jxl_simd::forward_xyb_scalar(
+        &plane_r, &plane_g, &plane_b, &mut xyb_x, &mut xyb_y, &mut xyb_b, n,
+    );
+    (xyb_x, xyb_y, xyb_b)
+}
+
+/// Inverse of [`to_opsin_planes`]: three opsin planes → interleaved linear
+/// RGB, allocated under the runtime fallible-alloc policy. The encode
+/// pipeline downstream re-runs its own forward opsin on the result, which
+/// is why the wrappers hand back linear RGB rather than XYB.
+fn from_opsin_planes(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    n_out: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<f32>> {
+    let mut out = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        n_out * 3,
+    )?;
+    out.resize(n_out * 3, 0.0);
+    jxl_simd::inverse_xyb_scalar(xyb_x, xyb_y, xyb_b, &mut out, n_out);
+    Ok(out)
+}
+
+/// Box downsample of one plane by an integer factor (libjxl
+/// `DownsampleImage(const ImageF&, size_t factor)`, `image_ops.cc:44-98`):
+/// each output sample is the unweighted mean of the up to `factor ×
+/// factor` source samples in its footprint, clipped at the right / bottom
+/// edges. This is the arithmetic primitive [`box_downsample_rgb`] applies
+/// per opsin plane.
+fn box_downsample_plane(
+    plane: &[f32],
+    w: usize,
+    h: usize,
+    factor: usize,
+    out: &mut [f32],
+    out_w: usize,
+    out_h: usize,
+) {
+    debug_assert_eq!(plane.len(), w * h);
+    debug_assert_eq!(out.len(), out_w * out_h);
+    for oy in 0..out_h {
+        let y0 = oy * factor;
+        let y1 = (y0 + factor).min(h);
+        for ox in 0..out_w {
+            let x0 = ox * factor;
+            let x1 = (x0 + factor).min(w);
+            let mut sum = 0.0f32;
+            let mut count = 0u32;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    sum += plane[y * w + x];
+                    count += 1;
+                }
+            }
+            out[oy * out_w + ox] = sum * (1.0 / count as f32);
+        }
+    }
+}
+
+/// Box-filter downsample interleaved linear RGB (3 channels per pixel)
+/// by an integer factor — libjxl's 4× / 8× path
+/// (`enc_frame.cc:761-762` → `DownsampleImage(*opsin, upsampling)`).
+///
+/// Takes and returns **interleaved linear RGB**, but filters in the
+/// **XYB (opsin) domain**, because that is where the decoder's upsampler
+/// runs and where libjxl downsamples — see the module docs. Output
+/// dimensions are `(width.div_ceil(factor), height.div_ceil(factor))`
+/// and each opsin output sample is the unweighted mean of the up to
+/// `factor × factor` source samples inside its footprint (clipped at the
+/// right / bottom edges) — [`box_downsample_plane`] is the arithmetic.
 ///
 /// `factor` must be one of `1`, `2`, `4`, `8` — the JPEG XL spec's
 /// allowed `upsampling` values. Returns `(downsampled_rgb,
 /// out_width, out_height)`.
 ///
-/// The factor=1 case is a clone (no downsampling); included so
-/// callers can dispatch without a special-case.
+/// The factor=1 case is an exact clone (no downsampling, no colour round
+/// trip); included so callers can dispatch without a special-case.
 pub fn box_downsample_rgb(
     rgb_interleaved: &[f32],
     width: usize,
@@ -48,35 +169,18 @@ pub fn box_downsample_rgb(
     let f = factor as usize;
     let out_w = width.div_ceil(f);
     let out_h = height.div_ceil(f);
-    // Dimension-driven output buffer — honor the runtime fallible-alloc policy;
-    // byte-identical when infallible.
-    let mut out = crate::budget::vec_with_capacity_fallible(
-        budget.is_some_and(|b| b.is_fallible()),
-        out_w * out_h * 3,
-    )?;
-    for oy in 0..out_h {
-        let y0 = oy * f;
-        let y1 = (y0 + f).min(height);
-        for ox in 0..out_w {
-            let x0 = ox * f;
-            let x1 = (x0 + f).min(width);
-            let mut sum = [0.0f32; 3];
-            let mut count = 0u32;
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    let idx = (y * width + x) * 3;
-                    sum[0] += rgb_interleaved[idx];
-                    sum[1] += rgb_interleaved[idx + 1];
-                    sum[2] += rgb_interleaved[idx + 2];
-                    count += 1;
-                }
-            }
-            let inv = 1.0 / count as f32;
-            out.push(sum[0] * inv);
-            out.push(sum[1] * inv);
-            out.push(sum[2] * inv);
-        }
-    }
+    let n = width * height;
+    let n_out = out_w * out_h;
+
+    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n);
+    let mut down_x = alloc::vec![0.0_f32; n_out];
+    let mut down_y = alloc::vec![0.0_f32; n_out];
+    let mut down_b = alloc::vec![0.0_f32; n_out];
+    box_downsample_plane(&xyb_x, width, height, f, &mut down_x, out_w, out_h);
+    box_downsample_plane(&xyb_y, width, height, f, &mut down_y, out_w, out_h);
+    box_downsample_plane(&xyb_b, width, height, f, &mut down_b, out_w, out_h);
+
+    let out = from_opsin_planes(&down_x, &down_y, &down_b, n_out, budget)?;
     Ok((out, out_w as u32, out_h as u32))
 }
 
@@ -394,12 +498,19 @@ fn sharper_downsample_2x_plane(
 }
 
 /// Sharper 12×12 kernel-based 2× downsample (mirrors libjxl
-/// `DownsampleImage2_Sharper` for the 3-channel image case). Operates
-/// on **interleaved** RGB f32 input. Output dims are
-/// `(width.div_ceil(2), height.div_ceil(2))`. Each channel runs
-/// [`sharper_downsample_2x_plane`] independently — the kernel + mask
-/// are per-channel in libjxl as well (it operates on `Image3F` plane
-/// by plane via `DownsampleImage2_Sharper(opsin)`).
+/// `DownsampleImage2_Sharper` for the 3-channel image case), our 2×
+/// default at effort ≤ 9.
+///
+/// Takes and returns **interleaved linear RGB** f32, but filters in the
+/// **XYB (opsin) domain** — libjxl runs `DownsampleImage2_Sharper(opsin)`
+/// and the decoder upsamples XYB before the inverse colour transform, so
+/// filtering linear RGB pre-XYB optimises a round trip that never
+/// happens (measured: bfly 21.3–22.8 vs cjxl's 12.8–14.5 on the same
+/// CID22-512 cells; see the module docs and
+/// `benchmarks/jxl_resampling_domain_2026-08-30.tsv`). Output dims are
+/// `(width.div_ceil(2), height.div_ceil(2))`. Each opsin plane runs
+/// [`sharper_downsample_2x_plane`] independently — the kernel + mask are
+/// per-plane in libjxl as well.
 ///
 /// Compared with [`box_downsample_rgb`] at factor 2, this preserves
 /// edge detail and reduces blocking artifacts in the upsampled
@@ -414,35 +525,18 @@ pub fn sharper_downsample_2x_rgb(
     debug_assert_eq!(rgb_interleaved.len(), width * height * 3);
     let out_w = width.div_ceil(2);
     let out_h = height.div_ceil(2);
+    let n = width * height;
+    let n_out = out_w * out_h;
 
-    // Deinterleave into 3 planes.
-    let mut plane_r = alloc::vec![0.0_f32; width * height];
-    let mut plane_g = alloc::vec![0.0_f32; width * height];
-    let mut plane_b = alloc::vec![0.0_f32; width * height];
-    for i in 0..(width * height) {
-        plane_r[i] = rgb_interleaved[i * 3];
-        plane_g[i] = rgb_interleaved[i * 3 + 1];
-        plane_b[i] = rgb_interleaved[i * 3 + 2];
-    }
+    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n);
+    let mut down_x = alloc::vec![0.0_f32; n_out];
+    let mut down_y = alloc::vec![0.0_f32; n_out];
+    let mut down_b = alloc::vec![0.0_f32; n_out];
+    sharper_downsample_2x_plane(&xyb_x, width, height, &mut down_x, out_w, out_h);
+    sharper_downsample_2x_plane(&xyb_y, width, height, &mut down_y, out_w, out_h);
+    sharper_downsample_2x_plane(&xyb_b, width, height, &mut down_b, out_w, out_h);
 
-    let mut out_r = alloc::vec![0.0_f32; out_w * out_h];
-    let mut out_g = alloc::vec![0.0_f32; out_w * out_h];
-    let mut out_b = alloc::vec![0.0_f32; out_w * out_h];
-    sharper_downsample_2x_plane(&plane_r, width, height, &mut out_r, out_w, out_h);
-    sharper_downsample_2x_plane(&plane_g, width, height, &mut out_g, out_w, out_h);
-    sharper_downsample_2x_plane(&plane_b, width, height, &mut out_b, out_w, out_h);
-
-    // Re-interleave. Dimension-driven output buffer — honor the runtime
-    // fallible-alloc policy; byte-identical when infallible.
-    let mut out = crate::budget::vec_with_capacity_fallible(
-        budget.is_some_and(|b| b.is_fallible()),
-        out_w * out_h * 3,
-    )?;
-    for i in 0..(out_w * out_h) {
-        out.push(out_r[i]);
-        out.push(out_g[i]);
-        out.push(out_b[i]);
-    }
+    let out = from_opsin_planes(&down_x, &down_y, &down_b, n_out, budget)?;
     Ok((out, out_w as u32, out_h as u32))
 }
 
@@ -453,10 +547,9 @@ pub fn sharper_downsample_2x_rgb(
 // it refines the sharper-kernel result so that the DECODER's default 2×
 // upsampler reproduces the original as closely as possible (3 rounds of
 // gradient correction through the upsampler's adjoint), then clamps
-// ringing against the box-downsampled neighborhood. libjxl applies it to
-// the opsin (XYB) planes; we apply it to linear RGB pre-XYB, matching the
-// existing sharper-2× wiring (documented divergence — see
-// docs/LIBJXL_DIVERGENCES.md).
+// ringing against the box-downsampled neighborhood. Like libjxl (and like
+// the box + sharper wrappers since 2026-08-30) we apply it to the opsin
+// (XYB) planes — see the module docs for why the domain is load-bearing.
 //
 // The libjxl `Image3F` wrapper also builds a butteraugli mask it never
 // uses (`mask` / `mask_fuzzy` in `DownsampleImage2_Iterative(Image3F*)`
@@ -802,11 +895,9 @@ fn iterative_downsample_2x_plane(
 /// `DownsampleColorChannels(..., Image3F* opsin)`). Optimizing the
 /// adjoint rounds in linear RGB would target the wrong roundtrip and
 /// measurably WORSENS quality (butteraugli 30.8 vs 19.7 on the first
-/// CID22-512 differential cell). Conversion uses the unit-intensity
-/// opsin pair (`linear_rgb_to_xyb_batch` / `xyb_to_linear_rgb_batch`)
-/// — exact for the SDR default (`intensity_target = 255` ⇒
-/// `intensity_mul = 1.0`); HDR intensity targets optimize in a
-/// slightly-rescaled domain (bounded, encoder-side only).
+/// CID22-512 differential cell). Conversion goes through
+/// [`to_opsin_planes`] / [`from_opsin_planes`] — see those for the
+/// scalar-pair and intensity-target caveats.
 ///
 /// Output dims are `(width.div_ceil(2), height.div_ceil(2))`. Compared
 /// with the sharper kernel alone this minimizes the decoder-side
@@ -826,33 +917,7 @@ pub fn iterative_downsample_2x_rgb(
     let n = width * height;
     let n_out = out_w * out_h;
 
-    // Deinterleave linear RGB into planes, then forward-opsin them.
-    let mut plane_r = alloc::vec![0.0_f32; n];
-    let mut plane_g = alloc::vec![0.0_f32; n];
-    let mut plane_b = alloc::vec![0.0_f32; n];
-    for i in 0..n {
-        plane_r[i] = rgb_interleaved[i * 3];
-        plane_g[i] = rgb_interleaved[i * 3 + 1];
-        plane_b[i] = rgb_interleaved[i * 3 + 2];
-    }
-    // SCALAR opsin pair, deliberately: the dispatched SIMD variants are
-    // ULP-divergent across arches by design (see
-    // docs/SIMD_PARITY_KNOWN_DIVERGENCES.md), and the 3 adjoint rounds
-    // below amplify per-pixel ULP noise into different encoded bytes —
-    // the first CI run of the `lossy_mg_rgb_512x512_noise_r2_e10` lock
-    // measured x86_64 80303 B vs aarch64 80215 B. `forward_xyb_scalar` /
-    // `inverse_xyb_scalar` are pure fma + fixed-iteration Newton cbrt
-    // (correctly-rounded IEEE ops), bit-identical on every platform; the
-    // conversion cost is negligible next to the upsampler rounds.
-    let mut xyb_x = alloc::vec![0.0_f32; n];
-    let mut xyb_y = alloc::vec![0.0_f32; n];
-    let mut xyb_b = alloc::vec![0.0_f32; n];
-    jxl_simd::forward_xyb_scalar(
-        &plane_r, &plane_g, &plane_b, &mut xyb_x, &mut xyb_y, &mut xyb_b, n,
-    );
-    drop(plane_r);
-    drop(plane_g);
-    drop(plane_b);
+    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n);
 
     // Iterative refinement per opsin plane (the decoder-upsampler's
     // actual input domain).
@@ -865,12 +930,7 @@ pub fn iterative_downsample_2x_rgb(
 
     // Back to interleaved linear RGB for the (unchanged) encode pipeline,
     // which re-runs its own forward opsin on the half-res image.
-    let mut out = crate::budget::vec_with_capacity_fallible(
-        budget.is_some_and(|b| b.is_fallible()),
-        n_out * 3,
-    )?;
-    out.resize(n_out * 3, 0.0);
-    jxl_simd::inverse_xyb_scalar(&down_x, &down_y, &down_b, &mut out, n_out);
+    let out = from_opsin_planes(&down_x, &down_y, &down_b, n_out, budget)?;
     Ok((out, out_w as u32, out_h as u32))
 }
 
@@ -933,71 +993,149 @@ mod tests {
         assert_eq!(h, 1);
     }
 
+    // ── Box arithmetic: pinned on the per-plane primitive ───────────────
+    //
+    // `box_downsample_plane` IS the box filter; `box_downsample_rgb`
+    // applies it to the three opsin planes (2026-08-30 domain fix — the
+    // decoder upsamples XYB, so a mean taken in linear RGB targets a
+    // round trip that never happens). These four cases carry the exact
+    // fixtures, expected means and tolerances they had when they were
+    // written against the interleaved wrapper; only the unit under test
+    // moved to the function that still performs that arithmetic.
+
+    /// Helper: run the plane box filter and return the output plane.
+    fn box_plane(plane: &[f32], w: usize, h: usize, f: usize) -> (Vec<f32>, usize, usize) {
+        let (ow, oh) = (w.div_ceil(f), h.div_ceil(f));
+        let mut out = vec![0.0_f32; ow * oh];
+        box_downsample_plane(plane, w, h, f, &mut out, ow, oh);
+        (out, ow, oh)
+    }
+
     #[test]
     fn test_factor_2_uniform_input_yields_uniform_output() {
-        // 4×4 RGB image filled with (0.5, 0.25, 0.75); 2× downsample → 2×2
-        // each output pixel = mean of 4 identical inputs = same value.
-        let rgb = vec![0.5_f32, 0.25, 0.75]
-            .into_iter()
-            .cycle()
-            .take(4 * 4 * 3)
-            .collect::<Vec<_>>();
-        let (out, w, h) = box_downsample_rgb(&rgb, 4, 4, 2, None).unwrap();
-        assert_eq!(w, 2);
-        assert_eq!(h, 2);
-        assert_eq!(out.len(), 2 * 2 * 3);
-        for chunk in out.as_chunks::<3>().0 {
-            assert!((chunk[0] - 0.5).abs() < 1e-6);
-            assert!((chunk[1] - 0.25).abs() < 1e-6);
-            assert!((chunk[2] - 0.75).abs() < 1e-6);
+        // 4×4 plane filled with 0.5; 2× downsample → 2×2, each output
+        // pixel = mean of 4 identical inputs = same value.
+        for v in [0.5_f32, 0.25, 0.75] {
+            let plane = vec![v; 4 * 4];
+            let (out, w, h) = box_plane(&plane, 4, 4, 2);
+            assert_eq!((w, h), (2, 2));
+            assert_eq!(out.len(), 2 * 2);
+            for &o in &out {
+                assert!((o - v).abs() < 1e-6);
+            }
         }
     }
 
     #[test]
     fn test_factor_2_averages_2x2_block() {
-        // 2×2 RGB image with distinct corner values (R channel only):
-        // [1, 0, 0,  2, 0, 0,
-        //  3, 0, 0,  4, 0, 0]
-        // 2× downsample → 1×1 with R = (1+2+3+4)/4 = 2.5.
-        let rgb = vec![1.0, 0.0, 0.0, 2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 4.0, 0.0, 0.0];
-        let (out, w, h) = box_downsample_rgb(&rgb, 2, 2, 2, None).unwrap();
-        assert_eq!(w, 1);
-        assert_eq!(h, 1);
+        // 2×2 plane with distinct corner values [1, 2, 3, 4];
+        // 2× downsample → 1×1 with (1+2+3+4)/4 = 2.5.
+        let plane = vec![1.0_f32, 2.0, 3.0, 4.0];
+        let (out, w, h) = box_plane(&plane, 2, 2, 2);
+        assert_eq!((w, h), (1, 1));
         assert!((out[0] - 2.5).abs() < 1e-6);
     }
 
     #[test]
     fn test_factor_4_handles_partial_edge() {
-        // 5×3 image, factor 4 → 2×1 output: first cell averages cols 0..4 rows 0..3
+        // 5×3 plane, factor 4 → 2×1 output: first cell averages cols 0..4 rows 0..3
         // (12 cells), second cell averages just col 4, rows 0..3 (3 cells).
-        let mut rgb = Vec::new();
+        let mut plane = Vec::new();
         for y in 0..3u32 {
             for x in 0..5u32 {
-                let v = (x + y * 5) as f32;
-                rgb.push(v);
-                rgb.push(v);
-                rgb.push(v);
+                plane.push((x + y * 5) as f32);
             }
         }
-        let (out, w, h) = box_downsample_rgb(&rgb, 5, 3, 4, None).unwrap();
-        assert_eq!(w, 2);
-        assert_eq!(h, 1);
+        let (out, w, h) = box_plane(&plane, 5, 3, 4);
+        assert_eq!((w, h), (2, 1));
         // Cell 0: averages cols 0..4, rows 0..3 → 12 cells with values
         // {0..3, 5..8, 10..13}. Mean = (0+1+2+3 + 5+6+7+8 + 10+11+12+13) / 12
         // = (6 + 26 + 46) / 12 = 78 / 12 = 6.5.
         assert!((out[0] - 6.5).abs() < 1e-4);
         // Cell 1: averages col 4, rows 0..3 → values 4, 9, 14. Mean = 27/3 = 9.0.
-        assert!((out[3] - 9.0).abs() < 1e-4);
+        assert!((out[1] - 9.0).abs() < 1e-4);
     }
 
     #[test]
     fn test_factor_8() {
-        // 8×8 uniform RGB image, factor 8 → 1×1 output equal to input value.
-        let rgb = vec![0.42_f32; 8 * 8 * 3];
-        let (out, w, h) = box_downsample_rgb(&rgb, 8, 8, 8, None).unwrap();
-        assert_eq!(w, 1);
-        assert_eq!(h, 1);
+        // 8×8 uniform plane, factor 8 → 1×1 output equal to input value.
+        let plane = vec![0.42_f32; 8 * 8];
+        let (out, w, h) = box_plane(&plane, 8, 8, 8);
+        assert_eq!((w, h), (1, 1));
         assert!((out[0] - 0.42).abs() < 1e-6);
+    }
+
+    // ── Box WRAPPER: dims + the opsin domain it now filters in ──────────
+
+    #[test]
+    fn test_box_rgb_dimensions_and_uniform_roundtrip() {
+        // Uniform input stays uniform through opsin → box → linear: the
+        // mean of identical opsin samples is that sample, so the only
+        // error is the f32 colour round trip (cbrt then cube through two
+        // 3×3 matrices).
+        for (w, h, f) in [(4usize, 4usize, 2u32), (5, 3, 4), (8, 8, 8), (17, 9, 2)] {
+            let rgb: Vec<f32> = [0.5_f32, 0.25, 0.75]
+                .into_iter()
+                .cycle()
+                .take(w * h * 3)
+                .collect();
+            let (out, ow, oh) = box_downsample_rgb(&rgb, w, h, f, None).unwrap();
+            assert_eq!(ow as usize, w.div_ceil(f as usize));
+            assert_eq!(oh as usize, h.div_ceil(f as usize));
+            assert_eq!(out.len(), (ow * oh) as usize * 3);
+            for chunk in out.as_chunks::<3>().0 {
+                for (got, want) in chunk.iter().zip([0.5_f32, 0.25, 0.75]) {
+                    assert!(
+                        (got - want).abs() < 1e-4,
+                        "uniform {want} → {got} at {w}x{h} f{f}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_box_rgb_filters_in_opsin_not_linear_rgb() {
+        // THE regression guard for the 2026-08-30 domain fix (#45 T1).
+        // On non-uniform colour the opsin-domain mean is NOT the linear
+        // mean, so the wrapper must (a) differ from the naive linear-RGB
+        // mean and (b) equal the explicit convert → box → invert path.
+        let rgb = vec![
+            0.9_f32, 0.05, 0.05, // saturated red
+            0.05, 0.05, 0.9, // saturated blue
+            0.05, 0.9, 0.05, // saturated green
+            0.9, 0.9, 0.05, // yellow
+        ];
+        let (out, w, h) = box_downsample_rgb(&rgb, 2, 2, 2, None).unwrap();
+        assert_eq!((w, h), (1, 1));
+
+        // (a) The linear-RGB mean of the four pixels.
+        let linear_mean = [
+            (0.9 + 0.05 + 0.05 + 0.9) / 4.0_f32,
+            (0.05 + 0.05 + 0.9 + 0.9) / 4.0,
+            (0.05 + 0.9 + 0.05 + 0.05) / 4.0,
+        ];
+        let max_delta = out
+            .iter()
+            .zip(linear_mean.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max_delta > 1e-3,
+            "opsin-domain box must differ from the linear-RGB mean on \
+             non-uniform colour; got {out:?} vs linear mean {linear_mean:?}"
+        );
+
+        // (b) It equals convert → per-plane box → invert, exactly.
+        let (x, y, b) = to_opsin_planes(&rgb, 4);
+        let mut dx = [0.0_f32; 1];
+        let mut dy = [0.0_f32; 1];
+        let mut db = [0.0_f32; 1];
+        box_downsample_plane(&x, 2, 2, 2, &mut dx, 1, 1);
+        box_downsample_plane(&y, 2, 2, 2, &mut dy, 1, 1);
+        box_downsample_plane(&b, 2, 2, 2, &mut db, 1, 1);
+        let expect = from_opsin_planes(&dx, &dy, &db, 1, None).unwrap();
+        assert_eq!(out, expect, "wrapper must be exactly convert→box→invert");
     }
 
     #[test]
@@ -1063,6 +1201,68 @@ mod tests {
             out[0] < 0.01,
             "far corner R should clamp to ~0; got {}",
             out[0]
+        );
+    }
+
+    #[test]
+    fn test_sharper_2x_filters_in_opsin_not_linear_rgb() {
+        // Companion guard to `test_box_rgb_filters_in_opsin_not_linear_rgb`
+        // for the e ≤ 9 2× path (#45 T1, 2026-08-30): the wrapper must be
+        // exactly convert → per-opsin-plane sharper → invert, and must
+        // differ from running the same kernel on linear RGB.
+        let (w, h) = (16usize, 16usize);
+        let mut rgb = vec![0.0_f32; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                rgb[i] = if (x / 4 + y / 4) % 2 == 0 { 0.9 } else { 0.05 };
+                rgb[i + 1] = (x as f32) / (w as f32);
+                rgb[i + 2] = 1.0 - (y as f32) / (h as f32);
+            }
+        }
+        let (out, ow, oh) = sharper_downsample_2x_rgb(&rgb, w, h, None).unwrap();
+        assert_eq!((ow as usize, oh as usize), (8, 8));
+
+        // Exactly convert → per-opsin-plane sharper → invert.
+        let n = w * h;
+        let n_out = (ow * oh) as usize;
+        let (x, y, b) = to_opsin_planes(&rgb, n);
+        let mut dx = vec![0.0_f32; n_out];
+        let mut dy = vec![0.0_f32; n_out];
+        let mut db = vec![0.0_f32; n_out];
+        sharper_downsample_2x_plane(&x, w, h, &mut dx, 8, 8);
+        sharper_downsample_2x_plane(&y, w, h, &mut dy, 8, 8);
+        sharper_downsample_2x_plane(&b, w, h, &mut db, 8, 8);
+        let expect = from_opsin_planes(&dx, &dy, &db, n_out, None).unwrap();
+        assert_eq!(
+            out, expect,
+            "wrapper must be exactly convert→sharper→invert"
+        );
+
+        // …and NOT the same kernel applied to the linear RGB planes.
+        let mut lin_planes = [vec![0.0_f32; n], vec![0.0_f32; n], vec![0.0_f32; n]];
+        for i in 0..n {
+            for (c, p) in lin_planes.iter_mut().enumerate() {
+                p[i] = rgb[i * 3 + c];
+            }
+        }
+        let mut linear_domain = vec![0.0_f32; n_out * 3];
+        let mut scratch = vec![0.0_f32; n_out];
+        for (c, p) in lin_planes.iter().enumerate() {
+            sharper_downsample_2x_plane(p, w, h, &mut scratch, 8, 8);
+            for i in 0..n_out {
+                linear_domain[i * 3 + c] = scratch[i];
+            }
+        }
+        let max_delta = out
+            .iter()
+            .zip(linear_domain.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max_delta > 1e-3,
+            "opsin-domain sharper must differ from the linear-RGB one on \
+             structured colour (max |Δ| {max_delta:.3e})"
         );
     }
 

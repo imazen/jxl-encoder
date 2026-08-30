@@ -1190,6 +1190,118 @@ fn lossy_mg_rgb_512x512_noise_r2_e10() {
     );
 }
 
+/// Multi-group lossy at e3/e7/e9 with `resampling = 2`: pins the
+/// **e ≤ 9** sharper-kernel 2× downsample path (`DownsampleImage2_Sharper`
+/// port). Added 2026-08-30 with the #45 T1 colour-domain fix — before
+/// that commit NO lock covered any e ≤ 9 resampling cell, which is
+/// exactly why the linear-RGB-vs-opsin domain mismatch survived (the
+/// e10 cell above covers only the iterative kernel). Three efforts
+/// because the surrounding encode differs per tier while the downsampler
+/// does not: a future change that moves only one of them is a signal.
+/// Frames are coded at 256² with `upsampling = 2` signaled; decoded dims
+/// stay 512².
+#[test]
+fn lossy_mg_rgb_512x512_noise_r2_e3() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_resampling(2)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_r2_e3",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn lossy_mg_rgb_512x512_noise_r2_e7() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .with_resampling(2)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_r2_e7",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn lossy_mg_rgb_512x512_noise_r2_e9() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(9)
+        .with_resampling(2)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_r2_e9",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossy with `resampling = 4` / `8`: pins the **box**
+/// downsample path, which is effort-independent (libjxl
+/// `enc_frame.cc:761-762` → `DownsampleImage(*opsin, upsampling)` for
+/// every factor other than 2) and was likewise uncovered before
+/// 2026-08-30. Frames are coded at 128² / 64² with `upsampling = 4` / `8`
+/// signaled. e7 is the default tier; the box kernel is shared by every
+/// other effort including e10, so one cell per factor pins it.
+#[test]
+fn lossy_mg_rgb_512x512_noise_r4_e7() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .with_resampling(4)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_r4_e7",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+#[test]
+fn lossy_mg_rgb_512x512_noise_r8_e7() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .with_resampling(8)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_r8_e7",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
 /// Multi-group lossy at e11: the extended-tier buttloop (8 iters) +
 /// 2-seed multi-seed search — the pre-shift "e10" machinery at its
 /// post-shift number (issue #45). First lock coverage for the extended

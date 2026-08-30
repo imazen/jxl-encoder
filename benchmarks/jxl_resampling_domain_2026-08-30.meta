@@ -1,0 +1,46 @@
+# jxl_resampling_domain_2026-08-30 — #45 task T1
+
+what        e<=9 `with_resampling(N)` downsampled LINEAR RGB pre-XYB while the
+            decoder upsamples XYB before the inverse colour transform (libjxl
+            dec_cache.cc GetUpsamplingStage ahead of GetXYBStage; jxl-oxide
+            matches) and libjxl's encoder downsamples the OPSIN image
+            (enc_frame.cc:740-763 DownsampleColorChannels(..., Image3F* opsin),
+            reached at :1648 after ToXYB converted `color` in place at :1610).
+            Averaging does not commute with the XYB nonlinearity, so the
+            round trip could not compose. This is the before/after for moving
+            the box (4x/8x) and sharper (2x) wrappers into the opsin domain.
+
+baseline    parent commit of the fix (linear_rgb_BEFORE rows)
+fix commit  c9af8d9a2b2ffaf99a592d8d00dc3796dca0b237 is the PARENT; the fix is the commit that adds this file
+host        macOS 26.5.2 aarch64 (Apple Silicon, 12 core), release build,
+            NO target-cpu=native
+harness     jxl-encoder/examples/resampling_domain_ab.rs  (`[[example]] resampling_domain_ab`)
+command     RESAMP_AB_IMAGES=4 RESAMP_AB_EFFORTS=1,3,5,7,9,10 \
+            RESAMP_AB_RESAMP=2,4,8 RESAMP_AB_DIST=1.0,2.0,4.0,7.0,10.0 \
+            RESAMP_AB_OUT=<tsv> cargo run --release -p jxl-encoder \
+              --example resampling_domain_ab
+
+grid        4 x CID22-512 validation PNGs (1025469, 1044329, 1189261, 1279330)
+            x distance {1.0, 2.0, 4.0, 7.0, 10.0}
+            x resampling {2, 4, 8}
+            x effort {1, 3, 5, 7, 9, 10}
+            plus the synthetic `noise_rgb_512x512` hash-lock fixture at the six
+            cells the sidecar pins (rows with image=hashlock_noise_512).
+            n = 1092 rows.
+
+metric      in-process Rust `butteraugli` 0.9.4 `butteraugli_linear` over a
+            jxl-oxide `srgb_linear` decode of every stream, against the
+            srgb_to_linear source. Metadata-immune per CLAUDE.md — NEVER
+            butteraugli_main. Every stream decoded; 0 undecodable in both arms.
+reference   cjxl v0.12.0 0.12.0 [_NEON_BF16_,NEON] {AppleClang 21.0.0.21000099} (`--resampling=N`, metadata-stripped PNG input).
+            The cjxl arm is the SAME external binary in both runs and is
+            byte-identical across them (verified); it appears once, tagged
+            downsample_domain=opsin_libjxl.
+
+NOT a size sweep — the mechanism is per-pixel colour-space, not size-dependent,
+so no intercept/slope fit is reported. All corpus cells are 512x512.
+
+columns     image width height distance effort resampling encoder
+            downsample_domain bytes butteraugli
+            downsample_domain: linear_rgb_BEFORE | opsin_AFTER | opsin_libjxl
+

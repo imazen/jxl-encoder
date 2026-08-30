@@ -150,21 +150,31 @@ finish, release.** Root causes below are MEASURED, not hypothesised; do not
 re-derive them from scratch, but do re-verify any premise you are about to
 build on (this file has been wrong before).
 
-### T1 — e≤9 resampling domain fix + re-lock (APPROVED byte move)
+### T1 — e≤9 resampling domain fix + re-lock — DONE 2026-08-30
 
-Root cause and evidence: see "ACTIVE 2026-08-30: e≤9 `with_resampling(2)`
-downsamples in the WRONG domain" under Known Bugs. Short form: the decoder
-upsamples XYB *before* the inverse colour transform, libjxl's encoder
-downsamples the opsin image, and our e≤9 box/sharper wrappers downsample linear
-RGB. Averaging does not commute with the XYB nonlinearity, so the round trip
-cannot compose — butteraugli 19.68/30.20 vs 7.20/10.66 domain-correct.
-The e≥10 iterative path already got this fix in `e3a54d7e`; **copy its shape**
-(convert → box/sharper per opsin plane → invert), do not invent a second one.
-**The owner has approved moving e≤9 `resampling>1` bytes.** No hash lock covers
-those cells today, so ADD e≤9 r2 lock cells as part of the fix, and regenerate
-via the repo's regen workflow with in-process decode of every stream. e1–e9
-locks for `resampling == 1` must NOT move — if any non-resampling cell moves,
-stop and find out why before relocking.
+Shipped. Full record: "RESOLVED 2026-08-30: e≤9 `with_resampling(N)`
+downsampled in the WRONG domain" under Resolved Bugs, plus
+`benchmarks/jxl_resampling_domain_2026-08-30.{tsv,meta,md}` and the
+`vardct/resampling.rs` divergence row. Headline: the box (4×/8×) and sharper
+(2×) wrappers now filter the opsin planes like libjxl does, via the shared
+`to_opsin_planes` / `from_opsin_planes` helpers the e≥10 iterative path was
+refactored onto byte-identically. Butteraugli −33.6…−41.2 % at 2× and bytes
+down at the same time; 53/53 pre-existing hash locks byte-identical, 5 new
+`resampling > 1` cells added (there were none below e10 — that is why the bug
+survived).
+
+**Two corrections to what this section used to say.** (1) It scoped the fix as
+"e≤9". The *sharper* half is e≤9, but the box 4×/8× kernel is
+effort-independent, so the fix necessarily moves `r4`/`r8` at e10+ as well
+(no lock covered those either). (2) It quoted "butteraugli 19.68/30.20 vs
+7.20/10.66" as the size of the effect. Those were two single d1.0 cells; over
+the 4-image × 5-distance × 6-effort × 3-factor grid the 2× effect is
+21.3–22.8 → 12.6–15.0, i.e. large but not 3×.
+
+**Spun out, still open**: the new RGBA lock cell exposed an unrelated
+pre-existing defect — lossy `resampling > 1` with alpha writes
+`ec_upsampling = 1` next to colour `upsampling = N`, which is invalid and
+undecodable. See the ACTIVE Known Bug of the same date.
 
 ### T2 — zensim secant guard thresholds — DONE 2026-08-30, and the brief above
 ### it was WRONG on three counts
@@ -500,28 +510,76 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### ACTIVE 2026-08-30: e≤9 `with_resampling(2)` downsamples in the WRONG domain (linear RGB, decoder upsamples XYB)
+### ACTIVE 2026-08-30: lossy `with_resampling(N>1)` + alpha emits an UNDECODABLE stream (`ec_upsampling` left at 1)
 
-**Status**: ACTIVE — flagged during #45; e≤9 fix needs an owner decision
-(it moves e≤9 bytes, which the ladder-shift job froze).
+**Status**: ACTIVE — found 2026-08-30 by the new `resampling` hash-lock
+cells (T1). Independent of the domain bug below; pre-dates it.
 
-[PROVEN] The decoder's 2× upsampling stage runs on the XYB planes BEFORE
+[PROVEN] `vardct/bitstream.rs:3497` hardcodes
+`fh.ec_upsampling = vec![1; num_extra_channels]`, but the lossy
+resampling path DOES downsample alpha by `effective_resampling`
+(`api.rs` both call sites → `box_downsample_alpha_u8`). So an RGBA encode
+at `with_resampling(2)` writes colour `upsampling = 2` alongside
+`ec_upsampling = 1`, which the spec forbids — jxl-oxide rejects the
+header outright: `ValidationFailed("EC upsampling < color upsampling,
+which is invalid")`. libjxl defaults `ec_resampling` to `resampling`
+(`enc_frame.cc:118-120`) and then hard-clamps `ec_resampling =
+max(ec_resampling, resampling)` (`enc_frame.cc:2658-2659`) before filling
+`extra_channel_upsampling` with it (`enc_frame.cc:461-463`). Repro: encode
+any `PixelLayout::Rgba8` buffer with `LossyConfig::new(1.0).with_effort(7)
+.with_resampling(2)` and parse the result with jxl-oxide. The modular
+`--ec_resampling` half-res-alpha path (`with_dim_shift`) is a *different*
+feature and is not implicated. Fix shape: carry the resampling factor into
+the VarDCT frame-header writer and set `ec_upsampling` to it for the
+channels we downsampled; then land the
+`lossy_mg_rgba_512x512_blocky_r2_e7` lock cell that exposed this (written
+and removed from the T1 commit because the regenerator correctly refuses
+undecodable bytes).
+
+### RESOLVED 2026-08-30: e≤9 `with_resampling(N)` downsampled in the WRONG domain (linear RGB, decoder upsamples XYB)
+
+**Status**: RESOLVED — owner-approved byte move, landed with T1.
+
+[PROVEN] The decoder's upsampling stage runs on the XYB planes BEFORE
 the inverse color transform (libjxl `dec_cache.cc` adds
 `GetUpsamplingStage` ahead of `GetXYBStage`; jxl-oxide matches), and
-libjxl's encoder downsamples the OPSIN image (`enc_frame.cc:742`). Our
-e≤9 resampling path (box 4×/8× + sharper 2×, `api.rs` both call sites)
-downsamples **linear RGB pre-XYB** — a domain mismatch. Measured
-(in-process Rust butteraugli, jxl-oxide `srgb_linear` decode, d1.0 r2,
-CID22-512): sharper-on-linear e9 scores bfly **19.68 / 30.20** where the
-XYB-domain iterative e10 scores **7.20 / 10.66** on the same cells
-(cjxl e10: 7.19 / 9.90). Repro:
-`cargo test -p jxl-encoder --test it effort_ladder_tiers::iterative_downsample_cjxl_differential -- --ignored --nocapture`.
-The e≥10 iterative path was fixed in `e3a54d7e` (runs in XYB); the fix
-for e≤9 is the same shape (convert → box/sharper per opsin plane →
-invert) but changes every e≤9 `resampling>1` stream. No hash-lock covers
-e≤9 resampling cells. Next step: owner decision on moving e≤9 r2 bytes,
-then port the domain fix to the box + sharper wrappers and add e≤9 r2
-lock cells.
+libjxl's encoder downsamples the OPSIN image — `DownsampleColorChannels(
+..., Image3F* opsin)` at `enc_frame.cc:740-763`, called at `:1648` after
+`ToXYB` converted `color` in place at `:1610`, and it dispatches sharper-2×
+**and** the plain box for 4×/8× on that opsin image. Our e≤9 resampling
+path (box 4×/8× + sharper 2×, `api.rs` both call sites) downsampled
+**linear RGB pre-XYB**; averaging does not commute with the XYB
+nonlinearity, so the round trip could not compose.
+
+Fixed by moving the box + sharper wrappers into the opsin domain, the
+same shape `e3a54d7e` used for the e≥10 iterative path: the two shared
+helpers `to_opsin_planes` / `from_opsin_planes` in `vardct/resampling.rs`
+now front all three wrappers (the iterative one was refactored onto them
+byte-identically). **Correction to the pre-fix version of this entry**: it
+quoted 19.68/30.20 vs 7.20/10.66 from two single cells at d1.0 — the
+grid measurement is smaller and covers more (4 × CID22-512 × d{1,2,4,7,10}
+× e{1,3,5,7,9,10} × r{2,4,8}, `benchmarks/jxl_resampling_domain_2026-08-30
+.{tsv,meta,md}`):
+
+| resampling | butteraugli | bytes |
+|---|---|---|
+| 2× (e1–e9) | −33.6 … −41.2 % | −6.0 … −20.2 % |
+| 4× (all efforts) | −3.4 … −10.1 % | −1.3 … −2.6 % |
+| 8× (all efforts) | −4.1 … −7.7 % | −1.2 … −2.7 % |
+
+Both axes improve at once, and 2× now lands at cjxl's score (e7 13.95 vs
+cjxl 14.46). The box change also moves e10/e11+ `r4`/`r8` — the box kernel
+is effort-independent, so "e≤9" describes the *sharper* half only. `r2 e10`
+is untouched (iterative, already correct): its lock is byte-identical.
+
+**Why it survived**: NO hash lock covered any `resampling > 1` cell below
+e10. Five were added with the fix — `lossy_mg_rgb_512x512_noise_{r2_e3,
+r2_e7,r2_e9,r4_e7,r8_e7}`. Regen evidence: of the 53 pre-existing lines,
+**53 were byte-identical**, including every e1–e9 `resampling == 1` cell
+and `r2_e10`; only the 5 new lines appeared. The r4/r8 *noise fixture*
+cells score +1.06 bfly (worse) — a degenerate fixture (an 8× box of
+per-pixel uniform noise is a constant; butteraugli on it is not signal),
+not a regression; the corpus grid is the evidence.
 
 ### RESOLVED 2026-06-13: 12 MP HDR encode failed at 2 GiB cap — budget over-count + too-low default
 
