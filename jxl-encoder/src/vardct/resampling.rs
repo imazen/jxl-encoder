@@ -106,6 +106,17 @@ fn from_opsin_planes(
 /// factor` source samples in its footprint, clipped at the right / bottom
 /// edges. This is the arithmetic primitive [`box_downsample_rgb`] applies
 /// per opsin plane.
+///
+/// **Do NOT "unify" this with [`box_downsample_2x_plane`]** — they are
+/// deliberately not the same function. This one normalizes as
+/// `sum * (1.0 / count)`, carried over verbatim from the interleaved
+/// wrapper it replaced; `box_downsample_2x_plane` (the iterative path's
+/// ringing-mask input) normalizes as `sum / count`. Those agree exactly
+/// whenever `count` is a power of two — which is every interior cell —
+/// but diverge on the partial edge cells that factor 4/8 produces
+/// (`1.0/12.0` is not representable). Merging them would silently move
+/// bytes on one of the two paths; both are pinned by hash locks
+/// (`lossy_mg_rgb_512x512_noise_{r4_e7,r8_e7}` and `..._r2_e10`).
 fn box_downsample_plane(
     plane: &[f32],
     w: usize,
