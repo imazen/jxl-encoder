@@ -229,6 +229,63 @@ fn resampling2_iterative_vs_sharper_streams() {
     );
 }
 
+/// Every SHAPE the `with_resampling` path can emit decodes in **both**
+/// reference Rust decoders — jxl-rs primary, jxl-oxide secondary.
+///
+/// The hash-lock sidecar cells decode through jxl-oxide only (that is
+/// what `assert_hashes` runs), so this is the jxl-rs half of the #45 T1
+/// coverage. Two things it pins that the byte locks cannot:
+///
+/// 1. the **box** path at r4/r8, which had no test of any kind before
+///    2026-08-30 and now filters the opsin planes like libjxl's
+///    `DownsampleImage(*opsin, N)`; and
+/// 2. the **colour + alpha** shape, whose frame header must carry
+///    `ec_upsampling == upsampling`. Until 2026-08-30 it carried `1`,
+///    which is invalid (an extra channel may be coarser than colour,
+///    never finer) and every decoder rejected the stream — a whole api
+///    configuration that had never been decoded in a test.
+///
+/// r2 at e9/e10 is covered by `resampling2_iterative_vs_sharper_streams`
+/// above; this covers the rest of the matrix.
+#[test]
+fn resampling_every_shape_decodes_in_both_decoders() {
+    let (w, h) = (320u32, 128u32);
+    let n = (w * h) as usize;
+    let mut rgb = vec![0u8; n * 3];
+    let mut rgba = vec![0u8; n * 4];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let p = y * w as usize + x;
+            let g = ((x * 255) / w as usize) as u8;
+            let e = if (x / 24 + y / 16) % 2 == 0 { 200 } else { 30 };
+            let px = [g, e, g / 2 + e / 2];
+            rgb[p * 3..p * 3 + 3].copy_from_slice(&px);
+            rgba[p * 4..p * 4 + 3].copy_from_slice(&px);
+            // Structured, non-constant alpha: a constant plane would let
+            // a mis-signalled ec_upsampling still look plausible.
+            rgba[p * 4 + 3] = ((x * 3 + y * 5) % 256) as u8;
+        }
+    }
+
+    for factor in [2u32, 4, 8] {
+        for effort in [3u8, 7, 9, 10] {
+            let rgb_stream = LossyConfig::new(1.0)
+                .with_effort(effort)
+                .with_resampling(factor)
+                .encode(&rgb, w, h, PixelLayout::Rgb8)
+                .unwrap_or_else(|e| panic!("rgb e{effort} r{factor}: {e:?}"));
+            decode_both(&format!("rgb_e{effort}_r{factor}"), &rgb_stream, w, h);
+
+            let rgba_stream = LossyConfig::new(1.0)
+                .with_effort(effort)
+                .with_resampling(factor)
+                .encode(&rgba, w, h, PixelLayout::Rgba8)
+                .unwrap_or_else(|e| panic!("rgba e{effort} r{factor}: {e:?}"));
+            decode_both(&format!("rgba_e{effort}_r{factor}"), &rgba_stream, w, h);
+        }
+    }
+}
+
 /// Differential vs a libjxl-produced reference for the e10 iterative 2×
 /// downsampler (issue #45): encode two CID22-512 photos at
 /// `-d 1.0 -e 10 --resampling=2` with BOTH encoders, decode each with

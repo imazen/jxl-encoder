@@ -528,8 +528,12 @@ max(ec_resampling, resampling)` (`enc_frame.cc:2658-2659`) before filling
 `extra_channel_upsampling` with it (`enc_frame.cc:461-463`). Repro (before
 the fix): encode any `PixelLayout::Rgba8` buffer with
 `LossyConfig::new(1.0).with_effort(7).with_resampling(2)` and parse the
-result with jxl-oxide. The modular `--ec_resampling` half-res-alpha path
-(`with_dim_shift`) is a *different* feature and was not implicated.
+result with jxl-oxide. **Both** reference decoders reject it, so this was
+never a jxl-oxide quirk — jxl-rs fails the same stream with
+`InvalidEcUpsampling(2, 0, 1)` (measured by reverting both fix layers
+under `effort_ladder_tiers::resampling_every_shape_decodes_in_both_decoders`).
+The modular `--ec_resampling` half-res-alpha path (`with_dim_shift`) is a
+*different* feature and was not implicated.
 
 **Fixed** by writing `ec_upsampling = upsampling` for every extra channel
 (safe because non-alpha extras are rejected outright at `resampling > 1`
