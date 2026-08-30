@@ -142,6 +142,128 @@ Phase 7-zensim (docs), zensim-gpu GPU-native diffmap kernels (currently
 CPU-fallback), cvvdp-cpu structural perf (strip-pipeline + f16 for
 150ms→50ms at 1024²).
 
+## ACTIVE WORK PROGRAM 2026-08-30 — five tasks, root causes established
+
+Owner-directed after the #45/#76/#96 program closed. **Every one of these
+touches this repo, so they are strictly sequential — claim `.workongoing`,
+finish, release.** Root causes below are MEASURED, not hypothesised; do not
+re-derive them from scratch, but do re-verify any premise you are about to
+build on (this file has been wrong before).
+
+### T1 — e≤9 resampling domain fix + re-lock (APPROVED byte move)
+
+Root cause and evidence: see "ACTIVE 2026-08-30: e≤9 `with_resampling(2)`
+downsamples in the WRONG domain" under Known Bugs. Short form: the decoder
+upsamples XYB *before* the inverse colour transform, libjxl's encoder
+downsamples the opsin image, and our e≤9 box/sharper wrappers downsample linear
+RGB. Averaging does not commute with the XYB nonlinearity, so the round trip
+cannot compose — butteraugli 19.68/30.20 vs 7.20/10.66 domain-correct.
+The e≥10 iterative path already got this fix in `e3a54d7e`; **copy its shape**
+(convert → box/sharper per opsin plane → invert), do not invent a second one.
+**The owner has approved moving e≤9 `resampling>1` bytes.** No hash lock covers
+those cells today, so ADD e≤9 r2 lock cells as part of the fix, and regenerate
+via the repo's regen workflow with in-process decode of every stream. e1–e9
+locks for `resampling == 1` must NOT move — if any non-resampling cell moves,
+stop and find out why before relocking.
+
+### T2 — zensim secant min-|Δln L| guard
+
+`vardct/zensim_loop.rs`. The controller measures elasticity
+`ε̂ = Δln L / Δln S` from the last two iterates. **Sign convention that is easy
+to get backwards: higher quant_field = MORE bits = LESS loss, so ε̂ is
+NEGATIVE**; the secant fires only when `ε̂ < −1e-6`. Known flaw: when
+consecutive iterates are nearly equal, Δln L is tiny, ε̂ is unreliable, and the
+step overshoots (measured: t=70 went 71.0 → 61.8 at iter 2). The existing
+`|Δln S| > 1e-6` guard does not catch this because it guards the wrong axis.
+Fix = a min-|Δln L| guard falling back to the power law when the loss barely
+moved. Evidence + the A/B methodology: `benchmarks/zensim_secant_2026-08-25.md`.
+Note the loop never entropy-codes, so its traces have no bytes column — per-
+iterate bytes only come from separate budget-capped full encodes.
+
+### T3 — e7 sectioned wall, via content-adaptive K (corpus expansion REQUIRED)
+
+Root cause: at e7 t=1 the 11.5 s total is 8.5 s per-group tree learn, of which
+**`find_best_split` is 4.7 s — our split search evaluates K=8 kept predictors
+where libjxl learns over 2** (`enc_modular.cc:642-644`, `Predictor::Best` =
+{Weighted, Gradient}). ~4× the search work, and sectioned runs it *per group*
+rather than once whole-image, so it multiplies by group count exactly where
+sectioned mode is meant to be winning memory. e9 is inside the 1.3× bar
+(1.08×/1.10×) only because its surrounding encode is expensive enough to bury
+the same absolute cost.
+Already measured and rejected as blanket defaults: prune K=6 (−4…−13 % wall,
+≤ +0.20 % bytes), K=4 (up to +1.35 % bytes on palette content) —
+`benchmarks/jxl_sectioned_prune_k_2026-08-28.{tsv,meta}`. The single-worker
+fork-engine bypass already landed (−3.5 % learn wall).
+**Owner directive: content-adaptive K is approved, but the gate must be fitted
+on a corpus that actually spans the content space** — expand the low-resolution
+sampling of imazen-26 to more images *and crops thereof*. Per the workspace
+sweep discipline: cluster to pick representative sources rather than sampling
+randomly (random over-represents the modal class and drops the outliers a gate
+fails on), log-spaced sizes, skip upscaling, and hold out a validation split.
+A gate fitted on a handful of images will look excellent and generalise badly.
+
+### T4 — libjxl mimic mode toward byte-exactness
+
+`EncoderStrategy::Libjxl` exists already. The goal is **not** cosmetic parity:
+byte-exactness is the instrument for (a) quantifying where our perf gap to
+libjxl actually comes from and (b) surfacing bugs in zen mode that only show up
+as an unexplained divergence. Start from `docs/LIBJXL_PARITY_TRACKING.md`
+(component-by-component, source-grounded against libjxl `d089091a`) and
+`docs/LIBJXL_DIVERGENCES.md`. Known structural gaps recorded there include the
+predictor count (theirs 2, ours 7–9 via probe-tree pruning, 14 historically),
+Bernoulli vs fixed-stride sampling (density at parity, aliasing behaviour
+differs), and the three §A fidelity gaps from the e11 TectonicPlate work
+(kNoWP transcribed but unwired; fixed-predictor trials single-leaf vs their
+restricted-candidate tree learn; sequential vs RunOnPool). **Every divergence
+found must land in `LIBJXL_DIVERGENCES.md` — that file is mandatory per the
+section below.** Where we deliberately differ because we beat them on RD, say
+so explicitly rather than "fixing" it into a regression.
+
+### T5 — make the sectioned estimator accurate
+
+Issue #99 item 3. `estimate_encode_sectioned`'s e9 additive term is
+**36 MiB/worker, calibrated on photo 1024²** (measured slope 31.6). imac_dark
+e9 t=12 measures **4.3 MiB/worker** — TYP = 847.9 MB = **2.52×** the measured
+cell, just over the 2.5× tightness bar in
+`sectioned_estimate_covers_measured_cells_2026_08_27`. The pin is deliberately
+held stale-high with an in-code comment; lowering it to the honest measurement
+fails the bar.
+**The conflict to resolve:** a headroom-aware additive term (subtracting the
+measured envelope−content-floor slack, 68−48 B/px) restores tightness on every
+rgb cell but makes the model **non-strictly-monotone in threads** at large px —
+which `heuristics::tests::sectioned_estimate_shape`,
+`api_tests::encode_preflight_sectioned::floor_is_the_minimum_over_one_and_two_workers`
+and `walks_down_on_the_sectioned_per_thread_term` all assert, and on which the
+admission thread-walk-down contract is built. Either refine differently, or
+change the contract deliberately with its tests updated as a designed change —
+**not** by weakening an assertion to make a number fit.
+Bundle with #99 item 2 if you touch the model: the RCT trial wave
+(`select_best_rct` holding nine whole-image i32 clones = 193 MiB, the designed
+`RCT_TRIAL_WAVE = 2` transient) is now what SETS the sectioned peak, and the
+per-trial fold at `effective_threads() == 1` would move the floors again. Move
+the model once, not twice.
+
+### Cross-cutting facts worth not rediscovering
+
+- **`cargo fmt --all` reaches into sibling path-dep repos** and will silently
+  reformat them (confirmed live on 2026-08-29: it edited `../zenav1-aom`).
+  Always scope: `cargo fmt -p <pkg>`.
+- **CI cancellation is high in this workspace** (measured 2026-08-30: 44 % of
+  the last 25 CI runs on this repo's main, and 72–80 % in zenmetrics/zensim/
+  zenanalyze/zenpipe). A run that ends `cancelled` is an ABSENCE of a verdict,
+  not a weak pass — and a real failure can hide among the cancellations because
+  a red Lint job fail-fasts the matrix. Always check the job-level tally, and
+  re-run if your commit's own run was superseded.
+- **`butteraugli 0.9.4` DOES gate this crate.** A 2026-08-29 claim that 0.9.3
+  suffices was measured false: `ButteraugliReference::estimated_reference_bytes`
+  was introduced after `v0.9.3` and is referenced from
+  `tests/it/alloc_budget.rs`. A lib-only compile succeeds against 0.9.3 and
+  looks like proof — it is not.
+- **Published `jxl-encoder 0.3.1` does not build today** under fresh
+  resolution (`magetypes 0.9.28` breaks published `jxl-encoder-simd 0.3.0`);
+  workaround `cargo update -p magetypes --precise 0.9.23`. The 0.4.0 release
+  fixes it. Path-dep local builds never exercise what a registry consumer gets.
+
 ## Current Status
 
 The VarDCT encoder implements every algorithmic component libjxl evaluates
