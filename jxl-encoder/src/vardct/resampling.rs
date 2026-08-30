@@ -793,14 +793,27 @@ fn iterative_downsample_2x_plane(
 
 /// Iterative 2× downsample (libjxl `DownsampleImage2_Iterative`, used at
 /// `speed_tier <= kGlacier` — our effort ≥ 10 — when `resampling == 2`).
-/// Operates on **interleaved** RGB f32, per channel, like
-/// [`sharper_downsample_2x_rgb`]. Output dims are
-/// `(width.div_ceil(2), height.div_ceil(2))`.
+/// Takes and returns **interleaved linear RGB** f32 like
+/// [`sharper_downsample_2x_rgb`], but internally optimizes in the **XYB
+/// (opsin) domain**: the decoder's 2× upsampling stage runs on the XYB
+/// planes BEFORE the inverse color transform (libjxl `dec_cache.cc` adds
+/// `GetUpsamplingStage` ahead of `GetXYBStage`; libjxl's encoder
+/// correspondingly downsamples the opsin image — `enc_frame.cc:742`
+/// `DownsampleColorChannels(..., Image3F* opsin)`). Optimizing the
+/// adjoint rounds in linear RGB would target the wrong roundtrip and
+/// measurably WORSENS quality (butteraugli 30.8 vs 19.7 on the first
+/// CID22-512 differential cell). Conversion uses the unit-intensity
+/// opsin pair (`linear_rgb_to_xyb_batch` / `xyb_to_linear_rgb_batch`)
+/// — exact for the SDR default (`intensity_target = 255` ⇒
+/// `intensity_mul = 1.0`); HDR intensity targets optimize in a
+/// slightly-rescaled domain (bounded, encoder-side only).
 ///
-/// Compared with the sharper kernel alone this minimizes the decoder-side
-/// reconstruction error `‖orig − Upsample2×(down)‖` (3 adjoint-gradient
-/// rounds), at ~4× the sharper path's arithmetic (libjxl documents ~80 %
-/// whole-encode slowdown at high distance, `enc_frame.cc:753-755`).
+/// Output dims are `(width.div_ceil(2), height.div_ceil(2))`. Compared
+/// with the sharper kernel alone this minimizes the decoder-side
+/// reconstruction error `‖orig − Upsample2×(down)‖` in the upsampler's
+/// actual domain (3 adjoint-gradient rounds), at ~4× the sharper path's
+/// arithmetic (libjxl documents ~80 % whole-encode slowdown,
+/// `enc_frame.cc:753-755`).
 pub fn iterative_downsample_2x_rgb(
     rgb_interleaved: &[f32],
     width: usize,
@@ -810,24 +823,45 @@ pub fn iterative_downsample_2x_rgb(
     debug_assert_eq!(rgb_interleaved.len(), width * height * 3);
     let out_w = width.div_ceil(2);
     let out_h = height.div_ceil(2);
+    let n = width * height;
+    let n_out = out_w * out_h;
 
-    // Deinterleave into 3 planes (same shape as the sharper wrapper).
-    let mut plane = alloc::vec![0.0_f32; width * height];
-    let mut out_plane = alloc::vec![0.0_f32; out_w * out_h];
+    // Deinterleave linear RGB into planes, then forward-opsin them.
+    let mut plane_r = alloc::vec![0.0_f32; n];
+    let mut plane_g = alloc::vec![0.0_f32; n];
+    let mut plane_b = alloc::vec![0.0_f32; n];
+    for i in 0..n {
+        plane_r[i] = rgb_interleaved[i * 3];
+        plane_g[i] = rgb_interleaved[i * 3 + 1];
+        plane_b[i] = rgb_interleaved[i * 3 + 2];
+    }
+    let mut xyb_x = alloc::vec![0.0_f32; n];
+    let mut xyb_y = alloc::vec![0.0_f32; n];
+    let mut xyb_b = alloc::vec![0.0_f32; n];
+    jxl_simd::linear_rgb_to_xyb_batch(
+        &plane_r, &plane_g, &plane_b, &mut xyb_x, &mut xyb_y, &mut xyb_b,
+    );
+    drop(plane_r);
+    drop(plane_g);
+    drop(plane_b);
+
+    // Iterative refinement per opsin plane (the decoder-upsampler's
+    // actual input domain).
+    let mut down_x = alloc::vec![0.0_f32; n_out];
+    let mut down_y = alloc::vec![0.0_f32; n_out];
+    let mut down_b = alloc::vec![0.0_f32; n_out];
+    iterative_downsample_2x_plane(&xyb_x, width, height, &mut down_x, out_w, out_h);
+    iterative_downsample_2x_plane(&xyb_y, width, height, &mut down_y, out_w, out_h);
+    iterative_downsample_2x_plane(&xyb_b, width, height, &mut down_b, out_w, out_h);
+
+    // Back to interleaved linear RGB for the (unchanged) encode pipeline,
+    // which re-runs its own forward opsin on the half-res image.
     let mut out = crate::budget::vec_with_capacity_fallible(
         budget.is_some_and(|b| b.is_fallible()),
-        out_w * out_h * 3,
+        n_out * 3,
     )?;
-    out.resize(out_w * out_h * 3, 0.0);
-    for c in 0..3 {
-        for i in 0..(width * height) {
-            plane[i] = rgb_interleaved[i * 3 + c];
-        }
-        iterative_downsample_2x_plane(&plane, width, height, &mut out_plane, out_w, out_h);
-        for i in 0..(out_w * out_h) {
-            out[i * 3 + c] = out_plane[i];
-        }
-    }
+    out.resize(n_out * 3, 0.0);
+    jxl_simd::xyb_to_linear_rgb_batch(&down_x, &down_y, &down_b, &mut out, n_out);
     Ok((out, out_w as u32, out_h as u32))
 }
 

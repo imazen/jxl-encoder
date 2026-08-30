@@ -228,3 +228,155 @@ fn resampling2_iterative_vs_sharper_streams() {
         "e10 must dispatch the iterative downsampler (different stream from e9's sharper)"
     );
 }
+
+/// Differential vs a libjxl-produced reference for the e10 iterative 2×
+/// downsampler (issue #45): encode two CID22-512 photos at
+/// `-d 1.0 -e 10 --resampling=2` with BOTH encoders, decode each with
+/// jxl-oxide in linear RGB, and score in-process Rust butteraugli
+/// against the source (metadata-immune per the repo CLAUDE.md — never
+/// `butteraugli_main`). Ours must land in the same quality regime as
+/// cjxl's iterative-downsampler output (≤ 1.6× its butteraugli — the
+/// two encoders differ everywhere else, so byte parity is not the bar),
+/// and the e9 sharper-kernel run is reported alongside for context.
+///
+/// REQUIRES `cjxl` (≥ 0.11, effort-10-capable) on PATH and network/
+/// cached codec-corpus; run explicitly:
+/// `cargo test -p jxl-encoder --test it effort_ladder_tiers::iterative_downsample_cjxl_differential -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn iterative_downsample_cjxl_differential() {
+    use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
+    use imgref::Img;
+    use rgb::RGB;
+
+    let cjxl = which_cjxl().expect(
+        "cjxl not found on PATH — this differential test REQUIRES a libjxl \
+         cjxl (>= 0.11 for effort 10). Install it or run the non-ignored \
+         effort_ladder_tiers tests instead.",
+    );
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus init");
+    let dir = corpus
+        .get("CID22/CID22-512/validation")
+        .expect("codec-corpus CID22 validation");
+    let mut pngs: Vec<_> = std::fs::read_dir(&dir)
+        .expect("read CID22 dir")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("png"))
+        .collect();
+    pngs.sort();
+    assert!(pngs.len() >= 2, "CID22 validation should have >= 2 PNGs");
+
+    let tmp = std::env::temp_dir().join(format!("jxl_iterdiff_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let params = ButteraugliParams::default();
+
+    for path in pngs.iter().take(2) {
+        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+        let img = image::open(path).unwrap().to_rgb8();
+        let (w, h) = (img.width(), img.height());
+        let srgb = img.as_raw().clone();
+        let orig_linear: Vec<RGB<f32>> = srgb
+            .chunks(3)
+            .map(|c| {
+                RGB::new(
+                    srgb_to_linear(c[0]),
+                    srgb_to_linear(c[1]),
+                    srgb_to_linear(c[2]),
+                )
+            })
+            .collect();
+        let orig_img = Img::new(orig_linear, w as usize, h as usize);
+
+        let score_of = |bytes: &[u8], label: &str| -> f64 {
+            let mut jxl_image = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(bytes))
+                .unwrap_or_else(|e| panic!("{name}/{label}: jxl-oxide parse: {e:?}"));
+            jxl_image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
+            let render = jxl_image
+                .render_frame(0)
+                .unwrap_or_else(|e| panic!("{name}/{label}: jxl-oxide render: {e:?}"));
+            let fb = render.image_all_channels();
+            let dec: Vec<RGB<f32>> = fb
+                .buf()
+                .chunks(3)
+                .map(|c| RGB::new(c[0], c[1], c[2]))
+                .collect();
+            let dec_img = Img::new(dec, w as usize, h as usize);
+            butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
+                .unwrap_or_else(|e| panic!("{name}/{label}: butteraugli: {e:?}"))
+                .score
+        };
+
+        // Ours: e9 (sharper) + e10 (iterative), resampling = 2.
+        let enc = |effort: u8| {
+            LossyConfig::new(1.0)
+                .with_effort(effort)
+                .with_resampling(2)
+                .encode(&srgb, w, h, PixelLayout::Rgb8)
+                .unwrap_or_else(|e| panic!("{name}: ours e{effort} r2 encode: {e:?}"))
+        };
+        let ours_e9 = enc(9);
+        let ours_e10 = enc(10);
+        let (b_ours_e9, b_ours_e10) = (
+            score_of(&ours_e9, "ours_e9"),
+            score_of(&ours_e10, "ours_e10"),
+        );
+
+        // cjxl e10 r2 on a metadata-stripped rewrite of the source (the
+        // image crate drops ancillary chunks like gAMA/cHRM that would
+        // change cjxl's input interpretation).
+        let stripped = tmp.join(format!("{name}_stripped.png"));
+        img.save(&stripped).unwrap();
+        let out_jxl = tmp.join(format!("{name}_cjxl_e10_r2.jxl"));
+        let status = std::process::Command::new(&cjxl)
+            .args([
+                stripped.to_str().unwrap(),
+                out_jxl.to_str().unwrap(),
+                "-d",
+                "1.0",
+                "-e",
+                "10",
+                "--resampling=2",
+                "--num_threads=4",
+            ])
+            .status()
+            .expect("spawn cjxl");
+        assert!(status.success(), "{name}: cjxl -e 10 --resampling=2 failed");
+        let cjxl_bytes = std::fs::read(&out_jxl).unwrap();
+        let b_cjxl = score_of(&cjxl_bytes, "cjxl_e10");
+
+        eprintln!(
+            "{name} d1.0 r2: ours e9(sharper) {} B bfly {:.4} | ours e10(iterative) {} B bfly {:.4} | cjxl e10 {} B bfly {:.4}",
+            ours_e9.len(),
+            b_ours_e9,
+            ours_e10.len(),
+            b_ours_e10,
+            cjxl_bytes.len(),
+            b_cjxl
+        );
+        assert!(
+            b_ours_e10 <= b_cjxl * 1.6,
+            "{name}: ours e10 iterative butteraugli {b_ours_e10:.4} not in cjxl's regime ({b_cjxl:.4})"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Locate cjxl on PATH (or the conventional libjxl build path).
+fn which_cjxl() -> Option<std::path::PathBuf> {
+    if let Ok(out) = std::process::Command::new("which").arg("cjxl").output()
+        && out.status.success()
+    {
+        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !p.is_empty() {
+            return Some(p.into());
+        }
+    }
+    let home = std::env::var("HOME").ok()?;
+    let built =
+        std::path::PathBuf::from(format!("{home}/work/jxl-efforts/libjxl/build/tools/cjxl"));
+    built.exists().then_some(built)
+}
