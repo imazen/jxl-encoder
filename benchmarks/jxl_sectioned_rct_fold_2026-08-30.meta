@@ -1,0 +1,51 @@
+jxl_sectioned_rct_fold_2026-08-30.tsv — the single-worker RCT-trial fold
+(issue #99 lever 1), measured the same day as (and enabled by) the
+patches-phase lifetime fix of jxl_sectioned_patches_lifetime_2026-08-30.
+
+MOTIVATION: with the patches working set out of the sectioned peak, the
+in-repo alloc-sites probe (JXL_ALLOC_SITES=1 mem_probe) classified the
+remaining lossless t=1 peak as exactly two sites on the 12 MP photo:
+  421875 KiB  n=9  Channel::clone <- select_best_rct (encode.rs:1575/1518)
+  140625 KiB  n=3  ModularImage i32 channels
+i.e. the whole ~48 B/px sectioned "floor" was the RCT_TRIAL_WAVE=2
+transient (2 in-flight trials x 3 whole-image channel clones + running
+best x 3 = 36 B/px) + the image (12 B/px). Same shape on imac_dark
+(193 of 281 MiB).
+
+CHANGE (modular/encode.rs best_rct_trial_waved): on a single-worker pool
+(effective_threads() <= 1) parallel_map runs the trials sequentially
+anyway, so the wave bought no overlap while its collected Vec kept both
+trials' clones live through the reduce. Trials now fold one at a time at
+t<=1 — same ascending order, same strict-< first-wins reduce — holding
+only the running best + the current trial (six channels / 24 B/px
+transient instead of nine / 36). t >= 2 keeps the wave.
+
+BYTE-IDENTITY: bytes identical in every measured cell (all rows in the
+TSV pair prefold/fold at equal bytes, incl. the patch-heavy imac cells
+and the content-adaptive global e5/e6 arms); cargo test -p jxl-encoder
+--lib (1525) / --test it (447, default AND --features parallel) / --doc
+green; clippy --all-targets -D warnings; fmt.
+
+RESULT (peak_live KiB, t=1 sectioned): photo 12 MP 597763 -> 457138
+(36.0 B/px marginal), 8.3 MP 413203 -> 316003, 4.2 MP 208957 -> 159805,
+1 MP e7 52261 -> 39973; imac_dark 280985 -> 228308 (38.6 B/px); reddit
+523716 -> 422495 (38.2 B/px); rgba 3840x2160 570687 -> 421304 (4-channel
+clone set, 16 B/px per trial). NOT moved (verified): every t >= 2 cell
+(597937 / 523826 / 357262 / 281076-281075 KiB-identical — the wave path
+is untouched), 1 MP e9 t=1 (the tree-learn peak exceeds the RCT instant;
+73994, whose delta vs the 74376 pin is pre-existing drift), and every
+global-tree cell measured (imac e5-e8, reddit e5/e6: gather-dominated).
+
+Host: mac (aarch64 laptop, 12 cores), release build, allocator-agnostic
+peak_live (counting global allocator, input included). prefold rows
+measured at f49663be..ae8c95b8; fold rows at the commit landing this
+file. Sources as in jxl_sectioned_patches_lifetime_2026-08-30.meta.
+
+Estimator: floors stay 68 B/px (t=1 now covers at 1.7-1.9x — still a
+sane admission envelope; a t=1-arm drop to ~56 is deferred to the next
+full recalibration together with the issue #99 item-3 model decision).
+heuristics measured-cell pins re-pinned to the fold values (t=1 cells
+only); the held imac e9 t12 pin is unaffected (t >= 2).
+
+Next lever (issue #99): stream the trial cost during forward_rct without
+materializing the full transformed candidate -> ~24 B/px t=1 floor.

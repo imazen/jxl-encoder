@@ -554,6 +554,20 @@ const SECTIONED_FIXED_E9: u64 = 32 << 20;
 /// cover the measured 48 with ~1.4× headroom (admission-safe), and the
 /// patches dictionary of patch-heavy content still lands above the bare
 /// floor (imac +0.9 MiB at t=1).
+///
+/// RCT-TRIAL FOLD (2026-08-30, same day, issue #99 lever 1,
+/// `benchmarks/jxl_sectioned_rct_fold_2026-08-30.{tsv,meta}`): the
+/// alloc-sites probe then showed the remaining ~48 B/px floor WAS the
+/// `select_best_rct` trial wave — nine whole-image i32 channel clones
+/// (36 B/px) + the ModularImage (12 B/px) — on all three content
+/// classes. On single-worker pools the wave buys no overlap, so trials
+/// now fold one at a time there (byte-identical): the t=1 band drops to
+/// ~36–39 B/px (photo 12 MP 597763 → 457138 KiB, imac 228308, reddit
+/// 422495; rgba 3840×2160 570687 → 421304). t ≥ 2 keeps the wave and
+/// its ~48 B/px band (re-measured KiB-identical), so the two constants
+/// below still share the multi-thread envelope; the t=1 arm could drop
+/// to ~56 after the next full recalibration but stays 68 (safe,
+/// covering at 1.7–1.9×).
 const SECTIONED_BPP_THREADS1: f64 = 68.0;
 const SECTIONED_BPP_MULTI: f64 = 68.0;
 
@@ -1046,26 +1060,33 @@ mod tests {
     fn sectioned_estimate_covers_measured_cells_2026_08_27() {
         const KB: u64 = 1024;
         // (w, h, has_alpha, effort, threads, measured peak_live KiB)
+        // t=1 rows re-pinned 2026-08-30 after the single-worker RCT-trial
+        // fold (issue #99 lever 1, benchmarks/jxl_sectioned_rct_fold_
+        // 2026-08-30.{tsv,meta}): the select_best_rct wave held nine
+        // whole-image channel clones (36 B/px) AT the t=1 peak — the fold
+        // holds six, dropping the t=1 band to ~36-39 B/px. t >= 2 cells
+        // keep the wave and re-measured byte-for-KiB identical. History:
+        // 3840x2160 e7 t1 530187 (pre labeling fix) -> 413203 -> 316003;
+        // 4000x3000 e7/e9 t1 875430 -> 597763 -> 457138; 1024^2 e9 t1
+        // 74376 -> 73994 is pre-existing drift (fold-neutral there: the
+        // 1 MP e9 tree-learn peak exceeds the RCT-wave instant).
         let sectioned_cells: &[(u32, u32, bool, u8, usize, u64)] = &[
             // photo 1403 crops
-            (64, 64, false, 7, 1, 6010),
-            (64, 64, false, 9, 1, 25868),
+            (64, 64, false, 7, 1, 6008),
+            (64, 64, false, 9, 1, 25865),
             (64, 64, false, 9, 12, 30400),
             (256, 256, false, 9, 12, 99933),
-            (1024, 1024, false, 7, 1, 52261),
+            (1024, 1024, false, 7, 1, 39973),
             (1024, 1024, false, 7, 12, 150954),
-            (1024, 1024, false, 9, 1, 74376),
+            (1024, 1024, false, 9, 1, 73994),
             (1024, 1024, false, 9, 12, 430537),
-            (2048, 2048, false, 9, 1, 208957),
+            (2048, 2048, false, 9, 1, 159805),
             (2048, 2048, false, 9, 12, 396710),
-            // t=1 rows re-measured 2026-08-28 after the patches-scan
-            // labeling fix (jxl_sectioned_mem_t1excess_2026-08-28.tsv):
-            // 3840x2160 e7 t1 was 530187, 4000x3000 e7/e9 t1 were 875430.
-            (3840, 2160, false, 7, 1, 413203),
+            (3840, 2160, false, 7, 1, 316003),
             (3840, 2160, false, 7, 4, 413315),
             (3840, 2160, false, 9, 12, 479149),
-            (4000, 3000, false, 7, 1, 597763),
-            (4000, 3000, false, 9, 1, 597763),
+            (4000, 3000, false, 7, 1, 457138),
+            (4000, 3000, false, 9, 1, 457138),
             (4000, 3000, false, 7, 4, 597879),
             (4000, 3000, false, 7, 12, 597937),
             (4000, 3000, false, 9, 12, 597937),
@@ -1080,28 +1101,33 @@ mod tests {
             // detection at peak — unchanged, verified same-commit.
             (256, 256, false, 9, 12, 66261),
             (1313, 4096, false, 9, 12, 336418),
-            (1313, 8008, false, 7, 1, 523716),
+            // 2026-08-30 RCT fold: was 523716 (post patches-lifetime fix;
+            // 665580 before that).
+            (1313, 8008, false, 7, 1, 422495),
             (1313, 8008, false, 9, 12, 523826),
-            // rgba (alpha := green): photo 1403 crops + reddit crop
-            (1024, 1024, true, 7, 1, 69670),
+            // rgba (alpha := green): photo 1403 crops + reddit crop. The
+            // t=1 cells fold a 4-channel clone set (16 B/px per trial):
+            // 1024^2 e7 was 69670, 3840x2160 e7/e9 were 570687.
+            (1024, 1024, true, 7, 1, 53286),
             (1024, 1024, true, 7, 8, 146332),
-            (1024, 1024, true, 9, 1, 101554),
+            (1024, 1024, true, 9, 1, 100734),
             (1024, 1024, true, 9, 8, 404080),
-            (3840, 2160, true, 7, 1, 570687),
+            (3840, 2160, true, 7, 1, 421304),
             (3840, 2160, true, 7, 8, 551044),
-            (3840, 2160, true, 9, 1, 570687),
+            (3840, 2160, true, 9, 1, 421304),
             (3840, 2160, true, 9, 8, 551044),
             (1313, 4096, true, 7, 8, 357262),
             // imac_dark (gb82-sc screenshot: full palette/compact + patches),
             // sectioned-engaged since 2026-08-28 (96/96 local sections).
-            // Re-pinned 2026-08-30 (patches-phase lifetime fix): was
-            // 347628 (t1) / 357866 (t4) / 357924 (t12) at both efforts —
-            // the detection working set at peak. Now at the photo floor
-            // plus the surviving patches dictionary (+0.9 MiB).
-            (2940, 1912, false, 7, 1, 280985),
+            // History: 347628-357924 (detection working set at peak, both
+            // efforts) -> 280985/281076/281134 (2026-08-30 patches-phase
+            // lifetime fix, photo floor + the surviving patches
+            // dictionary) -> t=1 228308 (same-day RCT fold; the t >= 2
+            // cells keep the wave and its measured values).
+            (2940, 1912, false, 7, 1, 228308),
             (2940, 1912, false, 7, 4, 281076),
             (2940, 1912, false, 7, 12, 281134),
-            (2940, 1912, false, 9, 1, 280985),
+            (2940, 1912, false, 9, 1, 228308),
             (2940, 1912, false, 9, 4, 281076),
             // e9 t12 measured 328741 on 2026-08-30 (12-worker group-learn
             // sets over the new floor) but stays pinned at the 2026-08-28

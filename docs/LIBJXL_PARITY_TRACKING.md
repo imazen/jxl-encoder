@@ -109,12 +109,12 @@ included), real content, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`
 
 | cell (RGB8, lossless, peak_live MiB) | global t=1 | sectioned t=1 | sectioned t≥4 |
 |---|---|---|---|
-| photo 3840×2160 e7 | 786 (96.4 B/px marginal) | **404** (47.9 B/px; was 518 before the 2026-08-28 patches-scan fix) | 404 (48.0 B/px) |
-| photo 3840×2160 e9 | 1029 (127.0 B/px) | 404 (was 518) | 404 (t=12: 468) |
-| photo 4000×3000 e7 | 1117 (94.6 B/px) | **584** (46.9 B/px; was 855) | 584 (48.0 B/px) |
-| photo 4000×3000 e9 | 1517 (129.5 B/px) | 584 (was 855) | 584 |
-| reddit.com 1313×8008 e7 | 888 | **511** (48.0 B/px since the 2026-08-30 patches-lifetime fix; was 650 / 61.8 B/px) | 512 (48.0 B/px) |
-| imac_dark 2940×1912 e7/e9 | 475 / 754 (85.6 / 137.7 B/px) | **274 / 274** (48.2 B/px since 2026-08-30; was 340–349 / 58.9–62.2 B/px; 96/96 local sections since 2026-08-28 — was a global fallback with 0 local sections, `jxl_sectioned_mem_meta_2026-08-28.tsv`) | 275 / 275 (e9 t=12: 321) |
+| photo 3840×2160 e7 | 786 (96.4 B/px marginal) | **309** (36.0 B/px since the 2026-08-30 RCT fold; 404 after the patches-scan fix, 518 before it) | 404 (48.0 B/px) |
+| photo 3840×2160 e9 | 1029 (127.0 B/px) | 309 (was 404 / 518) | 404 (t=12: 468) |
+| photo 4000×3000 e7 | 1117 (94.6 B/px) | **446** (36.0 B/px; was 584 / 855) | 584 (48.0 B/px) |
+| photo 4000×3000 e9 | 1517 (129.5 B/px) | 446 (was 584 / 855) | 584 |
+| reddit.com 1313×8008 e7 | 888 | **413** (38.2 B/px after the 2026-08-30 patches-lifetime fix + RCT fold; was 650 / 61.8 B/px) | 512 (48.0 B/px) |
+| imac_dark 2940×1912 e7/e9 | 475 / 754 (85.6 / 137.7 B/px) | **223 / 223** (38.6 B/px after the two 2026-08-30 fixes; was 340–349 / 58.9–62.2 B/px; 96/96 local sections since 2026-08-28 — was a global fallback with 0 local sections, `jxl_sectioned_mem_meta_2026-08-28.tsv`) | 275 / 275 (e9 t=12: 321) |
 
 Consequences recorded in `heuristics.rs`:
 
@@ -172,3 +172,18 @@ Consequences recorded in `heuristics.rs`:
   Post-fix peak composition on imac (alloc-sites): 193 MiB = NINE
   whole-image channel clones from `select_best_rct` — the next
   sectioned-peak lever, tracked in issue #99.
+- **RCT-trial fold at t=1 (2026-08-30, same day — issue #99 lever 1)**:
+  the alloc-sites probe then showed that clone set (2-trial wave × 3
+  channels + running best × 3 = 36 B/px) + the ModularImage (12 B/px)
+  IS the whole ~48 B/px sectioned t=1 floor on every content class
+  (12 MP photo: 421,875 KiB of clones at the peak instant, 98 %
+  classified in two sites). On single-worker pools the wave's
+  `parallel_map` is sequential anyway, so trials now fold one at a time
+  there (byte-identical; every t ≥ 2 cell re-measured KiB-identical):
+  t=1 sectioned peak_live photo 12 MP 597763 → **457138** KiB
+  (36.0 B/px), imac_dark → **228308** (38.6), reddit → **422495**
+  (38.2), rgba 3840×2160 → **421304**
+  (`benchmarks/jxl_sectioned_rct_fold_2026-08-30.{tsv,meta}`). The
+  remaining t=1 composition is best+current clones (24 B/px) + image
+  (12 B/px); streaming the trial cost without materializing the
+  candidate (→ ~24 B/px floor) is the next lever (issue #99).

@@ -1506,11 +1506,34 @@ const RCT_TRIAL_WAVE: usize = 2;
 ///
 /// `trial` returns `Some((cost, transformed_image))` for candidate `i`, or
 /// `None` if that candidate failed. Returns the winning `(index, cost, image)`.
+///
+/// On a single-worker pool the wave buys nothing (`parallel_map` runs the
+/// trials sequentially anyway) while its collected `Vec` keeps BOTH trials'
+/// whole-image clones live through the reduce — the 2026-08-30 alloc-sites
+/// attribution (issue #99, `benchmarks/jxl_sectioned_patches_lifetime_
+/// 2026-08-30.meta`) measured the resulting nine live channel clones
+/// (2 in-flight trials + running best, 421,875 KiB = 36 B/px at 12 MP) AS
+/// the lossless encode peak once the patches-phase set was out of the way.
+/// So at `effective_threads() <= 1` the trials fold one at a time — same
+/// ascending order, same strict-`<` reduce, byte-identical — holding only
+/// the running best plus the current trial (six channels instead of nine).
 fn best_rct_trial_waved(
     num_to_try: usize,
     trial: impl Fn(usize) -> Option<(f64, ModularImage)> + Sync,
 ) -> Option<(usize, f64, ModularImage)> {
     let mut best: Option<(usize, f64, ModularImage)> = None;
+    if crate::parallel::effective_threads() <= 1 {
+        for i in 0..num_to_try {
+            let Some((cost, img)) = trial(i) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(_, bc, _)| cost < *bc) {
+                best = Some((i, cost, img));
+            }
+            // a non-winning clone drops here, BEFORE the next trial clones
+        }
+        return best;
+    }
     let mut start = 0usize;
     while start < num_to_try {
         let end = (start + RCT_TRIAL_WAVE).min(num_to_try);
