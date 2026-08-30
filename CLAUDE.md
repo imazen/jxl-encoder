@@ -587,6 +587,16 @@ cjxl 14.46). The box change also moves e10/e11+ `r4`/`r8` — the box kernel
 is effort-independent, so "e≤9" describes the *sharper* half only. `r2 e10`
 is untouched (iterative, already correct): its lock is byte-identical.
 
+On the two cells this entry originally cited — the repro is still
+`cargo test -p jxl-encoder --release --test it
+effort_ladder_tiers::iterative_downsample_cjxl_differential -- --ignored --nocapture`
+— e9 sharper goes **19.68 → 11.52** (CID22-512 1025469, 15516 B) and
+**30.20 → 14.51** (1044329, 40784 B). e9 sharper remains worse than e10
+iterative (7.20 / 10.66) and that is BY DESIGN, not a residual bug: the
+adjoint refinement is a real kernel improvement, which is exactly why
+libjxl gates it at `kGlacier`. What was fixed is the domain; the
+kernel gap is the effort ladder working as intended.
+
 **Why it survived**: NO hash lock covered any `resampling > 1` cell below
 e10. Five were added with the fix — `lossy_mg_rgb_512x512_noise_{r2_e3,
 r2_e7,r2_e9,r4_e7,r8_e7}`. Regen evidence: of the 53 pre-existing lines,

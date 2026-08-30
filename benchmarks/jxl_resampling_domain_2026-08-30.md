@@ -43,6 +43,23 @@ These are the exact streams `tests/hash_lock_expected.txt` pins.
 | `lossy_mg_rgb_512x512_noise_r8_e7 (NEW)` | 1144 | 1048 | -8.4 % | 13.451 | 14.499 | +1.048 |
 | `lossy_mg_rgb_512x512_noise_r2_e10 (existing — UNCHANGED)` | 80215 | 80215 | +0.0 % | 9.830 | 9.830 | +0.000 |
 
+## Same-cell check against the two cells issue #45 originally cited
+
+`effort_ladder_tiers::iterative_downsample_cjxl_differential` (`--ignored`,
+needs `cjxl` on PATH), d1.0 r2, CID22-512 validation:
+
+| cell | e9 sharper BEFORE | e9 sharper AFTER | e10 iterative | cjxl e10 |
+|---|---:|---:|---:|---:|
+| 1025469 | 19.68 | **11.52** (15516 B) | 7.196 (15718 B) | 7.189 (15974 B) |
+| 1044329 | 30.20 | **14.51** (40784 B) | 10.660 (42306 B) | 9.899 (39596 B) |
+
+e9 sharper stays worse than e10 iterative, **by design** — the adjoint
+refinement is a real kernel improvement, which is why libjxl gates it at
+`kGlacier`. This change fixed the *domain*; the remaining gap is the effort
+ladder working as intended.
+
+## Note on the r4/r8 noise-fixture cells
+
 The r4/r8 noise cells move the "wrong" way on butteraugli (+1.06 each).
 That is a **degenerate fixture**, not a regression: per-pixel uniform random
 noise has no structure for either domain to preserve, an 8× box of it is
