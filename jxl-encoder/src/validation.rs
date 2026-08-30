@@ -41,13 +41,14 @@ pub enum ValidationError {
     /// Distance was non-finite (NaN or infinity).
     #[error("distance must be finite, got {value}")]
     DistanceNotFinite { value: f32 },
-    /// Effort level outside `1..=12`.
+    /// Effort level outside `1..=13`.
     /// (`EffortProfile::lossy` / `lossless` clamp internally; this surfaces
     /// the violation up front instead of silently coercing.)
     ///
-    /// `1..=9` matches libjxl's kFalcon..=kTortoise ladder. `10..=12` are our
-    /// extensions for longer search budgets (RFC#45 pick #1, extended in
-    /// chunk 2 to e12 with 32 butteraugli iters); the bitstream remains 100%
+    /// `1..=9` matches libjxl's kFalcon..=kTortoise ladder; e10 aligns with
+    /// libjxl e10 (kGlacier) as a superset. `11..=13` are our extensions for
+    /// longer search budgets (RFC#45 pick #1, renumbered +1 by the
+    /// 2026-08-29 ladder shift, issue #45); the bitstream remains 100%
     /// spec-valid.
     #[error("effort {value} out of valid range {valid:?}")]
     EffortOutOfRange {
@@ -145,16 +146,18 @@ pub enum ValidationError {
 /// `cjxl --distance` accepts `[0.0, 25.0]`; we reject `0.0` for lossy and
 /// require lossless instead, so the lossy validator uses an open lower bound.
 pub(crate) const DISTANCE_MAX: f32 = 25.0;
-/// Effort range. `1..=9` matches libjxl's kFalcon..=kTortoise ladder; `10..=12`
-/// are our extensions for longer search budgets (RFC#45 pick #1, extended in
-/// chunk 2 to e12 with 32 butteraugli iters and the `ITER_MAX = 32` cap).
+/// Effort range. `1..=9` matches libjxl's kFalcon..=kTortoise ladder; e10
+/// aligns with libjxl e10 (kGlacier) as a superset; `11..=13` are our
+/// extensions for longer search budgets (RFC#45 pick #1, renumbered +1 by
+/// the 2026-08-29 ladder shift, issue #45, so our e10 matches libjxl's).
 /// They produce 100% spec-valid bitstreams — only encoder-side search time
 /// changes.
-pub(crate) const EFFORT_RANGE: RangeInclusive<u8> = 1..=12;
+pub(crate) const EFFORT_RANGE: RangeInclusive<u8> = 1..=13;
 /// Cap on quality-loop iter counts. libjxl's kTortoise butteraugli runs 4
-/// passes; RFC#45 chunk 1 extended to 8 at e10 and 16 at e11. RFC#45 chunk 2
-/// extends to 32 at e12 (this commit), keeping a power-of-two ladder
-/// (4 → 8 → 16 → 32) on each additional effort step past libjxl's cap.
+/// passes (kGlacier keeps that cap); RFC#45 chunk 1 extended to 8 and 16
+/// on the tiers past libjxl, and chunk 2 to 32 on the top tier, keeping a
+/// power-of-two ladder (4 → 8 → 16 → 32) per extended step (e11/e12/e13
+/// post-shift).
 ///
 /// 32 leaves room for sweep harnesses without inviting absurd values; the
 /// butteraugli loop has its own per-iteration convergence guards

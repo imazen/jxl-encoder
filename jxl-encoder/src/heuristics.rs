@@ -152,11 +152,12 @@ const LOSSLESS_FIXED_OVERHEAD: u64 = 16 << 20;
 const LOSSY_BPP_BASE: f64 = 80.0;
 const LOSSY_BPP_E7PLUS: f64 = 135.0;
 /// Lossless ramps in four bands (not a clean step): e ≤ 5 base
-/// (no tree learning), e6 (heavier partial-search), e7–e9 full MA
-/// tree-learning, e ≥ 10 (`fine_grained_step`/multi-seed). Unlike lossy,
-/// the lossless working set is ~size-independent (1 MP ≈ 12 MP measured), so
-/// these B/px hold at the large sizes where memory matters. The e10 value is
-/// retained from the 2026-06-14 grid (e ≥ 10 not re-swept since).
+/// (no tree learning), e6 (heavier partial-search), e7–e10 full MA
+/// tree-learning (new e10 = e9 single-seed since the 2026-08-29 ladder
+/// shift), e ≥ 11 (multi-seed / config-trial tiers — measured at their
+/// pre-shift "e10" label below). Unlike lossy, the lossless working set is
+/// ~size-independent (1 MP ≈ 12 MP measured), so these B/px hold at the
+/// large sizes where memory matters.
 ///
 /// 2026-08-28 RECALIBRATION (imazen/jxl-encoder#96 follow-up,
 /// `benchmarks/jxl_lossless_band_2026-08-28.{tsv,meta}`): the thirteen
@@ -183,11 +184,12 @@ const LOSSY_BPP_E7PLUS: f64 = 135.0;
 /// small step over e5 — measured 79 vs 73 at 1 MP; e7 and e8 share one;
 /// e9 is its own). The intercept
 /// is effort-dependent (256² cells: e7 20.5 MB, e8 25.9 MB, e9 67.3 MB,
-/// e10 67.3 MB; 64² e7 6.0 MB) — see [`lossless_fixed_overhead`]. e10's
-/// multi-seed learn carries a ~150 MB size-independent term on top of a
-/// ≈ 91 B/px slope (1 → 4 MP fit), modelled as the 160 MiB intercept +
-/// the e9 slope. Lossless stays thread-invariant in the model (γ = 0):
-/// the 2026-08-27 sweep measured threads ≥ 4 at or below t=1.
+/// pre-shift-e10 67.3 MB; 64² e7 6.0 MB) — see [`lossless_fixed_overhead`].
+/// The multi-seed learn (pre-shift e10 label = today's e11) carries a
+/// ~150 MB size-independent term on top of a ≈ 91 B/px slope (1 → 4 MP
+/// fit), modelled as the 160 MiB intercept + the e9 slope. Lossless stays
+/// thread-invariant in the model (γ = 0): the 2026-08-27 sweep measured
+/// threads ≥ 4 at or below t=1.
 const LOSSLESS_BPP_BASE: f64 = 92.0;
 const LOSSLESS_BPP_E6: f64 = 100.0;
 const LOSSLESS_BPP_TREE: f64 = 128.0;
@@ -200,7 +202,13 @@ const LOSSLESS_BPP_E10: f64 = 160.0;
 /// 256² image; e10's multi-seed ≈ 150 MB).
 #[must_use]
 fn lossless_fixed_overhead(effort: u8) -> u64 {
-    if effort >= 10 {
+    // 2026-08-29 ladder shift (issue #45): multi-seed tree learning (the
+    // ~150 MB size-independent term measured on the pre-shift e10) now
+    // starts at e11; new e10 is single-seed and shares the e9 band. The
+    // e11 TectonicPlate config trial runs its trials sequentially, so its
+    // peak stays one trial's working set — the multi-seed intercept
+    // remains the envelope.
+    if effort >= 11 {
         160 << 20
     } else if effort >= 9 {
         64 << 20
@@ -287,7 +295,11 @@ fn encode_us_per_px(is_lossless: bool, effort: u8) -> f64 {
 /// precompute is folded into the lossy α, not a per-pixel surcharge).
 fn bytes_per_pixel(is_lossless: bool, effort: u8) -> f64 {
     if is_lossless {
-        if effort >= 10 {
+        // Post-2026-08-29-shift: the multi-seed slope band starts at e11
+        // (new e10 is single-seed, e9-equivalent). The two constants are
+        // currently equal (160 B/px), so this boundary only matters if
+        // they diverge on a future re-measure.
+        if effort >= 11 {
             LOSSLESS_BPP_E10
         } else if effort >= 9 {
             LOSSLESS_BPP_E9
@@ -686,7 +698,7 @@ mod tests {
         };
         let lossy7 = p(false, 7);
         let lossy9 = p(false, 9);
-        let (ll5, ll6, ll7, ll10) = (p(true, 5), p(true, 6), p(true, 7), p(true, 10));
+        let (ll5, ll6, ll7, ll11) = (p(true, 5), p(true, 6), p(true, 7), p(true, 11));
         // The buttloop adds little memory: e9 ≥ e7 but well under 2× (it is
         // NOT a step). Asserting the absence of a phantom step guards against
         // re-inflating the buttloop band.
@@ -700,10 +712,11 @@ mod tests {
         );
         // Lossless ramps e5 < e6 < e7 (2026-08-28 bands: e6 100 B/px
         // partial-search, e7 128 full tree-learning) and steps again at
-        // e10 (multi-seed: 160 B/px + a 160 MiB intercept).
+        // e11 (multi-seed post-2026-08-29-shift: 160 B/px + a 160 MiB
+        // intercept).
         assert!(ll6 > ll5, "lossless e6 above e5 base");
         assert!(ll7 > ll6, "lossless full tree-learning step at e7");
-        assert!(ll10 > ll7, "lossless e10 step above the e7-e9 band");
+        assert!(ll11 > ll7, "lossless e11 step above the e7-e10 band");
         // NOTE: the pre-2026-08-28 `ll7 > lossy9` ordering held only
         // because the lossless band was 4-5× stale-high; the lossy e ≥ 7
         // band (135 B/px, a d6.0 envelope) now sits above the re-anchored
@@ -896,9 +909,14 @@ mod tests {
             (2048, 2048, false, 9, 508750),
             (3840, 2160, false, 9, 1053230),
             (4000, 3000, false, 9, 1553020),
-            (256, 256, false, 10, 67333),
-            (1024, 1024, false, 10, 244742),
-            (2048, 2048, false, 10, 541108),
+            // Measured 2026-08-28 at the pre-shift "e10" label (2-seed
+            // multi-seed tree learn) — that behaviour lives at e11 since
+            // the 2026-08-29 ladder shift (issue #45), so the cells pin
+            // the e11 band. Post-shift e10 is single-seed and covered by
+            // the e9 rows above.
+            (256, 256, false, 11, 67333),
+            (1024, 1024, false, 11, 244742),
+            (2048, 2048, false, 11, 541108),
             // rgba (alpha := green)
             (1024, 1024, true, 7, 150367),
             (1024, 1024, true, 9, 213110),

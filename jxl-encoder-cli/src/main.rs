@@ -96,11 +96,13 @@ struct Args {
     #[arg(short, long, default_value = "90")]
     quality: u32,
 
-    /// Effort level (1-12, higher = slower but better compression).
-    /// e10/e11/e12 are our extensions past libjxl's kTortoise=9: longer
+    /// Effort level (1-13, higher = slower but better compression).
+    /// 1-9 mirrors libjxl kFalcon..=kTortoise; e10 supersets libjxl e10
+    /// (kGlacier: finer AC-strategy step, iterative 2x downsampling under
+    /// resampling=2). e11/e12/e13 are our extensions past libjxl: longer
     /// butteraugli convergence (8 / 16 / 32 iters) plus multi-seed tree
-    /// learning + multi-seed butteraugli sweep at e10/e11. Bitstreams stay
-    /// 100% spec-valid. See RFC issue #45.
+    /// learning + multi-seed butteraugli sweep. Bitstreams stay 100%
+    /// spec-valid. See RFC issue #45 (2026-08-29 ladder shift).
     #[arg(short, long, default_value = "7")]
     effort: u8,
 

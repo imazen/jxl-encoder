@@ -1955,9 +1955,10 @@ pub(crate) fn w44_audit_5_p3_force_libjxl_parity_for_screenshot(
 pub struct VarDctEncoder {
     /// Target distance (quality). 1.0 = visually lossless.
     pub distance: f32,
-    /// Effort level (1–12). Controls AC strategy gating and search depth.
-    /// e10/e11/e12 extends libjxl kTortoise=9 via extended search budgets
-    /// (e12 doubles butteraugli_iters 16 → 32; requires `ITER_MAX = 32`).
+    /// Effort level (1–13). Controls AC strategy gating and search depth.
+    /// e10 = libjxl kGlacier superset; e11/e12/e13 extend past libjxl via
+    /// longer search budgets (8/16/32 butteraugli iters; `ITER_MAX = 32`).
+    /// 2026-08-29 ladder shift (issue #45).
     pub effort: u8,
     /// Centralized effort-derived decisions. All effort-gated constants and
     /// thresholds are read from this profile instead of inline `if effort >= N`.

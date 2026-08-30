@@ -173,6 +173,19 @@
 
 ### QUEUED BREAKING CHANGES
 <!-- Batched for the next major (0.4.0). Do NOT ship piecemeal. -->
+- **Effort numbering above 9 shifted by +1 to align with libjxl** (issue
+  #45, 2026-08-29): libjxl now ships e10 (kGlacier) and expert e11
+  (kTectonicPlate), so our extended tiers moved up one — pre-shift
+  e10/e11/e12 behaviours (8/16/32 butteraugli iters, 2/16/16 tree-learn
+  seeds, 2/4/4 buttloop seeds) now live at e11/e12/e13, and
+  `EFFORT_RANGE` widened to `1..=13`. New e10 = a superset of libjxl e10:
+  `fine_grained_step = 1` (already at e≥10), the newly ported
+  `DownsampleImage2_Iterative` under `with_resampling(2)`, and a forced
+  global MA tree in `SectionedTrees::Auto`. e1–e9 output is
+  byte-identical (hash-locks unchanged); one opt-in exception: lossy
+  `with_lf_frame(true)` at e9 loses the accidental 2-seed DC-subframe
+  tree learn the old `effort+1 → e10` mapping picked up (now
+  libjxl-faithful single-seed).
 - **0.4.0 will narrow the public API surface.** `cargo semver-checks` vs
   published 0.3.1 found 4 breaks already present on HEAD (see
   `docs/RELEASE_SEMVER_0.3.1_to_0.3.2.md`): new pub fields on `FileHeader`

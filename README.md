@@ -160,9 +160,16 @@ let jxl = LosslessConfig::new()
     .encode(&pixels, width, height, PixelLayout::Rgb8)?;
 ```
 
-Valid effort is **`1..=12`**. `1..=9` mirrors libjxl's `kFalcon..=kTortoise` ladder;
-`10..=12` are this crate's extended search budgets (longer butteraugli / tree-learn
-seeds, still 100 %-spec-valid bitstreams). Higher effort = slower, better compression.
+Valid effort is **`1..=13`**. `1..=9` mirrors libjxl's `kFalcon..=kTortoise` ladder.
+**e10** aligns with libjxl e10 (kGlacier) as a superset — finer non-aligned
+AC-strategy search plus the iterative 2× downsampler when `with_resampling(2)`
+is set (lossless e10 output matches e9, whose behaviour already covers libjxl
+e10's modular additions). **`11..=13`** are this crate's extended search budgets
+(8/16/32 butteraugli iterations, multi-seed butteraugli + tree-learn search —
+still 100 %-spec-valid bitstreams). Effort numbering above 9 shifted by +1 on
+2026-08-29 to align with libjxl's new e10/e11 tiers: pre-shift e10/e11/e12
+behaviours now live at e11/e12/e13 (see issue #45). Higher effort = slower,
+better compression.
 
 ## Cancellation
 

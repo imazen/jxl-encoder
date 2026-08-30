@@ -579,13 +579,15 @@ impl EntropyMulTable {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct EffortProfile {
-    /// The raw effort level (1–12).
+    /// The raw effort level (1–13).
     ///
-    /// e10/e11/e12 extends libjxl's kTortoise=9 ceiling: those levels reuse
-    /// the e9 code paths but get extended search budgets on the knobs that
-    /// scale (`butteraugli_iters`, `tree_learn_seeds`, `lossy_search_seeds`).
-    /// e12 doubles `butteraugli_iters` from 16 → 32 (RFC#45 chunk 2) and
-    /// requires the `ITER_MAX = 32` cap bump in `validation.rs`.
+    /// `1..=9` mirrors libjxl kFalcon..=kTortoise; e10 aligns with libjxl
+    /// e10 (kGlacier: `fine_grained_step = 1`, iterative 2× downsampling,
+    /// forced global MA tree) as a superset. e11/e12/e13 extend past
+    /// libjxl with longer search budgets on the knobs that scale
+    /// (`butteraugli_iters` 8/16/32, `tree_learn_seeds` 2/16/16,
+    /// `lossy_search_seeds` 2/4/4) plus the e11+ lossless per-image
+    /// config trial (2026-08-29 ladder shift, issue #45).
     pub effort: u8,
 
     // ─── Feature flags ───────────────────────────────────────────────────
@@ -1242,18 +1244,18 @@ pub struct EffortProfile {
     /// tree with multiple stride offsets (or RNG seeds in the future)
     /// and picking the cheapest-encoding tree closes part of that gap.
     ///
-    /// Effort interaction (set by `Self::tree_learn_seeds_for`):
-    /// - effort ≤ 9: `1` (single run — libjxl-equivalent, byte-identical
-    ///   to the pre-RFC#45-chunk-2 baseline)
-    /// - effort = 10: `2`
-    /// - effort = 11: `8` (RFC#45 chunk 5 — expanded from 4 so that
-    ///   chunk-3-only perturbations (seeds 0..3) and chunk-4
-    ///   perturbations (seeds 4..7) can both contribute candidate trees
-    ///   instead of overwriting each other inside a fixed 4-seed budget)
+    /// Effort interaction (set by `Self::tree_learn_seeds_for`; tier
+    /// labels shifted +1 by the 2026-08-29 ladder shift, issue #45):
+    /// - effort ≤ 10: `1` (single run — libjxl-equivalent, byte-identical
+    ///   to the pre-RFC#45-chunk-2 baseline; libjxl e10 kGlacier adds no
+    ///   multi-seed learning either)
+    /// - effort = 11: `2`
+    /// - effort ≥ 12: `16` (RFC#45 chunks 5+6 — each variance dimension
+    ///   gets its own 4-seed slot; see `tree_learn_seeds_for`)
     ///
     /// Bitstream-valid: each seed produces a normal, spec-valid tree;
     /// the picker just chooses among them. Bytes change only when
-    /// `seeds > 1` (e10/e11) — no hash-lock churn at e ≤ 9.
+    /// `seeds > 1` (e11+) — no hash-lock churn at e ≤ 10.
     ///
     /// `0` is treated as `1` (defensive). Read by
     /// `modular/tree_learn.rs::select_best_tree_multi_seed`.
@@ -1347,13 +1349,16 @@ pub struct EffortProfile {
 impl EffortProfile {
     /// Create an effort profile for lossy (VarDCT) encoding.
     ///
-    /// Accepts effort in `1..=12`. e10/e11/e12 are our extensions beyond
-    /// libjxl's kTortoise=9 ceiling: longer search budgets (more butteraugli
-    /// iters at e10/e11/e12 — 8/16/32 respectively — and multi-seed tree
-    /// learning at e10+ in a follow-on chunk). The bitstream remains 100%
-    /// spec-valid — only encoder search effort changes.
+    /// Accepts effort in `1..=13` (2026-08-29 ladder shift, issue #45).
+    /// `1..=9` mirrors libjxl kFalcon..=kTortoise; e10 is a superset of
+    /// libjxl e10 (kGlacier: finer non-aligned AC-strategy step +
+    /// iterative 2× downsampling under `with_resampling(2)`); e11/e12/e13
+    /// are our extensions beyond libjxl: longer search budgets (8/16/32
+    /// butteraugli iters) and multi-seed search (2/4/4 buttloop seeds).
+    /// The bitstream remains 100% spec-valid — only encoder search effort
+    /// changes.
     pub fn lossy(effort: u8, mode: EncoderMode) -> Self {
-        let effort = effort.clamp(1, 12);
+        let effort = effort.clamp(1, 13);
         match mode {
             EncoderMode::Reference => Self::lossy_reference(effort),
             EncoderMode::Experimental => Self::lossy_experimental(effort),
@@ -1362,13 +1367,15 @@ impl EffortProfile {
 
     /// Create an effort profile for lossless (modular) encoding.
     ///
-    /// Accepts effort in `1..=12`. e10/e11/e12 reserve future multi-seed
-    /// tree learning (chunk 2 of RFC#45 pick #1). Today they fall through
-    /// to the e9 (kTortoise) lossless code paths; only the multi-seed
-    /// knobs `tree_learn_seeds` consume the extra budget on lossless
-    /// (lossy adds `butteraugli_iters` and `lossy_search_seeds`).
+    /// Accepts effort in `1..=13` (2026-08-29 ladder shift, issue #45).
+    /// Lossless e10 is byte-identical to e9 at the profile level — our e9
+    /// already covers libjxl e10's modular additions (global MA tree,
+    /// per-leaf predictor search, no chunked encoding). e11 adds 2-seed
+    /// tree learning plus the libjxl-e11-style per-image config trial
+    /// (TectonicPlate schedule, applied at the encode layer); e12/e13
+    /// fan out 16 tree-learning seeds.
     pub fn lossless(effort: u8, mode: EncoderMode) -> Self {
-        let effort = effort.clamp(1, 12);
+        let effort = effort.clamp(1, 13);
         match mode {
             EncoderMode::Reference => Self::lossless_reference(effort),
             EncoderMode::Experimental => Self::lossless_experimental(effort),
@@ -1421,24 +1428,30 @@ impl EffortProfile {
                 // (enc_adaptive_quantization.cc:1282). kDefaultButteraugliIters=2,
                 // kMaxButteraugliIters=4 for kTortoise (effort 9+).
                 //
-                // RFC#45 chunk 1 + chunk 2: e10/e11/e12 extend the budget past
-                // libjxl's cap on a power-of-two ladder (8 → 16 → 32). The loop
-                // structurally bounds itself at `MAX_QUANT_LOOP_ITERS = ITER_MAX`
-                // (see validation.rs:152 — bumped to 32 in chunk 2 to admit e12),
-                // so `_ => 32` is the natural saturation point.
+                // RFC#45 extended tiers (renumbered by the 2026-08-29 ladder
+                // shift, issue #45: libjxl now ships e10 kGlacier / e11
+                // kTectonicPlate, so our extended tiers moved up one to keep
+                // e10 aligned with libjxl e10). e10 keeps libjxl's 4-iter cap
+                // (kGlacier adds no buttloop iterations); e11/e12/e13 extend
+                // the budget past libjxl on a power-of-two ladder
+                // (8 → 16 → 32). The loop structurally bounds itself at
+                // `MAX_QUANT_LOOP_ITERS = ITER_MAX` (validation.rs — 32,
+                // set when the 32-iter tier was admitted), so `_ => 32` is
+                // the natural saturation point.
                 //
-                // Per W21-2 chunk-1 acceptance, e11's 16 iters saturate the
-                // single-axis loop on most photo cells; e12 doubling to 32 is
+                // Per W21-2 chunk-1 acceptance, 16 iters saturate the
+                // single-axis loop on most photo cells; the 32-iter tier is
                 // motivated by (a) per-image variance — a minority of cells
                 // continue to refine past iter 16 in the existing convergence
-                // log, and (b) keeping the per-effort doubling pattern so the
-                // e12 admit gate has a concrete differentiator vs e11 (RFC#45
-                // chunk-2 acceptance bench: `benchmarks/effort_12_admit_2026-05-18.tsv`).
+                // log, and (b) keeping the per-effort doubling pattern
+                // (RFC#45 chunk-2 acceptance bench:
+                // `benchmarks/effort_12_admit_2026-05-18.tsv`, pre-shift
+                // tier labels).
                 0..=7 => 0,
                 8 => 2,
-                9 => 4,
-                10 => 8,
-                11 => 16,
+                9 | 10 => 4,
+                11 => 8,
+                12 => 16,
                 _ => 32,
             },
 
@@ -1459,16 +1472,15 @@ impl EffortProfile {
             try_dct64: effort >= 7,
             try_dct4x8_afv: effort >= 6,
             non_aligned_eval: effort >= 6,
-            // libjxl gates step=1 at `speed_tier < kTortoise` (effort >= 10 on our
-            // scale); at speed_tier >= kTortoise (effort 1..=9 on our scale, which
-            // maps to libjxl kTortoise/kKitten/.../kLightning) it uses step=2.
-            // See libjxl `enc_ac_strategy.cc:1046`:
+            // libjxl gates step=1 at `speed_tier < kTortoise` (effort >= 10 on
+            // BOTH scales since the 2026-08-29 ladder shift: libjxl e10 =
+            // kGlacier, e11 = kTectonicPlate); at speed_tier >= kTortoise
+            // (effort 1..=9) it uses step=2. See libjxl `enc_ac_strategy.cc:1046`:
             //   `size_t step = cparams.speed_tier >= SpeedTier::kTortoise ? 2 : 1;`
             // W38-2 wedge #1.1 found we had this inverted at e9 — we were doing
             // 4× more 32×32 search work than libjxl at the same effort and finding
             // worse partitions (the cost model favours the libjxl-spaced grid).
-            // Keep the finer step=1 only at our e10+ where we explicitly extend
-            // libjxl past kGlacier.
+            // step=1 at e >= 10 is now exact libjxl parity (kGlacier and below).
             fine_grained_step: if effort >= 10 { 1 } else { 2 },
 
             // ── VarDCT pipeline ──
@@ -2017,9 +2029,12 @@ impl EffortProfile {
     }
 
     /// Number of multi-seed tree-learning runs by effort (RFC#45 pick #1
-    /// chunk 2, extended by chunks 5 + 6). e ≤ 9 keeps the single-pass
-    /// libjxl behaviour (byte-identical hash-locks); e10/e11 fan out
-    /// 2 / 16 seeded runs and pick the cheapest-encoding tree.
+    /// chunk 2, extended by chunks 5 + 6; tier labels shifted +1 by the
+    /// 2026-08-29 ladder shift). e ≤ 10 keeps the single-pass libjxl
+    /// behaviour (byte-identical hash-locks); e11/e12+ fan out 2 / 16
+    /// seeded runs and pick the cheapest-encoding tree. The chunk notes
+    /// below predate the shift — read their "e10/e11" as today's
+    /// "e11/e12".
     ///
     /// Chunk 6 raised e11 from 8 → 16 seeds by adding two new variance
     /// dimensions on top of chunks 3-5. The 16-seed layout is:
@@ -2046,22 +2061,29 @@ impl EffortProfile {
     /// being recombined with the others inside a fixed budget.
     fn tree_learn_seeds_for(effort: u8) -> u8 {
         match effort {
-            0..=9 => 1,
-            10 => 2,
+            // e10 stays single-pass since the 2026-08-29 ladder shift
+            // (issue #45): new e10 = libjxl kGlacier parity + our e9
+            // extras only — the multi-seed extensions start at e11.
+            0..=10 => 1,
+            11 => 2,
             _ => 16,
         }
     }
 
     /// Number of butteraugli-loop seeds to run by effort (RFC#45 pick #1
-    /// chunk 3). e ≤ 9 keeps the single-seed libjxl behaviour
-    /// (bit-identical hash-locks); e10 fans out 2 seeds, e11 fans out 4,
-    /// and the picker keeps the smallest-bytes seed that meets target
-    /// butteraugli. See [`EffortProfile::lossy_search_seeds`] for the
-    /// selection rule and seed values.
+    /// chunk 3; tier labels shifted +1 by the 2026-08-29 ladder shift).
+    /// e ≤ 10 keeps the single-seed libjxl behaviour (bit-identical
+    /// hash-locks); e11 fans out 2 seeds, e12+ fans out 4, and the picker
+    /// keeps the smallest-bytes seed that meets target butteraugli. See
+    /// [`EffortProfile::lossy_search_seeds`] for the selection rule and
+    /// seed values.
     fn lossy_search_seeds_for(effort: u8) -> u8 {
         match effort {
-            0..=9 => 1,
-            10 => 2,
+            // e10 stays single-seed since the 2026-08-29 ladder shift
+            // (issue #45): new e10 = libjxl kGlacier parity + our e9
+            // extras only — the multi-seed extensions start at e11.
+            0..=10 => 1,
+            11 => 2,
             _ => 4,
         }
     }
@@ -3449,11 +3471,11 @@ mod tests {
                 "e{effort}: libjxl kTortoise+ uses step=2"
             );
         }
-        for effort in 10..=12 {
+        for effort in 10..=13 {
             let p = EffortProfile::lossy(effort, EncoderMode::Reference);
             assert_eq!(
                 p.fine_grained_step, 1,
-                "e{effort}: extended past libjxl kGlacier uses finer step=1"
+                "e{effort}: libjxl kGlacier-and-below parity uses finer step=1"
             );
         }
     }
@@ -3497,41 +3519,42 @@ mod tests {
         let p = EffortProfile::lossy(0, EncoderMode::Reference);
         assert_eq!(p.effort, 1);
         // RFC#45 chunk 1: clamp bumped 10 → 11 to admit e10/e11.
-        // RFC#45 chunk 2: clamp bumped 11 → 12 to admit e12 (32 iters).
+        // 2026-08-29 ladder shift: clamp bumped 12 → 13 (issue #45).
         let p = EffortProfile::lossy(99, EncoderMode::Reference);
-        assert_eq!(p.effort, 12);
+        assert_eq!(p.effort, 13);
     }
 
     #[test]
-    fn test_lossy_search_seeds_e10_e11_extended() {
-        // RFC#45 chunk 3: multi-seed butteraugli sweep at e10/e11.
-        // e ≤ 9 keeps the libjxl single-seed behaviour (bit-identical
-        // hash-locks); e10/e11/e12 fan out 2/4/4 seeds (the seed table
-        // saturates at 4 — see `init_mul_seeds()`; e12 inherits e11's
-        // 4-seed fan-out because chunk 2 differentiates e12 via the
-        // `butteraugli_iters` axis, not the seed-count axis) and pick
-        // smallest bytes.
-        for effort in 1..=9 {
+    fn test_lossy_search_seeds_extended_tiers() {
+        // RFC#45 pick #1 chunk 3, renumbered by the 2026-08-29 ladder
+        // shift: multi-seed butteraugli sweep starts at e11. e ≤ 10 keeps
+        // the libjxl single-seed behaviour (bit-identical hash-locks —
+        // libjxl e10 kGlacier adds no buttloop seeds either);
+        // e11/e12/e13 fan out 2/4/4 seeds (the seed table saturates at 4
+        // — see `init_mul_seeds()`; e13 inherits e12's 4-seed fan-out
+        // because the top tier differentiates via the `butteraugli_iters`
+        // axis, not the seed-count axis) and pick smallest bytes.
+        for effort in 1..=10 {
             let p = EffortProfile::lossy(effort, EncoderMode::Reference);
             assert_eq!(
                 p.lossy_search_seeds, 1,
                 "e{effort}: single seed (libjxl-equivalent)"
             );
         }
-        let p10 = EffortProfile::lossy(10, EncoderMode::Reference);
         let p11 = EffortProfile::lossy(11, EncoderMode::Reference);
         let p12 = EffortProfile::lossy(12, EncoderMode::Reference);
-        assert_eq!(p10.lossy_search_seeds, 2, "e10 = 2× seeds");
-        assert_eq!(p11.lossy_search_seeds, 4, "e11 = 4× seeds");
+        let p13 = EffortProfile::lossy(13, EncoderMode::Reference);
+        assert_eq!(p11.lossy_search_seeds, 2, "e11 = 2× seeds");
+        assert_eq!(p12.lossy_search_seeds, 4, "e12 = 4× seeds");
         assert_eq!(
-            p12.lossy_search_seeds, 4,
-            "e12 = 4× seeds (caps at init_mul_seeds table length)"
+            p13.lossy_search_seeds, 4,
+            "e13 = 4× seeds (caps at init_mul_seeds table length)"
         );
 
         // Lossless never runs the buttloop; field must stay at 1 so a
         // future lossless caller that accidentally checks it doesn't
         // launch a phantom sweep.
-        for effort in 1..=12 {
+        for effort in 1..=13 {
             let p = EffortProfile::lossless(effort, EncoderMode::Reference);
             assert_eq!(
                 p.lossy_search_seeds, 1,
@@ -3540,10 +3563,10 @@ mod tests {
         }
 
         // Experimental inherits the reference value.
-        let pe11 = EffortProfile::lossy(11, EncoderMode::Experimental);
         let pe12 = EffortProfile::lossy(12, EncoderMode::Experimental);
-        assert_eq!(pe11.lossy_search_seeds, 4);
+        let pe13 = EffortProfile::lossy(13, EncoderMode::Experimental);
         assert_eq!(pe12.lossy_search_seeds, 4);
+        assert_eq!(pe13.lossy_search_seeds, 4);
     }
 
     #[test]
@@ -3580,41 +3603,47 @@ mod tests {
     }
 
     #[test]
-    fn test_butteraugli_iters_e10_e11_extended() {
-        // RFC#45 chunk 1 + chunk 2: longer butteraugli search budgets at
-        // e10/e11/e12 on a power-of-two ladder (8 → 16 → 32). e12 is the
-        // new chunk-2 tier and requires the `ITER_MAX = 32` cap (was 16).
-        // e9 = libjxl kTortoise max (4 iters).
+    fn test_butteraugli_iters_extended_tiers() {
+        // RFC#45 chunks 1 + 2, renumbered by the 2026-08-29 ladder shift:
+        // longer butteraugli search budgets at e11/e12/e13 on a
+        // power-of-two ladder (8 → 16 → 32). e9 = libjxl kTortoise max
+        // (4 iters); e10 keeps the 4-iter cap — libjxl kGlacier adds no
+        // buttloop iterations, and new e10 = kGlacier parity + e9 extras.
         let p9 = EffortProfile::lossy(9, EncoderMode::Reference);
         let p10 = EffortProfile::lossy(10, EncoderMode::Reference);
         let p11 = EffortProfile::lossy(11, EncoderMode::Reference);
         let p12 = EffortProfile::lossy(12, EncoderMode::Reference);
+        let p13 = EffortProfile::lossy(13, EncoderMode::Reference);
         assert_eq!(p9.butteraugli_iters, 4, "e9 = libjxl kTortoise default");
-        assert_eq!(p10.butteraugli_iters, 8, "e10 = 2× e9 budget");
-        assert_eq!(p11.butteraugli_iters, 16, "e11 = 4× e9 budget");
         assert_eq!(
-            p12.butteraugli_iters, 32,
-            "e12 = 8× e9, saturated at MAX_QUANT_LOOP_ITERS = 32"
+            p10.butteraugli_iters, 4,
+            "e10 = libjxl kGlacier (no extra iters)"
+        );
+        assert_eq!(p11.butteraugli_iters, 8, "e11 = 2× e9 budget");
+        assert_eq!(p12.butteraugli_iters, 16, "e12 = 4× e9 budget");
+        assert_eq!(
+            p13.butteraugli_iters, 32,
+            "e13 = 8× e9, saturated at MAX_QUANT_LOOP_ITERS = 32"
         );
         // Sanity: stays at saturation cap even if effort overshoots.
-        // (The lossy() clamp pins at 12; verify the table never returns
+        // (The lossy() clamp pins at 13; verify the table never returns
         // anything above the loop's structural cap.)
         assert!(
-            p12.butteraugli_iters <= crate::api::MAX_QUANT_LOOP_ITERS,
+            p13.butteraugli_iters <= crate::api::MAX_QUANT_LOOP_ITERS,
             "butteraugli_iters must not exceed MAX_QUANT_LOOP_ITERS"
         );
-        // The cap itself should be 32 in chunk 2 (was 16 in chunk 1).
+        // The cap itself stays 32 across the ladder shift.
         assert_eq!(
             crate::api::MAX_QUANT_LOOP_ITERS,
             32,
-            "RFC#45 chunk 2 bumps MAX_QUANT_LOOP_ITERS from 16 to 32 to admit e12"
+            "ITER_MAX stays 32 across the 2026-08-29 ladder shift"
         );
     }
 
     #[test]
     fn test_experimental_diverges_from_reference() {
         // Experimental should share effort/feature-flag structure with reference
-        for effort in 1..=12 {
+        for effort in 1..=13 {
             let r = EffortProfile::lossy(effort, EncoderMode::Reference);
             let e = EffortProfile::lossy(effort, EncoderMode::Experimental);
             assert_eq!(r.effort, e.effort);
@@ -4040,7 +4069,7 @@ mod tests {
     #[test]
     fn test_lossless_experimental_matches_reference() {
         // Lossless experimental is currently identical to reference
-        for effort in 1..=12 {
+        for effort in 1..=13 {
             let r = EffortProfile::lossless(effort, EncoderMode::Reference);
             let e = EffortProfile::lossless(effort, EncoderMode::Experimental);
             assert_eq!(r.effort, e.effort);
@@ -4088,7 +4117,7 @@ mod tests {
         // Lossy and lossless both surface the parallel-tree-learning knobs
         // (lossy uses tree learning for patch reference frames). The defaults
         // must match so a picker sees one canonical schedule per effort.
-        for effort in 1u8..=12 {
+        for effort in 1u8..=13 {
             let l = EffortProfile::lossless(effort, EncoderMode::Reference);
             let v = EffortProfile::lossy(effort, EncoderMode::Reference);
             assert_eq!(l.tree_parallel_max_depth, v.tree_parallel_max_depth);
@@ -4145,7 +4174,7 @@ mod tests {
     #[test]
     fn test_adapt_small_image_fallback_threshold() {
         // Default profile starts with fallback OFF.
-        for effort in 1u8..=12 {
+        for effort in 1u8..=13 {
             let p = EffortProfile::lossless(effort, EncoderMode::Reference);
             assert!(
                 !p.tree_parallel_small_image_fallback,
@@ -4170,7 +4199,7 @@ mod tests {
 
         // At/above size threshold: gate stays OFF (regardless of effort).
         for &pixels in &[SMALL_IMAGE_PIXEL_THRESHOLD, 1_048_576, 4_194_304, 8_000_000] {
-            for effort in 1u8..=12 {
+            for effort in 1u8..=13 {
                 let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
                 p.adapt_small_image_fallback(pixels);
                 assert!(
@@ -4273,7 +4302,7 @@ mod tests {
 
         // 4. Cross-product spot check: all (effort, pixels) cells outside
         //    the (effort>=9 AND pixels>=4MP) box leave the profile unchanged.
-        for effort in 1u8..=12 {
+        for effort in 1u8..=13 {
             for &pixels in &[262_144u64, 1_048_576, 3_999_999] {
                 let mut p = EffortProfile::lossless(effort, EncoderMode::Reference);
                 let want = baseline(effort);

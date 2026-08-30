@@ -1602,7 +1602,8 @@ impl VarDctEncoder {
         // `self.butteraugli_iters`) so Mode C TexturedExtend (0 → 2 at
         // e7) and Mode B SmoothSkip (iters - 1 at e8+) take effect.
         let iters = (resolved_iter_count.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
-        // RFC#45 chunk 1 + chunk 2: e10/e11/e12 push butteraugli_iters to
+        // RFC#45 chunks 1 + 2 (tiers renumbered +1 by the 2026-08-29
+        // ladder shift): e11/e12/e13 push butteraugli_iters to
         // 8/16/32 via the effort table (see effort.rs). The saturating
         // `.min()` above already bounds the loop; this debug-assert documents
         // the structural invariant so future effort levels can't sneak past

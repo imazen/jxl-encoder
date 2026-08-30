@@ -10,15 +10,12 @@
 //! signaling the decoder to upsample after decoding can dramatically
 //! cut file size at the same perceived quality.
 //!
-//! This module ports the simple box-filter half of libjxl's
-//! `image_ops.cc:44-98` (used for 4× and 8×). The 2× case in
-//! libjxl uses a 12×12 sharper kernel for better quality; we keep
-//! both cases on the simple box filter for now (foundation only —
-//! the sharper 2× kernel + the auto-select-at-d=10 logic + the
-//! frame-header `upsampling` wire-up are TBD).
-//!
-//! libjxl reference: `enc_heuristics.cc:279-405` (sharper 12×12)
-//! and `image_ops.cc:44-98` (simple box).
+//! This module ports libjxl's three downsamplers: the simple box filter
+//! (`image_ops.cc:44-98`, used for 4× and 8×), the 12×12 sharper 2×
+//! kernel (`enc_heuristics.cc:279-405`, our 2× default at effort ≤ 9),
+//! and the iterative 2× refinement (`enc_heuristics.cc:425-780`,
+//! `DownsampleImage2_Iterative` — used at effort ≥ 10 to mirror libjxl's
+//! `speed_tier <= kGlacier` gate at `enc_frame.cc:752`; issue #45).
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -449,6 +446,391 @@ pub fn sharper_downsample_2x_rgb(
     Ok((out, out_w as u32, out_h as u32))
 }
 
+// ── Iterative 2× downsampler (libjxl `DownsampleImage2_Iterative`) ──────
+//
+// Ported from libjxl `enc_heuristics.cc:425-780` (@ d089091). libjxl uses
+// this at `speed_tier <= kGlacier` (effort ≥ 10) when `upsampling == 2`:
+// it refines the sharper-kernel result so that the DECODER's default 2×
+// upsampler reproduces the original as closely as possible (3 rounds of
+// gradient correction through the upsampler's adjoint), then clamps
+// ringing against the box-downsampled neighborhood. libjxl applies it to
+// the opsin (XYB) planes; we apply it to linear RGB pre-XYB, matching the
+// existing sharper-2× wiring (documented divergence — see
+// docs/LIBJXL_DIVERGENCES.md).
+//
+// The libjxl `Image3F` wrapper also builds a butteraugli mask it never
+// uses (`mask` / `mask_fuzzy` in `DownsampleImage2_Iterative(Image3F*)`
+// are dead stores upstream); we port only the live per-plane algorithm.
+
+/// The decoder's default 2× upsampling kernels (`dec_upsample.cc` default
+/// `CustomTransformData`), transcribed from libjxl
+/// `enc_heuristics.cc:429-460`. One 5×5 kernel per output-pixel phase
+/// (even/odd x × even/odd y).
+const UPSAMPLE2_KERNEL_00: [f32; 25] = [
+    -0.01716200,
+    -0.03452303,
+    -0.04022174,
+    -0.02921014,
+    -0.00624645, //
+    -0.03452303,
+    0.14111091,
+    0.28896755,
+    0.00278718,
+    -0.01610267, //
+    -0.04022174,
+    0.28896755,
+    0.56661550,
+    0.03777607,
+    -0.01986694, //
+    -0.02921014,
+    0.00278718,
+    0.03777607,
+    -0.03144731,
+    -0.01185068, //
+    -0.00624645,
+    -0.01610267,
+    -0.01986694,
+    -0.01185068,
+    -0.00213539,
+];
+const UPSAMPLE2_KERNEL_01: [f32; 25] = [
+    -0.00624645,
+    -0.01610267,
+    -0.01986694,
+    -0.01185068,
+    -0.00213539, //
+    -0.02921014,
+    0.00278718,
+    0.03777607,
+    -0.03144731,
+    -0.01185068, //
+    -0.04022174,
+    0.28896755,
+    0.56661550,
+    0.03777607,
+    -0.01986694, //
+    -0.03452303,
+    0.14111091,
+    0.28896755,
+    0.00278718,
+    -0.01610267, //
+    -0.01716200,
+    -0.03452303,
+    -0.04022174,
+    -0.02921014,
+    -0.00624645,
+];
+const UPSAMPLE2_KERNEL_10: [f32; 25] = [
+    -0.00624645,
+    -0.02921014,
+    -0.04022174,
+    -0.03452303,
+    -0.01716200, //
+    -0.01610267,
+    0.00278718,
+    0.28896755,
+    0.14111091,
+    -0.03452303, //
+    -0.01986694,
+    0.03777607,
+    0.56661550,
+    0.28896755,
+    -0.04022174, //
+    -0.01185068,
+    -0.03144731,
+    0.03777607,
+    0.00278718,
+    -0.02921014, //
+    -0.00213539,
+    -0.01185068,
+    -0.01986694,
+    -0.01610267,
+    -0.00624645,
+];
+const UPSAMPLE2_KERNEL_11: [f32; 25] = [
+    -0.00213539,
+    -0.01185068,
+    -0.01986694,
+    -0.01610267,
+    -0.00624645, //
+    -0.01185068,
+    -0.03144731,
+    0.03777607,
+    0.00278718,
+    -0.02921014, //
+    -0.01986694,
+    0.03777607,
+    0.56661550,
+    0.28896755,
+    -0.04022174, //
+    -0.01610267,
+    0.00278718,
+    0.28896755,
+    0.14111091,
+    -0.03452303, //
+    -0.00624645,
+    -0.02921014,
+    -0.04022174,
+    -0.03452303,
+    -0.01716200,
+];
+
+/// 5×5 kernel side (libjxl `kSize`).
+const UPSAMPLE2_KSIZE: i64 = 5;
+
+#[inline]
+fn upsample2_kernel(x: i64, y: i64) -> &'static [f32; 25] {
+    match ((x & 1) != 0, (y & 1) != 0) {
+        (true, true) => &UPSAMPLE2_KERNEL_11,
+        (true, false) => &UPSAMPLE2_KERNEL_10,
+        (false, true) => &UPSAMPLE2_KERNEL_01,
+        (false, false) => &UPSAMPLE2_KERNEL_00,
+    }
+}
+
+/// The decoder's default 2× upsampler on one plane (libjxl
+/// `enc_heuristics.cc:UpsampleImage`, itself a mirror of `dec_upsample`
+/// with default `CustomTransformData`): 5×5 kernel per phase with
+/// edge-clamped taps, output clamped to the support's min/max.
+/// `input` is `in_w × in_h`; `out` is `out_w × out_h` (the full-res
+/// dims, `out_w.div_ceil(2) == in_w`).
+fn upsample2_plane(
+    input: &[f32],
+    in_w: usize,
+    in_h: usize,
+    out: &mut [f32],
+    out_w: usize,
+    out_h: usize,
+) {
+    debug_assert_eq!(input.len(), in_w * in_h);
+    debug_assert_eq!(out.len(), out_w * out_h);
+    let (xsize, ysize) = (in_w as i64, in_h as i64);
+    for y in 0..out_h as i64 {
+        for x in 0..out_w as i64 {
+            let kernel = upsample2_kernel(x, y);
+            let (x2, y2) = (x / 2, y / 2);
+            let mut sum = 0.0f32;
+            let mut min = f32::MAX;
+            let mut max = f32::MIN;
+            for ky in 0..UPSAMPLE2_KSIZE {
+                let yi = clamp_idx(y2 - UPSAMPLE2_KSIZE / 2 + ky, ysize);
+                let row = yi * in_w;
+                for kx in 0..UPSAMPLE2_KSIZE {
+                    let xi = clamp_idx(x2 - UPSAMPLE2_KSIZE / 2 + kx, xsize);
+                    let v = input[row + xi];
+                    min = min.min(v);
+                    max = max.max(v);
+                    sum += v * kernel[(ky * UPSAMPLE2_KSIZE + kx) as usize];
+                }
+            }
+            out[(y as usize) * out_w + x as usize] = sum.clamp(min, max);
+        }
+    }
+}
+
+/// Derivative of the 2× upsampler with respect to input pixel `(x2, y2)`
+/// at output pixel `(x, y)`, ignoring the clamp (libjxl `UpsamplerDeriv`).
+#[inline]
+fn upsample2_deriv(x2: i64, y2: i64, x: i64, y: i64) -> f32 {
+    let kernel = upsample2_kernel(x, y);
+    let kx = x2 - x / 2 + UPSAMPLE2_KSIZE / 2;
+    let ky = y2 - y / 2 + UPSAMPLE2_KSIZE / 2;
+    if !(0..UPSAMPLE2_KSIZE).contains(&kx) || !(0..UPSAMPLE2_KSIZE).contains(&ky) {
+        return 0.0;
+    }
+    kernel[(ky * UPSAMPLE2_KSIZE + kx) as usize]
+}
+
+/// Adjoint of the 2× upsampler: accumulates each full-res pixel back into
+/// the half-res grid weighted by the upsampler derivative (libjxl
+/// `AntiUpsample`). `input` is full-res (`in_w × in_h`), `out` is
+/// half-res (`out_w × out_h`). Accumulation matches libjxl's mixed
+/// float/double arithmetic (`double deriv` × float input into a float
+/// accumulator).
+fn anti_upsample2(
+    input: &[f32],
+    in_w: usize,
+    in_h: usize,
+    out: &mut [f32],
+    out_w: usize,
+    out_h: usize,
+) {
+    debug_assert_eq!(input.len(), in_w * in_h);
+    debug_assert_eq!(out.len(), out_w * out_h);
+    let (xsize, ysize) = (in_w as i64, in_h as i64);
+    let k0 = UPSAMPLE2_KSIZE - 1;
+    let k1 = UPSAMPLE2_KSIZE;
+    for y2 in 0..out_h as i64 {
+        for x2 in 0..out_w as i64 {
+            let x0 = (x2 * 2 - k0).max(0);
+            let x1 = (x2 * 2 + k1 + 1).min(xsize);
+            let y0 = (y2 * 2 - k0).max(0);
+            let y1 = (y2 * 2 + k1 + 1).min(ysize);
+            let mut sum = 0.0f32;
+            for y in y0..y1 {
+                let row = (y as usize) * in_w;
+                for x in x0..x1 {
+                    let deriv = f64::from(upsample2_deriv(x2, y2, x, y));
+                    sum = ((f64::from(sum)) + deriv * f64::from(input[row + x as usize])) as f32;
+                }
+            }
+            out[(y2 as usize) * out_w + x2 as usize] = sum;
+        }
+    }
+}
+
+/// Ringing clamp on the iteratively-refined result (libjxl
+/// `ReduceRinging`): bound each output pixel to the 3×3 neighborhood
+/// min/max of the `initial` (sharper) result, widened by
+/// `mask × 2` (libjxl `mask_multiplier = 2`).
+fn reduce_ringing_2x(initial: &[f32], mask: &[f32], down: &mut [f32], w: usize, h: usize) {
+    debug_assert_eq!(initial.len(), w * h);
+    debug_assert_eq!(mask.len(), w * h);
+    debug_assert_eq!(down.len(), w * h);
+    const MASK_MULTIPLIER: f32 = 2.0;
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let idx = (y as usize) * w + x as usize;
+            let mut min = initial[idx];
+            let mut max = initial[idx];
+            for yi in -1..2i64 {
+                for xi in -1..2i64 {
+                    let (x2, y2) = (x + xi, y + yi);
+                    if x2 < 0 || y2 < 0 || x2 >= w as i64 || y2 >= h as i64 {
+                        continue;
+                    }
+                    let v = initial[(y2 as usize) * w + x2 as usize];
+                    min = min.min(v);
+                    max = max.max(v);
+                }
+            }
+            let a = mask[idx] * MASK_MULTIPLIER;
+            down[idx] = down[idx].clamp(min - a, max + a);
+        }
+    }
+}
+
+/// 2×2 box downsample of one plane (libjxl `DownsampleImage(_, 2)`):
+/// unweighted mean over the up-to-2×2 footprint, edge-clipped.
+fn box_downsample_2x_plane(plane: &[f32], w: usize, h: usize, out: &mut [f32], out_w: usize) {
+    for oy in 0..h.div_ceil(2) {
+        let y0 = oy * 2;
+        let y1 = (y0 + 2).min(h);
+        for ox in 0..out_w {
+            let x0 = ox * 2;
+            let x1 = (x0 + 2).min(w);
+            let mut sum = 0.0f32;
+            let mut count = 0u32;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    sum += plane[y * w + x];
+                    count += 1;
+                }
+            }
+            out[oy * out_w + ox] = sum / count as f32;
+        }
+    }
+}
+
+/// Iterative 2× downsample of one plane (libjxl
+/// `DownsampleImage2_Iterative(const ImageF&, ImageF*)`,
+/// `enc_heuristics.cc:658-739`): start from the sharper-kernel result,
+/// then run 3 rounds of `down += AntiUpsample(orig − Upsample(down)) ÷
+/// AntiUpsample(1)` so the decoder's default upsampler reconstructs the
+/// original with minimal error, and finally clamp ringing against the
+/// box-downsampled neighborhood mask.
+fn iterative_downsample_2x_plane(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    out: &mut [f32],
+    out_w: usize,
+    out_h: usize,
+) {
+    debug_assert_eq!(plane.len(), width * height);
+    debug_assert_eq!(out.len(), out_w * out_h);
+    debug_assert_eq!(out_w, width.div_ceil(2));
+    debug_assert_eq!(out_h, height.div_ceil(2));
+
+    // Box-downsample → ringing mask (same CreateMask as the sharper
+    // path, but computed on the box result per libjxl).
+    let mut box_plane = alloc::vec![0.0_f32; out_w * out_h];
+    box_downsample_2x_plane(plane, width, height, &mut box_plane, out_w);
+    let mut mask = alloc::vec![0.0_f32; out_w * out_h];
+    create_ringing_mask(&box_plane, out_w, out_h, &mut mask);
+
+    // Initial result: the sharper 12×12 kernel.
+    let mut initial = alloc::vec![0.0_f32; out_w * out_h];
+    sharper_downsample_2x_plane(plane, width, height, &mut initial, out_w, out_h);
+    let mut down = initial.clone();
+
+    // weights ≡ 1 full-res (libjxl leaves the anti-ringing weights field
+    // at 1 — see the TODO in enc_heuristics.cc:704-709); its adjoint
+    // normalizes the correction, differing from a constant only at the
+    // image borders. `corr ×= weights` is skipped (× 1.0 is exact).
+    let weights = alloc::vec![1.0_f32; width * height];
+    let mut weights2 = alloc::vec![0.0_f32; out_w * out_h];
+    anti_upsample2(&weights, width, height, &mut weights2, out_w, out_h);
+
+    let mut up = alloc::vec![0.0_f32; width * height];
+    let mut corr = alloc::vec![0.0_f32; width * height];
+    let mut corr2 = alloc::vec![0.0_f32; out_w * out_h];
+    const NUM_IT: usize = 3;
+    for _ in 0..NUM_IT {
+        upsample2_plane(&down, out_w, out_h, &mut up, width, height);
+        for (c, (o, u)) in corr.iter_mut().zip(plane.iter().zip(up.iter())) {
+            *c = o - u;
+        }
+        anti_upsample2(&corr, width, height, &mut corr2, out_w, out_h);
+        for (d, (c2, w2)) in down.iter_mut().zip(corr2.iter().zip(weights2.iter())) {
+            *d += c2 / w2;
+        }
+    }
+
+    reduce_ringing_2x(&initial, &mask, &mut down, out_w, out_h);
+    out.copy_from_slice(&down);
+}
+
+/// Iterative 2× downsample (libjxl `DownsampleImage2_Iterative`, used at
+/// `speed_tier <= kGlacier` — our effort ≥ 10 — when `resampling == 2`).
+/// Operates on **interleaved** RGB f32, per channel, like
+/// [`sharper_downsample_2x_rgb`]. Output dims are
+/// `(width.div_ceil(2), height.div_ceil(2))`.
+///
+/// Compared with the sharper kernel alone this minimizes the decoder-side
+/// reconstruction error `‖orig − Upsample2×(down)‖` (3 adjoint-gradient
+/// rounds), at ~4× the sharper path's arithmetic (libjxl documents ~80 %
+/// whole-encode slowdown at high distance, `enc_frame.cc:753-755`).
+pub fn iterative_downsample_2x_rgb(
+    rgb_interleaved: &[f32],
+    width: usize,
+    height: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(Vec<f32>, u32, u32)> {
+    debug_assert_eq!(rgb_interleaved.len(), width * height * 3);
+    let out_w = width.div_ceil(2);
+    let out_h = height.div_ceil(2);
+
+    // Deinterleave into 3 planes (same shape as the sharper wrapper).
+    let mut plane = alloc::vec![0.0_f32; width * height];
+    let mut out_plane = alloc::vec![0.0_f32; out_w * out_h];
+    let mut out = crate::budget::vec_with_capacity_fallible(
+        budget.is_some_and(|b| b.is_fallible()),
+        out_w * out_h * 3,
+    )?;
+    out.resize(out_w * out_h * 3, 0.0);
+    for c in 0..3 {
+        for i in 0..(width * height) {
+            plane[i] = rgb_interleaved[i * 3 + c];
+        }
+        iterative_downsample_2x_plane(&plane, width, height, &mut out_plane, out_w, out_h);
+        for i in 0..(out_w * out_h) {
+            out[i * 3 + c] = out_plane[i];
+        }
+    }
+    Ok((out, out_w as u32, out_h as u32))
+}
+
 /// Box-filter downsample a single-channel u8 buffer (alpha) by an
 /// integer factor. Same semantics as [`box_downsample_rgb`] but for
 /// 1 byte/pixel inputs. Output values are rounded.
@@ -647,5 +1029,131 @@ mod tests {
         // libjxl's kernel sums to within rounding of 1.0; verify our
         // copy matches.
         assert!((s - 1.0).abs() < 0.01, "kernel sum {s} should be ~1.0");
+    }
+
+    // ── Iterative 2× (DownsampleImage2_Iterative port) ──────────────────
+
+    #[test]
+    fn test_upsample2_kernels_sum_to_1_and_mirror() {
+        // Each decoder-upsampler phase kernel preserves DC (sums ≈ 1),
+        // and the four phases are mirror images of each other — both
+        // properties hold in the libjxl table this was transcribed from.
+        for (name, k) in [
+            ("00", &UPSAMPLE2_KERNEL_00),
+            ("01", &UPSAMPLE2_KERNEL_01),
+            ("10", &UPSAMPLE2_KERNEL_10),
+            ("11", &UPSAMPLE2_KERNEL_11),
+        ] {
+            let s: f32 = k.iter().sum();
+            assert!(
+                (s - 1.0).abs() < 0.01,
+                "kernel{name} sum {s} should be ~1.0"
+            );
+        }
+        for ky in 0..5 {
+            for kx in 0..5 {
+                // 01 = vertical mirror of 00; 10 = horizontal mirror;
+                // 11 = both.
+                assert_eq!(
+                    UPSAMPLE2_KERNEL_00[ky * 5 + kx],
+                    UPSAMPLE2_KERNEL_01[(4 - ky) * 5 + kx]
+                );
+                assert_eq!(
+                    UPSAMPLE2_KERNEL_00[ky * 5 + kx],
+                    UPSAMPLE2_KERNEL_10[ky * 5 + (4 - kx)]
+                );
+                assert_eq!(
+                    UPSAMPLE2_KERNEL_00[ky * 5 + kx],
+                    UPSAMPLE2_KERNEL_11[(4 - ky) * 5 + (4 - kx)]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_iterative_2x_dimensions_and_uniform() {
+        // Uniform input stays uniform (kernels preserve DC; the
+        // correction rounds see zero residual), even/odd dims both work.
+        for (w, h) in [(64usize, 64usize), (65, 64), (33, 47)] {
+            let rgb = vec![0.5_f32; w * h * 3];
+            let (out, ow, oh) = iterative_downsample_2x_rgb(&rgb, w, h, None).unwrap();
+            assert_eq!(ow as usize, w.div_ceil(2));
+            assert_eq!(oh as usize, h.div_ceil(2));
+            assert_eq!(out.len(), (ow * oh * 3) as usize);
+            for &v in &out {
+                assert!((v - 0.5).abs() < 0.01, "uniform 0.5 → {v} at {w}x{h}");
+            }
+        }
+    }
+
+    /// Sum of squared reconstruction error after running the DECODER's
+    /// default 2× upsampler on a half-res plane.
+    fn roundtrip_l2(orig: &[f32], down: &[f32], w: usize, h: usize) -> f64 {
+        let (ow, oh) = (w.div_ceil(2), h.div_ceil(2));
+        let mut up = vec![0.0_f32; w * h];
+        upsample2_plane(down, ow, oh, &mut up, w, h);
+        orig.iter()
+            .zip(up.iter())
+            .map(|(o, u)| {
+                let d = f64::from(o - u);
+                d * d
+            })
+            .sum()
+    }
+
+    #[test]
+    fn test_iterative_2x_beats_sharper_on_decoder_roundtrip() {
+        // The whole point of the iterative refinement (libjxl
+        // `DownsampleImage2_Iterative`) is to minimize the error the
+        // DECODER's default upsampler reconstructs with. On structured
+        // content the refined plane must beat the sharper-kernel plane
+        // on that metric. Content: a deterministic mix of gradient +
+        // edges + texture (structure is what the adjoint iterations
+        // exploit; a uniform plane would tie).
+        let (w, h) = (96usize, 80usize);
+        let mut plane = vec![0.0_f32; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let gradient = x as f32 / w as f32;
+                let edge = if (x / 16 + y / 12) % 2 == 0 { 0.6 } else { 0.0 };
+                let texture = 0.08 * (((x * 7 + y * 13) % 11) as f32 / 11.0);
+                plane[y * w + x] = (gradient * 0.3 + edge + texture).min(1.0);
+            }
+        }
+        let (ow, oh) = (w.div_ceil(2), h.div_ceil(2));
+        let mut sharper = vec![0.0_f32; ow * oh];
+        sharper_downsample_2x_plane(&plane, w, h, &mut sharper, ow, oh);
+        let mut iterative = vec![0.0_f32; ow * oh];
+        iterative_downsample_2x_plane(&plane, w, h, &mut iterative, ow, oh);
+
+        let err_sharper = roundtrip_l2(&plane, &sharper, w, h);
+        let err_iterative = roundtrip_l2(&plane, &iterative, w, h);
+        assert!(
+            err_iterative < err_sharper,
+            "iterative must reduce decoder-upsampler roundtrip error: \
+             iterative {err_iterative:.6} vs sharper {err_sharper:.6}"
+        );
+    }
+
+    #[test]
+    fn test_anti_upsample2_weights_positive_and_interior_4() {
+        // AntiUpsample(1) is the per-input-pixel kernel mass: ≈ 4.0 in
+        // the interior (4 output phases, each kernel sums ≈ 1) and
+        // strictly positive everywhere (no division-by-zero in the
+        // correction normalizer).
+        let (w, h) = (20usize, 14usize);
+        let ones = vec![1.0_f32; w * h];
+        let (ow, oh) = (w.div_ceil(2), h.div_ceil(2));
+        let mut w2 = vec![0.0_f32; ow * oh];
+        anti_upsample2(&ones, w, h, &mut w2, ow, oh);
+        for (i, &v) in w2.iter().enumerate() {
+            assert!(v > 0.5, "weights2[{i}] = {v} must be positive");
+        }
+        // A fully-interior cell.
+        let center = w2[(oh / 2) * ow + ow / 2];
+        assert!(
+            (center - 4.0).abs() < 0.05,
+            "interior anti-upsampled weight ≈ 4.0, got {center}"
+        );
     }
 }

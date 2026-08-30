@@ -130,7 +130,8 @@ fn round_hafz(val: f32) -> i32 {
 /// * `xsize_blocks` - Number of 8x8 blocks horizontally
 /// * `ysize_blocks` - Number of 8x8 blocks vertically
 /// * `use_ans` - Whether to use ANS entropy coding
-/// * `effort` - Effort level (1-12; e10/e11/e12 extends libjxl kTortoise=9)
+/// * `effort` - Effort level (1-13; e10 = libjxl kGlacier superset,
+///   e11/e12/e13 extend past libjxl — 2026-08-29 ladder shift)
 /// * `budget` - Optional allocation budget; threads the runtime fallible-alloc
 ///   policy through the dimension-driven DC plane buffers
 #[allow(clippy::too_many_arguments)]
@@ -261,12 +262,14 @@ pub(crate) fn encode_lf_frame(
     // libjxl (enc_cache.cc:134-136) uses one speed_tier SLOWER (= more effort) for DC:
     //   speed_tier' = max(kTortoise, speed_tier - 1)
     // Lower speed_tier = more effort in libjxl. Our effort scale is reversed (higher = more).
-    // So DC gets effort + 1, capped at 12 (RFC#45 chunk-1 + chunk-2 admit-gate
-    // widening: e10/e11/e12 fall through to the e9 (kTortoise) lossless DC
-    // code via EffortProfile::lossless's internal saturation, but we widen the
-    // cap so callers passing with_effort(12) are not silently clipped to 11
-    // here).
-    let lf_effort = (effort + 1).min(12);
+    // So DC gets effort + 1, capped at 13 (the 2026-08-29 ladder-shift
+    // ceiling). Post-shift, e9 input maps to the lossless(10) profile,
+    // which is single-seed e9-equivalent — libjxl-faithful (their DC
+    // frame bump adds no multi-seed learning). Before the shift e9 input
+    // accidentally picked up the old-e10 2-seed tree learn here; opt-in
+    // `with_lf_frame(true)` e9 bytes moved with the shift (documented in
+    // the CHANGELOG entry — no lock covered that cell).
+    let lf_effort = (effort + 1).min(13);
     let mut profile =
         crate::effort::EffortProfile::lossless(lf_effort, crate::api::EncoderMode::Reference);
     // libjxl (enc_cache.cc:121) disables patches for DC frames.

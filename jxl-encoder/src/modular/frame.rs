@@ -42,6 +42,19 @@ enum TreeMode {
 /// per-image byte variance buys nothing without the wall win). Pin
 /// `with_sectioned_trees(On/Off)` for thread-invariant output.
 fn auto_tree_mode(effort: u8, threads: usize, memory_pressure: bool) -> TreeMode {
+    // e ≥ 10 forces the whole-image global tree, even under memory
+    // pressure — libjxl disables chunked/streaming encoding and forces
+    // `ComputeTree` at `speed_tier < kTortoise` (`enc_frame.cc:1692`,
+    // `:1806`), and our e10 supersets libjxl e10 (issue #45 ladder
+    // shift). Via the public API this arm is unreachable under pressure
+    // anyway: the preflight's sectioned estimate band stops at e9
+    // (`heuristics::sectioned_estimate_available`), so an
+    // over-budget e ≥ 10 encode is rejected up front rather than
+    // silently sectioned. An explicit `SectionedTrees::On` still wins —
+    // this gate only decides `Auto`.
+    if effort >= 10 {
+        return TreeMode::Global;
+    }
     if memory_pressure {
         return TreeMode::Sectioned;
     }
@@ -64,13 +77,23 @@ mod tree_mode_tests {
             assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Global, "e{e} t1");
         }
         // e8+ stays global regardless of threads
-        for e in [8u8, 9, 10, 11] {
+        for e in [8u8, 9, 10, 11, 12, 13] {
             assert_eq!(auto_tree_mode(e, 8, false), TreeMode::Global, "e{e} t8");
             assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Global, "e{e} t1");
         }
-        // memory pressure overrides everything (the pre-existing escape)
+        // memory pressure overrides the thread arm at e <= 9 (the
+        // pre-existing escape)
         assert_eq!(auto_tree_mode(9, 1, true), TreeMode::Sectioned);
         assert_eq!(auto_tree_mode(3, 1, true), TreeMode::Sectioned);
+        // …but NOT the e >= 10 global-tree force (libjxl kGlacier
+        // parity: chunked encoding off, global MA tree — issue #45).
+        for e in [10u8, 11, 12, 13] {
+            assert_eq!(
+                auto_tree_mode(e, 8, true),
+                TreeMode::Global,
+                "e{e} pressure: e>=10 Auto still forces the global tree"
+            );
+        }
     }
 }
 
@@ -79,9 +102,10 @@ mod tree_mode_tests {
 pub struct FrameEncoderOptions {
     /// Use modular mode (lossless).
     pub use_modular: bool,
-    /// Effort level (1-12, higher = better compression, slower; e10/e11/e12
-    /// extends libjxl kTortoise=9 with extended search budgets — e12 doubles
-    /// butteraugli iters 16 → 32 on the lossy path).
+    /// Effort level (1-13, higher = better compression, slower; e10 =
+    /// libjxl kGlacier superset, e11/e12/e13 extend past libjxl with
+    /// longer search budgets — 8/16/32 butteraugli iters on the lossy
+    /// path; 2026-08-29 ladder shift).
     pub effort: u8,
     /// Use ANS entropy coding instead of Huffman for modular.
     pub use_ans: bool,

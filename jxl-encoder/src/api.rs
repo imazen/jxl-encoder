@@ -1040,13 +1040,15 @@ impl LosslessConfig {
     /// - **e4–6**: + ANS entropy coding
     /// - **e7**: + content-adaptive tree learning, LZ77 RLE
     /// - **e8**: + LZ77 greedy hash chain
-    /// - **e9–12**: + LZ77 optimal (Viterbi DP)
+    /// - **e9–13**: + LZ77 optimal (Viterbi DP)
     ///
-    /// **e10/e11/e12 are our extensions** beyond libjxl's kTortoise=9 ceiling
-    /// (RFC#45 pick #1, extended in chunk 2 to e12). Today they map to the
-    /// e9 lossless code paths; multi-seed tree learning at e10/e11 fans out
-    /// 2/16 seeded runs. Bitstreams remain 100% spec-valid (djxl / jxl-rs /
-    /// jxl-oxide decode unchanged).
+    /// **e10** aligns with libjxl e10 (kGlacier) — for lossless our e9
+    /// already covers its modular additions (global MA tree, per-leaf
+    /// predictor search, no chunked encoding), so e10 output matches e9.
+    /// **e11/e12/e13 are our extensions** beyond libjxl (RFC#45 pick #1,
+    /// renumbered +1 by the 2026-08-29 ladder shift): multi-seed tree
+    /// learning fans out 2/16/16 seeded runs. Bitstreams remain 100%
+    /// spec-valid (djxl / jxl-rs / jxl-oxide decode unchanged).
     ///
     /// **WARNING — e6→e7 cliff** (#23): tree learning at e7 dominates
     /// the time profile and is significantly slower than e6 (a single
@@ -3153,13 +3155,16 @@ impl LossyConfig {
     /// - **e7**: + patches, error diffusion, CfL two-pass, LZ77 RLE, DCT64 strategies
     /// - **e8**: + butteraugli loop (2 iters), LZ77 greedy, WP param search (2 modes)
     /// - **e9**: + LZ77 optimal (Viterbi DP), 4 butteraugli iters, WP search (5 modes)
-    /// - **e10**: + 8 butteraugli iters, 2 tree-learn seeds (RFC#45 pick #1)
-    /// - **e11**: + 16 butteraugli iters, 4 lossy-search seeds, 16 tree-learn seeds
-    /// - **e12**: + 32 butteraugli iters (RFC#45 chunk 2; requires `MAX_QUANT_LOOP_ITERS = 32`)
+    /// - **e10**: + finer non-aligned AC-strategy step (libjxl kGlacier
+    ///   parity)
+    /// - **e11**: + 8 butteraugli iters, 2 buttloop seeds, 2 tree-learn seeds
+    /// - **e12**: + 16 butteraugli iters, 4 lossy-search seeds, 16 tree-learn seeds
+    /// - **e13**: + 32 butteraugli iters (requires `MAX_QUANT_LOOP_ITERS = 32`)
     ///
-    /// e10/e11/e12 extend libjxl's kTortoise=9 ceiling with strictly-longer
-    /// search budgets; the bitstream remains 100% spec-valid. See RFC issue
-    /// #45.
+    /// e10 supersets libjxl e10; e11/e12/e13 extend past libjxl with
+    /// strictly-longer search budgets (RFC#45 pick #1, renumbered +1 by
+    /// the 2026-08-29 ladder shift); the bitstream remains 100%
+    /// spec-valid. See RFC issue #45.
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
     pub fn with_effort(mut self, effort: u8) -> Self {
@@ -7724,14 +7729,25 @@ impl<'a> EncodeRequest<'a> {
 
         // Apply downsampling for resampling > 1 (refs #12). Factor 2
         // uses libjxl's sharper 12×12 kernel (`enc_heuristics.cc:279`)
-        // which preserves edge detail; factors 4 and 8 use the simple
-        // box filter (libjxl behavior). When `already_downsampled` is
-        // set, the caller has done their own downsample and wants the
-        // encoder to honour the input dims; skip the internal
-        // downsample but keep the upsampling factor in the bitstream.
+        // at effort ≤ 9 and the iterative refinement
+        // (`DownsampleImage2_Iterative`, decoder-upsampler adjoint) at
+        // effort ≥ 10 — mirroring libjxl's `speed_tier <= kGlacier` gate
+        // (`enc_frame.cc:752`, issue #45 ladder shift). Factors 4 and 8
+        // use the simple box filter (libjxl behavior). When
+        // `already_downsampled` is set, the caller has done their own
+        // downsample and wants the encoder to honour the input dims;
+        // skip the internal downsample but keep the upsampling factor
+        // in the bitstream.
         let (encode_rgb, encode_alpha, encode_w, encode_h) =
             if effective_resampling > 1 && !cfg.already_downsampled {
-                let (down_rgb, dw, dh) = if effective_resampling == 2 {
+                let (down_rgb, dw, dh) = if effective_resampling == 2 && cfg.effort >= 10 {
+                    crate::vardct::resampling::iterative_downsample_2x_rgb(
+                        &linear_rgb,
+                        w,
+                        h,
+                        Some(budget),
+                    )?
+                } else if effective_resampling == 2 {
                     crate::vardct::resampling::sharper_downsample_2x_rgb(
                         &linear_rgb,
                         w,
@@ -8934,7 +8950,17 @@ impl LossyEncoder {
             }
 
             let (encode_rgb, encode_alpha, encode_w, encode_h) = if effective_resampling > 1 {
-                let (down_rgb, dw, dh) = if effective_resampling == 2 {
+                // Factor-2 kernel choice mirrors the one-shot path (and
+                // libjxl `enc_frame.cc:752`): iterative at effort ≥ 10,
+                // sharper below.
+                let (down_rgb, dw, dh) = if effective_resampling == 2 && self.cfg.effort >= 10 {
+                    crate::vardct::resampling::iterative_downsample_2x_rgb(
+                        &linear_rgb,
+                        w,
+                        h,
+                        Some(&budget),
+                    )?
+                } else if effective_resampling == 2 {
                     crate::vardct::resampling::sharper_downsample_2x_rgb(
                         &linear_rgb,
                         w,
