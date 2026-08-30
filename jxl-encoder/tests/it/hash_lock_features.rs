@@ -18,11 +18,8 @@
 //! Then verify the new output decodes correctly with djxl, jxl-rs, and jxl-oxide.
 
 use jxl_encoder::api::SectionedTrees;
-use jxl_encoder::bit_writer::BitWriter;
-use jxl_encoder::headers::color_encoding::{ColorEncoding, RenderingIntent};
-use jxl_encoder::headers::extra_channels::ExtraChannelInfo;
-use jxl_encoder::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
-use jxl_encoder::{LosslessConfig, LossyConfig, Lz77Method, PixelLayout};
+use jxl_encoder::test_helpers::measure_file_header_len;
+use jxl_encoder::{ColorEncoding, LosslessConfig, LossyConfig, Lz77Method, PixelLayout};
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -104,55 +101,9 @@ fn hash_bytes(data: &[u8]) -> u64 {
     h
 }
 
-/// Measure the file header byte length by encoding the header alone.
-fn measure_file_header_len(
-    width: u32,
-    height: u32,
-    xyb_encoded: bool,
-    has_alpha: bool,
-    is_gray: bool,
-    bit_depth_16: bool,
-) -> usize {
-    let bit_depth = if bit_depth_16 {
-        BitDepth::uint16()
-    } else {
-        BitDepth::uint8()
-    };
-
-    let mut color_encoding = if is_gray {
-        ColorEncoding::gray()
-    } else {
-        ColorEncoding::srgb()
-    };
-    if xyb_encoded {
-        color_encoding.rendering_intent = RenderingIntent::Relative;
-    }
-
-    let extra_channels = if has_alpha {
-        vec![ExtraChannelInfo::alpha()]
-    } else {
-        Vec::new()
-    };
-
-    let file_header = FileHeader {
-        width,
-        height,
-        metadata: ImageMetadata {
-            bit_depth,
-            color_encoding,
-            extra_channels,
-            xyb_encoded,
-            ..ImageMetadata::default()
-        },
-        upsampling_mode: None,
-        upsampling_factor: 1,
-    };
-
-    let mut writer = BitWriter::new();
-    file_header.write(&mut writer).unwrap();
-    writer.zero_pad_to_byte();
-    writer.finish_with_padding().len()
-}
+// `measure_file_header_len` moved to `jxl_encoder::test_helpers` in #76
+// (0.4.0 narrowing): this suite compiles under default features, and the
+// header/bit-writer internals it re-serialized are now `pub(crate)`.
 
 /// Hash both header and frame portions, returning (header_hash, frame_hash).
 fn hash_split(

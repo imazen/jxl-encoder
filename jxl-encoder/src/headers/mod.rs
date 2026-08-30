@@ -11,9 +11,10 @@ pub mod color_encoding;
 pub mod extra_channels;
 pub mod file_header;
 pub mod frame_header;
-pub mod size;
 
+// #76 (0.4.0): this module is `pub(crate)`; these re-exports are the
+// crate-internal convenience paths still in use (`modular::frame`,
+// `tests`). The public routes are the crate-root re-exports of the
+// `color_encoding` types and `api`'s `BlendMode`.
 pub use color_encoding::ColorEncoding;
-pub use extra_channels::ExtraChannelInfo;
 pub use file_header::FileHeader;
-pub use frame_header::{BlendMode, Encoding, FrameHeader, FrameType};

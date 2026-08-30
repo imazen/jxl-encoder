@@ -32,7 +32,14 @@ pub mod effort;
 pub mod entropy_coding;
 pub mod error;
 pub(crate) mod f16;
-pub mod headers;
+// #76 (0.4.0): `headers` is an internal serialization layer. The public
+// color-signaling surface is the root re-exports below (`ColorEncoding`,
+// `ColorSpace`, `Primaries`, `WhitePoint`, `TransferFunction`,
+// `RenderingIntent`, `CIExy`, `CustomPrimaries`) plus `BlendMode` via
+// `api`. `FileHeader`/`FrameHeader`/`ImageMetadata` internals are not
+// API; the it-suite reaches what it needs through
+// `test_helpers::measure_file_header_len`.
+pub(crate) mod headers;
 pub(crate) mod icc;
 pub mod image;
 #[cfg(feature = "jpeg-reencoding")]

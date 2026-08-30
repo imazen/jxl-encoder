@@ -751,6 +751,71 @@ pub fn save_test_output(subdir: &str, filename: &str, data: &[u8]) {
     }
 }
 
+/// Measure the encoded byte length of the file header alone, by
+/// serializing a `FileHeader` matching the given encode parameters.
+///
+/// Used by `tests/it/hash_lock_features.rs` to split an encoded stream
+/// into header/frame portions and hash them separately. Lives here (the
+/// doc-hidden test-helper seam) since #76 made `crate::headers` +
+/// `crate::bit_writer` `pub(crate)`: the it-suite compiles under default
+/// features, so it cannot use the feature-gated `__internals` seam for
+/// this. Mirrors the header the default `srgb()`/`gray()` encode paths
+/// write. Not part of the public API.
+pub fn measure_file_header_len(
+    width: u32,
+    height: u32,
+    xyb_encoded: bool,
+    has_alpha: bool,
+    is_gray: bool,
+    bit_depth_16: bool,
+) -> usize {
+    use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
+    use crate::headers::extra_channels::ExtraChannelInfo;
+    use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
+
+    let bit_depth = if bit_depth_16 {
+        BitDepth::uint16()
+    } else {
+        BitDepth::uint8()
+    };
+
+    let mut color_encoding = if is_gray {
+        ColorEncoding::gray()
+    } else {
+        ColorEncoding::srgb()
+    };
+    if xyb_encoded {
+        color_encoding.rendering_intent = RenderingIntent::Relative;
+    }
+
+    let extra_channels = if has_alpha {
+        vec![ExtraChannelInfo::alpha()]
+    } else {
+        Vec::new()
+    };
+
+    let file_header = FileHeader {
+        width,
+        height,
+        metadata: ImageMetadata {
+            bit_depth,
+            color_encoding,
+            extra_channels,
+            xyb_encoded,
+            ..ImageMetadata::default()
+        },
+        upsampling_mode: None,
+        upsampling_factor: 1,
+    };
+
+    let mut writer = crate::bit_writer::BitWriter::new();
+    file_header
+        .write(&mut writer)
+        .expect("file header serialization cannot fail in-memory");
+    writer.zero_pad_to_byte();
+    writer.finish_with_padding().len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

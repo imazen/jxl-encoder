@@ -10,7 +10,7 @@
 // parse) + the file is well-formed for djxl. The djxl decode itself
 // is invoked manually below (the example writes a sibling .png path).
 
-use jxl_encoder::headers::color_encoding::ColorEncoding;
+use jxl_encoder::ColorEncoding;
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 fn main() {

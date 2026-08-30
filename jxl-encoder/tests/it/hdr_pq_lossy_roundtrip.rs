@@ -22,7 +22,7 @@
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
-use jxl_encoder::headers::color_encoding::TransferFunction;
+use jxl_encoder::TransferFunction;
 use jxl_encoder::{LossyConfig, PixelLayout};
 use rgb::RGB;
 
@@ -81,7 +81,7 @@ fn pq_linear_img(samples: &[u16], w: usize, h: usize) -> Img<Vec<RGB<f32>>> {
 }
 
 fn encode_and_score(pixels: &[u8], w: usize, h: usize, d: f32) -> (f64, Vec<u8>) {
-    let ce = jxl_encoder::headers::ColorEncoding::from_cicp(1, 16, 0, true).unwrap();
+    let ce = jxl_encoder::ColorEncoding::from_cicp(1, 16, 0, true).unwrap();
     let bytes = LossyConfig::new(d)
         .with_effort(5)
         .encode_request(w as u32, h as u32, PixelLayout::Rgb16)

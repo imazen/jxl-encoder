@@ -12,8 +12,14 @@ use super::color_encoding::ColorEncoding;
 use super::extra_channels::ExtraChannelInfo;
 
 /// Orientation of the image.
+///
+/// The full 8-value JXL spec table (ISO/IEC 18181-1 ImageMetadata
+/// orientation). The encoder currently only ever writes
+/// [`Orientation::Identity`]; the other variants document the wire
+/// values and are kept for that purpose (#76).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
+#[allow(dead_code)]
 pub enum Orientation {
     #[default]
     Identity = 1,
@@ -279,13 +285,6 @@ impl FileHeader {
     pub fn new_gray(width: u32, height: u32) -> Self {
         let mut header = Self::new_rgb(width, height);
         header.metadata.color_encoding = ColorEncoding::gray();
-        header
-    }
-
-    /// Creates a new file header for a lossy RGB image (VarDCT/XYB encoded).
-    pub fn new_rgb_lossy(width: u32, height: u32) -> Self {
-        let mut header = Self::new_rgb(width, height);
-        header.metadata.xyb_encoded = true;
         header
     }
 

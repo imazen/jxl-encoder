@@ -15,7 +15,7 @@
 //! the round-trip error per coordinate is at most `0.5e-6` in xy space.
 //! We assert with a generous `2e-6` tolerance.
 
-use jxl_encoder::headers::color_encoding::{CIExy, ColorEncoding, CustomPrimaries, Primaries};
+use jxl_encoder::{CIExy, ColorEncoding, CustomPrimaries, Primaries};
 use jxl_encoder::{LosslessConfig, PixelLayout};
 
 /// Tolerance for round-trip of CIE xy coordinates through the JXL bitstream

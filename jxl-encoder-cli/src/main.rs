@@ -2369,16 +2369,16 @@ fn srgb_u8_to_linear_f32(data: &[u8]) -> Vec<f32> {
 #[allow(clippy::type_complexity)]
 /// Map a PNG cICP chunk (ITU-T H.273 code points) to a JXL
 /// [`ColorEncoding`] via the libjxl-parity
-/// [`jxl_encoder::headers::ColorEncoding::from_cicp`]. Returns `None`
+/// [`jxl_encoder::ColorEncoding::from_cicp`]. Returns `None`
 /// for combinations it rejects (with a stderr note) — the caller then
 /// falls back to the gAMA/sRGB logic. Issue #71: without this, 16-bit
 /// PQ HDR PNGs were signaled as sRGB transfer in the codestream.
 fn color_encoding_from_cicp(
     cicp: png::CodingIndependentCodePoints,
     grayscale: bool,
-) -> Option<jxl_encoder::headers::ColorEncoding> {
-    use jxl_encoder::headers::color_encoding::ColorSpace;
-    match jxl_encoder::headers::ColorEncoding::from_cicp(
+) -> Option<jxl_encoder::ColorEncoding> {
+    use jxl_encoder::ColorSpace;
+    match jxl_encoder::ColorEncoding::from_cicp(
         cicp.color_primaries,
         cicp.transfer_function,
         cicp.matrix_coefficients,
@@ -2799,7 +2799,7 @@ fn read_apng(path: &PathBuf) -> Result<Option<ApngResult>, Box<dyn std::error::E
 #[cfg(test)]
 mod cicp_tests {
     use super::color_encoding_from_cicp;
-    use jxl_encoder::headers::color_encoding::{ColorSpace, Primaries, TransferFunction};
+    use jxl_encoder::{ColorSpace, Primaries, TransferFunction};
 
     fn cicp(cp: u8, tc: u8, mc: u8, full: bool) -> png::CodingIndependentCodePoints {
         png::CodingIndependentCodePoints {

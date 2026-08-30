@@ -17,8 +17,7 @@
 //! All fixtures are procedural (zero committed bytes) and 512×512 where
 //! the path under test is size-dependent (multi-group rule, CLAUDE.md).
 
-use jxl_encoder::headers::ColorEncoding;
-use jxl_encoder::headers::color_encoding::{Primaries, TransferFunction};
+use jxl_encoder::{ColorEncoding, Primaries, TransferFunction};
 use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
 
 // ── fixtures ────────────────────────────────────────────────────────────────
