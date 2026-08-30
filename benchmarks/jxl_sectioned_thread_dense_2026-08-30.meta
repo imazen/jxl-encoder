@@ -1,0 +1,101 @@
+jxl_sectioned_thread_dense_2026-08-30.tsv — the thread-dense sectioned-mode
+memory grid that `heuristics::estimate_encode_sectioned` is fitted on
+(imazen/jxl-encoder#99 item 3, CLAUDE.md T5).
+
+WHY A NEW GRID. The 2026-08-27/28/30 sweeps sample threads {1, 4, 8, 12}.
+Four points cannot distinguish a SUM-shaped model (floor + g·(t−1), which is
+what the estimator had) from a MAX-shaped one (max(floor, tree-learn(t))):
+the two agree wherever one term dominates and differ only through the
+crossover. Threads {1,2,3,4,6,8,12} brackets the crossover on every size in
+the grid, and the small-crop ladder 64² / 256² / 512×256 / 512² / 768² — one,
+one, two, four and nine modular groups at the default 256-pixel group
+dimension — is the only place an in-flight clamp can be validated at all
+(every ≥ 2 MP crop has ≥ 31 groups).
+
+GRID. 192 cells × 3 repeats = 576 rows. size {64², 256², 512×256, 512²,
+768², 1024², 2048², 3840×2160, 4000×3000, 1313×4096, 1313×8008, 2940×1912} ×
+effort {7, 9} × threads {1,2,3,4,6,8,12} (tiny ladder {1,2,4,8,12}, screen
+ladder {1,2,12}) × layout {rgb, rgba} × content {photo, screen-web,
+screen-palette}. `SectionedTrees::On` throughout.
+
+Sources: photo = imazen-26 png-v3 1403_nature_large-tree-canopy 4000×3000 sdr
+PNG (crops from the top-left via MEM_PROBE_CROP, never resampled); reddit =
+qoi-benchmark screenshot_web/reddit.com.png (1313×8008); imac = gb82-sc
+imac_dark.png (2940×1912, palette + ChannelCompact + patches). rgba rows take
+alpha := the source's green plane (worst-case entropy).
+
+Host: mac (aarch64 laptop, 12 cores), release build. Probe
+`jxl-encoder-cli/examples/mem_probe`, allocator-agnostic `peak_live` from its
+counting global allocator (high-water of LIVE bytes across `encode()`, input
+buffer included). Driver `scripts/mem_sectioned_threads_sweep.sh` (REPEATS=3);
+analysis `scripts/mem_sectioned_model_fit.py`.
+
+RUN-TO-RUN VARIANCE (new finding, and the reason for REPEATS=3): the
+tree-learn-bound cells vary with worker scheduling — how many workers happen
+to be inside a group learn at the same instant. Worst spread over three
+consecutive runs: reddit 1313×4096 e9 t12 330729 / 345335 / 384245 KiB
+(1.16×), reddit e9 t8 1.12×, photo 2048² e7 t12 1.10×. The FLOOR-bound cells
+are reproducible to ~100 KiB. A single sample therefore UNDER-STATES what the
+estimate has to cover; every pinned cell in
+`heuristics::tests::sectioned_estimate_covers_measured_cells_2026_08_30` is
+the maximum over repeats and over content classes at that geometry.
+
+THE SHAPE THE GRID SHOWS. The sectioned peak is the MAXIMUM of two
+consecutive phases, not their sum:
+
+  photo 4000×3000 (12 MP, 192 groups), marginal B/px:
+    e7  t1 29.1   t2 48.0  t3 48.0  t4 48.0  t6 48.0  t8 48.0  t12 48.0
+    e9  t1 29.1   t2 48.0  t3 48.0  t4 48.0  t6 48.0  t8 48.0  t12 48.0
+  photo 1024×1024 (1 MP, 16 groups), marginal B/px:
+    e9  t1 69.3   t2 110.5 t3 127.1 t4 167.3 t6 228.7 t8 305.6 t12 443.3
+
+At 12 MP twelve per-group learn sets cost NOTHING — they sit entirely under
+the pre-tree floor — while at 1 MP the same sets are the whole peak. 48.0
+B/px is not a fitted number: `RCT_TRIAL_WAVE = 2` in-flight trials + the
+running best + the image = 4 i32 planes per channel = 16.0 B/px/channel, and
+the rgba floor measures 64.0 = 16.0 × 4 at 3840×2160. The flat region is not
+exactly flat: it rises +7.3 KiB per worker on all four cells that exhibit it
+(photo 12 MP 597864 → 597937 KiB t2→t12, imac 281061 → 281134, reddit 523754
+→ 523797, photo 2048² 209013 → 209056), independent of size, content and
+effort — pool bookkeeping, and what lets the model stay STRICTLY monotone in
+the thread count without inventing memory.
+
+At one worker the wave does not exist (single-worker pools price RCT
+candidates with the streaming evaluator, 2026-08-30) and the peak instant is
+inside patches detection: measured t=1 floors 24.0–29.2 B/px on photo,
+37.2–38.1 on reddit, 38.6 on imac_dark.
+
+RESULT (scripts/mem_sectioned_model_fit.py over this file):
+
+  SHIPPED additive model (before this change)
+    192 cells, 94 at ≥ 2 MP.  UNDER-predicted 12.  ≥ 2.5× at ≥ 2 MP: 1.
+    ≥ 2 MP TYP/measured  min 1.31  max 2.77 (imac_dark e9 t12)  mean 1.74
+    < 2 MP TYP/measured  min 0.54 (photo 256² e9 t1)  max 19.63  mean 2.69
+
+  MAX-form model (this change)
+    192 cells.  UNDER-predicted 0.  ≥ 2.5× at ≥ 2 MP: 0.
+    ≥ 2 MP TYP/measured  min 1.25  max 2.28 (imac_dark e9 t12)  mean 1.46
+    < 2 MP TYP/measured  min 1.21  max 8.58 (imac 256² e7 t12)  mean 2.39
+
+The 12 under-predictions of the old model are the more serious finding: all
+of them are 1–9-group images, worst photo 256² e9 t1 at 0.54× (TYP 37.0 MB
+for a measured 68.6 MB peak). Under-prediction is the unsafe direction —
+admission sizes a cap from TYP — and the old grid could not see it because it
+had no cell between 64² and 1024².
+
+Per-worker constants, and the cell that binds each (the smallest value that
+still covers every cell given the rest of the model):
+    e7  requires 12.10 MiB (photo 1024² t8) — shipped 18 MiB, margin 1.49×
+    e9  requires 33.32 MiB (photo 1024² t2) — shipped 46 MiB, margin 1.38×
+The margins are deliberately above the 1.16× worst repeat spread: the
+constant is content-blind and photo is the most expensive content swept
+(imac_dark's palette groups need only ~20 MiB/worker at e9, which is why it
+is the loosest ≥ 2 MP cell at 2.28× rather than something a content-blind
+term could fix).
+
+Bytes were not compared here — this change touches the estimator only, and
+no encode path.
+
+Gates at the landing commit: cargo test -p jxl-encoder --lib (1528) /
+--test it (456, default and --features parallel) / --doc; clippy
+--all-targets -D warnings (jxl-encoder + cli); fmt.

@@ -10198,11 +10198,12 @@ pub(crate) fn encode_preflight(
 ///
 /// - `On` / `Auto`-under-pressure / `Auto`-e≤7-multithreaded → the
 ///   calibrated sectioned estimate
-///   ([`crate::heuristics::estimate_encode_sectioned`]: image-copy +
-///   pre-tree-phase floor plus one group's tree-learn working set per
-///   worker), which is far below the whole-image band — a 21 MP e7
-///   lossless encode is admitted under the 8 GiB default cap because its
-///   sectioned peak fits, not because admission was switched off.
+///   ([`crate::heuristics::estimate_encode_sectioned`]: image copy plus
+///   the LARGER of the pre-tree phase and one group's tree-learn working
+///   set per in-flight worker — the two are consecutive phases, not
+///   concurrent ones), which is far below the whole-image band — a 21 MP
+///   e7 lossless encode is admitted under the 8 GiB default cap because
+///   its sectioned peak fits, not because admission was switched off.
 /// - Everything else (`Off`, `Hybrid`, non-lossless, efforts outside the
 ///   calibrated 7–9 band, `Auto` where the gate keeps the global tree) →
 ///   the whole-image estimate, exactly as [`encode_preflight`].
@@ -10355,6 +10356,14 @@ pub(crate) fn encode_preflight_with_sectioned(
             // sectioned 1-worker excess would otherwise trade wall time
             // for no memory (or for MORE), and could step an admitted
             // request into an estimate above the cap.
+            //
+            // The sectioned band is STRICTLY falling by construction even
+            // where its two phases plateau (`SECTIONED_POOL_BYTES_PER_THREAD`
+            // is the measured slope of that plateau), so this guard does not
+            // stop the walk early on it. Where it does stop early the
+            // reduction was genuinely worth nothing: the loop exits at the
+            // LARGEST thread count whose estimate fits `thread_target`, which
+            // stays correct for a non-monotone arm too.
             let next = path_est_at(t - 1)?.0;
             if next >= est {
                 break;

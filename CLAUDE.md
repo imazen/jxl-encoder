@@ -265,29 +265,65 @@ found must land in `LIBJXL_DIVERGENCES.md` — that file is mandatory per the
 section below.** Where we deliberately differ because we beat them on RD, say
 so explicitly rather than "fixing" it into a regression.
 
-### T5 — make the sectioned estimator accurate
+### T5 — make the sectioned estimator accurate — DONE 2026-08-30, and the
+### brief above it framed the problem as the wrong SIGN
 
-Issue #99 item 3. `estimate_encode_sectioned`'s e9 additive term is
-**36 MiB/worker, calibrated on photo 1024²** (measured slope 31.6). imac_dark
-e9 t=12 measures **4.3 MiB/worker** — TYP = 847.9 MB = **2.52×** the measured
-cell, just over the 2.5× tightness bar in
-`sectioned_estimate_covers_measured_cells_2026_08_27`. The pin is deliberately
-held stale-high with an in-code comment; lowering it to the honest measurement
-fails the bar.
-**The conflict to resolve:** a headroom-aware additive term (subtracting the
-measured envelope−content-floor slack, 68−48 B/px) restores tightness on every
-rgb cell but makes the model **non-strictly-monotone in threads** at large px —
-which `heuristics::tests::sectioned_estimate_shape`,
-`api_tests::encode_preflight_sectioned::floor_is_the_minimum_over_one_and_two_workers`
-and `walks_down_on_the_sectioned_per_thread_term` all assert, and on which the
-admission thread-walk-down contract is built. Either refine differently, or
-change the contract deliberately with its tests updated as a designed change —
-**not** by weakening an assertion to make a number fit.
-Bundle with #99 item 2 if you touch the model: the RCT trial wave
-(`select_best_rct` holding nine whole-image i32 clones = 193 MiB, the designed
-`RCT_TRIAL_WAVE = 2` transient) is now what SETS the sectioned peak, and the
-per-trial fold at `effective_threads() == 1` would move the floors again. Move
-the model once, not twice.
+Shipped. `estimate_encode_sectioned` is now a MAX of two phases instead of a
+sum. Full record:
+`benchmarks/jxl_sectioned_thread_dense_2026-08-30.{tsv,meta}` (192 cells × 3
+repeats), the constants' own rustdoc in `heuristics.rs`, and
+`scripts/mem_sectioned_model_fit.py` (re-run it after any re-measure; it names
+the cell that binds each per-worker constant).
+
+**The measured root cause was NOT a mis-set per-worker constant.** The brief
+said the e9 term over-predicts palette content because 36 MiB/worker was
+calibrated on photo while imac_dark measures 4.3 MiB/worker. That 4.3 figure
+is an artefact of differencing two cells (t=4 → t=12) where t=4 sits ON THE
+PRE-TREE FLOOR, so it measures the floor's own slope, not a group learn.
+Threads {1,2,3,4,6,8,12} shows what is actually happening: **the pre-tree
+phase and the per-group tree learns are consecutive, and the peak is their
+max.** photo 12 MP measures 48.0 B/px marginal at t=2 AND t=12 at both
+efforts — twelve group-learn sets cost literally nothing there — while photo
+1024² (16 groups) climbs 69 → 443 B/px over the same range. Adding the two
+double-counts exactly where the floor wins.
+
+**A second, unreported bug fell out: the additive model UNDER-predicted 12 of
+the 192 cells**, worst photo 256² e9 t1 at **0.54×** (TYP 37.0 MB for a
+measured 68.6 MB peak). All twelve are 1–9-group images. The old grid could
+not see them because it had no cell between 64² and 1024²; under-prediction is
+the unsafe direction (admission sizes a cap from TYP).
+
+**The monotonicity conflict dissolved — no contract change was needed.** A
+`max()` is only non-decreasing, but the plateau is not actually flat: it rises
+**+7.3 KiB per worker**, identically on all four cells that exhibit it,
+independent of size/content/effort. Carrying that measured slope as
+`SECTIONED_POOL_BYTES_PER_THREAD` keeps the model strictly monotone without
+inventing memory, so `heuristics::tests::sectioned_estimate_shape` and all
+three `api_tests::encode_preflight_sectioned` walk-down tests pass unchanged.
+The shape asserts that described the OLD algebra were replaced with ones that
+describe the new (crossover behaviour, the in-flight clamp, per-channel alpha);
+no bar was weakened, and the 2.5× tightness bar is now met with room.
+
+Result over the grid: under-predictions **12 → 0**; ≥ 2 MP TYP/measured max
+**2.77× → 2.28×**, mean **1.74 → 1.46**; < 2 MP max 19.63× → 8.58×. Residual
+error is one-sided (over-prediction only). The loosest ≥ 2 MP cell is still
+imac_dark e9 t12 at 2.28× and that is inherent: its palette groups need
+~20 MiB/worker where photo needs 33, and the term is content-blind, so it must
+cover photo.
+
+**#99 item 2 needed nothing here** — the `RCT_TRIAL_WAVE` streaming fold at
+`effective_threads() == 1` had already landed (`88878085`) before this work
+started; re-verified in source. The wave's 4 i32 planes/channel are exactly
+the 16.0 B/px/channel the t ≥ 2 floor measures (48.0 rgb, 64.0 rgba), which is
+where `SECTIONED_WAVE_BPP_PER_CHANNEL` comes from.
+
+**Two calibration facts worth not rediscovering.** (1) Tree-learn-bound cells
+vary up to **1.16× run to run** with worker scheduling (reddit 1313×4096 e9
+t12: 330729 / 345335 / 384245 KiB in three consecutive runs); floor-bound
+cells are reproducible to ~100 KiB. Calibrate on the max over repeats — one
+sample under-states the requirement. (2) The estimate assumes the default
+256-pixel `modular_group_size_shift`; the knob has no public setter and
+neither this model nor its predecessor takes it as an input.
 
 ### Cross-cutting facts worth not rediscovering
 
