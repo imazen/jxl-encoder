@@ -1042,13 +1042,23 @@ impl LosslessConfig {
     /// - **e8**: + LZ77 greedy hash chain
     /// - **e9–13**: + LZ77 optimal (Viterbi DP)
     ///
-    /// **e10** aligns with libjxl e10 (kGlacier) — for lossless our e9
-    /// already covers its modular additions (global MA tree, per-leaf
-    /// predictor search, no chunked encoding), so e10 output matches e9.
-    /// **e11/e12/e13 are our extensions** beyond libjxl (RFC#45 pick #1,
-    /// renumbered +1 by the 2026-08-29 ladder shift): multi-seed tree
-    /// learning fans out 2/16/16 seeded runs. Bitstreams remain 100%
-    /// spec-valid (djxl / jxl-rs / jxl-oxide decode unchanged).
+    /// **e10** aligns with libjxl e10 (kGlacier): the MA-tree split
+    /// threshold drops 89 → 75, admitting more splits (its other
+    /// modular additions — global MA tree, per-leaf predictor search,
+    /// no chunked encoding — our e9 already does). **e11/e12/e13 are
+    /// our extensions** beyond libjxl (RFC#45 pick #1, renumbered +1 by
+    /// the 2026-08-29 ladder shift): multi-seed tree learning fans out
+    /// 2/16/16 seeded runs, and e11+ supersets libjxl e11 with the
+    /// TectonicPlate per-image config trial — the whole frame is
+    /// re-encoded under ~22 modular header/transform configurations
+    /// (palette, channel-compact, group size, predictor, patches,
+    /// sample density) at e10 search effort, the winner re-encoded at
+    /// the full tier profile, smallest stream wins. Caller-explicit
+    /// knobs are pinned across trials; streaming
+    /// ([`LosslessEncoder`]) skips the trial (whole-image only), and
+    /// explicit [`SectionedTrees::On`]/`Hybrid` skips it too.
+    /// Bitstreams remain 100% spec-valid (djxl / jxl-rs / jxl-oxide
+    /// decode unchanged).
     ///
     /// **WARNING — e6→e7 cliff** (#23): tree learning at e7 dominates
     /// the time profile and is significantly slower than e6 (a single
@@ -6241,7 +6251,173 @@ impl<'a> EncodeRequest<'a> {
 
     // ── Lossless path ───────────────────────────────────────────────────
 
+    /// Lossless dispatch: at effort ≥ 11 the TectonicPlate per-image
+    /// config trial (issue #45, libjxl e11 superset) wraps the single
+    /// encode; below that (and for every probe/trial/final encode the
+    /// schedule issues) [`Self::encode_lossless_single`] runs directly.
     fn encode_lossless(
+        &self,
+        cfg: &LosslessConfig,
+        pixels: &[u8],
+        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
+    ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
+        // Explicit sectioned/hybrid memory modes are whole-encode
+        // commitments the trial schedule would contradict (and e ≥ 10
+        // forces the global tree on `Auto` anyway) — honour them by
+        // skipping the trials.
+        if cfg.effort >= 11
+            && !matches!(
+                cfg.sectioned_trees(),
+                SectionedTrees::On | SectionedTrees::Hybrid
+            )
+        {
+            return self.encode_lossless_tectonic(cfg, pixels, budget);
+        }
+        self.encode_lossless_single(cfg, pixels, budget)
+    }
+
+    /// The e11+ lossless TectonicPlate schedule (issue #45; libjxl
+    /// `enc_frame.cc:2576-2643` structure):
+    ///
+    /// 1. Encode the two probe configs at trial effort (e10 — the
+    ///    kGlacier analogue; libjxl trials also run at kGlacier).
+    /// 2. Branch on the probe sizes: palette-hostile → the 24-config
+    ///    `LessPalette` list, palette-friendly → the 20-config
+    ///    `MorePalette` list (`sweep::tectonic_*`).
+    /// 3. Encode every unique config (dedup on the resolved profile
+    ///    fingerprint + modular-knob tuple; wp-only and
+    ///    fraction-saturated siblings collapse), sequentially, keeping
+    ///    only the smallest stream seen (sequential trials keep the
+    ///    peak working set at one trial's, so the e11 memory band stays
+    ///    the multi-seed envelope — see `heuristics.rs`).
+    /// 4. Re-encode the winning config at the ambient tier's full
+    ///    profile (e11: 2-seed tree learn; e12/e13: 16-seed) and keep
+    ///    the smaller of that and the best trial — every tier stays a
+    ///    structural superset of the one below.
+    ///
+    /// Knobs the caller set explicitly are pinned across all trials
+    /// (caller intent wins over the schedule, unlike libjxl which
+    /// clobbers); pinned axes shrink the unique set further.
+    fn encode_lossless_tectonic(
+        &self,
+        cfg: &LosslessConfig,
+        pixels: &[u8],
+        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
+    ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
+        use crate::sweep::{
+            TectonicConfig, dedup_tectonic, tectonic_less_palette, tectonic_more_palette,
+            tectonic_probe_pair,
+        };
+
+        // Apply one trial config to a clone of the caller's config at
+        // `effort`, pinning caller-explicit knobs.
+        let apply = |tc: &TectonicConfig, effort: u8| -> LosslessConfig {
+            let mut c = cfg.clone().with_effort(effort);
+            if cfg.modular_palette_colors().is_none() {
+                c = c.with_modular_palette_colors(Some(tc.palette_colors));
+            }
+            if cfg.modular_channel_colors_group_percent().is_none() {
+                c = c.with_modular_channel_colors_group_percent(Some(
+                    tc.channel_colors_group_percent,
+                ));
+            }
+            if cfg.modular_channel_colors_global_percent().is_none() {
+                c = c.with_modular_channel_colors_global_percent(Some(
+                    tc.channel_colors_global_percent,
+                ));
+            }
+            if cfg.modular_group_size().is_none() {
+                c = c.with_modular_group_size(Some(tc.group_size_shift));
+            }
+            if cfg.modular_predictor().is_none()
+                && let Some(p) = tc.predictor
+            {
+                c = c.with_modular_predictor(Some(p));
+            }
+            if cfg.patches.is_none() {
+                c = c.with_patches(tc.patches);
+            }
+            if cfg.tree_learning_sample_fraction().is_none() {
+                c = c.with_tree_learning_sample_fraction(tc.tree_sample_fraction());
+            }
+            if cfg.modular_nb_prev_channels().is_none() {
+                c = c.with_modular_nb_prev_channels(Some(tc.nb_prev_channels));
+            }
+            c
+        };
+        // Dedup key for an APPLIED trial config: the resolved effort
+        // profile's fingerprint (captures the fraction override and any
+        // pinned effort-level knobs) + the modular-knob tuple the
+        // profile doesn't see.
+        let key_of = |c: &LosslessConfig| -> (u64, i64, u32, u32, u8, Option<u8>, bool, i32) {
+            (
+                c.effective_profile().fingerprint_impl(),
+                c.modular_palette_colors().unwrap_or(i64::MIN),
+                c.modular_channel_colors_group_percent()
+                    .unwrap_or(-1.0)
+                    .to_bits(),
+                c.modular_channel_colors_global_percent()
+                    .unwrap_or(-1.0)
+                    .to_bits(),
+                c.modular_group_size().unwrap_or(u8::MAX),
+                c.modular_predictor(),
+                c.effective_patches(),
+                c.modular_nb_prev_channels().unwrap_or(-1),
+            )
+        };
+
+        const TRIAL_EFFORT: u8 = 10;
+        let mut seen = alloc::collections::BTreeSet::new();
+        let mut best: Option<(Vec<u8>, EncodeStats, TectonicConfig)> = None;
+
+        // Probe pair → branch (libjxl: `size_test[0] <= size_test[1]`
+        // picks LessPalette).
+        let probes = tectonic_probe_pair();
+        let mut probe_bytes = [0usize; 2];
+        for (i, tc) in probes.iter().enumerate() {
+            let c = apply(tc, TRIAL_EFFORT);
+            seen.insert(key_of(&c));
+            let (bytes, stats) = self.encode_lossless_single(&c, pixels, budget)?;
+            probe_bytes[i] = bytes.len();
+            if best.as_ref().is_none_or(|(b, _, _)| bytes.len() < b.len()) {
+                best = Some((bytes, stats, *tc));
+            }
+        }
+        let list = if probe_bytes[0] <= probe_bytes[1] {
+            tectonic_less_palette()
+        } else {
+            tectonic_more_palette()
+        };
+
+        for tc in dedup_tectonic(list) {
+            let c = apply(&tc, TRIAL_EFFORT);
+            if !seen.insert(key_of(&c)) {
+                continue; // collapsed with a probe or an earlier trial
+            }
+            let (bytes, stats) = self.encode_lossless_single(&c, pixels, budget)?;
+            if best.as_ref().is_none_or(|(b, _, _)| bytes.len() < b.len()) {
+                best = Some((bytes, stats, tc));
+            }
+        }
+        let (trial_bytes, trial_stats, winner) =
+            best.expect("tectonic schedule always encodes the probe pair");
+
+        // Final pass: the winning config at the ambient tier's full
+        // profile (multi-seed extras). Skip when it resolves to the same
+        // encode as the winning trial (fingerprint match ⇒ byte-identical).
+        let final_cfg = apply(&winner, cfg.effort);
+        if key_of(&final_cfg) == key_of(&apply(&winner, TRIAL_EFFORT)) {
+            return Ok((trial_bytes, trial_stats));
+        }
+        let (final_bytes, final_stats) = self.encode_lossless_single(&final_cfg, pixels, budget)?;
+        if final_bytes.len() < trial_bytes.len() {
+            Ok((final_bytes, final_stats))
+        } else {
+            Ok((trial_bytes, trial_stats))
+        }
+    }
+
+    fn encode_lossless_single(
         &self,
         cfg: &LosslessConfig,
         pixels: &[u8],

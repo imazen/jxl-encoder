@@ -583,7 +583,8 @@ pub struct EffortProfile {
     ///
     /// `1..=9` mirrors libjxl kFalcon..=kTortoise; e10 aligns with libjxl
     /// e10 (kGlacier: `fine_grained_step = 1`, iterative 2× downsampling,
-    /// forced global MA tree) as a superset. e11/e12/e13 extend past
+    /// forced global MA tree, tree-split threshold 89 → 75) as a
+    /// superset. e11/e12/e13 extend past
     /// libjxl with longer search budgets on the knobs that scale
     /// (`butteraugli_iters` 8/16/32, `tree_learn_seeds` 2/16/16,
     /// `lossy_search_seeds` 2/4/4) plus the e11+ lossless per-image
@@ -1368,12 +1369,14 @@ impl EffortProfile {
     /// Create an effort profile for lossless (modular) encoding.
     ///
     /// Accepts effort in `1..=13` (2026-08-29 ladder shift, issue #45).
-    /// Lossless e10 is byte-identical to e9 at the profile level — our e9
-    /// already covers libjxl e10's modular additions (global MA tree,
-    /// per-leaf predictor search, no chunked encoding). e11 adds 2-seed
-    /// tree learning plus the libjxl-e11-style per-image config trial
-    /// (TectonicPlate schedule, applied at the encode layer); e12/e13
-    /// fan out 16 tree-learning seeds.
+    /// Lossless e10 = libjxl e10 (kGlacier) parity: the MA-tree split
+    /// threshold drops 89 → 75 (`tree_threshold_base = 75 + 14 ×
+    /// speed_tier`, kGlacier = 0) admitting more splits; the rest of
+    /// libjxl e10's modular additions (global MA tree, per-leaf
+    /// predictor search, no chunked encoding) our e9 already does. e11
+    /// adds 2-seed tree learning plus the libjxl-e11-style per-image
+    /// config trial (TectonicPlate schedule, applied at the encode
+    /// layer); e12/e13 fan out 16 tree-learning seeds.
     pub fn lossless(effort: u8, mode: EncoderMode) -> Self {
         let effort = effort.clamp(1, 13);
         match mode {

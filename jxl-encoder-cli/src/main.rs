@@ -98,11 +98,14 @@ struct Args {
 
     /// Effort level (1-13, higher = slower but better compression).
     /// 1-9 mirrors libjxl kFalcon..=kTortoise; e10 supersets libjxl e10
-    /// (kGlacier: finer AC-strategy step, iterative 2x downsampling under
-    /// resampling=2). e11/e12/e13 are our extensions past libjxl: longer
-    /// butteraugli convergence (8 / 16 / 32 iters) plus multi-seed tree
-    /// learning + multi-seed butteraugli sweep. Bitstreams stay 100%
-    /// spec-valid. See RFC issue #45 (2026-08-29 ladder shift).
+    /// (kGlacier: finer AC-strategy step, lower MA-tree split threshold,
+    /// iterative 2x downsampling under resampling=2). e11/e12/e13 are our
+    /// extensions past libjxl: longer butteraugli convergence
+    /// (8 / 16 / 32 iters), multi-seed tree learning + butteraugli sweep,
+    /// and lossless e11+ supersets libjxl e11 with the TectonicPlate
+    /// per-image config trial (~22 whole-frame configs, smallest wins).
+    /// Bitstreams stay 100% spec-valid. See RFC issue #45 (2026-08-29
+    /// ladder shift).
     #[arg(short, long, default_value = "7")]
     effort: u8,
 

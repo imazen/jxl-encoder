@@ -38,6 +38,7 @@ mod dct4x8_diagnostic;
 mod display_config_dispatch;
 mod divergence_table_drift;
 mod e9_hang_repro;
+mod effort_ladder_tiers;
 mod empty_modular_section_roundtrip;
 mod encode_from_pre_quantized_ac_extras;
 mod encode_from_precomputed_extras;

@@ -1215,6 +1215,85 @@ fn ramp_noise_rgb16_512x512() -> Vec<u8> {
     out
 }
 
+/// Multi-group lossy at e10 with `resampling = 2`: pins the
+/// `DownsampleImage2_Iterative` port (issue #45 ladder shift — the
+/// iterative kernel is THE lossy e10 differentiator beyond
+/// `fine_grained_step`; e ≤ 9 keeps the sharper kernel). The frame is
+/// coded at 256² with `upsampling = 2` signaled; decoded dims stay 512².
+#[test]
+fn lossy_mg_rgb_512x512_noise_r2_e10() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(10)
+        .with_resampling(2)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_r2_e10",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossy at e11: the extended-tier buttloop (8 iters) +
+/// 2-seed multi-seed search — the pre-shift "e10" machinery at its
+/// post-shift number (issue #45). First lock coverage for the extended
+/// lossy tiers.
+#[test]
+fn lossy_mg_rgb_512x512_noise_e11_d1() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(11)
+        .encode(&noise_rgb_512x512(), 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_512x512_noise_e11_d1",
+        &data,
+        512,
+        512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Multi-group lossless at e11: the TectonicPlate per-image config
+/// trial (issue #45 — probe pair, branch, ~20 unique trial encodes at
+/// e10, winner re-encoded at the e11 profile). 17-colour blocky content
+/// keeps every palette/channel-compact axis live; the 320×96 canvas
+/// (2 horizontal modular groups) keeps the ~22-encode schedule cheap
+/// enough for CI (a 512² variant measured 27 s locally). e12/e13 share
+/// this machinery (bigger multi-seed finals only) and are exercised
+/// with in-process decode by the effort-ladder bench.
+#[test]
+fn lossless_mg_rgb_320x96_blocky17_e11() {
+    let (w, h) = (320usize, 96usize);
+    let full = blocky17_rgb_512x512();
+    // Top-left crop of the 512² blocky pattern (same 17-colour palette).
+    let mut px = vec![0u8; w * h * 3];
+    for y in 0..h {
+        px[y * w * 3..(y + 1) * w * 3].copy_from_slice(&full[y * 512 * 3..y * 512 * 3 + w * 3]);
+    }
+    let data = LosslessConfig::new()
+        .with_effort(11)
+        .encode(&px, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_320x96_blocky17_e11",
+        &data,
+        w as u32,
+        h as u32,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
 /// Multi-group lossless at e9: ref-properties offered to the learner
 /// (slots 0..2), the exact configuration where #68's two desyncs hid.
 #[test]

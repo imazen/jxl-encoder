@@ -40,9 +40,14 @@ pub mod jpeg;
 pub mod modular;
 pub(crate) mod parallel;
 /// Config enumeration + computed unique-configs for parameter sweeps
-/// (`__expert`). See [`sweep`] module docs.
+/// (`__expert`). See [`sweep`] module docs. Without `__expert` the
+/// module still compiles crate-internally: it carries the TectonicPlate
+/// e11+ lossless trial schedule (issue #45), which the default lossless
+/// encode path consumes.
 #[cfg(feature = "__expert")]
 pub mod sweep;
+#[cfg(not(feature = "__expert"))]
+pub(crate) mod sweep;
 
 /// Ultra HDR gain-map encoding for JPEG XL containers (feature
 /// `hdr-gainmap`).

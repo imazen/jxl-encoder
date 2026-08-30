@@ -179,9 +179,16 @@
   e10/e11/e12 behaviours (8/16/32 butteraugli iters, 2/16/16 tree-learn
   seeds, 2/4/4 buttloop seeds) now live at e11/e12/e13, and
   `EFFORT_RANGE` widened to `1..=13`. New e10 = a superset of libjxl e10:
-  `fine_grained_step = 1` (already at e≥10), the newly ported
-  `DownsampleImage2_Iterative` under `with_resampling(2)`, and a forced
-  global MA tree in `SectionedTrees::Auto`. e1–e9 output is
+  `fine_grained_step = 1` (already at e≥10), the kGlacier MA-tree split
+  threshold (89 → 75, the pre-existing `75 + 14×speed_tier` formula),
+  the newly ported `DownsampleImage2_Iterative` under
+  `with_resampling(2)`, and a forced global MA tree in
+  `SectionedTrees::Auto`. New e11+ lossless supersets libjxl e11
+  (kTectonicPlate): the per-image config trial re-encodes the frame
+  under the transcribed probe pair + 24/20-config lists (palette,
+  channel-compact percents, group-size shift, predictor, patches,
+  sample density; unique-config dedup) at e10 trial effort and keeps
+  the smallest, with the winner re-encoded at the full tier profile. e1–e9 output is
   byte-identical (hash-locks unchanged); one opt-in exception: lossy
   `with_lf_frame(true)` at e9 loses the accidental 2-seed DC-subframe
   tree learn the old `effort+1 → e10` mapping picked up (now
