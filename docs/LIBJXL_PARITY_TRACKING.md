@@ -132,9 +132,11 @@ Consequences recorded in `heuristics.rs`:
   was anchored on the 2026-08-01 12 MP cell (490 B/px) BEFORE the thirteen
   August reductions. The three-class grid
   (`benchmarks/jxl_lossless_band_2026-08-28.{tsv,meta}`: photo 64² → 12 MP,
-  imac_dark, reddit; e5–e10; rgb + rgba) now pins base 92 / e6 92 / e7–e8
-  128 / e9 160 / e10 160 B/px with effort-dependent intercepts (16 / 24 /
-  64 / 160 MiB) and alpha +72 B/px. `Auto`'s memory-pressure gate and
+  imac_dark, reddit; e5–e10 pre-shift labels; rgb + rgba) now pins base 92
+  / e6 92 / e7–e8 128 / e9 160 / multi-seed 160 B/px with effort-dependent
+  intercepts (16 / 24 / 64 / 160 MiB) and alpha +72 B/px. (2026-08-29
+  ladder shift, issue #45: the multi-seed band's grid label "e10" is
+  today's e11; `heuristics.rs` band boundaries moved with it.) `Auto`'s memory-pressure gate and
   `LosslessConfig::estimate_encode` are ~4× lower for e7–e9 (12 MP e7 TYP
   6.4 → 1.6 GB against 1.14 GB measured).
 - **Sectioned t=1 excess — ATTRIBUTED AND REMOVED (2026-08-28)**: the

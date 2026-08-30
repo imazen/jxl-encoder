@@ -329,6 +329,29 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-08-30: e≤9 `with_resampling(2)` downsamples in the WRONG domain (linear RGB, decoder upsamples XYB)
+
+**Status**: ACTIVE — flagged during #45; e≤9 fix needs an owner decision
+(it moves e≤9 bytes, which the ladder-shift job froze).
+
+[PROVEN] The decoder's 2× upsampling stage runs on the XYB planes BEFORE
+the inverse color transform (libjxl `dec_cache.cc` adds
+`GetUpsamplingStage` ahead of `GetXYBStage`; jxl-oxide matches), and
+libjxl's encoder downsamples the OPSIN image (`enc_frame.cc:742`). Our
+e≤9 resampling path (box 4×/8× + sharper 2×, `api.rs` both call sites)
+downsamples **linear RGB pre-XYB** — a domain mismatch. Measured
+(in-process Rust butteraugli, jxl-oxide `srgb_linear` decode, d1.0 r2,
+CID22-512): sharper-on-linear e9 scores bfly **19.68 / 30.20** where the
+XYB-domain iterative e10 scores **7.20 / 10.66** on the same cells
+(cjxl e10: 7.19 / 9.90). Repro:
+`cargo test -p jxl-encoder --test it effort_ladder_tiers::iterative_downsample_cjxl_differential -- --ignored --nocapture`.
+The e≥10 iterative path was fixed in `e3a54d7e` (runs in XYB); the fix
+for e≤9 is the same shape (convert → box/sharper per opsin plane →
+invert) but changes every e≤9 `resampling>1` stream. No hash-lock covers
+e≤9 resampling cells. Next step: owner decision on moving e≤9 r2 bytes,
+then port the domain fix to the box + sharper wrappers and add e≤9 r2
+lock cells.
+
 ### RESOLVED 2026-06-13: 12 MP HDR encode failed at 2 GiB cap — budget over-count + too-low default
 
 12 MP PQ-HDR e9 d4 failed with `memory budget exceeded: requested 144 MB on

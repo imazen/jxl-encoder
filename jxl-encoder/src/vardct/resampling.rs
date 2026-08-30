@@ -835,11 +835,20 @@ pub fn iterative_downsample_2x_rgb(
         plane_g[i] = rgb_interleaved[i * 3 + 1];
         plane_b[i] = rgb_interleaved[i * 3 + 2];
     }
+    // SCALAR opsin pair, deliberately: the dispatched SIMD variants are
+    // ULP-divergent across arches by design (see
+    // docs/SIMD_PARITY_KNOWN_DIVERGENCES.md), and the 3 adjoint rounds
+    // below amplify per-pixel ULP noise into different encoded bytes —
+    // the first CI run of the `lossy_mg_rgb_512x512_noise_r2_e10` lock
+    // measured x86_64 80303 B vs aarch64 80215 B. `forward_xyb_scalar` /
+    // `inverse_xyb_scalar` are pure fma + fixed-iteration Newton cbrt
+    // (correctly-rounded IEEE ops), bit-identical on every platform; the
+    // conversion cost is negligible next to the upsampler rounds.
     let mut xyb_x = alloc::vec![0.0_f32; n];
     let mut xyb_y = alloc::vec![0.0_f32; n];
     let mut xyb_b = alloc::vec![0.0_f32; n];
-    jxl_simd::linear_rgb_to_xyb_batch(
-        &plane_r, &plane_g, &plane_b, &mut xyb_x, &mut xyb_y, &mut xyb_b,
+    jxl_simd::forward_xyb_scalar(
+        &plane_r, &plane_g, &plane_b, &mut xyb_x, &mut xyb_y, &mut xyb_b, n,
     );
     drop(plane_r);
     drop(plane_g);
@@ -861,7 +870,7 @@ pub fn iterative_downsample_2x_rgb(
         n_out * 3,
     )?;
     out.resize(n_out * 3, 0.0);
-    jxl_simd::xyb_to_linear_rgb_batch(&down_x, &down_y, &down_b, &mut out, n_out);
+    jxl_simd::inverse_xyb_scalar(&down_x, &down_y, &down_b, &mut out, n_out);
     Ok((out, out_w as u32, out_h as u32))
 }
 

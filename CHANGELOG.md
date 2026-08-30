@@ -17,6 +17,9 @@
 - `SectionedTrees::Auto` rustdoc now states the 2026-08-19 thread policy (sectioned at e ≤ 7 with > 1 worker), not only the memory-pressure arm (#96)
 
 ### Added
+- **e11+ lossless TectonicPlate config trial** (issue #45, supersets libjxl e11): probe pair + the transcribed 24/20-config lists re-encode the frame at e10 trial effort (palette / channel-compact / group-size / predictor / patches / sample-density axes, unique-config dedup, caller-explicit knobs pinned), winner re-encoded at the full tier profile, smallest wins (20edf242, 15facee2)
+- **`DownsampleImage2_Iterative` port** for `with_resampling(2)` at effort ≥ 10 (libjxl `enc_frame.cc:752` kGlacier gate): 3 decoder-upsampler-adjoint refinement rounds run in the XYB domain — cjxl-e10 differential on CID22-512 shows near-exact quality parity (butteraugli 7.196 vs 7.189) at fewer bytes (20edf242, e3a54d7e)
+- New extended-tier test surface: `tests/it/effort_ladder_tiers.rs` (jxl-rs + jxl-oxide roundtrips, tectonic win/pin/threshold pins, `--ignored` cjxl differential) and 3 hash-lock cells (lossy r2 e10, lossy e11, lossless 320×96 blocky e11) (15facee2, e3a54d7e)
 - `jxl-encoder-cli/examples/mem_probe`: allocator-agnostic `peak_live_kb` / `marginal_live_kb` / `allocs` columns from a counting global allocator (portable — the `VmHWM` columns are Linux-only), a `tree` argument (`auto|global|sectioned|hybrid`) and `MEM_PROBE_CROP=WxH` real-content crops; `scripts/mem_sectioned_sweep.sh` drives the resumable size × effort × threads × content grid (#96)
 - `write_token`/`write_tokens` no longer silently corrupt streams on codeless symbols: an out-of-alphabet token now returns `Error::InvalidInput` instead of index-panicking, and a depth-0 symbol in a multi-symbol prefix code errors loudly instead of emitting zero Huffman bits (the zenjpeg #194 mechanism; sweep issue #97)
 - Static DC prefix codes now have Kraft-validity + used-symbol assertions in `test_static_codes_exist` (#97)
