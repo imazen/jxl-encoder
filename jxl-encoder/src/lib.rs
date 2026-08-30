@@ -633,6 +633,52 @@ pub mod __pre_quantized {
     }
 }
 
+/// Re-exports of DCT/transform reference primitives for the GPU encoder
+/// (imazen/jxl-gpu, crate `jxl-encoder-gpu`) — its G5.1 parity tests
+/// compare GPU kernel output against these exact CPU implementations
+/// (`forks/reconstruct.rs` `dc_from_dct_*` tests, the `kernels/identity`
+/// + `kernels/dct2x2` mirrors, and `forks/pre_quantized_ac.rs`'s
+/// `transform_blocks_into` provenance).
+///
+/// Added in #76 BEFORE `pub mod vardct::{dct, transform}` went
+/// `pub(crate)`, so jxl-gpu has a stable import path that survives the
+/// 0.4.0 public-surface narrowing (`jxl_encoder::vardct::dct::*` paths
+/// stop resolving; `jxl_encoder::__gpu::*` replaces them).
+///
+/// **Not part of the stable API.** `#[doc(hidden)]`, gated behind the
+/// same opt-in features jxl-gpu already enables (`__pre_quantized` for
+/// its runtime dep, `__internals` for its dev-dep), and items here may
+/// move or change at any time. Pure re-exports, no wrapping logic.
+#[cfg(any(feature = "__pre_quantized", feature = "__internals"))]
+#[doc(hidden)]
+pub mod __gpu {
+    /// Scale factors for the 16→2 DCT resampling used by the
+    /// `dc_from_dct_*` family (jxl-gpu `forks/reconstruct.rs` mirror).
+    pub use crate::vardct::dct::DCT_RESAMPLE_SCALE_16_TO_2;
+    /// The rectangular DC-from-DCT downsample family (libjxl
+    /// `DCFromLowestFrequencies`). jxl-gpu's `forks/reconstruct.rs`
+    /// parity tests exercise the 16x8..64x64 variants; 8x8/8x16 are
+    /// included so the family is complete.
+    pub use crate::vardct::dct::{
+        dc_from_dct_8x8, dc_from_dct_8x16, dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_16x32,
+        dc_from_dct_32x16, dc_from_dct_32x32, dc_from_dct_32x64, dc_from_dct_64x32,
+        dc_from_dct_64x64,
+    };
+    /// DCT4x8 forward transform (jxl-gpu `kernels/dct4_raw.rs` mirror)
+    /// plus the special non-DCT block transforms mirrored by
+    /// `kernels/identity.rs` / `kernels/dct2x2.rs`.
+    pub use crate::vardct::dct::{dct_4x8, dct2x2_transform, identity_transform};
+    pub use crate::vardct::encoder::VarDctEncoder;
+    /// Per-group output container for
+    /// [`VarDctEncoder::transform_blocks_into`] — the block-range
+    /// transform+quantize loop `forks/pre_quantized_ac.rs` mirrors.
+    /// The method lives on [`VarDctEncoder`] (reachable via
+    /// `__pre_quantized::VarDctEncoder`); this re-export completes its
+    /// signature (`&mut GroupTransformResult` out-param, plus
+    /// `scatter_into(TransformOutput)`).
+    pub use crate::vardct::transform::{GroupTransformResult, TransformOutput};
+}
+
 #[cfg(test)]
 mod tests;
 

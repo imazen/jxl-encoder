@@ -118,7 +118,11 @@ impl TransformOutput {
 /// Layout note: outer indexing stays per-channel, but the inner row
 /// is now flat: `quant_dc[c][ly * width + lx]` instead of the prior
 /// `quant_dc[c][ly][lx]`.
-pub(crate) struct GroupTransformResult {
+/// Visibility note (#76): `pub` (not `pub(crate)`) so the doc-hidden
+/// `crate::__gpu` seam can re-export it for jxl-encoder-gpu's
+/// `transform_blocks_into` consumers. The module path is crate-private;
+/// the only external route is `__gpu::GroupTransformResult`.
+pub struct GroupTransformResult {
     pub start_bx: usize,
     pub start_by: usize,
     pub width: usize,
@@ -313,8 +317,13 @@ impl VarDctEncoder {
     /// sub-rectangle `[start_by..end_by, start_bx..end_bx]` and writes results into
     /// locally-indexed arrays in `result`. The `quant_field` is read-only; any quant
     /// adjustments are recorded in `result.quant_adjustments` for later application.
+    ///
+    /// Visibility note (#76): `pub` so `__pre_quantized` /
+    /// [`crate::__gpu`] consumers (jxl-encoder-gpu) can drive the
+    /// block-transform loop directly on a [`GroupTransformResult`];
+    /// reachable externally only through those doc-hidden seams.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn transform_blocks_into(
+    pub fn transform_blocks_into(
         &self,
         xyb_x: &[f32],
         xyb_y: &[f32],
