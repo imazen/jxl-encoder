@@ -295,6 +295,19 @@ the model once, not twice.
   was introduced after `v0.9.3` and is referenced from
   `tests/it/alloc_budget.rs`. A lib-only compile succeeds against 0.9.3 and
   looks like proof — it is not.
+- **19 `__expert` examples do not compile** — they `use jxl_encoder::effort::{…}`
+  and `effort` is `pub(crate) mod` (`lib.rs:36`). CI never catches this: its two
+  clippy jobs run default features and `--features zensim-loop`, neither of
+  which enables `__expert`, and every one of the 19 is `__expert`-gated in
+  `Cargo.toml`. **The trap** (hit 2026-08-30 during T2): a developer-natural
+  `cargo clippy --all-targets --features "__expert butteraugli-loop …"` dies on
+  `E0603 module effort is private` in an example unrelated to whatever you are
+  working on, and cargo stops at the first one so it looks like a single broken
+  file rather than a family. Reproduce the list with
+  `grep -rl 'jxl_encoder::effort::' jxl-encoder/examples/`. **Not yours to fix
+  in passing** — it is 19 files and the fix is a design call (re-export the two
+  types under `__internals`, port the examples, or retire them). Gate your work
+  with the CI invocations instead; they are the ones that must be green.
 - **Published `jxl-encoder 0.3.1` does not build today** under fresh
   resolution (`magetypes 0.9.28` breaks published `jxl-encoder-simd 0.3.0`);
   workaround `cargo update -p magetypes --precise 0.9.23`. The 0.4.0 release
