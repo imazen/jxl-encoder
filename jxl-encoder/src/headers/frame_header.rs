@@ -360,6 +360,23 @@ impl FrameHeader {
         // upsampling, ec_upsampling: not present when USE_LF_FRAME flag is set
         // (jxl-rs frame_header.rs:288-300)
         if self.flags & USE_LF_FRAME == 0 {
+            // An extra channel may be coded at a COARSER resolution than the
+            // colour channels but never a finer one: `ec_upsampling <
+            // upsampling` is invalid and every decoder rejects it (jxl-oxide:
+            // "EC upsampling < color upsampling, which is invalid"). libjxl
+            // enforces the same on the encoder side by clamping
+            // `ec_resampling` up to `resampling` (`enc_frame.cc:2658-2659`).
+            // Caught here rather than emitted, because a header that no
+            // decoder accepts is silent data loss for the caller — this fired
+            // on lossy `with_resampling(N) + alpha`, which downsampled alpha
+            // by N while leaving `ec_upsampling` at 1 (2026-08-30).
+            if let Some(bad) = self.ec_upsampling.iter().find(|&&e| e < self.upsampling) {
+                return Err(crate::error::Error::InvalidInput(alloc::format!(
+                    "frame header would be undecodable: ec_upsampling {bad} < upsampling {} \
+                     (an extra channel may be coarser than colour, never finer)",
+                    self.upsampling
+                )));
+            }
             // upsampling (U32: 1, 2, 4, 8)
             writer.write_u32_coder(self.upsampling, 1, 2, 4, 8, 0)?;
 

@@ -8041,6 +8041,78 @@ fn test_lossy_with_resampling_2x_oneshot() {
     assert_eq!(fb.height() as u32, h);
 }
 
+/// Refs #12 / #45: lossy `with_resampling(N)` **with alpha** must signal
+/// `ec_upsampling = N`, not 1.
+///
+/// The api downsamples alpha by `effective_resampling` alongside the
+/// colour planes, but the VarDCT frame-header writer hardcoded
+/// `ec_upsampling = 1`. `ec_upsampling < upsampling` is invalid — an
+/// extra channel may be coarser than colour, never finer — so every
+/// RGBA encode at `resampling > 1` produced a stream no decoder would
+/// accept (jxl-oxide: `ValidationFailed("EC upsampling < color
+/// upsampling, which is invalid")`). libjxl clamps `ec_resampling` up to
+/// `resampling` (`enc_frame.cc:2658-2659`) and fills
+/// `extra_channel_upsampling` with it (`:461-463`).
+///
+/// Covers BOTH api entry points (one-shot `encode` and the
+/// `encode_request` path) at every legal factor, and asserts the stream
+/// renders at full size with its alpha channel intact.
+#[test]
+fn test_lossy_with_resampling_and_alpha_signals_ec_upsampling() {
+    let (w, h) = (64u32, 64u32);
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 4))
+        .map(|i| {
+            let p = i / 4;
+            let (x, y) = (p % w as usize, p / w as usize);
+            match i % 4 {
+                0 => (x * 4) as u8,
+                1 => (y * 4) as u8,
+                2 => ((x + y) * 2) as u8,
+                _ => ((x * 3 + y) % 256) as u8, // varying alpha
+            }
+        })
+        .collect();
+
+    for factor in [2u32, 4, 8] {
+        for (label, bytes) in [
+            (
+                "oneshot",
+                LossyConfig::new(2.0)
+                    .with_effort(5)
+                    .with_resampling(factor)
+                    .encode(&pixels, w, h, PixelLayout::Rgba8)
+                    .unwrap_or_else(|e| panic!("r{factor} oneshot encode: {e:?}")),
+            ),
+            (
+                "request",
+                LossyConfig::new(2.0)
+                    .with_effort(5)
+                    .with_resampling(factor)
+                    .encode_request(w, h, PixelLayout::Rgba8)
+                    .encode(&pixels)
+                    .unwrap_or_else(|e| panic!("r{factor} request encode: {e:?}")),
+            ),
+        ] {
+            let image = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(&bytes))
+                .unwrap_or_else(|e| {
+                    panic!("r{factor}/{label}: jxl-oxide rejected the header: {e:?}")
+                });
+            assert_eq!((image.width(), image.height()), (w, h));
+            let render = image
+                .render_frame(0)
+                .unwrap_or_else(|e| panic!("r{factor}/{label}: render: {e:?}"));
+            let fb = render.image_all_channels();
+            assert_eq!((fb.width() as u32, fb.height() as u32), (w, h));
+            assert_eq!(
+                fb.channels(),
+                4,
+                "r{factor}/{label}: alpha must survive resampling"
+            );
+        }
+    }
+}
+
 /// Refs #12: invalid resampling factor (e.g. 3) is silently coerced
 /// to 1 instead of crashing. Defensive — picks a value the spec does
 /// not allow.

@@ -3494,7 +3494,19 @@ impl VarDctEncoder {
             if self.use_lf_frame {
                 fh.flags |= crate::headers::frame_header::USE_LF_FRAME;
             }
-            fh.ec_upsampling = vec![1; num_extra_channels];
+            // Extra channels are coded at the SAME resolution as the colour
+            // channels here: the api downsamples alpha by `upsampling`
+            // alongside the colour planes (`box_downsample_alpha_u8`), and
+            // non-alpha extras are rejected outright at `resampling > 1`.
+            // So `ec_upsampling` must equal `upsampling` — a bare `1` next to
+            // `upsampling = 2` is not merely wrong-sized, it is an INVALID
+            // header the spec forbids and decoders reject ("EC upsampling <
+            // color upsampling"). libjxl reaches the same value from the
+            // other side: `ec_resampling` defaults to `resampling`
+            // (`enc_frame.cc:118-120`), is hard-clamped up to it
+            // (`enc_frame.cc:2658-2659`), and fills
+            // `extra_channel_upsampling` uniformly (`enc_frame.cc:461-463`).
+            fh.ec_upsampling = vec![fh.upsampling.max(1); num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
 
             // Progressive pass configuration

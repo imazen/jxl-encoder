@@ -171,10 +171,10 @@ effort-independent, so the fix necessarily moves `r4`/`r8` at e10+ as well
 the 4-image × 5-distance × 6-effort × 3-factor grid the 2× effect is
 21.3–22.8 → 12.6–15.0, i.e. large but not 3×.
 
-**Spun out, still open**: the new RGBA lock cell exposed an unrelated
-pre-existing defect — lossy `resampling > 1` with alpha writes
+**Spun out and also fixed**: the new RGBA lock cell exposed an unrelated
+pre-existing defect — lossy `resampling > 1` with alpha wrote
 `ec_upsampling = 1` next to colour `upsampling = N`, which is invalid and
-undecodable. See the ACTIVE Known Bug of the same date.
+undecodable. See the RESOLVED Known Bug of the same date.
 
 ### T2 — zensim secant guard thresholds — DONE 2026-08-30, and the brief above
 ### it was WRONG on three counts
@@ -510,10 +510,10 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### ACTIVE 2026-08-30: lossy `with_resampling(N>1)` + alpha emits an UNDECODABLE stream (`ec_upsampling` left at 1)
+### RESOLVED 2026-08-30: lossy `with_resampling(N>1)` + alpha emitted an UNDECODABLE stream (`ec_upsampling` left at 1)
 
-**Status**: ACTIVE — found 2026-08-30 by the new `resampling` hash-lock
-cells (T1). Independent of the domain bug below; pre-dates it.
+**Status**: RESOLVED same day. Found by the new `resampling` hash-lock
+cells (T1); independent of the domain bug below, and older than it.
 
 [PROVEN] `vardct/bitstream.rs:3497` hardcodes
 `fh.ec_upsampling = vec![1; num_extra_channels]`, but the lossy
@@ -525,16 +525,31 @@ header outright: `ValidationFailed("EC upsampling < color upsampling,
 which is invalid")`. libjxl defaults `ec_resampling` to `resampling`
 (`enc_frame.cc:118-120`) and then hard-clamps `ec_resampling =
 max(ec_resampling, resampling)` (`enc_frame.cc:2658-2659`) before filling
-`extra_channel_upsampling` with it (`enc_frame.cc:461-463`). Repro: encode
-any `PixelLayout::Rgba8` buffer with `LossyConfig::new(1.0).with_effort(7)
-.with_resampling(2)` and parse the result with jxl-oxide. The modular
-`--ec_resampling` half-res-alpha path (`with_dim_shift`) is a *different*
-feature and is not implicated. Fix shape: carry the resampling factor into
-the VarDCT frame-header writer and set `ec_upsampling` to it for the
-channels we downsampled; then land the
-`lossy_mg_rgba_512x512_blocky_r2_e7` lock cell that exposed this (written
-and removed from the T1 commit because the regenerator correctly refuses
-undecodable bytes).
+`extra_channel_upsampling` with it (`enc_frame.cc:461-463`). Repro (before
+the fix): encode any `PixelLayout::Rgba8` buffer with
+`LossyConfig::new(1.0).with_effort(7).with_resampling(2)` and parse the
+result with jxl-oxide. The modular `--ec_resampling` half-res-alpha path
+(`with_dim_shift`) is a *different* feature and was not implicated.
+
+**Fixed** by writing `ec_upsampling = upsampling` for every extra channel
+(safe because non-alpha extras are rejected outright at `resampling > 1`
+and alpha is downsampled by exactly that factor), plus a
+defence-in-depth refusal in `FrameHeader::write`: serializing
+`ec_upsampling < upsampling` now returns a named `InvalidInput` instead of
+emitting a header no decoder accepts. `resampling == 1` is untouched
+(`max(1)` is the identity), so 58/58 pre-existing locks stayed
+byte-identical and only `lossy_mg_rgba_512x512_blocky_r2_e7` — the cell
+that exposed this — was added. Regression:
+`api_tests::test_lossy_with_resampling_and_alpha_signals_ec_upsampling`
+covers both api entry points × r2/r4/r8 and is mutation-verified (reverting
+the one line fails it).
+
+**The lesson is the lock-coverage one again**: this shipped unobserved for
+as long as `with_resampling` + alpha has existed, because no hash lock
+covered ANY `resampling > 1` cell, let alone an RGBA one. Two distinct
+bugs — a wrong colour domain and an invalid header — fell out of adding
+six cells. When adding a feature knob, add a lock cell for each *shape* it
+can produce (here: colour-only vs colour+alpha), not just one.
 
 ### RESOLVED 2026-08-30: e≤9 `with_resampling(N)` downsampled in the WRONG domain (linear RGB, decoder upsamples XYB)
 

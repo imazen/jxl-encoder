@@ -1302,6 +1302,34 @@ fn lossy_mg_rgb_512x512_noise_r8_e7() {
     );
 }
 
+/// Multi-group lossy RGBA at `resampling = 2`: the colour planes go
+/// through the opsin-domain sharper 2×, while **alpha** takes the plain
+/// `box_downsample_alpha_u8` path — libjxl downsamples extra channels
+/// with `DownsampleImage(ec, ec_resampling)` on the raw channel, no
+/// colour transform (`enc_frame.cc:1650-1654`). This cell pins that
+/// split, and pins that the frame header signals `ec_upsampling = 2`
+/// alongside `upsampling = 2`: before 2026-08-30 it wrote `1` there and
+/// the stream was undecodable, which is why the cell could not be locked
+/// when the rest of its family was.
+#[test]
+fn lossy_mg_rgba_512x512_blocky_r2_e7() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .with_resampling(2)
+        .encode(&blocky17_rgba_512x512(), 512, 512, PixelLayout::Rgba8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgba_512x512_blocky_r2_e7",
+        &data,
+        512,
+        512,
+        true,
+        true,
+        false,
+        false,
+    );
+}
+
 /// Multi-group lossy at e11: the extended-tier buttloop (8 iters) +
 /// 2-seed multi-seed search — the pre-shift "e10" machinery at its
 /// post-shift number (issue #45). First lock coverage for the extended
