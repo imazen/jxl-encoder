@@ -43,7 +43,7 @@
 
 use std::path::PathBuf;
 
-use jxl_encoder::tuning::runtime::{RuntimeTuning, install, is_loaded};
+use jxl_encoder::tuning_runtime::{RuntimeTuning, install, is_loaded};
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 /// Resolve the codec-corpus root. Mirrors `buttloop_target_parity.rs`.

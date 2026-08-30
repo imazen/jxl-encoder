@@ -44,8 +44,8 @@ fn main() {
             g(AnalysisFeature::QuantSurvivalY),
         ];
         let px = u64::from(w) * u64::from(h);
-        let q80 = jxl_encoder::zq_seed::predict_q0_from_features(&feats, 80.0, px);
-        let q88 = jxl_encoder::zq_seed::predict_q0_from_features(&feats, 88.0, px);
+        let q80 = jxl_encoder::__test_exports::zq_seed::predict_q0_from_features(&feats, 80.0, px);
+        let q88 = jxl_encoder::__test_exports::zq_seed::predict_q0_from_features(&feats, 88.0, px);
         let fs = feats
             .iter()
             .map(|v| format!("{v}"))

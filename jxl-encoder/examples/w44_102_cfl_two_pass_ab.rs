@@ -38,8 +38,8 @@
 use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
 use image::GenericImageView;
 use imgref::Img;
+use jxl_encoder::LossyInternalParams;
 use jxl_encoder::api::{Limits, LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
 use rgb::RGB;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;

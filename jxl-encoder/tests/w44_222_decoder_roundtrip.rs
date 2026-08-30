@@ -23,7 +23,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
-use jxl_encoder::tuning::coupling::Tier2Knobs;
+use jxl_encoder::__test_exports::coupling::Tier2Knobs;
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 fn corpus_root() -> Option<PathBuf> {

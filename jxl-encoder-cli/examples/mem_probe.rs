@@ -264,14 +264,7 @@ fn main() {
         (_, true) => 4,
         _ => 3,
     };
-    let est = jxl_encoder::heuristics::estimate_encode(
-        w,
-        h,
-        input_bpp,
-        alpha == "rgba",
-        is_lossless,
-        effort,
-    );
+    let est = jxl_encoder::estimate_encode(w, h, input_bpp, alpha == "rgba", is_lossless, effort);
 
     let baseline = vmhwm_kb();
     let live_pre = counting_alloc::LIVE.load(Ordering::Relaxed);

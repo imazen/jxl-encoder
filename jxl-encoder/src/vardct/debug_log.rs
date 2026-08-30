@@ -56,6 +56,7 @@ pub fn flush_debug_log() {
 /// Debug log macro - writes to `<temp_dir>/jxl_enc_debug.log` when debug-tokens feature is enabled.
 ///
 /// Usage: `debug_log!("message: {}", value);`
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 macro_rules! debug_log {
     ($($arg:tt)*) => {
@@ -67,6 +68,7 @@ macro_rules! debug_log {
 }
 
 /// Debug log macro that also flushes (use sparingly, for important checkpoints).
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 macro_rules! debug_log_flush {
     ($($arg:tt)*) => {

@@ -20,8 +20,8 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use jxl_encoder::LossyInternalParams;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
 
 // 20 OPEN cells, sourced from cjxl_parity_ledger_2026-05-19_w44_61.tsv.
 // (image, effort, distance, ours_baseline_bytes_w44_61).

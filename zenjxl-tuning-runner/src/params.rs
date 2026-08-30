@@ -58,9 +58,9 @@ pub fn materialise_params(path: Option<&Path>) -> Result<ParamsRecord, String> {
     // requires a known struct shape. The install path also validates,
     // but doing it here gives us a clean error message before mutating
     // the process-global state.
-    let _: jxl_encoder::tuning::runtime::RuntimeTuning = postcard::from_bytes(&bytes)
+    let _: jxl_encoder::RuntimeTuning = postcard::from_bytes(&bytes)
         .map_err(|e| format!("postcard decode {}: {e}", path.display()))?;
-    let installed = match jxl_encoder::tuning::runtime::install_from_postcard_file(path) {
+    let installed = match jxl_encoder::install_from_postcard_file(path) {
         Ok(()) => true,
         Err(e) => {
             // Single-shot installer — if this process already installed,

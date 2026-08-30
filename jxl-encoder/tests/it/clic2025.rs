@@ -1752,7 +1752,7 @@ fn test_single_block_noise() {
 #[test]
 #[ignore]
 fn test_xyb_conversion() {
-    use jxl_encoder::color::xyb::linear_rgb_to_xyb;
+    use jxl_encoder::__test_exports::xyb::linear_rgb_to_xyb;
 
     eprintln!("\n=== XYB Conversion Test ===\n");
 
@@ -5469,8 +5469,8 @@ fn test_static_vs_optimize_codes() {
 #[ignore]
 fn test_ans_histogram_roundtrip_jxl_rs() {
     use jxl_encoder::__test_exports::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
+    use jxl_encoder::__test_exports::bit_writer::BitWriter;
     use jxl_encoder::__test_exports::histogram::Histogram;
-    use jxl_encoder::bit_writer::BitWriter;
 
     // Test cases: various histogram shapes
     let test_cases: Vec<(&str, Vec<i32>)> = vec![
@@ -5539,8 +5539,8 @@ fn test_ans_skewed_histogram_roundtrip() {
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
     use jxl_encoder::__test_exports::ans_decode::{AnsHistogram, BitReader};
+    use jxl_encoder::__test_exports::bit_writer::BitWriter;
     use jxl_encoder::__test_exports::histogram::Histogram;
-    use jxl_encoder::bit_writer::BitWriter;
 
     // Recreate the histogram from the debug output:
     // Skewed distribution like DC tokens: mostly token 0, rare token 1 and 32
@@ -5735,8 +5735,8 @@ fn test_ans_single_symbol_full_cycle() {
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
     use jxl_encoder::__test_exports::ans_decode::{AnsHistogram, BitReader};
+    use jxl_encoder::__test_exports::bit_writer::BitWriter;
     use jxl_encoder::__test_exports::histogram::Histogram;
-    use jxl_encoder::bit_writer::BitWriter;
 
     // Single symbol 8 with 10 occurrences
     let mut histo = Histogram::new();

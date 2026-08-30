@@ -26,8 +26,8 @@
 
 #![cfg(feature = "tuning-override")]
 
-use jxl_encoder::effort::ImageContentClass;
-use jxl_encoder::tuning::coupling::{ContentStratum, Tier2Knobs};
+use jxl_encoder::__test_exports::coupling::{ContentStratum, Tier2Knobs};
+use jxl_encoder::ImageContentClass;
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 // ─── Pure-data tests (no runtime::install reached — safe to parallelize) ───

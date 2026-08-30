@@ -787,6 +787,10 @@ impl LosslessConfig {
     /// knobsets must share to be byte-identical (see zenjxl
     /// `encode_fingerprint`). Public wrapper over the crate-internal
     /// resolver so sweep tooling needn't duplicate the override mapping.
+    ///
+    /// `#[doc(hidden)]` (#76): returns the internal [`EffortProfile`];
+    /// reachable-but-unsupported, like the type itself.
+    #[doc(hidden)]
     pub fn resolved_profile(&self) -> crate::effort::EffortProfile {
         self.effective_profile()
     }
@@ -2890,6 +2894,10 @@ impl LossyConfig {
     /// knobsets must share to be byte-identical (see zenjxl
     /// `encode_fingerprint`). Public wrapper over the crate-internal
     /// resolver so sweep tooling needn't duplicate the override mapping.
+    ///
+    /// `#[doc(hidden)]` (#76): returns the internal [`EffortProfile`];
+    /// reachable-but-unsupported, like the type itself.
+    #[doc(hidden)]
     pub fn resolved_profile(&self) -> crate::effort::EffortProfile {
         self.effective_profile()
     }

@@ -23,8 +23,8 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use jxl_encoder::LossyInternalParams;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
 
 const CELLS: &[(u8, f32, &str)] = &[
     (6, 1.0, "e6_d1.0"),

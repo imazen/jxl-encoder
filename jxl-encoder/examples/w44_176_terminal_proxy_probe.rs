@@ -25,8 +25,8 @@
 //!     --features "__expert __pre_quantized"
 
 use jxl_encoder::__pre_quantized::{EffortProfile, EncoderPrecomputed};
+use jxl_encoder::__test_exports::xyb::srgb_to_linear_value;
 use jxl_encoder::api::EncoderMode;
-use jxl_encoder::color::xyb::srgb_to_linear_value;
 use std::collections::HashSet;
 use std::path::Path;
 

@@ -49,8 +49,8 @@ use jxl_encoder::__pre_quantized::{
     compute_cfl_map, compute_mask1x1, compute_quant_field_float_free, find_and_build_patches,
     gaborish_inverse, quantize_quant_field, subtract_patches,
 };
+use jxl_encoder::__test_exports::xyb::linear_rgb_to_xyb;
 use jxl_encoder::EncoderMode;
-use jxl_encoder::color::xyb::linear_rgb_to_xyb;
 
 /// Build a "screenshot-like" image: solid background + a small text-glyph
 /// foreground replicated at multiple positions. Exactly the shape libjxl's

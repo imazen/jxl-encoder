@@ -38,9 +38,9 @@
 use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
 use image::GenericImageView;
 use imgref::Img;
+use jxl_encoder::__test_exports::coupling::Tier2Knobs;
+use jxl_encoder::ImageContentClass;
 use jxl_encoder::api::{EncoderStrategy, Limits, LossyConfig, PixelLayout};
-use jxl_encoder::effort::ImageContentClass;
-use jxl_encoder::tuning::coupling::Tier2Knobs;
 use rgb::RGB;
 use std::collections::BTreeMap;
 use std::env;

@@ -32,8 +32,8 @@
 //!       --example issue_43_chunk_2a_dct32_paired_ab \
 //!       > benchmarks/issue_43_chunk_2a_2026-05-25.tsv
 
+use jxl_encoder::LossyInternalParams;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
 use sha2::Digest;
 use std::time::Instant;
 

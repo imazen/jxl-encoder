@@ -113,6 +113,7 @@ pub use inner::{PhaseGuard, record, reset, take_snapshot};
 /// Time the supplied expression block and record under the given phase.
 ///
 /// Compiles to a plain block when `profile-phases` is disabled.
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 macro_rules! profile_time {
     ($phase:literal, $body:block) => {{

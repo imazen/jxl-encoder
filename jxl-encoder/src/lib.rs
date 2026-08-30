@@ -18,19 +18,24 @@ extern crate alloc;
 whereat::define_at_crate_info!(path = "jxl-encoder/");
 
 pub mod api;
-pub mod bit_writer;
+// #76 (0.4.0): the modules below are the encoder's internal machinery
+// and instrumentation. The supported surface is `api` plus the crate-root
+// re-exports; a small set of extra entry points survives as doc-hidden
+// root re-exports (see the `__compat` block near the bottom of this
+// file) for in-flight downstream consumers (zenjxl).
+pub(crate) mod bit_writer;
 pub(crate) mod budget;
-pub mod color;
-pub mod container;
-pub mod debug_rect;
-// `effort` carries internal effort-derived knobs. Kept `pub` for
-// backwards-compatibility with 0.3.0 (which re-exported `EffortProfile`
-// at the crate root). The actual sweep / picker escape-hatch entry point
-// (`LosslessConfig::with_effort_profile_override` / its lossy twin) is
-// gated behind the `__expert` feature.
-pub mod effort;
+pub(crate) mod color;
+pub(crate) mod container;
+pub(crate) mod debug_rect;
+// `effort` carries internal effort-derived knobs (#76: now
+// `pub(crate)` — the 0.3.0-compat root re-export of `EffortProfile`
+// stays, `#[doc(hidden)]`, and closes the old `effort::EffortProfile`
+// bypass). The sweep / picker escape hatch is the `__expert`-gated
+// `LossyInternalParams` / `LosslessInternalParams` pair.
+pub(crate) mod effort;
 pub mod entropy_coding;
-pub mod error;
+pub(crate) mod error;
 pub(crate) mod f16;
 // #76 (0.4.0): `headers` is an internal serialization layer. The public
 // color-signaling surface is the root re-exports below (`ColorEncoding`,
@@ -41,7 +46,6 @@ pub(crate) mod f16;
 // `test_helpers::measure_file_header_len`.
 pub(crate) mod headers;
 pub(crate) mod icc;
-pub mod image;
 #[cfg(feature = "jpeg-reencoding")]
 pub mod jpeg;
 pub mod modular;
@@ -62,8 +66,8 @@ pub(crate) mod sweep;
 /// See [`hdr::HdrFromSdrRequest`] for the end-to-end API.
 #[cfg(feature = "hdr-gainmap")]
 pub mod hdr;
-pub mod heuristics;
-pub mod profile_phases;
+pub(crate) mod heuristics;
+pub(crate) mod profile_phases;
 // W44-192: side-by-side prototype proving the `strategy_def!` proc-macro
 // generates code equivalent to the hand-written gate plumbing in `api.rs`.
 // Phase 1 of the W44-190 RFC. W44-193 migrated the production
@@ -80,7 +84,7 @@ pub(crate) mod strategy_def_prototype;
 // `crate::gate_registry` for the macro invocation, divergence metadata,
 // and the W44-120 dual-env-var supplement.
 pub(crate) mod gate_registry;
-pub mod trace;
+pub(crate) mod trace;
 // W44-211: canonical access path to every VarDCT tunable constant.
 // See `docs/TUNING_RELATIONS.md` for the relation graph and
 // `memory/w44_210_a_const_inventory_2026-05-22.md` for the inventory.
@@ -89,12 +93,12 @@ pub mod trace;
 // runtime override layer for the sweep runner.
 #[cfg(feature = "zensim-loop")]
 pub(crate) mod s4_eps;
-pub mod tuning;
+pub(crate) mod tuning;
 pub mod validation;
 #[cfg(test)]
 mod validation_tests;
 pub mod vardct;
-pub mod zq_seed;
+pub(crate) mod zq_seed;
 
 #[cfg(feature = "convenience")]
 pub mod convenience;
@@ -163,6 +167,40 @@ pub const BLOCK_SIZE: usize = BLOCK_DIM * BLOCK_DIM;
 /// JXL signature bytes.
 pub const JXL_SIGNATURE: [u8; 2] = [0xFF, 0x0A];
 
+// ── #76 (0.4.0) doc-hidden compat re-exports ────────────────────────────
+// Kept reachable (but unsupported) for in-flight downstream consumers —
+// zenjxl re-exports the container probes in its own API and drives its
+// memory pre-flight through the heuristics estimators. Promotion of any
+// of these to the supported surface is an owner decision for a later
+// release; until then they are #[doc(hidden)] and may change freely.
+/// Append a JHGM (gain-map) box to an encoded JXL container stream.
+#[doc(hidden)]
+pub use container::append_gain_map_box;
+/// Container-format probe: does `data` start with the ISOBMFF JXL
+/// container signature (vs a bare codestream)?
+#[doc(hidden)]
+pub use container::is_bare_codestream;
+#[doc(hidden)]
+pub use container::is_container;
+/// Pre-encode memory/threading estimators (calibrated 2026-06-14 /
+/// 2026-08-01; see `heuristics` module docs). zenjxl's admission
+/// pre-flight consumes these.
+#[doc(hidden)]
+pub use heuristics::{
+    EncodeEstimate, ThreadingInfo, encode_threading_info, estimate_encode, estimate_encode_threaded,
+};
+/// W44-211 runtime tuning-override layer (feature `tuning-override`) —
+/// the zenjxl-tuning-runner installs sweep blobs through this, and the
+/// w44_213 wiring test drives install/is_loaded directly.
+#[cfg(feature = "tuning-override")]
+#[doc(hidden)]
+pub use tuning::runtime::{RuntimeTuning, install_from_postcard_file};
+#[cfg(feature = "tuning-override")]
+#[doc(hidden)]
+pub mod tuning_runtime {
+    pub use crate::tuning::runtime::*;
+}
+
 /// Test path helpers for integration tests and examples.
 ///
 /// Provides configurable paths via environment variables for corpus directories,
@@ -201,6 +239,32 @@ pub mod __test_exports {
     /// Histogram type consumed by the ANS roundtrip tests.
     pub mod histogram {
         pub use crate::entropy_coding::histogram::*;
+    }
+    /// Bitstream writer driven directly by the ANS roundtrip tests.
+    pub mod bit_writer {
+        pub use crate::bit_writer::*;
+    }
+    /// XYB color primitives (`tests/it/{clic2025,with_patches_data}.rs`
+    /// + proxy-audit examples).
+    pub mod xyb {
+        pub use crate::color::xyb::*;
+    }
+    /// colr-box payload builder (`tests/it/colr_hcdr_boxes.rs`).
+    pub use crate::container::colr_nclx_payload;
+    /// Tier-2 coupling knobs (`examples/w44_229_parity_check.rs` +
+    /// the w44_221/222/228 knob tests).
+    pub mod coupling {
+        pub use crate::tuning::coupling::*;
+    }
+    /// zq-seed predictor probes (`examples/zq_feat_probe.rs` +
+    /// zq calibration examples).
+    pub mod zq_seed {
+        pub use crate::zq_seed::*;
+    }
+    /// Phase-profiling counters (`examples/{lossless_cliff_profile,
+    /// gather_dedup_ab}.rs`).
+    pub mod profile_phases {
+        pub use crate::profile_phases::*;
     }
 }
 

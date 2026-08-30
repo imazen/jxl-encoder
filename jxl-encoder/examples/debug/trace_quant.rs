@@ -1,4 +1,4 @@
-use jxl_encoder::color::xyb::srgb_to_xyb;
+use jxl_encoder::__test_exports::xyb::srgb_to_xyb;
 use std::f32::consts::PI;
 
 // Simple DCT-II implementation for testing

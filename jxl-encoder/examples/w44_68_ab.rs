@@ -15,8 +15,8 @@
 
 use std::path::PathBuf;
 
+use jxl_encoder::LossyInternalParams;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
 
 const CORPUS_BASE: &str = "/home/lilith/work/codec-corpus";
 

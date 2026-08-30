@@ -891,7 +891,7 @@ fn thread_walkdown_reduces_and_succeeds() {
             pixels.push((x.wrapping_mul(3) ^ y) as u8);
         }
     }
-    let cap = jxl_encoder::heuristics::estimate_encode_threaded(w, h, 3, false, false, 7, 3)
+    let cap = jxl_encoder::estimate_encode_threaded(w, h, 3, false, false, 7, 3)
         .unwrap()
         .peak_memory_bytes;
     let limits = Limits::new().with_max_memory_bytes(cap);

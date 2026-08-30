@@ -2436,6 +2436,7 @@ pub mod coupling {
 ///
 /// **Sweep-runner builds** (`tuning-override` ON): expands to
 /// `crate::tuning::runtime::get_or_default($const_path, |t| t.$field)`.
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 macro_rules! runtime_or_default {
     ($const_path:path, $field:ident $(,)?) => {{

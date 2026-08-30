@@ -31,7 +31,7 @@
 //! ```
 #![cfg(feature = "tuning-override")]
 
-use jxl_encoder::tuning::coupling::Tier2Knobs;
+use jxl_encoder::__test_exports::coupling::Tier2Knobs;
 
 fn main() {
     let cases = [

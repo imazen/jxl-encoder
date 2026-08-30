@@ -23,8 +23,8 @@
 //!   THREADS=8   (default 8)
 //!   EFFORT=7    (default 7)
 
+use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::effort::LosslessInternalParams;
 use std::time::Instant;
 
 const TEXTURED_PHOTOS: &[(&str, &str)] = &[

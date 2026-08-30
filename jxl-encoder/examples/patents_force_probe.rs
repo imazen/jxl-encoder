@@ -42,7 +42,7 @@ fn main() {
     // moves us toward cjxl's operating point.
     #[cfg(feature = "__expert")]
     {
-        let arms: &[(&str, fn(&mut jxl_encoder::effort::LossyInternalParams))] = &[
+        let arms: &[(&str, fn(&mut jxl_encoder::LossyInternalParams))] = &[
             ("search-no-DCT16+", |p| {
                 p.try_dct16 = Some(false);
                 p.try_dct32 = Some(false);
@@ -54,7 +54,7 @@ fn main() {
             }),
         ];
         for (label, setup) in arms {
-            let mut params = jxl_encoder::effort::LossyInternalParams::default();
+            let mut params = jxl_encoder::LossyInternalParams::default();
             setup(&mut params);
             let data = LossyConfig::new(0.5)
                 .with_effort(7)

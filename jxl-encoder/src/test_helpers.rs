@@ -51,6 +51,7 @@ pub fn corpus_dir() -> std::path::PathBuf {
 /// If a corpus-using test runs (i.e. the `corpus-tests` feature is on)
 /// and the corpus path can't be found, that's a CI configuration bug —
 /// the test panics so the failure is loud.
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 macro_rules! skip_without_corpus {
     () => {
@@ -62,6 +63,7 @@ macro_rules! skip_without_corpus {
 }
 
 /// Skip the current test if the given external binary is not available.
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 macro_rules! skip_without_binary {
     ($path:expr) => {

@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 
 use jxl_encoder::__pre_quantized::compute_mask1x1;
-use jxl_encoder::color::xyb::srgb_image_to_xyb;
+use jxl_encoder::__test_exports::xyb::srgb_image_to_xyb;
 
 const CORPUS_BASE: &str = "/home/lilith/work/codec-corpus";
 

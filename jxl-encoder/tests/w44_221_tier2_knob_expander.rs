@@ -33,8 +33,8 @@
 
 use std::path::PathBuf;
 
-use jxl_encoder::tuning::coupling::Tier2Knobs;
-use jxl_encoder::tuning::runtime::{RuntimeTuning, install, is_loaded};
+use jxl_encoder::__test_exports::coupling::Tier2Knobs;
+use jxl_encoder::tuning_runtime::{RuntimeTuning, install, is_loaded};
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 /// Resolve the codec-corpus root. Mirrors `w44_213_runtime_tuning_wiring.rs`.

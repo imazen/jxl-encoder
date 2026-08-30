@@ -31,7 +31,7 @@
 //!   EFFORTS=7,8,9
 
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::effort::LosslessInternalParams;
+use jxl_encoder::LosslessInternalParams;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;

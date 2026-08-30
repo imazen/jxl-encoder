@@ -479,6 +479,7 @@ pub(crate) fn try_alloc_zeroed_permanent<T: Copy + Default>(
 ///
 /// Expands to a `(Vec<f32>, BudgetGuard)` tuple. Pair the guard with
 /// the vec for the lifetime of the allocation.
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[doc(hidden)]
 macro_rules! try_alloc_plane_f32 {

@@ -119,15 +119,8 @@ fn main() {
     };
 
     // Model prediction for the same cell (thread-aware), in the same row.
-    let est = jxl_encoder::heuristics::estimate_encode_threaded(
-        w,
-        h,
-        3,
-        false,
-        is_lossless,
-        effort,
-        threads.max(1),
-    );
+    let est =
+        jxl_encoder::estimate_encode_threaded(w, h, 3, false, is_lossless, effort, threads.max(1));
     let (est_typ, est_max) = est
         .map(|e| (e.peak_memory_bytes / 1024, e.peak_memory_bytes_max / 1024))
         .unwrap_or((0, 0));

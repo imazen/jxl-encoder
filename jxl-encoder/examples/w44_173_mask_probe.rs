@@ -10,8 +10,8 @@
 //!     --example w44_173_mask_probe
 
 use jxl_encoder::__pre_quantized::{EffortProfile, EncoderPrecomputed};
+use jxl_encoder::__test_exports::xyb::srgb_to_linear_value;
 use jxl_encoder::api::EncoderMode;
-use jxl_encoder::color::xyb::srgb_to_linear_value;
 use std::path::PathBuf;
 
 const SRC_PNG: &str =

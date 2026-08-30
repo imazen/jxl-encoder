@@ -14,8 +14,8 @@
 //! but exercising the full `ImageMetadata` → `wrap_metadata_container` →
 //! append-aux-box wiring.
 
+use jxl_encoder::__test_exports::colr_nclx_payload;
 use jxl_encoder::api::{ImageMetadata, LosslessConfig, PixelLayout};
-use jxl_encoder::container::colr_nclx_payload;
 
 /// Build a 16×16 solid-red RGB8 image. Small enough that encode + scan is
 /// fast; big enough to exercise the lossless single-group path end-to-end.

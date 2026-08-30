@@ -14,8 +14,8 @@
 //!
 //! usage:  beardoil_d2_probe <img.png>
 
+use jxl_encoder::LossyInternalParams;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
 
 /// (label, knob-tweak) pair for the d2.0 ablation table.
 type Ablation = (&'static str, fn(&mut LossyInternalParams));

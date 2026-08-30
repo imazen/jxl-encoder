@@ -17,8 +17,8 @@
 //!   CLIFF_SAMPLES=3               # samples per cell
 //!   CLIFF_THREADS=1               # threads (1 = single, 0 = ambient pool)
 
+use jxl_encoder::__test_exports::profile_phases;
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::profile_phases;
 use std::path::PathBuf;
 use std::time::Instant;
 

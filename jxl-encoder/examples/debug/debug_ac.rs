@@ -1,6 +1,6 @@
 //! Debug AC coefficient values
 
-use jxl_encoder::color::xyb::srgb_to_xyb;
+use jxl_encoder::__test_exports::xyb::srgb_to_xyb;
 use jxl_encoder::vardct::quant_weights::get_dct8_inv_dequant_per_channel;
 use std::f32::consts::PI;
 

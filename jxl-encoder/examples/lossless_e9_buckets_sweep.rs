@@ -19,8 +19,8 @@
 //!   SAMPLES=5                               (default: 5; bench uses min)
 //!   THREADS=8                               (default: 8)
 
+use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::effort::LosslessInternalParams;
 use std::path::PathBuf;
 use std::time::Instant;
 

@@ -30,8 +30,8 @@
 //!                        # 8 is the production parallel-tree-learning shape.
 //!   GD_WARMUP=2          # warm-up samples discarded before measurement
 
+use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::effort::LosslessInternalParams;
 use std::path::PathBuf;
 use std::time::Instant;
 

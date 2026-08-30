@@ -8,7 +8,7 @@
 //!
 //! usage: hdr_tree_budget_probe <png> <effort> [frac=F] [props=N] [buckets=N] [rcts=N] [wp=N]
 
-use jxl_encoder::effort::LosslessInternalParams;
+use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::{LosslessConfig, PixelLayout};
 
 fn main() {

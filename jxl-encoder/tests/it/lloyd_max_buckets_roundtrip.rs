@@ -23,8 +23,8 @@
 
 use std::io::Cursor;
 
+use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::effort::LosslessInternalParams;
 
 /// Decode `jxl` via jxl-oxide and return the linear-sRGB pixel array
 /// alongside (width, height). Pixel-exact lossless decode for an 8-bit

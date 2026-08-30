@@ -209,6 +209,7 @@ pub fn trace_write_impl(
 /// // Write with description:
 /// trace_write!(writer, n_bits, value, "field_name", "description")?;
 /// ```
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(feature = "trace-bitstream")]
 macro_rules! trace_write {
@@ -226,6 +227,7 @@ macro_rules! trace_write {
     }};
 }
 
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(not(feature = "trace-bitstream"))]
 macro_rules! trace_write {
@@ -246,6 +248,7 @@ macro_rules! trace_write {
 /// // ... writes ...
 /// trace_section!(end "SECTION_NAME" @ writer);
 /// ```
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(feature = "trace-bitstream")]
 macro_rules! trace_section {
@@ -257,6 +260,7 @@ macro_rules! trace_section {
     };
 }
 
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(not(feature = "trace-bitstream"))]
 macro_rules! trace_section {
@@ -267,6 +271,7 @@ macro_rules! trace_section {
 /// Log a trace message without writing bits.
 ///
 /// Useful for noting important state or decisions.
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(feature = "trace-bitstream")]
 macro_rules! trace_note {
@@ -275,6 +280,7 @@ macro_rules! trace_note {
     };
 }
 
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(not(feature = "trace-bitstream"))]
 macro_rules! trace_note {
@@ -282,6 +288,7 @@ macro_rules! trace_note {
 }
 
 /// Trace a byte append operation.
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(feature = "trace-bitstream")]
 macro_rules! trace_bytes {
@@ -300,6 +307,7 @@ macro_rules! trace_bytes {
     }};
 }
 
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(not(feature = "trace-bitstream"))]
 macro_rules! trace_bytes {
@@ -310,6 +318,7 @@ macro_rules! trace_bytes {
 
 /// Debug print macro - only outputs when trace-bitstream feature is enabled.
 /// Use this instead of eprintln! for debug output in encoder code.
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(feature = "trace-bitstream")]
 macro_rules! debug_eprintln {
@@ -318,6 +327,7 @@ macro_rules! debug_eprintln {
     };
 }
 
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 #[cfg(not(feature = "trace-bitstream"))]
 macro_rules! debug_eprintln {
@@ -332,26 +342,31 @@ macro_rules! debug_eprintln {
     };
 }
 
-// Re-export macros at crate level
-pub use debug_eprintln;
-pub use trace_bytes;
-pub use trace_note;
-pub use trace_section;
-pub use trace_write;
+// #76: the macros are #[macro_export] (root paths for external users);
+// this pub(crate) alias keeps the crate-internal
+// `crate::trace::debug_eprintln!` call sites working (the other trace
+// macros are invoked by their crate-root paths).
+pub(crate) use debug_eprintln;
 
 // ============================================================================
 // NO-OP STUBS when feature is disabled
 // ============================================================================
 
+// #76: kept as the stable no-op mirror of the trace-bitstream API even
+// though no default-build caller remains — ad-hoc debugging sessions
+// toggle the feature without changing call sites.
 #[cfg(not(feature = "trace-bitstream"))]
+#[allow(dead_code)]
 pub fn init_trace(_path: &str) -> std::io::Result<()> {
     Ok(())
 }
 
 #[cfg(not(feature = "trace-bitstream"))]
+#[allow(dead_code)]
 pub fn init_trace_stderr() {}
 
 #[cfg(not(feature = "trace-bitstream"))]
+#[allow(dead_code)]
 pub fn finish_trace() {}
 
 #[cfg(test)]

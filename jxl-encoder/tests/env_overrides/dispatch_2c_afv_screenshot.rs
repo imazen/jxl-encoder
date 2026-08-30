@@ -20,7 +20,7 @@
 //!    (`benchmarks/dispatch_2c_afv_screenshot_2026-06-10.meta`).
 
 use jxl_encoder::api::EncoderMode;
-use jxl_encoder::effort::{EffortProfile, ImageContentClass};
+use jxl_encoder::{EffortProfile, ImageContentClass};
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 /// Serialises env-var mutation within this test binary. Only this

@@ -22,6 +22,11 @@
 //! 3. Call [`query_overlapping`] (or grep the CSV) for rectangles touching that region
 //! 4. Read the `message` column to understand every decision that affected those pixels
 
+// #76: ad-hoc debug tooling — entry is the `debug_rect!` macro; the
+// query helpers are kept for interactive sessions even when no in-tree
+// caller remains.
+#![allow(dead_code)]
+
 #[cfg(feature = "debug-rect")]
 use std::sync::Mutex;
 
@@ -41,6 +46,7 @@ pub static LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 ///
 /// When `debug-rect` is disabled this is a no-op.
 #[cfg(feature = "debug-rect")]
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 macro_rules! debug_rect {
     ($stage:expr, $x:expr, $y:expr, $w:expr, $h:expr, $($arg:tt)*) => {{
@@ -55,6 +61,7 @@ macro_rules! debug_rect {
 /// No-op version when feature is disabled — still evaluates arguments
 /// to suppress unused variable warnings, but the optimizer eliminates everything.
 #[cfg(not(feature = "debug-rect"))]
+#[doc(hidden)] // #76: instrumentation macro, not part of the supported API
 #[macro_export]
 macro_rules! debug_rect {
     ($stage:expr, $x:expr, $y:expr, $w:expr, $h:expr, $($arg:tt)*) => {

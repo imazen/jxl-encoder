@@ -33,8 +33,8 @@
 
 use std::path::PathBuf;
 
-use jxl_encoder::tuning::coupling::Tier2Knobs;
-use jxl_encoder::tuning::runtime::is_loaded;
+use jxl_encoder::__test_exports::coupling::Tier2Knobs;
+use jxl_encoder::tuning_runtime::is_loaded;
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 fn corpus_root() -> Option<PathBuf> {

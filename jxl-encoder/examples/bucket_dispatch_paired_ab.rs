@@ -29,8 +29,8 @@
 //!   - all other 8 cells: bytes-identical AND wall-clock within noise
 //!     (the dispatch must not fire outside its gate)
 
+use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::effort::LosslessInternalParams;
 use sha2::Digest;
 use std::path::PathBuf;
 use std::time::Instant;

@@ -21,10 +21,10 @@
 //!   GD_THREADS=1         # 1 = single-threaded; 0 = ambient rayon pool
 //!   GD_WARMUP=2          # warm-up samples discarded before measurement
 
-use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::effort::LosslessInternalParams;
 #[cfg(feature = "profile-phases")]
-use jxl_encoder::profile_phases;
+use jxl_encoder::__test_exports::profile_phases;
+use jxl_encoder::LosslessInternalParams;
+use jxl_encoder::api::{LosslessConfig, PixelLayout};
 use std::path::PathBuf;
 use std::time::Instant;
 

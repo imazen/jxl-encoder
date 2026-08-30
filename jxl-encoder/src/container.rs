@@ -122,6 +122,7 @@ fn write_level_box(out: &mut Vec<u8>, level: u8) {
 /// Returns bare codestream bytes wrapped in ISOBMFF boxes. The codestream
 /// goes into a `jxlc` box, EXIF into an `Exif` box (with 4-byte Tiff offset
 /// prefix), and XMP into an `xml ` box.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn wrap_in_container(codestream: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Vec<u8> {
     wrap_in_container_with_jbrd_and_level_and_jumbf(codestream, None, exif, xmp, 5, None)
 }
@@ -129,6 +130,7 @@ pub fn wrap_in_container(codestream: &[u8], exif: Option<&[u8]>, xmp: Option<&[u
 /// Like [`wrap_in_container`] but emits a `jxll` (codestream level) box
 /// directly after `ftyp` when `level != 5`. Use [`compute_codestream_level`]
 /// to derive `level` from image dimensions, ICC size, and extra channels.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn wrap_in_container_with_level(
     codestream: &[u8],
     exif: Option<&[u8]>,
@@ -143,6 +145,7 @@ pub fn wrap_in_container_with_level(
 /// Authenticity Initiative) lands in a `jumb` box appended after the
 /// `Exif`/`xml ` boxes. Caller supplies the JUMBF superbox contents
 /// verbatim — no ISO BMFF header included.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn wrap_in_container_with_jumbf(
     codestream: &[u8],
     exif: Option<&[u8]>,
@@ -291,6 +294,7 @@ pub fn wrap_in_container_with_brob_and_level_and_jumbf(
 /// The `jbrd` box contains JPEG Bitstream Reconstruction Data needed for
 /// byte-exact JPEG reconstruction from the JXL file. When present, the box
 /// order is: signature, ftyp, jxlc, jbrd, Exif (optional), xml (optional).
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn wrap_in_container_with_jbrd(
     codestream: &[u8],
     jbrd: Option<&[u8]>,
@@ -302,6 +306,7 @@ pub fn wrap_in_container_with_jbrd(
 
 /// Like [`wrap_in_container_with_jbrd`] but emits a `jxll` (codestream
 /// level) box directly after `ftyp` when `level != 5`.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn wrap_in_container_with_jbrd_and_level(
     codestream: &[u8],
     jbrd: Option<&[u8]>,
@@ -671,6 +676,7 @@ pub fn append_gain_map_box(jxl_data: &[u8], jhgm_payload: &[u8]) -> Vec<u8> {
 /// Matches libjxl's box ordering when JUMBF is added via
 /// `JxlEncoderAddBox(enc, "jumb", ...)` (see libjxl `encode.cc:2214`).
 #[must_use]
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn append_jumbf_box(jxl_data: &[u8], jumbf_payload: &[u8]) -> Vec<u8> {
     if is_container(jxl_data) {
         // Already a container — append jumb box at the end.

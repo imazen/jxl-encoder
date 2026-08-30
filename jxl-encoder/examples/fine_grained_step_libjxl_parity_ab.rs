@@ -46,8 +46,8 @@
 
 use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
 use imgref::Img;
+use jxl_encoder::LossyInternalParams;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
 use rgb::RGB;
 use sha2::Digest;
 use std::io::Cursor;

@@ -9,4 +9,5 @@
 
 pub mod xyb;
 
-pub use xyb::{linear_rgb_to_xyb, srgb_to_linear, srgb_to_xyb};
+// #76: no mod-level re-exports — consumers import from `xyb` directly
+// (externally via the doc-hidden `__test_exports::xyb` seam).

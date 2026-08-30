@@ -4,7 +4,7 @@
 //! the bitstream is correct.
 
 use jxl_encoder::__test_exports::ans::{AnsDistribution, AnsEncoder};
-use jxl_encoder::bit_writer::BitWriter;
+use jxl_encoder::__test_exports::bit_writer::BitWriter;
 
 /// Test encoding and decoding a single symbol with a flat distribution.
 #[test]
@@ -366,8 +366,8 @@ fn test_ans_with_hybrid_uint() {
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
     use jxl_encoder::__test_exports::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::__test_exports::bit_writer::BitWriter;
     use jxl_encoder::__test_exports::histogram::Histogram;
-    use jxl_encoder::bit_writer::BitWriter;
 
     // Test values that will produce varying HybridUint tokens
     let values: Vec<u32> = vec![0, 1, 2, 5, 10, 20, 50, 100, 200];
@@ -465,8 +465,8 @@ fn test_ans_multi_context() {
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
     use jxl_encoder::__test_exports::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::__test_exports::bit_writer::BitWriter;
     use jxl_encoder::__test_exports::histogram::Histogram;
-    use jxl_encoder::bit_writer::BitWriter;
 
     // Simulate tokens from different contexts (like DC encoding)
     // Context 0: DC values
@@ -580,8 +580,8 @@ fn test_ans_full_entropy_code_format() {
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
     use jxl_encoder::__test_exports::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::__test_exports::bit_writer::BitWriter;
     use jxl_encoder::__test_exports::histogram::Histogram;
-    use jxl_encoder::bit_writer::BitWriter;
 
     // Create tokens like the encoder does
     let tokens: Vec<(u8, u32)> = vec![
@@ -764,8 +764,8 @@ fn test_ans_with_lz77_flag() {
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
     use jxl_encoder::__test_exports::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::__test_exports::bit_writer::BitWriter;
     use jxl_encoder::__test_exports::histogram::Histogram;
-    use jxl_encoder::bit_writer::BitWriter;
 
     let tokens: Vec<u32> = vec![5, 10, 3, 20, 8];
 

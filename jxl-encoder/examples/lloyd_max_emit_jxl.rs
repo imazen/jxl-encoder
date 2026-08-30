@@ -4,8 +4,8 @@
 //!   cargo run --release -p jxl-encoder --features '__expert parallel-tree-learning' \
 //!     --example lloyd_max_emit_jxl -- <input.png> <output.jxl>
 
+use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
-use jxl_encoder::effort::LosslessInternalParams;
 
 fn main() {
     let mut args = std::env::args().skip(1);

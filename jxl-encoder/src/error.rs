@@ -15,6 +15,7 @@ pub type Result<T, E = Error> = core::result::Result<T, E>;
 /// Encoder error types.
 #[derive(Error, Debug)]
 #[non_exhaustive]
+#[allow(clippy::enum_variant_names)] // #76: internal enum; renaming AnsEncodingError/IoError is churn without benefit
 pub enum Error {
     // BitWriter errors
     #[error("BitWriter buffer overflow: tried to write {attempted} bits, capacity is {capacity}")]

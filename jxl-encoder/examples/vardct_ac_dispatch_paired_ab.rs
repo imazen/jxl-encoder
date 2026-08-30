@@ -36,8 +36,8 @@
 //!   - non-gated cells (medium/large × any d, or any size × d>=2.0):
 //!     bytes-identical (sha256 prefix equal sample-wise)
 
+use jxl_encoder::LossyInternalParams;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
 use sha2::Digest;
 use std::path::PathBuf;
 use std::time::Instant;

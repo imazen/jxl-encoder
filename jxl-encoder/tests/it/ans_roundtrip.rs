@@ -3,8 +3,8 @@
 use jxl_encoder::__test_exports::ans::{
     ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution,
 };
+use jxl_encoder::__test_exports::bit_writer::BitWriter;
 use jxl_encoder::__test_exports::histogram::Histogram;
-use jxl_encoder::bit_writer::BitWriter;
 
 #[test]
 fn test_single_symbol_histogram() {

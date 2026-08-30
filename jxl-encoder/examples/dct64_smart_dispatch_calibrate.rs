@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use jxl_encoder::api::{LossyConfig, PixelLayout};
-use jxl_encoder::effort::LossyInternalParams;
+use jxl_encoder::LossyInternalParams;
 use zenanalyze::analyze_features_rgb8;
 use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
 
