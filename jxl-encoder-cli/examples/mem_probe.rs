@@ -10,7 +10,9 @@
 //!
 //! Usage: mem_probe <png> <lossy|lossless> <effort> <distance> <8|16> [rgb|rgba] [threads] [tree]
 //! Env: MEM_PROBE_CROP=WxH, MEM_PROBE_OUT=<file.jxl>; lossless-only: MEM_PROBE_PATCHES=0|1,
-//! MEM_PROBE_GROUP_SHIFT=0..=3
+//! MEM_PROBE_GROUP_SHIFT=0..=3. Per-site peak attribution (stderr report):
+//! JXL_ALLOC_SITES=1, JXL_ALLOC_SITES_MIN=<bytes> (default 65536),
+//! JXL_ALLOC_SITES_TOP=<rows> (default 16) — see `mod alloc_sites`.
 //! Prints: `delta_kb=<n> peak_kb=<n> wall_ms=<f> user_ms=<f> sys_ms=<f> bytes=<n> \
 //!          threads=<n> est_min_kb=<n> est_typ_kb=<n> est_max_kb=<n> est_time_ms=<f> \
 //!          tree=<s> live_pre_kb=<n> peak_live_kb=<n> marginal_live_kb=<n> allocs=<n>`
@@ -82,10 +84,11 @@ mod counting_alloc {
     pub struct Counting;
 
     impl Counting {
-        fn record_alloc(size: usize) {
+        fn record_alloc(size: usize) -> usize {
             COUNT.fetch_add(1, Ordering::Relaxed);
             let live = LIVE.fetch_add(size, Ordering::Relaxed) + size;
             PEAK_LIVE.fetch_max(live, Ordering::Relaxed);
+            live
         }
     }
 
@@ -98,7 +101,8 @@ mod counting_alloc {
             // caller's `GlobalAlloc::alloc` contract (non-zero-size layout).
             let p = unsafe { std::alloc::System.alloc(layout) };
             if !p.is_null() {
-                Self::record_alloc(layout.size());
+                let live = Self::record_alloc(layout.size());
+                super::alloc_sites::on_alloc(p as usize, layout.size(), live);
             }
             p
         }
@@ -106,11 +110,13 @@ mod counting_alloc {
             // SAFETY: same contract as `alloc`, forwarded verbatim.
             let p = unsafe { std::alloc::System.alloc_zeroed(layout) };
             if !p.is_null() {
-                Self::record_alloc(layout.size());
+                let live = Self::record_alloc(layout.size());
+                super::alloc_sites::on_alloc(p as usize, layout.size(), live);
             }
             p
         }
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            super::alloc_sites::on_dealloc(ptr as usize);
             LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
             // SAFETY: `ptr`/`layout` were produced by this allocator's
             // `alloc`/`realloc`, which forward to `System` — the caller's
@@ -125,11 +131,187 @@ mod counting_alloc {
             if !p.is_null() {
                 // Between the two sizes the allocator may hold both — model
                 // the worst case so growth-by-realloc shows in the peak.
-                Self::record_alloc(new_size);
+                let live = Self::record_alloc(new_size);
+                super::alloc_sites::on_dealloc(ptr as usize);
+                super::alloc_sites::on_alloc(p as usize, new_size, live);
                 LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
             }
             p
         }
+    }
+}
+
+/// Per-site attribution of the live set AT the peak instant (#96), the
+/// in-repo port of the zenjxl `mem_probe_encode` methodology recorded in
+/// `benchmarks/jxl_alloc_sites_4k_2026-08-13.md`: every allocation ≥
+/// `JXL_ALLOC_SITES_MIN` bytes (default 64 KiB) captures an unresolved
+/// backtrace into a live map; every time the peak rises ≥ 8 MiB above the
+/// last snapshot the live map is snapshotted, so the LAST snapshot is the
+/// composition within 8 MiB of the true peak. Symbols resolve at report
+/// time (stderr), so steady-state overhead is the frame walk only.
+/// Enable with `JXL_ALLOC_SITES=1`; `JXL_ALLOC_SITES_TOP=<n>` rows.
+mod alloc_sites {
+    use std::backtrace::Backtrace;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    pub static ENABLED: AtomicBool = AtomicBool::new(false);
+    pub static MIN_BYTES: AtomicUsize = AtomicUsize::new(64 * 1024);
+    /// live-bytes value the last snapshot was taken at.
+    static LAST_SNAP: AtomicUsize = AtomicUsize::new(0);
+    const SNAP_QUANTUM: usize = 8 * 1024 * 1024;
+
+    struct State {
+        /// ptr -> (size, capture); only allocations ≥ MIN_BYTES.
+        live: HashMap<usize, (usize, Arc<Backtrace>)>,
+        /// live map + live-bytes at the highest snapshot instant so far.
+        snapshot: Vec<(usize, Arc<Backtrace>)>,
+        snapshot_live: usize,
+    }
+    fn state() -> &'static Mutex<State> {
+        static S: OnceLock<Mutex<State>> = OnceLock::new();
+        S.get_or_init(|| {
+            Mutex::new(State {
+                live: HashMap::new(),
+                snapshot: Vec::new(),
+                snapshot_live: 0,
+            })
+        })
+    }
+    std::thread_local! {
+        static IN_HOOK: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    }
+    /// Run `f` unless this thread is already inside a hook (the map and the
+    /// backtrace capture allocate; recursion must fall through to System).
+    fn guarded(f: impl FnOnce()) {
+        IN_HOOK.with(|g| {
+            if !g.get() {
+                g.set(true);
+                f();
+                g.set(false);
+            }
+        });
+    }
+
+    pub fn on_alloc(ptr: usize, size: usize, live_now: usize) {
+        if !ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        guarded(|| {
+            let mut st = state().lock().unwrap();
+            if size >= MIN_BYTES.load(Ordering::Relaxed) {
+                let bt = Arc::new(Backtrace::force_capture());
+                st.live.insert(ptr, (size, bt));
+            }
+            // Snapshot on every ≥ 8 MiB raise over the last snapshot, at any
+            // size class — small allocations move the peak instant too.
+            if live_now >= LAST_SNAP.load(Ordering::Relaxed) + SNAP_QUANTUM {
+                LAST_SNAP.store(live_now, Ordering::Relaxed);
+                st.snapshot = st.live.values().cloned().collect();
+                st.snapshot_live = live_now;
+            }
+        });
+    }
+    pub fn on_dealloc(ptr: usize) {
+        if !ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        guarded(|| {
+            state().lock().unwrap().live.remove(&ptr);
+        });
+    }
+
+    /// Resolve + aggregate the peak snapshot; print top-N to stderr.
+    pub fn report(peak_live: usize, top: usize) {
+        let (snapshot, snap_live) = {
+            let st = state().lock().unwrap();
+            (st.snapshot.clone(), st.snapshot_live)
+        };
+        // Aggregate by condensed site key: the innermost jxl frames.
+        let mut by_site: HashMap<String, (usize, usize)> = HashMap::new();
+        let mut classified = 0usize;
+        for (size, bt) in &snapshot {
+            classified += size;
+            let key = condense(&format!("{bt}"));
+            let e = by_site.entry(key).or_insert((0, 0));
+            e.0 += size;
+            e.1 += 1;
+        }
+        let mut rows: Vec<(String, (usize, usize))> = by_site.into_iter().collect();
+        rows.sort_by_key(|a| std::cmp::Reverse(a.1.0));
+        eprintln!(
+            "alloc-sites: peak_live_kb={} snapshot_live_kb={} classified_kb={} \
+             min_bytes={} sites={}",
+            peak_live / 1024,
+            snap_live / 1024,
+            classified / 1024,
+            MIN_BYTES.load(Ordering::Relaxed),
+            rows.len(),
+        );
+        for (key, (bytes, count)) in rows.into_iter().take(top) {
+            eprintln!("  {:>9} kb  n={:<4} {}", bytes / 1024, count, key);
+        }
+    }
+
+    /// Reduce a resolved multi-line backtrace to the innermost frames whose
+    /// source LOCATION is in this workspace (path contains `/jxl-encoder/`,
+    /// excluding this example itself — the hook's own frames): `sym
+    /// (file:line)` joined by ` | `. Location-based so allocator/std/Vec
+    /// plumbing symbols never form the key.
+    fn condense(full: &str) -> String {
+        let mut frames: Vec<String> = Vec::new();
+        let mut cur_sym: Option<String> = None;
+        for line in full.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.split_once(": ").and_then(|(n, r)| {
+                n.parse::<usize>().ok().map(|_| r) // "N: symbol"
+            }) {
+                cur_sym = Some(rest.to_string());
+            } else if let Some(loc) = t.strip_prefix("at ") {
+                let sym = cur_sym.take().unwrap_or_default();
+                let in_workspace = loc.contains("/jxl-encoder/");
+                let is_probe = loc.contains("examples/mem_probe.rs");
+                if in_workspace && !is_probe {
+                    // keep path tail (last 2 components) + line
+                    let tail: String = {
+                        let mut segs: Vec<&str> = loc.rsplit('/').take(2).collect();
+                        segs.reverse();
+                        segs.join("/")
+                    };
+                    let sym_short = {
+                        let mut segs: Vec<&str> = sym.rsplit("::").take(3).collect();
+                        segs.reverse();
+                        segs.join("::")
+                    };
+                    frames.push(format!("{sym_short} ({tail})"));
+                }
+            }
+            if frames.len() >= 4 {
+                break;
+            }
+        }
+        if frames.is_empty() {
+            // Allocation with no workspace frame (image loader, rayon, …):
+            // fall back to the first two non-allocator symbols.
+            for line in full.lines() {
+                let t = line.trim();
+                if let Some((n, sym)) = t.split_once(": ")
+                    && n.parse::<usize>().is_ok()
+                    && !sym.contains("alloc")
+                    && !sym.contains("Backtrace")
+                    && !sym.contains("mem_probe")
+                    && !sym.contains("hashbrown")
+                    && !sym.contains("thread")
+                {
+                    frames.push(sym.to_string());
+                    if frames.len() >= 2 {
+                        break;
+                    }
+                }
+            }
+        }
+        frames.join(" | ")
     }
 }
 
@@ -266,10 +448,26 @@ fn main() {
     };
     let est = jxl_encoder::estimate_encode(w, h, input_bpp, alpha == "rgba", is_lossless, effort);
 
+    // Per-site peak attribution (#96): JXL_ALLOC_SITES=1 (+ _MIN bytes,
+    // _TOP rows). Armed AFTER the input buffer so only encode-era
+    // allocations are tracked; report goes to stderr after the encode.
+    let sites_on = std::env::var("JXL_ALLOC_SITES").is_ok_and(|v| v == "1");
+    let sites_top: usize = std::env::var("JXL_ALLOC_SITES_TOP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
+    if let Ok(m) = std::env::var("JXL_ALLOC_SITES_MIN") {
+        alloc_sites::MIN_BYTES.store(
+            m.parse().expect("JXL_ALLOC_SITES_MIN=bytes"),
+            Ordering::Relaxed,
+        );
+    }
+
     let baseline = vmhwm_kb();
     let live_pre = counting_alloc::LIVE.load(Ordering::Relaxed);
     counting_alloc::PEAK_LIVE.store(live_pre, Ordering::Relaxed);
     counting_alloc::COUNT.store(0, Ordering::Relaxed);
+    alloc_sites::ENABLED.store(sites_on, Ordering::Relaxed);
     let (cu0, cs0) = cpu_ticks();
     let t0 = Instant::now();
     // `with_threads(n)`: n>=1 installs a dedicated n-thread rayon pool for
@@ -306,6 +504,10 @@ fn main() {
     let peak = vmhwm_kb();
     let peak_live = counting_alloc::PEAK_LIVE.load(Ordering::Relaxed);
     let allocs = counting_alloc::COUNT.load(Ordering::Relaxed);
+    alloc_sites::ENABLED.store(false, Ordering::Relaxed);
+    if sites_on {
+        alloc_sites::report(peak_live, sites_top);
+    }
     let len = match encoded {
         Ok(d) => {
             // `MEM_PROBE_OUT=path` keeps the bitstream for out-of-process

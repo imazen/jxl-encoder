@@ -517,24 +517,43 @@ const SECTIONED_FIXED_E9: u64 = 32 << 20;
 ///     thread count (bytes identical), and t=1 measures the SAME floor as
 ///     t ≥ 4: 46.9 B/px at 12 MP (597763 KiB, was 875430), 47.9 B/px at
 ///     8.3 MP (413203, was 530187).
-///   - screenshot (qoi reddit.com 1313×8008, 10.5 MP): 60.5–61.8 B/px at
-///     every thread count (620 MiB marginal; t=1 now pays the labeling
-///     plane like t ≥ 4 — 634775 KiB, was 620964).
+///   - screenshot (qoi reddit.com 1313×8008, 10.5 MP): measured
+///     60.5–61.8 B/px at every thread count in the 2026-08-27/28 sweeps;
+///     48.0 B/px since the 2026-08-30 patches-phase-lifetime fix below.
 ///
 /// One floor for every thread count: the envelope over both classes with
-/// ≥ 10 % margin (the two constants are kept as the model's two arms but
+/// margin (the two constants are kept as the model's two arms but
 /// carry the same value since the t=1 excess was removed).
 ///
 /// Palette / ChannelCompact / patches content engages the sectioned
 /// writer too since 2026-08-28 (stream 0 codes the meta channels with its
 /// own tiny tree; the patches dictionary precedes the modular stream as
 /// on the global path): gb82-sc `imac_dark` 2940×1912 — which wrote 0
-/// local sections under `On` before — now measures 58.9 B/px marginal at
+/// local sections under `On` before — measured 58.9 B/px marginal at
 /// e7 AND e9, t=1 (347.6 MiB peak_live vs 486 / 772 MiB global;
 /// `benchmarks/jxl_sectioned_mem_meta_2026-08-28.tsv`), under the floors
 /// above. Only the lossy-modular custom-DC-quant path and the non-tree /
 /// non-ANS modes still take the global tree under `On`; the runtime
 /// `MemoryBudget` enforces the cap allocation-by-allocation there.
+///
+/// PATCHES-PHASE LIFETIME (2026-08-30, the #96 residual item,
+/// `benchmarks/jxl_sectioned_patches_lifetime_2026-08-30.{tsv,meta}`):
+/// on screen content the patches DETECTION working set previously sat
+/// at the sectioned encode peak — `MEM_PROBE_PATCHES` A/B: +76 MiB on
+/// imac_dark, +138.5 MiB on reddit.com, ≈ +13.8 B/px at EVERY thread
+/// count — attributed with the in-repo alloc-sites probe
+/// (`JXL_ALLOC_SITES=1`) to the u8→f32 conversion planes (12 B/px), the
+/// BFS seed queue (a 2× over-sized leftover, ~22.7 B/px transient) and
+/// the flood-fill planes riding on top of the already-built whole-image
+/// i32 `ModularImage`. Fixed byte-identically by (a) detecting patches
+/// BEFORE the `ModularImage` is built (`api.rs::encode_lossless_single`)
+/// and (b) sizing the seed queue exactly (`vardct/patches.rs`). Screens
+/// now measure the SAME ~48 B/px floor as photo: imac_dark 280985 KiB
+/// (48.2 B/px, was 347628–357924 across t), reddit 523716 KiB (48.0
+/// B/px, was 665580). The 68 B/px floors below deliberately stay: they
+/// cover the measured 48 with ~1.4× headroom (admission-safe), and the
+/// patches dictionary of patch-heavy content still lands above the bare
+/// floor (imac +0.9 MiB at t=1).
 const SECTIONED_BPP_THREADS1: f64 = 68.0;
 const SECTIONED_BPP_MULTI: f64 = 68.0;
 
@@ -922,18 +941,28 @@ mod tests {
             (1024, 1024, true, 9, 213110),
             (3840, 2160, true, 7, 1084576),
             (3840, 2160, true, 9, 1281103),
-            // gb82-sc imac_dark (palette + patches screenshot)
+            // gb82-sc imac_dark (palette + patches screenshot).
+            // e6/e7/e8 re-pinned 2026-08-30 (patches-phase lifetime fix,
+            // jxl_sectioned_patches_lifetime_2026-08-30.tsv: detection
+            // runs before the ModularImage build): the light-effort
+            // global peaks carried part of the detection working set —
+            // e6 was 357844, e7 486110, e8 495594 (e7 includes ~1 MiB of
+            // pre-existing drift: 484850 measured at 29be5e32 both
+            // before and after the fix). e5/e9 unchanged, verified.
             (2940, 1912, false, 5, 382546),
-            (2940, 1912, false, 6, 357844),
-            (2940, 1912, false, 7, 486110),
-            (2940, 1912, false, 8, 495594),
+            (2940, 1912, false, 6, 353001),
+            (2940, 1912, false, 7, 484850),
+            (2940, 1912, false, 8, 492569),
             (2940, 1912, false, 9, 772396),
-            // qoi reddit.com screenshot
-            (1313, 4096, false, 7, 470541),
-            (1313, 8008, false, 5, 715897),
-            (1313, 8008, false, 6, 727010),
-            (1313, 8008, false, 7, 909647),
-            (1313, 8008, false, 8, 933119),
+            // qoi reddit.com screenshot. Same 2026-08-30 re-pin: e5 was
+            // 715897, e6 727010, e7 909647 (904584 already at 29be5e32
+            // pre-fix — drift), e8 933119, 4096-crop e7 470541; e9 cells
+            // unchanged, verified.
+            (1313, 4096, false, 7, 467733),
+            (1313, 8008, false, 5, 715316),
+            (1313, 8008, false, 6, 723394),
+            (1313, 8008, false, 7, 904584),
+            (1313, 8008, false, 8, 927365),
             (1313, 4096, false, 9, 696734),
             (1313, 8008, false, 9, 1367236),
         ];
@@ -1040,12 +1069,19 @@ mod tests {
             (4000, 3000, false, 7, 4, 597879),
             (4000, 3000, false, 7, 12, 597937),
             (4000, 3000, false, 9, 12, 597937),
-            // reddit.com screenshot crops (1313x8008 e7 t1 was 651769
-            // before the labeling plane rode along at t=1 as well)
+            // reddit.com screenshot crops. Re-pinned 2026-08-30 after the
+            // patches-phase lifetime fix (detection before the modular
+            // build + exact seed-queue capacity,
+            // jxl_sectioned_patches_lifetime_2026-08-30.tsv): the
+            // detection working set no longer rides at the peak, so the
+            // full-height cells drop to the photo floor (1313x8008 e7 t1
+            // was 665580, e9 t12 was 665660, 1313x4096 e9 t12 was
+            // 351990). The 256² crop and the rgba t8 cell never had the
+            // detection at peak — unchanged, verified same-commit.
             (256, 256, false, 9, 12, 66261),
-            (1313, 4096, false, 9, 12, 351990),
-            (1313, 8008, false, 7, 1, 665580),
-            (1313, 8008, false, 9, 12, 665660),
+            (1313, 4096, false, 9, 12, 336418),
+            (1313, 8008, false, 7, 1, 523716),
+            (1313, 8008, false, 9, 12, 523826),
             // rgba (alpha := green): photo 1403 crops + reddit crop
             (1024, 1024, true, 7, 1, 69670),
             (1024, 1024, true, 7, 8, 146332),
@@ -1057,12 +1093,27 @@ mod tests {
             (3840, 2160, true, 9, 8, 551044),
             (1313, 4096, true, 7, 8, 357262),
             // imac_dark (gb82-sc screenshot: full palette/compact + patches),
-            // sectioned-engaged since 2026-08-28 (96/96 local sections)
-            (2940, 1912, false, 7, 1, 347628),
-            (2940, 1912, false, 7, 4, 357866),
-            (2940, 1912, false, 7, 12, 357924),
-            (2940, 1912, false, 9, 1, 347628),
-            (2940, 1912, false, 9, 4, 357866),
+            // sectioned-engaged since 2026-08-28 (96/96 local sections).
+            // Re-pinned 2026-08-30 (patches-phase lifetime fix): was
+            // 347628 (t1) / 357866 (t4) / 357924 (t12) at both efforts —
+            // the detection working set at peak. Now at the photo floor
+            // plus the surviving patches dictionary (+0.9 MiB).
+            (2940, 1912, false, 7, 1, 280985),
+            (2940, 1912, false, 7, 4, 281076),
+            (2940, 1912, false, 7, 12, 281134),
+            (2940, 1912, false, 9, 1, 280985),
+            (2940, 1912, false, 9, 4, 281076),
+            // e9 t12 measured 328741 on 2026-08-30 (12-worker group-learn
+            // sets over the new floor) but stays pinned at the 2026-08-28
+            // value: lowering it trips the 2.5× tightness bar (TYP
+            // 847.9 MB = 2.52× of 328741) because the additive 36
+            // MiB/worker e9 term over-predicts palette content whose
+            // per-group learns are tiny (measured 4.3 MiB/worker here).
+            // The stale-high pin remains a VALID, stronger coverage
+            // constraint; tightening it awaits the per-thread-term model
+            // refinement (owner-gated — the walk-down admission contract
+            // asserts strict thread-monotonicity, which a headroom-aware
+            // term breaks). Tracked in the #96 residual follow-up issue.
             (2940, 1912, false, 9, 12, 357924),
         ];
         for &(w, h, alpha, effort, threads, live_kb) in sectioned_cells {

@@ -113,8 +113,8 @@ included), real content, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`
 | photo 3840×2160 e9 | 1029 (127.0 B/px) | 404 (was 518) | 404 (t=12: 468) |
 | photo 4000×3000 e7 | 1117 (94.6 B/px) | **584** (46.9 B/px; was 855) | 584 (48.0 B/px) |
 | photo 4000×3000 e9 | 1517 (129.5 B/px) | 584 (was 855) | 584 |
-| reddit.com 1313×8008 e7 | 888 | 650 (61.8 B/px; was 636 — t=1 now pays the labeling plane too) | 650 (61.8 B/px) |
-| imac_dark 2940×1912 e7/e9 | 475 / 754 (85.6 / 137.7 B/px) | **340 / 340** (58.9 B/px; 96/96 local sections since 2026-08-28 — was a global fallback with 0 local sections, `jxl_sectioned_mem_meta_2026-08-28.tsv`) | 350 / 350 |
+| reddit.com 1313×8008 e7 | 888 | **511** (48.0 B/px since the 2026-08-30 patches-lifetime fix; was 650 / 61.8 B/px) | 512 (48.0 B/px) |
+| imac_dark 2940×1912 e7/e9 | 475 / 754 (85.6 / 137.7 B/px) | **274 / 274** (48.2 B/px since 2026-08-30; was 340–349 / 58.9–62.2 B/px; 96/96 local sections since 2026-08-28 — was a global fallback with 0 local sections, `jxl_sectioned_mem_meta_2026-08-28.tsv`) | 275 / 275 (e9 t=12: 321) |
 
 Consequences recorded in `heuristics.rs`:
 
@@ -152,3 +152,23 @@ Consequences recorded in `heuristics.rs`:
   imac_dark/reddit/photo bytes unchanged). 12 MP e7/e9 sectioned t=1:
   855 → 584 MiB; 8.3 MP: 518 → 404 MiB. The sectioned floor is one value
   for every thread count now (`SECTIONED_BPP_THREADS1` = `_MULTI` = 68).
+- **Patches-phase lifetime — MEASURED, ATTRIBUTED AND REMOVED (2026-08-30,
+  the last #96 memory-residual item)**: on screen content the patches
+  DETECTION working set sat AT the sectioned encode peak at every thread
+  count — `MEM_PROBE_PATCHES` A/B: imac_dark +76 MiB, reddit.com
+  +138.5 MiB (≈ +13.8 B/px); zero on photo at every size (the tree phases
+  out-peak it there). Attributed with the new in-repo `mem_probe`
+  alloc-sites mode (`JXL_ALLOC_SITES=1`, the zenjxl methodology ported):
+  at the peak instant the detector held its u8→f32 conversion planes
+  (12 B/px), the flood-fill planes and a **2× over-sized BFS seed queue**
+  (127 MiB on imac — a leftover of the pre-2026-08-28 single-FIFO design)
+  on top of the already-built whole-image i32 `ModularImage`. Fixed
+  byte-identically (105-cell grid, incl. the content-adaptive e5/e6
+  patches arms): detection now runs BEFORE the `ModularImage` build
+  (`api.rs::encode_lossless_single`, layout-derived gate) and the seed
+  queue is sized exactly (`vardct/patches.rs`). Screens now sit on the
+  photo floor: imac 280985 KiB / reddit 523716 KiB ≈ 48.0–48.2 B/px
+  (`benchmarks/jxl_sectioned_patches_lifetime_2026-08-30.{tsv,meta}`).
+  Post-fix peak composition on imac (alloc-sites): 193 MiB = NINE
+  whole-image channel clones from `select_best_rct` — the next
+  sectioned-peak lever, tracked in the #96 residual follow-up issue.

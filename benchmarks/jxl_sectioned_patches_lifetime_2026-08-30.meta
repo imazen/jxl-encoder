@@ -1,0 +1,81 @@
+jxl_sectioned_patches_lifetime_2026-08-30.tsv — measurement, attribution and
+removal of the "patches-phase lifetime" residual of imazen/jxl-encoder#96 (the
+last unexplained memory item of the sectioned local-tree mode).
+
+Sources: photo = imazen-26 1403_nature_large-tree-canopy 4000x3000 sdr PNG
+(crops from the top-left via MEM_PROBE_CROP); imac = gb82-sc imac_dark.png
+(2940x1912, palette + patches screenshot); reddit = qoi-benchmark
+screenshot_web/reddit.com.png (1313x8008, web screenshot). Host: mac (aarch64
+laptop, 12 cores), release build, allocator-agnostic peak_live from
+mem_probe's counting global allocator (input buffer included; marginal =
+peak_live - live_pre). Lossless RGB8 (rgba rows: alpha := green). phase=before
+at commit 29be5e32 (pristine); phase=after with the fix this file lands with.
+
+MEASUREMENT (phase=before, MEM_PROBE_PATCHES=1 vs 0 A/B, tree=sectioned):
+the lossless patches DETECTION working set sat at the encode peak on screen
+content at EVERY thread count — imac e7/e9 t1 357844 vs 280048 KiB
+(+76.0 MiB), t4 357866 vs 280139; reddit e7/e9 t1 665580 vs 523716
+(+138.5 MiB), t4 665602 vs 523768 — ~= +13.8-14.2 B/px. On photo the A/B
+delta is ZERO at every size (512^2..12 MP), effort and thread count: the
+tree-learn phases out-peak the detector there. On the global tree the e7
+peaks also masked it (imac 484850 / reddit 904584, both A/B-equal), but the
+light-effort global cells carried part of it (imac e6 357844 -> 353001 after,
+e8 495594 -> 492569; reddit e5/e6/e8 -3.5..-5.6 MiB).
+
+ATTRIBUTION (in-repo alloc-sites probe, new this change: JXL_ALLOC_SITES=1
+mem_probe — backtrace per >= 64 KiB allocation, live-map snapshot at every
+>= 8 MiB peak raise, per-site aggregation; port of the zenjxl
+mem_probe_encode methodology of benchmarks/jxl_alloc_sites_4k_2026-08-13.md).
+imac e7 t1 sectioned BEFORE (peak 357860 KiB, 335336 classified = 98 %):
+  127323 KiB  BFS seed queue        patches.rs:1422 (2x num_seeds x 16
+                                    entries x 16 B — the 2x was a leftover
+                                    of the pre-2026-08-28 single-FIFO design;
+                                    the level-sync walk never reuses it)
+   65874 KiB  ModularImage i32 x3   channel.rs:66 via api.rs (built BEFORE
+                                    detection, live under it)
+   65874 KiB  background f32 x3     patches.rs:1416-1418 (flood-fill planes)
+   65874 KiB  u8->f32 planes x3     patches.rs:3021-3023 (detector input)
+    5489 KiB  is_background         patches.rs:1414
+    4899 KiB  queue growth + block maps + misc
+i.e. the peak instant was INSIDE detection, riding on the already-built
+whole-image ModularImage.
+
+FIX (byte-identical by construction, verified):
+  (a) api.rs encode_lossless_single: patches detection runs BEFORE the
+      ModularImage build (detection reads only detection_pixels — the raw
+      input, BGR-swapped if needed; the gate is layout-derived and equal to
+      the old image-derived gate for every layout the lossless path admits).
+  (b) vardct/patches.rs: BFS seed queue capacity 2x -> exactly
+      num_seeds x PATCH_SIDE^2 (the seed loop's worst case; levels use their
+      own vecs since the 2026-08-28 level-synchronous walk).
+
+RESULT (phase=after): screens drop to the photo floor at every thread count —
+imac 280985 (t1) / 281076 (t4) / 281134 (t12) at e7 = 48.2 B/px marginal
+(was 62.2); e9 t12 328741 (12-worker group-learn sets). reddit 523716 (e7 t1)
+/ 523826 (e9 t12) = 48.0 B/px (was 61.9-64.8). photo: byte-for-byte identical
+peaks at every size/effort/threads (the fix touches nothing photo exercises at
+peak). BYTES IDENTICAL in all 105 rows, including the content-adaptive
+patches arms (imac/reddit e5/e6 global vs the committed
+jxl_lossless_band_2026-08-28.tsv values) and the patch-heavy imac encodes
+(patches still found and used: 431853 e7 with vs 639376 without).
+
+Post-fix imac e7 t1 sectioned peak composition (alloc-sites, peak 281021 KiB,
+264428 classified): 197623 KiB = NINE whole-image channel clones from
+select_best_rct (modular/channel.rs:21 via modular/encode.rs:1575/1518, three
+i32 image copies) + 65874 ModularImage + ~0.9 MiB surviving patches
+dictionary. The RCT-trial clone set is the next sectioned-peak lever; tracked
+in the #96 residual follow-up issue.
+
+Estimator/test consequences (heuristics.rs): SECTIONED floors stay 68 B/px
+(cover the measured 48 with ~1.4x headroom; admission-safe). Measured-cell
+pins re-pinned to the after values EXCEPT imac e9 t12 (357924 kept: pinning
+the measured 328741 trips the 2.5x TYP-tightness bar because the additive
+36 MiB/worker e9 term over-predicts palette content, measured 4.3 MiB/worker
+there — the model refinement is owner-gated since the walk-down admission
+contract asserts strict thread-monotonicity; the stale-high pin remains a
+valid, stronger coverage constraint). Global-band screen pins refreshed
+(imac e6/e7/e8, reddit e5/e6/e7/e8 + 4096-crop e7; e7 cells also absorb
+~1-5 MiB of pre-existing drift measured at 29be5e32 before the fix).
+
+Gates: cargo test -p jxl-encoder --lib (1525) / --test it (447, default AND
+--features parallel) / --doc green; clippy --all-targets -D warnings; fmt.

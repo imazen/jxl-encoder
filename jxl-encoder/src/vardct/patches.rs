@@ -1419,9 +1419,20 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     ];
     // Queue entries: (cur_x, cur_y, src_x, src_y) as u32 to match libjxl's
     // std::pair<XY, XY> (16 bytes vs 32 bytes with usize — halves cache pressure).
+    //
+    // Capacity = num_seeds × PATCH_SIDE² exactly: the seed loop below
+    // enqueues at most every pixel of every screenshot-like block once
+    // (blocks are disjoint; `is_background` dedups), and since the
+    // 2026-08-28 level-synchronous walk the BFS levels use their own
+    // `level`/`next` vectors — this vec only ever holds the seeds. The
+    // former 2× factor was a leftover from the single-FIFO design and
+    // held a second, never-used ~65 MiB on a 5.6 MP screenshot (seeds
+    // ≈ 70 % of blocks ⇒ 512 B/seed): the #96 patches-phase-lifetime
+    // attribution (2026-08-30) found it at the encode peak. Capacity
+    // is unobservable in the bitstream — byte-identical by construction.
     let mut queue: Vec<(u32, u32, u32, u32)> = crate::budget::vec_with_capacity_fallible(
         fallible,
-        2 * num_seeds as usize * PATCH_SIDE * PATCH_SIDE,
+        num_seeds as usize * PATCH_SIDE * PATCH_SIDE,
     )?;
 
     // Seed from screenshot-like block pixels

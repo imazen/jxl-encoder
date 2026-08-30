@@ -6458,6 +6458,65 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
+        // Detect patches BEFORE the ModularImage is built (#96
+        // patches-phase lifetime, 2026-08-30). Detection reads only
+        // `detection_pixels` (the raw input, BGR-swapped if needed) —
+        // never the ModularImage — so running it first means its
+        // working set (the u8→f32 conversion planes, the background /
+        // flood-fill planes and the BFS frontier) overlaps just the
+        // input buffer instead of input + the whole-image i32
+        // channels. On screen content that working set previously SAT
+        // AT the sectioned-mode encode peak: the `MEM_PROBE_PATCHES`
+        // A/B measured +76 MiB (imac_dark 5.6 MP) / +138 MiB
+        // (reddit 10.5 MP) at every thread count, and the alloc-sites
+        // probe placed the peak instant inside the detection phase
+        // (`benchmarks/jxl_sectioned_patches_lifetime_2026-08-30.tsv`).
+        //
+        // The gate is layout-derived: for every layout the match below
+        // ADMITS (integer RGB/gray/CMYK), `PixelLayout::is_16bit()` /
+        // `is_grayscale()` equal the built image's `bit_depth` /
+        // `is_grayscale` exactly (float layouts error out below before
+        // the old image-based gate could have seen them), so hoisting
+        // cannot change which encodes detect patches. CMYK is excluded:
+        // the detector assumes RGB-like perceptual colour and would
+        // match on CMY planes. `bytes_per_pixel` counts BYTES; patches
+        // detection wants the CHANNEL count (and, for 16-bit layouts,
+        // reads u16 samples — see `find_and_build_lossless`). 16-bit
+        // enabled by issue #72: the tiled-pool HDR class lost 39-63 %
+        // to cjxl at e5/e6 purely because this gate kept the detector
+        // off.
+        let layout_bit_depth: u32 = if self.layout.is_16bit() { 16 } else { 8 };
+        let bytes_per_sample = if self.layout.is_16bit() { 2 } else { 1 };
+        let num_channels = self.layout.bytes_per_pixel() / bytes_per_sample;
+        let can_use_patches = cfg.effective_patches()
+            && !self.layout.is_grayscale()
+            && num_channels >= 3
+            && !self.layout.is_cmyk();
+        let patches_data = if can_use_patches {
+            crate::profile_time!("modular/patches_detect", {
+                let pd_opt = crate::vardct::patches::find_and_build_lossless(
+                    detection_pixels,
+                    w,
+                    h,
+                    num_channels,
+                    layout_bit_depth,
+                    Some(budget),
+                )
+                .map_err(EncodeError::from)?;
+                // RFC#45 chunks 4-7 lossless backport (chunk 5 lossless
+                // trial encoder): per-image cost gate. Trial-encodes
+                // lossless-shape ref-frame + dictionary overhead,
+                // requires `savings_est >= 1.5 * overhead`. Protects
+                // against pathological mixed content where patches barely
+                // clear the detector's 1% coverage filter but the
+                // ref-frame overhead dominates net savings. See
+                // `PatchesData::is_cost_effective_lossless` doc-comment.
+                pd_opt.filter(|pd| pd.is_cost_effective_lossless(layout_bit_depth, cfg.ans()))
+            })
+        } else {
+            None
+        };
+
         // Build ModularImage from pixel layout. The 8-bit RGB(A) paths
         // route through `from_*_with_budget` so the channel allocations
         // (the dominant working-set in lossless mode) are charged
@@ -6711,47 +6770,9 @@ impl<'a> EncodeRequest<'a> {
             .map_err(EncodeError::from)?;
         }
 
-        // Detect patches for lossless mode (RGB 8-bit only, non-grayscale).
-        // CMYK is excluded: the patches detector assumes RGB-like
-        // perceptual colour and operates on the first 3 channels
-        // (which are CMY, not RGB) — false matches would inject
-        // bogus subtractive-colour patches into the codestream.
-        // `bytes_per_pixel` counts BYTES; patches detection wants the
-        // CHANNEL count (and, for 16-bit layouts, reads u16 samples —
-        // see `find_and_build_lossless`). 16-bit enabled by issue #72:
-        // the tiled-pool HDR class lost 39-63 % to cjxl at e5/e6 purely
-        // because this gate kept the detector off.
-        let bytes_per_sample = if image.bit_depth > 8 { 2 } else { 1 };
-        let num_channels = self.layout.bytes_per_pixel() / bytes_per_sample;
-        let can_use_patches = cfg.effective_patches()
-            && !image.is_grayscale
-            && image.bit_depth <= 16
-            && num_channels >= 3
-            && !self.layout.is_cmyk();
-        let patches_data = if can_use_patches {
-            crate::profile_time!("modular/patches_detect", {
-                let pd_opt = crate::vardct::patches::find_and_build_lossless(
-                    detection_pixels,
-                    w,
-                    h,
-                    num_channels,
-                    image.bit_depth,
-                    Some(budget),
-                )
-                .map_err(EncodeError::from)?;
-                // RFC#45 chunks 4-7 lossless backport (chunk 5 lossless
-                // trial encoder): per-image cost gate. Trial-encodes
-                // lossless-shape ref-frame + dictionary overhead,
-                // requires `savings_est >= 1.5 * overhead`. Protects
-                // against pathological mixed content where patches barely
-                // clear the detector's 1% coverage filter but the
-                // ref-frame overhead dominates net savings. See
-                // `PatchesData::is_cost_effective_lossless` doc-comment.
-                pd_opt.filter(|pd| pd.is_cost_effective_lossless(image.bit_depth, cfg.ans()))
-            })
-        } else {
-            None
-        };
+        // (Patches detection ran ABOVE, before the ModularImage build —
+        // see the #96 patches-phase-lifetime comment at the
+        // `detection_pixels` block.)
 
         // Build file header
         let mut file_header = if image.is_grayscale {
