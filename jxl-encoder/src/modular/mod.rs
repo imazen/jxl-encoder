@@ -27,21 +27,14 @@ pub(crate) mod tree;
 pub(crate) mod tree_learn;
 pub(crate) mod tree_learn_split;
 
-pub use channel::{Channel, ModularImage};
-pub use encode::{
-    build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
-    write_group_modular_section, write_modular_stream_with_rct,
-    write_modular_stream_with_rct_weighted, write_modular_stream_with_weighted,
-};
-pub use frame::{FrameEncoder, FrameEncoderOptions};
-pub use predictor::{
-    Neighbors, Predictor, WeightedPredictorParams, WeightedPredictorState, pack_signed,
-    unpack_signed,
-};
-pub use rct::{RctType, forward_rct, inverse_rct};
-pub use section::GlobalModularState;
-pub use tree::{
-    PixelProperties, Property, PropertyDecisionNode, Tree, TreeToken,
-    adaptive_gradient_weighted_tree, collect_tree_tokens, count_contexts, gradient_tree,
-    simple_tree, traverse_tree, weighted_tree,
-};
+// #76 (0.4.0): every re-export below except `RctType` is crate-internal
+// (`pub(crate) use`). `RctType` is the one modular type on the supported
+// surface — `LosslessConfig::with_rct_type` takes it, and the crate root
+// re-exports it. The 207 pub item lines this module used to leak
+// (GlobalModularState, ModularImage, FrameEncoder, the tree/predictor
+// machinery, the section writers) are implementation detail; the
+// `GlobalModularState` variant-field semver break from
+// docs/RELEASE_SEMVER_0.3.1_to_0.3.2.md dies here.
+pub(crate) use channel::Channel;
+pub(crate) use predictor::Predictor;
+pub use rct::RctType;

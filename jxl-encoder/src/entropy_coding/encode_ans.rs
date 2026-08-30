@@ -41,13 +41,6 @@ pub struct OwnedAnsEntropyCode {
     pub uint_configs: Vec<HybridUintConfig>,
 }
 
-impl OwnedAnsEntropyCode {
-    /// Get the number of distributions.
-    pub fn num_distributions(&self) -> usize {
-        self.distributions.len()
-    }
-}
-
 /// Accumulated histogram data from a token stream (or multiple token streams).
 ///
 /// This struct captures all the statistical information needed to build an ANS

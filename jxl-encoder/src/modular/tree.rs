@@ -49,8 +49,13 @@ impl Default for PropertyDecisionNode {
 pub type Tree = Vec<PropertyDecisionNode>;
 
 /// Property indices for tree decisions.
+///
+/// The full spec table of modular property ids (ISO/IEC 18181-1
+/// `Properties`); the production tree learner constructs only a subset,
+/// the rest document the wire numbering (#76).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
+#[allow(dead_code)]
 pub enum Property {
     /// Channel index.
     Channel = 0,
@@ -88,58 +93,30 @@ pub enum Property {
 
 impl Property {
     /// Total number of static properties (not including WP properties).
+    /// Spec count, referenced by tests/docs only (#76).
+    #[allow(dead_code)]
     pub const NUM_STATIC: usize = 14;
 
     /// Total number of properties including WP.
+    #[allow(dead_code)]
     pub const NUM_PROPERTIES: usize = 16;
 }
 
 /// Properties computed for a pixel location.
+///
+/// #76: consumed only by the unit tests exercising the predefined
+/// static trees below (the production learner tracks properties in
+/// `tree_learn`'s own sample layout).
+#[cfg(test)]
 #[derive(Debug, Clone, Default)]
 pub struct PixelProperties {
     /// Property values.
     pub values: [i32; Property::NUM_PROPERTIES],
 }
 
+#[cfg(test)]
 impl PixelProperties {
-    /// Computes properties for a pixel.
-    #[allow(clippy::too_many_arguments)]
-    pub fn compute(
-        channel_idx: u32,
-        group_id: u32,
-        x: usize,
-        y: usize,
-        n: i32,
-        w: i32,
-        nw: i32,
-        ne: i32,
-        nn: i32,
-        ww: i32,
-        nww: i32,
-    ) -> Self {
-        let mut values = [0i32; Property::NUM_PROPERTIES];
-
-        values[Property::Channel as usize] = channel_idx as i32;
-        values[Property::GroupId as usize] = group_id as i32;
-        values[Property::Y as usize] = y as i32;
-        values[Property::X as usize] = x as i32;
-        values[Property::AbsNMinusNw as usize] = (n - nw).abs();
-        values[Property::AbsNMinusW as usize] = (n - w).abs();
-        values[Property::FloorLog2W as usize] = floor_log2(w.unsigned_abs());
-        values[Property::FloorLog2N as usize] = floor_log2(n.unsigned_abs());
-        values[Property::FloorLog2Nw as usize] = floor_log2(nw.unsigned_abs());
-        values[Property::AbsNMinusNn as usize] = (n - nn).abs();
-        values[Property::AbsWMinusWw as usize] = (w - ww).abs();
-        values[Property::AbsNwMinusNww as usize] = (nw - nww).abs();
-        values[Property::AbsNeMinusN as usize] = (ne - n).abs();
-        values[Property::AbsNwMinusW as usize] = (nw - w).abs();
-        values[Property::SumWNNw as usize] = w.abs() + n.abs() + nw.abs();
-        values[Property::WpMaxError as usize] = 0; // Filled in by WP state
-
-        Self { values }
-    }
-
-    /// Gets a property value.
+    /// Gets a property value (used by [`traverse_tree`]).
     #[inline]
     pub fn get(&self, property: i32) -> i32 {
         if property >= 0 && (property as usize) < self.values.len() {
@@ -152,6 +129,7 @@ impl PixelProperties {
 
 /// Floor log2 for unsigned values (returns 0 for 0).
 #[inline]
+#[cfg(test)]
 fn floor_log2(value: u32) -> i32 {
     if value == 0 {
         0
@@ -171,6 +149,7 @@ pub fn simple_tree(predictor: Predictor) -> Tree {
 }
 
 /// Creates a gradient tree (most common for lossless).
+#[cfg(test)]
 pub fn gradient_tree() -> Tree {
     simple_tree(Predictor::Gradient)
 }
@@ -208,6 +187,7 @@ pub fn per_channel_tree(num_channels: usize) -> Tree {
 }
 
 /// Traverses the tree to find the leaf node for given properties.
+#[cfg(test)]
 pub fn traverse_tree<'a>(tree: &'a Tree, properties: &PixelProperties) -> &'a PropertyDecisionNode {
     let mut node_idx = 0;
 
@@ -240,7 +220,9 @@ const MULTIPLIER_BITS_CONTEXT: usize = 5;
 /// Token for tree serialization.
 #[derive(Debug, Clone)]
 pub struct TreeToken {
-    /// Context for this token.
+    /// Context for this token. Read by stream-comparison unit tests
+    /// only (#76) — the writer streams tokens without re-reading it.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub context: usize,
     /// Token value (unsigned for property/predictor/log, signed for split_val/offset).
     pub value: i32,
@@ -334,6 +316,7 @@ fn decompose_multiplier(multiplier: u32) -> (u32, u32) {
 }
 
 /// Creates a tree with the weighted predictor.
+#[cfg(test)]
 pub fn weighted_tree() -> Tree {
     simple_tree(Predictor::Weighted)
 }
@@ -447,6 +430,7 @@ pub fn riged_tree(bit_depth: u32) -> Tree {
 
 /// Creates a tree that selects between Gradient and Weighted based on WP max error.
 /// Uses Gradient when max error is low (WP is stable), Weighted when error is higher.
+#[cfg(test)]
 pub fn adaptive_gradient_weighted_tree() -> Tree {
     vec![
         // Root: split on WP max error (property 15)

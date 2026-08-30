@@ -101,11 +101,16 @@ mod tree_mode_tests {
 #[derive(Debug, Clone)]
 pub struct FrameEncoderOptions {
     /// Use modular mode (lossless).
+    /// #76: retained for construction-site symmetry; nothing reads these
+    /// three legacy fields any more (the encode path dispatches on the
+    /// API-level configs instead).
+    #[allow(dead_code)]
     pub use_modular: bool,
     /// Effort level (1-13, higher = better compression, slower; e10 =
     /// libjxl kGlacier superset, e11/e12/e13 extend past libjxl with
     /// longer search budgets — 8/16/32 butteraugli iters on the lossy
     /// path; 2026-08-29 ladder shift).
+    #[allow(dead_code)]
     pub effort: u8,
     /// Use ANS entropy coding instead of Huffman for modular.
     pub use_ans: bool,
@@ -120,6 +125,7 @@ pub struct FrameEncoderOptions {
     /// Use lossy delta palette for near-lossless modular encoding.
     pub lossy_palette: bool,
     /// Encoder mode: Reference (match libjxl) or Experimental (own improvements).
+    #[allow(dead_code)]
     pub encoder_mode: crate::api::EncoderMode,
     /// Effort profile with all effort-derived parameters.
     pub profile: crate::effort::EffortProfile,
@@ -284,22 +290,6 @@ impl FrameEncoder {
             width,
             height,
             num_extra_channels: 0,
-            budget: None,
-        }
-    }
-
-    /// Creates a new frame encoder with extra channel support.
-    pub fn new_with_extra_channels(
-        width: usize,
-        height: usize,
-        options: FrameEncoderOptions,
-        num_extra_channels: usize,
-    ) -> Self {
-        Self {
-            options,
-            width,
-            height,
-            num_extra_channels,
             budget: None,
         }
     }
@@ -3034,6 +3024,7 @@ impl FrameEncoder {
     /// Returns the number of TOC entries for this frame.
     /// Single group: 1 entry
     /// Multi-group: 2 + num_lf_groups + num_groups * num_passes
+    #[cfg(test)]
     pub fn num_toc_entries(&self, num_passes: usize) -> usize {
         let num_groups = self.num_groups();
         if num_groups == 1 && num_passes == 1 {

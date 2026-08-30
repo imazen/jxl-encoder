@@ -83,6 +83,8 @@ const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
     lsb_in_token: 0,
 };
 
+// #76: sole remaining caller is the `jpeg-reencoding` path (jpeg/encode.rs).
+#[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
 pub fn collect_all_residuals(image: &ModularImage) -> (Vec<u32>, u32) {
     collect_all_residuals_with_predictor(image, 5)
 }
@@ -147,8 +149,6 @@ pub enum GlobalModularState {
         depths: Vec<u8>,
         /// Huffman codes for each HybridUint token.
         codes: Vec<u16>,
-        /// Maximum HybridUint token value.
-        max_token: u32,
         /// Fixed predictor id (libjxl `cjxl -P`); `5` (Gradient) is the
         /// legacy default that hash-locks pin against.
         predictor_id: u8,
@@ -266,34 +266,13 @@ pub(super) fn write_ans_modular_header(
 /// This writes:
 /// - dc_quant.all_default = 1
 /// - has_tree = 1
-/// - Tree histogram and tokens (Gradient predictor)
+/// - Tree histogram and tokens (honouring `predictor_id`, libjxl `cjxl -P`;
+///   default `5` (Gradient) keeps the hash-locked output bit-identical)
 /// - Data histogram with HybridUint {4,2,0} (Huffman or ANS)
 ///
 /// `all_residuals` are the raw packed residuals from all groups (needed for ANS histogram building).
 /// `histogram` and `max_token` are built from HybridUint-encoded tokens (not raw residuals).
 /// Returns the entropy coding state needed to encode pixel data in group sections.
-pub fn write_global_modular_section(
-    all_residuals: &[u32],
-    histogram: &[u32],
-    max_token: u32,
-    writer: &mut BitWriter,
-    use_ans: bool,
-    transforms: GlobalTransforms,
-) -> Result<GlobalModularState> {
-    write_global_modular_section_with_predictor(
-        all_residuals,
-        histogram,
-        max_token,
-        writer,
-        use_ans,
-        transforms,
-        5,
-    )
-}
-
-/// Knob-aware variant of [`write_global_modular_section`] that honours
-/// `predictor_id` (libjxl `cjxl -P`). Default `5` (Gradient) keeps the
-/// hash-locked output bit-identical.
 pub fn write_global_modular_section_with_predictor(
     all_residuals: &[u32],
     histogram: &[u32],
@@ -375,7 +354,6 @@ pub fn write_global_modular_section_with_predictor(
         Ok(GlobalModularState::Huffman {
             depths,
             codes,
-            max_token,
             predictor_id,
         })
     }
@@ -2264,26 +2242,7 @@ pub fn write_group_modular_section_local_tree_with_tree(
     Ok(())
 }
 
-#[allow(private_interfaces)]
-pub fn write_group_modular_section(
-    group_image: &ModularImage,
-    state: &GlobalModularState,
-    writer: &mut BitWriter,
-    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
-) -> Result<()> {
-    write_group_modular_section_idx(
-        group_image,
-        state,
-        0,
-        &GroupTransforms::none(),
-        writer,
-        budget,
-        super::tree_learn::WpCacheMode::Off,
-        None,
-    )
-}
-
-/// Like [`write_group_modular_section`] but with an explicit group index
+/// Group-section writer with an explicit group index
 /// for tree property 1 (group_id). Required when the learned tree splits on group_id.
 ///
 /// `rct_type`: Optional per-group RCT transform to write in this group's GroupHeader.
@@ -2354,7 +2313,6 @@ pub fn write_group_modular_section_idx(
         GlobalModularState::Huffman {
             depths,
             codes,
-            max_token: _,
             predictor_id,
         } => {
             // Encode residuals with HybridUint {4,2,0} + Huffman, honouring

@@ -219,6 +219,7 @@ fn forward_rct_row_copy(
 /// Apply inverse RCT to three channels in-place.
 ///
 /// This reverses the forward transform for decoding.
+#[cfg(test)]
 pub fn inverse_rct(channels: &mut [Channel], begin_c: usize, rct_type: RctType) -> Result<()> {
     if rct_type.is_noop() {
         return Ok(());
@@ -258,6 +259,7 @@ pub fn inverse_rct(channels: &mut [Channel], begin_c: usize, rct_type: RctType) 
 }
 
 /// Apply inverse RCT to a single row, returning copies.
+#[cfg(test)]
 fn inverse_rct_row_copy(
     c0: &[i32],
     c1: &[i32],

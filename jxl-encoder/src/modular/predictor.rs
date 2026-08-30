@@ -45,9 +45,6 @@ pub enum Predictor {
 }
 
 impl Predictor {
-    /// Number of simple predictors (excluding weighted/variable).
-    pub const NUM_SIMPLE: usize = 14;
-
     /// Map a libjxl predictor id (`cjxl -P N` / `--modular_predictor`)
     /// to a [`Predictor`] variant.
     ///
@@ -94,13 +91,6 @@ impl Predictor {
             Predictor::Average3,
             Predictor::Average4,
         ]
-    }
-
-    /// Predicts the value at (x, y) using this predictor.
-    #[inline]
-    pub fn predict(self, channel: &Channel, x: usize, y: usize) -> i32 {
-        let neighbors = Neighbors::gather(channel, x, y);
-        self.predict_from_neighbors(&neighbors)
     }
 
     /// Predicts from pre-gathered neighbor values.
@@ -261,70 +251,6 @@ impl Neighbors {
 
         let nee = if x + 2 < width && y > 0 {
             channel.get(x + 2, y - 1)
-        } else {
-            ne
-        };
-
-        Self {
-            n,
-            w,
-            nw,
-            ne,
-            nn,
-            ww,
-            nee,
-        }
-    }
-
-    /// Gathers neighbors with explicit row pointers for speed, matching JXL spec edge handling.
-    #[inline]
-    pub fn gather_fast(
-        row: &[i32],
-        prev_row: Option<&[i32]>,
-        prev_prev_row: Option<&[i32]>,
-        x: usize,
-        _width: usize,
-    ) -> Self {
-        let w = if x > 0 {
-            row[x - 1]
-        } else if let Some(prev) = prev_row {
-            prev[0]
-        } else {
-            0
-        };
-
-        let n = if let Some(prev) = prev_row {
-            prev[x]
-        } else {
-            w
-        };
-
-        let nw = if x > 0 {
-            if let Some(prev) = prev_row {
-                prev[x - 1]
-            } else {
-                w
-            }
-        } else {
-            w
-        };
-
-        let ne = if let Some(prev) = prev_row {
-            if x + 1 < prev.len() { prev[x + 1] } else { n }
-        } else {
-            n
-        };
-
-        let ww = if x > 1 { row[x - 2] } else { w };
-
-        let nn = if let Some(pp) = prev_prev_row {
-            pp[x]
-        } else {
-            n
-        };
-
-        let nee = if let Some(prev) = prev_row {
-            if x + 2 < prev.len() { prev[x + 2] } else { ne }
         } else {
             ne
         };
@@ -815,6 +741,7 @@ pub fn pack_signed(value: i32) -> u32 {
 
 /// Unpacks a zig-zag encoded value back to signed.
 #[inline]
+#[cfg(test)]
 pub fn unpack_signed(value: u32) -> i32 {
     if value & 1 == 0 {
         (value / 2) as i32

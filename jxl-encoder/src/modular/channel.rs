@@ -127,15 +127,27 @@ impl Channel {
     }
 
     /// Returns the total number of pixels.
+    ///
+    /// #76: only unit tests consume this; `cfg(test)` keeps it off the
+    /// production surface without touching the tests.
+    #[cfg(test)]
     #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
-    /// Returns true if the channel has no pixels.
+    /// Gets a pixel with boundary handling (returns 0 outside bounds).
+    ///
+    /// #76: only unit tests consume this; `cfg(test)` keeps it off the
+    /// production surface without touching the tests.
+    #[cfg(test)]
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+    pub fn get_clamped(&self, x: isize, y: isize) -> i32 {
+        if x < 0 || y < 0 || x >= self.width as isize || y >= self.height as isize {
+            0
+        } else {
+            self.data[y as usize * self.width + x as usize]
+        }
     }
 
     /// Returns a reference to the pixel at (x, y).
@@ -178,51 +190,6 @@ impl Channel {
     #[inline]
     pub fn data_mut(&mut self) -> &mut [i32] {
         &mut self.data
-    }
-
-    /// Gets a pixel with boundary handling (returns 0 outside bounds).
-    #[inline]
-    pub fn get_clamped(&self, x: isize, y: isize) -> i32 {
-        if x < 0 || y < 0 || x >= self.width as isize || y >= self.height as isize {
-            0
-        } else {
-            self.data[y as usize * self.width + x as usize]
-        }
-    }
-
-    /// Extracts a region from this channel, accounting for hshift/vshift.
-    ///
-    /// The rect is specified in full-resolution image coordinates. It is
-    /// downshifted by `hshift`/`vshift` and clamped to channel bounds.
-    /// Returns `None` if the shifted region has zero area.
-    pub fn extract_shifted_region(
-        &self,
-        rect_x0: usize,
-        rect_y0: usize,
-        rect_xsize: usize,
-        rect_ysize: usize,
-    ) -> Option<Channel> {
-        let x0 = rect_x0 >> self.hshift;
-        let y0 = rect_y0 >> self.vshift;
-        let xsize = (rect_xsize >> self.hshift).min(self.width.saturating_sub(x0));
-        let ysize = (rect_ysize >> self.vshift).min(self.height.saturating_sub(y0));
-
-        if xsize == 0 || ysize == 0 {
-            return None;
-        }
-
-        let mut data = Vec::with_capacity(xsize * ysize);
-        for y in 0..ysize {
-            for x in 0..xsize {
-                data.push(self.get(x0 + x, y0 + y));
-            }
-        }
-
-        let mut ch = Channel::from_vec(data, xsize, ysize).ok()?;
-        ch.hshift = self.hshift;
-        ch.vshift = self.vshift;
-        ch.component = self.component;
-        Some(ch)
     }
 
     /// Extracts a grid cell region matching the decoder's get_grid_rect logic.
@@ -270,14 +237,6 @@ impl Channel {
         ch.vshift = self.vshift;
         ch.component = self.component;
         Some(ch)
-    }
-
-    /// Gets a pixel, clamping coordinates to valid range.
-    #[inline]
-    pub fn get_clamped_to_edge(&self, x: isize, y: isize) -> i32 {
-        let x = x.clamp(0, self.width as isize - 1) as usize;
-        let y = y.clamp(0, self.height as isize - 1) as usize;
-        self.data[y * self.width + x]
     }
 }
 
@@ -503,41 +462,6 @@ impl ModularImage {
         })
     }
 
-    /// Creates a new modular image from 16-bit RGB data (big-endian).
-    pub fn from_rgb16(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        let expected = width
-            .checked_mul(height)
-            .and_then(|n| n.checked_mul(6))
-            .ok_or(Error::DimensionOverflow {
-                width,
-                height,
-                channels: 3,
-            })?;
-        if data.len() != expected {
-            return Err(Error::InvalidImageDimensions(width, height));
-        }
-
-        let mut channels = Vec::with_capacity(3);
-        for c in 0..3 {
-            let mut channel = Channel::new(width, height)?;
-            for y in 0..height {
-                for x in 0..width {
-                    let idx = (y * width + x) * 6 + c * 2;
-                    let val = u16::from_be_bytes([data[idx], data[idx + 1]]);
-                    channel.set(x, y, val as i32);
-                }
-            }
-            channels.push(channel);
-        }
-
-        Ok(Self {
-            channels,
-            bit_depth: 16,
-            is_grayscale: false,
-            has_alpha: false,
-        })
-    }
-
     /// Creates a new modular image from native-endian 16-bit RGB data.
     ///
     /// Input is a byte slice interpreted as `&[u16]` in native endian order
@@ -712,19 +636,16 @@ impl ModularImage {
         self.channels.first().map_or(0, |c| c.height())
     }
 
-    /// Returns the number of channels.
+    /// Returns the number of channels. Unit-test convenience (#76).
+    #[cfg(test)]
     pub fn num_channels(&self) -> usize {
         self.channels.len()
     }
 
-    /// Returns a reference to a channel.
+    /// Returns a reference to a channel. Unit-test convenience (#76).
+    #[cfg(test)]
     pub fn channel(&self, idx: usize) -> &Channel {
         &self.channels[idx]
-    }
-
-    /// Returns a mutable reference to a channel.
-    pub fn channel_mut(&mut self, idx: usize) -> &mut Channel {
-        &mut self.channels[idx]
     }
 
     /// Extracts a rectangular region from the image.

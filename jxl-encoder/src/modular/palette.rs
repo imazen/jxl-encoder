@@ -31,6 +31,7 @@ pub const CHANNEL_COLORS_PERCENT: f32 = 95.0;
 /// pass. Distinct from [`CHANNEL_COLORS_PERCENT`] (the global / single-group
 /// threshold) because the per-group path runs after global RCT and the
 /// distribution it sees is narrower (residuals, not raw pixels).
+#[cfg(test)] // #76: default asserted by unit tests; production reads the knob directly.
 pub const CHANNEL_COLORS_GROUP_PERCENT: f32 = 80.0;
 
 /// Override knobs for modular encoding tuning, mirroring libjxl's
@@ -117,6 +118,8 @@ impl ModularKnobs {
 
     /// Resolved per-group channel-colours percentage.
     /// Falls back to [`CHANNEL_COLORS_GROUP_PERCENT`].
+    /// #76: unit-test convenience; `modular::frame` reads the raw knob.
+    #[cfg(test)]
     pub fn channel_colors_group_percent_or_default(&self) -> f32 {
         self.channel_colors_group_percent
             .unwrap_or(CHANNEL_COLORS_GROUP_PERCENT)
