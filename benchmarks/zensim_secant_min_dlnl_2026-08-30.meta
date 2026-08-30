@@ -1,0 +1,41 @@
+study            zensim diffmap-secant guard thresholds — FITTED (T2, 2026-08-30)
+report           benchmarks/zensim_secant_min_dlnl_2026-08-30.md
+base_commit      9bb62a18 (jxl-encoder, main)
+host             mac / Darwin 25.5.0 arm64 / Apple M4 Pro / 12 cpu
+rustc            rustc 1.98.0 (88d9e12ae 2026-08-18)
+build            CARGO_TARGET_DIR=$HOME/tmp/jxlloop-target nice -n19 cargo build --release -j 4
+                 -p jxl-encoder --example zensim_diffmap_rd
+                 --features "__expert butteraugli-loop zensim-loop ssim2-loop parallel"
+                 (no target-cpu=native)
+runner           scripts/zensim-loop-eff/run_secant_guard_fit.sh   (AXIS=dlnl|eps, EMIT=best|last)
+analyzers        scripts/zensim-loop-eff/verdict_23shot_cells.py   (decoded census / median |err| / bytes)
+                 scripts/zensim-loop-eff/analyze_secant_overshoot.py (trajectory overshoot / crossings)
+bake             ~/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin
+                 sha256 1a2c8d522fed8034...   zensim rev 9c0635f1
+arm              h3-mag, JXL_ZENSIM_TARGET_TOL=-1, JXL_SAVE_BITSTREAM=1
+grid             9 refs x targets {70,80,88} = 27 cells/arm; K in {2,3}; emit in {best,last}
+corpus           benchmarks/zensim_secant_corpus9_2026-08-30.tsv   sha256 686b267f6c61968c...
+                 6 photo: CID22-512/validation {1279330,1420710,1475938,2079234,2253934,2775196}
+                 3 nonphoto: 480x480 +64+0 crops of codec-corpus/gb82-sc
+                   sc_graph     7babb236369f99ac...
+                   sc_terminal  136e42d5083ad44b...
+                   sc_windows95 1288cde2560ddc75...
+                 NOT the 2026-08-25/26 nine (city/dog/girl + 3 CID + 3 gb82 crops live under
+                 /mnt/v, absent on this host). Absolute numbers are NOT comparable across the
+                 two corpora; only within-sweep arm-to-arm deltas are.
+cells            zensim_secant_dlnl_cells_2026-08-30.tsv        (AXIS=dlnl, emit-best, 13 thresholds x K{2,3} + ctrl)
+                 zensim_secant_eps_cells_2026-08-30.tsv         (AXIS=eps,  emit-best, 11 thresholds x K{2,3} + ctrl)
+                 zensim_secant_epslast_cells_2026-08-30.tsv     (AXIS=eps,  emit-last,  8 thresholds x K{2,3} + ctrl)
+                 zensim_secant_ship_cells_2026-08-30.tsv        (post-fit binary, 1e-6 vs 0.25 vs ctrl)
+ctrltraces       zensim_secant_{dlnl,eps,epslast,ship}_ctrltrace_2026-08-30.tsv
+                 cols: run trace_id iter ln_L d_ln_L d_ln_S eps_hat used g_pow g_raw g
+                 written by JXL_ZENSIM_SECANT_TRACE (env-gated, default off)
+engagement       every arm gated: probe = 27*K, per-compare trace = 27*(K+1),
+                 controller trace = 27*K rows. All arms passed.
+adopted          SECANT_MIN_EPS_DEFAULT  1e-6 -> 0.25   (fitted; the axis that sets step size)
+                 SECANT_MIN_DLNL_DEFAULT 1e-3 unchanged (fitted verdict: numerical floor only,
+                 provably inert — min observed |d_ln_L| over 1053 eligible steps = 3.11e-3)
+byte_impact      zensim-loop only. Default-feature hash locks unmoved (cargo test --workspace
+                 --release green, 25 result blocks, 0 failures; ditto --features zensim-loop,
+                 27 blocks). vs pre-fit 1e-6: k2 0/27 bitstreams change, k3 1/27 emit-best,
+                 2/27 emit-last.

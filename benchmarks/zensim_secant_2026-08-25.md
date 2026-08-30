@@ -72,6 +72,17 @@ re-run is the rigorous confirmation. (2) v47A bake, not the frontier
 
 ## Min-|Δln L| guard (2026-08-25) — kills the overshoot, improves the median
 
+> **CORRECTION 2026-08-30** — the numbers in this section did NOT reproduce on the
+> current substrate. `benchmarks/zensim_secant_min_dlnl_2026-08-30.md` measured the
+> |Δln L| distribution over 1053 secant-eligible controller steps: the smallest value
+> is 3.11e-3, so the 1e-3 threshold below **never fires** and cannot have moved any
+> cell. Either the substrate changed enough to dissolve the effect (bake, `ctrl_exp`
+> and the S4 prior have all moved since) or this A/B carried another difference.
+> The overshoot is real but an order of magnitude smaller than recorded here (worst
+> 3.07 points, not 8.2), and its mechanism is a SHALLOW ε̂ reached via a large Δln S —
+> not a tiny Δln L. The guard that bounds it is the |ε̂| floor, fitted to 0.25 on
+> 2026-08-30. Treat the table below as a dated record, not as current behaviour.
+
 Added `&& (cur_log_l − prev_log_l).abs() > 1e-3` to the secant condition: when
 consecutive iterates barely move the loss, ε̂ is a divide-by-noise, so fall back
 to the power law. Re-A/B (same 9×3 corpus, v47A+h3-mag):

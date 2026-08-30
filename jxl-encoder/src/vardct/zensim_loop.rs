@@ -22,6 +22,34 @@ use super::frame::DistanceParams;
 use crate::debug_rect;
 use crate::error::Result;
 
+/// Minimum |Δln L| for the diffmap secant to trust its measured elasticity —
+/// a NUMERICAL floor, deliberately inert in the measured regime.
+///
+/// FITTED 2026-08-30 (`benchmarks/zensim_secant_min_dlnl_2026-08-30.md`): over
+/// 1053 secant-eligible controller steps the smallest observed |Δln L| was
+/// **3.11e-3**, so every threshold ≤ 3e-3 provably changes nothing, and 1e-3
+/// keeps 3.1× margin under the observed minimum. Thresholds that DO bite (≥1e-2)
+/// buy nothing consistent — at k2 they cost census (2e-1 → 19/27, 3e-1 → 18/27)
+/// and 6e-1 disables the secant outright. Keep this as divide-by-zero
+/// protection; the guard that actually bounds the overshoot is
+/// `SECANT_MIN_EPS_DEFAULT` below.
+const SECANT_MIN_DLNL_DEFAULT: f64 = 1e-3;
+
+/// Minimum |ε̂| for the diffmap secant to extrapolate along its measured
+/// elasticity — the trust region on the step's own denominator.
+///
+/// FITTED 2026-08-30 (same benchmark). The measured |ε̂| distribution has a low
+/// tail (min 0.043, 25/779 steps below 0.20) well separated from its body
+/// (median 0.589), and the outcome sweep finds a plateau at 0.20–0.30 where
+/// every column is at its best or tied-best: k3 overshooting cells 4→3, worst
+/// overshoot 3.07→2.17, median overshoot 0.425→0.215, median final |err|
+/// 0.436→0.381, with census and median |err| UNCHANGED at both budgets and both
+/// emit modes and bytes marginally lower. Past 0.35 the floor eats into the
+/// body of the distribution and median |err| degrades (k3 emit-last 0.477 →
+/// 0.505); 0.60 disables the secant. 0.25 is the plateau's interior, so a
+/// substrate shift does not immediately push the default off it.
+const SECANT_MIN_EPS_DEFAULT: f64 = 0.25;
+
 /// diffmap-RD worktree (2026-07-18): bake bytes for `JXL_ZENSIM_RD_PROFILE=bake:<path>`
 /// — mounts an arbitrary ZNPR bake as the loop scorer via `ZensimProfile::Custom`
 /// (zensim `custom-profiles` feature; enabled in this worktree's Cargo.toml).
@@ -906,6 +934,42 @@ impl VarDctEncoder {
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
             .unwrap_or(true);
+        // Min-|Δln L| guard (2026-08-25, threshold FITTED 2026-08-30). ε̂ is a
+        // ratio of two measured differences; when the loss barely moved between
+        // consecutive iterates the numerator is noise and `(ln L_t − ln L)/ε̂`
+        // divides by it, producing the overshoot the un-guarded arm showed. The
+        // sibling `|Δln S| > 1e-6` guard bounds the DENOMINATOR only, which is
+        // why it never caught this. Below this threshold the step falls back to
+        // the power law. `JXL_ZENSIM_SECANT_MIN_DLNL` overrides (0 disables the
+        // guard); the shipped default and the sweep that chose it are in
+        // `benchmarks/zensim_secant_min_dlnl_2026-08-30.md`.
+        let secant_min_dlnl: f64 = std::env::var("JXL_ZENSIM_SECANT_MIN_DLNL")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|v: &f64| v.is_finite() && *v >= 0.0)
+            .unwrap_or(SECANT_MIN_DLNL_DEFAULT);
+        // Min-|ε̂| guard (2026-08-30). The step is `(ln L_t − ln L)/ε̂`, so it is
+        // |ε̂| — not |Δln L| alone — that sets how far the controller travels. A
+        // SHALLOW measured elasticity (loss barely responded to a large scale
+        // move) extrapolates to a huge step, and that is the overshoot mechanism
+        // actually observed on this substrate. A floor was always here in the
+        // shape `eps_hat < -1e-6`; 1e-6 is a sign test, not a trust region.
+        // `JXL_ZENSIM_SECANT_MIN_EPS` overrides; the shipped default and the
+        // sweep that chose it are in
+        // `benchmarks/zensim_secant_min_dlnl_2026-08-30.md`.
+        let secant_min_eps: f64 = std::env::var("JXL_ZENSIM_SECANT_MIN_EPS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|v: &f64| v.is_finite() && *v >= 0.0)
+            .unwrap_or(SECANT_MIN_EPS_DEFAULT);
+        // Controller diagnostic trace (2026-08-30, env-gated, default off): one
+        // append-only TSV line per controller step —
+        // `trace_id  iter  ln_L  d_ln_L  d_ln_S  eps_hat  used  g_pow  g_raw  g`
+        // where `used` is `secant`|`powerlaw:<reason>`. This is a SEPARATE file
+        // from `JXL_ZENSIM_TRACE` on purpose: that trace's 7-column shape is
+        // numerically diffed against committed TSVs by the substrate probe in
+        // `analyze_23shot.py verify`, so it must not gain columns.
+        let secant_trace_path = std::env::var("JXL_ZENSIM_SECANT_TRACE").ok();
         let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
         // Efficiency study (2026-07-31): per-COMPARE trace — one TSV line per
         // iteration: `trace_id  iter  score  qf_mean  qf_min  qf_max  iter_ms`.
@@ -1774,27 +1838,50 @@ impl VarDctEncoder {
                 let cur_log_l = achieved_loss.ln();
                 // Power-law step: the default, and the secant's fallback.
                 let g_pow = (achieved_loss / target_loss).powf(ctrl_exp);
-                let g_raw = if secant_enabled
-                    && prev_log_l.is_finite()
-                    && (cum_log_s - prev_log_s).abs() > 1e-6
-                    // Loss must have MOVED enough for a reliable elasticity —
-                    // near-equal iterates give ε̂ ≈ 0 and a divide-by-noise step
-                    // (the 2026-08-25 smoke's t70 iter-2 overshoot). Fall back
-                    // to the power law when it barely moved.
-                    && (cur_log_l - prev_log_l).abs() > 1e-3
-                {
-                    // ε̂ = Δln L / Δln S; valid only when loss falls as scale
-                    // rises (ε̂ < 0). Step: ln S_target = ln S + (ln L_t − ln L)/ε̂.
-                    let eps_hat = (cur_log_l - prev_log_l) / (cum_log_s - prev_log_s);
-                    if eps_hat < -1e-6 {
-                        ((target_loss.ln() - cur_log_l) / eps_hat).exp()
-                    } else {
-                        g_pow
-                    }
+                let d_ln_l = cur_log_l - prev_log_l;
+                let d_ln_s = cum_log_s - prev_log_s;
+                // ε̂ = Δln L / Δln S; valid only when loss falls as scale rises
+                // (ε̂ < 0). Step: ln S_target = ln S + (ln L_t − ln L)/ε̂. Four
+                // conditions must hold: a previous iterate exists (iter 0 is
+                // always power law), the SCALE moved (Δln S, the ratio's
+                // denominator), the LOSS moved by at least `secant_min_dlnl`
+                // (Δln L, the ratio's numerator), and the resulting elasticity is
+                // steep enough to extrapolate along (`secant_min_eps` — the
+                // STEP's denominator, which is what actually sets step size).
+                let mut eps_hat = f64::NAN;
+                let (g_raw, used) = if !secant_enabled {
+                    (g_pow, "powerlaw:off")
+                } else if !prev_log_l.is_finite() {
+                    (g_pow, "powerlaw:iter0")
+                } else if d_ln_s.abs() <= 1e-6 {
+                    (g_pow, "powerlaw:dlns")
+                } else if d_ln_l.abs() <= secant_min_dlnl {
+                    (g_pow, "powerlaw:dlnl")
                 } else {
-                    g_pow
+                    eps_hat = d_ln_l / d_ln_s;
+                    if eps_hat < -secant_min_eps {
+                        (((target_loss.ln() - cur_log_l) / eps_hat).exp(), "secant")
+                    } else if eps_hat < 0.0 {
+                        (g_pow, "powerlaw:eps")
+                    } else {
+                        (g_pow, "powerlaw:sign")
+                    }
                 };
                 let g = g_raw.clamp(1.0 / ctrl_clamp, ctrl_clamp);
+                if let Some(stp) = &secant_trace_path {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(stp)
+                    {
+                        let _ = writeln!(
+                            f,
+                            "{trace_id}\t{iter}\t{cur_log_l:.9}\t{d_ln_l:.9}\t{d_ln_s:.9}\t\
+                             {eps_hat:.9}\t{used}\t{g_pow:.9}\t{g_raw:.9}\t{g:.9}"
+                        );
+                    }
+                }
                 // Record the iterate (S, L) at which this score was measured,
                 // then advance the cumulative scale by the applied step.
                 prev_log_s = cum_log_s;

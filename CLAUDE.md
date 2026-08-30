@@ -166,19 +166,55 @@ via the repo's regen workflow with in-process decode of every stream. e1–e9
 locks for `resampling == 1` must NOT move — if any non-resampling cell moves,
 stop and find out why before relocking.
 
-### T2 — zensim secant min-|Δln L| guard
+### T2 — zensim secant guard thresholds — DONE 2026-08-30, and the brief above
+### it was WRONG on three counts
 
 `vardct/zensim_loop.rs`. The controller measures elasticity
 `ε̂ = Δln L / Δln S` from the last two iterates. **Sign convention that is easy
 to get backwards: higher quant_field = MORE bits = LESS loss, so ε̂ is
-NEGATIVE**; the secant fires only when `ε̂ < −1e-6`. Known flaw: when
-consecutive iterates are nearly equal, Δln L is tiny, ε̂ is unreliable, and the
-step overshoots (measured: t=70 went 71.0 → 61.8 at iter 2). The existing
-`|Δln S| > 1e-6` guard does not catch this because it guards the wrong axis.
-Fix = a min-|Δln L| guard falling back to the power law when the loss barely
-moved. Evidence + the A/B methodology: `benchmarks/zensim_secant_2026-08-25.md`.
-Note the loop never entropy-codes, so its traces have no bytes column — per-
-iterate bytes only come from separate budget-capped full encodes.
+NEGATIVE.** That much held. What this section used to say, and what measuring it
+showed (full evidence:
+[benchmarks/zensim_secant_min_dlnl_2026-08-30.md](benchmarks/zensim_secant_min_dlnl_2026-08-30.md)):
+
+- It said "Fix = a min-|Δln L| guard". **That guard already existed** (since
+  `bbc2354c`, as `(cur_log_l - prev_log_l).abs() > 1e-3`). The outstanding work
+  was that its threshold was guessed.
+- It said the guard catches the overshoot. **At 1e-3 it never fires.** The
+  smallest |Δln L| over 1053 secant-eligible steps is 3.11e-3, so every
+  threshold ≤ 3e-3 is provably inert. 1e-3 is kept, but as divide-by-zero
+  protection only — every value large enough to bite is a secant-disabler.
+- It cited an 8.2-point overshoot (t=70, 71.0 → 61.8). **Scored against the
+  approach direction, nothing in the sweep exceeds 3.07 and no cell exceeds 5.**
+  That figure predates the move to `ctrl_exp` 1.0 + the S4 per-image prior and
+  the Profile C bake.
+
+**The axis that governs step size is ε̂ itself, not its numerator.** The step is
+`(ln L_t − ln L)/ε̂`, so a SHALLOW measured elasticity extrapolates to a huge
+step — and on this substrate ε̂ collapses via a large Δln S (the ±ln 2 clamp
+permits it), never via a tiny Δln L. Worst observed cell: |Δln L| = 0.0367
+(37× the guessed guard, "healthy") with ε̂ = −0.178, asking for a 41 % scale
+cut. A |Δln L| guard cannot catch that at any inert setting.
+
+Fix shipped: the |ε̂| floor that was always present in the shape
+`eps_hat < −1e-6` — a sign test, not a trust region — is now
+`SECANT_MIN_EPS_DEFAULT = 0.25`, fitted on a threshold sweep (plateau 0.20–0.30
+under both emit modes, matching the tail/body split of the measured |ε̂|
+distribution: min 0.043, 25/779 steps below 0.20, median 0.589). It removes the
+worst overshoot (3.07 → 2.17), halves median overshoot, and leaves decoded
+census and median |err| UNCHANGED at both budgets and both emit modes. Both
+thresholds are env-overridable (`JXL_ZENSIM_SECANT_MIN_DLNL`,
+`JXL_ZENSIM_SECANT_MIN_EPS`) and a controller diagnostic trace is available at
+`JXL_ZENSIM_SECANT_TRACE` (separate file from `JXL_ZENSIM_TRACE`, whose 7-column
+shape is numerically diffed by the substrate probe and must not gain columns).
+
+Caveats that stay open: n = 27 cells/arm and the adopted guard engages on 2 of
+them, so the threshold choice rests on the plateau + the 779-step distribution,
+not on the two cells; and the corpus is NOT the registered nine (city/dog/girl +
+the gb82 crops live under `/mnt/v`, absent on the mac). Re-running
+`scripts/zensim-loop-eff/run_secant_guard_fit.sh` on the `/mnt/v` corpus is the
+confirmation this work does not have. Note also that the loop never
+entropy-codes, so its traces have no bytes column — per-iterate bytes only come
+from separate budget-capped full encodes.
 
 ### T3 — e7 sectioned wall, via content-adaptive K (corpus expansion REQUIRED)
 
