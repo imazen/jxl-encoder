@@ -2938,3 +2938,165 @@ fn test_auto_delta_frames_lossy_rgba_identity_short_circuit() {
         }
     }
 }
+
+/// Deterministic textured RGB frame (variant of the sectioned-knob test
+/// fixture, seeded so the two animation frames differ).
+fn prng_rgb_seeded(w: usize, h: usize, seed: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(w * h * 3);
+    let mut state: u32 = seed;
+    for y in 0..h {
+        for x in 0..w {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            let n = (state >> 24) as u8;
+            out.push(((x * 255 / w) as u8).wrapping_add(n & 0x1f));
+            out.push(((y * 255 / h) as u8) ^ (n & 0x0f));
+            out.push((((x + y) * 128 / (w + h)) as u8).wrapping_add(n >> 3));
+        }
+    }
+    out
+}
+
+/// `LosslessConfig::with_sectioned_trees` must reach animation frames
+/// (imazen/jxl-encoder#99 item 4): the frame options hardcoded
+/// `SectionedTrees::Auto`, silently ignoring the knob — the same bug
+/// shape the streaming `LosslessEncoder` had before `cd9a7325`.
+/// Multi-group frames (512 > 256) per the multi-group coverage rule.
+/// Mutation check: re-hardcoding `Auto` in `animate.rs::make_opts`
+/// makes the `assert_ne` fail (Auto == Off on the ambient 1-worker
+/// pool at e7).
+#[test]
+fn animation_honours_sectioned_knob() {
+    use jxl_encoder::api::SectionedTrees;
+    let (w, h) = (512usize, 512usize);
+    let f0 = prng_rgb_seeded(w, h, 0x9e37_79b9);
+    let f1 = prng_rgb_seeded(w, h, 0x5eed_f00d);
+    let animation = AnimationParams {
+        tps_numerator: 10,
+        tps_denominator: 1,
+        num_loops: 0,
+        premultiplied_alpha: false,
+    };
+    let frames = [
+        AnimationFrame {
+            pixels: &f0,
+            duration: 1,
+            ..Default::default()
+        },
+        AnimationFrame {
+            pixels: &f1,
+            duration: 1,
+            ..Default::default()
+        },
+    ];
+    let encode = |mode: SectionedTrees| {
+        LosslessConfig::new()
+            .with_effort(7)
+            .with_sectioned_trees(mode)
+            .encode_animation(w as u32, h as u32, PixelLayout::Rgb8, &animation, &frames)
+            .unwrap_or_else(|e| panic!("encode_animation({mode:?}) failed: {e:?}"))
+    };
+    let off = encode(SectionedTrees::Off);
+    let on = encode(SectionedTrees::On);
+    assert_ne!(
+        off, on,
+        "the sectioned knob must change animation bytes (it was silently ignored)"
+    );
+
+    // Lossless invariant: both modes decode to the SAME pixels, in both
+    // decoders (jxl-rs is mandatory per the decoder-testing policy).
+    let (ow, oh, dec_off) = decode_animation_oxide(&off);
+    let (nw, nh, dec_on) = decode_animation_oxide(&on);
+    assert_eq!((ow, oh, dec_off.len()), (nw, nh, dec_on.len()));
+    for (i, (a, b)) in dec_off.iter().zip(dec_on.iter()).enumerate() {
+        assert_eq!(a.1, b.1, "frame {i} duration");
+        assert_eq!(
+            a.0, b.0,
+            "frame {i}: Off and On must decode identically (jxl-oxide)"
+        );
+    }
+    let rs_off = decode_animation_jxlrs(&off);
+    let rs_on = decode_animation_jxlrs(&on);
+    assert_eq!(rs_off.len(), rs_on.len());
+    for (i, (a, b)) in rs_off.iter().zip(rs_on.iter()).enumerate() {
+        assert_eq!(
+            a, b,
+            "frame {i}: Off and On must decode identically (jxl-rs)"
+        );
+    }
+    // Sanity vs the source (u8 grid, half-step tolerance).
+    let (_, _, dec) = decode_animation_oxide(&on);
+    for (fi, src) in [&f0, &f1].into_iter().enumerate() {
+        let px = &dec[fi].0;
+        assert_eq!(px.len(), src.len(), "frame {fi} sample count");
+        for (k, (&d, &s)) in px.iter().zip(src.iter()).enumerate().step_by(4097) {
+            let expect = s as f32 / 255.0;
+            assert!(
+                (d - expect).abs() < 0.5 / 255.0,
+                "frame {fi} sample {k}: decoded {d} vs source {expect}"
+            );
+        }
+    }
+}
+
+/// Animation lossless admission consults the SECTIONED band when the
+/// knob (or its `Auto` default) can engage per-group trees
+/// (imazen/jxl-encoder#99 item 4): before 2026-08-30 the animation
+/// pre-flight shimmed `SectionedTrees::Off` and admitted on the
+/// whole-image band the frames never used. With a cap just under the
+/// whole-image estimate, `Off` must reject and `Auto` must be admitted
+/// on the (smaller) sectioned estimate AND complete within the cap.
+/// If the two bands ever converge at this size the premise assert
+/// fires — re-pick the cell rather than loosening it.
+#[test]
+fn animation_admission_uses_sectioned_band() {
+    use jxl_encoder::api::SectionedTrees;
+    use jxl_encoder::{EncodeError, Limits};
+    let (w, h) = (1024u32, 512u32);
+    let whole_typ = jxl_encoder::estimate_encode(w, h, 3, false, true, 7)
+        .expect("estimate")
+        .peak_memory_bytes;
+    let cap = whole_typ - 1;
+    let f0 = prng_rgb_seeded(w as usize, h as usize, 0x1234_5678);
+    let f1 = prng_rgb_seeded(w as usize, h as usize, 0x8765_4321);
+    let animation = AnimationParams {
+        tps_numerator: 10,
+        tps_denominator: 1,
+        num_loops: 0,
+        premultiplied_alpha: false,
+    };
+    let frames = [
+        AnimationFrame {
+            pixels: &f0,
+            duration: 1,
+            ..Default::default()
+        },
+        AnimationFrame {
+            pixels: &f1,
+            duration: 1,
+            ..Default::default()
+        },
+    ];
+    let limits = Limits::new().with_max_memory_bytes(cap);
+    let off = LosslessConfig::new()
+        .with_effort(7)
+        .with_sectioned_trees(SectionedTrees::Off)
+        .encode_animation_with_limits(w, h, PixelLayout::Rgb8, &animation, &frames, &limits);
+    match &off {
+        Err(err) => match err.as_ref() {
+            EncodeError::LimitExceeded { .. } => {}
+            other => panic!("Off under the tight cap: expected LimitExceeded, got {other:?}"),
+        },
+        Ok(_) => panic!(
+            "Off was admitted under a cap below the whole-image estimate ({whole_typ}) — \
+             premise broken (bands converged?)"
+        ),
+    }
+    let auto = LosslessConfig::new()
+        .with_effort(7)
+        .with_sectioned_trees(SectionedTrees::Auto)
+        .encode_animation_with_limits(w, h, PixelLayout::Rgb8, &animation, &frames, &limits)
+        .unwrap_or_else(|e| panic!("Auto under the same cap must be admitted sectioned: {e:?}"));
+    // And the admitted stream is a real, decodable animation.
+    let (dw, dh, dec) = decode_animation_oxide(&auto);
+    assert_eq!((dw as u32, dh as u32, dec.len()), (w, h, 2));
+}

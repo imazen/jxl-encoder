@@ -118,8 +118,13 @@ pub(crate) fn encode_animation_lossless(
     // true`, threads = 1): animation frames run on the ambient pool with
     // no `run_with_threads` hook, so there is no thread count to walk
     // down — the calibrated single-frame 1-thread estimate is the
-    // admission floor.
-    let preflight = super::encode_preflight(
+    // admission floor. Sectioned-aware (issue #99 item 4, 2026-08-30):
+    // the frame options below plumb `cfg.sectioned_trees()`, so admission
+    // must consult the same knob — before this, animation lossless was
+    // admitted/estimated on the whole-image band (`SectionedTrees::Off`
+    // shim) while its frames ran `Auto`, the mismatch `cd9a7325` fixed
+    // for the one-shot and streaming paths.
+    let preflight = super::encode_preflight_with_sectioned(
         width,
         height,
         layout.bytes_per_pixel() as u8,
@@ -129,6 +134,7 @@ pub(crate) fn encode_animation_lossless(
         1,
         true,
         limits,
+        cfg.sectioned_trees(),
     )?;
     let budget = preflight.budget;
 
@@ -303,7 +309,13 @@ pub(crate) fn encode_animation_lossless(
                          ec_override: Option<BlendMode>|
          -> FrameEncoderOptions {
             FrameEncoderOptions {
-                sectioned_trees: crate::api::SectionedTrees::Auto,
+                // The config's knob, not a hardcoded `Auto` — before
+                // 2026-08-30 `with_sectioned_trees` was silently ignored
+                // on the animation path (issue #99 item 4; the same bug
+                // shape the streaming `LosslessEncoder` had). The default
+                // IS `Auto`, so default-config animations are
+                // byte-identical.
+                sectioned_trees: cfg.sectioned_trees(),
                 use_modular: true,
                 effort: cfg.effort,
                 use_ans: cfg.ans(),
