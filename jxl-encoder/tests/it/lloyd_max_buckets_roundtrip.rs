@@ -58,21 +58,22 @@ fn textured_rgb8() -> (Vec<u8>, u32, u32) {
     for y in 0..H {
         for x in 0..W {
             let band = (y / 8) & 1;
-            let r;
-            let g;
-            let b;
-            if band == 0 {
+            let (r, g, b) = if band == 0 {
                 // Smooth gradient — low |N|, low |W|.
-                r = (x * 255 / W) as u8;
-                g = ((x + y) * 127 / (W + H)) as u8;
-                b = (y * 255 / H) as u8;
+                (
+                    (x * 255 / W) as u8,
+                    ((x + y) * 127 / (W + H)) as u8,
+                    (y * 255 / H) as u8,
+                )
             } else {
                 // Noisy texture — high |N|, high |W|, high wp_max_error.
                 let mix = (x.wrapping_mul(31) ^ y.wrapping_mul(73)) as u8;
-                r = mix.wrapping_add(13);
-                g = mix.wrapping_mul(3).wrapping_add(127);
-                b = mix.wrapping_mul(7).wrapping_add(64);
-            }
+                (
+                    mix.wrapping_add(13),
+                    mix.wrapping_mul(3).wrapping_add(127),
+                    mix.wrapping_mul(7).wrapping_add(64),
+                )
+            };
             pixels.push(r);
             pixels.push(g);
             pixels.push(b);

@@ -467,7 +467,9 @@ fn libjxl_output_decodes_via_djxl() {
 fn libjxl_pinned_fixtures() {
     let update_mode = std::env::var("UPDATE_LIBJXL_SIZES").is_ok();
 
-    let fixtures: Vec<(&str, Vec<u8>, u32, u32, PixelLayout, f32, u8)> = vec![
+    /// One pinned cell: (name, pixels, width, height, layout, distance, effort).
+    type PinnedFixture = (&'static str, Vec<u8>, u32, u32, PixelLayout, f32, u8);
+    let fixtures: Vec<PinnedFixture> = vec![
         (
             "libjxl_gradient_rgb_32x32_d1",
             gradient_rgb_32x32(),
