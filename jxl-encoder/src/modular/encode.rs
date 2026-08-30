@@ -1357,119 +1357,328 @@ pub(crate) fn write_modular_stream_with_rct_weighted_with_budget(
 /// Matches libjxl's `EstimateCost()` in enc_modular_simd.cc.
 /// Uses clamped gradient prediction with residuals bucketed by local complexity
 /// (max neighbor difference). Returns total estimated bits.
-fn estimate_cost(image: &ModularImage) -> f64 {
-    use super::predictor::pack_signed;
-    use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+/// Context-bucket count of the RCT-trial cost model (17 cutoffs + 1).
+const RCT_COST_CONTEXTS: usize = 18;
 
-    let config = HybridUintConfig::new(4, 2, 0);
+/// Context LUT of the RCT-trial cost model (perf: the cost fn runs once
+/// per RCT trial — 7x per image at e7 — and the cutoff scan was a
+/// 17-compare loop per pixel, 11.4 % of CPU on terminal post-radix).
+/// ctx = number of cutoffs strictly greater than max_diff; constant for
+/// max_diff >= 500 (= 0), so a 501-entry table indexed by
+/// min(max_diff, 500) reproduces the scan exactly — byte-identical.
+fn rct_cost_ctx_lut() -> [u8; 501] {
     let cutoffs: &[u32] = &[
         0, 1, 3, 5, 7, 11, 15, 23, 31, 47, 63, 95, 127, 191, 255, 392, 500,
     ];
-    let nc = cutoffs.len() + 1; // 18 context buckets
-
-    // Context LUT (perf: this fn runs once per RCT trial — 7x per image
-    // at e7 — and the cutoff scan was a 17-compare loop per pixel,
-    // 11.4 % of CPU on terminal post-radix). ctx = number of cutoffs
-    // strictly greater than max_diff; constant for max_diff >= 500
-    // (= 0), so a 501-entry table indexed by min(max_diff, 500)
-    // reproduces the scan exactly — byte-identical.
+    debug_assert_eq!(cutoffs.len() + 1, RCT_COST_CONTEXTS);
     let mut ctx_lut = [0u8; 501];
     for (d, slot) in ctx_lut.iter_mut().enumerate() {
         *slot = cutoffs.iter().filter(|&&c| (d as u32) < c).count() as u8;
     }
+    ctx_lut
+}
 
-    let mut total_bits: f64 = 0.0;
-    let mut extra_bits: u64 = 0;
-    let mut histograms: Vec<Vec<u32>> = vec![vec![]; nc];
+/// Per-pixel core of the RCT-trial cost model, shared by the edge and
+/// interior paths (and by [`estimate_cost`] and
+/// [`estimate_cost_rct_streaming`] — one implementation so the two are
+/// value-identical by construction). Identical math to the original
+/// scalar loop; only neighbor SELECTION lives in the callers (hoisted
+/// rows, no per-pixel bounds branches inside).
+#[inline]
+#[allow(clippy::too_many_arguments)] // one shared per-pixel core, two callers
+fn rct_cost_tally(
+    config: &crate::entropy_coding::hybrid_uint::HybridUintConfig,
+    ctx_lut: &[u8; 501],
+    val: i32,
+    left: i32,
+    top: i32,
+    topleft: i32,
+    histograms: &mut [Vec<u32>],
+    extra_bits: &mut u64,
+) {
+    use super::predictor::pack_signed;
+    let max_diff = (left.max(top).max(topleft) - left.min(top).min(topleft)) as u32;
+    let ctx = ctx_lut[(max_diff as usize).min(500)] as usize;
 
-    // Per-pixel core, shared by the edge and interior paths. Identical
-    // math to the original scalar loop; only neighbor SELECTION moved to
-    // the callers (hoisted rows, no per-pixel bounds branches inside).
-    let tally = |val: i32,
-                 left: i32,
-                 top: i32,
-                 topleft: i32,
-                 histograms: &mut Vec<Vec<u32>>,
-                 extra_bits: &mut u64| {
-        let max_diff = (left.max(top).max(topleft) - left.min(top).min(topleft)) as u32;
-        let ctx = ctx_lut[(max_diff as usize).min(500)] as usize;
+    // Gradient prediction residual
+    let grad = left + top - topleft;
+    let pred = grad.max(left.min(top)).min(left.max(top)); // clamped gradient
+    let res = val - pred;
+    let packed = pack_signed(res);
 
-        // Gradient prediction residual
-        let grad = left + top - topleft;
-        let pred = grad.max(left.min(top)).min(left.max(top)); // clamped gradient
-        let res = val - pred;
-        let packed = pack_signed(res);
+    let (token, _bits, nbits) = config.encode(packed);
+    if histograms[ctx].len() <= token as usize {
+        histograms[ctx].resize(token as usize + 1, 0);
+    }
+    histograms[ctx][token as usize] += 1;
+    *extra_bits += nbits as u64;
+}
 
-        let (token, _bits, nbits) = config.encode(packed);
-        if histograms[ctx].len() <= token as usize {
-            histograms[ctx].resize(token as usize + 1, 0);
-        }
-        histograms[ctx][token as usize] += 1;
-        *extra_bits += nbits as u64;
-    };
+/// Row `y == 0` of a channel: left = previous pixel (0 at x == 0),
+/// top = left, topleft = left — the original per-pixel fallbacks.
+#[inline]
+fn rct_cost_row0(
+    config: &crate::entropy_coding::hybrid_uint::HybridUintConfig,
+    ctx_lut: &[u8; 501],
+    row: &[i32],
+    histograms: &mut [Vec<u32>],
+    extra_bits: &mut u64,
+) {
+    rct_cost_tally(config, ctx_lut, row[0], 0, 0, 0, histograms, extra_bits);
+    for x in 1..row.len() {
+        let left = row[x - 1];
+        rct_cost_tally(
+            config, ctx_lut, row[x], left, left, left, histograms, extra_bits,
+        );
+    }
+}
 
-    for ch in &image.channels {
-        let w = ch.width();
-        let h = ch.height();
-        if w == 0 || h == 0 {
-            continue;
-        }
+/// Interior row (`y >= 1`). x == 0: left = top = prev[0], topleft = left
+/// (original fallbacks: left -> N, top -> N, topleft -> left).
+#[inline]
+fn rct_cost_row(
+    config: &crate::entropy_coding::hybrid_uint::HybridUintConfig,
+    ctx_lut: &[u8; 501],
+    row: &[i32],
+    prev: &[i32],
+    histograms: &mut [Vec<u32>],
+    extra_bits: &mut u64,
+) {
+    rct_cost_tally(
+        config, ctx_lut, row[0], prev[0], prev[0], prev[0], histograms, extra_bits,
+    );
+    for x in 1..row.len() {
+        rct_cost_tally(
+            config,
+            ctx_lut,
+            row[x],
+            row[x - 1],
+            prev[x],
+            prev[x - 1],
+            histograms,
+            extra_bits,
+        );
+    }
+}
 
-        let data = ch.data();
-
-        // Row y == 0: left = previous pixel (0 at x == 0), top = left,
-        // topleft = left — matches the original per-pixel fallbacks.
-        {
-            let row = &data[..w];
-            tally(row[0], 0, 0, 0, &mut histograms, &mut extra_bits);
-            for x in 1..w {
-                let left = row[x - 1];
-                tally(row[x], left, left, left, &mut histograms, &mut extra_bits);
-            }
-        }
-
-        for y in 1..h {
-            let row = &data[y * w..y * w + w];
-            let prev = &data[(y - 1) * w..y * w];
-            // x == 0: left = top = prev[0], topleft = left (original
-            // fallbacks: left -> N, top -> N, topleft -> left).
-            tally(
-                row[0],
-                prev[0],
-                prev[0],
-                prev[0],
-                &mut histograms,
-                &mut extra_bits,
-            );
-            for x in 1..w {
-                tally(
-                    row[x],
-                    row[x - 1],
-                    prev[x],
-                    prev[x - 1],
-                    &mut histograms,
-                    &mut extra_bits,
-                );
-            }
-        }
-
-        // Sum Shannon entropy per context bucket, then reset
-        for hist in &mut histograms {
-            let total: u32 = hist.iter().sum();
-            if total > 0 {
-                let total_f = total as f64;
-                for &count in hist.iter() {
-                    if count > 0 {
-                        let p = count as f64 / total_f;
-                        total_bits -= count as f64 * jxl_simd::fast_log2f(p as f32) as f64;
-                    }
+/// Sum Shannon entropy per context bucket into `total_bits`, then reset
+/// the histograms (per-channel boundary of the cost model — `total_bits`
+/// must be touched in channel-index order for exact f64 equality between
+/// the materialized and streaming evaluators).
+fn rct_cost_entropy_finish(histograms: &mut [Vec<u32>], total_bits: &mut f64) {
+    for hist in histograms.iter_mut() {
+        let total: u32 = hist.iter().sum();
+        if total > 0 {
+            let total_f = total as f64;
+            for &count in hist.iter() {
+                if count > 0 {
+                    let p = count as f64 / total_f;
+                    *total_bits -= count as f64 * jxl_simd::fast_log2f(p as f32) as f64;
                 }
             }
-            hist.clear();
         }
+        hist.clear();
+    }
+}
+
+/// Full cost of one channel (row walk + entropy finish) — the
+/// per-channel body of [`estimate_cost`], reused verbatim by the
+/// streaming evaluator for the channels an RCT trial does not touch.
+fn rct_cost_plain_channel(
+    config: &crate::entropy_coding::hybrid_uint::HybridUintConfig,
+    ctx_lut: &[u8; 501],
+    ch: &super::channel::Channel,
+    histograms: &mut [Vec<u32>],
+    total_bits: &mut f64,
+    extra_bits: &mut u64,
+) {
+    let w = ch.width();
+    let h = ch.height();
+    if w == 0 || h == 0 {
+        return;
+    }
+    let data = ch.data();
+    rct_cost_row0(config, ctx_lut, &data[..w], histograms, extra_bits);
+    for y in 1..h {
+        rct_cost_row(
+            config,
+            ctx_lut,
+            &data[y * w..y * w + w],
+            &data[(y - 1) * w..y * w],
+            histograms,
+            extra_bits,
+        );
+    }
+    rct_cost_entropy_finish(histograms, total_bits);
+}
+
+fn estimate_cost(image: &ModularImage) -> f64 {
+    use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+
+    let config = HybridUintConfig::new(4, 2, 0);
+    let ctx_lut = rct_cost_ctx_lut();
+    let mut total_bits: f64 = 0.0;
+    let mut extra_bits: u64 = 0;
+    let mut histograms: Vec<Vec<u32>> = vec![vec![]; RCT_COST_CONTEXTS];
+
+    for ch in &image.channels {
+        rct_cost_plain_channel(
+            &config,
+            &ctx_lut,
+            ch,
+            &mut histograms,
+            &mut total_bits,
+            &mut extra_bits,
+        );
     }
 
     total_bits + extra_bits as f64
+}
+
+/// [`estimate_cost`] of `image` AS IF `forward_rct(channels, begin_c,
+/// rct_type)` had been applied — without materializing the transformed
+/// image (issue #99: the RCT trial clones WERE the lossless t=1 encode
+/// peak, 36 B/px of 421,875 KiB at 12 MP). Transformed rows come from
+/// the SAME per-row core `forward_rct` applies
+/// (`rct::forward_rct_row_copy` + `rct::permute_indices`), tallies go
+/// through the same [`rct_cost_tally`] and the per-channel entropy is
+/// finished in channel-index order, so the result equals
+/// `estimate_cost(&transformed)` bit-for-bit — pinned by
+/// `streaming_rct_cost_matches_materialized`.
+///
+/// Returns `None` exactly where `forward_rct` would refuse (fewer than
+/// `begin_c + 3` channels, or trio dimension mismatch).
+fn estimate_cost_rct_streaming(
+    image: &ModularImage,
+    begin_c: usize,
+    rct_type: super::rct::RctType,
+) -> Option<f64> {
+    use super::rct::{forward_rct_rows_in_place, permute_indices};
+    use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+    debug_assert!(!rct_type.is_noop());
+
+    if image.channels.len() < begin_c + 3 {
+        return None;
+    }
+    let w = image.channels[begin_c].width();
+    let h = image.channels[begin_c].height();
+    for c in &image.channels[begin_c..begin_c + 3] {
+        if c.width() != w || c.height() != h {
+            return None;
+        }
+    }
+
+    let config = HybridUintConfig::new(4, 2, 0);
+    let ctx_lut = rct_cost_ctx_lut();
+    let mut total_bits: f64 = 0.0;
+    let mut extra_bits: u64 = 0;
+    let mut histograms: Vec<Vec<u32>> = vec![vec![]; RCT_COST_CONTEXTS];
+
+    // Channels before the trio (ChannelCompact meta channels at
+    // `begin_c > 0`): untouched by the transform, walked in index order.
+    for ch in &image.channels[..begin_c] {
+        rct_cost_plain_channel(
+            &config,
+            &ctx_lut,
+            ch,
+            &mut histograms,
+            &mut total_bits,
+            &mut extra_bits,
+        );
+    }
+
+    // The trio: transform row-by-row (holding only the current and
+    // previous transformed rows), tally each of the three output
+    // channels into its own histogram set (tallies are order-free — the
+    // histograms and `extra_bits` are exact accumulators), then finish
+    // the three channels' entropy in index order.
+    let (idx0, idx1, idx2) = permute_indices(rct_type.permutation());
+    let transform = rct_type.transform();
+    let mut trio_hists: [Vec<Vec<u32>>; 3] = [
+        vec![vec![]; RCT_COST_CONTEXTS],
+        vec![vec![]; RCT_COST_CONTEXTS],
+        vec![vec![]; RCT_COST_CONTEXTS],
+    ];
+    if w > 0 && h > 0 {
+        // Six reusable row buffers (current + previous transformed rows)
+        // — no per-row allocation: a `forward_rct_row_copy` walk (6
+        // fresh Vecs per row) measured +4-6 % t=1 wall at 12 MP from
+        // the malloc churn alone.
+        let mut cur = (vec![0i32; w], vec![0i32; w], vec![0i32; w]);
+        let mut prev = (vec![0i32; w], vec![0i32; w], vec![0i32; w]);
+        for y in 0..h {
+            cur.0.copy_from_slice(image.channels[begin_c + idx0].row(y));
+            cur.1.copy_from_slice(image.channels[begin_c + idx1].row(y));
+            cur.2.copy_from_slice(image.channels[begin_c + idx2].row(y));
+            forward_rct_rows_in_place(&mut cur.0, &mut cur.1, &mut cur.2, transform);
+            if y == 0 {
+                rct_cost_row0(
+                    &config,
+                    &ctx_lut,
+                    &cur.0,
+                    &mut trio_hists[0],
+                    &mut extra_bits,
+                );
+                rct_cost_row0(
+                    &config,
+                    &ctx_lut,
+                    &cur.1,
+                    &mut trio_hists[1],
+                    &mut extra_bits,
+                );
+                rct_cost_row0(
+                    &config,
+                    &ctx_lut,
+                    &cur.2,
+                    &mut trio_hists[2],
+                    &mut extra_bits,
+                );
+            } else {
+                rct_cost_row(
+                    &config,
+                    &ctx_lut,
+                    &cur.0,
+                    &prev.0,
+                    &mut trio_hists[0],
+                    &mut extra_bits,
+                );
+                rct_cost_row(
+                    &config,
+                    &ctx_lut,
+                    &cur.1,
+                    &prev.1,
+                    &mut trio_hists[1],
+                    &mut extra_bits,
+                );
+                rct_cost_row(
+                    &config,
+                    &ctx_lut,
+                    &cur.2,
+                    &prev.2,
+                    &mut trio_hists[2],
+                    &mut extra_bits,
+                );
+            }
+            core::mem::swap(&mut cur, &mut prev);
+        }
+    }
+    for hset in trio_hists.iter_mut() {
+        rct_cost_entropy_finish(hset, &mut total_bits);
+    }
+
+    // Channels after the trio (alpha / extras): untouched, index order.
+    for ch in &image.channels[begin_c + 3..] {
+        rct_cost_plain_channel(
+            &config,
+            &ctx_lut,
+            ch,
+            &mut histograms,
+            &mut total_bits,
+            &mut extra_bits,
+        );
+    }
+
+    Some(total_bits + extra_bits as f64)
 }
 
 /// RCT variants to try at each effort level, matching libjxl's enc_modular.cc.
@@ -1507,33 +1716,17 @@ const RCT_TRIAL_WAVE: usize = 2;
 /// `trial` returns `Some((cost, transformed_image))` for candidate `i`, or
 /// `None` if that candidate failed. Returns the winning `(index, cost, image)`.
 ///
-/// On a single-worker pool the wave buys nothing (`parallel_map` runs the
-/// trials sequentially anyway) while its collected `Vec` keeps BOTH trials'
-/// whole-image clones live through the reduce — the 2026-08-30 alloc-sites
-/// attribution (issue #99, `benchmarks/jxl_sectioned_patches_lifetime_
-/// 2026-08-30.meta`) measured the resulting nine live channel clones
-/// (2 in-flight trials + running best, 421,875 KiB = 36 B/px at 12 MP) AS
-/// the lossless encode peak once the patches-phase set was out of the way.
-/// So at `effective_threads() <= 1` the trials fold one at a time — same
-/// ascending order, same strict-`<` reduce, byte-identical — holding only
-/// the running best plus the current trial (six channels instead of nine).
+/// Only reached on multi-worker pools: at `effective_threads() <= 1` the
+/// callers cost the candidates via [`estimate_cost_rct_streaming`] (no
+/// clone at all) and materialize the winner once — the wave (2 in-flight
+/// trials + running best = nine whole-image channel clones, 36 B/px) was
+/// the measured lossless t=1 encode peak (issue #99,
+/// `benchmarks/jxl_sectioned_rct_stream_2026-08-30.meta`).
 fn best_rct_trial_waved(
     num_to_try: usize,
     trial: impl Fn(usize) -> Option<(f64, ModularImage)> + Sync,
 ) -> Option<(usize, f64, ModularImage)> {
     let mut best: Option<(usize, f64, ModularImage)> = None;
-    if crate::parallel::effective_threads() <= 1 {
-        for i in 0..num_to_try {
-            let Some((cost, img)) = trial(i) else {
-                continue;
-            };
-            if best.as_ref().is_none_or(|(_, bc, _)| cost < *bc) {
-                best = Some((i, cost, img));
-            }
-            // a non-winning clone drops here, BEFORE the next trial clones
-        }
-        return best;
-    }
     let mut start = 0usize;
     while start < num_to_try {
         let end = (start + RCT_TRIAL_WAVE).min(num_to_try);
@@ -1552,6 +1745,45 @@ fn best_rct_trial_waved(
         start = end;
     }
     best
+}
+
+/// Cost-only candidate selection for single-worker pools (issue #99):
+/// every candidate is priced by [`estimate_cost_rct_streaming`] (no
+/// whole-image clone), then the winner alone is materialized. Same
+/// ascending candidate order and strict-`<` "first wins" reduce as the
+/// waved path, and the streamed cost equals the materialized cost
+/// bit-for-bit, so the selected RCT and the returned image are
+/// unchanged.
+fn best_rct_trial_streaming(
+    image: &ModularImage,
+    begin_c: usize,
+    num_to_try: usize,
+) -> Option<(usize, f64, ModularImage)> {
+    use super::rct::{RctType, forward_rct};
+    let mut best: Option<(usize, f64)> = None;
+    for (i, &cand) in RCT_CANDIDATES.iter().enumerate().take(num_to_try) {
+        let rct_type = RctType(cand);
+        let cost = if rct_type.is_noop() {
+            estimate_cost(image)
+        } else {
+            match estimate_cost_rct_streaming(image, begin_c, rct_type) {
+                Some(c) => c,
+                None => continue,
+            }
+        };
+        if best.is_none_or(|(_, bc)| cost < bc) {
+            best = Some((i, cost));
+        }
+    }
+    let (i, cost) = best?;
+    let rct_type = RctType(RCT_CANDIDATES[i]);
+    let mut transformed = image.clone();
+    if !rct_type.is_noop() {
+        // Cannot fail: the streaming evaluator validated the same
+        // preconditions `forward_rct` checks.
+        forward_rct(&mut transformed.channels, begin_c, rct_type).ok()?;
+    }
+    Some((i, cost, transformed))
 }
 
 /// Select the best RCT variant by trying candidates and picking the lowest cost.
@@ -1590,20 +1822,26 @@ pub(crate) fn select_best_rct(
     // the clone only), estimate_cost (pure read). Fan out across trials,
     // then reduce in trial order to preserve the deterministic tie-break
     // ("first wins" on equal cost, matching the previous serial logic).
-    let winner = best_rct_trial_waved(num_to_try, |i| {
-        let rct_type = RctType(RCT_CANDIDATES[i]);
-        if rct_type.is_noop() {
-            Some((estimate_cost(image), image.clone()))
-        } else {
-            let mut transformed = image.clone();
-            if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
-                let cost = estimate_cost(&transformed);
-                Some((cost, transformed))
+    // Single-worker pools price the candidates WITHOUT cloning (the
+    // trial-clone set was the measured lossless t=1 peak — issue #99).
+    let winner = if crate::parallel::effective_threads() <= 1 {
+        best_rct_trial_streaming(image, 0, num_to_try)
+    } else {
+        best_rct_trial_waved(num_to_try, |i| {
+            let rct_type = RctType(RCT_CANDIDATES[i]);
+            if rct_type.is_noop() {
+                Some((estimate_cost(image), image.clone()))
             } else {
-                None
+                let mut transformed = image.clone();
+                if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
+                    let cost = estimate_cost(&transformed);
+                    Some((cost, transformed))
+                } else {
+                    None
+                }
             }
-        }
-    });
+        })
+    };
 
     let mut best_cost = f64::MAX;
     // Fallback (all-trials-failed) RCT matches the nb_rcts_to_try=0 fallback.
@@ -1668,21 +1906,26 @@ pub(crate) fn select_best_rct_at(
 
     // Each RCT trial is independent (clone + forward_rct + estimate_cost).
     // Fan out across trials and reduce in trial order to keep the
-    // deterministic "first wins" tie-break on equal cost.
-    let winner = best_rct_trial_waved(num_to_try, |i| {
-        let rct_type = RctType(RCT_CANDIDATES[i]);
-        if rct_type.is_noop() {
-            Some((estimate_cost(image), image.clone()))
-        } else {
-            let mut transformed = image.clone();
-            if forward_rct(&mut transformed.channels, begin_c, rct_type).is_ok() {
-                let cost = estimate_cost(&transformed);
-                Some((cost, transformed))
+    // deterministic "first wins" tie-break on equal cost. Single-worker
+    // pools price the candidates WITHOUT cloning (issue #99).
+    let winner = if crate::parallel::effective_threads() <= 1 {
+        best_rct_trial_streaming(image, begin_c, num_to_try)
+    } else {
+        best_rct_trial_waved(num_to_try, |i| {
+            let rct_type = RctType(RCT_CANDIDATES[i]);
+            if rct_type.is_noop() {
+                Some((estimate_cost(image), image.clone()))
             } else {
-                None
+                let mut transformed = image.clone();
+                if forward_rct(&mut transformed.channels, begin_c, rct_type).is_ok() {
+                    let cost = estimate_cost(&transformed);
+                    Some((cost, transformed))
+                } else {
+                    None
+                }
             }
-        }
-    });
+        })
+    };
 
     let mut best_cost = f64::MAX;
     // Fallback (all-trials-failed) RCT matches the nb_rcts_to_try=0 fallback.
@@ -2922,6 +3165,80 @@ pub(crate) use super::section::{build_histogram_from_residuals, write_group_modu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The streaming RCT-trial cost evaluator must equal
+    /// `estimate_cost(&{clone + forward_rct})` BIT-FOR-BIT for every
+    /// candidate — the t<=1 selection path (issue #99) substitutes it
+    /// for the materialized trials, so any divergence would change
+    /// which RCT wins and therefore the bitstream.
+    #[test]
+    fn streaming_rct_cost_matches_materialized() {
+        use super::super::channel::{Channel, ModularImage};
+        use super::super::rct::{RctType, forward_rct};
+
+        fn prng_channel(w: usize, h: usize, seed: u32, amp: i32) -> Channel {
+            let mut ch = Channel::new(w, h).unwrap();
+            let mut state = seed;
+            for y in 0..h {
+                let row = ch.row_mut(y);
+                for v in row.iter_mut() {
+                    state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                    *v = ((state >> 20) as i32 % amp) - amp / 2;
+                }
+            }
+            ch
+        }
+        fn image(channels: Vec<Channel>) -> ModularImage {
+            ModularImage {
+                channels,
+                bit_depth: 8,
+                is_grayscale: false,
+                has_alpha: false,
+            }
+        }
+
+        // 3-channel, 4-channel (alpha rides untransformed), and a
+        // begin_c=1 case with a small meta channel of different dims.
+        let rgb = image(vec![
+            prng_channel(96, 41, 0x9e3779b9, 256),
+            prng_channel(96, 41, 0x5eedf00d, 256),
+            prng_channel(96, 41, 0x12345678, 256),
+        ]);
+        let rgba = image(vec![
+            prng_channel(64, 33, 1, 256),
+            prng_channel(64, 33, 2, 256),
+            prng_channel(64, 33, 3, 256),
+            prng_channel(64, 33, 4, 256),
+        ]);
+        let meta = image(vec![
+            prng_channel(7, 3, 99, 64),
+            prng_channel(48, 29, 5, 256),
+            prng_channel(48, 29, 6, 256),
+            prng_channel(48, 29, 7, 256),
+        ]);
+        let cases: &[(&ModularImage, usize)] = &[(&rgb, 0), (&rgba, 0), (&meta, 1)];
+        for &(img, begin_c) in cases {
+            for &cand in RCT_CANDIDATES {
+                let rct_type = RctType(cand);
+                if rct_type.is_noop() {
+                    continue;
+                }
+                let mut t = img.clone();
+                forward_rct(&mut t.channels, begin_c, rct_type).unwrap();
+                let materialized = estimate_cost(&t);
+                let streamed = estimate_cost_rct_streaming(img, begin_c, rct_type)
+                    .expect("valid trio must stream");
+                assert_eq!(
+                    streamed.to_bits(),
+                    materialized.to_bits(),
+                    "rct {cand} begin_c {begin_c}: streamed {streamed} != materialized {materialized}"
+                );
+            }
+        }
+        // Validation parity: too few channels -> None, like forward_rct's Err.
+        let two = image(vec![prng_channel(8, 8, 1, 16), prng_channel(8, 8, 2, 16)]);
+        assert!(estimate_cost_rct_streaming(&two, 0, RctType(1)).is_none());
+    }
 
     #[test]
     fn test_pack_signed() {

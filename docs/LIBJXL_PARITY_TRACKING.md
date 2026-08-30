@@ -109,10 +109,10 @@ included), real content, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`
 
 | cell (RGB8, lossless, peak_live MiB) | global t=1 | sectioned t=1 | sectioned t≥4 |
 |---|---|---|---|
-| photo 3840×2160 e7 | 786 (96.4 B/px marginal) | **309** (36.0 B/px since the 2026-08-30 RCT fold; 404 after the patches-scan fix, 518 before it) | 404 (48.0 B/px) |
-| photo 3840×2160 e9 | 1029 (127.0 B/px) | 309 (was 404 / 518) | 404 (t=12: 468) |
-| photo 4000×3000 e7 | 1117 (94.6 B/px) | **446** (36.0 B/px; was 584 / 855) | 584 (48.0 B/px) |
-| photo 4000×3000 e9 | 1517 (129.5 B/px) | 446 (was 584 / 855) | 584 |
+| photo 3840×2160 e7 | 786 (96.4 B/px marginal) | **255** (29.1 B/px after the 2026-08-30 RCT streaming; 309 fold, 404 patches-scan fix, 518 before it) | 404 (48.0 B/px) |
+| photo 3840×2160 e9 | 1029 (127.0 B/px) | ≈255 (was 309 / 404 / 518) | 404 (t=12: 468) |
+| photo 4000×3000 e7 | 1117 (94.6 B/px) | **368** (29.2 B/px; was 446 / 584 / 855) | 584 (48.0 B/px) |
+| photo 4000×3000 e9 | 1517 (129.5 B/px) | 368 (was 446 / 584 / 855) | 584 |
 | reddit.com 1313×8008 e7 | 888 | **413** (38.2 B/px after the 2026-08-30 patches-lifetime fix + RCT fold; was 650 / 61.8 B/px) | 512 (48.0 B/px) |
 | imac_dark 2940×1912 e7/e9 | 475 / 754 (85.6 / 137.7 B/px) | **223 / 223** (38.6 B/px after the two 2026-08-30 fixes; was 340–349 / 58.9–62.2 B/px; 96/96 local sections since 2026-08-28 — was a global fallback with 0 local sections, `jxl_sectioned_mem_meta_2026-08-28.tsv`) | 275 / 275 (e9 t=12: 321) |
 
@@ -172,7 +172,19 @@ Consequences recorded in `heuristics.rs`:
   Post-fix peak composition on imac (alloc-sites): 193 MiB = NINE
   whole-image channel clones from `select_best_rct` — the next
   sectioned-peak lever, tracked in issue #99.
-- **RCT-trial fold at t=1 (2026-08-30, same day — issue #99 lever 1)**:
+- **RCT-trial STREAMING at t=1 (2026-08-30, later the same day — issue
+  #99 lever 1, step 2, `benchmarks/jxl_sectioned_rct_stream_2026-08-30
+  .{tsv,meta}`)**: single-worker pools now price every RCT candidate
+  with a streaming evaluator (bit-equal to the materialized cost by
+  shared row/tally/entropy code; reusable row buffers) and materialize
+  only the winner. t=1 peak_live: photo 12 MP 457138 → **376747** KiB
+  (29.2 B/px), 2048² → 110653 (25.8), rgba 3840×2160 → 291703; imac /
+  reddit unchanged (their peaks were already the patches-detection
+  internals). The t=1 peak instant is now detection-internal liveness
+  everywhere (planes + flood + labeling over just the input) — the next
+  lever. Estimator t=1 floor 68 → 50 B/px; multi-thread floor stays 68.
+- **RCT-trial fold at t=1 (2026-08-30, same day — issue #99 lever 1,
+  superseded hours later by the streaming evaluator above)**:
   the alloc-sites probe then showed that clone set (2-trial wave × 3
   channels + running best × 3 = 36 B/px) + the ModularImage (12 B/px)
   IS the whole ~48 B/px sectioned t=1 floor on every content class

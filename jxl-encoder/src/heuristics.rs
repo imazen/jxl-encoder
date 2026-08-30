@@ -555,20 +555,26 @@ const SECTIONED_FIXED_E9: u64 = 32 << 20;
 /// patches dictionary of patch-heavy content still lands above the bare
 /// floor (imac +0.9 MiB at t=1).
 ///
-/// RCT-TRIAL FOLD (2026-08-30, same day, issue #99 lever 1,
-/// `benchmarks/jxl_sectioned_rct_fold_2026-08-30.{tsv,meta}`): the
-/// alloc-sites probe then showed the remaining ~48 B/px floor WAS the
-/// `select_best_rct` trial wave — nine whole-image i32 channel clones
-/// (36 B/px) + the ModularImage (12 B/px) — on all three content
-/// classes. On single-worker pools the wave buys no overlap, so trials
-/// now fold one at a time there (byte-identical): the t=1 band drops to
-/// ~36–39 B/px (photo 12 MP 597763 → 457138 KiB, imac 228308, reddit
-/// 422495; rgba 3840×2160 570687 → 421304). t ≥ 2 keeps the wave and
-/// its ~48 B/px band (re-measured KiB-identical), so the two constants
-/// below still share the multi-thread envelope; the t=1 arm could drop
-/// to ~56 after the next full recalibration but stays 68 (safe,
-/// covering at 1.7–1.9×).
-const SECTIONED_BPP_THREADS1: f64 = 68.0;
+/// RCT-TRIAL STREAMING at t=1 (2026-08-30, same day, issue #99 lever
+/// 1, `benchmarks/jxl_sectioned_rct_stream_2026-08-30.{tsv,meta}`):
+/// the alloc-sites probe then showed the remaining ~48 B/px floor WAS
+/// the `select_best_rct` trial wave — nine whole-image i32 channel
+/// clones (36 B/px) + the ModularImage (12 B/px) — on all three
+/// content classes. On single-worker pools candidates are now priced
+/// by a streaming evaluator (`estimate_cost_rct_streaming`, bit-equal
+/// to the materialized cost by shared row/tally/entropy code) with NO
+/// trial clone, and only the winner is materialized. t=1 band now:
+/// photo 12 MP 376747 KiB (29.2 B/px — the peak instant is the patches
+/// DETECTION internals, which since the same-day lifetime fix overlap
+/// only the input), 2048² 110653 (25.8), imac 228308 (38.6, its
+/// detection set + palette meta), reddit 422495 (38.2), rgba 3840×2160
+/// 291703. t ≥ 2 keeps the wave and its ~48 B/px band (re-measured
+/// KiB-identical), so the two arms now genuinely differ:
+/// `SECTIONED_BPP_THREADS1` re-anchors 68 → 50 (covers the worst
+/// measured t=1 cell, imac 38.6 B/px, at 1.30×; every ≥ 2 MP pinned
+/// cell within the 2.5× tightness bar — 68 left three cells at
+/// 2.8–2.9×), `SECTIONED_BPP_MULTI` stays 68 over the measured 48.
+const SECTIONED_BPP_THREADS1: f64 = 50.0;
 const SECTIONED_BPP_MULTI: f64 = 68.0;
 
 /// Per-worker term: each in-flight group learns its own tree (and
@@ -1061,32 +1067,35 @@ mod tests {
         const KB: u64 = 1024;
         // (w, h, has_alpha, effort, threads, measured peak_live KiB)
         // t=1 rows re-pinned 2026-08-30 after the single-worker RCT-trial
-        // fold (issue #99 lever 1, benchmarks/jxl_sectioned_rct_fold_
-        // 2026-08-30.{tsv,meta}): the select_best_rct wave held nine
-        // whole-image channel clones (36 B/px) AT the t=1 peak — the fold
-        // holds six, dropping the t=1 band to ~36-39 B/px. t >= 2 cells
-        // keep the wave and re-measured byte-for-KiB identical. History:
-        // 3840x2160 e7 t1 530187 (pre labeling fix) -> 413203 -> 316003;
-        // 4000x3000 e7/e9 t1 875430 -> 597763 -> 457138; 1024^2 e9 t1
-        // 74376 -> 73994 is pre-existing drift (fold-neutral there: the
-        // 1 MP e9 tree-learn peak exceeds the RCT-wave instant).
+        // fold and then the streaming evaluator (issue #99 lever 1,
+        // benchmarks/jxl_sectioned_rct_{fold,stream}_2026-08-30.{tsv,meta}):
+        // the select_best_rct wave held nine whole-image channel clones
+        // (36 B/px) AT the t=1 peak; the fold cut that to six, and the
+        // streaming evaluator prices candidates with NO clone, leaving
+        // the t=1 band at the patches-detection internals (~26-39 B/px).
+        // t >= 2 cells keep the wave and re-measured KiB-identical.
+        // History: 3840x2160 e7 t1 530187 (pre labeling fix) -> 413203
+        // -> 316003 (fold) -> 260680 (stream); 4000x3000 e7/e9 t1
+        // 875430 -> 597763 -> 457138 -> 376747; 1024^2 e9 t1 74376 ->
+        // 73994 is pre-existing drift (both stages neutral there: the
+        // 1 MP e9 tree-learn peak exceeds the RCT instant).
         let sectioned_cells: &[(u32, u32, bool, u8, usize, u64)] = &[
             // photo 1403 crops
             (64, 64, false, 7, 1, 6008),
             (64, 64, false, 9, 1, 25865),
             (64, 64, false, 9, 12, 30400),
             (256, 256, false, 9, 12, 99933),
-            (1024, 1024, false, 7, 1, 39973),
+            (1024, 1024, false, 7, 1, 32276),
             (1024, 1024, false, 7, 12, 150954),
             (1024, 1024, false, 9, 1, 73994),
             (1024, 1024, false, 9, 12, 430537),
-            (2048, 2048, false, 9, 1, 159805),
+            (2048, 2048, false, 9, 1, 110653),
             (2048, 2048, false, 9, 12, 396710),
-            (3840, 2160, false, 7, 1, 316003),
+            (3840, 2160, false, 7, 1, 260680),
             (3840, 2160, false, 7, 4, 413315),
             (3840, 2160, false, 9, 12, 479149),
-            (4000, 3000, false, 7, 1, 457138),
-            (4000, 3000, false, 9, 1, 457138),
+            (4000, 3000, false, 7, 1, 376747),
+            (4000, 3000, false, 9, 1, 376747),
             (4000, 3000, false, 7, 4, 597879),
             (4000, 3000, false, 7, 12, 597937),
             (4000, 3000, false, 9, 12, 597937),
@@ -1108,13 +1117,13 @@ mod tests {
             // rgba (alpha := green): photo 1403 crops + reddit crop. The
             // t=1 cells fold a 4-channel clone set (16 B/px per trial):
             // 1024^2 e7 was 69670, 3840x2160 e7/e9 were 570687.
-            (1024, 1024, true, 7, 1, 53286),
+            (1024, 1024, true, 7, 1, 43710),
             (1024, 1024, true, 7, 8, 146332),
             (1024, 1024, true, 9, 1, 100734),
             (1024, 1024, true, 9, 8, 404080),
-            (3840, 2160, true, 7, 1, 421304),
+            (3840, 2160, true, 7, 1, 291703),
             (3840, 2160, true, 7, 8, 551044),
-            (3840, 2160, true, 9, 1, 421304),
+            (3840, 2160, true, 9, 1, 291703),
             (3840, 2160, true, 9, 8, 551044),
             (1313, 4096, true, 7, 8, 357262),
             // imac_dark (gb82-sc screenshot: full palette/compact + patches),

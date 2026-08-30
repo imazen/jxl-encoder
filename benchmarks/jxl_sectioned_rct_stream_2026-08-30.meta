@@ -1,0 +1,52 @@
+jxl_sectioned_rct_stream_2026-08-30.tsv — the streaming RCT-trial cost
+evaluator (issue #99 lever 1, step 2 — supersedes the same-day fold of
+jxl_sectioned_rct_fold_2026-08-30 on single-worker pools).
+
+CHANGE (modular/encode.rs + modular/rct.rs): at effective_threads() <= 1
+both select_best_rct and select_best_rct_at price every candidate with
+estimate_cost_rct_streaming — transformed rows come from the SAME
+per-row core forward_rct applies (rct::forward_rct_rows_in_place, a
+refactor of forward_rct_row_copy's body; six reusable row buffers, no
+per-row allocation), tallies go through the same shared
+rct_cost_tally/row/entropy helpers estimate_cost now uses, and the
+per-channel entropy is finished in channel-index order — so the
+streamed cost equals estimate_cost(&{clone+forward_rct}) BIT-FOR-BIT
+(pinned by lib test streaming_rct_cost_matches_materialized across all
+RCT candidates x rgb/rgba/begin_c=1 fixtures). Only the winning
+candidate is materialized (one clone + one forward_rct). t >= 2 keeps
+the wave (byte- and KiB-identical, spot-verified).
+
+RESULT (peak_live KiB, t=1 sectioned; fold -> stream): photo 12 MP
+457138 -> 376747 (29.2 B/px marginal), 3840x2160 316003 -> 260680,
+2048^2 159805 -> 110653 (25.8 B/px), 1 MP e7 39973 -> 32276; rgba
+3840x2160 421304 -> 291703. BYTES IDENTICAL in every cell. NOT moved:
+imac (228308) and reddit (422495) — their peaks were already inside the
+patches-detection phase, not the RCT phase — plus 1 MP e9 (73994,
+tree-learn-bound) and every t >= 2 cell (597879 spot). The t=1 peak
+instant is now the patches DETECTION internals everywhere (alloc-sites:
+u8->f32 planes + flood planes + labeling starts + the 1x seed queue),
+overlapping only the input since the same-day lifetime fix — the next
+lever is detection-internal liveness (issue #99).
+
+Wall: within the shared-host run noise (photo 12 MP e7 t=1 observed
+15.4-16.3 s across the day's runs at all three stages; imac 2706 vs the
+fold run's 2709 ms, reddit 5482 vs 5455 ms). The first streaming cut
+used forward_rct_row_copy (6 fresh Vecs/row) and measured +4-6 % on the
+12 MP cells; the reusable-buffer walk this file records removed that.
+
+Estimator (heuristics.rs): the t=1 arm re-anchors
+SECTIONED_BPP_THREADS1 68 -> 50 — the 68 floor was >= 2.8x three >= 2 MP
+measured cells (2048^2 e9 2.92x, rgba 3840x2160 e7/e9 2.81/2.89x),
+breaking the 2.5x TYP-tightness bar; 50 covers the worst measured t=1
+cell (imac 38.6 B/px) at 1.30x and every pinned cell passes coverage +
+tightness. SECTIONED_BPP_MULTI stays 68 over the measured ~48 t >= 2
+band. Same-session-recalibration precedent: 528cf6f1 (80 -> 68).
+Measured-cell pins re-pinned to the stream values (t=1 cells only).
+
+Host: mac (aarch64 laptop, 12 cores), release build, allocator-agnostic
+peak_live (counting global allocator, input included). Sources as in
+jxl_sectioned_patches_lifetime_2026-08-30.meta.
+
+Gates: cargo test -p jxl-encoder --lib (1526) / --test it (449, default
+AND --features parallel) / --doc green; clippy --all-targets -D warnings
+(jxl-encoder + cli); fmt.

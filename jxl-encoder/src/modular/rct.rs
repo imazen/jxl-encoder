@@ -124,7 +124,7 @@ pub fn forward_rct(channels: &mut [Channel], begin_c: usize, rct_type: RctType) 
 /// Get permuted indices for the given permutation type.
 ///
 /// Permutations: 0=RGB, 1=GBR, 2=BRG, 3=RBG, 4=GRB, 5=BGR
-fn permute_indices(permutation: usize) -> (usize, usize, usize) {
+pub(crate) fn permute_indices(permutation: usize) -> (usize, usize, usize) {
     match permutation {
         0 => (0, 1, 2), // RGB
         1 => (1, 2, 0), // GBR
@@ -137,16 +137,35 @@ fn permute_indices(permutation: usize) -> (usize, usize, usize) {
 }
 
 /// Apply forward RCT to a single row, returning copies.
-fn forward_rct_row_copy(
+pub(crate) fn forward_rct_row_copy(
     c0: &[i32],
     c1: &[i32],
     c2: &[i32],
     transform: usize,
 ) -> (Vec<i32>, Vec<i32>, Vec<i32>) {
-    let w = c0.len();
     let mut out0 = c0.to_vec();
     let mut out1 = c1.to_vec();
     let mut out2 = c2.to_vec();
+    forward_rct_rows_in_place(&mut out0, &mut out1, &mut out2, transform);
+    (out0, out1, out2)
+}
+
+/// Apply `transform` in place to three equal-length rows whose current
+/// contents are the (already permuted) SOURCE values — the shared core
+/// of [`forward_rct_row_copy`] and the allocation-free streaming cost
+/// evaluator (`encode::estimate_cost_rct_streaming`, issue #99). Every
+/// arm reads each pixel's inputs before writing any of its outputs, so
+/// operating on the copies is value-identical to reading pristine
+/// inputs.
+pub(crate) fn forward_rct_rows_in_place(
+    out0: &mut [i32],
+    out1: &mut [i32],
+    out2: &mut [i32],
+    transform: usize,
+) {
+    let w = out0.len();
+    debug_assert_eq!(w, out1.len());
+    debug_assert_eq!(w, out2.len());
 
     // libjxl decomposition: second = transform >> 1, third = transform & 1
     // second: 0=noop, 1=subtract First, 2=subtract (First+Third)>>1
@@ -158,33 +177,33 @@ fn forward_rct_row_copy(
         1 => {
             // third=1: Third -= First
             for x in 0..w {
-                out2[x] = c2[x] - c0[x];
+                out2[x] -= out0[x];
             }
         }
         2 => {
             // second=1: Second -= First
             for x in 0..w {
-                out1[x] = c1[x] - c0[x];
+                out1[x] -= out0[x];
             }
         }
         3 => {
             // second=1, third=1: Second -= First, Third -= First
             for x in 0..w {
-                out1[x] = c1[x] - c0[x];
-                out2[x] = c2[x] - c0[x];
+                out1[x] -= out0[x];
+                out2[x] -= out0[x];
             }
         }
         4 => {
             // second=2: Second -= (First + Third) >> 1
             for x in 0..w {
-                out1[x] = c1[x] - ((c0[x] + c2[x]) >> 1);
+                out1[x] -= (out0[x] + out2[x]) >> 1;
             }
         }
         5 => {
             // second=2, third=1: Second -= (First + Third) >> 1, Third -= First
             for x in 0..w {
-                out1[x] = c1[x] - ((c0[x] + c2[x]) >> 1);
-                out2[x] = c2[x] - c0[x];
+                out1[x] -= (out0[x] + out2[x]) >> 1;
+                out2[x] -= out0[x];
             }
         }
         6 => {
@@ -194,9 +213,9 @@ fn forward_rct_row_copy(
             // o2 = G - tmp         (Cg)
             // o0 = tmp + (o2 >> 1) (Y)
             for x in 0..w {
-                let r = c0[x];
-                let g = c1[x];
-                let b = c2[x];
+                let r = out0[x];
+                let g = out1[x];
+                let b = out2[x];
 
                 let co = r - b;
                 let tmp = b + (co >> 1);
@@ -212,8 +231,6 @@ fn forward_rct_row_copy(
             // Unknown transform, do nothing
         }
     }
-
-    (out0, out1, out2)
 }
 
 /// Apply inverse RCT to three channels in-place.

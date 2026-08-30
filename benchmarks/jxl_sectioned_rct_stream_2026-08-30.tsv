@@ -1,0 +1,38 @@
+# jxl_sectioned_rct_stream_2026-08-30.tsv  host=mac (aarch64 laptop, 12 cores)  fold@commit=24b636c0  stream@the commit landing this file
+# cmd: [MEM_PROBE_CROP=<crop>] mem_probe <png> lossless <e> 0 8 <channels> <t> sectioned  (release; peak_live from the counting global allocator, input included)
+# photo = imazen-26 1403 4000x3000 sdr PNG (top-left crops); imac = gb82-sc imac_dark 2940x1912; reddit = qoi screenshot_web/reddit.com 1313x8008
+content	crop	channels	effort	threads	phase	bytes	peak_live_kb
+photo	64x64	rgb	7	1	fold	5645	6008
+photo	64x64	rgb	7	1	stream	5645	6008
+photo	64x64	rgb	9	1	fold	5529	25865
+photo	64x64	rgb	9	1	stream	5529	25865
+photo	1024x1024	rgb	7	1	fold	1390726	39973
+photo	1024x1024	rgb	7	1	stream	1390726	32276
+photo	1024x1024	rgb	9	1	fold	1380018	73994
+photo	1024x1024	rgb	9	1	stream	1380018	73994
+photo	2048x2048	rgb	7	1	fold	5504136	159805
+photo	2048x2048	rgb	7	1	stream	5504136	110653
+photo	2048x2048	rgb	9	1	fold	5470688	159805
+photo	2048x2048	rgb	9	1	stream	5470688	110653
+photo	3840x2160	rgb	7	1	fold	10891264	316003
+photo	3840x2160	rgb	7	1	stream	10891264	260680
+photo	full	rgb	7	1	fold	14029781	457138
+photo	full	rgb	7	1	stream	14029781	376747
+photo	full	rgb	9	1	fold	13910206	457138
+photo	full	rgb	9	1	stream	13910206	376747
+photo	full	rgb	7	4	fold	14029781	597879
+photo	full	rgb	7	4	stream	14029781	597879
+photo	1024x1024	rgba	7	1	fold	1816185	53286
+photo	1024x1024	rgba	7	1	stream	1816185	43710
+photo	1024x1024	rgba	9	1	fold	1771978	100734
+photo	1024x1024	rgba	9	1	stream	1771978	100734
+photo	3840x2160	rgba	7	1	fold	12851468	421304
+photo	3840x2160	rgba	7	1	stream	12851468	291703
+photo	3840x2160	rgba	9	1	fold	11982758	421304
+photo	3840x2160	rgba	9	1	stream	11982758	291703
+imac	full	rgb	7	1	fold	431853	228308
+imac	full	rgb	7	1	stream	431853	228308
+imac	full	rgb	9	1	fold	416750	228308
+imac	full	rgb	9	1	stream	416750	228308
+reddit	full	rgb	7	1	fold	1497875	422495
+reddit	full	rgb	7	1	stream	1497875	422495
