@@ -179,6 +179,18 @@ tagged or published. See docs/RELEASE_0.4.0.md for the publish gates.)
   sectioned/hybrid, byte-identical (ecf83e55). Lossy XYB cbrt Newton
   vectorized in f64x4, byte-identical, xyb phase −40% (a5d1dfe3).
 
+### Changed (release mechanics)
+- `butteraugli` dependency requirement corrected `"0.9"` → `"0.9.4"`
+  (dep + dev-dep): `ButteraugliReference::estimated_reference_bytes`
+  (the #93 buttloop budget guard) is 0.9.4-only — verified by building
+  against crates.io 0.9.3 (E0599, `vardct/perceptual_loop.rs:1066`).
+  Publishing 0.4.0 therefore waits on butteraugli 0.9.4.
+- Publish blockers, order, and gates for this release live in
+  `docs/RELEASE_0.4.0.md` (measured 2026-08-29; corrects two earlier
+  audit claims — the butteraugli one above, and published 0.3.1 being
+  unbuildable under fresh resolution because magetypes 0.9.28 breaks
+  jxl-encoder-simd 0.3.0).
+
 ### BREAKING CHANGES (shipping together in this release)
 <!-- Formerly the [Unreleased] QUEUED BREAKING CHANGES batch. -->
 - **Public API narrowed to the intended surface (#76;

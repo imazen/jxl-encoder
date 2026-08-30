@@ -56,7 +56,10 @@ zenyuv = { version = "0.1.3", default-features = false, optional = true }
 # dependency only (secondary roundtrip-validation decoder; jxl-rs + djxl
 # stay primary per CLAUDE.md).
 zenjxl-decoder = { version = "0.3.8", optional = true }
-butteraugli = { version = "0.9", optional = true }
+# 0.9.4 minimum is REAL: `ButteraugliReference::estimated_reference_bytes`
+# (the #93 buttloop budget guard, vardct/perceptual_loop.rs) ships in 0.9.4;
+# 0.9.3 fails to compile (verified 2026-08-29, #76 step 7 probe).
+butteraugli = { version = "0.9.4", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
@@ -405,7 +408,7 @@ jxl-jbr = "0.2.1"
 fast-ssim2 = { version = "0.7.1", features = ["imgref"] }
 yuvxyb = "0.5.0"
 # Butteraugli perceptual quality metric
-butteraugli = "0.9"
+butteraugli = "0.9.4"
 imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
