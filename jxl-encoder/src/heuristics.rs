@@ -1113,7 +1113,7 @@ mod tests {
             // constraint; tightening it awaits the per-thread-term model
             // refinement (owner-gated — the walk-down admission contract
             // asserts strict thread-monotonicity, which a headroom-aware
-            // term breaks). Tracked in the #96 residual follow-up issue.
+            // term breaks). Tracked in issue #99.
             (2940, 1912, false, 9, 12, 357924),
         ];
         for &(w, h, alpha, effort, threads, live_kb) in sectioned_cells {

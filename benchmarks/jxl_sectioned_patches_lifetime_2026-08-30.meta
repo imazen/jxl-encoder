@@ -64,7 +64,7 @@ Post-fix imac e7 t1 sectioned peak composition (alloc-sites, peak 281021 KiB,
 select_best_rct (modular/channel.rs:21 via modular/encode.rs:1575/1518, three
 i32 image copies) + 65874 ModularImage + ~0.9 MiB surviving patches
 dictionary. The RCT-trial clone set is the next sectioned-peak lever; tracked
-in the #96 residual follow-up issue.
+in issue #99.
 
 Estimator/test consequences (heuristics.rs): SECTIONED floors stay 68 B/px
 (cover the measured 48 with ~1.4x headroom; admission-safe). Measured-cell

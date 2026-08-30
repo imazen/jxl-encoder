@@ -171,4 +171,4 @@ Consequences recorded in `heuristics.rs`:
   (`benchmarks/jxl_sectioned_patches_lifetime_2026-08-30.{tsv,meta}`).
   Post-fix peak composition on imac (alloc-sites): 193 MiB = NINE
   whole-image channel clones from `select_best_rct` — the next
-  sectioned-peak lever, tracked in the #96 residual follow-up issue.
+  sectioned-peak lever, tracked in issue #99.
