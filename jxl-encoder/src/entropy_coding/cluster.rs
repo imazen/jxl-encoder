@@ -80,6 +80,9 @@ pub struct ClusterResult {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ClusteringType {
     /// Only 4 clusters maximum (fastest encoding).
+    /// #76: no production path selects it any more; unit tests still
+    /// exercise the 4-cluster bound.
+    #[allow(dead_code)]
     Fastest,
     /// Default clustering.
     #[default]

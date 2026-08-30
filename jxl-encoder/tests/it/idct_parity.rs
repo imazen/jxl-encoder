@@ -40,7 +40,7 @@
 //! ordering at `reconstruct.rs:799-967` (W44-116 target per W44-114
 //! recommendation).
 
-use jxl_encoder::vardct::dct::{
+use jxl_encoder::__test_exports::dct::{
     dct_16x8, idct_4x4, idct_4x4_full, idct_4x8, idct_4x8_full, idct_8x4, idct_8x4_full, idct_8x8,
     idct_8x16, idct_16x8, idct_16x16, idct_16x32, idct_32x16, idct_32x32, idct_32x64, idct_64x32,
     idct_64x64, idct1d_2, idct1d_4, idct1d_8, idct1d_16, inverse_dct2x2_transform,

@@ -7,35 +7,27 @@
 //! This module provides ANS (Asymmetric Numeral Systems) and Huffman
 //! encoding implementations for compressing symbols in the JXL bitstream.
 
-pub mod ans;
-pub mod ans_decode;
+pub(crate) mod ans;
+pub(crate) mod ans_decode;
 pub(crate) mod cluster;
 pub(crate) mod context_map;
 pub(crate) mod encode;
 pub(crate) mod encode_ans;
 mod encode_huffman;
-pub mod histogram;
+pub(crate) mod histogram;
 pub(crate) mod huffman_tree;
 pub(crate) mod hybrid_uint;
 pub(crate) mod lz77;
 pub(crate) mod token;
 
-pub use ans::{
-    ANS_LOG_TAB_SIZE, ANS_MAX_ALPHABET_SIZE, ANS_SIGNATURE, ANS_TAB_MASK, ANS_TAB_SIZE,
-    ANSEncodingHistogram, ANSHistogramStrategy, AnsEncoder, get_population_count_precision,
-};
-pub use cluster::{
-    ClusterResult, ClusteringType, EntropyType, cluster_histograms, fast_cluster_histograms,
-};
-pub use context_map::{
-    encode_context_map, inverse_move_to_front_transform, move_to_front_transform,
-};
-pub use histogram::{
-    DistanceScratch, HISTOGRAM_ROUNDING, Histogram, MIN_DISTANCE_FOR_DISTINCT, histogram_distance,
-    histogram_distance_reuse, histogram_kl_divergence,
-};
-pub use huffman_tree::{
-    HuffmanTable, build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,
-    store_huffman_tree, write_huffman_tree,
-};
+// #76 (0.4.0): the supported entropy surface is exactly the two
+// config-visible enums below (both also re-exported at the crate root).
+// Everything else — the ANS coder, histogram machinery, clustering,
+// Huffman trees, the context map — is implementation detail, kept
+// reachable crate-internally via `pub(crate) use`.
+pub use ans::ANSHistogramStrategy;
 pub use lz77::Lz77Method;
+
+// In-crate consumers import from the submodules directly; the only
+// re-export still routed through this module is the MTF helper.
+pub(crate) use context_map::move_to_front_transform;

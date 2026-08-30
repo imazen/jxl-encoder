@@ -197,7 +197,7 @@ fn process_image(src: &SourceImage, csv_entries: &[CjxlEntry]) -> Vec<CompareRes
 
     for entry in &sorted {
         // Encode with our encoder
-        let encoder = jxl_encoder::vardct::VarDctEncoder::new(entry.distance);
+        let encoder = jxl_encoder::__test_exports::VarDctEncoder::new(entry.distance);
         let rs_output = match encoder.encode(w as usize, h as usize, &linear_rgb, None) {
             Ok(out) => out,
             Err(e) => {

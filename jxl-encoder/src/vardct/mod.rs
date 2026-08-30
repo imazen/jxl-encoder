@@ -111,7 +111,10 @@ pub(crate) mod butteraugli_targets;
 // `zensim_targets.rs`. See `docs/RFC_ZENSIM_FORK_PLAN.md` §6 Step 3.
 pub(crate) mod dc_coding;
 pub(crate) mod dc_tree_learn;
-pub mod dct;
+// #76 (0.4.0): DCT reference primitives are internal; external
+// consumers go through the doc-hidden `crate::__gpu` /
+// `crate::__test_exports` seams.
+pub(crate) mod dct;
 pub(crate) mod debug_log;
 #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
 pub(crate) mod zensim_backend;
@@ -177,14 +180,17 @@ pub(crate) mod quantize;
 pub(crate) mod quantize_wp;
 pub(crate) mod reconstruct;
 mod static_codes;
-pub mod transform;
+pub(crate) mod transform;
 pub(crate) mod w44_181_dump;
 pub(crate) mod w44_182_dump;
 pub(crate) mod w44_76_dump;
 pub(crate) mod w44_audit_8_p4_dump;
 pub(crate) mod xyb;
 
-pub use encoder::{VarDctEncoder, VarDctOutput};
+// #76 (0.4.0): the VarDCT engine is internal — the public entry is
+// `LossyConfig::encode`. Externally reachable only via the doc-hidden
+// `__pre_quantized` / `__gpu` / `__test_exports` seams.
+pub(crate) use encoder::VarDctEncoder;
 #[cfg(any(feature = "rate-control", feature = "__pre_quantized"))]
 pub use precomputed::EncoderPrecomputed;
 #[cfg(feature = "rate-control")]

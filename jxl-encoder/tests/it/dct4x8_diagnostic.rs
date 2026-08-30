@@ -11,7 +11,7 @@
 // The bug: DCT4X8 produces catastrophic quality on real photos but works on synthetic images.
 // Evidence: decoded pixels range [-0.7625, 3.3630] with 33,527 negative pixels (vs normal DCT8 range).
 
-use jxl_encoder::vardct::VarDctEncoder;
+use jxl_encoder::__test_exports::VarDctEncoder;
 
 fn load_png_crop(path: &str, crop_w: usize, crop_h: usize) -> (usize, usize, Vec<f32>, Vec<u8>) {
     let img = image::open(path).expect("Failed to open image").to_rgb8();
@@ -532,7 +532,7 @@ fn verify_dct4x8_weights_applied() {
 #[test]
 #[ignore]
 fn diagnose_coefficient_layout() {
-    use jxl_encoder::vardct::dct::{dct_4x8_full, dct_8x8};
+    use jxl_encoder::__test_exports::dct::{dct_4x8_full, dct_8x8};
 
     // Create a block with known pattern to check coefficient layout
     let mut block = [0.0f32; 64];

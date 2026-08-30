@@ -133,6 +133,10 @@ pub use effort::EntropyMulTable;
 pub use effort::ImageContentClass;
 #[cfg(feature = "__expert")]
 pub use effort::{LosslessInternalParams, LossyInternalParams};
+// #76 (0.4.0): config-visible entropy enum, kept on the supported
+// surface next to `Lz77Method` (re-exported from `api` above).
+// `EffortProfile::ans_histogram_strategy_vardct` carries it.
+pub use entropy_coding::ANSHistogramStrategy;
 pub use headers::color_encoding::{
     CIExy, ColorEncoding, ColorSpace, CustomPrimaries, Primaries, RenderingIntent,
     TransferFunction, WhitePoint,
@@ -165,6 +169,40 @@ pub const JXL_SIGNATURE: [u8; 2] = [0xFF, 0x0A];
 /// tool binaries, and output directories. Not part of the public API.
 #[doc(hidden)]
 pub mod test_helpers;
+
+/// Internal re-exports for THIS REPO's integration tests, examples and
+/// benches — the in-tree consumers that compile under **default
+/// features** and therefore cannot use the feature-gated `__internals` /
+/// `__pre_quantized` / `__gpu` seams.
+///
+/// **Not part of the public API and not for downstream crates.** Items
+/// here may move or vanish in any release without a semver bump; the
+/// module exists so the it-suite keeps exercising engine internals
+/// (VarDctEncoder, the DCT reference kernels, the ANS coder) after #76
+/// narrowed their modules to `pub(crate)`. Same unconditional-doc-hidden
+/// pattern as [`vardct::__afv`] and [`test_helpers`].
+#[doc(hidden)]
+pub mod __test_exports {
+    /// The VarDCT engine (`tests/it/{clic2025,llf_invariants,
+    /// night_sky_blocks,quality_compare,dct4x8_diagnostic}.rs`).
+    pub use crate::vardct::encoder::{VarDctEncoder, VarDctOutput};
+    /// DCT reference kernels (`tests/it/idct_parity.rs` + diagnostics).
+    pub mod dct {
+        pub use crate::vardct::dct::*;
+    }
+    /// ANS encoder internals (`tests/it/{ans_roundtrip,minimal_ans}.rs`).
+    pub mod ans {
+        pub use crate::entropy_coding::ans::*;
+    }
+    /// ANS decode-side verifier used by the same roundtrip tests.
+    pub mod ans_decode {
+        pub use crate::entropy_coding::ans_decode::*;
+    }
+    /// Histogram type consumed by the ANS roundtrip tests.
+    pub mod histogram {
+        pub use crate::entropy_coding::histogram::*;
+    }
+}
 
 /// Re-exports of private vardct internals for downstream parity testing
 /// (notably from `jxl-encoder-gpu`'s `forks::*` G5.1 parity tests).

@@ -21,7 +21,9 @@
 //! This requires implementing the full JXL entropy bundle format, which is
 //! non-trivial. See libjxl `lib/jxl/enc_context_map.cc` for reference.
 
+#[cfg(test)]
 use crate::bit_writer::BitWriter;
+#[cfg(test)]
 use crate::error::Result;
 
 /// Move-to-front transform for better compression.
@@ -53,6 +55,7 @@ pub fn move_to_front_transform(input: &[u8]) -> Vec<u8> {
 }
 
 /// Inverse move-to-front transform (for testing).
+#[cfg(test)]
 pub fn inverse_move_to_front_transform(input: &[u8], max_symbol: u8) -> Vec<u8> {
     if input.is_empty() {
         return Vec::new();
@@ -106,6 +109,7 @@ pub fn inverse_move_to_front_transform(input: &[u8], max_symbol: u8) -> Vec<u8> 
 /// - HybridUint encoding for symbols
 ///
 /// Reference: libjxl lib/jxl/enc_context_map.cc
+#[cfg(test)]
 pub fn encode_context_map(
     context_map: &[u8],
     num_histograms: usize,
@@ -147,6 +151,7 @@ pub fn encode_context_map(
 
 /// Ceiling of log2 for non-zero values.
 #[inline]
+#[cfg(test)]
 fn ceil_log2_nonzero(n: usize) -> usize {
     if n <= 1 {
         0

@@ -608,7 +608,7 @@ fn test_night_sky_block_comparison() {
         })
         .collect();
 
-    let encoder = jxl_encoder::vardct::VarDctEncoder::new(distance);
+    let encoder = jxl_encoder::__test_exports::VarDctEncoder::new(distance);
     let output = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("internal encode failed");
