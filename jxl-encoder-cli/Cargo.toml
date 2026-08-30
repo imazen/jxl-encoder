@@ -60,7 +60,7 @@ jpeg-reencoding = ["jxl_encoder/jpeg-reencoding"]
 brotli-metadata = ["jxl_encoder/brotli-metadata"]
 
 [dependencies]
-jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", version = "0.3.2", default-features = false }
+jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", version = "0.4.0", default-features = false }
 clap = { version = "4", features = ["derive"] }
 png = "0.18"
 

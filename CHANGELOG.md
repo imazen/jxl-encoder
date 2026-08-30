@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+(nothing yet — the [0.4.0] section below is release-prepped; not yet
+tagged or published. See docs/RELEASE_0.4.0.md for the publish gates.)
+
+## [0.4.0] - UNRELEASED
+
 ### Changed
 - Whole-image lossless memory band recalibrated on a three-class grid (photo 64² → 12 MP, palette screenshot, web screenshot; e5–e10; rgb + rgba — `benchmarks/jxl_lossless_band_2026-08-28.{tsv,meta}`): e7–e8 128 B/px (was 540), e9 160, e10 160 + 160 MiB, e6 92 (was 235), alpha +72 B/px (was 230), effort-dependent intercepts. `LosslessConfig::estimate_encode` and `SectionedTrees::Auto`'s memory-pressure arm drop ~4× for tree-learning efforts (12 MP e7 TYP 6.4 → 1.6 GB against 1.14 GB measured); at the 8 GiB lossless default cap the whole-image path now admits up to ~65 MP at e7 instead of ~15.7 MP (#96)
 - Lossless tree learning skips the parallel fork engine on single-worker pools (`effective_threads() <= 1`) and runs the sequential grow loop directly — byte-identical (the two engines are bitstream-equivalent by construction; verified on the 8.3 MP photo, imac_dark and reddit cells) and 3.5 % less learn wall at threads=1 on both the global and the sectioned path (#96)
@@ -174,8 +179,36 @@
   sectioned/hybrid, byte-identical (ecf83e55). Lossy XYB cbrt Newton
   vectorized in f64x4, byte-identical, xyb phase −40% (a5d1dfe3).
 
-### QUEUED BREAKING CHANGES
-<!-- Batched for the next major (0.4.0). Do NOT ship piecemeal. -->
+### BREAKING CHANGES (shipping together in this release)
+<!-- Formerly the [Unreleased] QUEUED BREAKING CHANGES batch. -->
+- **Public API narrowed to the intended surface (#76;
+  22e16b3e/fdcf7a6d/32d76354/2df8c275/bfb880f9).** The supported surface
+  drops from 2,397 item lines / 46 pub modules to 1,256 lines / 7 pub
+  modules (`docs/public-api/jxl-encoder.txt`): `api` + crate-root
+  re-exports, `entropy_coding` (only `Lz77Method` +
+  `ANSHistogramStrategy`, both now also at the root), `modular` (only
+  `RctType`), `validation`, and the feature-gated `jpeg`/`hdr`/`sweep`
+  modules. `headers`, `vardct` internals (incl. the `VarDctEncoder`
+  engine and `dct`/`transform`), `modular` internals, `effort`,
+  `bit_writer`, `color`, `container`, `error` (the second
+  `Error`/`Result`), `heuristics`, `image` (deleted outright — dead),
+  `tuning`, `trace`/`debug_rect`/`profile_phases`/`zq_seed`
+  instrumentation and all 17 exported macros are `pub(crate)` or
+  `#[doc(hidden)]`. This deliberately folds in the four accidental
+  0.3.2-dev breaks (`docs/RELEASE_SEMVER_0.3.1_to_0.3.2.md`) instead of
+  shipping them piecemeal. Migration for known consumers: jxl-gpu keeps
+  its `__pre_quantized`/`__internals` seams (unchanged) and gains
+  `__gpu` for the DCT parity primitives; zenjxl swaps
+  `jxl_encoder::container::{is_container, is_bare_codestream,
+  append_gain_map_box}` and `jxl_encoder::heuristics::*` for the same
+  names re-exported (doc-hidden) at the crate root.
+- **Pre-existing 0.3.2-dev field/discriminant drift, now shipping under
+  the 0.4.0 major** (surfaced by `cargo semver-checks` vs 0.3.1):
+  `AnimationParams.premultiplied_alpha` +
+  `AnimationFrame.{blend_mode, blend_source, save_as_reference}` are new
+  fields on externally-constructible structs, and inserting
+  `ValidationError` variants shifted the discriminants of
+  `IterCountOutOfRange` and later variants.
 - **Effort numbering above 9 shifted by +1 to align with libjxl** (issue
   #45, 2026-08-29): libjxl now ships e10 (kGlacier) and expert e11
   (kTectonicPlate), so our extended tiers moved up one — pre-shift
@@ -574,7 +607,7 @@
   cancels, matching the encode-side `with_limits` / `with_stop` pattern
   (both `None` = the historical pixel-cap-only, zero-overhead parse). This
   replaces the interim `max_pixels: Option<u64>` parameter (an approved
-  public-API change — see QUEUED BREAKING CHANGES above). Byte-
+  public-API change — see BREAKING CHANGES above). Byte-
   identical for all real input: the cap only fires above the configured
   limit, and the JBRD byte-exact transcode conformance (28
   `tests/it/jpeg_reencoding.rs` fixtures, all < 120 MP) still passes.
