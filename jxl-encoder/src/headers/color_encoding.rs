@@ -433,7 +433,7 @@ impl ColorEncoding {
     /// # Examples
     ///
     /// ```
-    /// use jxl_encoder::headers::color_encoding::ColorEncoding;
+    /// use jxl_encoder::ColorEncoding;
     /// // sRGB
     /// let srgb = ColorEncoding::from_cicp(1, 13, 0, true).unwrap();
     /// assert!(srgb.is_srgb());

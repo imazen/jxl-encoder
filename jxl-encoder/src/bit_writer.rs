@@ -20,8 +20,12 @@ pub const MAX_BITS_PER_CALL: usize = 56;
 ///
 /// # Example
 ///
-/// ```
-/// use jxl_encoder::bit_writer::BitWriter;
+/// (`BitWriter` is crate-internal since #76 — no public import path, so
+/// this example is illustrative rather than a compiled doctest; the
+/// equivalent runnable coverage lives in this module's unit tests.)
+///
+/// ```ignore
+/// use crate::bit_writer::BitWriter;
 ///
 /// let mut writer = BitWriter::new();
 /// writer.write(8, 0x12).unwrap();
