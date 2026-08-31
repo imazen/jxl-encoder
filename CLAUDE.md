@@ -643,6 +643,25 @@ neither this model nor its predecessor takes it as an input.
   in passing** — it is 19 files and the fix is a design call (re-export the two
   types under `__internals`, port the examples, or retire them). Gate your work
   with the CI invocations instead; they are the ones that must be green.
+- **`fast-ssim2` stays pinned at 0.7.1 — 0.8.2 MOVES EVERY SCORE** (measured
+  2026-08-31, `benchmarks/ssim2_071_vs_082_2026-08-31.{tsv,meta}`, harness
+  `scripts/ssim2_version_equivalence/`). The pin is at `jxl-encoder/Cargo.toml`
+  :65 (dep) and :415 (dev-dep); local and crates.io are both 0.8.2, and this
+  repo's lock carries BOTH — `jxl-encoder` on 0.7.1 and the workspace member
+  `zenjxl-tuning-runner` on 0.8.2. **0 of 84 comparable cells are
+  bit-identical**; max absolute delta **0.416 points on the 0-100 scale**
+  (gb82 graph 796×481), max relative 5.2e-3, plus 12 sub-8px cells where 0.7.1
+  returns `InvalidImageSize` and 0.8.2 returns a score. `fast-ssim2` feeds
+  `ssim2-loop`, which drives encode decisions, so **bumping moves bytes and
+  re-bakes hash locks** — same class as the `dssim-core` 3.5.1 change. It is an
+  owner decision, not a routine bump. Two traps if you re-open this: (a) the
+  fast-ssim2 CHANGELOG claims "bit-identical" for both score-affecting 0.8.x
+  changes, and both claims are about an INDIVIDUAL internal change, not the
+  composite delta; (b) the 0.8.2 blur vectorisation explicitly does **not**
+  affect x86 — it changes the ARM path, so this aarch64 measurement need not
+  reproduce on an x86 box. Re-measure per platform. Consequence of staying
+  pinned: `CompareContext` / `compare_with` (the zero-alloc warm-reference
+  entry point) landed in 0.8.1 and is therefore unreachable from this crate.
 - **Published `jxl-encoder 0.3.1` does not build today** under fresh
   resolution (`magetypes 0.9.28` breaks published `jxl-encoder-simd 0.3.0`);
   workaround `cargo update -p magetypes --precise 0.9.23`. The 0.4.0 release

@@ -1,0 +1,67 @@
+# fast-ssim2 0.7.1 vs 0.8.2 — per-cell score equivalence
+#
+# Question: can jxl-encoder's `fast-ssim2 = "0.7.1"` pin (jxl-encoder/Cargo.toml
+# :65 dep, :415 dev-dep) be bumped to 0.8.2 without moving encoder output?
+# `fast-ssim2` feeds `ssim2-loop`, which drives encode decisions, so a score
+# shift moves bytes and re-bakes hash locks.
+#
+# ANSWER: NO. 0 of 84 comparable cells are bit-identical. DO NOT BUMP without
+# an owner decision. The pin stays at 0.7.1.
+#
+# date            2026-08-31
+# commit          (this commit)
+# host            Darwin 25.5.0, aarch64 (Apple Silicon)
+# harness         scripts/ssim2_version_equivalence/  (cargo run --release)
+# corpus          ~/work/codec-corpus  CID22-512 validation x2, gb82-sc x2,
+#                 plus 64x64 / 33x17 / 9x9 / 5x5 crops of a CID22 image
+# grid            8 sources x 3 degradation families (block-quant / box-blur /
+#                 additive-noise) x 4 strengths = 96 cells
+# api exercised   `Ssimulacra2Reference::new(src).compare(dist)` — exactly the
+#                 call `vardct/ssim2_loop.rs:172,327` makes on the encode path
+#
+# METHOD NOTE — why this is trustworthy:
+#  * BOTH versions are linked into ONE binary via renamed deps
+#    (`ssim_old = { package = "fast-ssim2", version = "=0.7.1" }`, `ssim_new`
+#    = "=0.8.2"), so every cell is scored by both on the SAME input bytes in
+#    the SAME process. No cross-run or cross-build drift can leak in.
+#  * DETERMINISM CONTROL: the whole binary was run twice and the two outputs
+#    are byte-identical, so the divergence is a VERSION delta, not noise.
+#  * Reported PER CELL, never aggregated — an aggregate mean hides a real
+#    shift, which is how the dssim-core 3.5.1 change nearly slipped through
+#    (all 216 scores moved while the mean moved in the seventh decimal).
+#
+# RESULT
+#   cells scored by both      84
+#     bit-identical            0
+#     different               84   (100%)
+#   sub-8px behaviour change  12   (0.7.1 = Err(InvalidImageSize), 0.8.2 scores)
+#
+#   max ABS delta  4.156e-1 points on the 0-100 scale
+#                  gb82_graph 796x481 quant/3: 79.54576145 -> 79.96140382
+#   max REL delta  5.225e-3  (same cell)
+#
+# WHY, per the fast-ssim2 CHANGELOG (~/work/zen/fast-ssim2/CHANGELOG.md):
+#  * 0.8.1 "Skip per-channel SSIM and edge-difference work whose final-score
+#    weight is zero. Bit-identical to the prior path"
+#  * 0.8.2 "Vectorised the recursive-Gaussian blur horizontal pass ...
+#    Bit-identical output to the scalar path ... x86 (AVX2) unaffected"
+#  Both claim bit-identity, and BOTH claims are about an individual internal
+#  change, NOT about the composite 0.7.1 -> 0.8.2 delta. Note the 0.8.2 blur
+#  change explicitly does NOT affect x86 — it changes the ARM path, which is
+#  this host. A measurement on an x86 box may well disagree with this table;
+#  that is a reason to re-measure per platform, not to trust either result
+#  as universal.
+#  * 0.8.2 also added sub-8px reflect-padding, turning InvalidImageSize into a
+#    score. That is the 12 behaviour-change cells and is documented, intended,
+#    and unreachable from `ssim2_loop` only if the loop never sees a <8px
+#    image -- NOT verified here.
+#
+# WHAT THIS DOES NOT SAY
+#  * It does not say the 0.8.2 scores are WORSE. They may well be more correct
+#    (the zero-weight skip and the IIR vectorisation are both principled).
+#    It says only that they are DIFFERENT, so the bump is a byte-moving change
+#    that needs a lock re-bake and an owner decision, not a routine bump.
+#  * The distortions are synthetic (quant/blur/noise on real images), not jxl
+#    reconstructions. That is fine for a metric-equivalence question — the
+#    metric is a pure function of two images — but a bump decision may want
+#    real reconstructions across the encoder's actual operating range.

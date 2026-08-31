@@ -1,0 +1,18 @@
+# Standalone: its OWN `[workspace]` so the repo workspace never resolves it.
+# It links TWO semver-incompatible fast-ssim2 versions at once, which the main
+# workspace must never be asked to do.
+[workspace]
+
+[package]
+name = "ssim2eq"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+ssim_old = { package = "fast-ssim2", version = "=0.7.1", features = ["imgref"] }
+ssim_new = { package = "fast-ssim2", version = "=0.8.2", features = ["imgref"] }
+imgref = "1.12"
+image = "0.25"
+
+[profile.release]
+opt-level = 2
