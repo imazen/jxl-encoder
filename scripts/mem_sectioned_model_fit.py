@@ -6,10 +6,14 @@ repeated).  For every (content, size, channels, effort, threads) cell it takes t
 MAXIMUM `peak_live_kb` over repeats — the estimator must cover the worst run, and
 the tree-learn-bound cells vary ±8-12 % with worker scheduling.
 
-Reports, for the shipped model and for a candidate:
+Reports, for the CURRENT shipped model and for the additive one it replaced:
   * coverage  — any cell where TYP < measured is an admission-safety BUG
   * tightness — TYP / measured, against the 2.5x bar the lib test enforces >= 2 MP
   * the per-worker constant each cell would REQUIRE, so the binding cell is named
+
+The superseded model is kept as a REGRESSION BASELINE, not as an option: it
+is what the max-form replaced on 2026-08-30 (8345b136), and printing both is
+how the improvement stays checkable after a re-measure.
 
 Usage: scripts/mem_sectioned_model_fit.py <grid.tsv> [more.tsv ...]
 """
@@ -19,10 +23,10 @@ from collections import defaultdict
 
 MIB = 1 << 20
 KIB = 1024
-GROUP_DIM = 256  # modular_group_size_shift default (1 -> 128 << 1)
+GROUP_DIM = 256  # SECTIONED_GROUP_DIM; modular_group_size_shift default (1 -> 128 << 1)
 
-# ── candidate: the max-form model (issue #99 item 3) ────────────────────────
-CAND = dict(
+# ── CURRENT: the max-form model shipped in 8345b136 (issue #99 item 3) ──────
+CURRENT = dict(
     fixed7=8 * MIB,
     fixed9=32 * MIB,
     per_worker7=18 * MIB,
@@ -37,7 +41,7 @@ CAND = dict(
 )
 
 
-def model_candidate(w, h, nc, effort, threads, p=CAND):
+def model_current(w, h, nc, effort, threads, p=CURRENT):
     px = w * h
     inp = px * nc
     fixed = p["fixed9"] if effort >= 8 else p["fixed7"]
@@ -55,8 +59,8 @@ def model_candidate(w, h, nc, effort, threads, p=CAND):
     return inp + fixed + max(floor, learn) + p["pool_per_worker"] * (t - 1)
 
 
-def model_shipped(w, h, nc, effort, threads):
-    """The 2026-08-30 additive model this change replaces."""
+def model_prev_additive(w, h, nc, effort, threads):
+    """The additive model the max-form replaced on 2026-08-30 (baseline only)."""
     px = w * h
     inp = px * nc
     fixed = 32 * MIB if effort >= 8 else 8 * MIB
@@ -69,8 +73,8 @@ def model_shipped(w, h, nc, effort, threads):
     return inp + fixed + int(px * bpp) + pw * (max(threads, 1) - 1)
 
 
-def required_per_worker(w, h, nc, effort, threads, meas, p=CAND):
-    """Smallest per-worker constant that keeps the candidate covering this cell."""
+def required_per_worker(w, h, nc, effort, threads, meas, p=CURRENT):
+    """Smallest per-worker constant that keeps the CURRENT model covering this cell."""
     px = w * h
     fixed = p["fixed9"] if effort >= 8 else p["fixed7"]
     t = max(threads, 1)
@@ -141,10 +145,73 @@ def report(cells, fn, label):
     return unders, loose
 
 
+# Every constant this script models, and how each is spelled in
+# `jxl-encoder/src/heuristics.rs`. A calibration tool that has drifted from
+# the source it calibrates is worse than no tool: it reports margins for a
+# model nobody ships. `check_source_drift` re-reads the constants out of the
+# crate and refuses to run on a mismatch.
+#
+# Values are compared in BYTES (or in the constant's own unit for the
+# dimensionless ones) — the regex resolves `<<` itself and `CURRENT` already
+# stores absolute bytes, so no unit conversion happens on either side.
+# `GROUP_DIM` is checked too: it is not a fitted constant, but the in-flight
+# clamp is computed from it, so a group-dimension change silently
+# invalidates every margin printed below.
+SOURCE_CONSTANTS = {
+    "SECTIONED_FIXED_E7": "fixed7",
+    "SECTIONED_FIXED_E9": "fixed9",
+    "SECTIONED_PER_THREAD_E7": "per_worker7",
+    "SECTIONED_PER_THREAD_E9": "per_worker9",
+    "SECTIONED_RESIDENT_BPP_PER_CHANNEL": "resident_bpp_per_ch",
+    "SECTIONED_DETECT_BPP_THREADS1": "detect_bpp",
+    "SECTIONED_WAVE_BPP_PER_CHANNEL": "wave_bpp_per_ch",
+    "SECTIONED_INFLIGHT_SLACK": "inflight_slack",
+    "SECTIONED_POOL_BYTES_PER_THREAD": "pool_per_worker",
+    "SECTIONED_PER_THREAD_ALPHA_NUM": "alpha_num",
+    "SECTIONED_PER_THREAD_ALPHA_DEN": "alpha_den",
+}
+
+
+def check_source_drift():
+    """Compare CURRENT/GROUP_DIM against heuristics.rs; list any mismatch."""
+    import os
+    import re
+
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "..", "jxl-encoder", "src", "heuristics.rs")
+    try:
+        with open(src) as fh:
+            text = fh.read()
+    except OSError as exc:
+        return [f"could not read {src}: {exc}"]
+    expected = {name: CURRENT[key] for name, key in SOURCE_CONSTANTS.items()}
+    expected["SECTIONED_GROUP_DIM"] = GROUP_DIM
+    problems = []
+    for name, want in expected.items():
+        # `const NAME: u64 = 46 << 20;` / `= 16 << 10;` / `const NAME: f64 = 22.0;`
+        m = re.search(rf"const {name}:\s*\w+\s*=\s*([0-9.]+)(?:\s*<<\s*(\d+))?\s*;", text)
+        if not m:
+            problems.append(f"{name}: not found in heuristics.rs")
+            continue
+        val = float(m.group(1))
+        if m.group(2):
+            val *= 1 << int(m.group(2))
+        if abs(val - want) > 1e-9:
+            problems.append(f"{name}: source {val:g}, this script {want:g}")
+    return problems
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
+    drift = check_source_drift()
+    if drift:
+        print("SOURCE DRIFT — this script no longer models the shipped estimator:")
+        for d in drift:
+            print(f"    {d}")
+        print("Update CURRENT (or the source) before trusting any margin below.")
+        return 3
     cells = load(sys.argv[1:])
     spread = [(max(v) / min(v), k) for k, v in cells.items() if len(v) > 1 and min(v) > 0]
     if spread:
@@ -154,9 +221,9 @@ def main():
             print(f"    {s:.3f}x  {k[0]} {k[1]}x{k[2]} nc{k[3]} e{k[4]} t{k[5]}  "
                   f"{sorted(cells[k])}")
         print()
-    report(cells, model_shipped, "SHIPPED additive model (2026-08-30)")
+    report(cells, model_prev_additive, "SUPERSEDED additive model (pre-8345b136 baseline)")
     print()
-    report(cells, model_candidate, "CANDIDATE max-form model")
+    report(cells, model_current, "CURRENT max-form model (shipped)")
     print()
     req = defaultdict(list)
     for key, vals in cells.items():
@@ -166,7 +233,7 @@ def main():
             req[e].append((pw / MIB, c, w, h, nc, t))
     for e in sorted(req):
         req[e].sort(reverse=True)
-        chosen = CAND["per_worker9"] if e >= 8 else CAND["per_worker7"]
+        chosen = CURRENT["per_worker9"] if e >= 8 else CURRENT["per_worker7"]
         print(f"=== e{e} per-worker requirement (MiB) — chosen {chosen // MIB} MiB, "
               f"margin {chosen / MIB / req[e][0][0]:.2f}x over the binding cell")
         for pw, c, w, h, nc, t in req[e][:5]:

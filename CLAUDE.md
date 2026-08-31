@@ -273,7 +273,14 @@ sum. Full record:
 `benchmarks/jxl_sectioned_thread_dense_2026-08-30.{tsv,meta}` (192 cells × 3
 repeats), the constants' own rustdoc in `heuristics.rs`, and
 `scripts/mem_sectioned_model_fit.py` (re-run it after any re-measure; it names
-the cell that binds each per-worker constant).
+the cell that binds each per-worker constant). That script **refuses to run
+when its constants have drifted from `heuristics.rs`** — it re-reads all
+eleven of them plus `SECTIONED_GROUP_DIM` out of the crate and exits 3 on any
+mismatch or rename, because a calibration tool that reports margins for a
+model nobody ships is worse than no tool. It also prints the superseded
+additive model alongside the current one as a REGRESSION BASELINE, so the
+12→0 under-prediction and 2.77×→2.28× improvements stay checkable rather than
+being a claim in a commit message.
 
 **The measured root cause was NOT a mis-set per-worker constant.** The brief
 said the e9 term over-predicts palette content because 36 MiB/worker was
