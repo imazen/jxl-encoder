@@ -1,0 +1,12 @@
+# T4 libjxl mimic byte-parity sweep
+date_utc: 2026-08-31T04:57:52Z
+host: Darwin 25.5.0 arm64 / mac
+git_commit: 6ecc1ff4
+cjxl_path: /opt/homebrew/bin/cjxl
+cjxl_version: cjxl v0.12.0 0.12.0 [_NEON_BF16_,NEON] {AppleClang 21.0.0.21000099}
+ours_path: /Users/lilith/work/zen/jxl-encoder/target/release/cjxl-rs
+ours_version: cjxl-rs 0.4.0
+efforts: 3 5 7
+distances: 0.5 1.0 4.0
+note: ours always runs --strategy libjxl (the mimic); zen mode is a
+note: different bundle and is NOT what this sweep measures.
