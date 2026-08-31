@@ -207,6 +207,7 @@ jxl_encoder_macros::strategy_def! {
             // Section D KNOWN-BUG: deliberately re-enable to match libjxl
             block_ctx_map_15_cluster = true,
             metadata_all_default_fast_path = true,
+            dc_adaptive_smoothing = true,
             // Smart-Zenjxl gates: strict parity — every per-image
             // discriminator disabled. Callers can still opt in via
             // `LossyConfig::with_content_class(Some(class))` etc.
@@ -300,6 +301,7 @@ jxl_encoder_macros::strategy_def! {
             // Section D: NOT re-enabled on LeanFaster (only on Libjxl).
             block_ctx_map_15_cluster = false,
             metadata_all_default_fast_path = false,
+            dc_adaptive_smoothing = false,
             // Smart-Zenjxl: drop every per-image gate.
             content_class_auto_classify = false,
             photo_epf_seed_admit = false,
@@ -381,6 +383,7 @@ jxl_encoder_macros::strategy_def! {
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
             metadata_all_default_fast_path = false,
+            dc_adaptive_smoothing = false,
             content_class_auto_classify = true,
             photo_epf_seed_admit = true,
             photo_variant_z_admit = true,
@@ -479,6 +482,7 @@ jxl_encoder_macros::strategy_def! {
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
             metadata_all_default_fast_path = false,
+            dc_adaptive_smoothing = false,
             content_class_auto_classify = true,
             photo_epf_seed_admit = true,
             photo_variant_z_admit = true,
@@ -655,6 +659,28 @@ jxl_encoder_macros::strategy_def! {
         metadata_all_default_fast_path: bool {
             divergence_section = "D",
             divergence_row_ref = "T4 ImageMetadata.all_default fast path",
+        },
+
+        /// T4 (2026-08-31): leave `kSkipAdaptiveDCSmoothing` (0x80)
+        /// CLEAR in the lossy frame header, so the decoder runs
+        /// libjxl's adaptive DC smoothing over the reconstructed DC.
+        ///
+        /// libjxl sets that flag only for JPEG transcode
+        /// (`enc_frame.cc:513`); an ordinary lossy encode ships
+        /// `flags == 0`. The smoothing is a pure DECODER-side
+        /// post-filter — libjxl's encoder-side call
+        /// (`enc_cache.cc:242`) runs after `AddVarDCTDC` has already
+        /// tokenized the DC and only touches its own reconstruction
+        /// copy, which is what its "only useful in tests and if
+        /// inspection is enabled" TODO means. So this gate needs no
+        /// encoder-side algorithm at all: it is one bit, and it also
+        /// saves the 8 bits the non-zero `flags` U64 costs.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`].
+        /// Section D.
+        dc_adaptive_smoothing: bool {
+            divergence_section = "D",
+            divergence_row_ref = "T4 kSkipAdaptiveDCSmoothing on every lossy frame",
         },
 
         // ── Smart-Zenjxl content-class dispatch ──────────────────────
@@ -1270,6 +1296,12 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "T4 ImageMetadata.all_default fast path",
         raw: __CUSTOM_DIVERGENCE_METADATA_ALL_DEFAULT_FAST_PATH,
+    },
+    DivergenceEntry {
+        gate_name: "dc_adaptive_smoothing",
+        section: "D",
+        row_ref: "T4 kSkipAdaptiveDCSmoothing on every lossy frame",
+        raw: __CUSTOM_DIVERGENCE_DC_ADAPTIVE_SMOOTHING,
     },
     // Section B — Smart-Zenjxl content-class dispatch
     DivergenceEntry {

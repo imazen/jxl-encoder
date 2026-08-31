@@ -2413,13 +2413,30 @@ pub struct VarDctEncoder {
     ///   etc.); the encoder operates entirely at the downsampled
     ///   resolution.
     /// - The codestream's file header still reports the **original**
-    ///   (pre-downsample) dimensions — the encoder multiplies
-    ///   the supplied (width, height) by `upsampling` when building
-    ///   the file header, and writes `upsampling` into the frame
-    ///   header. The decoder upsamples to that target.
+    ///   (pre-downsample) dimensions. Those come from
+    ///   [`Self::display_dims`] when the caller set it; the
+    ///   `supplied × upsampling` fallback is only correct when every
+    ///   dimension is a multiple of the factor (see that field).
     ///
     /// Used by [`crate::api::LossyConfig::with_resampling`] (refs #12).
     pub upsampling: u32,
+    /// The **original** (pre-downsample) image dimensions to advertise
+    /// in the file header when [`Self::upsampling`] > 1.
+    ///
+    /// The encoder is handed the already-downsampled buffer, whose dims
+    /// are `div_ceil(orig, factor)`. Reconstructing the original as
+    /// `downsampled × factor` over-reports by up to `factor − 1` on any
+    /// axis that is not a multiple of the factor — a 1105-row input at
+    /// factor 2 advertises 1106, and the decoder then emits an image one
+    /// row taller than the caller supplied. libjxl writes the true size
+    /// into the `SizeHeader` and lets `FrameDimensions::Set`'s
+    /// `DivCeil(xsize_px, upsampling)` recover the coded grid, so the
+    /// decoder crops the upsampled result back down.
+    ///
+    /// `None` keeps the `supplied × upsampling` fallback, which is what
+    /// `LossyConfig::with_already_downsampled` wants: there the caller
+    /// passes post-downsample dims and asks for `dims × N` explicitly.
+    pub(crate) display_dims: Option<(u32, u32)>,
     /// Decoder upsampling mode (libjxl
     /// `JxlEncoderSetUpsamplingMode(enc, factor, mode)`,
     /// `enc_modular.cc` etc.). Only emitted when [`Self::upsampling`] > 1
@@ -2690,6 +2707,7 @@ impl Default for VarDctEncoder {
             bits_per_sample_override: None,
             center_first: false,
             upsampling: 1,
+            display_dims: None,
             upsampling_mode: None,
             center_x: None,
             center_y: None,
@@ -2852,6 +2870,7 @@ impl VarDctEncoder {
             bits_per_sample_override: None,
             center_first: false,
             upsampling: 1,
+            display_dims: None,
             upsampling_mode: None,
             center_x: None,
             center_y: None,
@@ -6367,6 +6386,11 @@ impl VarDctEncoder {
             fh.epf_iters = params.epf_iters;
             fh.gaborish = self.enable_gaborish;
             fh.upsampling = self.upsampling;
+            // T4: see the same clear on the non-streaming path in
+            // `vardct/bitstream.rs`.
+            if self.resolved_improvements.dc_adaptive_smoothing {
+                fh.flags &= !crate::headers::frame_header::SKIP_ADAPTIVE_LF_SMOOTHING;
+            }
             if noise_params.is_some() {
                 fh.flags |= 0x01; // ENABLE_NOISE
             }

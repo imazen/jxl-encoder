@@ -1,0 +1,28 @@
+# T4 (2026-08-31) — is libjxl's adaptive DC smoothing worth having?
+date_utc: 2026-08-31
+host: Darwin 25.5.0 arm64 (12-core aarch64 laptop, `mac`)
+git_commit: e2d98cce (+ working tree: dc_adaptive_smoothing gate + odd-dim resampling fix)
+harness: jxl-encoder/examples/dc_smoothing_ab.rs
+command: cargo run -p jxl-encoder --release --example dc_smoothing_ab -- <png-dir> <out.tsv>
+arms: EncoderStrategy::Custom seeded from Zenjxl defaults; ONLY
+arms: `dc_adaptive_smoothing` differs (false = we set kSkipAdaptiveDCSmoothing,
+arms: true = libjxl's flags==0). Everything else is bit-identical by construction.
+decoder: jxl-oxide (linear sRGB, Relative intent)
+metrics: butteraugli_linear (default params); fast_ssim2 on sRGB u8 from linear
+grid: 5 fixtures x effort {5,7} x distance {0.5, 1.0, 2.0, 4.0, 7.0, 10.0}
+threads: 1
+
+# Validity self-check: the `pixels_differ` column must be true on content with
+# non-uniform DC. If it were false everywhere the decoder would be ignoring the
+# flag and every quality number here would be meaningless. It reads true on all
+# but flat_64x64 (uniform DC -> the filter is a no-op) and noise at d=0.5
+# (gap > 0.75 everywhere -> factor 0). So jxl-oxide does implement the filter.
+
+# HEADLINE — the effect is strongly CONTENT-DEPENDENT, not a free win:
+#   gradient_512x512 (smooth):  butteraugli -9% .. -34% at d >= 1, ssim2 +0.7 .. +6.2  BIG WIN
+#   gradient_512x512 at d=0.5:  butteraugli +13.2%                                     LOSS
+#   photo_512x512  (textured):  butteraugli +0.5% .. +13.4%, ssim2 -0.05 .. -0.94      LOSS
+#   frymire-srgb   (line art):  |ssim2| <= 0.09, butteraugli ~0                        NEUTRAL
+#   noise_512x512:              ~0 (gap exceeds 0.75, filter disabled by design)       NEUTRAL
+#   flat_64x64:                 exactly 0 (uniform DC)                                 NEUTRAL
+# Bytes: exactly -1 on every cell (flags U64 selector 2+8 bits -> 2 bits).

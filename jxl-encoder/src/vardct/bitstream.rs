@@ -965,8 +965,22 @@ impl VarDctEncoder {
         // (width, height); the file-header advertises the original
         // pre-downsample size that the decoder will produce after
         // applying the frame-header `upsampling` factor.
-        let display_width = (width as u32).saturating_mul(self.upsampling);
-        let display_height = (height as u32).saturating_mul(self.upsampling);
+        //
+        // `downsampled × upsampling` is NOT that size when a dimension
+        // is not a multiple of the factor: the downsample is a
+        // `div_ceil`, so the product rounds UP by as much as
+        // `factor − 1` and the decoder emits an image larger than the
+        // caller's input. `display_dims` carries the true original when
+        // the API downsampled internally; the product stays as the
+        // fallback for `with_already_downsampled`, where `dims × N` is
+        // exactly what the caller asked for.
+        let (display_width, display_height) = match self.display_dims {
+            Some((w, h)) => (w, h),
+            None => (
+                (width as u32).saturating_mul(self.upsampling),
+                (height as u32).saturating_mul(self.upsampling),
+            ),
+        };
         FileHeader {
             width: display_width,
             height: display_height,
@@ -3488,6 +3502,14 @@ impl VarDctEncoder {
             fh.epf_iters = params.epf_iters;
             fh.gaborish = self.enable_gaborish;
             fh.upsampling = self.upsampling;
+            // T4: libjxl leaves `kSkipAdaptiveDCSmoothing` clear on every
+            // non-JPEG lossy frame (`enc_frame.cc:513` sets it only for
+            // `jpeg_data`), which asks the decoder to run adaptive DC
+            // smoothing. It is a decoder-side post-filter, so clearing the
+            // bit needs no encoder-side work.
+            if self.resolved_improvements.dc_adaptive_smoothing {
+                fh.flags &= !crate::headers::frame_header::SKIP_ADAPTIVE_LF_SMOOTHING;
+            }
             if noise_params.is_some() {
                 fh.flags |= crate::headers::frame_header::ENABLE_NOISE;
             }

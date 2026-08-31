@@ -615,6 +615,63 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-08-31: resampling CHANGED THE IMAGE DIMENSIONS on any axis that is not a multiple of the factor — and it was reachable from the DEFAULT path
+
+**Status**: RESOLVED same day (T4). **This is a zen-mode defect, not a
+parity issue** — it was found while chasing libjxl byte parity, which is
+exactly the second thing that job exists for.
+
+**Symptom.** A 1118×1105 input encoded at `d = 10` came back **1118×1106**
+— one row taller than the caller supplied. `djxl`, `jxl-rs` and `jxl-oxide`
+all agreed, because the `SizeHeader` genuinely said 1106.
+
+**Root cause.** The encoder downsamples by `div_ceil(dim, factor)` (correct,
+matches libjxl `FrameDimensions::Set`), then `build_file_header` rebuilt the
+advertised size as `downsampled × factor`. For any axis that is not a
+multiple of the factor that product rounds **up**, by as much as
+`factor − 1` (so up to 7 rows/columns at factor 8). libjxl writes the TRUE
+size into the `SizeHeader` and lets the decoder's
+`DivCeil(xsize_px, upsampling)` recover the coded grid and crop the
+upsampled result back down. Verified directly: `cjxl v0.12.0 -d 12` on the
+same input writes `ysize = 1105`; we wrote 1106.
+
+**Why it is worse than it sounds.** `auto_resampling` is ON by default and
+selects factor 2 at `distance >= 10`, so **no caller opt-in was required**:
+any odd-width or odd-height image encoded at `d >= 10` silently came back
+the wrong size. Explicit `with_resampling(2/4/8)` hit it at every distance.
+
+**Why nothing caught it.** Every `resampling > 1` hash-lock cell uses a
+512×512 fixture. 512 is divisible by 8, so the buggy product equals the true
+size in every one of them — including the five cells T1 added on 2026-08-30
+specifically because "no lock covered any e ≤ 9 resampling cell". A lock
+grid can be complete on the axis you were thinking about and blind on the
+one you were not; **dimension parity needs a fixture whose dimensions are
+not multiples of the factors.**
+
+**Two doc claims were wrong and are fixed in the same commit.** (1)
+`with_resampling`'s rustdoc said "libjxl auto-selects factor = 2 at
+distance >= 10. We don't auto-select yet; callers opt in explicitly" — we
+have auto-selected for some time, and that stale sentence is what made this
+look opt-in. (2) `api.rs`'s inline comment and `VarDctEncoder::upsampling`'s
+doc both asserted "the file-header dims still report the original
+(pre-downsample) size" as though the multiply achieved it.
+
+**Fix**: `VarDctEncoder::display_dims: Option<(u32, u32)>` carries the true
+pre-downsample size from the API (both the one-shot and the streaming lossy
+paths) and `build_file_header` prefers it. The `downsampled × factor`
+fallback stays for `with_already_downsampled`, where `dims × N` is exactly
+what the caller asked for — pinned by its own test so the fallback cannot be
+"simplified" away.
+
+**Pinned**: `tests/it/resampling_odd_dims.rs` — odd dims 259×133 / 65×65 /
+127×255 × factors {2,4,8}, the auto-resample arm at d ∈ {10,12,15}, a
+no-resample control arm, and the `already_downsampled` contract; every cell
+checked through **both** jxl-rs and jxl-oxide, and jxl-oxide's render is
+asserted to match its own header. Mutation-verified: reverting either
+`display_dims` assignment fails the two resampling arms (260×134 vs 259×133)
+and leaves the control and `already_downsampled` arms green. No existing
+hash lock moved.
+
 ### RESOLVED 2026-08-30: lossy `with_resampling(N>1)` + alpha emitted an UNDECODABLE stream (`ec_upsampling` left at 1)
 
 **Status**: RESOLVED same day. Found by the new `resampling` hash-lock

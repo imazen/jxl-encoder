@@ -79,6 +79,7 @@ mod pathological;
 mod perceptual_target_score_smoke;
 mod quality_compare;
 mod rate_control;
+mod resampling_odd_dims;
 mod sectioned_trees_knob;
 mod sixteenbit_metadata;
 mod strategy_libjxl_byte_lock;

@@ -531,6 +531,12 @@ path = "examples/lossy_low_effort_zenjpeg_compare.rs"
 name = "distance_sweep"
 path = "examples/distance_sweep.rs"
 
+# T4 (2026-08-31) — is libjxl's decoder-side adaptive DC smoothing worth
+# having? A/B on one header bit; see the example's own module docs.
+[[example]]
+name = "dc_smoothing_ab"
+path = "examples/dc_smoothing_ab.rs"
+
 # Full RD curve audit vs cjxl across 15 distances × 5 efforts × 8 images.
 # Designed to find wedges in bytes-vs-quality Pareto. Read-only on src/.
 [[example]]

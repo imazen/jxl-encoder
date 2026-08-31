@@ -180,25 +180,40 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     // Zen-mode hash locks are BYTE-IDENTICAL across this change (the
     // gate is Libjxl-only), and jxl-rs + jxl-oxide roundtrip the new
     // bytes (`libjxl_output_decodes_via_jxl_rs_and_jxl_oxide`).
+    // **T4 `dc_adaptive_smoothing` (2026-08-31)**: re-pinned after
+    // `EncoderStrategy::Libjxl` stopped setting `kSkipAdaptiveDCSmoothing`
+    // (`FrameHeader.flags` 0x80) on lossy frames. libjxl sets that bit
+    // ONLY for JPEG transcode (`enc_frame.cc:513`); an ordinary lossy
+    // encode ships `flags == 0` and lets the decoder run adaptive DC
+    // smoothing. All 5 fixtures move by EXACTLY -1 byte, which is the
+    // whole delta: `flags = 0` is a 2-bit U64 selector, `flags = 128` is
+    // 2 + 8 bits. The DECODED PIXELS also change (the decoder now runs
+    // the filter), which is the point -- measured in
+    // `benchmarks/jxl_dc_smoothing_ab_2026-08-31.tsv`:
+    //   _d1   (e7):    208 -> 207 (-1 B)  hash drift
+    //   _d4   (e7):    151 -> 150 (-1 B)  hash drift
+    //   _d1_e5:        206 -> 205 (-1 B)  hash drift
+    //   _d1_e3:        311 -> 310 (-1 B)  hash drift
+    //   _noise_d1:    3212 -> 3211 (-1 B) hash drift
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1",
-        size: 208,
-        hash: 0x75bd25d364be4eb6,
+        size: 207,
+        hash: 0x4198175bbab35c15,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
-        size: 151,
-        hash: 0x988a8ba9f328976a,
+        size: 150,
+        hash: 0x1a613cdddac087df,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
-        size: 206,
-        hash: 0x85c57fe236daf7e1,
+        size: 205,
+        hash: 0xd506cbff3be8dfda,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
-        size: 311,
-        hash: 0x0c706493fc146ac4,
+        size: 310,
+        hash: 0xc1de936a255ca4a5,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
@@ -230,10 +245,11 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // Lever #1 MTF (2026-05-28): size 3219 → 3215 (-4 B), hash drift.
         // 3-way ctx-map cost comparison adopts MTF for the 15-cluster
         // ctx_map. See cluster comment-block at the top of LIBJXL_PINS.
-        // T4 (2026-08-31): 3215 → 3212 (-3 B), the same fixed header
-        // saving as the four gradient cells above.
-        size: 3212,
-        hash: 0x26ea0a6fcb270ffa,
+        // T4 (2026-08-31): 3215 → 3212 (-3 B) for the all_default header
+        // fast path, then 3212 → 3211 (-1 B) for the dc_adaptive_smoothing
+        // flags flip — the same two fixed deltas as the cells above.
+        size: 3211,
+        hash: 0x23a274b1fafa2db1,
     },
 ];
 

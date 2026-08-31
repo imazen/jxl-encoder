@@ -92,7 +92,8 @@ use std::path::PathBuf;
 /// W44-AUDIT-9 / SA-G Fix C added `cfl_zero_for_search` Section C gate → 31.
 /// #74 task #10 added `cfl_keep_best` Section C gate → 32.
 /// T4 (2026-08-31) added `metadata_all_default_fast_path` Section D gate → 35.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 35;
+/// T4 (2026-08-31) added `dc_adaptive_smoothing` Section D gate → 36.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 36;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -241,6 +242,9 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // (renaming the gate must not silently orphan the row).
         if row_ref.contains("ImageMetadata.all_default") {
             out.push("ImageMetadata.all_default".to_string());
+        }
+        if row_ref.contains("kSkipAdaptiveDCSmoothing") {
+            out.push("kSkipAdaptiveDCSmoothing".to_string());
         }
     }
     out

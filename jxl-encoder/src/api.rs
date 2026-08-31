@@ -4069,17 +4069,31 @@ impl LossyConfig {
     /// decoder to upsample by the same factor on output. The
     /// codestream's file header still reports the original
     /// (pre-downsample) dimensions, so callers and downstream tooling
-    /// see the full-size image. Output dimensions use `div_ceil`, so
+    /// see the full-size image. The coded grid uses `div_ceil`, so
     /// odd / non-multiple sizes round up — the decoder upsamples to
     /// `(out_w * factor, out_h * factor)` which may exceed the
-    /// original by up to `factor - 1` pixels along each axis (the
-    /// decoder crops to the file-header dimensions).
+    /// original by up to `factor - 1` pixels along each axis, and then
+    /// **crops to the file-header dimensions**. That crop is the whole
+    /// reason the header must carry the ORIGINAL size and not
+    /// `out_dims * factor`.
     ///
     /// libjxl auto-selects `factor = 2` at distance ≥ 10
-    /// (`enc_frame.cc:89-121`). We don't auto-select yet; callers
-    /// opt in explicitly. The simple box filter matches libjxl's 4×
-    /// and 8× paths; libjxl's 2× path uses a sharper 12×12 kernel
-    /// (`enc_heuristics.cc:279-405`) which is TBD.
+    /// (`enc_frame.cc:89-121`) and **so do we** — see
+    /// [`Self::with_auto_resampling`] (on by default) and
+    /// [`Self::effective_resampling`]. (This paragraph used to say "we
+    /// don't auto-select yet; callers opt in explicitly", which stopped
+    /// being true when auto-resample landed and mattered: it made the
+    /// odd-dimension bug below look opt-in when it was reachable from
+    /// the default path.) The 4× / 8× box filter matches libjxl; the 2×
+    /// path uses libjxl's sharper 12×12 kernel below e10 and the
+    /// iterative kernel at e ≥ 10, all applied in the opsin domain.
+    ///
+    /// **Dimension contract**: the advertised size is the caller's
+    /// original size exactly, on every axis, multiple of `factor` or
+    /// not. Getting this wrong is silent — a 1105-row input at factor 2
+    /// used to advertise 1106 and every decoder returned an image one
+    /// row taller than the input (fixed 2026-08-31, pinned by
+    /// `tests/it/resampling_odd_dims.rs`).
     pub fn with_resampling(mut self, factor: u32) -> Self {
         self.resampling = if matches!(factor, 1 | 2 | 4 | 8) {
             factor
@@ -7828,8 +7842,16 @@ impl<'a> EncodeRequest<'a> {
         // before reaching the encoder; the encoder operates entirely
         // at the downsampled resolution and signals the decoder to
         // upsample after rendering. The file-header dims still report
-        // the original (pre-downsample) size.
+        // the original (pre-downsample) size — which is `(w, h)` here,
+        // NOT `downsampled × factor`: the downsample is a `div_ceil`, so
+        // the product over-reports by up to `factor − 1` on any axis
+        // that is not a multiple of the factor. `already_downsampled`
+        // deliberately keeps the product, because there the caller
+        // passes post-downsample dims and asks for `dims × N`.
         enc.upsampling = effective_resampling;
+        if effective_resampling > 1 && !cfg.already_downsampled {
+            enc.display_dims = Some((w as u32, h as u32));
+        }
         // Custom upsampling LUT selection (libjxl
         // `JxlEncoderSetUpsamplingMode`). The encoder records the
         // mode on the file-header builder; the LUT itself is emitted
@@ -9146,8 +9168,14 @@ impl LossyEncoder {
             enc.bits_per_sample_override = self.bits_per_sample;
             enc.center_first = self.cfg.center_first;
             // Decoder upsampling factor (refs #12). Mirrors the
-            // EncodeRequest::encode_lossy wire-up below.
+            // EncodeRequest::encode_lossy wire-up below, including the
+            // true pre-downsample size for the file header (this path
+            // always downsamples internally — it does not honour
+            // `already_downsampled`).
             enc.upsampling = effective_resampling;
+            if effective_resampling > 1 {
+                enc.display_dims = Some((w as u32, h as u32));
+            }
             enc.non_finite_action = self.cfg.non_finite_action;
             enc.budget = Some(alloc::sync::Arc::clone(&budget));
             if let Some(ref icc) = self.icc_profile {
