@@ -1,0 +1,55 @@
+# every corpus rendition where the sectioned probe selector FIRES at the shipped
+# gate (probe_leaves >= SECTIONED_PROBE_MIN_LEAVES = 768), with its byte and wall
+# move vs the previous fixed-K=8 default. Renditions absent from this file are
+# byte-identical to the previous default. bytes_pct_t1/wall_pct_t1 are blank for
+# renditions below 1 MP (the t=1 sweep covered the >= 1 MP subset only).
+rendition	split	content_class	kind	w	h	probe_leaves	bytes_pct	wall_pct_t8	bytes_pct_t1	wall_pct_t1
+c0_1052_general_framed-building-painting_museum-orsay-paris_s23u_iso500-f2p4_20240425-185701_3000x4000.sdr_crop1024.png	validate	1000-lilith-photos-general	crop	1024	1024	1024	+0.948	+20.7	+0.948	-20.0
+c0_1052_general_framed-building-painting_museum-orsay-paris_s23u_iso500-f2p4_20240425-185701_3000x4000.sdr_crop2048.png	validate	1000-lilith-photos-general	crop	2048	2048	1024	+0.711	-6.6	+0.711	-19.3
+c0_1052_general_framed-building-painting_museum-orsay-paris_s23u_iso500-f2p4_20240425-185701_3000x4000.sdr_resize1024.png	validate	1000-lilith-photos-general	resize	768	1024	1024	+0.018	+13.3		
+c0_1052_general_framed-building-painting_museum-orsay-paris_s23u_iso500-f2p4_20240425-185701_3000x4000.sdr_resize2048.png	validate	1000-lilith-photos-general	resize	1536	2048	1024	+0.071	-10.4	+0.071	-21.0
+c0_1421_nature_potted-orchids-table_shinjuku-gyoen-national-garden-shinjuku_s23u_iso16-f1p7_20230702-114223_3000x4000.sdr_crop1024.png	train	1400-lilith-nature	crop	1024	1024	952	+0.058	+4.5	+0.058	-14.7
+c0_1421_nature_potted-orchids-table_shinjuku-gyoen-national-garden-shinjuku_s23u_iso16-f1p7_20230702-114223_3000x4000.sdr_crop2048.png	train	1400-lilith-nature	crop	2048	2048	1024	+0.190	+0.5	+0.190	-22.9
+c0_1421_nature_potted-orchids-table_shinjuku-gyoen-national-garden-shinjuku_s23u_iso16-f1p7_20230702-114223_3000x4000.sdr_resize1024.png	train	1400-lilith-nature	resize	768	1024	1013	+0.025	+15.0		
+c0_1421_nature_potted-orchids-table_shinjuku-gyoen-national-garden-shinjuku_s23u_iso16-f1p7_20230702-114223_3000x4000.sdr_resize2048.png	train	1400-lilith-nature	resize	1536	2048	1024	+0.097	-0.6	+0.097	-18.3
+c12_2012_people_by-ian-taylor-blopn4jci7s-unsplash_4000x3000.sdr_crop1024.png	validate	2000-unsplash-people	crop	1024	1024	968	-0.003	+9.4	-0.003	-11.0
+c12_2012_people_by-ian-taylor-blopn4jci7s-unsplash_4000x3000.sdr_crop2048.png	validate	2000-unsplash-people	crop	2048	2048	1024	-0.002	+12.0	-0.002	-15.6
+c12_2012_people_by-ian-taylor-blopn4jci7s-unsplash_4000x3000.sdr_resize2048.png	validate	2000-unsplash-people	resize	2048	1536	1024	+0.095	+19.0	+0.095	-15.7
+c12_5049_nps_romo-2018-longs-peak-keyhole-route_gray_p02_2550x4200.sdr_crop1024.png	train	5000-national-park-service-brochures	crop	1024	1024	855	-2.441	+11.2	-2.441	-10.2
+c12_5049_nps_romo-2018-longs-peak-keyhole-route_gray_p02_2550x4200.sdr_crop2048.png	train	5000-national-park-service-brochures	crop	2048	2048	1024	-0.681	+10.9	-0.681	-10.9
+c12_5049_nps_romo-2018-longs-peak-keyhole-route_gray_p02_2550x4200.sdr_resize2048.png	train	5000-national-park-service-brochures	resize	1243	2048	1024	+0.086	+4.1	+0.086	-10.1
+c14_9156_gen_illustrations_vintage-couture-pose_1024x1536.sdr_crop1448.png	validate	9094-lilith-ai-illustrations	crop	1024	1448	883	+0.512	+23.2	+0.512	-12.9
+c14_9493_gen_products-clothing-womens-general_cream-mohair-cardigan_onmodel_p0262_1024x1536.sdr_crop1448.png	train	9226-lilith-ai-products	crop	1024	1448	1024	+0.263	+17.6	+0.263	-22.9
+c14_9493_gen_products-clothing-womens-general_cream-mohair-cardigan_onmodel_p0262_1024x1536.sdr_resize1448.png	train	9226-lilith-ai-products	resize	965	1448	869	+0.206	+8.3	+0.206	-16.6
+c16_1413_nature_mountain-landscape-clouds_colorado_s21u_iso50-f2p2_20210707-143408_4000x3000.sdr_crop1024.png	train	1400-lilith-nature	crop	1024	1024	1024	+0.206	+19.9	+0.206	-18.4
+c16_1413_nature_mountain-landscape-clouds_colorado_s21u_iso50-f2p2_20210707-143408_4000x3000.sdr_crop2048.png	train	1400-lilith-nature	crop	2048	2048	1024	+0.916	+3.4	+0.916	-16.4
+c16_1413_nature_mountain-landscape-clouds_colorado_s21u_iso50-f2p2_20210707-143408_4000x3000.sdr_resize1024.png	train	1400-lilith-nature	resize	1024	768	1024	+0.090	+6.1		
+c16_1413_nature_mountain-landscape-clouds_colorado_s21u_iso50-f2p2_20210707-143408_4000x3000.sdr_resize2048.png	train	1400-lilith-nature	resize	2048	1536	1024	+0.049	+2.5	+0.049	-20.6
+c16_1634_food_breakfast-table-setting_uchiura-shigedera-numazu-japan_s23u_iso16-f1p7_20250308-091451_3000x4000.sdr_crop2048.png	validate	1600-lilith-food	crop	2048	2048	1024	+0.779	-0.4	+0.779	-18.6
+c16_1634_food_breakfast-table-setting_uchiura-shigedera-numazu-japan_s23u_iso16-f1p7_20250308-091451_3000x4000.sdr_resize2048.png	validate	1600-lilith-food	resize	1536	2048	873	+0.123	+16.1	+0.123	-11.1
+c17_9494_gen_products-clothing-womens-general_denim-jacket-women-flat_detail_p0263_1024x1024.sdr_crop1024.png	validate	9226-lilith-ai-products	crop	1024	1024	1024	+0.207	+5.8	+0.207	-5.8
+c17_9494_gen_products-clothing-womens-general_denim-jacket-women-flat_detail_p0263_1024x1024.sdr_crop724.png	validate	9226-lilith-ai-products	crop	724	724	1024	+0.101	+19.8		
+c17_9494_gen_products-clothing-womens-general_denim-jacket-women-flat_detail_p0263_1024x1024.sdr_resize1024.png	validate	9226-lilith-ai-products	resize	1024	1024	1024	+0.207	+38.5	+0.207	-12.2
+c17_9494_gen_products-clothing-womens-general_denim-jacket-women-flat_detail_p0263_1024x1024.sdr_resize724.png	validate	9226-lilith-ai-products	resize	724	724	919	+0.246	+20.7		
+c17_9867_gen_products-sporting-goods_puffer-vest-mens_detail_p0628_1536x1024.sdr_crop1448.png	train	9226-lilith-ai-products	crop	1448	1024	1024	+0.207	-8.4	+0.207	-24.3
+c17_9867_gen_products-sporting-goods_puffer-vest-mens_detail_p0628_1536x1024.sdr_resize1448.png	train	9226-lilith-ai-products	resize	1448	965	1024	+0.103	+51.4	+0.103	-20.0
+c19_6047_scans-patents_lynn-conway-us5046022-rescan-color_p019_2479x3230.sdr_crop2048.png	validate	6000-lilith-scans-public-patents	crop	2048	2048	1024	+2.991	-0.1	+2.991	-20.3
+c19_6047_scans-patents_lynn-conway-us5046022-rescan-color_p019_2479x3230.sdr_resize2048.png	validate	6000-lilith-scans-public-patents	resize	1572	2048	1024	+0.403	+4.2	+0.403	-18.3
+c22_1054_general_modern-art-museum-exterior-paris_s23u_iso10-f1p7_20240427-165529_3000x4000.sdr_crop1024.png	train	1000-lilith-photos-general	crop	1024	1024	1024	+0.011	+63.9	+0.011	-6.0
+c22_1054_general_modern-art-museum-exterior-paris_s23u_iso10-f1p7_20240427-165529_3000x4000.sdr_crop2048.png	train	1000-lilith-photos-general	crop	2048	2048	1024	+0.085	+0.8	+0.085	-21.9
+c22_1054_general_modern-art-museum-exterior-paris_s23u_iso10-f1p7_20240427-165529_3000x4000.sdr_resize1024.png	train	1000-lilith-photos-general	resize	768	1024	927	+0.024	-0.9		
+c22_1054_general_modern-art-museum-exterior-paris_s23u_iso10-f1p7_20240427-165529_3000x4000.sdr_resize2048.png	train	1000-lilith-photos-general	resize	1536	2048	1024	+0.022	+9.8	+0.022	-14.2
+c22_1456_nature_frozen-waterfall-landscape_gullfoss-falls-blaskogabyggd_s23u_iso125-f2p4_20231209-152815_3000x4000.sdr_crop1024.png	validate	1400-lilith-nature	crop	1024	1024	881	-0.174	-3.4	-0.174	-15.3
+c22_1456_nature_frozen-waterfall-landscape_gullfoss-falls-blaskogabyggd_s23u_iso125-f2p4_20231209-152815_3000x4000.sdr_crop2048.png	validate	1400-lilith-nature	crop	2048	2048	1024	-0.869	-12.9	-0.869	-23.0
+c22_1456_nature_frozen-waterfall-landscape_gullfoss-falls-blaskogabyggd_s23u_iso125-f2p4_20231209-152815_3000x4000.sdr_resize1024.png	validate	1400-lilith-nature	resize	768	1024	825	+0.080	-9.7		
+c22_1456_nature_frozen-waterfall-landscape_gullfoss-falls-blaskogabyggd_s23u_iso125-f2p4_20231209-152815_3000x4000.sdr_resize2048.png	validate	1400-lilith-nature	resize	1536	2048	1024	+0.013	-3.4	+0.013	-27.1
+c3_9770_gen_products-home-decor_washed-linen-bedding-set-sage_flat_p0531_5504x3072.sdr_crop2048.png	train	9226-lilith-ai-products	crop	2048	2048	1024	+0.173	+9.3	+0.173	-17.4
+c6_1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827.hdr_crop2048.png	validate	1000-lilith-photos-general	crop	2048	2048	1024	+0.006	+8.8	+0.006	-13.6
+c6_1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827.hdr_resize2048.png	validate	1000-lilith-photos-general	resize	1536	2048	971	+0.005	+16.5	+0.005	-14.2
+c6_1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827.sdr_crop2048.png	train	1000-lilith-photos-general	crop	2048	2048	927	-0.000	+10.9	-0.000	-20.8
+c6_1069_general_illuminated-castle-night_cinderella-castle-orange_ip13pro_iso500-f1p5_img-7653_2870x3827.sdr_resize2048.png	train	1000-lilith-photos-general	resize	1536	2048	977	+0.008	+11.6	+0.008	-9.6
+c7_1040_general_roller-coaster-ride_fuji-q-highland-fujikawaguchiko_s23u_iso50-f2p4_20231030-160417_3000x4000.sdr_crop2048.png	validate	1000-lilith-photos-general	crop	2048	2048	1024	-0.013	+4.6	-0.013	-21.4
+c7_1040_general_roller-coaster-ride_fuji-q-highland-fujikawaguchiko_s23u_iso50-f2p4_20231030-160417_3000x4000.sdr_resize1024.png	validate	1000-lilith-photos-general	resize	768	1024	898	+0.068	+4.9		
+c7_1040_general_roller-coaster-ride_fuji-q-highland-fujikawaguchiko_s23u_iso50-f2p4_20231030-160417_3000x4000.sdr_resize2048.png	validate	1000-lilith-photos-general	resize	1536	2048	1024	+0.260	+5.4	+0.260	-18.3
+c7_6619_scans-illustrations_redoute-rose-pale-pink_plate0057_2912x4368.sdr_crop2048.png	train	6600-ia-scans-manuscript-illustrations	crop	2048	2048	994	+0.013	+16.7	+0.013	-9.4
+c7_6619_scans-illustrations_redoute-rose-pale-pink_plate0057_2912x4368.sdr_resize2048.png	train	6600-ia-scans-manuscript-illustrations	resize	1365	2048	931	+0.136	-1.4	+0.136	-11.4

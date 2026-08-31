@@ -26,6 +26,11 @@ jxl_sectioned_adaptive_k_leaves{,_t1}_2026-08-31.tsv  probe-tree leaf count
     these directly, so the fit re-runs from the repo with no re-encode.
 jxl_sectioned_adaptive_k_bar_2026-08-31.tsv      the wall BAR cell (photo
     3840x2160) at e7 and e9, threads 1 and 8, 5 repeats, ours vs cjxl.
+jxl_sectioned_adaptive_k_fired_2026-08-31.tsv    EVERY rendition where the
+    shipped gate fires, one row each, with its split, content class, probe
+    leaf count, and byte + wall move vs the previous fixed-K default at both
+    thread counts. Renditions ABSENT from that file are byte-identical to the
+    previous default — that is the complete statement of what moved.
 
 Re-run the fit:
     python3 scripts/fit_sectioned_k_gate.py \
@@ -309,3 +314,25 @@ also re-verifies the root cause #99 filed:
   arm      total      learn   find_best_split   probe    gather
   K=8     11540 ms   8654 ms      4827 ms         -      892 ms
   gate     8954 ms   4808 ms      2829 ms      683 ms    704 ms
+
+
+============================================== WHERE THE GATE FIRES (the list)
+
+`jxl_sectioned_adaptive_k_fired_2026-08-31.tsv` is the per-cell record. 49 of
+310 renditions, 24 train / 25 validate / 0 continuity, by content class:
+
+  1000-lilith-photos-general              15
+  1400-lilith-nature                      12
+  9226-lilith-ai-products                  9
+  2000-unsplash-people                     3
+  5000-national-park-service-brochures     3
+  1600-lilith-food                         2
+  6000-lilith-scans-public-patents         2
+  6600-ia-scans-manuscript-illustrations   2
+  9094-lilith-ai-illustrations             1
+
+Zero in 5300-noaa-hurricane-documents, 7000-lilith-plots,
+8100-lilith-web-screenshots, 9000-lilith-ai-clipart and gb82-sc. Those
+classes — the ones the 2026-08-28 fixed-K sweep showed were the byte-fragile
+ones — are byte-identical to what shipped before, by construction rather
+than by tuning: their probe trees do not reach the trust floor.
