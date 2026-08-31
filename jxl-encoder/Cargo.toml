@@ -1803,6 +1803,18 @@ name = "zensim_loop_smoke_bench"
 path = "examples/zensim_loop_smoke_bench.rs"
 required-features = ["__expert", "butteraugli-loop", "zensim-loop", "ssim2-loop", "parallel"]
 
+# Config-over-flags Phase 1 (2026-08-31,
+# ~/work/zen-workspace/CONFIG_OVER_FLAGS_2026-08-31.md): byte-identity harness
+# for the zensim loop's configuration surface. NO hash lock covers that loop
+# (it needs `zensim-loop` AND an explicit `PerceptualMetric::Zensim` opt-in), so
+# the locks can only prove the absence of collateral damage — this prints a
+# per-cell SHA256 over a real corpus and is the direct evidence that a config
+# refactor moved zero bytes. Driver: `scripts/zensim-loop-eff/byte_identity_matrix.sh`.
+[[example]]
+name = "zensim_config_byte_identity"
+path = "examples/zensim_config_byte_identity.rs"
+required-features = ["zensim-loop"]
+
 # cvvdp-fork Phase 8b (2026-05-25): diffmap distribution capture
 # harness. Encodes 5 fixtures × 4 distances with both butteraugli + cvvdp
 # loops, dumping per-iter diffmap stats via the

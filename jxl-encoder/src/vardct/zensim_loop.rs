@@ -67,14 +67,20 @@ fn map_bake_bytes() -> &'static [u8] {
 }
 static MAP_PROFILE: std::sync::OnceLock<Option<(zensim::ZensimProfile, usize)>> =
     std::sync::OnceLock::new();
-fn map_profile_from_env() -> Option<(zensim::ZensimProfile, usize)> {
+/// Mount the split-role gradient bake named by [`ZensimLoopConfig::map_bake_path`].
+///
+/// Still process-`OnceLock`-cached and still called LAZILY (only from the
+/// gradient-derivation block), because the mount `eprintln!`s and can `panic!`
+/// on a bad path — hoisting it to construction would make those fire on encodes
+/// that never use the arm. The env READ moved to the config; the mount did not.
+fn map_profile_from(path: Option<&str>) -> Option<(zensim::ZensimProfile, usize)> {
     *MAP_PROFILE.get_or_init(|| {
-        let path = std::env::var("JXL_ZENSIM_MAP_BAKE").ok()?;
+        let path = path?;
         if path.is_empty() {
             return None;
         }
         let bytes =
-            std::fs::read(&path).unwrap_or_else(|e| panic!("JXL_ZENSIM_MAP_BAKE {path}: {e}"));
+            std::fs::read(path).unwrap_or_else(|e| panic!("JXL_ZENSIM_MAP_BAKE {path}: {e}"));
         MAP_BAKE_BYTES.set(bytes).expect("map bake set once");
         let params = zensim::profile::ProfileParams::builder()
             .mlp(map_bake_bytes)
@@ -167,11 +173,12 @@ fn rd_attr_map_profile() -> zensim::ZensimProfile {
     })
 }
 
-/// `JXL_ZENSIM_RD_PROFILE=a|b|latest|bake:<path>` → (profile, n_inputs).
-/// n_inputs = 0 means "model-map unsupported for this profile" (A's feature
-/// regime is not probed; the shipped default needs no gradient).
-fn rd_profile_from_env() -> (zensim::ZensimProfile, usize) {
-    let v = std::env::var("JXL_ZENSIM_RD_PROFILE").unwrap_or_default();
+/// `a|b|latest|bake:<path>` (the [`ZensimLoopConfig::rd_profile_spec`] value)
+/// → (profile, n_inputs). n_inputs = 0 means "model-map unsupported for this
+/// profile" (A's feature regime is not probed; the shipped default needs no
+/// gradient). Still process-`OnceLock`-cached at the call site: the mount leaks
+/// a `ProfileParams` and `RD_BAKE_BYTES` may only be `set` once.
+fn rd_profile_from_spec(v: &str) -> (zensim::ZensimProfile, usize) {
     if let Some(path) = v.strip_prefix("bake:") {
         let bytes = std::fs::read(path)
             .unwrap_or_else(|e| panic!("JXL_ZENSIM_RD_PROFILE bake {path}: {e}"));
@@ -201,7 +208,7 @@ fn rd_profile_from_env() -> (zensim::ZensimProfile, usize) {
         );
         return (profile, n_in);
     }
-    match v.as_str() {
+    match v {
         "b" => (zensim::ZensimProfile::B, 372),
         "latest" => (zensim::ZensimProfile::latest_preview(), 372),
         _ =>
@@ -230,37 +237,47 @@ struct ZensimParams {
     factor_max: f32, // ZENSIM_FACTOR_MAX (1.01-2.0)
 }
 
+impl Default for ZensimParams {
+    /// Tuned by parameter sweep (2026-03-08, 20 images validated).
+    /// masking=8,sqrt=0: preserves diffmap dynamic range for redistribution.
+    /// L2/sw=0.6/rmax=3.0: best quality gain across diverse images.
+    ///   → +1.262 SSIM2 at +1.10% size (e7-zen4 vs e7, 20-img avg)
+    ///   → +0.000 SSIM2 at -4.61% size (e8-zen4 vs e7, 20-img avg)
+    /// L6/sw=1.0/rmax=2.0 tested: lower size cost but -11% less quality
+    /// gain and e8-zen4 regression (-0.114 SSIM2). Overfits on 4-img sample.
+    fn default() -> Self {
+        Self {
+            masking_strength: Some(8.0),
+            sqrt: false,
+            include_hf: true,
+            include_edge_mse: true,
+            norm_power: 2.0,
+            spatial_weight: 0.6,
+            ratio_max: 3.0,
+            alpha_base: 0.25,
+            factor_max: 1.15,
+        }
+    }
+}
+
 impl ZensimParams {
     fn from_env() -> Self {
+        let d = Self::default();
         Self {
-            // Defaults tuned by parameter sweep (2026-03-08, 20 images validated).
-            // masking=8,sqrt=0: preserves diffmap dynamic range for redistribution.
-            // L2/sw=0.6/rmax=3.0: best quality gain across diverse images.
-            //   → +1.262 SSIM2 at +1.10% size (e7-zen4 vs e7, 20-img avg)
-            //   → +0.000 SSIM2 at -4.61% size (e8-zen4 vs e7, 20-img avg)
-            // L6/sw=1.0/rmax=2.0 tested: lower size cost but -11% less quality
-            // gain and e8-zen4 regression (-0.114 SSIM2). Overfits on 4-img sample.
-            masking_strength: Self::env_masking("ZENSIM_MASKING", Some(8.0)),
-            sqrt: Self::env_bool("ZENSIM_SQRT", false),
-            include_hf: Self::env_bool("ZENSIM_HF", true),
-            include_edge_mse: Self::env_bool("ZENSIM_EDGE_MSE", true),
-            norm_power: Self::env_f32("ZENSIM_NORM", 2.0),
-            spatial_weight: Self::env_f32("ZENSIM_SPATIAL_W", 0.6),
-            ratio_max: Self::env_f32("ZENSIM_RATIO_MAX", 3.0),
-            alpha_base: Self::env_f32("ZENSIM_ALPHA", 0.25),
-            factor_max: Self::env_f32("ZENSIM_FACTOR_MAX", 1.15),
+            masking_strength: Self::env_masking("ZENSIM_MASKING", d.masking_strength),
+            sqrt: Self::env_bool("ZENSIM_SQRT", d.sqrt),
+            include_hf: Self::env_bool("ZENSIM_HF", d.include_hf),
+            include_edge_mse: Self::env_bool("ZENSIM_EDGE_MSE", d.include_edge_mse),
+            norm_power: env_parse("ZENSIM_NORM").unwrap_or(d.norm_power),
+            spatial_weight: env_parse("ZENSIM_SPATIAL_W").unwrap_or(d.spatial_weight),
+            ratio_max: env_parse("ZENSIM_RATIO_MAX").unwrap_or(d.ratio_max),
+            alpha_base: env_parse("ZENSIM_ALPHA").unwrap_or(d.alpha_base),
+            factor_max: env_parse("ZENSIM_FACTOR_MAX").unwrap_or(d.factor_max),
         }
     }
 
-    fn env_f32(name: &str, default: f32) -> f32 {
-        std::env::var(name)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default)
-    }
-
     fn env_bool(name: &str, default: bool) -> bool {
-        match std::env::var(name).ok().as_deref() {
+        match env_str(name).as_deref() {
             Some("0" | "false" | "no") => false,
             Some("1" | "true" | "yes") => true,
             _ => default,
@@ -268,11 +285,653 @@ impl ZensimParams {
     }
 
     fn env_masking(name: &str, default: Option<f32>) -> Option<f32> {
-        match std::env::var(name).ok().as_deref() {
+        match env_str(name).as_deref() {
             Some("none" | "0" | "off") => None,
             Some(s) => s.parse().ok().map(Some).unwrap_or(default),
             None => default,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Config over flags — Phase 1 (2026-08-31).
+//
+// Design: `~/work/zen-workspace/CONFIG_OVER_FLAGS_2026-08-31.md`.
+//
+// Before this, the loop read the process environment at **27 sites**, two of
+// them inside the iteration body. `env::var` allocates a `String` and
+// takes a process-global lock on every call, so a knob that is a string parsed
+// per iteration is a knob that costs something every iteration.
+//
+// After: exactly **one** `env::var` call site in this file ([`env_str`]),
+// reached only from the two `from_env` constructors below, both of which run
+// once per encode. Every consumer in the loop body reads a typed field on
+// [`ZensimLoopConfig`] or calls a method on [`ZensimLoopObserver`].
+//
+// `from_env` is a **compatibility shim**, not the interface: `Default` is
+// exactly the shipped behaviour, every env name keeps its shipped meaning and
+// its shipped default, and the four TSV sinks keep their exact column shapes,
+// so `scripts/zensim-loop-eff/*` and the two smoke tests run unchanged. Phase 2
+// deletes the shim knob by knob as callers learn to build the struct directly.
+// ---------------------------------------------------------------------------
+
+/// The ONE place this file touches the process environment.
+///
+/// Called only from [`ZensimLoopConfig::from_env`], [`EnvTraceObserver::from_env`]
+/// and [`ZensimParams::from_env`] — never from the loop body, never per
+/// iteration. Keep it that way: the line below is meant to be this file's ONLY
+/// occurrence of the fully-qualified call, so grepping for it must return
+/// exactly one hit. (Every other mention in this file deliberately spells it
+/// `env::var` so the grep stays a real check rather than a slogan.)
+fn env_str(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// `env_str` + `FromStr`; `None` when unset or unparseable.
+fn env_parse<T: core::str::FromStr>(name: &str) -> Option<T> {
+    env_str(name).and_then(|s| s.parse().ok())
+}
+
+/// `1|true|yes` = on; unset or anything else = off. (`JXL_ZENSIM_SECANT`
+/// deliberately does NOT use this — it defaults ON and accepts a different
+/// spelling set; see [`ZensimLoopConfig::from_env`].)
+fn env_flag(name: &str) -> bool {
+    matches!(env_str(name).as_deref(), Some("1" | "true" | "yes"))
+}
+
+/// Controller exponent when neither `JXL_ZENSIM_CTRL_EXP` nor the S4 per-image
+/// prior supplies one. Pure proportional, adopted by the beats-butter study
+/// (campaign appendix Y part 2): monotone dose-response
+/// `0.45 << 0.6 < 0.8 < 1.0 >= 1.2` at BOTH budgets, 26W/1L vs the old 0.6,
+/// median |err| 1.659 → 0.564 on the frontier arm.
+const CTRL_EXP_DEFAULT: f64 = 1.0;
+
+/// Per-step clamp on the controller's global scale factor. 2.00 since the
+/// beats-butter study (2026-08-07): at exp 1.0 the dose-response peaks at 2.0
+/// (k3 census 20 → 24/27, nonphoto 3/9 → 7/9, photo unchanged, median |err|
+/// 0.564 → 0.535; 2.5 regresses to 23). The old 1.35 could not descend far
+/// enough on the nonphoto overshoot class in 2-3 steps.
+const CTRL_CLAMP_DEFAULT: f64 = 2.00;
+
+/// Default H3 per-tile magnitude gain (`ZENSIM_H3_GAIN`).
+const H3_GAIN_DEFAULT: f32 = 10.0;
+
+/// Default score tolerance for the target-seeking early stop.
+const TARGET_TOL_DEFAULT: f64 = 0.25;
+
+/// Level-2 binned attribution stride. JXL var-DCT tiles are 8-px aligned and
+/// the loop reads the map ONLY through `query_rect` on tile rects, so `8`
+/// answers every steering query EXACTLY while the map fold + SAT shrink 64×.
+/// `1` restores the per-pixel path (byte-identical pre-L2 behaviour) for A/B.
+const ATTR_BIN_DEFAULT: usize = 8;
+
+/// The loop-steering arm — was `JXL_ZENSIM_MODEL_MAP`, eight string literals
+/// `matches!`-ed at six sites in the loop body.
+///
+/// An unrecognised value parses to `None`, which the loop still refuses loudly:
+/// the 23shot-sota944 hazard was a typo'd arm masquerading as baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MapArm {
+    /// Signed per-scale `ModelSensitivity` fold (372-class only).
+    Signed,
+    /// `-|s|` fold, for additive solves (372-class only).
+    Abs,
+    /// C3b fused score+attribution steering.
+    Attr,
+    /// …steering with the PREVIOUS iteration's map.
+    AttrStale,
+    /// #69 H1: signed per-tile mass drives the qf factor directly.
+    H1Signed,
+    /// #69 H2: the map steers only the ZERO-SUM residual.
+    H2Ctrl,
+    /// #69 H3: per-tile step ∝ `query_rect` score-units.
+    H3Mag,
+    /// …with the previous iteration's map.
+    H3MagStale,
+}
+
+impl MapArm {
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "signed" => Self::Signed,
+            "abs" => Self::Abs,
+            "attr" => Self::Attr,
+            "attr-stale" => Self::AttrStale,
+            "h1-signed" => Self::H1Signed,
+            "h2-ctrl" => Self::H2Ctrl,
+            "h3-mag" => Self::H3Mag,
+            "h3-mag-stale" => Self::H3MagStale,
+            _ => return None,
+        })
+    }
+
+    /// ATTR family: routes through the fused score+attribution compare.
+    fn is_attr(self) -> bool {
+        matches!(
+            self,
+            Self::Attr
+                | Self::AttrStale
+                | Self::H1Signed
+                | Self::H2Ctrl
+                | Self::H3Mag
+                | Self::H3MagStale
+        )
+    }
+
+    /// `*-stale`: steer with the PREVIOUS iteration's map.
+    fn is_stale(self) -> bool {
+        matches!(self, Self::AttrStale | Self::H3MagStale)
+    }
+
+    /// FOLD family: the per-scale `ModelSensitivity` fold, which has no
+    /// folded-class integrands.
+    fn is_fold_family(self) -> bool {
+        matches!(self, Self::Signed | Self::Abs)
+    }
+
+    /// #69 H-arm index; `None` for the C3b and fold arms.
+    fn h_index(self) -> Option<u8> {
+        match self {
+            Self::H1Signed => Some(1),
+            Self::H2Ctrl => Some(2),
+            Self::H3Mag | Self::H3MagStale => Some(3),
+            _ => None,
+        }
+    }
+}
+
+/// A-Y1 adaptive H3 gain shape — was `ZENSIM_H3_GAIN_MODE`.
+///
+/// Unset OR unrecognised is `Fixed` (the shipped constant gain). That
+/// fall-through is pre-existing behaviour and is preserved deliberately —
+/// unlike [`MapArm`], an unknown gain mode has never been a loud refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum H3GainMode {
+    /// Shipped constant gain.
+    #[default]
+    Fixed,
+    /// `gain · 0.5^iter`.
+    Decay,
+    /// `gain · min(1, |err_i| / |err_0|)` — needs a target, else `Fixed`.
+    Err,
+    /// Plan §5 arm S3: per-tile measured elasticity after 2 iterates.
+    TileSecant,
+}
+
+impl H3GainMode {
+    fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("decay") => Self::Decay,
+            Some("err") => Self::Err,
+            Some("tile-secant") => Self::TileSecant,
+            _ => Self::Fixed,
+        }
+    }
+}
+
+/// The two fitted secant trust-region floors (`JXL_ZENSIM_SECANT_MIN_DLNL`,
+/// `JXL_ZENSIM_SECANT_MIN_EPS`). See the two `*_DEFAULT` consts at the top of
+/// this file for what each is for and the sweep that chose it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SecantGuards {
+    min_dlnl: f64,
+    min_eps: f64,
+}
+
+impl Default for SecantGuards {
+    fn default() -> Self {
+        Self {
+            min_dlnl: SECANT_MIN_DLNL_DEFAULT,
+            min_eps: SECANT_MIN_EPS_DEFAULT,
+        }
+    }
+}
+
+impl SecantGuards {
+    fn from_env() -> Self {
+        let d = Self::default();
+        Self {
+            min_dlnl: env_parse::<f64>("JXL_ZENSIM_SECANT_MIN_DLNL")
+                .filter(|v: &f64| v.is_finite() && *v >= 0.0)
+                .unwrap_or(d.min_dlnl),
+            min_eps: env_parse::<f64>("JXL_ZENSIM_SECANT_MIN_EPS")
+                .filter(|v: &f64| v.is_finite() && *v >= 0.0)
+                .unwrap_or(d.min_eps),
+        }
+    }
+}
+
+/// The damped global step's controller — collapses `JXL_ZENSIM_SECANT`,
+/// `_CTRL_EXP`, `_CTRL_CLAMP`, `_SECANT_MIN_EPS` and `_SECANT_MIN_DLNL` into
+/// one typed value.
+///
+/// **Deliberate deviation from the design doc's proposed shape**
+/// (`PowerLaw { exp, clamp }` / `Secant { min_eps, min_dlnl }`): here the two
+/// are not alternatives. The secant falls back to the power law *per step* on
+/// four documented conditions, so `exp` is load-bearing inside the `Secant` arm
+/// too, and `clamp` bounds the output of both. Carrying both on both arms puts
+/// that fact in the type instead of a comment; a `Secant` without an `exp`
+/// would be a controller that cannot take its own first step.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Controller {
+    /// `JXL_ZENSIM_SECANT=0` — the pure power law `(L / L_t)^exp`.
+    PowerLaw { exp: f64, clamp: f64 },
+    /// Default (budget-optimal, user directive 2026-08-25). Measured
+    /// elasticity `ε̂ = Δln L / Δln S` from the last two iterates, with the
+    /// power law as the mandatory first-iterate step and as the fallback
+    /// whenever a guard rejects ε̂.
+    Secant {
+        exp: f64,
+        clamp: f64,
+        min_eps: f64,
+        min_dlnl: f64,
+    },
+}
+
+/// One controller step — exactly the fields `JXL_ZENSIM_SECANT_TRACE`'s 10
+/// columns carry, plus the applied factor `g` the loop consumes.
+#[derive(Debug, Clone, Copy)]
+struct ControllerStep {
+    /// The power-law factor, always computed (it is the secant's fallback).
+    g_pow: f64,
+    /// The chosen factor before clamping.
+    g_raw: f64,
+    /// The measured elasticity, or `NaN` when no secant step was attempted.
+    eps_hat: f64,
+    /// `secant` | `powerlaw:<reason>`.
+    used: &'static str,
+    /// `g_raw` clamped to `[1/clamp, clamp]` — what the loop applies.
+    g: f64,
+}
+
+impl Controller {
+    fn exp(self) -> f64 {
+        match self {
+            Self::PowerLaw { exp, .. } | Self::Secant { exp, .. } => exp,
+        }
+    }
+
+    fn clamp_bound(self) -> f64 {
+        match self {
+            Self::PowerLaw { clamp, .. } | Self::Secant { clamp, .. } => clamp,
+        }
+    }
+
+    /// In THIS codebase higher quant_field = more bits = LESS loss, so ε̂ is
+    /// NEGATIVE. Four conditions must hold to extrapolate along it: a previous
+    /// iterate exists (iter 0 is always power law), the SCALE moved (Δln S, the
+    /// ratio's denominator), the LOSS moved by at least `min_dlnl` (Δln L, the
+    /// ratio's numerator), and the elasticity is steep enough (`min_eps` — the
+    /// STEP's denominator, which is what actually sets step size).
+    fn step(
+        self,
+        achieved_loss: f64,
+        target_loss: f64,
+        cur_log_l: f64,
+        prev_log_l: f64,
+        d_ln_l: f64,
+        d_ln_s: f64,
+    ) -> ControllerStep {
+        let g_pow = (achieved_loss / target_loss).powf(self.exp());
+        let mut eps_hat = f64::NAN;
+        let (g_raw, used) = match self {
+            Self::PowerLaw { .. } => (g_pow, "powerlaw:off"),
+            Self::Secant {
+                min_eps, min_dlnl, ..
+            } => {
+                if !prev_log_l.is_finite() {
+                    (g_pow, "powerlaw:iter0")
+                } else if d_ln_s.abs() <= 1e-6 {
+                    (g_pow, "powerlaw:dlns")
+                } else if d_ln_l.abs() <= min_dlnl {
+                    (g_pow, "powerlaw:dlnl")
+                } else {
+                    eps_hat = d_ln_l / d_ln_s;
+                    if eps_hat < -min_eps {
+                        (((target_loss.ln() - cur_log_l) / eps_hat).exp(), "secant")
+                    } else if eps_hat < 0.0 {
+                        (g_pow, "powerlaw:eps")
+                    } else {
+                        (g_pow, "powerlaw:sign")
+                    }
+                }
+            }
+        };
+        let bound = self.clamp_bound();
+        ControllerStep {
+            g_pow,
+            g_raw,
+            eps_hat,
+            used,
+            g: g_raw.clamp(1.0 / bound, bound),
+        }
+    }
+}
+
+/// Every knob the zensim loop exposes, as typed fields.
+///
+/// `Default` is EXACTLY the shipped behaviour. [`Self::from_env`] is the
+/// Phase-1 compatibility shim; see the module-level block comment above.
+#[derive(Debug, Clone)]
+struct ZensimLoopConfig {
+    /// Diffmap + redistribution knobs (`ZENSIM_MASKING` … `ZENSIM_FACTOR_MAX`).
+    diffmap: ZensimParams,
+    /// `JXL_ZENSIM_RD_PROFILE` — `a|b|latest|bake:<path>`; empty = shipped A.
+    rd_profile_spec: String,
+    /// `JXL_ZENSIM_MAP_BAKE` — split-role gradient bake; `None` = single-bake.
+    map_bake_path: Option<String>,
+    /// `JXL_ZENSIM_QF_GLOBAL_SCALE`, pre-filtered to the values that actually
+    /// act (finite, > 0, != 1); `None` = no-op.
+    qf_global_scale: Option<f32>,
+    /// `JXL_ZENSIM_MODEL_MAP` verbatim — kept only for the refusal messages.
+    model_map_raw: String,
+    /// Whether an arm was requested at all (an empty string counts as unset,
+    /// matching the `remove_var` drivers that clear the arm between runs).
+    model_map_requested: bool,
+    /// The parsed arm. `None` together with `model_map_requested` means an
+    /// UNKNOWN arm, which the loop refuses loudly rather than running baseline.
+    map_arm: Option<MapArm>,
+    /// `JXL_ZENSIM_SINGLEPASS` — stale-scalar (372-class) / stale-map (folded).
+    singlepass: bool,
+    /// `ZENSIM_H3_GAIN`.
+    h3_gain: f32,
+    /// `ZENSIM_H3_GAIN_MODE`.
+    h3_gain_mode: H3GainMode,
+    /// `JXL_ZENSIM_MAP_EMA`, pre-filtered to finite `(0, 1)`.
+    map_ema_alpha: Option<f32>,
+    /// `ZENSIM_ATTR_BIN`.
+    attr_bin: usize,
+    /// `JXL_ZENSIM_TARGET_SCORE` — native 0-100 score target.
+    target_native: Option<f64>,
+    /// `JXL_ZENSIM_TARGET_TOL` — early-stop tolerance.
+    target_tol: f64,
+    /// `JXL_ZENSIM_EMIT_BEST`, already ANDed with "a target is set" ("best" is
+    /// undefined without one).
+    emit_best: bool,
+    /// `JXL_ZENSIM_CTRL_EXP`, validated to finite `(0, 2]`. `None` hands the
+    /// exponent to the S4 per-image prior, then to [`CTRL_EXP_DEFAULT`].
+    ctrl_exp_override: Option<f64>,
+    /// `JXL_ZENSIM_S4_EPS` — false disables the per-image elasticity prior
+    /// without touching anything else.
+    s4_eps_prior: bool,
+    /// `JXL_ZENSIM_CTRL_CLAMP`, validated to finite `> 1`.
+    ctrl_clamp: f64,
+    /// `JXL_ZENSIM_SECANT` — `None` selects [`Controller::PowerLaw`].
+    secant: Option<SecantGuards>,
+    /// `JXL_ZENSIM_FDPROBE=seq` — the legacy per-probe FD gradient path.
+    fd_gradient_sequential: bool,
+}
+
+impl Default for ZensimLoopConfig {
+    fn default() -> Self {
+        Self {
+            diffmap: ZensimParams::default(),
+            rd_profile_spec: String::new(),
+            map_bake_path: None,
+            qf_global_scale: None,
+            model_map_raw: String::new(),
+            model_map_requested: false,
+            map_arm: None,
+            singlepass: false,
+            h3_gain: H3_GAIN_DEFAULT,
+            h3_gain_mode: H3GainMode::Fixed,
+            map_ema_alpha: None,
+            attr_bin: ATTR_BIN_DEFAULT,
+            target_native: None,
+            target_tol: TARGET_TOL_DEFAULT,
+            emit_best: false,
+            ctrl_exp_override: None,
+            s4_eps_prior: true,
+            ctrl_clamp: CTRL_CLAMP_DEFAULT,
+            secant: Some(SecantGuards::default()),
+            fd_gradient_sequential: false,
+        }
+    }
+}
+
+impl ZensimLoopConfig {
+    /// Phase-1 compatibility shim: parse the environment ONCE per encode into
+    /// typed fields. Every name keeps its shipped meaning, its shipped default
+    /// and its shipped validation, so the `scripts/zensim-loop-eff/*` harnesses
+    /// and the two `zensim_*_smoke` tests run unchanged.
+    fn from_env() -> Self {
+        let d = Self::default();
+        let model_map_raw = env_str("JXL_ZENSIM_MODEL_MAP").unwrap_or_default();
+        let target_native: Option<f64> = env_parse("JXL_ZENSIM_TARGET_SCORE");
+        Self {
+            diffmap: ZensimParams::from_env(),
+            rd_profile_spec: env_str("JXL_ZENSIM_RD_PROFILE").unwrap_or_default(),
+            map_bake_path: env_str("JXL_ZENSIM_MAP_BAKE"),
+            qf_global_scale: env_parse::<f32>("JXL_ZENSIM_QF_GLOBAL_SCALE")
+                .filter(|g: &f32| g.is_finite() && *g > 0.0 && *g != 1.0),
+            map_arm: MapArm::parse(&model_map_raw),
+            model_map_requested: !model_map_raw.is_empty(),
+            model_map_raw,
+            singlepass: env_flag("JXL_ZENSIM_SINGLEPASS"),
+            h3_gain: env_parse("ZENSIM_H3_GAIN").unwrap_or(d.h3_gain),
+            h3_gain_mode: H3GainMode::parse(env_str("ZENSIM_H3_GAIN_MODE").as_deref()),
+            map_ema_alpha: env_parse::<f32>("JXL_ZENSIM_MAP_EMA")
+                .filter(|a: &f32| a.is_finite() && *a > 0.0 && *a < 1.0),
+            attr_bin: env_parse::<usize>("ZENSIM_ATTR_BIN")
+                .filter(|b: &usize| *b >= 1)
+                .unwrap_or(d.attr_bin),
+            target_native,
+            target_tol: env_parse("JXL_ZENSIM_TARGET_TOL").unwrap_or(d.target_tol),
+            // Short-circuit preserved: without a target the flag is not read.
+            emit_best: target_native.is_some() && env_flag("JXL_ZENSIM_EMIT_BEST"),
+            ctrl_exp_override: env_parse::<f64>("JXL_ZENSIM_CTRL_EXP")
+                .filter(|e: &f64| e.is_finite() && *e > 0.0 && *e <= 2.0),
+            s4_eps_prior: !matches!(
+                env_str("JXL_ZENSIM_S4_EPS").as_deref(),
+                Some("0" | "false" | "off")
+            ),
+            ctrl_clamp: env_parse::<f64>("JXL_ZENSIM_CTRL_CLAMP")
+                .filter(|c: &f64| c.is_finite() && *c > 1.0)
+                .unwrap_or(d.ctrl_clamp),
+            // NOT `env_flag`: this one defaults ON and accepts only `1` or a
+            // case-insensitive `true` (notably NOT `yes`).
+            secant: env_str("JXL_ZENSIM_SECANT")
+                .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+                .unwrap_or(true)
+                .then(SecantGuards::from_env),
+            fd_gradient_sequential: env_str("JXL_ZENSIM_FDPROBE").is_some_and(|v| v == "seq"),
+        }
+    }
+
+    /// Build the controller for this encode.
+    ///
+    /// `exp` is resolved LATE because the S4 per-image prior needs the image;
+    /// see the call site in `zensim_refine_quant_field`.
+    fn controller(&self, exp: f64) -> Controller {
+        match self.secant {
+            Some(g) => Controller::Secant {
+                exp,
+                clamp: self.ctrl_clamp,
+                min_eps: g.min_eps,
+                min_dlnl: g.min_dlnl,
+            },
+            None => Controller::PowerLaw {
+                exp,
+                clamp: self.ctrl_clamp,
+            },
+        }
+    }
+}
+
+/// Per-iteration record, handed to the observer AFTER the compare while
+/// `quant_field` still holds the field this compare MEASURED (redistribution
+/// and the controller run later in the iteration).
+struct IterationRecord<'a> {
+    iter: usize,
+    score: f64,
+    quant_field: &'a [f32],
+    iter_ms: f64,
+}
+
+/// The per-tile steering field a steered iteration is about to redistribute
+/// with: the SIGNED mean attribution density on the #69 H arms, the
+/// anchor-blended tile distance otherwise.
+struct TileFieldRecord<'a> {
+    values: &'a [f32],
+}
+
+/// One damped-controller step.
+struct ControllerRecord {
+    iter: usize,
+    ln_l: f64,
+    d_ln_l: f64,
+    d_ln_s: f64,
+    step: ControllerStep,
+}
+
+/// One record per encode, at loop exit.
+struct LoopSummaryRecord<'a> {
+    compares_used: usize,
+    final_score: f64,
+    total_ms: f64,
+    iter_ms: &'a [f64],
+}
+
+/// Instrumentation sink — replaces the `*_TRACE` / `*_STATS` / `*_PROBE` env
+/// family. The library hands out typed records; it does not decide where they
+/// go.
+///
+/// **Deliberate deviation from the design doc's proposed shape**
+/// (`on_iteration: Option<&dyn Fn(&IterationRecord)>`): a single closure cannot
+/// carry this loop's instrumentation, because the four things the harnesses ask
+/// for fire at four different points with four different payloads — the tile
+/// field mid-iteration before redistribution, the compare result after it, the
+/// controller step at the end of the iteration, and the summary once per
+/// encode. A closure would have to be called with a sum type and re-dispatched
+/// inside, which is a `match` pretending to be a signature. Four defaulted
+/// no-op methods cost a harness nothing (implement only what you consume) and
+/// keep each payload's type honest.
+trait ZensimLoopObserver {
+    fn on_tile_field(&self, _r: &TileFieldRecord<'_>) {}
+    fn on_iteration(&self, _r: &IterationRecord<'_>) {}
+    fn on_controller_step(&self, _r: &ControllerRecord) {}
+    fn on_finish(&self, _r: &LoopSummaryRecord<'_>) {}
+}
+
+/// Phase-1 shim observer: reproduces the four env-gated append-only TSV sinks
+/// byte for byte.
+///
+/// **Two column shapes are load-bearing and must not change.**
+/// `JXL_ZENSIM_TRACE`'s 7 columns are numerically diffed against committed TSVs
+/// by the substrate probe in `scripts/zensim-loop-eff/analyze_23shot.py verify`
+/// — which is exactly why `JXL_ZENSIM_SECANT_TRACE` is a separate file rather
+/// than extra columns on that one. `JXL_ZENSIM_ATTR_PROBE`'s 4 columns are
+/// asserted by `tests/zensim_attr_smoke.rs` and `tests/zensim_h_arms_smoke.rs`
+/// (`split('\t').skip(1)`, then exactly 3 floats).
+#[derive(Debug, Default, Clone)]
+struct EnvTraceObserver {
+    /// `JXL_ZENSIM_TRACE` — 7 cols, one line per compare.
+    trace_path: Option<String>,
+    /// `JXL_ZENSIM_TRACE_ID` — column 0 of both traces.
+    trace_id: String,
+    /// `JXL_ZENSIM_SECANT_TRACE` — 10 cols, one line per controller step.
+    secant_trace_path: Option<String>,
+    /// `JXL_ZENSIM_RD_STATS` — 4 cols, one line per encode.
+    stats_path: Option<String>,
+    /// `JXL_ZENSIM_ATTR_PROBE` — 4 cols, one line per steered iteration.
+    attr_probe_path: Option<String>,
+}
+
+impl EnvTraceObserver {
+    fn from_env() -> Self {
+        Self {
+            trace_path: env_str("JXL_ZENSIM_TRACE"),
+            trace_id: env_str("JXL_ZENSIM_TRACE_ID").unwrap_or_default(),
+            secant_trace_path: env_str("JXL_ZENSIM_SECANT_TRACE"),
+            stats_path: env_str("JXL_ZENSIM_RD_STATS"),
+            attr_probe_path: env_str("JXL_ZENSIM_ATTR_PROBE"),
+        }
+    }
+
+    /// Append one already-newline-terminated line; failures are ignored, as
+    /// they always were (instrumentation must never break an encode).
+    fn append(path: &str, line: &str) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+}
+
+impl ZensimLoopObserver for EnvTraceObserver {
+    fn on_tile_field(&self, r: &TileFieldRecord<'_>) {
+        let Some(pp) = &self.attr_probe_path else {
+            return;
+        };
+        let (mut mn, mut mx, mut sum) = (f32::INFINITY, f32::NEG_INFINITY, 0.0f64);
+        for &v in r.values.iter() {
+            mn = mn.min(v);
+            mx = mx.max(v);
+            sum += v as f64;
+        }
+        let mean = sum / r.values.len().max(1) as f64;
+        Self::append(pp, &format!("attr_iter\t{mn}\t{mx}\t{mean}\n"));
+    }
+
+    fn on_iteration(&self, r: &IterationRecord<'_>) {
+        let Some(tp) = &self.trace_path else {
+            return;
+        };
+        let (mut qmn, mut qmx, mut qsum) = (f32::INFINITY, f32::NEG_INFINITY, 0.0f64);
+        for &v in r.quant_field.iter() {
+            qmn = qmn.min(v);
+            qmx = qmx.max(v);
+            qsum += v as f64;
+        }
+        let qmean = qsum / r.quant_field.len().max(1) as f64;
+        let (trace_id, iter, score, ms) = (&self.trace_id, r.iter, r.score, r.iter_ms);
+        Self::append(
+            tp,
+            &format!("{trace_id}\t{iter}\t{score:.4}\t{qmean:.6}\t{qmn:.6}\t{qmx:.6}\t{ms:.1}\n"),
+        );
+    }
+
+    fn on_controller_step(&self, r: &ControllerRecord) {
+        let Some(stp) = &self.secant_trace_path else {
+            return;
+        };
+        let trace_id = &self.trace_id;
+        let (iter, cur_log_l, d_ln_l, d_ln_s) = (r.iter, r.ln_l, r.d_ln_l, r.d_ln_s);
+        let ControllerStep {
+            g_pow,
+            g_raw,
+            eps_hat,
+            used,
+            g,
+        } = r.step;
+        Self::append(
+            stp,
+            &format!(
+                "{trace_id}\t{iter}\t{cur_log_l:.9}\t{d_ln_l:.9}\t{d_ln_s:.9}\t\
+                 {eps_hat:.9}\t{used}\t{g_pow:.9}\t{g_raw:.9}\t{g:.9}\n"
+            ),
+        );
+    }
+
+    fn on_finish(&self, r: &LoopSummaryRecord<'_>) {
+        let Some(sp) = &self.stats_path else {
+            return;
+        };
+        let per_iter = r
+            .iter_ms
+            .iter()
+            .map(|v| format!("{v:.1}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let (compares_used, final_score, total_ms) = (r.compares_used, r.final_score, r.total_ms);
+        Self::append(
+            sp,
+            &format!("{compares_used}\t{final_score:.4}\t{total_ms:.1}\t{per_iter}\n"),
+        );
     }
 }
 
@@ -588,24 +1247,25 @@ impl VarDctEncoder {
         let padded_pixels = padded_width * padded_height;
         let n = width * height;
 
-        // Read tunable parameters from environment variables.
-        // Defaults match the benchmark-validated configuration.
-        let params = ZensimParams::from_env();
+        // Config over flags, Phase 1: the environment is read ONCE, here, into
+        // typed fields; every knob below is a `cfg.<field>` read and every TSV
+        // sink is an `observer` call. See the block comment above
+        // `ZensimLoopConfig`.
+        let cfg = ZensimLoopConfig::from_env();
+        let env_observer = EnvTraceObserver::from_env();
+        // Phase 2 replaces this line with a caller-supplied
+        // `Option<&dyn ZensimLoopObserver>` parameter; nothing else moves.
+        let observer: &dyn ZensimLoopObserver = &env_observer;
+        let params = &cfg.diffmap;
 
-        // Efficiency study (2026-07-31): env-gated global quant-field
-        // pre-scale — the actuator for the harness-level bytes-target outer
-        // loop (E7). The loop itself never entropy-codes, so per-iterate
-        // bytes do not exist here; the outer harness measures real bytes per
-        // full encode and drives this scale with the same damped-controller
-        // formula the in-loop score controller uses. Unset / 1.0 = no-op
+        // Efficiency study (2026-07-31): global quant-field pre-scale — the
+        // actuator for the harness-level bytes-target outer loop (E7). The loop
+        // itself never entropy-codes, so per-iterate bytes do not exist here;
+        // the outer harness measures real bytes per full encode and drives this
+        // scale with the same damped-controller formula the in-loop score
+        // controller uses. `None` (unset / 1.0 / non-finite / <= 0) = no-op
         // (default behavior unchanged; byte-identity gated in the study's R0).
-        if let Some(g) = std::env::var("JXL_ZENSIM_QF_GLOBAL_SCALE")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            && g.is_finite()
-            && g > 0.0
-            && g != 1.0
-        {
+        if let Some(g) = cfg.qf_global_scale {
             for v in quant_field_float.iter_mut() {
                 *v *= g;
             }
@@ -626,7 +1286,8 @@ impl VarDctEncoder {
         // (DiffmapWeighting::ModelSensitivity) — s_k measured numerically at
         // the first iteration's features, fold per the 2026-07-18 coherence
         // matrix (signed for MLP gradients, abs for additive solves).
-        let (rd_profile, rd_n_in) = *RD_PROFILE.get_or_init(rd_profile_from_env);
+        let (rd_profile, rd_n_in) =
+            *RD_PROFILE.get_or_init(|| rd_profile_from_spec(&cfg.rd_profile_spec));
         // 23shot-sota944 (2026-08-05): folded-class (720/924/944) bakes cannot
         // score through the 372-class compare below — its forward wants more
         // features than that walk extracts, and the compare's `Err(_) =>
@@ -638,8 +1299,7 @@ impl VarDctEncoder {
         // input width — a pruned bake carries `FeatureTransform::Drop` and
         // must be handed its caller-width vector, never its internal width).
         let folded_class = rd_n_in >= 720;
-        let model_map = std::env::var("JXL_ZENSIM_MODEL_MAP").ok();
-        let model_map_requested = matches!(model_map.as_deref(), Some(s) if !s.is_empty());
+        let model_map_requested = cfg.model_map_requested;
         // Appendix N (2026-08-05): folded-class ATTR-FAMILY arms score+steer
         // through the FUSED folded-944 compare
         // (`compute_folded944_score_and_attribution`), whose v1 walk must
@@ -707,37 +1367,24 @@ impl VarDctEncoder {
         // fused folded-944 compare and caches its map; every later steered
         // iteration is a score-only canonical extraction + forward steering
         // with the cached map (marginal map cost ≈ 0; gate G-P5).
-        let singlepass = matches!(
-            std::env::var("JXL_ZENSIM_SINGLEPASS").ok().as_deref(),
-            Some("1" | "true" | "yes")
-        );
+        let singlepass = cfg.singlepass;
         if model_map_requested {
-            let known = matches!(
-                model_map.as_deref(),
-                Some("signed")
-                    | Some("abs")
-                    | Some("attr")
-                    | Some("attr-stale")
-                    | Some("h1-signed")
-                    | Some("h2-ctrl")
-                    | Some("h3-mag")
-                    | Some("h3-mag-stale")
-            );
+            // `map_arm == None` here means the name did not parse.
             assert!(
-                known,
+                cfg.map_arm.is_some(),
                 "JXL_ZENSIM_MODEL_MAP='{}' is not a known arm \
                  (signed|abs|attr|attr-stale|h1-signed|h2-ctrl|h3-mag|h3-mag-stale) \
                  — refusing the silent fall-through to baseline",
-                model_map.as_deref().unwrap_or_default()
+                cfg.model_map_raw
             );
             assert!(
                 rd_n_in > 0,
                 "JXL_ZENSIM_MODEL_MAP='{}' is set but the loop profile has no \
                  probed feature width (JXL_ZENSIM_RD_PROFILE unset / profile A) \
                  — the arm would silently run as baseline; refusing",
-                model_map.as_deref().unwrap_or_default()
+                cfg.model_map_raw
             );
-            let fold_family = matches!(model_map.as_deref(), Some("signed") | Some("abs"));
+            let fold_family = cfg.map_arm.is_some_and(MapArm::is_fold_family);
             assert!(
                 !(folded_class && fold_family),
                 "JXL_ZENSIM_MODEL_MAP='{}' requested on a folded-class bake \
@@ -746,7 +1393,7 @@ impl VarDctEncoder {
                  (attr|attr-stale|h1-signed|h2-ctrl|h3-mag|h3-mag-stale), \
                  which routes through the fused folded-944 compare — \
                  refusing the silent downgrade to baseline",
-                model_map.as_deref().unwrap_or_default()
+                cfg.model_map_raw
             );
             // Folded-class + SINGLEPASS is LIVE since appendix P lever 2:
             // the stale-MAP single-pass (first steered iteration fused +
@@ -757,48 +1404,26 @@ impl VarDctEncoder {
             // attr-family arm (checked by the fold-family refusal above).
         }
         let model_map_active = model_map_requested;
-        let attr_mode = matches!(
-            model_map.as_deref(),
-            Some("attr")
-                | Some("attr-stale")
-                | Some("h1-signed")
-                | Some("h2-ctrl")
-                | Some("h3-mag")
-                | Some("h3-mag-stale")
-        );
+        let attr_mode = cfg.map_arm.is_some_and(MapArm::is_attr);
         // `*-stale` steers with the PREVIOUS iteration's map (#69 G4 pricing
         // of the single-pass endpoint for a G1+G2-passing arm).
-        let attr_stale = matches!(
-            model_map.as_deref(),
-            Some("attr-stale") | Some("h3-mag-stale")
-        );
-        let h_arm: Option<u8> = match model_map.as_deref() {
-            Some("h1-signed") => Some(1),
-            Some("h2-ctrl") => Some(2),
-            Some("h3-mag") | Some("h3-mag-stale") => Some(3),
-            _ => None,
-        };
-        let h3_gain: f32 = std::env::var("ZENSIM_H3_GAIN")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(10.0);
+        let attr_stale = cfg.map_arm.is_some_and(MapArm::is_stale);
+        let h_arm: Option<u8> = cfg.map_arm.and_then(MapArm::h_index);
+        let h3_gain: f32 = cfg.h3_gain;
         // A-Y1 (campaign appendix Y): adaptive H3 gain shapes. Unset/"fixed"
         // = shipped constant gain (byte-identical); "decay" = gain·0.5^iter;
         // "err" = gain·min(1, |err_i|/|err_0|) — error-proportional, needs a
         // target (falls back to fixed without one). "tile-secant" = plan §5
         // arm S3: per-tile measured elasticity after 2 iterates (see the
         // s3_* state below).
-        let h3_gain_mode = std::env::var("ZENSIM_H3_GAIN_MODE").ok();
+        let h3_gain_mode = cfg.h3_gain_mode;
         let mut h3_err0: Option<f64> = None;
         // A-Y3 (campaign appendix Y): EMA blend of the H-arm per-tile query
         // field across iterations — tile_q_i = α·fresh + (1−α)·prev, the
         // middle point between the fresh and stale endpoints. Unset = OFF
         // (byte-identical). Under stale-map single-pass the cached map makes
         // this a near-no-op by construction.
-        let map_ema_alpha: Option<f32> = std::env::var("JXL_ZENSIM_MAP_EMA")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .filter(|a: &f32| a.is_finite() && *a > 0.0 && *a < 1.0);
+        let map_ema_alpha: Option<f32> = cfg.map_ema_alpha;
         let mut prev_tile_q: Vec<f32> = Vec::new();
         // S3 per-tile secant gain (plan §5 arm S3, 2026-08-26; env
         // ZENSIM_H3_GAIN_MODE=tile-secant): after two steered iterates the
@@ -818,11 +1443,7 @@ impl VarDctEncoder {
         // fold + SAT shrink 64× and no full-resolution canvas/trim/SAT is
         // built per compare. `ZENSIM_ATTR_BIN=1` restores the per-pixel
         // path (byte-identical pre-L2 behavior) for A/B.
-        let attr_bin: usize = std::env::var("ZENSIM_ATTR_BIN")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .filter(|b: &usize| *b >= 1)
-            .unwrap_or(8);
+        let attr_bin: usize = cfg.attr_bin;
         // attr mode: interleaved LinearF32Rgba view of the recon (reused),
         // and the previous iteration's map for the stale arm.
         let mut attr_rgba: Vec<f32> = Vec::new();
@@ -841,13 +1462,8 @@ impl VarDctEncoder {
         // `JXL_ZENSIM_TARGET_TOL` (default 0.25). `JXL_ZENSIM_RD_STATS`
         // appends one TSV line per encode (iters, final score, ms/iter) —
         // experiment instrumentation, env-gated, defaults unchanged.
-        let target_native: Option<f64> = std::env::var("JXL_ZENSIM_TARGET_SCORE")
-            .ok()
-            .and_then(|s| s.parse().ok());
-        let target_tol: f64 = std::env::var("JXL_ZENSIM_TARGET_TOL")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.25);
+        let target_native: Option<f64> = cfg.target_native;
+        let target_tol: f64 = cfg.target_tol;
         // #70 best-so-far emission (efficiency-study finding #7: the loop
         // emits the LAST iterate, and overshoot past the sweet spot does not
         // self-correct — h3 judged err 0.59@k6 → 1.02@k12). With
@@ -862,48 +1478,23 @@ impl VarDctEncoder {
         // OFF: env unset, or no `JXL_ZENSIM_TARGET_SCORE` ("best" is
         // undefined without a target) = shipped emit-last behavior
         // (byte-identity gated in the study's R0).
-        let emit_best = target_native.is_some()
-            && matches!(
-                std::env::var("JXL_ZENSIM_EMIT_BEST").ok().as_deref(),
-                Some("1" | "true" | "yes")
-            );
+        let emit_best = cfg.emit_best;
         let mut best_err = f64::INFINITY;
         let mut best_score = f64::NAN;
         let mut best_iter = usize::MAX;
         let mut best_qf: Vec<f32> = Vec::new();
-        // Metric-matrix study (2026-07-31): env-gated override of the damped
-        // Controller per-step clamp. DEFAULT 2.00 since the beats-butter
-        // study (2026-08-07): at exp 1.0 the clamp dose-response peaks at
-        // 2.0 (k3 census 20→24/27, nonphoto 3/9→7/9, photo unchanged,
-        // med |err| 0.564→0.535; 2.5 regresses to 23) — the old 1.35 could
-        // not descend far enough on the nonphoto overshoot class in 2-3
-        // steps. Controller-only confirmation ran in the same study.
-        // Values <= 1.0 are ignored (a step clamp must exceed 1).
-        let ctrl_clamp: f64 = std::env::var("JXL_ZENSIM_CTRL_CLAMP")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .filter(|c: &f64| c.is_finite() && *c > 1.0)
-            .unwrap_or(2.00);
-        // Controller exponent. DEFAULT 1.0 (pure proportional) since the
-        // beats-butter study adopted the appendix-Y Part-2 result: monotone
-        // dose-response 0.45<<0.6<0.8<1.0>=1.2 at BOTH budgets, 26W/1L vs
-        // the old 0.6, med |err| 1.659→0.564 on the frontier arm;
-        // controller-only is 19W/4L. Values outside (0, 2] are ignored.
-        // S4 arm-B3 per-image default (USER-APPROVED wiring 2026-08-28;
-        // census FULL PASS, benchmarks/s4_iter1_eps_wave_2026-08-27.md): when
-        // the env is unset and a score target is set, the elasticity prior
-        // supplies the exponent (registered guards keep 1.0 elsewhere).
-        // `JXL_ZENSIM_CTRL_EXP` still wins outright; `JXL_ZENSIM_S4_EPS=0`
-        // disables the prior without touching anything else.
-        let ctrl_exp: f64 = std::env::var("JXL_ZENSIM_CTRL_EXP")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .filter(|e: &f64| e.is_finite() && *e > 0.0 && *e <= 2.0)
+        // Controller exponent — the ONE knob that cannot be resolved at config
+        // construction, because the S4 arm-B3 per-image prior (USER-APPROVED
+        // wiring 2026-08-28; census FULL PASS,
+        // benchmarks/s4_iter1_eps_wave_2026-08-27.md) reads the IMAGE. Order is
+        // load-bearing and unchanged: an explicit `JXL_ZENSIM_CTRL_EXP` wins
+        // outright and the prior is then never invoked; `JXL_ZENSIM_S4_EPS=0`
+        // disables the prior without touching anything else; the fallback is
+        // `CTRL_EXP_DEFAULT`.
+        let ctrl_exp: f64 = cfg
+            .ctrl_exp_override
             .or_else(|| {
-                if matches!(
-                    std::env::var("JXL_ZENSIM_S4_EPS").ok().as_deref(),
-                    Some("0" | "false" | "off")
-                ) {
+                if !cfg.s4_eps_prior {
                     return None;
                 }
                 let t = target_native?;
@@ -917,68 +1508,16 @@ impl VarDctEncoder {
                     None
                 }
             })
-            .unwrap_or(1.0);
-        // Diffmap secant (plan §5.1, 2026-08-25): the global step uses a
-        // measured elasticity ε̂ = Δln L / Δln S from the last two iterates
-        // instead of the fixed-exponent power law. In THIS codebase higher
-        // quant_field = more bits = LESS loss, so ε̂ is NEGATIVE; the secant is
-        // used only when ε̂ < 0 and the last two scales differ, else the power
-        // law is the fallback (and the mandatory first-iterate step). The
-        // existing clamp still bounds the step. Default OFF (opt-in A/B arm).
-        // Budget-optimal default (user directive 2026-08-25 "adjust defaults to
-        // be optimal based on budget"): ON. Measured on the shipped C recipe
-        // (benchmarks/zensim_secant_2026-08-25.md) — +3 k2 census, −55%/−71%
-        // median error, no regression, at BOTH budgets. `JXL_ZENSIM_SECANT=0`
-        // opts back to the pure power law.
-        let secant_enabled: bool = std::env::var("JXL_ZENSIM_SECANT")
-            .ok()
-            .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-            .unwrap_or(true);
-        // Min-|Δln L| guard (2026-08-25, threshold FITTED 2026-08-30). ε̂ is a
-        // ratio of two measured differences; when the loss barely moved between
-        // consecutive iterates the numerator is noise and `(ln L_t − ln L)/ε̂`
-        // divides by it, producing the overshoot the un-guarded arm showed. The
-        // sibling `|Δln S| > 1e-6` guard bounds the DENOMINATOR only, which is
-        // why it never caught this. Below this threshold the step falls back to
-        // the power law. `JXL_ZENSIM_SECANT_MIN_DLNL` overrides (0 disables the
-        // guard); the shipped default and the sweep that chose it are in
-        // `benchmarks/zensim_secant_min_dlnl_2026-08-30.md`.
-        let secant_min_dlnl: f64 = std::env::var("JXL_ZENSIM_SECANT_MIN_DLNL")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .filter(|v: &f64| v.is_finite() && *v >= 0.0)
-            .unwrap_or(SECANT_MIN_DLNL_DEFAULT);
-        // Min-|ε̂| guard (2026-08-30). The step is `(ln L_t − ln L)/ε̂`, so it is
-        // |ε̂| — not |Δln L| alone — that sets how far the controller travels. A
-        // SHALLOW measured elasticity (loss barely responded to a large scale
-        // move) extrapolates to a huge step, and that is the overshoot mechanism
-        // actually observed on this substrate. A floor was always here in the
-        // shape `eps_hat < -1e-6`; 1e-6 is a sign test, not a trust region.
-        // `JXL_ZENSIM_SECANT_MIN_EPS` overrides; the shipped default and the
-        // sweep that chose it are in
-        // `benchmarks/zensim_secant_min_dlnl_2026-08-30.md`.
-        let secant_min_eps: f64 = std::env::var("JXL_ZENSIM_SECANT_MIN_EPS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .filter(|v: &f64| v.is_finite() && *v >= 0.0)
-            .unwrap_or(SECANT_MIN_EPS_DEFAULT);
-        // Controller diagnostic trace (2026-08-30, env-gated, default off): one
-        // append-only TSV line per controller step —
-        // `trace_id  iter  ln_L  d_ln_L  d_ln_S  eps_hat  used  g_pow  g_raw  g`
-        // where `used` is `secant`|`powerlaw:<reason>`. This is a SEPARATE file
-        // from `JXL_ZENSIM_TRACE` on purpose: that trace's 7-column shape is
-        // numerically diffed against committed TSVs by the substrate probe in
-        // `analyze_23shot.py verify`, so it must not gain columns.
-        let secant_trace_path = std::env::var("JXL_ZENSIM_SECANT_TRACE").ok();
-        let stats_path = std::env::var("JXL_ZENSIM_RD_STATS").ok();
-        // Efficiency study (2026-07-31): per-COMPARE trace — one TSV line per
-        // iteration: `trace_id  iter  score  qf_mean  qf_min  qf_max  iter_ms`.
-        // Env-gated, append-only, default off. NO bytes column: the loop
-        // never entropy-codes (no true bytes, no in-loop estimate) — a
-        // registered limitation; per-iterate bytes come from budget-capped
-        // full encodes (deterministic trajectory).
-        let trace_path = std::env::var("JXL_ZENSIM_TRACE").ok();
-        let trace_id = std::env::var("JXL_ZENSIM_TRACE_ID").unwrap_or_default();
+            .unwrap_or(CTRL_EXP_DEFAULT);
+        // Diffmap secant (plan §5.1, 2026-08-25), ON by default since the
+        // budget-optimal directive of the same date — measured on the shipped C
+        // recipe (benchmarks/zensim_secant_2026-08-25.md): +3 k2 census,
+        // −55%/−71% median error, no regression, at BOTH budgets.
+        // `JXL_ZENSIM_SECANT=0` opts back to the pure power law. The two
+        // trust-region floors and what they each bound are documented on
+        // `SECANT_MIN_DLNL_DEFAULT` / `SECANT_MIN_EPS_DEFAULT` and
+        // `Controller::step`.
+        let controller = cfg.controller(ctrl_exp);
         let t_loop = std::time::Instant::now();
         let mut iter_ms: Vec<f64> = Vec::new();
         let mut compares_used = 0usize;
@@ -1331,7 +1870,7 @@ impl VarDctEncoder {
                     // S3: snapshot the per-tile ln(qf) that PRODUCED this
                     // iterate's encode (quant_field_float is still that field
                     // here — redistribution runs later in the iteration).
-                    if h3_gain_mode.as_deref() == Some("tile-secant") {
+                    if h3_gain_mode == H3GainMode::TileSecant {
                         s3_cur_lnqf.clear();
                         s3_cur_lnqf.extend(quant_field_float.iter().map(|&v| v.max(1e-9).ln()));
                     }
@@ -1346,36 +1885,21 @@ impl VarDctEncoder {
                         ysize_blocks,
                         target_distance,
                         &mut tile_dist,
-                        &params,
+                        params,
                     );
                 }
-                // Smoke-test probe: one line per attr-steered iteration with
-                // the tile-dist stats (env-gated; test asserts sane values).
-                if let Ok(pp) = std::env::var("JXL_ZENSIM_ATTR_PROBE") {
-                    use std::io::Write;
-                    let probe_src: &[f32] = if h_arm.is_some() {
+                // One record per attr-steered iteration carrying the steering
+                // field the redistribution is about to use. Was a per-iteration
+                // `env::var` read (the only other in-loop one); the shim
+                // observer writes the same 4-column line to
+                // `JXL_ZENSIM_ATTR_PROBE`.
+                observer.on_tile_field(&TileFieldRecord {
+                    values: if h_arm.is_some() {
                         &tile_signed
                     } else {
                         &tile_dist
-                    };
-                    let (mut mn, mut mx, mut sum) = (f32::INFINITY, f32::NEG_INFINITY, 0.0f64);
-                    for &v in probe_src.iter() {
-                        mn = mn.min(v);
-                        mx = mx.max(v);
-                        sum += v as f64;
-                    }
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(pp)
-                    {
-                        let _ = writeln!(
-                            f,
-                            "attr_iter\t{mn}\t{mx}\t{}",
-                            sum / probe_src.len().max(1) as f64
-                        );
-                    }
-                }
+                    },
+                });
                 // Cache the map: lagged-fresh for the `*-stale` arms; the
                 // FIRST fused map for the folded-class single-pass (later
                 // iterations produce none and keep reusing it).
@@ -1486,7 +2010,7 @@ impl VarDctEncoder {
                     ysize_blocks,
                     target_distance,
                     &mut tile_dist,
-                    &params,
+                    params,
                 );
                 dm_result = Some(dm);
             }
@@ -1518,11 +2042,11 @@ impl VarDctEncoder {
                     // recipe (zensim gate `fd_gradient_bitwise_matches_
                     // sequential`). `JXL_ZENSIM_FDPROBE=seq` keeps the
                     // legacy per-probe path for A/B verification.
-                    let seq_probe = std::env::var("JXL_ZENSIM_FDPROBE").is_ok_and(|v| v == "seq");
+                    let seq_probe = cfg.fd_gradient_sequential;
                     // Split-role: gradient (the map) through the MAP bake when
                     // mounted; scoring stays on rd_profile everywhere else.
-                    let (grad_profile, grad_n_in) =
-                        map_profile_from_env().unwrap_or((rd_profile, rd_n_in));
+                    let (grad_profile, grad_n_in) = map_profile_from(cfg.map_bake_path.as_deref())
+                        .unwrap_or((rd_profile, rd_n_in));
                     assert!(
                         grad_n_in == rd_n_in,
                         "JXL_ZENSIM_MAP_BAKE width {grad_n_in} != scoring width {rd_n_in} — \
@@ -1565,7 +2089,7 @@ impl VarDctEncoder {
                         )
                         .unwrap_or_else(|_| vec![0.0f64; rd_n_in])
                     };
-                    if model_map.as_deref() == Some("abs") {
+                    if cfg.map_arm == Some(MapArm::Abs) {
                         for v in &mut s {
                             *v = -v.abs();
                         }
@@ -1636,30 +2160,19 @@ impl VarDctEncoder {
                 }
             }
             iter_ms.push(t_iter.elapsed().as_secs_f64() * 1e3);
-            // Efficiency-study trace (env-gated; see decl above). The qf
-            // stats describe the field MEASURED by this compare (the field
-            // that produced iterate `iter`), not the post-redistribution one.
-            if let Some(tp) = &trace_path {
-                use std::io::Write;
-                let (mut qmn, mut qmx, mut qsum) = (f32::INFINITY, f32::NEG_INFINITY, 0.0f64);
-                for &v in quant_field_float.iter() {
-                    qmn = qmn.min(v);
-                    qmx = qmx.max(v);
-                    qsum += v as f64;
-                }
-                let qmean = qsum / quant_field_float.len().max(1) as f64;
-                let ms = iter_ms.last().copied().unwrap_or(f64::NAN);
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(tp)
-                {
-                    let _ = writeln!(
-                        f,
-                        "{trace_id}\t{iter}\t{zensim_score:.4}\t{qmean:.6}\t{qmn:.6}\t{qmx:.6}\t{ms:.1}"
-                    );
-                }
-            }
+            // Efficiency-study record. The qf stats describe the field MEASURED
+            // by this compare (the field that produced iterate `iter`), not the
+            // post-redistribution one — which is why the record carries the
+            // slice and the observer reduces it, rather than the loop reducing
+            // it eagerly. NO bytes field: the loop never entropy-codes (no true
+            // bytes, no in-loop estimate) — a registered limitation; per-iterate
+            // bytes come from budget-capped full encodes.
+            observer.on_iteration(&IterationRecord {
+                iter,
+                score: zensim_score,
+                quant_field: quant_field_float,
+                iter_ms: iter_ms.last().copied().unwrap_or(f64::NAN),
+            });
             // Target convergence: stop once the measured score is within
             // tolerance (needs >= 1 redistribution behind it so the map
             // actually steered something).
@@ -1719,9 +2232,9 @@ impl VarDctEncoder {
                         // H3: step ∝ per-tile query_rect score-units, capped.
                         // A-Y1: gain optionally adapts per iteration (the
                         // default "fixed" reproduces the shipped constant).
-                        let h3_gain_eff: f32 = match h3_gain_mode.as_deref() {
-                            Some("decay") => h3_gain * 0.5f32.powi(iter as i32),
-                            Some("err") => {
+                        let h3_gain_eff: f32 = match h3_gain_mode {
+                            H3GainMode::Decay => h3_gain * 0.5f32.powi(iter as i32),
+                            H3GainMode::Err => {
                                 if let Some(tgt) = target_native {
                                     let err_i = (zensim_score - tgt).abs();
                                     let err0 = *h3_err0.get_or_insert(err_i.max(1e-9));
@@ -1732,7 +2245,7 @@ impl VarDctEncoder {
                             }
                             _ => h3_gain,
                         };
-                        let s3 = h3_gain_mode.as_deref() == Some("tile-secant")
+                        let s3 = h3_gain_mode == H3GainMode::TileSecant
                             && s3_prev_tile_q.len() == num_blocks
                             && s3_prev_lnqf.len() == num_blocks
                             && s3_cur_lnqf.len() == num_blocks;
@@ -1760,8 +2273,7 @@ impl VarDctEncoder {
                         }
                         // S3: advance the iterate pair (this iterate's map +
                         // the field that produced it) for the next gain.
-                        if h3_gain_mode.as_deref() == Some("tile-secant")
-                            && s3_cur_lnqf.len() == num_blocks
+                        if h3_gain_mode == H3GainMode::TileSecant && s3_cur_lnqf.len() == num_blocks
                         {
                             s3_prev_tile_q.clear();
                             s3_prev_tile_q.extend_from_slice(&tile_q);
@@ -1829,65 +2341,35 @@ impl VarDctEncoder {
 
             // C3b: damped global step toward the native-score target.
             // Loss (100 − score) above target ⇒ too lossy ⇒ scale the whole
-            // field up (more bits). Defaults JXL_ZENSIM_CTRL_EXP=1.0 +
-            // JXL_ZENSIM_CTRL_CLAMP=2.00 (adopted 2026-08-07, campaign
-            // appendix AB.3; the earlier 0.6 / 1.35 was superseded there).
+            // field up (more bits). The step rule, its guards and its clamp are
+            // the `Controller` value built above; see `Controller::step`.
             if let Some(tgt) = target_native {
                 let achieved_loss = (100.0 - zensim_score).max(0.05);
                 let target_loss = (100.0 - tgt).max(0.05);
                 let cur_log_l = achieved_loss.ln();
-                // Power-law step: the default, and the secant's fallback.
-                let g_pow = (achieved_loss / target_loss).powf(ctrl_exp);
                 let d_ln_l = cur_log_l - prev_log_l;
                 let d_ln_s = cum_log_s - prev_log_s;
-                // ε̂ = Δln L / Δln S; valid only when loss falls as scale rises
-                // (ε̂ < 0). Step: ln S_target = ln S + (ln L_t − ln L)/ε̂. Four
-                // conditions must hold: a previous iterate exists (iter 0 is
-                // always power law), the SCALE moved (Δln S, the ratio's
-                // denominator), the LOSS moved by at least `secant_min_dlnl`
-                // (Δln L, the ratio's numerator), and the resulting elasticity is
-                // steep enough to extrapolate along (`secant_min_eps` — the
-                // STEP's denominator, which is what actually sets step size).
-                let mut eps_hat = f64::NAN;
-                let (g_raw, used) = if !secant_enabled {
-                    (g_pow, "powerlaw:off")
-                } else if !prev_log_l.is_finite() {
-                    (g_pow, "powerlaw:iter0")
-                } else if d_ln_s.abs() <= 1e-6 {
-                    (g_pow, "powerlaw:dlns")
-                } else if d_ln_l.abs() <= secant_min_dlnl {
-                    (g_pow, "powerlaw:dlnl")
-                } else {
-                    eps_hat = d_ln_l / d_ln_s;
-                    if eps_hat < -secant_min_eps {
-                        (((target_loss.ln() - cur_log_l) / eps_hat).exp(), "secant")
-                    } else if eps_hat < 0.0 {
-                        (g_pow, "powerlaw:eps")
-                    } else {
-                        (g_pow, "powerlaw:sign")
-                    }
-                };
-                let g = g_raw.clamp(1.0 / ctrl_clamp, ctrl_clamp);
-                if let Some(stp) = &secant_trace_path {
-                    use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(stp)
-                    {
-                        let _ = writeln!(
-                            f,
-                            "{trace_id}\t{iter}\t{cur_log_l:.9}\t{d_ln_l:.9}\t{d_ln_s:.9}\t\
-                             {eps_hat:.9}\t{used}\t{g_pow:.9}\t{g_raw:.9}\t{g:.9}"
-                        );
-                    }
-                }
+                let step = controller.step(
+                    achieved_loss,
+                    target_loss,
+                    cur_log_l,
+                    prev_log_l,
+                    d_ln_l,
+                    d_ln_s,
+                );
+                observer.on_controller_step(&ControllerRecord {
+                    iter,
+                    ln_l: cur_log_l,
+                    d_ln_l,
+                    d_ln_s,
+                    step,
+                });
                 // Record the iterate (S, L) at which this score was measured,
                 // then advance the cumulative scale by the applied step.
                 prev_log_s = cum_log_s;
                 prev_log_l = cur_log_l;
-                cum_log_s += g.ln();
-                let gf = g as f32;
+                cum_log_s += step.g.ln();
+                let gf = step.g as f32;
                 for v in quant_field_float.iter_mut() {
                     *v = (*v * gf).clamp(qf_lower, qf_higher);
                 }
@@ -1917,25 +2399,12 @@ impl VarDctEncoder {
             );
         }
 
-        if let Some(sp) = &stats_path {
-            use std::io::Write;
-            let per_iter = iter_ms
-                .iter()
-                .map(|v| format!("{v:.1}"))
-                .collect::<Vec<_>>()
-                .join(",");
-            let line = format!(
-                "{compares_used}\t{final_score:.4}\t{:.1}\t{per_iter}\n",
-                t_loop.elapsed().as_secs_f64() * 1e3
-            );
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(sp)
-            {
-                let _ = f.write_all(line.as_bytes());
-            }
-        }
+        observer.on_finish(&LoopSummaryRecord {
+            compares_used,
+            final_score,
+            total_ms: t_loop.elapsed().as_secs_f64() * 1e3,
+            iter_ms: &iter_ms,
+        });
 
         // Final SetQuantField
         let mut final_params =
@@ -1970,5 +2439,227 @@ mod c10_loud_tests {
     #[should_panic(expected = "compare failed")]
     fn forced_compare_failure_panics_with_arm_name() {
         super::loud_compare::<(), &str>(Err("forced"), "unit-test-arm (forced failure)");
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    /// `Default` must BE the shipped behaviour — that is the whole premise of
+    /// the config-over-flags migration. If someone changes a fitted constant,
+    /// this fails and they have to say so in the same commit.
+    #[test]
+    fn default_config_is_the_shipped_configuration() {
+        let d = ZensimLoopConfig::default();
+        assert_eq!(d.diffmap.masking_strength, Some(8.0));
+        assert!(!d.diffmap.sqrt);
+        assert!(d.diffmap.include_hf);
+        assert!(d.diffmap.include_edge_mse);
+        assert_eq!(d.diffmap.norm_power, 2.0);
+        assert_eq!(d.diffmap.spatial_weight, 0.6);
+        assert_eq!(d.diffmap.ratio_max, 3.0);
+        assert_eq!(d.diffmap.alpha_base, 0.25);
+        assert_eq!(d.diffmap.factor_max, 1.15);
+        assert_eq!(d.attr_bin, 8);
+        assert_eq!(d.h3_gain, 10.0);
+        assert_eq!(d.h3_gain_mode, H3GainMode::Fixed);
+        assert_eq!(d.target_tol, 0.25);
+        assert_eq!(d.ctrl_clamp, 2.00);
+        assert!(d.ctrl_exp_override.is_none());
+        assert!(d.s4_eps_prior);
+        assert!(!d.emit_best);
+        assert!(!d.singlepass);
+        assert!(d.map_arm.is_none());
+        // Secant ON by default, with the two FITTED floors.
+        let g = d.secant.expect("secant is ON by default");
+        assert_eq!(g.min_dlnl, 1e-3, "SECANT_MIN_DLNL_DEFAULT");
+        assert_eq!(
+            g.min_eps, 0.25,
+            "SECANT_MIN_EPS_DEFAULT — fitted 2026-08-30, \
+             benchmarks/zensim_secant_min_dlnl_2026-08-30.md"
+        );
+        // The default controller is the secant carrying the default exponent.
+        assert_eq!(
+            d.controller(CTRL_EXP_DEFAULT),
+            Controller::Secant {
+                exp: 1.0,
+                clamp: 2.00,
+                min_eps: 0.25,
+                min_dlnl: 1e-3,
+            }
+        );
+    }
+
+    /// Every arm name the loop accepts, and the three predicates the loop
+    /// branches on. An unknown name must NOT parse — the loop turns that into a
+    /// loud refusal, and a typo'd arm silently running as baseline is the
+    /// 23shot-sota944 hazard.
+    #[test]
+    fn map_arm_parses_exactly_the_registered_arms() {
+        for (name, attr, stale, fold, h) in [
+            ("signed", false, false, true, None),
+            ("abs", false, false, true, None),
+            ("attr", true, false, false, None),
+            ("attr-stale", true, true, false, None),
+            ("h1-signed", true, false, false, Some(1u8)),
+            ("h2-ctrl", true, false, false, Some(2)),
+            ("h3-mag", true, false, false, Some(3)),
+            ("h3-mag-stale", true, true, false, Some(3)),
+        ] {
+            let a = MapArm::parse(name).unwrap_or_else(|| panic!("{name} must parse"));
+            assert_eq!(a.is_attr(), attr, "{name}.is_attr");
+            assert_eq!(a.is_stale(), stale, "{name}.is_stale");
+            assert_eq!(a.is_fold_family(), fold, "{name}.is_fold_family");
+            assert_eq!(a.h_index(), h, "{name}.h_index");
+        }
+        for bad in ["", "h3mag", "attr_stale", "H3-MAG", "signed "] {
+            assert!(MapArm::parse(bad).is_none(), "{bad:?} must not parse");
+        }
+    }
+
+    /// Unset AND unrecognised both mean `Fixed` — pre-existing behaviour, kept
+    /// deliberately (unlike `MapArm`, an unknown gain mode has never been a
+    /// loud refusal).
+    #[test]
+    fn h3_gain_mode_falls_through_to_fixed() {
+        assert_eq!(H3GainMode::parse(None), H3GainMode::Fixed);
+        assert_eq!(H3GainMode::parse(Some("")), H3GainMode::Fixed);
+        assert_eq!(H3GainMode::parse(Some("nonsense")), H3GainMode::Fixed);
+        assert_eq!(H3GainMode::parse(Some("decay")), H3GainMode::Decay);
+        assert_eq!(H3GainMode::parse(Some("err")), H3GainMode::Err);
+        assert_eq!(
+            H3GainMode::parse(Some("tile-secant")),
+            H3GainMode::TileSecant
+        );
+    }
+
+    /// The pre-refactor controller, transcribed verbatim from the inline block
+    /// `Controller::step` replaced. Frozen on purpose: it is the reference the
+    /// differential test below pins against, so a future edit to `step` that
+    /// changes ANY branch, guard order or arithmetic shows up here.
+    #[allow(clippy::too_many_arguments)]
+    fn reference_step(
+        secant_enabled: bool,
+        ctrl_exp: f64,
+        ctrl_clamp: f64,
+        secant_min_dlnl: f64,
+        secant_min_eps: f64,
+        achieved_loss: f64,
+        target_loss: f64,
+        cur_log_l: f64,
+        prev_log_l: f64,
+        d_ln_l: f64,
+        d_ln_s: f64,
+    ) -> (f64, f64, f64, &'static str, f64) {
+        let g_pow = (achieved_loss / target_loss).powf(ctrl_exp);
+        let mut eps_hat = f64::NAN;
+        let (g_raw, used) = if !secant_enabled {
+            (g_pow, "powerlaw:off")
+        } else if !prev_log_l.is_finite() {
+            (g_pow, "powerlaw:iter0")
+        } else if d_ln_s.abs() <= 1e-6 {
+            (g_pow, "powerlaw:dlns")
+        } else if d_ln_l.abs() <= secant_min_dlnl {
+            (g_pow, "powerlaw:dlnl")
+        } else {
+            eps_hat = d_ln_l / d_ln_s;
+            if eps_hat < -secant_min_eps {
+                (((target_loss.ln() - cur_log_l) / eps_hat).exp(), "secant")
+            } else if eps_hat < 0.0 {
+                (g_pow, "powerlaw:eps")
+            } else {
+                (g_pow, "powerlaw:sign")
+            }
+        };
+        let g = g_raw.clamp(1.0 / ctrl_clamp, ctrl_clamp);
+        (g_pow, g_raw, eps_hat, used, g)
+    }
+
+    /// BITWISE differential over a grid that reaches all seven branches. The
+    /// controller is the only part of the config migration that moved
+    /// arithmetic rather than just a read, so it gets a proof rather than a
+    /// claim. Comparison is on `to_bits`, not `==`: `NaN != NaN`, and `eps_hat`
+    /// is NaN on every non-secant branch.
+    #[test]
+    fn controller_step_is_bit_identical_to_the_pre_refactor_block() {
+        let losses: [f64; 5] = [0.05, 1.0, 3.7, 25.0, 99.95];
+        let dlnls = [0.0, 1e-3, 3.11e-3, 0.0367, -0.0367, -0.3, f64::NAN];
+        let dlnss = [0.0, 1e-6, 1.1e-6, 0.05, 0.693, -0.693];
+        let prevs = [f64::NAN, f64::INFINITY, 0.0, 1.5];
+        let mut cases = 0u64;
+        let mut seen = std::collections::BTreeSet::new();
+        for secant in [false, true] {
+            for exp in [0.6, 1.0, 2.0] {
+                for clamp in [1.35, 2.00] {
+                    for min_eps in [0.0, 0.25, 0.60] {
+                        for min_dlnl in [1e-3, 0.3] {
+                            let c = if secant {
+                                Controller::Secant {
+                                    exp,
+                                    clamp,
+                                    min_eps,
+                                    min_dlnl,
+                                }
+                            } else {
+                                Controller::PowerLaw { exp, clamp }
+                            };
+                            for &al in &losses {
+                                for &tl in &losses {
+                                    for &pl in &prevs {
+                                        for &dl in &dlnls {
+                                            for &ds in &dlnss {
+                                                let cur = al.ln();
+                                                let r = reference_step(
+                                                    secant, exp, clamp, min_dlnl, min_eps, al, tl,
+                                                    cur, pl, dl, ds,
+                                                );
+                                                let m = c.step(al, tl, cur, pl, dl, ds);
+                                                seen.insert(r.3);
+                                                cases += 1;
+                                                assert_eq!(
+                                                    (
+                                                        r.0.to_bits(),
+                                                        r.1.to_bits(),
+                                                        r.2.to_bits(),
+                                                        r.3,
+                                                        r.4.to_bits()
+                                                    ),
+                                                    (
+                                                        m.g_pow.to_bits(),
+                                                        m.g_raw.to_bits(),
+                                                        m.eps_hat.to_bits(),
+                                                        m.used,
+                                                        m.g.to_bits()
+                                                    ),
+                                                    "secant={secant} exp={exp} clamp={clamp} \
+                                                     min_eps={min_eps} min_dlnl={min_dlnl} \
+                                                     achieved={al} target={tl} prev={pl} \
+                                                     dlnL={dl} dlnS={ds}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cases > 100_000, "grid shrank to {cases} cases");
+        // Silence is not coverage: assert every branch was actually reached.
+        let want = [
+            "powerlaw:off",
+            "powerlaw:iter0",
+            "powerlaw:dlns",
+            "powerlaw:dlnl",
+            "powerlaw:eps",
+            "powerlaw:sign",
+            "secant",
+        ];
+        for w in want {
+            assert!(seen.contains(w), "branch {w} never exercised");
+        }
     }
 }

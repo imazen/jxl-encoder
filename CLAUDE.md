@@ -142,6 +142,125 @@ Phase 7-zensim (docs), zensim-gpu GPU-native diffmap kernels (currently
 CPU-fallback), cvvdp-cpu structural perf (strip-pipeline + f16 for
 150ms→50ms at 1024²).
 
+## Config over flags — the Phase 1 pattern (2026-08-31)
+
+Design doc: [`~/work/zen-workspace/CONFIG_OVER_FLAGS_2026-08-31.md`](../../zen-workspace/CONFIG_OVER_FLAGS_2026-08-31.md).
+Owner directives it encodes: *"feature flags are lowkey evil"*, *"env vars are
+slow and bad"*, and the constraint that shapes it — *"we will continue exploring
+alternate IQA and search methods and encoding modes."* The goal is the **same or
+more** exploration surface at a fraction of the build permutations, with every
+variant compiled and therefore type-checked, lintable and testable.
+
+**The measurement this repo starts from** (2026-08-31): **37** cargo features,
+**205** `env::var` calls across **57** distinct names in `src/`. Only ~29 sit
+near a `OnceLock`/`static`, so ~176 are re-read on every call, and ≥ 8 are
+inside loop bodies. `env::var` allocates a `String` and takes a process-global
+lock per call. Concentration: `vardct/zensim_loop.rs` 27, `vardct/encoder.rs`
+22, `modular/tree_learn.rs` 22.
+
+**Phase 1 landed first on `vardct/zensim_loop.rs`** (the densest file) and is the
+template for the rest. Copy its shape:
+
+1. **One typed config struct** (`ZensimLoopConfig`) whose `Default` is EXACTLY
+   the shipped behaviour, so the fitted constants are visible defaults instead
+   of runtime string parses.
+2. **One `from_env()` compatibility shim** that parses the environment **once
+   per encode** into that struct. Every env name keeps its shipped meaning,
+   default and validation, so existing harnesses run unchanged. Phase 2 deletes
+   the shim knob by knob as callers learn to set the struct.
+3. **Closed sets become enums** — `MapArm` (8 arms, was 8 string literals
+   `matches!`-ed at 6 sites), `H3GainMode` (4), `Controller` (2).
+4. **Instrumentation becomes an observer**, not env: a `ZensimLoopObserver`
+   trait with defaulted no-op methods, plus an `EnvTraceObserver` shim that
+   reproduces the old TSV sinks byte for byte.
+5. **Exactly one `std::env::var` call site survives per file** (a private
+   `env_str` helper). `grep -c 'std::env::var' <file>` is the check, and it must
+   print `1`.
+
+### The two shapes the design doc got wrong, corrected against real code
+
+The doc is a proposal, not a contract. Two of its shapes did not survive first
+contact and the corrections are load-bearing:
+
+- **`Controller`**: the doc proposed `PowerLaw { exp, clamp }` /
+  `Secant { min_eps, min_dlnl }` as alternatives. They are not. The secant falls
+  back to the power law *per step* on four documented conditions, so `exp` is
+  load-bearing inside `Secant` too, and `clamp` bounds the output of both. Both
+  arms carry both. A `Secant` without an `exp` is a controller that cannot take
+  its own first step.
+- **The observer**: the doc proposed a single
+  `on_iteration: Option<&dyn Fn(&IterationRecord)>`. One closure cannot carry
+  this loop's instrumentation — four payloads fire at four different points (the
+  tile field mid-iteration before redistribution, the compare result after it,
+  the controller step at the end of the iteration, the summary once per encode).
+  A closure would have to take a sum type and re-dispatch inside, which is a
+  `match` pretending to be a signature. Use a trait with defaulted no-op
+  methods: a harness implements only what it consumes.
+
+### The bar: byte identity, proven, not asserted
+
+Phase 1 is **behaviour-preserving**. That is the whole property, so it needs
+evidence, not a claim.
+
+- Hash locks must be **byte-identical**, and none may be relocked. If a lock
+  moves, the shim changed behaviour — stop and find out why.
+- The zensim loop has **no hash-lock coverage at all** (it is behind
+  `zensim-loop` AND an explicit `PerceptualMetric::Zensim` opt-in), so the locks
+  can only prove the absence of collateral damage. Direct evidence comes from
+  [`examples/zensim_config_byte_identity.rs`](jxl-encoder/examples/zensim_config_byte_identity.rs)
+  + [`scripts/zensim-loop-eff/byte_identity_matrix.sh`](scripts/zensim-loop-eff/byte_identity_matrix.sh):
+  per-cell SHA256 over a real corpus across an env matrix, run on both sides of
+  the change, `diff -r` empty. **Any file that gets this treatment and has no
+  lock coverage needs the same kind of harness before the refactor, not after.**
+- **Where a refactor moves ARITHMETIC rather than just a read, pin it with a
+  bitwise differential test against the frozen pre-refactor block.**
+  `config_tests::controller_step_is_bit_identical_to_the_pre_refactor_block`
+  does this for `Controller::step`: ~300k cases on `to_bits()` (not `==` —
+  `eps_hat` is NaN on every non-secant branch), plus an assertion that all seven
+  branches were actually reached, because silence is not coverage. It found
+  nothing, which is the point; it now stands as the gate on any future edit to
+  the step rule. This is cheap, needs no build of the rest of the crate, and is
+  strictly better evidence than "the bytes did not move on my corpus."
+- **Do not "fix" anything while you are in there.** A behaviour change smuggled
+  into a mechanical refactor makes the byte-identity proof worthless. Found bugs
+  get reported, not fixed in the same commit. `JXL_ZENSIM_TARGET_SCORE` accepts
+  `nan`/`inf` because it has no `.filter()`; that survived Phase 1 deliberately.
+
+### Trap: two TSV column shapes are contracts
+
+- `JXL_ZENSIM_TRACE` is **7 columns** and is numerically diffed against
+  committed TSVs by the substrate probe in
+  `scripts/zensim-loop-eff/analyze_23shot.py verify`. It must not gain columns —
+  which is exactly why `JXL_ZENSIM_SECANT_TRACE` (10 columns) is a **separate
+  file** rather than extra columns on that one.
+- `JXL_ZENSIM_ATTR_PROBE` is **4 columns** and is asserted by
+  `tests/zensim_attr_smoke.rs` and `tests/zensim_h_arms_smoke.rs`
+  (`split('\t').skip(1)`, then exactly 3 finite floats).
+
+`byte_identity_matrix.sh` captures all four sinks, normalises the wall-clock
+columns out, and records the distinct per-sink column counts, so a shape change
+shows up as a diff rather than as a silently broken analysis script months
+later.
+
+### What Phase 1 could NOT collapse in this file (the Phase 2 input)
+
+Two knobs are structurally late and stay resolved outside the config; both are
+already read-once, so neither costs anything per iteration:
+
+- **`JXL_ZENSIM_CTRL_EXP` / `JXL_ZENSIM_S4_EPS`** — the S4 arm-B3 per-image
+  elasticity prior reads the IMAGE, so the controller exponent cannot be a
+  constant field. The config carries the validated override plus the
+  prior-enabled flag; `Controller` is built inside the loop once the exponent
+  resolves. Order is load-bearing: an explicit exponent wins outright and the
+  prior is then never invoked.
+- **`JXL_ZENSIM_RD_PROFILE` / `JXL_ZENSIM_MAP_BAKE`** — both mount through
+  process-wide `OnceLock`s (the mount leaks a `ProfileParams`, and
+  `RD_BAKE_BYTES` may only be `set` once), and the map-bake mount is
+  additionally **lazy on purpose**: it `eprintln!`s and can `panic!`, so
+  hoisting it to construction would fire those on encodes that never use the
+  arm. Phase 1 moved the env READ into the config and passes the spec/path down;
+  the mounts kept their `OnceLock` and their laziness.
+
 ## ACTIVE WORK PROGRAM 2026-08-30 — five tasks, root causes established
 
 Owner-directed after the #45/#76/#96 program closed. **Every one of these
