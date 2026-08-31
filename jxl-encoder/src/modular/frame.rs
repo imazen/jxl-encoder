@@ -1291,6 +1291,43 @@ impl FrameEncoder {
                 full_pixels,
                 &self.options.profile,
             );
+            // Content-adaptive predictor set for every group's learn (#99
+            // item 1). ONE whole-image probe tree replaces the fixed
+            // `SECTIONED_PRUNE_PREDICTORS_K = 8` root-cost prune, and it
+            // selects BEFORE each group's gather so the gather shrinks too.
+            // DEFAULT: `auto` at effort >= 7 (the band where the sectioned
+            // writer engages at all); `JXL_SECTIONED_TREE_PREDICTORS`
+            // overrides both ways (`off`/`14` restores the fixed-K prune).
+            // AMORTIZATION GATE: the probe is one extra strided gather plus a
+            // capped tree learn, paid once and reused by every group. On a
+            // 1-4-group image there is nothing to amortize over and the probe
+            // is pure overhead (measured; see the per-pixel-bucket table in
+            // `benchmarks/jxl_sectioned_adaptive_k_2026-08-31.meta`), so
+            // small images keep the fixed-K path.
+            let sectioned_selection = super::tree_learn::sectioned_tree_predictors_env().or({
+                if self.options.profile.effort >= 7
+                    && num_groups >= super::section::sectioned_probe_min_groups()
+                {
+                    Some(super::tree_learn::GLOBAL_TREE_PREDICTORS_AUTO)
+                } else {
+                    None
+                }
+            });
+            let sectioned_predictors: Option<Vec<super::predictor::Predictor>> =
+                match sectioned_selection {
+                    Some(k) if k == super::tree_learn::GLOBAL_TREE_PREDICTORS_AUTO => {
+                        crate::profile_time!("sectioned/probe_predictors", {
+                            super::section::sectioned_probe_predictors(
+                                &group_images,
+                                &self.options.profile,
+                                per_group_id_offset,
+                                stride,
+                            )
+                        })
+                    }
+                    _ => None,
+                };
+            let sectioned_predictors = sectioned_predictors.as_deref();
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
                 let group_idx = flat_idx / num_passes;
                 let group_image = &group_images[group_idx];
@@ -1305,6 +1342,7 @@ impl FrameEncoder {
                     // exactly like the global-tree path — none per group.
                     None,
                     Some(stride),
+                    sectioned_predictors,
                     &mut group_writer,
                     budget,
                 )?;

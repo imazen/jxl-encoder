@@ -316,6 +316,71 @@ fn noise_rgb_512x512() -> Vec<u8> {
     out
 }
 
+/// 1024x1024 "photo-like" RGB: four octaves of deterministic value noise
+/// (hashed integer lattice, bilinear between lattice points), six octaves
+/// down to a 2-px lattice plus per-pixel grain, and a couple of hard edges. Unlike `noise_rgb_512x512` (which is i.i.d. per byte and
+/// therefore structureless), this has multi-scale spatial correlation, so
+/// the modular tree learner grows a DEEP tree over it — which is exactly
+/// what the sectioned probe-tree selector needs in order to fire.
+///
+/// It exists because the two 512x512 sectioned lock cells do NOT trip the
+/// selector (their probe trees fall under `SECTIONED_PROBE_MIN_LEAVES`), so
+/// without this cell the content-adaptive path would ship with ZERO
+/// byte-lock coverage — the same lock-coverage gap that let the
+/// `resampling > 1` bugs survive (see CLAUDE.md, 2026-08-30).
+fn photoish_rgb_1024x1024() -> Vec<u8> {
+    let (w, h) = (1024usize, 1024usize);
+    let hash = |x: i64, y: i64, c: i64| -> f32 {
+        let mut v = (x.wrapping_mul(0x27d4_eb2d)
+            ^ y.wrapping_mul(0x1656_67b1)
+            ^ c.wrapping_mul(0x9e37_79b9)) as u64;
+        v ^= v >> 33;
+        v = v.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        v ^= v >> 29;
+        ((v >> 40) as u32 as f32) / 16_777_216.0
+    };
+    let mut out = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            for c in 0..3usize {
+                let mut acc = 0.0f32;
+                let mut amp = 0.5f32;
+                for oct in 0..6u32 {
+                    let step = 1usize << (6 - oct); // 64, 32, 16, 8, 4, 2
+                    let (gx, gy) = (x / step, y / step);
+                    let (fx, fy) = (
+                        (x % step) as f32 / step as f32,
+                        (y % step) as f32 / step as f32,
+                    );
+                    let c0 = c as i64 * 7 + oct as i64 * 131;
+                    let v00 = hash(gx as i64, gy as i64, c0);
+                    let v10 = hash(gx as i64 + 1, gy as i64, c0);
+                    let v01 = hash(gx as i64, gy as i64 + 1, c0);
+                    let v11 = hash(gx as i64 + 1, gy as i64 + 1, c0);
+                    let top = v00 + (v10 - v00) * fx;
+                    let bot = v01 + (v11 - v01) * fx;
+                    acc += amp * (top + (bot - top) * fy);
+                    amp *= 0.55;
+                }
+                // Two hard edges so the learner sees discontinuities as well
+                // as texture.
+                if x > 700 && y < 300 {
+                    acc = acc * 0.35 + 0.6;
+                }
+                if (x as i64 - y as i64).abs() < 6 {
+                    acc = 1.0 - acc;
+                }
+                // Per-pixel grain: without it the field is too smooth and the
+                // probe tree stays shallow (measured: 191 leaves, under the
+                // trust floor), so the cell would not cover the adaptive path.
+                acc += (hash(x as i64, y as i64, c as i64 * 977 + 31) - 0.5) * 0.08;
+                out[(y * w + x) * 3 + c] = (acc.clamp(0.0, 1.0) * 255.0) as u8;
+            }
+        }
+    }
+    out
+}
+
 /// 512x512 RGBA: 17-colour blocky RGB + a few-valued alpha pattern —
 /// MULTI-GROUP with an extra channel (alpha defers to PassGroups) AND the
 /// full-image palette engaging on the colour channels. Locks the
@@ -877,6 +942,39 @@ fn lossless_mg_rgb_512x512_noise_e7_sectioned() {
         &data,
         512,
         512,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
+/// The ONLY lock cell that exercises the content-adaptive sectioned
+/// predictor selector (#99 item 1, 2026-08-31). 4x4 groups of multi-scale
+/// texture: the whole-image probe tree clears
+/// `SECTIONED_PROBE_MIN_LEAVES`, so the per-group learns run over the
+/// probe's leaf-share-selected set instead of the fixed root-cost K.
+///
+/// If a future change makes the probe untrusted here (a bigger
+/// `MIN_LEAVES`, a smaller `MAX_NODES`, a different probe density) this
+/// cell would silently fall back to the fixed-K path and stop testing what
+/// it was added for. The NON-VACUITY check lives in the env-overrides
+/// binary (`env_overrides::sectioned_probe_selector::
+/// photoish_1024_actually_trips_the_probe_selector`) because it needs
+/// `JXL_SECTIONED_TREE_PREDICTORS=off` and `it` must not mutate env.
+/// `JXL_PROBE_COSTS=1` prints the chosen set.
+#[test]
+fn lossless_mg_rgb_1024x1024_photoish_e7_sectioned() {
+    let px = photoish_rgb_1024x1024();
+    let data = LosslessConfig::new()
+        .with_sectioned_trees(SectionedTrees::On)
+        .encode(&px, 1024, 1024, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossless_mg_rgb_1024x1024_photoish_e7_sectioned",
+        &data,
+        1024,
+        1024,
         false,
         false,
         false,

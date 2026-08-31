@@ -1,0 +1,311 @@
+jxl_sectioned_adaptive_k_2026-08-31 — content-adaptive predictor selection
+for the SECTIONED per-group tree learns (imazen/jxl-encoder#99 item 1, T3).
+
+Host: mac (aarch64 laptop, 12 cores). Encoder: release, default features +
+`std parallel profile-phases`. Reference: cjxl v0.12.0 [_NEON_BF16_,NEON].
+Harness: `jxl-encoder/examples/sectioned_k_corpus.rs` (features / render /
+sweep / phases / croptl) + `scripts/select_sectioned_k_corpus.py` +
+`scripts/fit_sectioned_k_gate.py` + `scripts/sectioned_k_bar_cell.sh`.
+NO `-C target-cpu=native` anywhere.
+
+
+================================================================ FILES
+
+jxl_sectioned_adaptive_k_corpus_2026-08-31.tsv   the corpus: 310 renditions
+    of 52 origins, with each rendition's sha256 AND its origin's sha256, the
+    cluster it represents, its split, and how it was derived (crop|resize,
+    target size). This is the reproducibility record for the fit.
+jxl_sectioned_adaptive_k_picks_2026-08-31.tsv    the (origin, cluster, split,
+    kind, target) rows the renderer consumed — i.e. the clustering's output.
+jxl_sectioned_adaptive_k_2026-08-31.tsv          full corpus x 6 arms at
+    e7 t=8 (310 x 6 = 1860 encodes). BYTES are the load-bearing column here.
+jxl_sectioned_adaptive_k_t1_2026-08-31.tsv       the >= 1 MP subset x 4 arms
+    at e7 t=1 (122 x 4 = 488 encodes). WALL is the load-bearing column here.
+jxl_sectioned_adaptive_k_leaves{,_t1}_2026-08-31.tsv  probe-tree leaf count
+    per rendition, distilled from `JXL_PROBE_COSTS=1`. The fit script takes
+    these directly, so the fit re-runs from the repo with no re-encode.
+jxl_sectioned_adaptive_k_bar_2026-08-31.tsv      the wall BAR cell (photo
+    3840x2160) at e7 and e9, threads 1 and 8, 5 repeats, ours vs cjxl.
+
+Re-run the fit:
+    python3 scripts/fit_sectioned_k_gate.py \
+      benchmarks/jxl_sectioned_adaptive_k_2026-08-31.tsv \
+      benchmarks/jxl_sectioned_adaptive_k_leaves_2026-08-31.tsv
+
+
+================================================================ THE CORPUS
+
+The owner made corpus expansion a precondition, because the prior K sweep
+(`jxl_sectioned_prune_k_2026-08-28`) had THREE images.
+
+Pool: all 2233 imazen-26 `png-v3` images across 21 content folders, plus the
+5 gb82-sc screens the 2026-08-28 benchmark used (2238 total).
+
+Representative selection is by CLUSTERING, not sampling. imazen-26 is
+heavily skewed — 749 of 2233 images are AI product shots and another 370 are
+web screenshots — so a random draw reproduces that skew and drops exactly the
+outliers a content gate fails on. `sectioned_k_corpus features` computes a
+10-dimensional content vector per image (flat-run mass, gradient-zero rate,
+unique colours per pixel, activity-context distribution and its entropy,
+best-static-predictor bits/px, root-cost spread, per-context winner count and
+mismatch mass — the axes predictor choice actually depends on), and
+`select_sectioned_k_corpus.py` runs k-means++ (K=24, 8 restarts, seed
+20260830, best inertia 2059.1) over the standardized vectors and takes the
+TWO members nearest each centroid.
+
+Split is by ORIGIN: of each cluster's two representatives, one goes to
+`train` and one to `validate`, so every rendition of an origin lands on the
+same side and no derivative of a training image can appear in validation,
+while both sides still span every content region. The 5 gb82-sc screens are
+carried as a third split, `continuity`; they are reported separately and are
+NOT part of the fit.
+
+Cluster sizes (n = pool members assigned, rep = the train-side pick):
+   0: 178  1400-lilith-nature (photo, foliage)
+   1: 212  9226-ai-products/toys
+   2:  64  7000-plots/random-charts
+   3:   1  9226-ai-products/home/decor (5504x3072 — a genuine singleton
+           outlier, kept rather than dropped)
+   4:  40  6000-scans-patents (1-bit original scans)
+   5: 140  9000-ai-clipart
+   6:  67  1000-photos-general (night, high ISO)
+   7: 134  6600-ia-scans-manuscript-illustrations
+   8:   8  8100-web-screenshots (1440x900 / 1920x1080)
+   9:  29  9226-ai-products/home/small-appliances
+  10: 172  9226-ai-products/grocery
+  11:  34  5000-nps-brochures (grayscale maps)
+  12:  29  5000-nps-brochures (grayscale, second mode)
+  13: 119  9226-ai-products/whitelabeled-beauty
+  14:  88  9226-ai-products/clothing-womens
+  15:  11  7000-plots/real-charts
+  16: 195  1400-lilith-nature (landscape)
+  17:  67  9226-ai-products/sporting-goods
+  18: 197  9226-ai-products/clothing-loungewear
+  19:  50  9226-ai-products/with-callouts
+  20:  37  7000-plots/aliased-lines (line art — the cfl_two_pass class)
+  21: 119  5300-noaa-hurricane-documents
+  22:  86  1000-photos-general (architecture)
+  23: 161  9226-ai-products/home/small-appliances (second mode)
+
+Renditions per origin: a log-spaced ladder {362, 512, 724, 1024, 1448, 2048}
+truncated at the source's long edge (UPSCALING IS REFUSED — the renderer
+asserts, it does not silently upscale, because a synthetic upscale has no
+high-frequency detail and would mislead every feature the gate conditions
+on), then the smallest / middle / largest legal size, each materialized BOTH
+as a centre `crop` (native detail statistics preserved) and as a `resize`
+(CatmullRom = Mitchell-Netravali B=0 C=0.5, balanced blur/ringing). 310
+renditions: 154 crop / 155 resize (one origin yields a duplicate at its
+native size), 107 < 0.25 MP, 81 0.25-1 MP, 75 1-2 MP, 46 >= 2 MP.
+
+
+================================================================ WHAT SHIPS
+
+The sectioned local-tree writer used to gather all 14 candidate predictors
+per group and then prune to a FIXED `SECTIONED_PRUNE_PREDICTORS_K = 8` by
+ROOT COST. Two things are wrong with that and the corpus shows both:
+
+ 1. Root-cost ranking is the wrong selector — already refuted for the GLOBAL
+    tree in `jxl_probe_prune_2026-08-15.md` (predictor value is
+    leaf-conditional; screen trees put real mass on `Zero`, whose root cost
+    is 15.9x worse than `Gradient`'s). Measured cost of that here: the
+    SHIPPING K=8 default costs **+0.38 % bytes mean / +6.54 % max** vs no
+    pruning at all on the train split, **+1.12 % mean** on the gb82-sc
+    screens. That is a pre-existing regression nobody had measured, because
+    the 2026-08-28 sweep used K=8 as its own baseline.
+ 2. Pruning AFTER the gather only shrinks the split search. Selecting the
+    set BEFORE the gather shrinks the tokenization and the token/ebit columns
+    too.
+
+What ships instead: ONE whole-image probe tree per encode, and every group's
+learn gets the predictors that tree's leaves actually use. The COUNT is
+therefore chosen by content — 4 on a concentrated photo tree, 8 on a spread
+document tree — which is the "content-adaptive K" the task asked for.
+
+Three constants, all in `modular/section.rs`, two of them fitted here:
+
+  SECTIONED_PROBE_MAX_NODES  = 2047   (measured, see below)
+  SECTIONED_PROBE_MIN_LEAVES = 768    (fitted)
+  SECTIONED_PROBE_COVERAGE_PCT = 80   (fitted)
+
+plus the probe density `(group_stride, pixel_mult) = (1, 16)` at e7 and
+`(1, 8)` at e8+. Env dials for all of them:
+`JXL_SECTIONED_TREE_PREDICTORS` (auto|off|K),
+`JXL_SECTIONED_PROBE_{MAX_NODES,MIN_LEAVES,COVERAGE,GROUP_STRIDE,PIXEL_MULT}`.
+
+
+================================================================ WHAT FAILED
+
+Recorded so the next session does not re-derive them.
+
+* **Probing every 4th group (the global probe's density) is wrong here.**
+  The global probe feeds ONE whole-image tree, so a group-level sample is
+  unbiased for it. The sectioned probe feeds N per-group trees, and the whole
+  point of sectioned mode is that groups differ. At group_stride 4 the worst
+  byte cell was **+12.4 %** vs K=8 (a 4-group screenshot crop); covering
+  EVERY group at the same total sample count (pixel stride 16 instead of 4)
+  removed that failure mode. Group stride is now 1.
+
+* **An uncapped probe tree eats its own saving.** On the 3840x2160 photo the
+  probe grew a **9515-leaf** tree costing **1.39 s — 14 % of the whole
+  encode**. Capping `max_property_values` (what the global probe does) does
+  NOT bound tree size. With a node cap the cost flattens: 4095 nodes 748 ms,
+  2047 nodes 706 ms, 1023 nodes 677 ms, 511 nodes 661 ms — the residue is the
+  gather plus the top splits. 2047 sits on the plateau and keeps the most
+  leaf resolution for the trust gate.
+
+* **Masking the probe's property columns did nothing.** The global probe sets
+  `active_props`; this one did not. Adding it moved the probe from 1403 ms to
+  1384 ms. It is still the right thing (it is what the learn reads) and it
+  stays, but it is not where the cost was.
+
+* **Letting the adaptive set exceed 8 predictors is a wall regression.** On
+  spread content the probe names 10-12 predictors. That buys bytes back, but
+  it buys them with exactly the wall this work exists to remove: at t=8 the
+  uncapped selector measured **+20 % wall** corpus-mean. The set is now hard
+  capped at `SECTIONED_PRUNE_PREDICTORS_K`, so it can only ever be SMALLER
+  than what ships today — and inside the cap the ranking is still the probe's
+  leaf share rather than root cost, which is the better-founded selection at
+  an equal count.
+
+* **A sequential probe is Amdahl serial work.** Before the probe gather was
+  parallelized, its share GREW with the thread count: ~+1 % of wall at t=1
+  and ~+20 % at t=8. It now fans out across groups and merges in index order
+  (deterministic — `append_from` is order-dependent and the order is fixed).
+
+* **Small probe trees cannot be trusted.** On 362-px crops of charts and line
+  art the probe learns 5-15 leaves, names 4-6 predictors, and the restriction
+  costs up to **+8.3 % bytes**, because the real per-group learns (4x the
+  samples, per group) reach for predictors the probe never split on. Those
+  same cells have nothing to gain: dropping 14 -> 8 predictors moves their
+  wall by under 5 %. Hence the trust gate. It is NOT a size gate — over the
+  corpus, ZERO cells with 4 or fewer groups produce a trusted probe, so a
+  separate `SECTIONED_PROBE_MIN_GROUPS` earns nothing and stays a no-op.
+
+
+================================================================ THE FIT
+
+Two parameters, fitted JOINTLY and evaluated offline from one sweep (a cell
+with `leaves < min_leaves` contributes its K=8 row, which is exactly what the
+gated encoder does, so no re-encode per candidate).
+
+Selection rule, stated in `fit_sectioned_k_gate.py` BEFORE the numbers:
+among candidates whose TRAIN worst-case per-rendition byte move vs K=8 is
+<= 1.0 % and whose TRAIN mean byte move is <= 0, take the largest TRAIN mean
+wall saving. Winner: **min_leaves = 768, coverage = 80 %**. Coverage 85 also
+passes and is separated from 80 by 0.05 pp of corpus-mean t=8 wall — inside
+run-to-run noise, and it produces the IDENTICAL predictor set on the bar
+cell; a future re-fit with repeats may prefer it. Coverage 90 does not reach
+the wall bar.
+
+Gate firing rate: 49 of 310 renditions (16 %). It fires on photos, AI product
+shots, colour patent rescans and one illustration. It NEVER fires on
+documents (NOAA), web screenshots, plots/line-art, clipart, or the gb82-sc
+screens — those are byte-identical to what ships today.
+
+e7 t=8, full corpus (310 renditions), vs the shipping K=8 default:
+
+  split       n    fires   bytes mean   median    p95     max   wall mean
+  train      144      24      -0.001 %  +0.000  +0.136  +0.916    +1.85 %
+  validate   138      25      +0.049 %  +0.000  +0.260  +2.991    +1.42 %
+  continuity  28       0      +0.000 %  +0.000  +0.000  +0.000    +0.00 %
+
+e7 t=1, >= 1 MP subset (122 renditions), vs the shipping K=8 default:
+
+  split       n  fires |  ALL wall   ALL bytes | FIRED wall  median  FIRED bytes   max
+  train      58     21 |   -5.81 %    -0.005 % |  -16.05 %  -16.56 %    -0.014 %  +0.916 %
+  validate   56     20 |   -5.98 %    +0.112 % |  -16.73 %  -16.99 %    +0.314 %  +2.991 %
+  continuity  8      0 |   +0.00 %    +0.000 % |   +0.00 %   +0.00 %    +0.000 %  +0.000 %
+  ALL       122     41 |   -5.51 %    +0.049 % |  -16.38 %  -16.56 %    +0.146 %  +2.991 %
+
+HELD-OUT READS HONESTLY ON WALL AND WORSE ON BYTES. The wall saving
+generalises (-16.7 % held-out vs -16.1 % train); the byte tail does not
+(+0.31 % mean / +2.99 % max held-out vs -0.01 % / +0.92 % train). The +2.99 %
+is ONE cell — a colour patent rescan at 2048^2 — and it buys -20.3 % wall on
+that same cell. It is present at every coverage below 100 and at every
+min_leaves, so it is the probe getting that image's predictor set wrong, not
+a threshold that can be nudged; coverage 100 avoids it and delivers no wall
+win at all (-0.75 % on the fired cells).
+
+Fired cells by size (e7 t=1) — the win grows with size, as the amortization
+argument predicts:
+
+  MP band     n   wall mean   median    best    worst   bytes mean    max
+  1-2 MP     14    -15.01 %  -15.01 % -24.34 %  -5.77 %   +0.022 %  +0.948 %
+  2-4 MP     13    -16.15 %  -15.69 % -27.15 %  -9.63 %   +0.105 %  +0.403 %
+  >= 4 MP    14    -17.97 %  -18.99 % -22.96 %  -9.39 %   +0.307 %  +2.991 %
+
+Reference arms on the SAME 41 fired cells (e7 t=1): no pruning (K=14) is
++33.12 % wall for +0.009 % bytes; the probe list with NO coverage cut
+(coverage 100) is -0.75 % wall for -0.156 % bytes. The coverage cut is where
+the wall comes from and where the bytes go.
+
+Per content class, gate vs K=8 (all splits, e7 t=8; `fires` counts
+renditions where the probe was trusted):
+
+  class                                     n  fires  bytes mean  bytes max  wall mean
+  1000-lilith-photos-general               30     15    +0.074 %   +0.948 %    +5.12 %
+  1400-lilith-nature                       18     12    +0.038 %   +0.916 %    +1.21 %
+  1600-lilith-food                          6      2    +0.150 %   +0.779 %    +2.61 %
+  2000-unsplash-people                      6      3    +0.015 %   +0.095 %    +6.74 %
+  5000-national-park-service-brochures     12      3    -0.253 %   +0.086 %    +2.19 %
+  5300-noaa-hurricane-documents            12      0     0.000 %    0.000 %     0.00 %
+  6000-lilith-scans-public-patents         24      2    +0.141 %   +2.991 %    +0.17 %
+  6600-ia-scans-manuscript-illustrations    6      2    +0.025 %   +0.136 %    +2.54 %
+  7000-lilith-plots                        36      0     0.000 %    0.000 %     0.00 %
+  8100-lilith-web-screenshots              12      0     0.000 %    0.000 %     0.00 %
+  9000-lilith-ai-clipart                   18      0     0.000 %    0.000 %     0.00 %
+  9094-lilith-ai-illustrations              6      1    +0.085 %   +0.512 %    +3.86 %
+  9226-lilith-ai-products                  96      9    +0.018 %   +0.263 %    +1.70 %
+  gb82-sc                                  28      0     0.000 %    0.000 %     0.00 %
+
+The positive t=8 wall column on that table is NOT the bar cell. It is the
+corpus mean at 8 threads over renditions that top out at 4 MP, where the
+probe's ~200 ms is a large share of a ~1 s encode. At t=1 the same cells are
+-16 %, and at 8.3 MP the t=8 cell is a win too (see the bar table). The
+crossover is size, and it is reported rather than averaged away.
+
+
+================================================================ THE BAR CELL
+
+`jxl_sectioned_adaptive_k_bar_2026-08-31.tsv`. Photo 3840x2160 (imazen-26
+1403 `nature_large-tree-canopy`, cropped TOP-LEFT, sha256
+0e72993af2f43ba978b5f2cbb3e630dc4c537ea615de4fd9c3aa5734c67821c9), the cell
+issue #99 quotes. `SectionedTrees::On` both sides. 5 repeats, arms
+INTERLEAVED inside each rep. MIN over repeats:
+
+| cell | cjxl v0.12 | K=8 (before) | gate (after) | gate vs K=8 | bytes |
+|---|---|---|---|---|---|
+| e7 t=1 | 7.22 s | 11.52 s (1.60x) | **8.90 s (1.23x)** | -22.7 % | +0.315 % |
+| e7 t=8 | 1.10 s | 1.96 s (1.78x) | 1.80 s (1.64x) | -7.9 % | +0.315 % |
+| e9 t=1 | 41.97 s | 44.79 s (1.07x) | **33.14 s (0.79x)** | -26.0 % | +0.263 % |
+| e9 t=8 | 6.07 s | 6.78 s (1.12x) | **5.85 s (0.96x)** | -13.8 % | +0.263 % |
+
+**e7 t=1 meets the <= 1.3x bar. Both e9 cells meet it and now BEAT cjxl.
+e7 t=8 does not, and no predictor-set change reaches it**: fixed K=4 — the
+maximum possible reduction, and a byte regression on palette content — was
+measured at 1729 ms on this cell, i.e. **1.38x**, against a 1.3x target of
+1430 ms. The remaining t=8 gap is #99's other named lever (a cheaper split
+search over the kept set), plus the structural fact that the probe's ~200 ms
+is 10 % of a 1.8 s encode at t=8 and 8 % of an 8.9 s encode at t=1.
+
+Wall conventions: `cjxl` is whole-process wall INCLUDING PNG decode (the
+convention #99 used); ours is encode-only. At t=1 the PNG load is noise; at
+t=8 it is ~10 % of cjxl's number, so the t=8 ratios above FLATTER us and the
+true e7 t=8 standing is worse than 1.64x.
+
+Repeat spread on this host (max/min): e7 t=1 0.2-0.6 %, e9 t=1 3-4 %, and
+**t=8 cells 7-36 %** — which is why the t=8 rows are min-over-repeats and why
+the arms are interleaved.
+
+METHOD TRAP, recorded because it inverted a sign: the first run of this table
+did 5 repeats of K=8 and then 5 of the gate. Block-ordered like that it
+reported the gate **+10.4 % SLOWER** at e7 t=8. Interleaving reports **-7.9 %**
+(and a separate 9-repeat interleaved run agrees at -8.7 %). Short
+multi-threaded cells drift over a run; do not block-order them.
+
+Phase split on the same cell (`sectioned_k_corpus phases`, e7 t=1), which
+also re-verifies the root cause #99 filed:
+
+  arm      total      learn   find_best_split   probe    gather
+  K=8     11540 ms   8654 ms      4827 ms         -      892 ms
+  gate     8954 ms   4808 ms      2829 ms      683 ms    704 ms

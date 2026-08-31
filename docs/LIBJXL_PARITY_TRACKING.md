@@ -12,7 +12,7 @@ Measured numbers: 3840x2160 mosaics, t=1, macOS M4 Pro
 | component | libjxl (enc_ma.h:24-138) | ours (tree_learn.rs TreeSamples) | parity |
 |---|---|---|---|
 | residual tokens | 2 B/pred: {u8 tok, u8 nbits}, extra bits NOT stored | 2 B/pred: tokens u8 + ebits u8 columns | ≈ parity per predictor |
-| predictor count | **2** at all default lossless efforts (`Predictor::Best` = {Weighted, Gradient}, enc_modular.cc:642-644); 14 only at Glacier `Predictor::Variable` | 14 always (pre-2026-08-15); `JXL_GLOBAL_TREE_PREDICTORS=auto` probe-tree selection keeps 7-9 | **structural gap, now bridged by probe-tree pruning; our 7-9 > their 2 is an RD choice (we beat cjxl bytes 6-46%)** |
+| predictor count | **2** at all default lossless efforts (`Predictor::Best` = {Weighted, Gradient}, enc_modular.cc:642-644); 14 only at Glacier `Predictor::Variable` | 14 always (pre-2026-08-15); GLOBAL tree: `JXL_GLOBAL_TREE_PREDICTORS=auto` probe-tree selection keeps 7-9. SECTIONED per-group learns (2026-08-31): their own probe-tree selector keeps **4-8**, content-chosen, capped at 8 | **structural gap, now bridged by probe-tree pruning; our 7-9 > their 2 is an RD choice (we beat cjxl bytes 6-46%)** |
 | properties | u8 PRE-QUANTIZED buckets at gather (≤256, QuantizeProperty LUT enc_ma.h:109-119); statics (channel, group) u32 | e8+: u8 buckets at gather (exact distinct-value pre-walk = byte-identical thresholds; raw columns never materialize — 2026-08-15); e≤7: raw i16/i32 → pre_quantize, waved free | **BRIDGED at e8+** (different mechanism, same effect: their subsampled pre-pass thresholds vs our exact pre-walk — ours keeps bytes identical) |
 | dedup | streaming 2-position open hash at gather, u16 counts (saturate+evict) | post-gather packed-key sort (adaptive 2-byte+refined partitions), u32 counts | ours measured faster than our own streaming port (+3-8% wall); count width 2 B theirs vs 4 ours |
 | per-unique bytes | e7 19 B, e9 28 B (P=2) | e7 ~35 B, e9 ~46 B at 14 preds; ~21-27 B at auto 7-9 | bridged by auto |
@@ -86,6 +86,25 @@ wall on photo, but +0.20 % / +1.35 % bytes on imac_dark) and NOT defaulted.
 Single-worker pools now bypass the fork engine (byte-identical, −3.5 % learn
 wall on both paths). Group size 128–1024 measured: 256 stays
 (`jxl_sectioned_group_size_2026-08-28.meta`).
+
+**SUPERSEDED 2026-08-31 by the content-adaptive predictor selector (#99 item
+1).** The fixed K=8 root-cost prune is replaced by a probe-tree-derived
+per-image predictor set; re-measured on the same cell, min of 5 INTERLEAVED
+repeats (block-ordered repeats inverted the sign at e7 t=8 — do not use them
+for short multi-thread cells):
+
+| cell | cjxl v0.12 | ours before | ours after | ratio before → after |
+|---|---|---|---|---|
+| e7 t=1 | 7.22 s | 11.52 s | **8.90 s** | 1.60× → **1.23×** |
+| e7 t=8 | 1.10 s | 1.96 s | **1.80 s** | 1.78× → 1.64× |
+| e9 t=1 | 41.97 s | 44.79 s | **33.14 s** | 1.07× → **0.79×** |
+| e9 t=8 | 6.07 s | 6.78 s | **5.85 s** | 1.12× → **0.96×** |
+
+Bytes +0.32 % (e7) / +0.26 % (e9) on that cell. **e7 t=8 is not
+predictor-count-bound**: fixed K=4 — the maximum possible reduction — lands at
+1.38× on the same cell, so the residual there needs the cheaper-split-search
+lever, not a smaller set. Full record
+`benchmarks/jxl_sectioned_adaptive_k_2026-08-31.{tsv,meta}`.
 
 2026-08-18 lossless-t8 update (rounds 6-8, all byte-identical): the
 work-stealing RefCell crash fixed; dedup refinement scatter, tensor

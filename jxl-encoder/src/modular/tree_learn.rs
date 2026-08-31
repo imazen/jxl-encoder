@@ -10997,6 +10997,36 @@ pub(crate) fn tree_prune_predictors_env() -> Option<usize> {
     None
 }
 
+/// `JXL_SECTIONED_TREE_PREDICTORS` — predictor-set selection for the
+/// SECTIONED per-group tree learns (#99 item 1). `auto` (the e >= 7
+/// DEFAULT) runs one whole-image probe tree and gives every group the
+/// predictors its leaves actually use, so the count is chosen by content
+/// instead of the fixed `SECTIONED_PRUNE_PREDICTORS_K`; `off`/`14`
+/// restores the fixed-K root-cost prune; a numeric K forces that prune at
+/// that strength. Selecting BEFORE the per-group gather (rather than
+/// pruning after it) is what makes this cheaper than the fixed-K path at
+/// the same count — the gather only tokenizes the surviving predictors.
+#[cfg(feature = "std")]
+pub(crate) fn sectioned_tree_predictors_env() -> Option<usize> {
+    let v = std::env::var("JXL_SECTIONED_TREE_PREDICTORS").ok()?;
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("auto") {
+        return Some(GLOBAL_TREE_PREDICTORS_AUTO);
+    }
+    if v.eq_ignore_ascii_case("off") {
+        return Some(GLOBAL_TREE_PREDICTORS_OFF);
+    }
+    match v.parse::<usize>() {
+        Ok(k) if k >= CANDIDATE_PREDICTORS.len() => Some(GLOBAL_TREE_PREDICTORS_OFF),
+        Ok(k) => Some(k.max(2)),
+        Err(_) => None,
+    }
+}
+#[cfg(not(feature = "std"))]
+pub(crate) fn sectioned_tree_predictors_env() -> Option<usize> {
+    None
+}
+
 /// `JXL_GLOBAL_TREE_PREDICTORS` — probe-pruned GLOBAL tree-learn gather
 /// (alg-parity item, libjxl learns over 2 predictors at default lossless
 /// efforts — `Predictor::Best` = {Weighted, Gradient},
@@ -11194,6 +11224,12 @@ pub(crate) const PROBE_CTX_MARGIN: f64 = 1.015;
 /// 1/this of the probed samples.
 pub(crate) const PROBE_CTX_MASS_FLOOR_DIV: usize = 64;
 
+/// Concentrated-tree statics cap for the GLOBAL probe-tree selector
+/// (corpus-gated 2026-08-16, `benchmarks/jxl_wall_parity_2026-08-16.md`).
+/// Only applied when the top `N` statics already carry >= 90 % of the
+/// probe tree's static leaf mass, so spread trees decline it automatically.
+pub(crate) const BIG_TREE_KEEP_STATICS: usize = 5;
+
 /// Predictors a learned tree's leaves actually use, with a mass floor —
 /// the `auto` probe-tree selector (see the section.rs call site): keep
 /// every predictor holding at least `leaves/64` leaves (min 2), always
@@ -11202,6 +11238,7 @@ pub(crate) const PROBE_CTX_MASS_FLOOR_DIV: usize = 64;
 /// contexts the final tree can re-serve with a surviving predictor at
 /// negligible cost.
 pub(crate) fn predictors_used_by_tree(tree: &Tree) -> alloc::vec::Vec<Predictor> {
+    let keep_statics_cap = BIG_TREE_KEEP_STATICS;
     let mut leaf_count = [0u32; 16];
     let mut leaves = 0u32;
     for node in tree.iter() {
@@ -11233,7 +11270,6 @@ pub(crate) fn predictors_used_by_tree(tree: &Tree) -> alloc::vec::Vec<Predictor>
     // tree-SIZE-gated cap — size is NOT a content discriminator)
     // decline the cap automatically. Corpus-gated 2026-08-16
     // (benchmarks/jxl_wall_parity_2026-08-16.md).
-    const BIG_TREE_KEEP_STATICS: usize = 5;
     const KEEP_CAP_MIN_COVERAGE_PCT: u64 = 90;
     if leaves >= 512 {
         let mut by_share: alloc::vec::Vec<(usize, u32)> = leaf_count
@@ -11248,11 +11284,11 @@ pub(crate) fn predictors_used_by_tree(tree: &Tree) -> alloc::vec::Vec<Predictor>
         let static_total: u64 = by_share.iter().map(|&(_, c)| c as u64).sum();
         let top_mass: u64 = by_share
             .iter()
-            .take(BIG_TREE_KEEP_STATICS)
+            .take(keep_statics_cap)
             .map(|&(_, c)| c as u64)
             .sum();
         if static_total > 0 && top_mass * 100 >= static_total * KEEP_CAP_MIN_COVERAGE_PCT {
-            for &(pi, _) in by_share.iter().skip(BIG_TREE_KEEP_STATICS) {
+            for &(pi, _) in by_share.iter().skip(keep_statics_cap) {
                 keep[pi] = false;
             }
         }
@@ -11267,6 +11303,97 @@ pub(crate) fn predictors_used_by_tree(tree: &Tree) -> alloc::vec::Vec<Predictor>
     if std::env::var_os("JXL_PROBE_COSTS").is_some() {
         eprintln!(
             "[probe-tree] leaves={leaves} floor={floor} keep {}: {:?}",
+            list.len(),
+            list
+        );
+    }
+    list
+}
+
+/// SECTIONED probe-tree selector (#99 item 1): the predictors a whole-image
+/// probe tree's leaves use, cut at a fitted CUMULATIVE leaf-mass coverage.
+///
+/// Same leaf-mass floor as [`predictors_used_by_tree`], then a different
+/// cut rule. The global selector caps the static count at a fixed 5 and
+/// only when the top 5 already carry >= 90 % of the static leaf mass — a
+/// rule tuned for a cost paid ONCE per image. The sectioned writer pays
+/// the split search once PER GROUP, so the same marginal predictor costs
+/// `num_groups` times as much, and the useful dial is "how much leaf mass
+/// am I willing to leave on the table", not "how many predictors".
+///
+/// `coverage_pct` = 100 keeps every static above the floor (the global
+/// selector's uncapped behaviour). Lower values keep the shortest prefix
+/// of the leaf-share ranking that reaches that share of static leaf mass,
+/// so the RESULTING COUNT IS CHOSEN BY CONTENT: a concentrated photo tree
+/// reaches 90 % in two or three statics, while a document or palette tree
+/// spreads its mass and keeps most of them at the same setting. That is
+/// why lowering this does not reproduce the fixed-K byte regressions —
+/// fixed K cuts the spread trees too.
+///
+/// [`Predictor::Weighted`] is always retained (its value is
+/// context-dependent; the WP max-error property splits on it).
+pub(crate) fn sectioned_predictors_from_tree(
+    tree: &Tree,
+    coverage_pct: u64,
+    max_total: usize,
+) -> alloc::vec::Vec<Predictor> {
+    let mut leaf_count = [0u32; 16];
+    let mut leaves = 0u32;
+    for node in tree.iter() {
+        if node.property < 0 {
+            leaf_count[(node.predictor as usize).min(15)] += 1;
+            leaves += 1;
+        }
+    }
+    // Same floor as the global selector: small probe trees under-resolve
+    // their leaf tail, so below 512 leaves keep everything used at all.
+    let floor = if leaves < 512 {
+        1
+    } else {
+        (leaves / 128).max(2)
+    };
+    let mut keep = [false; 16];
+    for (pi, &c) in leaf_count.iter().enumerate() {
+        keep[pi] = c >= floor;
+    }
+    let mut by_share: alloc::vec::Vec<(usize, u32)> = leaf_count
+        .iter()
+        .enumerate()
+        .filter(|&(pi, &c)| {
+            keep[pi] && c > 0 && CANDIDATE_PREDICTORS.get(pi) != Some(&Predictor::Weighted)
+        })
+        .map(|(pi, &c)| (pi, c))
+        .collect();
+    by_share.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let static_total: u64 = by_share.iter().map(|&(_, c)| c as u64).sum();
+    // HARD CAP at the shipping predictor count, so the adaptive set can only
+    // ever be SMALLER than what ships today and the split search can never
+    // get slower than the fixed-K path. Without it the selector keeps 10-11
+    // predictors on spread content (documents, screenshots) — which does buy
+    // bytes back, but it buys them with the exact wall this work exists to
+    // remove. Inside the cap the RANKING is still the probe's leaf share
+    // rather than root cost, so at an equal count it is the better-founded
+    // selection.
+    let max_statics = max_total.saturating_sub(1).max(1);
+    let need = static_total * coverage_pct;
+    let mut acc: u64 = 0;
+    for (i, &(pi, c)) in by_share.iter().enumerate() {
+        if i >= max_statics || (i > 0 && acc * 100 >= need) {
+            keep[pi] = false;
+        } else {
+            acc += c as u64;
+        }
+    }
+    let list: alloc::vec::Vec<Predictor> = CANDIDATE_PREDICTORS
+        .iter()
+        .enumerate()
+        .filter(|&(pi, &p)| p == Predictor::Weighted || keep[pi])
+        .map(|(_, &p)| p)
+        .collect();
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_PROBE_COSTS").is_some() {
+        eprintln!(
+            "[sectioned-probe] leaves={leaves} floor={floor} cov={coverage_pct} cap={max_total} n_pred={}: {:?}",
             list.len(),
             list
         );
@@ -14793,5 +14920,104 @@ mod tests {
         let mut borrowed = NodeTensor::zeroed(&layout);
         build_node_tensor_borrowed(&view, &params, &layout, histogram_size, 0, n, &mut borrowed);
         assert_tensors_identical(&owned, &borrowed, "borrowed-vs-owned build");
+    }
+}
+
+#[cfg(test)]
+mod sectioned_probe_selector_tests {
+    use super::*;
+    use crate::modular::tree::PropertyDecisionNode;
+
+    /// Build a tree whose leaves use `counts[i]` copies of
+    /// `CANDIDATE_PREDICTORS[i]`. Only the leaf predictor and the
+    /// `property < 0` leaf marker matter to the selector.
+    fn tree_with_leaf_counts(counts: &[(usize, u32)]) -> Tree {
+        let mut t: Tree = Vec::new();
+        for &(pi, n) in counts {
+            for _ in 0..n {
+                t.push(PropertyDecisionNode {
+                    property: -1,
+                    predictor: CANDIDATE_PREDICTORS[pi],
+                    ..Default::default()
+                });
+            }
+        }
+        t
+    }
+
+    fn idx_of(p: Predictor) -> usize {
+        CANDIDATE_PREDICTORS.iter().position(|&q| q == p).unwrap()
+    }
+
+    /// The cap is what keeps the adaptive set from ever being SLOWER than the
+    /// fixed-K path it replaces: a spread probe tree names 10-12 predictors,
+    /// and shipping that would buy bytes with the wall this work exists to
+    /// remove. Pinned because the cap is easy to lose in a refactor and the
+    /// loss is invisible in bytes.
+    #[test]
+    fn cap_bounds_the_adaptive_set_even_when_the_probe_tree_is_spread() {
+        // Twelve statics, all equally used: nothing can be cut on coverage.
+        let counts: Vec<(usize, u32)> = (0..CANDIDATE_PREDICTORS.len())
+            .filter(|&i| CANDIDATE_PREDICTORS[i] != Predictor::Weighted)
+            .map(|i| (i, 100u32))
+            .collect();
+        let tree = tree_with_leaf_counts(&counts);
+        for cap in 2..=9 {
+            let got = sectioned_predictors_from_tree(&tree, 100, cap);
+            assert!(
+                got.len() <= cap,
+                "cap {cap} exceeded: {} predictors {got:?}",
+                got.len()
+            );
+            assert!(
+                got.contains(&Predictor::Weighted),
+                "Weighted must always survive (cap {cap}): {got:?}"
+            );
+        }
+    }
+
+    /// A CONCENTRATED tree (one static carrying nearly all leaf mass — what a
+    /// photo produces) must collapse under a coverage cut, while a SPREAD
+    /// tree (a document / palette screenshot) must not. That asymmetry IS the
+    /// content adaptation; a fixed K cannot express it, which is why fixed
+    /// K=4 costs palette content bytes.
+    #[test]
+    fn coverage_cut_is_content_adaptive_not_a_fixed_count() {
+        let g = idx_of(Predictor::Gradient);
+        let z = idx_of(Predictor::Zero);
+        let l = idx_of(Predictor::Left);
+        let t = idx_of(Predictor::Top);
+        let concentrated = tree_with_leaf_counts(&[(g, 940), (z, 20), (l, 20), (t, 20)]);
+        let spread = tree_with_leaf_counts(&[(g, 260), (z, 250), (l, 250), (t, 240)]);
+        let c = sectioned_predictors_from_tree(&concentrated, 90, 8);
+        let s = sectioned_predictors_from_tree(&spread, 90, 8);
+        assert!(
+            c.len() < s.len(),
+            "same coverage must keep FEWER predictors on concentrated content: \
+             concentrated {c:?} vs spread {s:?}"
+        );
+        assert!(c.contains(&Predictor::Gradient) && c.contains(&Predictor::Weighted));
+    }
+
+    /// Lowering coverage may only ever REMOVE predictors. A non-monotone
+    /// selector would make the fitted threshold meaningless (the fit assumes
+    /// the curve it swept is ordered).
+    #[test]
+    fn lower_coverage_is_always_a_subset() {
+        let g = idx_of(Predictor::Gradient);
+        let z = idx_of(Predictor::Zero);
+        let l = idx_of(Predictor::Left);
+        let t = idx_of(Predictor::Top);
+        let a = idx_of(Predictor::Average0);
+        let tree = tree_with_leaf_counts(&[(g, 400), (z, 300), (l, 200), (t, 80), (a, 20)]);
+        let mut prev = sectioned_predictors_from_tree(&tree, 100, 8);
+        for cov in [95u64, 90, 80, 70, 60, 50, 40] {
+            let cur = sectioned_predictors_from_tree(&tree, cov, 8);
+            assert!(
+                cur.iter().all(|p| prev.contains(p)),
+                "coverage {cov} added a predictor: {cur:?} not a subset of {prev:?}"
+            );
+            prev = cur;
+        }
     }
 }

@@ -226,27 +226,89 @@ confirmation this work does not have. Note also that the loop never
 entropy-codes, so its traces have no bytes column — per-iterate bytes only come
 from separate budget-capped full encodes.
 
-### T3 — e7 sectioned wall, via content-adaptive K (corpus expansion REQUIRED)
+### T3 — e7 sectioned wall via content-adaptive K — DONE 2026-08-31 for e7 t=1
+### and BOTH e9 cells; e7 t=8 lands at 1.58x, NOT 1.30x, and here is why
 
-Root cause: at e7 t=1 the 11.5 s total is 8.5 s per-group tree learn, of which
-**`find_best_split` is 4.7 s — our split search evaluates K=8 kept predictors
-where libjxl learns over 2** (`enc_modular.cc:642-644`, `Predictor::Best` =
-{Weighted, Gradient}). ~4× the search work, and sectioned runs it *per group*
-rather than once whole-image, so it multiplies by group count exactly where
-sectioned mode is meant to be winning memory. e9 is inside the 1.3× bar
-(1.08×/1.10×) only because its surrounding encode is expensive enough to bury
-the same absolute cost.
-Already measured and rejected as blanket defaults: prune K=6 (−4…−13 % wall,
-≤ +0.20 % bytes), K=4 (up to +1.35 % bytes on palette content) —
-`benchmarks/jxl_sectioned_prune_k_2026-08-28.{tsv,meta}`. The single-worker
-fork-engine bypass already landed (−3.5 % learn wall).
-**Owner directive: content-adaptive K is approved, but the gate must be fitted
-on a corpus that actually spans the content space** — expand the low-resolution
-sampling of imazen-26 to more images *and crops thereof*. Per the workspace
-sweep discipline: cluster to pick representative sources rather than sampling
-randomly (random over-represents the modal class and drops the outliers a gate
-fails on), log-spaced sizes, skip upscaling, and hold out a validation split.
-A gate fitted on a handful of images will look excellent and generalise badly.
+Shipped: the sectioned per-group learns no longer prune a fixed K=8 by root
+cost. ONE whole-image probe tree is learned per encode and every group's
+learn gets the predictors that tree's leaves actually use, capped at the old
+K and cut at a fitted cumulative leaf-mass coverage. The COUNT is chosen by
+content (4 on a concentrated photo tree, 8 on a spread document tree), and
+the set is chosen BEFORE the gather, so the tokenization and the token/ebit
+columns shrink with it — the old prune ran after the gather and only ever
+shrank the split search.
+
+Full record: `benchmarks/jxl_sectioned_adaptive_k_2026-08-31.{tsv,meta}`
+(+ the `_t1`, `_bar`, `_corpus`, `_picks`, `_leaves*` siblings), the three
+constants' own rustdoc in `modular/section.rs`, the LIBJXL_DIVERGENCES.md
+section-D row, and `scripts/{select_sectioned_k_corpus.py,
+fit_sectioned_k_gate.py,sectioned_k_bar_cell.sh}`.
+
+**Wall vs cjxl v0.12 on the bar cell (photo 3840x2160, min of 5 interleaved
+repeats), before -> after:**
+
+| cell | cjxl | before | after | bar |
+|---|---|---|---|---|
+| e7 t=1 | 7.22 s | 11.52 s (1.60x) | 8.90 s (**1.23x**) | MET |
+| e7 t=8 | 1.10 s | 1.96 s (1.78x) | 1.80 s (**1.64x**) | NOT met |
+| e9 t=1 | 41.97 s | 44.79 s (1.07x) | 33.14 s (**0.79x**) | MET, and now beats cjxl |
+| e9 t=8 | 6.07 s | 6.78 s (1.12x) | 5.85 s (**0.96x**) | MET, and now beats cjxl |
+
+Bytes on that cell +0.32 % (e7) / +0.26 % (e9). **e9 did not regress — it
+improved on both axes of the bar.** (Those e9 numbers are explicit
+`SectionedTrees::On`; `Auto` still routes e>=8 to the global tree.)
+
+**e7 t=8 is NOT predictor-count-bound and no gate reaches 1.3x there.**
+Measured on the same cell: the maximum possible reduction, fixed K=4, lands
+at 1.38x with cjxl's process wall as the denominator and ~1.56x against its
+encode-only wall. The gate gets 1.78x -> 1.64x and that is the end of this
+lever. The remaining t=8 gap is the OTHER lever named in #99 — a cheaper
+split search over the kept set — plus the fact that at 8 threads the probe's
+~200 ms is 10 % of a 1.7 s encode while at t=1 it is 7 % of 8.9 s.
+
+**Three corrections to what this section used to say.**
+
+1. It framed the fixed K=8 default as the byte-safe baseline that a gate had
+   to avoid regressing. The corpus says K=8 is ITSELF a regression: vs no
+   pruning at all it costs **+0.38 % bytes mean / +6.54 % max** on the train
+   split and **+1.12 % mean** on the gb82-sc screens. The 2026-08-28 sweep
+   could not see this because it used K=8 as its own baseline. The gate
+   recovers most of that on the content where it fires and leaves the rest
+   byte-identical.
+2. It said e9 "sits inside the 1.3x bar only because its surrounding encode
+   buries the same absolute cost". True before; the fix is worth MORE at e9
+   (-26 % t=1) than at e7 (-22 %), because the e9 learns are deeper and the
+   one probe amortizes over more work.
+3. `find_best_split` at 4.7 s of an 8.5 s learn held up exactly
+   (`profile-phases` on the same cell: learn 8.65 s, find_best_split 4.83 s
+   of an 11.54 s encode).
+
+**Method traps that cost real time here — do not repeat them.**
+
+- **Block-ordered repeats INVERTED the sign at e7 t=8.** Five reps of arm A
+  then five of arm B reported the gate +10.4 % slower; interleaving both arms
+  inside each rep reports it **7.9 % faster** (min of 5; a separate 9-rep run
+  agrees at -8.7 %). Short multi-thread
+  cells drift over a run. `scripts/sectioned_k_bar_cell.sh` now interleaves.
+- **The probe must sample EVERY group, not every 4th.** The global probe
+  skips groups because it feeds one whole-image tree; the sectioned probe
+  feeds N per-group trees and the point of sectioned mode is that groups
+  differ. Group-stride 4 cost up to **+12.4 % bytes** on a 4-group crop.
+- **Cap the probe TREE SIZE, not just its property resolution.** Uncapped it
+  grew 9515 leaves and cost 1.39 s — 14 % of the encode, more than the saving
+  it enables. `max_property_values` does not bound node count.
+- **A sequential probe is Amdahl serial work**: ~+1 % of wall at t=1, ~+20 %
+  at t=8 before it was fanned out across groups.
+- **Small probe trees are not trustworthy.** On 362-px chart/line-art crops
+  the probe learns 5-15 leaves and its restriction costs up to +8.3 % bytes.
+  Hence `SECTIONED_PROBE_MIN_LEAVES`; the gate simply does not fire there.
+
+Held-out honesty: the wall saving generalises (-16.7 % held-out vs -16.1 %
+train on fired >= 1 MP cells at t=1) but the byte tail does not (+0.31 % mean
+/ **+2.99 % max** held-out vs -0.01 % / +0.92 % train). The +2.99 % is one
+cell, a colour patent rescan, and it buys -20.3 % wall on that same cell; it
+is present at every coverage below 100 so it is the probe mis-reading that
+image, not a threshold that can be nudged.
 
 ### T4 — libjxl mimic mode toward byte-exactness
 

@@ -2035,6 +2035,290 @@ pub(crate) fn write_local_trees_lf_global(
 /// (RD-max mode) and honor the same env override.
 pub(crate) const SECTIONED_PRUNE_PREDICTORS_K: usize = 8;
 
+/// Content-adaptive predictor set for the sectioned per-group tree learns
+/// (#99 item 1): learn ONE capped probe tree over a strided subsample of
+/// the groups and return the predictors its leaves actually use.
+///
+/// This replaces a fixed `SECTIONED_PRUNE_PREDICTORS_K` with a count the
+/// CONTENT chooses, and it applies at a strictly better place in the
+/// pipeline: the fixed-K path gathers all 14 predictor columns per group
+/// and drops 6 afterwards, so it only ever saved split-search time, while
+/// the probe list is handed to each group's `TreeSamples` up front so the
+/// gather tokenizes only the survivors.
+///
+/// Root-cost ranking — what `TreeSamples::prune_to_top_predictors` uses —
+/// is REFUTED as the selector for this decision (2026-08-15,
+/// `benchmarks/jxl_probe_prune_2026-08-15.md`): predictor value is
+/// leaf-conditional, so flat/palette content loses predictors whose root
+/// cost looks terrible but whose leaves carry real mass. That is exactly
+/// the asymmetry the 2026-08-28 K sweep measured (K=4 costs the palette
+/// screenshot +1.35 % bytes and the photo +0.02 %). The probe tree
+/// exercises the real contextual machinery, so its leaf histogram is the
+/// honest selector, and `predictors_used_by_tree` already carries the
+/// corpus-gated leaf floor and coverage cap.
+///
+/// Amortization is the reason this is affordable per-image but not
+/// per-group: ONE probe over every `probe_group_stride`-th group at
+/// `PROBE_PIXEL_STRIDE_MULT`x the gather stride serves every group's
+/// learn.
+/// Returns `None` when the probe tree is too small to have exercised the
+/// predictor space — see [`SECTIONED_PROBE_MIN_LEAVES`]. The caller then
+/// keeps the shipping fixed-K root-cost prune, so the gate can only ever
+/// change behaviour where the probe is trustworthy.
+pub(crate) fn sectioned_probe_predictors(
+    images: &[ModularImage],
+    profile: &crate::effort::EffortProfile,
+    per_group_id_offset: u32,
+    stride: usize,
+) -> Option<alloc::vec::Vec<super::predictor::Predictor>> {
+    use super::predictor::WeightedPredictorParams;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, compute_best_tree, gather_samples_strided,
+        max_ref_channels, sectioned_predictors_from_tree,
+    };
+    let wp_params = WeightedPredictorParams::default();
+    let num_refs = images.iter().map(max_ref_channels).max().unwrap_or(0);
+    // Sample EVERY group, thinly, rather than every Nth group densely.
+    //
+    // The global probe skips groups (every 4th at e7) because its consumer
+    // is one whole-image tree, so a group-level sample is unbiased for it.
+    // The sectioned consumer is N per-group trees, and the whole point of
+    // sectioned mode is that groups differ — skipping groups makes the list
+    // wrong for exactly the heterogeneous images (charts with a flat field
+    // plus a dense plot area, product shots with a white ground plus a
+    // detailed subject) where per-group adaptation is the win. MEASURED
+    // 2026-08-31: at group_stride 4 the worst byte cell is +12.4 % vs the
+    // fixed-K default on a 4-group screenshot crop; covering every group at
+    // the SAME total sample count removes that failure mode.
+    let (probe_group_stride, probe_pixel_mult) = probe_density(profile.effort);
+    let probe_stride = stride.saturating_mul(probe_pixel_mult).max(1);
+    let mut probe = TreeSamples::new_with_ref_channels(num_refs);
+    // The probe gather fans out across the sampled groups and merges in
+    // index order (`append_from` is order-dependent, and the merge order
+    // fixes the sample order the learn sees, so this stays deterministic).
+    // Fanning out is load-bearing at high thread counts, NOT a micro-opt:
+    // the per-group learns it feeds are already parallel, so a SEQUENTIAL
+    // probe is Amdahl serial work whose share grows with the thread count —
+    // measured +20 % wall at t=8 before this, against +1 % at t=1.
+    // Store only the property columns the learn will read. The gather
+    // otherwise materializes all ~24 raw columns where the learn uses 7-9,
+    // which is most of the probe's cost and buys nothing — the global probe
+    // has always masked; this one had not (measured: it is the difference
+    // between a probe that pays for itself and one that eats the saving).
+    let active_prop_list: alloc::vec::Vec<usize> = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .properties
+        .clone();
+    let active_mask: alloc::boxed::Box<[bool]> = {
+        let mut m = alloc::vec![false; probe.total_num_properties()].into_boxed_slice();
+        for &p in &active_prop_list {
+            if p < m.len() {
+                m[p] = true;
+            }
+        }
+        m
+    };
+    probe.set_active_props(active_mask.clone());
+    let probe_indices: alloc::vec::Vec<usize> = (0..images.len())
+        .step_by(probe_group_stride.max(1))
+        .collect();
+    let locals: alloc::vec::Vec<TreeSamples> =
+        crate::parallel::parallel_map(probe_indices.len(), |i| {
+            let gi = probe_indices[i];
+            let mut local = TreeSamples::new_with_ref_channels(num_refs);
+            local.set_active_props(active_mask.clone());
+            gather_samples_strided(
+                &mut local,
+                &images[gi],
+                gi as u32 + per_group_id_offset,
+                0,
+                probe_stride,
+                &wp_params,
+            );
+            local
+        });
+    for local in locals {
+        probe.append_from(local);
+    }
+    let probe_pixels: usize = images
+        .iter()
+        .step_by(probe_group_stride)
+        .flat_map(|img| img.channels.iter())
+        .map(|c| c.width() * c.height())
+        .sum();
+    let mut probe_params = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .with_total_pixels(probe_pixels.max(1))
+        .with_pixel_fraction(if probe_pixels > 0 {
+            probe.total_gathered_weight() as f64 / probe_pixels as f64
+        } else {
+            1.0
+        });
+    probe_params.max_property_values = probe_params
+        .max_property_values
+        .min(if profile.effort >= 8 { 64 } else { 32 });
+    // Cap the probe tree's SIZE, not just its property resolution. Capping
+    // `max_property_values` alone leaves the node count unbounded: on the
+    // 3840x2160 photo the probe grew a 9515-LEAF tree and cost 1.39 s —
+    // 14 % of the whole encode, more than the split-search saving it
+    // enables. The probe's output is a LEAF HISTOGRAM over 14 predictors;
+    // a few hundred leaves already resolve that, and the tail leaves a deep
+    // tree adds are noise for this purpose. The cap must stay above
+    // `SECTIONED_PROBE_MIN_LEAVES` or the trust gate would reject every
+    // probe by construction.
+    probe_params.max_nodes = probe_params.max_nodes.min(sectioned_probe_max_nodes());
+    let probe_tree = compute_best_tree(&mut probe, &probe_params);
+    let leaves = probe_tree.iter().filter(|n| n.property < 0).count();
+    if leaves < sectioned_probe_min_leaves() {
+        #[cfg(feature = "std")]
+        if std::env::var_os("JXL_PROBE_COSTS").is_some() {
+            eprintln!("[sectioned-probe] leaves={leaves} UNTRUSTED -> fixed-K fallback");
+        }
+        return None;
+    }
+    Some(sectioned_predictors_from_tree(
+        &probe_tree,
+        sectioned_probe_coverage_pct(),
+        SECTIONED_PRUNE_PREDICTORS_K,
+    ))
+}
+
+/// Cumulative static leaf-mass coverage the SECTIONED probe selector keeps
+/// (percent).
+///
+/// FITTED 2026-08-31 jointly with [`SECTIONED_PROBE_MIN_LEAVES`] on the
+/// 310-rendition / 52-origin clustered corpus, train/validate split by
+/// ORIGIN: `benchmarks/jxl_sectioned_adaptive_k_2026-08-31.{tsv,meta}`.
+/// Selection rule was stated before the numbers (lowest byte cost subject
+/// to a 1 % train worst-case budget, then best wall). 85 is statistically
+/// indistinguishable from 80 on the selection objective and gives the same
+/// predictor set on the 4K photo cell; 90 does NOT reach the wall bar.
+pub(crate) const SECTIONED_PROBE_COVERAGE_PCT: u64 = 80;
+
+/// Probe sample density as `(group_stride, pixel_stride_multiplier)`. The
+/// product is the sample-count divisor; the split between the two factors
+/// is the COVERAGE choice (see `sectioned_probe_predictors`). Overridable
+/// for the fit sweep via `JXL_SECTIONED_PROBE_GROUP_STRIDE` /
+/// `JXL_SECTIONED_PROBE_PIXEL_MULT`.
+fn probe_density(effort: u8) -> (usize, usize) {
+    // e8+ trees are deeper (max_property_values 128-256), so the probe is
+    // resolved denser there or its leaf set under-represents the tail — the
+    // same reason the global probe halves its group stride at e8.
+    let (mut gs, mut pm) = if effort >= 8 { (1, 8) } else { (1, 16) };
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_GROUP_STRIDE")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            gs = n.max(1);
+        }
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_PIXEL_MULT")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            pm = n.max(1);
+        }
+    }
+    (gs, pm)
+}
+
+/// Node cap for the probe tree.
+///
+/// MEASURED 2026-08-31 on the 3840x2160 photo at e7 t=1: uncapped the probe
+/// grew a 9515-leaf tree costing 1.39 s (14 % of the whole encode, more than
+/// the split-search saving it enables); the cost then flattens — 4095 nodes
+/// 748 ms, 2047 nodes 706 ms, 1023 nodes 677 ms, 511 nodes 661 ms — because
+/// the residue is the probe gather plus the top splits. 2047 sits on the
+/// plateau and keeps the most leaf resolution for
+/// [`SECTIONED_PROBE_MIN_LEAVES`], which is expressed relative to it:
+/// CHANGING THIS REQUIRES RE-FITTING THAT.
+pub(crate) const SECTIONED_PROBE_MAX_NODES: usize = 2047;
+
+/// `JXL_SECTIONED_PROBE_MAX_NODES=N` — A/B dial for
+/// [`SECTIONED_PROBE_MAX_NODES`].
+fn sectioned_probe_max_nodes() -> usize {
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_MAX_NODES")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            return n.max(3);
+        }
+    }
+    SECTIONED_PROBE_MAX_NODES
+}
+
+/// Minimum probe-tree leaf count for the probe's predictor list to be
+/// trusted. Below it the shipping fixed-K root-cost prune is kept.
+///
+/// This is a TRUST gate, not a speed gate, and it is the one the corpus
+/// measurement forced. A probe tree with a handful of leaves has not
+/// exercised the predictor space: on 362-px crops of charts and line art
+/// the probe learns 5-15 leaves, names 4-6 predictors, and the resulting
+/// restriction costs up to +8 % bytes because the real per-group learns
+/// (four times the samples, per group) reach for predictors the probe
+/// never split on. The same cells have nothing to gain — their learns are
+/// so cheap that dropping from 14 predictors to 8 moves wall by under 5 %.
+///
+/// FITTED 2026-08-31 jointly with [`SECTIONED_PROBE_COVERAGE_PCT`]
+/// (`benchmarks/jxl_sectioned_adaptive_k_2026-08-31.{tsv,meta}`). Because
+/// [`SECTIONED_PROBE_MAX_NODES`] caps the probe at 1024 leaves, this reads
+/// as "trust the probe only when its tree wanted to be at least 3/4 of the
+/// cap" — the two constants are a pair and neither can be moved alone.
+/// Over the corpus the gate fires on 49 of 310 renditions; documents,
+/// screenshots, plots, clipart and the gb82-sc screens never trip it and
+/// are byte-identical to the shipping fixed-K path.
+pub(crate) const SECTIONED_PROBE_MIN_LEAVES: usize = 768;
+
+/// `JXL_SECTIONED_PROBE_MIN_LEAVES=N` — A/B dial for
+/// [`SECTIONED_PROBE_MIN_LEAVES`].
+fn sectioned_probe_min_leaves() -> usize {
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_MIN_LEAVES")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            return n;
+        }
+    }
+    SECTIONED_PROBE_MIN_LEAVES
+}
+
+/// Minimum group count for the sectioned probe selector to be worth
+/// running. MEASURED 2026-08-31: no separate size gate is needed — the
+/// probe-tree trust gate already subsumes it (over the corpus, ZERO cells
+/// with 4 or fewer groups produce a probe tree large enough to be trusted),
+/// so this stays at the no-op value rather than adding a second threshold
+/// that the data does not ask for.
+pub(crate) const SECTIONED_PROBE_MIN_GROUPS: usize = 1;
+
+/// `JXL_SECTIONED_PROBE_MIN_GROUPS=N` — A/B dial for
+/// [`SECTIONED_PROBE_MIN_GROUPS`].
+pub(crate) fn sectioned_probe_min_groups() -> usize {
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_MIN_GROUPS")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            return n;
+        }
+    }
+    SECTIONED_PROBE_MIN_GROUPS
+}
+
+/// `JXL_SECTIONED_PROBE_COVERAGE=P` — A/B dial for
+/// [`SECTIONED_PROBE_COVERAGE_PCT`] (the fit sweep's axis).
+fn sectioned_probe_coverage_pct() -> u64 {
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_COVERAGE")
+            && let Ok(n) = v.trim().parse::<u64>()
+        {
+            return n.min(100);
+        }
+    }
+    SECTIONED_PROBE_COVERAGE_PCT
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn write_group_modular_section_local_tree(
     group_image: &ModularImage,
@@ -2044,6 +2328,7 @@ pub fn write_group_modular_section_local_tree(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     rct_type: Option<RctType>,
     gather_stride: Option<usize>,
+    predictors: Option<&[super::predictor::Predictor]>,
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
@@ -2075,7 +2360,16 @@ pub fn write_group_modular_section_local_tree(
     // Learn this group's tree from this group's samples only. Property 1
     // (group id) is the spec stream id, matching what the residual
     // collector below feeds the tree at encode time.
-    let mut samples = TreeSamples::new_with_ref_channels(num_refs);
+    //
+    // `predictors` (the whole-image probe-tree list, #99 item 1) restricts
+    // the candidate set BEFORE the gather, so the tokenization, the
+    // token/ebit columns and the split search all shrink together. Without
+    // it the gather stays at all 14 and `prune_to_top_predictors` below
+    // trims the columns afterwards (split search only).
+    let mut samples = match predictors {
+        Some(list) => TreeSamples::new_with_owned_predictors(list.to_vec(), num_refs),
+        None => TreeSamples::new_with_ref_channels(num_refs),
+    };
     // WP-cache fusion: the gather's WP walk records its per-pixel outputs
     // so the residual collect below skips the WP state machine — one WP
     // walk per group instead of two. Values (and bytes) are identical.
@@ -2107,11 +2401,17 @@ pub fn write_group_modular_section_local_tree(
     // but costs +0.06% at e9, kept as an env choice. The sectioned mode
     // is the memory/production mode and its bytes are not hash-locked;
     // JXL_TREE_PRUNE_PREDICTORS=K overrides (>= 14 disables).
-    let prune_k =
-        super::tree_learn::tree_prune_predictors_env().unwrap_or(SECTIONED_PRUNE_PREDICTORS_K);
-    crate::profile_time!("sectioned/prune_predictors", {
-        samples.prune_to_top_predictors(prune_k)
-    });
+    //
+    // Skipped entirely when `predictors` selected the set up front (#99
+    // item 1) — pruning a probe-selected list by root cost would re-impose
+    // exactly the ranking the probe exists to replace.
+    if predictors.is_none() {
+        let prune_k =
+            super::tree_learn::tree_prune_predictors_env().unwrap_or(SECTIONED_PRUNE_PREDICTORS_K);
+        crate::profile_time!("sectioned/prune_predictors", {
+            samples.prune_to_top_predictors(prune_k)
+        });
+    }
     let tree = crate::profile_time!("sectioned/learn", {
         compute_best_tree(&mut samples, &params)
     });

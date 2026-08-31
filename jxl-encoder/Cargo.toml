@@ -385,6 +385,13 @@ name = "mem_grid_probe"
 path = "examples/mem_grid_probe.rs"
 required-features = ["std", "parallel"]
 
+# Corpus builder + per-K byte/wall sweep for the sectioned per-group
+# predictor-prune gate (#99 item 1). Modes: features / render / sweep.
+[[example]]
+name = "sectioned_k_corpus"
+path = "examples/sectioned_k_corpus.rs"
+required-features = ["std", "parallel"]
+
 [dev-dependencies]
 # Transitive-version pin (#82), NOT used directly. `brotli` (a dev-dep via
 # `zenjxl-decoder`, and our own optional `brotli-metadata` dep) pulls
