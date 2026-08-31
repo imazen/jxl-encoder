@@ -1013,9 +1013,7 @@ impl VarDctEncoder {
             // T4: libjxl's one-bit `ImageMetadata.all_default`. Gated to
             // `EncoderStrategy::Libjxl` because flipping it moves every
             // zen-mode hash lock; the two encodings decode identically.
-            metadata_all_default_fast_path: self
-                .resolved_improvements
-                .metadata_all_default_fast_path,
+            header_all_default_fast_paths: self.resolved_improvements.header_all_default_fast_paths,
         }
     }
 
@@ -3510,6 +3508,10 @@ impl VarDctEncoder {
             if self.resolved_improvements.dc_adaptive_smoothing {
                 fh.flags &= !crate::headers::frame_header::SKIP_ADAPTIVE_LF_SMOOTHING;
             }
+            // T4: libjxl's one-bit frame header. Only reachable once the
+            // flag above clears `flags` — a non-zero `flags` is itself a
+            // non-default field, so these two gates compose.
+            fh.all_default_fast_path = self.resolved_improvements.header_all_default_fast_paths;
             if noise_params.is_some() {
                 fh.flags |= crate::headers::frame_header::ENABLE_NOISE;
             }

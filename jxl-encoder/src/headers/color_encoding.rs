@@ -553,8 +553,37 @@ impl ColorEncoding {
 
     /// Writes the color encoding to the bitstream.
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
+        self.write_with_spec_default_fast_path(writer, false)
+    }
+
+    /// [`Self::write`] with the spec-default `all_default` fast path
+    /// opt-in.
+    ///
+    /// Two predicates can put a `1` bit here, and they differ only in
+    /// rendering intent:
+    ///
+    /// - [`Self::is_srgb`] (`Perceptual`) — the historical path, always
+    ///   live. **It is not actually the spec default**: libjxl's
+    ///   `ColorEncoding` defaults `rendering_intent` to `kRelative`
+    ///   (`color_encoding_internal.cc`), so a `Perceptual` encoding
+    ///   written this way comes back from any decoder as `Relative`.
+    ///   That is a pre-existing metadata infidelity, kept because it is
+    ///   what the lossless path emits today and it is byte-identical to
+    ///   cjxl there (cjxl writes the same single bit).
+    /// - [`Self::is_spec_default`] (`Relative`) — the true spec default,
+    ///   gated by `allow_spec_default`. The lossy VarDCT builder sets
+    ///   `Relative` explicitly to match libjxl, which is exactly why the
+    ///   `is_srgb` predicate never fires there: every lossy encode whose
+    ///   outer `ImageMetadata.all_default` is blocked (alpha, non-8-bit
+    ///   depth, HDR metadata) spelled out 17 bits of colour encoding
+    ///   that cjxl writes in one.
+    pub(crate) fn write_with_spec_default_fast_path(
+        &self,
+        writer: &mut BitWriter,
+        allow_spec_default: bool,
+    ) -> Result<()> {
         // all_default flag
-        let all_default = self.is_srgb();
+        let all_default = self.is_srgb() || (allow_spec_default && self.is_spec_default());
         crate::trace::debug_eprintln!(
             "CENC [bit {}]: all_default = {}",
             writer.bits_written(),

@@ -1,0 +1,38 @@
+# T4 (2026-08-31) — x_qm_scale from the ORIGINAL vs the auto-resample-reduced
+# distance. Gate `x_qm_scale_from_original_distance`.
+date_utc: 2026-08-31
+host: Darwin 25.5.0 arm64 (12-core aarch64 laptop, `mac`)
+harness: jxl-encoder/examples/libjxl_gate_ab.rs
+command: cargo run -p jxl-encoder --release --example libjxl_gate_ab -- <png-dir> <out.tsv> x_qm_scale_from_original_distance
+arms: EncoderStrategy::Custom seeded from Zenjxl defaults; ONLY the named gate
+arms: differs. Third arm = cjxl v0.12.0 at the same -e/-d, scored through the
+arms: identical decode+metric path.
+decoder: jxl-oxide (linear sRGB, Relative intent)
+metrics: butteraugli_linear (default params); fast_ssim2 on sRGB u8 from linear
+grid: 5 fixtures x effort {5,7} x distance {0.5, 1.0, 2.0, 4.0, 7.0, 10.0}
+
+# libjxl captures `original_butteraugli_distance` BEFORE `ParamsPostInit`
+# rewrites `butteraugli_distance` to d*0.25+0.25 for the d>=10 auto-resample
+# (enc_frame.cc:101 then :109-115), and scores x_qm_scale's {2.5,5.5,9.5}
+# ladder against the ORIGINAL (:676). We ported the rewrite but not the
+# capture, so at d=10 we scored 2.75 -> x_qm_scale 4 where cjxl gets 6.
+#
+# ONLY d>=10 cells can differ; every d<10 row is identical by construction and
+# is retained as the control (a gate that moved a d<10 cell would be a bug).
+#
+# HEADLINE at d=10 (off -> on, vs cjxl):
+#   frymire-srgb e5: 115617 -> 123740 B (cjxl 123606); ssim2 -18.57 -> -18.32
+#                    (cjxl -23.17); butteraugli 34.55 (cjxl 36.49)
+#   frymire-srgb e7: 126203 -> 130100 B (cjxl 127865); ssim2 -16.99 -> -16.88
+#                    (cjxl -21.37)
+#   noise_512    e5:  33519 ->  34964 B (cjxl  29102); ssim2 -43.91 -> -42.19
+#   photo_512    e7:   2557 ->   2641 B (cjxl   2362); ssim2  77.90 ->  78.08
+#   flat_64, gradient_512: byte-identical (differ=false) — their X-channel AC
+#                    is all zero, so scaling the X quant matrix changes nothing.
+#
+# READ IT AS A MOVE ALONG THE RD CURVE, NOT A FREE WIN: the gate spends more
+# bytes and buys quality. What it settles is the parity question — the gated
+# arm lands within 0.1-1.7 % of cjxl's rate where the ungated arm sat 6-15 %
+# under it, and at that rate we score BETTER than cjxl on every cell that moved
+# (ssim2 +4.4 to +4.9 on frymire, +2.5 on photo). Whether zen mode should adopt
+# it needs a matched-rate comparison, which this grid does not provide.

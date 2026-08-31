@@ -6391,6 +6391,10 @@ impl VarDctEncoder {
             if self.resolved_improvements.dc_adaptive_smoothing {
                 fh.flags &= !crate::headers::frame_header::SKIP_ADAPTIVE_LF_SMOOTHING;
             }
+            // T4: libjxl's one-bit frame header. Only reachable once the
+            // flag above clears `flags` — a non-zero `flags` is itself a
+            // non-default field, so these two gates compose.
+            fh.all_default_fast_path = self.resolved_improvements.header_all_default_fast_paths;
             if noise_params.is_some() {
                 fh.flags |= 0x01; // ENABLE_NOISE
             }

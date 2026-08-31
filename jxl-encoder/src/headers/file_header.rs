@@ -263,7 +263,7 @@ pub struct FileHeader {
     /// and the `ImageMetadata.all_default` row in
     /// `docs/LIBJXL_DIVERGENCES.md` Section D for why the default is the
     /// larger encoding.
-    pub metadata_all_default_fast_path: bool,
+    pub header_all_default_fast_paths: bool,
 }
 
 impl FileHeader {
@@ -276,7 +276,7 @@ impl FileHeader {
             upsampling_mode: None,
             upsampling_factor: 1,
             // Opt-in only; see `is_metadata_default`.
-            metadata_all_default_fast_path: false,
+            header_all_default_fast_paths: false,
         }
     }
 
@@ -623,7 +623,8 @@ impl FileHeader {
             "META [bit {}]: Writing color_encoding",
             writer.bits_written()
         );
-        meta.color_encoding.write(writer)?;
+        meta.color_encoding
+            .write_with_spec_default_fast_path(writer, self.header_all_default_fast_paths)?;
         crate::trace::debug_eprintln!("META [bit {}]: After color_encoding", writer.bits_written());
 
         // tone_mapping - only if extra_fields
@@ -689,7 +690,7 @@ impl FileHeader {
     /// and so can never take this path; lossy VarDCT sRGB / 8-bit /
     /// no-alpha / no-metadata-deviation encodes always can.
     ///
-    /// **Gated on [`Self::metadata_all_default_fast_path`], which is set
+    /// **Gated on [`Self::header_all_default_fast_paths`], which is set
     /// only under [`crate::api::EncoderStrategy::Libjxl`].** The gate is
     /// not about correctness — the two forms decode identically and the
     /// short one is strictly 27 bits smaller. It exists because flipping
@@ -697,7 +698,7 @@ impl FileHeader {
     /// sign-off. See the `ImageMetadata.all_default` row in
     /// `docs/LIBJXL_DIVERGENCES.md` Section D.
     fn is_metadata_default(&self) -> bool {
-        if !self.metadata_all_default_fast_path {
+        if !self.header_all_default_fast_paths {
             return false;
         }
         let m = &self.metadata;

@@ -144,6 +144,12 @@ pub struct FrameHeader {
     /// Frame flags (bitfield: ENABLE_NOISE=0x01, PATCHES_FLAG=0x02,
     /// SKIP_ADAPTIVE_LF_SMOOTHING=0x80).
     pub flags: u64,
+    /// Permit the one-bit `all_default = 1` frame-header encoding when
+    /// [`Self::is_all_default`] holds. `false` everywhere except
+    /// [`crate::api::EncoderStrategy::Libjxl`] — the two encodings
+    /// decode identically and the short one is ~23 bits smaller, but
+    /// enabling it moves zen-mode hash locks.
+    pub all_default_fast_path: bool,
     /// Whether the frame uses YCbCr color transform (only written when !xyb_encoded).
     pub do_ycbcr: bool,
     /// JPEG upsampling mode for chroma (only for VarDCT + YCbCr).
@@ -230,6 +236,7 @@ impl Default for FrameHeader {
             encoding: Encoding::VarDct,
             xyb_encoded: true,
             flags: 0,
+            all_default_fast_path: false,
             do_ycbcr: false,
             jpeg_upsampling: [0; 3],
             upsampling: 1,
@@ -723,17 +730,48 @@ impl FrameHeader {
     /// The all_default frame header is: Regular VarDCT, no flags, do_ycbcr=true,
     /// upsampling=1, group_size_shift=1, x/b_qm_scale=2, 1 pass, no crop,
     /// Replace blend, is_last=true, no name, default loop filter (gab+epf2).
+    /// Whether every serialized field equals the JXL spec default, so
+    /// `all_default = 1` (one bit) may replace the ~24-bit long form.
+    ///
+    /// **`x_qm_scale`'s spec default is 3, not 2** (libjxl
+    /// `frame_header.cc`: `visitor->Bits(3, 3, &x_qm_scale)` against
+    /// `Bits(3, 2, &b_qm_scale)` on the very next line — only the *b*
+    /// scale defaults to 2). This predicate demanded 2 until 2026-08-31,
+    /// which made it **unreachable**: `DistanceParams` starts
+    /// `x_qm_scale` at 3 and only ever increments, so no VarDCT frame
+    /// could satisfy it. Worse than dead code, it was a latent
+    /// correctness hazard — had it ever fired at 2, the decoder would
+    /// have reconstructed 3 and dequantized the X channel against a
+    /// different matrix than the encoder used.
+    ///
+    /// There was a SECOND, independent unreachability bug — see the
+    /// `do_ycbcr` note in the body.
+    ///
+    /// Gated on [`Self::all_default_fast_path`] so the reachability fix
+    /// cannot move zen-mode bytes; see `docs/LIBJXL_DIVERGENCES.md`
+    /// Section D.
     fn is_all_default(&self) -> bool {
-        self.frame_type == FrameType::Regular
+        self.all_default_fast_path
+            && self.frame_type == FrameType::Regular
             && self.encoding == Encoding::VarDct
             && self.xyb_encoded
             && self.flags == 0
-            && self.do_ycbcr
+            // NOTE: `do_ycbcr` is deliberately NOT tested. It is only
+            // serialized when `!xyb_encoded` (libjxl reads the
+            // `alternate` bool only in that branch), and `xyb_encoded`
+            // is required just above — so the field cannot appear in
+            // the stream here. Until 2026-08-31 this read
+            // `&& self.do_ycbcr`, requiring a field that `Default`
+            // sets to `false` and that no XYB frame ever writes: the
+            // SECOND independent reason this predicate could never
+            // fire (the first was `x_qm_scale == 2`; see the doc
+            // above). Two unreachability bugs in one predicate is what
+            // dead code buys you — neither was ever exercised.
             && self.upsampling == 1
             && self.ec_upsampling.is_empty()
             && self.ec_blend_modes.is_empty()
             && self.group_size_shift == 1
-            && self.x_qm_scale == 2
+            && self.x_qm_scale == 3
             && self.b_qm_scale == 2
             && self.num_passes == 1
             && self.pass_shifts.is_empty()

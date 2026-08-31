@@ -206,7 +206,8 @@ jxl_encoder_macros::strategy_def! {
             epf_dynamic_sharpness_min_effort = EffortGate::Libjxl,
             // Section D KNOWN-BUG: deliberately re-enable to match libjxl
             block_ctx_map_15_cluster = true,
-            metadata_all_default_fast_path = true,
+            header_all_default_fast_paths = true,
+            x_qm_scale_from_original_distance = true,
             dc_adaptive_smoothing = true,
             // Smart-Zenjxl gates: strict parity — every per-image
             // discriminator disabled. Callers can still opt in via
@@ -300,7 +301,8 @@ jxl_encoder_macros::strategy_def! {
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             // Section D: NOT re-enabled on LeanFaster (only on Libjxl).
             block_ctx_map_15_cluster = false,
-            metadata_all_default_fast_path = false,
+            header_all_default_fast_paths = false,
+            x_qm_scale_from_original_distance = false,
             dc_adaptive_smoothing = false,
             // Smart-Zenjxl: drop every per-image gate.
             content_class_auto_classify = false,
@@ -382,7 +384,8 @@ jxl_encoder_macros::strategy_def! {
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
-            metadata_all_default_fast_path = false,
+            header_all_default_fast_paths = false,
+            x_qm_scale_from_original_distance = false,
             dc_adaptive_smoothing = false,
             content_class_auto_classify = true,
             photo_epf_seed_admit = true,
@@ -481,7 +484,8 @@ jxl_encoder_macros::strategy_def! {
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
-            metadata_all_default_fast_path = false,
+            header_all_default_fast_paths = false,
+            x_qm_scale_from_original_distance = false,
             dc_adaptive_smoothing = false,
             content_class_auto_classify = true,
             photo_epf_seed_admit = true,
@@ -642,9 +646,13 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "BlockCtxMap 15-cluster default (issue #59 KNOWN-BUG)",
         },
 
-        /// T4 (2026-08-31): take libjxl's `ImageMetadata.all_default`
-        /// fast path — one `1` bit instead of 27 bits spelling out
-        /// fields that are each already at their spec default.
+        /// T4 (2026-08-31): take libjxl's `all_default` fast paths —
+        /// one `1` bit instead of spelling out fields that are each
+        /// already at their spec default. Covers all THREE nested
+        /// bundles that have one: `ImageMetadata` (27 bits),
+        /// `ColorEncoding` (17 bits, the one that still applies when
+        /// an alpha channel or a non-8-bit depth blocks the outer
+        /// path), and `FrameHeader` (23 bits).
         ///
         /// `true` only under [`crate::api::EncoderStrategy::Libjxl`].
         /// The default stays `false` NOT because the long form is
@@ -656,9 +664,29 @@ jxl_encoder_macros::strategy_def! {
         /// `docs/LIBJXL_DIVERGENCES.md` Section D for the measured
         /// saving (+4 bytes per file, 37.5 % of `header_and_toc` on
         /// the tiny cells). Section D.
-        metadata_all_default_fast_path: bool {
+        header_all_default_fast_paths: bool {
             divergence_section = "D",
             divergence_row_ref = "T4 ImageMetadata.all_default fast path",
+        },
+
+        /// T4 (2026-08-31): derive `x_qm_scale` from the caller's
+        /// ORIGINAL distance rather than the auto-resample-reduced one.
+        ///
+        /// libjxl captures `original_butteraugli_distance` BEFORE
+        /// `ParamsPostInit` rewrites `butteraugli_distance` to
+        /// `d*0.25 + 0.25` for the d >= 10 auto-resample
+        /// (`enc_frame.cc:101,109-115`), and `x_qm_scale`'s
+        /// {2.5, 5.5, 9.5} ladder is scored against the ORIGINAL
+        /// (`enc_frame.cc:676`). We ported the distance rewrite but not
+        /// the capture, so at d = 10 we score 2.75 and land on 4 where
+        /// cjxl lands on 6.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`];
+        /// this is bitstream- AND quality-affecting, so zen mode keeps
+        /// its behaviour until it is measured. Section D.
+        x_qm_scale_from_original_distance: bool {
+            divergence_section = "D",
+            divergence_row_ref = "T4 x_qm_scale uses original vs resample-reduced distance",
         },
 
         /// T4 (2026-08-31): leave `kSkipAdaptiveDCSmoothing` (0x80)
@@ -1292,10 +1320,16 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         raw: __CUSTOM_DIVERGENCE_BLOCK_CTX_MAP_15_CLUSTER,
     },
     DivergenceEntry {
-        gate_name: "metadata_all_default_fast_path",
+        gate_name: "header_all_default_fast_paths",
         section: "D",
         row_ref: "T4 ImageMetadata.all_default fast path",
-        raw: __CUSTOM_DIVERGENCE_METADATA_ALL_DEFAULT_FAST_PATH,
+        raw: __CUSTOM_DIVERGENCE_HEADER_ALL_DEFAULT_FAST_PATHS,
+    },
+    DivergenceEntry {
+        gate_name: "x_qm_scale_from_original_distance",
+        section: "D",
+        row_ref: "T4 x_qm_scale uses original vs resample-reduced distance",
+        raw: __CUSTOM_DIVERGENCE_X_QM_SCALE_FROM_ORIGINAL_DISTANCE,
     },
     DivergenceEntry {
         gate_name: "dc_adaptive_smoothing",

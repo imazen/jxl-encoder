@@ -51,6 +51,17 @@
 //!
 //! 1. Add a row to [`BYTE_LOCK_CELLS`] (synthetic-generator fn +
 //!    encode params).
+//!
+//! ## Why the two RGBA cells earn their place (T4, 2026-08-31)
+//!
+//! They are the only cells here that carry an extra channel, which makes them
+//! the only cells where `ImageMetadata.all_default` CANNOT fire — and that is
+//! exactly what exposed the nested `ColorEncoding.all_default` fast path as a
+//! separate divergence. When the outer fast path landed the eight RGB cells
+//! moved -3 B and these two did not move at all (correct: an extra channel
+//! disqualifies them); when the inner one landed these two moved -2 B and the
+//! eight RGB cells did not. A coverage matrix that only differs in effort and
+//! distance would have seen neither.
 //! 2. Add the cell name to the golden file with hash `0..` (placeholder).
 //! 3. Run `UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert \
 //!    --test strategy_libjxl_byte_lock` — emits + rewrites the golden.

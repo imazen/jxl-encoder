@@ -1,78 +1,190 @@
 image	width	height	effort	distance	kind	name	cjxl	ours	delta
-flat_64x64	64	64	3	0.5	size	file_bytes	72	94	22
-flat_64x64	64	64	3	0.5	field	frame.flags	0	128	
+flat_64x64	64	64	3	0.5	size	file_bytes	72	93	21
 flat_64x64	64	64	3	0.5	section	all-in-one	62	83	21
-flat_64x64	64	64	3	0.5	section	header_and_toc	10	11	1
-flat_64x64	64	64	3	1.0	size	file_bytes	72	95	23
-flat_64x64	64	64	3	1.0	field	frame.flags	0	128	
+flat_64x64	64	64	3	0.5	section	header_and_toc	10	10	0
+flat_64x64	64	64	3	1.0	size	file_bytes	72	94	22
 flat_64x64	64	64	3	1.0	section	all-in-one	61	83	22
-flat_64x64	64	64	3	1.0	section	header_and_toc	11	12	1
-flat_64x64	64	64	3	4.0	size	file_bytes	70	92	22
-flat_64x64	64	64	3	4.0	field	frame.flags	0	128	
+flat_64x64	64	64	3	1.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	3	2.0	size	file_bytes	70	91	21
+flat_64x64	64	64	3	2.0	section	all-in-one	59	80	21
+flat_64x64	64	64	3	2.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	3	4.0	size	file_bytes	70	91	21
 flat_64x64	64	64	3	4.0	section	all-in-one	59	80	21
-flat_64x64	64	64	3	4.0	section	header_and_toc	11	12	1
-flat_64x64	64	64	5	0.5	size	file_bytes	71	102	31
-flat_64x64	64	64	5	0.5	field	frame.flags	0	128	
+flat_64x64	64	64	3	4.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	3	7.0	size	file_bytes	69	90	21
+flat_64x64	64	64	3	7.0	section	all-in-one	58	79	21
+flat_64x64	64	64	3	7.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	3	10.0	size	file_bytes	69	94	25
+flat_64x64	64	64	3	10.0	section	all-in-one	58	83	25
+flat_64x64	64	64	3	10.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	3	15.0	size	file_bytes	68	94	26
+flat_64x64	64	64	3	15.0	section	all-in-one	57	83	26
+flat_64x64	64	64	3	15.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	5	0.5	size	file_bytes	71	101	30
 flat_64x64	64	64	5	0.5	section	all-in-one	61	91	30
-flat_64x64	64	64	5	0.5	section	header_and_toc	10	11	1
-flat_64x64	64	64	5	1.0	size	file_bytes	72	105	33
-flat_64x64	64	64	5	1.0	field	frame.flags	0	128	
+flat_64x64	64	64	5	0.5	section	header_and_toc	10	10	0
+flat_64x64	64	64	5	1.0	size	file_bytes	72	104	32
 flat_64x64	64	64	5	1.0	section	all-in-one	61	93	32
-flat_64x64	64	64	5	1.0	section	header_and_toc	11	12	1
-flat_64x64	64	64	5	4.0	size	file_bytes	70	104	34
-flat_64x64	64	64	5	4.0	field	frame.flags	0	128	
+flat_64x64	64	64	5	1.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	5	2.0	size	file_bytes	69	99	30
+flat_64x64	64	64	5	2.0	section	all-in-one	62	92	30
+flat_64x64	64	64	5	2.0	section	header_and_toc	7	7	0
+flat_64x64	64	64	5	4.0	size	file_bytes	70	103	33
 flat_64x64	64	64	5	4.0	section	all-in-one	59	92	33
-flat_64x64	64	64	5	4.0	section	header_and_toc	11	12	1
-flat_64x64	64	64	7	0.5	size	file_bytes	71	102	31
-flat_64x64	64	64	7	0.5	field	frame.flags	0	128	
+flat_64x64	64	64	5	4.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	5	7.0	size	file_bytes	69	102	33
+flat_64x64	64	64	5	7.0	section	all-in-one	58	91	33
+flat_64x64	64	64	5	7.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	5	10.0	size	file_bytes	63	95	32
+flat_64x64	64	64	5	10.0	section	all-in-one	53	85	32
+flat_64x64	64	64	5	10.0	section	header_and_toc	10	10	0
+flat_64x64	64	64	5	15.0	size	file_bytes	64	96	32
+flat_64x64	64	64	5	15.0	section	all-in-one	53	85	32
+flat_64x64	64	64	5	15.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	7	0.5	size	file_bytes	71	101	30
 flat_64x64	64	64	7	0.5	section	all-in-one	61	91	30
-flat_64x64	64	64	7	0.5	section	header_and_toc	10	11	1
-flat_64x64	64	64	7	1.0	size	file_bytes	69	105	36
-flat_64x64	64	64	7	1.0	field	frame.flags	0	128	
+flat_64x64	64	64	7	0.5	section	header_and_toc	10	10	0
+flat_64x64	64	64	7	1.0	size	file_bytes	69	104	35
 flat_64x64	64	64	7	1.0	section	all-in-one	58	93	35
-flat_64x64	64	64	7	1.0	section	header_and_toc	11	12	1
-flat_64x64	64	64	7	4.0	size	file_bytes	68	104	36
-flat_64x64	64	64	7	4.0	field	frame.flags	0	128	
+flat_64x64	64	64	7	1.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	7	2.0	size	file_bytes	72	99	27
+flat_64x64	64	64	7	2.0	section	all-in-one	65	92	27
+flat_64x64	64	64	7	2.0	section	header_and_toc	7	7	0
+flat_64x64	64	64	7	4.0	size	file_bytes	68	103	35
 flat_64x64	64	64	7	4.0	section	all-in-one	57	92	35
-flat_64x64	64	64	7	4.0	section	header_and_toc	11	12	1
-gradient_32x32	32	32	3	0.5	size	file_bytes	332	388	56
-gradient_32x32	32	32	3	0.5	field	frame.flags	0	128	
+flat_64x64	64	64	7	4.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	7	7.0	size	file_bytes	67	102	35
+flat_64x64	64	64	7	7.0	section	all-in-one	56	91	35
+flat_64x64	64	64	7	7.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	7	10.0	size	file_bytes	62	95	33
+flat_64x64	64	64	7	10.0	section	all-in-one	52	85	33
+flat_64x64	64	64	7	10.0	section	header_and_toc	10	10	0
+flat_64x64	64	64	7	15.0	size	file_bytes	63	96	33
+flat_64x64	64	64	7	15.0	section	all-in-one	52	85	33
+flat_64x64	64	64	7	15.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	9	0.5	size	file_bytes	71	102	31
+flat_64x64	64	64	9	0.5	section	all-in-one	61	92	31
+flat_64x64	64	64	9	0.5	section	header_and_toc	10	10	0
+flat_64x64	64	64	9	1.0	size	file_bytes	68	101	33
+flat_64x64	64	64	9	1.0	field	lfglobal.quantizer.global_scale	3791	5606	
+flat_64x64	64	64	9	1.0	field	lfglobal.quantizer.quant_dc	23	16	
+flat_64x64	64	64	9	1.0	section	all-in-one	57	90	33
+flat_64x64	64	64	9	1.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	9	2.0	size	file_bytes	78	98	20
+flat_64x64	64	64	9	2.0	section	all-in-one	71	91	20
+flat_64x64	64	64	9	2.0	section	header_and_toc	7	7	0
+flat_64x64	64	64	9	4.0	size	file_bytes	67	102	35
+flat_64x64	64	64	9	4.0	field	lfglobal.quantizer.global_scale	1321	1465	
+flat_64x64	64	64	9	4.0	field	lfglobal.quantizer.quant_dc	21	19	
+flat_64x64	64	64	9	4.0	section	all-in-one	56	91	35
+flat_64x64	64	64	9	4.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	9	7.0	size	file_bytes	73	101	28
+flat_64x64	64	64	9	7.0	section	all-in-one	62	90	28
+flat_64x64	64	64	9	7.0	section	header_and_toc	11	11	0
+flat_64x64	64	64	9	10.0	size	file_bytes	61	95	34
+flat_64x64	64	64	9	10.0	field	lfglobal.quantizer.global_scale	1210	1931	
+flat_64x64	64	64	9	10.0	field	lfglobal.quantizer.quant_dc	31	20	
+flat_64x64	64	64	9	10.0	section	all-in-one	51	85	34
+flat_64x64	64	64	9	10.0	section	header_and_toc	10	10	0
+flat_64x64	64	64	9	15.0	size	file_bytes	62	95	33
+flat_64x64	64	64	9	15.0	field	lfglobal.quantizer.global_scale	982	1465	
+flat_64x64	64	64	9	15.0	field	lfglobal.quantizer.quant_dc	28	19	
+flat_64x64	64	64	9	15.0	section	all-in-one	51	84	33
+flat_64x64	64	64	9	15.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	3	0.5	size	file_bytes	332	387	55
 gradient_32x32	32	32	3	0.5	section	all-in-one	322	377	55
-gradient_32x32	32	32	3	0.5	section	header_and_toc	10	11	1
-gradient_32x32	32	32	3	1.0	size	file_bytes	258	311	53
-gradient_32x32	32	32	3	1.0	field	frame.flags	0	128	
+gradient_32x32	32	32	3	0.5	section	header_and_toc	10	10	0
+gradient_32x32	32	32	3	1.0	size	file_bytes	258	310	52
 gradient_32x32	32	32	3	1.0	section	all-in-one	247	299	52
-gradient_32x32	32	32	3	1.0	section	header_and_toc	11	12	1
-gradient_32x32	32	32	3	4.0	size	file_bytes	149	196	47
-gradient_32x32	32	32	3	4.0	field	frame.flags	0	128	
+gradient_32x32	32	32	3	1.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	3	2.0	size	file_bytes	197	249	52
+gradient_32x32	32	32	3	2.0	section	all-in-one	186	238	52
+gradient_32x32	32	32	3	2.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	3	4.0	size	file_bytes	149	195	46
 gradient_32x32	32	32	3	4.0	section	all-in-one	138	184	46
-gradient_32x32	32	32	3	4.0	section	header_and_toc	11	12	1
-gradient_32x32	32	32	5	0.5	size	file_bytes	204	246	42
-gradient_32x32	32	32	5	0.5	field	frame.flags	0	128	
+gradient_32x32	32	32	3	4.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	3	7.0	size	file_bytes	135	181	46
+gradient_32x32	32	32	3	7.0	section	all-in-one	124	170	46
+gradient_32x32	32	32	3	7.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	3	10.0	size	file_bytes	114	140	26
+gradient_32x32	32	32	3	10.0	section	all-in-one	103	129	26
+gradient_32x32	32	32	3	10.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	3	15.0	size	file_bytes	108	133	25
+gradient_32x32	32	32	3	15.0	section	all-in-one	97	122	25
+gradient_32x32	32	32	3	15.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	5	0.5	size	file_bytes	204	245	41
 gradient_32x32	32	32	5	0.5	section	all-in-one	194	235	41
-gradient_32x32	32	32	5	0.5	section	header_and_toc	10	11	1
-gradient_32x32	32	32	5	1.0	size	file_bytes	164	206	42
-gradient_32x32	32	32	5	1.0	field	frame.flags	0	128	
+gradient_32x32	32	32	5	0.5	section	header_and_toc	10	10	0
+gradient_32x32	32	32	5	1.0	size	file_bytes	164	205	41
 gradient_32x32	32	32	5	1.0	section	all-in-one	153	194	41
-gradient_32x32	32	32	5	1.0	section	header_and_toc	11	12	1
-gradient_32x32	32	32	5	4.0	size	file_bytes	116	148	32
-gradient_32x32	32	32	5	4.0	field	frame.flags	0	128	
+gradient_32x32	32	32	5	1.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	5	2.0	size	file_bytes	136	176	40
+gradient_32x32	32	32	5	2.0	section	all-in-one	129	169	40
+gradient_32x32	32	32	5	2.0	section	header_and_toc	7	7	0
+gradient_32x32	32	32	5	4.0	size	file_bytes	116	147	31
 gradient_32x32	32	32	5	4.0	section	all-in-one	105	136	31
-gradient_32x32	32	32	5	4.0	section	header_and_toc	11	12	1
-gradient_32x32	32	32	7	0.5	size	file_bytes	206	245	39
-gradient_32x32	32	32	7	0.5	field	frame.flags	0	128	
+gradient_32x32	32	32	5	4.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	5	7.0	size	file_bytes	105	135	30
+gradient_32x32	32	32	5	7.0	section	all-in-one	94	124	30
+gradient_32x32	32	32	5	7.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	5	10.0	size	file_bytes	88	117	29
+gradient_32x32	32	32	5	10.0	section	all-in-one	78	107	29
+gradient_32x32	32	32	5	10.0	section	header_and_toc	10	10	0
+gradient_32x32	32	32	5	15.0	size	file_bytes	80	108	28
+gradient_32x32	32	32	5	15.0	section	all-in-one	69	97	28
+gradient_32x32	32	32	5	15.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	7	0.5	size	file_bytes	206	244	38
 gradient_32x32	32	32	7	0.5	section	all-in-one	196	234	38
-gradient_32x32	32	32	7	0.5	section	header_and_toc	10	11	1
-gradient_32x32	32	32	7	1.0	size	file_bytes	168	208	40
-gradient_32x32	32	32	7	1.0	field	frame.flags	0	128	
+gradient_32x32	32	32	7	0.5	section	header_and_toc	10	10	0
+gradient_32x32	32	32	7	1.0	size	file_bytes	168	207	39
 gradient_32x32	32	32	7	1.0	section	all-in-one	157	196	39
-gradient_32x32	32	32	7	1.0	section	header_and_toc	11	12	1
-gradient_32x32	32	32	7	4.0	size	file_bytes	118	151	33
-gradient_32x32	32	32	7	4.0	field	frame.flags	0	128	
+gradient_32x32	32	32	7	1.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	7	2.0	size	file_bytes	137	176	39
+gradient_32x32	32	32	7	2.0	section	all-in-one	130	169	39
+gradient_32x32	32	32	7	2.0	section	header_and_toc	7	7	0
+gradient_32x32	32	32	7	4.0	size	file_bytes	118	150	32
 gradient_32x32	32	32	7	4.0	section	all-in-one	107	139	32
-gradient_32x32	32	32	7	4.0	section	header_and_toc	11	12	1
-gradient_512x512	512	512	3	0.5	size	file_bytes	4619	4923	304
-gradient_512x512	512	512	3	0.5	field	frame.flags	0	128	
+gradient_32x32	32	32	7	4.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	7	7.0	size	file_bytes	108	139	31
+gradient_32x32	32	32	7	7.0	section	all-in-one	97	128	31
+gradient_32x32	32	32	7	7.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	7	10.0	size	file_bytes	88	117	29
+gradient_32x32	32	32	7	10.0	section	all-in-one	78	107	29
+gradient_32x32	32	32	7	10.0	section	header_and_toc	10	10	0
+gradient_32x32	32	32	7	15.0	size	file_bytes	80	109	29
+gradient_32x32	32	32	7	15.0	section	all-in-one	69	98	29
+gradient_32x32	32	32	7	15.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	9	0.5	size	file_bytes	204	220	16
+gradient_32x32	32	32	9	0.5	section	all-in-one	194	210	16
+gradient_32x32	32	32	9	0.5	section	header_and_toc	10	10	0
+gradient_32x32	32	32	9	1.0	size	file_bytes	156	182	26
+gradient_32x32	32	32	9	1.0	field	lfglobal.quantizer.global_scale	7456	7323	
+gradient_32x32	32	32	9	1.0	section	all-in-one	145	171	26
+gradient_32x32	32	32	9	1.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	9	2.0	size	file_bytes	130	161	31
+gradient_32x32	32	32	9	2.0	field	lfglobal.quantizer.global_scale	3815	3764	
+gradient_32x32	32	32	9	2.0	section	all-in-one	123	154	31
+gradient_32x32	32	32	9	2.0	section	header_and_toc	7	7	0
+gradient_32x32	32	32	9	4.0	size	file_bytes	114	140	26
+gradient_32x32	32	32	9	4.0	field	lfglobal.quantizer.global_scale	1575	1546	
+gradient_32x32	32	32	9	4.0	section	all-in-one	103	129	26
+gradient_32x32	32	32	9	4.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	9	7.0	size	file_bytes	103	130	27
+gradient_32x32	32	32	9	7.0	field	lfglobal.quantizer.global_scale	722	708	
+gradient_32x32	32	32	9	7.0	field	lfglobal.quantizer.quant_dc	24	25	
+gradient_32x32	32	32	9	7.0	section	all-in-one	92	119	27
+gradient_32x32	32	32	9	7.0	section	header_and_toc	11	11	0
+gradient_32x32	32	32	9	10.0	size	file_bytes	79	109	30
+gradient_32x32	32	32	9	10.0	field	lfglobal.quantizer.global_scale	1982	2166	
+gradient_32x32	32	32	9	10.0	field	lfglobal.quantizer.quant_dc	19	18	
+gradient_32x32	32	32	9	10.0	section	all-in-one	69	99	30
+gradient_32x32	32	32	9	10.0	section	header_and_toc	10	10	0
+gradient_32x32	32	32	9	15.0	size	file_bytes	77	106	29
+gradient_32x32	32	32	9	15.0	field	lfglobal.quantizer.global_scale	1233	1394	
+gradient_32x32	32	32	9	15.0	field	lfglobal.quantizer.quant_dc	23	20	
+gradient_32x32	32	32	9	15.0	section	all-in-one	66	95	29
+gradient_32x32	32	32	9	15.0	section	header_and_toc	11	11	0
+gradient_512x512	512	512	3	0.5	size	file_bytes	4619	4922	303
 gradient_512x512	512	512	3	0.5	section	LfGlobal	225	393	168
 gradient_512x512	512	512	3	0.5	section	LfGroup[0]	2721	3297	576
 gradient_512x512	512	512	3	0.5	section	HfGlobal	75	80	5
@@ -80,9 +192,8 @@ gradient_512x512	512	512	3	0.5	section	HfGroup[p0 g0]	526	350	-176
 gradient_512x512	512	512	3	0.5	section	HfGroup[p0 g1]	534	408	-126
 gradient_512x512	512	512	3	0.5	section	HfGroup[p0 g2]	220	144	-76
 gradient_512x512	512	512	3	0.5	section	HfGroup[p0 g3]	298	230	-68
-gradient_512x512	512	512	3	0.5	section	header_and_toc	20	21	1
-gradient_512x512	512	512	3	1.0	size	file_bytes	2894	3549	655
-gradient_512x512	512	512	3	1.0	field	frame.flags	0	128	
+gradient_512x512	512	512	3	0.5	section	header_and_toc	20	20	0
+gradient_512x512	512	512	3	1.0	size	file_bytes	2894	3548	654
 gradient_512x512	512	512	3	1.0	section	LfGlobal	207	334	127
 gradient_512x512	512	512	3	1.0	section	LfGroup[0]	2267	2792	525
 gradient_512x512	512	512	3	1.0	section	HfGlobal	33	35	2
@@ -90,9 +201,17 @@ gradient_512x512	512	512	3	1.0	section	HfGroup[p0 g0]	96	96	0
 gradient_512x512	512	512	3	1.0	section	HfGroup[p0 g1]	168	168	0
 gradient_512x512	512	512	3	1.0	section	HfGroup[p0 g2]	48	48	0
 gradient_512x512	512	512	3	1.0	section	HfGroup[p0 g3]	54	54	0
-gradient_512x512	512	512	3	1.0	section	header_and_toc	21	22	1
-gradient_512x512	512	512	3	4.0	size	file_bytes	1916	2359	443
-gradient_512x512	512	512	3	4.0	field	frame.flags	0	128	
+gradient_512x512	512	512	3	1.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	3	2.0	size	file_bytes	2307	2815	508
+gradient_512x512	512	512	3	2.0	section	LfGlobal	172	289	117
+gradient_512x512	512	512	3	2.0	section	LfGroup[0]	2030	2422	392
+gradient_512x512	512	512	3	2.0	section	HfGlobal	22	21	-1
+gradient_512x512	512	512	3	2.0	section	HfGroup[p0 g0]	20	20	0
+gradient_512x512	512	512	3	2.0	section	HfGroup[p0 g1]	4	4	0
+gradient_512x512	512	512	3	2.0	section	HfGroup[p0 g2]	12	12	0
+gradient_512x512	512	512	3	2.0	section	HfGroup[p0 g3]	26	26	0
+gradient_512x512	512	512	3	2.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	3	4.0	size	file_bytes	1916	2358	442
 gradient_512x512	512	512	3	4.0	section	LfGlobal	154	236	82
 gradient_512x512	512	512	3	4.0	section	LfGroup[0]	1738	2098	360
 gradient_512x512	512	512	3	4.0	section	HfGlobal	3	3	0
@@ -100,9 +219,23 @@ gradient_512x512	512	512	3	4.0	section	HfGroup[p0 g0]	0	0	0
 gradient_512x512	512	512	3	4.0	section	HfGroup[p0 g1]	0	0	0
 gradient_512x512	512	512	3	4.0	section	HfGroup[p0 g2]	0	0	0
 gradient_512x512	512	512	3	4.0	section	HfGroup[p0 g3]	0	0	0
-gradient_512x512	512	512	3	4.0	section	header_and_toc	21	22	1
-gradient_512x512	512	512	5	0.5	size	file_bytes	4537	5008	471
-gradient_512x512	512	512	5	0.5	field	frame.flags	0	128	
+gradient_512x512	512	512	3	4.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	3	7.0	size	file_bytes	1842	2057	215
+gradient_512x512	512	512	3	7.0	section	LfGlobal	144	221	77
+gradient_512x512	512	512	3	7.0	section	LfGroup[0]	1674	1812	138
+gradient_512x512	512	512	3	7.0	section	HfGlobal	3	3	0
+gradient_512x512	512	512	3	7.0	section	HfGroup[p0 g0]	0	0	0
+gradient_512x512	512	512	3	7.0	section	HfGroup[p0 g1]	0	0	0
+gradient_512x512	512	512	3	7.0	section	HfGroup[p0 g2]	0	0	0
+gradient_512x512	512	512	3	7.0	section	HfGroup[p0 g3]	0	0	0
+gradient_512x512	512	512	3	7.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	3	10.0	size	file_bytes	933	1173	240
+gradient_512x512	512	512	3	10.0	section	all-in-one	921	1161	240
+gradient_512x512	512	512	3	10.0	section	header_and_toc	12	12	0
+gradient_512x512	512	512	3	15.0	size	file_bytes	742	944	202
+gradient_512x512	512	512	3	15.0	section	all-in-one	730	932	202
+gradient_512x512	512	512	3	15.0	section	header_and_toc	12	12	0
+gradient_512x512	512	512	5	0.5	size	file_bytes	4537	5007	470
 gradient_512x512	512	512	5	0.5	section	LfGlobal	304	375	71
 gradient_512x512	512	512	5	0.5	section	LfGroup[0]	3301	3659	358
 gradient_512x512	512	512	5	0.5	section	HfGlobal	62	71	9
@@ -110,9 +243,8 @@ gradient_512x512	512	512	5	0.5	section	HfGroup[p0 g0]	229	239	10
 gradient_512x512	512	512	5	0.5	section	HfGroup[p0 g1]	215	223	8
 gradient_512x512	512	512	5	0.5	section	HfGroup[p0 g2]	192	200	8
 gradient_512x512	512	512	5	0.5	section	HfGroup[p0 g3]	214	220	6
-gradient_512x512	512	512	5	0.5	section	header_and_toc	20	21	1
-gradient_512x512	512	512	5	1.0	size	file_bytes	3342	3738	396
-gradient_512x512	512	512	5	1.0	field	frame.flags	0	128	
+gradient_512x512	512	512	5	0.5	section	header_and_toc	20	20	0
+gradient_512x512	512	512	5	1.0	size	file_bytes	3342	3737	395
 gradient_512x512	512	512	5	1.0	section	LfGlobal	256	329	73
 gradient_512x512	512	512	5	1.0	section	LfGroup[0]	2710	3022	312
 gradient_512x512	512	512	5	1.0	section	HfGlobal	35	45	10
@@ -120,9 +252,17 @@ gradient_512x512	512	512	5	1.0	section	HfGroup[p0 g0]	78	78	0
 gradient_512x512	512	512	5	1.0	section	HfGroup[p0 g1]	72	72	0
 gradient_512x512	512	512	5	1.0	section	HfGroup[p0 g2]	92	92	0
 gradient_512x512	512	512	5	1.0	section	HfGroup[p0 g3]	78	78	0
-gradient_512x512	512	512	5	1.0	section	header_and_toc	21	22	1
-gradient_512x512	512	512	5	4.0	size	file_bytes	2168	2479	311
-gradient_512x512	512	512	5	4.0	field	frame.flags	0	128	
+gradient_512x512	512	512	5	1.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	5	2.0	size	file_bytes	2686	3005	319
+gradient_512x512	512	512	5	2.0	section	LfGlobal	235	289	54
+gradient_512x512	512	512	5	2.0	section	LfGroup[0]	2262	2526	264
+gradient_512x512	512	512	5	2.0	section	HfGlobal	26	27	1
+gradient_512x512	512	512	5	2.0	section	HfGroup[p0 g0]	36	36	0
+gradient_512x512	512	512	5	2.0	section	HfGroup[p0 g1]	38	38	0
+gradient_512x512	512	512	5	2.0	section	HfGroup[p0 g2]	36	36	0
+gradient_512x512	512	512	5	2.0	section	HfGroup[p0 g3]	36	36	0
+gradient_512x512	512	512	5	2.0	section	header_and_toc	17	17	0
+gradient_512x512	512	512	5	4.0	size	file_bytes	2168	2478	310
 gradient_512x512	512	512	5	4.0	section	LfGlobal	207	246	39
 gradient_512x512	512	512	5	4.0	section	LfGroup[0]	1937	2208	271
 gradient_512x512	512	512	5	4.0	section	HfGlobal	3	3	0
@@ -130,9 +270,23 @@ gradient_512x512	512	512	5	4.0	section	HfGroup[p0 g0]	0	0	0
 gradient_512x512	512	512	5	4.0	section	HfGroup[p0 g1]	0	0	0
 gradient_512x512	512	512	5	4.0	section	HfGroup[p0 g2]	0	0	0
 gradient_512x512	512	512	5	4.0	section	HfGroup[p0 g3]	0	0	0
-gradient_512x512	512	512	5	4.0	section	header_and_toc	21	22	1
-gradient_512x512	512	512	7	0.5	size	file_bytes	4539	5058	519
-gradient_512x512	512	512	7	0.5	field	frame.flags	0	128	
+gradient_512x512	512	512	5	4.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	5	7.0	size	file_bytes	1831	2131	300
+gradient_512x512	512	512	5	7.0	section	LfGlobal	196	225	29
+gradient_512x512	512	512	5	7.0	section	LfGroup[0]	1611	1882	271
+gradient_512x512	512	512	5	7.0	section	HfGlobal	3	3	0
+gradient_512x512	512	512	5	7.0	section	HfGroup[p0 g0]	0	0	0
+gradient_512x512	512	512	5	7.0	section	HfGroup[p0 g1]	0	0	0
+gradient_512x512	512	512	5	7.0	section	HfGroup[p0 g2]	0	0	0
+gradient_512x512	512	512	5	7.0	section	HfGroup[p0 g3]	0	0	0
+gradient_512x512	512	512	5	7.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	5	10.0	size	file_bytes	951	1031	80
+gradient_512x512	512	512	5	10.0	section	all-in-one	940	1020	80
+gradient_512x512	512	512	5	10.0	section	header_and_toc	11	11	0
+gradient_512x512	512	512	5	15.0	size	file_bytes	859	947	88
+gradient_512x512	512	512	5	15.0	section	all-in-one	847	935	88
+gradient_512x512	512	512	5	15.0	section	header_and_toc	12	12	0
+gradient_512x512	512	512	7	0.5	size	file_bytes	4539	5057	518
 gradient_512x512	512	512	7	0.5	section	LfGlobal	304	402	98
 gradient_512x512	512	512	7	0.5	section	LfGroup[0]	3303	3665	362
 gradient_512x512	512	512	7	0.5	section	HfGlobal	62	76	14
@@ -140,9 +294,8 @@ gradient_512x512	512	512	7	0.5	section	HfGroup[p0 g0]	229	243	14
 gradient_512x512	512	512	7	0.5	section	HfGroup[p0 g1]	215	229	14
 gradient_512x512	512	512	7	0.5	section	HfGroup[p0 g2]	192	200	8
 gradient_512x512	512	512	7	0.5	section	HfGroup[p0 g3]	214	222	8
-gradient_512x512	512	512	7	0.5	section	header_and_toc	20	21	1
-gradient_512x512	512	512	7	1.0	size	file_bytes	3487	3793	306
-gradient_512x512	512	512	7	1.0	field	frame.flags	0	128	
+gradient_512x512	512	512	7	0.5	section	header_and_toc	20	20	0
+gradient_512x512	512	512	7	1.0	size	file_bytes	3487	3792	305
 gradient_512x512	512	512	7	1.0	section	LfGlobal	262	330	68
 gradient_512x512	512	512	7	1.0	section	LfGroup[0]	2849	3056	207
 gradient_512x512	512	512	7	1.0	section	HfGlobal	35	49	14
@@ -150,9 +303,17 @@ gradient_512x512	512	512	7	1.0	section	HfGroup[p0 g0]	78	80	2
 gradient_512x512	512	512	7	1.0	section	HfGroup[p0 g1]	72	82	10
 gradient_512x512	512	512	7	1.0	section	HfGroup[p0 g2]	92	94	2
 gradient_512x512	512	512	7	1.0	section	HfGroup[p0 g3]	78	80	2
-gradient_512x512	512	512	7	1.0	section	header_and_toc	21	22	1
-gradient_512x512	512	512	7	4.0	size	file_bytes	2629	2480	-149
-gradient_512x512	512	512	7	4.0	field	frame.flags	0	128	
+gradient_512x512	512	512	7	1.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	7	2.0	size	file_bytes	3174	3027	-147
+gradient_512x512	512	512	7	2.0	section	LfGlobal	243	289	46
+gradient_512x512	512	512	7	2.0	section	LfGroup[0]	2742	2548	-194
+gradient_512x512	512	512	7	2.0	section	HfGlobal	26	27	1
+gradient_512x512	512	512	7	2.0	section	HfGroup[p0 g0]	36	36	0
+gradient_512x512	512	512	7	2.0	section	HfGroup[p0 g1]	38	38	0
+gradient_512x512	512	512	7	2.0	section	HfGroup[p0 g2]	36	36	0
+gradient_512x512	512	512	7	2.0	section	HfGroup[p0 g3]	36	36	0
+gradient_512x512	512	512	7	2.0	section	header_and_toc	17	17	0
+gradient_512x512	512	512	7	4.0	size	file_bytes	2629	2479	-150
 gradient_512x512	512	512	7	4.0	section	LfGlobal	237	242	5
 gradient_512x512	512	512	7	4.0	section	LfGroup[0]	2368	2213	-155
 gradient_512x512	512	512	7	4.0	section	HfGlobal	3	3	0
@@ -160,45 +321,184 @@ gradient_512x512	512	512	7	4.0	section	HfGroup[p0 g0]	0	0	0
 gradient_512x512	512	512	7	4.0	section	HfGroup[p0 g1]	0	0	0
 gradient_512x512	512	512	7	4.0	section	HfGroup[p0 g2]	0	0	0
 gradient_512x512	512	512	7	4.0	section	HfGroup[p0 g3]	0	0	0
-gradient_512x512	512	512	7	4.0	section	header_and_toc	21	22	1
-noise_48x48	48	48	3	0.5	size	file_bytes	4240	4238	-2
-noise_48x48	48	48	3	0.5	field	frame.flags	0	128	
+gradient_512x512	512	512	7	4.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	7	7.0	size	file_bytes	2222	2117	-105
+gradient_512x512	512	512	7	7.0	section	LfGlobal	206	218	12
+gradient_512x512	512	512	7	7.0	section	LfGroup[0]	1992	1875	-117
+gradient_512x512	512	512	7	7.0	section	HfGlobal	3	3	0
+gradient_512x512	512	512	7	7.0	section	HfGroup[p0 g0]	0	0	0
+gradient_512x512	512	512	7	7.0	section	HfGroup[p0 g1]	0	0	0
+gradient_512x512	512	512	7	7.0	section	HfGroup[p0 g2]	0	0	0
+gradient_512x512	512	512	7	7.0	section	HfGroup[p0 g3]	0	0	0
+gradient_512x512	512	512	7	7.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	7	10.0	size	file_bytes	956	1051	95
+gradient_512x512	512	512	7	10.0	section	all-in-one	945	1040	95
+gradient_512x512	512	512	7	10.0	section	header_and_toc	11	11	0
+gradient_512x512	512	512	7	15.0	size	file_bytes	861	953	92
+gradient_512x512	512	512	7	15.0	section	all-in-one	849	941	92
+gradient_512x512	512	512	7	15.0	section	header_and_toc	12	12	0
+gradient_512x512	512	512	9	0.5	size	file_bytes	4328	2974	-1354
+gradient_512x512	512	512	9	0.5	section	LfGlobal	234	317	83
+gradient_512x512	512	512	9	0.5	section	LfGroup[0]	3303	1763	-1540
+gradient_512x512	512	512	9	0.5	section	HfGlobal	60	85	25
+gradient_512x512	512	512	9	0.5	section	HfGroup[p0 g0]	183	199	16
+gradient_512x512	512	512	9	0.5	section	HfGroup[p0 g1]	175	204	29
+gradient_512x512	512	512	9	0.5	section	HfGroup[p0 g2]	172	188	16
+gradient_512x512	512	512	9	0.5	section	HfGroup[p0 g3]	181	198	17
+gradient_512x512	512	512	9	0.5	section	header_and_toc	20	20	0
+gradient_512x512	512	512	9	1.0	size	file_bytes	3340	1997	-1343
+gradient_512x512	512	512	9	1.0	field	lfglobal.quantizer.global_scale	6779	7789	
+gradient_512x512	512	512	9	1.0	field	lfglobal.quantizer.quant_dc	13	11	
+gradient_512x512	512	512	9	1.0	section	LfGlobal	165	275	110
+gradient_512x512	512	512	9	1.0	section	LfGroup[0]	2906	1388	-1518
+gradient_512x512	512	512	9	1.0	section	HfGlobal	27	42	15
+gradient_512x512	512	512	9	1.0	section	HfGroup[p0 g0]	55	71	16
+gradient_512x512	512	512	9	1.0	section	HfGroup[p0 g1]	58	71	13
+gradient_512x512	512	512	9	1.0	section	HfGroup[p0 g2]	54	58	4
+gradient_512x512	512	512	9	1.0	section	HfGroup[p0 g3]	54	71	17
+gradient_512x512	512	512	9	1.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	9	2.0	size	file_bytes	2998	1461	-1537
+gradient_512x512	512	512	9	2.0	field	lfglobal.quantizer.global_scale	2978	3673	
+gradient_512x512	512	512	9	2.0	field	lfglobal.quantizer.quant_dc	17	13	
+gradient_512x512	512	512	9	2.0	section	LfGlobal	212	264	52
+gradient_512x512	512	512	9	2.0	section	LfGroup[0]	2639	1039	-1600
+gradient_512x512	512	512	9	2.0	section	HfGlobal	18	23	5
+gradient_512x512	512	512	9	2.0	section	HfGroup[p0 g0]	26	24	-2
+gradient_512x512	512	512	9	2.0	section	HfGroup[p0 g1]	12	22	10
+gradient_512x512	512	512	9	2.0	section	HfGroup[p0 g2]	52	38	-14
+gradient_512x512	512	512	9	2.0	section	HfGroup[p0 g3]	22	34	12
+gradient_512x512	512	512	9	2.0	section	header_and_toc	17	17	0
+gradient_512x512	512	512	9	4.0	size	file_bytes	2556	1116	-1440
+gradient_512x512	512	512	9	4.0	field	lfglobal.quantizer.global_scale	1177	1531	
+gradient_512x512	512	512	9	4.0	field	lfglobal.quantizer.quant_dc	24	18	
+gradient_512x512	512	512	9	4.0	section	LfGlobal	167	198	31
+gradient_512x512	512	512	9	4.0	section	LfGroup[0]	2366	894	-1472
+gradient_512x512	512	512	9	4.0	section	HfGlobal	2	3	1
+gradient_512x512	512	512	9	4.0	section	HfGroup[p0 g0]	0	0	0
+gradient_512x512	512	512	9	4.0	section	HfGroup[p0 g1]	0	0	0
+gradient_512x512	512	512	9	4.0	section	HfGroup[p0 g2]	0	0	0
+gradient_512x512	512	512	9	4.0	section	HfGroup[p0 g3]	0	0	0
+gradient_512x512	512	512	9	4.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	9	7.0	size	file_bytes	2103	986	-1117
+gradient_512x512	512	512	9	7.0	field	lfglobal.quantizer.global_scale	571	724	
+gradient_512x512	512	512	9	7.0	field	lfglobal.quantizer.quant_dc	31	24	
+gradient_512x512	512	512	9	7.0	section	LfGlobal	112	201	89
+gradient_512x512	512	512	9	7.0	section	LfGroup[0]	1968	761	-1207
+gradient_512x512	512	512	9	7.0	section	HfGlobal	2	3	1
+gradient_512x512	512	512	9	7.0	section	HfGroup[p0 g0]	0	0	0
+gradient_512x512	512	512	9	7.0	section	HfGroup[p0 g1]	0	0	0
+gradient_512x512	512	512	9	7.0	section	HfGroup[p0 g2]	0	0	0
+gradient_512x512	512	512	9	7.0	section	HfGroup[p0 g3]	0	0	0
+gradient_512x512	512	512	9	7.0	section	header_and_toc	21	21	0
+gradient_512x512	512	512	9	10.0	size	file_bytes	891	609	-282
+gradient_512x512	512	512	9	10.0	field	lfglobal.quantizer.global_scale	1629	2513	
+gradient_512x512	512	512	9	10.0	field	lfglobal.quantizer.quant_dc	23	15	
+gradient_512x512	512	512	9	10.0	section	all-in-one	880	598	-282
+gradient_512x512	512	512	9	10.0	section	header_and_toc	11	11	0
+gradient_512x512	512	512	9	15.0	size	file_bytes	820	588	-232
+gradient_512x512	512	512	9	15.0	field	lfglobal.quantizer.global_scale	1010	1593	
+gradient_512x512	512	512	9	15.0	field	lfglobal.quantizer.quant_dc	28	18	
+gradient_512x512	512	512	9	15.0	section	all-in-one	808	576	-232
+gradient_512x512	512	512	9	15.0	section	header_and_toc	12	12	0
+noise_48x48	48	48	3	0.5	size	file_bytes	4240	4237	-3
 noise_48x48	48	48	3	0.5	section	all-in-one	4230	4227	-3
-noise_48x48	48	48	3	0.5	section	header_and_toc	10	11	1
-noise_48x48	48	48	3	1.0	size	file_bytes	3287	3259	-28
-noise_48x48	48	48	3	1.0	field	frame.flags	0	128	
+noise_48x48	48	48	3	0.5	section	header_and_toc	10	10	0
+noise_48x48	48	48	3	1.0	size	file_bytes	3287	3258	-29
 noise_48x48	48	48	3	1.0	section	all-in-one	3276	3247	-29
-noise_48x48	48	48	3	1.0	section	header_and_toc	11	12	1
-noise_48x48	48	48	3	4.0	size	file_bytes	1636	1584	-52
-noise_48x48	48	48	3	4.0	field	frame.flags	0	128	
+noise_48x48	48	48	3	1.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	3	2.0	size	file_bytes	2356	2330	-26
+noise_48x48	48	48	3	2.0	section	all-in-one	2345	2319	-26
+noise_48x48	48	48	3	2.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	3	4.0	size	file_bytes	1636	1583	-53
 noise_48x48	48	48	3	4.0	section	all-in-one	1625	1572	-53
-noise_48x48	48	48	3	4.0	section	header_and_toc	11	12	1
-noise_48x48	48	48	5	0.5	size	file_bytes	3126	3319	193
-noise_48x48	48	48	5	0.5	field	frame.flags	0	128	
+noise_48x48	48	48	3	4.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	3	7.0	size	file_bytes	1055	1062	7
+noise_48x48	48	48	3	7.0	section	all-in-one	1044	1051	7
+noise_48x48	48	48	3	7.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	3	10.0	size	file_bytes	554	568	14
+noise_48x48	48	48	3	10.0	section	all-in-one	543	557	14
+noise_48x48	48	48	3	10.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	3	15.0	size	file_bytes	427	455	28
+noise_48x48	48	48	3	15.0	section	all-in-one	416	444	28
+noise_48x48	48	48	3	15.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	5	0.5	size	file_bytes	3126	3318	192
 noise_48x48	48	48	5	0.5	section	all-in-one	3116	3308	192
-noise_48x48	48	48	5	0.5	section	header_and_toc	10	11	1
-noise_48x48	48	48	5	1.0	size	file_bytes	2780	2777	-3
-noise_48x48	48	48	5	1.0	field	frame.flags	0	128	
+noise_48x48	48	48	5	0.5	section	header_and_toc	10	10	0
+noise_48x48	48	48	5	1.0	size	file_bytes	2780	2776	-4
 noise_48x48	48	48	5	1.0	section	all-in-one	2769	2765	-4
-noise_48x48	48	48	5	1.0	section	header_and_toc	11	12	1
-noise_48x48	48	48	5	4.0	size	file_bytes	837	1045	208
-noise_48x48	48	48	5	4.0	field	frame.flags	0	128	
+noise_48x48	48	48	5	1.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	5	2.0	size	file_bytes	1765	1757	-8
+noise_48x48	48	48	5	2.0	section	all-in-one	1758	1750	-8
+noise_48x48	48	48	5	2.0	section	header_and_toc	7	7	0
+noise_48x48	48	48	5	4.0	size	file_bytes	837	1044	207
 noise_48x48	48	48	5	4.0	section	all-in-one	826	1033	207
-noise_48x48	48	48	5	4.0	section	header_and_toc	11	12	1
-noise_48x48	48	48	7	0.5	size	file_bytes	3590	3797	207
-noise_48x48	48	48	7	0.5	field	frame.flags	0	128	
+noise_48x48	48	48	5	4.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	5	7.0	size	file_bytes	628	729	101
+noise_48x48	48	48	5	7.0	section	all-in-one	617	718	101
+noise_48x48	48	48	5	7.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	5	10.0	size	file_bytes	570	617	47
+noise_48x48	48	48	5	10.0	section	all-in-one	560	607	47
+noise_48x48	48	48	5	10.0	section	header_and_toc	10	10	0
+noise_48x48	48	48	5	15.0	size	file_bytes	548	594	46
+noise_48x48	48	48	5	15.0	section	all-in-one	537	583	46
+noise_48x48	48	48	5	15.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	7	0.5	size	file_bytes	3590	3796	206
 noise_48x48	48	48	7	0.5	section	all-in-one	3580	3786	206
-noise_48x48	48	48	7	0.5	section	header_and_toc	10	11	1
-noise_48x48	48	48	7	1.0	size	file_bytes	3217	3212	-5
-noise_48x48	48	48	7	1.0	field	frame.flags	0	128	
+noise_48x48	48	48	7	0.5	section	header_and_toc	10	10	0
+noise_48x48	48	48	7	1.0	size	file_bytes	3217	3211	-6
 noise_48x48	48	48	7	1.0	section	all-in-one	3206	3200	-6
-noise_48x48	48	48	7	1.0	section	header_and_toc	11	12	1
-noise_48x48	48	48	7	4.0	size	file_bytes	940	1203	263
-noise_48x48	48	48	7	4.0	field	frame.flags	0	128	
+noise_48x48	48	48	7	1.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	7	2.0	size	file_bytes	2124	2157	33
+noise_48x48	48	48	7	2.0	section	all-in-one	2114	2147	33
+noise_48x48	48	48	7	2.0	section	header_and_toc	10	10	0
+noise_48x48	48	48	7	4.0	size	file_bytes	940	1202	262
 noise_48x48	48	48	7	4.0	section	all-in-one	929	1191	262
-noise_48x48	48	48	7	4.0	section	header_and_toc	11	12	1
-noise_512x512	512	512	3	0.5	size	file_bytes	438460	433943	-4517
-noise_512x512	512	512	3	0.5	field	frame.flags	0	128	
+noise_48x48	48	48	7	4.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	7	7.0	size	file_bytes	667	775	108
+noise_48x48	48	48	7	7.0	section	all-in-one	656	764	108
+noise_48x48	48	48	7	7.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	7	10.0	size	file_bytes	693	758	65
+noise_48x48	48	48	7	10.0	section	all-in-one	683	748	65
+noise_48x48	48	48	7	10.0	section	header_and_toc	10	10	0
+noise_48x48	48	48	7	15.0	size	file_bytes	579	643	64
+noise_48x48	48	48	7	15.0	section	all-in-one	568	632	64
+noise_48x48	48	48	7	15.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	9	0.5	size	file_bytes	3903	3993	90
+noise_48x48	48	48	9	0.5	field	lfglobal.quantizer.global_scale	12702	10590	
+noise_48x48	48	48	9	0.5	field	lfglobal.quantizer.quant_dc	12	15	
+noise_48x48	48	48	9	0.5	section	all-in-one	3893	3983	90
+noise_48x48	48	48	9	0.5	section	header_and_toc	10	10	0
+noise_48x48	48	48	9	1.0	size	file_bytes	3124	3169	45
+noise_48x48	48	48	9	1.0	field	lfglobal.quantizer.global_scale	4057	3599	
+noise_48x48	48	48	9	1.0	field	lfglobal.quantizer.quant_dc	22	24	
+noise_48x48	48	48	9	1.0	section	all-in-one	3113	3158	45
+noise_48x48	48	48	9	1.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	9	2.0	size	file_bytes	2244	2343	99
+noise_48x48	48	48	9	2.0	field	lfglobal.quantizer.global_scale	2330	1773	
+noise_48x48	48	48	9	2.0	field	lfglobal.quantizer.quant_dc	21	28	
+noise_48x48	48	48	9	2.0	section	all-in-one	2234	2333	99
+noise_48x48	48	48	9	2.0	section	header_and_toc	10	10	0
+noise_48x48	48	48	9	4.0	size	file_bytes	1356	1663	307
+noise_48x48	48	48	9	4.0	field	lfglobal.quantizer.global_scale	853	810	
+noise_48x48	48	48	9	4.0	field	lfglobal.quantizer.quant_dc	33	34	
+noise_48x48	48	48	9	4.0	section	all-in-one	1345	1652	307
+noise_48x48	48	48	9	4.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	9	7.0	size	file_bytes	536	677	141
+noise_48x48	48	48	9	7.0	field	lfglobal.quantizer.global_scale	525	509	
+noise_48x48	48	48	9	7.0	field	lfglobal.quantizer.quant_dc	33	34	
+noise_48x48	48	48	9	7.0	section	all-in-one	525	666	141
+noise_48x48	48	48	9	7.0	section	header_and_toc	11	11	0
+noise_48x48	48	48	9	10.0	size	file_bytes	629	668	39
+noise_48x48	48	48	9	10.0	field	lfglobal.quantizer.global_scale	1181	1053	
+noise_48x48	48	48	9	10.0	field	lfglobal.quantizer.quant_dc	32	36	
+noise_48x48	48	48	9	10.0	section	all-in-one	619	658	39
+noise_48x48	48	48	9	10.0	section	header_and_toc	10	10	0
+noise_48x48	48	48	9	15.0	size	file_bytes	487	563	76
+noise_48x48	48	48	9	15.0	field	lfglobal.quantizer.global_scale	772	734	
+noise_48x48	48	48	9	15.0	field	lfglobal.quantizer.quant_dc	36	38	
+noise_48x48	48	48	9	15.0	section	all-in-one	476	552	76
+noise_48x48	48	48	9	15.0	section	header_and_toc	11	11	0
+noise_512x512	512	512	3	0.5	size	file_bytes	438460	433942	-4518
 noise_512x512	512	512	3	0.5	section	LfGlobal	195	293	98
 noise_512x512	512	512	3	0.5	section	LfGroup[0]	9930	11525	1595
 noise_512x512	512	512	3	0.5	section	HfGlobal	1250	1616	366
@@ -206,9 +506,8 @@ noise_512x512	512	512	3	0.5	section	HfGroup[p0 g0]	106757	105041	-1716
 noise_512x512	512	512	3	0.5	section	HfGroup[p0 g1]	106829	105233	-1596
 noise_512x512	512	512	3	0.5	section	HfGroup[p0 g2]	106670	105089	-1581
 noise_512x512	512	512	3	0.5	section	HfGroup[p0 g3]	106802	105118	-1684
-noise_512x512	512	512	3	0.5	section	header_and_toc	27	28	1
-noise_512x512	512	512	3	1.0	size	file_bytes	330577	324516	-6061
-noise_512x512	512	512	3	1.0	field	frame.flags	0	128	
+noise_512x512	512	512	3	0.5	section	header_and_toc	27	27	0
+noise_512x512	512	512	3	1.0	size	file_bytes	330577	324515	-6062
 noise_512x512	512	512	3	1.0	section	LfGlobal	208	273	65
 noise_512x512	512	512	3	1.0	section	LfGroup[0]	8643	10233	1590
 noise_512x512	512	512	3	1.0	section	HfGlobal	1012	1131	119
@@ -216,9 +515,17 @@ noise_512x512	512	512	3	1.0	section	HfGroup[p0 g0]	80123	78179	-1944
 noise_512x512	512	512	3	1.0	section	HfGroup[p0 g1]	80205	78293	-1912
 noise_512x512	512	512	3	1.0	section	HfGroup[p0 g2]	80104	78164	-1940
 noise_512x512	512	512	3	1.0	section	HfGroup[p0 g3]	80255	78214	-2041
-noise_512x512	512	512	3	1.0	section	header_and_toc	27	29	2
-noise_512x512	512	512	3	4.0	size	file_bytes	146936	145351	-1585
-noise_512x512	512	512	3	4.0	field	frame.flags	0	128	
+noise_512x512	512	512	3	1.0	section	header_and_toc	27	28	1
+noise_512x512	512	512	3	2.0	size	file_bytes	221627	217144	-4483
+noise_512x512	512	512	3	2.0	section	LfGlobal	202	335	133
+noise_512x512	512	512	3	2.0	section	LfGroup[0]	7336	8938	1602
+noise_512x512	512	512	3	2.0	section	HfGlobal	811	845	34
+noise_512x512	512	512	3	2.0	section	HfGroup[p0 g0]	53279	51719	-1560
+noise_512x512	512	512	3	2.0	section	HfGroup[p0 g1]	53365	51794	-1571
+noise_512x512	512	512	3	2.0	section	HfGroup[p0 g2]	53248	51690	-1558
+noise_512x512	512	512	3	2.0	section	HfGroup[p0 g3]	53359	51796	-1563
+noise_512x512	512	512	3	2.0	section	header_and_toc	27	27	0
+noise_512x512	512	512	3	4.0	size	file_bytes	146936	145350	-1586
 noise_512x512	512	512	3	4.0	section	LfGlobal	208	413	205
 noise_512x512	512	512	3	4.0	section	LfGroup[0]	6070	7662	1592
 noise_512x512	512	512	3	4.0	section	HfGlobal	703	582	-121
@@ -226,9 +533,23 @@ noise_512x512	512	512	3	4.0	section	HfGroup[p0 g0]	34960	34150	-810
 noise_512x512	512	512	3	4.0	section	HfGroup[p0 g1]	35042	34234	-808
 noise_512x512	512	512	3	4.0	section	HfGroup[p0 g2]	34929	34109	-820
 noise_512x512	512	512	3	4.0	section	HfGroup[p0 g3]	34997	34173	-824
-noise_512x512	512	512	3	4.0	section	header_and_toc	27	28	1
-noise_512x512	512	512	5	0.5	size	file_bytes	310356	334492	24136
-noise_512x512	512	512	5	0.5	field	frame.flags	0	128	
+noise_512x512	512	512	3	4.0	section	header_and_toc	27	27	0
+noise_512x512	512	512	3	7.0	size	file_bytes	95597	96747	1150
+noise_512x512	512	512	3	7.0	section	LfGlobal	191	344	153
+noise_512x512	512	512	3	7.0	section	LfGroup[0]	5031	6702	1671
+noise_512x512	512	512	3	7.0	section	HfGlobal	514	552	38
+noise_512x512	512	512	3	7.0	section	HfGroup[p0 g0]	22468	22258	-210
+noise_512x512	512	512	3	7.0	section	HfGroup[p0 g1]	22507	22327	-180
+noise_512x512	512	512	3	7.0	section	HfGroup[p0 g2]	22402	22236	-166
+noise_512x512	512	512	3	7.0	section	HfGroup[p0 g3]	22457	22301	-156
+noise_512x512	512	512	3	7.0	section	header_and_toc	27	27	0
+noise_512x512	512	512	3	10.0	size	file_bytes	47933	47202	-731
+noise_512x512	512	512	3	10.0	section	all-in-one	47920	47189	-731
+noise_512x512	512	512	3	10.0	section	header_and_toc	13	13	0
+noise_512x512	512	512	3	15.0	size	file_bytes	36370	36434	64
+noise_512x512	512	512	3	15.0	section	all-in-one	36357	36421	64
+noise_512x512	512	512	3	15.0	section	header_and_toc	13	13	0
+noise_512x512	512	512	5	0.5	size	file_bytes	310356	334491	24135
 noise_512x512	512	512	5	0.5	section	LfGlobal	249	257	8
 noise_512x512	512	512	5	0.5	section	LfGroup[0]	10885	11911	1026
 noise_512x512	512	512	5	0.5	section	HfGlobal	1393	1589	196
@@ -236,9 +557,8 @@ noise_512x512	512	512	5	0.5	section	HfGroup[p0 g0]	74030	79895	5865
 noise_512x512	512	512	5	0.5	section	HfGroup[p0 g1]	74270	80157	5887
 noise_512x512	512	512	5	0.5	section	HfGroup[p0 g2]	74754	80318	5564
 noise_512x512	512	512	5	0.5	section	HfGroup[p0 g3]	74748	80337	5589
-noise_512x512	512	512	5	0.5	section	header_and_toc	27	28	1
-noise_512x512	512	512	5	1.0	size	file_bytes	271931	273577	1646
-noise_512x512	512	512	5	1.0	field	frame.flags	0	128	
+noise_512x512	512	512	5	0.5	section	header_and_toc	27	27	0
+noise_512x512	512	512	5	1.0	size	file_bytes	271931	273576	1645
 noise_512x512	512	512	5	1.0	section	LfGlobal	267	299	32
 noise_512x512	512	512	5	1.0	section	LfGroup[0]	9712	11118	1406
 noise_512x512	512	512	5	1.0	section	HfGlobal	904	901	-3
@@ -246,9 +566,17 @@ noise_512x512	512	512	5	1.0	section	HfGroup[p0 g0]	65183	65223	40
 noise_512x512	512	512	5	1.0	section	HfGroup[p0 g1]	65230	65278	48
 noise_512x512	512	512	5	1.0	section	HfGroup[p0 g2]	65262	65323	61
 noise_512x512	512	512	5	1.0	section	HfGroup[p0 g3]	65346	65407	61
-noise_512x512	512	512	5	1.0	section	header_and_toc	27	28	1
-noise_512x512	512	512	5	4.0	size	file_bytes	65319	68584	3265
-noise_512x512	512	512	5	4.0	field	frame.flags	0	128	
+noise_512x512	512	512	5	1.0	section	header_and_toc	27	27	0
+noise_512x512	512	512	5	2.0	size	file_bytes	145584	149570	3986
+noise_512x512	512	512	5	2.0	section	LfGlobal	351	446	95
+noise_512x512	512	512	5	2.0	section	LfGroup[0]	7798	9181	1383
+noise_512x512	512	512	5	2.0	section	HfGlobal	966	1845	879
+noise_512x512	512	512	5	2.0	section	HfGroup[p0 g0]	32876	33460	584
+noise_512x512	512	512	5	2.0	section	HfGroup[p0 g1]	34216	34408	192
+noise_512x512	512	512	5	2.0	section	HfGroup[p0 g2]	34800	35234	434
+noise_512x512	512	512	5	2.0	section	HfGroup[p0 g3]	34554	34972	418
+noise_512x512	512	512	5	2.0	section	header_and_toc	23	24	1
+noise_512x512	512	512	5	4.0	size	file_bytes	65319	68583	3264
 noise_512x512	512	512	5	4.0	section	LfGlobal	313	387	74
 noise_512x512	512	512	5	4.0	section	LfGroup[0]	6234	7426	1192
 noise_512x512	512	512	5	4.0	section	HfGlobal	774	1452	678
@@ -256,9 +584,23 @@ noise_512x512	512	512	5	4.0	section	HfGroup[p0 g0]	14563	14954	391
 noise_512x512	512	512	5	4.0	section	HfGroup[p0 g1]	14594	14854	260
 noise_512x512	512	512	5	4.0	section	HfGroup[p0 g2]	14375	14755	380
 noise_512x512	512	512	5	4.0	section	HfGroup[p0 g3]	14443	14731	288
-noise_512x512	512	512	5	4.0	section	header_and_toc	23	25	2
-noise_512x512	512	512	7	0.5	size	file_bytes	361818	389509	27691
-noise_512x512	512	512	7	0.5	field	frame.flags	0	128	
+noise_512x512	512	512	5	4.0	section	header_and_toc	23	24	1
+noise_512x512	512	512	5	7.0	size	file_bytes	48274	51354	3080
+noise_512x512	512	512	5	7.0	section	LfGlobal	278	362	84
+noise_512x512	512	512	5	7.0	section	LfGroup[0]	5460	6398	938
+noise_512x512	512	512	5	7.0	section	HfGlobal	1065	2205	1140
+noise_512x512	512	512	5	7.0	section	HfGroup[p0 g0]	10355	10588	233
+noise_512x512	512	512	5	7.0	section	HfGroup[p0 g1]	10457	10671	214
+noise_512x512	512	512	5	7.0	section	HfGroup[p0 g2]	10254	10497	243
+noise_512x512	512	512	5	7.0	section	HfGroup[p0 g3]	10381	10609	228
+noise_512x512	512	512	5	7.0	section	header_and_toc	24	24	0
+noise_512x512	512	512	5	10.0	size	file_bytes	29102	29940	838
+noise_512x512	512	512	5	10.0	section	all-in-one	29090	29928	838
+noise_512x512	512	512	5	10.0	section	header_and_toc	12	12	0
+noise_512x512	512	512	5	15.0	size	file_bytes	19600	19124	-476
+noise_512x512	512	512	5	15.0	section	all-in-one	19587	19111	-476
+noise_512x512	512	512	5	15.0	section	header_and_toc	13	13	0
+noise_512x512	512	512	7	0.5	size	file_bytes	361818	389508	27690
 noise_512x512	512	512	7	0.5	section	LfGlobal	248	257	9
 noise_512x512	512	512	7	0.5	section	LfGroup[0]	10849	11917	1068
 noise_512x512	512	512	7	0.5	section	HfGlobal	1406	1683	277
@@ -266,9 +608,8 @@ noise_512x512	512	512	7	0.5	section	HfGroup[p0 g0]	87124	93687	6563
 noise_512x512	512	512	7	0.5	section	HfGroup[p0 g1]	87468	93918	6450
 noise_512x512	512	512	7	0.5	section	HfGroup[p0 g2]	87501	93991	6490
 noise_512x512	512	512	7	0.5	section	HfGroup[p0 g3]	87195	94028	6833
-noise_512x512	512	512	7	0.5	section	header_and_toc	27	28	1
-noise_512x512	512	512	7	1.0	size	file_bytes	325533	328249	2716
-noise_512x512	512	512	7	1.0	field	frame.flags	0	128	
+noise_512x512	512	512	7	0.5	section	header_and_toc	27	27	0
+noise_512x512	512	512	7	1.0	size	file_bytes	325533	328248	2715
 noise_512x512	512	512	7	1.0	section	LfGlobal	272	298	26
 noise_512x512	512	512	7	1.0	section	LfGroup[0]	9746	11264	1518
 noise_512x512	512	512	7	1.0	section	HfGlobal	1019	1074	55
@@ -276,9 +617,17 @@ noise_512x512	512	512	7	1.0	section	HfGroup[p0 g0]	78575	78892	317
 noise_512x512	512	512	7	1.0	section	HfGroup[p0 g1]	78653	78896	243
 noise_512x512	512	512	7	1.0	section	HfGroup[p0 g2]	78524	78801	277
 noise_512x512	512	512	7	1.0	section	HfGroup[p0 g3]	78717	78995	278
-noise_512x512	512	512	7	1.0	section	header_and_toc	27	29	2
-noise_512x512	512	512	7	4.0	size	file_bytes	75387	74323	-1064
-noise_512x512	512	512	7	4.0	field	frame.flags	0	128	
+noise_512x512	512	512	7	1.0	section	header_and_toc	27	28	1
+noise_512x512	512	512	7	2.0	size	file_bytes	206088	180580	-25508
+noise_512x512	512	512	7	2.0	section	LfGlobal	340	415	75
+noise_512x512	512	512	7	2.0	section	LfGroup[0]	8384	9394	1010
+noise_512x512	512	512	7	2.0	section	HfGlobal	1016	787	-229
+noise_512x512	512	512	7	2.0	section	HfGroup[p0 g0]	48730	41094	-7636
+noise_512x512	512	512	7	2.0	section	HfGroup[p0 g1]	49410	42608	-6802
+noise_512x512	512	512	7	2.0	section	HfGroup[p0 g2]	48862	43823	-5039
+noise_512x512	512	512	7	2.0	section	HfGroup[p0 g3]	49320	42433	-6887
+noise_512x512	512	512	7	2.0	section	header_and_toc	26	26	0
+noise_512x512	512	512	7	4.0	size	file_bytes	75387	74322	-1065
 noise_512x512	512	512	7	4.0	section	LfGlobal	291	389	98
 noise_512x512	512	512	7	4.0	section	LfGroup[0]	6459	7431	972
 noise_512x512	512	512	7	4.0	section	HfGlobal	969	1613	644
@@ -286,9 +635,88 @@ noise_512x512	512	512	7	4.0	section	HfGroup[p0 g0]	17632	16348	-1284
 noise_512x512	512	512	7	4.0	section	HfGroup[p0 g1]	16193	16368	175
 noise_512x512	512	512	7	4.0	section	HfGroup[p0 g2]	16980	16112	-868
 noise_512x512	512	512	7	4.0	section	HfGroup[p0 g3]	16839	16037	-802
-noise_512x512	512	512	7	4.0	section	header_and_toc	24	25	1
-photo_512x512	512	512	3	0.5	size	file_bytes	23907	26775	2868
-photo_512x512	512	512	3	0.5	field	frame.flags	0	128	
+noise_512x512	512	512	7	4.0	section	header_and_toc	24	24	0
+noise_512x512	512	512	7	7.0	size	file_bytes	51970	54378	2408
+noise_512x512	512	512	7	7.0	section	LfGlobal	277	327	50
+noise_512x512	512	512	7	7.0	section	LfGroup[0]	5509	6431	922
+noise_512x512	512	512	7	7.0	section	HfGlobal	1170	2303	1133
+noise_512x512	512	512	7	7.0	section	HfGroup[p0 g0]	11181	11342	161
+noise_512x512	512	512	7	7.0	section	HfGroup[p0 g1]	11384	11426	42
+noise_512x512	512	512	7	7.0	section	HfGroup[p0 g2]	11102	11295	193
+noise_512x512	512	512	7	7.0	section	HfGroup[p0 g3]	11323	11230	-93
+noise_512x512	512	512	7	7.0	section	header_and_toc	24	24	0
+noise_512x512	512	512	7	10.0	size	file_bytes	37692	34466	-3226
+noise_512x512	512	512	7	10.0	section	all-in-one	37680	34454	-3226
+noise_512x512	512	512	7	10.0	section	header_and_toc	12	12	0
+noise_512x512	512	512	7	15.0	size	file_bytes	24793	20892	-3901
+noise_512x512	512	512	7	15.0	section	all-in-one	24780	20879	-3901
+noise_512x512	512	512	7	15.0	section	header_and_toc	13	13	0
+noise_512x512	512	512	9	0.5	size	file_bytes	403933	407690	3757
+noise_512x512	512	512	9	0.5	field	lfglobal.quantizer.global_scale	13102	10316	
+noise_512x512	512	512	9	0.5	field	lfglobal.quantizer.quant_dc	12	15	
+noise_512x512	512	512	9	0.5	section	LfGlobal	210	179	-31
+noise_512x512	512	512	9	0.5	section	LfGroup[0]	11083	10844	-239
+noise_512x512	512	512	9	0.5	section	HfGlobal	1508	1694	186
+noise_512x512	512	512	9	0.5	section	HfGroup[p0 g0]	97779	98599	820
+noise_512x512	512	512	9	0.5	section	HfGroup[p0 g1]	97812	98895	1083
+noise_512x512	512	512	9	0.5	section	HfGroup[p0 g2]	97680	98714	1034
+noise_512x512	512	512	9	0.5	section	HfGroup[p0 g3]	97834	98738	904
+noise_512x512	512	512	9	0.5	section	header_and_toc	27	27	0
+noise_512x512	512	512	9	1.0	size	file_bytes	315377	315979	602
+noise_512x512	512	512	9	1.0	field	lfglobal.quantizer.global_scale	4009	3535	
+noise_512x512	512	512	9	1.0	field	lfglobal.quantizer.quant_dc	22	25	
+noise_512x512	512	512	9	1.0	section	LfGlobal	243	218	-25
+noise_512x512	512	512	9	1.0	section	LfGroup[0]	10067	9724	-343
+noise_512x512	512	512	9	1.0	section	HfGlobal	1054	1174	120
+noise_512x512	512	512	9	1.0	section	HfGroup[p0 g0]	76045	76332	287
+noise_512x512	512	512	9	1.0	section	HfGroup[p0 g1]	76027	76080	53
+noise_512x512	512	512	9	1.0	section	HfGroup[p0 g2]	75749	75926	177
+noise_512x512	512	512	9	1.0	section	HfGroup[p0 g3]	76164	76497	333
+noise_512x512	512	512	9	1.0	section	header_and_toc	28	28	0
+noise_512x512	512	512	9	2.0	size	file_bytes	215770	209877	-5893
+noise_512x512	512	512	9	2.0	field	lfglobal.quantizer.global_scale	2263	2398	
+noise_512x512	512	512	9	2.0	field	lfglobal.quantizer.quant_dc	22	21	
+noise_512x512	512	512	9	2.0	section	LfGlobal	279	251	-28
+noise_512x512	512	512	9	2.0	section	LfGroup[0]	8573	7563	-1010
+noise_512x512	512	512	9	2.0	section	HfGlobal	1062	818	-244
+noise_512x512	512	512	9	2.0	section	HfGroup[p0 g0]	51674	49492	-2182
+noise_512x512	512	512	9	2.0	section	HfGroup[p0 g1]	51680	50297	-1383
+noise_512x512	512	512	9	2.0	section	HfGroup[p0 g2]	51443	51133	-310
+noise_512x512	512	512	9	2.0	section	HfGroup[p0 g3]	51032	50297	-735
+noise_512x512	512	512	9	2.0	section	header_and_toc	27	26	-1
+noise_512x512	512	512	9	4.0	size	file_bytes	127486	129772	2286
+noise_512x512	512	512	9	4.0	field	lfglobal.quantizer.global_scale	1391	1469	
+noise_512x512	512	512	9	4.0	field	lfglobal.quantizer.quant_dc	20	19	
+noise_512x512	512	512	9	4.0	section	LfGlobal	246	299	53
+noise_512x512	512	512	9	4.0	section	LfGroup[0]	6468	5480	-988
+noise_512x512	512	512	9	4.0	section	HfGlobal	1177	2280	1103
+noise_512x512	512	512	9	4.0	section	HfGroup[p0 g0]	29635	30453	818
+noise_512x512	512	512	9	4.0	section	HfGroup[p0 g1]	29663	30313	650
+noise_512x512	512	512	9	4.0	section	HfGroup[p0 g2]	30023	30594	571
+noise_512x512	512	512	9	4.0	section	HfGroup[p0 g3]	30246	30325	79
+noise_512x512	512	512	9	4.0	section	header_and_toc	28	28	0
+noise_512x512	512	512	9	7.0	size	file_bytes	44192	58195	14003
+noise_512x512	512	512	9	7.0	field	lfglobal.quantizer.global_scale	536	541	
+noise_512x512	512	512	9	7.0	field	lfglobal.quantizer.quant_dc	33	32	
+noise_512x512	512	512	9	7.0	section	LfGlobal	214	285	71
+noise_512x512	512	512	9	7.0	section	LfGroup[0]	5575	4445	-1130
+noise_512x512	512	512	9	7.0	section	HfGlobal	993	2365	1372
+noise_512x512	512	512	9	7.0	section	HfGroup[p0 g0]	9333	12554	3221
+noise_512x512	512	512	9	7.0	section	HfGroup[p0 g1]	9411	12260	2849
+noise_512x512	512	512	9	7.0	section	HfGroup[p0 g2]	9221	13840	4619
+noise_512x512	512	512	9	7.0	section	HfGroup[p0 g3]	9422	12422	3000
+noise_512x512	512	512	9	7.0	section	header_and_toc	23	24	1
+noise_512x512	512	512	9	10.0	size	file_bytes	34485	44644	10159
+noise_512x512	512	512	9	10.0	field	lfglobal.quantizer.global_scale	1195	1979	
+noise_512x512	512	512	9	10.0	field	lfglobal.quantizer.quant_dc	32	19	
+noise_512x512	512	512	9	10.0	section	all-in-one	34473	44632	10159
+noise_512x512	512	512	9	10.0	section	header_and_toc	12	12	0
+noise_512x512	512	512	9	15.0	size	file_bytes	21212	33974	12762
+noise_512x512	512	512	9	15.0	field	lfglobal.quantizer.global_scale	779	1319	
+noise_512x512	512	512	9	15.0	field	lfglobal.quantizer.quant_dc	36	21	
+noise_512x512	512	512	9	15.0	section	all-in-one	21199	33961	12762
+noise_512x512	512	512	9	15.0	section	header_and_toc	13	13	0
+photo_512x512	512	512	3	0.5	size	file_bytes	23907	26774	2867
 photo_512x512	512	512	3	0.5	section	LfGlobal	331	618	287
 photo_512x512	512	512	3	0.5	section	LfGroup[0]	4950	6410	1460
 photo_512x512	512	512	3	0.5	section	HfGlobal	847	1043	196
@@ -296,9 +724,8 @@ photo_512x512	512	512	3	0.5	section	HfGroup[p0 g0]	4607	4802	195
 photo_512x512	512	512	3	0.5	section	HfGroup[p0 g1]	4287	4364	77
 photo_512x512	512	512	3	0.5	section	HfGroup[p0 g2]	4263	4457	194
 photo_512x512	512	512	3	0.5	section	HfGroup[p0 g3]	4600	5057	457
-photo_512x512	512	512	3	0.5	section	header_and_toc	22	24	2
-photo_512x512	512	512	3	1.0	size	file_bytes	13752	15196	1444
-photo_512x512	512	512	3	1.0	field	frame.flags	0	128	
+photo_512x512	512	512	3	0.5	section	header_and_toc	22	23	1
+photo_512x512	512	512	3	1.0	size	file_bytes	13752	15195	1443
 photo_512x512	512	512	3	1.0	section	LfGlobal	285	508	223
 photo_512x512	512	512	3	1.0	section	LfGroup[0]	4036	5253	1217
 photo_512x512	512	512	3	1.0	section	HfGlobal	484	492	8
@@ -306,9 +733,17 @@ photo_512x512	512	512	3	1.0	section	HfGroup[p0 g0]	2255	2225	-30
 photo_512x512	512	512	3	1.0	section	HfGroup[p0 g1]	2078	2069	-9
 photo_512x512	512	512	3	1.0	section	HfGroup[p0 g2]	2091	2053	-38
 photo_512x512	512	512	3	1.0	section	HfGroup[p0 g3]	2500	2572	72
-photo_512x512	512	512	3	1.0	section	header_and_toc	23	24	1
-photo_512x512	512	512	3	4.0	size	file_bytes	4919	5707	788
-photo_512x512	512	512	3	4.0	field	frame.flags	0	128	
+photo_512x512	512	512	3	1.0	section	header_and_toc	23	23	0
+photo_512x512	512	512	3	2.0	size	file_bytes	7535	8752	1217
+photo_512x512	512	512	3	2.0	section	LfGlobal	237	408	171
+photo_512x512	512	512	3	2.0	section	LfGroup[0]	3282	4289	1007
+photo_512x512	512	512	3	2.0	section	HfGlobal	236	223	-13
+photo_512x512	512	512	3	2.0	section	HfGroup[p0 g0]	978	1020	42
+photo_512x512	512	512	3	2.0	section	HfGroup[p0 g1]	928	954	26
+photo_512x512	512	512	3	2.0	section	HfGroup[p0 g2]	876	852	-24
+photo_512x512	512	512	3	2.0	section	HfGroup[p0 g3]	977	985	8
+photo_512x512	512	512	3	2.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	3	4.0	size	file_bytes	4919	5706	787
 photo_512x512	512	512	3	4.0	section	LfGlobal	213	396	183
 photo_512x512	512	512	3	4.0	section	LfGroup[0]	2744	3548	804
 photo_512x512	512	512	3	4.0	section	HfGlobal	141	143	2
@@ -316,9 +751,23 @@ photo_512x512	512	512	3	4.0	section	HfGroup[p0 g0]	434	394	-40
 photo_512x512	512	512	3	4.0	section	HfGroup[p0 g1]	454	412	-42
 photo_512x512	512	512	3	4.0	section	HfGroup[p0 g2]	446	368	-78
 photo_512x512	512	512	3	4.0	section	HfGroup[p0 g3]	466	424	-42
-photo_512x512	512	512	3	4.0	section	header_and_toc	21	22	1
-photo_512x512	512	512	5	0.5	size	file_bytes	22813	26193	3380
-photo_512x512	512	512	5	0.5	field	frame.flags	0	128	
+photo_512x512	512	512	3	4.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	3	7.0	size	file_bytes	3207	3950	743
+photo_512x512	512	512	3	7.0	section	LfGlobal	177	321	144
+photo_512x512	512	512	3	7.0	section	LfGroup[0]	2418	3032	614
+photo_512x512	512	512	3	7.0	section	HfGlobal	95	94	-1
+photo_512x512	512	512	3	7.0	section	HfGroup[p0 g0]	140	134	-6
+photo_512x512	512	512	3	7.0	section	HfGroup[p0 g1]	96	84	-12
+photo_512x512	512	512	3	7.0	section	HfGroup[p0 g2]	104	104	0
+photo_512x512	512	512	3	7.0	section	HfGroup[p0 g3]	156	160	4
+photo_512x512	512	512	3	7.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	3	10.0	size	file_bytes	3134	3738	604
+photo_512x512	512	512	3	10.0	section	all-in-one	3122	3726	604
+photo_512x512	512	512	3	10.0	section	header_and_toc	12	12	0
+photo_512x512	512	512	3	15.0	size	file_bytes	2545	3015	470
+photo_512x512	512	512	3	15.0	section	all-in-one	2533	3003	470
+photo_512x512	512	512	3	15.0	section	header_and_toc	12	12	0
+photo_512x512	512	512	5	0.5	size	file_bytes	22813	26192	3379
 photo_512x512	512	512	5	0.5	section	LfGlobal	467	656	189
 photo_512x512	512	512	5	0.5	section	LfGroup[0]	5369	6395	1026
 photo_512x512	512	512	5	0.5	section	HfGlobal	1093	1289	196
@@ -326,9 +775,8 @@ photo_512x512	512	512	5	0.5	section	HfGroup[p0 g0]	4250	4678	428
 photo_512x512	512	512	5	0.5	section	HfGroup[p0 g1]	3706	4144	438
 photo_512x512	512	512	5	0.5	section	HfGroup[p0 g2]	3530	4086	556
 photo_512x512	512	512	5	0.5	section	HfGroup[p0 g3]	4375	4921	546
-photo_512x512	512	512	5	0.5	section	header_and_toc	23	24	1
-photo_512x512	512	512	5	1.0	size	file_bytes	12198	14355	2157
-photo_512x512	512	512	5	1.0	field	frame.flags	0	128	
+photo_512x512	512	512	5	0.5	section	header_and_toc	23	23	0
+photo_512x512	512	512	5	1.0	size	file_bytes	12198	14354	2156
 photo_512x512	512	512	5	1.0	section	LfGlobal	368	513	145
 photo_512x512	512	512	5	1.0	section	LfGroup[0]	4600	5257	657
 photo_512x512	512	512	5	1.0	section	HfGlobal	493	663	170
@@ -336,9 +784,17 @@ photo_512x512	512	512	5	1.0	section	HfGroup[p0 g0]	1842	2206	364
 photo_512x512	512	512	5	1.0	section	HfGroup[p0 g1]	1424	1714	290
 photo_512x512	512	512	5	1.0	section	HfGroup[p0 g2]	1475	1723	248
 photo_512x512	512	512	5	1.0	section	HfGroup[p0 g3]	1973	2255	282
-photo_512x512	512	512	5	1.0	section	header_and_toc	23	24	1
-photo_512x512	512	512	5	4.0	size	file_bytes	4530	5041	511
-photo_512x512	512	512	5	4.0	field	frame.flags	0	128	
+photo_512x512	512	512	5	1.0	section	header_and_toc	23	23	0
+photo_512x512	512	512	5	2.0	size	file_bytes	6949	8585	1636
+photo_512x512	512	512	5	2.0	section	LfGlobal	323	440	117
+photo_512x512	512	512	5	2.0	section	LfGroup[0]	3918	4376	458
+photo_512x512	512	512	5	2.0	section	HfGlobal	321	415	94
+photo_512x512	512	512	5	2.0	section	HfGroup[p0 g0]	681	967	286
+photo_512x512	512	512	5	2.0	section	HfGroup[p0 g1]	534	680	146
+photo_512x512	512	512	5	2.0	section	HfGroup[p0 g2]	492	695	203
+photo_512x512	512	512	5	2.0	section	HfGroup[p0 g3]	663	995	332
+photo_512x512	512	512	5	2.0	section	header_and_toc	17	17	0
+photo_512x512	512	512	5	4.0	size	file_bytes	4530	5040	510
 photo_512x512	512	512	5	4.0	section	LfGlobal	278	396	118
 photo_512x512	512	512	5	4.0	section	LfGroup[0]	3203	3457	254
 photo_512x512	512	512	5	4.0	section	HfGlobal	137	171	34
@@ -346,9 +802,23 @@ photo_512x512	512	512	5	4.0	section	HfGroup[p0 g0]	274	298	24
 photo_512x512	512	512	5	4.0	section	HfGroup[p0 g1]	183	213	30
 photo_512x512	512	512	5	4.0	section	HfGroup[p0 g2]	162	184	22
 photo_512x512	512	512	5	4.0	section	HfGroup[p0 g3]	272	300	28
-photo_512x512	512	512	5	4.0	section	header_and_toc	21	22	1
-photo_512x512	512	512	7	0.5	size	file_bytes	22339	28066	5727
-photo_512x512	512	512	7	0.5	field	frame.flags	0	128	
+photo_512x512	512	512	5	4.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	5	7.0	size	file_bytes	3370	3690	320
+photo_512x512	512	512	5	7.0	section	LfGlobal	269	333	64
+photo_512x512	512	512	5	7.0	section	LfGroup[0]	2761	2976	215
+photo_512x512	512	512	5	7.0	section	HfGlobal	61	86	25
+photo_512x512	512	512	5	7.0	section	HfGroup[p0 g0]	82	90	8
+photo_512x512	512	512	5	7.0	section	HfGroup[p0 g1]	56	58	2
+photo_512x512	512	512	5	7.0	section	HfGroup[p0 g2]	48	52	4
+photo_512x512	512	512	5	7.0	section	HfGroup[p0 g3]	72	74	2
+photo_512x512	512	512	5	7.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	5	10.0	size	file_bytes	2334	2690	356
+photo_512x512	512	512	5	10.0	section	all-in-one	2323	2679	356
+photo_512x512	512	512	5	10.0	section	header_and_toc	11	11	0
+photo_512x512	512	512	5	15.0	size	file_bytes	1847	2151	304
+photo_512x512	512	512	5	15.0	section	all-in-one	1835	2139	304
+photo_512x512	512	512	5	15.0	section	header_and_toc	12	12	0
+photo_512x512	512	512	7	0.5	size	file_bytes	22339	28065	5726
 photo_512x512	512	512	7	0.5	section	LfGlobal	445	665	220
 photo_512x512	512	512	7	0.5	section	LfGroup[0]	5356	6419	1063
 photo_512x512	512	512	7	0.5	section	HfGlobal	986	1596	610
@@ -356,9 +826,8 @@ photo_512x512	512	512	7	0.5	section	HfGroup[p0 g0]	4163	5086	923
 photo_512x512	512	512	7	0.5	section	HfGroup[p0 g1]	3567	4480	913
 photo_512x512	512	512	7	0.5	section	HfGroup[p0 g2]	3478	4414	936
 photo_512x512	512	512	7	0.5	section	HfGroup[p0 g3]	4322	5382	1060
-photo_512x512	512	512	7	0.5	section	header_and_toc	22	24	2
-photo_512x512	512	512	7	1.0	size	file_bytes	12394	15071	2677
-photo_512x512	512	512	7	1.0	field	frame.flags	0	128	
+photo_512x512	512	512	7	0.5	section	header_and_toc	22	23	1
+photo_512x512	512	512	7	1.0	size	file_bytes	12394	15070	2676
 photo_512x512	512	512	7	1.0	section	LfGlobal	395	505	110
 photo_512x512	512	512	7	1.0	section	LfGroup[0]	4660	5220	560
 photo_512x512	512	512	7	1.0	section	HfGlobal	479	673	194
@@ -366,9 +835,17 @@ photo_512x512	512	512	7	1.0	section	HfGroup[p0 g0]	1914	2390	476
 photo_512x512	512	512	7	1.0	section	HfGroup[p0 g1]	1420	1875	455
 photo_512x512	512	512	7	1.0	section	HfGroup[p0 g2]	1488	1894	406
 photo_512x512	512	512	7	1.0	section	HfGroup[p0 g3]	2015	2490	475
-photo_512x512	512	512	7	1.0	section	header_and_toc	23	24	1
-photo_512x512	512	512	7	4.0	size	file_bytes	4760	5151	391
-photo_512x512	512	512	7	4.0	field	frame.flags	0	128	
+photo_512x512	512	512	7	1.0	section	header_and_toc	23	23	0
+photo_512x512	512	512	7	2.0	size	file_bytes	7325	8993	1668
+photo_512x512	512	512	7	2.0	section	LfGlobal	345	447	102
+photo_512x512	512	512	7	2.0	section	LfGroup[0]	4070	4352	282
+photo_512x512	512	512	7	2.0	section	HfGlobal	328	481	153
+photo_512x512	512	512	7	2.0	section	HfGroup[p0 g0]	720	1061	341
+photo_512x512	512	512	7	2.0	section	HfGroup[p0 g1]	533	795	262
+photo_512x512	512	512	7	2.0	section	HfGroup[p0 g2]	532	777	245
+photo_512x512	512	512	7	2.0	section	HfGroup[p0 g3]	780	1062	282
+photo_512x512	512	512	7	2.0	section	header_and_toc	17	18	1
+photo_512x512	512	512	7	4.0	size	file_bytes	4760	5150	390
 photo_512x512	512	512	7	4.0	section	LfGlobal	307	399	92
 photo_512x512	512	512	7	4.0	section	LfGroup[0]	3382	3457	75
 photo_512x512	512	512	7	4.0	section	HfGlobal	140	214	74
@@ -376,121 +853,221 @@ photo_512x512	512	512	7	4.0	section	HfGroup[p0 g0]	262	316	54
 photo_512x512	512	512	7	4.0	section	HfGroup[p0 g1]	208	231	23
 photo_512x512	512	512	7	4.0	section	HfGroup[p0 g2]	162	202	40
 photo_512x512	512	512	7	4.0	section	HfGroup[p0 g3]	278	310	32
-photo_512x512	512	512	7	4.0	section	header_and_toc	21	22	1
-rgba_64x32	64	32	3	0.5	size	file_bytes	531	581	50
-rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	3	0.5	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	3	0.5	field	frame.flags	0	128	
+photo_512x512	512	512	7	4.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	7	7.0	size	file_bytes	3659	3754	95
+photo_512x512	512	512	7	7.0	section	LfGlobal	277	352	75
+photo_512x512	512	512	7	7.0	section	LfGroup[0]	2990	2972	-18
+photo_512x512	512	512	7	7.0	section	HfGlobal	66	93	27
+photo_512x512	512	512	7	7.0	section	HfGroup[p0 g0]	94	106	12
+photo_512x512	512	512	7	7.0	section	HfGroup[p0 g1]	87	70	-17
+photo_512x512	512	512	7	7.0	section	HfGroup[p0 g2]	46	62	16
+photo_512x512	512	512	7	7.0	section	HfGroup[p0 g3]	78	78	0
+photo_512x512	512	512	7	7.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	7	10.0	size	file_bytes	2362	2798	436
+photo_512x512	512	512	7	10.0	section	all-in-one	2351	2787	436
+photo_512x512	512	512	7	10.0	section	header_and_toc	11	11	0
+photo_512x512	512	512	7	15.0	size	file_bytes	1848	2209	361
+photo_512x512	512	512	7	15.0	section	all-in-one	1836	2197	361
+photo_512x512	512	512	7	15.0	section	header_and_toc	12	12	0
+photo_512x512	512	512	9	0.5	size	file_bytes	21309	25626	4317
+photo_512x512	512	512	9	0.5	section	LfGlobal	349	514	165
+photo_512x512	512	512	9	0.5	section	LfGroup[0]	5421	4883	-538
+photo_512x512	512	512	9	0.5	section	HfGlobal	879	1408	529
+photo_512x512	512	512	9	0.5	section	HfGroup[p0 g0]	3944	4928	984
+photo_512x512	512	512	9	0.5	section	HfGroup[p0 g1]	3428	4358	930
+photo_512x512	512	512	9	0.5	section	HfGroup[p0 g2]	3300	4322	1022
+photo_512x512	512	512	9	0.5	section	HfGroup[p0 g3]	3966	5190	1224
+photo_512x512	512	512	9	0.5	section	header_and_toc	22	23	1
+photo_512x512	512	512	9	1.0	size	file_bytes	11377	12558	1181
+photo_512x512	512	512	9	1.0	field	lfglobal.quantizer.global_scale	7963	7935	
+photo_512x512	512	512	9	1.0	section	LfGlobal	305	365	60
+photo_512x512	512	512	9	1.0	section	LfGroup[0]	4668	3985	-683
+photo_512x512	512	512	9	1.0	section	HfGlobal	382	554	172
+photo_512x512	512	512	9	1.0	section	HfGroup[p0 g0]	1670	2117	447
+photo_512x512	512	512	9	1.0	section	HfGroup[p0 g1]	1273	1657	384
+photo_512x512	512	512	9	1.0	section	HfGroup[p0 g2]	1297	1652	355
+photo_512x512	512	512	9	1.0	section	HfGroup[p0 g3]	1759	2205	446
+photo_512x512	512	512	9	1.0	section	header_and_toc	23	23	0
+photo_512x512	512	512	9	2.0	size	file_bytes	6714	6724	10
+photo_512x512	512	512	9	2.0	field	lfglobal.quantizer.global_scale	3627	3576	
+photo_512x512	512	512	9	2.0	section	LfGlobal	308	364	56
+photo_512x512	512	512	9	2.0	section	LfGroup[0]	4157	3256	-901
+photo_512x512	512	512	9	2.0	section	HfGlobal	242	326	84
+photo_512x512	512	512	9	2.0	section	HfGroup[p0 g0]	562	787	225
+photo_512x512	512	512	9	2.0	section	HfGroup[p0 g1]	423	578	155
+photo_512x512	512	512	9	2.0	section	HfGroup[p0 g2]	402	585	183
+photo_512x512	512	512	9	2.0	section	HfGroup[p0 g3]	603	811	208
+photo_512x512	512	512	9	2.0	section	header_and_toc	17	17	0
+photo_512x512	512	512	9	4.0	size	file_bytes	4188	3584	-604
+photo_512x512	512	512	9	4.0	field	lfglobal.quantizer.global_scale	1471	1505	
+photo_512x512	512	512	9	4.0	section	LfGlobal	241	296	55
+photo_512x512	512	512	9	4.0	section	LfGroup[0]	3394	2565	-829
+photo_512x512	512	512	9	4.0	section	HfGlobal	87	115	28
+photo_512x512	512	512	9	4.0	section	HfGroup[p0 g0]	116	172	56
+photo_512x512	512	512	9	4.0	section	HfGroup[p0 g1]	131	142	11
+photo_512x512	512	512	9	4.0	section	HfGroup[p0 g2]	77	118	41
+photo_512x512	512	512	9	4.0	section	HfGroup[p0 g3]	121	155	34
+photo_512x512	512	512	9	4.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	9	7.0	size	file_bytes	3476	2730	-746
+photo_512x512	512	512	9	7.0	field	lfglobal.quantizer.global_scale	640	697	
+photo_512x512	512	512	9	7.0	field	lfglobal.quantizer.quant_dc	27	25	
+photo_512x512	512	512	9	7.0	section	LfGlobal	221	260	39
+photo_512x512	512	512	9	7.0	section	LfGroup[0]	3031	2194	-837
+photo_512x512	512	512	9	7.0	section	HfGlobal	61	66	5
+photo_512x512	512	512	9	7.0	section	HfGroup[p0 g0]	33	63	30
+photo_512x512	512	512	9	7.0	section	HfGroup[p0 g1]	45	40	-5
+photo_512x512	512	512	9	7.0	section	HfGroup[p0 g2]	20	37	17
+photo_512x512	512	512	9	7.0	section	HfGroup[p0 g3]	44	49	5
+photo_512x512	512	512	9	7.0	section	header_and_toc	21	21	0
+photo_512x512	512	512	9	10.0	size	file_bytes	1930	2104	174
+photo_512x512	512	512	9	10.0	field	lfglobal.quantizer.global_scale	1996	2522	
+photo_512x512	512	512	9	10.0	field	lfglobal.quantizer.quant_dc	19	15	
+photo_512x512	512	512	9	10.0	section	all-in-one	1919	2093	174
+photo_512x512	512	512	9	10.0	section	header_and_toc	11	11	0
+photo_512x512	512	512	9	15.0	size	file_bytes	1555	1662	107
+photo_512x512	512	512	9	15.0	field	lfglobal.quantizer.global_scale	1161	1539	
+photo_512x512	512	512	9	15.0	field	lfglobal.quantizer.quant_dc	24	18	
+photo_512x512	512	512	9	15.0	section	all-in-one	1543	1650	107
+photo_512x512	512	512	9	15.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	3	0.5	size	file_bytes	531	578	47
 rgba_64x32	64	32	3	0.5	section	all-in-one	519	566	47
-rgba_64x32	64	32	3	0.5	section	header_and_toc	12	15	3
-rgba_64x32	64	32	3	1.0	size	file_bytes	385	447	62
-rgba_64x32	64	32	3	1.0	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	3	1.0	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	3	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	3	1.0	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	3	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	3	1.0	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	3	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	3	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	3	1.0	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	3	1.0	field	frame.flags	0	128	
+rgba_64x32	64	32	3	0.5	section	header_and_toc	12	12	0
+rgba_64x32	64	32	3	1.0	size	file_bytes	385	444	59
 rgba_64x32	64	32	3	1.0	section	all-in-one	373	432	59
-rgba_64x32	64	32	3	1.0	section	header_and_toc	12	15	3
-rgba_64x32	64	32	3	4.0	size	file_bytes	257	297	40
-rgba_64x32	64	32	3	4.0	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	3	4.0	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	3	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	3	4.0	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	3	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	3	4.0	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	3	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	3	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	3	4.0	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	3	4.0	field	frame.flags	0	128	
+rgba_64x32	64	32	3	1.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	3	2.0	size	file_bytes	302	357	55
+rgba_64x32	64	32	3	2.0	section	all-in-one	290	345	55
+rgba_64x32	64	32	3	2.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	3	4.0	size	file_bytes	257	294	37
 rgba_64x32	64	32	3	4.0	section	all-in-one	245	282	37
-rgba_64x32	64	32	3	4.0	section	header_and_toc	12	15	3
-rgba_64x32	64	32	5	0.5	size	file_bytes	344	383	39
-rgba_64x32	64	32	5	0.5	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	5	0.5	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	5	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	5	0.5	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	5	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	5	0.5	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	5	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	5	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	5	0.5	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	5	0.5	field	frame.flags	0	128	
+rgba_64x32	64	32	3	4.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	3	7.0	size	file_bytes	213	259	46
+rgba_64x32	64	32	3	7.0	section	all-in-one	201	247	46
+rgba_64x32	64	32	3	7.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	3	10.0	size	file_bytes	187	213	26
+rgba_64x32	64	32	3	10.0	section	all-in-one	175	201	26
+rgba_64x32	64	32	3	10.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	3	15.0	size	file_bytes	176	205	29
+rgba_64x32	64	32	3	15.0	section	all-in-one	164	193	29
+rgba_64x32	64	32	3	15.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	5	0.5	size	file_bytes	344	380	36
 rgba_64x32	64	32	5	0.5	section	all-in-one	332	368	36
-rgba_64x32	64	32	5	0.5	section	header_and_toc	12	15	3
-rgba_64x32	64	32	5	1.0	size	file_bytes	251	302	51
-rgba_64x32	64	32	5	1.0	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	5	1.0	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	5	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	5	1.0	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	5	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	5	1.0	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	5	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	5	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	5	1.0	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	5	1.0	field	frame.flags	0	128	
+rgba_64x32	64	32	5	0.5	section	header_and_toc	12	12	0
+rgba_64x32	64	32	5	1.0	size	file_bytes	251	299	48
 rgba_64x32	64	32	5	1.0	section	all-in-one	239	287	48
-rgba_64x32	64	32	5	1.0	section	header_and_toc	12	15	3
-rgba_64x32	64	32	5	4.0	size	file_bytes	180	210	30
-rgba_64x32	64	32	5	4.0	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	5	4.0	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	5	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	5	4.0	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	5	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	5	4.0	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	5	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	5	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	5	4.0	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	5	4.0	field	frame.flags	0	128	
+rgba_64x32	64	32	5	1.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	5	2.0	size	file_bytes	215	249	34
+rgba_64x32	64	32	5	2.0	field	frame.all_default	1	0	
+rgba_64x32	64	32	5	2.0	field	frame.frame_type	None	kRegularFrame	
+rgba_64x32	64	32	5	2.0	field	frame.is_modular	None	0	
+rgba_64x32	64	32	5	2.0	field	frame.flags	None	0	
+rgba_64x32	64	32	5	2.0	field	frame.upsampling	None	1	
+rgba_64x32	64	32	5	2.0	field	frame.ec_upsampling[0]	None	1	
+rgba_64x32	64	32	5	2.0	field	frame.x_qm_scale	None	3	
+rgba_64x32	64	32	5	2.0	field	frame.b_qm_scale	None	2	
+rgba_64x32	64	32	5	2.0	field	frame.passes.num_passes	None	1	
+rgba_64x32	64	32	5	2.0	field	frame.custom_size_or_origin	None	0	
+rgba_64x32	64	32	5	2.0	field	frame.blending.mode	None	kReplace	
+rgba_64x32	64	32	5	2.0	field	frame.ec_blending[0].mode	None	kReplace	
+rgba_64x32	64	32	5	2.0	field	frame.is_last	None	1	
+rgba_64x32	64	32	5	2.0	field	frame.name_len	None	0	
+rgba_64x32	64	32	5	2.0	field	frame.loop_filter.all_default	None	1	
+rgba_64x32	64	32	5	2.0	field	frame.extensions	None	0	
+rgba_64x32	64	32	5	2.0	section	all-in-one	207	238	31
+rgba_64x32	64	32	5	2.0	section	header_and_toc	8	11	3
+rgba_64x32	64	32	5	4.0	size	file_bytes	180	207	27
 rgba_64x32	64	32	5	4.0	section	all-in-one	168	195	27
-rgba_64x32	64	32	5	4.0	section	header_and_toc	12	15	3
-rgba_64x32	64	32	7	0.5	size	file_bytes	352	383	31
-rgba_64x32	64	32	7	0.5	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	7	0.5	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	7	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	7	0.5	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	7	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	7	0.5	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	7	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	7	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	7	0.5	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	7	0.5	field	frame.flags	0	128	
+rgba_64x32	64	32	5	4.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	5	7.0	size	file_bytes	160	190	30
+rgba_64x32	64	32	5	7.0	section	all-in-one	148	178	30
+rgba_64x32	64	32	5	7.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	5	10.0	size	file_bytes	142	165	23
+rgba_64x32	64	32	5	10.0	section	all-in-one	131	154	23
+rgba_64x32	64	32	5	10.0	section	header_and_toc	11	11	0
+rgba_64x32	64	32	5	15.0	size	file_bytes	132	156	24
+rgba_64x32	64	32	5	15.0	section	all-in-one	120	144	24
+rgba_64x32	64	32	5	15.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	7	0.5	size	file_bytes	352	380	28
 rgba_64x32	64	32	7	0.5	section	all-in-one	340	368	28
-rgba_64x32	64	32	7	0.5	section	header_and_toc	12	15	3
-rgba_64x32	64	32	7	1.0	size	file_bytes	262	304	42
-rgba_64x32	64	32	7	1.0	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	7	1.0	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	7	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	7	1.0	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	7	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	7	1.0	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	7	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	7	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	7	1.0	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	7	1.0	field	frame.flags	0	128	
+rgba_64x32	64	32	7	0.5	section	header_and_toc	12	12	0
+rgba_64x32	64	32	7	1.0	size	file_bytes	262	301	39
 rgba_64x32	64	32	7	1.0	section	all-in-one	250	289	39
-rgba_64x32	64	32	7	1.0	section	header_and_toc	12	15	3
-rgba_64x32	64	32	7	4.0	size	file_bytes	189	212	23
-rgba_64x32	64	32	7	4.0	field	metadata.color_encoding.all_default	1	0	
-rgba_64x32	64	32	7	4.0	field	metadata.color_encoding.want_icc	None	0	
-rgba_64x32	64	32	7	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-rgba_64x32	64	32	7	4.0	field	metadata.color_encoding.white_point	None	kD65	
-rgba_64x32	64	32	7	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-rgba_64x32	64	32	7	4.0	field	metadata.color_encoding.have_gamma	None	0	
-rgba_64x32	64	32	7	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-rgba_64x32	64	32	7	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-rgba_64x32	64	32	7	4.0	field	<headers zero-padded to byte boundary>	5	7	
-rgba_64x32	64	32	7	4.0	field	frame.flags	0	128	
+rgba_64x32	64	32	7	1.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	7	2.0	size	file_bytes	224	249	25
+rgba_64x32	64	32	7	2.0	field	frame.all_default	1	0	
+rgba_64x32	64	32	7	2.0	field	frame.frame_type	None	kRegularFrame	
+rgba_64x32	64	32	7	2.0	field	frame.is_modular	None	0	
+rgba_64x32	64	32	7	2.0	field	frame.flags	None	0	
+rgba_64x32	64	32	7	2.0	field	frame.upsampling	None	1	
+rgba_64x32	64	32	7	2.0	field	frame.ec_upsampling[0]	None	1	
+rgba_64x32	64	32	7	2.0	field	frame.x_qm_scale	None	3	
+rgba_64x32	64	32	7	2.0	field	frame.b_qm_scale	None	2	
+rgba_64x32	64	32	7	2.0	field	frame.passes.num_passes	None	1	
+rgba_64x32	64	32	7	2.0	field	frame.custom_size_or_origin	None	0	
+rgba_64x32	64	32	7	2.0	field	frame.blending.mode	None	kReplace	
+rgba_64x32	64	32	7	2.0	field	frame.ec_blending[0].mode	None	kReplace	
+rgba_64x32	64	32	7	2.0	field	frame.is_last	None	1	
+rgba_64x32	64	32	7	2.0	field	frame.name_len	None	0	
+rgba_64x32	64	32	7	2.0	field	frame.loop_filter.all_default	None	1	
+rgba_64x32	64	32	7	2.0	field	frame.extensions	None	0	
+rgba_64x32	64	32	7	2.0	section	all-in-one	216	238	22
+rgba_64x32	64	32	7	2.0	section	header_and_toc	8	11	3
+rgba_64x32	64	32	7	4.0	size	file_bytes	189	209	20
 rgba_64x32	64	32	7	4.0	section	all-in-one	177	197	20
-rgba_64x32	64	32	7	4.0	section	header_and_toc	12	15	3
+rgba_64x32	64	32	7	4.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	7	7.0	size	file_bytes	169	190	21
+rgba_64x32	64	32	7	7.0	section	all-in-one	157	178	21
+rgba_64x32	64	32	7	7.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	7	10.0	size	file_bytes	139	165	26
+rgba_64x32	64	32	7	10.0	section	all-in-one	128	154	26
+rgba_64x32	64	32	7	10.0	section	header_and_toc	11	11	0
+rgba_64x32	64	32	7	15.0	size	file_bytes	128	164	36
+rgba_64x32	64	32	7	15.0	section	all-in-one	116	152	36
+rgba_64x32	64	32	7	15.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	9	0.5	size	file_bytes	313	328	15
+rgba_64x32	64	32	9	0.5	section	all-in-one	301	316	15
+rgba_64x32	64	32	9	0.5	section	header_and_toc	12	12	0
+rgba_64x32	64	32	9	1.0	size	file_bytes	244	268	24
+rgba_64x32	64	32	9	1.0	field	lfglobal.quantizer.global_scale	8813	7707	
+rgba_64x32	64	32	9	1.0	field	lfglobal.quantizer.quant_dc	10	11	
+rgba_64x32	64	32	9	1.0	section	all-in-one	232	256	24
+rgba_64x32	64	32	9	1.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	9	2.0	size	file_bytes	212	250	38
+rgba_64x32	64	32	9	2.0	field	frame.all_default	1	0	
+rgba_64x32	64	32	9	2.0	field	frame.frame_type	None	kRegularFrame	
+rgba_64x32	64	32	9	2.0	field	frame.is_modular	None	0	
+rgba_64x32	64	32	9	2.0	field	frame.flags	None	0	
+rgba_64x32	64	32	9	2.0	field	frame.upsampling	None	1	
+rgba_64x32	64	32	9	2.0	field	frame.ec_upsampling[0]	None	1	
+rgba_64x32	64	32	9	2.0	field	frame.x_qm_scale	None	3	
+rgba_64x32	64	32	9	2.0	field	frame.b_qm_scale	None	2	
+rgba_64x32	64	32	9	2.0	field	frame.passes.num_passes	None	1	
+rgba_64x32	64	32	9	2.0	field	frame.custom_size_or_origin	None	0	
+rgba_64x32	64	32	9	2.0	field	frame.blending.mode	None	kReplace	
+rgba_64x32	64	32	9	2.0	field	frame.ec_blending[0].mode	None	kReplace	
+rgba_64x32	64	32	9	2.0	field	frame.is_last	None	1	
+rgba_64x32	64	32	9	2.0	field	frame.name_len	None	0	
+rgba_64x32	64	32	9	2.0	field	frame.loop_filter.all_default	None	1	
+rgba_64x32	64	32	9	2.0	field	frame.extensions	None	0	
+rgba_64x32	64	32	9	2.0	field	lfglobal.quantizer.global_scale	3685	3761	
+rgba_64x32	64	32	9	2.0	section	all-in-one	204	239	35
+rgba_64x32	64	32	9	2.0	section	header_and_toc	8	11	3
+rgba_64x32	64	32	9	4.0	size	file_bytes	190	192	2
+rgba_64x32	64	32	9	4.0	field	lfglobal.quantizer.global_scale	1546	1569	
+rgba_64x32	64	32	9	4.0	section	all-in-one	178	180	2
+rgba_64x32	64	32	9	4.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	9	7.0	size	file_bytes	166	195	29
+rgba_64x32	64	32	9	7.0	field	lfglobal.quantizer.global_scale	746	733	
+rgba_64x32	64	32	9	7.0	field	lfglobal.quantizer.quant_dc	23	24	
+rgba_64x32	64	32	9	7.0	section	all-in-one	154	183	29
+rgba_64x32	64	32	9	7.0	section	header_and_toc	12	12	0
+rgba_64x32	64	32	9	10.0	size	file_bytes	128	154	26
+rgba_64x32	64	32	9	10.0	field	lfglobal.quantizer.global_scale	1954	2155	
+rgba_64x32	64	32	9	10.0	field	lfglobal.quantizer.quant_dc	19	18	
+rgba_64x32	64	32	9	10.0	section	all-in-one	117	143	26
+rgba_64x32	64	32	9	10.0	section	header_and_toc	11	11	0
+rgba_64x32	64	32	9	15.0	size	file_bytes	123	158	35
+rgba_64x32	64	32	9	15.0	field	lfglobal.quantizer.global_scale	1240	1456	
+rgba_64x32	64	32	9	15.0	field	lfglobal.quantizer.quant_dc	22	19	
+rgba_64x32	64	32	9	15.0	section	all-in-one	111	146	35
+rgba_64x32	64	32	9	15.0	section	header_and_toc	12	12	0

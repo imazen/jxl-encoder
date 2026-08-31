@@ -2,8 +2,10 @@
 date_utc: 2026-08-31
 host: Darwin 25.5.0 arm64 (12-core aarch64 laptop, `mac`)
 git_commit: e2d98cce (+ working tree: dc_adaptive_smoothing gate + odd-dim resampling fix)
-harness: jxl-encoder/examples/dc_smoothing_ab.rs
-command: cargo run -p jxl-encoder --release --example dc_smoothing_ab -- <png-dir> <out.tsv>
+harness: jxl-encoder/examples/libjxl_gate_ab.rs (was dc_smoothing_ab.rs; renamed
+harness: the same day when it was generalised to A/B any one gate + a cjxl arm.
+harness: This TSV predates the cjxl columns, so it has 16 columns, not 19.)
+command: cargo run -p jxl-encoder --release --example libjxl_gate_ab -- <png-dir> <out.tsv> dc_adaptive_smoothing
 arms: EncoderStrategy::Custom seeded from Zenjxl defaults; ONLY
 arms: `dc_adaptive_smoothing` differs (false = we set kSkipAdaptiveDCSmoothing,
 arms: true = libjxl's flags==0). Everything else is bit-identical by construction.

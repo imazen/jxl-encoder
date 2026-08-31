@@ -91,9 +91,10 @@ use std::path::PathBuf;
 /// W44-AUDIT-5 Phase 3 added `cfl_pass1_screenshot_x0_start` Section C gate → 30.
 /// W44-AUDIT-9 / SA-G Fix C added `cfl_zero_for_search` Section C gate → 31.
 /// #74 task #10 added `cfl_keep_best` Section C gate → 32.
-/// T4 (2026-08-31) added `metadata_all_default_fast_path` Section D gate → 35.
+/// T4 (2026-08-31) added `header_all_default_fast_paths` Section D gate → 35.
 /// T4 (2026-08-31) added `dc_adaptive_smoothing` Section D gate → 36.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 36;
+/// T4 (2026-08-31) added `x_qm_scale_from_original_distance` Section D gate → 37.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 37;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -245,6 +246,9 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         }
         if row_ref.contains("kSkipAdaptiveDCSmoothing") {
             out.push("kSkipAdaptiveDCSmoothing".to_string());
+        }
+        if row_ref.contains("x_qm_scale") {
+            out.push("x_qm_scale".to_string());
         }
     }
     out

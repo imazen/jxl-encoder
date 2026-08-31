@@ -7636,7 +7636,23 @@ impl<'a> EncodeRequest<'a> {
         enc.photon_noise_iso = cfg.photon_noise_iso;
         enc.manual_noise_lut = cfg.manual_noise_lut;
         enc.quant_ac_rescale = cfg.quant_ac_rescale;
-        enc.original_distance = cfg.original_distance;
+        // T4: libjxl captures `original_butteraugli_distance` BEFORE
+        // `ParamsPostInit` rewrites `butteraugli_distance` to
+        // `d*0.25 + 0.25` for the d >= 10 auto-resample
+        // (`enc_frame.cc:101` then `:109-115`), and scores `x_qm_scale`'s
+        // {2.5, 5.5, 9.5} ladder against the ORIGINAL (`:676`). We ported
+        // the rewrite but not the capture, so at d = 10 we score 2.75 and
+        // land on x_qm_scale 4 where cjxl lands on 6. An explicit caller
+        // value always wins, exactly as libjxl's `-1.0` sentinel does.
+        enc.original_distance = cfg.original_distance.or({
+            if enc.resolved_improvements.x_qm_scale_from_original_distance
+                && effective_distance < cfg.distance
+            {
+                Some(cfg.distance)
+            } else {
+                None
+            }
+        });
         enc.enable_denoise = cfg.denoise;
         // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
         // and unconditionally OFF at decoding_speed_tier == 4
@@ -9011,7 +9027,16 @@ impl LossyEncoder {
             // siblings #2 audit) and four others.
             enc.manual_noise_lut = cfg.manual_noise_lut;
             enc.quant_ac_rescale = cfg.quant_ac_rescale;
-            enc.original_distance = cfg.original_distance;
+            // T4: see the one-shot path above.
+            enc.original_distance = cfg.original_distance.or({
+                if enc.resolved_improvements.x_qm_scale_from_original_distance
+                    && effective_distance < cfg.distance
+                {
+                    Some(cfg.distance)
+                } else {
+                    None
+                }
+            });
             enc.enable_denoise = cfg.denoise;
             enc.enable_gaborish = cfg.effective_gaborish() && effective_distance > 0.5;
             // EX-J13: adaptive gaborish is silently gated to be a subset of
