@@ -36,7 +36,7 @@
 use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
 use image::GenericImageView;
 use imgref::Img;
-use jxl_encoder::effort::{EntropyMulTable, LossyInternalParams};
+use jxl_encoder::{EntropyMulTable, LossyInternalParams};
 use jxl_encoder::{LossyConfig, PixelLayout};
 use rgb::RGB;
 use std::io::{Cursor, Write};

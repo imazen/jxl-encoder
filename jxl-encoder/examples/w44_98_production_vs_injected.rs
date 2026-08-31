@@ -21,7 +21,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use image::GenericImageView;
-use jxl_encoder::effort::{EntropyMulTable, LossyInternalParams};
+use jxl_encoder::{EntropyMulTable, LossyInternalParams};
 use jxl_encoder::{LossyConfig, PixelLayout};
 use std::path::PathBuf;
 

@@ -288,6 +288,21 @@ jobs:
       - name: Clippy (zensim-loop)
         run: cargo clippy --workspace --all-targets --features zensim-loop -- -D warnings
 
+      # `__expert` is not in either clippy lane above, and that is why the 19
+      # examples importing `jxl_encoder::effort::{EntropyMulTable,
+      # LossyInternalParams}` sat broken (E0603 — `effort` is `pub(crate)`)
+      # without CI noticing: every one of them is `__expert`-gated in
+      # Cargo.toml, so no default-feature job ever built them.
+      #
+      # This is `check`, NOT `clippy`, deliberately. The `__expert` example set
+      # carries substantial pre-existing lint debt (78 examples, 56 of them
+      # `undocumented_unsafe_blocks` around edition-2024 `set_var`), so a
+      # `-D warnings` lane here would be red on arrival and would have to be
+      # earned file by file. `check` is green today and catches the
+      # compile-breakage class that actually rotted.
+      - name: Check (__expert examples compile)
+        run: cargo check -p jxl-encoder --features "__expert,parallel,butteraugli-loop,ssim2-loop" --examples
+
 
   # ==========================================================================
   # Format check
