@@ -118,16 +118,40 @@ included), real content, `benchmarks/jxl_sectioned_mem_2026-08-27.tsv`
 
 Consequences recorded in `heuristics.rs`:
 
-- `estimate_encode_sectioned` (new, `pub(crate)`): `input + fixed(e) +
-  floor(threads)·px + per_thread(e)·(t−1)` — fixed 8/32 MB (e7/e9),
-  floor 80 B/px at t=1 / 68 B/px multi-threaded, per-thread 12/36 MiB
-  (one 256² group's learn; `parallel-tree-learning` forks inside it).
-  TYP covers every sectioned-engaged cell (< 2.5× at ≥ 2 MP), including
+- `estimate_encode_sectioned` (`pub(crate)`) — **CURRENT SHAPE, 2026-08-30
+  (issue #99 item 3)**; the dated bullets further down quote the floor
+  values that were live at each of their own changes, so read this one for
+  today's model:
+
+  ```text
+  peak = input + fixed(e)
+       + max( pre_tree_floor(t, channels)·px,
+              resident(channels)·px + per_worker(e, channels)·in_flight )
+       + pool·(t − 1)
+  ```
+
+  fixed 8/32 MiB (e7/e9); resident 4 B/px/channel (the i32 `ModularImage`
+  plane); pre-tree floor 22 B/px/channel at t ≥ 2 (the `RCT_TRIAL_WAVE = 2`
+  trial wave — 4 i32 planes/channel, measured 16.0) and `4·channels + 38`
+  B/px at t = 1 (the streaming-RCT path's patches-detection internals);
+  per_worker 18/46 MiB × 3/2 with alpha; `in_flight = min(t, groups + 2)`;
+  pool 16 KiB/worker. The **max** matters: the pre-tree phase and the
+  per-group learns are consecutive, so at 12 MP twelve learn sets cost
+  nothing (48.0 B/px measured at t=2 and t=12 alike) while at 1024² they
+  are the entire peak. The `pool` term is the measured +7.3 KiB/worker
+  slope of that flat region and is what keeps the estimate STRICTLY
+  monotone in the pool width, which the pre-flight thread walk-down needs.
+
+  TYP covers every one of the 192 cells of
+  `benchmarks/jxl_sectioned_thread_dense_2026-08-30.tsv` and stays < 2.5×
+  at ≥ 2 MP (max 2.28× on imac_dark e9 t12, mean 1.46×) — including
   palette/ChannelCompact/patches content since the 2026-08-28 meta-channel
   arm (stream 0 learns its own tree from the meta channels; the patches
-  dictionary rides in LfGlobal as on the global path). MAX (1.8×) still
-  covers the 2026-08-27 fallback peaks so a regression to the whole-image
-  tree stays inside the admitted envelope.
+  dictionary rides in LfGlobal as on the global path). The additive model
+  this replaced UNDER-predicted 12 of those cells (worst 0.54× at photo
+  256² e9 t1), all of them 1–9-group images. MAX (1.8×) still covers the
+  2026-08-27 fallback peaks so a regression to the whole-image tree stays
+  inside the admitted envelope.
 - **Whole-image band RECALIBRATED (2026-08-28)**: `LOSSLESS_BPP_TREE = 540`
   was anchored on the 2026-08-01 12 MP cell (490 B/px) BEFORE the thirteen
   August reductions. The three-class grid
@@ -151,7 +175,10 @@ Consequences recorded in `heuristics.rs`:
   (bytes identical — hash-locks, the lossy/lossless patches fixtures and
   imac_dark/reddit/photo bytes unchanged). 12 MP e7/e9 sectioned t=1:
   855 → 584 MiB; 8.3 MP: 518 → 404 MiB. The sectioned floor is one value
-  for every thread count now (`SECTIONED_BPP_THREADS1` = `_MULTI` = 68).
+  for every thread count now (`SECTIONED_BPP_THREADS1` = `_MULTI` = 68 —
+  both constants are gone since the 2026-08-30 max-form rewrite above;
+  the two thread arms diverged again once single-worker pools stopped
+  materializing RCT trials).
 - **Patches-phase lifetime — MEASURED, ATTRIBUTED AND REMOVED (2026-08-30,
   the last #96 memory-residual item)**: on screen content the patches
   DETECTION working set sat AT the sectioned encode peak at every thread
