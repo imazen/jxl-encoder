@@ -160,25 +160,45 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     // bits via MTF-induced symbol-distribution compaction). djxl,
     // jxl-rs, and jxl-oxide all roundtrip cleanly (verified via
     // `libjxl_output_decodes_via_jxl_rs_and_jxl_oxide`).
+    // **T4 `metadata_all_default_fast_path` (2026-08-31)**: re-pinned
+    // after `EncoderStrategy::Libjxl` started taking libjxl's one-bit
+    // `ImageMetadata.all_default` path instead of spelling out 27 bits
+    // of fields that are each already at their spec default. Found by
+    // `scripts/jxl_bitstream_diff.py` — it was the FIRST diverging
+    // field on every lossy sRGB 8-bit cell. All 5 fixtures move by
+    // EXACTLY -3 bytes, which is the whole story: 27 saved bits inside
+    // a header block that is zero-padded to a byte boundary before the
+    // first frame lands as 24 bits = 3 bytes, independent of content:
+    //   _d1   (e7):    211 → 208 (-3 B)  hash drift
+    //   _d4   (e7):    154 → 151 (-3 B)  hash drift
+    //   _d1_e5:        209 → 206 (-3 B)  hash drift
+    //   _d1_e3:        314 → 311 (-3 B)  hash drift
+    //   _noise_d1:    3215 → 3212 (-3 B) hash drift
+    // A uniform delta with no content dependence is the signature of a
+    // fixed-overhead fix; anything content-varying here would mean the
+    // change had reached the payload and would need investigating.
+    // Zen-mode hash locks are BYTE-IDENTICAL across this change (the
+    // gate is Libjxl-only), and jxl-rs + jxl-oxide roundtrip the new
+    // bytes (`libjxl_output_decodes_via_jxl_rs_and_jxl_oxide`).
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1",
-        size: 211,
-        hash: 0x063bb0e9c4f2b5e8,
+        size: 208,
+        hash: 0x75bd25d364be4eb6,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
-        size: 154,
-        hash: 0x86050e4ba08e29dc,
+        size: 151,
+        hash: 0x988a8ba9f328976a,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
-        size: 209,
-        hash: 0x5c87f6448ade80a3,
+        size: 206,
+        hash: 0x85c57fe236daf7e1,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
-        size: 314,
-        hash: 0x9b475a92f6c4d6f6,
+        size: 311,
+        hash: 0x0c706493fc146ac4,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
@@ -210,8 +230,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // Lever #1 MTF (2026-05-28): size 3219 → 3215 (-4 B), hash drift.
         // 3-way ctx-map cost comparison adopts MTF for the 15-cluster
         // ctx_map. See cluster comment-block at the top of LIBJXL_PINS.
-        size: 3215,
-        hash: 0xd8381016e12ee958,
+        // T4 (2026-08-31): 3215 → 3212 (-3 B), the same fixed header
+        // saving as the four gradient cells above.
+        size: 3212,
+        hash: 0x26ea0a6fcb270ffa,
     },
 ];
 

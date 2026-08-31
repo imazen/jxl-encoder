@@ -491,7 +491,65 @@ class Parser:
         self.toc = dict(entries=sizes, labels=labels, num_groups=num_groups,
                         num_dc_groups=num_dc_groups, num_passes=num_passes,
                         payload_start=br.pos // 8)
+        self.lf_global_prefix(br.pos // 8, sizes[0] if labels[0] == "LfGlobal"
+                              else None)
         return self.toc
+
+    # ── LfGlobal fixed prefix ───────────────────────────────────────────────
+    def lf_global_prefix(self, start_byte, lf_global_bytes):
+        """Parse LfGlobal up to where its modular sub-stream begins.
+
+        Order (libjxl `dec_frame.cc::ProcessDCGlobal`): [patches] [splines]
+        [noise] -> `DequantMatrices::DecodeDC` -> `Quantizer::Decode` ->
+        `DecodeBlockCtxMap` -> `ColorCorrelation::DecodeDC` ->
+        `ModularFrameDecoder::DecodeGlobalInfo`.
+
+        Everything before the modular call is plain field coding; the modular
+        stream is where the MA tree and the ANS histograms live. Splitting at
+        that boundary turns "LfGlobal is +19 bytes" into "the global MA tree is
+        +19 bytes", which is a different investigation. Bails (recording why)
+        on any construct that needs an ANS decoder — patches, splines, noise,
+        or a non-default block context map — rather than reporting a wrong
+        offset."""
+        br = self.br
+        fr = getattr(self, "frame", {})
+        flags = fr.get("flags", 0)
+        if flags & 0x02 or flags & 0x10 or flags & 0x01:
+            self.note.append("LfGlobal carries patches/splines/noise "
+                             "(entropy-coded); modular-boundary split skipped")
+            return
+        if fr.get("is_modular"):
+            return
+        try:
+            if self.f("lfglobal.dequant_dc.all_default", br.bit()) == 0:
+                for c in range(3):
+                    self.f(f"lfglobal.dequant_dc.quant[{c}]", br.f16())
+            self.f("lfglobal.quantizer.global_scale",
+                   br.u32([("O", (11, 1)), ("O", (11, 2049)), ("O", (12, 4097)),
+                           ("O", (16, 8193))]))
+            self.f("lfglobal.quantizer.quant_dc",
+                   br.u32([("V", 16), ("O", (5, 1)), ("O", (8, 1)),
+                           ("O", (16, 1))]))
+            if self.f("lfglobal.block_ctx_map.is_default", br.bit()) == 0:
+                self.note.append("block_ctx_map is NOT default (ANS-coded "
+                                 "context map); modular-boundary split skipped")
+                return
+            if self.f("lfglobal.cmap_dc.all_default", br.bit()) == 0:
+                self.f("lfglobal.cmap_dc.color_factor",
+                       br.u32([("V", 84), ("V", 256), ("O", (8, 2)),
+                               ("O", (16, 258))]))
+                self.f("lfglobal.cmap_dc.base_correlation_x", br.f16())
+                self.f("lfglobal.cmap_dc.base_correlation_b", br.f16())
+                self.f("lfglobal.cmap_dc.ytox_dc", br.bits(8) - 128)
+                self.f("lfglobal.cmap_dc.ytob_dc", br.bits(8) - 128)
+        except EOFError:
+            self.note.append("ran out of bytes inside LfGlobal prefix")
+            return
+        fixed_bits = br.pos - start_byte * 8
+        self.f("lfglobal.fixed_prefix_bits", fixed_bits)
+        if lf_global_bytes is not None:
+            self.f("lfglobal.modular_stream_bytes",
+                   lf_global_bytes - (fixed_bits + 7) // 8)
 
     # ── driver ──────────────────────────────────────────────────────────────
     def parse(self):

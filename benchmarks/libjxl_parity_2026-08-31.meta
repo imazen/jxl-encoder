@@ -1,5 +1,5 @@
 # T4 libjxl mimic byte-parity sweep
-date_utc: 2026-08-31T04:57:52Z
+date_utc: 2026-08-31T05:11:50Z
 host: Darwin 25.5.0 arm64 / mac
 git_commit: 6ecc1ff4
 cjxl_path: /opt/homebrew/bin/cjxl

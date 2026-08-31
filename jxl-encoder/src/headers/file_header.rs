@@ -257,6 +257,13 @@ pub struct FileHeader {
     /// so [`Self::write`] can select the right LUT slot when
     /// [`Self::upsampling_mode`] is set.
     pub upsampling_factor: u32,
+    /// Permit the `ImageMetadata.all_default = 1` one-bit fast path when
+    /// [`Self::is_metadata_default`] holds. `false` on every path except
+    /// [`crate::api::EncoderStrategy::Libjxl`] — see that method's docs
+    /// and the `ImageMetadata.all_default` row in
+    /// `docs/LIBJXL_DIVERGENCES.md` Section D for why the default is the
+    /// larger encoding.
+    pub metadata_all_default_fast_path: bool,
 }
 
 impl FileHeader {
@@ -268,6 +275,8 @@ impl FileHeader {
             metadata: ImageMetadata::default(),
             upsampling_mode: None,
             upsampling_factor: 1,
+            // Opt-in only; see `is_metadata_default`.
+            metadata_all_default_fast_path: false,
         }
     }
 
@@ -649,31 +658,80 @@ impl FileHeader {
         Ok(())
     }
 
-    /// Checks if all metadata is at the JXL spec defaults so the
-    /// encoder can write `all_default=1` and skip the rest of the
-    /// metadata block (saves ~50-70 bits per encode).
+    /// Whether every serialized `ImageMetadata` field is at its JXL
+    /// spec default, so the encoder may write `all_default = 1` (one
+    /// bit) instead of spelling the whole block out (27 bits for the
+    /// common 8-bit sRGB no-alpha lossy case).
     ///
-    /// Per JXL spec (jxl-rs `headers/image_metadata.rs`):
-    /// - `bit_depth` = 8-bit int (`floating_point_sample=false`,
-    ///   `bits_per_sample=8`, `exponent_bits=0`)
-    /// - `extra_fields` = `false` (no orientation/intrinsic/preview/
-    ///   animation/tone-mapping deviations)
-    /// - `extra_channel_info` = `[]` (no extra channels)
-    /// - `xyb_encoded` = `true` *(spec default — note: NOT false; an
-    ///   earlier comment here had this backwards)*
-    /// - `color_encoding` = sRGB defaults
-    /// - `extensions` = none
+    /// Spec defaults, read from libjxl `d089091a`
+    /// `image_metadata.cc::ImageMetadata::VisitFields` +
+    /// `color_encoding_internal.cc::ColorEncoding::VisitFields` (their
+    /// comment there: *"we set the defaults to the most common values
+    /// so ImageMetadata.all_default is true in the common case"*):
     ///
-    /// Implication: lossless modular encodes (which need
-    /// `xyb_encoded=false`) cannot use `all_default=true`. Lossy
-    /// VarDCT encodes with sRGB / no alpha / 8-bit / no metadata
-    /// deviations CAN.
+    /// - `extra_fields = false` — orientation identity, no intrinsic
+    ///   size, no preview, no animation, and `ToneMapping` all-default
+    ///   (`intensity_target = 255`, `min_nits = 0`,
+    ///   `relative_to_max_display = false`, `linear_below = 0`)
+    /// - `bit_depth` = 8-bit integer
+    /// - `modular_16_bit_buffer_sufficient = true`
+    /// - `num_extra_channels = 0`
+    /// - `xyb_encoded = true` *(spec default — NOT false; an earlier
+    ///   comment here had this backwards, and our own
+    ///   `ImageMetadata::default()` differs from the SPEC default on
+    ///   exactly this field, which is why this predicate tests the spec
+    ///   values field by field rather than comparing against
+    ///   `Default::default()`)*
+    /// - `color_encoding` = sRGB defaults with `want_icc = false`
+    /// - no extensions
     ///
-    /// Currently disabled: enabling shifts every hash-lock sidecar
-    /// entry by ~50-70 bits, which is a mechanical migration that
-    /// hasn't been done yet.
+    /// Implication: lossless modular encodes need `xyb_encoded = false`
+    /// and so can never take this path; lossy VarDCT sRGB / 8-bit /
+    /// no-alpha / no-metadata-deviation encodes always can.
+    ///
+    /// **Gated on [`Self::metadata_all_default_fast_path`], which is set
+    /// only under [`crate::api::EncoderStrategy::Libjxl`].** The gate is
+    /// not about correctness — the two forms decode identically and the
+    /// short one is strictly 27 bits smaller. It exists because flipping
+    /// it moves every zen-mode hash lock, a re-bake that needs owner
+    /// sign-off. See the `ImageMetadata.all_default` row in
+    /// `docs/LIBJXL_DIVERGENCES.md` Section D.
     fn is_metadata_default(&self) -> bool {
-        false
+        if !self.metadata_all_default_fast_path {
+            return false;
+        }
+        let m = &self.metadata;
+        let tone_mapping_default = m.intensity_target == 255.0
+            && m.min_nits == 0.0
+            && !m.relative_to_max_display
+            && m.linear_below == 0.0;
+        let extra_fields = m.animation.is_some()
+            || m.orientation != Orientation::Identity
+            || m.have_intrinsic_size
+            || !tone_mapping_default;
+        if extra_fields {
+            return false;
+        }
+        if m.bit_depth.float_sample
+            || m.bit_depth.bits_per_sample != 8
+            || m.bit_depth.exponent_bits != 0
+        {
+            return false;
+        }
+        // `modular_16_bit_buffer_sufficient` is written as
+        // `bits_per_sample <= 12 && !force_modular_32bit`; the spec
+        // default is `true`, so #94's 32-bit escape hatch forces the
+        // long form.
+        if m.force_modular_32bit {
+            return false;
+        }
+        if !m.extra_channels.is_empty() {
+            return false;
+        }
+        if !m.xyb_encoded {
+            return false;
+        }
+        m.color_encoding.is_spec_default()
     }
 }
 

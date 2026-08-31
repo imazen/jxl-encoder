@@ -230,6 +230,33 @@ pub struct ColorEncoding {
 }
 
 impl ColorEncoding {
+    /// Whether every serialized field equals the JXL **spec** default,
+    /// so a writer may emit `ColorEncoding.all_default = 1` (one bit).
+    ///
+    /// Spec defaults from libjxl `d089091a`
+    /// `color_encoding_internal.cc::ColorEncoding::VisitFields`:
+    /// `want_icc = false`, `color_space = kRGB`, `white_point = kD65`,
+    /// `primaries = kSRGB`, transfer function = `kSRGB` (i.e. *not* a
+    /// custom gamma), `rendering_intent = kRelative`.
+    ///
+    /// Note the rendering-intent trap: [`Self::srgb`] builds
+    /// `Perceptual`, which is **not** the spec default. The VarDCT
+    /// header builder overwrites it with `Relative` to match libjxl, so
+    /// the lossy path qualifies and a caller-supplied `srgb()` used
+    /// verbatim would not. Testing the field rather than the
+    /// constructor is deliberate.
+    pub(crate) fn is_spec_default(&self) -> bool {
+        !self.want_icc
+            && self.color_space == ColorSpace::Rgb
+            && self.white_point == WhitePoint::D65
+            && self.custom_white_point.is_none()
+            && self.primaries == Primaries::Srgb
+            && self.custom_primaries.is_none()
+            && self.gamma.is_none()
+            && self.transfer_function == TransferFunction::Srgb
+            && self.rendering_intent == RenderingIntent::Relative
+    }
+
     /// Creates a standard sRGB color encoding.
     pub fn srgb() -> Self {
         Self {

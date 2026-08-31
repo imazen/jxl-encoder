@@ -1,400 +1,77 @@
 image	width	height	effort	distance	kind	name	cjxl	ours	delta
-flat_64x64	64	64	3	0.5	size	file_bytes	72	97	25
-flat_64x64	64	64	3	0.5	field	metadata.all_default	1	0	
-flat_64x64	64	64	3	0.5	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	3	0.5	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	3	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	3	0.5	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	3	0.5	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	3	0.5	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	3	0.5	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	3	0.5	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	3	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	3	0.5	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	3	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	3	0.5	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	3	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	3	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	3	0.5	field	metadata.extensions	None	0	
-flat_64x64	64	64	3	0.5	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	3	0.5	size	file_bytes	72	94	22
 flat_64x64	64	64	3	0.5	field	frame.flags	0	128	
 flat_64x64	64	64	3	0.5	section	all-in-one	62	83	21
-flat_64x64	64	64	3	0.5	section	header_and_toc	10	14	4
-flat_64x64	64	64	3	1.0	size	file_bytes	72	98	26
-flat_64x64	64	64	3	1.0	field	metadata.all_default	1	0	
-flat_64x64	64	64	3	1.0	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	3	1.0	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	3	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	3	1.0	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	3	1.0	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	3	1.0	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	3	1.0	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	3	1.0	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	3	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	3	1.0	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	3	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	3	1.0	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	3	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	3	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	3	1.0	field	metadata.extensions	None	0	
-flat_64x64	64	64	3	1.0	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	3	0.5	section	header_and_toc	10	11	1
+flat_64x64	64	64	3	1.0	size	file_bytes	72	95	23
 flat_64x64	64	64	3	1.0	field	frame.flags	0	128	
 flat_64x64	64	64	3	1.0	section	all-in-one	61	83	22
-flat_64x64	64	64	3	1.0	section	header_and_toc	11	15	4
-flat_64x64	64	64	3	4.0	size	file_bytes	70	95	25
-flat_64x64	64	64	3	4.0	field	metadata.all_default	1	0	
-flat_64x64	64	64	3	4.0	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	3	4.0	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	3	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	3	4.0	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	3	4.0	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	3	4.0	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	3	4.0	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	3	4.0	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	3	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	3	4.0	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	3	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	3	4.0	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	3	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	3	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	3	4.0	field	metadata.extensions	None	0	
-flat_64x64	64	64	3	4.0	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	3	1.0	section	header_and_toc	11	12	1
+flat_64x64	64	64	3	4.0	size	file_bytes	70	92	22
 flat_64x64	64	64	3	4.0	field	frame.flags	0	128	
 flat_64x64	64	64	3	4.0	section	all-in-one	59	80	21
-flat_64x64	64	64	3	4.0	section	header_and_toc	11	15	4
-flat_64x64	64	64	5	0.5	size	file_bytes	71	105	34
-flat_64x64	64	64	5	0.5	field	metadata.all_default	1	0	
-flat_64x64	64	64	5	0.5	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	5	0.5	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	5	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	5	0.5	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	5	0.5	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	5	0.5	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	5	0.5	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	5	0.5	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	5	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	5	0.5	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	5	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	5	0.5	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	5	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	5	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	5	0.5	field	metadata.extensions	None	0	
-flat_64x64	64	64	5	0.5	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	3	4.0	section	header_and_toc	11	12	1
+flat_64x64	64	64	5	0.5	size	file_bytes	71	102	31
 flat_64x64	64	64	5	0.5	field	frame.flags	0	128	
 flat_64x64	64	64	5	0.5	section	all-in-one	61	91	30
-flat_64x64	64	64	5	0.5	section	header_and_toc	10	14	4
-flat_64x64	64	64	5	1.0	size	file_bytes	72	108	36
-flat_64x64	64	64	5	1.0	field	metadata.all_default	1	0	
-flat_64x64	64	64	5	1.0	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	5	1.0	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	5	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	5	1.0	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	5	1.0	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	5	1.0	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	5	1.0	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	5	1.0	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	5	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	5	1.0	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	5	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	5	1.0	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	5	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	5	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	5	1.0	field	metadata.extensions	None	0	
-flat_64x64	64	64	5	1.0	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	5	0.5	section	header_and_toc	10	11	1
+flat_64x64	64	64	5	1.0	size	file_bytes	72	105	33
 flat_64x64	64	64	5	1.0	field	frame.flags	0	128	
 flat_64x64	64	64	5	1.0	section	all-in-one	61	93	32
-flat_64x64	64	64	5	1.0	section	header_and_toc	11	15	4
-flat_64x64	64	64	5	4.0	size	file_bytes	70	107	37
-flat_64x64	64	64	5	4.0	field	metadata.all_default	1	0	
-flat_64x64	64	64	5	4.0	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	5	4.0	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	5	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	5	4.0	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	5	4.0	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	5	4.0	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	5	4.0	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	5	4.0	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	5	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	5	4.0	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	5	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	5	4.0	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	5	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	5	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	5	4.0	field	metadata.extensions	None	0	
-flat_64x64	64	64	5	4.0	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	5	1.0	section	header_and_toc	11	12	1
+flat_64x64	64	64	5	4.0	size	file_bytes	70	104	34
 flat_64x64	64	64	5	4.0	field	frame.flags	0	128	
 flat_64x64	64	64	5	4.0	section	all-in-one	59	92	33
-flat_64x64	64	64	5	4.0	section	header_and_toc	11	15	4
-flat_64x64	64	64	7	0.5	size	file_bytes	71	105	34
-flat_64x64	64	64	7	0.5	field	metadata.all_default	1	0	
-flat_64x64	64	64	7	0.5	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	7	0.5	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	7	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	7	0.5	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	7	0.5	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	7	0.5	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	7	0.5	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	7	0.5	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	7	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	7	0.5	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	7	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	7	0.5	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	7	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	7	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	7	0.5	field	metadata.extensions	None	0	
-flat_64x64	64	64	7	0.5	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	5	4.0	section	header_and_toc	11	12	1
+flat_64x64	64	64	7	0.5	size	file_bytes	71	102	31
 flat_64x64	64	64	7	0.5	field	frame.flags	0	128	
 flat_64x64	64	64	7	0.5	section	all-in-one	61	91	30
-flat_64x64	64	64	7	0.5	section	header_and_toc	10	14	4
-flat_64x64	64	64	7	1.0	size	file_bytes	69	108	39
-flat_64x64	64	64	7	1.0	field	metadata.all_default	1	0	
-flat_64x64	64	64	7	1.0	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	7	1.0	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	7	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	7	1.0	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	7	1.0	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	7	1.0	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	7	1.0	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	7	1.0	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	7	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	7	1.0	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	7	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	7	1.0	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	7	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	7	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	7	1.0	field	metadata.extensions	None	0	
-flat_64x64	64	64	7	1.0	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	7	0.5	section	header_and_toc	10	11	1
+flat_64x64	64	64	7	1.0	size	file_bytes	69	105	36
 flat_64x64	64	64	7	1.0	field	frame.flags	0	128	
 flat_64x64	64	64	7	1.0	section	all-in-one	58	93	35
-flat_64x64	64	64	7	1.0	section	header_and_toc	11	15	4
-flat_64x64	64	64	7	4.0	size	file_bytes	68	107	39
-flat_64x64	64	64	7	4.0	field	metadata.all_default	1	0	
-flat_64x64	64	64	7	4.0	field	metadata.extra_fields	None	0	
-flat_64x64	64	64	7	4.0	field	metadata.bit_depth.floating_point	None	0	
-flat_64x64	64	64	7	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-flat_64x64	64	64	7	4.0	field	metadata.modular_16bit_buffers	None	1	
-flat_64x64	64	64	7	4.0	field	metadata.num_extra_channels	None	0	
-flat_64x64	64	64	7	4.0	field	metadata.xyb_encoded	None	1	
-flat_64x64	64	64	7	4.0	field	metadata.color_encoding.all_default	None	0	
-flat_64x64	64	64	7	4.0	field	metadata.color_encoding.want_icc	None	0	
-flat_64x64	64	64	7	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-flat_64x64	64	64	7	4.0	field	metadata.color_encoding.white_point	None	kD65	
-flat_64x64	64	64	7	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-flat_64x64	64	64	7	4.0	field	metadata.color_encoding.have_gamma	None	0	
-flat_64x64	64	64	7	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-flat_64x64	64	64	7	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-flat_64x64	64	64	7	4.0	field	metadata.extensions	None	0	
-flat_64x64	64	64	7	4.0	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	7	1.0	section	header_and_toc	11	12	1
+flat_64x64	64	64	7	4.0	size	file_bytes	68	104	36
 flat_64x64	64	64	7	4.0	field	frame.flags	0	128	
 flat_64x64	64	64	7	4.0	section	all-in-one	57	92	35
-flat_64x64	64	64	7	4.0	section	header_and_toc	11	15	4
-gradient_32x32	32	32	3	0.5	size	file_bytes	332	391	59
-gradient_32x32	32	32	3	0.5	field	metadata.all_default	1	0	
-gradient_32x32	32	32	3	0.5	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	3	0.5	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	3	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	3	0.5	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	3	0.5	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	3	0.5	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	3	0.5	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	3	0.5	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	3	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	3	0.5	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	3	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	3	0.5	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	3	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	3	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	3	0.5	field	metadata.extensions	None	0	
-gradient_32x32	32	32	3	0.5	field	<headers zero-padded to byte boundary>	4	7	
+flat_64x64	64	64	7	4.0	section	header_and_toc	11	12	1
+gradient_32x32	32	32	3	0.5	size	file_bytes	332	388	56
 gradient_32x32	32	32	3	0.5	field	frame.flags	0	128	
 gradient_32x32	32	32	3	0.5	section	all-in-one	322	377	55
-gradient_32x32	32	32	3	0.5	section	header_and_toc	10	14	4
-gradient_32x32	32	32	3	1.0	size	file_bytes	258	314	56
-gradient_32x32	32	32	3	1.0	field	metadata.all_default	1	0	
-gradient_32x32	32	32	3	1.0	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	3	1.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	3	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	3	1.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	3	1.0	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	3	1.0	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	3	1.0	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	3	1.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	3	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	3	1.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	3	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	3	1.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	3	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	3	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	3	1.0	field	metadata.extensions	None	0	
-gradient_32x32	32	32	3	1.0	field	<headers zero-padded to byte boundary>	4	7	
+gradient_32x32	32	32	3	0.5	section	header_and_toc	10	11	1
+gradient_32x32	32	32	3	1.0	size	file_bytes	258	311	53
 gradient_32x32	32	32	3	1.0	field	frame.flags	0	128	
 gradient_32x32	32	32	3	1.0	section	all-in-one	247	299	52
-gradient_32x32	32	32	3	1.0	section	header_and_toc	11	15	4
-gradient_32x32	32	32	3	4.0	size	file_bytes	149	199	50
-gradient_32x32	32	32	3	4.0	field	metadata.all_default	1	0	
-gradient_32x32	32	32	3	4.0	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	3	4.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	3	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	3	4.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	3	4.0	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	3	4.0	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	3	4.0	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	3	4.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	3	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	3	4.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	3	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	3	4.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	3	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	3	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	3	4.0	field	metadata.extensions	None	0	
-gradient_32x32	32	32	3	4.0	field	<headers zero-padded to byte boundary>	4	7	
+gradient_32x32	32	32	3	1.0	section	header_and_toc	11	12	1
+gradient_32x32	32	32	3	4.0	size	file_bytes	149	196	47
 gradient_32x32	32	32	3	4.0	field	frame.flags	0	128	
 gradient_32x32	32	32	3	4.0	section	all-in-one	138	184	46
-gradient_32x32	32	32	3	4.0	section	header_and_toc	11	15	4
-gradient_32x32	32	32	5	0.5	size	file_bytes	204	249	45
-gradient_32x32	32	32	5	0.5	field	metadata.all_default	1	0	
-gradient_32x32	32	32	5	0.5	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	5	0.5	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	5	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	5	0.5	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	5	0.5	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	5	0.5	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	5	0.5	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	5	0.5	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	5	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	5	0.5	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	5	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	5	0.5	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	5	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	5	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	5	0.5	field	metadata.extensions	None	0	
-gradient_32x32	32	32	5	0.5	field	<headers zero-padded to byte boundary>	4	7	
+gradient_32x32	32	32	3	4.0	section	header_and_toc	11	12	1
+gradient_32x32	32	32	5	0.5	size	file_bytes	204	246	42
 gradient_32x32	32	32	5	0.5	field	frame.flags	0	128	
 gradient_32x32	32	32	5	0.5	section	all-in-one	194	235	41
-gradient_32x32	32	32	5	0.5	section	header_and_toc	10	14	4
-gradient_32x32	32	32	5	1.0	size	file_bytes	164	209	45
-gradient_32x32	32	32	5	1.0	field	metadata.all_default	1	0	
-gradient_32x32	32	32	5	1.0	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	5	1.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	5	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	5	1.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	5	1.0	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	5	1.0	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	5	1.0	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	5	1.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	5	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	5	1.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	5	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	5	1.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	5	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	5	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	5	1.0	field	metadata.extensions	None	0	
-gradient_32x32	32	32	5	1.0	field	<headers zero-padded to byte boundary>	4	7	
+gradient_32x32	32	32	5	0.5	section	header_and_toc	10	11	1
+gradient_32x32	32	32	5	1.0	size	file_bytes	164	206	42
 gradient_32x32	32	32	5	1.0	field	frame.flags	0	128	
 gradient_32x32	32	32	5	1.0	section	all-in-one	153	194	41
-gradient_32x32	32	32	5	1.0	section	header_and_toc	11	15	4
-gradient_32x32	32	32	5	4.0	size	file_bytes	116	151	35
-gradient_32x32	32	32	5	4.0	field	metadata.all_default	1	0	
-gradient_32x32	32	32	5	4.0	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	5	4.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	5	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	5	4.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	5	4.0	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	5	4.0	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	5	4.0	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	5	4.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	5	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	5	4.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	5	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	5	4.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	5	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	5	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	5	4.0	field	metadata.extensions	None	0	
-gradient_32x32	32	32	5	4.0	field	<headers zero-padded to byte boundary>	4	7	
+gradient_32x32	32	32	5	1.0	section	header_and_toc	11	12	1
+gradient_32x32	32	32	5	4.0	size	file_bytes	116	148	32
 gradient_32x32	32	32	5	4.0	field	frame.flags	0	128	
 gradient_32x32	32	32	5	4.0	section	all-in-one	105	136	31
-gradient_32x32	32	32	5	4.0	section	header_and_toc	11	15	4
-gradient_32x32	32	32	7	0.5	size	file_bytes	206	248	42
-gradient_32x32	32	32	7	0.5	field	metadata.all_default	1	0	
-gradient_32x32	32	32	7	0.5	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	7	0.5	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	7	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	7	0.5	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	7	0.5	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	7	0.5	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	7	0.5	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	7	0.5	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	7	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	7	0.5	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	7	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	7	0.5	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	7	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	7	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	7	0.5	field	metadata.extensions	None	0	
-gradient_32x32	32	32	7	0.5	field	<headers zero-padded to byte boundary>	4	7	
+gradient_32x32	32	32	5	4.0	section	header_and_toc	11	12	1
+gradient_32x32	32	32	7	0.5	size	file_bytes	206	245	39
 gradient_32x32	32	32	7	0.5	field	frame.flags	0	128	
 gradient_32x32	32	32	7	0.5	section	all-in-one	196	234	38
-gradient_32x32	32	32	7	0.5	section	header_and_toc	10	14	4
-gradient_32x32	32	32	7	1.0	size	file_bytes	168	211	43
-gradient_32x32	32	32	7	1.0	field	metadata.all_default	1	0	
-gradient_32x32	32	32	7	1.0	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	7	1.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	7	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	7	1.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	7	1.0	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	7	1.0	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	7	1.0	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	7	1.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	7	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	7	1.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	7	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	7	1.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	7	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	7	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	7	1.0	field	metadata.extensions	None	0	
-gradient_32x32	32	32	7	1.0	field	<headers zero-padded to byte boundary>	4	7	
+gradient_32x32	32	32	7	0.5	section	header_and_toc	10	11	1
+gradient_32x32	32	32	7	1.0	size	file_bytes	168	208	40
 gradient_32x32	32	32	7	1.0	field	frame.flags	0	128	
 gradient_32x32	32	32	7	1.0	section	all-in-one	157	196	39
-gradient_32x32	32	32	7	1.0	section	header_and_toc	11	15	4
-gradient_32x32	32	32	7	4.0	size	file_bytes	118	154	36
-gradient_32x32	32	32	7	4.0	field	metadata.all_default	1	0	
-gradient_32x32	32	32	7	4.0	field	metadata.extra_fields	None	0	
-gradient_32x32	32	32	7	4.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_32x32	32	32	7	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_32x32	32	32	7	4.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_32x32	32	32	7	4.0	field	metadata.num_extra_channels	None	0	
-gradient_32x32	32	32	7	4.0	field	metadata.xyb_encoded	None	1	
-gradient_32x32	32	32	7	4.0	field	metadata.color_encoding.all_default	None	0	
-gradient_32x32	32	32	7	4.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_32x32	32	32	7	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_32x32	32	32	7	4.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_32x32	32	32	7	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_32x32	32	32	7	4.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_32x32	32	32	7	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_32x32	32	32	7	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_32x32	32	32	7	4.0	field	metadata.extensions	None	0	
-gradient_32x32	32	32	7	4.0	field	<headers zero-padded to byte boundary>	4	7	
+gradient_32x32	32	32	7	1.0	section	header_and_toc	11	12	1
+gradient_32x32	32	32	7	4.0	size	file_bytes	118	151	33
 gradient_32x32	32	32	7	4.0	field	frame.flags	0	128	
 gradient_32x32	32	32	7	4.0	section	all-in-one	107	139	32
-gradient_32x32	32	32	7	4.0	section	header_and_toc	11	15	4
-gradient_512x512	512	512	3	0.5	size	file_bytes	4619	4926	307
-gradient_512x512	512	512	3	0.5	field	metadata.all_default	1	0	
-gradient_512x512	512	512	3	0.5	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	3	0.5	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	3	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	3	0.5	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	3	0.5	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	3	0.5	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	3	0.5	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	3	0.5	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	3	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	3	0.5	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	3	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	3	0.5	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	3	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	3	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	3	0.5	field	metadata.extensions	None	0	
-gradient_512x512	512	512	3	0.5	field	<headers zero-padded to byte boundary>	5	8	
+gradient_32x32	32	32	7	4.0	section	header_and_toc	11	12	1
+gradient_512x512	512	512	3	0.5	size	file_bytes	4619	4923	304
 gradient_512x512	512	512	3	0.5	field	frame.flags	0	128	
 gradient_512x512	512	512	3	0.5	section	LfGlobal	225	393	168
 gradient_512x512	512	512	3	0.5	section	LfGroup[0]	2721	3297	576
@@ -403,25 +80,8 @@ gradient_512x512	512	512	3	0.5	section	HfGroup[p0 g0]	526	350	-176
 gradient_512x512	512	512	3	0.5	section	HfGroup[p0 g1]	534	408	-126
 gradient_512x512	512	512	3	0.5	section	HfGroup[p0 g2]	220	144	-76
 gradient_512x512	512	512	3	0.5	section	HfGroup[p0 g3]	298	230	-68
-gradient_512x512	512	512	3	0.5	section	header_and_toc	20	24	4
-gradient_512x512	512	512	3	1.0	size	file_bytes	2894	3552	658
-gradient_512x512	512	512	3	1.0	field	metadata.all_default	1	0	
-gradient_512x512	512	512	3	1.0	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	3	1.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	3	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	3	1.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	3	1.0	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	3	1.0	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	3	1.0	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	3	1.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	3	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	3	1.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	3	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	3	1.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	3	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	3	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	3	1.0	field	metadata.extensions	None	0	
-gradient_512x512	512	512	3	1.0	field	<headers zero-padded to byte boundary>	5	8	
+gradient_512x512	512	512	3	0.5	section	header_and_toc	20	21	1
+gradient_512x512	512	512	3	1.0	size	file_bytes	2894	3549	655
 gradient_512x512	512	512	3	1.0	field	frame.flags	0	128	
 gradient_512x512	512	512	3	1.0	section	LfGlobal	207	334	127
 gradient_512x512	512	512	3	1.0	section	LfGroup[0]	2267	2792	525
@@ -430,25 +90,8 @@ gradient_512x512	512	512	3	1.0	section	HfGroup[p0 g0]	96	96	0
 gradient_512x512	512	512	3	1.0	section	HfGroup[p0 g1]	168	168	0
 gradient_512x512	512	512	3	1.0	section	HfGroup[p0 g2]	48	48	0
 gradient_512x512	512	512	3	1.0	section	HfGroup[p0 g3]	54	54	0
-gradient_512x512	512	512	3	1.0	section	header_and_toc	21	25	4
-gradient_512x512	512	512	3	4.0	size	file_bytes	1916	2362	446
-gradient_512x512	512	512	3	4.0	field	metadata.all_default	1	0	
-gradient_512x512	512	512	3	4.0	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	3	4.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	3	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	3	4.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	3	4.0	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	3	4.0	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	3	4.0	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	3	4.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	3	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	3	4.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	3	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	3	4.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	3	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	3	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	3	4.0	field	metadata.extensions	None	0	
-gradient_512x512	512	512	3	4.0	field	<headers zero-padded to byte boundary>	5	8	
+gradient_512x512	512	512	3	1.0	section	header_and_toc	21	22	1
+gradient_512x512	512	512	3	4.0	size	file_bytes	1916	2359	443
 gradient_512x512	512	512	3	4.0	field	frame.flags	0	128	
 gradient_512x512	512	512	3	4.0	section	LfGlobal	154	236	82
 gradient_512x512	512	512	3	4.0	section	LfGroup[0]	1738	2098	360
@@ -457,25 +100,8 @@ gradient_512x512	512	512	3	4.0	section	HfGroup[p0 g0]	0	0	0
 gradient_512x512	512	512	3	4.0	section	HfGroup[p0 g1]	0	0	0
 gradient_512x512	512	512	3	4.0	section	HfGroup[p0 g2]	0	0	0
 gradient_512x512	512	512	3	4.0	section	HfGroup[p0 g3]	0	0	0
-gradient_512x512	512	512	3	4.0	section	header_and_toc	21	25	4
-gradient_512x512	512	512	5	0.5	size	file_bytes	4537	5011	474
-gradient_512x512	512	512	5	0.5	field	metadata.all_default	1	0	
-gradient_512x512	512	512	5	0.5	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	5	0.5	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	5	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	5	0.5	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	5	0.5	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	5	0.5	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	5	0.5	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	5	0.5	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	5	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	5	0.5	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	5	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	5	0.5	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	5	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	5	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	5	0.5	field	metadata.extensions	None	0	
-gradient_512x512	512	512	5	0.5	field	<headers zero-padded to byte boundary>	5	8	
+gradient_512x512	512	512	3	4.0	section	header_and_toc	21	22	1
+gradient_512x512	512	512	5	0.5	size	file_bytes	4537	5008	471
 gradient_512x512	512	512	5	0.5	field	frame.flags	0	128	
 gradient_512x512	512	512	5	0.5	section	LfGlobal	304	375	71
 gradient_512x512	512	512	5	0.5	section	LfGroup[0]	3301	3659	358
@@ -484,25 +110,8 @@ gradient_512x512	512	512	5	0.5	section	HfGroup[p0 g0]	229	239	10
 gradient_512x512	512	512	5	0.5	section	HfGroup[p0 g1]	215	223	8
 gradient_512x512	512	512	5	0.5	section	HfGroup[p0 g2]	192	200	8
 gradient_512x512	512	512	5	0.5	section	HfGroup[p0 g3]	214	220	6
-gradient_512x512	512	512	5	0.5	section	header_and_toc	20	24	4
-gradient_512x512	512	512	5	1.0	size	file_bytes	3342	3741	399
-gradient_512x512	512	512	5	1.0	field	metadata.all_default	1	0	
-gradient_512x512	512	512	5	1.0	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	5	1.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	5	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	5	1.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	5	1.0	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	5	1.0	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	5	1.0	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	5	1.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	5	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	5	1.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	5	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	5	1.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	5	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	5	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	5	1.0	field	metadata.extensions	None	0	
-gradient_512x512	512	512	5	1.0	field	<headers zero-padded to byte boundary>	5	8	
+gradient_512x512	512	512	5	0.5	section	header_and_toc	20	21	1
+gradient_512x512	512	512	5	1.0	size	file_bytes	3342	3738	396
 gradient_512x512	512	512	5	1.0	field	frame.flags	0	128	
 gradient_512x512	512	512	5	1.0	section	LfGlobal	256	329	73
 gradient_512x512	512	512	5	1.0	section	LfGroup[0]	2710	3022	312
@@ -511,25 +120,8 @@ gradient_512x512	512	512	5	1.0	section	HfGroup[p0 g0]	78	78	0
 gradient_512x512	512	512	5	1.0	section	HfGroup[p0 g1]	72	72	0
 gradient_512x512	512	512	5	1.0	section	HfGroup[p0 g2]	92	92	0
 gradient_512x512	512	512	5	1.0	section	HfGroup[p0 g3]	78	78	0
-gradient_512x512	512	512	5	1.0	section	header_and_toc	21	25	4
-gradient_512x512	512	512	5	4.0	size	file_bytes	2168	2482	314
-gradient_512x512	512	512	5	4.0	field	metadata.all_default	1	0	
-gradient_512x512	512	512	5	4.0	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	5	4.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	5	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	5	4.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	5	4.0	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	5	4.0	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	5	4.0	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	5	4.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	5	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	5	4.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	5	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	5	4.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	5	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	5	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	5	4.0	field	metadata.extensions	None	0	
-gradient_512x512	512	512	5	4.0	field	<headers zero-padded to byte boundary>	5	8	
+gradient_512x512	512	512	5	1.0	section	header_and_toc	21	22	1
+gradient_512x512	512	512	5	4.0	size	file_bytes	2168	2479	311
 gradient_512x512	512	512	5	4.0	field	frame.flags	0	128	
 gradient_512x512	512	512	5	4.0	section	LfGlobal	207	246	39
 gradient_512x512	512	512	5	4.0	section	LfGroup[0]	1937	2208	271
@@ -538,25 +130,8 @@ gradient_512x512	512	512	5	4.0	section	HfGroup[p0 g0]	0	0	0
 gradient_512x512	512	512	5	4.0	section	HfGroup[p0 g1]	0	0	0
 gradient_512x512	512	512	5	4.0	section	HfGroup[p0 g2]	0	0	0
 gradient_512x512	512	512	5	4.0	section	HfGroup[p0 g3]	0	0	0
-gradient_512x512	512	512	5	4.0	section	header_and_toc	21	25	4
-gradient_512x512	512	512	7	0.5	size	file_bytes	4539	5061	522
-gradient_512x512	512	512	7	0.5	field	metadata.all_default	1	0	
-gradient_512x512	512	512	7	0.5	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	7	0.5	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	7	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	7	0.5	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	7	0.5	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	7	0.5	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	7	0.5	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	7	0.5	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	7	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	7	0.5	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	7	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	7	0.5	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	7	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	7	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	7	0.5	field	metadata.extensions	None	0	
-gradient_512x512	512	512	7	0.5	field	<headers zero-padded to byte boundary>	5	8	
+gradient_512x512	512	512	5	4.0	section	header_and_toc	21	22	1
+gradient_512x512	512	512	7	0.5	size	file_bytes	4539	5058	519
 gradient_512x512	512	512	7	0.5	field	frame.flags	0	128	
 gradient_512x512	512	512	7	0.5	section	LfGlobal	304	402	98
 gradient_512x512	512	512	7	0.5	section	LfGroup[0]	3303	3665	362
@@ -565,25 +140,8 @@ gradient_512x512	512	512	7	0.5	section	HfGroup[p0 g0]	229	243	14
 gradient_512x512	512	512	7	0.5	section	HfGroup[p0 g1]	215	229	14
 gradient_512x512	512	512	7	0.5	section	HfGroup[p0 g2]	192	200	8
 gradient_512x512	512	512	7	0.5	section	HfGroup[p0 g3]	214	222	8
-gradient_512x512	512	512	7	0.5	section	header_and_toc	20	24	4
-gradient_512x512	512	512	7	1.0	size	file_bytes	3487	3796	309
-gradient_512x512	512	512	7	1.0	field	metadata.all_default	1	0	
-gradient_512x512	512	512	7	1.0	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	7	1.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	7	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	7	1.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	7	1.0	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	7	1.0	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	7	1.0	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	7	1.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	7	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	7	1.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	7	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	7	1.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	7	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	7	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	7	1.0	field	metadata.extensions	None	0	
-gradient_512x512	512	512	7	1.0	field	<headers zero-padded to byte boundary>	5	8	
+gradient_512x512	512	512	7	0.5	section	header_and_toc	20	21	1
+gradient_512x512	512	512	7	1.0	size	file_bytes	3487	3793	306
 gradient_512x512	512	512	7	1.0	field	frame.flags	0	128	
 gradient_512x512	512	512	7	1.0	section	LfGlobal	262	330	68
 gradient_512x512	512	512	7	1.0	section	LfGroup[0]	2849	3056	207
@@ -592,25 +150,8 @@ gradient_512x512	512	512	7	1.0	section	HfGroup[p0 g0]	78	80	2
 gradient_512x512	512	512	7	1.0	section	HfGroup[p0 g1]	72	82	10
 gradient_512x512	512	512	7	1.0	section	HfGroup[p0 g2]	92	94	2
 gradient_512x512	512	512	7	1.0	section	HfGroup[p0 g3]	78	80	2
-gradient_512x512	512	512	7	1.0	section	header_and_toc	21	25	4
-gradient_512x512	512	512	7	4.0	size	file_bytes	2629	2483	-146
-gradient_512x512	512	512	7	4.0	field	metadata.all_default	1	0	
-gradient_512x512	512	512	7	4.0	field	metadata.extra_fields	None	0	
-gradient_512x512	512	512	7	4.0	field	metadata.bit_depth.floating_point	None	0	
-gradient_512x512	512	512	7	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-gradient_512x512	512	512	7	4.0	field	metadata.modular_16bit_buffers	None	1	
-gradient_512x512	512	512	7	4.0	field	metadata.num_extra_channels	None	0	
-gradient_512x512	512	512	7	4.0	field	metadata.xyb_encoded	None	1	
-gradient_512x512	512	512	7	4.0	field	metadata.color_encoding.all_default	None	0	
-gradient_512x512	512	512	7	4.0	field	metadata.color_encoding.want_icc	None	0	
-gradient_512x512	512	512	7	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-gradient_512x512	512	512	7	4.0	field	metadata.color_encoding.white_point	None	kD65	
-gradient_512x512	512	512	7	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-gradient_512x512	512	512	7	4.0	field	metadata.color_encoding.have_gamma	None	0	
-gradient_512x512	512	512	7	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-gradient_512x512	512	512	7	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-gradient_512x512	512	512	7	4.0	field	metadata.extensions	None	0	
-gradient_512x512	512	512	7	4.0	field	<headers zero-padded to byte boundary>	5	8	
+gradient_512x512	512	512	7	1.0	section	header_and_toc	21	22	1
+gradient_512x512	512	512	7	4.0	size	file_bytes	2629	2480	-149
 gradient_512x512	512	512	7	4.0	field	frame.flags	0	128	
 gradient_512x512	512	512	7	4.0	section	LfGlobal	237	242	5
 gradient_512x512	512	512	7	4.0	section	LfGroup[0]	2368	2213	-155
@@ -619,214 +160,44 @@ gradient_512x512	512	512	7	4.0	section	HfGroup[p0 g0]	0	0	0
 gradient_512x512	512	512	7	4.0	section	HfGroup[p0 g1]	0	0	0
 gradient_512x512	512	512	7	4.0	section	HfGroup[p0 g2]	0	0	0
 gradient_512x512	512	512	7	4.0	section	HfGroup[p0 g3]	0	0	0
-gradient_512x512	512	512	7	4.0	section	header_and_toc	21	25	4
-noise_48x48	48	48	3	0.5	size	file_bytes	4240	4241	1
-noise_48x48	48	48	3	0.5	field	metadata.all_default	1	0	
-noise_48x48	48	48	3	0.5	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	3	0.5	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	3	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	3	0.5	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	3	0.5	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	3	0.5	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	3	0.5	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	3	0.5	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	3	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	3	0.5	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	3	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	3	0.5	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	3	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	3	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	3	0.5	field	metadata.extensions	None	0	
-noise_48x48	48	48	3	0.5	field	<headers zero-padded to byte boundary>	4	7	
+gradient_512x512	512	512	7	4.0	section	header_and_toc	21	22	1
+noise_48x48	48	48	3	0.5	size	file_bytes	4240	4238	-2
 noise_48x48	48	48	3	0.5	field	frame.flags	0	128	
 noise_48x48	48	48	3	0.5	section	all-in-one	4230	4227	-3
-noise_48x48	48	48	3	0.5	section	header_and_toc	10	14	4
-noise_48x48	48	48	3	1.0	size	file_bytes	3287	3262	-25
-noise_48x48	48	48	3	1.0	field	metadata.all_default	1	0	
-noise_48x48	48	48	3	1.0	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	3	1.0	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	3	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	3	1.0	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	3	1.0	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	3	1.0	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	3	1.0	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	3	1.0	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	3	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	3	1.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	3	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	3	1.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	3	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	3	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	3	1.0	field	metadata.extensions	None	0	
-noise_48x48	48	48	3	1.0	field	<headers zero-padded to byte boundary>	4	7	
+noise_48x48	48	48	3	0.5	section	header_and_toc	10	11	1
+noise_48x48	48	48	3	1.0	size	file_bytes	3287	3259	-28
 noise_48x48	48	48	3	1.0	field	frame.flags	0	128	
 noise_48x48	48	48	3	1.0	section	all-in-one	3276	3247	-29
-noise_48x48	48	48	3	1.0	section	header_and_toc	11	15	4
-noise_48x48	48	48	3	4.0	size	file_bytes	1636	1587	-49
-noise_48x48	48	48	3	4.0	field	metadata.all_default	1	0	
-noise_48x48	48	48	3	4.0	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	3	4.0	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	3	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	3	4.0	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	3	4.0	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	3	4.0	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	3	4.0	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	3	4.0	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	3	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	3	4.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	3	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	3	4.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	3	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	3	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	3	4.0	field	metadata.extensions	None	0	
-noise_48x48	48	48	3	4.0	field	<headers zero-padded to byte boundary>	4	7	
+noise_48x48	48	48	3	1.0	section	header_and_toc	11	12	1
+noise_48x48	48	48	3	4.0	size	file_bytes	1636	1584	-52
 noise_48x48	48	48	3	4.0	field	frame.flags	0	128	
 noise_48x48	48	48	3	4.0	section	all-in-one	1625	1572	-53
-noise_48x48	48	48	3	4.0	section	header_and_toc	11	15	4
-noise_48x48	48	48	5	0.5	size	file_bytes	3126	3322	196
-noise_48x48	48	48	5	0.5	field	metadata.all_default	1	0	
-noise_48x48	48	48	5	0.5	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	5	0.5	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	5	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	5	0.5	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	5	0.5	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	5	0.5	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	5	0.5	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	5	0.5	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	5	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	5	0.5	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	5	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	5	0.5	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	5	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	5	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	5	0.5	field	metadata.extensions	None	0	
-noise_48x48	48	48	5	0.5	field	<headers zero-padded to byte boundary>	4	7	
+noise_48x48	48	48	3	4.0	section	header_and_toc	11	12	1
+noise_48x48	48	48	5	0.5	size	file_bytes	3126	3319	193
 noise_48x48	48	48	5	0.5	field	frame.flags	0	128	
 noise_48x48	48	48	5	0.5	section	all-in-one	3116	3308	192
-noise_48x48	48	48	5	0.5	section	header_and_toc	10	14	4
-noise_48x48	48	48	5	1.0	size	file_bytes	2780	2780	0
-noise_48x48	48	48	5	1.0	field	metadata.all_default	1	0	
-noise_48x48	48	48	5	1.0	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	5	1.0	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	5	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	5	1.0	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	5	1.0	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	5	1.0	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	5	1.0	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	5	1.0	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	5	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	5	1.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	5	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	5	1.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	5	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	5	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	5	1.0	field	metadata.extensions	None	0	
-noise_48x48	48	48	5	1.0	field	<headers zero-padded to byte boundary>	4	7	
+noise_48x48	48	48	5	0.5	section	header_and_toc	10	11	1
+noise_48x48	48	48	5	1.0	size	file_bytes	2780	2777	-3
 noise_48x48	48	48	5	1.0	field	frame.flags	0	128	
 noise_48x48	48	48	5	1.0	section	all-in-one	2769	2765	-4
-noise_48x48	48	48	5	1.0	section	header_and_toc	11	15	4
-noise_48x48	48	48	5	4.0	size	file_bytes	837	1048	211
-noise_48x48	48	48	5	4.0	field	metadata.all_default	1	0	
-noise_48x48	48	48	5	4.0	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	5	4.0	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	5	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	5	4.0	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	5	4.0	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	5	4.0	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	5	4.0	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	5	4.0	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	5	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	5	4.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	5	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	5	4.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	5	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	5	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	5	4.0	field	metadata.extensions	None	0	
-noise_48x48	48	48	5	4.0	field	<headers zero-padded to byte boundary>	4	7	
+noise_48x48	48	48	5	1.0	section	header_and_toc	11	12	1
+noise_48x48	48	48	5	4.0	size	file_bytes	837	1045	208
 noise_48x48	48	48	5	4.0	field	frame.flags	0	128	
 noise_48x48	48	48	5	4.0	section	all-in-one	826	1033	207
-noise_48x48	48	48	5	4.0	section	header_and_toc	11	15	4
-noise_48x48	48	48	7	0.5	size	file_bytes	3590	3800	210
-noise_48x48	48	48	7	0.5	field	metadata.all_default	1	0	
-noise_48x48	48	48	7	0.5	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	7	0.5	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	7	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	7	0.5	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	7	0.5	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	7	0.5	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	7	0.5	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	7	0.5	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	7	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	7	0.5	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	7	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	7	0.5	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	7	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	7	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	7	0.5	field	metadata.extensions	None	0	
-noise_48x48	48	48	7	0.5	field	<headers zero-padded to byte boundary>	4	7	
+noise_48x48	48	48	5	4.0	section	header_and_toc	11	12	1
+noise_48x48	48	48	7	0.5	size	file_bytes	3590	3797	207
 noise_48x48	48	48	7	0.5	field	frame.flags	0	128	
 noise_48x48	48	48	7	0.5	section	all-in-one	3580	3786	206
-noise_48x48	48	48	7	0.5	section	header_and_toc	10	14	4
-noise_48x48	48	48	7	1.0	size	file_bytes	3217	3215	-2
-noise_48x48	48	48	7	1.0	field	metadata.all_default	1	0	
-noise_48x48	48	48	7	1.0	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	7	1.0	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	7	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	7	1.0	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	7	1.0	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	7	1.0	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	7	1.0	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	7	1.0	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	7	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	7	1.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	7	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	7	1.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	7	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	7	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	7	1.0	field	metadata.extensions	None	0	
-noise_48x48	48	48	7	1.0	field	<headers zero-padded to byte boundary>	4	7	
+noise_48x48	48	48	7	0.5	section	header_and_toc	10	11	1
+noise_48x48	48	48	7	1.0	size	file_bytes	3217	3212	-5
 noise_48x48	48	48	7	1.0	field	frame.flags	0	128	
 noise_48x48	48	48	7	1.0	section	all-in-one	3206	3200	-6
-noise_48x48	48	48	7	1.0	section	header_and_toc	11	15	4
-noise_48x48	48	48	7	4.0	size	file_bytes	940	1206	266
-noise_48x48	48	48	7	4.0	field	metadata.all_default	1	0	
-noise_48x48	48	48	7	4.0	field	metadata.extra_fields	None	0	
-noise_48x48	48	48	7	4.0	field	metadata.bit_depth.floating_point	None	0	
-noise_48x48	48	48	7	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_48x48	48	48	7	4.0	field	metadata.modular_16bit_buffers	None	1	
-noise_48x48	48	48	7	4.0	field	metadata.num_extra_channels	None	0	
-noise_48x48	48	48	7	4.0	field	metadata.xyb_encoded	None	1	
-noise_48x48	48	48	7	4.0	field	metadata.color_encoding.all_default	None	0	
-noise_48x48	48	48	7	4.0	field	metadata.color_encoding.want_icc	None	0	
-noise_48x48	48	48	7	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_48x48	48	48	7	4.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_48x48	48	48	7	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_48x48	48	48	7	4.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_48x48	48	48	7	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_48x48	48	48	7	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_48x48	48	48	7	4.0	field	metadata.extensions	None	0	
-noise_48x48	48	48	7	4.0	field	<headers zero-padded to byte boundary>	4	7	
+noise_48x48	48	48	7	1.0	section	header_and_toc	11	12	1
+noise_48x48	48	48	7	4.0	size	file_bytes	940	1203	263
 noise_48x48	48	48	7	4.0	field	frame.flags	0	128	
 noise_48x48	48	48	7	4.0	section	all-in-one	929	1191	262
-noise_48x48	48	48	7	4.0	section	header_and_toc	11	15	4
-noise_512x512	512	512	3	0.5	size	file_bytes	438460	433946	-4514
-noise_512x512	512	512	3	0.5	field	metadata.all_default	1	0	
-noise_512x512	512	512	3	0.5	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	3	0.5	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	3	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	3	0.5	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	3	0.5	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	3	0.5	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	3	0.5	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	3	0.5	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	3	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	3	0.5	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	3	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	3	0.5	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	3	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	3	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	3	0.5	field	metadata.extensions	None	0	
-noise_512x512	512	512	3	0.5	field	<headers zero-padded to byte boundary>	5	8	
+noise_48x48	48	48	7	4.0	section	header_and_toc	11	12	1
+noise_512x512	512	512	3	0.5	size	file_bytes	438460	433943	-4517
 noise_512x512	512	512	3	0.5	field	frame.flags	0	128	
 noise_512x512	512	512	3	0.5	section	LfGlobal	195	293	98
 noise_512x512	512	512	3	0.5	section	LfGroup[0]	9930	11525	1595
@@ -835,25 +206,8 @@ noise_512x512	512	512	3	0.5	section	HfGroup[p0 g0]	106757	105041	-1716
 noise_512x512	512	512	3	0.5	section	HfGroup[p0 g1]	106829	105233	-1596
 noise_512x512	512	512	3	0.5	section	HfGroup[p0 g2]	106670	105089	-1581
 noise_512x512	512	512	3	0.5	section	HfGroup[p0 g3]	106802	105118	-1684
-noise_512x512	512	512	3	0.5	section	header_and_toc	27	31	4
-noise_512x512	512	512	3	1.0	size	file_bytes	330577	324519	-6058
-noise_512x512	512	512	3	1.0	field	metadata.all_default	1	0	
-noise_512x512	512	512	3	1.0	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	3	1.0	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	3	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	3	1.0	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	3	1.0	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	3	1.0	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	3	1.0	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	3	1.0	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	3	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	3	1.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	3	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	3	1.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	3	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	3	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	3	1.0	field	metadata.extensions	None	0	
-noise_512x512	512	512	3	1.0	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	3	0.5	section	header_and_toc	27	28	1
+noise_512x512	512	512	3	1.0	size	file_bytes	330577	324516	-6061
 noise_512x512	512	512	3	1.0	field	frame.flags	0	128	
 noise_512x512	512	512	3	1.0	section	LfGlobal	208	273	65
 noise_512x512	512	512	3	1.0	section	LfGroup[0]	8643	10233	1590
@@ -862,25 +216,8 @@ noise_512x512	512	512	3	1.0	section	HfGroup[p0 g0]	80123	78179	-1944
 noise_512x512	512	512	3	1.0	section	HfGroup[p0 g1]	80205	78293	-1912
 noise_512x512	512	512	3	1.0	section	HfGroup[p0 g2]	80104	78164	-1940
 noise_512x512	512	512	3	1.0	section	HfGroup[p0 g3]	80255	78214	-2041
-noise_512x512	512	512	3	1.0	section	header_and_toc	27	32	5
-noise_512x512	512	512	3	4.0	size	file_bytes	146936	145354	-1582
-noise_512x512	512	512	3	4.0	field	metadata.all_default	1	0	
-noise_512x512	512	512	3	4.0	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	3	4.0	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	3	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	3	4.0	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	3	4.0	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	3	4.0	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	3	4.0	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	3	4.0	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	3	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	3	4.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	3	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	3	4.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	3	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	3	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	3	4.0	field	metadata.extensions	None	0	
-noise_512x512	512	512	3	4.0	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	3	1.0	section	header_and_toc	27	29	2
+noise_512x512	512	512	3	4.0	size	file_bytes	146936	145351	-1585
 noise_512x512	512	512	3	4.0	field	frame.flags	0	128	
 noise_512x512	512	512	3	4.0	section	LfGlobal	208	413	205
 noise_512x512	512	512	3	4.0	section	LfGroup[0]	6070	7662	1592
@@ -889,25 +226,8 @@ noise_512x512	512	512	3	4.0	section	HfGroup[p0 g0]	34960	34150	-810
 noise_512x512	512	512	3	4.0	section	HfGroup[p0 g1]	35042	34234	-808
 noise_512x512	512	512	3	4.0	section	HfGroup[p0 g2]	34929	34109	-820
 noise_512x512	512	512	3	4.0	section	HfGroup[p0 g3]	34997	34173	-824
-noise_512x512	512	512	3	4.0	section	header_and_toc	27	31	4
-noise_512x512	512	512	5	0.5	size	file_bytes	310356	334495	24139
-noise_512x512	512	512	5	0.5	field	metadata.all_default	1	0	
-noise_512x512	512	512	5	0.5	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	5	0.5	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	5	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	5	0.5	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	5	0.5	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	5	0.5	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	5	0.5	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	5	0.5	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	5	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	5	0.5	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	5	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	5	0.5	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	5	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	5	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	5	0.5	field	metadata.extensions	None	0	
-noise_512x512	512	512	5	0.5	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	3	4.0	section	header_and_toc	27	28	1
+noise_512x512	512	512	5	0.5	size	file_bytes	310356	334492	24136
 noise_512x512	512	512	5	0.5	field	frame.flags	0	128	
 noise_512x512	512	512	5	0.5	section	LfGlobal	249	257	8
 noise_512x512	512	512	5	0.5	section	LfGroup[0]	10885	11911	1026
@@ -916,25 +236,8 @@ noise_512x512	512	512	5	0.5	section	HfGroup[p0 g0]	74030	79895	5865
 noise_512x512	512	512	5	0.5	section	HfGroup[p0 g1]	74270	80157	5887
 noise_512x512	512	512	5	0.5	section	HfGroup[p0 g2]	74754	80318	5564
 noise_512x512	512	512	5	0.5	section	HfGroup[p0 g3]	74748	80337	5589
-noise_512x512	512	512	5	0.5	section	header_and_toc	27	31	4
-noise_512x512	512	512	5	1.0	size	file_bytes	271931	273580	1649
-noise_512x512	512	512	5	1.0	field	metadata.all_default	1	0	
-noise_512x512	512	512	5	1.0	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	5	1.0	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	5	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	5	1.0	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	5	1.0	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	5	1.0	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	5	1.0	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	5	1.0	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	5	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	5	1.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	5	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	5	1.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	5	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	5	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	5	1.0	field	metadata.extensions	None	0	
-noise_512x512	512	512	5	1.0	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	5	0.5	section	header_and_toc	27	28	1
+noise_512x512	512	512	5	1.0	size	file_bytes	271931	273577	1646
 noise_512x512	512	512	5	1.0	field	frame.flags	0	128	
 noise_512x512	512	512	5	1.0	section	LfGlobal	267	299	32
 noise_512x512	512	512	5	1.0	section	LfGroup[0]	9712	11118	1406
@@ -943,25 +246,8 @@ noise_512x512	512	512	5	1.0	section	HfGroup[p0 g0]	65183	65223	40
 noise_512x512	512	512	5	1.0	section	HfGroup[p0 g1]	65230	65278	48
 noise_512x512	512	512	5	1.0	section	HfGroup[p0 g2]	65262	65323	61
 noise_512x512	512	512	5	1.0	section	HfGroup[p0 g3]	65346	65407	61
-noise_512x512	512	512	5	1.0	section	header_and_toc	27	31	4
-noise_512x512	512	512	5	4.0	size	file_bytes	65319	68587	3268
-noise_512x512	512	512	5	4.0	field	metadata.all_default	1	0	
-noise_512x512	512	512	5	4.0	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	5	4.0	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	5	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	5	4.0	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	5	4.0	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	5	4.0	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	5	4.0	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	5	4.0	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	5	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	5	4.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	5	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	5	4.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	5	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	5	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	5	4.0	field	metadata.extensions	None	0	
-noise_512x512	512	512	5	4.0	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	5	1.0	section	header_and_toc	27	28	1
+noise_512x512	512	512	5	4.0	size	file_bytes	65319	68584	3265
 noise_512x512	512	512	5	4.0	field	frame.flags	0	128	
 noise_512x512	512	512	5	4.0	section	LfGlobal	313	387	74
 noise_512x512	512	512	5	4.0	section	LfGroup[0]	6234	7426	1192
@@ -970,25 +256,8 @@ noise_512x512	512	512	5	4.0	section	HfGroup[p0 g0]	14563	14954	391
 noise_512x512	512	512	5	4.0	section	HfGroup[p0 g1]	14594	14854	260
 noise_512x512	512	512	5	4.0	section	HfGroup[p0 g2]	14375	14755	380
 noise_512x512	512	512	5	4.0	section	HfGroup[p0 g3]	14443	14731	288
-noise_512x512	512	512	5	4.0	section	header_and_toc	23	28	5
-noise_512x512	512	512	7	0.5	size	file_bytes	361818	389512	27694
-noise_512x512	512	512	7	0.5	field	metadata.all_default	1	0	
-noise_512x512	512	512	7	0.5	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	7	0.5	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	7	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	7	0.5	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	7	0.5	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	7	0.5	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	7	0.5	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	7	0.5	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	7	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	7	0.5	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	7	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	7	0.5	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	7	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	7	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	7	0.5	field	metadata.extensions	None	0	
-noise_512x512	512	512	7	0.5	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	5	4.0	section	header_and_toc	23	25	2
+noise_512x512	512	512	7	0.5	size	file_bytes	361818	389509	27691
 noise_512x512	512	512	7	0.5	field	frame.flags	0	128	
 noise_512x512	512	512	7	0.5	section	LfGlobal	248	257	9
 noise_512x512	512	512	7	0.5	section	LfGroup[0]	10849	11917	1068
@@ -997,25 +266,8 @@ noise_512x512	512	512	7	0.5	section	HfGroup[p0 g0]	87124	93687	6563
 noise_512x512	512	512	7	0.5	section	HfGroup[p0 g1]	87468	93918	6450
 noise_512x512	512	512	7	0.5	section	HfGroup[p0 g2]	87501	93991	6490
 noise_512x512	512	512	7	0.5	section	HfGroup[p0 g3]	87195	94028	6833
-noise_512x512	512	512	7	0.5	section	header_and_toc	27	31	4
-noise_512x512	512	512	7	1.0	size	file_bytes	325533	328252	2719
-noise_512x512	512	512	7	1.0	field	metadata.all_default	1	0	
-noise_512x512	512	512	7	1.0	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	7	1.0	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	7	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	7	1.0	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	7	1.0	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	7	1.0	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	7	1.0	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	7	1.0	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	7	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	7	1.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	7	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	7	1.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	7	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	7	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	7	1.0	field	metadata.extensions	None	0	
-noise_512x512	512	512	7	1.0	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	7	0.5	section	header_and_toc	27	28	1
+noise_512x512	512	512	7	1.0	size	file_bytes	325533	328249	2716
 noise_512x512	512	512	7	1.0	field	frame.flags	0	128	
 noise_512x512	512	512	7	1.0	section	LfGlobal	272	298	26
 noise_512x512	512	512	7	1.0	section	LfGroup[0]	9746	11264	1518
@@ -1024,25 +276,8 @@ noise_512x512	512	512	7	1.0	section	HfGroup[p0 g0]	78575	78892	317
 noise_512x512	512	512	7	1.0	section	HfGroup[p0 g1]	78653	78896	243
 noise_512x512	512	512	7	1.0	section	HfGroup[p0 g2]	78524	78801	277
 noise_512x512	512	512	7	1.0	section	HfGroup[p0 g3]	78717	78995	278
-noise_512x512	512	512	7	1.0	section	header_and_toc	27	32	5
-noise_512x512	512	512	7	4.0	size	file_bytes	75387	74326	-1061
-noise_512x512	512	512	7	4.0	field	metadata.all_default	1	0	
-noise_512x512	512	512	7	4.0	field	metadata.extra_fields	None	0	
-noise_512x512	512	512	7	4.0	field	metadata.bit_depth.floating_point	None	0	
-noise_512x512	512	512	7	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-noise_512x512	512	512	7	4.0	field	metadata.modular_16bit_buffers	None	1	
-noise_512x512	512	512	7	4.0	field	metadata.num_extra_channels	None	0	
-noise_512x512	512	512	7	4.0	field	metadata.xyb_encoded	None	1	
-noise_512x512	512	512	7	4.0	field	metadata.color_encoding.all_default	None	0	
-noise_512x512	512	512	7	4.0	field	metadata.color_encoding.want_icc	None	0	
-noise_512x512	512	512	7	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-noise_512x512	512	512	7	4.0	field	metadata.color_encoding.white_point	None	kD65	
-noise_512x512	512	512	7	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-noise_512x512	512	512	7	4.0	field	metadata.color_encoding.have_gamma	None	0	
-noise_512x512	512	512	7	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-noise_512x512	512	512	7	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-noise_512x512	512	512	7	4.0	field	metadata.extensions	None	0	
-noise_512x512	512	512	7	4.0	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	7	1.0	section	header_and_toc	27	29	2
+noise_512x512	512	512	7	4.0	size	file_bytes	75387	74323	-1064
 noise_512x512	512	512	7	4.0	field	frame.flags	0	128	
 noise_512x512	512	512	7	4.0	section	LfGlobal	291	389	98
 noise_512x512	512	512	7	4.0	section	LfGroup[0]	6459	7431	972
@@ -1051,25 +286,8 @@ noise_512x512	512	512	7	4.0	section	HfGroup[p0 g0]	17632	16348	-1284
 noise_512x512	512	512	7	4.0	section	HfGroup[p0 g1]	16193	16368	175
 noise_512x512	512	512	7	4.0	section	HfGroup[p0 g2]	16980	16112	-868
 noise_512x512	512	512	7	4.0	section	HfGroup[p0 g3]	16839	16037	-802
-noise_512x512	512	512	7	4.0	section	header_and_toc	24	28	4
-photo_512x512	512	512	3	0.5	size	file_bytes	23907	26778	2871
-photo_512x512	512	512	3	0.5	field	metadata.all_default	1	0	
-photo_512x512	512	512	3	0.5	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	3	0.5	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	3	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	3	0.5	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	3	0.5	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	3	0.5	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	3	0.5	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	3	0.5	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	3	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	3	0.5	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	3	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	3	0.5	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	3	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	3	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	3	0.5	field	metadata.extensions	None	0	
-photo_512x512	512	512	3	0.5	field	<headers zero-padded to byte boundary>	5	8	
+noise_512x512	512	512	7	4.0	section	header_and_toc	24	25	1
+photo_512x512	512	512	3	0.5	size	file_bytes	23907	26775	2868
 photo_512x512	512	512	3	0.5	field	frame.flags	0	128	
 photo_512x512	512	512	3	0.5	section	LfGlobal	331	618	287
 photo_512x512	512	512	3	0.5	section	LfGroup[0]	4950	6410	1460
@@ -1078,25 +296,8 @@ photo_512x512	512	512	3	0.5	section	HfGroup[p0 g0]	4607	4802	195
 photo_512x512	512	512	3	0.5	section	HfGroup[p0 g1]	4287	4364	77
 photo_512x512	512	512	3	0.5	section	HfGroup[p0 g2]	4263	4457	194
 photo_512x512	512	512	3	0.5	section	HfGroup[p0 g3]	4600	5057	457
-photo_512x512	512	512	3	0.5	section	header_and_toc	22	27	5
-photo_512x512	512	512	3	1.0	size	file_bytes	13752	15199	1447
-photo_512x512	512	512	3	1.0	field	metadata.all_default	1	0	
-photo_512x512	512	512	3	1.0	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	3	1.0	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	3	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	3	1.0	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	3	1.0	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	3	1.0	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	3	1.0	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	3	1.0	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	3	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	3	1.0	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	3	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	3	1.0	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	3	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	3	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	3	1.0	field	metadata.extensions	None	0	
-photo_512x512	512	512	3	1.0	field	<headers zero-padded to byte boundary>	5	8	
+photo_512x512	512	512	3	0.5	section	header_and_toc	22	24	2
+photo_512x512	512	512	3	1.0	size	file_bytes	13752	15196	1444
 photo_512x512	512	512	3	1.0	field	frame.flags	0	128	
 photo_512x512	512	512	3	1.0	section	LfGlobal	285	508	223
 photo_512x512	512	512	3	1.0	section	LfGroup[0]	4036	5253	1217
@@ -1105,25 +306,8 @@ photo_512x512	512	512	3	1.0	section	HfGroup[p0 g0]	2255	2225	-30
 photo_512x512	512	512	3	1.0	section	HfGroup[p0 g1]	2078	2069	-9
 photo_512x512	512	512	3	1.0	section	HfGroup[p0 g2]	2091	2053	-38
 photo_512x512	512	512	3	1.0	section	HfGroup[p0 g3]	2500	2572	72
-photo_512x512	512	512	3	1.0	section	header_and_toc	23	27	4
-photo_512x512	512	512	3	4.0	size	file_bytes	4919	5710	791
-photo_512x512	512	512	3	4.0	field	metadata.all_default	1	0	
-photo_512x512	512	512	3	4.0	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	3	4.0	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	3	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	3	4.0	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	3	4.0	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	3	4.0	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	3	4.0	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	3	4.0	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	3	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	3	4.0	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	3	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	3	4.0	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	3	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	3	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	3	4.0	field	metadata.extensions	None	0	
-photo_512x512	512	512	3	4.0	field	<headers zero-padded to byte boundary>	5	8	
+photo_512x512	512	512	3	1.0	section	header_and_toc	23	24	1
+photo_512x512	512	512	3	4.0	size	file_bytes	4919	5707	788
 photo_512x512	512	512	3	4.0	field	frame.flags	0	128	
 photo_512x512	512	512	3	4.0	section	LfGlobal	213	396	183
 photo_512x512	512	512	3	4.0	section	LfGroup[0]	2744	3548	804
@@ -1132,25 +316,8 @@ photo_512x512	512	512	3	4.0	section	HfGroup[p0 g0]	434	394	-40
 photo_512x512	512	512	3	4.0	section	HfGroup[p0 g1]	454	412	-42
 photo_512x512	512	512	3	4.0	section	HfGroup[p0 g2]	446	368	-78
 photo_512x512	512	512	3	4.0	section	HfGroup[p0 g3]	466	424	-42
-photo_512x512	512	512	3	4.0	section	header_and_toc	21	25	4
-photo_512x512	512	512	5	0.5	size	file_bytes	22813	26196	3383
-photo_512x512	512	512	5	0.5	field	metadata.all_default	1	0	
-photo_512x512	512	512	5	0.5	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	5	0.5	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	5	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	5	0.5	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	5	0.5	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	5	0.5	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	5	0.5	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	5	0.5	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	5	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	5	0.5	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	5	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	5	0.5	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	5	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	5	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	5	0.5	field	metadata.extensions	None	0	
-photo_512x512	512	512	5	0.5	field	<headers zero-padded to byte boundary>	5	8	
+photo_512x512	512	512	3	4.0	section	header_and_toc	21	22	1
+photo_512x512	512	512	5	0.5	size	file_bytes	22813	26193	3380
 photo_512x512	512	512	5	0.5	field	frame.flags	0	128	
 photo_512x512	512	512	5	0.5	section	LfGlobal	467	656	189
 photo_512x512	512	512	5	0.5	section	LfGroup[0]	5369	6395	1026
@@ -1159,25 +326,8 @@ photo_512x512	512	512	5	0.5	section	HfGroup[p0 g0]	4250	4678	428
 photo_512x512	512	512	5	0.5	section	HfGroup[p0 g1]	3706	4144	438
 photo_512x512	512	512	5	0.5	section	HfGroup[p0 g2]	3530	4086	556
 photo_512x512	512	512	5	0.5	section	HfGroup[p0 g3]	4375	4921	546
-photo_512x512	512	512	5	0.5	section	header_and_toc	23	27	4
-photo_512x512	512	512	5	1.0	size	file_bytes	12198	14358	2160
-photo_512x512	512	512	5	1.0	field	metadata.all_default	1	0	
-photo_512x512	512	512	5	1.0	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	5	1.0	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	5	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	5	1.0	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	5	1.0	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	5	1.0	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	5	1.0	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	5	1.0	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	5	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	5	1.0	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	5	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	5	1.0	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	5	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	5	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	5	1.0	field	metadata.extensions	None	0	
-photo_512x512	512	512	5	1.0	field	<headers zero-padded to byte boundary>	5	8	
+photo_512x512	512	512	5	0.5	section	header_and_toc	23	24	1
+photo_512x512	512	512	5	1.0	size	file_bytes	12198	14355	2157
 photo_512x512	512	512	5	1.0	field	frame.flags	0	128	
 photo_512x512	512	512	5	1.0	section	LfGlobal	368	513	145
 photo_512x512	512	512	5	1.0	section	LfGroup[0]	4600	5257	657
@@ -1186,25 +336,8 @@ photo_512x512	512	512	5	1.0	section	HfGroup[p0 g0]	1842	2206	364
 photo_512x512	512	512	5	1.0	section	HfGroup[p0 g1]	1424	1714	290
 photo_512x512	512	512	5	1.0	section	HfGroup[p0 g2]	1475	1723	248
 photo_512x512	512	512	5	1.0	section	HfGroup[p0 g3]	1973	2255	282
-photo_512x512	512	512	5	1.0	section	header_and_toc	23	27	4
-photo_512x512	512	512	5	4.0	size	file_bytes	4530	5044	514
-photo_512x512	512	512	5	4.0	field	metadata.all_default	1	0	
-photo_512x512	512	512	5	4.0	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	5	4.0	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	5	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	5	4.0	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	5	4.0	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	5	4.0	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	5	4.0	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	5	4.0	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	5	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	5	4.0	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	5	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	5	4.0	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	5	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	5	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	5	4.0	field	metadata.extensions	None	0	
-photo_512x512	512	512	5	4.0	field	<headers zero-padded to byte boundary>	5	8	
+photo_512x512	512	512	5	1.0	section	header_and_toc	23	24	1
+photo_512x512	512	512	5	4.0	size	file_bytes	4530	5041	511
 photo_512x512	512	512	5	4.0	field	frame.flags	0	128	
 photo_512x512	512	512	5	4.0	section	LfGlobal	278	396	118
 photo_512x512	512	512	5	4.0	section	LfGroup[0]	3203	3457	254
@@ -1213,25 +346,8 @@ photo_512x512	512	512	5	4.0	section	HfGroup[p0 g0]	274	298	24
 photo_512x512	512	512	5	4.0	section	HfGroup[p0 g1]	183	213	30
 photo_512x512	512	512	5	4.0	section	HfGroup[p0 g2]	162	184	22
 photo_512x512	512	512	5	4.0	section	HfGroup[p0 g3]	272	300	28
-photo_512x512	512	512	5	4.0	section	header_and_toc	21	25	4
-photo_512x512	512	512	7	0.5	size	file_bytes	22339	28069	5730
-photo_512x512	512	512	7	0.5	field	metadata.all_default	1	0	
-photo_512x512	512	512	7	0.5	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	7	0.5	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	7	0.5	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	7	0.5	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	7	0.5	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	7	0.5	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	7	0.5	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	7	0.5	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	7	0.5	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	7	0.5	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	7	0.5	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	7	0.5	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	7	0.5	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	7	0.5	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	7	0.5	field	metadata.extensions	None	0	
-photo_512x512	512	512	7	0.5	field	<headers zero-padded to byte boundary>	5	8	
+photo_512x512	512	512	5	4.0	section	header_and_toc	21	22	1
+photo_512x512	512	512	7	0.5	size	file_bytes	22339	28066	5727
 photo_512x512	512	512	7	0.5	field	frame.flags	0	128	
 photo_512x512	512	512	7	0.5	section	LfGlobal	445	665	220
 photo_512x512	512	512	7	0.5	section	LfGroup[0]	5356	6419	1063
@@ -1240,25 +356,8 @@ photo_512x512	512	512	7	0.5	section	HfGroup[p0 g0]	4163	5086	923
 photo_512x512	512	512	7	0.5	section	HfGroup[p0 g1]	3567	4480	913
 photo_512x512	512	512	7	0.5	section	HfGroup[p0 g2]	3478	4414	936
 photo_512x512	512	512	7	0.5	section	HfGroup[p0 g3]	4322	5382	1060
-photo_512x512	512	512	7	0.5	section	header_and_toc	22	27	5
-photo_512x512	512	512	7	1.0	size	file_bytes	12394	15074	2680
-photo_512x512	512	512	7	1.0	field	metadata.all_default	1	0	
-photo_512x512	512	512	7	1.0	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	7	1.0	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	7	1.0	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	7	1.0	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	7	1.0	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	7	1.0	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	7	1.0	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	7	1.0	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	7	1.0	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	7	1.0	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	7	1.0	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	7	1.0	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	7	1.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	7	1.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	7	1.0	field	metadata.extensions	None	0	
-photo_512x512	512	512	7	1.0	field	<headers zero-padded to byte boundary>	5	8	
+photo_512x512	512	512	7	0.5	section	header_and_toc	22	24	2
+photo_512x512	512	512	7	1.0	size	file_bytes	12394	15071	2677
 photo_512x512	512	512	7	1.0	field	frame.flags	0	128	
 photo_512x512	512	512	7	1.0	section	LfGlobal	395	505	110
 photo_512x512	512	512	7	1.0	section	LfGroup[0]	4660	5220	560
@@ -1267,25 +366,8 @@ photo_512x512	512	512	7	1.0	section	HfGroup[p0 g0]	1914	2390	476
 photo_512x512	512	512	7	1.0	section	HfGroup[p0 g1]	1420	1875	455
 photo_512x512	512	512	7	1.0	section	HfGroup[p0 g2]	1488	1894	406
 photo_512x512	512	512	7	1.0	section	HfGroup[p0 g3]	2015	2490	475
-photo_512x512	512	512	7	1.0	section	header_and_toc	23	27	4
-photo_512x512	512	512	7	4.0	size	file_bytes	4760	5154	394
-photo_512x512	512	512	7	4.0	field	metadata.all_default	1	0	
-photo_512x512	512	512	7	4.0	field	metadata.extra_fields	None	0	
-photo_512x512	512	512	7	4.0	field	metadata.bit_depth.floating_point	None	0	
-photo_512x512	512	512	7	4.0	field	metadata.bit_depth.bits_per_sample	None	8	
-photo_512x512	512	512	7	4.0	field	metadata.modular_16bit_buffers	None	1	
-photo_512x512	512	512	7	4.0	field	metadata.num_extra_channels	None	0	
-photo_512x512	512	512	7	4.0	field	metadata.xyb_encoded	None	1	
-photo_512x512	512	512	7	4.0	field	metadata.color_encoding.all_default	None	0	
-photo_512x512	512	512	7	4.0	field	metadata.color_encoding.want_icc	None	0	
-photo_512x512	512	512	7	4.0	field	metadata.color_encoding.color_space	None	kRGB	
-photo_512x512	512	512	7	4.0	field	metadata.color_encoding.white_point	None	kD65	
-photo_512x512	512	512	7	4.0	field	metadata.color_encoding.primaries	None	kSRGB	
-photo_512x512	512	512	7	4.0	field	metadata.color_encoding.have_gamma	None	0	
-photo_512x512	512	512	7	4.0	field	metadata.color_encoding.transfer_function	None	kSRGB	
-photo_512x512	512	512	7	4.0	field	metadata.color_encoding.rendering_intent	None	kRelative	
-photo_512x512	512	512	7	4.0	field	metadata.extensions	None	0	
-photo_512x512	512	512	7	4.0	field	<headers zero-padded to byte boundary>	5	8	
+photo_512x512	512	512	7	1.0	section	header_and_toc	23	24	1
+photo_512x512	512	512	7	4.0	size	file_bytes	4760	5151	391
 photo_512x512	512	512	7	4.0	field	frame.flags	0	128	
 photo_512x512	512	512	7	4.0	section	LfGlobal	307	399	92
 photo_512x512	512	512	7	4.0	section	LfGroup[0]	3382	3457	75
@@ -1294,7 +376,7 @@ photo_512x512	512	512	7	4.0	section	HfGroup[p0 g0]	262	316	54
 photo_512x512	512	512	7	4.0	section	HfGroup[p0 g1]	208	231	23
 photo_512x512	512	512	7	4.0	section	HfGroup[p0 g2]	162	202	40
 photo_512x512	512	512	7	4.0	section	HfGroup[p0 g3]	278	310	32
-photo_512x512	512	512	7	4.0	section	header_and_toc	21	25	4
+photo_512x512	512	512	7	4.0	section	header_and_toc	21	22	1
 rgba_64x32	64	32	3	0.5	size	file_bytes	531	581	50
 rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.all_default	1	0	
 rgba_64x32	64	32	3	0.5	field	metadata.color_encoding.want_icc	None	0	

@@ -206,6 +206,7 @@ jxl_encoder_macros::strategy_def! {
             epf_dynamic_sharpness_min_effort = EffortGate::Libjxl,
             // Section D KNOWN-BUG: deliberately re-enable to match libjxl
             block_ctx_map_15_cluster = true,
+            metadata_all_default_fast_path = true,
             // Smart-Zenjxl gates: strict parity — every per-image
             // discriminator disabled. Callers can still opt in via
             // `LossyConfig::with_content_class(Some(class))` etc.
@@ -298,6 +299,7 @@ jxl_encoder_macros::strategy_def! {
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             // Section D: NOT re-enabled on LeanFaster (only on Libjxl).
             block_ctx_map_15_cluster = false,
+            metadata_all_default_fast_path = false,
             // Smart-Zenjxl: drop every per-image gate.
             content_class_auto_classify = false,
             photo_epf_seed_admit = false,
@@ -378,6 +380,7 @@ jxl_encoder_macros::strategy_def! {
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
+            metadata_all_default_fast_path = false,
             content_class_auto_classify = true,
             photo_epf_seed_admit = true,
             photo_variant_z_admit = true,
@@ -475,6 +478,7 @@ jxl_encoder_macros::strategy_def! {
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
+            metadata_all_default_fast_path = false,
             content_class_auto_classify = true,
             photo_epf_seed_admit = true,
             photo_variant_z_admit = true,
@@ -632,6 +636,25 @@ jxl_encoder_macros::strategy_def! {
         block_ctx_map_15_cluster: bool {
             divergence_section = "D",
             divergence_row_ref = "BlockCtxMap 15-cluster default (issue #59 KNOWN-BUG)",
+        },
+
+        /// T4 (2026-08-31): take libjxl's `ImageMetadata.all_default`
+        /// fast path — one `1` bit instead of 27 bits spelling out
+        /// fields that are each already at their spec default.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`].
+        /// The default stays `false` NOT because the long form is
+        /// better — it is strictly 27 bits worse and decodes
+        /// identically — but because flipping it moves every zen-mode
+        /// hash lock, and the T4 brief holds those byte-identical.
+        /// Flipping the default is a queued, owner-gated re-bake; see
+        /// the `ImageMetadata.all_default` row in
+        /// `docs/LIBJXL_DIVERGENCES.md` Section D for the measured
+        /// saving (+4 bytes per file, 37.5 % of `header_and_toc` on
+        /// the tiny cells). Section D.
+        metadata_all_default_fast_path: bool {
+            divergence_section = "D",
+            divergence_row_ref = "T4 ImageMetadata.all_default fast path",
         },
 
         // ── Smart-Zenjxl content-class dispatch ──────────────────────
@@ -1241,6 +1264,12 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "BlockCtxMap 15-cluster default (issue #59 KNOWN-BUG)",
         raw: __CUSTOM_DIVERGENCE_BLOCK_CTX_MAP_15_CLUSTER,
+    },
+    DivergenceEntry {
+        gate_name: "metadata_all_default_fast_path",
+        section: "D",
+        row_ref: "T4 ImageMetadata.all_default fast path",
+        raw: __CUSTOM_DIVERGENCE_METADATA_ALL_DEFAULT_FAST_PATH,
     },
     // Section B — Smart-Zenjxl content-class dispatch
     DivergenceEntry {

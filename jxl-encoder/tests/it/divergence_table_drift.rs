@@ -91,7 +91,8 @@ use std::path::PathBuf;
 /// W44-AUDIT-5 Phase 3 added `cfl_pass1_screenshot_x0_start` Section C gate → 30.
 /// W44-AUDIT-9 / SA-G Fix C added `cfl_zero_for_search` Section C gate → 31.
 /// #74 task #10 added `cfl_keep_best` Section C gate → 32.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 34;
+/// T4 (2026-08-31) added `metadata_all_default_fast_path` Section D gate → 35.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 35;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -233,6 +234,13 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // The doc table row carries "keep-best CfL Pass-2 guard" verbatim.
         if row_ref.contains("keep-best CfL") {
             out.push("keep-best CfL".to_string());
+        }
+        // T4 (2026-08-31) libjxl-mimic work predates the W-code scheme's
+        // retirement and carries no chunk id. The Section D row names the
+        // bitstream field verbatim, which is the stable thing to anchor on
+        // (renaming the gate must not silently orphan the row).
+        if row_ref.contains("ImageMetadata.all_default") {
+            out.push("ImageMetadata.all_default".to_string());
         }
     }
     out

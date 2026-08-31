@@ -1724,6 +1724,9 @@ fn build_jpeg_file_header(width: usize, height: usize, is_gray: bool) -> FileHea
         },
         upsampling_mode: None,
         upsampling_factor: 1,
+        // JPEG frames need `xyb_encoded = false`, which is not the spec
+        // default, so the fast path could never fire here anyway.
+        metadata_all_default_fast_path: false,
     }
 }
 

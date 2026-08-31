@@ -996,6 +996,12 @@ impl VarDctEncoder {
             // non-(-1) mode was supplied.
             upsampling_mode: self.upsampling_mode,
             upsampling_factor: self.upsampling,
+            // T4: libjxl's one-bit `ImageMetadata.all_default`. Gated to
+            // `EncoderStrategy::Libjxl` because flipping it moves every
+            // zen-mode hash lock; the two encodings decode identically.
+            metadata_all_default_fast_path: self
+                .resolved_improvements
+                .metadata_all_default_fast_path,
         }
     }
 

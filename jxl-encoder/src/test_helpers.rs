@@ -808,6 +808,7 @@ pub fn measure_file_header_len(
         },
         upsampling_mode: None,
         upsampling_factor: 1,
+        metadata_all_default_fast_path: false,
     };
 
     let mut writer = crate::bit_writer::BitWriter::new();
