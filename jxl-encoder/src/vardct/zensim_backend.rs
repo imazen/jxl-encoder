@@ -158,15 +158,6 @@ pub(crate) mod cpu {
         /// by `set_reference`; passed as `&[f32]` to
         /// `precompute_reference_linear_planar`.
         ref_planes: [Vec<f32>; 3],
-        /// Tight-stride f32 scratch for the distorted side. The
-        /// buttloop hands us strided `recon_r/g/b` with
-        /// `padded_width >= width`; we copy each row into this buffer
-        /// before passing the slice to
-        /// `compute_with_ref_and_diffmap_linear_planar` because the
-        /// linear-planar API expects `stride >= width`. We normalise
-        /// to `stride == width` to keep the code path uniform and the
-        /// buffer allocation amortised across iters.
-        dist_plane_scratch: [Vec<f32>; 3],
         /// Per-cell precomputed reference. Built on `set_reference`;
         /// reused on every compare call.
         precomputed: Option<PrecomputedReference>,
@@ -232,41 +223,11 @@ pub(crate) mod cpu {
                     alloc::vec![0.0f32; n],
                     alloc::vec![0.0f32; n],
                 ],
-                dist_plane_scratch: [
-                    alloc::vec![0.0f32; n],
-                    alloc::vec![0.0f32; n],
-                    alloc::vec![0.0f32; n],
-                ],
                 precomputed: None,
                 width,
                 height,
                 compare_call_count: 0,
             })
-        }
-
-        /// Copy one strided plane into a tight-stride destination.
-        /// Mirrors `CpuCvvdpBackend::copy_strided_row_into_scratch` —
-        /// fast-path when `padded_width == width`, per-row copy
-        /// otherwise.
-        fn copy_strided_row_into_scratch(
-            scratch: &mut [f32],
-            src: &[f32],
-            padded_width: usize,
-            width: usize,
-            height: usize,
-        ) {
-            debug_assert_eq!(scratch.len(), width * height);
-            if padded_width == width {
-                let n = width * height;
-                debug_assert!(src.len() >= n);
-                scratch.copy_from_slice(&src[..n]);
-                return;
-            }
-            for y in 0..height {
-                let src_row = y * padded_width;
-                let dst_row = y * width;
-                scratch[dst_row..dst_row + width].copy_from_slice(&src[src_row..src_row + width]);
-            }
         }
     }
 
@@ -359,28 +320,32 @@ pub(crate) mod cpu {
                 )));
             }
 
-            // Strided → tight copy into the per-instance scratch.
-            let [s_r, s_g, s_b] = &mut self.dist_plane_scratch;
-            Self::copy_strided_row_into_scratch(s_r, dist_r, padded_width, width, height);
-            Self::copy_strided_row_into_scratch(s_g, dist_g, padded_width, width, height);
-            Self::copy_strided_row_into_scratch(s_b, dist_b, padded_width, width, height);
-
-            // Call zensim's diffmap-bearing linear-planar entry point
-            // with tight stride (we already normalised the dist
-            // scratch above; the precomputed reference was also built
-            // tight).
+            // Hand zensim the buttloop's planes AS THEY ARE, with their real
+            // stride. `compute_with_ref_and_diffmap_linear_planar` has taken a
+            // `stride` parameter all along (zensim `src/diffmap.rs`), threads it
+            // into `convert_linear_planar_to_xyb`'s row addressing (`row_off =
+            // y * stride`), and validates `stride >= width` +
+            // `len >= stride * height`, returning `InvalidStride` /
+            // `InvalidDataLength` rather than reading past a row. So the
+            // strided→tight pre-copy this used to do was pure work: it fed the
+            // callee the same values in the same order, having first moved
+            // 3 × width × height × 4 bytes through memory.
+            //
+            // Output shape is unaffected: the diffmap is built at zensim's OWN
+            // `simd_padded_width(width)`, which does not depend on the input
+            // stride, so the trim below and everything downstream are unchanged.
+            //
+            // The workspace pixel-buffer rule from the caller's side: the callee
+            // handles stride natively at no cost on the packed path, and a
+            // caller that normalises to tight anyway throws exactly that away.
             let result = self
                 .scorer
                 .compute_with_ref_and_diffmap_linear_planar(
                     pre,
-                    [
-                        &self.dist_plane_scratch[0],
-                        &self.dist_plane_scratch[1],
-                        &self.dist_plane_scratch[2],
-                    ],
+                    [dist_r, dist_g, dist_b],
                     width,
                     height,
-                    width, // tight stride
+                    padded_width,
                     // RD-experiment knob (2026-07-18): `JXL_ZENSIM_DIFFMAP_SIGNALS=all`
                     // turns on the edge/mse/hf per-pixel signals (the coherence
                     // matrix showed the ssim-only default is part of the
@@ -532,6 +497,13 @@ pub(crate) mod gpu {
         /// the linear-planes API expects tight `width × height`
         /// planes (no padding); we copy each row before the call to
         /// `score_from_linear_planes_with_warm_ref_diffmap`.
+        ///
+        /// **Load-bearing here, unlike on the CPU backend.**
+        /// `score_from_linear_planes_with_warm_ref_diffmap` takes NO stride
+        /// parameter, so the copy is the only way to satisfy its tight-plane
+        /// contract. The CPU backend's equivalent scratch was deleted
+        /// (2026-08-31) because its callee has always taken a `stride`; do not
+        /// "clean up" this one by symmetry — check the callee's signature first.
         dist_plane_scratch: [Vec<f32>; 3],
         width: u32,
         height: u32,
