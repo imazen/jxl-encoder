@@ -310,22 +310,123 @@ cell, a colour patent rescan, and it buys -20.3 % wall on that same cell; it
 is present at every coverage below 100 so it is the probe mis-reading that
 image, not a threshold that can be nudged.
 
-### T4 — libjxl mimic mode toward byte-exactness
+### T4 — libjxl mimic mode — DONE 2026-08-31 for the ENVELOPE; the brief's
+### framing was wrong on scope, and the job surfaced a shipping zen-mode bug
 
-`EncoderStrategy::Libjxl` exists already. The goal is **not** cosmetic parity:
-byte-exactness is the instrument for (a) quantifying where our perf gap to
-libjxl actually comes from and (b) surfacing bugs in zen mode that only show up
-as an unexplained divergence. Start from `docs/LIBJXL_PARITY_TRACKING.md`
-(component-by-component, source-grounded against libjxl `d089091a`) and
-`docs/LIBJXL_DIVERGENCES.md`. Known structural gaps recorded there include the
-predictor count (theirs 2, ours 7–9 via probe-tree pruning, 14 historically),
-Bernoulli vs fixed-stride sampling (density at parity, aliasing behaviour
-differs), and the three §A fidelity gaps from the e11 TectonicPlate work
-(kNoWP transcribed but unwired; fixed-predictor trials single-leaf vs their
-restricted-candidate tree learn; sequential vs RunOnPool). **Every divergence
-found must land in `LIBJXL_DIVERGENCES.md` — that file is mandatory per the
-section below.** Where we deliberately differ because we beat them on RD, say
-so explicitly rather than "fixing" it into a regression.
+**The codestream envelope is now field-identical to cjxl v0.12.0.** Signature,
+`SizeHeader`, `ImageMetadata`, `CustomTransformData`, `FrameHeader` and the TOC
+match on every cell of a 196-cell grid (7 fixtures × e{3,5,7,9} ×
+d{0.5,1,2,4,7,10,15}); `header_and_toc` went **+24.4 % → +0.3 %**. The whole
+residual is inside the entropy-coded sections. Full record:
+`docs/LIBJXL_DIVERGENCES.md` §D (the `D-harness` block plus three new rows),
+`benchmarks/libjxl_parity_2026-08-31.{tsv,meta}`,
+`benchmarks/jxl_dc_smoothing_ab_2026-08-31.{tsv,meta}`,
+`benchmarks/jxl_x_qm_scale_ab_2026-08-31.{tsv,meta}`.
+
+**Instrument first.** `scripts/jxl_bitstream_diff.py` (+
+`libjxl_parity_sweep.sh`, `make_parity_fixtures.py`) parses the envelope field
+by field and prints the first field whose VALUE differs plus the per-TOC-section
+byte table, so a residual lands on `LfGlobal` / `LfGroup k` / `HfGlobal` /
+`HfGroup p g` instead of "byte 4711 onward". It is a deliberate standalone
+re-implementation of the libjxl `d089091a` bit layout — not a call into our
+reader or jxl-rs — because a differential that shares code with the encoder
+under test cannot see a bug the two share. It self-checks
+(`header + TOC + Σ sections == file size`) and says `PARSE INCONSISTENT` rather
+than guessing.
+
+**Standing by section** (proportional gap is INVERTED from where the bytes
+are): `HfGroup` **+0.9 %** while carrying 85 % of the bytes; `LfGroup` +6.2 %;
+`HfGlobal` **+36.2 %**; `LfGlobal` **+34.2 %**; overall +1.9 %. Both global
+sections' field-coded prefixes are at parity, so their gap is entirely in the
+ANS-coded parts. Per image we already WIN on `gradient_512x512` (−3.3 %), and by
+distance at d = 2 and d = 10.
+
+**Three corrections to what this section used to say.**
+
+1. **Scope.** It named the predictor-count / Bernoulli-sampling /
+   property-quantisation / dedup gaps as the work. Those are all in
+   `LIBJXL_PARITY_TRACKING.md` and all on the **lossless** modular path —
+   and `EncoderStrategy` is a `LossyConfig` field. `LosslessConfig` has
+   neither the field nor a `with_strategy` setter, and the strategy is read
+   only from `LossyConfig::effective_profile_for_image_with_smoothness`. So
+   **`EncoderStrategy::Libjxl` is a lossy-VarDCT-only mimic and cannot
+   exercise any of them.** Reaching them needs a strategy axis on
+   `LosslessConfig` first. (Aside, measured: on lossless our headers are
+   already byte-identical to cjxl's and our payload is 20 % smaller.)
+2. **The e11 TectonicPlate §A fidelity gaps are in the same bucket** —
+   lossless-only, unreachable from the mimic.
+3. **"Byte-exactness as an instrument for finding zen bugs" paid off on the
+   first serious use**, which is the part of the brief that turned out to
+   matter most. See the RESOLVED Known Bug of 2026-08-31: resampling changed
+   the image DIMENSIONS on any axis that is not a multiple of the factor, and
+   `auto_resampling` made it reachable at `d >= 10` with no caller opt-in.
+
+**What was closed, and the pattern behind it.** Four `all_default` fast paths
+existed in the header writers and **not one of them could ever fire**:
+
+- `ImageMetadata`: `is_metadata_default()` was `fn(&self) -> bool { false }` —
+  an inert predicate carrying a full doc-comment for a path it never took.
+- `ColorEncoding`: the predicate was `is_srgb()`, which demands
+  `rendering_intent == Perceptual`; the SPEC default is `kRelative`, which the
+  lossy builder sets *to match libjxl*.
+- `FrameHeader`: `is_all_default()` demanded `x_qm_scale == 2` (the spec
+  default is **3**; only *b*`_qm_scale` is 2) AND `do_ycbcr` (only serialized
+  when `!xyb_encoded`). Two independent unreachability bugs, plus a third
+  blocker — `flags` was always `0x80`.
+- The same predicate also demanded the extra-channel vectors be EMPTY where
+  libjxl only needs them at their DEFAULTS, excluding every RGBA frame.
+
+**The lesson worth keeping: a predicate that looks real and is never exercised
+drifts from the spec it claims to encode, and nothing notices — because a fast
+path that never fires still produces correct output.** The `x_qm_scale == 2`
+case was also a latent correctness hazard (a frame emitted `all_default` at 2
+would be dequantized at 3). Every one of these is gated on
+`header_all_default_fast_paths`, Libjxl-only, so zen-mode hash locks stayed
+byte-identical throughout.
+
+**Two divergences closed with measurement, not assumption.**
+
+- `kSkipAdaptiveDCSmoothing` was set on EVERY lossy frame; libjxl sets it only
+  for JPEG transcode. **There is no encoder-side algorithm to port** — libjxl's
+  own `AdaptiveDCSmoothing` call runs after the DC is already tokenized and
+  touches only its private reconstruction copy (its "only useful in tests"
+  TODO). It is a pure decoder-side post-filter. Measured A/B: **strongly
+  content-dependent** — smooth gradient butteraugli −9…−34 % and ssim2 +0.7…+6.2
+  at d ≥ 1, textured photo butteraugli **+0.5…+13.4 %** (a real loss), line art
+  and noise neutral. So zen mode's skip flag is a defensible trade, not an
+  oversight; doing it *unconditionally* is the open item, and the split falls
+  along the `mask1x1` discriminator zen already computes.
+- `x_qm_scale` was scored against the auto-resample-REDUCED distance; libjxl
+  captures `original_butteraugli_distance` before the rewrite and scores the
+  original. 73 of 196 cells affected. Measured with a cjxl reference arm: it is
+  a MOVE ALONG THE RD CURVE — the gated arm lands within 0.1–1.7 % of cjxl's
+  rate where the ungated arm sat 6–15 % under, and at that rate we beat cjxl
+  (ssim2 −18.32 vs −23.17 on frymire e5). Zen adoption needs a matched-rate
+  comparison that grid does not provide.
+
+**Named next steps, in the order the harness ranks them.**
+
+1. Port `DecodeContextMap` + an ANS reader into `jxl_bitstream_diff.py`. It is
+   the only way past the two global sections' field-coded prefixes, and it is
+   what turns "`HfGlobal` +36.2 %" into a structure name.
+2. `hfglobal.used_orders` differs on 32 of 196 cells and **goes both ways**
+   (11 cells `1 → 0`, but also 2 cells `2 → 3`) — a genuinely different
+   coefficient-order selection rule, not an over-spend.
+3. `lfglobal.block_ctx_map.qf_thresholds` differs on 12 cells (+3 counts).
+4. A content gate for `kSkipAdaptiveDCSmoothing` in zen mode.
+5. A strategy axis on `LosslessConfig`, without which the whole of
+   `LIBJXL_PARITY_TRACKING.md` stays un-A/B-able.
+
+**Method traps worth not repeating.** (a) The codestream headers are
+zero-padded to a byte boundary before the first frame; a parser that misses it
+still decodes every later field, just shifted, and emits plausible garbage — a
+32×32 image reporting `num_passes = 2` and a custom crop origin — rather than
+failing. (b) The original e{3,5,7} × d{0.5,1,4} grid could not see ANY of the
+four `all_default` paths, the `x_qm_scale` divergence, or the dimension bug;
+widening to e{3,5,7,9} × d{0.5..15} surfaced all of them at once. (c) The RGBA
+byte-lock cells earn their place precisely because they are the only ones where
+the outer fast path cannot fire — they are what separated the nested
+`ColorEncoding` divergence from the outer `ImageMetadata` one.
 
 ### T5 — make the sectioned estimator accurate — DONE 2026-08-30, and the
 ### brief above it framed the problem as the wrong SIGN

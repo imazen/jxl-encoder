@@ -768,8 +768,19 @@ impl FrameHeader {
             // above). Two unreachability bugs in one predicate is what
             // dead code buys you — neither was ever exercised.
             && self.upsampling == 1
-            && self.ec_upsampling.is_empty()
-            && self.ec_blend_modes.is_empty()
+            // The extra-channel vectors must be at their DEFAULTS, not
+            // EMPTY. libjxl's `Bundle::AllDefault` compares serialized
+            // values, and an alpha channel at `ec_upsampling = 1` /
+            // `BlendMode::kReplace` / `source = 0` matches the defaults
+            // exactly — cjxl writes the one-bit header for RGBA frames.
+            // Demanding emptiness (which is what this said until
+            // 2026-08-31) excluded every RGBA encode for no reason: on
+            // `all_default` the writer returns before the EC fields, so
+            // the decoder reconstructs those same defaults.
+            && self.ec_upsampling.iter().all(|&u| u == 1)
+            && self.ec_blend_modes.iter().all(|&m| m == BlendMode::Replace)
+            && self.ec_blend_sources.iter().all(|&s| s == 0)
+            && self.alpha_blend_channel == 0
             && self.group_size_shift == 1
             && self.x_qm_scale == 3
             && self.b_qm_scale == 2

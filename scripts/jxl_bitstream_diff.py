@@ -491,8 +491,19 @@ class Parser:
         self.toc = dict(entries=sizes, labels=labels, num_groups=num_groups,
                         num_dc_groups=num_dc_groups, num_passes=num_passes,
                         payload_start=br.pos // 8)
+        # Self-consistency: header + TOC + every section size must account for
+        # the whole file. If it does not, the parse is wrong somewhere upstream
+        # and every number below it is fiction — say so loudly rather than
+        # reporting a confident, wrong attribution.
+        accounted = self.toc["payload_start"] + sum(sizes)
+        if accounted != len(self.d):
+            self.note.append(
+                f"PARSE INCONSISTENT: header+TOC ({self.toc['payload_start']}) "
+                f"+ sections ({sum(sizes)}) = {accounted} != file size "
+                f"({len(self.d)}). Do not trust the section table.")
         self.lf_global_prefix(br.pos // 8, sizes[0] if labels[0] == "LfGlobal"
                               else None)
+        self.hf_global_prefix()
         return self.toc
 
     # ── LfGlobal fixed prefix ───────────────────────────────────────────────
@@ -531,8 +542,36 @@ class Parser:
                    br.u32([("V", 16), ("O", (5, 1)), ("O", (8, 1)),
                            ("O", (16, 1))]))
             if self.f("lfglobal.block_ctx_map.is_default", br.bit()) == 0:
-                self.note.append("block_ctx_map is NOT default (ANS-coded "
-                                 "context map); modular-boundary split skipped")
+                # The thresholds are plain field coding; only the context map
+                # that follows them is ANS. Report them — they say how the two
+                # encoders SHAPE the block context map, which is a different
+                # question from how many bytes the map costs.
+                dct_dist = [("B", 4), ("O", (8, 16)), ("O", (16, 272)),
+                            ("O", (32, 65808))]
+                qf_dist = [("B", 2), ("O", (3, 4)), ("O", (5, 12)),
+                           ("O", (8, 44))]
+                for c in range(3):
+                    n = self.f(f"lfglobal.block_ctx_map.dc_thresholds[{c}].n",
+                               br.bits(4))
+                    for k in range(n):
+                        self.f(
+                            f"lfglobal.block_ctx_map.dc_thresholds[{c}][{k}]",
+                            unpack_signed(br.u32(dct_dist)))
+                nqf = self.f("lfglobal.block_ctx_map.qf_thresholds.n",
+                             br.bits(4))
+                for k in range(nqf):
+                    self.f(f"lfglobal.block_ctx_map.qf_thresholds[{k}]",
+                           br.u32(qf_dist) + 1)
+                # Relative to the section start, NOT the absolute file bit:
+                # an absolute offset differs whenever anything upstream does,
+                # which makes it a false-positive generator in a diff. This is
+                # the LENGTH of LfGlobal's field-coded prefix, which is the
+                # comparable quantity.
+                self.f("lfglobal.block_ctx_map.ans_starts_at_bit",
+                       br.pos - start_byte * 8)
+                self.note.append("block_ctx_map context map is ANS-coded; "
+                                 "LfGlobal modular-boundary split skipped "
+                                 "(needs a DecodeContextMap port)")
                 return
             if self.f("lfglobal.cmap_dc.all_default", br.bit()) == 0:
                 self.f("lfglobal.cmap_dc.color_factor",
@@ -550,6 +589,56 @@ class Parser:
         if lf_global_bytes is not None:
             self.f("lfglobal.modular_stream_bytes",
                    lf_global_bytes - (fixed_bits + 7) // 8)
+
+    # ── HfGlobal fixed prefix ───────────────────────────────────────────────
+    def hf_global_prefix(self):
+        """Parse HfGlobal up to where its first ANS-coded structure begins.
+
+        Order (libjxl `dec_frame.cc::ProcessACGlobal`):
+        `DequantMatrices::Decode` -> `num_histograms` -> per pass
+        {`used_orders`, `DecodeCoeffOrders` (ANS), `DecodeHistograms` (ANS)}.
+
+        The first two are plain field coding and the `used_orders` bitmask is a
+        `U32Coder`, so three genuinely comparable numbers come out before any
+        entropy decoding is needed: whether the AC quant matrices are default,
+        how many histogram sets the frame uses, and WHICH of the 13 coefficient
+        orders each pass customises. That last one is the informative one — two
+        encoders can spend very different numbers of bytes here purely by
+        choosing to customise more orders.
+        """
+        t = self.toc
+        if not t or t["labels"][0] != "LfGlobal":
+            return
+        idx = 1 + t["num_dc_groups"]
+        if t["labels"][idx] != "HfGlobal":
+            return
+        start = t["payload_start"] + sum(t["entries"][:idx])
+        size = t["entries"][idx]
+        if size == 0:
+            return
+        br = BitReader(self.d, start)
+        saved, self.br = self.br, br
+        try:
+            if self.f("hfglobal.dequant_matrices.all_default", br.bit()) == 0:
+                self.note.append("HfGlobal carries CUSTOM AC dequant matrices "
+                                 "(17 QuantEncoding tables); prefix split "
+                                 "stops here")
+                return
+            num_groups = t["num_groups"]
+            # CeilLog2Nonzero(num_groups): 0 when num_groups == 1.
+            nbits = max(0, (num_groups - 1).bit_length())
+            self.f("hfglobal.num_histograms", br.bits(nbits) + 1)
+            for p in range(t["num_passes"]):
+                used = br.u32([("V", 0x5F), ("V", 0x13), ("V", 0),
+                               ("B", 13)])
+                self.f(f"hfglobal.used_orders[p{p}]",
+                       f"0x{used:04x} ({bin(used).count('1')} of 13 custom)")
+                self.f(f"hfglobal.ans_starts_at_bit[p{p}]", br.pos - start * 8)
+                break  # later passes sit behind this pass's ANS data
+        except EOFError:
+            self.note.append("ran out of bytes inside HfGlobal prefix")
+        finally:
+            self.br = saved
 
     # ── driver ──────────────────────────────────────────────────────────────
     def parse(self):
