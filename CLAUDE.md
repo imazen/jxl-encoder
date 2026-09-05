@@ -911,6 +911,32 @@ asserted to match its own header. Mutation-verified: reverting either
 and leaves the control and `already_downsampled` arms green. No existing
 hash lock moved.
 
+**Issue #101 (2026-09-05) is this defect, not a recurrence.** It was filed
+against bitstreams from a `zenmetrics sweep --codec zenjxl` run whose zenjxl
+build path-patches `jxl-encoder` to THIS checkout (`~/work/zen/zenjxl/
+Cargo.toml` `[patch.crates-io]`), and the checkout sat at 5f40694e
+(2026-08-28) — before 71e0f6af / 11828823 landed. Verified by parsing the
+SizeHeader of every persisted odd-dimension cell in
+`/mnt/v/output/zensim/ladder-2026-09-05/grid_native/encoded/jxl/`: 130 of
+585 declare +1/+1 = exactly the 13 odd-dim images × 10 distances at d ≥ 10,
+while current `main` encodes the same shapes at the source size (pinned
+below). Process lesson: a sweep that path-patches a sibling repo measures
+that repo's WORKING COPY, not its `main` — `jj git fetch && jj new
+main@origin` in the sibling before building the sweep binary, or a fixed bug
+re-appears in the data. The issue's second signal — SSIM2 falling from 15.3
+to −20.8 between d = 9.9 and d = 10.0 on an even-dim image — is libjxl's own
+auto threshold + `d×0.25+0.25` remap (`enc_frame.cc:108-114`, verified in
+source 2026-09-05): inherited behaviour, not a divergence. Extra coverage
+landed as `tests/it/resampling_odd_dims_streaming.rs`: the streaming
+`LossyEncoder` path, Rgba8, multi-group coded cells (513×769 → 257×385),
+streaming == one-shot byte identity (also for `already_downsampled`), an
+`#[ignore]` djxl leg and a decoder-independent SizeHeader bit parse. That
+last cell caught a REAL residual: the streaming `LossyEncoder` ignored
+`already_downsampled` (documented inline as "does not honour" it) — it
+downsampled pre-downsampled input again and advertised the CODED size
+(300×200 where one-shot says 600×400). Fixed the same day: the streaming arm
+now carries the one-shot guard; byte-identical everywhere else.
+
 ### RESOLVED 2026-08-30: lossy `with_resampling(N>1)` + alpha emitted an UNDECODABLE stream (`ec_upsampling` left at 1)
 
 **Status**: RESOLVED same day. Found by the new `resampling` hash-lock

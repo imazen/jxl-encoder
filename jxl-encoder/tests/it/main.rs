@@ -80,6 +80,7 @@ mod perceptual_target_score_smoke;
 mod quality_compare;
 mod rate_control;
 mod resampling_odd_dims;
+mod resampling_odd_dims_streaming;
 mod sectioned_trees_knob;
 mod sixteenbit_metadata;
 mod strategy_libjxl_byte_lock;

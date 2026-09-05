@@ -4147,6 +4147,15 @@ impl LossyConfig {
     /// [`Self::with_resampling`]; pass the **already downsampled**
     /// dimensions to [`crate::api::EncodeRequest`] — the file header
     /// will advertise `dims * N` as the original size.
+    ///
+    /// Because the encoder never sees the original, `dims * N` is the
+    /// only size it can advertise: an original with a dimension not
+    /// divisible by `N` (downsampled as `ceil(dim / N)`) decodes to the
+    /// next multiple of `N` on that axis. Let the encoder downsample
+    /// (leave this `false`) when the exact source size matters — that
+    /// path advertises the true source size for any dimensions
+    /// (imazen/jxl-encoder#45, #101). libjxl's `already_downsampled`
+    /// carries the same odd-size caveat (`enc_frame.cc:431`).
     pub fn with_already_downsampled(mut self, already: bool) -> Self {
         self.already_downsampled = already;
         self
@@ -9194,11 +9203,13 @@ impl LossyEncoder {
             enc.center_first = self.cfg.center_first;
             // Decoder upsampling factor (refs #12). Mirrors the
             // EncodeRequest::encode_lossy wire-up below, including the
-            // true pre-downsample size for the file header (this path
-            // always downsamples internally — it does not honour
-            // `already_downsampled`).
+            // true pre-downsample size for the file header and the
+            // `already_downsampled` contract (the streaming path used to
+            // ignore the flag: it downsampled pre-downsampled input a
+            // second time and advertised the coded size, so streaming and
+            // one-shot output diverged — imazen/jxl-encoder#101).
             enc.upsampling = effective_resampling;
-            if effective_resampling > 1 {
+            if effective_resampling > 1 && !self.cfg.already_downsampled {
                 enc.display_dims = Some((w as u32, h as u32));
             }
             enc.non_finite_action = self.cfg.non_finite_action;
@@ -9207,7 +9218,9 @@ impl LossyEncoder {
                 enc.icc_profile = Some(icc.clone());
             }
 
-            let (encode_rgb, encode_alpha, encode_w, encode_h) = if effective_resampling > 1 {
+            let (encode_rgb, encode_alpha, encode_w, encode_h) = if effective_resampling > 1
+                && !self.cfg.already_downsampled
+            {
                 // Factor-2 kernel choice mirrors the one-shot path (and
                 // libjxl `enc_frame.cc:752`): iterative at effort ≥ 10,
                 // sharper below.
