@@ -207,6 +207,8 @@ jxl_encoder_macros::strategy_def! {
             // Section D KNOWN-BUG: deliberately re-enable to match libjxl
             block_ctx_map_15_cluster = true,
             header_all_default_fast_paths = true,
+            // #101: libjxl's d>=10 auto-resample regime switch — parity-only.
+            auto_resample_libjxl_rule = true,
             x_qm_scale_from_original_distance = true,
             dc_adaptive_smoothing = true,
             // Smart-Zenjxl gates: strict parity — every per-image
@@ -302,6 +304,8 @@ jxl_encoder_macros::strategy_def! {
             // Section D: NOT re-enabled on LeanFaster (only on Libjxl).
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
+            // #101: libjxl's d>=10 auto-resample regime switch — parity-only.
+            auto_resample_libjxl_rule = false,
             x_qm_scale_from_original_distance = false,
             dc_adaptive_smoothing = false,
             // Smart-Zenjxl: drop every per-image gate.
@@ -385,6 +389,8 @@ jxl_encoder_macros::strategy_def! {
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
+            // #101: libjxl's d>=10 auto-resample regime switch — parity-only.
+            auto_resample_libjxl_rule = false,
             x_qm_scale_from_original_distance = false,
             dc_adaptive_smoothing = false,
             content_class_auto_classify = true,
@@ -485,6 +491,8 @@ jxl_encoder_macros::strategy_def! {
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
+            // #101: libjxl's d>=10 auto-resample regime switch — parity-only.
+            auto_resample_libjxl_rule = false,
             x_qm_scale_from_original_distance = false,
             dc_adaptive_smoothing = false,
             content_class_auto_classify = true,
@@ -687,6 +695,23 @@ jxl_encoder_macros::strategy_def! {
         x_qm_scale_from_original_distance: bool {
             divergence_section = "D",
             divergence_row_ref = "T4 x_qm_scale uses original vs resample-reduced distance",
+        },
+        /// libjxl's automatic resampling regime switch (`enc_frame.cc:108-114`:
+        /// `distance >= 10` → `resampling = 2`, internal distance
+        /// `d * 0.25 + 0.25`). `true` = follow it when the caller has not
+        /// pinned `with_resampling` / `with_auto_resampling`; `false` = one
+        /// regime at every distance. Measured 2026-09-05 (issue #101
+        /// follow-up, `benchmarks/auto_resample_monotonicity_2026-09-05.*`):
+        /// at d = 10 the 2× regime is never the cheaper one at matched
+        /// butteraugli on 40/40 real cells — photos pay +12 %/+30 % bytes at
+        /// the switch, graphics lose 9–26 butteraugli / 30–85 SSIM2 — and it
+        /// wins only at d ≥ 17 on 6/40 cells by ≤ 14 %; cjxl v0.11.1 shows the
+        /// same at its own d ≥ 20 switch. A fixed-threshold switch is therefore
+        /// a structural monotonicity break with no RD case; the zen strategies
+        /// turn it off, `Libjxl` keeps it for byte parity.
+        auto_resample_libjxl_rule: bool {
+            divergence_section = "A",
+            divergence_row_ref = "#101 auto-resample regime switch (libjxl d>=10 -> 2x + d*0.25+0.25): Libjxl on, Zenjxl/Aggressive/LeanFaster off",
         },
 
         /// T4 (2026-08-31): leave `kSkipAdaptiveDCSmoothing` (0x80)
@@ -1453,6 +1478,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "W44-205 coeff_orders skip buckets 2+4 (Zenjxl extension of W44-201)",
         raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_DISABLE_MEDIUM_BUCKETS,
+    },
+    // Section A — #101 auto-resample regime switch (measured OFF for zen strategies)
+    DivergenceEntry {
+        gate_name: "auto_resample_libjxl_rule",
+        section: "A",
+        row_ref: "#101 auto-resample regime switch (libjxl d>=10 -> 2x + d*0.25+0.25): Libjxl on, Zenjxl/Aggressive/LeanFaster off",
+        raw: __CUSTOM_DIVERGENCE_AUTO_RESAMPLE_LIBJXL_RULE,
     },
 ];
 

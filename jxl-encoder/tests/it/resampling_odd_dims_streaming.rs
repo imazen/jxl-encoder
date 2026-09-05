@@ -2,8 +2,10 @@
 //! carry the SOURCE size on every resampling path, including the ones the
 //! sibling module does not exercise.
 //!
-//! Background. At distance ≥ 10 the encoder engages libjxl's automatic 2×
-//! resampling (`enc_frame.cc:108-114`, parity): pixels are downsampled to
+//! Background. Under libjxl's automatic 2× resampling rule
+//! (`enc_frame.cc:108-114`; since the #101 follow-up reached only through
+//! `with_auto_resampling(true)` or `EncoderStrategy::Libjxl` — the zen
+//! strategies keep one regime) pixels at distance ≥ 10 are downsampled to
 //! `ceil(w/2) × ceil(h/2)`, the frame header carries `upsampling = 2`, and
 //! a decoder upsamples the coded frame and crops it to the SizeHeader size.
 //! `build_file_header` used to rebuild the advertised size as
@@ -230,7 +232,9 @@ fn assert_source_size(bytes: &[u8], w: u32, h: u32, ctx: &str) {
 fn issue_101_auto_resample_odd_dims_one_shot_rgb8_header_is_source_size() {
     for &(w, h) in &[(65u32, 33u32), (33, 65), (513, 769), (769, 513)] {
         for &d in &[10.0f32, 25.0] {
-            let cfg = LossyConfig::new(d).with_effort(5);
+            let cfg = LossyConfig::new(d)
+                .with_effort(5)
+                .with_auto_resampling(true);
             assert_eq!(
                 cfg.effective_resampling(),
                 2,
@@ -252,7 +256,9 @@ fn issue_101_auto_resample_odd_dims_one_shot_rgb8_header_is_source_size() {
 #[test]
 fn issue_101_auto_resample_odd_dims_streaming_rgba8_header_is_source_size() {
     for &(w, h) in &[(65u32, 33u32), (513, 769)] {
-        let cfg = LossyConfig::new(10.0).with_effort(5);
+        let cfg = LossyConfig::new(10.0)
+            .with_effort(5)
+            .with_auto_resampling(true);
         let px = fixture(w, h, 4);
         let mut enc = cfg
             .encoder(w, h, PixelLayout::Rgba8)
@@ -339,21 +345,24 @@ fn issue_101_already_downsampled_streaming_matches_one_shot() {
     assert_eq!((rw, rh), (2 * w, 2 * h), "jxl-rs decodes to coded × 2");
 }
 
-/// Controls: even dimensions at d=10 (unaffected before and after) and
-/// odd dimensions just below the auto threshold (no resampling).
+/// Controls: even dimensions at d=10 with the rule opted in (unaffected
+/// before and after) and odd dimensions just below the auto threshold.
 #[test]
 fn issue_101_controls_even_dims_and_below_threshold() {
     for &(w, h) in &[(64u32, 64u32), (66, 34)] {
         let px = fixture(w, h, 3);
         let bytes = LossyConfig::new(10.0)
             .with_effort(5)
+            .with_auto_resampling(true)
             .encode_request(w, h, PixelLayout::Rgb8)
             .encode(&px)
             .expect("even-dim encode at d=10");
         assert_source_size(&bytes, w, h, &format!("even control {w}x{h} d=10"));
     }
     let (w, h) = (65u32, 33u32);
-    let cfg = LossyConfig::new(9.9).with_effort(5);
+    let cfg = LossyConfig::new(9.9)
+        .with_effort(5)
+        .with_auto_resampling(true);
     assert_eq!(cfg.effective_resampling(), 1, "no auto-resample below d=10");
     let px = fixture(w, h, 3);
     let bytes = cfg
@@ -398,6 +407,7 @@ fn issue_101_auto_resample_odd_dims_decodes_via_djxl_to_source_size() {
     let px = fixture(w, h, 3);
     let bytes = LossyConfig::new(10.0)
         .with_effort(5)
+        .with_auto_resampling(true)
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&px)
         .expect("encode 513x769 d=10");

@@ -19,6 +19,7 @@ mod alpha_squeeze_chunk1_framework;
 mod alpha_squeeze_chunk2_pipeline;
 mod animation;
 mod ans_roundtrip;
+mod auto_resample_strategy_gate;
 mod auto_splines;
 mod buffering_dispatch;
 mod buffering_enum;

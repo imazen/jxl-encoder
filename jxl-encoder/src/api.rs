@@ -2061,24 +2061,29 @@ pub struct LossyConfig {
     /// [`Self::with_center_first`].
     center_first: bool,
     /// Decoder upsampling factor (refs #12). `1` (default) = no
-    /// resampling; `2`/`4`/`8` = box-filter downsample the input by
-    /// this factor before encoding and signal the decoder to upsample
-    /// after rendering. Trades per-pixel fidelity for dramatic file-size
-    /// reduction at very high distances. libjxl auto-selects 2× at
-    /// d ≥ 10. See [`Self::with_resampling`].
+    /// resampling; `2`/`4`/`8` = downsample the input by this factor
+    /// before encoding and signal the decoder to upsample after
+    /// rendering. Trades per-pixel fidelity for file-size reduction at
+    /// very high distances. libjxl auto-selects 2× at d ≥ 10; the zen
+    /// strategies do not (see `auto_resampling`). See
+    /// [`Self::with_resampling`].
     resampling: u32,
     /// `true` when [`Self::with_resampling`] was called explicitly.
     /// Used to decide whether the auto-resample-at-high-distance
     /// gate fires (refs #12). Auto only kicks in if the caller did
     /// **not** pin a resampling factor.
     resampling_explicit: bool,
-    /// `true` (default) enables libjxl's auto-resample-at-d≥10 rule
-    /// (`enc_frame.cc:103-115`). When the effective gate triggers,
-    /// the encoder uses the sharper 2× kernel and adjusts the
-    /// internal distance to `d * 0.25 + 0.25` so the bpp stays
-    /// roughly comparable. Disable via [`Self::with_auto_resampling`]
-    /// if you want strict pinned behavior.
-    auto_resampling: bool,
+    /// Caller pin for libjxl's auto-resample-at-d≥10 rule
+    /// (`enc_frame.cc:108-114`: 2× sharper downsampling + internal
+    /// distance `d * 0.25 + 0.25`). `Some(true)` follows the rule,
+    /// `Some(false)` never auto-resamples, `None` (default) defers to the
+    /// strategy gate `auto_resample_libjxl_rule`: ON under
+    /// `EncoderStrategy::Libjxl` (parity), OFF for Zenjxl / Aggressive /
+    /// LeanFaster — issue #101 follow-up, measured 2026-09-05: the switch is
+    /// never the cheaper regime at matched butteraugli at d = 10 and is the
+    /// only structural monotonicity break on a distance ladder
+    /// (`benchmarks/auto_resample_monotonicity_2026-09-05.analysis.md`).
+    auto_resampling: Option<bool>,
     /// `true` when the caller has already downsampled the input to
     /// the target resolution and just wants the encoder to write the
     /// matching `upsampling` factor in the bitstream. Mirrors libjxl
@@ -2716,7 +2721,7 @@ impl LossyConfig {
             center_first: false,
             resampling: 1,
             resampling_explicit: false,
-            auto_resampling: true,
+            auto_resampling: None,
             already_downsampled: false,
             splines: None,
             // `None` inherits the effort-derived auto-splines default
@@ -3028,7 +3033,7 @@ impl LossyConfig {
                 crate::api::SmoothPhotoDct64Policy::ForceAdmit => true,
                 crate::api::SmoothPhotoDct64Policy::ForceSkip => false,
             };
-            p.adapt_to_image_lossy_with_smoothness(pixels, self.distance, smooth_hint);
+            p.adapt_to_image_lossy_with_smoothness(pixels, self.effective_distance(), smooth_hint);
             // W44-164 Smart-Zenjxl chunk 1 — content-class dispatch.
             //
             // Precedence:
@@ -3061,7 +3066,7 @@ impl LossyConfig {
             };
             let effective_class = self.content_class.or(auto_class_for_resolve);
             if let Some(class) = effective_class {
-                p.adapt_to_image_content(pixels, self.distance, class);
+                p.adapt_to_image_content(pixels, self.effective_distance(), class);
             }
             // W44-133 Chunk G: Section A effort-gate consultation.
             // Flips `cfl_two_pass` / `try_dct64` / `epf_dynamic_sharpness`
@@ -4078,15 +4083,16 @@ impl LossyConfig {
     /// `out_dims * factor`.
     ///
     /// libjxl auto-selects `factor = 2` at distance ≥ 10
-    /// (`enc_frame.cc:89-121`) and **so do we** — see
-    /// [`Self::with_auto_resampling`] (on by default) and
-    /// [`Self::effective_resampling`]. (This paragraph used to say "we
-    /// don't auto-select yet; callers opt in explicitly", which stopped
-    /// being true when auto-resample landed and mattered: it made the
-    /// odd-dimension bug below look opt-in when it was reachable from
-    /// the default path.) The 4× / 8× box filter matches libjxl; the 2×
-    /// path uses libjxl's sharper 12×12 kernel below e10 and the
-    /// iterative kernel at e ≥ 10, all applied in the opsin domain.
+    /// (`enc_frame.cc:108-114`). We follow that rule only under
+    /// `EncoderStrategy::Libjxl` or an explicit
+    /// [`Self::with_auto_resampling`]`(true)`; the zen strategies keep one
+    /// regime at every distance (issue #101 follow-up, measured
+    /// 2026-09-05 — the switch raised bytes on photos and collapsed
+    /// quality on graphics without ever being the cheaper regime at
+    /// matched butteraugli). See [`Self::effective_resampling`]. The
+    /// 4× / 8× box filter matches libjxl; the 2× path uses libjxl's
+    /// sharper 12×12 kernel below e10 and the iterative kernel at e ≥ 10,
+    /// all applied in the opsin domain.
     ///
     /// **Dimension contract**: the advertised size is the caller's
     /// original size exactly, on every axis, multiple of `factor` or
@@ -4115,20 +4121,38 @@ impl LossyConfig {
         self.resampling
     }
 
-    /// Enable / disable libjxl's auto-resample-at-d≥10 rule (refs #12).
-    /// Default `true`. When enabled and the caller has *not* pinned a
-    /// resampling factor via [`Self::with_resampling`], the encoder
-    /// engages 2× sharper downsampling at distance ≥ 10 and adjusts
-    /// the internal target distance to `d * 0.25 + 0.25`. libjxl
-    /// reference: `enc_frame.cc:103-115`.
+    /// Pin libjxl's auto-resample-at-d≥10 rule on or off (refs #12,
+    /// #101). When enabled and the caller has *not* pinned a resampling
+    /// factor via [`Self::with_resampling`], the encoder engages 2×
+    /// sharper downsampling at distance ≥ 10 and adjusts the internal
+    /// target distance to `d * 0.25 + 0.25` (libjxl `enc_frame.cc:108-114`).
+    ///
+    /// Unset, the strategy decides: ON under `EncoderStrategy::Libjxl`
+    /// (parity), OFF for Zenjxl / Aggressive / LeanFaster. The zen default
+    /// is measured (issue #101 follow-up, 2026-09-05, 20 real images ×
+    /// e5/e8): at the d = 10 switch photos paid +12 %/+30 % bytes for
+    /// slightly worse butteraugli and graphics lost 9–26 butteraugli /
+    /// 30–85 SSIM2, and the 2× regime was never the cheaper one at matched
+    /// butteraugli at d = 10 (wins only at d ≥ 17 on 6/40 cells, ≤ 14 %).
+    /// With one regime per ladder, bytes and quality have no structural
+    /// discontinuity in `distance`.
     pub fn with_auto_resampling(mut self, enable: bool) -> Self {
-        self.auto_resampling = enable;
+        self.auto_resampling = Some(enable);
         self
     }
 
-    /// Current auto-resample setting. Default `true`.
+    /// Effective auto-resample setting: the caller pin from
+    /// [`Self::with_auto_resampling`], else the strategy gate
+    /// `auto_resample_libjxl_rule` (`true` only under
+    /// `EncoderStrategy::Libjxl`).
     pub fn auto_resampling(&self) -> bool {
+        self.auto_resample_enabled()
+    }
+
+    /// Caller pin, else the strategy gate (#101).
+    fn auto_resample_enabled(&self) -> bool {
         self.auto_resampling
+            .unwrap_or_else(|| self.resolve_improvements().auto_resample_libjxl_rule)
     }
 
     /// Tell the encoder the input is **already** at the post-resampling
@@ -4171,7 +4195,7 @@ impl LossyConfig {
     /// `self.resampling` unless auto-resample is enabled, no explicit
     /// factor was set, and `self.distance >= 10`.
     pub fn effective_resampling(&self) -> u32 {
-        if !self.resampling_explicit && self.auto_resampling && self.distance >= 10.0 {
+        if !self.resampling_explicit && self.auto_resample_enabled() && self.distance >= 10.0 {
             2
         } else {
             self.resampling
@@ -4183,7 +4207,7 @@ impl LossyConfig {
     /// kicks in (refs #12). Returns `self.distance` unless auto-resample
     /// fires; otherwise returns `distance * 0.25 + 0.25`.
     pub fn effective_distance(&self) -> f32 {
-        if !self.resampling_explicit && self.auto_resampling && self.distance >= 10.0 {
+        if !self.resampling_explicit && self.auto_resample_enabled() && self.distance >= 10.0 {
             self.distance * 0.25 + 0.25
         } else {
             self.distance
@@ -7516,7 +7540,7 @@ impl<'a> EncodeRequest<'a> {
         // the identical full-image pass again ~60 lines later — 2 x
         // ~78 ms at 4K e5. The band is the union of both consumers'
         // gates (class band eff 5-6 is a subset of the proxies band).
-        let shared_proxies = if cfg.effort() >= 5 || cfg.distance >= 2.0 {
+        let shared_proxies = if cfg.effort() >= 5 || cfg.effective_distance() >= 2.0 {
             compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout)
         } else {
             None
@@ -7529,7 +7553,7 @@ impl<'a> EncodeRequest<'a> {
         #[cfg(feature = "learned-admission")]
         let learned_subband_bad = if shared_proxies.is_some()
             && cfg.resolve_improvements().learned_subband_exclude
-            && cfg.distance >= 2.0
+            && cfg.effective_distance() >= 2.0
         {
             crate::vardct::learned_admission::extract_rgb8_verdict(pixels, w, h, self.layout)
         } else {

@@ -1146,6 +1146,31 @@ measurement at equal or better coverage.
   block buys quality, not bytes) — don't widen the band without re-running
   the 2026-06-10 A/B. (issue #43 chunk 2c, ae62c219)
 
+**Resampling / regime switch**
+- libjxl's auto-resample switch (`enc_frame.cc:108-114`: d ≥ 10 → 2× +
+  `d×0.25+0.25`) is OFF for Zenjxl/Aggressive/LeanFaster and ON only under
+  `EncoderStrategy::Libjxl` or an explicit `with_auto_resampling(true)`
+  (gate `auto_resample_libjxl_rule`, #101 follow-up, 2026-09-05). Measured
+  (`benchmarks/auto_resample_monotonicity{,_cjxl}_2026-09-05.*`, harness
+  `examples/auto_resample_monotonicity`, 20 real images × e5/e8): at d=10 the
+  2× regime is NEVER the cheaper one at matched butteraugli (40/40 cells) —
+  photos pay +12 %/+30 % bytes at the switch for slightly worse butteraugli,
+  graphics lose 9–26 butteraugli / 30–85 SSIM2 (their down→up floor alone is
+  8–40 butteraugli); it wins only at d ≥ 17 on 6/40 cells by ≤ 14 %; cjxl
+  v0.11.1 shows the same at its own d ≥ 20 switch. One regime per ladder =
+  no structural monotonicity break (residual within-regime noise: bytes rise
+  on 6/260 steps by ≤ 2.5 %; butteraugli/SSIM2 fluctuate on 20–25 % of steps
+  at these coarse distances — metric noise, not a switch). Don't re-enable a
+  fixed-threshold switch; the only sanctioned route back is a MEASURED
+  matched-quality switch: score the 2× candidate at full resolution against
+  the source inside the perceptual loop and take it only when it is smaller
+  at equal butteraugli. When the rule IS on (Libjxl / opt-in), every
+  downstream consumer sees the REMAPPED distance (`effective_distance()`),
+  exactly like libjxl after `ParamsPostInit`; only `original_distance` (the
+  `x_qm_scale` ladder, Libjxl-only gate) keeps the requested value — the
+  profile adaptation + proxy gates used to see the requested 10 (fixed
+  2026-09-05, pinned by `issue_101_libjxl_strategy_keeps_the_switch`).
+
 **Perceptual loop / butteraugli**
 - Buttloop screenshot qf-seed scale: gate ≥ d=3.5 (main band) plus the
   W44-108 m3<24 sub-band at d∈[2,3.5) (wedge-2 lowered 30→24), AND — since

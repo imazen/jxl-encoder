@@ -94,7 +94,7 @@ use std::path::PathBuf;
 /// T4 (2026-08-31) added `header_all_default_fast_paths` Section D gate → 35.
 /// T4 (2026-08-31) added `dc_adaptive_smoothing` Section D gate → 36.
 /// T4 (2026-08-31) added `x_qm_scale_from_original_distance` Section D gate → 37.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 37;
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 38;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -231,6 +231,11 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // "W44-AUDIT-9 / SA-G Fix C" so anchor on that.
         if row_ref.contains("SA-G Fix C") {
             out.push("SA-G Fix C".to_string());
+        }
+        // #101 follow-up (2026-09-05): the auto-resample regime-switch gate has
+        // no W-code; its table row carries this phrase verbatim.
+        if row_ref.contains("auto-resample regime switch") {
+            out.push("auto-resample regime switch".to_string());
         }
         // #74 keep-best CfL Pass-2 guard: issue-numbered ref, no W-code.
         // The doc table row carries "keep-best CfL Pass-2 guard" verbatim.

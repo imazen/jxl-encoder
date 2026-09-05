@@ -8128,28 +8128,55 @@ fn test_lossy_with_resampling_invalid_falls_back_to_1() {
 
 /// Refs #12: auto-resample at distance ≥ 10 (libjxl
 /// `enc_frame.cc:103-115`). When the caller has not pinned a
-/// resampling factor and `auto_resampling` is on (default), the
-/// encoder engages 2× downsampling at d ≥ 10 and rescales the
-/// internal target distance to `d * 0.25 + 0.25`.
+/// resampling factor and the libjxl rule is enabled — explicitly via
+/// `with_auto_resampling(true)` or through `EncoderStrategy::Libjxl` —
+/// the encoder engages 2× downsampling at d ≥ 10 and rescales the
+/// internal target distance to `d * 0.25 + 0.25`. The zen strategies
+/// keep one regime at every distance (issue #101 follow-up).
 #[test]
 fn test_lossy_auto_resampling_at_distance_10() {
-    // d = 10: effective resampling = 2, effective distance = 2.75
+    // Default strategy (Zenjxl): the rule is OFF — no switch at d = 10
+    // or d = 25, distance passed through untouched.
     let cfg = LossyConfig::new(10.0);
+    assert!(!cfg.auto_resampling());
+    assert_eq!(cfg.effective_resampling(), 1);
+    assert_eq!(cfg.effective_distance(), 10.0);
+    let cfg = LossyConfig::new(25.0);
+    assert_eq!(cfg.effective_resampling(), 1);
+    assert_eq!(cfg.effective_distance(), 25.0);
+
+    // EncoderStrategy::Libjxl keeps libjxl's rule (parity): d = 10 →
+    // resampling 2, internal distance 2.75.
+    let cfg = LossyConfig::new(10.0).with_strategy(crate::api::EncoderStrategy::Libjxl);
+    assert!(cfg.auto_resampling());
+    assert_eq!(cfg.effective_resampling(), 2);
+    assert!((cfg.effective_distance() - 2.75).abs() < 1e-5);
+    // …and the caller pin wins over the strategy either way.
+    let cfg = LossyConfig::new(10.0)
+        .with_strategy(crate::api::EncoderStrategy::Libjxl)
+        .with_auto_resampling(false);
+    assert_eq!(cfg.effective_resampling(), 1);
+
+    // Opt-in on the default strategy: d = 10 → 2 / 2.75.
+    let cfg = LossyConfig::new(10.0).with_auto_resampling(true);
+    assert!(cfg.auto_resampling());
     assert_eq!(cfg.effective_resampling(), 2);
     assert!((cfg.effective_distance() - 2.75).abs() < 1e-5);
 
     // d = 25: same gate fires (resampling stays at 2).
-    let cfg = LossyConfig::new(25.0);
+    let cfg = LossyConfig::new(25.0).with_auto_resampling(true);
     assert_eq!(cfg.effective_resampling(), 2);
     assert!((cfg.effective_distance() - 6.5).abs() < 1e-5);
 
-    // d = 9.99: gate does NOT fire.
-    let cfg = LossyConfig::new(9.99);
+    // d = 9.99: gate does NOT fire even when enabled.
+    let cfg = LossyConfig::new(9.99).with_auto_resampling(true);
     assert_eq!(cfg.effective_resampling(), 1);
     assert_eq!(cfg.effective_distance(), 9.99);
 
-    // Explicit with_resampling(1) suppresses auto.
-    let cfg = LossyConfig::new(15.0).with_resampling(1);
+    // Explicit with_resampling(1) suppresses auto even when enabled.
+    let cfg = LossyConfig::new(15.0)
+        .with_auto_resampling(true)
+        .with_resampling(1);
     assert_eq!(cfg.effective_resampling(), 1);
     assert_eq!(cfg.effective_distance(), 15.0);
 
@@ -8159,13 +8186,16 @@ fn test_lossy_auto_resampling_at_distance_10() {
     assert_eq!(cfg.effective_distance(), 15.0);
 
     // Explicit with_resampling(4) overrides — does NOT engage 2x.
-    let cfg = LossyConfig::new(15.0).with_resampling(4);
+    let cfg = LossyConfig::new(15.0)
+        .with_auto_resampling(true)
+        .with_resampling(4);
     assert_eq!(cfg.effective_resampling(), 4);
     assert_eq!(cfg.effective_distance(), 15.0);
 }
 
-/// Refs #12: end-to-end auto-resample → smaller file, decoded dims
-/// preserved, frame renders end-to-end.
+/// Refs #12 / #101: end-to-end auto-resample (opted in) → smaller file,
+/// decoded dims preserved, frame renders end-to-end; the DEFAULT path is
+/// byte-identical to auto-off (one regime).
 #[test]
 fn test_lossy_auto_resampling_round_trip() {
     let w = 64u32;
@@ -8182,9 +8212,21 @@ fn test_lossy_auto_resampling_round_trip() {
         .encode(&pixels)
         .expect("no-auto encode");
 
-    // With auto (default): d=12 → effective d=3.25 + 2× sharper.
+    // Default (Zenjxl): no auto-resample → byte-identical to auto-off (#101).
+    let bytes_default = LossyConfig::new(12.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("default encode");
+    assert_eq!(
+        bytes_default, bytes_no_auto,
+        "default must not switch regime at d=12"
+    );
+
+    // Opted in: d=12 → effective d=3.25 + 2× sharper.
     let bytes_auto = LossyConfig::new(12.0)
         .with_effort(5)
+        .with_auto_resampling(true)
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&pixels)
         .expect("auto encode");

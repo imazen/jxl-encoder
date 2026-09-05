@@ -10,9 +10,11 @@
 //! fix, a 1105-row input at factor 2 shipped a `SizeHeader` saying 1106 and
 //! every decoder produced an image one row taller than the caller supplied.
 //!
-//! That reaches the DEFAULT path with no opt-in at all: `auto_resampling` is
-//! on by default and selects factor 2 at `distance >= 10`, so any odd-height
-//! or odd-width image encoded at `d >= 10` came back the wrong size.
+//! That reached the DEFAULT path with no opt-in at all: `auto_resampling` was
+//! on by default and selected factor 2 at `distance >= 10`, so any odd-height
+//! or odd-width image encoded at `d >= 10` came back the wrong size. (Since the
+//! #101 follow-up the zen strategies keep one regime; the rule is reached via
+//! `with_auto_resampling(true)` or `EncoderStrategy::Libjxl` — both covered.)
 //!
 //! libjxl writes the true size into the `SizeHeader` and lets
 //! `FrameDimensions::Set`'s `DivCeil(xsize_px, upsampling)` recover the coded
@@ -123,9 +125,11 @@ fn explicit_resampling_preserves_odd_dimensions() {
     }
 }
 
-/// The default path: `auto_resampling` is on and selects factor 2 at
-/// `distance >= 10`, with no caller opt-in. This is the arm that made the bug
-/// reachable without anyone asking for resampling at all.
+/// libjxl's auto-resample rule: factor 2 at `distance >= 10`. It was the
+/// DEFAULT path when this bug was found (reachable with no caller opt-in);
+/// since the #101 follow-up the zen strategies keep one regime and the rule
+/// is reached via `with_auto_resampling(true)` or `EncoderStrategy::Libjxl`
+/// — both arms are covered here.
 #[test]
 fn auto_resampling_at_high_distance_preserves_odd_dimensions() {
     let (w, h) = (259usize, 133usize);
@@ -133,9 +137,21 @@ fn auto_resampling_at_high_distance_preserves_odd_dimensions() {
     for d in [10.0f32, 12.0, 15.0] {
         let bytes = LossyConfig::new(d)
             .with_effort(5)
+            .with_auto_resampling(true)
             .encode(&px, w as u32, h as u32, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("d={d}: encode failed: {e:?}"));
         assert_dims_preserved(&format!("{w}x{h} auto-resample at d={d}"), &bytes, w, h);
+        let bytes = LossyConfig::new(d)
+            .with_effort(5)
+            .with_strategy(jxl_encoder::api::EncoderStrategy::Libjxl)
+            .encode(&px, w as u32, h as u32, PixelLayout::Rgb8)
+            .unwrap_or_else(|e| panic!("d={d} Libjxl: encode failed: {e:?}"));
+        assert_dims_preserved(
+            &format!("{w}x{h} Libjxl auto-resample at d={d}"),
+            &bytes,
+            w,
+            h,
+        );
     }
 }
 
