@@ -548,6 +548,13 @@ path = "examples/rd_curve_audit_vs_cjxl.rs"
 name = "buttloop_distance_split_ab"
 path = "examples/buttloop_distance_split_ab.rs"
 
+# Issue #101 follow-up (2026-09-05) — auto-resample monotonicity baseline:
+# full-res ladder vs default auto (2x at d>=10) vs explicit res2 at a grid of
+# internal distances, real content, in-process butteraugli + SSIM2.
+[[example]]
+name = "auto_resample_monotonicity"
+path = "examples/auto_resample_monotonicity.rs"
+
 # W39-2 (WF3 fix) — screenshot-class HIGH-regime max_increase cap sweep.
 # Follow-on to W39-1 (3ecd397b). Searches {1.3, 1.5, 1.8, 2.0, ∞=100.0}
 # on the screenshot-only HIGH slot; photo-class HIGH stays at libjxl no-cap.

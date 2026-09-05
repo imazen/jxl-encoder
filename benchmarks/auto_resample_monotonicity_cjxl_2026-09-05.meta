@@ -1,0 +1,31 @@
+harness: jxl-encoder/examples/auto_resample_monotonicity.rs (MODE=cjxl)
+commit: 2f6607e592b5
+cjxl: cjxl v0.11.1 [AVX3_DL,AVX2,SSE4,SSE2] (cjxl)
+host: dev
+tag: 2026-09-05
+effort: 7 (cjxl -e 7)
+D_CJXL: [8.0, 9.9, 10.0, 12.0, 15.0, 17.0, 20.0, 22.0, 25.0]; modes: cjxl_auto (default flags) vs cjxl_full (--resampling=1)
+max_pixels (centre-crop above, to <=1024 per axis; crops fed as temp PNG): 1100000
+metrics: jxl-oxide srgb_linear decode; butteraugli_linear (ButteraugliParams::default) at full res; fast_ssim2 compute_ssimulacra2 on sRGB u8
+cells: 360  failures: 0  wall_s: 94
+pick: photo	CID22/CID22-512/training/1001682.png
+pick: photo	CID22/CID22-512/training/1028637.png
+pick: photo	CID22/CID22-512/training/1029604.png
+pick: photo	CID22/CID22-512/training/106399.png
+pick: photo	CID22/CID22-512/training/1080721.png
+pick: photo	CID22/CID22-512/training/1082342.png
+pick: photo	CID22/CID22-512/training/1089930.png
+pick: photo	CID22/CID22-512/training/110472.png
+pick: screenshot	gb82-sc/codec_wiki.png
+pick: screenshot	gb82-sc/gmessages.png
+pick: screenshot	gb82-sc/graph.png
+pick: screenshot	gb82-sc/gui.png
+pick: screenshot	gb82-sc/terminal.png
+pick: screenshot	gb82-sc/windows95.png
+pick: lineart	imazen-26/7000-lilith-plots/aliased-lines/7006_plots_line-00012-s2be0c08d_1024x1024.png
+pick: lineart	imazen-26/7000-lilith-plots/aliased-lines/7007_plots_line-00020-s1aac7045_1024x1024.png
+pick: lineart	imazen-26/7000-lilith-plots/grids/7037_plots_chart-heatmap-01-corporate-1024sq-mpl_1024x1024.png
+pick: web	imazen-26/8100-lilith-web-screenshots/375x667/8271_web-screenshots_archive-wayback-search_dpr1_page1_375x667.png
+pick: web	imazen-26/8100-lilith-web-screenshots/375x667/8272_web-screenshots_archives-exhibits_dpr1_page1_375x667.png
+pick: web	imazen-26/8100-lilith-web-screenshots/375x667/8273_web-screenshots_archives-exhibits_dpr1_page2_375x667.png
+command: MODE=cjxl cargo run -p jxl-encoder --release --example auto_resample_monotonicity
