@@ -81,22 +81,28 @@ def main():
     P = lines.append
     P(f"# auto-resample monotonicity analysis — {path}")
     P("")
-    # 1. self-check
-    mism = 0; checked = 0
+    # 1. self-check: what does the default (`auto`) path actually encode?
+    #    libjxl rule on  -> byte-identical to the res2 row at t = d*0.25+0.25
+    #    one regime      -> byte-identical to the full-res row at the same d
+    n_res2 = n_full = n_neither = checked = 0
     for key, rs in by.items():
         res2 = {round(r["d_req"], 4): r for r in rs if r["mode"] == "res2"}
+        full = {round(r["d_req"], 4): r for r in rs if r["mode"] == "full"}
         for a in (r for r in rs if r["mode"] == "auto"):
-            twin = res2.get(round(a["d_internal"], 4))
-            if twin is None:
-                continue
+            t2 = res2.get(round(a["d_internal"], 4))
+            tf = full.get(round(a["d_req"], 4))
             checked += 1
-            if twin["sha16"] != a["sha16"] or twin["bytes"] != a["bytes"]:
-                mism += 1
-                P(f"- SELF-CHECK MISMATCH {key} d={a['d_req']}: auto {a['bytes']}B/{a['sha16']} vs res2(t={a['d_internal']}) {twin['bytes']}B/{twin['sha16']}")
-    P(f"## 1. self-check: {checked} auto/res2 twins compared, {mism} mismatches")
+            if t2 is not None and t2["sha16"] == a["sha16"] and t2["bytes"] == a["bytes"]:
+                n_res2 += 1
+            elif tf is not None and tf["sha16"] == a["sha16"] and tf["bytes"] == a["bytes"]:
+                n_full += 1
+            else:
+                n_neither += 1
+                P(f"- SELF-CHECK MISMATCH {key} d={a['d_req']}: auto {a['bytes']}B/{a['sha16']} matches neither res2(t={a['d_internal']}) nor full(d)")
+    P(f"## 1. self-check: {checked} auto rows — {n_res2} ≡ res2 twin (libjxl rule ON), {n_full} ≡ full-res row (one regime), {n_neither} match neither")
     P("")
     # 2. default ladder monotonicity + cliff
-    P("## 2. default ladder (full below d=10, auto at d>=10): byte/quality monotonicity")
+    P("## 2. default ladder (full below d=10, whatever `auto` encodes at d>=10): byte/quality monotonicity")
     P("")
     P("| image | class | e | bytes(9.9) | bytes(10) | Δbytes@switch | byte↑ steps | bfly(9.9) | bfly(10) | ssim2(9.9) | ssim2(10) | quality↑ steps (bfly/ssim2) |")
     P("|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
