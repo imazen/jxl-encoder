@@ -52,12 +52,37 @@ zenyuv (already an optional dep of this crate, feature `chroma-subsampling`)
 
 zenresize is a separable-filter image resizer (`resize_rgba8`, filter kernels,
   SIMD). Two reasons it does not apply: (1) the JXL sharper kernel is NOT
-  separable -- SVD of the 12x12 gives singular values
-  [0.966, 0.076, 0.026, ...], 99.30 % rank-1 energy, so a separable
-  approximation is close but NOT exact and we require bit-exactness with
-  libjxl; (2) the iterative step is not a resize at all, it is an inverse
-  problem against a specific upsampler. zenresize carries no adjoint or
-  iterative machinery.
+  separable, and it fails on plain ACCURACY, long before any bit-exactness
+  policy is reached -- measured max abs error of a rank-K approximation
+  against the full 2D kernel on a real 512x512 plane:
+      rank 1 (24 taps, 6x cheaper): 2.46e-01   catastrophic
+      rank 2 (48 taps, 3x cheaper): 1.47e-01   catastrophic
+      rank 3 (72 taps, 2x cheaper): 5.23e-03   visible (~1.3/255)
+      rank 4 (96 taps, 1.5x)      : 4.62e-03   visible
+      rank 6 (144 taps, no saving): 2.66e-15   exact
+  The "99.30 % rank-1 energy" figure is a TRAP: energy is dominated by the
+  central positive lobe, while the sharpening behaviour lives in the small
+  negative lobes (-0.163, -0.017) that a low-rank fit destroys first. You must
+  reach essentially full rank to be correct, at which point there is no saving.
+  (2) the iterative step is not a resize at all, it is an inverse problem
+  against a specific upsampler; zenresize carries no adjoint machinery.
+
+IS BIT-EXACTNESS WITH libjxl ACTUALLY REQUIRED? Checked rather than assumed:
+  - The Libjxl BYTE-LOCK never reached the resampling path. Its 10 cells sit at
+    d in {0.5, 1, 2, 4} and auto-resample fires at d >= 10, so the
+    `EncoderStrategy::Libjxl` parity CLAIM covered resampled encodes while no
+    test did. That gap is now closed by an 11th cell
+    (`gradient_rgb_64x64_e7_d12_resampled`).
+  - The 7 `_r*_` hash-lock cells pin OUR output for determinism, not libjxl
+    parity; they are regenerable.
+  So bit-exactness is not demanded by any pre-existing test. It is worth having
+  for three reasons: it is the oracle that caught the f32::MIN defect; it backs
+  the Libjxl-parity claim at d >= 10 that is now actually tested; and strict
+  summation order keeps results identical across ISAs, avoiding more per-arch
+  hash-lock variants (issue #70). Crucially it costs nothing here: padding +
+  vectorising ACROSS OUTPUT PIXELS keeps each pixel's 144-tap order unchanged,
+  so the fast path stays bit-exact. Bit-exactness never had to be traded away;
+  separability was ruled out by accuracy alone.
 
 sharpyuv (libwebp) is the same family as zenyuv and is also foreign codec
   software, which the workspace rules exclude from imazen pipelines anyway.

@@ -34,7 +34,8 @@
 //!
 //! ## Coverage
 //!
-//! 10 cells span the matrix of (effort × distance × content × layout):
+//! 11 cells span the matrix of (effort × distance × content × layout), the
+//! last of which reaches the auto-resample path at d >= 10:
 //! - 5 synthetic gradient cells: e3/e5/e7 × d=1.0/d=4.0/d=0.5 (covers the
 //!   Section A `cfl_two_pass` / `try_dct64` / `epf_dynamic_sharpness`
 //!   effort-gate flips)
@@ -79,6 +80,19 @@ use std::path::PathBuf;
 
 /// 32x32 RGB gradient (R=x, G=y, B=128) as sRGB u8. Mirrors the shape used
 /// in [`strategy_libjxl_hash_locks`] for cross-test consistency.
+fn gradient_rgb_64x64() -> Vec<u8> {
+    let (w, h) = (64usize, 64usize);
+    let mut px = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            px.push(((x * 255) / w) as u8);
+            px.push(((y * 255) / h) as u8);
+            px.push(((x ^ y) & 0xFF) as u8);
+        }
+    }
+    px
+}
+
 fn gradient_rgb_32x32() -> Vec<u8> {
     let (w, h) = (32, 32);
     let mut out = vec![0u8; w * h * 3];
@@ -189,6 +203,23 @@ fn byte_lock_cells() -> Vec<ByteLockCell> {
             distance: 4.0,
             effort: 7,
             generator: gradient_rgb_32x32,
+        },
+        // Cluster B2: the RESAMPLING path. `EncoderStrategy::Libjxl` keeps
+        // libjxl's auto-resample rule, so d >= 10 engages the 2x sharper
+        // downsampler and an `upsampling = 2` frame header. Every other cell
+        // here sits at d <= 4, so before this one the Libjxl-parity CLAIM
+        // covered the resampling path while no lock ever reached it — found
+        // while making that kernel bit-exact with libjxl (issue #102). 64x64
+        // keeps the odd-dimension question out of scope; that is pinned
+        // separately in `resampling_odd_dims*.rs`.
+        ByteLockCell {
+            name: "gradient_rgb_64x64_e7_d12_resampled",
+            width: 64,
+            height: 64,
+            layout: PixelLayout::Rgb8,
+            distance: 12.0,
+            effort: 7,
+            generator: gradient_rgb_64x64,
         },
         // Cluster C: noise (high-frequency) × effort sweep
         ByteLockCell {
