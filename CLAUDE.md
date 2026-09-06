@@ -854,6 +854,59 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-09-06: our `DownsampleImage2_Sharper` port is ~35 % worse than libjxl's (2x resampling floor at effort <= 9)
+
+**Status**: [PROVEN] by differential validation against `cjxl v0.11.1`; localised
+to the sharper KERNEL, not the effort gate and not the encode. No fix applied.
+
+**Evidence** (same image + crop: imazen-26 `renders` abstract-flower-render,
+1024 centre crop; `--resampling=2`, d=0.5; butteraugli at FULL resolution via
+jxl-oxide linear decode, scorer cross-validated bit-identically against
+`examples/distance_targeting_probe`):
+
+| | sharper | iterative |
+|---|--:|--:|
+| cjxl v0.11.1 | 6.3714 (e7) | 6.3521 (e10) |
+| ours | **8.5834** (computed floor) / 8.4365 (achieved e7) | 6.5095 (computed floor) |
+
+libjxl's two kernels agree to 0.3 %. Ours differ by 32 %, and our ITERATIVE port
+is faithful (6.51 vs libjxl 6.35, 2.4 % apart). So the defect is in
+`sharper_downsample_2x_plane`, which is the kernel used at every effort <= 9.
+
+**Ruled out [PROVEN]**: an effort-gate mis-port. libjxl gates iterative on
+`cparams.speed_tier <= SpeedTier::kGlacier` and the enum is INVERTED
+(`common.h`: kTectonicPlate=-1, kGlacier=0, kTortoise=1, kKitten=2,
+kSquirrel=3), so `<= kGlacier` is effort 10-11 ONLY — the same as our
+`effort >= 10`. cjxl `-e 7` is kSquirrel and therefore uses Sharper, and still
+beats us. Also ruled out: the encode being the limiter — our achieved 2x
+(8.4365) sits at our own computed sharper floor (8.5834).
+
+**Scope**: 8-image differential, median floor ratio ours/cjxl **1.095**, worst
+1.324, better on 1/8 (`benchmarks/libjxl_resample_differential_2026-09-06.md`).
+Effort >= 8 (the buttloop) was NOT differentially tested, so a loop-specific 2x
+defect would be invisible in that report.
+
+**Impact is bounded**, which is why this is filed rather than fixed: the zen
+default is never-resample (user directive, same date), so this reaches only
+`EncoderStrategy::Libjxl` at d >= 10 and callers who set `with_resampling(2)`
+explicitly at effort <= 9. It does NOT overturn the "2x is essentially never
+worth choosing" result: substituting libjxl's better downsampler moves the win
+rate from 2/80 to 3/80 quality points.
+
+**Caveat this places on the #101 sweep**: `benchmarks/resample_admissibility_
+2026-09-06.*` drove its 2x regime through this defective kernel at e5/e8, so the
+ACHIEVED 2x quality there is pessimistic by ~9.5 % median. The soundness
+analysis is unaffected (it uses the iterative floor, which is faithful), and the
+0.08 % oracle headline is unaffected in direction per the 2/80 vs 3/80 check.
+
+**A corpus trap found while doing this**: 4 of the 43 images in
+`benchmarks/lossless_bench_set_2026-06-10.tsv` carry an `iCCP` chunk (2
+mobile-screenshots, 2 photos-png). cjxl honours it, our probe reads PNG as raw
+RGB8 and ignores it, which pinned one image's cjxl butteraugli at a constant
+~12.6 regardless of bitrate and inverted its result until the chunk was
+stripped. Strip ICC before any cross-encoder comparison on this corpus.
+
+
 ### ACTIVE 2026-09-06: the d>=3.5 screenshot qf-seed lift breaks distance targeting (and therefore monotonicity) on graphics/document content
 
 **Status**: [PROVEN] mechanism + prevalence measured; NO fix applied (the gate
