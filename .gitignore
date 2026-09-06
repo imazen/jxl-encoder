@@ -84,3 +84,6 @@ benchmarks/**/*.png
 
 # In-progress sweep outputs (harnesses rename .partial -> final on completion)
 *.tsv.partial
+
+# Pinned CI reference tools and their source/build cache
+.ci-libjxl/

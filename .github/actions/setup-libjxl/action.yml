@@ -1,0 +1,84 @@
+name: Set up libjxl reference tools
+description: Provide pinned v0.12 cjxl and djxl for reference tests, including cross containers.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v6
+      id: tools
+      with:
+        path: .ci-libjxl/tools
+        key: libjxl-v0.12.0-${{ runner.os }}-${{ runner.arch }}-v1
+
+    - name: Download static Linux x64 reference tools
+      if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Linux' && runner.arch == 'X64'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p .ci-libjxl/tools
+        sudo apt-get update
+        sudo apt-get install -y lzip
+        curl --fail --location --retry 3 https://github.com/libjxl/libjxl/releases/download/v0.12.0/jxl-linux-x86_64-static.tar.lz -o .ci-libjxl/linux.tar.lz
+        echo '5318a1ea40adad76d023e0c17a03d4627f8282f83cb2b575e69be8e74f1ff456  .ci-libjxl/linux.tar.lz' | sha256sum --check
+        tar --lzip -xf .ci-libjxl/linux.tar.lz -C .ci-libjxl/tools
+
+    - name: Download static Windows reference tools
+      if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force .ci-libjxl/tools | Out-Null
+        Invoke-WebRequest https://github.com/libjxl/libjxl/releases/download/v0.12.0/jxl-x64-windows-static.zip -OutFile .ci-libjxl/windows.zip
+        $digest = (Get-FileHash .ci-libjxl/windows.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($digest -ne '3025d7e308390796d20492322e606bc92decaee7b6bc99d3f7547870ae5db7de') { throw 'libjxl archive checksum mismatch' }
+        Expand-Archive .ci-libjxl/windows.zip -DestinationPath .ci-libjxl/tools
+
+    - name: Check out pinned source for macOS and Linux ARM
+      if: steps.tools.outputs.cache-hit != 'true' && (runner.os == 'macOS' || (runner.os == 'Linux' && runner.arch == 'ARM64'))
+      uses: actions/checkout@v7
+      with:
+        repository: libjxl/libjxl
+        ref: v0.12.0
+        path: .ci-libjxl/source
+        submodules: recursive
+        persist-credentials: false
+
+    - name: Build reference tools for macOS and Linux ARM
+      if: steps.tools.outputs.cache-hit != 'true' && (runner.os == 'macOS' || (runner.os == 'Linux' && runner.arch == 'ARM64'))
+      shell: bash
+      run: |
+        set -euo pipefail
+        nice -n 19 cmake -S .ci-libjxl/source -B .ci-libjxl/build \
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF \
+          -DJPEGXL_ENABLE_TOOLS=ON -DJPEGXL_ENABLE_BENCHMARK=OFF \
+          -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_JNI=OFF \
+          -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SJPEG=OFF \
+          -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF \
+          -DJPEGXL_BUNDLE_LIBPNG=ON -DJPEGXL_ENABLE_SKCMS=ON
+        nice -n 19 cmake --build .ci-libjxl/build --target cjxl djxl --parallel 4
+        mkdir -p .ci-libjxl/tools
+        cp .ci-libjxl/build/tools/cjxl .ci-libjxl/build/tools/djxl .ci-libjxl/tools/
+
+    - name: Verify versions and export reference paths
+      shell: bash
+      run: |
+        set -euo pipefail
+        for tool in cjxl djxl; do
+          suffix=''
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
+          matches=()
+          while IFS= read -r match; do matches+=("$match"); done < <(find "$PWD/.ci-libjxl/tools" -type f -name "$tool$suffix")
+          if [[ ${#matches[@]} != 1 ]]; then echo "Expected one $tool, found ${#matches[@]}" >&2; exit 1; fi
+          tool_path="${matches[0]}"
+          version=$("$tool_path" --version 2>&1)
+          echo "$version"
+          if [[ "$version" != *v0.12.* ]]; then echo 'Incorrect libjxl version' >&2; exit 1; fi
+          if [[ "$RUNNER_OS" == Windows ]]; then tool_path=$(cygpath -m "$tool_path"); fi
+          if [[ "$tool" == cjxl ]]; then key=CJXL_PATH; else key=DJXL_PATH; fi
+          echo "$key=$tool_path" >> "$GITHUB_ENV"
+        done
+        mkdir -p "$HOME/tmp/jxl-encoder-reference-tests"
+        scratch_path="$HOME/tmp/jxl-encoder-reference-tests"
+        if [[ "$RUNNER_OS" == Windows ]]; then scratch_path=$(cygpath -m "$scratch_path"); fi
+        for key in TMPDIR TMP TEMP JXL_CROSS_TEST_TMP; do
+          echo "$key=$scratch_path" >> "$GITHUB_ENV"
+        done
+        echo "JXL_ENCODER_OUTPUT_DIR=$scratch_path/output/jxl-encoder" >> "$GITHUB_ENV"

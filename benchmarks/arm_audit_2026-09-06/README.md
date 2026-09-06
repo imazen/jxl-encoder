@@ -68,3 +68,13 @@ not end-to-end before/after performance of the DCT change. Full data:
 with checksums in [fixtures.pointer.md](fixtures.pointer.md).
 
 Use `just arm-kernel-tiers-macos` and `just arm-encode-tiers-macos` to rerun.
+
+## Reference-tool CI repair
+
+After the audit rebased onto concurrent `0bdd137d`, the v0.12-only reference guard began failing in CI: no `cjxl`/`djxl` had been provisioned. Run 34033834550's expert and i686 logs show the same missing-tool cause across 20 failures. The guard remains unchanged.
+
+The new `setup-libjxl` composite action provisions [official v0.12.0 tools](https://github.com/libjxl/libjxl/releases/tag/v0.12.0): SHA-256-checked static releases for Linux x64 and Windows, and a pinned source build for macOS and Linux ARM. It verifies both tool versions, exports explicit paths, and passes paths and a mounted home-directory scratch area into cross. Windows ARM now runs tests instead of only building.
+
+On the M4 Pro, the action's source-build and export scripts completed using four nice -n19 build jobs. Both new tools report v0.12.0/a7a9c78. The source tree remained clean. The Linux release archive's digest and tool paths were verified locally; its executables were not run on this ARM Mac. Native Linux, Windows and cross-container execution are checked by CI.
+
+Workflow actionlint 1.7.12 passed; all Bash snippets passed `/bin/bash -n`, including the macOS Bash 3-compatible path collection. The two existing version-guard tests passed locally, followed by the expert library/integration invocation against the freshly built tools. [Test summary](reference_test_summary.log), [export output](jxl-reference-export-check.log), and [full capture pointers](reference_ci.pointer.md). No assertions, thresholds or ignores changed.

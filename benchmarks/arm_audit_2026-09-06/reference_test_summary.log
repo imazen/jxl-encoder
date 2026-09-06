@@ -1,0 +1,4 @@
+test test_helpers::libjxl_version_guard_tests::resolved_tools_are_the_required_version ... ok
+test test_helpers::libjxl_version_guard_tests::wrong_version_binary_is_refused ... ok
+test result: ok. 1589 passed; 0 failed; 29 ignored; 0 measured; 0 filtered out; finished in 5.75s
+test result: ok. 489 passed; 0 failed; 182 ignored; 0 measured; 0 filtered out; finished in 57.43s

@@ -5,6 +5,12 @@
 passthrough = [
     "RUST_BACKTRACE",
     "RUST_LOG",
+    "CJXL_PATH",
+    "DJXL_PATH",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "JXL_ENCODER_OUTPUT_DIR",
 ]
 # Same-path volume mounts for the sibling path-dep repos. cross mounts the
 # workspace and each *discovered package dir* into the container, but NOT
@@ -21,6 +27,7 @@ volumes = [
     "JXL_CROSS_SIBLINGS_PARENT",
     "JXL_CROSS_GP_BUTTERAUGLI",
     "JXL_CROSS_GP_DSSIM",
+    "JXL_CROSS_TEST_TMP",
 ]
 
 # i686 (32-bit x86 Linux)

@@ -40,6 +40,9 @@ jobs:
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
 
+      - name: Set up libjxl v0.12 reference tools
+        uses: ./.github/actions/setup-libjxl
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -76,8 +79,7 @@ jobs:
         include:
           - { os: ubuntu-24.04-arm, name: Linux, run_tests: true }
           - { os: macos-latest, name: macOS, run_tests: true }
-          # Windows ARM: build-only (fd-lock dev-dep doesn't compile on aarch64-windows)
-          - { os: windows-11-arm, name: "Windows ARM", run_tests: false }
+          - { os: windows-11-arm, name: "Windows ARM", run_tests: true }
           - { os: macos-26-intel, name: "macOS Intel", run_tests: true }
 
     steps:
@@ -85,6 +87,9 @@ jobs:
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
+
+      - name: Set up libjxl v0.12 reference tools
+        uses: ./.github/actions/setup-libjxl
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -120,6 +125,10 @@ jobs:
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
+
+      - name: Set up libjxl v0.12 reference tools
+        if: matrix.run_tests
+        uses: ./.github/actions/setup-libjxl
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -206,6 +215,9 @@ jobs:
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
 
+      - name: Set up libjxl v0.12 reference tools
+        uses: ./.github/actions/setup-libjxl
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -247,6 +259,9 @@ jobs:
       - uses: actions/checkout@v6
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
+
+      - name: Set up libjxl v0.12 reference tools
+        uses: ./.github/actions/setup-libjxl
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
