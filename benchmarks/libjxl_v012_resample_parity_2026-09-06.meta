@@ -1,0 +1,18 @@
+question: is our 2x resampling worse than libjxl's? (re-run of the #102
+  differential against the CORRECT reference version)
+reference: cjxl v0.12.0 4279d48, built out-of-tree with -DJPEGXL_ENABLE_OPENEXR=OFF
+  at ~/tmp/libjxl-v012-build. The earlier differential used the PACKAGED
+  /usr/bin/cjxl, which is v0.11.1 — a different version with a different
+  downsampler effort gate.
+metric: the 2x resampling FLOOR = the best butteraugli either encoder's 2x
+  regime reaches at any bitrate; min over --resampling=2 -e 7 at d in
+  {0.3, 0.5, 1}. Scored at FULL resolution on a jxl-oxide linear decode,
+  identical path for both encoders (jxlscore was cross-validated bit-identically
+  against examples/distance_targeting_probe). butteraugli_main never used.
+corpus: the same 8 centre-cropped (<=1024) images as the original differential.
+result: mean ratio ours/cjxl = 0.994 (below 1.0 = ours better), range
+  0.940-1.016. AT PARITY. The same measurement against v0.11.1 gave 1.095 and
+  was read as a ~35% defect in our port; it was measuring the version gap.
+  v0.11.x switches to the iterative downsampler between e5 and e7; v0.12
+  restricts it to speed_tier <= kGlacier (effort 10-11) and our gate matches
+  v0.12.
