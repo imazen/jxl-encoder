@@ -325,14 +325,10 @@ fn sub420_decodes_via_djxl_when_available() {
     // tree path we have locally; finally fall back to whatever's on
     // $PATH. If none of these exist, we skip via env var (caller
     // controls whether to fail).
-    let djxl_path = std::env::var("DJXL").unwrap_or_else(|_| {
-        let local = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
-        if std::path::Path::new(local).exists() {
-            local.to_string()
-        } else {
-            "djxl".to_string()
-        }
-    });
+    // Resolve through the shared helper, which accepts ONLY libjxl v0.12.
+    // A bare `djxl` off $PATH is the packaged v0.11.x build here, and a
+    // wrong-version reference silently measures the wrong thing (issue #102).
+    let djxl_path = jxl_encoder::test_helpers::djxl_path();
     // Verify the binary actually exists / runs before we encode.
     let ok = Command::new(&djxl_path).arg("--version").output().is_ok();
     if !ok {
@@ -592,14 +588,10 @@ fn sub440_encodes_and_roundtrips_via_jxl_rs() {
 #[test]
 fn sub422_and_sub440_decode_via_djxl_when_available() {
     use std::process::Command;
-    let djxl_path = std::env::var("DJXL").unwrap_or_else(|_| {
-        let local = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
-        if std::path::Path::new(local).exists() {
-            local.to_string()
-        } else {
-            "djxl".to_string()
-        }
-    });
+    // Resolve through the shared helper, which accepts ONLY libjxl v0.12.
+    // A bare `djxl` off $PATH is the packaged v0.11.x build here, and a
+    // wrong-version reference silently measures the wrong thing (issue #102).
+    let djxl_path = jxl_encoder::test_helpers::djxl_path();
     let ok = Command::new(&djxl_path).arg("--version").output().is_ok();
     if !ok {
         eprintln!(

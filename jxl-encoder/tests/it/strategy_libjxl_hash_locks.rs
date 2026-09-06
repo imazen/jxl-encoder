@@ -448,23 +448,8 @@ fn libjxl_output_decodes_via_jxl_rs_and_jxl_oxide() {
 fn libjxl_output_decodes_via_djxl() {
     use std::path::PathBuf;
 
-    let djxl_path: PathBuf = if std::process::Command::new("djxl")
-        .arg("--version")
-        .output()
-        .is_ok()
-    {
-        PathBuf::from("djxl")
-    } else {
-        let homedir = std::env::var("HOME").expect("HOME unset");
-        let candidate = PathBuf::from(format!(
-            "{homedir}/work/jxl-efforts/libjxl/build/tools/djxl"
-        ));
-        if !candidate.exists() {
-            eprintln!("djxl not found at {candidate:?} or on PATH; skipping");
-            return;
-        }
-        candidate
-    };
+    // Shared helper: libjxl v0.12 only (issue #102).
+    let djxl_path = PathBuf::from(jxl_encoder::test_helpers::djxl_path());
 
     let pixels = noise_rgb_48x48();
     let bytes = LossyConfig::new(1.0)

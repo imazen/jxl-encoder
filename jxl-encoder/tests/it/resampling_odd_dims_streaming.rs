@@ -381,28 +381,10 @@ fn issue_101_controls_even_dims_and_below_threshold() {
 #[ignore = "requires djxl (libjxl); run with --include-ignored"]
 fn issue_101_auto_resample_odd_dims_decodes_via_djxl_to_source_size() {
     use std::process::Command;
-    // First candidate that actually runs (`--version` exits 0): an
-    // explicit `DJXL_PATH`, then a PATH `djxl`, then the local libjxl
-    // build. A candidate that exists but cannot load its shared
-    // libraries is skipped, not silently trusted.
-    let candidates: Vec<String> = std::env::var("DJXL_PATH")
-        .ok()
-        .into_iter()
-        .chain([
-            "djxl".to_string(),
-            "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl".to_string(),
-        ])
-        .collect();
-    let djxl_path = candidates
-        .iter()
-        .find(|c| {
-            Command::new(c)
-                .arg("--version")
-                .output()
-                .is_ok_and(|o| o.status.success())
-        })
-        .cloned()
-        .unwrap_or_else(|| panic!("no working djxl among {candidates:?}"));
+    // Resolve through the shared helper, which accepts ONLY libjxl v0.12 and
+    // panics naming what it found otherwise. The packaged `djxl` on $PATH is
+    // v0.11.x; a wrong-version reference is worse than none (issue #102).
+    let djxl_path = jxl_encoder::test_helpers::djxl_path();
     let (w, h) = (513u32, 769u32);
     let px = fixture(w, h, 3);
     let bytes = LossyConfig::new(10.0)

@@ -328,7 +328,10 @@ fn git_head() -> String {
 
 /// `MODE=cjxl`: reference-encoder cross-check (see module docs).
 fn run_cjxl(out_dir: &Path, tag: &str, max_pixels: u64) {
-    let cjxl = std::env::var("CJXL").unwrap_or_else(|_| "cjxl".into());
+    // libjxl v0.12 only — the packaged binary is v0.11.x and switches 2x
+    // downsamplers at a different effort, which is exactly the trap that
+    // produced a bogus differential in issue #102.
+    let cjxl = jxl_encoder::test_helpers::cjxl_path();
     let version = std::process::Command::new(&cjxl)
         .arg("--version")
         .output()

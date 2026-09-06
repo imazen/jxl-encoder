@@ -10,16 +10,36 @@
 
 set -euo pipefail
 
-CJXL="${CJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/cjxl}"
-DJXL="${DJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/djxl}"
+CJXL="${CJXL_PATH:-$HOME/tmp/libjxl-v012-build/tools/cjxl}"
+DJXL="${DJXL_PATH:-$HOME/tmp/libjxl-v012-build/tools/djxl}"
+
+# This CSV is the reference EVERY quality comparison in the repo is scored
+# against, so regenerating it with the wrong libjxl silently poisons all of
+# them. v0.11.x differs from v0.12 in ways that look like defects in our port
+# (issue #102): refuse anything that is not v0.12.
+REQUIRED_LIBJXL="v0.12"
+for tool in "$CJXL" "$DJXL"; do
+  ver="$("$tool" --version 2>&1 | head -1 || true)"
+  case "$ver" in
+    *"$REQUIRED_LIBJXL"*) ;;
+    *)
+      echo "ERROR: $tool reports '${ver:-<did not run>}', need libjxl $REQUIRED_LIBJXL." >&2
+      echo "Build one (the packaged binary is the wrong version):" >&2
+      echo "  cmake -S ~/work/jxl-efforts/libjxl -B ~/tmp/libjxl-v012-build \\" >&2
+      echo "    -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=OFF -DBUILD_TESTING=OFF" >&2
+      echo "  cmake --build ~/tmp/libjxl-v012-build --target cjxl djxl -j 12" >&2
+      exit 1 ;;
+  esac
+done
+echo "reference encoder: $("$CJXL" --version 2>&1 | head -1)"
 SSIM2="${SSIMULACRA2_PATH:-$HOME/work/fast-ssim2/target/release/fast-ssim2-cli}"
 BFLY="${BUTTERAUGLI_MAIN_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/butteraugli_main}"
 
 CACHE_DIR="${JXL_ENCODER_OUTPUT_DIR:-/mnt/v/output/jxl-encoder-rs}/cjxl-reference"
-STRIP_DIR="/tmp/cjxl-ref-stripped"
-PNM_DIR="/tmp/cjxl-ref-pnm"
-DECODED_DIR="/tmp/cjxl-ref-decoded"
-TIMING_FILE="/tmp/cjxl-ref-timing.txt"
+STRIP_DIR="$HOME/tmp/cjxl-ref-stripped"
+PNM_DIR="$HOME/tmp/cjxl-ref-pnm"
+DECODED_DIR="$HOME/tmp/cjxl-ref-decoded"
+TIMING_FILE="$HOME/tmp/cjxl-ref-timing.txt"
 
 OUTCSV="reference/cjxl_reference.csv"
 

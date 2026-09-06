@@ -79,22 +79,126 @@ macro_rules! skip_without_binary {
 /// historical libjxl build whose OpenEXR 2.5 shared libs left the system, so
 /// existence checks pass while every invocation fails. Probing once per test
 /// process makes the helper immune to any single build tree rotting.
+/// The ONLY libjxl version this encoder is validated against.
+///
+/// Our port targets libjxl v0.12. Comparing against any other version silently
+/// measures the wrong thing: v0.11.x, for instance, switches to the iterative
+/// 2x downsampler between effort 5 and 7, where v0.12 restricts it to
+/// `speed_tier <= kGlacier` (effort 10-11). A differential run against a
+/// v0.11.1 binary made our (correct, v0.12-matching) resampling look ~35 %
+/// worse than libjxl; against v0.12 the same measurement is at parity
+/// (issue #102). Hence: refuse anything that is not v0.12.
+pub const REQUIRED_LIBJXL_VERSION: &str = "v0.12";
+
+/// Reports the `--version` line of a libjxl tool, or `None` if it will not run.
+fn libjxl_tool_version(path: &str) -> Option<String> {
+    let out = std::process::Command::new(path)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().next().unwrap_or_default().trim().to_string();
+    if line.is_empty() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Some(err.lines().next().unwrap_or_default().trim().to_string());
+    }
+    Some(line)
+}
+
+/// Resolve a libjxl tool, accepting ONLY [`REQUIRED_LIBJXL_VERSION`].
+///
+/// An explicit env override still wins, but is version-checked like any other
+/// candidate: a wrong-version reference is worse than no reference, because it
+/// produces a plausible number instead of an error. Panics with the versions it
+/// actually found and how to build a correct one.
 fn first_running(env_key: &str, candidates: &[&str]) -> String {
+    let mut seen: Vec<String> = Vec::new();
+    let mut check = |c: &str| -> Option<String> {
+        match libjxl_tool_version(c) {
+            Some(v) if v.contains(REQUIRED_LIBJXL_VERSION) => Some(c.to_string()),
+            Some(v) => {
+                seen.push(alloc::format!("{c}: {v}"));
+                None
+            }
+            None => {
+                seen.push(alloc::format!("{c}: does not run"));
+                None
+            }
+        }
+    };
     if let Ok(p) = std::env::var(env_key) {
-        return p; // explicit override wins unconditionally (and fails loud if broken)
+        if let Some(found) = check(&p) {
+            return found;
+        }
+        panic!(
+            "{env_key}={p} is not libjxl {REQUIRED_LIBJXL_VERSION}.\n  {}\n\
+             This encoder is validated against libjxl {REQUIRED_LIBJXL_VERSION} ONLY; a \
+             different version measures the wrong thing (issue #102).",
+            seen.join("\n  ")
+        );
     }
     for c in candidates {
-        if std::process::Command::new(c)
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return (*c).to_string();
+        if let Some(found) = check(c) {
+            return found;
         }
     }
-    // Nothing runs: return the first candidate so the caller's error names a path.
-    candidates[0].to_string()
+    panic!(
+        "no libjxl {REQUIRED_LIBJXL_VERSION} binary found. Tried:\n  {}\n\
+         Build one (the system package is the wrong version):\n  \
+         cmake -S ~/work/jxl-efforts/libjxl -B ~/tmp/libjxl-v012-build \
+         -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=OFF -DBUILD_TESTING=OFF\n  \
+         cmake --build ~/tmp/libjxl-v012-build --target cjxl djxl -j 12\n\
+         then set {env_key} to it.",
+        seen.join("\n  ")
+    );
+}
+
+#[cfg(test)]
+mod libjxl_version_guard_tests {
+    use super::*;
+
+    /// A wrong-version reference binary must be REFUSED, not silently used.
+    ///
+    /// This is the guard for issue #102: the packaged `/usr/bin/cjxl` is
+    /// v0.11.x, the old resolver took "the first candidate that runs", and a
+    /// broken in-tree build made it fall through to that one. The result was a
+    /// plausible-looking differential that measured a version difference and
+    /// was read as a defect in our port.
+    #[test]
+    fn wrong_version_binary_is_refused() {
+        for sys in ["/usr/bin/cjxl", "/usr/bin/djxl"] {
+            let Some(v) = libjxl_tool_version(sys) else {
+                continue; // not installed on this machine; nothing to guard against
+            };
+            assert!(
+                !v.contains(REQUIRED_LIBJXL_VERSION),
+                "{sys} reports {v}, which IS the required version — this test \
+                 assumes the packaged binary is the wrong one; re-point it"
+            );
+            let r = std::panic::catch_unwind(|| first_running("__JXL_NO_SUCH_ENV__", &[sys]));
+            assert!(
+                r.is_err(),
+                "{sys} reports {v} but the resolver accepted it; a wrong-version \
+                 reference must panic, not be used"
+            );
+        }
+    }
+
+    /// Whatever the resolver DOES return must be the required version.
+    #[test]
+    fn resolved_tools_are_the_required_version() {
+        for (name, path) in [("cjxl", cjxl_path()), ("djxl", djxl_path())] {
+            let v = libjxl_tool_version(&path)
+                .unwrap_or_else(|| panic!("{name} resolved to {path}, which does not run"));
+            assert!(
+                v.contains(REQUIRED_LIBJXL_VERSION),
+                "{name} resolved to {path} reporting {v}, not {REQUIRED_LIBJXL_VERSION}"
+            );
+        }
+    }
 }
 
 /// Returns the path to the djxl binary.
@@ -106,9 +210,13 @@ pub fn djxl_path() -> String {
         first_running(
             "DJXL_PATH",
             &[
+                // v0.12 out-of-tree build (see the panic message in
+                // `first_running` for how to produce it) FIRST; the in-tree
+                // build second. `/usr/bin` is deliberately absent: the
+                // packaged binary is v0.11.x and must never be selected.
+                "/home/lilith/tmp/libjxl-v012-build/tools/djxl",
                 "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
                 "/home/lilith/work/libjxl-build/tools/djxl",
-                "/usr/bin/djxl",
             ],
         )
     })
@@ -124,9 +232,12 @@ pub fn cjxl_path() -> String {
         first_running(
             "CJXL_PATH",
             &[
+                // v0.12 out-of-tree build first; in-tree build second.
+                // `/usr/bin` is deliberately absent: the packaged binary is
+                // v0.11.x and must never be selected (issue #102).
+                "/home/lilith/tmp/libjxl-v012-build/tools/cjxl",
                 "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl",
                 "/home/lilith/work/libjxl-build/tools/cjxl",
-                "/usr/bin/cjxl",
             ],
         )
     })

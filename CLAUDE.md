@@ -10,6 +10,33 @@ correctness verification, but is no longer the reference for quality comparisons
 
 ## Reference Implementations
 
+> **THE REFERENCE IS libjxl v0.12, AND ONLY v0.12 (user directive 2026-09-06).**
+> Never compare against v0.11.x. The packaged `/usr/bin/cjxl` and `/usr/bin/djxl`
+> on this box are **v0.11.1** and must never be used as a reference: v0.11.x
+> switches to the iterative 2x downsampler between effort 5 and 7, where v0.12
+> restricts it to `speed_tier <= kGlacier` (effort 10-11). A differential run
+> against the packaged binary made our correct, v0.12-matching resampling look
+> ~35 % worse than libjxl; re-run against v0.12 the same measurement is at
+> parity (ours 8.4365 vs cjxl 8.4619 at e7; 6.3907 vs 6.3278 at e10) — issue
+> #102. A wrong-version reference is worse than no reference, because it yields
+> a plausible number instead of an error.
+>
+> **Build the v0.12 tools** (the in-tree `build/tools/*` cannot load
+> `libIlmImf-2_5.so.25`, which is what made the resolver fall through to the
+> packaged binary in the first place):
+> ```
+> cmake -S ~/work/jxl-efforts/libjxl -B ~/tmp/libjxl-v012-build \
+>   -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=OFF -DBUILD_TESTING=OFF
+> cmake --build ~/tmp/libjxl-v012-build --target cjxl djxl -j 12
+> ```
+> **Enforcement**: `jxl_encoder::test_helpers::{cjxl_path, djxl_path}` accept
+> only `REQUIRED_LIBJXL_VERSION` and panic naming every candidate and its
+> version otherwise; `/usr/bin` is deliberately absent from their candidate
+> lists. `scripts/generate_cjxl_reference.sh` refuses to regenerate the
+> committed reference CSV with anything else. Pinned by
+> `test_helpers::libjxl_version_guard_tests`. Resolve every new cjxl/djxl call
+> site through those helpers — never `Command::new("cjxl")`.
+
 - **libjxl (C++)**: `~/work/jxl-efforts/libjxl` - **PRIMARY** reference encoder/decoder
   - Use cjxl for quality comparisons and RD benchmarks
   - Use djxl for decode verification
@@ -854,10 +881,21 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### ACTIVE 2026-09-06: our `DownsampleImage2_Sharper` port is ~35 % worse than libjxl's (2x resampling floor at effort <= 9)
+### RESOLVED 2026-09-06: the "our sharper port is ~35 % worse" finding was a VERSION artifact; a real (small) port bug was found and fixed
 
-**Status**: [PROVEN] by differential validation against `cjxl v0.11.1`; localised
-to the sharper KERNEL, not the effort gate and not the encode. No fix applied.
+**Status**: RESOLVED. The differential was run against the WRONG libjxl
+(`cjxl v0.11.1`, the packaged binary). Re-run against **v0.12**, the version we
+actually target, our 2x resampling is at parity: e7 ours 8.4365 vs cjxl 8.4619
+(ours 0.3 % better), e10 ours 6.3907 vs cjxl 6.3278 (ours 1.0 % worse). There is
+no ~35 % gap. v0.11.x switches to the iterative downsampler between e5 and e7;
+v0.12 restricts it to `speed_tier <= kGlacier` and OUR GATE MATCHES v0.12.
+A real but SMALL port bug was found on the way and IS fixed (`a75655f4`): the
+ringing clamp seeded its upper bound with Rust's `f32::MIN` where libjxl uses
+C++ `numeric_limits<float>::min()` (the smallest POSITIVE normal). Now bit-exact
+against golden vectors from the linked C function; measured effect on real
+content is 0.00 % (20 floors, 10 images), so it is a correctness/parity fix.
+The tooling hole that caused the whole detour is closed: see the v0.12-only
+rule under "Reference Implementations".
 
 **Evidence** (same image + crop: imazen-26 `renders` abstract-flower-render,
 1024 centre crop; `--resampling=2`, d=0.5; butteraugli at FULL resolution via
