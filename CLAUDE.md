@@ -1228,6 +1228,12 @@ measurement at equal or better coverage.
   the 2026-06-10 A/B. (issue #43 chunk 2c, ae62c219)
 
 **Resampling / regime switch**
+- **USER DIRECTIVE 2026-09-06: the default is NEVER resample.** Confirmed after
+  the measurement below. Do not re-enable auto-resampling on the zen strategies,
+  and do not reopen this as a byte-saving idea — the upside was measured at
+  0.08 % with perfect knowledge. `EncoderStrategy::Libjxl` keeps libjxl's rule
+  for parity, and explicit `with_resampling(N)` / `with_auto_resampling(true)`
+  remain available to callers who want it.
 - **2× resampling is not worth enabling on real content, and the ceiling on
   that judgement is measured, not argued** (#101, 2026-09-06,
   `benchmarks/resample_admissibility_2026-09-06.*`, harness
