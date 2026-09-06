@@ -470,7 +470,15 @@ fn sharper_downsample_2x_plane(
             // directly under the output pixel (matches libjxl's R=5
             // restriction).
             let mut mn = f32::MAX;
-            let mut mx = f32::MIN;
+            // libjxl seeds this with `std::numeric_limits<float>::min()`,
+            // which in C++ is the smallest POSITIVE normal (~1.18e-38), NOT
+            // the most negative float. Rust's `f32::MIN` is the most negative
+            // one, and using it here tightened the ringing clamp's upper bound
+            // everywhere the opsin plane is negative — most of the X and B
+            // channels — costing ~35 % on the 2x resampling floor (issue #102).
+            // `f32::MIN_POSITIVE` is the faithful transcription; pinned
+            // bit-exactly by `sharper_downsample_2x_is_bit_exact_with_libjxl`.
+            let mut mx = f32::MIN_POSITIVE;
             for ky in SHARPER_KERNEL_BOUND_R as i64..(kernel_dim - SHARPER_KERNEL_BOUND_R as i64) {
                 let iy = clamp_idx(oy as i64 * 2 + ky - half, ysize);
                 let row = iy * width;
@@ -1365,6 +1373,221 @@ mod tests {
             max_delta > 1e-3,
             "opsin-domain sharper must differ from the linear-RGB one on \
              structured colour (max |Δ| {max_delta:.3e})"
+        );
+    }
+
+    /// Our opsin transform must agree with libjxl's `LinearRGBRowToXYB`.
+    ///
+    /// The resampling kernels run IN the opsin domain, so if our opsin differs
+    /// from libjxl's the same kernel operates on different data and no amount
+    /// of kernel-level bit-exactness makes the results comparable. Goldens in
+    /// `testdata/linear_rgb_to_xyb_golden_libjxl.txt` come from linking
+    /// libjxl's real `jxl::LinearRGBRowToXYB` at `intensity_target = 255`
+    /// (generator committed beside them). Issue #102.
+    #[test]
+    fn opsin_transform_agrees_with_libjxl() {
+        let golden = include_str!("../../testdata/linear_rgb_to_xyb_golden_libjxl.txt");
+        let mut lines = golden.lines().filter(|l| !l.trim().is_empty());
+        let hdr: Vec<&str> = lines.next().unwrap().split_whitespace().collect();
+        assert_eq!(hdr[0], "XYB");
+        let n: usize = hdr[1].parse().unwrap();
+        let parse3 = |l: &str| -> [f32; 3] {
+            let v: Vec<f32> = l
+                .split_whitespace()
+                .map(|h| f32::from_bits(u32::from_str_radix(h, 16).unwrap()))
+                .collect();
+            [v[0], v[1], v[2]]
+        };
+        let mut rgb = alloc::vec![0.0_f32; n * 3];
+        for i in 0..n {
+            let px = parse3(lines.next().unwrap());
+            rgb[i * 3] = px[0];
+            rgb[i * 3 + 1] = px[1];
+            rgb[i * 3 + 2] = px[2];
+        }
+        assert_eq!(lines.next().unwrap().trim(), "OUT");
+        let (gx, gy, gb): (Vec<f32>, Vec<f32>, Vec<f32>) = {
+            let (mut a, mut b, mut c) = (alloc::vec![], alloc::vec![], alloc::vec![]);
+            for _ in 0..n {
+                let px = parse3(lines.next().unwrap());
+                a.push(px[0]);
+                b.push(px[1]);
+                c.push(px[2]);
+            }
+            (a, b, c)
+        };
+        let (ox, oy, ob) = to_opsin_planes(&rgb, n);
+        let mut worst = 0.0_f32;
+        let mut worst_desc = alloc::string::String::new();
+        for (name, ours, theirs) in [("X", &ox, &gx), ("Y", &oy, &gy), ("B", &ob, &gb)] {
+            for i in 0..n {
+                let d = (ours[i] - theirs[i]).abs();
+                if d > worst {
+                    worst = d;
+                    worst_desc =
+                        alloc::format!("{name}[{i}] ours {} vs libjxl {}", ours[i], theirs[i]);
+                }
+            }
+        }
+        assert!(
+            worst < 1e-5,
+            "opsin transform diverges from libjxl by {worst:e} ({worst_desc}) — the \
+             resampling kernels run in this domain, so a divergence here makes \
+             kernel-level bit-exactness meaningless"
+        );
+    }
+
+    /// The opsin round-trip our resampling path performs must be lossless.
+    ///
+    /// libjxl downsamples the opsin (XYB) image IN PLACE and hands it straight
+    /// to the encoder. We instead convert linear RGB -> opsin, downsample,
+    /// convert back to linear RGB, and let the encoder re-derive opsin. That
+    /// extra `inverse_xyb -> forward_xyb` hop is only free if it is an
+    /// identity; if it clamps or loses precision, every resampled encode pays
+    /// for it and no kernel fix can recover the loss (issue #102).
+    #[test]
+    fn opsin_round_trip_is_lossless_over_the_resampling_path() {
+        let n = 4096;
+        let mut state = 0x1234_5678_u32;
+        let mut rgb = alloc::vec![0.0_f32; n * 3];
+        for v in rgb.iter_mut() {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            // Linear-light values, including the very dark end where the
+            // opsin cube root and its inverse are most sensitive.
+            *v = (state >> 8) as f32 * (1.0 / 16_777_216.0);
+        }
+        let (x, y, b) = to_opsin_planes(&rgb, n);
+        let back = from_opsin_planes(&x, &y, &b, n, None).expect("inverse opsin");
+        let mut worst = 0.0_f32;
+        let mut worst_at = (0usize, 0.0_f32, 0.0_f32);
+        for i in 0..n * 3 {
+            let d = (back[i] - rgb[i]).abs();
+            if d > worst {
+                worst = d;
+                worst_at = (i, rgb[i], back[i]);
+            }
+        }
+        assert!(
+            worst < 1e-4,
+            "opsin round-trip is NOT an identity: worst abs error {worst:e} at index {} \
+             ({} -> {}). Every resampled encode pays this before the kernel runs.",
+            worst_at.0,
+            worst_at.1,
+            worst_at.2,
+        );
+    }
+
+    /// PAIRED bit-exactness test against libjxl's own
+    /// `DownsampleImage2_Sharper` (`enc_heuristics.cc`).
+    ///
+    /// The golden vectors in `testdata/sharper_downsample2x_golden_libjxl.txt`
+    /// were produced by LINKING the real `jxl::DownsampleImage2_Sharper(
+    /// Image3F*)` out of libjxl v0.12 and dumping raw f32 bits; the generator
+    /// is committed beside them as `..._golden_gen.cc`. The input is
+    /// procedural and this function reproduces it bit-for-bit, so the test
+    /// needs no stored inputs.
+    ///
+    /// Plane 0 is deliberately ALL NEGATIVE. That is the case that caught the
+    /// original port defect: libjxl seeds the ringing clamp's upper bound with
+    /// `std::numeric_limits<float>::min()`, which in C++ is the smallest
+    /// POSITIVE normal (~1.18e-38), not the most negative float. Rust's
+    /// `f32::MIN` *is* the most negative float, so the obvious transcription
+    /// silently tightened the clamp everywhere the opsin plane is negative —
+    /// which for the X and B channels is most of the image (issue #102).
+    #[test]
+    fn sharper_downsample_2x_is_bit_exact_with_libjxl() {
+        // Mirror of `gen_px` / `map_c` in the committed C++ generator.
+        fn next_u(state: &mut u32) -> f32 {
+            *state ^= *state << 13;
+            *state ^= *state >> 17;
+            *state ^= *state << 5;
+            (*state >> 8) as f32 * (1.0 / 16_777_216.0)
+        }
+        fn map_c(c: usize, u: f32) -> f32 {
+            match c {
+                0 => -1.0 + u * 0.99, // all negative
+                1 => u,
+                _ => u - 0.5,
+            }
+        }
+        fn seed(w: usize, h: usize, c: usize) -> u32 {
+            let s = 0x9E37_79B9_u32
+                ^ (w as u32).wrapping_mul(73_856_093)
+                ^ (h as u32).wrapping_mul(19_349_663)
+                ^ (c as u32).wrapping_mul(83_492_791);
+            if s == 0 { 1 } else { s }
+        }
+
+        let golden = include_str!("../../testdata/sharper_downsample2x_golden_libjxl.txt");
+        let mut lines = golden
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty());
+        let mut shapes_checked = 0usize;
+        let mut values_checked = 0usize;
+        while let Some(header) = lines.next() {
+            let f: Vec<&str> = header.split_whitespace().collect();
+            let hashed = match f[0] {
+                "SHAPE" => false,
+                "HASH" => true,
+                other => panic!("expected SHAPE/HASH header, got {other:?} in {header:?}"),
+            };
+            let (w, h): (usize, usize) = (f[1].parse().unwrap(), f[2].parse().unwrap());
+            let (out_w, out_h): (usize, usize) = (f[3].parse().unwrap(), f[4].parse().unwrap());
+            assert_eq!((out_w, out_h), (w.div_ceil(2), h.div_ceil(2)));
+            // Large shapes are pinned by an FNV-1a 64 digest instead of literal
+            // values so scale coverage costs a line rather than a megabyte.
+            let mut fnv: u64 = 0xcbf2_9ce4_8422_2325;
+            for c in 0..3 {
+                let mut st = seed(w, h, c);
+                let plane: Vec<f32> = (0..w * h).map(|_| map_c(c, next_u(&mut st))).collect();
+                let mut ours = alloc::vec![0.0_f32; out_w * out_h];
+                sharper_downsample_2x_plane(&plane, w, h, &mut ours, out_w, out_h);
+                if hashed {
+                    for got in ours.iter() {
+                        for k in 0..4 {
+                            fnv ^= ((got.to_bits() >> (8 * k)) & 0xff) as u64;
+                            fnv = fnv.wrapping_mul(0x100_0000_01b3);
+                        }
+                        values_checked += 1;
+                    }
+                    continue;
+                }
+                for (i, got) in ours.iter().enumerate() {
+                    let want_bits =
+                        u32::from_str_radix(lines.next().expect("golden truncated").trim(), 16)
+                            .expect("hex f32 bits");
+                    let want = f32::from_bits(want_bits);
+                    assert_eq!(
+                        got.to_bits(),
+                        want_bits,
+                        "{w}x{h} plane {c} index {i} ({}, {}): ours {got:e} (0x{:08x}) != libjxl \
+                         {want:e} (0x{want_bits:08x})",
+                        i % out_w,
+                        i / out_w,
+                        got.to_bits(),
+                    );
+                    values_checked += 1;
+                }
+            }
+            if hashed {
+                let want = lines
+                    .next()
+                    .expect("golden truncated: missing digest")
+                    .trim();
+                assert_eq!(
+                    alloc::format!("{fnv:016x}"),
+                    want,
+                    "{w}x{h}: FNV-1a digest of our downsample differs from libjxl's"
+                );
+            }
+            shapes_checked += 1;
+        }
+        assert_eq!(shapes_checked, 7, "expected 7 golden shapes");
+        assert!(
+            values_checked > 1000,
+            "only {values_checked} values compared"
         );
     }
 
