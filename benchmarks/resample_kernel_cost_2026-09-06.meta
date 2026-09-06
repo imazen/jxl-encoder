@@ -33,3 +33,44 @@ VERDICT: do not blanket-flip the gate. (a) the win is not universal, so a
   gate that runs both and keeps the better result, rather than a blanket flip.
   Low priority regardless: the default never resamples, so this only affects
   callers who explicitly ask for with_resampling(N) at effort <= 9.
+
+REUSE STUDY (2026-09-06): can zenyuv / zenresize / sharpyuv supply this?
+
+zenyuv (already an optional dep of this crate, feature `chroma-subsampling`)
+  ships Sharp YUV: an L2-optimal Newton-step refinement of Cb/Cr on the 4:2:0
+  grid, with AVX2/NEON/WASM SIMD. Same FAMILY as the iterative downsampler --
+  refine the downsampled data so the decoder's upsample reconstructs better --
+  but the SOLVER DOES NOT TRANSFER. zenyuv's model upsamples chroma
+  nearest-neighbour from the 4:2:0 grid (`sharp.rs`: "nearest-neighbor to the
+  co-sited position"), which makes every 2x2 block INDEPENDENT; that
+  independence is the entire reason a closed-form per-block Newton step is
+  valid and fast. JXL's decoder upsampler is a 5x5 per-phase kernel, so one
+  downsampled pixel affects a 5x5 neighbourhood of outputs and neighbouring
+  blocks are COUPLED. A per-block Newton step is simply not correct there,
+  which is why libjxl solves it as 3 global adjoint-gradient rounds instead.
+  Not copy-pasteable; the shared part is the idea, not the code.
+
+zenresize is a separable-filter image resizer (`resize_rgba8`, filter kernels,
+  SIMD). Two reasons it does not apply: (1) the JXL sharper kernel is NOT
+  separable -- SVD of the 12x12 gives singular values
+  [0.966, 0.076, 0.026, ...], 99.30 % rank-1 energy, so a separable
+  approximation is close but NOT exact and we require bit-exactness with
+  libjxl; (2) the iterative step is not a resize at all, it is an inverse
+  problem against a specific upsampler. zenresize carries no adjoint or
+  iterative machinery.
+
+sharpyuv (libwebp) is the same family as zenyuv and is also foreign codec
+  software, which the workspace rules exclude from imazen pipelines anyway.
+
+WHERE THE SPEED ACTUALLY IS: the current scalar kernel runs at 0.44 GFLOP/s
+  (0.26 MP out x 144 taps = 75 MFLOP in 173 ms), 20-100x off a single core's
+  scalar peak. The inner loop calls `clamp_idx` PER TAP -- 144 edge clamps per
+  output pixel -- which is exactly what this repo's own "Buffer Padding Rule"
+  forbids ("pad and align buffers upfront with edge replication rather than
+  adding bounds checks throughout"). Pad the plane once with edge replication,
+  drop the clamp from the interior loop, then vectorise ACROSS OUTPUT PIXELS
+  (one lane per output pixel, tap order unchanged per pixel) so the float
+  summation order is preserved and the libjxl bit-exactness lock still holds.
+  That is the cheap, correctness-preserving win; do it before revisiting the
+  kernel-choice policy, because today keep-best would double a cost that is
+  already 6.5x the encode.
