@@ -1201,6 +1201,30 @@ measurement at equal or better coverage.
   the 2026-06-10 A/B. (issue #43 chunk 2c, ae62c219)
 
 **Resampling / regime switch**
+- **2× resampling is not worth enabling on real content, and the ceiling on
+  that judgement is measured, not argued** (#101, 2026-09-06,
+  `benchmarks/resample_admissibility_2026-09-06.*`, harness
+  `examples/resample_admissibility`): over the 43-image imazen-26 stratified
+  pick list (23 strata × sizes {512,1024} × e5/e8 × 13 distances = 2236
+  decision cells), a PERFECT ORACLE that picks the cheaper regime per cell at
+  matched butteraugli saves **0.08 % of corpus bytes**. Only 3 % of cells are
+  admissible at all; 72 % are UNREACHABLE (2× cannot deliver the requested
+  quality at any bitrate, because quality saturates at the resampling floor).
+  Below d=8 it is ~never admissible (98-100 % unreachable at d ≤ 5). Eight
+  strata never admit it (ai-clipart, manuscript-text, patents,
+  patents-gray-jpg, photos-nature, plots, textures, web-screenshots); the best
+  are renders 29 % and photos-png 14 %. Do NOT spend further effort trying to
+  win bytes with resampling on SDR still images — the upside does not exist.
+- **If resampling is ever enabled anyway (parity mode, explicit
+  `with_resampling`), gate it on the FLOOR, not on distance.** `floor/d` ranks
+  admissibility at AUC 0.927; a fitted logistic on 4 predictors scores 0.913
+  and adding all 101 zenanalyze features scores 0.897 — the single physical
+  quantity BEATS the learned models, so do not train a picker for this. Useful
+  form: admit only when the requested quality has ≥ 3× headroom over the floor
+  (58 % precision, mean matched-quality ratio 0.97). Safety is the real win:
+  across 2236 cells the floor gate selected **0** unreachable cells where
+  libjxl's `d >= 10` selected **468 of its 1032** (mean ratio 1.49, worst
+  7.56). Compute the floor with `__internals::resample_roundtrip_2x_rgb`.
 - libjxl's auto-resample switch (`enc_frame.cc:108-114`: d ≥ 10 → 2× +
   `d×0.25+0.25`) is OFF for Zenjxl/Aggressive/LeanFaster and ON only under
   `EncoderStrategy::Libjxl` or an explicit `with_auto_resampling(true)`

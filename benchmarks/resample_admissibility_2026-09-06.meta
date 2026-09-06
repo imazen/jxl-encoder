@@ -1,0 +1,15 @@
+harness: jxl-encoder/examples/resample_admissibility.rs
+commit: f3ccb4bea7b7
+jxl-encoder: 0.4.0
+host: dev
+tag: 2026-09-06
+picks: benchmarks/lossless_bench_set_2026-06-10.tsv (43 images, imazen-26 k-means stratified)
+size_caps (centre crop, no upscale, duplicates deduped): [512, 1024]
+efforts: [5, 8]
+D_FULL (auto off): [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 18.0, 21.0, 25.0]
+T_RES2 (explicit with_resampling(2), internal distance): [0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
+floor: __internals::resample_roundtrip_2x_rgb (opsin down->up, NO quantisation) scored vs source; kernels sharper (e<=9) + iterative (e>=10)
+metrics: jxl-oxide srgb_linear decode; butteraugli_linear (ButteraugliParams::default) at FULL resolution; fast_ssim2 compute_ssimulacra2 on sRGB u8
+ground truth: bytes_2x interpolated on the res2 bfly curve at each full-res point's bfly; admissible = ratio < 1 (matched QUALITY, never matched distance)
+image_cells: 86  encode_cells: 4644  failures: 0  wall_s: 3145
+command: EFFORTS=5,8 SIZE_CAPS=512,1024 cargo run -p jxl-encoder --release --features __internals --example resample_admissibility
