@@ -1058,22 +1058,20 @@ fn neon_dct8_batch(
 #[allow(clippy::needless_range_loop)]
 fn neon_dct16_batch(
     token: archmage::NeonToken,
-    data_in: &[f32],
-    data_out: &mut [f32],
-    base_row: usize,
-    stride: usize,
+    data_in: &[f32; 64],
+    data_out: &mut [f32; 64],
     scale: magetypes::simd::f32x4,
 ) {
     let mut v = [magetypes::simd::f32x4::zero(token); 16];
     for j in 0..16 {
-        v[j] = gather_col_neon(token, data_in, base_row, j, stride);
+        v[j] = gather_col_neon(token, data_in, 0, j, 16);
     }
     dct1d_16_batch_neon(token, &mut v);
     for j in 0..16 {
         v[j] *= scale;
     }
     for j in 0..16 {
-        scatter_col_neon(token, v[j], data_out, base_row, j, stride);
+        scatter_col_neon(token, v[j], data_out, 0, j, 16);
     }
 }
 
@@ -1088,8 +1086,13 @@ pub fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &m
     let mut tmp = crate::scratch_buf::<256>();
 
     // Pass 1: Forward DCT on rows (4 batches of 4 rows)
-    for batch in 0..4 {
-        neon_dct16_batch(token, input, &mut tmp, batch * 4, 16, scale);
+    for (src, dst) in input
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(tmp.as_chunks_mut::<64>().0)
+    {
+        neon_dct16_batch(token, src, dst, scale);
     }
 
     // Transpose 16x16
@@ -1101,8 +1104,13 @@ pub fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &m
     }
 
     // Pass 2: Forward DCT on columns (4 batches of 4 rows)
-    for batch in 0..4 {
-        neon_dct16_batch(token, &transposed, output, batch * 4, 16, scale);
+    for (src, dst) in transposed
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(output.as_chunks_mut::<64>().0)
+    {
+        neon_dct16_batch(token, src, dst, scale);
     }
 }
 
@@ -1131,8 +1139,13 @@ pub fn dct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
     }
 
     // Pass 2: 16-point DCT on 8 rows (stride 16), 2 batches of 4 rows
-    for batch in 0..2 {
-        neon_dct16_batch(token, &transposed, output, batch * 4, 16, scale16);
+    for (src, dst) in transposed
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(output.as_chunks_mut::<64>().0)
+    {
+        neon_dct16_batch(token, src, dst, scale16);
     }
 }
 
@@ -1148,8 +1161,13 @@ pub fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
     let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 16-point DCT on 8 rows (stride 16), 2 batches of 4 rows
-    for batch in 0..2 {
-        neon_dct16_batch(token, input, &mut tmp, batch * 4, 16, scale16);
+    for (src, dst) in input
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(tmp.as_chunks_mut::<64>().0)
+    {
+        neon_dct16_batch(token, src, dst, scale16);
     }
 
     // Transpose 8x16 -> 16x8
