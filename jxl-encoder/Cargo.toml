@@ -564,6 +564,13 @@ path = "examples/auto_resample_monotonicity.rs"
 name = "distance_targeting_probe"
 path = "examples/distance_targeting_probe.rs"
 
+# What the decoder-adjoint 2x downsampler costs, measured on our code rather
+# than inherited from libjxl's "80% slowdown" note.
+[[example]]
+name = "resample_kernel_cost"
+path = "examples/resample_kernel_cost.rs"
+required-features = ["__internals"]
+
 [[example]]
 name = "resample_admissibility"
 path = "examples/resample_admissibility.rs"

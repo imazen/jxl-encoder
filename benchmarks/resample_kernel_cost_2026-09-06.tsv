@@ -1,0 +1,4 @@
+image	w	h	mp	sharper_roundtrip_ms	iterative_roundtrip_ms	extra_downsample_ms	our_encode_e7_ms	extra_pct_of_encode
+9291_gen_products-beauty_bryn-birch-beard-oil	1024	1024	1.05	173.0	905.4	732.4	111.7	655.7
+1001682_cid22	512	512	0.26	41.9	224.0	182.1	33.4	545.0
+terminal_gb82sc	1024	1024	1.05	174.0	910.4	736.4	124.2	592.8

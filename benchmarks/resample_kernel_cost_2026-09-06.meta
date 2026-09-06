@@ -1,0 +1,35 @@
+question: should we use the decoder-adjoint (iterative) 2x downsampler when
+  resampling is EXPLICITLY requested, instead of the sharper kernel libjxl
+  v0.12 uses below effort 10?
+harness: jxl-encoder/examples/resample_kernel_cost (best of 5, warmed)
+method: both round trips do one downsample plus one IDENTICAL upsample, so the
+  difference between them is exactly the extra downsample cost the encoder
+  would pay. Encode time is a real encode at effort 7 with resampling 2.
+
+COST (this file): extra downsample ~700 ms per megapixel, which is ~6.5x our
+  entire effort-7 encode (112 ms at 1 MP). Our resampling is fully scalar --
+  144 taps per output pixel for sharper, plus 3 adjoint-gradient rounds over
+  the full-resolution image for iterative -- with no SIMD anywhere in
+  vardct/resampling.rs, so this is an UNOPTIMIZED price.
+  For context, cjxl v0.12 on the same image: e7 (sharper) 0.086 s, e10
+  (iterative + other kGlacier work) 0.862 s = 10x. So the kernel is expensive
+  in libjxl too; we are not anomalously slow. libjxl's own note in
+  enc_frame.cc quotes "80% slowdown", which its e7-vs-e10 wall time does not
+  obviously support.
+
+QUALITY (from benchmarks/resample_admissibility_2026-09-06.images.tsv, 84
+  image x size cells): iterative lowers the 2x floor by a median 11.2%
+  butteraugli, mean 11.5%, p90 24.4%, best 32.4% -- but it is WORSE on 7 of 84
+  cells (worst -11.9%), and the epa-report stratum is negative overall
+  (-3.8% median). So it is "usually better, occasionally worse", not
+  unconditionally better.
+
+VERDICT: do not blanket-flip the gate. (a) the win is not universal, so a
+  blanket flip regresses some content; (b) the cost is ~6.5x the encode on
+  code that has no SIMD at all, so we would be paying an unoptimized price;
+  (c) it is a deliberate divergence from v0.12, which is the reference we are
+  directed to match. Sequence if pursued: SIMD the kernels first (archmage /
+  magetypes per the workspace rules), re-measure, then consider a keep-best
+  gate that runs both and keeps the better result, rather than a blanket flip.
+  Low priority regardless: the default never resamples, so this only affects
+  callers who explicitly ask for with_resampling(N) at effort <= 9.
