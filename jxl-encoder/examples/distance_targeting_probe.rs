@@ -15,8 +15,12 @@
 //! Env: `IMG` (required), `DISTANCES` (default a ladder across the 3.5 gate),
 //! `EFFORTS` (default `8`), `CROP` (centre-crop cap, default none),
 //! plus whatever runtime overrides you want to A/B — notably
-//! `JXL_BUTTLOOP_INITIAL_QF_SCALE=1.0` to turn the qf-seed lift off
-//! (`4.0` is the default scale; `1.0` ≡ off).
+//! `JXL_BUTTLOOP_INITIAL_QF_SCALE=1.0` at e >= 8 (default scale 4.0) and
+//! `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0` at e in [5,7] (defaults 2.0 at
+//! e5/e6, 3.0 at e7). Those are DIFFERENT gates: both must be set to turn the
+//! lift off across an effort ladder. `RESAMPLING` (1/2/4/8, default 1) drives
+//! the `with_resampling(N)` path so our 2x regime can be scored against a
+//! reference encoder's.
 //!
 //! Prints a TSV to stdout: `effort d_req bytes bfly ssim2 delivered_ratio`,
 //! where `delivered_ratio = bfly / d_req` (1.0 = promise kept, <1 = finer
@@ -67,6 +71,14 @@ fn main() {
         .ok()
         .map(|s| s.parse().expect("CROP: u32"));
 
+    // Forced resampling factor (1/2/4/8). `1` (default) leaves the regime
+    // alone; `2` drives the same path `LossyConfig::with_resampling(2)` takes,
+    // so this probe can score OUR 2x regime against a reference encoder's.
+    let resampling: u32 = std::env::var("RESAMPLING")
+        .ok()
+        .map(|s| s.parse().expect("RESAMPLING: u32"))
+        .unwrap_or(1);
+
     let img = image::open(&path).expect("open IMG").to_rgb8();
     let (mut w, mut h) = (img.width(), img.height());
     let mut rgb = img.as_raw().clone();
@@ -109,6 +121,7 @@ fn main() {
         for &d in &distances {
             let bytes = LossyConfig::new(d)
                 .with_effort(e)
+                .with_resampling(resampling)
                 .encode_request(w, h, PixelLayout::Rgb8)
                 .with_limits(&lim)
                 .encode(&rgb)

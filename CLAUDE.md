@@ -875,14 +875,41 @@ on 9291 e8 — lift OFF: 1.02-1.15 at every distance (promise kept, bytes
 monotone). Lift ON: 1.07 at d=3.4 then **0.47-0.60** for every d >= 3.6, i.e.
 the encoder silently delivers ~2x finer quality than requested across the whole
 band, not just at the boundary. At MATCHED delivered quality the lifted points
-cost 0.99x (d=4), 1.12x (d=3.6), 1.15x (d=5) versus the unlifted curve — on the
-encoder's own RD curve, ~9 % mean penalty. So the extra bytes buy real quality;
-they are simply quality nobody asked for.
+cost 0.99x (d=4), 1.12x (d=3.6), 1.15x (d=5) versus the unlifted curve on THAT
+image at e8. So the extra bytes buy real quality; they are simply quality nobody
+asked for. (Across more content the SIGN varies — see the firing-cell table
+below; an earlier version of this entry generalised from this one image and was
+wrong.)
 
-**Not a loop-budget problem [PROVEN].** e9/e10/e11 all converge to the SAME
-point as e8 (ratio 0.550, 51850 B identical). The loop refines from the lifted
-seed and never walks back to the requested target: the seed is acting as a
-target.
+**Two gates, and the ONE-SHOT path is the tell [PROVEN, 2026-09-06].** There
+is no single qf-seed gate: `adaptive_quant_qf_seed` (W44-109) pre-scales the
+quant field at e in [5,7] (2.0 at e5/e6, 3.0 at e7) and `buttloop_qf_seed`
+(W44-105/107/108) scales the buttloop seed at e >= 8 (4.0). e5/e6 run NO
+perceptual loop, so "the loop cannot walk back from the seed" cannot explain
+them - yet they displace too (9291 at e5: delivered/requested 1.01 -> 0.68 at
+the d=3.6 gate). The mechanism that explains BOTH: the lift scales the
+quantisation field and nothing renormalises it to the requested distance. In
+one-shot mode the scale passes straight through; at e8+ the loop walks part of
+it back but not all. Measured displacement (off_ratio / on_ratio, median over
+firing cells) against each gate's own scale: e5 1.69 (scale 2.0), e7 2.22
+(scale 3.0), e8 1.70 (scale 4.0) - e8's smaller displacement despite the larger
+scale is the loop partially compensating. e9/e10/e11 converge to the SAME point
+as e8 (ratio 0.550, 51850 B identical), so extra loop budget does not fix it.
+
+**It DOES sometimes pay on the RD curve - it is a coin flip, and its sign does
+not match its rationale [MEASURED, small sample].** Over the 33 cells where the
+lift actually fires (`benchmarks/qfseed_lift_ab_2026-09-06.*`,
+`scripts/qfseed_lift_ab_analyze.py`), matched-quality cost has median 0.98 with
+17 wins and 16 losses, range 0.78-1.49. By class: ai-products median 0.90
+(13 wins / 2 losses) - the lift helps MOST on the content flagged as a misfire;
+plots median 1.28 (0 wins / 5 losses); true screenshots (gb82-sc terminal +
+codec_wiki, the W44-105 calibration content) median 1.06 (4 wins / 9 losses).
+CAVEAT: 4 images, and the matched-quality rule is conservative in the lift's
+favour (a coarse unlifted grid inflates the bytes it is compared against), so
+the wins are an upper bound. NOT enough to re-calibrate W44-105/107/108 - it is
+enough to say the RD case for the current gate is unproven on its own
+calibration content, and that any fix should be judged on firing cells only
+(non-firing cells score 1.00 by construction and hide both wins and losses).
 
 **Prevalence.** 5 of 10 strata probed (one image each, e8, native): ai-products
 +98.9 %, plots +45.3 %, patents +33.7 %, web-screenshots +9.0 %, nps-brochures

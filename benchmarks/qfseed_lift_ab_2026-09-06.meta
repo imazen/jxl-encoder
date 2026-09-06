@@ -1,0 +1,23 @@
+harness: jxl-encoder/examples/distance_targeting_probe (RESAMPLING unused here)
+analysis: scripts/qfseed_lift_ab_analyze.py
+commit: see git log for benchmarks/qfseed_lift_ab_2026-09-06.tsv
+question: (a) what explains the ONE-SHOT (e5-e7, no perceptual loop) behaviour of
+  the qf-seed lift, and (b) does the lift ever pay on the RD curve?
+gates A/B'd (two, not one — both must be set to turn the lift off):
+  e in [5,7]: JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE=1.0  (defaults 2.0 e5/e6, 3.0 e7)
+  e >= 8    : JXL_BUTTLOOP_INITIAL_QF_SCALE=1.0        (default 4.0)
+grid: 4 images x efforts {5,7,8} x mode {on,off};
+  on  distances 2,3,3.4,3.6,4,5,6,8
+  off distances 0.75,1,1.25,1.5,2,2.5,3,3.4,3.6,4,5,6,8 (finer, to bracket the
+  lifted points' delivered quality for the matched-quality comparison)
+images: gb82-sc terminal.png + codec_wiki.png (true screenshots, the W44-105
+  calibration content), imazen-26 9291 beard-oil (ai-products), 7026 line-00081
+  (plots). All centre-cropped to <=1024 per axis.
+metrics: jxl-oxide srgb_linear decode; butteraugli_linear (default params) at
+  FULL resolution; fast_ssim2 compute_ssimulacra2 on sRGB u8.
+matched-quality rule: cheapest MEASURED unlifted setting whose butteraugli is
+  <= the lifted point's. Conservative in the lift's FAVOUR when the unlifted
+  grid is coarse (the qualifying point may overshoot quality, inflating its
+  bytes), so the lift's measured wins are an upper bound.
+CAVEAT: 4 images, 33 firing cells. Direction (win/loss counts) is more robust
+  than the absolute cost numbers. Not sufficient to re-calibrate W44-105/107/108.
