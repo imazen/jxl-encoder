@@ -555,6 +555,14 @@ path = "examples/buttloop_distance_split_ab.rs"
 name = "auto_resample_monotonicity"
 path = "examples/auto_resample_monotonicity.rs"
 
+# Issue #101 follow-up (2026-09-05) — is 2x resampling ever admissible on
+# imazen-26, and can the resampling FLOOR decide it? Needs zenanalyze
+# (learned-admission) for the per-image feature dump.
+[[example]]
+name = "resample_admissibility"
+path = "examples/resample_admissibility.rs"
+required-features = ["learned-admission", "__internals"]
+
 # W39-2 (WF3 fix) — screenshot-class HIGH-regime max_increase cap sweep.
 # Follow-on to W39-1 (3ecd397b). Searches {1.3, 1.5, 1.8, 2.0, ∞=100.0}
 # on the screenshot-only HIGH slot; photo-class HIGH stays at libjxl no-cap.

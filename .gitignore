@@ -81,3 +81,6 @@ zen-metrics-bin
 # .tsv / .md / .json results, not the plot images.
 benchmarks/**/*.png
 .jj/
+
+# In-progress sweep outputs (harnesses rename .partial -> final on completion)
+*.tsv.partial

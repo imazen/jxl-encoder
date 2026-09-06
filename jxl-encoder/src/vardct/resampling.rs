@@ -945,6 +945,86 @@ pub fn iterative_downsample_2x_rgb(
     Ok((out, out_w as u32, out_h as u32))
 }
 
+/// Which 2× downsample kernel a round-trip should use — mirrors the
+/// encoder's per-effort choice in `api.rs` (iterative at effort ≥ 10,
+/// sharper below; the box kernel is the factor-4/8 path's, offered here
+/// for ablation).
+// Consumed by the unit tests below and, publicly, through the `__internals`
+// seam (the #101 admissibility study). The cfg comes off the day a production
+// gate calls it; until then the default build should not carry it.
+#[cfg(any(test, feature = "__internals"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Downsample2xKernel {
+    /// libjxl's sharper 12×12 kernel (`DownsampleImage2_Sharper`), e ≤ 9.
+    Sharper,
+    /// The decoder-adjoint iterative refinement kernel, e ≥ 10.
+    Iterative,
+    /// Plain 2×2 box average.
+    Box,
+}
+
+/// The 2× **resampling floor**: the image a decoder reconstructs from a
+/// *perfectly coded* 2×-downsampled frame — downsample, then upsample with
+/// the decoder's own default upsampler, both in the opsin domain, with **no
+/// quantisation in between**. Returns interleaved linear RGB at the input
+/// dimensions.
+///
+/// Why this is worth a primitive: it is an a-priori BOUND on the whole
+/// `with_resampling(2)` regime. The decoder's upsampling stage runs on
+/// whatever the coded frame decodes to, so no number of bits spent on that
+/// frame can produce a better reconstruction than this. Scoring it against
+/// the source with the encoder's perceptual metric therefore gives a SOUND
+/// admissibility test — if the floor is already worse than the requested
+/// distance, the 2× regime cannot hit the target at any bitrate and must not
+/// be selected — and it costs one downsample + one upsample + one metric
+/// call, with no encode. Contrast a fixed distance threshold (libjxl's
+/// `d >= 10`), which cannot be sound because it never looks at the image.
+///
+/// Measured floors span two orders of magnitude across content
+/// (`benchmarks/auto_resample_monotonicity_2026-09-05.analysis.md`): ~5
+/// butteraugli on smooth photos, 20-40 on aliased line art, which is exactly
+/// why one threshold cannot serve both.
+#[cfg(any(test, feature = "__internals"))]
+pub fn resample_roundtrip_2x_rgb(
+    rgb_interleaved: &[f32],
+    width: usize,
+    height: usize,
+    kernel: Downsample2xKernel,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<f32>> {
+    debug_assert_eq!(rgb_interleaved.len(), width * height * 3);
+    let out_w = width.div_ceil(2);
+    let out_h = height.div_ceil(2);
+    let n = width * height;
+    let n_out = out_w * out_h;
+
+    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n);
+    let mut up_planes: [Vec<f32>; 3] = [
+        alloc::vec![0.0_f32; n],
+        alloc::vec![0.0_f32; n],
+        alloc::vec![0.0_f32; n],
+    ];
+    for (src, up) in [&xyb_x, &xyb_y, &xyb_b]
+        .into_iter()
+        .zip(up_planes.iter_mut())
+    {
+        let mut down = alloc::vec![0.0_f32; n_out];
+        match kernel {
+            Downsample2xKernel::Sharper => {
+                sharper_downsample_2x_plane(src, width, height, &mut down, out_w, out_h)
+            }
+            Downsample2xKernel::Iterative => {
+                iterative_downsample_2x_plane(src, width, height, &mut down, out_w, out_h)
+            }
+            Downsample2xKernel::Box => {
+                box_downsample_2x_plane(src, width, height, &mut down, out_w)
+            }
+        }
+        upsample2_plane(&down, out_w, out_h, up, width, height);
+    }
+    from_opsin_planes(&up_planes[0], &up_planes[1], &up_planes[2], n, budget)
+}
+
 /// Box-filter downsample a single-channel u8 buffer (alpha) by an
 /// integer factor. Same semantics as [`box_downsample_rgb`] but for
 /// 1 byte/pixel inputs. Output values are rounded.
@@ -1274,6 +1354,65 @@ mod tests {
             max_delta > 1e-3,
             "opsin-domain sharper must differ from the linear-RGB one on \
              structured colour (max |Δ| {max_delta:.3e})"
+        );
+    }
+
+    #[test]
+    fn roundtrip_2x_preserves_dimensions_and_uniform_content() {
+        // A uniform field survives down→up exactly (every kernel tap sums
+        // to 1 and the clamp is a no-op), so the floor of a flat image is 0.
+        let (w, h) = (17usize, 9usize); // odd both axes on purpose
+        let rgb = alloc::vec![0.25_f32; w * h * 3];
+        for kernel in [
+            Downsample2xKernel::Sharper,
+            Downsample2xKernel::Iterative,
+            Downsample2xKernel::Box,
+        ] {
+            let out = resample_roundtrip_2x_rgb(&rgb, w, h, kernel, None).expect("roundtrip");
+            assert_eq!(out.len(), w * h * 3, "{kernel:?}: dims must be preserved");
+            let max_err = out
+                .iter()
+                .zip(rgb.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f32, f32::max);
+            assert!(
+                max_err < 1e-3,
+                "{kernel:?}: uniform field drifted by {max_err}"
+            );
+        }
+    }
+
+    #[test]
+    fn roundtrip_2x_loses_more_on_high_frequency_than_on_smooth_content() {
+        // The floor is content-dependent — that is the whole basis of the
+        // admissibility test. A 1-pixel checkerboard is destroyed by 2×;
+        // a smooth ramp is nearly untouched.
+        let (w, h) = (32usize, 32usize);
+        let mut smooth = alloc::vec![0.0_f32; w * h * 3];
+        let mut checker = alloc::vec![0.0_f32; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                let ramp = x as f32 / w as f32;
+                let alt = if (x ^ y) & 1 == 0 { 0.0 } else { 1.0 };
+                for c in 0..3 {
+                    smooth[i + c] = ramp;
+                    checker[i + c] = alt;
+                }
+            }
+        }
+        let err = |src: &[f32]| -> f32 {
+            let out =
+                resample_roundtrip_2x_rgb(src, w, h, Downsample2xKernel::Sharper, None).unwrap();
+            out.iter()
+                .zip(src.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max)
+        };
+        let (e_smooth, e_checker) = (err(&smooth), err(&checker));
+        assert!(
+            e_checker > 10.0 * e_smooth,
+            "checkerboard floor ({e_checker}) must dwarf the smooth-ramp floor ({e_smooth})"
         );
     }
 

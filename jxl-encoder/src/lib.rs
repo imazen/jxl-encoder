@@ -364,6 +364,29 @@ pub mod __internals {
     // Pub re-exports of already-pub items in private/pub(crate) modules.
     pub use crate::vardct::chroma_from_luma::{ytob_ratio, ytox_ratio};
     pub use crate::vardct::quant::INV_DC_QUANT;
+    // #101 follow-up: the 2× resampling FLOOR primitive (down→up with no
+    // quantisation) that the admissibility study scores against the source.
+    pub use crate::vardct::resampling::Downsample2xKernel;
+
+    /// Budget-free wrapper over
+    /// [`crate::vardct::resampling::resample_roundtrip_2x_rgb`] — the memory
+    /// budget type is crate-private, and with no budget the call is
+    /// infallible (plain `vec!` allocation, no `try_reserve` path).
+    pub fn resample_roundtrip_2x_rgb(
+        rgb_interleaved: &[f32],
+        width: usize,
+        height: usize,
+        kernel: Downsample2xKernel,
+    ) -> Vec<f32> {
+        crate::vardct::resampling::resample_roundtrip_2x_rgb(
+            rgb_interleaved,
+            width,
+            height,
+            kernel,
+            None,
+        )
+        .expect("resample roundtrip without a budget is infallible")
+    }
     // Wrappers around pub(crate) helpers and pub(crate) impl methods that
     // can't be `pub use`d directly.
     pub use crate::vardct::ac_strategy::compute_scaled_constants_free;
