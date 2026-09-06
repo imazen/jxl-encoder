@@ -1,9 +1,11 @@
 # JXL encoder ARM audit, 2026-09-06
 
-Coverage so far: 17 kernel groups. The entropy group's original scalar arm
-is a historical formula with different accumulation order, so it is not a
-measurement of today's production fallback. Whole-image encoder measurements
-and a corrected entropy-dispatch comparison are still pending.
+Coverage so far: 17 kernel groups plus a corrected production entropy comparison.
+Whole-image encoding covers one 512×512 seeded noise/patches fixture at effort 5,
+lossy distance 1 and lossless. Other quality levels, content and sizes are not
+covered by this run. The original entropy arm
+uses a historical formula with different accumulation order; it is retained
+under an explicit legacy-reference label, not as the production fallback.
 
 Apple M4 Pro, macOS, Rust 1.98.0 / LLVM 22, runtime dispatch without
 `target-cpu=native`, four build/Rayon/OMP threads, `nice -n 19`. The baseline
@@ -36,3 +38,26 @@ Validation after the fixed-array change: 188 SIMD library tests passed,
 clippy passed with `-D warnings`, and 60 encoder hash-lock integration tests
 passed with no expected-value changes. The corresponding logs are committed
 alongside this report. No whole-image speedup is claimed for this kernel change.
+
+## Production entropy comparison
+
+With testable dispatch enabled for the benchmark, the canonical
+`shannon_entropy_bits` entry measures 3.98 µs with NEON and 9.96 µs forced
+scalar on 4096 histogram entries. Exact result-bit equality passed before
+timing. This replaces the original legacy-formula comparison as evidence
+about the production fallback. See [canonical entropy log](jxl-entropy-canonical.log).
+
+## Whole-image encoding
+
+| Mode, 512×512, effort 5 | NEON mean | Forced scalar mean |
+|---|---:|---:|
+| Lossy, distance 1 | 48.30 ms | 108.90 ms |
+| Lossless | 178.14 ms | 204.14 ms |
+
+The lossy and lossless outputs were byte-identical across tiers (273510 and
+715576 bytes respectively). These compare tiers in the fixed-array build,
+not end-to-end before/after performance of the DCT change. Full data:
+[encoder log](jxl-encoder-full-tiers.log). Fixtures are retained outside git
+with checksums in [fixtures.pointer.md](fixtures.pointer.md).
+
+Use `just arm-kernel-tiers-macos` and `just arm-encode-tiers-macos` to rerun.

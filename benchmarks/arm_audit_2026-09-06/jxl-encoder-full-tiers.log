@@ -1,0 +1,54 @@
+warning: patch `zenjxl-decoder v0.4.0 (/Users/lilith/work/zen/zenjxl-decoder/zenjxl-decoder)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+   Compiling jxl-encoder v0.4.0 (/Users/lilith/work/zen/jxl-encoder/jxl-encoder)
+warning: function `upsample_h2v2_libjpeg_row_scalar` is never used
+   --> /Users/lilith/work/zen/zenjpeg/zenjpeg/src/decode/upsample.rs:736:8
+    |
+736 | pub fn upsample_h2v2_libjpeg_row_scalar(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zenjpeg` (lib) generated 1 warning
+    Finished `bench` profile [optimized + debuginfo] target(s) in 17.32s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running benches/tier_isolation.rs (target/release/deps/tier_isolation-5cf34398b271127c)
+[tier_isolation] comparing neon vs forced scalar
+neon: lossy 273510 bytes, lossless 715576 bytes; saved to /Users/lilith/work/zen/jxl-encoder/jxl-encoder/../../../codec-artifacts/jxl-encoder-arm-audit
+scalar: lossy 273510 bytes, lossless 715576 bytes; saved to /Users/lilith/work/zen/jxl-encoder/jxl-encoder/../../../codec-artifacts/jxl-encoder-arm-audit
+[zenbench] calibration: int=0.27ns/iter mem_bw=117.8GiB/s mem_lat=7.5ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.22ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788675080-13b1d.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788675080-13b1d
+  git: 60a55dd596e240605c20558e4d9dd00085fcddbb
+═══════════════════════════════════════════════════════════════
+
+  encode_lossy_d1_512  30 rounds × 1 calls
+              mean ±mad ms  95% CI vs base     
+  ├─ neon      48.3 ±1.4ms  [47.9–48.7]ms      
+  ╰─ scalar   108.9 ±1.9ms  [+123.7%–+127.2%]  
+
+  neon    ███████████████████████████ 48.30ms
+  scalar  █████████████████████████████████████████████████████████████ 108.90ms
+
+  encode_lossless_512  27 rounds × 1 calls
+              mean ±mad ms  95% CI vs base   
+  ├─ neon     178.1 ±2.4ms  [177.3–179.0]ms  
+  ╰─ scalar   204.1 ±1.8ms  [+14.2%–+15.0%]  
+
+  neon    █████████████████████████████████████████████████████ 178.14ms
+  scalar  █████████████████████████████████████████████████████████████ 204.14ms
+
+  total: 23.1s  (4 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=encode_lossy_d1_512 benchmark=neon  |  vs_base=baseline  |  min=46.57ms mean=48.30ms median=48.38ms mad=1.37ms  |  n=30 cv=2.2% rounds=30 calls=1 mean_ci=[47.93ms 48.68ms] cold=47.09ms
+group=encode_lossy_d1_512 benchmark=scalar  |  vs_base_pct=+125.46 ci=[+123.71% +127.21%] significant=true effect=47.13 p=0.0000  |  min=106.08ms mean=108.90ms median=109.53ms mad=1.85ms  |  n=30 cv=1.4% rounds=30 calls=1 mean_ci=[108.37ms 109.42ms] cold=107.04ms
+group=encode_lossless_512 benchmark=neon  |  vs_base=baseline  |  min=174.07ms mean=178.14ms median=178.57ms mad=2.42ms  |  n=27 cv=1.3% rounds=27 calls=1 mean_ci=[177.28ms 178.96ms] cold=174.91ms
+group=encode_lossless_512 benchmark=scalar  |  vs_base_pct=+14.60 ci=[+14.15% +15.01%] significant=true effect=12.42 p=0.0000  |  min=199.84ms mean=204.14ms median=204.26ms mad=1.85ms  |  n=27 cv=0.9% rounds=27 calls=1 mean_ci=[203.44ms 204.82ms] cold=200.39ms

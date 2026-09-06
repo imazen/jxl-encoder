@@ -215,3 +215,12 @@ compare-visual source ours cjxl distance outdir="${JXL_ENCODER_OUTPUT_DIR:-/mnt/
       "{{outdir}}/six_compare.png"
     feh "{{outdir}}/six_compare.png" &
     echo "Saved to {{outdir}}/six_compare.png"
+
+# Native ARM comparisons without target-cpu=native. Preserve full logs.
+arm-kernel-tiers-macos group="":
+    mkdir -p "$HOME/tmp"
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p jxl-encoder-simd --bench kernel_tiers -- --group='{{group}}' --format=llm > "$HOME/tmp/jxl-encoder-kernel-tiers.log" 2>&1
+
+arm-encode-tiers-macos:
+    mkdir -p "$HOME/tmp"
+    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p jxl-encoder --features _dev --bench tier_isolation -- --format=llm > "$HOME/tmp/jxl-encoder-full-tiers.log" 2>&1

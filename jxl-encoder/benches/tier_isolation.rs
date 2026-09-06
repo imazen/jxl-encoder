@@ -37,7 +37,6 @@ const TIER_NAME: &str = if cfg!(target_arch = "aarch64") {
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn set_simd(enabled: bool) -> bool {
-    use archmage::SimdToken;
     TierToken::dangerously_disable_token_process_wide(!enabled).is_ok()
 }
 
@@ -65,19 +64,50 @@ fn make_rgb(w: usize, h: usize) -> Vec<u8> {
 }
 
 fn bench_tiers(suite: &mut Suite) {
-    if !set_simd(true) || !set_simd(false) {
-        eprintln!(
-            "[tier_isolation] no toggleable SIMD tier on this target, or the tier is \
-             compile-time guaranteed (drop -C target-cpu=native, build with --features _dev). \
-             Skipping."
-        );
-        return;
-    }
+    assert!(
+        set_simd(true) && set_simd(false),
+        "build with _dev and runtime SIMD dispatch"
+    );
     set_simd(true);
     eprintln!("[tier_isolation] comparing {TIER_NAME} vs forced scalar");
 
     let (w, h) = (512usize, 512usize);
     let rgb = make_rgb(w, h);
+    let artifact_dir = std::env::var_os("CODEC_BENCH_ARTIFACT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../codec-artifacts/jxl-encoder-arm-audit")
+        });
+    std::fs::create_dir_all(&artifact_dir).unwrap();
+    for (label, enabled) in [("neon", true), ("scalar", false)] {
+        assert!(set_simd(enabled));
+        let lossy = LossyConfig::new(1.0)
+            .with_effort(5)
+            .encode(&rgb, w as u32, h as u32, PixelLayout::Rgb8)
+            .unwrap();
+        let lossless = LosslessConfig::new()
+            .with_effort(5)
+            .encode(&rgb, w as u32, h as u32, PixelLayout::Rgb8)
+            .unwrap();
+        std::fs::write(
+            artifact_dir.join(format!("lossy-d1-e5-512-{label}.jxl")),
+            &lossy,
+        )
+        .unwrap();
+        std::fs::write(
+            artifact_dir.join(format!("lossless-e5-512-{label}.jxl")),
+            &lossless,
+        )
+        .unwrap();
+        eprintln!(
+            "{label}: lossy {} bytes, lossless {} bytes; saved to {}",
+            lossy.len(),
+            lossless.len(),
+            artifact_dir.display()
+        );
+    }
+    assert!(set_simd(true));
 
     // Lossy / VarDCT — the DCT, XYB and Gaborish kernels.
     let rgb_l: &'static [u8] = Box::leak(rgb.clone().into_boxed_slice());

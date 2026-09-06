@@ -49,5 +49,6 @@ name = "kernel_tiers"
 harness = false
 
 [dev-dependencies]
+archmage = { version = "0.9.27", features = ["testable_dispatch"] }
 # Workspace-standard benchmarking harness (interleaved arms, paired statistics).
 zenbench = "0.1.8"

@@ -35,10 +35,7 @@ fn ramp(n: usize, seed: u32) -> Vec<f32> {
 #[cfg(target_arch = "aarch64")]
 fn bench_kernels(suite: &mut Suite) {
     use archmage::SimdToken;
-    let Some(t) = archmage::NeonToken::summon() else {
-        eprintln!("[kernel_tiers] no NEON token; skipping");
-        return;
-    };
+    let t = archmage::NeonToken::summon().expect("ARM kernel benchmarks require NEON");
 
     macro_rules! dct {
         ($name:expr, $n:expr, $neon:path, $scalar:path) => {
@@ -174,13 +171,34 @@ fn bench_kernels(suite: &mut Suite) {
                 .into_boxed_slice(),
         );
         let total: usize = counts.iter().map(|c| *c as usize).sum();
-        suite.compare("shannon_entropy/4096", move |g| {
+        suite.compare("shannon_entropy_legacy_reference/4096", move |g| {
             g.bench("neon", move |b| {
                 b.iter(move || jxl_encoder_simd::shannon_entropy_neon(t, counts, total))
             });
-            g.bench("scalar", move |b| {
+            g.bench("legacy_scalar_formula", move |b| {
                 b.iter(move || jxl_encoder_simd::shannon_entropy_scalar(counts, total))
             });
+        });
+        suite.compare("shannon_entropy_dispatch/4096", move |g| {
+            archmage::NeonToken::dangerously_disable_token_process_wide(false).unwrap();
+            let neon = jxl_encoder_simd::shannon_entropy_bits(counts, total);
+            archmage::NeonToken::dangerously_disable_token_process_wide(true).unwrap();
+            let scalar = jxl_encoder_simd::shannon_entropy_bits(counts, total);
+            assert_eq!(
+                neon.to_bits(),
+                scalar.to_bits(),
+                "canonical entropy tier parity"
+            );
+            archmage::NeonToken::dangerously_disable_token_process_wide(false).unwrap();
+            for (label, enabled) in [("neon", true), ("scalar", false)] {
+                g.bench(label, move |b| {
+                    b.with_input(move || {
+                        archmage::NeonToken::dangerously_disable_token_process_wide(!enabled)
+                            .unwrap();
+                    })
+                    .run(|_| jxl_encoder_simd::shannon_entropy_bits(counts, total))
+                });
+            }
         });
     }
 

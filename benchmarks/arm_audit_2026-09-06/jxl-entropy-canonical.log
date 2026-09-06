@@ -1,0 +1,32 @@
+warning: patch `zenjxl-decoder v0.4.0 (/Users/lilith/work/zen/zenjxl-decoder/zenjxl-decoder)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+   Compiling archmage v0.9.28
+   Compiling magetypes v0.9.28
+   Compiling jxl-encoder-simd v0.4.0 (/Users/lilith/work/zen/jxl-encoder/jxl-encoder-simd)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 3.56s
+     Running benches/kernel_tiers.rs (target/release/deps/kernel_tiers-398e19d9b1f49e72)
+[zenbench] calibration: int=0.41ns/iter mem_bw=81.4GiB/s mem_lat=7.7ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.28ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788675018-13a8b.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788675018-13a8b
+  git: 60a55dd596e240605c20558e4d9dd00085fcddbb
+═══════════════════════════════════════════════════════════════
+
+  shannon_entropy_dispatch/4096  30 rounds × 265 calls
+              mean ±mad µs  95% CI vs base     
+  ├─ neon      4.0 ±0.2µs  [3.7–4.2]µs        
+  ╰─ scalar   10.0 ±1.0µs  [+142.9%–+156.2%]  
+
+  neon    █████████████████████████ 3.98µs
+  scalar  ██████████████████████████████████████████████████████████████ 9.96µs
+
+  total: 4.3s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=shannon_entropy_dispatch/4096 benchmark=neon  |  vs_base=baseline  |  min=1.84µs mean=3.98µs median=4.21µs mad=162.1ns  |  n=30 cv=17.3% rounds=30 calls=265 mean_ci=[3.73µs 4.21µs] cold=1.42µs
+group=shannon_entropy_dispatch/4096 benchmark=scalar  |  vs_base_pct=+149.73 ci=[+142.88% +156.20%] significant=true effect=6.41 p=0.0000  |  min=4.80µs mean=9.96µs median=10.39µs mad=1.04µs  |  n=30 cv=15.5% rounds=30 calls=265 mean_ci=[9.38µs 10.45µs] cold=3.67µs
