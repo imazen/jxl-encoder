@@ -1,0 +1,19 @@
+harness: jxl-encoder/examples/resample_admissibility (MAX_IMAGES=10 SIZE_CAPS=1024 EFFORTS=5)
+question: what did the #102 sharper-downsampler bit-exactness fix actually change
+  on real content?
+method: recompute the 2x resampling FLOOR (down->up, no quantisation, via
+  __internals::resample_roundtrip_2x_rgb) for the first 10 imazen-26 pick-list
+  images at the 1024 centre crop, and diff against the SAME floors recorded
+  pre-fix in benchmarks/resample_admissibility_2026-09-06.images.tsv.
+result: 20 floors (10 images x {sharper, iterative}) changed by +0.00% / -0.01%.
+  The fix is a CORRECTNESS + parity fix, not a quality win: the C++/Rust
+  `numeric_limits<float>::min()` vs `f32::MIN` difference only changes the
+  ringing clamp where a whole 12x12 support region is negative AND the clamp
+  binds, which is rare on real opsin (Y and B are positive; X is small).
+  Single-image cross-check on renders/abstract-flower-render: achieved 2x
+  butteraugli 8.4365 both before and after; bytes 77108 -> 77071.
+context: the "our sharper is ~35% worse than libjxl's" headline in #102 was a
+  VERSION artifact - cjxl v0.11.1 switches to the iterative downsampler between
+  e5 and e7, current libjxl v0.12 restricts it to speed_tier <= kGlacier
+  (effort 10-11) and OUR gate matches v0.12. Our iterative port is faithful
+  (6.3907 vs cjxl 6.3521).
