@@ -432,7 +432,14 @@ def main():
     P("")
 
     def loso_auc(names):
-        preds = np.zeros(len(usable))
+        """LOSO AUC scored ONLY over rows that actually received a prediction.
+
+        A fold whose training half contains no positives is unfittable and is
+        skipped; scoring its rows as 0 would rank every positive below every
+        negative and report an anti-predictive AUC that is a fold artifact,
+        not a result. Returns (auc, n_scored, n_pos_scored).
+        """
+        preds = np.full(len(usable), np.nan)
         for s in strata:
             tr = [i for i, r in enumerate(usable) if r["stratum"] != s]
             te = [i for i, r in enumerate(usable) if r["stratum"] == s]
@@ -445,16 +452,28 @@ def main():
             clf = LogisticRegression(max_iter=2000, C=0.5)
             clf.fit((Xtr - mu) / sd, y[tr])
             preds[te] = clf.predict_proba((Xte - mu) / sd)[:, 1]
-        return roc_auc_score(y, preds) if len(set(y)) > 1 else float("nan")
+        m = ~np.isnan(preds)
+        if m.sum() == 0 or len(set(y[m])) < 2:
+            return (float("nan"), int(m.sum()), int(y[m].sum()))
+        return (roc_auc_score(y[m], preds[m]), int(m.sum()), int(y[m].sum()))
+
+    def fmt_auc(t):
+        auc, n, npos = t
+        a = "n/a" if (isinstance(auc, float) and math.isnan(auc)) else f"{auc:.3f}"
+        return f"**{a}** (over {n} scorable rows, {npos} positive)"
 
     floor_only_auc = roc_auc_score(
         y, np.asarray([-math.log(max(r["floor"], 1e-6) / max(r["d"], 1e-6)) for r in usable])
     ) if len(set(y)) > 1 else float("nan")
-    P(f"- floor/d alone, as a ranking score: AUC **{floor_only_auc:.3f}**")
-    P(f"- logistic on the 4 base predictors: AUC **{loso_auc([]):.3f}**")
+    P(f"- floor/d alone, as a ranking score (no fitting, so no folds): "
+      f"AUC **{floor_only_auc:.3f}**")
+    P(f"- logistic on the 4 base predictors: AUC {fmt_auc(loso_auc([]))}")
     if featnames:
         P(f"- logistic on base + {len(featnames)} zenanalyze features: "
-          f"AUC **{loso_auc(featnames):.3f}**")
+          f"AUC {fmt_auc(loso_auc(featnames))}")
+    P("")
+    P("A fitted model can only be compared with floor/d on the rows it could "
+      "score; strata holding all the positives make their own fold unfittable.")
     P("")
 
     text = "\n".join(L) + "\n"

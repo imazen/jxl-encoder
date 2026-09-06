@@ -854,6 +854,60 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-09-06: the d>=3.5 screenshot qf-seed lift breaks distance targeting (and therefore monotonicity) on graphics/document content
+
+**Status**: [PROVEN] mechanism + prevalence measured; NO fix applied (the gate
+is calibrated W44-105/107/108 territory and a blanket main-band exclude was
+already REFUTED on RD grounds in task #13 — see "Perceptual loop" constraints).
+
+**Symptom.** Asking for a COARSER distance produces a much LARGER file.
+`cjxl-rs -e 8` on imazen-26 9291 (ai-products, 1024 crop): d=3.4 -> 28355 B,
+d=3.6 -> 56720 B (**+100 %**). Native size: 31197 -> 62038 B (+98.9 %).
+
+**Mechanism [PROVEN].** The buttloop screenshot qf-seed scale (4.0), gated at
+`d >= 3.5`. `JXL_BUTTLOOP_INITIAL_QF_SCALE=1.0` (== off) removes it entirely
+and `EncoderStrategy::Libjxl` (`ButtloopQfSeedPolicy::Off`) is monotone across
+the same range. Harness: `examples/distance_targeting_probe` (requested vs
+DELIVERED butteraugli).
+
+**It is mis-targeting, NOT RD waste [PROVEN].** Delivered/requested butteraugli
+on 9291 e8 — lift OFF: 1.02-1.15 at every distance (promise kept, bytes
+monotone). Lift ON: 1.07 at d=3.4 then **0.47-0.60** for every d >= 3.6, i.e.
+the encoder silently delivers ~2x finer quality than requested across the whole
+band, not just at the boundary. At MATCHED delivered quality the lifted points
+cost 0.99x (d=4), 1.12x (d=3.6), 1.15x (d=5) versus the unlifted curve — on the
+encoder's own RD curve, ~9 % mean penalty. So the extra bytes buy real quality;
+they are simply quality nobody asked for.
+
+**Not a loop-budget problem [PROVEN].** e9/e10/e11 all converge to the SAME
+point as e8 (ratio 0.550, 51850 B identical). The loop refines from the lifted
+seed and never walks back to the requested target: the seed is acting as a
+target.
+
+**Prevalence.** 5 of 10 strata probed (one image each, e8, native): ai-products
++98.9 %, plots +45.3 %, patents +33.7 %, web-screenshots +9.0 %, nps-brochures
++5.2 %. Monotone: photos-general, photos-nature, museum-met, textures,
+mobile-screenshots. Photographic content is clean; graphics and document scans
+are not. ai-products/plots/patents break at the 3.4->3.6 step (the gate);
+web-screenshots and nps-brochures break at 3.6->4.0, so a SECOND mechanism may
+be involved there and must be localised before any fix.
+
+**Proposed fixes, in order of principle** (none applied; needs the user's call
+because the overshoot may be deliberate for true screenshots):
+1. Make the seed a seed, not a target — let the loop converge to the requested
+   distance from any starting point. Feasible: with the lift off the same loop
+   hits 1.02-1.07. Restores monotonicity by construction. Risk: moves bytes on
+   the true-screenshot cells W44-105/107/108 was calibrated on, so it needs
+   that sweep re-run.
+2. Keep-best seed (the accepted `cfl_keep_best` pattern from #74 task #10):
+   run the lifted and unlifted seed, keep whichever is cheaper at the delivered
+   quality. Content-agnostic, costs a second loop on gated cells; bounds the
+   damage but does not by itself restore distance semantics.
+3. Distance-compensate the lift (target ~2d so delivered lands at d). A
+   calibration, content-dependent (0.47-0.60 here) — weakest option.
+DO NOT re-run the refuted blanket main-band exclude.
+
+
 ### RESOLVED 2026-08-31: resampling CHANGED THE IMAGE DIMENSIONS on any axis that is not a multiple of the factor — and it was reachable from the DEFAULT path
 
 **Status**: RESOLVED same day (T4). **This is a zen-mode defect, not a

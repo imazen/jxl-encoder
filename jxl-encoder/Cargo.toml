@@ -558,6 +558,12 @@ path = "examples/auto_resample_monotonicity.rs"
 # Issue #101 follow-up (2026-09-05) — is 2x resampling ever admissible on
 # imazen-26, and can the resampling FLOOR decide it? Needs zenanalyze
 # (learned-admission) for the per-image feature dump.
+# Requested vs delivered butteraugli distance — separates "off the RD curve"
+# (waste) from "on the curve but mis-targeted" for any distance-keyed gate.
+[[example]]
+name = "distance_targeting_probe"
+path = "examples/distance_targeting_probe.rs"
+
 [[example]]
 name = "resample_admissibility"
 path = "examples/resample_admissibility.rs"
