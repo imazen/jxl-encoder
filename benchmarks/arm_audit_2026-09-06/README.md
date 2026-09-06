@@ -27,7 +27,14 @@ and 767.4 ns respectively. These are separate builds/runs, not paired
 before/after statistics. Compare the [before assembly](jxl-dct16-before.asm),
 [after assembly](jxl-dct16-fixed.asm), and [new timings](jxl-dct16-fixed.log).
 This change is `06b9751c`, also used by the 16×8 and 8×16 forward transforms.
-Those rectangular shapes have not yet been remeasured after this change.
+The rectangular follow-up at source `c56badee` is now measured: forward
+16×8 is 181.5 ns NEON / 482.0 ns scalar; forward 8×16 is 305.9 / 477.5 ns.
+The paired scalar-over-NEON intervals are +157.69% to +172.25% and +54.97%
+to +60.40%. The substring filters also measured inverse 16×8 (233.6 / 961.3 ns)
+and inverse 8×16 (284.7 / 979.5 ns); both favor NEON. These four cells have
+17–29% CV and are tier comparisons in the fixed-array build, not paired
+before/after measurements. Full logs: [16×8](jxl-rect-16x8.log) and
+[8×16](jxl-rect-8x16.log).
 
 An earlier `#[inline(always)]` experiment changed no assembly: archmage-macros
 0.9.28's `rite_single_impl` explicitly filters inline attributes and inserts

@@ -1,0 +1,59 @@
+warning: patch `zenjxl-decoder v0.4.0 (/Users/lilith/work/zen/zenjxl-decoder/zenjxl-decoder)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+    Finished `bench` profile [optimized + debuginfo] target(s) in 0.22s
+     Running benches/kernel_tiers.rs (target/release/deps/kernel_tiers-398e19d9b1f49e72)
+[zenbench] calibration: int=0.27ns/iter mem_bw=117.2GiB/s mem_lat=7.4ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.22ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788698299-649a.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788698299-649a
+  git: c56badee2412633aed733b255c37eb4736d7d26a
+═══════════════════════════════════════════════════════════════
+
+  dct_16x8  30 rounds × 6K calls
+             mean ±mad ns  95% CI vs base     
+  ├─ neon     181 ±26ns  [168–193]ns         [1]
+  ╰─ scalar   482 ±73ns  [+157.7%–+172.2%]  
+
+  neon    ███████████████████████ 181.5ns
+  scalar  ██████████████████████████████████████████████████████████████ 482.0ns
+  [1] CV=20%
+
+  idct_16x8  30 rounds × 2K calls
+             mean ±mad ns  95% CI vs base     
+  ├─ neon      234 ±49ns  [212–253]ns         [1]
+  ╰─ scalar   961 ±146ns  [+295.4%–+324.3%]  
+
+  neon    ███████████████ 233.6ns
+  scalar  ██████████████████████████████████████████████████████████████ 961.3ns
+  [1] CV=26%
+
+  total: 9.2s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=dct_16x8 benchmark=neon  |  vs_base=baseline  |  min=68.5ns mean=181.5ns median=185.6ns mad=25.5ns  |  n=30 cv=20.1% rounds=30 calls=6944 mean_ci=[167.9ns 193.4ns] cold=417.0ns
+group=dct_16x8 benchmark=scalar  |  vs_base_pct=+164.82 ci=[+157.69% +172.25%] significant=true effect=6.88 p=0.0000  |  min=197.1ns mean=482.0ns median=501.7ns mad=73.0ns  |  n=30 cv=19.3% rounds=30 calls=6944 mean_ci=[447.8ns 512.4ns] cold=166.0ns
+group=idct_16x8 benchmark=neon  |  vs_base=baseline  |  min=87.6ns mean=233.6ns median=243.5ns mad=49.1ns  |  n=30 cv=25.7% rounds=30 calls=2865 mean_ci=[212.2ns 253.5ns] cold=42.0ns
+group=idct_16x8 benchmark=scalar  |  vs_base_pct=+309.71 ci=[+295.44% +324.29%] significant=true effect=7.00 p=0.0000  |  min=481.0ns mean=961.3ns median=981.6ns mad=145.8ns  |  n=30 cv=17.1% rounds=30 calls=2865 mean_ci=[902.7ns 1.02µs] cold=417.0ns
+        9.47 real         2.73 user         1.50 sys
+           102350848  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               29869  page reclaims
+                  81  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   6  messages sent
+                   6  messages received
+                   7  signals received
+                1015  voluntary context switches
+                9977  involuntary context switches
+          1369296847  instructions retired
+           454792464  cycles elapsed
+            76808816  peak memory footprint
