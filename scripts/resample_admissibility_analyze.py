@@ -81,8 +81,12 @@ def build_truth(cells, floors):
         if not curve or not m["full"]:
             continue
         best_2x_bfly = min(bf for bf, _ in curve)
+        # The effort-matched kernel is what the encoder would actually use;
+        # the iterative (decoder-adjoint) floor is the tighter bound on what
+        # ANY coded frame could achieve, so soundness is judged against it.
         kernel = "iterative" if effort >= 10 else "sharper"
         floor = floors.get((image, cap, kernel), (float("nan"), float("nan")))[0]
+        floor_bound = floors.get((image, cap, "iterative"), (float("nan"), float("nan")))[0]
         for c in m["full"]:
             need = bytes_to_reach(curve, c["bfly"])
             ratio = None if need is None else need / c["bytes"]
@@ -100,6 +104,7 @@ def build_truth(cells, floors):
                     "bfly_full": c["bfly"],
                     "ssim2_full": c["ssim2"],
                     "floor": floor,
+                    "floor_bound": floor_bound,
                     "best_2x_bfly": best_2x_bfly,
                     "reachable": need is not None,
                     "ratio": ratio,
@@ -210,11 +215,17 @@ def main():
       "unreachable. Violations would mean the bound is not a bound.")
     P("")
     have_floor = [r for r in rows if not math.isnan(r["floor"])]
+    P(f"- cells with a floor measured: {len(have_floor)}")
+    for label, key in [("effort-matched kernel", "floor"),
+                       ("iterative kernel (the tighter bound)", "floor_bound")]:
+        hv = [r for r in have_floor if not math.isnan(r[key])]
+        caught = [r for r in hv if r[key] > r["bfly_full"]]
+        viol = [r for r in caught if r["reachable"]]
+        P(f"- {label}: says unreachable on {len(caught)}/{len(hv)} cells; of "
+          f"those actually reachable on the measured grid (bound violations): "
+          f"**{len(viol)}**")
     viol = [r for r in have_floor if r["floor"] > r["bfly_full"] and r["reachable"]]
     caught = [r for r in have_floor if r["floor"] > r["bfly_full"]]
-    P(f"- cells with a floor measured: {len(have_floor)}")
-    P(f"- floor says unreachable: {len(caught)}; of those actually reachable "
-      f"on the measured grid (bound violations): **{len(viol)}**")
     miss = [r for r in have_floor if r["floor"] <= r["bfly_full"] and not r["reachable"]]
     P(f"- floor says reachable but the grid could not reach it: {len(miss)} "
       f"(expected — the floor needs infinite bitrate; the grid stops at "

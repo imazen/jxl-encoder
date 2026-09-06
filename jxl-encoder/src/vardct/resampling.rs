@@ -969,16 +969,27 @@ pub enum Downsample2xKernel {
 /// quantisation in between**. Returns interleaved linear RGB at the input
 /// dimensions.
 ///
-/// Why this is worth a primitive: it is an a-priori BOUND on the whole
-/// `with_resampling(2)` regime. The decoder's upsampling stage runs on
-/// whatever the coded frame decodes to, so no number of bits spent on that
-/// frame can produce a better reconstruction than this. Scoring it against
-/// the source with the encoder's perceptual metric therefore gives a SOUND
-/// admissibility test — if the floor is already worse than the requested
-/// distance, the 2× regime cannot hit the target at any bitrate and must not
-/// be selected — and it costs one downsample + one upsample + one metric
-/// call, with no encode. Contrast a fixed distance threshold (libjxl's
-/// `d >= 10`), which cannot be sound because it never looks at the image.
+/// Why this is worth a primitive: it estimates the quality CEILING of the
+/// whole `with_resampling(2)` regime, with no encode. Scoring it against the
+/// source with the encoder's perceptual metric answers "can 2× reach the
+/// requested distance at all?" — and if it cannot, no bitrate will rescue it
+/// and the regime must not be selected. Contrast a fixed distance threshold
+/// (libjxl's `d >= 10`), which cannot be sound because it never looks at the
+/// image: measured floors span an order of magnitude across content (~5
+/// butteraugli on smooth photos, 20-40 on aliased line art), so one threshold
+/// cannot serve both.
+///
+/// **It is a near-bound, not an exact one, and which kernel you pass decides
+/// how near.** The decoder upsamples whatever the coded frame decodes to, so
+/// the regime's true ceiling is the upsample of the *best* coded frame — not
+/// necessarily the downsampled source. [`Downsample2xKernel::Iterative`] is
+/// libjxl's decoder-adjoint search for exactly that frame, so its floor sits
+/// close to the true ceiling; [`Downsample2xKernel::Sharper`] is a plain
+/// filter whose floor a real encode can beat by a few percent (measured: best
+/// achieved 2× butteraugli / sharper floor has median 0.99, p10 0.96 over the
+/// imazen-26 sweep, and the encoder's own gaborish/EPF post-filters account
+/// for the rest). Treat a `Sharper` floor as a tight estimate and an
+/// `Iterative` floor as the admissibility bound.
 ///
 /// Measured floors span two orders of magnitude across content
 /// (`benchmarks/auto_resample_monotonicity_2026-09-05.analysis.md`): ~5
