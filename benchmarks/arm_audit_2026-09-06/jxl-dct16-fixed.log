@@ -1,0 +1,42 @@
+warning: patch `zenjxl-decoder v0.4.0 (/Users/lilith/work/zen/zenjxl-decoder/zenjxl-decoder)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+   Compiling jxl-encoder-simd v0.4.0 (/Users/lilith/work/zen/jxl-encoder/jxl-encoder-simd)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 2.51s
+     Running benches/kernel_tiers.rs (target/release/deps/kernel_tiers-c6018fc7c929a9d2)
+[zenbench] calibration: int=0.38ns/iter mem_bw=86.5GiB/s mem_lat=7.4ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.27ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1788674382-126cb.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1788674382-126cb
+  git: 7a7751e6592844adadb1b8b8fb3902229d37e32c
+═══════════════════════════════════════════════════════════════
+
+  dct_16x16  40 rounds × 3K calls
+             mean ±mad ns  95% CI vs base   
+  ├─ neon      414 ±66ns  [379–456]ns       [1]
+  ╰─ scalar   767 ±100ns  [+87.1%–+96.2%]  
+
+  neon    █████████████████████████████████ 413.9ns
+  scalar  ██████████████████████████████████████████████████████████████ 767.4ns
+  [1] CV=30%
+
+  idct_16x16  30 rounds × 1K calls
+             mean ±mad ns  95% CI vs base   
+  ├─ neon      777 ±178ns  [718–835]ns       [1]
+  ╰─ scalar   1356 ±149ns  [+67.9%–+80.7%]  
+
+  neon    ████████████████████████████████████ 777.3ns
+  scalar  ██████████████████████████████████████████████████████████████ 1.36µs
+  [1] CV=21%
+
+  total: 9.7s  (2 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+group=dct_16x16 benchmark=neon  |  vs_base=baseline  |  min=195.0ns mean=413.9ns median=423.1ns mad=65.8ns  |  n=40 cv=30.2% rounds=40 calls=3424 mean_ci=[379.2ns 456.3ns] cold=542.0ns
+group=dct_16x16 benchmark=scalar  |  vs_base_pct=+91.86 ci=[+87.15% +96.24%] significant=true effect=4.06 p=0.0000  |  min=376.4ns mean=767.4ns median=816.6ns mad=100.0ns  |  n=40 cv=19.6% rounds=40 calls=3424 mean_ci=[719.3ns 810.8ns] cold=333.0ns
+group=idct_16x16 benchmark=neon  |  vs_base=baseline  |  min=353.9ns mean=777.3ns median=804.3ns mad=178.4ns  |  n=30 cv=21.0% rounds=30 calls=1915 mean_ci=[718.3ns 834.8ns] cold=250.0ns
+group=idct_16x16 benchmark=scalar  |  vs_base_pct=+74.51 ci=[+67.94% +80.67%] significant=true effect=3.09 p=0.0000  |  min=663.7ns mean=1.36µs median=1.43µs mad=148.9ns  |  n=30 cv=15.4% rounds=30 calls=1915 mean_ci=[1.28µs 1.42µs] cold=542.0ns

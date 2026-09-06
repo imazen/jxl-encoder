@@ -1,0 +1,360 @@
+warning: patch `zenjxl-decoder v0.4.0 (/Users/lilith/work/zen/zenjxl-decoder/zenjxl-decoder)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+   Compiling libm v0.2.16
+   Compiling autocfg v1.5.1
+   Compiling serde_core v1.0.229
+   Compiling syn v2.0.119
+   Compiling num-traits v0.2.19
+   Compiling bytemuck_derive v1.11.0
+   Compiling cfg-if v1.0.4
+   Compiling bytemuck v1.25.2
+   Compiling crossbeam-utils v0.8.22
+   Compiling pin-project-lite v0.2.17
+   Compiling serde v1.0.229
+   Compiling once_cell v1.21.4
+   Compiling zerocopy v0.8.55
+   Compiling zerocopy-derive v0.8.55
+   Compiling either v1.17.0
+   Compiling crossbeam-epoch v0.9.20
+   Compiling thiserror v2.0.19
+   Compiling thiserror-impl v2.0.19
+   Compiling paste v1.0.15
+   Compiling crossbeam-deque v0.8.7
+   Compiling rayon-core v1.13.0
+   Compiling num-integer v0.1.46
+   Compiling ident_case v1.0.1
+   Compiling simd-adler32 v0.3.10
+   Compiling bitflags v2.13.1
+   Compiling log v0.4.33
+   Compiling cfg_aliases v0.2.2
+   Compiling num-bigint v0.4.8
+   Compiling archmage-macros v0.9.28
+   Compiling safe_unaligned_simd v0.2.5
+   Compiling adler2 v2.0.1
+   Compiling rayon v1.12.0
+   Compiling miniz_oxide v0.8.9
+   Compiling num-rational v0.4.2
+   Compiling smallvec v1.15.2
+   Compiling version_check v0.9.5
+   Compiling unicode-segmentation v1.13.3
+   Compiling archmage v0.9.28
+   Compiling nom v8.0.0
+   Compiling convert_case v0.10.0
+   Compiling serde_json v1.0.151
+   Compiling unicode-xid v0.2.6
+   Compiling derive_more-impl v2.1.1
+   Compiling tracing-core v0.1.36
+   Compiling half v2.7.1
+   Compiling equivalent v1.0.2
+   Compiling fnv v1.0.7
+   Compiling parking v2.2.1
+   Compiling strsim v0.11.1
+   Compiling darling_core v0.21.3
+   Compiling darling_core v0.23.0
+   Compiling tracing v0.1.44
+   Compiling derive-new v0.7.0
+   Compiling option-ext v0.2.0
+   Compiling getrandom v0.4.3
+   Compiling object v0.37.3
+   Compiling parking_lot_core v0.9.12
+   Compiling scopeguard v1.2.0
+   Compiling regex-syntax v0.8.11
+   Compiling rand_core v0.10.1
+   Compiling regex-automata v0.4.16
+   Compiling lock_api v0.4.14
+   Compiling dirs-sys v0.5.0
+   Compiling darling_macro v0.23.0
+   Compiling darling_macro v0.21.3
+   Compiling magetypes v0.9.28
+   Compiling equator-macro v0.4.2
+   Compiling foldhash v0.2.0
+   Compiling gimli v0.32.3
+   Compiling imgref v1.12.3
+   Compiling futures-core v0.3.33
+   Compiling allocator-api2 v0.2.21
+   Compiling winnow v1.0.4
+   Compiling ciborium-io v0.2.2
+   Compiling addr2line v0.25.1
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling ciborium-ll v0.2.2
+   Compiling hashbrown v0.16.1
+   Compiling equator v0.4.2
+   Compiling darling v0.21.3
+   Compiling darling v0.23.0
+   Compiling dirs v6.0.0
+   Compiling regex v1.13.1
+   Compiling chacha20 v0.10.1
+   Compiling cubecl-common v0.10.0 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling serde_spanned v1.1.1
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling futures-io v0.3.33
+   Compiling portable-atomic v1.14.0
+   Compiling rustc-demangle v0.1.28
+   Compiling memchr v2.8.3
+   Compiling fastrand v2.5.0
+   Compiling prettyplease v0.2.37
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling toml v1.1.3+spec-1.1.0
+   Compiling futures-lite v2.6.1
+   Compiling backtrace v0.3.76
+   Compiling enumset_derive v0.15.0
+   Compiling rand v0.10.2
+   Compiling sanitize-filename v0.6.0
+   Compiling aligned-vec v0.6.4
+   Compiling parking_lot v0.12.5
+   Compiling ciborium v0.2.2
+   Compiling spin v0.10.1
+   Compiling derive_more v2.1.1
+   Compiling jxl-bitstream v1.1.0 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling event-listener v5.4.2
+   Compiling float8 v0.7.0
+   Compiling tynm v0.2.0
+   Compiling ahash v0.8.12
+   Compiling num-complex v0.4.6
+   Compiling rgb v0.8.53
+   Compiling serde_bytes v0.11.19
+   Compiling float4 v0.2.0
+   Compiling cudarc v0.19.8
+   Compiling embassy-futures v0.1.2
+   Compiling web-time v1.1.0
+   Compiling oneshot v0.2.1
+   Compiling xxhash-rust v0.8.18
+   Compiling event-listener-strategy v0.5.4
+   Compiling enumset v1.1.14
+   Compiling cubecl-macros-internal v0.10.0 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling zenforks-cubecl-runtime v0.10.2 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling concurrent-queue v2.5.0
+   Compiling variadics_please v1.1.0
+   Compiling num-derive v0.4.2
+   Compiling cubecl-macros v0.10.0 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling float-ord v0.3.2
+   Compiling cubecl-ir v0.10.0 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling async-channel v2.5.0
+   Compiling jxl-oxide-common v1.0.0 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling cubecl-zspace v0.10.0 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling jxl-grid v0.6.1 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling itertools v0.14.0
+   Compiling foldhash v0.1.5
+   Compiling hashbrown v0.17.1
+   Compiling enough v0.4.4
+   Compiling inflections v1.1.1
+   Compiling md5 v0.8.1
+   Compiling indexmap v2.14.0
+   Compiling hashbrown v0.15.5
+   Compiling jxl-coding v1.0.1 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling v_frame v0.3.9
+   Compiling jxl-threadpool v1.0.0 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling libloading v0.9.0
+   Compiling num-iter v0.1.46
+   Compiling fixedbitset v0.5.7
+   Compiling whereat v0.1.5
+   Compiling rustc-hash v2.1.3
+   Compiling anyhow v1.0.104
+   Compiling type-map v0.5.1
+   Compiling zenpixels v0.2.16
+   Compiling petgraph v0.8.3
+   Compiling num v0.4.3
+   Compiling linear-srgb v0.6.12
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling crc32fast v1.5.0
+   Compiling stable-vec v0.4.2
+   Compiling arrayvec v0.7.8
+   Compiling stable_deref_trait v1.2.1
+   Compiling as-slice v0.2.1
+   Compiling alloc-stdlib v0.2.4
+   Compiling rustix v1.1.4
+   Compiling zenforks-cubecl-cuda v0.10.2 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling jxl-modular v0.11.2 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling jxl-image v0.13.0 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling proc-macro-error-attr2 v2.0.0
+   Compiling av-scenechange v0.14.1
+   Compiling zenforks-cubecl-core v0.10.2 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling typenum v1.20.1
+   Compiling built v0.8.1
+   Compiling proc-macro-error2 v2.0.1
+   Compiling hybrid-array v0.4.14
+   Compiling rav1e v0.8.1
+   Compiling jxl-vardct v0.11.1 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling brotli-decompressor v5.0.3
+   Compiling aligned v0.4.3
+   Compiling garb v0.2.8
+   Compiling pulp v0.22.3
+   Compiling wide v1.5.0
+   Compiling no_std_io2 v0.9.4
+   Compiling arg_enum_proc_macro v0.3.4
+   Compiling profiling-procmacros v1.0.18
+   Compiling quick-error v2.0.1
+   Compiling pastey v0.1.1
+   Compiling bytes v1.12.1
+   Compiling zenforks-cubecl-opt v0.10.2 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling byte-slice-cast v1.2.3
+   Compiling y4m v0.8.0
+   Compiling zenforks-cubecl v0.10.2 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling av-data v0.4.4
+   Compiling zenforks-cubecl-cpp v0.10.2 (https://github.com/imazen/zenforks-cubecl?rev=92e4a157e160198490b484618896d8dad0313e2c#92e4a157)
+   Compiling profiling v1.0.18
+   Compiling yuvxyb-math v0.1.1
+   Compiling bitstream-io v4.10.0
+   Compiling zenpixels-convert v0.2.16
+   Compiling flate2 v1.1.9
+   Compiling jxl-frame v0.13.3 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling av1-grain v0.2.5
+   Compiling almost-enough v0.4.4
+   Compiling maybe-rayon v0.1.1
+   Compiling objc2-core-foundation v0.3.2
+   Compiling simd_helpers v0.1.0
+   Compiling pulp-wasm-simd-flag v0.1.1
+   Compiling noop_proc_macro v0.3.0
+   Compiling reborrow v0.5.5
+   Compiling zune-core v0.5.3
+   Compiling new_debug_unreachable v1.0.6
+   Compiling weezl v0.1.12
+   Compiling zune-jpeg v0.5.15
+   Compiling fast-ssim2 v0.7.1
+   Compiling objc2-io-kit v0.3.2
+   Compiling zencodec v0.1.26
+   Compiling zenanalyze v0.2.0 (/Users/lilith/work/zen/zenanalyze)
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling jxl-color v0.11.0 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling avif-serialize v0.8.9
+   Compiling loop9 v0.1.5
+   Compiling zune-inflate v0.2.54
+   Compiling fdeflate v0.3.7
+   Compiling byteorder-lite v0.1.0
+   Compiling jxl_simd v0.4.3
+   Compiling fax v0.2.7
+   Compiling color_quant v1.1.0
+   Compiling array-init v2.1.0
+   Compiling pxfm v0.1.30
+   Compiling byteorder v1.5.0
+   Compiling bit_field v0.10.3
+   Compiling lebe v0.5.3
+   Compiling const-oid v0.10.2
+   Compiling tinyvec_macros v0.1.1
+   Compiling ravif v0.13.0
+   Compiling digest v0.11.3
+   Compiling tinyvec v1.12.0
+   Compiling moxcms v0.8.1
+   Compiling gif v0.14.2
+   Compiling tiff v0.11.3
+   Compiling jxl_transforms v0.4.3
+   Compiling image-webp v0.2.4
+   Compiling png v0.18.1
+   Compiling jxl-render v0.12.3 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling exr v1.74.2
+   Compiling zenmetrics-gpu-core v0.0.1 (/Users/lilith/work/zen/zenmetrics/crates/zenmetrics-gpu-core)
+   Compiling ultrahdr-core v0.6.0
+   Compiling sysinfo v0.36.1
+   Compiling jxl-jbr v0.2.1 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling yuvxyb v0.4.2
+   Compiling brotli v8.0.4
+   Compiling jxl_macros v0.4.3
+   Compiling zenjxl-decoder-macros v0.3.9
+   Compiling fs4 v1.1.0
+   Compiling fd-lock v4.0.4
+   Compiling terminal_size v0.4.4
+   Compiling zenyuv v0.1.3 (/Users/lilith/work/zen/zenjpeg/zenyuv)
+   Compiling butteraugli v0.9.4 (/Users/lilith/work/butteraugli/butteraugli)
+   Compiling cvvdp v0.1.0 (/Users/lilith/work/zen/zenmetrics/crates/cvvdp)
+   Compiling jxl-encoder-simd v0.4.0 (/Users/lilith/work/zen/jxl-encoder/jxl-encoder-simd)
+   Compiling zenjxl-decoder-simd v0.3.9
+   Compiling v_frame v0.5.2
+   Compiling qoi v0.4.1
+   Compiling cpufeatures v0.3.0
+   Compiling jxl-encoder-macros v0.4.0 (/Users/lilith/work/zen/jxl-encoder/jxl-encoder-macros)
+   Compiling atomic_refcell v0.1.14
+   Compiling same-file v1.0.6
+   Compiling zenjxl-decoder v0.3.10
+   Compiling walkdir v2.5.0
+   Compiling sha2 v0.11.0
+   Compiling image v0.25.10
+   Compiling yuvxyb v0.5.0
+   Compiling cvvdp-gpu v0.0.1 (/Users/lilith/work/zen/zenmetrics/crates/cvvdp-gpu)
+   Compiling zenjpeg v0.9.0 (/Users/lilith/work/zen/zenjpeg/zenjpeg)
+   Compiling zenbench v0.1.9
+   Compiling codec-corpus v1.1.0
+   Compiling jxl v0.4.3
+   Compiling jxl-oxide v0.12.5 (https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e)
+   Compiling jxl-encoder v0.4.0 (/Users/lilith/work/zen/jxl-encoder/jxl-encoder)
+warning: function `upsample_h2v2_libjpeg_row_scalar` is never used
+   --> /Users/lilith/work/zen/zenjpeg/zenjpeg/src/decode/upsample.rs:736:8
+    |
+736 | pub fn upsample_h2v2_libjpeg_row_scalar(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zenjpeg` (lib) generated 1 warning
+    Finished `release` profile [optimized + debuginfo] target(s) in 44.72s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/it/main.rs (target/release/deps/it-fc5659f7e48067fd)
+
+running 60 tests
+test hash_lock_features::lossless_all_off ... ok
+test hash_lock_features::lossless_bgr8 ... ok
+test hash_lock_features::lossless_defaults_rgb_13x17 ... ok
+test hash_lock_features::lossless_defaults_rgb_32x32 ... ok
+test hash_lock_features::lossless_defaults_rgb_48x48_noise ... ok
+test hash_lock_features::lossless_gray_32x32 ... ok
+test hash_lock_features::lossless_mg_gray_512x512_bilevel_e7 ... ok
+test hash_lock_features::lossless_mg_rgb16_512x512_ramp_e5 ... ok
+test hash_lock_features::lossless_mg_rgb_1024x1024_photoish_e7_sectioned ... ok
+test hash_lock_features::lossless_mg_rgb_320x96_blocky17_e11 ... ok
+test hash_lock_features::lossless_mg_rgb_512x512_noise_e5 ... ok
+test hash_lock_features::lossless_mg_rgb_512x512_noise_e7 ... ok
+test hash_lock_features::lossless_mg_rgb_512x512_noise_e7_sectioned ... ok
+test hash_lock_features::lossless_mg_rgb_512x512_noise_e9 ... ok
+test hash_lock_features::lossless_mg_rgb_512x512_palette_e7 ... ok
+test hash_lock_features::lossless_mg_rgb_512x512_palette_e7_sectioned ... ok
+test hash_lock_features::lossless_mg_rgb_512x512_tiled_e8 ... ok
+test hash_lock_features::lossless_mg_rgba_512x512_blocky_e7 ... ok
+test hash_lock_features::lossless_no_ans_huffman ... ok
+test hash_lock_features::lossless_rgba_32x32 ... ok
+test hash_lock_features::lossless_tree_learning_and_squeeze ... ok
+test hash_lock_features::lossless_with_lz77_greedy ... ok
+test hash_lock_features::lossless_with_lz77_rle ... ok
+test hash_lock_features::lossless_with_squeeze ... ok
+test hash_lock_features::lossless_with_tree_learning ... ok
+test hash_lock_features::lossy_all_off ... ok
+test hash_lock_features::lossy_bgr8 ... ok
+test hash_lock_features::lossy_defaults_rgb_13x17 ... ok
+test hash_lock_features::lossy_defaults_rgb_32x32 ... ok
+test hash_lock_features::lossy_defaults_rgb_48x48_noise ... ok
+test hash_lock_features::lossy_distance_05 ... ok
+test hash_lock_features::lossy_distance_3 ... ok
+test hash_lock_features::lossy_force_afv0 ... ok
+test hash_lock_features::lossy_force_dct16x16 ... ok
+test hash_lock_features::lossy_force_dct2x2 ... ok
+test hash_lock_features::lossy_force_dct4x4 ... ok
+test hash_lock_features::lossy_force_dct8 ... ok
+test hash_lock_features::lossy_force_identity ... ok
+test hash_lock_features::lossy_mg_gray_512x512_bilevel_e7_d1 ... ok
+test hash_lock_features::lossy_mg_rgb16_pq_512x512_ramp_e7_d1 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_e11_d1 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_e5_d1 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_e7_d1 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_r2_e10 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_r2_e3 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_r2_e7 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_r2_e9 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_r4_e7 ... ok
+test hash_lock_features::lossy_mg_rgb_512x512_noise_r8_e7 ... ok
+test hash_lock_features::lossy_mg_rgba_512x512_blocky_r2_e7 ... ok
+test hash_lock_features::lossy_no_ans_huffman ... ok
+test hash_lock_features::lossy_no_butteraugli ... ok
+test hash_lock_features::lossy_no_gaborish ... ok
+test hash_lock_features::lossy_no_pixel_domain_loss ... ok
+test hash_lock_features::lossy_rgb16_32x32 ... ok
+test hash_lock_features::lossy_rgba_32x32 ... ok
+test hash_lock_features::lossy_with_error_diffusion ... ok
+test hash_lock_features::lossy_with_lz77_greedy ... ok
+test hash_lock_features::lossy_with_lz77_rle ... ok
+test hash_lock_features::lossy_with_noise ... ok
+
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 590 filtered out; finished in 8.34s
+
