@@ -12,6 +12,9 @@
 //! against a real encode's wall time at the same settings, because a slowdown
 //! only matters relative to what it is a slowdown of.
 //!
+//! Encodes are persisted under required `ARTIFACT_DIR`; output hashes also pin
+//! both floating-point round trips. Timings are interleaved across all arms.
+//!
 //! Env: `IMGS` (comma-separated paths; default: four imazen-26 pick-list
 //! images), `CROP` (default 1024), `REPS` (default 5), `EFFORT` (default 7).
 //!
@@ -19,6 +22,7 @@
 //!   cargo run -p jxl-encoder --release --features __internals \
 //!     --example resample_kernel_cost
 
+use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 use jxl_encoder::__internals::{Downsample2xKernel, resample_roundtrip_2x_rgb};
@@ -57,12 +61,16 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(7);
 
-    println!("image\tw\th\tmp\tsharper_ms\titerative_ms\tdelta_ms\tencode_ms\tdelta_pct_of_encode");
+    assert!(reps > 0, "REPS must be positive");
+    let artifact_dir = std::path::PathBuf::from(
+        std::env::var("ARTIFACT_DIR").expect("set ARTIFACT_DIR for persisted encodes"),
+    );
+    std::fs::create_dir_all(&artifact_dir).expect("create ARTIFACT_DIR");
+    println!(
+        "image\tw\th\tmp\tsharper_ms\titerative_ms\tdelta_ms\tencode_ms\tdelta_pct_of_encode\tsharper_sha256\titerative_sha256\tencoded_sha256"
+    );
     for path in &imgs {
-        let Ok(img) = image::open(path) else {
-            eprintln!("unreadable: {path}");
-            continue;
-        };
+        let img = image::open(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let rgb8 = img.to_rgb8();
         let (mut w, mut h) = (rgb8.width(), rgb8.height());
         let mut raw = rgb8.as_raw().clone();
@@ -80,34 +88,62 @@ fn main() {
         }
         let lin: Vec<f32> = raw.iter().map(|&b| srgb_to_linear(b)).collect();
 
-        // Warm once so neither kernel pays the first-touch page faults.
-        let _ =
-            resample_roundtrip_2x_rgb(&lin, w as usize, h as usize, Downsample2xKernel::Sharper);
-        let mut best = |k: Downsample2xKernel| -> f64 {
-            let mut ms = f64::MAX;
-            for _ in 0..reps {
-                let t = Instant::now();
-                let out = resample_roundtrip_2x_rgb(&lin, w as usize, h as usize, k);
-                let e = t.elapsed().as_secs_f64() * 1000.0;
-                std::hint::black_box(&out);
-                ms = ms.min(e);
+        let kernels = [Downsample2xKernel::Sharper, Downsample2xKernel::Iterative];
+        let digest = |v: &[f32]| {
+            let mut hash = Sha256::new();
+            for value in v {
+                hash.update(value.to_bits().to_le_bytes());
             }
-            ms
+            hash.finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         };
-        let sharper = best(Downsample2xKernel::Sharper);
-        let iterative = best(Downsample2xKernel::Iterative);
-
+        let hashes: Vec<_> = kernels
+            .iter()
+            .map(|&k| digest(&resample_roundtrip_2x_rgb(&lin, w as usize, h as usize, k)))
+            .collect();
         let lim = Limits::default().with_max_memory_bytes(8u64 << 30);
-        let t = Instant::now();
-        let bytes = LossyConfig::new(2.0)
-            .with_effort(effort)
-            .with_resampling(2)
-            .encode_request(w, h, PixelLayout::Rgb8)
-            .with_limits(&lim)
-            .encode(&raw)
-            .expect("encode");
-        let enc_ms = t.elapsed().as_secs_f64() * 1000.0;
-        std::hint::black_box(&bytes);
+        let encode = || {
+            LossyConfig::new(2.0)
+                .with_effort(effort)
+                .with_resampling(2)
+                .encode_request(w, h, PixelLayout::Rgb8)
+                .with_limits(&lim)
+                .encode(&raw)
+                .expect("encode")
+        };
+        let warm_bytes = encode();
+        let encoded_hash = Sha256::digest(&warm_bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        std::fs::write(
+            artifact_dir.join(format!("{encoded_hash}.jxl")),
+            &warm_bytes,
+        )
+        .expect("persist encode");
+        let mut times = [f64::INFINITY; 3];
+        for rep in 0..reps {
+            // Rotate all three arms, including the encode, within each repeat.
+            for offset in 0..3 {
+                let arm = (rep + offset) % 3;
+                let t = Instant::now();
+                if arm < 2 {
+                    let out = resample_roundtrip_2x_rgb(&lin, w as usize, h as usize, kernels[arm]);
+                    std::hint::black_box(&out);
+                    times[arm] = times[arm].min(t.elapsed().as_secs_f64() * 1000.0);
+                    assert_eq!(digest(&out), hashes[arm], "nondeterministic resampling");
+                } else {
+                    let bytes = encode();
+                    std::hint::black_box(&bytes);
+                    times[arm] = times[arm].min(t.elapsed().as_secs_f64() * 1000.0);
+                    assert_eq!(bytes, warm_bytes, "nondeterministic encode");
+                }
+            }
+            eprintln!("{path} {w}x{h} repeat {}/{reps}", rep + 1);
+        }
+        let [sharper, iterative, enc_ms] = times;
 
         let name = std::path::Path::new(path)
             .file_stem()
@@ -116,9 +152,11 @@ fn main() {
         let mp = w as f64 * h as f64 / 1e6;
         let delta = iterative - sharper;
         println!(
-            "{}\t{w}\t{h}\t{mp:.2}\t{sharper:.1}\t{iterative:.1}\t{delta:.1}\t{enc_ms:.1}\t{:.1}",
+            "{}\t{w}\t{h}\t{mp:.2}\t{sharper:.1}\t{iterative:.1}\t{delta:.1}\t{enc_ms:.1}\t{:.1}\t{}\t{}\t{encoded_hash}",
             &name[..name.len().min(40)],
-            delta / enc_ms * 100.0
+            delta / enc_ms * 100.0,
+            hashes[0],
+            hashes[1]
         );
     }
 }

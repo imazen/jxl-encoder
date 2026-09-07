@@ -224,3 +224,14 @@ arm-kernel-tiers-macos group="":
 arm-encode-tiers-macos:
     mkdir -p "$HOME/tmp"
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p jxl-encoder --features _dev --bench tier_isolation -- --format=llm > "$HOME/tmp/jxl-encoder-full-tiers.log" 2>&1
+
+# Issue 103: local validation with explicit reference tools and caller filters.
+issue103-test *args:
+    CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test -p jxl-encoder -j 4 {{args}}
+
+# Set IMGS/CROP/REPS and ARTIFACT_DIR in the caller; keep the full TSV and stderr.
+resample-kernel-cost:
+    nice -n 19 cargo run -p jxl-encoder -j 4 --release --features __internals --example resample_kernel_cost
+
+resample-kernel-check:
+    nice -n 19 cargo clippy -p jxl-encoder --features __internals --example resample_kernel_cost -j 4 -- -D warnings
