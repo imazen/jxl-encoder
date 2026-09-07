@@ -916,6 +916,34 @@ count (56720 B, 1024 centre crop; delivered/requested 0.598). The smaller
 The corpus's `STORAGE-MAP.md` and `ACCESS.md` identify canonical distribution
 URLs; `VARIANT.md` describes the SDR renders.
 
+### ACTIVE 2026-09-07: #103 full-distance targeting search misses cheaper response branches
+
+The full encoder's distance response is non-monotonic on the two W44
+screenshots even beyond the seed gate. With the original persisted probe,
+terminal e8 internal d6 delivers 3.1735 at 24884 B; d8 delivers 3.0031 at
+21039 B. Codec wiki d16 delivers 11.4118 at 11109 B, but d19 delivers
+7.7818 at 9776 B. A first bad-quality point therefore cannot rule out all
+larger internal distances.
+
+`qfseed_lift_ab.py --target-feedback --feedback-search boundary` spends 12
+full encode/measure queries per target, continuing past the first quality
+match. All eight e8 cells (terminal/wiki × targets 3/4/6/8) land within
+[1,1.1] delivered/requested. Nevertheless six of seven seed-firing cells
+lose bytes against the earlier measured same-encoder quality frontier;
+worst +17.16% on wiki target 8. The twelve measured encode times sum to
+6.31–6.54 s per target, excluding decoding, scoring and process overhead.
+This is a rejected targeting algorithm, not a default-policy change.
+
+Data: `benchmarks/qfseed_targeting_boundary_feedback_2026-09-07/`,
+`benchmarks/qfseed_targeting_boundary_feedback_comparison_2026-09-07.tsv`,
+and the original e8 extension's terminal/wiki TSVs. Their metadata pins
+binary hashes; full encodes, diffmaps and decoder logs remain at the named
+artifact paths. When running the comparator, pass individual data TSVs via
+`--extend-before`: the extension directory also contains a derived comparison
+TSV with a different schema. The next search must consider separated feasible
+regions rather than treating this response as monotone. No claim is made that
+this old-binary experiment measures the reconstruction fixes' effect.
+
 ### ACTIVE 2026-09-07: #103 DCT4x4 internal reconstruction sign defect
 
 [PROVEN] `reconstruct.rs::idct_for_strategy`, DCT4X4 arm, reconstructed
