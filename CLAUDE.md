@@ -941,6 +941,28 @@ Bidirectional local block updates alone therefore do not enforce the global
 Butteraugli target. The next variant separates field-shape updates from a
 global score-controlled scale update.
 
+The separated shape/global-control variant normalizes away the mean scale
+change of the local block update, then multiplies the field by the measured
+global score divided by the requested score. It uses the same 12-iteration
+probe grid and actual production sharpness policy. Only 3/13 firing cells
+land in [1,1.2]; the range is 0.702–1.400. Matched-quality screenshot losses
+remain (terminal target 3.6 +17.88%, target 8 +18.41%). The controller is not
+accepted. Data and comparison: `benchmarks/qfseed_targeting_coordinate_control`
+`_2026-09-07/` and `..._comparison_2026-09-07.tsv`. A subsequent attempt needs
+to retain and compare measured candidates, and account for changes outside
+the AC field when internal distance changes (DC quantization and quantization
+matrix scales remain tied to the original distance in these field-only trials).
+
+Two separate source findings to verify before relying on their existing
+claims: (1) the multi-seed picker uses largest `mean_qf` as its smallest-bytes
+proxy, although a larger quant field means finer precision; its cost ranking
+needs measurement before changing it. This cannot explain single-seed e8.
+(2) `jxl_bitstream_diff.py toc` fails on the terminal patch-reference frame
+with `UnboundLocalError: mode`; `mode` is assigned only for regular frames,
+and the parser's accounting currently assumes one frame. No section-byte
+attribution was obtained. Extend reference-frame/multi-frame parsing with
+independent decoder coverage before using that tool on these streams.
+
 ### ACTIVE 2026-09-07: #103 full-distance targeting search misses cheaper response branches
 
 The full encoder's distance response is non-monotonic on the two W44

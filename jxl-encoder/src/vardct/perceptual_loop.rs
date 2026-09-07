@@ -2631,6 +2631,8 @@ impl VarDctEncoder {
                 break;
             }
 
+            let mean_before_adjustment = mean_qf_float(quant_field_float);
+
             // Step 7: kOriginalComparisonRound = 1: constrain toward initial BEFORE adjustment.
             // Prevents oscillation by keeping qf from diverging too far from initial.
             // (libjxl enc_adaptive_quantization.cc:1039-1057)
@@ -2809,6 +2811,17 @@ impl VarDctEncoder {
                         }
                     }
                     quant_field_float[bi] = quant_field_float[bi].clamp(qf_lower, qf_higher);
+                }
+            }
+            if allow_seed_coarsening && effective_metric_target_distance > 0.0 {
+                // Keep the local update's relative shape, remove its mean-scale
+                // change, then control global precision from measured quality.
+                let mean_after_adjustment = mean_qf_float(quant_field_float);
+                let factor = (mean_before_adjustment / mean_after_adjustment)
+                    * (iter_score / f64::from(effective_metric_target_distance));
+                for value in quant_field_float.iter_mut() {
+                    *value = (f64::from(*value) * factor) as f32;
+                    *value = value.clamp(qf_lower, qf_higher);
                 }
             }
         }
