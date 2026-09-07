@@ -1,0 +1,11 @@
+{
+  "binary": "/Users/lilith/tmp/jxl103/distance-targeting-reconstruction-only",
+  "binary_sha256": "a4353a1f47d9bf3cb03c4b63660293ee9fa58df66e2984132aad1e53b1c76667",
+  "env": {
+    "JXL_W44_168_MODE": "C",
+    "EFFORTS": "8",
+    "DISTANCES": "3.4,3.6,4,5",
+    "CROP": "1024"
+  },
+  "meaning": "C keeps the original e8 iteration count and suppresses the narrow d4..5 decrement"
+}

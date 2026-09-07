@@ -1,0 +1,10 @@
+{
+  "build_commit": "203a568b",
+  "probe": "/Users/lilith/tmp/jxl103/distance-targeting-reconstruction-only",
+  "manifest": "benchmarks/qfseed_targeting_inputs_2026-09-07.tsv",
+  "command": "just qfseed-lift-ab --probe ~/tmp/jxl103/distance-targeting-reconstruction-only --manifest benchmarks/qfseed_targeting_inputs_2026-09-07.tsv --output-dir benchmarks/qfseed_targeting_reconstruction_2026-09-07 --artifacts ~/tmp/jxl103/targeting-reconstruction-grid --djxl .ci-libjxl/tools/djxl --efforts 5,7,8 --off-distances 2,3,3.4,3.6,4,5,6,8",
+  "cells": 336,
+  "artifacts": "/Users/lilith/tmp/jxl103/targeting-reconstruction-grid",
+  "log": "/Users/lilith/tmp/jxl103-targeting-reconstruction-grid.log",
+  "note": "Reconstruction fixes only; no global target search or low-effort normalization. All encodes rendered through jxl-rs, jxl-oxide and djxl v0.12."
+}
