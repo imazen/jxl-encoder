@@ -112,26 +112,30 @@ pub(crate) fn compute_inv_sigma_map(
     quant_scale: f32,
     xsize_blocks: usize,
     ysize_blocks: usize,
+    ac_strategy: &AcStrategyMap,
 ) -> Vec<f32> {
     let mut inv_sigma = vec![0.0f32; xsize_blocks * ysize_blocks];
-
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
-            let idx = by * xsize_blocks + bx;
-            let raw_quant = quant_field[idx] as f32;
-            let sharpness = sharpness_map[idx].min(7) as usize;
-
-            let sigma_quant = EPF_QUANT_MUL / (quant_scale * raw_quant * K_INV_SIGMA_NUM);
-            let sigma = sigma_quant * EPF_SHARP_LUT[sharpness];
-
-            // Sigma should be negative (K_INV_SIGMA_NUM < 0), clamp to avoid div-by-zero
-            if sigma.abs() > 1e-10 {
-                inv_sigma[idx] = 1.0 / sigma;
+            if !ac_strategy.is_first(bx, by) {
+                continue;
             }
-            // If sigma ~= 0, inv_sigma stays 0 -> filter has no effect (all weights = 1)
+            // Only the first raw quantizer is serialized for a transform.
+            // libjxl epf.cc::ComputeSigma broadcasts it over the covered
+            // blocks, while each 8x8 block retains its own sharpness.
+            let raw_quant = quant_field[by * xsize_blocks + bx] as f32;
+            let sigma_quant = EPF_QUANT_MUL / (quant_scale * raw_quant * K_INV_SIGMA_NUM);
+            for iy in 0..ac_strategy.covered_blocks_y(bx, by) {
+                for ix in 0..ac_strategy.covered_blocks_x(bx, by) {
+                    let idx = (by + iy) * xsize_blocks + bx + ix;
+                    let sigma = sigma_quant * EPF_SHARP_LUT[sharpness_map[idx].min(7) as usize];
+                    if sigma.abs() > 1e-10 {
+                        inv_sigma[idx] = 1.0 / sigma;
+                    }
+                }
+            }
         }
     }
-
     inv_sigma
 }
 
@@ -665,6 +669,7 @@ pub(crate) fn apply_epf(
     ysize_blocks: usize,
     width: usize,
     height: usize,
+    ac_strategy: &AcStrategyMap,
     visible_size: (usize, usize),
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<()> {
@@ -678,6 +683,7 @@ pub(crate) fn apply_epf(
         quant_scale,
         xsize_blocks,
         ysize_blocks,
+        ac_strategy,
     );
 
     // Step 0: heavy 5x5 plus (only at epf_iters >= 3)
@@ -1108,6 +1114,7 @@ pub(crate) fn compute_epf_sharpness(
             params.scale,
             xsize_blocks,
             ysize_blocks,
+            ac_strategy,
         );
 
         apply_epf_with_scratch(
@@ -1378,6 +1385,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sigma_uses_first_transform_quantizer_and_each_blocks_sharpness() {
+        let strategies =
+            AcStrategyMap::force_strategy(2, 2, super::super::ac_strategy::RAW_STRATEGY_DCT16X8);
+        let sharpness = [4, 5, 6, 7];
+        let actual = compute_inv_sigma_map(&[2, 3, 200, 17], &sharpness, 1.0, 2, 2, &strategies);
+        let expected = compute_inv_sigma_map(
+            &[2, 3, 2, 3],
+            &sharpness,
+            1.0,
+            2,
+            2,
+            &AcStrategyMap::new_dct8(2, 2),
+        );
+        assert_eq!(actual, expected);
+        assert_ne!(
+            actual[0], actual[2],
+            "each covered block retains its own sharpness"
+        );
+    }
+
+    #[test]
     fn epf_padding_matches_decoder_mirroring() {
         for (width, coordinates) in [
             (1, vec![0, 0, 0, 0, 0, 0, 0]),
@@ -1440,8 +1468,14 @@ mod tests {
                 let mut actual = strided.clone();
                 // Invoke the kernels directly on a tightly packed visible image.
                 // The production strip scheduler requires block-padded heights.
-                let sigma =
-                    compute_inv_sigma_map(&qf, &sharpness, 1.0, stride / 8, padded_height / 8);
+                let sigma = compute_inv_sigma_map(
+                    &qf,
+                    &sharpness,
+                    1.0,
+                    stride / 8,
+                    padded_height / 8,
+                    &AcStrategyMap::new_dct8(stride / 8, padded_height / 8),
+                );
                 if steps == 3 {
                     let padded =
                         core::array::from_fn(|c| pad_plane(&expected[c], width, height, 3));
@@ -1498,6 +1532,7 @@ mod tests {
                     padded_height / 8,
                     stride,
                     padded_height,
+                    &AcStrategyMap::new_dct8(stride / 8, padded_height / 8),
                     (width, height),
                     None,
                 )
@@ -1540,6 +1575,7 @@ mod tests {
             ysize_blocks,
             w,
             h,
+            &AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks),
             (w, h),
             None,
         )
@@ -1586,6 +1622,7 @@ mod tests {
             ysize_blocks,
             w,
             h,
+            &AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks),
             (w, h),
             None,
         )
@@ -1641,6 +1678,7 @@ mod tests {
             ysize_blocks,
             w,
             h,
+            &AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks),
             (w, h),
             None,
         )
@@ -1697,6 +1735,7 @@ mod tests {
             ysize_blocks,
             w,
             h,
+            &AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks),
             (w, h),
             None,
         )

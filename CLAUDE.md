@@ -1011,6 +1011,34 @@ divergence drift checks (7), djxl odd-size validation and both RD-regression
 tests pass unchanged. The reconstruction hook, SSIM2 loop and Zensim loop
 also pass targeted clippy together.
 
+### ACTIVE 2026-09-07: #103 EPF used unsignaled quantizers inside large transforms
+
+[PROVEN] libjxl v0.12 `epf.cc::ComputeSigma` reads the first quantizer of a
+transform and uses it across every covered 8×8 block, preserving per-block
+sharpness. Our `compute_inv_sigma_map` instead read all quant-field slots;
+only the first is serialized, and the perceptual loop can leave different
+values in the covered slots. On 9291 e8 d3.6 after the other reconstruction
+fixes, the maximum 0.01345 linear-RGB difference lies in a DCT8×16 whose
+two slots contain 10 and 9. The decoder uses 10 for both.
+
+The sigma builder now traverses transform origins and broadcasts the first
+quantizer. The shared builder also serves production sharpness selection.
+`visible_reconstruction_matches_both_decoders` failed before the change on
+64² frymire forced DCT8×16 + gaborish/EPF (0.000997 versus -0.0000255).
+Afterward all 36 decoder cases pass, covering DCT4×4 and all nine multi-block
+shapes through 64×64 at 64², 259×133 and 512². The dedicated
+`sigma_uses_first_transform_quantizer_and_each_blocks_sharpness` regression
+pins quantizer broadcast while retaining distinct sharpness values.
+Logs: `~/tmp/jxl103-large-transform-epf-{before,after}.log` and
+`~/tmp/jxl103-large-transforms-parity.log`.
+Independent validation without the seed-targeting prototype passes the default
+suite, normal workspace clippy, targeted reconstruction/SSIM2/Zensim clippy,
+all 36 decoder cases, unchanged Libjxl byte locks, divergence drift checks,
+odd-size djxl validation and both RD-regression tests. Logs use the
+`~/tmp/jxl103-sigma-` prefix. The broader feature-enabled all-target check
+encounters two pre-existing `collapsible_if` errors in
+`examples/adaptive_gaborish_wider_corpus.rs`; its logic is outside this fix.
+
 ### ACTIVE 2026-09-07: #103 targeting after reconstruction corrections
 
 The 336-cell reconstruction-only run is at

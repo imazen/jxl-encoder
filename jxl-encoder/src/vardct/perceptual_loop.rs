@@ -2226,6 +2226,7 @@ impl VarDctEncoder {
                     ysize_blocks,
                     padded_width,
                     padded_height,
+                    ac_strategy,
                     (width, height),
                     self.budget.as_ref(),
                 )?;
@@ -2970,6 +2971,7 @@ impl VarDctEncoder {
                                 ysize_blocks,
                                 padded_width,
                                 padded_height,
+                                ac_strategy,
                                 (width, height),
                                 self.budget.as_ref(),
                             )?;

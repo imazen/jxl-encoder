@@ -21,7 +21,20 @@ fn visible_reconstruction_matches_both_decoders() {
     let djxl = jxl_encoder::test_helpers::djxl_path();
     for (width, height) in [(64u32, 64u32), (259, 133), (512, 512)] {
         let pixels = source.crop_imm(0, 0, width, height).to_rgb8();
-        for (strategy, epf, gab) in [(7u8, 0, false), (0, 0, true), (0, 3, true)] {
+        for (strategy, epf, gab) in [
+            (7u8, 0, false),
+            (0, 0, true),
+            (0, 3, true),
+            (1, 3, true),
+            (2, 3, true),
+            (3, 3, true),
+            (4, 3, true),
+            (10, 3, true),
+            (11, 3, true),
+            (16, 3, true),
+            (17, 3, true),
+            (18, 3, true),
+        ] {
             // Pin both sides to the same sharpness policy. Selection of a
             // sharpness map is separate from reconstructing its decoded pixels.
             let config = LossyConfig::new(4.0)
