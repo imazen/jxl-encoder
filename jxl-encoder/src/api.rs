@@ -7780,6 +7780,7 @@ impl<'a> EncodeRequest<'a> {
         #[cfg(feature = "butteraugli-loop")]
         {
             enc.butteraugli_iters = cfg.butteraugli_iters();
+            enc.seed_distance_targeting = cfg.butteraugli_iters != Some(0);
             // EX-J11 chunk 4: resolve `HdrLoss::Auto` to a concrete
             // loss now (using caller's `with_color_encoding` if set,
             // else `PixelLayout::implied_transfer_function()`), so the
@@ -9135,6 +9136,7 @@ impl LossyEncoder {
             #[cfg(feature = "butteraugli-loop")]
             {
                 enc.butteraugli_iters = cfg.butteraugli_iters();
+                enc.seed_distance_targeting = cfg.butteraugli_iters != Some(0);
                 // EX-J11 chunk 4: see `encode_lossy` site above for
                 // the resolution rationale. Auto → Vdp2 on PQ/HLG,
                 // Butteraugli otherwise.

@@ -253,6 +253,9 @@ resample-kernel-ab *args:
 distance-targeting-probe:
     JXL_PROBE_BUILD_COMMIT="$(jj log --no-graph -r @ -T commit_id)" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo run -p jxl-encoder -j 4 --release --example distance_targeting_probe
 
+distance-targeting-build:
+    JXL_PROBE_BUILD_COMMIT="$(jj log --no-graph -r @ -T commit_id)" nice -n19 cargo build -p jxl-encoder --release --features __internal_recon_hook --example distance_targeting_probe -j4
+
 distance-targeting-check:
     nice -n 19 cargo clippy -p jxl-encoder --example distance_targeting_probe -j 4 -- -D warnings
 

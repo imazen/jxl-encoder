@@ -2131,6 +2131,9 @@ pub struct VarDctEncoder {
     /// Default: 0 (disabled)
     #[cfg(feature = "butteraugli-loop")]
     pub butteraugli_iters: u32,
+    /// Permit distance measurement on an otherwise one-shot lifted seed.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) seed_distance_targeting: bool,
     /// EX-J11 chunk 1: HDR-aware loss dispatch for the butteraugli
     /// quantization loop. Default [`crate::vardct::hdr_metrics::HdrLoss::Butteraugli`]
     /// keeps every existing hash-lock byte-identical;
@@ -2623,6 +2626,8 @@ impl Default for VarDctEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
+            #[cfg(feature = "butteraugli-loop")]
+            seed_distance_targeting: false,
             // EX-J11 chunk 1: default keeps every hash-lock byte-identical.
             #[cfg(feature = "butteraugli-loop")]
             hdr_loss: crate::vardct::hdr_metrics::HdrLoss::Butteraugli,
@@ -2786,6 +2791,8 @@ impl VarDctEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
+            #[cfg(feature = "butteraugli-loop")]
+            seed_distance_targeting: false,
             // EX-J11 chunk 1: default keeps every hash-lock byte-identical.
             #[cfg(feature = "butteraugli-loop")]
             hdr_loss: crate::vardct::hdr_metrics::HdrLoss::Butteraugli,
@@ -3894,6 +3901,11 @@ impl VarDctEncoder {
         // encode peaks (benchmarks/jxl_alloc_sites_4k_2026-08-13.md).
         // `iters > 0` is conservative: the adaptive paths only reduce
         // iteration counts, never raise them from zero.
+        #[cfg(feature = "butteraugli-loop")]
+        let may_target_one_shot_seed =
+            self.seed_distance_targeting && (5..=7).contains(&self.effort);
+        #[cfg(not(feature = "butteraugli-loop"))]
+        let may_target_one_shot_seed = false;
         let need_linear = {
             #[allow(unused_mut)]
             let mut need = false;
@@ -3911,7 +3923,7 @@ impl VarDctEncoder {
             }
             need
         };
-        if !need_linear {
+        if !need_linear && !may_target_one_shot_seed {
             linear_src.release();
         }
 
@@ -4646,6 +4658,26 @@ impl VarDctEncoder {
             }
             qf_pre_scale
         };
+        #[cfg(feature = "butteraugli-loop")]
+        let target_one_shot_seed = qf_pre_scale != 1.0
+            && self.seed_distance_targeting
+            && !self.cvvdp_loop
+            && {
+                #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+                {
+                    !self.zensim_loop
+                }
+                #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+                {
+                    true
+                }
+            }
+            && matches!(self.hdr_loss, super::hdr_metrics::HdrLoss::Butteraugli);
+        #[cfg(not(feature = "butteraugli-loop"))]
+        let target_one_shot_seed = false;
+        if !need_linear && may_target_one_shot_seed && !target_one_shot_seed {
+            linear_src.release();
+        }
 
         // Step 3: Quantize float quant field to raw u8 with adaptive inv_scale
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
@@ -5718,7 +5750,7 @@ impl VarDctEncoder {
         // gate semantics because `effective_buttloop_iters ==
         // self.butteraugli_iters`.
         #[cfg(feature = "butteraugli-loop")]
-        if effective_buttloop_iters > 0 {
+        if effective_buttloop_iters > 0 || target_one_shot_seed {
             let initial_qf_float = quant_field_float.clone();
             // W43-3 chunk 1: HdrLoss::Ssim2 dispatch.
             //
@@ -5977,6 +6009,7 @@ impl VarDctEncoder {
                     // resolves to `self.butteraugli_iters`, byte-
                     // identical to pre-W44-168.
                     Some(effective_buttloop_iters),
+                    target_one_shot_seed,
                     stop,
                 )?;
             }

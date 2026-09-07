@@ -1077,6 +1077,22 @@ targeting. No iteration gate has been changed. Evidence:
 `~/tmp/jxl103/targeting-second-gate/`. This identifies the brochure mechanism;
 the replacement web-screenshot representative 8106 has no such byte cliff.
 
+#### Fixed-shape global targeting — rejected by matched-quality bytes
+
+`benchmarks/qfseed_targeting_original_e8_extended_2026-09-07/` extends the
+original terminal/codec_wiki e8 curves from d8.5 through d25 in 0.5 steps.
+The comparison against prototype 4 shows terminal regressions on 7/8 firing
+cells, up to 20.61% more bytes; codec_wiki regresses on 1/5, by 3.97%.
+Because discrete baseline spacing favors the candidate, denser matching
+cannot excuse these losses. A post-spatial uniform scale changes quality
+but cannot reproduce the strategy and spatial-allocation choices made at
+a different encoder distance. The next experiment adjusts the full distance
+setting while measuring delivered quality. The fixed-shape prototype remains
+recoverable WIP and must not be treated as an accepted production change.
+The probe accepts distance only through 25; an attempted extension beyond
+that limit failed explicitly, and the runner now validates the range before
+starting. The partial e5 measurements were preserved separately.
+
 #### Seed-targeting experiments (before the reconstruction corrections)
 
 The persisted baseline covers seven explicitly listed images at e5/e7/e8:
@@ -1107,6 +1123,35 @@ distances, but ratios range from 0.534 to 1.523. Removing the scale is
 insufficient to meet the distance-accuracy bar. Matched-quality comparisons
 remain required. Full grid and artifacts:
 `~/tmp/jxl103/targeting-prototype2-grid/` and its `-artifacts` sibling.
+
+After all five reconstruction corrections, the 336-cell prototype grid is
+at `benchmarks/qfseed_targeting_prototype4_2026-09-07/`. On baseline-firing
+cells, e8 has 30/31 delivered/requested ratios in [1,1.2] (remaining 5058 d2:
+0.956); e5 has 3/13 and e7 0/13, confirming normalization alone is inadequate.
+Byte rises remain at e8: 9291 d3.4→3.6 +2.87%, 7026 +8.94%, and terminal
+d3.6→4 +1.45%. Target accuracy alone does not prove a monotone byte ladder.
+On 9291 e8 d3.6, the quantizer-broadcast correction reduces the maximum
+internal/decoded difference from 0.01345 to 5.48e-6; internal score 3.6537876
+versus decoded 3.6537921. The adjacent unlifted d3.4 cell retains the distinct
+EPF sharpness-selection policy and its larger reconstruction mismatch.
+
+The next experiment measures a lifted one-shot field with the same global
+search but zero spatial updates. It preserves an explicit
+`with_butteraugli_iters(0)` opt-out, the separate metric choices and animation
+behavior. Accuracy, matched-quality bytes, runtime and memory still require
+measurement; this is not an accepted default change.
+The first low-effort run exposed an input-lifetime requirement: `encode_inner`
+releases owned linear RGB immediately after XYB conversion when no spatial
+loop runs. A measured one-shot search must retain it until seed eligibility
+is known, then release it immediately on non-firing images. The failed run
+is preserved at `~/tmp/jxl103/targeting-prototype5-artifacts/9291-on.log`.
+After the DC-precision correction, the 112-cell low-effort run is persisted
+at `benchmarks/qfseed_targeting_prototype7_2026-09-07/`. Of 13 baseline-firing
+cells per effort, 12/13 reach [1,1.2] at both e5 and e7. The remaining 5058 d5
+ratios are 0.956 and 0.983 respectively. No sampled low-effort on-mode ladder
+has a byte rise. Non-firing targeting errors remain unchanged. On 9291,
+e5 d3.6/d4 take 349/570 ms and e7 takes 495/822 ms in this run; these are
+single measurements, not an interleaved runtime comparison.
 
 
 ### RESOLVED 2026-09-06: the "our sharper port is ~35 % worse" finding was a VERSION artifact; a real (small) port bug was found and fixed

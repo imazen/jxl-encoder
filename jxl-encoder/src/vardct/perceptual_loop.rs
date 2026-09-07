@@ -833,10 +833,10 @@ impl VarDctEncoder {
         // content-aware iter dispatch (Mode B SmoothSkip / Mode C
         // TexturedExtend / Mode D Combined). `None` falls back to
         // `self.butteraugli_iters` (default, byte-identical to
-        // pre-W44-168). The caller is responsible for the gate
-        // condition `iters_override.unwrap_or(self.butteraugli_iters)
-        // > 0` so the buttloop isn't entered with iters=0.
+        // pre-W44-168). A zero budget permits only the global target
+        // search for a lifted one-shot seed; no spatial update runs.
         iters_override: Option<u32>,
+        target_one_shot_seed: bool,
         // Cooperative cancellation token, polled per butteraugli iteration
         // inside `butteraugli_refine_quant_field_inner_seed`.
         stop: Option<&dyn enough::Stop>,
@@ -1269,26 +1269,32 @@ impl VarDctEncoder {
             && (target_distance >= buttloop_min_distance
                 || (w44_108_low_colour
                     && target_distance >= BUTTLOOP_QF_SEED_SCALE_SUB_MIN_DISTANCE));
-        let buttloop_qf_seed_scale = match buttloop_qf_seed_policy {
-            crate::api::ButtloopQfSeedPolicy::AutoScale4 => {
-                if auto_gate_fires {
-                    crate::runtime_or_default!(
-                        DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE,
-                        buttloop_default_screenshot_qf_seed_scale,
-                    )
-                } else {
-                    1.0
+        let buttloop_qf_seed_scale = if target_one_shot_seed {
+            // The caller already applied the low-effort seed during strategy
+            // selection. Do not apply the independent e8+ seed a second time.
+            1.0
+        } else {
+            match buttloop_qf_seed_policy {
+                crate::api::ButtloopQfSeedPolicy::AutoScale4 => {
+                    if auto_gate_fires {
+                        crate::runtime_or_default!(
+                            DEFAULT_BUTTLOOP_SCREENSHOT_QF_SEED_SCALE,
+                            buttloop_default_screenshot_qf_seed_scale,
+                        )
+                    } else {
+                        1.0
+                    }
                 }
-            }
-            crate::api::ButtloopQfSeedPolicy::AutoScale(s) => {
-                if auto_gate_fires {
-                    s
-                } else {
-                    1.0
+                crate::api::ButtloopQfSeedPolicy::AutoScale(s) => {
+                    if auto_gate_fires {
+                        s
+                    } else {
+                        1.0
+                    }
                 }
+                crate::api::ButtloopQfSeedPolicy::ForceScale(s) => s,
+                crate::api::ButtloopQfSeedPolicy::Off => 1.0,
             }
-            crate::api::ButtloopQfSeedPolicy::ForceScale(s) => s,
-            crate::api::ButtloopQfSeedPolicy::Off => 1.0,
         };
 
         // W44-132 Chunk F: env-var `JXL_BUTTLOOP_INITIAL_QF_SCALE` is
@@ -1857,7 +1863,7 @@ impl VarDctEncoder {
                 iters,
                 k_init_mul,
                 is_screenshot,
-                buttloop_qf_seed_scale != 1.0,
+                target_one_shot_seed || buttloop_qf_seed_scale != 1.0,
                 w44_118_per_iter_sharpness,
                 mask1x1,
                 // cvvdp-fork Phase 4: metric-direction target for the
