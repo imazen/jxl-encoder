@@ -93,3 +93,29 @@ resampling test, and both RD regression tests passed unchanged. The default
 integration suite includes jxl-rs round trips; no existing expectations or hash
 locks were regenerated. Logs: `/Users/lilith/tmp/jxl103-tests-final.log`,
 `jxl103-clippy-tail.log`, and `jxl103-resampling-gates2.log` in the same directory.
+
+## Adjoint row staging follow-up
+
+Starting from `61dccb75`, the adjoint now deinterleaves each support row once
+into even/odd arrays. Its five adjacent tap pairs load contiguous output
+lanes from those arrays. Each output still accumulates the same 100 taps in
+the same order, including f64 multiply/add and f32 rounding after every tap.
+This changes load organization only.
+
+Five interleaved repeats on the same Mac compare the original batched
+adjoint with staging. Terminal 1024² iterative time is 106.7→99.5 ms; photo
+1421 at 3000×4000 is 1215.4→1127.2 ms. Photo encode time is
+1077.3→1078.2 ms. The tiny photo's medians remain 0.8 ms iterative and
+0.5 ms encode in both arms. Line art 1024² improves from 109.6 to 102.2 ms iterative, with encode
+76.6→76.3 ms. Tiny terminal measurements include startup drift
+and are retained without a speed claim. The issue's extra-cost target remains
+open. No kernel selection policy changes.
+
+Data and binary hashes: `jxl_adjoint_staging_{terminal,photo,lineart}_2026-09-07`
+TSVs and `.meta.json` companions. Full logs and encoded artifacts are under
+`/Users/lilith/tmp/jxl103/adjoint-staging-{terminal,photo,lineart}/`.
+
+Staging validation: scoped fmt, workspace all-target clippy, the full default
+encoder suite and doctests, Libjxl byte locks, divergence drift, v0.12 djxl
+odd-dimension decode, and both RD gates passed unchanged. Logs:
+`/Users/lilith/tmp/jxl103-adjoint-staging-{parity,clippy,tests,gates}.log`.

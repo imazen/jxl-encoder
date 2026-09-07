@@ -1,0 +1,30 @@
+{
+  "log": "/Users/lilith/tmp/jxl103/adjoint-staging-terminal/jxl_adjoint_staging_terminal_2026-09-07.log",
+  "command": [
+    "scripts/bench_resample_kernels.py",
+    "--before",
+    "/Users/lilith/tmp/jxl103/adjoint-staging-before",
+    "--after",
+    "/Users/lilith/tmp/jxl103/adjoint-staging-after",
+    "--image",
+    "/Users/lilith/work/codec-corpus/gb82-sc/terminal.png",
+    "--sizes",
+    "64",
+    "256",
+    "1024",
+    "--repeats",
+    "5",
+    "--output",
+    "benchmarks/jxl_adjoint_staging_terminal_2026-09-07.tsv",
+    "--artifacts",
+    "/Users/lilith/tmp/jxl103/adjoint-staging-terminal"
+  ],
+  "hostname": "mac",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "commit": "8b3948597b9a0bd653bce7cd2874861f5fb13a02",
+  "binary_sha256": {
+    "before": "df571afe1ea6b2a74b6516547d4c56af79c5e32fa2362d1537fc92224159bb12",
+    "after": "6eadd72f365b504d44144c460f003bb4dbb9770ae4dc5dbe6214fb3674dcf67d"
+  },
+  "timing": "One warmed measurement per arm per invocation; alternate binary order each repeat."
+}

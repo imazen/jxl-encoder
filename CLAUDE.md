@@ -898,6 +898,10 @@ round trip 7197.3→1234.5 ms, accompanying e7 d2 r2 encode
 policy or auto-resampling change was made. Full method, tiny-image caveats,
 source/binary hashes, per-cell data, and artifact locations:
 [benchmarks/jxl_resample_kernels_2026-09-07.md](benchmarks/jxl_resample_kernels_2026-09-07.md).
+A subsequent adjoint row-staging comparison against `61dccb75` reduces the
+same photo from 1215.4 to 1127.2 ms (five interleaved repeats, identical
+hashes), with encode time 1077.3→1078.2 ms. Data: the report above and
+`benchmarks/jxl_adjoint_staging_*_2026-09-07.{tsv,meta.json}`.
 No x86 performance measurement yet. Thread 1 (qf-seed distance targeting)
 remains open in the entry below.
 

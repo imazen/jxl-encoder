@@ -859,7 +859,7 @@ const ANTI_UPSAMPLE2_STENCIL: [f64; 100] = {
 
 // Across-output lanes preserve each output's original 100-tap order.
 #[inline(always)]
-fn anti_upsample2_interior<const LANES: usize, const ROW: usize>(
+fn anti_upsample2_interior<const LANES: usize, const ROW: usize, const HALF: usize>(
     input: &[f32],
     in_w: usize,
     x2: usize,
@@ -869,10 +869,22 @@ fn anti_upsample2_interior<const LANES: usize, const ROW: usize>(
     for ky in 0..10 {
         let start = (y2 * 2 - 4 + ky) * in_w + x2 * 2 - 4;
         let row: &[f32; ROW] = input[start..start + ROW].try_into().unwrap();
-        for kx in 0..10 {
-            let deriv = ANTI_UPSAMPLE2_STENCIL[ky * 10 + kx];
+        // Reuse contiguous even/odd lanes across the five adjacent taps.
+        // Each output still accumulates even then odd, in original tap order.
+        let even: [f32; HALF] = core::array::from_fn(|i| row[2 * i]);
+        let odd: [f32; HALF] = core::array::from_fn(|i| row[2 * i + 1]);
+        for pair in 0..5 {
+            let even_lanes: &[f32; LANES] = even[pair..pair + LANES].try_into().unwrap();
+            let odd_lanes: &[f32; LANES] = odd[pair..pair + LANES].try_into().unwrap();
+            let even_weight = ANTI_UPSAMPLE2_STENCIL[ky * 10 + pair * 2];
+            let odd_weight = ANTI_UPSAMPLE2_STENCIL[ky * 10 + pair * 2 + 1];
             for lane in 0..LANES {
-                sums[lane] = (f64::from(sums[lane]) + deriv * f64::from(row[kx + lane * 2])) as f32;
+                sums[lane] =
+                    (f64::from(sums[lane]) + even_weight * f64::from(even_lanes[lane])) as f32;
+            }
+            for lane in 0..LANES {
+                sums[lane] =
+                    (f64::from(sums[lane]) + odd_weight * f64::from(odd_lanes[lane])) as f32;
             }
         }
     }
@@ -908,7 +920,8 @@ fn anti_upsample2(
                 && x2 + 16 <= out_w as i64
                 && x2 * 2 + 35 < xsize
             {
-                let sums = anti_upsample2_interior::<16, 40>(input, in_w, x2 as usize, y2 as usize);
+                let sums =
+                    anti_upsample2_interior::<16, 40, 20>(input, in_w, x2 as usize, y2 as usize);
                 let start = y2 as usize * out_w + x2 as usize;
                 out[start..start + 16].copy_from_slice(&sums);
                 x2 += 16;
@@ -920,7 +933,8 @@ fn anti_upsample2(
                 && x2 + 4 <= out_w as i64
                 && x2 * 2 + 11 < xsize
             {
-                let sums = anti_upsample2_interior::<4, 16>(input, in_w, x2 as usize, y2 as usize);
+                let sums =
+                    anti_upsample2_interior::<4, 16, 8>(input, in_w, x2 as usize, y2 as usize);
                 let start = y2 as usize * out_w + x2 as usize;
                 out[start..start + 4].copy_from_slice(&sums);
                 x2 += 4;

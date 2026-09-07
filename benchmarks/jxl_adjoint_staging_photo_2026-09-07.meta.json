@@ -1,0 +1,31 @@
+{
+  "log": "/Users/lilith/tmp/jxl103/adjoint-staging-photo/jxl_adjoint_staging_photo_2026-09-07.log",
+  "command": [
+    "scripts/bench_resample_kernels.py",
+    "--before",
+    "/Users/lilith/tmp/jxl103/adjoint-staging-before",
+    "--after",
+    "/Users/lilith/tmp/jxl103/adjoint-staging-after",
+    "--image",
+    "/Users/lilith/work/zen/imazen-26/png-v3/1400-lilith-nature/1421_nature_potted-orchids-table_shinjuku-gyoen-national-garden-shinjuku_s23u_iso16-f1p7_20230702-114223_3000x4000.sdr.png",
+    "--sizes",
+    "64",
+    "256",
+    "1024",
+    "4096",
+    "--repeats",
+    "5",
+    "--output",
+    "benchmarks/jxl_adjoint_staging_photo_2026-09-07.tsv",
+    "--artifacts",
+    "/Users/lilith/tmp/jxl103/adjoint-staging-photo"
+  ],
+  "hostname": "mac",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "commit": "9fbbdc7e1a85b6ba66fdf6c27d0d19e9e7c3ff7b",
+  "binary_sha256": {
+    "before": "df571afe1ea6b2a74b6516547d4c56af79c5e32fa2362d1537fc92224159bb12",
+    "after": "6eadd72f365b504d44144c460f003bb4dbb9770ae4dc5dbe6214fb3674dcf67d"
+  },
+  "timing": "One warmed measurement per arm per invocation; alternate binary order each repeat."
+}

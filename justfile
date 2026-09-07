@@ -233,6 +233,9 @@ issue103-test *args:
 resample-kernel-cost:
     nice -n 19 cargo run -p jxl-encoder -j 4 --release --features __internals --example resample_kernel_cost
 
+resample-kernel-build:
+    nice -n 19 cargo build -p jxl-encoder -j 4 --release --features __internals --example resample_kernel_cost
+
 resample-kernel-check:
     nice -n 19 cargo clippy -p jxl-encoder --features __internals --example resample_kernel_cost -j 4 -- -D warnings
 
