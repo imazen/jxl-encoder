@@ -15,7 +15,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 # `readme` (../README.crates.md, the generated crates.io README) is always
 # packaged by cargo even though it lives at the workspace root, outside this
 # include whitelist. The GitHub README.md stays at the repo root only.
-include = ["/src/**", "/examples/*.rs", "/tests/*.rs", "/tests/*.txt", "/LICENSE*"]
+include = ["/src/**", "/examples/*.rs", "/examples/distance_targeting_probe/decode.rs", "/tests/*.rs", "/tests/*.txt", "/LICENSE*"]
 # Disable example auto-discovery so internal-only tools (e.g. picker oracle
 # calibration harnesses with sibling-repo path deps) don't break out-of-tree
 # CI builds. Examples must be listed explicitly via [[example]] below.

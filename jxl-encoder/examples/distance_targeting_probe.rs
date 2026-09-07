@@ -306,13 +306,7 @@ fn main() {
                     .0
                     .iter()
                     .map(|p| {
-                        let convert = |v: f32| {
-                            if v <= 0.04045 {
-                                v / 12.92
-                            } else {
-                                ((v + 0.055) / 1.055).powf(2.4)
-                            }
-                        };
+                        let convert = decode::srgb_to_linear;
                         RGB::new(convert(p[0]), convert(p[1]), convert(p[2]))
                     })
                     .collect();

@@ -2045,7 +2045,7 @@ impl VarDctEncoder {
         stop: Option<&dyn enough::Stop>,
     ) -> Result<SeedOutcome> {
         use super::epf;
-        use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
+        use super::reconstruct::{reconstruct_xyb, xyb_to_linear_rgb_planar};
 
         let target_distance = self.distance;
         // cvvdp-fork Phase 4: cached alias for the three metric-axis
@@ -2198,7 +2198,13 @@ impl VarDctEncoder {
             }
 
             if self.enable_gaborish {
-                gab_smooth(&mut planes, padded_width, padded_height);
+                super::reconstruct::gab_smooth_visible(
+                    &mut planes,
+                    padded_width,
+                    padded_height,
+                    width,
+                    height,
+                );
             }
             #[cfg(feature = "__internal_recon_hook")]
             if capture_steps && self.enable_gaborish {
@@ -2220,6 +2226,7 @@ impl VarDctEncoder {
                     ysize_blocks,
                     padded_width,
                     padded_height,
+                    (width, height),
                     self.budget.as_ref(),
                 )?;
             }
@@ -2233,7 +2240,7 @@ impl VarDctEncoder {
             }
 
             if let Some(pd) = patches_data {
-                super::patches::add_patches(&mut planes, padded_width, pd);
+                super::patches::add_patches(&mut planes, padded_width, pd, self.distance);
             }
             #[cfg(feature = "__internal_recon_hook")]
             if capture_steps && patches_data.is_some() {
@@ -2944,7 +2951,13 @@ impl VarDctEncoder {
                         );
 
                         if self.enable_gaborish {
-                            gab_smooth(&mut planes, padded_width, padded_height);
+                            super::reconstruct::gab_smooth_visible(
+                                &mut planes,
+                                padded_width,
+                                padded_height,
+                                width,
+                                height,
+                            );
                         }
                         if final_params.epf_iters > 0 {
                             epf::apply_epf(
@@ -2957,11 +2970,17 @@ impl VarDctEncoder {
                                 ysize_blocks,
                                 padded_width,
                                 padded_height,
+                                (width, height),
                                 self.budget.as_ref(),
                             )?;
                         }
                         if let Some(pd) = patches_data {
-                            super::patches::add_patches(&mut planes, padded_width, pd);
+                            super::patches::add_patches(
+                                &mut planes,
+                                padded_width,
+                                pd,
+                                self.distance,
+                            );
                         }
                         if let Some(sd) = splines_data {
                             super::splines::add_splines(

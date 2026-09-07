@@ -957,7 +957,7 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
             let dc11 = input[9];
             input[0] = dc00 + dc01 + dc10 + dc11;
             input[1] = dc00 + dc01 - dc10 - dc11;
-            input[8] = dc00 - dc01 + dc10 + dc11;
+            input[8] = dc00 - dc01 + dc10 - dc11;
             input[9] = dc00 - dc01 - dc10 + dc11;
 
             // All 64 positions written: 4 sub-blocks × 4×4 = 64 pixels
@@ -1151,6 +1151,37 @@ pub(crate) fn gab_smooth(planes: &mut [Vec<f32>; 3], width: usize, height: usize
     }
 }
 
+/// Apply gaborish at the visible image boundary in block-padded planes.
+/// The one-pixel filter halo repeats the final visible row/column. Transform
+/// padding contains reconstructed coefficients and is not a decoder neighbor.
+#[cfg(any(
+    test,
+    feature = "butteraugli-loop",
+    feature = "ssim2-loop",
+    feature = "zensim-loop"
+))]
+pub(crate) fn gab_smooth_visible(
+    planes: &mut [Vec<f32>; 3],
+    stride: usize,
+    padded_height: usize,
+    width: usize,
+    height: usize,
+) {
+    if width < stride || height < padded_height {
+        for plane in planes.iter_mut() {
+            if width < stride {
+                for row in plane[..height * stride].chunks_exact_mut(stride) {
+                    row[width] = row[width - 1];
+                }
+            }
+            if height < padded_height {
+                plane.copy_within((height - 1) * stride..height * stride, height * stride);
+            }
+        }
+    }
+    gab_smooth(planes, stride, padded_height);
+}
+
 /// Convert XYB pixel planes to interleaved linear RGB.
 ///
 /// Implements the inverse of the XYB color transform:
@@ -1200,6 +1231,65 @@ pub(crate) fn xyb_to_linear_rgb_planar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gaborish_visible_pixels_ignore_transform_padding() {
+        for (width, height) in [(1usize, 1usize), (9, 11), (17, 13), (259, 133)] {
+            let stride = width.div_ceil(8) * 8;
+            let padded_height = height.div_ceil(8) * 8;
+            let mut tight: [Vec<f32>; 3] = core::array::from_fn(|c| {
+                (0..width * height)
+                    .map(|i| ((i * 17 + c * 29) % 101) as f32 * 0.001)
+                    .collect()
+            });
+            let mut strided = core::array::from_fn(|_| vec![f32::NAN; stride * padded_height]);
+            for c in 0..3 {
+                for y in 0..height {
+                    strided[c][y * stride..y * stride + width]
+                        .copy_from_slice(&tight[c][y * width..(y + 1) * width]);
+                }
+            }
+            gab_smooth(&mut tight, width, height);
+            gab_smooth_visible(&mut strided, stride, padded_height, width, height);
+            for c in 0..3 {
+                for y in 0..height {
+                    for x in 0..width {
+                        assert_eq!(
+                            strided[c][y * stride + x].to_bits(),
+                            tight[c][y * width + x].to_bits(),
+                            "{width}x{height} channel {c}, ({x},{y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dct4x4_reconstruction_dc_basis_matches_libjxl() {
+        // libjxl v0.12 dec_transforms-inl.h, Type::DCT4X4: the four
+        // low-frequency coefficients form a 2x2 Hadamard over quadrant DCs.
+        for (slot, quadrants) in [
+            (0, [1.0_f32, 1.0, 1.0, 1.0]),
+            (1, [1.0, 1.0, -1.0, -1.0]),
+            (8, [1.0, -1.0, 1.0, -1.0]),
+            (9, [1.0, -1.0, -1.0, 1.0]),
+        ] {
+            let mut coefficients = [0.0; 64];
+            coefficients[slot] = 1.0;
+            let mut pixels = [0.0; 64];
+            idct_for_strategy(RAW_STRATEGY_DCT4X4, &coefficients, &mut pixels);
+            for y in 0..8 {
+                for x in 0..8 {
+                    assert_eq!(
+                        pixels[y * 8 + x],
+                        quadrants[(y / 4) * 2 + x / 4],
+                        "coefficient {slot}, pixel ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
 
     /// Test that LLF restoration is the inverse of DC extraction for DCT16x16.
     #[test]

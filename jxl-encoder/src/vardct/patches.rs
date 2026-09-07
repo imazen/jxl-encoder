@@ -2432,14 +2432,25 @@ pub fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &Pa
     }
 }
 
-/// Add patches back to XYB planes (inverse of [`subtract_patches`]).
+/// Add the decoded patch reference to XYB planes.
 ///
 /// Used by the butteraugli loop to simulate the decoder's reconstruction,
 /// which adds patches via blend mode kAdd after IDCT + gab + EPF.
+/// The reference frame rounds its samples to integers; reproduce that loss
+/// using the host frame's distance and the serialized F16 quantization factors.
 // Consumed only by the perceptual reconstruction loops (perceptual_loop /
 // zensim_loop / ssim2_loop), all of which require `butteraugli-loop`.
 #[cfg_attr(not(feature = "butteraugli-loop"), allow(dead_code))]
-pub(crate) fn add_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &PatchesData) {
+pub(crate) fn add_patches(
+    xyb: &mut [Vec<f32>; 3],
+    xyb_stride: usize,
+    patches: &PatchesData,
+    distance: f32,
+) {
+    let (inv, dequant) = compute_patches_dc_quant(distance).unwrap_or((
+        [4096.0, 512.0, 256.0],
+        [1.0 / 4096.0, 1.0 / 512.0, 1.0 / 256.0],
+    ));
     for pos in &patches.positions {
         let ref_pos = &patches.ref_positions[pos.ref_pos_idx];
         let pw = ref_pos.xsize as usize;
@@ -2458,7 +2469,17 @@ pub(crate) fn add_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &
                     continue;
                 }
                 for c in 0..3 {
-                    xyb[c][img_i] += patches.ref_image[c][ref_i];
+                    let value = patches.ref_image[c][ref_i];
+                    let quantized = safe_round_to_i32(value * inv[c]);
+                    let decoded = if c == 2 {
+                        // The modular decoder converts Y and B-Y to float
+                        // separately, adds them, then applies B's multiplier.
+                        let y = safe_round_to_i32(patches.ref_image[1][ref_i] * inv[1]);
+                        ((quantized - y) as f32 + y as f32) * dequant[c]
+                    } else {
+                        quantized as f32 * dequant[c]
+                    };
+                    xyb[c][img_i] += decoded;
                 }
             }
         }
@@ -3589,6 +3610,63 @@ pub(crate) fn encode_reference_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconstruction_uses_quantized_patch_reference_on_strided_rows() {
+        let patches = PatchesData {
+            positions: vec![PatchPosition {
+                x: 1,
+                y: 1,
+                ref_pos_idx: 0,
+            }],
+            ref_positions: vec![PatchReferencePosition {
+                ref_id: PATCH_FRAME_REFERENCE_ID,
+                x0: 0,
+                y0: 0,
+                xsize: 2,
+                ysize: 1,
+            }],
+            ref_image: [vec![0.1, 0.2], vec![0.1, 0.2], vec![0.1, 0.2]],
+            ref_width: 2,
+            ref_height: 1,
+        };
+        // Explicit integer samples and F16-exact dequantizers from the
+        // reference-frame wire format, independent of the helper under test.
+        for (distance, expected) in [
+            (
+                0.0,
+                [
+                    [410.0 / 4096.0, 819.0 / 4096.0],
+                    [51.0 / 512.0, 102.0 / 512.0],
+                    [26.0 / 256.0, 51.0 / 256.0],
+                ],
+            ),
+            (
+                4.0,
+                [
+                    [70.0 * 93.0 / 65536.0, 141.0 * 93.0 / 65536.0],
+                    [7.0 * 57.0 / 4096.0, 14.0 * 57.0 / 4096.0],
+                    [7.0 * 57.0 / 4096.0, 14.0 * 57.0 / 4096.0],
+                ],
+            ),
+        ] {
+            let mut planes = [vec![0.0; 21], vec![0.0; 21], vec![0.0; 21]];
+            add_patches(&mut planes, 7, &patches, distance);
+            for c in 0..3 {
+                for i in 0..21 {
+                    let value = if (8..10).contains(&i) {
+                        expected[c][i - 8]
+                    } else {
+                        0.0
+                    };
+                    assert_eq!(
+                        planes[c][i], value,
+                        "distance={distance}, channel={c}, index={i}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_patches_ref_group_size_shift_matches_libjxl() {

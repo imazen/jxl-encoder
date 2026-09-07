@@ -910,6 +910,127 @@ count (56720 B, 1024 centre crop; delivered/requested 0.598). The smaller
 The corpus's `STORAGE-MAP.md` and `ACCESS.md` identify canonical distribution
 URLs; `VARIANT.md` describes the SDR renders.
 
+### ACTIVE 2026-09-07: #103 DCT4x4 internal reconstruction sign defect
+
+[PROVEN] `reconstruct.rs::idct_for_strategy`, DCT4X4 arm, reconstructed
+quadrant 2 DC as `dc00 - dc01 + dc10 + dc11`; libjxl v0.12
+`dec_transforms-inl.h::TransformToPixels` and our standalone SIMD inverse
+both subtract the last coefficient. The new
+`dct4x4_reconstruction_dc_basis_matches_libjxl` tests all four Hadamard
+basis vectors and failed at coefficient 9 / pixel (0,4): +1 versus -1.
+Changing that sign makes the test pass. This affects the encoder's internal
+pixel reconstruction (perceptual loop and EPF search), rather than the
+bitstream decoder's inverse transform.
+
+On the 5058 brochure 1024 crop at e8 d4, the pre-fix internal score is
+4.204 while BOTH jxl-rs and jxl-oxide score the emitted pixels at 1.156.
+Internal/production quant fields and global scales are identical;
+per-iteration EPF sharpness recomputation does not remove the discrepancy.
+The maximum internal pixel error is in a DCT4X4 block (block15,117).
+With the sign fixed and the experimental scale search still enabled,
+delivered/requested moves 0.289→0.929. The neighboring d3.6 and d5 encodes
+stay byte-identical to that same experimental baseline. Other internal
+pixel differences remain and are being isolated before accepting a wider
+claim of reconstruction parity. Logs and persisted internal f32 RGB,
+strategy maps, quant fields and JXLs:
+`/Users/lilith/tmp/jxl103-targeting-recon-{qf,strategy,dct4fixed}.log` and
+`/Users/lilith/tmp/jxl103/targeting-recon-{strategy,dct4fixed}/`.
+
+### ACTIVE 2026-09-07: #103 patch-reference reconstruction mismatch
+
+[PROVEN] `patches.rs::add_patches` added the original `ref_image` floats,
+while `encode_reference_frame` integer-quantizes them using distance-dependent,
+F16-serialized factors. The decoder adds the quantized reference. On 5058 at
+512² e8 d4, forced DCT8 with gaborish/EPF disabled, the maximum internal-versus-
+decoded pixel difference was 0.0523; disabling patches reduced it to 2.38e-6.
+The same mismatch occurred across all ten tested single-block strategies,
+whereas their 64² cells agreed within 1.61e-6.
+
+The reconstruction now reproduces the reference frame's integer conversion
+and dequantization, including the modular decoder's float Y+(B-Y) addition
+order. All three perceptual loops pass the host frame distance (the same
+value used by both reference-frame writers). With patches enabled the
+DCT8 512² maximum difference drops to 2.03e-6, with quant fields/global scales
+still identical between internal and production transforms. Regression:
+`reconstruction_uses_quantized_patch_reference_on_strided_rows` covers explicit
+wire-derived samples at d0 and d4 and checks untouched row padding.
+Evidence: `/Users/lilith/tmp/jxl103-recon-strategies.log`,
+`jxl103-targeting-recon-{nopatches,patchfixed}.log` in the same directory;
+raw internal RGB, maps and bitstreams are under `~/tmp/jxl103/` in the
+corresponding `recon-strategies` / `targeting-recon-*` directories.
+Full filter-enabled parity and distance-targeting validation remain open.
+
+### ACTIVE 2026-09-07: #103 EPF border reconstruction mismatch
+
+[PROVEN] Both EPF padding paths replicated image-edge pixels. libjxl v0.12
+`render_pipeline/simple_render_pipeline.cc` mirrors them before every stage.
+`epf_padding_matches_decoder_mirroring` pins all padded pixels for 1, 2 and
+4-pixel square planes with a 3-pixel halo, including repeated reflection on
+small inputs. It failed before the correction (0 versus 3 on the 2-pixel
+plane). Both allocating and scratch-buffer EPF paths now share the private
+mirror-padding implementation; the general SIMD crate's public padding API
+keeps its documented replication behavior.
+
+The preceding DCT/patch fixes and experimental production-sharpness search
+leave the largest pixel discrepancies at the image edges on 5058 e8:
+d3.6 (1023,203), d4 (1023,542), d5 (0,512). With mirror padding, the maximum linear-RGB differences in those three
+1024² cells fall from 0.015–0.045 to 2.38e-6, 6.44e-6 and 3.10e-6,
+respectively. A 259² crop still differs substantially; its filter and
+sharpness contributions are being isolated. Evidence: `~/tmp/jxl103-epf-padding-{before,after}.log`
+and `~/tmp/jxl103-targeting-recon-productionepf.log`.
+
+### ACTIVE 2026-09-07: #103 filtering included transform padding
+
+[PROVEN] The perceptual loops passed block-padded dimensions into gaborish
+and EPF. On a 259² crop, forced DCT8 / EPF disabled, gaborish produced a
+0.03493 maximum linear-RGB disagreement at the bottom edge; disabling
+both filters left only 2.26e-6. Restricting the gaborish neighborhood to the
+visible image reduces the filter-enabled error to 1.91e-6. The image's
+reconstructed transform-padding pixels are not decoder neighbors.
+The three perceptual loops now pass the visible dimensions to EPF's
+mirror-padding layer and use `gab_smooth_visible` before EPF. The aligned
+path retains the existing contiguous kernel; strided rows keep their stride.
+Tests compare packed versus padded buffers, including 259×133, with NaNs
+in the padding to expose accidental reads. Remaining EPF sharpness-policy
+differences on non-lifted cells are separate from this boundary defect.
+Evidence: `~/tmp/jxl103-targeting-recon-odd-{nofilters,gab,gabfixed,epf1}.log`.
+
+Validation of the reconstruction corrections: `just issue103-reconstruction-parity`
+fully decodes real frymire crops through jxl-rs and djxl v0.12 at 64²,
+259×133 and 512², with DCT4x4 / no filters, DCT8 / gaborish, and
+DCT8 / gaborish + all EPF stages. All nine cases meet the unchanged 1e-3
+linear-RGB bound with both sides pinned to uniform EPF sharpness. This
+separates reconstruction from the still-distinct sharpness-selection policy.
+The test is a separate binary because the reconstruction hook is global.
+The probe's diagnostic jxl-rs conversion now mirrors jxl-rs's signed sRGB
+extension (`abs` transfer then `copysign`), so negative reconstructed values
+are compared correctly; the persisted primary metric remains jxl-oxide's
+linear output. Default tests and workspace clippy pass on the reconstruction
+fixes without the experimental seed-targeting code. Libjxl byte locks (5),
+divergence drift checks (7), djxl odd-size validation and both RD-regression
+tests pass unchanged. The reconstruction hook, SSIM2 loop and Zensim loop
+also pass targeted clippy together.
+
+### ACTIVE 2026-09-07: #103 targeting after reconstruction corrections
+
+The 336-cell reconstruction-only run is at
+`benchmarks/qfseed_targeting_reconstruction_2026-09-07/`, with its command,
+build revision and persisted-artifact location in `meta.json`. The original
+9291 e8 cliff is unchanged: d3.4→3.6 remains 28355→56720 B. Fixing the
+reconstruction defects is necessary but does not undo the seed displacement.
+
+[PROVEN] A second mechanism on 5058 (brochure): W44-169 narrows the spatial
+loop from two iterations to one at d4 on smooth/screenshot content. With
+`JXL_W44_168_MODE=C` (which keeps the e8 base count and suppresses that narrow
+decrement), d3.4/d3.6 remain byte-identical, while d4 changes 50458→45225 B
+and d5 46264→41427 B. The d3.6→4 rise of 6.2% becomes a decrease. Delivered/
+requested still sits at 0.383→0.436, so keeping two iterations does not fix
+targeting. No iteration gate has been changed. Evidence:
+`benchmarks/qfseed_second_gate_2026-09-07.{tsv,meta.json}` and
+`~/tmp/jxl103-targeting-second-gate.log`; artifacts under
+`~/tmp/jxl103/targeting-second-gate/`. This identifies the brochure mechanism;
+the replacement web-screenshot representative 8106 has no such byte cliff.
+
 ### RESOLVED 2026-09-06: the "our sharper port is ~35 % worse" finding was a VERSION artifact; a real (small) port bug was found and fixed
 
 **Status**: RESOLVED. The differential was run against the WRONG libjxl

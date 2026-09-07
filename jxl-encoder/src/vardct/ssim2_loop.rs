@@ -140,7 +140,7 @@ impl VarDctEncoder {
         splines_data: Option<&super::splines::SplinesData>,
     ) -> Result<DistanceParams> {
         use super::epf;
-        use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
+        use super::reconstruct::{reconstruct_xyb, xyb_to_linear_rgb_planar};
         use crate::budget::MemoryBudget;
 
         let budget = self.budget.as_ref();
@@ -277,7 +277,13 @@ impl VarDctEncoder {
             );
 
             if self.enable_gaborish {
-                gab_smooth(&mut planes, padded_width, padded_height);
+                super::reconstruct::gab_smooth_visible(
+                    &mut planes,
+                    padded_width,
+                    padded_height,
+                    width,
+                    height,
+                );
             }
 
             if current_params.epf_iters > 0 {
@@ -291,12 +297,13 @@ impl VarDctEncoder {
                     ysize_blocks,
                     padded_width,
                     padded_height,
+                    (width, height),
                     budget,
                 )?;
             }
 
             if let Some(pd) = patches_data {
-                super::patches::add_patches(&mut planes, padded_width, pd);
+                super::patches::add_patches(&mut planes, padded_width, pd, self.distance);
             }
 
             if let Some(sd) = splines_data {

@@ -141,42 +141,74 @@ fn epf_weight(sad: f32, inv_sigma: f32) -> f32 {
     (sad * inv_sigma + 1.0).max(0.0)
 }
 
-/// Pad a plane into a pre-allocated output buffer with edge replication.
-///
-/// Like `jxl_simd::pad_plane` but writes into an existing buffer to avoid allocation.
-/// `out` must have length >= `(width + 2*pad) * (height + 2*pad)`.
+/// Mirror the `offset`-th pixel beyond an edge, including the edge pixel.
+/// libjxl's render pipeline uses this reflection before every EPF stage.
+fn mirrored_edge(offset: usize, len: usize) -> usize {
+    let folded = offset % (2 * len);
+    if folded < len {
+        folded
+    } else {
+        2 * len - folded - 1
+    }
+}
+
+fn pad_plane(plane: &[f32], width: usize, height: usize, pad: usize) -> Vec<f32> {
+    let mut out = jxl_simd::vec_f32_dirty((width + 2 * pad) * (height + 2 * pad));
+    pad_plane_into(plane, width, height, pad, &mut out);
+    out
+}
+
+/// Pad an EPF plane by reflection into an existing allocation.
+/// `out` must hold `(width + 2*pad) * (height + 2*pad)` pixels.
 fn pad_plane_into(plane: &[f32], width: usize, height: usize, pad: usize, out: &mut [f32]) {
     let stride = width + 2 * pad;
-    // Copy interior rows
     for y in 0..height {
         let src_off = y * width;
-        let dst_off = (y + pad) * stride + pad;
-        out[dst_off..dst_off + width].copy_from_slice(&plane[src_off..src_off + width]);
-    }
-    // Replicate left/right edges for interior rows
-    for y in 0..height {
         let row_off = (y + pad) * stride;
-        let left_val = out[row_off + pad];
+        out[row_off + pad..row_off + pad + width].copy_from_slice(&plane[src_off..src_off + width]);
         for p in 0..pad {
-            out[row_off + p] = left_val;
-        }
-        let right_val = out[row_off + pad + width - 1];
-        for p in 0..pad {
-            out[row_off + pad + width + p] = right_val;
+            let reflected = mirrored_edge(p, width);
+            out[row_off + pad - p - 1] = plane[src_off + reflected];
+            out[row_off + pad + width + p] = plane[src_off + width - reflected - 1];
         }
     }
-    // Replicate top rows (full padded rows including left/right)
     for p in 0..pad {
-        let src_off = pad * stride;
-        let dst_off = p * stride;
-        out.copy_within(src_off..src_off + stride, dst_off);
+        let reflected = mirrored_edge(p, height);
+        let top_src = (pad + reflected) * stride;
+        out.copy_within(top_src..top_src + stride, (pad - p - 1) * stride);
+        let bottom_src = (pad + height - reflected - 1) * stride;
+        out.copy_within(bottom_src..bottom_src + stride, (pad + height + p) * stride);
     }
-    // Replicate bottom rows
-    for p in 0..pad {
-        let src_off = (pad + height - 1) * stride;
-        let dst_off = (pad + height + p) * stride;
-        out.copy_within(src_off..src_off + stride, dst_off);
+}
+
+/// Mirror the visible image, excluding the transform's padded rows/columns.
+#[cfg(any(test, feature = "butteraugli-loop"))]
+fn pad_visible_plane(
+    plane: &[f32],
+    stride: usize,
+    padded_height: usize,
+    pad: usize,
+    visible_size: (usize, usize),
+) -> Vec<f32> {
+    let (width, height) = visible_size;
+    if (stride, padded_height) == visible_size {
+        return pad_plane(plane, stride, padded_height, pad);
     }
+    let out_stride = stride + 2 * pad;
+    let mut out = jxl_simd::vec_f32_dirty(out_stride * (padded_height + 2 * pad));
+    for y in 0..padded_height + 2 * pad {
+        let sy = mirrored_edge(if y < pad { pad - y - 1 } else { y - pad }, height);
+        let src = &plane[sy * stride..sy * stride + width];
+        let dst = &mut out[y * out_stride..(y + 1) * out_stride];
+        dst[pad..pad + width].copy_from_slice(src);
+        for x in 0..pad {
+            dst[x] = src[mirrored_edge(pad - x - 1, width)];
+        }
+        for x in pad + width..out_stride {
+            dst[x] = src[mirrored_edge(x - pad, width)];
+        }
+    }
+    out
 }
 
 /// Get the border SAD multiplier for a pixel position within a block.
@@ -633,6 +665,7 @@ pub(crate) fn apply_epf(
     ysize_blocks: usize,
     width: usize,
     height: usize,
+    visible_size: (usize, usize),
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<()> {
     if epf_iters == 0 {
@@ -663,8 +696,9 @@ pub(crate) fn apply_epf(
         let padded_len = in_stride.saturating_mul(height + 2 * pad);
         let _padded_guard =
             MemoryBudget::reserve_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
-        let padded: [Vec<f32>; 3] =
-            core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
+        let padded: [Vec<f32>; 3] = core::array::from_fn(|c| {
+            pad_visible_plane(&planes[c], width, height, pad, visible_size)
+        });
         let result = epf_step0(
             &padded,
             &inv_sigma,
@@ -698,9 +732,9 @@ pub(crate) fn apply_epf(
                 .saturating_mul(4 * 3)
                 .saturating_add((n as u64).saturating_mul(4 * 3)),
         )?;
-        let padded_x = jxl_simd::pad_plane(&planes[0], width, height, pad);
-        let padded_y = jxl_simd::pad_plane(&planes[1], width, height, pad);
-        let padded_b = jxl_simd::pad_plane(&planes[2], width, height, pad);
+        let padded_x = pad_visible_plane(&planes[0], width, height, pad, visible_size);
+        let padded_y = pad_visible_plane(&planes[1], width, height, pad, visible_size);
+        let padded_b = pad_visible_plane(&planes[2], width, height, pad, visible_size);
         let mut out_x = jxl_simd::vec_f32_dirty(n);
         let mut out_y = jxl_simd::vec_f32_dirty(n);
         let mut out_b = jxl_simd::vec_f32_dirty(n);
@@ -740,9 +774,9 @@ pub(crate) fn apply_epf(
                 .saturating_mul(4 * 3)
                 .saturating_add((n as u64).saturating_mul(4 * 3)),
         )?;
-        let padded_x = jxl_simd::pad_plane(&planes[0], width, height, pad);
-        let padded_y = jxl_simd::pad_plane(&planes[1], width, height, pad);
-        let padded_b = jxl_simd::pad_plane(&planes[2], width, height, pad);
+        let padded_x = pad_visible_plane(&planes[0], width, height, pad, visible_size);
+        let padded_y = pad_visible_plane(&planes[1], width, height, pad, visible_size);
+        let padded_b = pad_visible_plane(&planes[2], width, height, pad, visible_size);
         let mut out_x = jxl_simd::vec_f32_dirty(n);
         let mut out_y = jxl_simd::vec_f32_dirty(n);
         let mut out_b = jxl_simd::vec_f32_dirty(n);
@@ -807,7 +841,7 @@ fn apply_epf_with_scratch(
         let _padded_guard =
             MemoryBudget::reserve_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
         let padded: [Vec<f32>; 3] =
-            core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
+            core::array::from_fn(|c| pad_plane(&planes[c], width, height, pad));
         let result = epf_step0(
             &padded,
             inv_sigma,
@@ -1343,6 +1377,146 @@ pub(crate) fn compute_epf_sharpness(
 mod tests {
     use super::*;
 
+    #[test]
+    fn epf_padding_matches_decoder_mirroring() {
+        for (width, coordinates) in [
+            (1, vec![0, 0, 0, 0, 0, 0, 0]),
+            (2, vec![1, 1, 0, 0, 1, 1, 0, 0]),
+            (4, vec![2, 1, 0, 0, 1, 2, 3, 3, 2, 1]),
+        ] {
+            let plane: Vec<f32> = (0..width * width).map(|v| v as f32).collect();
+            let side = width + 6;
+            let mut padded = vec![f32::NAN; side * side];
+            pad_plane_into(&plane, width, width, 3, &mut padded);
+            for (y, &source_y) in coordinates.iter().enumerate() {
+                for (x, &source_x) in coordinates.iter().enumerate() {
+                    assert_eq!(
+                        padded[y * side + x],
+                        plane[source_y * width + source_x],
+                        "width={width}, ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn epf_visible_pixels_ignore_transform_padding() {
+        type EpfKernel = fn(
+            &[f32],
+            &[f32],
+            &[f32],
+            &mut [f32],
+            &mut [f32],
+            &mut [f32],
+            &[f32],
+            usize,
+            usize,
+            usize,
+            usize,
+            usize,
+            f32,
+            f32,
+        );
+        for (width, height) in [(1usize, 1usize), (9, 11), (17, 13), (259, 133)] {
+            let stride = width.div_ceil(8) * 8;
+            let padded_height = height.div_ceil(8) * 8;
+            let tight: [Vec<f32>; 3] = core::array::from_fn(|c| {
+                (0..width * height)
+                    .map(|i| ((i * 17 + c * 29) % 101) as f32 * 0.001)
+                    .collect()
+            });
+            let mut strided = core::array::from_fn(|_| vec![f32::NAN; stride * padded_height]);
+            for c in 0..3 {
+                for y in 0..height {
+                    strided[c][y * stride..y * stride + width]
+                        .copy_from_slice(&tight[c][y * width..(y + 1) * width]);
+                }
+            }
+            let qf = vec![10; stride / 8 * (padded_height / 8)];
+            let sharpness = vec![4; qf.len()];
+            for steps in 1..=3 {
+                let mut expected = tight.clone();
+                let mut actual = strided.clone();
+                // Invoke the kernels directly on a tightly packed visible image.
+                // The production strip scheduler requires block-padded heights.
+                let sigma =
+                    compute_inv_sigma_map(&qf, &sharpness, 1.0, stride / 8, padded_height / 8);
+                if steps == 3 {
+                    let padded =
+                        core::array::from_fn(|c| pad_plane(&expected[c], width, height, 3));
+                    expected = epf_step0(
+                        &padded,
+                        &sigma,
+                        stride / 8,
+                        width,
+                        height,
+                        width + 6,
+                        3,
+                        None,
+                    )
+                    .unwrap();
+                }
+                for (pad, scale, kernel) in [
+                    (2, 1.65, jxl_simd::epf_step1_scalar as EpfKernel),
+                    (
+                        1,
+                        EPF_PASS2_SIGMA_SCALE * 1.65,
+                        jxl_simd::epf_step2_scalar as EpfKernel,
+                    ),
+                ] {
+                    if pad == 1 && steps == 1 {
+                        continue;
+                    }
+                    let input: [Vec<f32>; 3] =
+                        core::array::from_fn(|c| pad_plane(&expected[c], width, height, pad));
+                    let [x, y, b] = &mut expected;
+                    kernel(
+                        &input[0],
+                        &input[1],
+                        &input[2],
+                        x,
+                        y,
+                        b,
+                        &sigma,
+                        stride / 8,
+                        width,
+                        height,
+                        width + 2 * pad,
+                        pad,
+                        scale,
+                        EPF_BORDER_SAD_MUL,
+                    );
+                }
+                apply_epf(
+                    &mut actual,
+                    &qf,
+                    &sharpness,
+                    1.0,
+                    steps,
+                    stride / 8,
+                    padded_height / 8,
+                    stride,
+                    padded_height,
+                    (width, height),
+                    None,
+                )
+                .unwrap();
+                for c in 0..3 {
+                    for y in 0..height {
+                        for x in 0..width {
+                            assert_eq!(
+                                actual[c][y * stride + x].to_bits(),
+                                expected[c][y * width + x].to_bits(),
+                                "{width}x{height} EPF{steps} channel {c}, ({x},{y})"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// EPF on constant input should produce constant output.
     #[test]
     fn test_epf_constant_passthrough() {
@@ -1366,6 +1540,7 @@ mod tests {
             ysize_blocks,
             w,
             h,
+            (w, h),
             None,
         )
         .unwrap();
@@ -1411,6 +1586,7 @@ mod tests {
             ysize_blocks,
             w,
             h,
+            (w, h),
             None,
         )
         .unwrap();
@@ -1465,6 +1641,7 @@ mod tests {
             ysize_blocks,
             w,
             h,
+            (w, h),
             None,
         )
         .unwrap();
@@ -1520,6 +1697,7 @@ mod tests {
             ysize_blocks,
             w,
             h,
+            (w, h),
             None,
         )
         .unwrap();

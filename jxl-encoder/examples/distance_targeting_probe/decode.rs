@@ -67,3 +67,16 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32
         .flat_map(|y| pixels.row(y).iter().copied())
         .collect()
 }
+
+/// The decoder extends sRGB symmetrically outside the display gamut.
+/// Match jxl-rs color/tf.rs: transform the magnitude, then restore its sign.
+#[cfg(feature = "__internal_recon_hook")]
+pub(super) fn srgb_to_linear(value: f32) -> f32 {
+    let magnitude = value.abs();
+    let linear = if magnitude <= 0.04045 {
+        magnitude / 12.92
+    } else {
+        ((magnitude + 0.055) / 1.055).powf(2.4)
+    };
+    linear.copysign(value)
+}

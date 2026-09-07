@@ -280,3 +280,7 @@ qfseed-lift-analyze *args:
 
 issue103-fmt:
     nice -n19 cargo fmt -p jxl-encoder -p jxl-encoder-simd
+
+# Process isolation keeps the reconstruction capture from racing other encodes.
+issue103-reconstruction-parity:
+    just issue103-test --features __internal_recon_hook --test reconstruction_decoder_parity -- --nocapture
