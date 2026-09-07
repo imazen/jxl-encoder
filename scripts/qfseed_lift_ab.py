@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--off-distances", default="0.75,1,1.25,1.5,2,2.5,3,3.4,3.6,4,5,6,8")
     parser.add_argument("--crop", type=int, default=1024)
     parser.add_argument("--iters", type=int)
+    parser.add_argument("--modes", nargs="+", choices=["on", "off"], default=["on", "off"])
     args = parser.parse_args()
     with args.manifest.open() as source:
         images = list(csv.DictReader(source, delimiter="\t"))
@@ -40,7 +41,7 @@ def main():
         # A different run gets a different directory; never overwrite a sweep.
         with output_path.open("x") as output:
             writer = None
-            for mode in ["on", "off"]:
+            for mode in args.modes:
                 print(f"{image['image']} {image['class']} lift={mode}", flush=True)
                 env = dict(os.environ, IMG=image["path"], CROP=str(args.crop),
                            EFFORTS=args.efforts, ARTIFACT_DIR=str(args.artifacts),

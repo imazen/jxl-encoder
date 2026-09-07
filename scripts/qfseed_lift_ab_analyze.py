@@ -39,6 +39,8 @@ parser.add_argument("input", nargs="?", type=Path,
                     default=Path("benchmarks/qfseed_lift_ab_2026-09-06.tsv"))
 parser.add_argument("--compare-before", type=Path,
                     help="Compare revised on-mode output with an earlier persisted on/off run.")
+parser.add_argument("--extend-before", type=Path, action="append", default=[],
+                    help="Additional measured baseline curves for matched-quality comparison.")
 args = parser.parse_args()
 rows = load_rows(args.input)
 if args.compare_before:
@@ -48,6 +50,10 @@ if args.compare_before:
     for row in before:
         if row["mode"] == "on":
             curves[row["image"], row["effort"]].append(row)
+    for extension in args.extend_before:
+        for row in load_rows(extension):
+            if row["mode"] == "on":
+                curves[row["image"], row["effort"]].append(row)
     writer = csv.writer(sys.stdout, delimiter="\t", lineterminator="\n")
     writer.writerow(["image", "class", "effort", "d_req", "seed_fired_before",
                      "before_ratio", "after_ratio", "before_bytes", "after_bytes",
