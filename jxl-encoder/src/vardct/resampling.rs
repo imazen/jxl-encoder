@@ -776,10 +776,6 @@ fn upsample2_plane(
                     let start = (y as usize / 2 - 2 + ky) * in_w + x as usize / 2 - 2;
                     let row: &[f32; 8] = input[start..start + 8].try_into().unwrap();
                     for kx in 0..5 {
-                        let even = kernels[0][ky * 5 + kx];
-                        let odd = kernels[1][ky * 5 + kx];
-                        let below_even = kernels[2][ky * 5 + kx];
-                        let below_odd = kernels[3][ky * 5 + kx];
                         for lane in 0..4 {
                             let v = row[kx + lane];
                             if v < mins[lane] {
@@ -788,10 +784,12 @@ fn upsample2_plane(
                             if v > maxs[lane] {
                                 maxs[lane] = v;
                             }
-                            sums[0][lane] += v * even;
-                            sums[1][lane] += v * odd;
-                            sums[2][lane] += v * below_even;
-                            sums[3][lane] += v * below_odd;
+                        }
+                        for phase in 0..4 {
+                            let weight = kernels[phase][ky * 5 + kx];
+                            for lane in 0..4 {
+                                sums[phase][lane] += row[kx + lane] * weight;
+                            }
                         }
                     }
                 }
