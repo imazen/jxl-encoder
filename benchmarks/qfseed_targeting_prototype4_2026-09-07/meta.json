@@ -1,0 +1,11 @@
+{
+  "build_commit": "4b036195",
+  "probe": "/Users/lilith/tmp/jxl103/distance-targeting-prototype4",
+  "probe_sha256": "6430544d94c5681e56cf894cdc500067f840bc3966c5ff60cb90367df27d3693",
+  "manifest": "benchmarks/qfseed_targeting_inputs_2026-09-07.tsv",
+  "cells": 336,
+  "artifacts": "/Users/lilith/tmp/jxl103/targeting-prototype4-artifacts",
+  "log": "/Users/lilith/tmp/jxl103-targeting-prototype4-grid.log",
+  "command": "just qfseed-lift-ab --probe ~/tmp/jxl103/distance-targeting-prototype4 --manifest benchmarks/qfseed_targeting_inputs_2026-09-07.tsv --output-dir ~/tmp/jxl103/targeting-prototype4-grid --artifacts ~/tmp/jxl103/targeting-prototype4-artifacts --djxl .ci-libjxl/tools/djxl --off-distances 2,3,3.4,3.6,4,5,6,8",
+  "note": "Experimental normalization at e5/e7 and global target search at e8, after all five reconstruction fixes. Not accepted: low-effort accuracy and matched-quality comparisons remain open."
+}
