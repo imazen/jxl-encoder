@@ -85,6 +85,18 @@ fn main() {
         .map(|v| v.parse().expect("ITERS: u32"));
     #[cfg(not(feature = "butteraugli-loop"))]
     assert!(iters.is_none(), "ITERS requires butteraugli-loop");
+    let forced_strategy: Option<u8> = std::env::var("FORCE_STRATEGY")
+        .ok()
+        .map(|v| v.parse().expect("FORCE_STRATEGY: u8"));
+    let epf: Option<i8> = std::env::var("EPF")
+        .ok()
+        .map(|v| v.parse().expect("EPF: i8"));
+    let gaborish: Option<bool> = std::env::var("GABORISH")
+        .ok()
+        .map(|v| v.parse().expect("GABORISH: true or false"));
+    let patches: Option<bool> = std::env::var("PATCHES")
+        .ok()
+        .map(|v| v.parse().expect("PATCHES: true or false"));
     let djxl = jxl_encoder::test_helpers::djxl_path();
     let distances: Vec<f32> = std::env::var("DISTANCES")
         .unwrap_or_else(|_| "1,2,3,3.4,3.6,4,5,6,8".into())
@@ -148,9 +160,11 @@ fn main() {
         .as_nanos();
     let stem = artifacts.join(format!("{source_hash}-{run_id}"));
     std::fs::write(stem.with_extension("meta"), format!(
-        "build_commit\t{build_commit}\nsource\t{path:?}\nsource_rgb8_sha256\t{source_hash}\nwidth\t{w}\nheight\t{h}\nresampling\t{resampling}\niters\t{iters:?}\nbuttloop_scale\t{:?}\nadaptive_scale\t{:?}\n",
+        "build_commit\t{build_commit}\nsource\t{path:?}\nsource_rgb8_sha256\t{source_hash}\nwidth\t{w}\nheight\t{h}\nresampling\t{resampling}\niters\t{iters:?}\nforced_strategy\t{forced_strategy:?}\nepf\t{epf:?}\ngaborish\t{gaborish:?}\npatches\t{patches:?}\nbuttloop_scale\t{:?}\nadaptive_scale\t{:?}\nepf_seed_disable\t{:?}\nepf_per_iter\t{:?}\n",
         std::env::var("JXL_BUTTLOOP_INITIAL_QF_SCALE").ok(),
         std::env::var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE").ok(),
+        std::env::var("JXL_W44_117_DISABLE").ok(),
+        std::env::var("JXL_W44_118_PER_ITER_SHARPNESS").ok(),
     )).expect("persist run metadata");
     let mut records = std::fs::File::create(stem.with_extension("tsv")).expect("create run TSV");
     eprintln!(
@@ -165,9 +179,29 @@ fn main() {
             let mut config = LossyConfig::new(d)
                 .with_effort(e)
                 .with_resampling(resampling);
+            if let Some(patches) = patches {
+                config = config.with_patches(patches);
+            }
+            if let Some(strategy) = forced_strategy {
+                config = config.with_force_strategy(Some(strategy));
+            }
+            if let Some(epf) = epf {
+                config = config.with_epf_level(epf);
+            }
+            if let Some(gaborish) = gaborish {
+                config = config.with_gaborish(gaborish);
+            }
             #[cfg(feature = "butteraugli-loop")]
             if let Some(iters) = iters {
                 config = config.with_butteraugli_iters(iters);
+            }
+            #[cfg(feature = "__internal_recon_hook")]
+            {
+                use jxl_encoder::vardct::__recon_hook;
+                let _ = __recon_hook::take_last();
+                __recon_hook::set_capture_enabled(true);
+                let _ = __recon_hook::take_last_production_qf();
+                __recon_hook::set_production_qf_capture_enabled(true);
             }
             let started = Instant::now();
             let bytes = config
@@ -177,9 +211,68 @@ fn main() {
                 .unwrap_or_else(|err| panic!("encode d={d} e={e}: {err:?}"));
             let encode_ms = started.elapsed().as_secs_f64() * 1000.0;
             let encoded_hash = sha256(&bytes);
+            #[cfg(feature = "__internal_recon_hook")]
+            {
+                use jxl_encoder::vardct::__recon_hook;
+                __recon_hook::set_capture_enabled(false);
+                __recon_hook::set_production_qf_capture_enabled(false);
+                if let Some(recon) = __recon_hook::take_last() {
+                    std::fs::write(
+                        artifacts.join(format!("{encoded_hash}.internal-strategy")),
+                        &recon.raw_strategy,
+                    )
+                    .expect("persist strategy map");
+                    std::fs::write(
+                        artifacts.join(format!("{encoded_hash}.internal-qf")),
+                        &recon.quant_field_u8,
+                    )
+                    .expect("persist quant field");
+                    let production = __recon_hook::take_last_production_qf()
+                        .expect("production quant-field capture");
+                    let changed = recon
+                        .quant_field_u8
+                        .iter()
+                        .zip(&production.quant_field_u8)
+                        .filter(|(a, b)| a != b)
+                        .count();
+                    eprintln!(
+                        "internal vs production: changed_qf={changed} global_scale={} vs {}",
+                        recon.final_global_scale, production.global_scale
+                    );
+                    let pixels: Vec<RGB<f32>> = recon
+                        .r
+                        .iter()
+                        .zip(&recon.g)
+                        .zip(&recon.b)
+                        .map(|((&r, &g), &b)| RGB::new(r, g, b))
+                        .collect();
+                    let mut raw = Vec::with_capacity(pixels.len() * 12);
+                    for p in &pixels {
+                        for value in [p.r, p.g, p.b] {
+                            raw.extend_from_slice(&value.to_le_bytes());
+                        }
+                    }
+                    std::fs::write(
+                        artifacts.join(format!("{encoded_hash}.internal-rgb-f32le")),
+                        raw,
+                    )
+                    .expect("persist internal reconstruction");
+                    let internal = Img::new(pixels, recon.width, recon.height);
+                    let score = butteraugli_linear(
+                        orig_lin.as_ref(),
+                        internal.as_ref(),
+                        &ButteraugliParams::default(),
+                    )
+                    .expect("score internal reconstruction");
+                    eprintln!(
+                        "internal e{e} d{d}: score={} iteration={} spatial_iters={} global_scale={}",
+                        score.score, recon.iter, recon.iters, recon.final_global_scale
+                    );
+                }
+            }
             let encoded_path = artifacts.join(format!("{encoded_hash}.jxl"));
             std::fs::write(&encoded_path, &bytes).expect("persist JXL before validation");
-            decode::verify_jxl_rs(&bytes, w as usize, h as usize);
+            let primary_pixels = decode::verify_jxl_rs(&bytes, w as usize, h as usize);
             let reference = std::process::Command::new(&djxl)
                 .arg(&encoded_path)
                 .args(["--disable_output", "--num_threads=1"])
@@ -206,6 +299,55 @@ fn main() {
             let fb = dec.render_frame(0).expect("render").image_all_channels();
             assert_eq!((fb.width(), fb.height()), (w as usize, h as usize));
             let buf = fb.buf();
+            #[cfg(feature = "__internal_recon_hook")]
+            {
+                let linear: Vec<RGB<f32>> = primary_pixels
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|p| {
+                        let convert = |v: f32| {
+                            if v <= 0.04045 {
+                                v / 12.92
+                            } else {
+                                ((v + 0.055) / 1.055).powf(2.4)
+                            }
+                        };
+                        RGB::new(convert(p[0]), convert(p[1]), convert(p[2]))
+                    })
+                    .collect();
+                let primary = Img::new(linear, w as usize, h as usize);
+                let metric = butteraugli_linear(
+                    orig_lin.as_ref(),
+                    primary.as_ref(),
+                    &ButteraugliParams::default(),
+                )
+                .expect("score jxl-rs pixels");
+                let internal_path = artifacts.join(format!("{encoded_hash}.internal-rgb-f32le"));
+                if internal_path.is_file() {
+                    let raw = std::fs::read(internal_path).unwrap();
+                    assert_eq!(raw.len(), buf.len() * 4);
+                    let mut max_diff = (0.0f32, 0usize, 0.0f32, 0.0f32);
+                    let mut sum_diff = 0.0f64;
+                    for (i, (&decoded, raw)) in
+                        buf.iter().zip(raw.as_chunks::<4>().0.iter()).enumerate()
+                    {
+                        let internal = f32::from_le_bytes(*raw);
+                        let diff = (internal - decoded).abs();
+                        sum_diff += f64::from(diff);
+                        if diff > max_diff.0 {
+                            max_diff = (diff, i, internal, decoded);
+                        }
+                    }
+                    eprintln!(
+                        "decoder drift: jxl_rs_score={} max={:?} mean_abs={}",
+                        metric.score,
+                        max_diff,
+                        sum_diff / buf.len() as f64
+                    );
+                }
+            }
+            drop(primary_pixels);
             let dist_lin: Img<Vec<RGB<f32>>> = Img::new(
                 buf.chunks(3).map(|c| RGB::new(c[0], c[1], c[2])).collect(),
                 fb.width(),

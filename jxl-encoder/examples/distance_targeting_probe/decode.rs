@@ -1,6 +1,6 @@
 //! Full jxl-rs frame decode for the distance-targeting probe's RGB inputs.
 
-pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) {
+pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32> {
     use jxl::api::{
         JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat,
         ProcessingResult, states,
@@ -63,4 +63,7 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) {
             "non-finite decoded pixel"
         );
     }
+    (0..height)
+        .flat_map(|y| pixels.row(y).iter().copied())
+        .collect()
 }

@@ -9,14 +9,66 @@ The e5/e6 path is ONE-SHOT (no perceptual loop), so a "the loop cannot walk
 back from the seed" story cannot explain it; a scale applied to the quant
 field and never renormalised to the requested distance explains both.
 """
-import csv, math, sys
+import argparse, csv, math, sys
+from pathlib import Path
 from collections import defaultdict
 
-rows = list(csv.DictReader(open(sys.argv[1] if len(sys.argv)>1 else 'benchmarks/qfseed_lift_ab_2026-09-06.tsv'), delimiter='\t'))
-for r in rows:
-    r['effort'] = int(r['effort']); r['d_req'] = float(r['d_req'])
-    r['bytes'] = int(r['bytes']); r['bfly'] = float(r['bfly'])
-    r['ssim2'] = float(r['ssim2']); r['delivered_ratio'] = float(r['delivered_ratio'])
+def load_rows(path):
+    paths = sorted(path.glob("*.tsv")) if path.is_dir() else [path]
+    rows = []
+    for item in paths:
+        with item.open() as source:
+            rows.extend(csv.DictReader(source, delimiter="\t"))
+    assert rows, path
+    for row in rows:
+        for key in ["effort", "bytes"]:
+            row[key] = int(row[key])
+        for key in ["d_req", "bfly", "ssim2", "delivered_ratio"]:
+            row[key] = float(row[key])
+    return rows
+
+
+def output_changed(a, b):
+    if a.get("encoded_sha256") and b.get("encoded_sha256"):
+        return a["encoded_sha256"] != b["encoded_sha256"]
+    return a["bytes"] != b["bytes"]
+
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("input", nargs="?", type=Path,
+                    default=Path("benchmarks/qfseed_lift_ab_2026-09-06.tsv"))
+parser.add_argument("--compare-before", type=Path,
+                    help="Compare revised on-mode output with an earlier persisted on/off run.")
+args = parser.parse_args()
+rows = load_rows(args.input)
+if args.compare_before:
+    before = load_rows(args.compare_before)
+    indexed = {(r["image"], r["effort"], r["d_req"], r["mode"]): r for r in before}
+    curves = defaultdict(list)
+    for row in before:
+        if row["mode"] == "on":
+            curves[row["image"], row["effort"]].append(row)
+    writer = csv.writer(sys.stdout, delimiter="\t", lineterminator="\n")
+    writer.writerow(["image", "class", "effort", "d_req", "seed_fired_before",
+                     "before_ratio", "after_ratio", "before_bytes", "after_bytes",
+                     "before_matched_bytes", "after_cost_at_matched_bfly"])
+    for row in rows:
+        if row["mode"] != "on":
+            continue
+        key = row["image"], row["effort"], row["d_req"]
+        old = indexed[*key, "on"]
+        off = indexed[*key, "off"]
+        candidates = [r for r in curves[row["image"], row["effort"]]
+                      if r["bfly"] <= row["bfly"]]
+        best = min(candidates, key=lambda r: r["bytes"]) if candidates else None
+        writer.writerow([row["image"], row["class"], row["effort"], row["d_req"],
+                         int(output_changed(old, off)), old["delivered_ratio"],
+                         row["delivered_ratio"], old["bytes"], row["bytes"],
+                         best["bytes"] if best else "unbracketed",
+                         row["bytes"] / best["bytes"] if best else "unbracketed"])
+    # The comparator uses measured frontier points, never interpolation. A coarse
+    # baseline grid overstates baseline bytes and can overstate candidate wins.
+    sys.exit(0)
 
 by = defaultdict(lambda: {'on': [], 'off': []})
 for r in rows:
@@ -71,7 +123,7 @@ for (img, cls, e), m in sorted(by.items()):
         # matching unlifted point IS the same encode) and would drag every
         # median to 1.00, hiding both the wins and the losses.
         _o = offmap_d.get(r['d_req'])
-        r['_firing'] = bool(_o) and _o['bytes'] != r['bytes']
+        r['_firing'] = bool(_o) and output_changed(_o, r)
         ok = [o for o in offs if o['bfly'] <= r['bfly']]
         if not ok:
             unbracketed += 1

@@ -255,3 +255,28 @@ distance-targeting-probe:
 
 distance-targeting-check:
     nice -n 19 cargo clippy -p jxl-encoder --example distance_targeting_probe -j 4 -- -D warnings
+
+# Same probe with captured final internal pixels for decoder-drift diagnosis.
+distance-targeting-recon:
+    JXL_PROBE_BUILD_COMMIT="$(jj log --no-graph -r @ -T commit_id)" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo run -p jxl-encoder -j 4 --release --features __internal_recon_hook --example distance_targeting_probe
+
+qfseed-lift-ab *args:
+    nice -n 19 python3 scripts/qfseed_lift_ab.py {{args}}
+
+# Build distance-targeting-recon first. Each cell persists metadata and all pixels.
+distance-recon-strategies:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for crop in 64 512; do
+        for strategy in 0 5 6 7 8 9 12 13 14 15; do
+            echo "reconstruction crop=$crop strategy=$strategy"
+            CROP="$crop" FORCE_STRATEGY="$strategy" EPF=0 GABORISH=false EFFORTS=8 DISTANCES=4 ITERS=1 nice -n 19 target/release/examples/distance_targeting_probe
+        done
+    done
+
+# Compare persisted targeting runs; input paths may be individual TSVs or directories.
+qfseed-lift-analyze *args:
+    python3 scripts/qfseed_lift_ab_analyze.py {{args}}
+
+issue103-fmt:
+    nice -n19 cargo fmt -p jxl-encoder -p jxl-encoder-simd
