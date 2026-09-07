@@ -1856,7 +1856,7 @@ impl VarDctEncoder {
                 k_init_mul,
                 is_screenshot,
                 allow_seed_coarsening,
-                w44_118_per_iter_sharpness || allow_seed_coarsening,
+                w44_118_per_iter_sharpness,
                 mask1x1,
                 // cvvdp-fork Phase 4: metric-direction target for the
                 // inner loop's bad-block + accept-bound + diff_raw math.
@@ -2132,6 +2132,7 @@ impl VarDctEncoder {
             // buttloop slowdown). Production default off; this is a
             // bisection switch only.
             if w44_118_per_iter_sharpness
+                && !allow_seed_coarsening
                 && current_params.epf_iters > 0
                 && self.profile.epf_dynamic_sharpness
                 && let Some(m1x1) = mask1x1
@@ -2153,6 +2154,45 @@ impl VarDctEncoder {
             {
                 // Overwrite sharpness with the per-iter computed map.
                 sharpness.copy_from_slice(&new_sharpness);
+            }
+
+            // Match the actual emitted EPF policy for every experimental iterate.
+            if allow_seed_coarsening && current_params.epf_iters > 0 {
+                let mask = super::adaptive_quant::resolve_mask1x1_for_sharpness(
+                    mask1x1,
+                    xyb_y,
+                    padded_width,
+                    padded_height,
+                    self.budget.as_ref(),
+                )?;
+                let use_default = self.distance < 0.5
+                    || !self.profile.epf_dynamic_sharpness
+                    || matches!(self.epf_dispatch, crate::api::EpfDispatch::AlwaysDefault)
+                    || (matches!(self.epf_dispatch, crate::api::EpfDispatch::Auto)
+                        && super::epf::mask1x1_is_smooth_enough_to_skip_sharpness(&mask));
+                if use_default {
+                    sharpness.fill(super::epf::EPF_DEFAULT_SHARPNESS);
+                } else {
+                    let _guard = crate::budget::MemoryBudget::reserve_opt(
+                        self.budget.as_ref(),
+                        num_blocks as u64,
+                    )?;
+                    let selected = super::epf::compute_epf_sharpness(
+                        [xyb_x, xyb_y, xyb_b],
+                        &transform_out.quant_dc,
+                        &transform_out.quant_ac,
+                        quant_field,
+                        &mask,
+                        &current_params,
+                        cfl_map,
+                        ac_strategy,
+                        self.enable_gaborish,
+                        xsize_blocks,
+                        ysize_blocks,
+                        self.budget.as_ref(),
+                    )?;
+                    sharpness.copy_from_slice(&selected);
+                }
             }
 
             // Step 3: Reconstruct XYB from quantized coefficients

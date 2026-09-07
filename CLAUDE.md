@@ -929,9 +929,17 @@ probe saves binary/build provenance and full multi-decoder artifacts.
 This first experiment also forces the existing per-iteration sharpness
 probe, which does not honor production's `EpfDispatch::Auto` smooth-mask
 shortcut. Internal and decoded scores still differ (9291 d3.6: internal
-4.9860 versus decoded 5.3784). Before drawing conclusions about the
+4.9860 versus decoded 5.3790). Before drawing conclusions about the
 controller, the next variant must apply the exact production sharpness
 selection policy. This code is experimental and is not approved for main.
+
+The exact-production-sharpness variant is recorded separately in
+`benchmarks/qfseed_targeting_bidirectional_policy_2026-09-07/`. It closes
+that diagnostic mismatch (9291 d3.6 internal 5.077332 versus decoded 5.0773),
+but all 13 firing cells still overrun distance, with ratios 1.293–1.725.
+Bidirectional local block updates alone therefore do not enforce the global
+Butteraugli target. The next variant separates field-shape updates from a
+global score-controlled scale update.
 
 ### ACTIVE 2026-09-07: #103 full-distance targeting search misses cheaper response branches
 
