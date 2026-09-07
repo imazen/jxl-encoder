@@ -881,6 +881,31 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-09-07: #103 resampling cost — bit-preserving batching implemented; cost target still open
+
+`vardct/resampling.rs` batches independent output pixels in the sharper,
+upsample and adjoint kernels, retaining each output's tap order and the
+adjoint's per-tap f64→f32 rounding. The all-one normalization field is now
+computed once per interior support, with explicit border sums. Frozen scalar
+oracles in `resampling_reference_tests.rs` verify bits through odd 513×257
+shapes; existing libjxl golden vectors are unchanged. Before/after benchmarks
+also require identical round-trip and encoded SHA256s for every repetition.
+
+Measured on this Mac (aarch64): photo 1421 at native 3000×4000, iterative
+round trip 7197.3→1234.5 ms, accompanying e7 d2 r2 encode
+1414.8→1089.4 ms. The extra iterative cost is still 82.5% of encode time;
+**the “well below encode wall” target is not met**, and no keep-best kernel
+policy or auto-resampling change was made. Full method, tiny-image caveats,
+source/binary hashes, per-cell data, and artifact locations:
+[benchmarks/jxl_resample_kernels_2026-09-07.md](benchmarks/jxl_resample_kernels_2026-09-07.md).
+No x86 performance measurement yet. Thread 1 (qf-seed distance targeting)
+remains open in the entry below.
+
+Additional local imazen corpus files are at `/Users/lilith/work/zen/imazen-26/png-v3/`
+(normalized SDR PNGs) and `/Users/lilith/work/zen/imazen-26/splits/validate/`
+(original validation inputs), including image 9291. The smaller
+`~/work/codec-corpus/imazen-26/` checkout does not contain that image.
+
 ### RESOLVED 2026-09-06: the "our sharper port is ~35 % worse" finding was a VERSION artifact; a real (small) port bug was found and fixed
 
 **Status**: RESOLVED. The differential was run against the WRONG libjxl

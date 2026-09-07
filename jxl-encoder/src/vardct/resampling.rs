@@ -62,6 +62,7 @@ use alloc::vec::Vec;
 /// intensity targets downsample in a slightly-rescaled domain (bounded,
 /// encoder-side only).
 fn to_opsin_planes(rgb_interleaved: &[f32], n: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let _phase = crate::profile_phases::PhaseGuard::new("resample.to_opsin_planes");
     debug_assert_eq!(rgb_interleaved.len(), n * 3);
     let mut plane_r = alloc::vec![0.0_f32; n];
     let mut plane_g = alloc::vec![0.0_f32; n];
@@ -91,6 +92,7 @@ fn from_opsin_planes(
     n_out: usize,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Vec<f32>> {
+    let _phase = crate::profile_phases::PhaseGuard::new("resample.from_opsin_planes");
     let mut out = crate::budget::vec_with_capacity_fallible(
         budget.is_some_and(|b| b.is_fallible()),
         n_out * 3,
@@ -428,6 +430,7 @@ fn sharper_downsample_2x_plane(
     out_w: usize,
     out_h: usize,
 ) {
+    let _phase = crate::profile_phases::PhaseGuard::new("resample.sharper_downsample_2x_plane");
     debug_assert_eq!(plane.len(), width * height);
     debug_assert_eq!(out.len(), out_w * out_h);
     debug_assert_eq!(out_w, width.div_ceil(2));
@@ -462,6 +465,45 @@ fn sharper_downsample_2x_plane(
     let ysize = height as i64;
     let half = (kernel_dim - 1) / 2; // 5
 
+    // Four neighboring outputs share the same interior stencil. Keep each
+    // lane's ky/kx accumulation order, with separate multiply and add.
+    for oy in 0..out_h {
+        let mut ox = 0;
+        while ox < out_w {
+            if oy * 2 >= 5
+                && oy * 2 + 6 < height
+                && ox * 2 >= 5
+                && ox + 4 <= out_w
+                && ox * 2 + 12 < width
+            {
+                let mut sums = [0.0_f32; 4];
+                for ky in 0..SHARPER_KERNEL_DIM {
+                    let start = (oy * 2 - 5 + ky) * width + ox * 2 - 5;
+                    let row: &[f32; 18] = plane[start..start + 18].try_into().unwrap();
+                    for kx in 0..SHARPER_KERNEL_DIM {
+                        let weight = SHARPER_KERNEL_2X[ky * SHARPER_KERNEL_DIM + kx];
+                        for lane in 0..4 {
+                            sums[lane] += row[kx + lane * 2] * weight;
+                        }
+                    }
+                }
+                out[oy * out_w + ox..oy * out_w + ox + 4].copy_from_slice(&sums);
+                ox += 4;
+            } else {
+                let mut sum = 0.0_f32;
+                for ky in 0..kernel_dim {
+                    let iy = clamp_idx(oy as i64 * 2 + ky - half, ysize);
+                    for kx in 0..kernel_dim {
+                        let ix = clamp_idx(ox as i64 * 2 + kx - half, xsize);
+                        sum += plane[iy * width + ix]
+                            * SHARPER_KERNEL_2X[ky as usize * SHARPER_KERNEL_DIM + kx as usize];
+                    }
+                }
+                out[oy * out_w + ox] = sum;
+                ox += 1;
+            }
+        }
+    }
     for oy in 0..out_h {
         let row_mask_off = oy * out_w;
         for ox in 0..out_w {
@@ -475,7 +517,7 @@ fn sharper_downsample_2x_plane(
             // the most negative float. Rust's `f32::MIN` is the most negative
             // one, and using it here tightened the ringing clamp's upper bound
             // everywhere the opsin plane is negative — most of the X and B
-            // channels — costing ~35 % on the 2x resampling floor (issue #102).
+            // channels (issue #102).
             // `f32::MIN_POSITIVE` is the faithful transcription; pinned
             // bit-exactly by `sharper_downsample_2x_is_bit_exact_with_libjxl`.
             let mut mx = f32::MIN_POSITIVE;
@@ -496,22 +538,8 @@ fn sharper_downsample_2x_plane(
                 }
             }
 
-            // Apply full 12×12 kernel.
-            let mut sum = 0.0_f32;
-            for ky in 0..kernel_dim {
-                let iy = clamp_idx(oy as i64 * 2 + ky - half, ysize);
-                let row = iy * width;
-                let kernel_row_off = (ky as usize) * SHARPER_KERNEL_DIM;
-                for kx in 0..kernel_dim {
-                    let ix = clamp_idx(ox as i64 * 2 + kx - half, xsize);
-                    sum += plane[row + ix] * SHARPER_KERNEL_2X[kernel_row_off + kx as usize];
-                }
-            }
-
-            let m = mask[row_mask_off + ox]; // mask_multiplier=1 in libjxl
-            let lo = mn - m;
-            let hi = mx + m;
-            out[row_mask_off + ox] = sum.clamp(lo, hi);
+            let m = mask[row_mask_off + ox];
+            out[row_mask_off + ox] = out[row_mask_off + ox].clamp(mn - m, mx + m);
         }
     }
 }
@@ -691,7 +719,7 @@ const UPSAMPLE2_KERNEL_11: [f32; 25] = [
 const UPSAMPLE2_KSIZE: i64 = 5;
 
 #[inline]
-fn upsample2_kernel(x: i64, y: i64) -> &'static [f32; 25] {
+const fn upsample2_kernel(x: i64, y: i64) -> &'static [f32; 25] {
     match ((x & 1) != 0, (y & 1) != 0) {
         (true, true) => &UPSAMPLE2_KERNEL_11,
         (true, false) => &UPSAMPLE2_KERNEL_10,
@@ -714,11 +742,69 @@ fn upsample2_plane(
     out_w: usize,
     out_h: usize,
 ) {
+    let _phase = crate::profile_phases::PhaseGuard::new("resample.upsample2_plane");
     debug_assert_eq!(input.len(), in_w * in_h);
     debug_assert_eq!(out.len(), out_w * out_h);
     let (xsize, ysize) = (in_w as i64, in_h as i64);
     for y in 0..out_h as i64 {
-        for x in 0..out_w as i64 {
+        let mut x = 0i64;
+        while x < out_w as i64 {
+            if (y & !1) + 1 < out_h as i64
+                && y / 2 >= 2
+                && y / 2 + 2 < ysize
+                && x % 2 == 0
+                && x / 2 >= 2
+                && x + 8 <= out_w as i64
+                && x / 2 + 5 < xsize
+            {
+                // The four 2x2 phases share support and bounds. The even
+                // row writes both rows; the odd row only handles its borders.
+                if y & 1 != 0 {
+                    x += 8;
+                    continue;
+                }
+                let kernels = [
+                    upsample2_kernel(x, y),
+                    upsample2_kernel(x + 1, y),
+                    upsample2_kernel(x, y + 1),
+                    upsample2_kernel(x + 1, y + 1),
+                ];
+                let mut sums = [[0.0_f32; 4]; 4];
+                let mut mins = [f32::MAX; 4];
+                let mut maxs = [f32::MIN; 4];
+                for ky in 0..5 {
+                    let start = (y as usize / 2 - 2 + ky) * in_w + x as usize / 2 - 2;
+                    let row: &[f32; 8] = input[start..start + 8].try_into().unwrap();
+                    for kx in 0..5 {
+                        let even = kernels[0][ky * 5 + kx];
+                        let odd = kernels[1][ky * 5 + kx];
+                        let below_even = kernels[2][ky * 5 + kx];
+                        let below_odd = kernels[3][ky * 5 + kx];
+                        for lane in 0..4 {
+                            let v = row[kx + lane];
+                            if v < mins[lane] {
+                                mins[lane] = v;
+                            }
+                            if v > maxs[lane] {
+                                maxs[lane] = v;
+                            }
+                            sums[0][lane] += v * even;
+                            sums[1][lane] += v * odd;
+                            sums[2][lane] += v * below_even;
+                            sums[3][lane] += v * below_odd;
+                        }
+                    }
+                }
+                for lane in 0..4 {
+                    let start = y as usize * out_w + x as usize + lane * 2;
+                    out[start] = sums[0][lane].clamp(mins[lane], maxs[lane]);
+                    out[start + 1] = sums[1][lane].clamp(mins[lane], maxs[lane]);
+                    out[start + out_w] = sums[2][lane].clamp(mins[lane], maxs[lane]);
+                    out[start + out_w + 1] = sums[3][lane].clamp(mins[lane], maxs[lane]);
+                }
+                x += 8;
+                continue;
+            }
             let kernel = upsample2_kernel(x, y);
             let (x2, y2) = (x / 2, y / 2);
             let mut sum = 0.0f32;
@@ -736,6 +822,7 @@ fn upsample2_plane(
                 }
             }
             out[(y as usize) * out_w + x as usize] = sum.clamp(min, max);
+            x += 1;
         }
     }
 }
@@ -753,6 +840,45 @@ fn upsample2_deriv(x2: i64, y2: i64, x: i64, y: i64) -> f32 {
     kernel[(ky * UPSAMPLE2_KSIZE + kx) as usize]
 }
 
+// For x = 2*x2 - 4 + kx, the derivative's column is 4 - kx/2;
+// likewise for y. The even origin leaves the four phases unchanged.
+const ANTI_UPSAMPLE2_STENCIL: [f64; 100] = {
+    let mut weights = [0.0; 100];
+    let mut y = 0;
+    while y < 10 {
+        let mut x = 0;
+        while x < 10 {
+            weights[y * 10 + x] =
+                upsample2_kernel(x as i64, y as i64)[(4 - y / 2) * 5 + 4 - x / 2] as f64;
+            x += 1;
+        }
+        y += 1;
+    }
+    weights
+};
+
+// Across-output lanes preserve each output's original 100-tap order.
+#[inline(always)]
+fn anti_upsample2_interior<const LANES: usize, const ROW: usize>(
+    input: &[f32],
+    in_w: usize,
+    x2: usize,
+    y2: usize,
+) -> [f32; LANES] {
+    let mut sums = [0.0_f32; LANES];
+    for ky in 0..10 {
+        let start = (y2 * 2 - 4 + ky) * in_w + x2 * 2 - 4;
+        let row: &[f32; ROW] = input[start..start + ROW].try_into().unwrap();
+        for kx in 0..10 {
+            let deriv = ANTI_UPSAMPLE2_STENCIL[ky * 10 + kx];
+            for lane in 0..LANES {
+                sums[lane] = (f64::from(sums[lane]) + deriv * f64::from(row[kx + lane * 2])) as f32;
+            }
+        }
+    }
+    sums
+}
+
 /// Adjoint of the 2× upsampler: accumulates each full-res pixel back into
 /// the half-res grid weighted by the upsampler derivative (libjxl
 /// `AntiUpsample`). `input` is full-res (`in_w × in_h`), `out` is
@@ -767,13 +893,39 @@ fn anti_upsample2(
     out_w: usize,
     out_h: usize,
 ) {
+    let _phase = crate::profile_phases::PhaseGuard::new("resample.anti_upsample2");
     debug_assert_eq!(input.len(), in_w * in_h);
     debug_assert_eq!(out.len(), out_w * out_h);
     let (xsize, ysize) = (in_w as i64, in_h as i64);
     let k0 = UPSAMPLE2_KSIZE - 1;
     let k1 = UPSAMPLE2_KSIZE;
     for y2 in 0..out_h as i64 {
-        for x2 in 0..out_w as i64 {
+        let mut x2 = 0i64;
+        while x2 < out_w as i64 {
+            if y2 >= 2
+                && y2 * 2 + 5 < ysize
+                && x2 >= 2
+                && x2 + 16 <= out_w as i64
+                && x2 * 2 + 35 < xsize
+            {
+                let sums = anti_upsample2_interior::<16, 40>(input, in_w, x2 as usize, y2 as usize);
+                let start = y2 as usize * out_w + x2 as usize;
+                out[start..start + 16].copy_from_slice(&sums);
+                x2 += 16;
+                continue;
+            }
+            if y2 >= 2
+                && y2 * 2 + 5 < ysize
+                && x2 >= 2
+                && x2 + 4 <= out_w as i64
+                && x2 * 2 + 11 < xsize
+            {
+                let sums = anti_upsample2_interior::<4, 16>(input, in_w, x2 as usize, y2 as usize);
+                let start = y2 as usize * out_w + x2 as usize;
+                out[start..start + 4].copy_from_slice(&sums);
+                x2 += 4;
+                continue;
+            }
             let x0 = (x2 * 2 - k0).max(0);
             let x1 = (x2 * 2 + k1 + 1).min(xsize);
             let y0 = (y2 * 2 - k0).max(0);
@@ -787,6 +939,33 @@ fn anti_upsample2(
                 }
             }
             out[(y2 as usize) * out_w + x2 as usize] = sum;
+            x2 += 1;
+        }
+    }
+}
+
+/// Adjoint of the constant-one weight field. Every full-support pixel
+/// has the same tap sequence, including the f32 rounding after each tap.
+/// Only clipped border supports need their own accumulation.
+fn anti_upsample2_weights(w: usize, h: usize, out: &mut [f32], ow: usize, oh: usize) {
+    let _phase = crate::profile_phases::PhaseGuard::new("resample.anti_upsample2_weights");
+    let interior = ANTI_UPSAMPLE2_STENCIL
+        .iter()
+        .fold(0.0_f32, |sum, &weight| (f64::from(sum) + weight) as f32);
+    out.fill(interior);
+    for y2 in 0..oh {
+        for x2 in 0..ow {
+            if x2 >= 2 && x2 * 2 + 5 < w && y2 >= 2 && y2 * 2 + 5 < h {
+                continue;
+            }
+            let mut sum = 0.0_f32;
+            for y in (y2 * 2).saturating_sub(4)..(y2 * 2 + 6).min(h) {
+                for x in (x2 * 2).saturating_sub(4)..(x2 * 2 + 6).min(w) {
+                    let weight = upsample2_deriv(x2 as i64, y2 as i64, x as i64, y as i64);
+                    sum = (f64::from(sum) + f64::from(weight)) as f32;
+                }
+            }
+            out[y2 * ow + x2] = sum;
         }
     }
 }
@@ -880,9 +1059,8 @@ fn iterative_downsample_2x_plane(
     // at 1 — see the TODO in enc_heuristics.cc:704-709); its adjoint
     // normalizes the correction, differing from a constant only at the
     // image borders. `corr ×= weights` is skipped (× 1.0 is exact).
-    let weights = alloc::vec![1.0_f32; width * height];
     let mut weights2 = alloc::vec![0.0_f32; out_w * out_h];
-    anti_upsample2(&weights, width, height, &mut weights2, out_w, out_h);
+    anti_upsample2_weights(width, height, &mut weights2, out_w, out_h);
 
     let mut up = alloc::vec![0.0_f32; width * height];
     let mut corr = alloc::vec![0.0_f32; width * height];
@@ -1784,3 +1962,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "resampling_reference_tests.rs"]
+mod reference_tests;

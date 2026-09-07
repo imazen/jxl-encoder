@@ -1,0 +1,24 @@
+{
+  "command": [
+    "scripts/bench_resample_kernels.py",
+    "--before",
+    "/Users/lilith/tmp/jxl103/resample-kernel-before",
+    "--after",
+    "target/release/examples/resample_kernel_cost",
+    "--image",
+    "/Users/lilith/work/codec-corpus/gb82-sc/terminal.png",
+    "--output",
+    "benchmarks/jxl_resample_kernels_terminal_2026-09-07.tsv",
+    "--artifacts",
+    "/Users/lilith/tmp/jxl103/artifacts"
+  ],
+  "hostname": "mac",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "commit": "5cbd458942d580c2cad12f876f0dcb631286361f",
+  "binary_sha256": {
+    "before": "5cad89a4226b1f06101c9464a02cb324dfb89dfac8d6c31f02ba71c8b8598add",
+    "after": "44d6aecdfba0c05db6f5929367e6420a1da831df4fc26d9faf13b8db6f96912b"
+  },
+  "timing": "One warmed measurement per arm per invocation; alternate binary order each repeat.",
+  "log": "/Users/lilith/tmp/jxl103/artifacts/jxl_resample_kernels_terminal_2026-09-07.log"
+}

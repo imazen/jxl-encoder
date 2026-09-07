@@ -128,6 +128,7 @@ fn main() {
             // Rotate all three arms, including the encode, within each repeat.
             for offset in 0..3 {
                 let arm = (rep + offset) % 3;
+                jxl_encoder::__test_exports::profile_phases::reset();
                 let t = Instant::now();
                 if arm < 2 {
                     let out = resample_roundtrip_2x_rgb(&lin, w as usize, h as usize, kernels[arm]);
@@ -139,6 +140,11 @@ fn main() {
                     std::hint::black_box(&bytes);
                     times[arm] = times[arm].min(t.elapsed().as_secs_f64() * 1000.0);
                     assert_eq!(bytes, warm_bytes, "nondeterministic encode");
+                }
+                for (phase, ns) in jxl_encoder::__test_exports::profile_phases::take_snapshot() {
+                    if phase.starts_with("resample.") {
+                        eprintln!("phase\t{arm}\t{rep}\t{phase}\t{ns}");
+                    }
                 }
             }
             eprintln!("{path} {w}x{h} repeat {}/{reps}", rep + 1);

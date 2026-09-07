@@ -235,3 +235,16 @@ resample-kernel-cost:
 
 resample-kernel-check:
     nice -n 19 cargo clippy -p jxl-encoder --features __internals --example resample_kernel_cost -j 4 -- -D warnings
+
+resample-kernel-profile:
+    nice -n 19 cargo run -p jxl-encoder -j 4 --release --features '__internals profile-phases' --example resample_kernel_cost
+
+# Run after the default suite; each command is serialized and reference-pinned.
+issue103-resampling-gates:
+    just issue103-test --features __expert,__internals --test it strategy_libjxl_byte_lock
+    just issue103-test --features __expert,__internals --test it divergence_table_drift
+    just issue103-test --test it issue_101_auto_resample_odd_dims_decodes_via_djxl_to_source_size -- --ignored
+    just issue103-test --test it clic2025::test_rd_regression -- --ignored --nocapture
+
+resample-kernel-ab *args:
+    nice -n 19 python3 scripts/bench_resample_kernels.py {{args}}
