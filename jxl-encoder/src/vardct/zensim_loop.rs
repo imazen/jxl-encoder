@@ -1619,11 +1619,7 @@ impl VarDctEncoder {
         for iter in 0..iters + 1 {
             let t_iter = std::time::Instant::now();
             // Step 1: SetQuantField — recompute global_scale from float field
-            current_params =
-                DistanceParams::compute_from_quant_field(target_distance, quant_field_float);
-            current_params.x_qm_scale = initial_params.x_qm_scale;
-            current_params.b_qm_scale = initial_params.b_qm_scale;
-            current_params.epf_iters = initial_params.epf_iters;
+            current_params = initial_params.with_quant_field(quant_field_float);
 
             let qf_vec = quantize_quant_field(quant_field_float, current_params.inv_scale);
             quant_field.copy_from_slice(&qf_vec);
@@ -2415,11 +2411,7 @@ impl VarDctEncoder {
         });
 
         // Final SetQuantField
-        let mut final_params =
-            DistanceParams::compute_from_quant_field(target_distance, quant_field_float);
-        final_params.x_qm_scale = initial_params.x_qm_scale;
-        final_params.b_qm_scale = initial_params.b_qm_scale;
-        final_params.epf_iters = initial_params.epf_iters;
+        let final_params = initial_params.with_quant_field(quant_field_float);
 
         let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
         quant_field.copy_from_slice(&qf_vec);

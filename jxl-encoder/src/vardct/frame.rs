@@ -312,16 +312,30 @@ impl DistanceParams {
             quant_median_absd,
             quant_median - quant_median_absd
         );
-        // Buttloop-only adaptive path — no profile context here, but
-        // libjxl gates `nl_dc = speed_tier < kFalcon` (effort ≤ 7) and
-        // the buttloop only fires at effort ≥ 8, so extra_dc_precision
-        // is structurally 0 on this path. Match by passing 0 explicitly.
+        // No profile context: use the default precision. Quantization loops
+        // use with_quant_field to preserve their frame's signaled settings.
         Self::compute_internal(
             distance,
             distance,
             Some(quant_median - quant_median_absd),
             0,
         )
+    }
+
+    /// Update adaptive quantization while retaining the signaled frame settings.
+    #[cfg(any(
+        test,
+        feature = "butteraugli-loop",
+        feature = "ssim2-loop",
+        feature = "zensim-loop"
+    ))]
+    pub(crate) fn with_quant_field(&self, quant_field: &[f32]) -> Self {
+        let mut result = Self::compute_from_quant_field(self.distance, quant_field);
+        result.x_qm_scale = self.x_qm_scale;
+        result.b_qm_scale = self.b_qm_scale;
+        result.epf_iters = self.epf_iters;
+        result.extra_dc_precision = self.extra_dc_precision;
+        result
     }
 
     /// Internal implementation shared by all compute methods.
@@ -747,6 +761,23 @@ fn write_toc_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adaptive_quant_field_retains_signaled_settings() {
+        let mut initial = DistanceParams::compute(4.0);
+        initial.x_qm_scale = 2;
+        initial.b_qm_scale = 5;
+        initial.epf_iters = 3;
+        for precision in 0..=3 {
+            initial.extra_dc_precision = precision;
+            let updated = initial.with_quant_field(&[0.01, 0.02, 0.03]);
+            assert_ne!(updated.global_scale, initial.global_scale);
+            assert_eq!(updated.extra_dc_precision, precision);
+            assert_eq!(updated.x_qm_scale, 2);
+            assert_eq!(updated.b_qm_scale, 5);
+            assert_eq!(updated.epf_iters, 3);
+        }
+    }
 
     #[test]
     fn test_distance_params() {

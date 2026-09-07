@@ -1039,6 +1039,24 @@ odd-size djxl validation and both RD-regression tests. Logs use the
 encounters two pre-existing `collapsible_if` errors in
 `examples/adaptive_gaborish_wider_corpus.rs`; its logic is outside this fix.
 
+### ACTIVE 2026-09-07: explicit low-effort loops dropped extra DC precision
+
+[PROVEN] Explicit `with_butteraugli_iters(2)` at effort 5 reproduces a
+large brightness error without any seed-targeting experiment. The loop
+rebuilt `DistanceParams` with `extra_dc_precision=0`, while the DC-group
+writer signaled `profile.extra_dc_precision=1`. Internal pixel 0 red on
+the 64² frymire crop was 0.994868 versus decoded 0.189061. The same rebuild
+pattern existed in the SSIM2 and Zensim loops. All six rebuild sites now
+use `DistanceParams::with_quant_field` to retain the signaled precision,
+chromacity scales and EPF settings. The existing 36 decoder cases and six
+new explicit e5/e7 cases pass the unchanged 1e-3 bound. Before/after logs:
+`~/tmp/jxl103-explicit-low-loop-before2.log` and
+`~/tmp/jxl103-explicit-low-loop-precision.log`. The seed-targeting prototype
+also hit this defect after its linear-RGB lifetime issue was corrected.
+Independent default tests, workspace lint, affected SSIM2/Zensim targets,
+Libjxl byte locks, divergence checks, djxl odd-size validation and both RD
+gates pass unchanged (`~/tmp/jxl103-dcprecision-*.log`).
+
 ### ACTIVE 2026-09-07: #103 targeting after reconstruction corrections
 
 The 336-cell reconstruction-only run is at

@@ -2090,12 +2090,7 @@ impl VarDctEncoder {
             // Step 1: SetQuantField — recompute global_scale from float field,
             // then convert float → u8.
             // (libjxl: quantizer.SetQuantField(initial_quant_dc, quant_field, &raw_quant_field))
-            current_params =
-                DistanceParams::compute_from_quant_field(target_distance, quant_field_float);
-            // Preserve chromacity adjustments and EPF from initial params
-            current_params.x_qm_scale = initial_params.x_qm_scale;
-            current_params.b_qm_scale = initial_params.b_qm_scale;
-            current_params.epf_iters = initial_params.epf_iters;
+            current_params = initial_params.with_quant_field(quant_field_float);
 
             // Convert float → u8 with current params' inv_scale
             // (libjxl: SetQuantFieldRect: ClampVal(row_qf[x] * inv_global_scale_ + 0.5f, 1, 255))
@@ -2772,11 +2767,7 @@ impl VarDctEncoder {
         // the same `final_params` derivation — and so the tighten pass
         // can PIN these params across probes (see Phase 8d design note
         // below).
-        let mut final_params =
-            DistanceParams::compute_from_quant_field(target_distance, quant_field_float);
-        final_params.x_qm_scale = initial_params.x_qm_scale;
-        final_params.b_qm_scale = initial_params.b_qm_scale;
-        final_params.epf_iters = initial_params.epf_iters;
+        let final_params = initial_params.with_quant_field(quant_field_float);
 
         // cvvdp-fork Phase 8d (2026-05-25): post-convergence bytes-tighten
         // exit pass (Variant 1 batched single-probe per RFC §3.3
