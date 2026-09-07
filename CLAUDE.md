@@ -916,6 +916,23 @@ count (56720 B, 1024 centre crop; delivered/requested 0.598). The smaller
 The corpus's `STORAGE-MAP.md` and `ACCESS.md` identify canonical distribution
 URLs; `VARIANT.md` describes the SDR renders.
 
+### EXPERIMENT 2026-09-07: lifted seeds with bidirectional late iterations
+
+The first bidirectional experiment retains `resolved_cur_pow(1, d)` after
+iteration 1 only when the Butteraugli seed lift fires; unlifted and other
+metric paths keep the original update rule. With 12 requested iterations,
+13 firing e8 cells on 9291/terminal/wiki all overrun the requested distance
+(ratios 1.399–2.109). The unlifted d3 controls remain 1.057 and 0.948.
+Data: `benchmarks/qfseed_targeting_bidirectional_smoke_2026-09-07/`; the
+probe saves binary/build provenance and full multi-decoder artifacts.
+
+This first experiment also forces the existing per-iteration sharpness
+probe, which does not honor production's `EpfDispatch::Auto` smooth-mask
+shortcut. Internal and decoded scores still differ (9291 d3.6: internal
+4.9860 versus decoded 5.3784). Before drawing conclusions about the
+controller, the next variant must apply the exact production sharpness
+selection policy. This code is experimental and is not approved for main.
+
 ### ACTIVE 2026-09-07: #103 full-distance targeting search misses cheaper response branches
 
 The full encoder's distance response is non-monotonic on the two W44

@@ -1813,6 +1813,8 @@ impl VarDctEncoder {
             target_distance
         };
 
+        let allow_seed_coarsening =
+            buttloop_qf_seed_scale != 1.0 && !use_vdp2 && !self.cvvdp_loop && !self.zensim_loop;
         for &k_init_mul in seeds {
             // Restore starting state for this seed (skipped on seed 0 because
             // quant_field/quant_field_float already hold it, but cheap enough
@@ -1853,7 +1855,8 @@ impl VarDctEncoder {
                 iters,
                 k_init_mul,
                 is_screenshot,
-                w44_118_per_iter_sharpness,
+                allow_seed_coarsening,
+                w44_118_per_iter_sharpness || allow_seed_coarsening,
                 mask1x1,
                 // cvvdp-fork Phase 4: metric-direction target for the
                 // inner loop's bad-block + accept-bound + diff_raw math.
@@ -2017,6 +2020,7 @@ impl VarDctEncoder {
         // screenshot. `false` (default for photo / unknown) is
         // byte-identical to pre-W39-2 behaviour.
         is_screenshot: bool,
+        allow_seed_coarsening: bool,
         // W44-118 Mode D bisection: when true AND mask1x1 is Some,
         // recompute sharpness per-iter using the current transform_out
         // (post-iter-quantize) instead of reusing the W44-117 one-shot
@@ -2638,7 +2642,15 @@ impl VarDctEncoder {
             // (only iter < 2 reduces quality of good blocks; later
             // iters only bump bad blocks — same as libjxl
             // `enc_adaptive_quantization.cc:1106`).
-            let cur_pow: f64 = resolved_cur_pow(iter, target_distance as f64);
+            // Experiment: a lifted seed may shed precision after round 1.
+            // The unlifted path and other perceptual metrics retain their policy.
+            let control_iter =
+                if allow_seed_coarsening && matches!(active_metric, ActiveMetric::Butteraugli) {
+                    iter.min(1)
+                } else {
+                    iter
+                };
+            let cur_pow: f64 = resolved_cur_pow(control_iter, target_distance as f64);
             // W39-2 (WF3 fix): HIGH-regime + screenshot-class content
             // can cap `max_increase` at a lower value than the libjxl
             // default. `is_screenshot` was classified once at the
