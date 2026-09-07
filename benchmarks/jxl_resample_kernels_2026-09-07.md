@@ -119,3 +119,10 @@ Staging validation: scoped fmt, workspace all-target clippy, the full default
 encoder suite and doctests, Libjxl byte locks, divergence drift, v0.12 djxl
 odd-dimension decode, and both RD gates passed unchanged. Logs:
 `/Users/lilith/tmp/jxl103-adjoint-staging-{parity,clippy,tests,gates}.log`.
+
+A separate upsample phase-loop reordering was rejected: all 33 resampling
+unit tests pass, but five interleaved terminal repeats show 105.7→106.6 ms
+iterative at 1024², and no tiny-image benefit. No output hash moved.
+`jxl_upsample_phases_terminal_2026-09-07.{tsv,meta.json}` preserves the
+comparison; the source experiment remains in jj change `uoromknx`.
+The production upsample loop retains its previous organization.

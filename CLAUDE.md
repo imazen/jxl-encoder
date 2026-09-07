@@ -902,7 +902,9 @@ A subsequent adjoint row-staging comparison against `61dccb75` reduces the
 same photo from 1215.4 to 1127.2 ms (five interleaved repeats, identical
 hashes), with encode time 1077.3→1078.2 ms. Data: the report above and
 `benchmarks/jxl_adjoint_staging_*_2026-09-07.{tsv,meta.json}`.
-No x86 performance measurement yet. Thread 1 (qf-seed distance targeting)
+Upsampler phase-loop reordering was also measured and rejected (1024²
+terminal 105.7→106.6 ms); its data and recoverable change are named in the
+report. No x86 performance measurement yet. Thread 1 (qf-seed distance targeting)
 remains open in the entry below.
 
 Additional local imazen corpus files are at `/Users/lilith/work/zen/imazen-26/png-v3/`
