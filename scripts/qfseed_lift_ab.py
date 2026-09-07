@@ -27,6 +27,9 @@ def main():
     parser.add_argument("--iters", type=int)
     parser.add_argument("--modes", nargs="+", choices=["on", "off"], default=["on", "off"])
     args = parser.parse_args()
+    # LossyConfig validates this range; fail before starting a partial sweep.
+    for grid in [args.distances, args.off_distances]:
+        assert all(0.0 <= float(d) <= 25.0 for d in grid.split(",")), "distance must be in 0..=25"
     with args.manifest.open() as source:
         images = list(csv.DictReader(source, delimiter="\t"))
     assert images
