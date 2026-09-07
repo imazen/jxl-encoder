@@ -4542,7 +4542,7 @@ impl VarDctEncoder {
         // Photo-class content keeps `is_screenshot = false` so the
         // scale stays at 1.0 → byte-identical to pre-W44-109. Only
         // low-effort screenshot-class hits the lossy gate.
-        {
+        let qf_pre_scale = {
             // W44-213: tuning-override-aware threshold lookup.
             let median_threshold = crate::runtime_or_default!(
                 super::perceptual_tuning::SCREENSHOT_MEDIAN_THRESHOLD,
@@ -4644,7 +4644,8 @@ impl VarDctEncoder {
                     *v *= qf_pre_scale;
                 }
             }
-        }
+            qf_pre_scale
+        };
 
         // Step 3: Quantize float quant field to raw u8 with adaptive inv_scale
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
@@ -5691,6 +5692,16 @@ impl VarDctEncoder {
                 // Aggressive at e>=7, OFF on Libjxl for byte parity).
                 self.profile.cfl_keep_best,
             );
+        }
+
+        // The low-effort lift guides strategy/CfL search, but there is no
+        // perceptual loop to undo its uniform precision increase. Restore the
+        // requested scale before the final coefficient quantization.
+        if qf_pre_scale != 1.0 {
+            for q in quant_field_float.iter_mut() {
+                *q /= qf_pre_scale;
+            }
+            quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
         }
 
         let _ms_cfl2 = _t_cfl2.elapsed().as_secs_f64() * 1000.0;

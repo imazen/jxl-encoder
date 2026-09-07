@@ -735,6 +735,10 @@ pub(crate) fn maybe_dump_tile_dist_stats_phase8g(
     }
 }
 
+#[cfg(feature = "butteraugli-loop")]
+#[path = "seed_distance_search.rs"]
+mod seed_distance_search;
+
 /// Outcome of one butteraugli-loop seed used by the multi-seed picker
 /// in [`VarDctEncoder::butteraugli_refine_quant_field`].
 #[derive(Clone)]
@@ -1853,6 +1857,7 @@ impl VarDctEncoder {
                 iters,
                 k_init_mul,
                 is_screenshot,
+                buttloop_qf_seed_scale != 1.0,
                 w44_118_per_iter_sharpness,
                 mask1x1,
                 // cvvdp-fork Phase 4: metric-direction target for the
@@ -2017,6 +2022,7 @@ impl VarDctEncoder {
         // screenshot. `false` (default for photo / unknown) is
         // byte-identical to pre-W39-2 behaviour.
         is_screenshot: bool,
+        scaled_seed: bool,
         // W44-118 Mode D bisection: when true AND mask1x1 is Some,
         // recompute sharpness per-iter using the current transform_out
         // (post-iter-quantize) instead of reusing the W44-117 one-shot
@@ -2076,10 +2082,34 @@ impl VarDctEncoder {
         // `BackendCompareResult { diffmap: Vec<f32> }` path produced.
         let mut diffmap_vec: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
 
+        let target_seed = scaled_seed && !use_vdp2 && !self.cvvdp_loop && {
+            #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
+            {
+                !self.zensim_loop
+            }
+            #[cfg(not(any(feature = "zensim-loop", feature = "zensim-loop-gpu")))]
+            {
+                true
+            }
+        };
+        let last_iter = iters
+            + if target_seed {
+                seed_distance_search::MAX_STEPS
+            } else {
+                0
+            };
+        let mut target_search = None;
+        let mut target_shape = Vec::new();
+        let mut _target_shape_guard = None;
+        #[cfg(feature = "__internal_recon_hook")]
+        let mut target_best_recon = None;
+        #[cfg(feature = "__internal_recon_hook")]
+        let mut target_best_steps = None;
+
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
         // i=iters: SetQuantField + roundtrip + compare + break
-        for iter in 0..iters + 1 {
+        for iter in 0..=last_iter {
             // Cooperative cancellation checkpoint, per butteraugli iteration —
             // this loop (a full reconstruct + metric compare per iter) is the
             // slowest VarDCT phase at effort 8+. Byte-identical under an
@@ -2151,6 +2181,47 @@ impl VarDctEncoder {
                 sharpness.copy_from_slice(&new_sharpness);
             }
 
+            // During the global target search, score the sharpness map that
+            // production will emit for this candidate, including Auto's smooth
+            // mask shortcut. The spatial seed loop retains its existing policy.
+            if target_seed && iter >= iters && current_params.epf_iters > 0 {
+                let mask = super::adaptive_quant::resolve_mask1x1_for_sharpness(
+                    mask1x1,
+                    xyb_y,
+                    padded_width,
+                    padded_height,
+                    self.budget.as_ref(),
+                )?;
+                let use_default = self.distance < 0.5
+                    || !self.profile.epf_dynamic_sharpness
+                    || matches!(self.epf_dispatch, crate::api::EpfDispatch::AlwaysDefault)
+                    || (matches!(self.epf_dispatch, crate::api::EpfDispatch::Auto)
+                        && super::epf::mask1x1_is_smooth_enough_to_skip_sharpness(&mask));
+                if use_default {
+                    sharpness.fill(super::epf::EPF_DEFAULT_SHARPNESS);
+                } else {
+                    let _guard = crate::budget::MemoryBudget::reserve_opt(
+                        self.budget.as_ref(),
+                        num_blocks as u64,
+                    )?;
+                    let selected = super::epf::compute_epf_sharpness(
+                        [xyb_x, xyb_y, xyb_b],
+                        &transform_out.quant_dc,
+                        &transform_out.quant_ac,
+                        quant_field,
+                        &mask,
+                        &current_params,
+                        cfl_map,
+                        ac_strategy,
+                        self.enable_gaborish,
+                        xsize_blocks,
+                        ysize_blocks,
+                        self.budget.as_ref(),
+                    )?;
+                    sharpness.copy_from_slice(&selected);
+                }
+            }
+
             // Step 3: Reconstruct XYB from quantized coefficients
             let mut planes = reconstruct_xyb(
                 &transform_out.quant_dc,
@@ -2170,7 +2241,7 @@ impl VarDctEncoder {
             // `#[cfg(feature = "__internal_recon_hook")]`, so the flag
             // only exists when the hook is compiled in.
             #[cfg(feature = "__internal_recon_hook")]
-            let capture_steps = iter == iters && recon_hook::steps_capture_enabled();
+            let capture_steps = iter >= iters && recon_hook::steps_capture_enabled();
 
             #[cfg(feature = "__internal_recon_hook")]
             let mut step_after_recon: Option<recon_hook::Xyb> = None;
@@ -2293,7 +2364,7 @@ impl VarDctEncoder {
             // bitstream (jxl-rs / jxl-oxide). Comparing the two pinpoints the bug.
             // See memory/quality_drift_investigation_2026-05-15.md.
             #[cfg(feature = "__internal_recon_hook")]
-            if iter == iters && recon_hook::capture_enabled() {
+            if iter >= iters && recon_hook::capture_enabled() {
                 let mut cropped_r = alloc::vec![0.0f32; width * height];
                 let mut cropped_g = alloc::vec![0.0f32; width * height];
                 let mut cropped_b = alloc::vec![0.0f32; width * height];
@@ -2435,6 +2506,79 @@ impl VarDctEncoder {
             // target). Stored before the iter==iters early-break below so the
             // compare-only last iteration is included.
             last_score = iter_score;
+
+            // A lifted seed must not become a permanently finer target. Once
+            // the spatial loop ends, retain its field shape and bracket the
+            // requested global distance by scaling that field. Re-use the
+            // same reconstruction and metric path for every measured candidate.
+            if iter == iters
+                && target_seed
+                && (iter_score < f64::from(effective_metric_target_distance)
+                    || iter_score > f64::from(effective_metric_target_distance) * 1.1)
+            {
+                _target_shape_guard = Some(crate::budget::MemoryBudget::reserve_opt(
+                    self.budget.as_ref(),
+                    (num_blocks as u64).saturating_mul(4),
+                )?);
+                target_shape = crate::budget::vec_f32_zeroed_fallible(
+                    self.budget.as_ref().is_some_and(|b| b.is_fallible()),
+                    num_blocks,
+                )?;
+                target_shape.copy_from_slice(quant_field_float);
+                target_search = Some(seed_distance_search::SeedDistanceSearch::new(f64::from(
+                    effective_metric_target_distance,
+                )));
+            }
+            if iter >= iters
+                && let Some(search) = target_search.as_mut()
+            {
+                let observed_scale = search.scale;
+                let next = search.observe(iter_score);
+                debug_rect!(
+                    "bfly/seed_target",
+                    0,
+                    0,
+                    width,
+                    height,
+                    "iter={} score={} target={} scale={} best_scale={} best_score={}",
+                    iter,
+                    iter_score,
+                    effective_metric_target_distance,
+                    observed_scale,
+                    search.best_scale,
+                    search.best_score,
+                );
+                #[cfg(feature = "__internal_recon_hook")]
+                if search.best_scale == observed_scale {
+                    target_best_recon = recon_hook::take_last();
+                    target_best_steps = recon_hook::take_last_steps();
+                }
+                #[cfg(not(feature = "__internal_recon_hook"))]
+                let _ = observed_scale;
+                let finish = next.is_none() || iter == last_iter;
+                let scale = if finish {
+                    search.best_scale
+                } else {
+                    search.scale
+                };
+                for (q, &base) in quant_field_float.iter_mut().zip(&target_shape) {
+                    *q = (base * scale).clamp(qf_lower, qf_higher);
+                }
+                if finish {
+                    last_score = search.best_score;
+                    #[cfg(feature = "__internal_recon_hook")]
+                    {
+                        if let Some(recon) = target_best_recon.take() {
+                            recon_hook::store(recon);
+                        }
+                        if let Some(steps) = target_best_steps.take() {
+                            recon_hook::store_steps(steps);
+                        }
+                    }
+                    break;
+                }
+                continue;
+            }
 
             // Step 6: Compute per-block tile distance (16th-power norm,
             // matching libjxl TileDistMap).

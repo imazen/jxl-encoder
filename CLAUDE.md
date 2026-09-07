@@ -1077,6 +1077,38 @@ targeting. No iteration gate has been changed. Evidence:
 `~/tmp/jxl103/targeting-second-gate/`. This identifies the brochure mechanism;
 the replacement web-screenshot representative 8106 has no such byte cliff.
 
+#### Seed-targeting experiments (before the reconstruction corrections)
+
+The persisted baseline covers seven explicitly listed images at e5/e7/e8:
+`benchmarks/qfseed_targeting_inputs_2026-09-07.tsv` and
+`benchmarks/qfseed_targeting_before_2026-09-07/*.tsv`. The runner is
+`scripts/qfseed_lift_ab.py`; original encodes, f32 butteraugli diffmaps,
+per-run build hashes and full decoder logs are in
+`/Users/lilith/tmp/jxl103/targeting-before/`. Every cell fully decodes through
+jxl-rs, libjxl v0.12 djxl and jxl-oxide. The manifest's representatives are
+not claimed to be the original issue's prevalence sample.
+
+A bounded post-spatial global-scale search is under evaluation, not accepted.
+It reduces 9291 e8 d3.6 from 56720 B / ratio 0.598 to 29173 B / ratio 1.015,
+but d3.4 remains 28355 B, leaving a 2.9% byte increase. The seven-image e8
+prototype results are at `/Users/lilith/tmp/jxl103/targeting-prototype1-grid/`;
+artifacts are in its `-artifacts` sibling. It is insufficient by itself:
+5058 (brochure) d4 stays byte-identical at 50471 B / ratio 0.289 while the
+neighboring d3.6 and d5 cells move near the target. Internal reconstruction
+versus decoded output on that outlier led to the corrections recorded above.
+The non-firing 8106 e8 d2 cell already has ratio 1.618 in the baseline, so
+seed repair alone cannot explain or fix every distance error in this grid.
+
+The low-effort experiment retains the lift during strategy/CfL decisions,
+then divides it out before final quantization. On 9291 it removes the large
+e5/e7 d3.4→3.6 jump (e5 32907→31310 B; e7 32732→31170 B). It does not prove
+all-distance targeting: e5 d8 still has ratio 0.810. The subsequent seven-image e5/e7 grid has no byte rises at its sampled
+distances, but ratios range from 0.534 to 1.523. Removing the scale is
+insufficient to meet the distance-accuracy bar. Matched-quality comparisons
+remain required. Full grid and artifacts:
+`~/tmp/jxl103/targeting-prototype2-grid/` and its `-artifacts` sibling.
+
+
 ### RESOLVED 2026-09-06: the "our sharper port is ~35 % worse" finding was a VERSION artifact; a real (small) port bug was found and fixed
 
 **Status**: RESOLVED. The differential was run against the WRONG libjxl
