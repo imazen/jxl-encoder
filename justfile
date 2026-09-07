@@ -248,3 +248,10 @@ issue103-resampling-gates:
 
 resample-kernel-ab *args:
     nice -n 19 python3 scripts/bench_resample_kernels.py {{args}}
+
+# IMG, ARTIFACT_DIR, CROP, EFFORTS, DISTANCES, and optional ITERS come from caller.
+distance-targeting-probe:
+    JXL_PROBE_BUILD_COMMIT="$(jj log --no-graph -r @ -T commit_id)" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo run -p jxl-encoder -j 4 --release --example distance_targeting_probe
+
+distance-targeting-check:
+    nice -n 19 cargo clippy -p jxl-encoder --example distance_targeting_probe -j 4 -- -D warnings

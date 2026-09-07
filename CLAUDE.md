@@ -902,9 +902,13 @@ No x86 performance measurement yet. Thread 1 (qf-seed distance targeting)
 remains open in the entry below.
 
 Additional local imazen corpus files are at `/Users/lilith/work/zen/imazen-26/png-v3/`
-(normalized SDR PNGs) and `/Users/lilith/work/zen/imazen-26/splits/validate/`
-(original validation inputs), including image 9291. The smaller
+(normalized SDR PNGs), including image 9291. The `splits/validate/` 9291 entry
+is a BROKEN symlink to an absent original; check `is_file()`, not just a glob
+match. The normalized 9291 still reproduces the issue's exact e8 d3.6 byte
+count (56720 B, 1024 centre crop; delivered/requested 0.598). The smaller
 `~/work/codec-corpus/imazen-26/` checkout does not contain that image.
+The corpus's `STORAGE-MAP.md` and `ACCESS.md` identify canonical distribution
+URLs; `VARIANT.md` describes the SDR renders.
 
 ### RESOLVED 2026-09-06: the "our sharper port is ~35 % worse" finding was a VERSION artifact; a real (small) port bug was found and fixed
 

@@ -26,10 +26,24 @@
 //! where `delivered_ratio = bfly / d_req` (1.0 = promise kept, <1 = finer
 //! than requested, >1 = coarser).
 //!
-//! Reproducer:
-//!   IMG=<png> cargo run -p jxl-encoder --release --example distance_targeting_probe
+//! `ARTIFACT_DIR` is required. Each cell persists its JXL and full f32
+//! butteraugli diffmap (`BFMAPF32`, little-endian u32 width/height, then
+//! row-major little-endian f32 pixels), plus max and p1/p2/p3/p6 norms.
+//! Per-run TSV and metadata record the source hash and build commit.
+//! Every cell fully decodes through jxl-rs, djxl v0.12, and jxl-oxide.
+//! `ITERS` optionally overrides the existing quant-loop iteration setting.
+//!
+//! Reproducer (sets compile-time source provenance and the local djxl path):
+//!   IMG=<png> ARTIFACT_DIR=<dir> just distance-targeting-probe
 
-use std::io::Cursor;
+use std::io::{Cursor, Write};
+use std::path::PathBuf;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use sha2::{Digest, Sha256};
+
+#[path = "distance_targeting_probe/decode.rs"]
+mod decode;
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
@@ -57,6 +71,21 @@ fn linear_to_srgb_u8(l: f32) -> u8 {
 
 fn main() {
     let path = std::env::var("IMG").expect("set IMG=<png path>");
+    let artifacts = PathBuf::from(std::env::var("ARTIFACT_DIR").expect("set ARTIFACT_DIR"));
+    std::fs::create_dir_all(&artifacts).expect("create ARTIFACT_DIR");
+    let build_commit = match option_env!("JXL_PROBE_BUILD_COMMIT") {
+        Some(commit) => commit,
+        None => {
+            eprintln!("build via just distance-targeting-probe to record source provenance");
+            std::process::exit(2);
+        }
+    };
+    let iters: Option<u32> = std::env::var("ITERS")
+        .ok()
+        .map(|v| v.parse().expect("ITERS: u32"));
+    #[cfg(not(feature = "butteraugli-loop"))]
+    assert!(iters.is_none(), "ITERS requires butteraugli-loop");
+    let djxl = jxl_encoder::test_helpers::djxl_path();
     let distances: Vec<f32> = std::env::var("DISTANCES")
         .unwrap_or_else(|_| "1,2,3,3.4,3.6,4,5,6,8".into())
         .split(',')
@@ -112,20 +141,62 @@ fn main() {
     );
 
     let lim = Limits::default().with_max_memory_bytes(8u64 << 30);
+    let source_hash = sha256(&rgb);
+    let run_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let stem = artifacts.join(format!("{source_hash}-{run_id}"));
+    std::fs::write(stem.with_extension("meta"), format!(
+        "build_commit\t{build_commit}\nsource\t{path:?}\nsource_rgb8_sha256\t{source_hash}\nwidth\t{w}\nheight\t{h}\nresampling\t{resampling}\niters\t{iters:?}\nbuttloop_scale\t{:?}\nadaptive_scale\t{:?}\n",
+        std::env::var("JXL_BUTTLOOP_INITIAL_QF_SCALE").ok(),
+        std::env::var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE").ok(),
+    )).expect("persist run metadata");
+    let mut records = std::fs::File::create(stem.with_extension("tsv")).expect("create run TSV");
     eprintln!(
         "# {path} {w}x{h}  qf_scale_env={:?}",
         std::env::var("JXL_BUTTLOOP_INITIAL_QF_SCALE").ok()
     );
-    println!("effort\td_req\tbytes\tbfly\tssim2\tdelivered_ratio");
+    let header = "effort\td_req\tbytes\tbfly\tssim2\tdelivered_ratio\tencode_ms\tpnorm1\tpnorm2\tpnorm3\tpnorm6\tencoded_sha256\tdiffmap_sha256";
+    println!("{header}");
+    writeln!(records, "{header}").unwrap();
     for &e in &efforts {
         for &d in &distances {
-            let bytes = LossyConfig::new(d)
+            let mut config = LossyConfig::new(d)
                 .with_effort(e)
-                .with_resampling(resampling)
+                .with_resampling(resampling);
+            #[cfg(feature = "butteraugli-loop")]
+            if let Some(iters) = iters {
+                config = config.with_butteraugli_iters(iters);
+            }
+            let started = Instant::now();
+            let bytes = config
                 .encode_request(w, h, PixelLayout::Rgb8)
                 .with_limits(&lim)
                 .encode(&rgb)
                 .unwrap_or_else(|err| panic!("encode d={d} e={e}: {err:?}"));
+            let encode_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let encoded_hash = sha256(&bytes);
+            let encoded_path = artifacts.join(format!("{encoded_hash}.jxl"));
+            std::fs::write(&encoded_path, &bytes).expect("persist JXL before validation");
+            decode::verify_jxl_rs(&bytes, w as usize, h as usize);
+            let reference = std::process::Command::new(&djxl)
+                .arg(&encoded_path)
+                .args(["--disable_output", "--num_threads=1"])
+                .output()
+                .expect("run djxl");
+            let mut reference_log = reference.stdout;
+            reference_log.extend_from_slice(&reference.stderr);
+            std::fs::write(
+                artifacts.join(format!("{encoded_hash}.djxl.log")),
+                &reference_log,
+            )
+            .expect("persist djxl output");
+            assert!(
+                reference.status.success(),
+                "djxl rejected {encoded_hash}: {}",
+                String::from_utf8_lossy(&reference_log)
+            );
             let mut dec = jxl_oxide::JxlImage::builder()
                 .read(Cursor::new(&bytes))
                 .expect("decode");
@@ -133,19 +204,30 @@ fn main() {
                 jxl_oxide::RenderingIntent::Relative,
             ));
             let fb = dec.render_frame(0).expect("render").image_all_channels();
+            assert_eq!((fb.width(), fb.height()), (w as usize, h as usize));
             let buf = fb.buf();
             let dist_lin: Img<Vec<RGB<f32>>> = Img::new(
                 buf.chunks(3).map(|c| RGB::new(c[0], c[1], c[2])).collect(),
                 fb.width(),
                 fb.height(),
             );
-            let bfly = butteraugli_linear(
+            let metric = butteraugli_linear(
                 orig_lin.as_ref(),
                 dist_lin.as_ref(),
-                &ButteraugliParams::default(),
+                &ButteraugliParams::default().with_compute_diffmap(true),
             )
-            .expect("butteraugli")
-            .score as f64;
+            .expect("butteraugli");
+            let bfly = metric.score;
+            let diffmap = metric.diffmap.as_ref().expect("requested diffmap");
+            let mut map_bytes = b"BFMAPF32".to_vec();
+            map_bytes.extend_from_slice(&w.to_le_bytes());
+            map_bytes.extend_from_slice(&h.to_le_bytes());
+            for &value in diffmap.buf() {
+                map_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            let diffmap_hash = sha256(&map_bytes);
+            std::fs::write(artifacts.join(format!("{diffmap_hash}.bfmap")), map_bytes)
+                .expect("persist f32 butteraugli diffmap");
             let dist_srgb: Img<Vec<[u8; 3]>> = Img::new(
                 buf.chunks(3)
                     .map(|c| {
@@ -161,11 +243,29 @@ fn main() {
             );
             let ssim2 = fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dist_srgb.as_ref())
                 .expect("ssim2");
-            println!(
-                "{e}\t{d}\t{}\t{bfly:.4}\t{ssim2:.3}\t{:.3}",
+            let row = format!(
+                "{e}\t{d}\t{}\t{bfly:.4}\t{ssim2:.3}\t{:.3}\t{encode_ms:.3}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{encoded_hash}\t{diffmap_hash}",
                 bytes.len(),
+                bfly / d as f64,
+                metric.pnorm(1.0).unwrap(),
+                metric.pnorm(2.0).unwrap(),
+                metric.pnorm_3,
+                metric.pnorm(6.0).unwrap(),
+            );
+            println!("{row}");
+            writeln!(records, "{row}").unwrap();
+            records.flush().unwrap();
+            eprintln!(
+                "saved {w}x{h} e{e} d{d}: {encoded_hash}, ratio={:.3}",
                 bfly / d as f64
             );
         }
     }
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
