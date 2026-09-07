@@ -1,0 +1,11 @@
+{
+  "build_commit": "683221e6",
+  "probe": "/Users/lilith/tmp/jxl103/distance-targeting-prototype7",
+  "probe_sha256": "493062a6da557368360fa41616bf168eb8b18ade700017cc2e6818743c72884e",
+  "manifest": "benchmarks/qfseed_targeting_inputs_2026-09-07.tsv",
+  "cells": 112,
+  "artifacts": "/Users/lilith/tmp/jxl103/targeting-prototype7-artifacts",
+  "log": "/Users/lilith/tmp/jxl103-targeting-prototype7-grid.log",
+  "command": "just qfseed-lift-ab --probe ~/tmp/jxl103/distance-targeting-prototype7 --manifest benchmarks/qfseed_targeting_inputs_2026-09-07.tsv --output-dir ~/tmp/jxl103/targeting-prototype7-grid --artifacts ~/tmp/jxl103/targeting-prototype7-artifacts --djxl .ci-libjxl/tools/djxl --efforts 5,7 --modes on",
+  "note": "Experimental zero-spatial-update global target search on lifted one-shot seeds, after the DC precision correction. Existing non-firing distance errors remain; matched-quality baseline extension is separate."
+}
