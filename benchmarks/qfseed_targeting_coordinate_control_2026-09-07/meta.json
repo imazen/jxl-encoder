@@ -1,0 +1,18 @@
+{
+  "binary": "/Users/lilith/tmp/jxl103/distance-targeting-coordinate-control",
+  "binary_sha256": "a872c3cc0d683c0b2e232ea1dc060aae68a391e64305f944567fde9cb489dc82",
+  "effort": 8,
+  "requested_iterations": 12,
+  "distances": [
+    3,
+    3.6,
+    4,
+    6,
+    8
+  ],
+  "crop": 1024,
+  "manifest": "/Users/lilith/tmp/jxl103/bidirectional-smoke-inputs.tsv",
+  "source_patch": "dev/issue103/coordinate-control.patch",
+  "patch_base": "0bc8348c",
+  "artifacts": "/Users/lilith/tmp/jxl103/targeting-coordinate-control-artifacts"
+}

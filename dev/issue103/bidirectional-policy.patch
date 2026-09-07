@@ -1,0 +1,100 @@
+diff --git a/jxl-encoder/src/vardct/perceptual_loop.rs b/jxl-encoder/src/vardct/perceptual_loop.rs
+index 2cd4831c..66476bfe 100644
+--- a/jxl-encoder/src/vardct/perceptual_loop.rs
++++ b/jxl-encoder/src/vardct/perceptual_loop.rs
+@@ -1813,6 +1813,8 @@ impl VarDctEncoder {
+             target_distance
+         };
+ 
++        let allow_seed_coarsening =
++            buttloop_qf_seed_scale != 1.0 && !use_vdp2 && !self.cvvdp_loop && !self.zensim_loop;
+         for &k_init_mul in seeds {
+             // Restore starting state for this seed (skipped on seed 0 because
+             // quant_field/quant_field_float already hold it, but cheap enough
+@@ -1853,6 +1855,7 @@ impl VarDctEncoder {
+                 iters,
+                 k_init_mul,
+                 is_screenshot,
++                allow_seed_coarsening,
+                 w44_118_per_iter_sharpness,
+                 mask1x1,
+                 // cvvdp-fork Phase 4: metric-direction target for the
+@@ -2017,6 +2020,7 @@ impl VarDctEncoder {
+         // screenshot. `false` (default for photo / unknown) is
+         // byte-identical to pre-W39-2 behaviour.
+         is_screenshot: bool,
++        allow_seed_coarsening: bool,
+         // W44-118 Mode D bisection: when true AND mask1x1 is Some,
+         // recompute sharpness per-iter using the current transform_out
+         // (post-iter-quantize) instead of reusing the W44-117 one-shot
+@@ -2128,6 +2132,7 @@ impl VarDctEncoder {
+             // buttloop slowdown). Production default off; this is a
+             // bisection switch only.
+             if w44_118_per_iter_sharpness
++                && !allow_seed_coarsening
+                 && current_params.epf_iters > 0
+                 && self.profile.epf_dynamic_sharpness
+                 && let Some(m1x1) = mask1x1
+@@ -2151,6 +2156,45 @@ impl VarDctEncoder {
+                 sharpness.copy_from_slice(&new_sharpness);
+             }
+ 
++            // Match the actual emitted EPF policy for every experimental iterate.
++            if allow_seed_coarsening && current_params.epf_iters > 0 {
++                let mask = super::adaptive_quant::resolve_mask1x1_for_sharpness(
++                    mask1x1,
++                    xyb_y,
++                    padded_width,
++                    padded_height,
++                    self.budget.as_ref(),
++                )?;
++                let use_default = self.distance < 0.5
++                    || !self.profile.epf_dynamic_sharpness
++                    || matches!(self.epf_dispatch, crate::api::EpfDispatch::AlwaysDefault)
++                    || (matches!(self.epf_dispatch, crate::api::EpfDispatch::Auto)
++                        && super::epf::mask1x1_is_smooth_enough_to_skip_sharpness(&mask));
++                if use_default {
++                    sharpness.fill(super::epf::EPF_DEFAULT_SHARPNESS);
++                } else {
++                    let _guard = crate::budget::MemoryBudget::reserve_opt(
++                        self.budget.as_ref(),
++                        num_blocks as u64,
++                    )?;
++                    let selected = super::epf::compute_epf_sharpness(
++                        [xyb_x, xyb_y, xyb_b],
++                        &transform_out.quant_dc,
++                        &transform_out.quant_ac,
++                        quant_field,
++                        &mask,
++                        &current_params,
++                        cfl_map,
++                        ac_strategy,
++                        self.enable_gaborish,
++                        xsize_blocks,
++                        ysize_blocks,
++                        self.budget.as_ref(),
++                    )?;
++                    sharpness.copy_from_slice(&selected);
++                }
++            }
++
+             // Step 3: Reconstruct XYB from quantized coefficients
+             let mut planes = reconstruct_xyb(
+                 &transform_out.quant_dc,
+@@ -2638,7 +2682,15 @@ impl VarDctEncoder {
+             // (only iter < 2 reduces quality of good blocks; later
+             // iters only bump bad blocks — same as libjxl
+             // `enc_adaptive_quantization.cc:1106`).
+-            let cur_pow: f64 = resolved_cur_pow(iter, target_distance as f64);
++            // Experiment: a lifted seed may shed precision after round 1.
++            // The unlifted path and other perceptual metrics retain their policy.
++            let control_iter =
++                if allow_seed_coarsening && matches!(active_metric, ActiveMetric::Butteraugli) {
++                    iter.min(1)
++                } else {
++                    iter
++                };
++            let cur_pow: f64 = resolved_cur_pow(control_iter, target_distance as f64);
+             // W39-2 (WF3 fix): HIGH-regime + screenshot-class content
+             // can cap `max_increase` at a lower value than the libjxl
+             // default. `is_screenshot` was classified once at the

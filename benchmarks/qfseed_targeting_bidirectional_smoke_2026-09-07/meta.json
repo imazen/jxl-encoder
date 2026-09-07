@@ -1,0 +1,18 @@
+{
+  "binary": "/Users/lilith/tmp/jxl103/distance-targeting-bidirectional",
+  "binary_sha256": "d300329cf00cf3860044013ebb074ec94e0a6cbbcf1613c8f4eac2df11d42ab9",
+  "effort": 8,
+  "requested_iterations": 12,
+  "distances": [
+    3,
+    3.6,
+    4,
+    6,
+    8
+  ],
+  "crop": 1024,
+  "manifest": "/Users/lilith/tmp/jxl103/bidirectional-smoke-inputs.tsv",
+  "source_patch": "dev/issue103/bidirectional.patch",
+  "patch_base": "0bc8348c",
+  "artifacts": "/Users/lilith/tmp/jxl103/targeting-bidirectional-artifacts"
+}

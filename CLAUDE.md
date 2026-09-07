@@ -916,6 +916,81 @@ count (56720 B, 1024 centre crop; delivered/requested 0.598). The smaller
 The corpus's `STORAGE-MAP.md` and `ACCESS.md` identify canonical distribution
 URLs; `VARIANT.md` describes the SDR renders.
 
+### EXPERIMENT 2026-09-07: lifted seeds with bidirectional late iterations
+
+The first bidirectional experiment retains `resolved_cur_pow(1, d)` after
+iteration 1 only when the Butteraugli seed lift fires; unlifted and other
+metric paths keep the original update rule. With 12 requested iterations,
+13 firing e8 cells on 9291/terminal/wiki all overrun the requested distance
+(ratios 1.399–2.109). The unlifted d3 controls remain 1.057 and 0.948.
+Data: `benchmarks/qfseed_targeting_bidirectional_smoke_2026-09-07/`; the
+probe saves binary/build provenance and full multi-decoder artifacts.
+
+This first experiment also forces the existing per-iteration sharpness
+probe, which does not honor production's `EpfDispatch::Auto` smooth-mask
+shortcut. Internal and decoded scores still differ (9291 d3.6: internal
+4.9860 versus decoded 5.3790). Before drawing conclusions about the
+controller, the next variant must apply the exact production sharpness
+selection policy. Source variants are preserved as `dev/issue103/{bidirectional,bidirectional-policy,coordinate-control}.patch` against `0bc8348c`; none is applied to production source.
+
+The exact-production-sharpness variant is recorded separately in
+`benchmarks/qfseed_targeting_bidirectional_policy_2026-09-07/`. It closes
+that diagnostic mismatch (9291 d3.6 internal 5.077332 versus decoded 5.0773),
+but all 13 firing cells still overrun distance, with ratios 1.293–1.725.
+Bidirectional local block updates alone therefore do not enforce the global
+Butteraugli target. The next variant separates field-shape updates from a
+global score-controlled scale update.
+
+The separated shape/global-control variant normalizes away the mean scale
+change of the local block update, then multiplies the field by the measured
+global score divided by the requested score. It uses the same 12-iteration
+probe grid and actual production sharpness policy. Only 3/13 firing cells
+land in [1,1.2]; the range is 0.702–1.400. Matched-quality screenshot losses
+remain (terminal target 3.6 +17.88%, target 8 +18.41%). The controller is not
+accepted. Data and comparison: `benchmarks/qfseed_targeting_coordinate_control`
+`_2026-09-07/` and `..._comparison_2026-09-07.tsv`. A subsequent attempt needs
+to retain and compare measured candidates, and account for changes outside
+the AC field when internal distance changes (DC quantization and quantization
+matrix scales remain tied to the original distance in these field-only trials).
+
+Two separate source findings to verify before relying on their existing
+claims: (1) the multi-seed picker uses largest `mean_qf` as its smallest-bytes
+proxy, although a larger quant field means finer precision; its cost ranking
+needs measurement before changing it. This cannot explain single-seed e8.
+(2) `jxl_bitstream_diff.py toc` fails on the terminal patch-reference frame
+with `UnboundLocalError: mode`; `mode` is assigned only for regular frames,
+and the parser's accounting currently assumes one frame. No section-byte
+attribution was obtained. Extend reference-frame/multi-frame parsing with
+independent decoder coverage before using that tool on these streams.
+
+### ACTIVE 2026-09-07: #103 full-distance targeting search misses cheaper response branches
+
+The full encoder's distance response is non-monotonic on the two W44
+screenshots even beyond the seed gate. With the original persisted probe,
+terminal e8 internal d6 delivers 3.1735 at 24884 B; d8 delivers 3.0031 at
+21039 B. Codec wiki d16 delivers 11.4118 at 11109 B, but d19 delivers
+7.7818 at 9776 B. A first bad-quality point therefore cannot rule out all
+larger internal distances.
+
+`qfseed_lift_ab.py --target-feedback --feedback-search boundary` spends 12
+full encode/measure queries per target, continuing past the first quality
+match. All eight e8 cells (terminal/wiki × targets 3/4/6/8) land within
+[1,1.1] delivered/requested. Nevertheless six of seven seed-firing cells
+lose bytes against the earlier measured same-encoder quality frontier;
+worst +17.16% on wiki target 8. The twelve measured encode times sum to
+6.31–6.54 s per target, excluding decoding, scoring and process overhead.
+This is a rejected targeting algorithm, not a default-policy change.
+
+Data: `benchmarks/qfseed_targeting_boundary_feedback_2026-09-07/`,
+`benchmarks/qfseed_targeting_boundary_feedback_comparison_2026-09-07.tsv`,
+and the original e8 extension's terminal/wiki TSVs. Their metadata pins
+binary hashes; full encodes, diffmaps and decoder logs remain at the named
+artifact paths. When running the comparator, pass individual data TSVs via
+`--extend-before`; derived comparison TSVs use a different schema and must
+not be mixed into a raw-input directory. The next search must consider separated feasible
+regions rather than treating this response as monotone. No claim is made that
+this old-binary experiment measures the reconstruction fixes' effect.
+
 ### ACTIVE 2026-09-07: #103 DCT4x4 internal reconstruction sign defect
 
 [PROVEN] `reconstruct.rs::idct_for_strategy`, DCT4X4 arm, reconstructed

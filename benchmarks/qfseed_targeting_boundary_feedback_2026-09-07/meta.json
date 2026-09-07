@@ -1,0 +1,19 @@
+{
+  "probe": "/Users/lilith/tmp/jxl103/distance-targeting-persisted-before",
+  "probe_sha256": "c59e9fc2e8eafe1670e06f1f009566d59f0069462293848bb01bcaeb1f8b4a30",
+  "manifest": "/Users/lilith/tmp/jxl103/targeting-calibration-inputs.tsv",
+  "crop": 1024,
+  "efforts": "8",
+  "distances": "3,4,6,8",
+  "modes": [
+    "on"
+  ],
+  "artifacts": "/Users/lilith/tmp/jxl103/targeting-boundary-feedback-artifacts",
+  "max_measurements": 12,
+  "ratio_band": [
+    1,
+    1.1
+  ],
+  "search": "boundary",
+  "harness_commit": "fac2b3a3d84bc6d6bdf3f284cddc5607f09d9f68"
+}
