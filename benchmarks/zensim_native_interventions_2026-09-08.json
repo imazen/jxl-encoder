@@ -1,0 +1,848 @@
+{
+  "status": "unqualified mechanism evidence; no model or policy changed",
+  "encoder_base": "8e2f0997fbe2",
+  "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+  "driver_sha256": "e8d093e39f3760178b8f7b3f7de755b42614198fb2809926286bfb224430b463",
+  "judge_binary_sha256": "6cb4744c0f1baa178c46c307db3f7a40c679dba2bf3d1ecb083a9d21f1e8cb6f",
+  "compatibility_decoder_sha256": "41b3531133282018310e65fc4fb4aaaba439cfce38f351bcf6a78743113f83bf",
+  "training_origins": [
+    "2010",
+    "6068",
+    "7066",
+    "8206"
+  ],
+  "independent_families": 4,
+  "primary": {
+    "work": {
+      "additional_scored_maps": 8,
+      "elapsed_seconds": 1.9098201910000001,
+      "full_encodes": 272,
+      "independent_decodes": 272,
+      "internal_reconstructions": 0,
+      "libjxl_compatibility_decodes": 24,
+      "ordinary_scalar_pixel_comparisons": 272,
+      "process_peak_rss_kib": 34580
+    },
+    "totals": {
+      "actual_quantizer_inert": 14,
+      "pixel_inert": 31,
+      "captured_quantizer_inert_but_pixels_changed": 7,
+      "quantizer_changes_outside_region": 0,
+      "pixel_changes_outside_region": 222,
+      "nonpositive_central_byte_derivatives": 34
+    },
+    "cells": [
+      {
+        "origin": "2010",
+        "class": "photo",
+        "distance": 1.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 1,
+        "pixel_inert": 1,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 31,
+        "nonpositive_central_byte_derivatives": 4,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": -0.2588235294117647,
+          "map_mass_vs_native_score_delta_per_byte": -0.5324001159371432,
+          "map_density_vs_native_score_delta": -0.2588235294117647,
+          "map_density_vs_native_score_delta_per_byte": -0.5324001159371432,
+          "map_mass_vs_ssim2_quality_delta": -0.488235294117647,
+          "map_mass_vs_ssim2_quality_delta_per_byte": -0.35664335664335667,
+          "map_density_vs_ssim2_quality_delta": -0.488235294117647,
+          "map_density_vs_ssim2_quality_delta_per_byte": -0.35664335664335667,
+          "map_mass_vs_butteraugli_quality_delta": 0.4852941176470588,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.11188811188811189,
+          "map_density_vs_butteraugli_quality_delta": 0.4852941176470588,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.11188811188811189
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 17,
+            "negative": 14,
+            "flat": 0,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 18,
+            "negative": 13,
+            "flat": 0,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 23,
+            "negative": 8,
+            "flat": 0,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "2010",
+        "class": "photo",
+        "distance": 3.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 0,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 32,
+        "nonpositive_central_byte_derivatives": 1,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.26176470588235295,
+          "map_mass_vs_native_score_delta_per_byte": 0.12857142857142856,
+          "map_density_vs_native_score_delta": 0.1323529411764706,
+          "map_density_vs_native_score_delta_per_byte": 0.06785714285714285,
+          "map_mass_vs_ssim2_quality_delta": 0.36764705882352944,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.2821428571428571,
+          "map_density_vs_ssim2_quality_delta": 0.2823529411764706,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.14285714285714282,
+          "map_mass_vs_butteraugli_quality_delta": 0.39999999999999997,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.024999999999999998,
+          "map_density_vs_butteraugli_quality_delta": 0.3735294117647059,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.0
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 22,
+            "negative": 10,
+            "flat": 0,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 21,
+            "negative": 11,
+            "flat": 0,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 30,
+            "negative": 2,
+            "flat": 0,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "6068",
+        "class": "document",
+        "distance": 1.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 6,
+        "pixel_inert": 7,
+        "captured_quantizer_inert_but_pixels_changed": 5,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 24,
+        "nonpositive_central_byte_derivatives": 3,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.5280258961679973,
+          "map_mass_vs_native_score_delta_per_byte": 0.5529578821201331,
+          "map_density_vs_native_score_delta": 0.666669567228868,
+          "map_density_vs_native_score_delta_per_byte": 0.5749661560353623,
+          "map_mass_vs_ssim2_quality_delta": 0.2920366688303449,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.23383791034931004,
+          "map_density_vs_ssim2_quality_delta": 0.38643235976540585,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.29986273209499753,
+          "map_mass_vs_butteraugli_quality_delta": 0.41593101318261244,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.5474558136413259,
+          "map_density_vs_butteraugli_quality_delta": 0.7669649888473704,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.7015137310479301
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 12,
+            "negative": 8,
+            "flat": 6,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 14,
+            "negative": 6,
+            "flat": 6,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 17,
+            "negative": 3,
+            "flat": 6,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "6068",
+        "class": "document",
+        "distance": 3.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 10,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 22,
+        "nonpositive_central_byte_derivatives": 4,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.22963592974155947,
+          "map_mass_vs_native_score_delta_per_byte": 0.26269742562687987,
+          "map_density_vs_native_score_delta": 0.17481961102905813,
+          "map_density_vs_native_score_delta_per_byte": 0.15061319069274445,
+          "map_mass_vs_ssim2_quality_delta": 0.34519465567602164,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.43082377802808297,
+          "map_density_vs_ssim2_quality_delta": 0.28445224845406075,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.3677763958776317,
+          "map_mass_vs_butteraugli_quality_delta": 0.5348294879787288,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.6409817185295869,
+          "map_density_vs_butteraugli_quality_delta": 0.48001316926622756,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.6199659244794364
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 13,
+            "negative": 9,
+            "flat": 10,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 9,
+            "negative": 13,
+            "flat": 10,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 15,
+            "negative": 7,
+            "flat": 10,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "7066",
+        "class": "graphic",
+        "distance": 1.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 4,
+        "pixel_inert": 2,
+        "captured_quantizer_inert_but_pixels_changed": 2,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 30,
+        "nonpositive_central_byte_derivatives": 5,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": -0.08529411764705883,
+          "map_mass_vs_native_score_delta_per_byte": -0.11818181818181818,
+          "map_density_vs_native_score_delta": 0.047058823529411764,
+          "map_density_vs_native_score_delta_per_byte": 0.09090909090909091,
+          "map_mass_vs_ssim2_quality_delta": 0.22058823529411767,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.17272727272727276,
+          "map_density_vs_ssim2_quality_delta": 0.0029411764705882353,
+          "map_density_vs_ssim2_quality_delta_per_byte": -0.14545454545454548,
+          "map_mass_vs_butteraugli_quality_delta": -0.1764705882352941,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.0,
+          "map_density_vs_butteraugli_quality_delta": 0.06176470588235294,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.3090909090909091
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 14,
+            "negative": 14,
+            "flat": 0,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 17,
+            "negative": 11,
+            "flat": 0,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 23,
+            "negative": 4,
+            "flat": 1,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "7066",
+        "class": "graphic",
+        "distance": 3.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 3,
+        "pixel_inert": 6,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 26,
+        "nonpositive_central_byte_derivatives": 4,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.6176470588235293,
+          "map_mass_vs_native_score_delta_per_byte": 0.6223776223776225,
+          "map_density_vs_native_score_delta": 0.611764705882353,
+          "map_density_vs_native_score_delta_per_byte": 0.6923076923076924,
+          "map_mass_vs_ssim2_quality_delta": 0.4147058823529412,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.6573426573426573,
+          "map_density_vs_ssim2_quality_delta": 0.34705882352941175,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.5104895104895105,
+          "map_mass_vs_butteraugli_quality_delta": 0.6588235294117648,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.5594405594405596,
+          "map_density_vs_butteraugli_quality_delta": 0.6558823529411765,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.5734265734265735
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 16,
+            "negative": 10,
+            "flat": 3,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 17,
+            "negative": 9,
+            "flat": 3,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 24,
+            "negative": 2,
+            "flat": 3,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "8206",
+        "class": "screen",
+        "distance": 1.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 3,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 28,
+        "nonpositive_central_byte_derivatives": 6,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.36176470588235293,
+          "map_mass_vs_native_score_delta_per_byte": 0.8060606060606059,
+          "map_density_vs_native_score_delta": 0.37058823529411766,
+          "map_density_vs_native_score_delta_per_byte": 0.8666666666666665,
+          "map_mass_vs_ssim2_quality_delta": -0.15,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.18787878787878787,
+          "map_density_vs_ssim2_quality_delta": 0.06764705882352941,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.406060606060606,
+          "map_mass_vs_butteraugli_quality_delta": 0.4205882352941176,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.4424242424242424,
+          "map_density_vs_butteraugli_quality_delta": 0.488235294117647,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.5030303030303029
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 9,
+            "negative": 20,
+            "flat": 3,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 15,
+            "negative": 14,
+            "flat": 3,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 14,
+            "negative": 14,
+            "flat": 4,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "8206",
+        "class": "screen",
+        "distance": 3.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 2,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 29,
+        "nonpositive_central_byte_derivatives": 7,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.6764705882352942,
+          "map_mass_vs_native_score_delta_per_byte": 0.65,
+          "map_density_vs_native_score_delta": 0.3411764705882353,
+          "map_density_vs_native_score_delta_per_byte": 0.08333333333333334,
+          "map_mass_vs_ssim2_quality_delta": 0.047058823529411764,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.35,
+          "map_density_vs_ssim2_quality_delta": 0.38823529411764707,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.09999999999999999,
+          "map_mass_vs_butteraugli_quality_delta": 0.31176470588235294,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.5499999999999999,
+          "map_density_vs_butteraugli_quality_delta": 0.17352941176470588,
+          "map_density_vs_butteraugli_quality_delta_per_byte": -0.26666666666666666
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 20,
+            "negative": 10,
+            "flat": 2,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 16,
+            "negative": 14,
+            "flat": 2,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 20,
+            "negative": 9,
+            "flat": 3,
+            "epsilon": 1e-06
+          }
+        }
+      }
+    ],
+    "independent_judge_comparisons": 544,
+    "compatibility_max_abs_rgb8": 1
+  },
+  "multigroup": {
+    "work": {
+      "additional_scored_maps": 8,
+      "elapsed_seconds": 6.060511873,
+      "full_encodes": 272,
+      "independent_decodes": 272,
+      "internal_reconstructions": 0,
+      "libjxl_compatibility_decodes": 24,
+      "ordinary_scalar_pixel_comparisons": 272,
+      "process_peak_rss_kib": 80748
+    },
+    "totals": {
+      "actual_quantizer_inert": 10,
+      "pixel_inert": 36,
+      "captured_quantizer_inert_but_pixels_changed": 5,
+      "quantizer_changes_outside_region": 0,
+      "pixel_changes_outside_region": 216,
+      "nonpositive_central_byte_derivatives": 44
+    },
+    "cells": [
+      {
+        "origin": "2010",
+        "class": "photo",
+        "distance": 1.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 3,
+        "pixel_inert": 2,
+        "captured_quantizer_inert_but_pixels_changed": 1,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 30,
+        "nonpositive_central_byte_derivatives": 4,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.4764705882352941,
+          "map_mass_vs_native_score_delta_per_byte": 0.5314685314685316,
+          "map_density_vs_native_score_delta": 0.4764705882352941,
+          "map_density_vs_native_score_delta_per_byte": 0.5314685314685316,
+          "map_mass_vs_ssim2_quality_delta": 0.09117647058823529,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.16083916083916086,
+          "map_density_vs_ssim2_quality_delta": 0.09117647058823529,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.16083916083916086,
+          "map_mass_vs_butteraugli_quality_delta": 0.5176470588235293,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.3356643356643357,
+          "map_density_vs_butteraugli_quality_delta": 0.5176470588235293,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.3356643356643357
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 21,
+            "negative": 8,
+            "flat": 0,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 17,
+            "negative": 12,
+            "flat": 0,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 26,
+            "negative": 3,
+            "flat": 0,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "2010",
+        "class": "photo",
+        "distance": 3.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 3,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 29,
+        "nonpositive_central_byte_derivatives": 3,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.6235294117647059,
+          "map_mass_vs_native_score_delta_per_byte": 0.43956043956043955,
+          "map_density_vs_native_score_delta": 0.2029411764705882,
+          "map_density_vs_native_score_delta_per_byte": 0.46153846153846156,
+          "map_mass_vs_ssim2_quality_delta": 0.4941176470588235,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.2582417582417582,
+          "map_density_vs_ssim2_quality_delta": -0.09705882352941177,
+          "map_density_vs_ssim2_quality_delta_per_byte": -0.07142857142857142,
+          "map_mass_vs_butteraugli_quality_delta": 0.5764705882352941,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.42857142857142855,
+          "map_density_vs_butteraugli_quality_delta": 0.14411764705882352,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.2747252747252747
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 23,
+            "negative": 6,
+            "flat": 3,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 23,
+            "negative": 6,
+            "flat": 3,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 22,
+            "negative": 6,
+            "flat": 4,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "6068",
+        "class": "document",
+        "distance": 1.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 6,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 26,
+        "nonpositive_central_byte_derivatives": 4,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.2535295555904682,
+          "map_mass_vs_native_score_delta_per_byte": 0.33975533714409795,
+          "map_density_vs_native_score_delta": 0.5381943197622219,
+          "map_density_vs_native_score_delta_per_byte": 0.33975533714409795,
+          "map_mass_vs_ssim2_quality_delta": 0.1386436710608708,
+          "map_mass_vs_ssim2_quality_delta_per_byte": 0.09090909090909093,
+          "map_density_vs_ssim2_quality_delta": 0.3038361301972275,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.09090909090909093,
+          "map_mass_vs_butteraugli_quality_delta": 0.2064905739204459,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.2657342657342658,
+          "map_density_vs_butteraugli_quality_delta": 0.513276569459394,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.2657342657342658
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 19,
+            "negative": 7,
+            "flat": 6,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 16,
+            "negative": 10,
+            "flat": 6,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 23,
+            "negative": 2,
+            "flat": 7,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "6068",
+        "class": "document",
+        "distance": 3.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 8,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 23,
+        "nonpositive_central_byte_derivatives": 5,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.256638284729697,
+          "map_mass_vs_native_score_delta_per_byte": -0.13636363636363638,
+          "map_density_vs_native_score_delta": 0.43363020523293644,
+          "map_density_vs_native_score_delta_per_byte": 0.14545454545454548,
+          "map_mass_vs_ssim2_quality_delta": -0.17699192050323934,
+          "map_mass_vs_ssim2_quality_delta_per_byte": -0.39090909090909093,
+          "map_density_vs_ssim2_quality_delta": 0.0796463642264577,
+          "map_density_vs_ssim2_quality_delta_per_byte": 0.045454545454545456,
+          "map_mass_vs_butteraugli_quality_delta": 0.13274394037742948,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": -0.36363636363636365,
+          "map_density_vs_butteraugli_quality_delta": 0.504426973434232,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.03636363636363637
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 14,
+            "negative": 10,
+            "flat": 8,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 14,
+            "negative": 10,
+            "flat": 8,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 15,
+            "negative": 9,
+            "flat": 8,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "7066",
+        "class": "graphic",
+        "distance": 1.0,
+        "interventions": 32,
+        "central_samples": 15,
+        "actual_quantizer_inert": 6,
+        "pixel_inert": 2,
+        "captured_quantizer_inert_but_pixels_changed": 4,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 30,
+        "nonpositive_central_byte_derivatives": 3,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.075,
+          "map_mass_vs_native_score_delta_per_byte": 0.16083916083916086,
+          "map_density_vs_native_score_delta": 0.075,
+          "map_density_vs_native_score_delta_per_byte": 0.16083916083916086,
+          "map_mass_vs_ssim2_quality_delta": -0.16785714285714282,
+          "map_mass_vs_ssim2_quality_delta_per_byte": -0.25874125874125875,
+          "map_density_vs_ssim2_quality_delta": -0.16785714285714282,
+          "map_density_vs_ssim2_quality_delta_per_byte": -0.25874125874125875,
+          "map_mass_vs_butteraugli_quality_delta": 0.05714285714285713,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.1958041958041958,
+          "map_density_vs_butteraugli_quality_delta": 0.05714285714285713,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.1958041958041958
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 16,
+            "negative": 9,
+            "flat": 1,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 15,
+            "negative": 11,
+            "flat": 0,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 21,
+            "negative": 4,
+            "flat": 1,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "7066",
+        "class": "graphic",
+        "distance": 3.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 1,
+        "pixel_inert": 1,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 31,
+        "nonpositive_central_byte_derivatives": 7,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": -0.07352941176470588,
+          "map_mass_vs_native_score_delta_per_byte": -0.08333333333333334,
+          "map_density_vs_native_score_delta": -0.05294117647058824,
+          "map_density_vs_native_score_delta_per_byte": -0.08333333333333334,
+          "map_mass_vs_ssim2_quality_delta": -0.05294117647058824,
+          "map_mass_vs_ssim2_quality_delta_per_byte": -0.08333333333333334,
+          "map_density_vs_ssim2_quality_delta": -0.0588235294117647,
+          "map_density_vs_ssim2_quality_delta_per_byte": -0.08333333333333334,
+          "map_mass_vs_butteraugli_quality_delta": -0.21764705882352942,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": -0.2833333333333333,
+          "map_density_vs_butteraugli_quality_delta": -0.2088235294117647,
+          "map_density_vs_butteraugli_quality_delta_per_byte": -0.2833333333333333
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 17,
+            "negative": 14,
+            "flat": 0,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 18,
+            "negative": 13,
+            "flat": 0,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 16,
+            "negative": 15,
+            "flat": 0,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "8206",
+        "class": "screen",
+        "distance": 1.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 8,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 23,
+        "nonpositive_central_byte_derivatives": 10,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.17185656677432837,
+          "map_mass_vs_native_score_delta_per_byte": 0.08571428571428573,
+          "map_density_vs_native_score_delta": 0.4192707620442666,
+          "map_density_vs_native_score_delta_per_byte": 0.08571428571428573,
+          "map_mass_vs_ssim2_quality_delta": 0.4089001071527123,
+          "map_mass_vs_ssim2_quality_delta_per_byte": -0.028571428571428574,
+          "map_density_vs_ssim2_quality_delta": 0.25926637228885746,
+          "map_density_vs_ssim2_quality_delta_per_byte": -0.028571428571428574,
+          "map_mass_vs_butteraugli_quality_delta": -0.15822658001703102,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.2,
+          "map_density_vs_butteraugli_quality_delta": -0.07762058642344917,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.2
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 15,
+            "negative": 9,
+            "flat": 8,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 13,
+            "negative": 11,
+            "flat": 8,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 15,
+            "negative": 9,
+            "flat": 8,
+            "epsilon": 1e-06
+          }
+        }
+      },
+      {
+        "origin": "8206",
+        "class": "screen",
+        "distance": 3.0,
+        "interventions": 32,
+        "central_samples": 16,
+        "actual_quantizer_inert": 0,
+        "pixel_inert": 6,
+        "captured_quantizer_inert_but_pixels_changed": 0,
+        "quantizer_changes_outside_region": 0,
+        "pixel_changes_outside_region": 24,
+        "nonpositive_central_byte_derivatives": 8,
+        "rank_associations": {
+          "map_mass_vs_native_score_delta": 0.41648282062647163,
+          "map_mass_vs_native_score_delta_per_byte": 0.4285714285714286,
+          "map_density_vs_native_score_delta": 0.30022083182968273,
+          "map_density_vs_native_score_delta_per_byte": 0.4285714285714286,
+          "map_mass_vs_ssim2_quality_delta": -0.03973511009510507,
+          "map_mass_vs_ssim2_quality_delta_per_byte": -0.2380952380952381,
+          "map_density_vs_ssim2_quality_delta": 0.06475351274757861,
+          "map_density_vs_ssim2_quality_delta_per_byte": -0.3571428571428572,
+          "map_mass_vs_butteraugli_quality_delta": 0.4483795319415397,
+          "map_mass_vs_butteraugli_quality_delta_per_byte": 0.28571428571428575,
+          "map_density_vs_butteraugli_quality_delta": 0.6224215871030583,
+          "map_density_vs_butteraugli_quality_delta_per_byte": 0.4047619047619048
+        },
+        "direction": {
+          "native_score_delta": {
+            "positive": 15,
+            "negative": 11,
+            "flat": 6,
+            "epsilon": 1e-05
+          },
+          "ssim2_quality_delta": {
+            "positive": 17,
+            "negative": 9,
+            "flat": 6,
+            "epsilon": 1e-06
+          },
+          "butteraugli_quality_delta": {
+            "positive": 18,
+            "negative": 6,
+            "flat": 8,
+            "epsilon": 1e-06
+          }
+        }
+      }
+    ],
+    "independent_judge_comparisons": 544,
+    "compatibility_max_abs_rgb8": 1
+  },
+  "reproduction": {
+    "full_encodes_repeated": 272,
+    "ordinary_decoded_scores_exact": 272,
+    "complete_region_maps_exact": 8,
+    "independent_judge_pairs_exact_per_metric": 272,
+    "timing_excluded": true,
+    "first_driver": "5bb52999c6dea57653f0369174acf76b9d1a689c0b7e2daea904c0f4d374823b",
+    "final_driver": "e8d093e39f3760178b8f7b3f7de755b42614198fb2809926286bfb224430b463"
+  },
+  "analyzer_rejection_controls": 19,
+  "analyzer_positive_controls": 2,
+  "cli_rejection_controls": 6,
+  "existing_analyzer_unit_tests": 4,
+  "existing_analyzer_functions_unchanged": [
+    "load_judges",
+    "interp_bytes",
+    "helpful",
+    "fmt_saved",
+    "target_loop_main",
+    "reachable_target_summary",
+    "native_target_summary",
+    "main"
+  ],
+  "artifacts": "/mnt/v/output/zensim/jxl-native-interventions-2026-09-08",
+  "total_work_including_reproduction": {
+    "full_encodes": 816,
+    "independent_decodes": 816,
+    "ordinary_scalar_pixel_comparisons": 816,
+    "additional_scored_maps": 24,
+    "internal_reconstructions": 0,
+    "libjxl_compatibility_decodes": 48,
+    "independent_judge_comparisons": 1632
+  }
+}

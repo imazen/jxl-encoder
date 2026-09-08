@@ -76,8 +76,11 @@ fn sha(bytes: &[u8]) -> String {
         .collect()
 }
 fn driver_sha() -> Result<String> {
+    file_sha(&std::env::current_exe()?)
+}
+fn file_sha(path: &Path) -> Result<String> {
     // Hashing an unstripped research binary must not dominate measured RSS.
-    let mut file = fs::File::open(std::env::current_exe()?)?;
+    let mut file = fs::File::open(path)?;
     let mut hash = Sha256::new();
     let mut buffer = [0; 64 * 1024];
     loop {
@@ -505,4 +508,13 @@ pub(super) fn evaluate(root: &Path, calibration_path: &Path, bake: &str, out: &P
         )?,
     )?;
     Ok(())
+}
+
+#[cfg(all(feature = "__pre_quantized", feature = "__internal_recon_hook"))]
+#[path = "interventions.rs"]
+mod interventions;
+
+#[cfg(all(feature = "__pre_quantized", feature = "__internal_recon_hook"))]
+pub(super) fn intervene(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
+    interventions::run(manifest, bake, out)
 }

@@ -314,6 +314,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut zensim_targets: Vec<f64> = Vec::new();
     let mut arms: Vec<String> = vec!["baseline".into(), "attr".into(), "attr-stale".into()];
     let mut bake: Option<String> = None;
+    let mut native_interventions: Option<PathBuf> = None;
     let mut native_fit: Option<PathBuf> = None;
     let mut native_eval: Option<PathBuf> = None;
     let mut native_calibration: Option<PathBuf> = None;
@@ -351,10 +352,29 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
             "--bake" => bake = args.next(),
+            "--native-interventions" => native_interventions = args.next().map(PathBuf::from),
             "--native-fit" => native_fit = args.next().map(PathBuf::from),
             "--native-eval" => native_eval = args.next().map(PathBuf::from),
             "--native-calibration" => native_calibration = args.next().map(PathBuf::from),
             _ => {}
+        }
+    }
+    if let Some(manifest) = native_interventions.as_deref() {
+        assert!(
+            native_fit.is_none() && native_eval.is_none(),
+            "interventions are a separate operation"
+        );
+        #[cfg(all(feature = "__pre_quantized", feature = "__internal_recon_hook"))]
+        return targeting::intervene(
+            manifest,
+            bake.as_deref().expect("--bake required"),
+            &out_dir,
+        )
+        .map_err(Into::into);
+        #[cfg(not(all(feature = "__pre_quantized", feature = "__internal_recon_hook")))]
+        {
+            let _ = manifest;
+            return Err("interventions require __pre_quantized and __internal_recon_hook".into());
         }
     }
     if let Some(root) = native_fit.as_deref() {

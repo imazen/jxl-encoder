@@ -101,3 +101,19 @@
   many interior requests. Do not interpret 45/45 as a universal targeting gate.
 - [Native target record](../benchmarks/zensim_native_targeting_2026-09-08.md) owns
   counts, exact artifacts, negative controls, reproduction and limitations.
+
+## September 8: native finite-block intervention response
+
+- **NOT ESTABLISHED:** strong complete-D pixel-restoration coherence predicts
+  native marginal quality/byte gains. The fixed four-train-family, two-distance
+  screen has mixed map/response rank associations; 222/256 local quantizer
+  interventions change pixels outside their transform region.
+- **PROVEN on retained probes:** final captured quantizer identity does not
+  prove an inert encode. Seven interventions keep the entire captured final
+  field but change pixels. Native `AdjustQuantBlockAC` also derives thresholds
+  from the incoming field; CfL is frozen in this experiment.
+- All primary probes repeat byte/pixel/score/map-exactly; separate 512-long-edge
+  multi-group coverage passes. Both independent judges and libjxl 0.12 checks
+  complete. No encoder/model change or qualified RD gain.
+- [Intervention record](../benchmarks/zensim_native_interventions_2026-09-08.md)
+  owns registration, counts, controls and the limits of normalized secants.

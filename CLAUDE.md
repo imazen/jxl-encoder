@@ -3182,3 +3182,13 @@ exporter's exact closure passes locked workspace and exact-example Clippy, and
 the pinned release binary reproduces every non-timing native experiment field.
 The earlier `9f038d4d` binding commit had not advanced that pin; use this updated
 closure when reproducing complete candidate serving.
+
+September 8 finite-block continuation: the existing RD example now supports
+`--native-interventions` with existing `__pre_quantized,__internal_recon_hook`
+features. [Native intervention evidence](benchmarks/zensim_native_interventions_2026-09-08.md):
+272 primary probes reproduce exactly; separate 272-probe multi-group coverage,
+complete independent judges and libjxl 0.12 checks pass. Map mass/density have
+mixed associations with native marginal response. Final quantizer identity
+alone does not prove an inert encode because thresholds also depend on the
+incoming field. Preserve decoded-pixel controls. This changes neither the
+model nor encoder policy and establishes no qualified spatial RD win.
