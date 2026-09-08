@@ -43,6 +43,7 @@
 
 use std::path::PathBuf;
 
+use jxl_encoder::api::{ButtloopQfSeedPolicy, EncoderImprovementsCustom, EncoderStrategy};
 use jxl_encoder::tuning_runtime::{RuntimeTuning, install, is_loaded};
 use jxl_encoder::{LossyConfig, PixelLayout};
 
@@ -112,7 +113,16 @@ fn load_screenshot() -> (Vec<u8>, u32, u32) {
 
 /// Encode one image at e8 d=4.0. Returns encoded byte count.
 fn encode_e8_d4(rgb: &[u8], w: u32, h: u32) -> usize {
-    let cfg = LossyConfig::new(4.0).with_effort(8);
+    // Named presets disable the legacy seed lift. This test exercises its
+    // explicit custom-policy override, not the production preset.
+    let cfg = LossyConfig::new(4.0)
+        .with_effort(8)
+        .with_strategy(EncoderStrategy::Custom(Box::new(
+            EncoderImprovementsCustom {
+                buttloop_qf_seed: ButtloopQfSeedPolicy::AutoScale4,
+                ..Default::default()
+            },
+        )));
     cfg.encode(rgb, w, h, PixelLayout::Rgb8)
         .expect("encode failed")
         .len()
