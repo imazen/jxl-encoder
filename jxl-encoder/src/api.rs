@@ -6842,6 +6842,27 @@ impl<'a> EncodeRequest<'a> {
                 synthesised_black_u16 = Some(k);
                 ModularImage::from_rgb16_native(&cmy, w, h)
             }
+            other if other.lossless_float_bit_depth().is_some() => {
+                // Lossless float (imazen/jxl-encoder#109). Samples are packed
+                // by bit reinterpretation (binary32) or carried as-is
+                // (binary16, whose bit pattern IS the (16, 5) custom float),
+                // so nothing can be lost here — see
+                // `modular::float_pack` for the reference derivation.
+                synthesised_black_u8 = None;
+                synthesised_black_u16 = None;
+                let (bits, _) = other
+                    .lossless_float_bit_depth()
+                    .expect("guarded by the match arm");
+                ModularImage::from_float_native(
+                    pixels,
+                    w,
+                    h,
+                    other.float_channel_count(),
+                    bits == 16,
+                    other.is_gray_float(),
+                    other.has_alpha(),
+                )
+            }
             other => return Err(EncodeError::UnsupportedPixelLayout(other)),
         }
         .map_err(EncodeError::from)?;
@@ -6970,7 +6991,22 @@ impl<'a> EncodeRequest<'a> {
         } else {
             FileHeader::new_rgb(self.width, self.height)
         };
-        if image.bit_depth == 16 {
+        if let Some((bits, exponent_bits)) = self.layout.lossless_float_bit_depth() {
+            // Float samples (imazen/jxl-encoder#109). This also drives the
+            // level: `ImageMetadata::modular_16bit_buffer_sufficient` returns
+            // false for any float depth, so `compute_codestream_level` bumps to
+            // 10 without a second rule — matching libjxl, whose
+            // `SetFloat32Samples`/`SetFloat16Samples` clear the same field.
+            let bd = crate::headers::file_header::BitDepth {
+                float_sample: true,
+                bits_per_sample: bits,
+                exponent_bits,
+            };
+            file_header.metadata.bit_depth = bd;
+            for ec in &mut file_header.metadata.extra_channels {
+                ec.bit_depth = bd;
+            }
+        } else if image.bit_depth == 16 {
             file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
             for ec in &mut file_header.metadata.extra_channels {
                 ec.bit_depth = crate::headers::file_header::BitDepth::uint16();

@@ -1397,13 +1397,27 @@ fn rct_cost_tally(
     extra_bits: &mut u64,
 ) {
     use super::predictor::pack_signed;
-    let max_diff = (left.max(top).max(topleft) - left.min(top).min(topleft)) as u32;
+    // Neighbour spread. `abs_diff` rather than `(max - min) as u32`: the
+    // difference of two full-range `i32` samples does not fit `i32` (a
+    // float-packed plane routinely holds both `i32::MIN` and large positives),
+    // and `abs_diff` is exact over the whole range. Byte-identical whenever the
+    // subtraction did fit, i.e. on all integer content.
+    let max_diff = left
+        .max(top)
+        .max(topleft)
+        .abs_diff(left.min(top).min(topleft));
     let ctx = ctx_lut[(max_diff as usize).min(500)] as usize;
 
-    // Gradient prediction residual
-    let grad = left + top - topleft;
-    let pred = grad.max(left.min(top)).min(left.max(top)); // clamped gradient
-    let res = val - pred;
+    // Gradient prediction residual. Uses the same overflow-correct primitives
+    // as the real coder (`predictor::clamped_gradient` + `wrapping_sub`) rather
+    // than a second hand-inlined copy, so the estimate cannot disagree with what
+    // is actually coded — and so a full-width sample (float-packed input spans
+    // all of `i32`) cannot overflow here. Byte-identical for every input that
+    // did not overflow, which is all integer content: `clamped_gradient` agrees
+    // with `grad.max(min).min(max)` exactly when the sum fits, and `wrapping_sub`
+    // agrees with `-` on the same condition.
+    let pred = super::predictor::clamped_gradient(top, left, topleft);
+    let res = val.wrapping_sub(pred);
     let packed = pack_signed(res);
 
     let (token, _bits, nbits) = config.encode(packed);
@@ -2220,6 +2234,22 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
 
     let is_lossy = lossy_options.is_some();
+
+    // Transform bit budget (libjxl `enc_modular.cc:868-905`). libjxl tracks
+    // `max_bitdepth = bits_per_sample + (fp ? 0 : 1)` and refuses an RCT unless
+    // `max_bitdepth + 1 < level_max_bitdepth` (32 at level 10), because an RCT's
+    // channel sums need one more bit than the samples do. A 32-bit float sample
+    // occupies the full width — its packed bit pattern spans all of `i32` — so
+    // there is no spare bit and RCT (and the palette path that precedes it) must
+    // be off. Everything we encode today at `bit_depth < 32` has spare room:
+    // 16-bit integer is `max_bitdepth` 17, and `17 + 1 < 32`.
+    //
+    // Expressed on `bit_depth` rather than a new `is_float` flag because 32 is
+    // reachable only from a 32-bit float sample — integer input tops out at 16
+    // — so the two are the same predicate today, and libjxl's own budget for
+    // f16 (`max_bitdepth` 16, RCT permitted at level 10) falls out unchanged.
+    let rct = rct && image.bit_depth < 32;
+    let palette = palette && image.bit_depth < 32;
 
     // Check if multi-channel palette is beneficial (only for lossless, non-lossy images).
     // When palette is active, it replaces RCT for the color channels — palette

@@ -466,6 +466,84 @@ impl ModularImage {
     ///
     /// Input is a byte slice interpreted as `&[u16]` in native endian order
     /// (6 bytes per pixel: R_lo, R_hi, G_lo, G_hi, B_lo, B_hi on little-endian).
+    /// Build a modular image from interleaved IEEE floating-point samples,
+    /// packing each one into the integer sample the modular codec codes
+    /// (imazen/jxl-encoder#109).
+    ///
+    /// `num_channels` counts colour + alpha; `f16` selects binary16 input
+    /// (2 bytes/sample) over binary32 (4 bytes/sample). Native-endian, matching
+    /// the existing `*_native` constructors.
+    ///
+    /// **Neither width can lose information, so this cannot fail on the sample
+    /// values.** binary32 packs by bit reinterpretation
+    /// (libjxl `float_to_int`'s `bits == 32` branch, `enc_modular.cc:174`), and
+    /// a binary16 bit pattern *is* libjxl's `bits = 16, exponent_bits = 5`
+    /// custom-float layout — same sign position, same 5-bit biased exponent,
+    /// same 10-bit mantissa — so it packs as itself. That is proven rather than
+    /// assumed: `float_pack`'s tests round-trip all 65536 binary16 patterns and
+    /// a 200k-sample sweep of binary32.
+    ///
+    /// `bit_depth` is set to the sample width, which is also what gates the
+    /// transform budget: 32 disables RCT and palette, exactly as libjxl's
+    /// `max_bitdepth` accounting does.
+    pub fn from_float_native(
+        data: &[u8],
+        width: usize,
+        height: usize,
+        num_channels: usize,
+        f16: bool,
+        is_grayscale: bool,
+        has_alpha: bool,
+    ) -> Result<Self> {
+        let bytes_per_sample = if f16 { 2 } else { 4 };
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(num_channels))
+            .and_then(|n| n.checked_mul(bytes_per_sample))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: num_channels,
+            })?;
+        if data.len() != expected {
+            return Err(Error::InvalidInput(alloc::format!(
+                "expected {expected} bytes for {width}x{height} \
+                 {num_channels}-channel {}, got {}",
+                if f16 { "f16" } else { "f32" },
+                data.len()
+            )));
+        }
+
+        let mut channels = Vec::with_capacity(num_channels);
+        for _ in 0..num_channels {
+            channels.push(Channel::new(width, height)?);
+        }
+        for y in 0..height {
+            for x in 0..width {
+                let base = (y * width + x) * num_channels * bytes_per_sample;
+                for (c, ch) in channels.iter_mut().enumerate() {
+                    let off = base + c * bytes_per_sample;
+                    let sample = if f16 {
+                        // A binary16 pattern is already the packed (16, 5)
+                        // sample; widening to f32 and repacking is the identity.
+                        i32::from(u16::from_ne_bytes([data[off], data[off + 1]]))
+                    } else {
+                        u32::from_ne_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+                            as i32
+                    };
+                    ch.set(x, y, sample);
+                }
+            }
+        }
+
+        Ok(Self {
+            channels,
+            bit_depth: if f16 { 16 } else { 32 },
+            is_grayscale,
+            has_alpha,
+        })
+    }
+
     pub fn from_rgb16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
         let expected = width
             .checked_mul(height)

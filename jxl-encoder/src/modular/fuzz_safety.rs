@@ -59,12 +59,27 @@ pub(crate) fn is_nan_for_quantize(value: f32) -> bool {
 /// by the channel's range, so the subtraction always fits; this is a
 /// fuzz/adversarial guard against crafted weighted-predictor states.
 #[inline]
+/// Modular residual, `pixel - prediction`, with the **wrapping** semantics the
+/// format defines.
+///
+/// This used to return an error on `i32` overflow. That was wrong, not merely
+/// strict: libjxl computes the residual in `pixel_type_w` (`int64_t`) and then
+/// narrows it to `int32_t` at the `PackSigned` call
+/// (`modular/encoding/enc_encoding.cc:397-399`), and `PackSigned` itself
+/// carries `JXL_NO_SANITIZE("unsigned-integer-overflow")`. The round trip is
+/// exact because encode subtracts and decode adds, both modulo 2^32, over a
+/// 32-bit sample — so a wrapped residual is a *correct* residual, not a
+/// corrupt one.
+///
+/// It was unreachable while samples were at most 16-bit (residuals are then
+/// bounded by ±65535) and became reachable with lossless float input
+/// (imazen/jxl-encoder#109), whose packed samples span all of `i32`: a
+/// grayscale f32 encode tripped the old error path immediately.
+///
+/// Kept as a named function rather than inlining `wrapping_sub` at the call
+/// site so the reasoning above has somewhere to live.
 pub(crate) fn checked_residual(pixel: i32, prediction: i32) -> Result<i32> {
-    pixel.checked_sub(prediction).ok_or_else(|| {
-        Error::InvalidInput(alloc::string::String::from(
-            "Residual overflow in modular encode",
-        ))
-    })
+    Ok(pixel.wrapping_sub(prediction))
 }
 
 #[cfg(test)]
@@ -98,21 +113,48 @@ mod tests {
 
     #[test]
     fn checked_residual_overflow_positive() {
-        // i32::MIN - 1 would overflow: pixel = i32::MIN, prediction = 1
-        let err = checked_residual(i32::MIN, 1).unwrap_err();
-        match err {
-            Error::InvalidInput(msg) => assert!(msg.contains("overflow")),
-            other => panic!("expected InvalidInput, got {other:?}"),
-        }
+        // Changed 2026-09-08: this asserted an error. `i32::MIN - 1` is a
+        // legitimate residual that the format defines as wrapping — encode
+        // subtracts and decode adds, both mod 2^32 — and float-packed samples
+        // reach it. See `checked_residual`'s doc.
+        assert_eq!(checked_residual(i32::MIN, 1).unwrap(), i32::MAX);
     }
 
     #[test]
     fn checked_residual_overflow_negative() {
-        // i32::MAX - (-1) would overflow: pixel = i32::MAX, prediction = -1
-        let err = checked_residual(i32::MAX, -1).unwrap_err();
-        match err {
-            Error::InvalidInput(msg) => assert!(msg.contains("overflow")),
-            other => panic!("expected InvalidInput, got {other:?}"),
+        assert_eq!(checked_residual(i32::MAX, -1).unwrap(), i32::MIN);
+    }
+
+    /// The property that makes wrapping safe: the decoder's `prediction +
+    /// residual` recovers the pixel for EVERY `i32` pair, because both sides
+    /// are modulo 2^32.
+    #[test]
+    fn wrapping_residual_round_trips_over_the_whole_range() {
+        let mut x: u32 = 0x1234_5678;
+        for _ in 0..200_000 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let pixel = x as i32;
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let prediction = x as i32;
+            let res = checked_residual(pixel, prediction).unwrap();
+            assert_eq!(
+                prediction.wrapping_add(res),
+                pixel,
+                "decode must recover pixel {pixel} from prediction {prediction}"
+            );
+        }
+        for (pixel, prediction) in [
+            (i32::MIN, i32::MAX),
+            (i32::MAX, i32::MIN),
+            (i32::MIN, i32::MIN),
+            (0, i32::MIN),
+        ] {
+            let res = checked_residual(pixel, prediction).unwrap();
+            assert_eq!(prediction.wrapping_add(res), pixel);
         }
     }
 
@@ -124,11 +166,12 @@ mod tests {
         assert_eq!(checked_residual(i32::MIN, i32::MIN).unwrap(), 0);
         // i32::MAX - 0 fits.
         assert_eq!(checked_residual(i32::MAX, 0).unwrap(), i32::MAX);
-        // 0 - i32::MIN = overflow (since -i32::MIN > i32::MAX).
-        let err = checked_residual(0, i32::MIN).unwrap_err();
-        match err {
-            Error::InvalidInput(_) => {}
-            other => panic!("expected InvalidInput, got {other:?}"),
-        }
+        // Changed 2026-09-08 with `checked_residual` itself: `0 - i32::MIN`
+        // wraps rather than erroring, which is the format's definition (see the
+        // function's doc). What must hold is the round trip, and it does.
+        let res = checked_residual(0, i32::MIN).unwrap();
+        assert_eq!(i32::MIN.wrapping_add(res), 0);
+        let res = checked_residual(i32::MIN, i32::MAX).unwrap();
+        assert_eq!(i32::MAX.wrapping_add(res), i32::MIN);
     }
 }

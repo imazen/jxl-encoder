@@ -789,7 +789,16 @@ impl FrameEncoder {
         // Step 0a: ChannelCompact on raw image (before RCT)
         // Only try ChannelCompact when tree learning + ANS are enabled (the global
         // meta-channel path requires the AnsWithTree codepath in section.rs).
-        let has_rct = !self.options.skip_rct && image.channels.len() >= 3;
+        // Transform bit budget (libjxl `enc_modular.cc:868-905`): an RCT's
+        // channel sums need one more bit than the samples, so libjxl refuses it
+        // unless `max_bitdepth + 1 < level_max_bitdepth` (32 at level 10). A
+        // 32-bit float sample spans all of `i32`, leaving no spare bit — and an
+        // RCT applied anyway does not round-trip, because the decoder's inverse
+        // runs in 32-bit buffers too. Mirrors the identical gate in
+        // `encode::write_modular_stream_with_tree_dc_quant_knobs`; both are
+        // needed because the sectioned/multi-group path reaches RCT through
+        // this function rather than that one.
+        let has_rct = !self.options.skip_rct && image.channels.len() >= 3 && image.bit_depth < 32;
         let num_color_channels = if has_rct {
             3
         } else {
@@ -1887,7 +1896,7 @@ impl FrameEncoder {
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
         let squeeze_params = default_squeeze_params(image);
         let mut squeezed = image.clone();
-        let has_rct = squeezed.channels.len() >= 3;
+        let has_rct = squeezed.channels.len() >= 3 && squeezed.bit_depth < 32;
         if has_rct {
             forward_rct(&mut squeezed.channels, 0, RctType::YCOCG)?;
         }

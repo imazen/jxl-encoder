@@ -12,12 +12,12 @@ pub(crate) mod encode;
 mod encode_primitives;
 mod encode_transforms;
 mod encode_tree;
-// Float-sample packing. No production consumer yet — the input surface that
-// calls it is the next chunk (imazen/jxl-encoder#109 F3: `LosslessConfig`
-// accepting the float `PixelLayout`s). Landed ahead of it because the packing
-// is the risky half and its correctness is established independently, against
-// golden vectors generated from libjxl's own `float_to_int` / `int_to_float`.
-// Every item is exercised by that module's tests.
+// Float-sample packing (imazen/jxl-encoder#109). `float_to_int_sample` is the
+// production f32 path (`ModularImage::from_float_native`).
+// `int_to_float_sample` and `is_valid_float_format` are the decoder-side
+// inverse and the format validator: both are exercised by this module's golden
+// vectors, and the validator becomes load-bearing when #95 lifts
+// `with_bits_per_sample` past 16 and arbitrary widths become reachable.
 #[allow(dead_code)]
 pub(crate) mod float_pack;
 pub(crate) mod frame;

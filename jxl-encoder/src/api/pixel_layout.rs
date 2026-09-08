@@ -148,6 +148,55 @@ impl PixelLayout {
         )
     }
 
+    /// For a floating-point layout, the codestream `BitDepth` it encodes to:
+    /// `(bits_per_sample, exponent_bits)`. `None` for integer layouts.
+    ///
+    /// `RgbLinearF32` and friends carry IEEE binary32, which JPEG XL signals as
+    /// `bits = 32, exponent_bits = 8`; the `*F16` layouts carry binary16, i.e.
+    /// `bits = 16, exponent_bits = 5` (libjxl `SetFloat32Samples` /
+    /// `SetFloat16Samples`, `image_metadata.h:246,254`).
+    ///
+    /// The transfer-function-tagged float layouts (`RgbPqF32` etc.) are
+    /// deliberately absent: their samples are float too, but the lossless path
+    /// would also have to signal their transfer function, which has not been
+    /// verified end to end — see imazen/jxl-encoder#109. They stay lossy-only
+    /// and are rejected with a named error rather than silently mis-signalled.
+    pub const fn lossless_float_bit_depth(self) -> Option<(u32, u32)> {
+        match self {
+            Self::RgbLinearF32
+            | Self::RgbaLinearF32
+            | Self::GrayLinearF32
+            | Self::GrayAlphaLinearF32 => Some((32, 8)),
+            Self::RgbLinearF16
+            | Self::RgbaLinearF16
+            | Self::GrayLinearF16
+            | Self::GrayAlphaLinearF16 => Some((16, 5)),
+            _ => None,
+        }
+    }
+
+    /// Number of stored channels (colour + alpha) for a linear float layout.
+    pub const fn float_channel_count(self) -> usize {
+        match self {
+            Self::GrayLinearF32 | Self::GrayLinearF16 => 1,
+            Self::GrayAlphaLinearF32 | Self::GrayAlphaLinearF16 => 2,
+            Self::RgbLinearF32 | Self::RgbLinearF16 => 3,
+            Self::RgbaLinearF32 | Self::RgbaLinearF16 => 4,
+            _ => 0,
+        }
+    }
+
+    /// Whether this layout is grayscale (1 colour channel).
+    pub const fn is_gray_float(self) -> bool {
+        matches!(
+            self,
+            Self::GrayLinearF32
+                | Self::GrayAlphaLinearF32
+                | Self::GrayLinearF16
+                | Self::GrayAlphaLinearF16
+        )
+    }
+
     /// Whether this layout uses 16-bit samples.
     pub const fn is_16bit(self) -> bool {
         matches!(

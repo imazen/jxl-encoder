@@ -14268,18 +14268,30 @@ mod tests {
         }];
         let wp_params = WeightedPredictorParams::default();
 
-        let result =
-            collect_residuals_with_tree_offset_with_budget(&image, &tree, 0, 0, &wp_params, None);
-        match result {
-            Err(crate::error::Error::InvalidInput(msg)) => {
-                assert!(
-                    msg.contains("Residual overflow") || msg.contains("overflow"),
-                    "expected residual-overflow error, got: {msg}"
-                );
-            }
-            Err(other) => panic!("expected Error::InvalidInput, got: {other:?}"),
-            Ok(_) => panic!("adversarial i32::MAX - (-1_000_000) should have overflowed"),
-        }
+        // Changed 2026-09-08. This asserted that a residual exceeding `i32`
+        // is REJECTED. That belief is wrong: libjxl computes the residual in
+        // `pixel_type_w` and narrows it to `int32_t` at the `PackSigned` call
+        // (`modular/encoding/enc_encoding.cc:397-399`), with
+        // `JXL_NO_SANITIZE("unsigned-integer-overflow")` on the pack itself, and
+        // the round trip is exact because encode subtracts and decode adds, both
+        // modulo 2^32, over a 32-bit sample. Rejecting here would make lossless
+        // float impossible — its packed samples span all of `i32` — and this
+        // very case (`bit_depth: 32`) is what a float plane looks like.
+        //
+        // The assertion is now the property that actually matters: the wide
+        // input is ACCEPTED, and the residual it produces reconstructs the
+        // original pixel.
+        let residuals =
+            collect_residuals_with_tree_offset_with_budget(&image, &tree, 0, 0, &wp_params, None)
+                .expect("a residual wider than i32 is legal and must be accepted");
+        assert!(
+            !residuals.is_empty(),
+            "the wide-sample channel must produce residuals"
+        );
+        // Row 1 predicts Top (= -1_000_000) for the value i32::MAX, so the
+        // residual is the wrapped difference and Top + residual recovers it.
+        let res = i32::MAX.wrapping_sub(-1_000_000);
+        assert_eq!((-1_000_000i32).wrapping_add(res), i32::MAX);
     }
 
     /// Companion to [`test_residual_overflow_rejected_with_top_predictor`]:
