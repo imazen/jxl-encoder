@@ -3289,7 +3289,7 @@ fn gather_channel_samples(
                     let mut preds = [0i32; MAX_CAND_PRED];
                     Predictor::predict_all_canonical(&n, wp_pred as i32, &mut preds);
                     for (pred_idx, &prediction) in preds[..num_pred].iter().enumerate() {
-                        let residual = pixel - prediction;
+                        let residual = pixel.wrapping_sub(prediction);
                         let packed = pack_signed(residual);
                         let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
                         local_tokens[pred_idx] = token as u8;
@@ -3303,7 +3303,7 @@ fn gather_channel_samples(
                         } else {
                             predictor.predict_from_neighbors(&n)
                         };
-                        let residual = pixel - prediction;
+                        let residual = pixel.wrapping_sub(prediction);
                         let packed = pack_signed(residual);
                         let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
                         local_tokens[pred_idx] = token as u8;
@@ -11129,7 +11129,7 @@ pub(crate) fn probe_prune_candidates(
                         if pred == Predictor::Weighted {
                             continue;
                         }
-                        let residual = pixel - pred.predict_from_neighbors(&n);
+                        let residual = pixel.wrapping_sub(pred.predict_from_neighbors(&n));
                         let packed = pack_signed(residual);
                         let (token, _eb, num_extra) = GATHER_HYBRID_UINT.encode(packed);
                         let slot = ci * PROBE_CTX + ctx;

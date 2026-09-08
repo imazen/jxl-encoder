@@ -78,7 +78,7 @@ fn collect_residuals_with_prediction_id(image: &ModularImage, predictor_id: u8) 
 
                 // Predict using the requested predictor (default: ClampedGradient = 5)
                 let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 let packed = pack_signed(residual);
 
                 if debug_count < 20 {
@@ -517,7 +517,7 @@ pub(crate) fn write_simple_modular_stream_with_predictor(
                     predict_pixel_with_id(channel, x, y, predictor_id)
                 };
 
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 let packed = pack_signed(residual);
                 residuals.push(packed);
             }
@@ -688,7 +688,7 @@ pub fn write_modular_stream_with_palette_knobs(
 
                 let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
 
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 let packed = pack_signed(residual);
 
                 residuals.push(packed);
@@ -866,7 +866,7 @@ pub(crate) fn write_modular_stream_with_lossy_palette_budget_knobs(
             for x in 0..width {
                 let pixel = channel.get(x, y);
                 let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 let packed = pack_signed(residual);
                 residuals.push(packed);
             }
@@ -1124,7 +1124,7 @@ fn write_modular_stream_with_rct_only_with_predictor(
 
                 let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
 
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 let packed = pack_signed(residual);
 
                 residuals.push(packed);
@@ -1217,7 +1217,7 @@ pub(crate) fn write_modular_stream_with_weighted_with_budget(
                 let neighbors = Neighbors::gather(channel, x, y);
                 let prediction = wp_state.predict(x, y, width, &neighbors);
 
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 let packed = pack_signed(residual);
                 residuals.push(packed);
 
@@ -1310,7 +1310,7 @@ pub(crate) fn write_modular_stream_with_rct_weighted_with_budget(
                 let neighbors = Neighbors::gather(channel, x, y);
                 let prediction = wp_state.predict(x, y, width, &neighbors);
 
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 residuals.push(pack_signed(residual));
 
                 wp_state.update_errors(pixel, x, y, width);

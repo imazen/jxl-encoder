@@ -109,7 +109,7 @@ pub(crate) fn collect_all_residuals_with_predictor(
                 let pixel = channel.get(x, y);
 
                 let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 let packed = pack_signed(residual);
 
                 residuals.push(packed);
@@ -1842,7 +1842,7 @@ fn collect_group_residuals_with_predictor(
             for x in 0..width {
                 let pixel = channel.get(x, y);
                 let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 residuals.push(pack_signed(residual));
             }
         }
@@ -2625,7 +2625,7 @@ pub fn write_group_modular_section_idx(
                     for x in 0..width {
                         let pixel = channel.get(x, y);
                         let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
-                        let residual = pixel - prediction;
+                        let residual = pixel.wrapping_sub(prediction);
                         let packed = pack_signed(residual);
 
                         let (token, extra_bits, num_extra) = MODULAR_HYBRID_UINT.encode(packed);

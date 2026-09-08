@@ -44,6 +44,44 @@ pub enum Predictor {
     Average4 = 13,
 }
 
+/// libjxl `ClampedGradient` (`modular/encoding/context_predict.h:385`),
+/// transcribed exactly.
+///
+/// `grad = n + w - l` is computed in **wrapping** 32-bit arithmetic, and the
+/// result is selected by where `l` sits relative to `[min(n,w), max(n,w)]`
+/// rather than by clamping `grad`. That is not an optimisation detail — it is
+/// what makes the predictor correct for samples that use the full `i32` range
+/// (float-packed samples do; see [`super::float_pack`]). When `l` is inside
+/// the interval, `grad` is provably inside it too, so the wrap cannot have
+/// mattered; when `l` is outside, the answer is a bound and `grad` is never
+/// read.
+///
+/// The previous implementation was `w.saturating_add(n).saturating_sub(nw)`
+/// followed by `.clamp(min, max)`. That agrees with this for every input that
+/// does not overflow — hence byte-identical on 8/16-bit content — but not in
+/// general: with `w = 2^31-1, n = 2^30, nw = 2^30` the exact answer is
+/// `2^31-1` while saturate-then-clamp yields `2^30`, because the first
+/// saturation loses the magnitude the subtraction would have given back.
+#[inline]
+pub fn clamped_gradient(n: i32, w: i32, l: i32) -> i32 {
+    let m = n.min(w);
+    let big_m = n.max(w);
+    let grad = (n as u32).wrapping_add(w as u32).wrapping_sub(l as u32) as i32;
+    let grad_clamp_m = if l < m { big_m } else { grad };
+    if l > big_m { m } else { grad_clamp_m }
+}
+
+/// Mean of two samples, `(a + b) / 2`, truncating toward zero.
+///
+/// libjxl evaluates this in `pixel_type_w` (`int64_t`), so the sum cannot
+/// overflow for any `i32` pair; ours previously summed in `i32` and would
+/// overflow once samples exceed ~2^30. Byte-identical wherever the `i32` sum
+/// did not overflow, i.e. on all 8/16-bit content.
+#[inline]
+pub fn average2(a: i32, b: i32) -> i32 {
+    ((a as i64 + b as i64) / 2) as i32
+}
+
 impl Predictor {
     /// Map a libjxl predictor id (`cjxl -P N` / `--modular_predictor`)
     /// to a [`Predictor`] variant.
@@ -100,7 +138,7 @@ impl Predictor {
             Predictor::Zero => 0,
             Predictor::Left => n.w,
             Predictor::Top => n.n,
-            Predictor::Average0 => (n.w + n.n) / 2,
+            Predictor::Average0 => average2(n.w, n.n),
             Predictor::Select => {
                 // Select predictor (matches JXL spec):
                 // p = W + N - NW
@@ -113,23 +151,18 @@ impl Predictor {
                     n.n
                 }
             }
-            Predictor::Gradient => {
-                // Clamped gradient: W + N - NW, clamped to [min(W,N), max(W,N)]
-                let gradient = n.w.saturating_add(n.n).saturating_sub(n.nw);
-                gradient.clamp(n.w.min(n.n), n.w.max(n.n))
-            }
+            Predictor::Gradient => clamped_gradient(n.n, n.w, n.nw),
             Predictor::Weighted => {
                 // Simplified weighted predictor (full version uses adaptive weights)
                 // This is a placeholder - full weighted uses WP state
-                let gradient = n.w.saturating_add(n.n).saturating_sub(n.nw);
-                gradient.clamp(n.w.min(n.n), n.w.max(n.n))
+                clamped_gradient(n.n, n.w, n.nw)
             }
             Predictor::TopRight => n.ne,
             Predictor::TopLeft => n.nw,
             Predictor::LeftLeft => n.ww,
-            Predictor::Average1 => (n.w + n.nw) / 2,
-            Predictor::Average2 => (n.n + n.nw) / 2,
-            Predictor::Average3 => (n.n + n.ne) / 2,
+            Predictor::Average1 => average2(n.w, n.nw),
+            Predictor::Average2 => average2(n.n, n.nw),
+            Predictor::Average3 => average2(n.n, n.ne),
             Predictor::Average4 => {
                 // AverageAll: (6*N - 2*NN + 7*W + WW + NEE + 3*NE + 8) / 16
                 // where NEE = toprightright = pixel at (x+2, y-1)
@@ -163,21 +196,20 @@ impl Predictor {
         out[0] = 0; // Zero
         out[1] = n.w; // Left
         out[2] = n.n; // Top
-        out[3] = (n.w + n.n) / 2; // Average0
+        out[3] = average2(n.w, n.n); // Average0
         out[4] = if n.n.abs_diff(n.nw) < n.w.abs_diff(n.nw) {
             n.w
         } else {
             n.n
         }; // Select
-        let gradient = n.w.saturating_add(n.n).saturating_sub(n.nw);
-        out[5] = gradient.clamp(n.w.min(n.n), n.w.max(n.n)); // Gradient
+        out[5] = clamped_gradient(n.n, n.w, n.nw); // Gradient
         out[6] = wp_pred; // Weighted (true WP prediction)
         out[7] = n.ne; // TopRight
         out[8] = n.nw; // TopLeft
         out[9] = n.ww; // LeftLeft
-        out[10] = (n.w + n.nw) / 2; // Average1
-        out[11] = (n.n + n.nw) / 2; // Average2
-        out[12] = (n.n + n.ne) / 2; // Average3
+        out[10] = average2(n.w, n.nw); // Average1
+        out[11] = average2(n.n, n.nw); // Average2
+        out[12] = average2(n.n, n.ne); // Average3
         out[13] = ((6i64 * n.n as i64 - 2 * n.nn as i64
             + 7 * n.w as i64
             + n.ww as i64
@@ -728,26 +760,38 @@ impl Default for WeightedPredictorState {
     }
 }
 
-/// Packs a signed integer for entropy coding.
-/// Converts signed values to unsigned using zig-zag encoding.
+/// Packs a signed integer for entropy coding (zig-zag: `X` → `2X`,
+/// `-X` → `2X - 1`).
+///
+/// Transcribed from libjxl `PackSigned` (`lib/jxl/pack_signed.h:18`), which is
+/// branchless and **deliberately wrapping** — it carries
+/// `JXL_NO_SANITIZE("unsigned-integer-overflow")`.
+///
+/// The previous form was `if value >= 0 { value as u32 * 2 } else { (-value) as
+/// u32 * 2 - 1 }`. It agrees with this one for every value in
+/// `-2^31 + 1 ..= 2^31 - 1`, but **panics in debug builds on `i32::MIN`**,
+/// where `-value` overflows. That is unreachable while samples are ≤ 16-bit
+/// (residuals are then bounded by ±65535) and becomes reachable the moment
+/// wide samples exist: a float-packed `-0.0f32` is the bit pattern
+/// `0x8000_0000`, i.e. exactly `i32::MIN` (see [`super::float_pack`]).
+///
+/// Note the wire format is **not** widened for wide samples — libjxl computes
+/// the residual in `pixel_type_w` (`int64_t`) and then narrows it to `int32_t`
+/// at the `PackSigned` call (`modular/encoding/enc_encoding.cc:397-399`). The
+/// round trip is exact because encode subtracts and decode adds, both modulo
+/// 2^32, and the sample itself is 32-bit.
 #[inline]
 pub fn pack_signed(value: i32) -> u32 {
-    if value >= 0 {
-        (value as u32) * 2
-    } else {
-        ((-value) as u32) * 2 - 1
-    }
+    ((value as u32) << 1) ^ (((!value as u32) >> 31).wrapping_sub(1))
 }
 
-/// Unpacks a zig-zag encoded value back to signed.
+/// Inverse of [`pack_signed`]. Transcribed from libjxl `UnpackSigned`
+/// (`lib/jxl/pack_signed.h:30`); total over the whole `u32` range, where the
+/// previous form's `-((value / 2) as i32) - 1` overflowed near `u32::MAX`.
 #[inline]
 #[cfg(test)]
 pub fn unpack_signed(value: u32) -> i32 {
-    if value & 1 == 0 {
-        (value / 2) as i32
-    } else {
-        -((value / 2) as i32) - 1
-    }
+    ((value >> 1) ^ ((!value & 1).wrapping_sub(1))) as i32
 }
 
 /// Estimate the total encoding cost of using a WP parameter set on the given channels.
@@ -777,7 +821,7 @@ pub fn estimate_wp_cost(channels: &[super::Channel], params: &WeightedPredictorP
                 let neighbors = Neighbors::gather(channel, x, y);
                 let prediction = wp_state.predict(x, y, width, &neighbors);
 
-                let residual = pixel - prediction;
+                let residual = pixel.wrapping_sub(prediction);
                 let packed = pack_signed(residual);
 
                 // Bin the packed residual for histogram
@@ -904,6 +948,143 @@ mod tests {
         assert_eq!(pack_signed(-1), 1);
         assert_eq!(pack_signed(2), 4);
         assert_eq!(pack_signed(-2), 3);
+    }
+
+    /// F1 (imazen/jxl-encoder#95 chunk 1 / #109): `pack_signed` was rewritten
+    /// to libjxl's branchless wrapping form. Prove it agrees with the previous
+    /// implementation everywhere the previous one was DEFINED — and that it is
+    /// additionally total at `i32::MIN`, where the old one panicked in debug
+    /// (`-i32::MIN` overflows). That value becomes reachable with float-packed
+    /// samples: `-0.0f32` is the bit pattern `0x8000_0000`.
+    #[test]
+    fn pack_signed_matches_the_previous_implementation_and_is_total() {
+        fn previous(value: i32) -> u32 {
+            // Verbatim pre-F1 body. Not called at i32::MIN, which is the point.
+            if value >= 0 {
+                (value as u32) * 2
+            } else {
+                ((-value) as u32) * 2 - 1
+            }
+        }
+
+        // Exhaustive over the ranges that matter, plus a deterministic sweep of
+        // the rest: every 8/16-bit residual, both i32 extremes' neighbourhoods.
+        let mut checked = 0u64;
+        let check = |v: i32| {
+            assert_eq!(pack_signed(v), previous(v), "pack_signed diverged at {v}");
+            assert_eq!(unpack_signed(pack_signed(v)), v, "round trip failed at {v}");
+        };
+        for v in -70_000i32..=70_000 {
+            check(v);
+            checked += 1;
+        }
+        for v in (i32::MIN + 1)..(i32::MIN + 1000) {
+            check(v);
+            checked += 1;
+        }
+        for v in (i32::MAX - 1000)..=i32::MAX {
+            check(v);
+            checked += 1;
+        }
+        let mut x: u32 = 0x9e37_79b9;
+        for _ in 0..200_000 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let v = x as i32;
+            if v != i32::MIN {
+                check(v);
+                checked += 1;
+            }
+        }
+        assert!(checked > 300_000, "sweep too small: {checked}");
+
+        // The case the old code could not express at all.
+        assert_eq!(pack_signed(i32::MIN), u32::MAX);
+        assert_eq!(unpack_signed(u32::MAX), i32::MIN);
+    }
+
+    /// `clamped_gradient` must equal the previous saturate-then-clamp form for
+    /// every input where that form was correct (no intermediate overflow), and
+    /// must be exact where it was not. The second half is the reason for the
+    /// change, so it is asserted with a witness rather than left implicit.
+    #[test]
+    fn clamped_gradient_matches_the_previous_form_in_range_and_fixes_it_outside() {
+        fn previous(n: i32, w: i32, l: i32) -> i32 {
+            let gradient = w.saturating_add(n).saturating_sub(l);
+            gradient.clamp(w.min(n), w.max(n))
+        }
+
+        // In-range: every combination of small magnitudes, plus 16-bit-scale
+        // values, where no i32 intermediate can overflow.
+        for n in [-4000i32, -255, -1, 0, 1, 255, 4000, 65535] {
+            for w in [-4000i32, -255, -1, 0, 1, 255, 4000, 65535] {
+                for l in [-4000i32, -255, -1, 0, 1, 255, 4000, 65535] {
+                    assert_eq!(
+                        clamped_gradient(n, w, l),
+                        previous(n, w, l),
+                        "diverged in the non-overflowing domain at n={n} w={w} l={l}"
+                    );
+                }
+            }
+        }
+
+        // Out of range: the witness from the module docs. The exact answer is
+        // n + w - l = 2^31-1, which lies inside [m, M], so it is returned as-is;
+        // saturate-then-clamp loses it.
+        let (n, w, l) = (1i32 << 30, i32::MAX, 1i32 << 30);
+        assert_eq!(clamped_gradient(n, w, l), i32::MAX);
+        assert_eq!(previous(n, w, l), 1i32 << 30);
+        assert_ne!(clamped_gradient(n, w, l), previous(n, w, l));
+
+        // And the defining property, over the full i32 range: the result is
+        // always within [min(n,w), max(n,w)], and equals the exact gradient
+        // whenever that gradient is in range.
+        let mut x: u32 = 0x1234_5678;
+        for _ in 0..200_000 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let n = x as i32;
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let w = x as i32;
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let l = x as i32;
+
+            let got = clamped_gradient(n, w, l);
+            let (m, big_m) = (n.min(w), n.max(w));
+            assert!(
+                got >= m && got <= big_m,
+                "clamped_gradient escaped [{m}, {big_m}] at n={n} w={w} l={l}: {got}"
+            );
+            let exact = n as i64 + w as i64 - l as i64;
+            if exact >= m as i64 && exact <= big_m as i64 {
+                assert_eq!(got as i64, exact, "not exact in range at n={n} w={w} l={l}");
+            }
+        }
+    }
+
+    /// `average2` must agree with the previous `(a + b) / 2` wherever that did
+    /// not overflow, and must be exact (libjxl evaluates it in `int64_t`)
+    /// where it did.
+    #[test]
+    fn average2_matches_the_previous_form_in_range_and_fixes_it_outside() {
+        for a in [-70_000i32, -65535, -1, 0, 1, 3, 65535, 70_000] {
+            for b in [-70_000i32, -65535, -1, 0, 1, 3, 65535, 70_000] {
+                assert_eq!(average2(a, b), (a + b) / 2, "diverged at a={a} b={b}");
+            }
+        }
+        // Truncation is toward zero on both sides, including odd negative sums.
+        assert_eq!(average2(-1, -2), -1);
+        assert_eq!(average2(1, 2), 1);
+        // The overflowing case: exact, where `(a + b) / 2` would have wrapped.
+        assert_eq!(average2(i32::MAX, i32::MAX), i32::MAX);
+        assert_eq!(average2(i32::MIN, i32::MIN), i32::MIN);
+        assert_eq!(average2(i32::MAX, 1), 1 << 30);
     }
 
     #[test]
