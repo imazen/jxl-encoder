@@ -881,6 +881,26 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-09-08: EPF padding test imposed scalar/SIMD bit identity
+
+The new `epf_visible_pixels_ignore_transform_padding` test failed on x86 CI
+at the 1x1 EPF1 channel-1 cell (1022202217 versus 1022202218 float bits),
+while ARM passed. It compared dispatched production kernels to a scalar
+oracle, conflating image-edge padding with arithmetic differences. libjxl
+v0.12 `render_pipeline/stage_epf.cc` uses Highway `MulAdd` and a
+precision-dependent reciprocal; `image_ops.h::Mirror` and the render
+pipeline define reflection at the visible image boundary.
+
+With owner approval, the test now independently constructs reflected input
+using the reference's signed-coordinate mirror algorithm, then runs the same
+dispatched kernel with block-aligned storage on both sides. Visible pixels
+still require exact bit equality at all four sizes and all three pass counts;
+NaN-filled transform padding remains the poison input. Mac validation passes,
+and deliberately mirroring the transform-padded dimensions instead fails.
+The existing SIMD numerical-parity tests remain unchanged. This changes no
+production filter arithmetic, tolerance, or encoded-byte expectation; x86
+validation is tracked on the fix's CI run.
+
 ### ACTIVE 2026-09-07: #103 resampling cost — bit-preserving batching implemented; cost target still open
 
 `vardct/resampling.rs` batches independent output pixels in the sharper,

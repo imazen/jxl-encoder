@@ -1430,6 +1430,38 @@ mod tests {
 
     #[test]
     fn epf_visible_pixels_ignore_transform_padding() {
+        // Independent port of libjxl v0.12 image_ops.h::Mirror. Its render
+        // pipeline mirrors the visible image before running each SIMD stage.
+        // Compare padding through the same kernel: stage_epf.cc uses MulAdd
+        // and target-dependent reciprocal arithmetic, so scalar bit identity
+        // is not the image-edge contract. SIMD accuracy has separate tests.
+        fn reference_padding(
+            plane: &[f32],
+            stride: usize,
+            padded_height: usize,
+            visible: (usize, usize),
+            pad: usize,
+        ) -> Vec<f32> {
+            fn mirror(mut x: isize, size: usize) -> usize {
+                let size = size as isize;
+                while x < 0 || x >= size {
+                    if x < 0 {
+                        x = -x - 1;
+                    } else {
+                        x = 2 * size - 1 - x;
+                    }
+                }
+                x as usize
+            }
+            let out_stride = stride + 2 * pad;
+            (0..out_stride * (padded_height + 2 * pad))
+                .map(|i| {
+                    let x = mirror((i % out_stride) as isize - pad as isize, visible.0);
+                    let y = mirror((i / out_stride) as isize - pad as isize, visible.1);
+                    plane[y * stride + x]
+                })
+                .collect()
+        }
         type EpfKernel = fn(
             &[f32],
             &[f32],
@@ -1464,10 +1496,11 @@ mod tests {
             let qf = vec![10; stride / 8 * (padded_height / 8)];
             let sharpness = vec![4; qf.len()];
             for steps in 1..=3 {
-                let mut expected = tight.clone();
+                let mut expected = strided.clone();
                 let mut actual = strided.clone();
-                // Invoke the kernels directly on a tightly packed visible image.
-                // The production strip scheduler requires block-padded heights.
+                // Invoke kernels directly, bypassing production padding and
+                // strip scheduling. Keep block-aligned storage on both sides
+                // so that every visible pixel uses the same SIMD lane.
                 let sigma = compute_inv_sigma_map(
                     &qf,
                     &sharpness,
@@ -1477,33 +1510,35 @@ mod tests {
                     &AcStrategyMap::new_dct8(stride / 8, padded_height / 8),
                 );
                 if steps == 3 {
-                    let padded =
-                        core::array::from_fn(|c| pad_plane(&expected[c], width, height, 3));
+                    let padded = core::array::from_fn(|c| {
+                        reference_padding(&expected[c], stride, padded_height, (width, height), 3)
+                    });
                     expected = epf_step0(
                         &padded,
                         &sigma,
                         stride / 8,
-                        width,
-                        height,
-                        width + 6,
+                        stride,
+                        padded_height,
+                        stride + 6,
                         3,
                         None,
                     )
                     .unwrap();
                 }
                 for (pad, scale, kernel) in [
-                    (2, 1.65, jxl_simd::epf_step1_scalar as EpfKernel),
+                    (2, 1.65, jxl_simd::epf_step1 as EpfKernel),
                     (
                         1,
                         EPF_PASS2_SIGMA_SCALE * 1.65,
-                        jxl_simd::epf_step2_scalar as EpfKernel,
+                        jxl_simd::epf_step2 as EpfKernel,
                     ),
                 ] {
                     if pad == 1 && steps == 1 {
                         continue;
                     }
-                    let input: [Vec<f32>; 3] =
-                        core::array::from_fn(|c| pad_plane(&expected[c], width, height, pad));
+                    let input: [Vec<f32>; 3] = core::array::from_fn(|c| {
+                        reference_padding(&expected[c], stride, padded_height, (width, height), pad)
+                    });
                     let [x, y, b] = &mut expected;
                     kernel(
                         &input[0],
@@ -1514,9 +1549,9 @@ mod tests {
                         b,
                         &sigma,
                         stride / 8,
-                        width,
-                        height,
-                        width + 2 * pad,
+                        stride,
+                        padded_height,
+                        stride + 2 * pad,
                         pad,
                         scale,
                         EPF_BORDER_SAD_MUL,
@@ -1542,7 +1577,7 @@ mod tests {
                         for x in 0..width {
                             assert_eq!(
                                 actual[c][y * stride + x].to_bits(),
-                                expected[c][y * width + x].to_bits(),
+                                expected[c][y * stride + x].to_bits(),
                                 "{width}x{height} EPF{steps} channel {c}, ({x},{y})"
                             );
                         }
