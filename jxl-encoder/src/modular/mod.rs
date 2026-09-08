@@ -12,6 +12,14 @@ pub(crate) mod encode;
 mod encode_primitives;
 mod encode_transforms;
 mod encode_tree;
+// Float-sample packing. No production consumer yet — the input surface that
+// calls it is the next chunk (imazen/jxl-encoder#109 F3: `LosslessConfig`
+// accepting the float `PixelLayout`s). Landed ahead of it because the packing
+// is the risky half and its correctness is established independently, against
+// golden vectors generated from libjxl's own `float_to_int` / `int_to_float`.
+// Every item is exercised by that module's tests.
+#[allow(dead_code)]
+pub(crate) mod float_pack;
 pub(crate) mod frame;
 pub(crate) mod fuzz_safety;
 pub(crate) mod inline_add_sample;
