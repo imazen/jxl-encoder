@@ -487,7 +487,8 @@ impl ModularImage {
     /// transform budget: 32 disables RCT and palette, exactly as libjxl's
     /// `max_bitdepth` accounting does.
     /// Build a modular image from PLANAR integer channels of arbitrary width
-    /// up to the spec's 31-bit ceiling (imazen/jxl-engine#95).
+    /// up to 31 bits (imazen/jxl-encoder#95; see the provenance note below
+    /// for what "31" actually rests on).
     ///
     /// Each entry of `planes` is one channel in row-major order, exactly
     /// `width * height` samples. Values must be in `0 ..= 2^bits - 1`; the
@@ -498,11 +499,17 @@ impl ModularImage {
     /// actually arrives — DEM tiles, instrument rasters, depth maps — and it
     /// avoids inventing an interleaved-pixel model for single-channel content.
     ///
-    /// 31 is the spec ceiling, not an arbitrary cap: jxl-oxide's header parser
-    /// rejects integer `bits_per_sample > 31`, and libjxl's own public API caps
-    /// it lower still, at 24 (`encode.cc:632`), refusing 32-bit integer modular
-    /// outright (`enc_modular.cc:744`). So 17..=24 is libjxl parity and 25..=31
-    /// is beyond it.
+    /// **Provenance of the 31 limit, stated precisely because it is not what it
+    /// might look like.** The official text (ISO/IEC 18181-1) has NOT been
+    /// consulted — it is paywalled and no copy is available here. 31 comes from
+    /// two implementation facts: jxl-oxide's header parser rejects integer
+    /// `bits_per_sample > 31`, and libjxl's `CheckValidBitdepth`
+    /// (`encode.cc:632`) caps its own public API at 24 with an in-source
+    /// comment saying the spec allows up to 31. A code comment and a decoder's
+    /// validation are evidence, not normative. So: 17..=24 is libjxl parity
+    /// (its encoder refuses 32-bit integer modular outright,
+    /// `enc_modular.cc:744`), and 25..=31 rests on that comment plus the fact
+    /// that two independent decoders accept what we emit there.
     pub fn from_planar_int(
         planes: &[&[u32]],
         width: usize,

@@ -9,13 +9,21 @@
 //! imagery that needs more — DEM/terrain rasters, instrument counts, 24/32-bit
 //! depth maps, masters that must round-trip as exact integers.
 //!
-//! **Where this sits relative to libjxl.** Its public API caps integer
-//! `bits_per_sample` at 24 (`encode.cc:632`, whose own comment notes the spec
-//! allows 31) and its encoder refuses 32-bit integer modular outright
-//! (`enc_modular.cc:744`). So 17..=24 is parity and 25..=31 is beyond what
-//! libjxl will encode — which is why the 25+ cells are verified through
-//! decoders rather than against a cjxl reference arm: there is nothing to
-//! compare against.
+//! **What "valid" rests on here, stated precisely.** The official text
+//! (ISO/IEC 18181-1) has NOT been consulted — it is paywalled. Every claim in
+//! this file traces to implementations: libjxl's `CheckValidBitdepth`
+//! (`encode.cc:632`) caps its public API at 24 with a comment saying the spec
+//! allows 31, its encoder refuses 32-bit integer modular outright
+//! (`enc_modular.cc:744`), and jxl-oxide's parser rejects `> 31`.
+//!
+//! That makes the evidence weakest exactly where this file claims the most.
+//! libjxl is ISO/IEC 18181-4 (the reference software), so agreement with it is
+//! strong — but it cannot encode 25..=31-bit integers at all, so its decoder
+//! path there is comparatively unexercised. The 18181-3 conformance suite
+//! (github.com/libjxl/conformance) is decoder-only and its vectors stop at
+//! 16-bit integer / 32-bit float, so **no conformance coverage exists for this
+//! range anywhere**. Treat 25..=31 as "two independent decoders accept it and
+//! the low bits demonstrably reach the stream", not as "certified".
 
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
 
