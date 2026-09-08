@@ -29,6 +29,7 @@ mod chroma_subsampling_signal;
 mod clic2025;
 mod codestream_level10;
 mod colr_hcdr_boxes;
+mod compat_surface_76;
 mod content_class_dispatch_roundtrip;
 mod custom_primaries_roundtrip;
 mod cvvdp_backend_smoke;

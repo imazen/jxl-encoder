@@ -182,6 +182,17 @@ pub use container::append_gain_map_box;
 pub use container::is_bare_codestream;
 #[doc(hidden)]
 pub use container::is_container;
+/// Wrap a bare codestream in an ISOBMFF JXL container, optionally
+/// attaching `Exif` and `xml ` (XMP) boxes.
+///
+/// The still and streaming paths thread metadata through
+/// [`EncodeRequest`] / [`LossyEncoder::with_exif`] and wrap internally,
+/// so this is only needed where no such request exists — today that is
+/// the animation API ([`LossyConfig::encode_animation`]), which has no
+/// metadata surface of its own. zenjxl's zencodec animation adapter
+/// calls this after building the codestream (#100).
+#[doc(hidden)]
+pub use container::wrap_in_container;
 /// Pre-encode memory/threading estimators (calibrated 2026-06-14 /
 /// 2026-08-01; see `heuristics` module docs). zenjxl's admission
 /// pre-flight consumes these.
