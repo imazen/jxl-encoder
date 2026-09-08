@@ -169,6 +169,23 @@ Phase 7-zensim (docs), zensim-gpu GPU-native diffmap kernels (currently
 CPU-fallback), cvvdp-cpu structural perf (strip-pipeline + f16 for
 150ms→50ms at 1024²).
 
+## Complete candidate serving in the zensim loop — September 8, 2026
+
+Custom `bake:<path>` overrides now load per encode and use the complete
+`BakeScorer` pixel/attribution surface. Do not restore width probing or a
+first-iteration gradient for candidates. Fresh maps begin at the first
+reconstruction; explicit stale arms retain their map lag. Signed/abs legacy
+signal-fold controls refuse custom bakes. Unsupported spatial integrands
+refuse rather than silently dropping model terms. Named-profile defaults
+remain historical; the new candidate route is intentionally distinct.
+
+[Binding and RD evidence](benchmarks/zensim_candidate_binding_2026-09-08.md):
+840 candidate ladders complete and maps change delivered pixels, but D/H3
+has no established broad RD gain. Photo means regress slightly on both
+independent judges; documents regress on Butteraugli. Keep this negative
+finding when selecting/tuning models. The existing target harness's seed
+staircase and old seed head are not canonical train-family calibration.
+
 ## Config over flags — the Phase 1 pattern (2026-08-31)
 
 Design doc: [`~/work/zen-workspace/CONFIG_OVER_FLAGS_2026-08-31.md`](../../zen-workspace/CONFIG_OVER_FLAGS_2026-08-31.md).

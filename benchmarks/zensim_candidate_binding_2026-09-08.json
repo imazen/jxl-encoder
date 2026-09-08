@@ -1,0 +1,181 @@
+{
+  "status": "development RD screen, not product qualification",
+  "method": "existing rd_probe_analyze helpful: log-byte interpolation inside each image/independent-judge baseline range; no extrapolation",
+  "binary": {
+    "path": "/mnt/v/output/zensim/jxl-candidate-binding-2026-09-08/bin/zenmetrics-6cb4744c0f1b",
+    "sha256": "6cb4744c0f1baa178c46c307db3f7a40c679dba2bf3d1ecb083a9d21f1e8cb6f",
+    "version": "zenmetrics-cli 0.6.0\n",
+    "arguments": [
+      "batch",
+      "--use-legacy-scheduler",
+      "--gpu-runtime",
+      "cpu",
+      "--pairs",
+      "/mnt/v/output/zensim/jxl-candidate-binding-2026-09-08/judge_pairs.tsv"
+    ]
+  },
+  "summary": [
+    {
+      "judge": "butter",
+      "class": "document",
+      "matched_cells": 41,
+      "median_bytes_saved_percent": -0.21696754375368776,
+      "mean_bytes_saved_percent": -0.3524833169417199,
+      "minimum_percent": -3.4351704177202347
+    },
+    {
+      "judge": "butter",
+      "class": "graphic",
+      "matched_cells": 41,
+      "median_bytes_saved_percent": 0.3017405063074796,
+      "mean_bytes_saved_percent": 0.9507872898792997,
+      "minimum_percent": -0.8308743316589817
+    },
+    {
+      "judge": "butter",
+      "class": "photo",
+      "matched_cells": 41,
+      "median_bytes_saved_percent": 4.440892098500626e-14,
+      "mean_bytes_saved_percent": -0.2819292710348772,
+      "minimum_percent": -14.70141810139216
+    },
+    {
+      "judge": "butter",
+      "class": "screen",
+      "matched_cells": 41,
+      "median_bytes_saved_percent": 0.3053044584241049,
+      "mean_bytes_saved_percent": 0.7608248812062338,
+      "minimum_percent": -4.548372293071723
+    },
+    {
+      "judge": "ssim2",
+      "class": "document",
+      "matched_cells": 39,
+      "median_bytes_saved_percent": 0.6798768646177455,
+      "mean_bytes_saved_percent": -0.6597280163018965,
+      "minimum_percent": -33.16440391340225
+    },
+    {
+      "judge": "ssim2",
+      "class": "graphic",
+      "matched_cells": 40,
+      "median_bytes_saved_percent": 1.6653345369377348e-14,
+      "mean_bytes_saved_percent": -1.2628263933527313,
+      "minimum_percent": -24.4461667007273
+    },
+    {
+      "judge": "ssim2",
+      "class": "photo",
+      "matched_cells": 42,
+      "median_bytes_saved_percent": 5.551115123125783e-15,
+      "mean_bytes_saved_percent": -0.3106386174095844,
+      "minimum_percent": -14.70141810139216
+    },
+    {
+      "judge": "ssim2",
+      "class": "screen",
+      "matched_cells": 41,
+      "median_bytes_saved_percent": 0.5187687072814695,
+      "mean_bytes_saved_percent": 0.9991932749843795,
+      "minimum_percent": -4.248733535629068
+    }
+  ],
+  "per_family": [
+    {
+      "origin": "3311",
+      "judge": "butter",
+      "matched_cells": 21,
+      "median_bytes_saved_percent": 0.0
+    },
+    {
+      "origin": "3311",
+      "judge": "ssim2",
+      "matched_cells": 21,
+      "median_bytes_saved_percent": 4.440892098500626e-14
+    },
+    {
+      "origin": "2403",
+      "judge": "butter",
+      "matched_cells": 20,
+      "median_bytes_saved_percent": 0.23973787171555627
+    },
+    {
+      "origin": "2403",
+      "judge": "ssim2",
+      "matched_cells": 21,
+      "median_bytes_saved_percent": 0.0
+    },
+    {
+      "origin": "5315",
+      "judge": "butter",
+      "matched_cells": 20,
+      "median_bytes_saved_percent": -0.24661933187123397
+    },
+    {
+      "origin": "5315",
+      "judge": "ssim2",
+      "matched_cells": 19,
+      "median_bytes_saved_percent": 1.3004130984296647
+    },
+    {
+      "origin": "6823",
+      "judge": "butter",
+      "matched_cells": 21,
+      "median_bytes_saved_percent": -0.21696754375368776
+    },
+    {
+      "origin": "6823",
+      "judge": "ssim2",
+      "matched_cells": 20,
+      "median_bytes_saved_percent": 0.45041433875071535
+    },
+    {
+      "origin": "9113",
+      "judge": "butter",
+      "matched_cells": 21,
+      "median_bytes_saved_percent": 0.2420597234321531
+    },
+    {
+      "origin": "9113",
+      "judge": "ssim2",
+      "matched_cells": 20,
+      "median_bytes_saved_percent": 0.03588203989252081
+    },
+    {
+      "origin": "9413",
+      "judge": "butter",
+      "matched_cells": 20,
+      "median_bytes_saved_percent": 0.6611830800564933
+    },
+    {
+      "origin": "9413",
+      "judge": "ssim2",
+      "matched_cells": 20,
+      "median_bytes_saved_percent": -0.1193201740829486
+    },
+    {
+      "origin": "8113",
+      "judge": "butter",
+      "matched_cells": 21,
+      "median_bytes_saved_percent": 0.3053044584241049
+    },
+    {
+      "origin": "8113",
+      "judge": "ssim2",
+      "matched_cells": 20,
+      "median_bytes_saved_percent": 0.021899012023451903
+    },
+    {
+      "origin": "8183",
+      "judge": "butter",
+      "matched_cells": 20,
+      "median_bytes_saved_percent": 0.2986660143192654
+    },
+    {
+      "origin": "8183",
+      "judge": "ssim2",
+      "matched_cells": 21,
+      "median_bytes_saved_percent": 0.7707658771329284
+    }
+  ]
+}

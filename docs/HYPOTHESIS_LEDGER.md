@@ -79,3 +79,14 @@
 - `docs/TIER_2_KNOBS.md` — Tier-2 knob specs
 - `docs/TUNING_RELATIONS.md` — full coupling graph
 - `docs/LIBJXL_DIVERGENCES.md` — encoder-side divergences (cross-checked: never let a knob change the Libjxl-strategy hash)
+
+## September 8: complete candidate scalar/spatial binding
+
+- **PROVEN (wiring):** complete candidate maps affect emitted pixels; changing
+  model bytes is observed on the next encode. Reintroducing a first-bake cache
+  fails the negative control. Fresh maps use current reconstruction features.
+- **SUSPECTED, not established (quality):** D's strong finite-block coherence
+  translates into a general JXL RD gain. The first 8-family matched-judge
+  screen does not establish this: photo means regress slightly and documents
+  regress on Butteraugli. Do not promote a near-zero median to a quality win.
+- Evidence: [September 8 binding screen](../benchmarks/zensim_candidate_binding_2026-09-08.md).

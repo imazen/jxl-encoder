@@ -50,17 +50,23 @@ const SECANT_MIN_DLNL_DEFAULT: f64 = 1e-3;
 /// substrate shift does not immediately push the default off it.
 const SECANT_MIN_EPS_DEFAULT: f64 = 0.25;
 
-/// diffmap-RD worktree (2026-07-18): bake bytes for `JXL_ZENSIM_RD_PROFILE=bake:<path>`
-/// — mounts an arbitrary ZNPR bake as the loop scorer via `ZensimProfile::Custom`
-/// (zensim `custom-profiles` feature; enabled in this worktree's Cargo.toml).
-static RD_BAKE_BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-fn rd_bake_bytes() -> &'static [u8] {
-    RD_BAKE_BYTES.get().expect("rd bake bytes set").as_slice()
+/// Load once per encode. The model owns its bytes; inference and spatial
+/// semantics belong to zensim's complete candidate surface, not a profile mount.
+fn load_candidate(path: &str) -> Result<zenpredict::Model> {
+    let bytes = std::fs::read(path)?;
+    zenpredict::Model::from_bytes(&bytes)
+        .map_err(|e| crate::error::Error::InvalidInput(format!("zensim bake {path}: {e}")))
 }
+
+fn candidate_error(e: zensim::ZensimError) -> crate::error::Error {
+    crate::error::Error::InvalidInput(format!("zensim candidate: {e}"))
+}
+
 /// Split-role experiment (2026-08-28, balance campaign): `JXL_ZENSIM_MAP_BAKE=
 /// <path>` mounts a SECOND bake whose FD gradient drives the model map / H3
-/// steering while `JXL_ZENSIM_RD_PROFILE` keeps scoring. Unset => byte-identical
-/// to the single-bake path (the gradient profile is rd_profile as before).
+/// steering while `JXL_ZENSIM_RD_PROFILE` keeps scoring. This legacy mount
+/// remains only for named-profile experiments. Custom candidate encodes use
+/// separate per-encode `BakeScorer` instances below.
 static MAP_BAKE_BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
 fn map_bake_bytes() -> &'static [u8] {
     MAP_BAKE_BYTES.get().expect("map bake bytes set").as_slice()
@@ -174,40 +180,11 @@ fn rd_attr_map_profile() -> zensim::ZensimProfile {
 }
 
 /// `a|b|latest|bake:<path>` (the [`ZensimLoopConfig::rd_profile_spec`] value)
-/// → (profile, n_inputs). n_inputs = 0 means "model-map unsupported for this
-/// profile" (A's feature regime is not probed; the shipped default needs no
-/// gradient). Still process-`OnceLock`-cached at the call site: the mount leaks
-/// a `ProfileParams` and `RD_BAKE_BYTES` may only be `set` once.
+/// → (profile, n_inputs) for legacy named profiles only. Custom bakes are
+/// loaded independently per encode through `BakeScorer`. n_inputs = 0 means
+/// "model-map unsupported" (A's regime is not probed; the shipped default needs no
+/// gradient). Named-profile selection remains process-`OnceLock`-cached.
 fn rd_profile_from_spec(v: &str) -> (zensim::ZensimProfile, usize) {
-    if let Some(path) = v.strip_prefix("bake:") {
-        let bytes = std::fs::read(path)
-            .unwrap_or_else(|e| panic!("JXL_ZENSIM_RD_PROFILE bake {path}: {e}"));
-        RD_BAKE_BYTES.set(bytes).expect("rd bake set once");
-        let params = zensim::profile::ProfileParams::builder()
-            .mlp(rd_bake_bytes)
-            .skip_score_mapping(true)
-            .extrapolate_score(true)
-            .extended_features(true)
-            .compute_iw_features(true)
-            .build();
-        let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
-        let profile = zensim::ZensimProfile::Custom {
-            params,
-            name: "rd-bake",
-        };
-        let n_in = rd_infer_n_inputs(profile);
-        // 23shot-sota944 loud guard: a mounted bake whose forward accepts no
-        // probed width can never score — the loop's compare errors would then
-        // silently emit seed-quality bitstreams (`Err(_) => Ok(current_params)`).
-        // Refuse at mount instead.
-        assert!(
-            n_in != 0,
-            "JXL_ZENSIM_RD_PROFILE bake:{path}: the bake's forward accepts no \
-             probed feature width (156/228/300/372/720/924/944) — refusing to \
-             mount a bake that cannot score (silent mount = seed-quality output)"
-        );
-        return (profile, n_in);
-    }
     match v {
         "b" => (zensim::ZensimProfile::B, 372),
         "latest" => (zensim::ZensimProfile::latest_preview(), 372),
@@ -309,8 +286,8 @@ impl ZensimParams {
 // [`ZensimLoopConfig`] or calls a method on [`ZensimLoopObserver`].
 //
 // `from_env` is a **compatibility shim**, not the interface: `Default` is
-// exactly the shipped behaviour, every env name keeps its shipped meaning and
-// its shipped default, and the four TSV sinks keep their exact column shapes,
+// exactly the shipped default behaviour. September 8 explicitly replaces the
+// custom-bake semantics; the four TSV sinks keep their exact column shapes,
 // so `scripts/zensim-loop-eff/*` and the two smoke tests run unchanged. Phase 2
 // deletes the shim knob by knob as callers learn to build the struct directly.
 // ---------------------------------------------------------------------------
@@ -1278,16 +1255,46 @@ impl VarDctEncoder {
         // calibration coherent across zensim releases.
         // zensim deprecated `A` in favour of `B` (2026-07); the pin stays until
         // the calibration table is re-seeded against a new profile.
-        // RD-experiment override (2026-07-18): `JXL_ZENSIM_RD_PROFILE=
-        // a|b|latest|bake:<path>` selects the loop's scoring profile (bake:
-        // mounts an arbitrary ZNPR via ZensimProfile::Custom); unset → A
-        // (shipped behavior). `JXL_ZENSIM_MODEL_MAP=signed|abs` additionally
-        // steers iterations 2+ with the MODEL'S OWN gradient s_k
-        // (DiffmapWeighting::ModelSensitivity) — s_k measured numerically at
-        // the first iteration's features, fold per the 2026-07-18 coherence
-        // matrix (signed for MLP gradients, abs for additive solves).
-        let (rd_profile, rd_n_in) =
-            *RD_PROFILE.get_or_init(|| rd_profile_from_spec(&cfg.rd_profile_spec));
+        // September 8: custom bakes use complete per-encode candidate state.
+        // Fresh attribution uses the current reconstruction from iteration 0;
+        // the legacy first-iteration gradient below is for named profiles only.
+        // Unset and a|b|latest retain their historical named-profile route.
+        let candidate_model = cfg
+            .rd_profile_spec
+            .strip_prefix("bake:")
+            .map(load_candidate)
+            .transpose()?;
+        let mut candidate = candidate_model
+            .as_ref()
+            .map(zensim::BakeScorer::new)
+            .transpose()
+            .map_err(candidate_error)?;
+        let map_model = if candidate.is_some() {
+            cfg.map_bake_path
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .map(load_candidate)
+                .transpose()?
+        } else {
+            None
+        };
+        let mut candidate_map = map_model
+            .as_ref()
+            .map(zensim::BakeScorer::new)
+            .transpose()
+            .map_err(candidate_error)?;
+        if candidate.is_some() && cfg.map_arm.is_some_and(MapArm::is_fold_family) {
+            return Err(crate::error::Error::InvalidInput(
+                "custom bakes require an attribution-family map arm; signed/abs are historical signal-fold controls".into(),
+            ));
+        }
+        // These legacy routing fields are not candidate feature declarations.
+        // Candidate pixels and maps below always use their own declared plan.
+        let (rd_profile, rd_n_in) = if candidate.is_some() {
+            (zensim::ZensimProfile::B, 372)
+        } else {
+            *RD_PROFILE.get_or_init(|| rd_profile_from_spec(&cfg.rd_profile_spec))
+        };
         // 23shot-sota944 (2026-08-05): folded-class (720/924/944) bakes cannot
         // score through the 372-class compare below — its forward wants more
         // features than that walk extracts, and the compare's `Err(_) =>
@@ -1403,7 +1410,7 @@ impl VarDctEncoder {
             // unchanged. SINGLEPASS on a folded-class bake requires an
             // attr-family arm (checked by the fold-family refusal above).
         }
-        let model_map_active = model_map_requested;
+        let model_map_active = model_map_requested && candidate.is_none();
         let attr_mode = cfg.map_arm.is_some_and(MapArm::is_attr);
         // `*-stale` steers with the PREVIOUS iteration's map (#69 G4 pricing
         // of the single-pass endpoint for a G1+G2-passing arm).
@@ -1448,6 +1455,7 @@ impl VarDctEncoder {
         // and the previous iteration's map for the stale arm.
         let mut attr_rgba: Vec<f32> = Vec::new();
         let mut prev_attr: Option<zensim::AttributionResult> = None;
+        let mut prev_candidate_map: Option<zensim::ScoredAttribution> = None;
         let mut attr_session: Option<zensim::AttributionSession> = None;
         // Appendix N: the fused folded-944 session (extraction scratch +
         // walk retention, ~42 MB at 576² reused across compares), created
@@ -1534,7 +1542,7 @@ impl VarDctEncoder {
         // form since the C5 switchover), so build the tight LinearF32Rgba
         // interleave of the clean source once per encode.
         let mut folded_src_rgba: Vec<f32> = Vec::new();
-        if folded_class {
+        if folded_class || candidate.is_some() {
             folded_src_rgba.resize(n * 4, 1.0);
             for i in 0..n {
                 folded_src_rgba[i * 4] = linear_rgb[i * 3];
@@ -1549,7 +1557,19 @@ impl VarDctEncoder {
 
         // The deinterleaved planes are transient: only used to build the zensim
         // precomputed reference, then dropped.
-        let precomputed = {
+        let precomputed = if let Some(scorer) = candidate.as_ref() {
+            let source = zensim::StridedBytes::with_alpha_mode(
+                bytemuck::cast_slice(&folded_src_rgba),
+                width,
+                height,
+                width * 16,
+                zensim::PixelFormat::LinearF32Rgba,
+                zensim::AlphaMode::Opaque,
+            );
+            scorer
+                .precompute_reference(&source)
+                .map_err(candidate_error)?
+        } else {
             let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
             let (src_r, src_g, src_b) = deinterleave_rgb(linear_rgb, n);
             loud_compare(
@@ -1705,7 +1725,158 @@ impl VarDctEncoder {
             let dm_result;
             let zensim_score;
             let measured_dist;
-            if let (true, Some(s)) = (attr_mode, model_s) {
+            if let Some(scorer) = candidate.as_mut() {
+                attr_rgba.resize(n * 4, 1.0);
+                for y in 0..height {
+                    for x in 0..width {
+                        let i = (y * width + x) * 4;
+                        let j = y * padded_width + x;
+                        attr_rgba[i] = recon_r[j];
+                        attr_rgba[i + 1] = recon_g[j];
+                        attr_rgba[i + 2] = recon_b[j];
+                    }
+                }
+                let source = zensim::StridedBytes::with_alpha_mode(
+                    bytemuck::cast_slice(&folded_src_rgba),
+                    width,
+                    height,
+                    width * 16,
+                    zensim::PixelFormat::LinearF32Rgba,
+                    zensim::AlphaMode::Opaque,
+                );
+                let distorted = zensim::StridedBytes::with_alpha_mode(
+                    bytemuck::cast_slice(&attr_rgba),
+                    width,
+                    height,
+                    width * 16,
+                    zensim::PixelFormat::LinearF32Rgba,
+                    zensim::AlphaMode::Opaque,
+                );
+                if attr_mode {
+                    let stale = singlepass && prev_candidate_map.is_some();
+                    let fresh = if stale {
+                        None
+                    } else {
+                        let map_scorer = candidate_map.as_mut().unwrap_or(scorer);
+                        let value = map_scorer
+                            .compute_with_ref_and_attribution(
+                                &source,
+                                &precomputed,
+                                &distorted,
+                                Some("jxl"),
+                                fused944_session.get_or_insert_with(zensim::Fused944Session::new),
+                                attr_bin,
+                            )
+                            .map_err(candidate_error)?;
+                        if !value.unsupported_feature_ids().is_empty()
+                            || value.has_corruption_gate()
+                        {
+                            return Err(crate::error::Error::InvalidInput(format!(
+                                "candidate spatial terms unavailable: {:?}; corruption gate: {}",
+                                value.unsupported_feature_ids(),
+                                value.has_corruption_gate(),
+                            )));
+                        }
+                        Some(value)
+                    };
+                    zensim_score = if map_model.is_none() && !stale {
+                        fresh
+                            .as_ref()
+                            .expect("fresh candidate comparison")
+                            .result()
+                            .score()
+                    } else {
+                        scorer
+                            .compute(&source, &distorted, Some("jxl"))
+                            .map_err(candidate_error)?
+                            .score()
+                    };
+                    // No named-profile distance surrogate for candidate scores.
+                    measured_dist = f32::NAN;
+                    let value = if attr_stale || stale {
+                        prev_candidate_map.as_ref().or(fresh.as_ref())
+                    } else {
+                        fresh.as_ref()
+                    }
+                    .expect("candidate map available");
+                    let steer_map = value.attribution();
+                    if h_arm.is_some() {
+                        compute_tile_signed_attr(
+                            steer_map,
+                            ac_strategy,
+                            xsize_blocks,
+                            ysize_blocks,
+                            &mut tile_signed,
+                            &mut tile_q,
+                        );
+                        if let Some(a) = map_ema_alpha {
+                            if prev_tile_q.len() == tile_q.len() {
+                                for (q, p) in tile_q.iter_mut().zip(&prev_tile_q) {
+                                    *q = a * *q + (1.0 - a) * *p;
+                                }
+                            }
+                            prev_tile_q.clear();
+                            prev_tile_q.extend_from_slice(&tile_q);
+                        }
+                        if h3_gain_mode == H3GainMode::TileSecant {
+                            s3_cur_lnqf.clear();
+                            s3_cur_lnqf.extend(quant_field_float.iter().map(|&v| v.max(1e-9).ln()));
+                        }
+                        tile_dist.fill(target_distance);
+                        h_steered = true;
+                    } else {
+                        compute_tile_dist_attr(
+                            steer_map,
+                            ac_strategy,
+                            xsize_blocks,
+                            ysize_blocks,
+                            target_distance,
+                            &mut tile_dist,
+                            params,
+                        );
+                    }
+                    observer.on_tile_field(&TileFieldRecord {
+                        values: if h_arm.is_some() {
+                            &tile_signed
+                        } else {
+                            &tile_dist
+                        },
+                    });
+                    if fresh.is_some() && (attr_stale || singlepass) {
+                        prev_candidate_map = fresh;
+                    }
+                    dm_result = None;
+                } else {
+                    zensim_score = scorer
+                        .compute(&source, &distorted, Some("jxl"))
+                        .map_err(candidate_error)?
+                        .score();
+                    // Existing trained signal map is a separate historical control.
+                    let dm = z
+                        .compute_with_ref_and_diffmap_linear_planar(
+                            &precomputed,
+                            [&recon_r, &recon_g, &recon_b],
+                            width,
+                            height,
+                            padded_width,
+                            diffmap_opts,
+                        )
+                        .map_err(candidate_error)?;
+                    compute_tile_dist(
+                        dm.diffmap(),
+                        width,
+                        height,
+                        ac_strategy,
+                        xsize_blocks,
+                        ysize_blocks,
+                        target_distance,
+                        &mut tile_dist,
+                        params,
+                    );
+                    measured_dist = f32::NAN;
+                    dm_result = Some(dm);
+                }
+            } else if let (true, Some(s)) = (attr_mode, model_s) {
                 let n_px = width * height;
                 attr_rgba.resize(n_px * 4, 1.0);
                 for y in 0..height {

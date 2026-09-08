@@ -322,6 +322,31 @@ on `photo_512x512` at e5.)
 
 ## E. Per-API behavior divergences (opt-in)
 
+### Registered September 8: complete candidate scalar/spatial serving
+
+For `JXL_ZENSIM_RD_PROFILE=bake:<path>`, replace the width-probed custom
+profile and first-iterate gradient with per-encode `BakeScorer` state and
+its declared pixel extraction. Attribution-family arms use the complete
+`compute_with_ref_and_attribution` surface at each current reconstruction;
+explicit stale arms retain their stated map lag. Scalar-only iterations use
+`BakeScorer::compute`. A split-role map bake remains an explicit experiment
+and gets its own complete scorer. Unsupported spatial integrands refuse
+instead of silently losing score terms. Existing named-profile defaults and
+Butteraugli paths retain their behavior. No gain/seed/controller constants
+are tuned in this binding change. Negative scores retain their original scale.
+
+Before acceptance: compare native reconstructed scores to surface scoring,
+exercise active/neutral H3 maps, independently decode emitted bitstreams,
+check the existing trace column contracts and run default regression gates.
+The existing distance-grid harness also records a separate candidate ladder
+TSV and encoded bytes when `--bake` is supplied, before target experiments.
+This fixes its previously ignored bake option outside target mode. Distances
+retain sufficient filename precision to avoid low-distance overwrites.
+Bounds, canonical train-family seed fitting and actual 1/2/3 complete encodes
+remain separate required qualification experiments; internal comparisons
+are not complete encodes. The September 8 zensim serving/coherence report
+selects D only as the first native baseline, not a qualified model.
+
 API flags / hints that exist for callers to override defaults. Not divergences from libjxl per se, but extension points where caller can pick libjxl-parity or our-default.
 
 | API | Default | Caller can opt-in to | Notes |

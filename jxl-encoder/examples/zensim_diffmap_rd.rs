@@ -32,12 +32,14 @@
 #![cfg(feature = "zensim-loop")]
 
 use std::fs;
-use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use jxl_encoder::api::{EncoderStrategy, PerceptualMetric};
 use jxl_encoder::{LossyConfig, PixelLayout};
+
+#[path = "distance_targeting_probe/decode.rs"]
+mod decode;
 
 const CID22_VAL_DIR: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
 const GB82_SC_DIR: &str = "/home/lilith/work/codec-corpus/gb82-sc";
@@ -103,32 +105,19 @@ fn decode_jxl_srgb_u8(
     w: u32,
     h: u32,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let decoder = jxl_oxide::JxlImage::builder().read(Cursor::new(encoded))?;
-    let frame = decoder.render_frame(0)?;
-    let stream = frame.stream();
-    let (dec_w, dec_h) = (stream.width(), stream.height());
-    if dec_w != w || dec_h != h {
-        return Err(format!("decoded dims {dec_w}x{dec_h} != {w}x{h}").into());
-    }
-    let ch = stream.channels() as usize;
-    let mut f32buf: Vec<f32> = vec![0.0; (dec_w as usize) * (dec_h as usize) * ch];
-    let mut s = stream;
-    let _ = s.write_to_buffer(&mut f32buf);
-    let n_px = (dec_w as usize) * (dec_h as usize);
-    let mut rgb = Vec::with_capacity(n_px * 3);
-    for i in 0..n_px {
-        let r = (f32buf[i * ch].clamp(0.0, 1.0) * 255.0).round() as u8;
-        let g = if ch >= 2 {
-            (f32buf[i * ch + 1].clamp(0.0, 1.0) * 255.0).round() as u8
+    // Reuse the primary decoder owner. Inputs in this harness are RGB8 sRGB;
+    // the encoder signals that color encoding, and jxl-rs returns its samples.
+    let values = decode::verify_jxl_rs(encoded, w as usize, h as usize);
+    let n = w as usize * h as usize;
+    let channels = values.len() / n;
+    let mut rgb = Vec::with_capacity(n * 3);
+    for pixel in values.chunks_exact(channels) {
+        let sample = |c: usize| (pixel[c].clamp(0.0, 1.0) * 255.0).round() as u8;
+        if channels == 1 {
+            rgb.extend_from_slice(&[sample(0); 3]);
         } else {
-            r
-        };
-        let b = if ch >= 3 {
-            (f32buf[i * ch + 2].clamp(0.0, 1.0) * 255.0).round() as u8
-        } else {
-            r
-        };
-        rgb.extend_from_slice(&[r, g, b]);
+            rgb.extend_from_slice(&[sample(0), sample(1), sample(2)]);
+        }
     }
     Ok(rgb)
 }
@@ -146,79 +135,10 @@ fn parse_metric(s: &str) -> PerceptualMetric {
     }
 }
 
-/// C3b (zensim task #67): judge profile — the SAME bake that drives the
-/// loop, scoring decoded-vs-ref (native zensim, higher = better). One bake
-/// per process (OnceLock; the loop's own RD_PROFILE cache has the same
-/// constraint — the outer script runs one process per bake).
-static JUDGE_BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-fn judge_bytes() -> &'static [u8] {
-    JUDGE_BYTES.get().expect("judge bake set").as_slice()
-}
-/// (profile, probed caller width). Width 0 = named profile / non-folded route
-/// (the classic `z.compute` path). Width ≥ 720 = folded-class judge route.
-static JUDGE: std::sync::OnceLock<(zensim::ZensimProfile, usize)> = std::sync::OnceLock::new();
-
-/// 23shot-sota944 (2026-08-05): smallest-first width probe, mirroring the
-/// loop's `rd_infer_n_inputs` (vardct/zensim_loop.rs — the forward accepts any
-/// width ≥ the bake's caller width, so the FIRST accepted width is the tight
-/// one). Examples cannot reach the crate-private probe; keep the two lists in
-/// sync.
-fn probe_judge_width(profile: zensim::ZensimProfile) -> usize {
-    let feats = vec![0.0f64; 944];
-    for n in [156usize, 228, 300, 372, 720, 924, 944] {
-        if zensim::score_features_with_profile(profile, &feats[..n], 64, 64).is_ok() {
-            return n;
-        }
-    }
-    0
-}
-
-fn judge_profile(bake_path: &str) -> (zensim::ZensimProfile, usize) {
-    *JUDGE.get_or_init(|| {
-        // Metric-matrix study (2026-07-31): `profile:<a|b|latest>` judges
-        // with the NAMED profile (the loop scorer is set to the same name
-        // by `set_rd_profile_env`) — the same-scorer judging contract,
-        // without mounting bytes.
-        if let Some(name) = bake_path.strip_prefix("profile:") {
-            let p = match name {
-                "b" => zensim::ZensimProfile::B,
-                "latest" => zensim::ZensimProfile::latest_preview(),
-                "a" =>
-                {
-                    #[allow(deprecated)]
-                    zensim::ZensimProfile::A
-                }
-                other => panic!("unsupported judge profile:{other}"),
-            };
-            return (p, 0);
-        }
-        let bytes = std::fs::read(bake_path).expect("judge bake read");
-        JUDGE_BYTES.set(bytes).expect("judge bytes once");
-        let params = zensim::profile::ProfileParams::builder()
-            .mlp(judge_bytes)
-            .skip_score_mapping(true)
-            .extrapolate_score(true)
-            .extended_features(true)
-            .compute_iw_features(true)
-            .build();
-        let params: &'static zensim::profile::ProfileParams = Box::leak(Box::new(params));
-        let profile = zensim::ZensimProfile::Custom {
-            params,
-            name: "judge-bake",
-        };
-        let n_in = probe_judge_width(profile);
-        assert!(
-            n_in != 0,
-            "judge bake {bake_path}: forward accepts no probed feature width — \
-             every judged cell would be NaN; refusing"
-        );
-        (profile, n_in)
-    })
-}
-
+/// Independent bitstream reconstruction, scored through the same public
+/// candidate surface as native steering. No feature-width probing or profile
+/// mounts. Parse/setup time is included where callers time this whole function.
 fn judge_score(bake_path: &str, ref_rgb: &[u8], dec_rgb: &[u8], w: u32, h: u32) -> f64 {
-    let (profile, n_in) = judge_profile(bake_path);
-    let z = zensim::Zensim::new(profile).with_parallel(false);
     let rp: Vec<[u8; 3]> = ref_rgb
         .chunks_exact(3)
         .map(|c| [c[0], c[1], c[2]])
@@ -229,20 +149,27 @@ fn judge_score(bake_path: &str, ref_rgb: &[u8], dec_rgb: &[u8], w: u32, h: u32) 
         .collect();
     let rs = zensim::RgbSlice::new(&rp, w as usize, h as usize);
     let ds = zensim::RgbSlice::new(&dp, w as usize, h as usize);
-    if n_in >= 720 {
-        // Folded-class judge (23shot-sota944): canonical 720/924/944
-        // extraction + full-bundle forward — the same-scorer contract for a
-        // bake the 372-class compare cannot score. NaN = recorded null.
-        let v2 = match n_in {
-            944 => z.compute_folded720_append2_features(&rs, &ds),
-            924 => z.compute_folded720_append_features(&rs, &ds),
-            _ => z.compute_folded720_features(&rs, &ds),
+    if let Some(name) = bake_path.strip_prefix("profile:") {
+        let profile = match name {
+            "b" => zensim::ZensimProfile::B,
+            "latest" => zensim::ZensimProfile::latest_preview(),
+            #[allow(deprecated)]
+            "a" => zensim::ZensimProfile::A,
+            other => panic!("unsupported judge profile:{other}"),
         };
-        return v2
-            .and_then(|r| zensim::score_features_with_profile(profile, r.features(), w, h))
-            .unwrap_or(f64::NAN);
+        return zensim::Zensim::new(profile)
+            .with_parallel(false)
+            .compute(&rs, &ds)
+            .expect("named judge scoring")
+            .score();
     }
-    z.compute(&rs, &ds).map(|r| r.score()).unwrap_or(f64::NAN)
+    let model = zenpredict::Model::from_bytes(&fs::read(bake_path).expect("judge bake read"))
+        .expect("judge model parse");
+    zensim::BakeScorer::new(&model)
+        .expect("judge serving contract")
+        .compute(&rs, &ds, Some("jxl"))
+        .expect("candidate judge scoring")
+        .score()
 }
 
 /// Metric-matrix study (2026-07-31): one place maps `--bake` to the loop's
@@ -390,12 +317,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // (fixture × target × arm) encode with the shared target controller and
     // judge decoded output with the SAME bake.
     let mut zensim_targets: Vec<f64> = Vec::new();
-    let mut arms: Vec<String> = vec![
-        "baseline".into(),
-        "abs".into(),
-        "attr".into(),
-        "attr-stale".into(),
-    ];
+    let mut arms: Vec<String> = vec!["baseline".into(), "attr".into(), "attr-stale".into()];
     let mut bake: Option<String> = None;
     // Efficiency study E7 (2026-07-31): bytes-target outer-loop mode.
     let mut bytes_targets_file: Option<String> = None;
@@ -439,6 +361,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None => default_corpus(),
     };
     let metric = parse_metric(&metric_s);
+    if let Some(bake) = &bake {
+        set_rd_profile_env(bake);
+    }
 
     if let Some(btf) = &bytes_targets_file {
         return run_bytes_target(
@@ -485,6 +410,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let manifest_path = out_dir.join(format!("manifest_{label}.tsv"));
     let mut manifest =
         String::from("ref_path\tdist_path\tlabel\timage\tcorpus\tdistance\tbytes\tencode_ms\n");
+    let mut candidate_ladder = String::from(
+        "image\tclass\tdistance\tbytes\tscore\tencode_ms\tdecode_ms\tscore_ms\tbitstream\tdecoded\n",
+    );
     eprintln!(
         "[diffmap_rd] metric={metric_s} label={label} | ZENSIM_MASKING={} ZENSIM_SQRT={} ZENSIM_HF={} ZENSIM_EDGE_MSE={}",
         std::env::var("ZENSIM_MASKING").unwrap_or_else(|_| "default(8)".into()),
@@ -530,8 +458,31 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let encoded = cfg.encode(&pixels, w, h, PixelLayout::Rgb8)?;
             let encode_ms = t.elapsed().as_secs_f64() * 1000.0;
             let bytes = encoded.len();
+            let td = Instant::now();
             let decoded = decode_jxl_srgb_u8(&encoded, w, h)?;
-            let dist_png = decoded_dir.join(format!("{label}__{name}__d{d:.2}.png"));
+            let decode_ms = td.elapsed().as_secs_f64() * 1000.0;
+            let stem = if bake.is_some() {
+                format!("{label}__{name}__d{d:.8}")
+            } else {
+                format!("{label}__{name}__d{d:.2}")
+            };
+            let dist_png = decoded_dir.join(format!("{stem}.png"));
+            if let Some(bake) = &bake {
+                let ts = Instant::now();
+                let score = judge_score(bake, &pixels, &decoded, w, h);
+                let score_ms = ts.elapsed().as_secs_f64() * 1000.0;
+                let bitstream = decoded_dir.join(format!("{stem}.jxl"));
+                fs::write(&bitstream, &encoded)?;
+                candidate_ladder.push_str(&format!(
+                    "{name}\t{corpus_name}\t{d:.8}\t{bytes}\t{score:.17}\t{encode_ms:.6}\t{decode_ms:.6}\t{score_ms:.6}\t{}\t{}\n",
+                    bitstream.display(), dist_png.display(),
+                ));
+                // Preserve completed rows if a later codec cell fails.
+                fs::write(
+                    out_dir.join(format!("candidate_ladder_{label}.tsv")),
+                    &candidate_ladder,
+                )?;
+            }
             image::RgbImage::from_raw(w, h, decoded)
                 .ok_or("dec from_raw")?
                 .save(&dist_png)?;
