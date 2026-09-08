@@ -903,6 +903,23 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-09-08: streaming omits content analysis and changes real-image output
+
+The new seeded streaming fuzz target stops on an unmutated codec_wiki center
+crop, 513×259 RGB8, effort 5, distance `0.1 + 40*(24.9/255)`, seven-row chunks.
+Input SHA256: `e04fba6274cb62e33c2d175cf639e7ed48a0404bf05cdc62fdb20f9d9fc25844`.
+Source verified: one-shot computes smooth-photo, content-class and zenanalyze
+proxies from the source; streaming calls only `effective_profile_for_image`
+and explicitly leaves proxies absent. This is a structural difference, not
+an allowed floating-point tolerance. Reproducer:
+`production_resources::real_screenshot_streaming_keeps_one_shot_content_dispatch`.
+Raw input is preserved outside git under
+`~/tmp/jxl-fuzz-2026-09-08/artifacts/streaming_roundtrip/`.
+The planned fix retains admitted source rows and routes finish through the
+same one-shot request pipeline, avoiding another duplicated analysis path.
+Canonicalization remains explicitly unavailable on the streaming API.
+
+
 ### RESOLVED 2026-09-08: streaming input allocated before limits could attach
 
 [PROVEN] The lossy constructor reserved whole-image RGB/alpha vectors and the

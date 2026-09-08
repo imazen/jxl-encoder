@@ -1,0 +1,107 @@
+[package]
+name = "jxl-encoder-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+jxl-encoder = { path = "../jxl-encoder" }
+# Same primary decoder series used by the encoder's regression suite.
+jxl = "0.4.0"
+
+[features]
+__internal_recon_hook = []
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "request_limits"
+path = "fuzz_targets/request_limits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "streaming_roundtrip"
+path = "fuzz_targets/streaming_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+# Keep the source overrides aligned with the parent workspace. These are
+# build-time siblings; CI fetches the revisions in .github/sibling-revisions.tsv.
+[patch.crates-io]
+
+jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-bitstream = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-coding = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-frame = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-grid = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-modular = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-render = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-vardct = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+# crates.io zenjpeg (latest 0.8.4) does not ship
+# `DecodeConfig::decode_coefficients_with_jbrd_metadata`, which our
+# `jpeg-reencoding` feature requires, and 0.8.4's `parallel` feature does not
+# compile with default-features off (`fused_parallel_encode.rs` references
+# `color::fast_yuv`, gated behind the default-on `yuv` feature it never
+# declares). The local sibling (0.9.0, unpublished) has both: the jbrd API and
+# fast_yuv de-gated. Path-patch until zenjpeg 0.9.0 is published.
+# CAUTION: the `zenjpeg` version req in jxl-encoder/Cargo.toml must track the
+# sibling's version, or this patch silently deactivates and cargo falls back
+# to broken crates.io 0.8.4 — that mismatch (req 0.8.4 vs sibling 0.9.0) broke
+# every nightly-CI run 2026-07-08..13.
+# Required for the `jpeg-reencoding` feature to build.
+zenjpeg = { path = "../../zenjpeg/zenjpeg" }
+# zenjxl-decoder (our pure-Rust JXL decoder) is a DEV-dependency used only by
+# the JBRD round-trip conformance gate (`tests/jbrd_roundtrip_conformance.rs`):
+# transcode a JPEG -> JXL with jxl-encoder, reconstruct the original JPEG bytes
+# with zenjxl-decoder, and assert byte-exact. Path-patched to the local sibling
+# so the gate exercises the in-tree decoder, not a published snapshot. Not a
+# normal dependency — published jxl-encoder does not depend on it.
+zenjxl-decoder = { path = "../../zenjxl-decoder/zenjxl-decoder" }
+# Use local butteraugli workspace (not crates.io 0.9.2) so the buttloop +
+# Lock-Zenjxl regression-gate consume the latest unpublished fixes. Per user
+# direction 2026-05-23: "we should be using the local butteraugli and
+# butteraugli-gpu not cratesio".
+butteraugli = { path = "../../../butteraugli/butteraugli" }
+# W44-phase3-B1: GPU butteraugli backend lives in the zenmetrics workspace
+# at `crates/butteraugli-gpu`. `publish = false` so always path-pinned;
+# pulled in via the `gpu-butteraugli` cargo feature in `jxl-encoder/Cargo.toml`.
+butteraugli-gpu = { path = "../../zenmetrics/crates/butteraugli-gpu" }
+# cvvdp-gpu lives in the same zenmetrics workspace. Only used by
+# `examples/cvvdp_track_baseline.rs` (RFC `docs/RFC_CVVDP_FORK.md` §5).
+# `publish = false` upstream; path-pinned here.
+cvvdp-gpu = { path = "../../zenmetrics/crates/cvvdp-gpu" }
+# cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend. 2026-05-27: zenmetrics
+# renamed `cvvdp-cpu` → package `cvvdp`. The jxl-encoder member now path-deps
+# it directly with `package = "cvvdp"` (keeping the dep NAME `cvvdp-cpu`), so
+# no `[patch.crates-io]` entry is needed — a patch can't rename a package
+# anyway. (Was: `cvvdp-cpu = { path = "../../zenmetrics/crates/cvvdp-cpu" }`.)
+# zensim-fork Phase 3 (2026-05-25): GPU zensim backend. Path-pinned
+# because zensim-gpu 0.0.1 is `publish = false` (zenmetrics workspace
+# deliverable; Phase 1 commit `1175b49` on zenmetrics master). Wrapped
+# in jxl-encoder via the `zensim-loop-gpu` cargo feature.
+zensim-gpu = { path = "../../zenmetrics/crates/zensim-gpu" }
+# zensim 0.3.0 is required transitively by zensim-gpu (its Phase 1
+# `score_from_linear_planes_with_warm_ref_diffmap` delegates to the
+# 0.3-only CPU pipeline). crates.io still serves 0.2.7 as latest, so
+# path-pin to the workspace `~/work/zen/zensim/zensim` for the
+# zensim-loop / zensim-loop-gpu builds. The jxl-encoder CPU backend
+# (`zensim-loop` feature) also consumes this — APIs we use
+# (`compute_with_ref_and_diffmap_linear_planar`,
+# `precompute_reference_linear_planar`) are stable across 0.2.7 → 0.3,
+# but pinning to 0.3.x here keeps the dep tree consistent with
+# zensim-gpu.
+zensim = { path = "../../zensim/zensim" }
+zenanalyze = { path = "../../zenanalyze" }

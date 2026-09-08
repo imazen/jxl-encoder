@@ -298,3 +298,19 @@ canonicalization-check:
 # Admission is checked before streaming image planes exist; no corpus needed.
 streaming-admission-test *args:
     TMPDIR="$HOME/tmp" nice -n 19 cargo test -p jxl-encoder -j 4 --lib streaming_ {{args}}
+
+# Caller supplies corpus and artifact directories outside the repository.
+fuzz-encoder target corpus artifacts *args:
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo +nightly fuzz run --codegen-units 16 {{target}} {{corpus}} -- -artifact_prefix={{artifacts}}/ -rss_limit_mb=2048 {{args}}
+
+fuzz-regression:
+    DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" TMPDIR="$HOME/tmp" nice -n 19 cargo test -p jxl-encoder -j 4 --test fuzz_regression
+
+fuzz-build:
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo +nightly fuzz build --codegen-units 16
+
+fuzz-seed manifest output:
+    TMPDIR="$HOME/tmp" nice -n 19 uv run --with pillow python scripts/seed_encoder_fuzz.py {{manifest}} {{output}} --build-commit "$(jj log --no-graph -r @ -T commit_id)"
+
+production-resources:
+    TMPDIR="$HOME/tmp" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" CARGO_BUILD_JOBS=4 nice -n 19 cargo test -p jxl-encoder --features corpus-tests --test production_resources -- --test-threads=1 --nocapture
