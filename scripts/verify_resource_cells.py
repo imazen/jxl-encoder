@@ -33,7 +33,7 @@ sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
     "inputs": {p.name: sha(p) for p in sorted(args.inputs.glob("*.ppm"))},
 }, indent=2) + "\n")
 with (args.output / "results.tsv").open("x") as table:
-    writer = csv.DictWriter(table, fieldnames=list(rows[0]), delimiter="\t")
+    writer = csv.DictWriter(table, fieldnames=list(rows[0]), delimiter="\t", lineterminator="\n")
     writer.writeheader()
     table.flush()
     for index, row in enumerate(rows, 1):
