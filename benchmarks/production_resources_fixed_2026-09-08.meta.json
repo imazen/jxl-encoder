@@ -1,0 +1,12 @@
+{
+  "build_commit": "9157db37a5d69f010a3c7bcde8b51bcd5c6106a7",
+  "hostname": "mac",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "binary_sha256": "d6ffaf255270fca66cb6738cb0cfff519cb3a872dc7d6b0f49ea68f89f222d7f",
+  "baseline_sha256": "595ecabfbba6dfdc6a311bb9803dc2f8abf557f053588490c7575e8a88a61f79",
+  "measurement": "/usr/bin/time -l maximum resident set size",
+  "inputs": {
+    "5058.ppm": "28c537ef4a82c3464d1b5c3cbb6ec0d32f6f48dbbf153dedf01e6b2f1f32a18a",
+    "6047.ppm": "e5196cc81c98d53db661be80ce3622a6cde927030cc6b504bf8ac3afcf6ff8a1"
+  }
+}

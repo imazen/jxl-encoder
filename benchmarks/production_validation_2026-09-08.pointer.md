@@ -101,10 +101,10 @@ baseline. Both the corrected default baseline and the complete explicit legacy
 baseline now pass locally (21 cells each, all three decoders, unchanged slack).
 This does not substitute for a green nightly run on the resulting commit.
 
-## Explicit memory-limit failure — deployment blocker
+## Explicit memory-limit counterexample and correction
 
-[Issue #106](https://github.com/imazen/jxl-encoder/issues/106) tracks the
-remaining pre-allocation accounting work. At a configured 1,600,000,000-byte
+[Issue #106](https://github.com/imazen/jxl-encoder/issues/106) records the
+pre-allocation accounting defect fixed by `e2d2a49f`. Before that fix, at a configured 1,600,000,000-byte
 limit, the pinned brochure encode succeeds and reaches 2,807,529,472 bytes
 process peak RSS. [Cell provenance](production_explicit_cap_2026-09-08.json).
 The cap is not a process RSS ceiling; the measurement does not distinguish
@@ -122,4 +122,47 @@ and the full workspace all-targets output are preserved together:
 Both complete remote copies match the local hash. The workspace command
 `cargo test --workspace --all-targets -j 4` exits successfully: 2303 passed,
 215 ignored, and the SIMD benchmark target completed. These tests do not prove
-a process-memory cap; the measured counterexample above remains open.
+a process-memory cap. The corrected admission rejects this counterexample
+before encoding; the default-cap output remains byte-identical.
+See [post-fix measurements](production_memory_fix_2026-09-08.json).
+
+
+## Final accounting candidate
+
+`9157db37` with Butteraugli `d2466a4e` repeats the
+[same twelve cells](production_resources_fixed_2026-09-08.tsv): every bitstream
+is byte-identical to the pinned baseline, every cell renders in jxl-rs and
+djxl v0.12, and every measured RSS is below the maximum estimate. Process
+peaks range from 556,318,720 to 2,665,889,792 bytes. The brochure's maximum
+estimate is 3,064,194,048 bytes; its 1.6 GB cap rejects before encoding at a
+27,492,352-byte process peak. The historical typical estimate remains low;
+CPU-loop-capable admission now uses the corrected maximum. These twelve
+observations are not a calibration across all sizes, qualities or content.
+
+The intermediate exact-capacity implementation exposed a second accounting
+omission: subtracting the reference from the e7 baseline underpredicted the
+brochure. The e7 baseline contains no perceptual reference. `9157db37` adds
+the full dependency peak. The failed intermediate measurement is preserved
+with the final results. No test tolerance or memory cap was relaxed.
+
+The validation checkout began as an `e2d2a49f` export and was advanced with
+source copies. All 752 tracked Rust source, manifest, lockfile and sibling-pin
+files were compared against `9157db37`, with zero differences. Cargo consumes
+the pinned Butteraugli git revision; sibling checkout state is not substituted.
+
+Final local checks on this source closure: workspace all-targets 2306 passed /
+215 existing ignored; workspace doctests 7 passed / 13 existing ignored; all-target
+clippy passed; production resources 5 passed; hash locks 60 passed; Libjxl
+byte locks 5 passed; divergence checks 7 passed; explicit RD regressions 2 passed.
+Ignored tests do not establish coverage.
+
+Raw final and failed intermediate measurements, both decoder logs and encoded
+bitstreams, source verification, complete local test/build logs, input PPMs,
+lockfile, pins and resource harness:
+
+- Local: `~/tmp/jxl-memory-accounting-final-2026-09-08.tar`.
+- R2: `s3://zen-tuning-ephemeral/jxl-encoder/production-validation-2026-09-08/memory-accounting-final.tar`.
+- Tower: `/mnt/tower/output/jxl-encoder/production-validation-2026-09-08/memory-accounting-final.tar`.
+- SHA256: `67e7ce8e27d0fef623b78d679328282a7a4f6e04c7546517de6814b8115b36cf`.
+
+The complete R2 download and Tower archive both match this SHA256.

@@ -936,9 +936,9 @@ e7 typical band, which contains no perceptual reference;
 e8+ admission uses that maximum. The typical estimate remains historical.
 This remains an allocation estimate, not an operating-system RSS limit.
 Do not claim a production concurrency budget from the two-source grid. The 1.6 GB
-case now rejects before encoder allocation (27,475,968 bytes process peak).
+case now rejects before encoder allocation (27,492,352 bytes process peak).
 The default-cap encode remains byte-identical, renders in both decoders, and
-measures 2,842,066,944 bytes RSS, below the 3,189,646,336-byte maximum estimate.
+measures 2,665,889,792 bytes RSS, below the 3,064,194,048-byte maximum estimate.
 The historical typical estimate remains an underprediction on this input;
 admission no longer uses it for CPU-loop-capable efforts.
 Evidence: `benchmarks/production_memory_fix_2026-09-08.json`.

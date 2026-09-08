@@ -1,5 +1,5 @@
 {
-  "butteraugli_commit": "eab74f266fafbe3bdfe953c946af6c77bf1a8462",
+  "butteraugli_commit": "d2466a4eaad67f8008838c0caa452484300214ca",
   "platform": "aarch64-apple-darwin",
   "input": "5058 brochure, 2550x3300 RGB8",
   "config": {
@@ -14,14 +14,14 @@
   },
   "after_capped": {
     "accepted": false,
-    "rss_bytes": 27475968,
+    "rss_bytes": 27492352,
     "output_bytes": 0
   },
   "after_default": {
     "accepted": true,
-    "rss_bytes": 2842066944,
-    "maximum_estimate_bytes": 3189646336,
-    "budget_peak_bytes": 3468620800,
+    "rss_bytes": 2665889792,
+    "maximum_estimate_bytes": 3064194048,
+    "budget_peak_bytes": 2836288512,
     "output_bytes": 148626,
     "sha256": "2832f3afdd6960e6227d602a8825a04e40ed4433d73e7a9ce853e46ff7f63a1a",
     "identical_to_before": true,
@@ -29,5 +29,6 @@
     "djxl_012_render": true
   },
   "measurement": "/usr/bin/time -l maximum resident set size; process RSS includes allocator-retained pages",
-  "scope": "one counterexample; no extrapolation or fleet-concurrency claim"
+  "scope": "Explicit-cap reproduction plus 12 two-source resource cells; no extrapolation or fleet-concurrency claim",
+  "build_commit": "9157db37a5d69f010a3c7bcde8b51bcd5c6106a7"
 }

@@ -19,9 +19,9 @@ A clean export of `db4b441c` with all sixteen pinned sibling revisions and a
 fresh 133,272-byte lockfile passes the five production tests under `--locked`.
 The lockfile and source provenance are in the verified R2/Tower
 [validation archive](../benchmarks/production_validation_2026-09-08.pointer.md).
-Committing this lockfile is pending the owner's required large-file approval;
-CI does not yet enforce this resolution. Source-build success does not remove
-the registry publication blockers below.
+The owner approved committing the lockfile: `05a3976f` tracks it and enforces
+`--locked` in CI. `e2d2a49f` adds the pinned Butteraugli accounting API.
+Source-build success does not remove the registry publication blockers below.
 
 The crates.io API was checked again on 2026-09-08: the published versions in
 section 3 remain unchanged. The four GPU/CVVDP dependencies remain unpublished,
@@ -45,12 +45,24 @@ so its success is not used as API-validation evidence. Direct source-consumer
 semver invocation fails dependency resolution; using explicit rustdoc inputs
 isolates the API inventory from that separate packaging blocker.
 
-The worldwide-deployment resource gate remains blocked by
-[#106](https://github.com/imazen/jxl-encoder/issues/106): a real e8 encode
-succeeds at a 1.6 GB configured limit while reaching 2.81 GB process peak RSS.
-The full workspace all-targets suite passes, but that is not evidence of a
-process-memory ceiling. The proposed dependency scratch-accounting API and
-application concurrency limits still require owner input.
+The concrete [#106](https://github.com/imazen/jxl-encoder/issues/106)
+accounting defect is fixed by `e2d2a49f`, `33155ec0` and `9157db37`,
+using Butteraugli `d2466a4e`.
+The 1.6 GB counterexample rejects before encoding (27.5 MB measured process
+peak); the default-budget result is byte-identical and renders in both decoders.
+Its measured 2,665,889,792-byte RSS is below the 3,064,194,048-byte
+maximum estimate. All twelve repeated resource cells retain their exact
+bitstreams and render through both decoders. The unchanged 2 GiB screenshot
+regression passes. The API
+accounts image buffers, not allocator-retained pages or a hard process ceiling.
+Application concurrency and fleet admission still depend on the deployment
+workload and host limits; no worldwide rollout was performed.
+
+Local validation of `9157db37` passes workspace all-targets, workspace doctests,
+all-target clippy, the explicit production-resource tests, 60 unchanged hash
+locks, five Libjxl byte locks, divergence checks and both RD regressions.
+Exact CI and nightly results are recorded on the tracking issues; a local
+pass is not a substitute for the full platform matrix.
 
 ## 1. What 0.4.0 is
 

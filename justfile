@@ -334,3 +334,7 @@ resource-cell input mode effort threads output budget="default":
 
 release-semver-json current baseline *args:
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo semver-checks --current-rustdoc "{{current}}" --baseline-rustdoc "{{baseline}}" {{args}}
+
+# The baseline supplies the exact cell grid and expected bitstream hashes.
+resource-verify baseline inputs output commit:
+    nice -n 19 python3 scripts/verify_resource_cells.py "{{baseline}}" "{{inputs}}" "{{output}}" --build-commit "{{commit}}"
