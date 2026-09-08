@@ -8295,6 +8295,7 @@ pub struct LossyEncoder {
     height: u32,
     layout: PixelLayout,
     rows_pushed: u32,
+    input_admitted: bool,
     linear_rgb: Vec<f32>,
     alpha: Option<Vec<u8>>,
     bit_depth_16: bool,
@@ -8451,12 +8452,14 @@ impl LossyEncoder {
 
     /// Attach resource limits.
     ///
-    /// The supplied [`Limits`] is consulted at [`finish`](Self::finish)
-    /// time to derive the per-encode allocation cap, mirroring
-    /// [`EncodeRequest::with_limits`]. When unset the encoder applies the
-    /// soft default ([`Limits::DEFAULT_MAX_MEMORY_BYTES`], ~4 GB).
+    /// Limits are checked before the first nonempty [`push_rows`](Self::push_rows)
+    /// allocates image planes, and again at [`finish`](Self::finish). Changing
+    /// limits after input has started rechecks admission on the next push;
+    /// it does not release buffers already accepted under the previous limits.
+    /// Unset memory limits use the path-specific [`Limits`] default.
     pub fn with_limits(mut self, limits: &Limits) -> Self {
         self.limits = Some(limits.clone());
+        self.input_admitted = false;
         self
     }
 
@@ -8515,6 +8518,32 @@ impl LossyEncoder {
                     message: "push_rows: row dimensions overflow".into(),
                 }));
             }
+        }
+
+        if !self.input_admitted {
+            self.cfg.validate().map_err(at_from)?;
+            self.check_input_limits()?;
+            encode_preflight(
+                self.width,
+                self.height,
+                self.layout.bytes_per_pixel() as u8,
+                self.layout.has_alpha(),
+                false,
+                self.cfg.effort,
+                self.cfg.threads,
+                false,
+                self.limits.as_ref(),
+            )?;
+            let pixels = w * self.height as usize; // constructor validated overflow
+            self.linear_rgb
+                .try_reserve(pixels * 3 - self.linear_rgb.len())
+                .map_err(|e| at(EncodeError::from(crate::error::Error::from(e))))?;
+            if let Some(alpha) = &mut self.alpha {
+                alpha
+                    .try_reserve(pixels - alpha.len())
+                    .map_err(|e| at(EncodeError::from(crate::error::Error::from(e))))?;
+            }
+            self.input_admitted = true;
         }
 
         let gamma = self.source_gamma;
@@ -8873,7 +8902,16 @@ impl LossyEncoder {
         Ok(result)
     }
 
+    fn check_input_limits(&self) -> Result<()> {
+        let mut request = self
+            .cfg
+            .encode_request(self.width, self.height, self.layout);
+        request.limits = self.limits.as_ref();
+        request.check_limits()
+    }
+
     fn finish_inner(self) -> Result<EncodeResult> {
+        self.check_input_limits()?;
         if self.rows_pushed != self.height {
             return Err(at!(EncodeError::InvalidInput {
                 message: format!(
@@ -9373,30 +9411,11 @@ impl LossyConfig {
             }));
         }
         validate_dims(width, height).at()?;
-        let w = width as usize;
-        let h = height as usize;
-        let rgb_capacity = w.checked_mul(h).and_then(|n| n.checked_mul(3));
-        let Some(rgb_capacity) = rgb_capacity else {
-            return Err(at(EncodeError::InvalidInput {
-                message: "image dimensions overflow".into(),
-            }));
-        };
-
         let bit_depth_16 = layout.is_16bit();
-        let has_alpha = layout.has_alpha();
-        let alpha = if has_alpha {
-            let mut v = Vec::new();
-            v.try_reserve(w * h)
-                .map_err(|e| at(EncodeError::from(crate::error::Error::from(e))))?;
-            Some(v)
-        } else {
-            None
-        };
-
-        let mut linear_rgb = Vec::new();
-        linear_rgb
-            .try_reserve(rgb_capacity)
-            .map_err(|e| at(EncodeError::from(crate::error::Error::from(e))))?;
+        // Limits are attached to the returned encoder. Defer image storage
+        // until push_rows can admit the image against those limits.
+        let alpha = layout.has_alpha().then(Vec::new);
+        let linear_rgb = Vec::new();
 
         Ok(LossyEncoder {
             cfg: self.clone(),
@@ -9404,6 +9423,7 @@ impl LossyConfig {
             height,
             layout,
             rows_pushed: 0,
+            input_admitted: false,
             linear_rgb,
             alpha,
             bit_depth_16,
@@ -9456,6 +9476,7 @@ pub struct LosslessEncoder {
     height: u32,
     layout: PixelLayout,
     rows_pushed: u32,
+    input_admitted: bool,
     channels: Vec<crate::modular::channel::Channel>,
     num_source_channels: usize,
     bit_depth: u32,
@@ -9615,12 +9636,14 @@ impl LosslessEncoder {
 
     /// Attach resource limits.
     ///
-    /// The supplied [`Limits`] is consulted at [`finish`](Self::finish)
-    /// time to derive the per-encode allocation cap, mirroring
-    /// [`EncodeRequest::with_limits`]. When unset the encoder applies the
-    /// soft default ([`Limits::DEFAULT_MAX_MEMORY_BYTES`], ~4 GB).
+    /// Limits are checked before the first nonempty [`push_rows`](Self::push_rows)
+    /// allocates image planes, and again at [`finish`](Self::finish). Changing
+    /// limits after input has started rechecks admission on the next push;
+    /// it does not release buffers already accepted under the previous limits.
+    /// Unset memory limits use the path-specific [`Limits`] default.
     pub fn with_limits(mut self, limits: &Limits) -> Self {
         self.limits = Some(limits.clone());
+        self.input_admitted = false;
         self
     }
 
@@ -9678,6 +9701,40 @@ impl LosslessEncoder {
                     message: "push_rows: row dimensions overflow".into(),
                 }));
             }
+        }
+
+        if !self.input_admitted {
+            self.cfg.validate().map_err(at_from)?;
+            self.check_input_limits()?;
+            let preflight = encode_preflight_with_sectioned(
+                self.width,
+                self.height,
+                self.layout.bytes_per_pixel() as u8,
+                self.layout.has_alpha(),
+                true,
+                self.cfg.effort,
+                self.cfg.threads,
+                false,
+                self.limits.as_ref(),
+                self.cfg.sectioned_trees(),
+            )?;
+            if self.channels.is_empty() {
+                // Publish the planes only after all allocations succeed, so
+                // an allocation error leaves the encoder retryable.
+                let mut channels = Vec::with_capacity(self.num_source_channels);
+                for _ in 0..self.num_source_channels {
+                    channels.push(
+                        crate::modular::channel::Channel::new_with_budget(
+                            w,
+                            self.height as usize,
+                            Some(&preflight.budget),
+                        )
+                        .map_err(|e| at(EncodeError::from(e)))?,
+                    );
+                }
+                self.channels = channels;
+            }
+            self.input_admitted = true;
         }
 
         let y_start = self.rows_pushed as usize;
@@ -9823,7 +9880,16 @@ impl LosslessEncoder {
         Ok(result)
     }
 
+    fn check_input_limits(&self) -> Result<()> {
+        let mut request = self
+            .cfg
+            .encode_request(self.width, self.height, self.layout);
+        request.limits = self.limits.as_ref();
+        request.check_limits()
+    }
+
     fn finish_inner(self) -> Result<EncodeResult> {
+        self.check_input_limits()?;
         use crate::bit_writer::BitWriter;
         use crate::headers::color_encoding::ColorSpace;
         use crate::headers::{ColorEncoding, FileHeader};
@@ -10132,19 +10198,14 @@ impl LosslessEncoder {
 impl LosslessConfig {
     /// Create a streaming encoder for incremental row input.
     ///
-    /// Per-channel planes are pre-allocated and filled as rows are pushed via
+    /// Per-channel planes are allocated after admission on the first push and filled via
     /// [`LosslessEncoder::push_rows`], so callers can free source buffers
     /// incrementally. The full-image planes stay in memory until
     /// [`LosslessEncoder::finish`] — input streaming does not bound peak
     /// encoder memory.
     #[track_caller]
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LosslessEncoder> {
-        use crate::modular::channel::Channel;
-
         validate_dims(width, height).at()?;
-
-        let w = width as usize;
-        let h = height as usize;
 
         let (num_channels, bit_depth, is_grayscale, has_alpha) = match layout {
             PixelLayout::Rgb8 | PixelLayout::Bgr8 => (3, 8u32, false, false),
@@ -10158,10 +10219,7 @@ impl LosslessConfig {
             other => return Err(at(EncodeError::UnsupportedPixelLayout(other))),
         };
 
-        let mut channels = Vec::with_capacity(num_channels);
-        for _ in 0..num_channels {
-            channels.push(Channel::new(w, h).map_err(|e| at(EncodeError::from(e)))?);
-        }
+        let channels = Vec::new();
 
         Ok(LosslessEncoder {
             cfg: self.clone(),
@@ -10169,6 +10227,7 @@ impl LosslessConfig {
             height,
             layout,
             rows_pushed: 0,
+            input_admitted: false,
             channels,
             num_source_channels: num_channels,
             bit_depth,

@@ -3512,3 +3512,138 @@ fn test_resolve_perceptual_target_score_sanitises_bogus_inputs() {
         );
     }
 }
+
+/// Resource admission must precede the first source-plane allocation, so
+/// attaching limits after construction protects streaming input as well as
+/// finish-time work. Covers both single- and multi-group geometry.
+#[test]
+fn streaming_admission_before_input_allocation() {
+    let limits = Limits::new().with_max_memory_bytes(1);
+    for (w, h) in [(19, 13), (511, 259)] {
+        let row = vec![0u8; w as usize * 4];
+        let mut lossy = LossyConfig::new(1.0)
+            .encoder(w, h, PixelLayout::Rgba8)
+            .unwrap()
+            .with_limits(&limits);
+        assert_eq!(
+            lossy.linear_rgb.capacity(),
+            0,
+            "constructor allocated color before limits"
+        );
+        assert_eq!(
+            lossy.alpha.as_ref().unwrap().capacity(),
+            0,
+            "constructor allocated alpha before limits"
+        );
+        let result = lossy.push_rows(&row, 1);
+        assert!(matches!(result, Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. })));
+        assert_eq!(lossy.rows_pushed(), 0);
+        assert_eq!(lossy.linear_rgb.capacity(), 0);
+
+        let mut lossless = LosslessConfig::new()
+            .encoder(w, h, PixelLayout::Rgba8)
+            .unwrap()
+            .with_limits(&limits);
+        assert!(
+            lossless.channels.is_empty(),
+            "constructor allocated channels before limits"
+        );
+        let result = lossless.push_rows(&row, 1);
+        assert!(matches!(result, Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. })));
+        assert_eq!(lossless.rows_pushed(), 0);
+        assert!(lossless.channels.is_empty());
+    }
+}
+
+#[test]
+fn streaming_dimension_limits_before_rows_and_after_limits_change() {
+    for (w, h) in [(19, 13), (511, 259)] {
+        let row = vec![0u8; w as usize * 3];
+        for limits in [
+            Limits::new().with_max_width(u64::from(w - 1)),
+            Limits::new().with_max_height(u64::from(h - 1)),
+            Limits::new().with_max_pixels(u64::from(w) * u64::from(h) - 1),
+        ] {
+            let mut lossy = LossyConfig::new(1.0)
+                .encoder(w, h, PixelLayout::Rgb8)
+                .unwrap()
+                .with_limits(&limits);
+            assert!(
+                matches!(lossy.push_rows(&row, 1), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
+            );
+            assert_eq!(lossy.rows_pushed(), 0);
+            lossy = lossy.with_limits(&Limits::new());
+            lossy.push_rows(&row, 1).unwrap();
+            lossy = lossy.with_limits(&limits);
+            assert!(
+                matches!(lossy.push_rows(&row, 1), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
+            );
+            assert_eq!(lossy.rows_pushed(), 1);
+
+            let mut lossless = LosslessConfig::new()
+                .encoder(w, h, PixelLayout::Rgb8)
+                .unwrap()
+                .with_limits(&limits);
+            assert!(
+                matches!(lossless.push_rows(&row, 1), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
+            );
+            assert_eq!(lossless.rows_pushed(), 0);
+            lossless = lossless.with_limits(&Limits::new());
+            lossless.push_rows(&row, 1).unwrap();
+            lossless = lossless.with_limits(&limits);
+            assert!(
+                matches!(lossless.push_rows(&row, 1), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
+            );
+            assert_eq!(lossless.rows_pushed(), 1);
+        }
+    }
+}
+
+#[test]
+fn streaming_default_admission_rejects_large_shape_without_allocating() {
+    // One narrow row describes a huge image. Construction and rejection must
+    // never allocate the billion-pixel backing planes.
+    let (w, h) = (1, 1_000_000_000);
+    let mut lossy = LossyConfig::new(1.0)
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap();
+    assert_eq!(lossy.linear_rgb.capacity(), 0);
+    assert!(
+        matches!(lossy.push_rows(&[0, 0, 0], 1), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
+    );
+    assert_eq!(lossy.linear_rgb.capacity(), 0);
+    let mut lossless = LosslessConfig::new()
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap();
+    assert!(lossless.channels.is_empty());
+    assert!(
+        matches!(lossless.push_rows(&[0, 0, 0], 1), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
+    );
+    assert!(lossless.channels.is_empty());
+}
+
+#[test]
+fn streaming_finish_rechecks_limits_attached_after_all_rows() {
+    for (w, h) in [(19, 13), (511, 259)] {
+        let pixels = vec![0u8; w as usize * h as usize * 3];
+        for limits in [
+            Limits::new().with_max_memory_bytes(1),
+            Limits::new().with_max_width(1),
+        ] {
+            let mut lossy = LossyConfig::new(1.0)
+                .encoder(w, h, PixelLayout::Rgb8)
+                .unwrap();
+            lossy.push_rows(&pixels, h).unwrap();
+            assert!(
+                matches!(lossy.with_limits(&limits).finish(), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
+            );
+            let mut lossless = LosslessConfig::new()
+                .encoder(w, h, PixelLayout::Rgb8)
+                .unwrap();
+            lossless.push_rows(&pixels, h).unwrap();
+            assert!(
+                matches!(lossless.with_limits(&limits).finish(), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
+            );
+        }
+    }
+}

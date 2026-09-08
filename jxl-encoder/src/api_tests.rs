@@ -6441,18 +6441,19 @@ fn test_request_lossy_valid_intensity_target_accepted() {
 /// to silently work for the streaming path because `validate()` was
 /// opt-in; now both paths reject up front.
 #[test]
-fn test_streaming_lossy_invalid_distance_rejected_at_finish() {
+fn test_streaming_lossy_invalid_distance_rejected_before_input_allocation() {
     let w = 8u32;
     let h = 8u32;
     let pixels = vec![0u8; (w * h * 3) as usize];
     let cfg = LossyConfig::new(50.0).with_effort(3); // distance > 25
     let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).expect("encoder");
     let row_bytes = (w as usize) * 3;
-    for y in 0..(h as usize) {
-        enc.push_rows(&pixels[y * row_bytes..(y + 1) * row_bytes], 1)
-            .expect("push");
-    }
-    let result = enc.finish();
+    let result = enc.push_rows(&pixels[..row_bytes], 1);
+    assert_eq!(
+        enc.rows_pushed(),
+        0,
+        "invalid config must not consume input"
+    );
     assert!(result.is_err(), "distance > DISTANCE_MAX must reject");
     let msg = format!("{:?}", result.unwrap_err());
     assert!(

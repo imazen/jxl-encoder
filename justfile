@@ -294,3 +294,14 @@ canonicalization-test:
 
 canonicalization-check:
     nice -n 19 cargo clippy --workspace --all-targets -j 4 -- -D warnings
+
+# Admission is checked before streaming image planes exist; no corpus needed.
+streaming-admission-test *args:
+    TMPDIR="$HOME/tmp" nice -n 19 cargo test -p jxl-encoder -j 4 --lib streaming_ {{args}}
+
+# Caller supplies corpus and artifact directories outside the repository.
+fuzz-encoder target corpus artifacts *args:
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo +nightly fuzz run {{target}} {{corpus}} -- -artifact_prefix={{artifacts}}/ -rss_limit_mb=2048 {{args}}
+
+fuzz-regression:
+    DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" TMPDIR="$HOME/tmp" nice -n 19 cargo test -p jxl-encoder -j 4 --test fuzz_regression

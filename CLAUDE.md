@@ -903,6 +903,33 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-09-08: streaming input storage is allocated before limits attach
+
+[PROVEN in source] `LossyConfig::encoder` reserves whole-image RGB/alpha
+vectors and `LosslessConfig::encoder` allocates whole-image modular channels
+before the caller can call `with_limits`. Admission occurs only in `finish`.
+`push_rows` therefore fills those allocations without checking the attached
+memory cap. The constructors validate dimensions/overflow but not memory.
+Prepared regression: `api_tests::streaming_admission_before_input_allocation`
+(single/multi-group, lossy/lossless); execution and correction are pending the
+serialized targeting sweep. Fix should defer input storage until the first
+validated row push, perform admission using the caller's limits first, and
+revalidate if limits change. No public signature change is needed.
+
+
+### ACTIVE 2026-09-08: line-art size cliff also exists below distance 1
+
+[PROVEN] The deployment policy sweep (`qfseed_unlifted_2026-09-08`,
+probe build `92d53a69`) finds an independent cliff on imazen-26 7026,
+1024 crop: e8 d0.5 is 64712 B / butteraugli 0.5234, d0.75 is 85317 B /
+0.9226. Both the legacy and unlifted policies reproduce it; e5 and e7
+also grow across this step. This is outside both screenshot seed bands.
+[THREAD] The API enables Gaborish only above d0.5, and EPF starts at
+another low-distance threshold. Compare the pinned C++ reference and
+ablate those filters before changing a policy or expectation. No cause
+is established yet, and no default change has been made for this finding.
+
+
 ### RESOLVED 2026-09-08: one-shot input canonicalization consumes its setter (#104)
 
 `LossyConfig::with_canonicalize_input(true)` now calls zenpixels-convert's

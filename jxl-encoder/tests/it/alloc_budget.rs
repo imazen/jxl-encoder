@@ -250,8 +250,8 @@ fn budget_intercepts_transform_output() {
 // ── Streaming encoder budget plumbing ───────────────────────────────────────
 
 /// `LossyEncoder::with_limits` should propagate the cap into
-/// `finish_inner` so an oversized streaming encode is rejected the same
-/// way as the request path.
+/// input admission so an oversized streaming encode is rejected before
+/// source planes are allocated.
 #[test]
 fn streaming_lossy_with_limits_denies_oversized() {
     let (w, h) = (2048u32, 2048u32);
@@ -264,11 +264,10 @@ fn streaming_lossy_with_limits_denies_oversized() {
         .encoder(w, h, PixelLayout::Rgb8)
         .expect("encoder construction should succeed")
         .with_limits(&limits);
-    for _ in 0..h {
-        enc.push_rows(&row, 1)
-            .expect("push_rows should accept rows");
-    }
-    let err = enc.finish().expect_err("oversized finish should be denied");
+    let err = enc
+        .push_rows(&row, 1)
+        .expect_err("oversized input should be denied");
+    assert_eq!(enc.rows_pushed(), 0, "rejected input must not be consumed");
     let inner: &EncodeError = err.as_ref();
     assert!(
         matches!(inner, EncodeError::LimitExceeded { .. }),
@@ -289,11 +288,10 @@ fn streaming_lossless_with_limits_denies_oversized() {
         .encoder(w, h, PixelLayout::Rgb8)
         .expect("encoder construction should succeed")
         .with_limits(&limits);
-    for _ in 0..h {
-        enc.push_rows(&row, 1)
-            .expect("push_rows should accept rows");
-    }
-    let err = enc.finish().expect_err("oversized finish should be denied");
+    let err = enc
+        .push_rows(&row, 1)
+        .expect_err("oversized input should be denied");
+    assert_eq!(enc.rows_pushed(), 0, "rejected input must not be consumed");
     let inner: &EncodeError = err.as_ref();
     assert!(
         matches!(inner, EncodeError::LimitExceeded { .. }),
