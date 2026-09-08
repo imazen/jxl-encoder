@@ -400,3 +400,219 @@ fn f32_multigroup_with_extreme_values_is_accepted_by_djxl() {
         .expect("encode");
     djxl_accepts(&data, "f32_multigroup_extremes");
 }
+
+// ── F4: streaming lossless float ───────────────────────────────────────────
+
+/// The property that makes the streaming path trustworthy is not "it decodes"
+/// but **streaming == one-shot, byte for byte**. If the two agree exactly then
+/// every guarantee already established for one-shot — bit-exact samples, level
+/// 10, decoder acceptance — transfers without re-deriving it.
+///
+/// Pushed in awkward chunk sizes on purpose (1 row, then 7, then the rest), so
+/// a row-offset bug inside `push_rows` cannot hide behind a single push.
+fn streaming_matches_one_shot(layout: PixelLayout, w: u32, h: u32, px: &[u8]) -> Vec<u8> {
+    let one_shot = LosslessConfig::new()
+        .encode_request(w, h, layout)
+        .encode(px)
+        .expect("one-shot encode");
+
+    let bpp = layout.bytes_per_pixel();
+    let row = w as usize * bpp;
+    for chunks in [vec![1u32, 7, h - 8], vec![h], vec![1; h as usize]] {
+        let mut enc = LosslessConfig::new()
+            .encoder(w, h, layout)
+            .expect("streaming encoder must accept the float layout");
+        let mut y = 0usize;
+        for n in &chunks {
+            let bytes = &px[y * row..(y + *n as usize) * row];
+            enc.push_rows(bytes, *n).expect("push_rows");
+            y += *n as usize;
+        }
+        assert_eq!(y, h as usize, "chunk plan must cover the image");
+        let streamed = enc.finish().expect("finish");
+        assert_eq!(
+            streamed, one_shot,
+            "streaming with chunks {chunks:?} must be byte-identical to one-shot for {layout:?}"
+        );
+    }
+    one_shot
+}
+
+#[test]
+fn streaming_f32_rgb_is_byte_identical_to_one_shot() {
+    const W: usize = 32;
+    const H: usize = 24;
+    let vals = f32_values(W * H * 3);
+    let mut px = Vec::with_capacity(W * H * 12);
+    for v in &vals {
+        px.extend_from_slice(&v.to_ne_bytes());
+    }
+    let data = streaming_matches_one_shot(PixelLayout::RgbLinearF32, W as u32, H as u32, &px);
+
+    // And the samples really are exact, so this is not just "two paths agree
+    // on the same wrong bytes".
+    let (_, _, decoded) = decode_jxlrs_planar(&data, 3);
+    for (i, (a, b)) in decoded.iter().zip(&vals).enumerate() {
+        assert_eq!(a.to_bits(), b.to_bits(), "streamed f32 sample {i} differs");
+    }
+    djxl_accepts(&data, "streaming_f32_rgb");
+}
+
+#[test]
+fn streaming_f16_gray_alpha_is_byte_identical_to_one_shot() {
+    const W: usize = 19;
+    const H: usize = 17;
+    let bits = f16_bits(W * H * 2);
+    let mut px = Vec::with_capacity(W * H * 4);
+    for b in &bits {
+        px.extend_from_slice(&b.to_ne_bytes());
+    }
+    let data = streaming_matches_one_shot(PixelLayout::GrayAlphaLinearF16, W as u32, H as u32, &px);
+    let i = data
+        .windows(4)
+        .position(|w| w == b"jxll")
+        .expect("float is level 10 on the streaming path too");
+    assert_eq!(data[i + 4], 10);
+    djxl_accepts(&data, "streaming_f16_grayalpha");
+}
+
+/// Multi-group through the streaming path — the group boundary is where the
+/// row bookkeeping is easiest to get wrong.
+#[test]
+fn streaming_f32_multigroup_is_byte_identical_to_one_shot() {
+    const W: usize = 300;
+    const H: usize = 260;
+    let vals: Vec<f32> = (0..W * H * 3)
+        .map(|i| {
+            let x = (i / 3) % W;
+            let y = (i / 3) / W;
+            let c = i % 3;
+            (x as f32 * 0.013 + y as f32 * 0.007 + c as f32 * 0.11).sin()
+        })
+        .collect();
+    let mut px = Vec::with_capacity(W * H * 12);
+    for v in &vals {
+        px.extend_from_slice(&v.to_ne_bytes());
+    }
+    let data = streaming_matches_one_shot(PixelLayout::RgbLinearF32, W as u32, H as u32, &px);
+    let (dw, dh, decoded) = decode_jxlrs_planar(&data, 3);
+    assert_eq!((dw, dh), (W, H));
+    let bad = decoded
+        .iter()
+        .zip(&vals)
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
+    assert_eq!(bad, 0, "{bad} streamed samples differ across groups");
+}
+
+#[test]
+fn streaming_refuses_tf_tagged_float_layouts() {
+    for layout in [PixelLayout::RgbPqF32, PixelLayout::RgbaHlgF32] {
+        // `LosslessEncoder` is not `Debug`, so match rather than `expect_err`.
+        match LosslessConfig::new().encoder(8, 8, layout) {
+            Ok(_) => panic!("TF-tagged float must be refused on streaming lossless: {layout:?}"),
+            Err(err) => assert!(
+                format!("{err:?}").contains("UnsupportedPixelLayout"),
+                "expected UnsupportedPixelLayout for {layout:?}, got {err:?}"
+            ),
+        }
+    }
+}
+
+/// Every supported linear float layout, one-shot, checked against djxl. Added
+/// after the F4 streaming test caught `GrayAlphaLinearF16` being rejected — the
+/// earlier tests happened to cover no alpha-bearing float layout at all, so a
+/// whole quadrant of the surface was unexercised.
+#[test]
+fn every_linear_float_layout_is_accepted_by_djxl() {
+    const W: u32 = 24;
+    const H: u32 = 18;
+    let layouts = [
+        PixelLayout::GrayLinearF32,
+        PixelLayout::GrayAlphaLinearF32,
+        PixelLayout::RgbLinearF32,
+        PixelLayout::RgbaLinearF32,
+        PixelLayout::GrayLinearF16,
+        PixelLayout::GrayAlphaLinearF16,
+        PixelLayout::RgbLinearF16,
+        PixelLayout::RgbaLinearF16,
+    ];
+    let mut failures = Vec::new();
+    for layout in layouts {
+        let n = (W * H) as usize * layout.float_channel_count();
+        let px: Vec<u8> = match layout.lossless_float_bit_depth() {
+            Some((16, _)) => f16_bits(n).iter().flat_map(|b| b.to_ne_bytes()).collect(),
+            _ => f32_values(n).iter().flat_map(|v| v.to_ne_bytes()).collect(),
+        };
+        let data = match LosslessConfig::new()
+            .encode_request(W, H, layout)
+            .encode(&px)
+        {
+            Ok(d) => d,
+            Err(e) => {
+                failures.push(format!("{layout:?}: encode failed: {e:?}"));
+                continue;
+            }
+        };
+        let dir = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "lossless_float");
+        let path = dir.join(format!("all_{layout:?}.jxl"));
+        std::fs::write(&path, &data).expect("write");
+        let out = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+            .arg(&path)
+            .arg("--disable_output")
+            .arg("--num_threads=1")
+            .output()
+            .expect("run djxl");
+        if !out.status.success() {
+            failures.push(format!("{layout:?}: djxl rejected"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "layouts not accepted by djxl: {failures:#?}"
+    );
+}
+
+/// Control: do the INTEGER gray+alpha layouts survive djxl? If they do not,
+/// the float gray+alpha rejection is a pre-existing defect in grayscale-plus-
+/// alpha rather than anything float introduced.
+#[test]
+fn integer_gray_alpha_control_for_djxl() {
+    const W: u32 = 24;
+    const H: u32 = 18;
+    let mut failures = Vec::new();
+    for (layout, bps) in [
+        (PixelLayout::GrayAlpha8, 1usize),
+        (PixelLayout::GrayAlpha16, 2usize),
+        (PixelLayout::Gray8, 1usize),
+        (PixelLayout::Gray16, 2usize),
+    ] {
+        let nc = if matches!(layout, PixelLayout::GrayAlpha8 | PixelLayout::GrayAlpha16) {
+            2
+        } else {
+            1
+        };
+        let n = (W * H) as usize * nc;
+        let px: Vec<u8> = (0..n * bps).map(|i| (i % 251) as u8).collect();
+        let data = LosslessConfig::new()
+            .encode_request(W, H, layout)
+            .encode(&px)
+            .unwrap_or_else(|e| panic!("{layout:?} encode failed: {e:?}"));
+        let dir = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "lossless_float");
+        let path = dir.join(format!("ctrl_{layout:?}.jxl"));
+        std::fs::write(&path, &data).expect("write");
+        let out = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+            .arg(&path)
+            .arg("--disable_output")
+            .arg("--num_threads=1")
+            .output()
+            .expect("run djxl");
+        if !out.status.success() {
+            failures.push(format!("{layout:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "integer grayscale layouts djxl rejects (pre-existing, not float-related): {failures:?}"
+    );
+}

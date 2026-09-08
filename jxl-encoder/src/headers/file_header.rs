@@ -329,6 +329,30 @@ impl FileHeader {
         header
     }
 
+    /// Creates a new file header for a grayscale image WITH an alpha channel.
+    ///
+    /// Grayscale + alpha needs both the gray colour encoding *and* the alpha
+    /// extra-channel entry. `new_gray` supplies only the first, and using it
+    /// for a 2-channel image produces a header that claims one channel and no
+    /// extras while the modular stream carries two — which no decoder accepts.
+    ///
+    /// That is exactly what shipped: the lossless path selected `new_gray`
+    /// whenever `is_grayscale`, including when alpha was present, so **every
+    /// `PixelLayout::GrayAlpha8` / `GrayAlpha16` lossless encode produced an
+    /// undecodable file**. djxl v0.12 rejects them with "Failed to decode
+    /// image"; `Gray8`/`Gray16` are unaffected. Nothing caught it because no
+    /// hash-lock cell and no test covered a grayscale-plus-alpha lossless
+    /// encode — found 2026-09-08 while adding lossless float, whose
+    /// `GrayAlphaLinearF32`/`F16` layouts hit the same path.
+    pub fn new_gray_alpha(width: u32, height: u32) -> Self {
+        let mut header = Self::new_gray(width, height);
+        header
+            .metadata
+            .extra_channels
+            .push(ExtraChannelInfo::alpha());
+        header
+    }
+
     /// Creates a new file header for a grayscale image.
     pub fn new_gray(width: u32, height: u32) -> Self {
         let mut header = Self::new_rgb(width, height);

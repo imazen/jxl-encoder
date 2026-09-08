@@ -6984,7 +6984,14 @@ impl<'a> EncodeRequest<'a> {
         // `detection_pixels` block.)
 
         // Build file header
-        let mut file_header = if image.is_grayscale {
+        let mut file_header = if image.is_grayscale && image.has_alpha {
+            // Both the gray colour encoding AND the alpha extra channel. See
+            // `FileHeader::new_gray_alpha`: selecting `new_gray` here (as this
+            // did until 2026-09-08) emitted a header describing one channel and
+            // no extras for a two-channel modular stream, i.e. an undecodable
+            // file, for every GrayAlpha lossless encode.
+            FileHeader::new_gray_alpha(self.width, self.height)
+        } else if image.is_grayscale {
             FileHeader::new_gray(self.width, self.height)
         } else if image.has_alpha {
             FileHeader::new_rgba(self.width, self.height)
@@ -9264,6 +9271,48 @@ impl LosslessEncoder {
                     }
                 }
             }
+            other if other.lossless_float_bit_depth().is_some() => {
+                // Same packing as the one-shot path
+                // (`ModularImage::from_float_native`): f32 through the verified
+                // `float_to_int_sample`, f16 carried as-is because a binary16
+                // pattern IS libjxl's (16, 5) custom float. Byte identity with
+                // one-shot is asserted by the F4 tests, not assumed.
+                let (bits, _) = other
+                    .lossless_float_bit_depth()
+                    .expect("guarded by the match arm");
+                let f16 = bits == 16;
+                let bps = if f16 { 2 } else { 4 };
+                for y in 0..n {
+                    let row_offset = y * w * nc * bps;
+                    let dst_y = y_start + y;
+                    for x in 0..w {
+                        let src = row_offset + x * nc * bps;
+                        for c in 0..nc {
+                            let off = src + c * bps;
+                            let sample = if f16 {
+                                i32::from(u16::from_ne_bytes([pixels[off], pixels[off + 1]]))
+                            } else {
+                                let v = f32::from_bits(u32::from_ne_bytes([
+                                    pixels[off],
+                                    pixels[off + 1],
+                                    pixels[off + 2],
+                                    pixels[off + 3],
+                                ]));
+                                crate::modular::float_pack::float_to_int_sample(v, 32, 8).map_err(
+                                    |e| {
+                                        at(EncodeError::InvalidInput {
+                                            message: format!(
+                                                "float sample cannot be represented: {e}"
+                                            ),
+                                        })
+                                    },
+                                )?
+                            };
+                            self.channels[c].set(x, dst_y, sample);
+                        }
+                    }
+                }
+            }
             _ => {
                 return Err(at!(EncodeError::UnsupportedPixelLayout(self.layout)));
             }
@@ -9453,7 +9502,12 @@ impl LosslessEncoder {
             };
 
             // Build file header
-            let mut file_header = if image.is_grayscale {
+            // Same grayscale+alpha correction as the one-shot path above —
+            // the streaming encoder selected `new_gray` too, so it emitted the
+            // same undecodable header for GrayAlpha input.
+            let mut file_header = if image.is_grayscale && image.has_alpha {
+                FileHeader::new_gray_alpha(self.width, self.height)
+            } else if image.is_grayscale {
                 FileHeader::new_gray(self.width, self.height)
             } else if image.has_alpha {
                 FileHeader::new_rgba(self.width, self.height)
@@ -9485,7 +9539,19 @@ impl LosslessEncoder {
             // preserves pixels bit-exactly so this only affects header
             // signaling — the encoded values stay whatever the caller
             // pushed via push_rows.
-            if let Some(bits) = self.bits_per_sample {
+            if let Some((bits, exponent_bits)) = self.layout.lossless_float_bit_depth() {
+                // Mirrors the one-shot path; also drives the level, since
+                // `modular_16bit_buffer_sufficient` is false for any float.
+                let bd = crate::headers::file_header::BitDepth {
+                    float_sample: true,
+                    bits_per_sample: bits,
+                    exponent_bits,
+                };
+                file_header.metadata.bit_depth = bd;
+                for ec in &mut file_header.metadata.extra_channels {
+                    ec.bit_depth = bd;
+                }
+            } else if let Some(bits) = self.bits_per_sample {
                 file_header.metadata.bit_depth.bits_per_sample = bits;
                 for ec in &mut file_header.metadata.extra_channels {
                     ec.bit_depth.bits_per_sample = bits;
@@ -9674,6 +9740,24 @@ impl LosslessConfig {
             PixelLayout::Rgba16 => (4, 16, false, true),
             PixelLayout::Gray16 => (1, 16, true, false),
             PixelLayout::GrayAlpha16 => (2, 16, true, true),
+            // Lossless float (imazen/jxl-encoder#109, F4). `bit_depth` here is
+            // the SAMPLE width, which is also the transform budget the modular
+            // writer gates RCT on: 32 for f32 (refused, as libjxl refuses at
+            // that budget), 16 for f16 (permitted, as libjxl permits at level
+            // 10). The float-ness itself reaches the header through
+            // `PixelLayout::lossless_float_bit_depth` at `finish`, exactly as
+            // on the one-shot path.
+            other if other.lossless_float_bit_depth().is_some() => {
+                let (bits, _) = other
+                    .lossless_float_bit_depth()
+                    .expect("guarded by the match arm");
+                (
+                    other.float_channel_count(),
+                    bits,
+                    other.is_gray_float(),
+                    other.has_alpha(),
+                )
+            }
             other => return Err(at(EncodeError::UnsupportedPixelLayout(other))),
         };
 
