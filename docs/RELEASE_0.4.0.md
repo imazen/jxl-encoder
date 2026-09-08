@@ -219,8 +219,9 @@ pre-bump "0.3.2" strings; this repo is now 0.4.0):
 Per the global release rules — in order, stop on any failure:
 
 1. `cargo test --all-targets` + `cargo test --doc` locally green.
-2. Push; CI green on ALL platforms (incl. windows-11-arm, macOS Intel,
-   i686 via cross).
+2. Push; CI green on all enabled platforms (including windows-11-arm,
+   macOS ARM64, and i686 via cross). The owner disabled macOS Intel CI
+   on 2026-09-08.
 3. Owner decisions resolved: GPU-crate deps (strip vs publish), `cvvdp`
    path dep, and whether any of the doc-hidden compat re-exports
    (zenjxl's container/heuristics set) get promoted to supported.

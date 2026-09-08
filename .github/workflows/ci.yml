@@ -68,7 +68,7 @@ jobs:
         run: cargo build --locked -p jxl-encoder --no-default-features
 
   # ==========================================================================
-  # Native ARM64 + macOS Intel testing
+  # Native ARM64 testing (macOS Intel disabled by owner on 2026-09-08).
   # ==========================================================================
   build-native:
     name: Build native (${{ matrix.name }})
@@ -80,7 +80,6 @@ jobs:
           - { os: ubuntu-24.04-arm, name: Linux, run_tests: true }
           - { os: macos-latest, name: macOS, run_tests: true }
           - { os: windows-11-arm, name: "Windows ARM", run_tests: true }
-          - { os: macos-26-intel, name: "macOS Intel", run_tests: true }
 
     steps:
       - uses: actions/checkout@v6

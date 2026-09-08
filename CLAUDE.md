@@ -2318,6 +2318,10 @@ measurement at equal or better coverage.
 
 ## Build Commands
 
+**CI target override (owner directive 2026-09-08): macOS Intel is disabled.**
+Keep macOS ARM64, Windows ARM64, and i686 coverage. This project-specific
+directive overrides the shared requirement to include a macOS Intel runner.
+
 ```bash
 # Build
 cargo build
