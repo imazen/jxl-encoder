@@ -3234,3 +3234,7 @@ path = "examples/bit_depth_perf.rs"
 [[example]]
 name = "cliff_bisect"
 path = "examples/cliff_bisect.rs"
+
+[[example]]
+name = "scope_probe_16bit"
+path = "examples/scope_probe_16bit.rs"

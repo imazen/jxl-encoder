@@ -183,3 +183,51 @@ property columns carry neighbour values and their differences, so:
   property that is a difference of two 16-bit values spans 17 bits — NOT
   verified, and worth checking, since it decides whether this was a latent bug
   or a shipping one. A checker can revert the one-line doubling and re-run.
+
+---
+
+# ADDENDUM 2: the scope question is answered — #115 was a SHIPPING bug
+
+The first addendum left one thing open, and said it decided severity: whether
+the pathology reached the long-shipped `PixelLayout::Rgb16` surface, or only
+the new >16-bit and float paths.
+
+**It reached the shipped surface.** Measured on REAL content — the imazen-26
+16-bit HDR renders (`png-v3/**/*.hdr.png`, 16-bit RGB, gain-map sources), not
+synthetic — through `PixelLayout::Rgb16` with no wide input anywhere:
+
+| image (1024x1024 centre crop) | before fix | after fix | factor | bytes |
+|---|--:|--:|--:|--:|
+| `1064_general_castle-bridge-moat_montjuic-castle-barcelona` | **42605.3 ms** | **2823.5 ms** | **15.1x** | 3 594 946 (identical) |
+
+Harness `examples/scope_probe_16bit.rs`; "before" is the same binary with the
+one-line `compact()` doubling reverted.
+
+Two further after-fix cells on the same corpus, for context (1024x1024 crops):
+`1065_..._sagrada-familia` 2315.0 ms / 2 486 310 B, `1066_..._park-guell`
+3038.5 ms / 3 928 225 B.
+
+## Why this was reachable without wide input
+
+The trigger is a *sampled property column* whose distinct set approaches
+65536. A single 16-bit channel already carries up to 65536 distinct values,
+and the learner's properties include neighbour and reference-channel
+DIFFERENCES, which span 17 bits (-65535..65535). Real 16-bit photographic
+content fills that space; the synthetic ramps used earlier in this document
+did not, which is why the size effect looked wide-input-specific at first.
+
+## Consequence
+
+Every 16-bit RGB lossless encode of detailed content has been paying this,
+at roughly an order of magnitude, for as long as the fixed threshold has been
+in place. It is not a regression from the September 2026 high-bit-depth work —
+that work only made it easy to construct and therefore to find.
+
+## Note on corpus
+
+The 512x512 crop of the same image shows only 625.4 ms before the fix: the
+sample count at that size does not push the distinct set far enough into the
+degenerate region. **A performance claim about 16-bit content needs a real
+16-bit image at a realistic size**; the local `codec-corpus` checkout contains
+no 16-bit PNGs at all, and the imazen-26 `png-v3` HDR renders are the only
+16-bit source on this machine.
