@@ -91,7 +91,7 @@ zenjpeg = { path = "../zenjpeg/zenjpeg" }
 zenjxl-decoder = { path = "../zenjxl-decoder/zenjxl-decoder" }
 # Pin the approved pre-allocation accounting API while 0.9.4 is unreleased.
 # A git revision also prevents unrelated local sibling WIP changing the build.
-butteraugli = { git = "https://github.com/imazen/butteraugli", rev = "eab74f266fafbe3bdfe953c946af6c77bf1a8462" }
+butteraugli = { git = "https://github.com/imazen/butteraugli", rev = "d2466a4eaad67f8008838c0caa452484300214ca" }
 # W44-phase3-B1: GPU butteraugli backend lives in the zenmetrics workspace
 # at `crates/butteraugli-gpu`. `publish = false` so always path-pinned;
 # pulled in via the `gpu-butteraugli` cargo feature in `jxl-encoder/Cargo.toml`.
