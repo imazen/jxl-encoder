@@ -385,6 +385,11 @@ mod tests {
         let batch = &batches[0];
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(batch.num_columns(), 55);
+        let expected = RecordBatch::try_new(Arc::new(build_schema()), build_arrays(&row)).unwrap();
+        assert_eq!(
+            batch, &expected,
+            "all column types and values must roundtrip"
+        );
 
         let schema = batch.schema();
         // Quick sanity-check the v2 column names are present.
@@ -448,6 +453,11 @@ mod tests {
         let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>().unwrap();
         let batch = &batches[0];
         assert_eq!(batch.num_columns(), 55);
+        let expected = RecordBatch::try_new(Arc::new(build_schema()), build_arrays(&row)).unwrap();
+        assert_eq!(
+            batch, &expected,
+            "nulls and all other values must roundtrip"
+        );
 
         let schema = batch.schema();
         let names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();

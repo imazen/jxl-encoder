@@ -68,9 +68,9 @@ serde_json = "1.0"
 postcard = { version = "1.0", features = ["alloc"] }
 
 # Parquet emit (polars is heavy; arrow-rs minimal feature set is enough).
-arrow-array = "53"
-arrow-schema = "53"
-parquet = { version = "53", default-features = false, features = ["arrow", "zstd"] }
+arrow-array = "59.3.0"
+arrow-schema = "59.3.0"
+parquet = { version = "59.3.0", default-features = false, features = ["arrow", "zstd"] }
 
 # Optional CPU metrics (only pulled in with --features cpu-metrics).
 # Pinned versions match what `jxl-encoder/Cargo.toml` dev-deps use so

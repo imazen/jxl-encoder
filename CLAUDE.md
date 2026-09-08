@@ -903,6 +903,19 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-08: development dependency refresh (#107)
+
+The tuning runner now uses Arrow/Parquet 59.3.0. Its locked dependency graph
+no longer includes Thrift. The existing Parquet tests compare all 55 column
+types and values after writing and reading, including nullable artifact keys;
+all 21 runner tests and workspace all-target Clippy pass against the pinned
+sibling closure. The separate secondary-decoder update remains in progress.
+
+The local sibling-resolution drift is preserved on the remote
+`research/local-sibling-resolution-drift` branch (`50aac4d7`), not applied
+to the release lock. Local sibling WIP changes CubeCL's git revision and
+zensim's dependencies; build validation must use the pinned closure.
+
 ### RESOLVED 2026-09-08: CPU Butteraugli comparison scratch evaded memory admission (#106)
 
 **[PROVEN]** The pinned-clean 2550×3300 brochure, d4/e8/t4, measures
