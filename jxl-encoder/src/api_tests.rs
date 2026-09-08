@@ -11589,6 +11589,32 @@ mod encode_preflight_sectioned {
 }
 
 mod encode_preflight_walkdown {
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn issue106_rejects_before_allocating_the_brochure_working_set() {
+        let limits = crate::api::Limits::new().with_max_memory_bytes(1_600_000_000);
+        for threads in [1, 4] {
+            let result = crate::api::encode_preflight(
+                2550,
+                3300,
+                3,
+                false,
+                false,
+                8,
+                threads,
+                false,
+                Some(&limits),
+            );
+            assert!(
+                matches!(result, Err(e) if matches!(e.error(), crate::api::EncodeError::LimitExceeded { .. }))
+            );
+            assert!(
+                crate::api::encode_preflight(2550, 3300, 3, false, false, 8, threads, false, None,)
+                    .is_ok()
+            );
+        }
+    }
+
     use crate::api::{Limits, encode_preflight};
     use crate::heuristics::estimate_encode_threaded;
 

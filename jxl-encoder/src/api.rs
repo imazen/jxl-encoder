@@ -9695,7 +9695,15 @@ pub(crate) fn encode_preflight_with_sectioned(
             effort,
             threads,
         )
-        .map(|e| e.peak_memory_bytes)
+        .map(|e| {
+            if cfg!(feature = "butteraugli-loop") && !is_lossless && effort >= 8 {
+                // #106: CPU comparison scratch is covered by the structural
+                // maximum, not the historical typical e7 working-set band.
+                e.peak_memory_bytes_max
+            } else {
+                e.peak_memory_bytes
+            }
+        })
         .ok_or_else(overflow)
     };
 

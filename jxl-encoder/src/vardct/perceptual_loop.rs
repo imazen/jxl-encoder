@@ -1052,25 +1052,6 @@ impl VarDctEncoder {
                     // matching DisplayConfig.
                     target_display: self.target_display,
                 };
-                // Issue #93: reserve the CPU butteraugli reference precompute
-                // on the budget BEFORE constructing it, so an over-cap encode
-                // fails with a graceful `EncodeError` instead of OOM-killing
-                // the host. Scoped to the CpuButteraugliBackend — the only
-                // backend that builds this host-side multi-res pyramid (GPU
-                // butteraugli keeps it on the device; cvvdp/zensim have their
-                // own profiles). The guard is held in the function-scoped
-                // `_butteraugli_precompute_guard` so the reservation persists
-                // for the reference's whole lifetime (the entire seed loop).
-                if metric == PerceptualMetric::Butteraugli && device == PerceptualDevice::Cpu {
-                    let precompute_bytes =
-                        butteraugli::ButteraugliReference::estimated_reference_bytes(
-                            width,
-                            height,
-                            &butteraugli_params,
-                        );
-                    _butteraugli_precompute_guard =
-                        Some(MemoryBudget::reserve_opt(budget, precompute_bytes as u64)?);
-                }
                 let mut b = super::perceptual_backend::construct_backend(
                     width as u32,
                     height as u32,
@@ -1078,6 +1059,19 @@ impl VarDctEncoder {
                     metric_intensity_target,
                     selection,
                 );
+                // #106: select the actual backend first so CPU fallback and
+                // GPU's optional CPU shadow cannot evade this reservation.
+                // Reserve construction + comparison scratch + retained pool,
+                // not just the reference pyramid; hold it through all seeds.
+                let peak = b.cpu_butteraugli_peak_bytes(width, height).ok_or(
+                    crate::error::Error::DimensionOverflow {
+                        width,
+                        height,
+                        channels: 3,
+                    },
+                )?;
+                _butteraugli_precompute_guard =
+                    Some(MemoryBudget::reserve_opt(budget, peak as u64)?);
                 // Build the planar reference transiently for the one-shot
                 // precompute, then drop it: the backend caches its own
                 // internal copy, so holding these ~144 MB (at 12 MP) for

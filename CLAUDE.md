@@ -903,7 +903,7 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### ACTIVE 2026-09-08: e8 process peaks exceed the admission model on real documents (#106)
+### RESOLVED 2026-09-08: CPU Butteraugli comparison scratch evaded memory admission (#106)
 
 **[PROVEN]** The pinned-clean 2550×3300 brochure, d4/e8/t4, measures
 2,642,804,736 bytes maximum resident set size with macOS `/usr/bin/time -l`.
@@ -928,10 +928,20 @@ and other encoder allocations also contribute. Do not label the delta a leak.
 to the default-cap cell and renders in both decoders. The cap is not a process
 RSS ceiling. This test does not distinguish live heap from retained pages.
 
-**Next:** bound reference construction and comparison scratch before allocation,
-then revalidate admission over size/quality/content/mode axes. Extending the
-butteraugli API is pending the owner's explicit cross-repository/API approval. Do not raise a guessed B/px constant from these
-two sources or claim a production concurrency budget from the current grid.
+**Fix verified on the explicit-cap reproduction:** owner-approved Butteraugli API `eab74f26` provides
+`estimated_planar_peak_bytes`: reference + scratch + idle pool, including
+concurrent scales and oversized recycled capacities. Backend selection now
+precedes the reservation so CPU fallback/shadow paths participate. The maximum estimate adds structural scratch to the historical typical band;
+e8+ admission uses that maximum. The typical estimate remains historical.
+This remains an allocation estimate, not an operating-system RSS limit.
+Do not claim a production concurrency budget from the two-source grid. The 1.6 GB
+case now rejects before encoder allocation (27,475,968 bytes process peak).
+The default-cap encode remains byte-identical, renders in both decoders, and
+measures 2,842,066,944 bytes RSS, below the 3,189,646,336-byte maximum estimate.
+The historical typical estimate remains an underprediction on this input;
+admission no longer uses it for CPU-loop-capable efforts.
+Evidence: `benchmarks/production_memory_fix_2026-09-08.json`.
+
 
 
 ### RESOLVED 2026-09-08: parallel-only tuning build had unused tree-learning helpers

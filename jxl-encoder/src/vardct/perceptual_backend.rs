@@ -480,6 +480,12 @@ pub(crate) trait PerceptualBackend: core::fmt::Debug {
     #[allow(dead_code)]
     fn name(&self) -> &'static str;
 
+    /// CPU Butteraugli storage, resolved after fallback selection and before
+    /// reference construction. Other metric backends account separately.
+    fn cpu_butteraugli_peak_bytes(&self, _width: usize, _height: usize) -> Option<usize> {
+        Some(0)
+    }
+
     /// Cache the reference image. After this returns `Ok(())`,
     /// [`Self::compare_with_reference`] can be called any number of times
     /// with distorted images of the same dimensions.
@@ -589,6 +595,10 @@ impl CpuButteraugliBackend {
 
 #[cfg(feature = "butteraugli-loop")]
 impl PerceptualBackend for CpuButteraugliBackend {
+    fn cpu_butteraugli_peak_bytes(&self, width: usize, height: usize) -> Option<usize> {
+        butteraugli::ButteraugliReference::estimated_planar_peak_bytes(width, height, &self.params)
+    }
+
     fn name(&self) -> &'static str {
         "cpu"
     }
@@ -1000,6 +1010,12 @@ pub(crate) mod gpu {
     }
 
     impl PerceptualBackend for GpuButteraugliBackend {
+        fn cpu_butteraugli_peak_bytes(&self, width: usize, height: usize) -> Option<usize> {
+            self.cpu_shadow.as_ref().map_or(Some(0), |shadow| {
+                shadow.cpu_butteraugli_peak_bytes(width, height)
+            })
+        }
+
         fn name(&self) -> &'static str {
             if self.forced_to_cpu {
                 "gpu-cuda-fallback-cpu"
@@ -1788,6 +1804,23 @@ pub(crate) fn construct_backend(
 
 #[cfg(all(test, feature = "butteraugli-loop"))]
 mod tests {
+
+    #[test]
+    fn cpu_peak_reservation_includes_comparison_scratch() {
+        let params = butteraugli::ButteraugliParams::default();
+        let backend = super::CpuButteraugliBackend::new(params.clone());
+        let backend: &dyn super::PerceptualBackend = &backend;
+        let peak = backend.cpu_butteraugli_peak_bytes(513, 259).unwrap();
+        assert_eq!(
+            peak,
+            butteraugli::ButteraugliReference::estimated_planar_peak_bytes(513, 259, &params)
+                .unwrap()
+        );
+        assert!(
+            peak > butteraugli::ButteraugliReference::estimated_reference_bytes(513, 259, &params)
+        );
+        assert_eq!(backend.cpu_butteraugli_peak_bytes(usize::MAX, 8), None);
+    }
     use super::*;
 
     /// The recovered timing experiment belongs in the existing opt-in profiler.

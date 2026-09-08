@@ -352,13 +352,38 @@ pub fn estimate_encode(
         bpp += LOSSLESS_BPP_ALPHA;
     }
     let working = (pixels as f64 * bpp) as u64;
+    // #106: the e7 measured band does not cover an e8+ CPU perceptual
+    // comparison's scratch. Add the dependency's structural peak reservation
+    // beyond its persistent reference (already present in the old band).
+    // This dimension/effort API cannot see metric/HDR opt-outs, so it reserves
+    // the CPU path conservatively whenever the loop can run.
+    #[cfg(feature = "butteraugli-loop")]
+    let perceptual_scratch = if !is_lossless && effort >= 8 && width >= 8 && height >= 8 {
+        let params = butteraugli::ButteraugliParams::default();
+        let peak = butteraugli::ButteraugliReference::estimated_planar_peak_bytes(
+            width as usize,
+            height as usize,
+            &params,
+        )?;
+        let reference = butteraugli::ButteraugliReference::estimated_reference_bytes(
+            width as usize,
+            height as usize,
+            &params,
+        );
+        u64::try_from(peak.checked_sub(reference)?).ok()?
+    } else {
+        0
+    };
+    #[cfg(not(feature = "butteraugli-loop"))]
+    let perceptual_scratch = 0;
     let typical = fixed.checked_add(input)?.checked_add(working)?;
 
     // Multipliers apply to the content-dependent working set, not the
     // deterministic fixed + input terms.
     let base = fixed + input;
     let min = base + (working as f64 * MULT_MIN) as u64;
-    let max = base + (working as f64 * MULT_MAX) as u64;
+    let max =
+        (base + (working as f64 * MULT_MAX) as u64).max(typical.checked_add(perceptual_scratch)?);
 
     let time_ms = (pixels as f64 * encode_us_per_px(is_lossless, effort) / 1_000.0) as f32;
     // Coarse output estimate: lossless ~0.5× input; lossy scales loosely.
@@ -715,6 +740,16 @@ pub(crate) fn estimate_encode_sectioned(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn issue106_e8_comparison_scratch_exceeds_explicit_cap() {
+        let e8 = super::estimate_encode_threaded(2550, 3300, 3, false, false, 8, 4).unwrap();
+        let e7 = super::estimate_encode_threaded(2550, 3300, 3, false, false, 7, 4).unwrap();
+        assert!(e8.peak_memory_bytes_max > 1_600_000_000);
+        assert!(e7.peak_memory_bytes < 1_600_000_000);
+        assert!(e8.peak_memory_bytes_max < crate::api::Limits::default_max_memory_bytes(false));
+    }
+
     use super::*;
 
     /// 12 MP estimates must SAFELY cover the measured marginal working set

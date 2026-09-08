@@ -320,6 +320,12 @@ release-semver *args:
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo semver-checks -p jxl-encoder --only-explicit-features --features std,parallel,butteraugli-loop {{args}}
 
 # macOS process RSS; keep encoded bytes and full time output per cell.
+production-clippy manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" --workspace --all-targets -- -D warnings
+
+resource-build manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo build --locked --manifest-path "{{manifest}}" -p jxl-encoder --release --features std,parallel --example mem_grid_probe
+
 resource-cell input mode effort threads output budget="default":
     mkdir -p "{{output}}"
     MEM_PROBE_OUT="{{output}}/encoded.jxl" nice -n 19 /usr/bin/time -l target/release/examples/mem_grid_probe "{{input}}" {{mode}} {{effort}} 4 {{threads}} {{budget}} > "{{output}}/encode.log" 2>&1

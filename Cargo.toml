@@ -89,11 +89,9 @@ zenjpeg = { path = "../zenjpeg/zenjpeg" }
 # so the gate exercises the in-tree decoder, not a published snapshot. Not a
 # normal dependency — published jxl-encoder does not depend on it.
 zenjxl-decoder = { path = "../zenjxl-decoder/zenjxl-decoder" }
-# Use local butteraugli workspace (not crates.io 0.9.2) so the buttloop +
-# Lock-Zenjxl regression-gate consume the latest unpublished fixes. Per user
-# direction 2026-05-23: "we should be using the local butteraugli and
-# butteraugli-gpu not cratesio".
-butteraugli = { path = "../../butteraugli/butteraugli" }
+# Pin the approved pre-allocation accounting API while 0.9.4 is unreleased.
+# A git revision also prevents unrelated local sibling WIP changing the build.
+butteraugli = { git = "https://github.com/imazen/butteraugli", rev = "eab74f266fafbe3bdfe953c946af6c77bf1a8462" }
 # W44-phase3-B1: GPU butteraugli backend lives in the zenmetrics workspace
 # at `crates/butteraugli-gpu`. `publish = false` so always path-pinned;
 # pulled in via the `gpu-butteraugli` cargo feature in `jxl-encoder/Cargo.toml`.

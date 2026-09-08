@@ -641,3 +641,15 @@ For chunks that DON'T change any divergence: no action required.
 - Cardinal rule: `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/cardinal_rule_leave_nothing_unported_2026-05-19.md`
 - Anti-rule: `~/.claude/projects/-home-lilith-work-zen-jxl-encoder/memory/fd_residual_not_fma_precision_2026-05-19.md`
 - libjxl source root: `~/work/jxl-efforts/libjxl/lib/jxl/`
+
+### Resource admission: CPU perceptual scratch (#106, 2026-09-08)
+
+`heuristics::estimate_encode` raises its maximum to cover the typical e7 band
+plus Butteraugli's structural planar peak minus its persistent reference when `!is_lossless && effort >= 8`
+and `butteraugli-loop` is compiled. This dimension/effort API conservatively
+covers the CPU loop even when a caller later disables it. The runtime guard
+uses the selected backend's requirement, including CPU fallback and GPU shadow,
+before building a reference. No quantization or bitstream decision changes.
+This is encoder-side budget policy; no libjxl algorithm or gate is replaced.
+The 25-scratch-planes-per-scale count and pool/padding rules live in Butteraugli
+`eab74f26`; they are source-derived allocation bounds, not fitted RD constants.

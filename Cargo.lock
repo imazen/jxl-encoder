@@ -548,6 +548,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "butteraugli"
 version = "0.9.4"
+source = "git+https://github.com/imazen/butteraugli?rev=eab74f266fafbe3bdfe953c946af6c77bf1a8462#eab74f266fafbe3bdfe953c946af6c77bf1a8462"
 dependencies = [
  "archmage",
  "enough",
