@@ -1,6 +1,6 @@
 name: Clone sibling path-dep repos
 description: >
-  Clone the sibling repos that the workspace Cargo.toml (and the workspaces it
+  Clone the exact sibling revisions in .github/sibling-revisions.tsv that the workspace Cargo.toml (and the workspaces it
   path-references, transitively) need on disk. Cargo refuses to even parse the
   workspace manifest unless every path-dep manifest can be loaded — true even
   for --lib builds, `cargo fmt --check`, and `cargo clippy`. Worse, loading any
@@ -53,13 +53,35 @@ runs:
         #   grandparent = repos referenced as ../../X (butteraugli, dssim)
         parent="$(dirname "$GITHUB_WORKSPACE")"
         grandparent="$(dirname "$parent")"
+        revision_file="$GITHUB_WORKSPACE/.github/sibling-revisions.tsv"
         clone_if_missing() {
-          local url="$1" dst="$2"
+          local url="$1" dst="$2" repository revision actual
+          repository="${url#https://github.com/}"
+          revision=$(awk -F '\t' -v repo="$repository" '$1 == repo { print $2 }' "$revision_file")
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Missing or ambiguous revision pin for $repository" >&2
+            exit 1
+          fi
           if [ -d "$dst/.git" ]; then
-            echo "Already present: $dst"
+            actual=$(git -C "$dst" rev-parse HEAD)
+            if [[ "$actual" != "$revision" ]]; then
+              echo "$repository is at $actual, expected $revision; refusing to rewrite an existing checkout" >&2
+              exit 1
+            fi
+            echo "Verified existing $repository at $revision"
             return 0
           fi
-          git clone --depth 1 "$url" "$dst"
+          if [ -e "$dst" ]; then
+            echo "Refusing to replace existing directory $dst" >&2
+            exit 1
+          fi
+          git init -q "$dst"
+          git -C "$dst" remote add origin "$url"
+          git -C "$dst" fetch --depth 1 origin "$revision"
+          git -C "$dst" switch --detach FETCH_HEAD
+          actual=$(git -C "$dst" rev-parse HEAD)
+          [[ "$actual" == "$revision" ]]
+          echo "Verified $repository at $actual"
         }
         # Direct path deps of this workspace
         clone_if_missing https://github.com/imazen/zenjpeg       "$parent/zenjpeg"

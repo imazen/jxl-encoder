@@ -7,6 +7,20 @@ owner publishes. Supersedes the per-item claims in
 `RELEASE_DEP_AUDIT.md` (2026-06) where they conflict; the numbers here
 are from executed probes on 2026-08-29 (see "Evidence").
 
+## September 8 validation in progress
+
+CI sibling sources are pinned in
+[.github/sibling-revisions.tsv](../.github/sibling-revisions.tsv). The clone
+step fetches those exact commits and rejects an existing checkout at another
+revision. This pins the source closure; it does not replace a dependency
+lockfile or prove a registry consumer can resolve the package.
+
+The crates.io API was checked again on 2026-09-08: the published versions in
+section 3 remain unchanged. The four GPU/CVVDP dependencies remain unpublished,
+and `jxl-encoder-macros` still has no registry release. No tag, GitHub release,
+or crate publication was made during this validation. The remaining consumer
+and release gates below still apply.
+
 ## 1. What 0.4.0 is
 
 The deliberate public-surface narrowing tracked in #76, folding in the
