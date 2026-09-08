@@ -31,6 +31,9 @@
 //! row-major little-endian f32 pixels), plus max and p1/p2/p3/p6 norms.
 //! Per-run TSV and metadata record the source hash and build commit.
 //! Every cell fully decodes through jxl-rs, djxl v0.12, and jxl-oxide.
+//! `TARGETING_POLICY` selects `default`, `libjxl`, `legacy` (explicit old
+//! seed lifts and iteration skip), or `unlifted` (both seed lifts and both
+//! adaptive iteration flags disabled; other Zenjxl choices retained).
 //! `ITERS` optionally overrides the existing quant-loop iteration setting.
 //!
 //! Reproducer (sets compile-time source provenance and the local djxl path):
@@ -47,7 +50,10 @@ mod decode;
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
-use jxl_encoder::api::{Limits, LossyConfig, PixelLayout};
+use jxl_encoder::api::{
+    AdaptiveQuantQfSeedPolicy, ButtloopQfSeedPolicy, EncoderImprovementsCustom, EncoderStrategy,
+    Limits, LossyConfig, PixelLayout,
+};
 use rgb::RGB;
 
 fn srgb_to_linear_f32(s: u8) -> f32 {
@@ -78,6 +84,31 @@ fn main() {
         None => {
             eprintln!("build via just distance-targeting-probe to record source provenance");
             std::process::exit(2);
+        }
+    };
+    let targeting_policy = std::env::var("TARGETING_POLICY").unwrap_or_else(|_| "default".into());
+    let strategy = match targeting_policy.as_str() {
+        "default" => EncoderStrategy::Zenjxl,
+        "libjxl" => EncoderStrategy::Libjxl,
+        "legacy" | "unlifted" => {
+            let legacy = targeting_policy == "legacy";
+            let mut custom = EncoderImprovementsCustom::default();
+            custom.buttloop_qf_seed = if legacy {
+                ButtloopQfSeedPolicy::AutoScale4
+            } else {
+                ButtloopQfSeedPolicy::Off
+            };
+            custom.adaptive_quant_qf_seed = if legacy {
+                AdaptiveQuantQfSeedPolicy::AutoScalePerEffort
+            } else {
+                AdaptiveQuantQfSeedPolicy::Off
+            };
+            custom.adaptive_buttloop_iters = legacy;
+            custom.adaptive_buttloop_iters_narrow = legacy;
+            EncoderStrategy::Custom(Box::new(custom))
+        }
+        other => {
+            panic!("unknown TARGETING_POLICY {other:?}; use default, legacy, unlifted or libjxl")
         }
     };
     let iters: Option<u32> = std::env::var("ITERS")
@@ -160,7 +191,7 @@ fn main() {
         .as_nanos();
     let stem = artifacts.join(format!("{source_hash}-{run_id}"));
     std::fs::write(stem.with_extension("meta"), format!(
-        "build_commit\t{build_commit}\nsource\t{path:?}\nsource_rgb8_sha256\t{source_hash}\nwidth\t{w}\nheight\t{h}\nresampling\t{resampling}\niters\t{iters:?}\nforced_strategy\t{forced_strategy:?}\nepf\t{epf:?}\ngaborish\t{gaborish:?}\npatches\t{patches:?}\nbuttloop_scale\t{:?}\nadaptive_scale\t{:?}\nepf_seed_disable\t{:?}\nepf_per_iter\t{:?}\n",
+        "build_commit\t{build_commit}\nsource\t{path:?}\nsource_rgb8_sha256\t{source_hash}\nwidth\t{w}\nheight\t{h}\nresampling\t{resampling}\ntargeting_policy\t{targeting_policy}\niters\t{iters:?}\nforced_strategy\t{forced_strategy:?}\nepf\t{epf:?}\ngaborish\t{gaborish:?}\npatches\t{patches:?}\nbuttloop_scale\t{:?}\nadaptive_scale\t{:?}\nepf_seed_disable\t{:?}\nepf_per_iter\t{:?}\n",
         std::env::var("JXL_BUTTLOOP_INITIAL_QF_SCALE").ok(),
         std::env::var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE").ok(),
         std::env::var("JXL_W44_117_DISABLE").ok(),
@@ -177,6 +208,7 @@ fn main() {
     for &e in &efforts {
         for &d in &distances {
             let mut config = LossyConfig::new(d)
+                .with_strategy(strategy.clone())
                 .with_effort(e)
                 .with_resampling(resampling);
             if let Some(patches) = patches {

@@ -25,6 +25,8 @@ def main():
     parser.add_argument("--off-distances", default="0.75,1,1.25,1.5,2,2.5,3,3.4,3.6,4,5,6,8")
     parser.add_argument("--crop", type=int, default=1024)
     parser.add_argument("--iters", type=int)
+    parser.add_argument("--on-policy", choices=["default", "legacy", "unlifted", "libjxl"], default="default")
+    parser.add_argument("--off-policy", choices=["default", "legacy", "unlifted", "libjxl"], default="default")
     args = parser.parse_args()
     with args.manifest.open() as source:
         images = list(csv.DictReader(source, delimiter="\t"))
@@ -44,6 +46,7 @@ def main():
                 print(f"{image['image']} {image['class']} lift={mode}", flush=True)
                 env = dict(os.environ, IMG=image["path"], CROP=str(args.crop),
                            EFFORTS=args.efforts, ARTIFACT_DIR=str(args.artifacts),
+                           TARGETING_POLICY=args.on_policy if mode == "on" else args.off_policy,
                            DJXL_PATH=str(args.djxl.resolve()), RAYON_NUM_THREADS="4",
                            DISTANCES=args.distances if mode == "on" else args.off_distances)
                 for key in ["JXL_BUTTLOOP_INITIAL_QF_SCALE", "JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE"]:
@@ -61,7 +64,7 @@ def main():
                         reader = csv.DictReader(run.stdout, delimiter="\t")
                         count = 0
                         for row in reader:
-                            row = dict(image=image["image"], **{"class": image["class"]}, mode=mode, **row)
+                            row = dict(image=image["image"], **{"class": image["class"]}, mode=mode, policy=env["TARGETING_POLICY"], **row)
                             if writer is None:
                                 writer = csv.DictWriter(output, fieldnames=list(row), delimiter="\t",
                                                         lineterminator="\n")
