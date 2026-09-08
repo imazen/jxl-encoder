@@ -903,6 +903,30 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-09-08: streaming input allocated before limits could attach
+
+[PROVEN] The lossy constructor reserved whole-image RGB/alpha vectors and the
+lossless constructor allocated modular channels before `with_limits` could be
+called. The new `api::tests::streaming_admission_before_input_allocation` test
+fails on the pre-fix constructor (741 f32 slots allocated for a 19×13 input).
+
+Both constructors now defer image storage until the first valid nonempty row
+push. That push checks the configuration, request dimension/iteration limits,
+and the same path/effort/thread-aware memory preflight used by `finish`.
+Changing limits invalidates admission; the next push and `finish` recheck them.
+Already accepted buffers are retained when a caller tightens limits later.
+Lossless channel allocation now also honors the caller's fallible-allocation
+policy. No public signatures, encoding gates, or numeric thresholds changed.
+
+Validation: 42 streaming unit tests pass; the complete encoder all-target suite
+and workspace all-target clippy pass. Tests cover single/multi-group shapes,
+rejection before allocation, a billion-pixel shape without allocating its
+planes, retry with raised limits, and limits changed after input was accepted.
+The existing oversized streaming integration tests now require rejection on
+the first push, rather than after the buffers were filled. No hash lock moved.
+
+
+
 ### RESOLVED 2026-09-08: one-shot input canonicalization consumes its setter (#104)
 
 `LossyConfig::with_canonicalize_input(true)` now calls zenpixels-convert's

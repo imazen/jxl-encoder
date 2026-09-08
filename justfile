@@ -294,3 +294,7 @@ canonicalization-test:
 
 canonicalization-check:
     nice -n 19 cargo clippy --workspace --all-targets -j 4 -- -D warnings
+
+# Admission is checked before streaming image planes exist; no corpus needed.
+streaming-admission-test *args:
+    TMPDIR="$HOME/tmp" nice -n 19 cargo test -p jxl-encoder -j 4 --lib streaming_ {{args}}
