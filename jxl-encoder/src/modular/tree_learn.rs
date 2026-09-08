@@ -6849,11 +6849,19 @@ struct PropOutcome {
 /// Whether the MAB split-dump diagnostic sink is active (its per-prop
 /// record order assumes sequential evaluation — the parallel path is
 /// gated off while it runs).
-#[cfg(all(feature = "parallel", feature = "__env_var_diagnostics"))]
+#[cfg(all(
+    feature = "parallel",
+    feature = "parallel-tree-learning",
+    feature = "__env_var_diagnostics"
+))]
 fn mab_sink_active() -> bool {
     mabsplit_dump::sink().is_some()
 }
-#[cfg(all(feature = "parallel", not(feature = "__env_var_diagnostics")))]
+#[cfg(all(
+    feature = "parallel",
+    feature = "parallel-tree-learning",
+    not(feature = "__env_var_diagnostics")
+))]
 fn mab_sink_active() -> bool {
     false
 }
@@ -7258,11 +7266,11 @@ fn eval_split_prop_borrowed(
 /// Minimum node rows before [`find_best_split_borrowed`] fans PROPERTIES
 /// across the pool. Only root-scale nodes qualify; the transient cost is
 /// up to [`FBS_PROP_WAVE`] pooled workspaces for the call's duration.
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", feature = "parallel-tree-learning"))]
 const FBS_PROP_PAR_MIN_ROWS: usize = 1 << 18;
 /// Concurrent-property bound for the parallel dispatch (bounds pooled
 /// workspace memory, not correctness).
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", feature = "parallel-tree-learning"))]
 const FBS_PROP_WAVE: usize = 4;
 
 /// Borrowed-view counterpart to [`find_best_split`]. Operates on the live
@@ -7847,7 +7855,7 @@ fn stable_gather_partition_borrowed(
 
 /// Minimum node rows before the stable-gather partition fans columns
 /// across the pool (per-worker scratch via for_each_init).
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", feature = "parallel-tree-learning"))]
 const GATHER_PARTITION_PAR_MIN_ROWS: usize = 1 << 20;
 
 /// Hoare-style in-place partition over a [`BorrowedSamples`]. Mirrors
@@ -9094,7 +9102,7 @@ const ACCUM_4WAY_MIN_RUN: usize = 256;
 /// Minimum node rows before `find_best_split_borrowed`'s per-bucket
 /// accumulation fans buckets across the rayon pool (disjoint output
 /// slices — bit-identical; below this the spawn overhead loses).
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", feature = "parallel-tree-learning"))]
 const FBS_ACCUM_PAR_MIN_ROWS: usize = 1 << 16;
 
 /// Builds a node's [`NodeTensor`] from its sample rows `[start..end)`.

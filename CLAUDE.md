@@ -903,6 +903,15 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-09-08: parallel-only tuning build had unused tree-learning helpers
+
+The MAB sink predicate and four parallel split/gather constants were compiled
+with `parallel` although every consumer also requires `parallel-tree-learning`.
+Their cfg conditions now match those consumers. Values and runtime choices are
+unchanged. Clippy with `tuning-override,parallel` and workspace all-targets
+clippy both pass; this was a build-permutation gap, not an encoding change.
+
+
 ### RESOLVED 2026-09-08: streaming omitted content analysis and changed real-image output
 
 The new seeded streaming fuzz target stops on an unmutated codec_wiki center
