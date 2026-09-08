@@ -808,13 +808,13 @@ fn test_w44_167_find_best_32_per_m3_lift_default_per_strategy() {
 fn test_w44_168_adaptive_buttloop_iters_default_per_strategy() {
     let zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
     assert!(
-        zenjxl.adaptive_buttloop_iters,
-        "Zenjxl must enable W44-168 adaptive buttloop iters"
+        !zenjxl.adaptive_buttloop_iters,
+        "Preset preserves reference effort iteration counts"
     );
     let aggressive = EncoderStrategy::Aggressive.resolve(&StrategyOverrides::default());
     assert!(
-        aggressive.adaptive_buttloop_iters,
-        "Aggressive must enable W44-168 adaptive buttloop iters"
+        !aggressive.adaptive_buttloop_iters,
+        "Preset preserves reference effort iteration counts"
     );
     let libjxl = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
     assert!(
@@ -829,14 +829,14 @@ fn test_w44_168_adaptive_buttloop_iters_default_per_strategy() {
     // Custom inherits whatever the user set on EncoderImprovementsCustom.
     let mut custom = EncoderImprovementsCustom::default();
     assert!(
-        custom.adaptive_buttloop_iters,
+        !custom.adaptive_buttloop_iters,
         "EncoderImprovementsCustom::default() matches Zenjxl"
     );
-    custom.adaptive_buttloop_iters = false;
+    custom.adaptive_buttloop_iters = true;
     let resolved = EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
     assert!(
-        !resolved.adaptive_buttloop_iters,
-        "Custom with field set false must propagate"
+        resolved.adaptive_buttloop_iters,
+        "Custom opt-in must propagate"
     );
 }
 
@@ -846,13 +846,13 @@ fn test_w44_168_adaptive_buttloop_iters_default_per_strategy() {
 fn test_w44_169_adaptive_buttloop_iters_narrow_default_per_strategy() {
     let zenjxl = EncoderStrategy::Zenjxl.resolve(&StrategyOverrides::default());
     assert!(
-        zenjxl.adaptive_buttloop_iters_narrow,
-        "Zenjxl must enable W44-169 narrow SmoothSkip (production SHIPPED)"
+        !zenjxl.adaptive_buttloop_iters_narrow,
+        "Preset preserves reference effort iteration counts"
     );
     let aggressive = EncoderStrategy::Aggressive.resolve(&StrategyOverrides::default());
     assert!(
-        aggressive.adaptive_buttloop_iters_narrow,
-        "Aggressive must enable W44-169 narrow SmoothSkip"
+        !aggressive.adaptive_buttloop_iters_narrow,
+        "Preset preserves reference effort iteration counts"
     );
     let libjxl = EncoderStrategy::Libjxl.resolve(&StrategyOverrides::default());
     assert!(
@@ -866,14 +866,14 @@ fn test_w44_169_adaptive_buttloop_iters_narrow_default_per_strategy() {
     );
     let mut custom = EncoderImprovementsCustom::default();
     assert!(
-        custom.adaptive_buttloop_iters_narrow,
+        !custom.adaptive_buttloop_iters_narrow,
         "EncoderImprovementsCustom::default() matches Zenjxl"
     );
-    custom.adaptive_buttloop_iters_narrow = false;
+    custom.adaptive_buttloop_iters_narrow = true;
     let resolved = EncoderStrategy::Custom(Box::new(custom)).resolve(&StrategyOverrides::default());
     assert!(
-        !resolved.adaptive_buttloop_iters_narrow,
-        "Custom with field set false must propagate"
+        resolved.adaptive_buttloop_iters_narrow,
+        "Custom opt-in must propagate"
     );
 }
 

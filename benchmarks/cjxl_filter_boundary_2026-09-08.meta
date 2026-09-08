@@ -1,0 +1,21 @@
+build_commit	a7cf6d8d4f06674559a755d5be9aac75acca342b
+source	"/Users/lilith/work/zen/imazen-26/png-v3/7000-lilith-plots/aliased-polygons/7026_plots_line-00081-s68404bb1_1024x1024.sdr.png"
+source_rgb8_sha256	de19dae6eb452b620c783810920fa833dda2b9c893ebc0f16c186abdd2c8921d
+width	1024
+height	1024
+resampling	1
+targeting_policy	cjxl
+iters	None
+forced_strategy	None
+epf	None
+gaborish	None
+patches	None
+buttloop_scale	None
+adaptive_scale	None
+epf_seed_disable	None
+epf_per_iter	None
+
+reference	cjxl v0.12 (helper-enforced)
+command	CROP=1024 EFFORTS=5,7,8 DISTANCES=0.35,0.5,0.6,0.7,0.75,1 TARGETING_POLICY=cjxl just distance-targeting-probe
+artifacts	/Users/lilith/tmp/jxl103/cjxl-filter-boundary-2026-09-08
+timing_scope	cjxl process wall includes startup, PNG read and JXL write; do not compare directly to Rust API encode_ms

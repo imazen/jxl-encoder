@@ -17,12 +17,9 @@
 use image::GenericImageView;
 use jxl_encoder::api::EncoderStrategy;
 use jxl_encoder::{LossyConfig, PixelLayout};
-use std::path::PathBuf;
-
-const CID22: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
 
 fn load_image(name: &str) -> (u32, u32, Vec<u8>) {
-    let path = PathBuf::from(CID22).join(name);
+    let path = crate::corpus_file(&format!("CID22/CID22-512/validation/{name}"));
     let img = image::open(&path).expect("decode png");
     let (w, h) = img.dimensions();
     let rgb = img.to_rgb8().into_raw();
@@ -41,7 +38,9 @@ fn encode_with_env(
     let prev = std::env::var("JXL_W44_167_MODE").ok();
     // SAFETY: tests are single-threaded; we save+restore.
     match mode_env {
+        // SAFETY: every caller holds crate::env_serial() across this helper.
         Some(v) => unsafe { std::env::set_var("JXL_W44_167_MODE", v) },
+        // SAFETY: every caller holds crate::env_serial() across this helper.
         None => unsafe { std::env::remove_var("JXL_W44_167_MODE") },
     }
     let cfg = LossyConfig::new(d)
@@ -50,7 +49,9 @@ fn encode_with_env(
         .with_strategy(strategy);
     let bytes = cfg.encode(rgb, w, h, PixelLayout::Rgb8).expect("encode ok");
     match prev {
+        // SAFETY: every caller holds crate::env_serial() across this helper.
         Some(v) => unsafe { std::env::set_var("JXL_W44_167_MODE", v) },
+        // SAFETY: every caller holds crate::env_serial() across this helper.
         None => unsafe { std::env::remove_var("JXL_W44_167_MODE") },
     }
     bytes

@@ -1,0 +1,19 @@
+{
+  "objects": 7765,
+  "bytes": 11299945683,
+  "verified_content": [
+    {
+      "key": "jxl-encoder/issue103-unlifted-2026-09-08/artifacts/beb4bf2351e36bc40c56d26061a361ac93bdd61cf03cf22c74f4384a1433b160.jxl",
+      "sha256": "beb4bf2351e36bc40c56d26061a361ac93bdd61cf03cf22c74f4384a1433b160"
+    },
+    {
+      "key": "jxl-encoder/issue103-unlifted-2026-09-08/artifacts/597fba840d12aa33b5bceec8fb6d742858c736264616abab2511db946b3740b6.jxl",
+      "sha256": "597fba840d12aa33b5bceec8fb6d742858c736264616abab2511db946b3740b6"
+    },
+    {
+      "key": "jxl-encoder/issue103-unlifted-2026-09-08/artifacts/2176ab4070737412391ace92394ba360db6c67fb81f07882f8d60368c75186d3.jxl",
+      "sha256": "2176ab4070737412391ace92394ba360db6c67fb81f07882f8d60368c75186d3"
+    }
+  ],
+  "prefix": "s3://zen-tuning-ephemeral/jxl-encoder/issue103-unlifted-2026-09-08/artifacts/"
+}

@@ -94,6 +94,7 @@ use std::path::PathBuf;
 /// T4 (2026-08-31) added `header_all_default_fast_paths` Section D gate → 35.
 /// T4 (2026-08-31) added `dc_adaptive_smoothing` Section D gate → 36.
 /// T4 (2026-08-31) added `x_qm_scale_from_original_distance` Section D gate → 37.
+// #103 changes four preset defaults; no gate was added or removed.
 const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 38;
 
 fn divergence_table_path() -> PathBuf {

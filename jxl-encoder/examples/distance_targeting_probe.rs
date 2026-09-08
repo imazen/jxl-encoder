@@ -31,6 +31,11 @@
 //! row-major little-endian f32 pixels), plus max and p1/p2/p3/p6 norms.
 //! Per-run TSV and metadata record the source hash and build commit.
 //! Every cell fully decodes through jxl-rs, djxl v0.12, and jxl-oxide.
+//! `TARGETING_POLICY` selects `default`, `libjxl`, `legacy` (explicit old
+//! seed lifts and iteration skip), or `unlifted` (both seed lifts and both
+//! adaptive iteration flags disabled; other Zenjxl choices retained).
+//! `cjxl` runs the pinned C++ v0.12 encoder on the same normalized RGB8 input.
+//! Its encode_ms includes process startup and input/output I/O; Rust timings do not.
 //! `ITERS` optionally overrides the existing quant-loop iteration setting.
 //!
 //! Reproducer (sets compile-time source provenance and the local djxl path):
@@ -47,7 +52,10 @@ mod decode;
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
-use jxl_encoder::api::{Limits, LossyConfig, PixelLayout};
+use jxl_encoder::api::{
+    AdaptiveQuantQfSeedPolicy, ButtloopQfSeedPolicy, EncoderImprovementsCustom, EncoderStrategy,
+    Limits, LossyConfig, PixelLayout,
+};
 use rgb::RGB;
 
 fn srgb_to_linear_f32(s: u8) -> f32 {
@@ -78,6 +86,35 @@ fn main() {
         None => {
             eprintln!("build via just distance-targeting-probe to record source provenance");
             std::process::exit(2);
+        }
+    };
+    let targeting_policy = std::env::var("TARGETING_POLICY").unwrap_or_else(|_| "default".into());
+    let strategy = match targeting_policy.as_str() {
+        "default" => EncoderStrategy::Zenjxl,
+        "libjxl" | "cjxl" => EncoderStrategy::Libjxl,
+        "legacy" | "unlifted" => {
+            let legacy = targeting_policy == "legacy";
+            let custom = EncoderImprovementsCustom {
+                buttloop_qf_seed: if legacy {
+                    ButtloopQfSeedPolicy::AutoScale4
+                } else {
+                    ButtloopQfSeedPolicy::Off
+                },
+                adaptive_quant_qf_seed: if legacy {
+                    AdaptiveQuantQfSeedPolicy::AutoScalePerEffort
+                } else {
+                    AdaptiveQuantQfSeedPolicy::Off
+                },
+                adaptive_buttloop_iters: legacy,
+                adaptive_buttloop_iters_narrow: legacy,
+                ..EncoderImprovementsCustom::default()
+            };
+            EncoderStrategy::Custom(Box::new(custom))
+        }
+        other => {
+            panic!(
+                "unknown TARGETING_POLICY {other:?}; use default, legacy, unlifted, libjxl or cjxl"
+            )
         }
     };
     let iters: Option<u32> = std::env::var("ITERS")
@@ -160,12 +197,24 @@ fn main() {
         .as_nanos();
     let stem = artifacts.join(format!("{source_hash}-{run_id}"));
     std::fs::write(stem.with_extension("meta"), format!(
-        "build_commit\t{build_commit}\nsource\t{path:?}\nsource_rgb8_sha256\t{source_hash}\nwidth\t{w}\nheight\t{h}\nresampling\t{resampling}\niters\t{iters:?}\nforced_strategy\t{forced_strategy:?}\nepf\t{epf:?}\ngaborish\t{gaborish:?}\npatches\t{patches:?}\nbuttloop_scale\t{:?}\nadaptive_scale\t{:?}\nepf_seed_disable\t{:?}\nepf_per_iter\t{:?}\n",
+        "build_commit\t{build_commit}\nsource\t{path:?}\nsource_rgb8_sha256\t{source_hash}\nwidth\t{w}\nheight\t{h}\nresampling\t{resampling}\ntargeting_policy\t{targeting_policy}\niters\t{iters:?}\nforced_strategy\t{forced_strategy:?}\nepf\t{epf:?}\ngaborish\t{gaborish:?}\npatches\t{patches:?}\nbuttloop_scale\t{:?}\nadaptive_scale\t{:?}\nepf_seed_disable\t{:?}\nepf_per_iter\t{:?}\n",
         std::env::var("JXL_BUTTLOOP_INITIAL_QF_SCALE").ok(),
         std::env::var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE").ok(),
         std::env::var("JXL_W44_117_DISABLE").ok(),
         std::env::var("JXL_W44_118_PER_ITER_SHARPNESS").ok(),
     )).expect("persist run metadata");
+    let cjxl_input = if targeting_policy == "cjxl" {
+        assert!(
+            iters.is_none() && forced_strategy.is_none(),
+            "cjxl does not implement the Rust loop/strategy overrides"
+        );
+        let normalized = stem.with_extension("source.png");
+        image::save_buffer(&normalized, &rgb, w, h, image::ColorType::Rgb8)
+            .expect("persist normalized reference input");
+        Some((jxl_encoder::test_helpers::cjxl_path(), normalized))
+    } else {
+        None
+    };
     let mut records = std::fs::File::create(stem.with_extension("tsv")).expect("create run TSV");
     eprintln!(
         "# {path} {w}x{h}  qf_scale_env={:?}",
@@ -177,6 +226,7 @@ fn main() {
     for &e in &efforts {
         for &d in &distances {
             let mut config = LossyConfig::new(d)
+                .with_strategy(strategy.clone())
                 .with_effort(e)
                 .with_resampling(resampling);
             if let Some(patches) = patches {
@@ -204,11 +254,42 @@ fn main() {
                 __recon_hook::set_production_qf_capture_enabled(true);
             }
             let started = Instant::now();
-            let bytes = config
-                .encode_request(w, h, PixelLayout::Rgb8)
-                .with_limits(&lim)
-                .encode(&rgb)
-                .unwrap_or_else(|err| panic!("encode d={d} e={e}: {err:?}"));
+            let bytes = if let Some((cjxl, input)) = &cjxl_input {
+                let output = stem.with_extension(format!("e{e}-d{d}.cjxl"));
+                assert!(!output.exists(), "reference output must be new");
+                let mut command = std::process::Command::new(cjxl);
+                command.arg(input).arg(&output).args([
+                    format!("--effort={e}"),
+                    format!("--distance={d}"),
+                    format!("--resampling={resampling}"),
+                    "--num_threads=1".into(),
+                ]);
+                if let Some(value) = epf {
+                    command.arg(format!("--epf={value}"));
+                }
+                if let Some(value) = gaborish {
+                    command.arg(format!("--gaborish={}", u8::from(value)));
+                }
+                if let Some(value) = patches {
+                    command.arg(format!("--patches={}", u8::from(value)));
+                }
+                let result = command.output().expect("run cjxl v0.12");
+                let mut log = result.stdout;
+                log.extend_from_slice(&result.stderr);
+                std::fs::write(output.with_extension("cjxl.log"), &log).expect("persist cjxl log");
+                assert!(
+                    result.status.success(),
+                    "cjxl failed: {}",
+                    String::from_utf8_lossy(&log)
+                );
+                std::fs::read(output).expect("read fresh reference bitstream")
+            } else {
+                config
+                    .encode_request(w, h, PixelLayout::Rgb8)
+                    .with_limits(&lim)
+                    .encode(&rgb)
+                    .unwrap_or_else(|err| panic!("encode d={d} e={e}: {err:?}"))
+            };
             let encode_ms = started.elapsed().as_secs_f64() * 1000.0;
             let encoded_hash = sha256(&bytes);
             #[cfg(feature = "__internal_recon_hook")]

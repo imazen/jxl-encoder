@@ -592,8 +592,8 @@ pub enum SmoothPhotoDct64Policy {
 /// wire the env-var fallback).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ButtloopQfSeedPolicy {
-    /// **Default.** Auto-fire per the W44-105/107/108 gate at scale
-    /// `4.0`.
+    /// Legacy enum default: auto-fire per the W44-105/107/108 gate at
+    /// scale `4.0`. Strategy presets explicitly select [`Self::Off`].
     #[default]
     AutoScale4,
     /// Custom scale (replaces the 4.0 default but keeps the same gate
@@ -616,8 +616,9 @@ pub enum ButtloopQfSeedPolicy {
 /// `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum AdaptiveQuantQfSeedPolicy {
-    /// **Default.** Auto-fire on screenshot-class at e ∈ \[5, 7\] with
-    /// the per-effort scales (2.0 at e5/e6, 3.0 at e7).
+    /// Legacy enum default: auto-fire on screenshot-class at e ∈ \[5, 7\]
+    /// with scales 2.0 at e5/e6 and 3.0 at e7. Strategy presets select
+    /// [`Self::Off`].
     #[default]
     AutoScalePerEffort,
     /// Custom per-effort scales (replaces the 2.0/3.0 defaults but

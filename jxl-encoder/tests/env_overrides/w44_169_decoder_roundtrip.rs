@@ -17,12 +17,9 @@
 use image::GenericImageView;
 use jxl_encoder::api::{EncoderImprovementsCustom, EncoderStrategy};
 use jxl_encoder::{LossyConfig, PixelLayout};
-use std::path::PathBuf;
-
-const CID22: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
 
 fn load_image(name: &str) -> (u32, u32, Vec<u8>) {
-    let path = PathBuf::from(CID22).join(name);
+    let path = crate::corpus_file(&format!("CID22/CID22-512/validation/{name}"));
     let img = image::open(&path).expect("decode png");
     let (w, h) = img.dimensions();
     let rgb = img.to_rgb8().into_raw();
@@ -46,16 +43,18 @@ fn encode_with_field(
         .with_threads(2)
         .with_strategy(strategy);
     let bytes = cfg.encode(rgb, w, h, PixelLayout::Rgb8).expect("encode ok");
-    match prev {
-        Some(v) => unsafe { std::env::set_var("JXL_W44_168_MODE", v) },
-        None => {}
+    if let Some(v) = prev {
+        // SAFETY: every caller holds crate::env_serial() across this helper.
+        unsafe { std::env::set_var("JXL_W44_168_MODE", v) };
     }
     bytes
 }
 
 fn zenjxl_strategy(narrow: bool) -> EncoderStrategy {
-    let mut custom = EncoderImprovementsCustom::default();
-    custom.adaptive_buttloop_iters_narrow = narrow;
+    let custom = EncoderImprovementsCustom {
+        adaptive_buttloop_iters_narrow: narrow,
+        ..Default::default()
+    };
     EncoderStrategy::Custom(Box::new(custom))
 }
 
@@ -71,9 +70,8 @@ fn w44_169_libjxl_strategy_byte_identical_regardless_of_field() {
     // e8 d=4 sits in the W44-169 narrow band on a smooth photo —
     // would fire if Libjxl honored the field.
     let a = encode_with_field(&rgb, w, h, 8, 4.0, EncoderStrategy::Libjxl);
-    // Custom with EVERY Libjxl field but `adaptive_buttloop_iters_narrow=true`
-    // should also be byte-identical because Libjxl's resolve path
-    // overrides custom.
+    // Repeat the Libjxl encode. The preset's disabled field is independently
+    // asserted by test_w44_169_adaptive_buttloop_iters_narrow_default_per_strategy.
     let b = encode_with_field(&rgb, w, h, 8, 4.0, EncoderStrategy::Libjxl);
     assert_eq!(a, b, "Libjxl strategy must be byte-identical across runs");
 }

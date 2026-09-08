@@ -927,6 +927,26 @@ the first push, rather than after the buffers were filled. No hash lock moved.
 
 
 
+### RESOLVED investigation 2026-09-08: the low-distance line-art cliff also occurs in libjxl v0.12
+
+[PROVEN] On imazen-26 7026 at 1024², cjxl v0.12 effort 8 goes from
+71,368 B / Butteraugli 0.4742 at d=0.5 to 94,002 B / 0.6893 at d=0.6.
+Efforts 5 and 7 also increase bytes across this boundary. Our unlifted arm
+increases from 64,712 B / 0.5234 at d=0.5 to 85,317 B / 0.9226 at d=0.75;
+cjxl at d=0.75 is 86,730 B / 0.8719. These are fully decoded, identically
+scored normalized RGB inputs, not differing PNG metadata.
+
+The source gates agree: both enable Gaborish only above d=0.5, and use EPF
+thresholds 0.7, 1.5, 4.0. The reference reproduces the symptom; no wrong-pixel
+or porting defect was demonstrated. Do not impose universal byte monotonicity
+across this reference filter transition as a parity test. This is independent
+of the Zenjxl seed/iteration discontinuities at higher distances.
+Evidence: `benchmarks/cjxl_filter_boundary_2026-09-08.{tsv,meta}`; the
+`distance_targeting_probe` now supports a `cjxl` arm with pinned tools and the
+same source pixels, decoders, metrics and artifact persistence as the Rust arm.
+
+
+
 ### RESOLVED 2026-09-08: one-shot input canonicalization consumes its setter (#104)
 
 `LossyConfig::with_canonicalize_input(true)` now calls zenpixels-convert's
@@ -1238,11 +1258,39 @@ RGB8 and ignores it, which pinned one image's cjxl butteraugli at a constant
 stripped. Strip ICC before any cross-encoder comparison on this corpus.
 
 
-### ACTIVE 2026-09-06: the d>=3.5 screenshot qf-seed lift breaks distance targeting (and therefore monotonicity) on graphics/document content
+### RESOLVED default policy 2026-09-08: screenshot seed lifts displaced requested distance (#103)
 
-**Status**: [PROVEN] mechanism + prevalence measured; NO fix applied (the gate
-is calibrated W44-105/107/108 territory and a blanket main-band exclude was
-already REFUTED on RD grounds in task #13 — see "Perceptual loop" constraints).
+**Current policy:** all four named presets disable `buttloop_qf_seed`,
+`adaptive_quant_qf_seed`, `adaptive_buttloop_iters` and
+`adaptive_buttloop_iters_narrow`. Custom policies retain all four experiments.
+Their constants and content predicates are unchanged. Environment shims only
+apply to explicitly selected legacy seed policies; they cannot re-enable a
+named preset's `Off` policy. The enum-level `Default` remains legacy-compatible
+because the macro uses it to identify env-fallback eligibility; do not change
+that default without testing Libjxl isolation.
+
+**Measured:** 4,536 full three-decoder cells (nine sources, four crop caps,
+efforts 5/7/8, 21 distances, legacy versus unlifted) reduce >10% byte increases
+from 60 to 17 among 2,160 adjacent steps per policy. Above distance 2 they
+fall from 24 to zero. The remaining low-distance line-art increase also occurs
+in C++ v0.12. This is a targeting-policy correction, not a universal RD win:
+among 576 changed, quality-bracketed cells, legacy is >2% cheaper on 251 and
+>2% dearer on 229. Explicit custom opt-in preserves the useful cases.
+[Data and backups](benchmarks/qfseed_unlifted_2026-09-08.pointer.md).
+
+**Corrected expectation, verified against C++:** a universal delivered/requested
+band of 1.0–1.2 is invalid. libjxl v0.12 itself falls outside it on 214/297
+normalized-input cells, including every terminal and codec_wiki cell.
+[Reference evidence](benchmarks/cjxl_target_semantics_2026-09-08.pointer.md).
+Neither exact global Butteraugli targeting nor global byte monotonicity across
+reference filter changes is promised. The earlier claim below that a seed
+change restores monotonicity "by construction" was a proposal, not proof.
+Rejected loop controllers are preserved on the `rejected/issue103-*` branches;
+do not reopen them without new evidence.
+
+**Historical mechanism and alternatives (2026-09-06):** the following records
+why the previous defaults were investigated. The default-on descriptions and
+unimplemented proposals below are historical; the current policy above wins.
 
 **Symptom.** Asking for a COARSER distance produces a much LARGER file.
 `cjxl-rs -e 8` on imazen-26 9291 (ai-products, 1024 crop): d=3.4 -> 28355 B,
@@ -1303,8 +1351,7 @@ are not. ai-products/plots/patents break at the 3.4->3.6 step (the gate);
 web-screenshots and nps-brochures break at 3.6->4.0, so a SECOND mechanism may
 be involved there and must be localised before any fix.
 
-**Proposed fixes, in order of principle** (none applied; needs the user's call
-because the overshoot may be deliberate for true screenshots):
+**Historical proposed fixes** (superseded by the default-policy correction above):
 1. Make the seed a seed, not a target — let the loop converge to the requested
    distance from any starting point. Feasible: with the lift off the same loop
    hits 1.02-1.07. Restores monotonicity by construction. Risk: moves bytes on
@@ -1667,7 +1714,7 @@ measurement at equal or better coverage.
   2026-09-05, pinned by `issue_101_libjxl_strategy_keeps_the_switch`).
 
 **Perceptual loop / butteraugli**
-- Buttloop screenshot qf-seed scale: gate ≥ d=3.5 (main band) plus the
+- **Opt-in only since #103 (2026-09-08).** Buttloop screenshot qf-seed scale: gate ≥ d=3.5 (main band) plus the
   W44-108 m3<24 sub-band at d∈[2,3.5) (wedge-2 lowered 30→24), AND — since
   task #12 (2026-07-14) — ALL LOW-COLOUR (m3<24) firing on BOTH bands
   additionally requires `mask1x1_p25 ≥ 95` via the `(m3 ≥ 24 OR p25 ≥ 95)`

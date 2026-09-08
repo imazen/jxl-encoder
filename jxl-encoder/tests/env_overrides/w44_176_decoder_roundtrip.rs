@@ -4,8 +4,7 @@
 //! W44-176 multi-decoder roundtrip test for the terminal-class exclude.
 //!
 //! Verifies:
-//! 1. The W44-176 production output (Zenjxl strategy with the W44-176
-//!    exclude ON) decodes cleanly via jxl-rs AND jxl-oxide on terminal
+//! 1. Explicit legacy seed policies with the W44-176 exclude ON decodes cleanly via jxl-rs AND jxl-oxide on terminal
 //!    e7 d=4/5 (the cells where the discriminator fires and the W44-109
 //!    lift is suppressed).
 //! 2. The Libjxl strategy is byte-identical regardless of W44-176 (the
@@ -116,7 +115,7 @@ fn w44_176_zenjxl_default_decodes_cleanly() {
         let cfg = LossyConfig::new(distance)
             .with_effort(effort)
             .with_threads(1)
-            .with_strategy(EncoderStrategy::Zenjxl);
+            .with_strategy(legacy_seed_strategy());
         let bytes = cfg
             .encode(&rgb, w, h, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("{cell_name}: Zenjxl encode failed: {e:?}"));
@@ -214,7 +213,7 @@ fn w44_176_env_disable_decodes_cleanly() {
     let cfg = LossyConfig::new(distance)
         .with_effort(effort)
         .with_threads(1)
-        .with_strategy(EncoderStrategy::Zenjxl);
+        .with_strategy(legacy_seed_strategy());
     let bytes = cfg
         .encode(&rgb, w, h, PixelLayout::Rgb8)
         .expect("Zenjxl encode with W44-176 DISABLE=1");
@@ -241,4 +240,15 @@ fn w44_176_env_disable_decodes_cleanly() {
     let (rw, rh) = decode_jxl_rs(&bytes).expect("jxl-rs decode");
     assert_eq!(rw, w as usize);
     assert_eq!(rh, h as usize);
+}
+
+fn legacy_seed_strategy() -> EncoderStrategy {
+    use jxl_encoder::api::{
+        AdaptiveQuantQfSeedPolicy, ButtloopQfSeedPolicy, EncoderImprovementsCustom,
+    };
+    EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom {
+        buttloop_qf_seed: ButtloopQfSeedPolicy::AutoScale4,
+        adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+        ..Default::default()
+    }))
 }

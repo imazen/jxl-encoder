@@ -1,0 +1,62 @@
+[
+  {
+    "folder": "target-artifacts",
+    "objects": 1521,
+    "bytes": 1054594556,
+    "r2_sizes_verified": true,
+    "r2_tower_sha256_samples": [
+      {
+        "file": "c381be89b58c6e94a102e4dc99105eab977d7ad785d366223fcd2fddfbc80772.jxl",
+        "sha256": "c381be89b58c6e94a102e4dc99105eab977d7ad785d366223fcd2fddfbc80772"
+      },
+      {
+        "file": "5bb3513ac5b08a0582be5023ba358ebf6817d3fe7cf21ed01f8efebd7e6677e0.jxl",
+        "sha256": "5bb3513ac5b08a0582be5023ba358ebf6817d3fe7cf21ed01f8efebd7e6677e0"
+      },
+      {
+        "file": "1c7c0878dfc329e6ddfb4c147eb9145e6282143c6dcf491edfe142589bb888ff.jxl",
+        "sha256": "1c7c0878dfc329e6ddfb4c147eb9145e6282143c6dcf491edfe142589bb888ff"
+      }
+    ]
+  },
+  {
+    "folder": "results",
+    "objects": 10,
+    "bytes": 76089,
+    "r2_sizes_verified": true,
+    "r2_tower_sha256_samples": [
+      {
+        "file": "photo1025469-crop1024.tsv",
+        "sha256": "50aff9ed996ced954bffbf808e021d763f3f09ab9c0bdedb9d98447f923d5be0"
+      },
+      {
+        "file": "8106-crop1024.tsv",
+        "sha256": "35432f5d4ef5ede3ac22fe6f0df48c3babbe0c60bf8e97c8f89ea30cb03059fe"
+      },
+      {
+        "file": "6047-crop1024.tsv",
+        "sha256": "2529775e0c9dfa0265caabbf02ad6ac1eb5e50db68786965992fe75a3ceec83a"
+      }
+    ]
+  },
+  {
+    "folder": "boundary-artifacts",
+    "objects": 91,
+    "bytes": 70236211,
+    "r2_sizes_verified": true,
+    "r2_tower_sha256_samples": [
+      {
+        "file": "c3ff6b20f3485bea917c2e473ef2187df30874e4ec112bf76acaacd5ddeab2e1.jxl",
+        "sha256": "c3ff6b20f3485bea917c2e473ef2187df30874e4ec112bf76acaacd5ddeab2e1"
+      },
+      {
+        "file": "89f0b1a43fb6466b5936bc086295d79d6f13482fecbcdfbfabf50b093faf7be4.jxl",
+        "sha256": "89f0b1a43fb6466b5936bc086295d79d6f13482fecbcdfbfabf50b093faf7be4"
+      },
+      {
+        "file": "1caf04beb633605d900bcb9b6d46e99299fb80307d90a5c067a2525bcb186a38.jxl",
+        "sha256": "1caf04beb633605d900bcb9b6d46e99299fb80307d90a5c067a2525bcb186a38"
+      }
+    ]
+  }
+]

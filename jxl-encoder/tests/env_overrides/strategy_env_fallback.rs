@@ -36,6 +36,15 @@ use jxl_encoder::api::{
     EpfSharpnessSeed,
 };
 
+// Legacy policies remain explicit experiment controls after #103.
+fn legacy_seed_strategy() -> EncoderStrategy {
+    EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom {
+        buttloop_qf_seed: ButtloopQfSeedPolicy::AutoScale4,
+        adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+        ..Default::default()
+    }))
+}
+
 /// Shared lock serialising env-var mutations across all tests in
 /// this binary. Without this, parallel `cargo test` execution would
 /// see set/get races even though each individual test correctly
@@ -115,8 +124,8 @@ fn no_env_vars_default_passthrough() {
     let _env_serial = crate::env_serial();
     let (_guard, snapshot) = env_lock_and_snapshot();
     let (qf, aq, epf) = resolve_strategy_for_test(&EncoderStrategy::Zenjxl);
-    assert_eq!(qf, ButtloopQfSeedPolicy::AutoScale4);
-    assert_eq!(aq, AdaptiveQuantQfSeedPolicy::AutoScalePerEffort);
+    assert_eq!(qf, ButtloopQfSeedPolicy::Off);
+    assert_eq!(aq, AdaptiveQuantQfSeedPolicy::Off);
     assert_eq!(epf, EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 });
     env_restore(snapshot);
 }
@@ -129,7 +138,7 @@ fn env_buttloop_qf_scale_promotes() {
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "2.0") };
-    let (qf, _, _) = resolve_strategy_for_test(&EncoderStrategy::Zenjxl);
+    let (qf, _, _) = resolve_strategy_for_test(&legacy_seed_strategy());
     assert_eq!(qf, ButtloopQfSeedPolicy::AutoScale(2.0));
     env_restore(snapshot);
 }
@@ -143,7 +152,7 @@ fn env_adaptive_quant_qf_scale_promotes() {
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE", "2.5") };
-    let (_, aq, _) = resolve_strategy_for_test(&EncoderStrategy::Zenjxl);
+    let (_, aq, _) = resolve_strategy_for_test(&legacy_seed_strategy());
     assert_eq!(
         aq,
         AdaptiveQuantQfSeedPolicy::AutoScaleCustom {
@@ -261,7 +270,7 @@ fn env_qf_scale_4_0_promotes_but_is_runtime_equivalent() {
     let (_guard, snapshot) = env_lock_and_snapshot();
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "4.0") };
-    let (qf, _, _) = resolve_strategy_for_test(&EncoderStrategy::Zenjxl);
+    let (qf, _, _) = resolve_strategy_for_test(&legacy_seed_strategy());
     assert_eq!(qf, ButtloopQfSeedPolicy::AutoScale(4.0));
     env_restore(snapshot);
 }
@@ -279,7 +288,7 @@ fn env_unparseable_value_ignored() {
     unsafe { std::env::set_var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE", "garbage") };
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_120_EPF_SEED_MIN_DISTANCE", "abc") };
-    let (qf, aq, epf) = resolve_strategy_for_test(&EncoderStrategy::Zenjxl);
+    let (qf, aq, epf) = resolve_strategy_for_test(&legacy_seed_strategy());
     assert_eq!(qf, ButtloopQfSeedPolicy::AutoScale4);
     assert_eq!(aq, AdaptiveQuantQfSeedPolicy::AutoScalePerEffort);
     assert_eq!(epf, EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 });
@@ -327,7 +336,7 @@ fn env_multiple_promote_independently() {
     unsafe { std::env::set_var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE", "1.7") };
     // SAFETY: env-var mutex is held; see env_lock_and_snapshot.
     unsafe { std::env::set_var("JXL_W44_120_EPF_SEED_MIN_DISTANCE", "0.5") };
-    let (qf, aq, epf) = resolve_strategy_for_test(&EncoderStrategy::Zenjxl);
+    let (qf, aq, epf) = resolve_strategy_for_test(&legacy_seed_strategy());
     assert_eq!(qf, ButtloopQfSeedPolicy::AutoScale(3.0));
     assert_eq!(
         aq,
@@ -356,6 +365,7 @@ fn env_custom_partial_default_fields_take_env() {
     // two fields stay at Default.
     let custom = EncoderImprovementsCustom {
         buttloop_qf_seed: ButtloopQfSeedPolicy::ForceScale(9.0),
+        adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
         ..Default::default()
     };
     let strategy = EncoderStrategy::Custom(Box::new(custom));
@@ -370,5 +380,28 @@ fn env_custom_partial_default_fields_take_env() {
             e7: 1.7
         }
     );
+    env_restore(snapshot);
+}
+
+/// Environment shims must not re-enable the removed preset seed boosts.
+#[test]
+fn named_presets_keep_seed_lifts_off_with_legacy_env_set() {
+    let _env_serial = crate::env_serial();
+    let (_guard, snapshot) = env_lock_and_snapshot();
+    // SAFETY: this binary serializes all environment mutations.
+    unsafe {
+        std::env::set_var("JXL_BUTTLOOP_INITIAL_QF_SCALE", "4.0");
+        std::env::set_var("JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE", "3.0");
+    }
+    for strategy in [
+        EncoderStrategy::Zenjxl,
+        EncoderStrategy::Aggressive,
+        EncoderStrategy::LeanFaster,
+        EncoderStrategy::Libjxl,
+    ] {
+        let (qf, aq, _) = resolve_strategy_for_test(&strategy);
+        assert_eq!(qf, ButtloopQfSeedPolicy::Off);
+        assert_eq!(aq, AdaptiveQuantQfSeedPolicy::Off);
+    }
     env_restore(snapshot);
 }

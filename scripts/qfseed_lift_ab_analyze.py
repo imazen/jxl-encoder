@@ -39,8 +39,21 @@ parser.add_argument("input", nargs="?", type=Path,
                     default=Path("benchmarks/qfseed_lift_ab_2026-09-06.tsv"))
 parser.add_argument("--compare-before", type=Path,
                     help="Compare revised on-mode output with an earlier persisted on/off run.")
+parser.add_argument("--reference-summary", action="store_true",
+                    help="Summarize delivered/requested ratios for a single reference arm.")
 args = parser.parse_args()
 rows = load_rows(args.input)
+if args.reference_summary:
+    by_image = defaultdict(list)
+    for row in rows:
+        by_image[row["image"]].append(row["delivered_ratio"])
+    writer = csv.writer(sys.stdout, delimiter="\t", lineterminator="\n")
+    writer.writerow(["image", "cells", "minimum_delivered_ratio",
+                     "maximum_delivered_ratio", "outside_1_0_to_1_2"])
+    for image, values in sorted(by_image.items()):
+        writer.writerow([image, len(values), min(values), max(values),
+                         sum(not 1 <= value <= 1.2 for value in values)])
+    sys.exit(0)
 if args.compare_before:
     before = load_rows(args.compare_before)
     indexed = {(r["image"], r["effort"], r["d_req"], r["mode"]): r for r in before}
@@ -78,8 +91,8 @@ SCALE = {5: 2.0, 6: 2.0, 7: 3.0, 8: 4.0}
 
 print("# qf-seed lift A/B\n")
 print("## 1. Delivered vs requested distance (does the lift displace the target?)\n")
-print("`delivered_ratio` = butteraugli / requested d. 1.0 = promise kept, "
-      "<1 = finer than asked. `displacement` = off_ratio / on_ratio at the same d.\n")
+print("`delivered_ratio` = butteraugli / requested d. 1.0 = numerical equality, "
+      "<1 = measured distance below the requested parameter. `displacement` = off_ratio / on_ratio at the same d.\n")
 print("| image | class | e | gate scale | d | on ratio | off ratio | displacement |")
 print("|---|---|--:|--:|--:|--:|--:|--:|")
 disp_by_e = defaultdict(list)

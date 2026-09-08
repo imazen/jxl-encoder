@@ -190,6 +190,8 @@ jxl_encoder_macros::strategy_def! {
             dct64_search_policy = Dct64SearchPolicy::ForceAllow,
             dct32_search_policy = Dct32SearchPolicy::FollowDct64Suppression,
             smooth_photo_dct64_admission = SmoothPhotoDct64Policy::ForceSkip,
+            // #103: preserve the reference seed and iteration schedule.
+            // The screenshot lifts remain explicit Custom policies.
             buttloop_qf_seed = ButtloopQfSeedPolicy::Off,
             adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::Off,
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::LegacyUniform4,
@@ -286,6 +288,8 @@ jxl_encoder_macros::strategy_def! {
             dct64_search_policy = Dct64SearchPolicy::ForceAllow,
             dct32_search_policy = Dct32SearchPolicy::FollowDct64Suppression,
             smooth_photo_dct64_admission = SmoothPhotoDct64Policy::ForceSkip,
+            // #103: preserve the reference seed and iteration schedule.
+            // The screenshot lifts remain explicit Custom policies.
             buttloop_qf_seed = ButtloopQfSeedPolicy::Off,
             adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::Off,
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::LegacyUniform4,
@@ -376,8 +380,10 @@ jxl_encoder_macros::strategy_def! {
             dct64_search_policy = Dct64SearchPolicy::Auto,
             dct32_search_policy = Dct32SearchPolicy::FollowDct64Suppression,
             smooth_photo_dct64_admission = SmoothPhotoDct64Policy::Auto,
-            buttloop_qf_seed = ButtloopQfSeedPolicy::AutoScale4,
-            adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            // #103: preserve the reference seed and iteration schedule.
+            // The screenshot lifts remain explicit Custom policies.
+            buttloop_qf_seed = ButtloopQfSeedPolicy::Off,
+            adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::Off,
             // `EpfSharpnessSeed::default()` = `AutoW44_117 { min_distance: 1.0 }`.
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 },
             epf_dispatch = EpfDispatch::Auto,
@@ -397,8 +403,8 @@ jxl_encoder_macros::strategy_def! {
             photo_epf_seed_admit = true,
             photo_variant_z_admit = true,
             find_best_32_per_m3_lift = true,
-            adaptive_buttloop_iters = true,
-            adaptive_buttloop_iters_narrow = true,
+            adaptive_buttloop_iters = false,
+            adaptive_buttloop_iters_narrow = false,
             terminal_class_exclude = true,
             // W44-AUDIT-6 Phase 1 (2026-05-24): Zenjxl default ON —
             // excludes codec_wiki-class high-colour mixed-content
@@ -479,8 +485,10 @@ jxl_encoder_macros::strategy_def! {
             dct64_search_policy = Dct64SearchPolicy::Auto,
             dct32_search_policy = Dct32SearchPolicy::FollowDct64Suppression,
             smooth_photo_dct64_admission = SmoothPhotoDct64Policy::Auto,
-            buttloop_qf_seed = ButtloopQfSeedPolicy::AutoScale4,
-            adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            // #103: preserve the reference seed and iteration schedule.
+            // The screenshot lifts remain explicit Custom policies.
+            buttloop_qf_seed = ButtloopQfSeedPolicy::Off,
+            adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::Off,
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 },
             epf_dispatch = EpfDispatch::Auto,
             pixel_loss_dispatch = PixelLossDispatch::AlwaysOn,
@@ -499,8 +507,8 @@ jxl_encoder_macros::strategy_def! {
             photo_epf_seed_admit = true,
             photo_variant_z_admit = true,
             find_best_32_per_m3_lift = true,
-            adaptive_buttloop_iters = true,
-            adaptive_buttloop_iters_narrow = true,
+            adaptive_buttloop_iters = false,
+            adaptive_buttloop_iters_narrow = false,
             terminal_class_exclude = true,
             // W44-AUDIT-6 Phase 1: Aggressive mirrors Zenjxl per the
             // standing pattern (Aggressive is a forward-compatible slot
@@ -573,20 +581,20 @@ jxl_encoder_macros::strategy_def! {
         },
 
         /// W44-105 / W44-107 / W44-108 buttloop qf seed scale. Promoted
-        /// from env var `JXL_BUTTLOOP_INITIAL_QF_SCALE`. Section B.
+        /// from env var `JXL_BUTTLOOP_INITIAL_QF_SCALE`. Opt-in since #103; Section B.
         buttloop_qf_seed: ButtloopQfSeedPolicy {
             env_hook = "JXL_BUTTLOOP_INITIAL_QF_SCALE" => parse_buttloop_qf_scale,
             divergence_section = "B",
-            divergence_row_ref = "W44-105/107/108 buttloop qf seed scale (effort >= 8)",
+            divergence_row_ref = "W44-105/107/108 buttloop qf seed scale (effort >= 8); opt-in after #103",
         },
 
         /// W44-109 adaptive_quant qf pre-scale at effort ∈ [5, 7].
         /// Promoted from env var `JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE`.
-        /// Section B.
+        /// Opt-in since #103; Section B.
         adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy {
             env_hook = "JXL_W44_109_ADAPTIVE_QUANT_QF_SCALE" => parse_adaptive_quant_qf_scale,
             divergence_section = "B",
-            divergence_row_ref = "W44-109 adaptive_quant qf seed (effort 5..=7)",
+            divergence_row_ref = "W44-109 adaptive_quant qf seed (effort 5..=7); opt-in after #103",
         },
 
         /// W44-117 / W44-118 / W44-120 EPF sharpness seed for buttloop.
@@ -768,17 +776,17 @@ jxl_encoder_macros::strategy_def! {
         },
 
         /// W44-168: adaptive `butteraugli_iters` per content
-        /// (smooth-skip + textured-extend modes). Section B.
+        /// (smooth-skip + textured-extend modes). Opt-in since #103; Section B.
         adaptive_buttloop_iters: bool {
             divergence_section = "B",
-            divergence_row_ref = "W44-168 adaptive butteraugli_iters (JXL_W44_168_MODE)",
+            divergence_row_ref = "W44-168 adaptive butteraugli_iters (JXL_W44_168_MODE); opt-in after #103",
         },
 
         /// W44-169: distance-narrowed SmoothSkip iter-reduction at
-        /// d ∈ [4.0, 5.0] (production SHIPPED). Section B.
+        /// d ∈ [4.0, 5.0]. Opt-in since #103; Section B.
         adaptive_buttloop_iters_narrow: bool {
             divergence_section = "B",
-            divergence_row_ref = "W44-169 distance-narrowed buttloop iter reduction",
+            divergence_row_ref = "W44-169 distance-narrowed buttloop iter reduction; opt-in after #103",
         },
 
         /// W44-176: exclude terminal-class screenshots from W44-108
@@ -1278,13 +1286,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
     DivergenceEntry {
         gate_name: "buttloop_qf_seed",
         section: "B",
-        row_ref: "W44-105/107/108 buttloop qf seed scale (effort >= 8)",
+        row_ref: "W44-105/107/108 buttloop qf seed scale (effort >= 8); opt-in after #103",
         raw: __CUSTOM_DIVERGENCE_BUTTLOOP_QF_SEED,
     },
     DivergenceEntry {
         gate_name: "adaptive_quant_qf_seed",
         section: "B",
-        row_ref: "W44-109 adaptive_quant qf seed (effort 5..=7)",
+        row_ref: "W44-109 adaptive_quant qf seed (effort 5..=7); opt-in after #103",
         raw: __CUSTOM_DIVERGENCE_ADAPTIVE_QUANT_QF_SEED,
     },
     DivergenceEntry {
@@ -1390,13 +1398,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
     DivergenceEntry {
         gate_name: "adaptive_buttloop_iters",
         section: "B",
-        row_ref: "W44-168 adaptive butteraugli_iters (JXL_W44_168_MODE)",
+        row_ref: "W44-168 adaptive butteraugli_iters (JXL_W44_168_MODE); opt-in after #103",
         raw: __CUSTOM_DIVERGENCE_ADAPTIVE_BUTTLOOP_ITERS,
     },
     DivergenceEntry {
         gate_name: "adaptive_buttloop_iters_narrow",
         section: "B",
-        row_ref: "W44-169 distance-narrowed buttloop iter reduction",
+        row_ref: "W44-169 distance-narrowed buttloop iter reduction; opt-in after #103",
         raw: __CUSTOM_DIVERGENCE_ADAPTIVE_BUTTLOOP_ITERS_NARROW,
     },
     DivergenceEntry {
@@ -1524,11 +1532,8 @@ mod tests {
             Dct32SearchPolicy::FollowDct64Suppression
         );
         assert_eq!(d.smooth_photo_dct64_admission, SmoothPhotoDct64Policy::Auto);
-        assert_eq!(d.buttloop_qf_seed, ButtloopQfSeedPolicy::AutoScale4);
-        assert_eq!(
-            d.adaptive_quant_qf_seed,
-            AdaptiveQuantQfSeedPolicy::AutoScalePerEffort
-        );
+        assert_eq!(d.buttloop_qf_seed, ButtloopQfSeedPolicy::Off);
+        assert_eq!(d.adaptive_quant_qf_seed, AdaptiveQuantQfSeedPolicy::Off);
         assert_eq!(
             d.buttloop_epf_sharpness_seed,
             EpfSharpnessSeed::AutoW44_117 { min_distance: 1.0 }
@@ -1556,8 +1561,8 @@ mod tests {
         assert!(d.photo_epf_seed_admit);
         assert!(d.photo_variant_z_admit);
         assert!(d.find_best_32_per_m3_lift);
-        assert!(d.adaptive_buttloop_iters);
-        assert!(d.adaptive_buttloop_iters_narrow);
+        assert!(!d.adaptive_buttloop_iters);
+        assert!(!d.adaptive_buttloop_iters_narrow);
         assert!(d.terminal_class_exclude);
         // W44-AUDIT-6 Phase 1: Zenjxl default = ON.
         assert!(d.high_colour_class_exclude);
@@ -1584,16 +1589,16 @@ mod tests {
         );
     }
 
-    /// Libjxl constructor diverges from Zenjxl on every Section A / B
-    /// / D / Smart-Zenjxl gate. Spot-check the divergence is wired.
+    /// Spot-check intentional preset differences and shared targeting policies.
     #[test]
     fn libjxl_diverges_from_zenjxl_on_key_gates() {
         let l = CustomResolvedImprovements::libjxl();
         let z = CustomResolvedImprovements::zenjxl();
         assert_ne!(l.high_d_photo_entropy_mul, z.high_d_photo_entropy_mul);
         assert_ne!(l.dct64_search_policy, z.dct64_search_policy);
-        assert_ne!(l.buttloop_qf_seed, z.buttloop_qf_seed);
-        assert_ne!(l.adaptive_quant_qf_seed, z.adaptive_quant_qf_seed);
+        // #103: both presets preserve the reference quant-field scale.
+        assert_eq!(l.buttloop_qf_seed, z.buttloop_qf_seed);
+        assert_eq!(l.adaptive_quant_qf_seed, z.adaptive_quant_qf_seed);
         assert_ne!(l.buttloop_epf_sharpness_seed, z.buttloop_epf_sharpness_seed);
         assert_ne!(l.cfl_two_pass_min_effort, z.cfl_two_pass_min_effort);
         assert_ne!(l.try_dct64_min_effort, z.try_dct64_min_effort);
