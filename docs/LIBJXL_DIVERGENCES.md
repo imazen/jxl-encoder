@@ -525,6 +525,8 @@ versus one-shot 3135. The real-image regression now requires exact equality at
 chunk heights 1/7/259 and full jxl-rs/djxl v0.12 rendering. No effort gate,
 constant, or named-strategy value changes in this fix; the shared gate registry
 is consumed by both entry points. Canonicalization still requires one-shot.
+HDR intensity overrides retain `Some(255.0)` distinctly from an unset default,
+so streaming preserves the same explicit color metadata as one-shot.
 
 
 | `vardct/epf.rs::compute_inv_sigma_map` multi-block quantizers (#103) | Previously read each covered 8×8 slot; now broadcasts the transform-origin quantizer with per-block sharpness | libjxl v0.12 `epf.cc::ComputeSigma` uses only the first quantizer, which is the value actually serialized | Corrected in this change. Forced DCT8×16 decoder parity failed before and passes after; 36 real-image cases cover all nine multi-block transform shapes and odd dimensions. |

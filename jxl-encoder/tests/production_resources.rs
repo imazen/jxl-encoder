@@ -196,3 +196,131 @@ fn real_screenshot_streaming_keeps_one_shot_content_dispatch() {
         verify(&streamed, width, height);
     }
 }
+
+/// Real spatial content in distinct storage/transfer representations. This
+/// verifies entry-point equivalence, not HDR perceptual quality calibration.
+#[test]
+fn streaming_preserves_source_layout_and_color_metadata() {
+    for (width, height) in [(63, 47), (511, 259)] {
+        let rgb = photo(width, height);
+        for layout in [
+            PixelLayout::Rgb8,
+            PixelLayout::Rgba8,
+            PixelLayout::Bgr8,
+            PixelLayout::Bgra8,
+            PixelLayout::Gray8,
+            PixelLayout::GrayAlpha8,
+            PixelLayout::Rgb16,
+            PixelLayout::Rgba16,
+            PixelLayout::Gray16,
+            PixelLayout::GrayAlpha16,
+            PixelLayout::RgbLinearF32,
+            PixelLayout::RgbaLinearF32,
+            PixelLayout::GrayLinearF32,
+            PixelLayout::GrayAlphaLinearF32,
+            PixelLayout::RgbLinearF16,
+            PixelLayout::RgbaLinearF16,
+            PixelLayout::GrayLinearF16,
+            PixelLayout::GrayAlphaLinearF16,
+            PixelLayout::RgbPqF32,
+            PixelLayout::RgbaPqF32,
+            PixelLayout::RgbHlgF32,
+            PixelLayout::RgbaHlgF32,
+            PixelLayout::RgbBt709F32,
+            PixelLayout::RgbaBt709F32,
+        ] {
+            let gray = matches!(
+                layout,
+                PixelLayout::Gray8
+                    | PixelLayout::GrayAlpha8
+                    | PixelLayout::Gray16
+                    | PixelLayout::GrayAlpha16
+                    | PixelLayout::GrayLinearF32
+                    | PixelLayout::GrayAlphaLinearF32
+                    | PixelLayout::GrayLinearF16
+                    | PixelLayout::GrayAlphaLinearF16
+            );
+            let half = matches!(
+                layout,
+                PixelLayout::RgbLinearF16
+                    | PixelLayout::RgbaLinearF16
+                    | PixelLayout::GrayLinearF16
+                    | PixelLayout::GrayAlphaLinearF16
+            );
+            let mut pixels = Vec::new();
+            for p in rgb.chunks_exact(3) {
+                let mut values = if gray { vec![p[0]] } else { p.to_vec() };
+                if matches!(layout, PixelLayout::Bgr8 | PixelLayout::Bgra8) {
+                    values.swap(0, 2);
+                }
+                if layout.has_alpha() {
+                    values.push(p[1]);
+                }
+                let bytes_per_sample = layout.bytes_per_pixel() / values.len();
+                for v in values {
+                    match bytes_per_sample {
+                        1 => pixels.push(v),
+                        2 if half => {
+                            // Exact binary16 encodings of k/16, k=0..15.
+                            // Quantize fixture values only; no encoder conversion is shared.
+                            const HALF: [u16; 16] = [
+                                0, 0x2c00, 0x3000, 0x3200, 0x3400, 0x3500, 0x3600, 0x3700, 0x3800,
+                                0x3880, 0x3900, 0x3980, 0x3a00, 0x3a80, 0x3b00, 0x3b80,
+                            ];
+                            pixels.extend_from_slice(&HALF[usize::from(v >> 4)].to_ne_bytes());
+                        }
+                        2 => pixels.extend_from_slice(&(u16::from(v) * 257).to_ne_bytes()),
+                        4 => pixels.extend_from_slice(&(f32::from(v) / 255.0).to_ne_bytes()),
+                        _ => unreachable!("fixture storage width"),
+                    }
+                }
+            }
+            for effort in [5, 8] {
+                let cfg = LossyConfig::new(4.0).with_effort(effort).with_threads(1);
+                let baseline = cfg.encode(&pixels, width, height, layout).unwrap();
+                for rows in [1, 7] {
+                    let mut encoder = cfg.encoder(width, height, layout).unwrap();
+                    let row_bytes = width as usize * layout.bytes_per_pixel();
+                    for chunk in pixels.chunks(row_bytes * rows) {
+                        encoder
+                            .push_rows(chunk, (chunk.len() / row_bytes) as u32)
+                            .unwrap();
+                    }
+                    let streamed = encoder.finish().unwrap();
+                    assert!(
+                        baseline == streamed,
+                        "layout={layout:?} effort={effort} chunk={rows} size={width}x{height}"
+                    );
+                }
+                verify(&baseline, width, height);
+            }
+        }
+    }
+}
+
+#[test]
+fn streaming_preserves_explicit_hdr_intensity_equal_to_sdr_default() {
+    for (width, height) in [(63, 47), (511, 259)] {
+        let pixels: Vec<_> = photo(width, height)
+            .iter()
+            .flat_map(|&v| (f32::from(v) / 255.0).to_ne_bytes())
+            .collect();
+        let cfg = LossyConfig::new(4.0).with_effort(8).with_threads(1);
+        let layout = PixelLayout::RgbPqF32;
+        let baseline = cfg
+            .encode_request(width, height, layout)
+            .with_intensity_target(255.0)
+            .encode(&pixels)
+            .unwrap();
+        let mut encoder = cfg
+            .encoder(width, height, layout)
+            .unwrap()
+            .with_intensity_target(255.0);
+        encoder.push_rows(&pixels, height).unwrap();
+        assert!(
+            encoder.finish().unwrap() == baseline,
+            "explicit 255-nit override was lost"
+        );
+        verify(&baseline, width, height);
+    }
+}

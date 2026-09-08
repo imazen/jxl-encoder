@@ -21,6 +21,22 @@ and `jxl-encoder-macros` still has no registry release. No tag, GitHub release,
 or crate publication was made during this validation. The remaining consumer
 and release gates below still apply.
 
+The September 8 packaging attempt first failed on the missing `cvvdp`
+version requirement. Adding `0.1.0` (the local package version) gets packaging
+to registry resolution, where it fails on unpublished `butteraugli ^0.9.4`.
+The other unpublished requirements below remain blockers. Optional dependencies
+must resolve even when disabled. No package verification or publication passed.
+
+Fresh rustdoc was generated for `std,parallel,butteraugli-loop` against the
+workspace source closure. Comparing it with the previously reconstructed,
+magetypes-pinned 0.3.1 rustdoc with `--release-type minor` executes 196 checks:
+187 pass, 9 fail, 57 skip. The nine failing checks cover removed/narrowed API,
+new animation fields and changed validation discriminants; they require the
+already-planned 0.4 version. The automatic 0.3→0.4 check skips all 253 checks,
+so its success is not used as API-validation evidence. Direct source-consumer
+semver invocation fails dependency resolution; using explicit rustdoc inputs
+isolates the API inventory from that separate packaging blocker.
+
 ## 1. What 0.4.0 is
 
 The deliberate public-surface narrowing tracked in #76, folding in the
@@ -126,7 +142,7 @@ blocks the unpatched build/publish even when its feature is off.
 | `zensim-gpu 0.0.1` (optional) | never published, `publish = false` | **OWNER DECISION** |
 | `butteraugli-gpu 0.0.1` (optional) | never published, `publish = false` | **OWNER DECISION** |
 | `cvvdp-gpu 0.0.1` (optional) | never published, `publish = false` | **OWNER DECISION** |
-| `cvvdp` (path, no version, optional) | never published | **OWNER DECISION** |
+| `cvvdp 0.1.0` (path + version, optional) | never published | **OWNER DECISION** |
 
 The four OWNER DECISION rows are the hard stop the workspace map
 (`~/work/zen-workspace/PUBLISH_ORDER_2026-08-29.md`, §6 class B3) calls

@@ -313,4 +313,18 @@ fuzz-seed manifest output:
     TMPDIR="$HOME/tmp" nice -n 19 uv run --with pillow python scripts/seed_encoder_fuzz.py {{manifest}} {{output}} --build-commit "$(jj log --no-graph -r @ -T commit_id)"
 
 production-resources:
-    TMPDIR="$HOME/tmp" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" CARGO_BUILD_JOBS=4 nice -n 19 cargo test -p jxl-encoder --features corpus-tests --test production_resources -- --test-threads=1 --nocapture
+    TMPDIR="$HOME/tmp" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" CARGO_BUILD_JOBS=4 nice -n 19 cargo test -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
+
+# Local release checks preserve the package error as a release blocker.
+release-semver *args:
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo semver-checks -p jxl-encoder --only-explicit-features --features std,parallel,butteraugli-loop {{args}}
+
+# macOS process RSS; keep encoded bytes and full time output per cell.
+resource-cell input mode effort threads output:
+    mkdir -p "{{output}}"
+    MEM_PROBE_OUT="{{output}}/encoded.jxl" nice -n 19 /usr/bin/time -l target/release/examples/mem_grid_probe "{{input}}" {{mode}} {{effort}} 4 {{threads}} default > "{{output}}/encode.log" 2>&1
+    nice -n 19 target/release/examples/mem_grid_probe --decode "{{output}}/encoded.jxl" "{{input}}" {{mode}} > "{{output}}/jxl-rs.log" 2>&1
+    nice -n 19 .ci-libjxl/tools/djxl "{{output}}/encoded.jxl" --disable_output --num_threads=1 > "{{output}}/djxl.log" 2>&1
+
+release-semver-json current baseline *args:
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo semver-checks --current-rustdoc "{{current}}" --baseline-rustdoc "{{baseline}}" {{args}}

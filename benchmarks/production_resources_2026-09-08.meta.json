@@ -1,0 +1,13 @@
+{
+  "host": "macOS ARM64, 24 GiB RAM",
+  "binary_sha256": "20163d7416dc836c458015f9da1375082621fca3b7632628c8fa66bc5e9d1027",
+  "command": "just resource-cell INPUT MODE EFFORT THREADS OUTPUT; d4, default memory caps, native image dimensions",
+  "input_sha256": {
+    "6047.ppm": "e5196cc81c98d53db661be80ce3622a6cde927030cc6b504bf8ac3afcf6ff8a1",
+    "5058.ppm": "28c537ef4a82c3464d1b5c3cbb6ec0d32f6f48dbbf153dedf01e6b2f1f32a18a"
+  },
+  "measurement": "macOS /usr/bin/time -l maximum resident set size, whole encode process only; decoding in separate processes",
+  "limitations": "2 document sources, 1 repetition per cell; not a calibrated model or production traffic bound",
+  "encoder_commit": "6e4f309ca277b70440a4003a963c29ea190ab60e",
+  "dependency_caveat": "Measured against existing local siblings; pinned-clean dependency validation is separate."
+}

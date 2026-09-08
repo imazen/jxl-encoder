@@ -920,6 +920,11 @@ one-shot request pipeline. Before: 3135 bytes one-shot versus 3571 streaming.
 After: exact byte equality for chunk heights 1, 7 and 259, fully rendered by
 jxl-rs and djxl v0.12. This removes the duplicated analysis/conversion path.
 Canonicalization remains explicitly unavailable on the streaming API.
+Additional coverage verifies all 24 supported lossy streaming layouts at e5/e8
+on single/multi-group real content (96 cells, each with chunk heights 1 and 7),
+including grayscale, alpha, binary16, PQ, HLG and BT.709. Both decoders fully render every cell. Streaming HDR metadata stores optional
+overrides directly: an explicit 255-nit intensity must not be mistaken for
+the unset SDR default (regression `streaming_preserves_explicit_hdr_intensity_equal_to_sdr_default`).
 
 
 ### RESOLVED 2026-09-08: short lossless encodes did not poll late cancellation

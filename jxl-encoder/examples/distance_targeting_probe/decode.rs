@@ -1,4 +1,4 @@
-//! Full jxl-rs frame decode, including extra channels; returns RGB samples.
+//! Full jxl-rs frame decode, including extra channels; returns color samples.
 
 pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32> {
     use jxl::api::{
@@ -20,7 +20,8 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32
     };
     assert_eq!(decoder.basic_info().size, (width, height));
     let format = decoder.current_pixel_format();
-    assert_eq!(format.color_type.samples_per_pixel(), 3);
+    let channels = format.color_type.samples_per_pixel();
+    assert!(matches!(channels, 1 | 3));
     let num_extra = format.extra_channel_format.len();
     decoder.set_pixel_format(JxlPixelFormat {
         color_type: format.color_type,
@@ -36,7 +37,7 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32
             }
         }
     };
-    let mut pixels = Image::<f32>::new((width * 3, height)).expect("jxl-rs pixel buffer");
+    let mut pixels = Image::<f32>::new((width * channels, height)).expect("jxl-rs pixel buffer");
     let mut extras: Vec<_> = (0..num_extra)
         .map(|_| Image::<f32>::new((width, height)).expect("jxl-rs extra buffer"))
         .collect();
@@ -44,7 +45,7 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32
         pixels
             .get_rect_mut(Rect {
                 origin: (0, 0),
-                size: (width * 3, height),
+                size: (width * channels, height),
             })
             .into_raw(),
     )];

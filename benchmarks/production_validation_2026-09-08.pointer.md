@@ -27,12 +27,42 @@ No maximum cancellation latency is claimed for individual algorithm loops.
   as evidence. Log: `~/tmp/jxl-stream-unified-all-targets.log`.
 - Workspace all-target clippy passed; doctests: 7 passed, 10 ignored.
 - Explicit RD regression: 2 passed with existing thresholds unchanged.
-- Real-image resource tests: 3 passed, covering cancellation, the screenshot
+- Real-image resource tests: 5 passed, covering cancellation, the screenshot
   mismatch, and 1/2/4 concurrent RGBA requests at e5/e8, opaque/nonopaque alpha,
   canonicalization on/off. Tight-budget failures do not poison later requests.
 - The original streaming failure replays successfully under AddressSanitizer.
-  A bounded mutation run is in progress; no completed mutation verdict yet.
+  The bounded streaming mutation run completed 219 executions in 301 seconds,
+  adding 137 corpus entries, with no further failure. The admission target
+  completed 955 executions in 121 seconds, adding 106 entries, with no failure.
+  These are short ASan smoke runs, not exhaustive fuzz coverage.
 
-Full logs and corpus are currently under `~/tmp/jxl-fuzz-2026-09-08/` and
-`~/tmp/jxl-*.log`. Remote backup verification and process RSS measurements
-will be recorded here before this validation is closed.
+The layout test additionally covers all 24 supported lossy streaming layouts,
+96 layout/size/effort cells, each with chunk heights 1 and 7. Every cell renders
+through both decoders. An explicit 255-nit PQ override is separately tested;
+streaming stores optional tone-mapping overrides without numeric sentinels.
+
+## Actual process memory
+
+[12 native-size cells](production_resources_2026-09-08.tsv) and
+[method/binary/input provenance](production_resources_2026-09-08.meta.json):
+two real document images, 2479×3230 and 2550×3300, d4, lossy e5/e8 and lossless
+e7, internal threads 1/4. All encoded under default caps and fully rendered
+through jxl-rs and djxl v0.12. Lossless pixels were compared exactly.
+macOS `/usr/bin/time -l` measured whole-process encode peak RSS between
+547438592 and 2743861248 bytes. Decoding ran in separate processes.
+These are single measurements on two documents, not a production admission
+bound or a new calibration. Existing local sibling source differences are
+recorded with the raw results; pinned-clean validation is a separate gate.
+
+## Persisted fuzz evidence
+
+Full working corpora, original failure, sanitizer logs and Cargo lockfiles:
+- Local: `~/tmp/jxl-fuzz-2026-09-08.tar`.
+- R2: `s3://zen-tuning-ephemeral/jxl-encoder/production-validation-2026-09-08/fuzz.tar`.
+- Tower: `/mnt/tower/output/jxl-encoder/production-validation-2026-09-08/fuzz.tar`.
+- SHA256: `c5f8375d745da47086e77b7b968cd6c224f0d5cd4651e5b852ef88451f307e56`.
+
+The complete R2 download and Tower archive both match the local SHA256.
+No corpus or failure was deleted. Nightly automation now runs both targets
+with real-image seeds and retains corpus/failure artifacts.
+

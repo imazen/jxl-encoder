@@ -120,7 +120,7 @@ jobs:
       - name: Validate cancellation and concurrent canonicalization
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
-        run: cargo test --release -p jxl-encoder --features corpus-tests --test production_resources -- --test-threads=1 --nocapture
+        run: cargo test --release -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
 
       - name: Run corpus decoder-roundtrip gates
         env:
@@ -136,3 +136,48 @@ jobs:
             w44_164_decoder_roundtrip w44_166_decoder_roundtrip \
             w44_176_decoder_roundtrip w44_205_decoder_roundtrip \
             w44_78_decoder_roundtrip
+
+  encoder-fuzz:
+    name: Encoder admission and streaming fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 4
+      RAYON_NUM_THREADS: 4
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/clone-siblings
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Prepare real-image fuzz corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/tmp/encoder-fuzz/artifacts/request_limits" "$HOME/tmp/encoder-fuzz/artifacts/streaming_roundtrip"
+          echo "TMPDIR=$HOME/tmp" >> "$GITHUB_ENV"
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/imazen/codec-corpus.git "$HOME/tmp/fuzz-source"
+          git -C "$HOME/tmp/fuzz-source" sparse-checkout set --no-cone CID22/CID22-512/validation/1418519.png gb82-sc/codec_wiki.png
+          python3 -m venv "$HOME/tmp/fuzz-python"
+          "$HOME/tmp/fuzz-python/bin/pip" install Pillow==12.3.0
+          printf 'image\tpath\nphoto\t%s/CID22/CID22-512/validation/1418519.png\ncodec_wiki\t%s/gb82-sc/codec_wiki.png\n' "$HOME/tmp/fuzz-source" "$HOME/tmp/fuzz-source" > "$HOME/tmp/fuzz-inputs.tsv"
+          "$HOME/tmp/fuzz-python/bin/python" scripts/seed_encoder_fuzz.py "$HOME/tmp/fuzz-inputs.tsv" "$HOME/tmp/encoder-fuzz/corpus" --build-commit "$GITHUB_SHA"
+      - name: Install and build sanitizer targets
+        run: |
+          set -o pipefail
+          nice -n 19 cargo install cargo-fuzz --version 0.13.2 --locked 2>&1 | tee "$HOME/tmp/encoder-fuzz/install.log"
+          nice -n 19 cargo fuzz build --codegen-units 16 2>&1 | tee "$HOME/tmp/encoder-fuzz/build.log"
+      - name: Fuzz request admission
+        run: |
+          set -o pipefail
+          nice -n 19 cargo fuzz run --codegen-units 16 request_limits "$HOME/tmp/encoder-fuzz/corpus/request_limits" -- -artifact_prefix="$HOME/tmp/encoder-fuzz/artifacts/request_limits/" -rss_limit_mb=2048 -max_total_time=120 -timeout=60 -max_len=500000 -print_final_stats=1 2>&1 | tee "$HOME/tmp/encoder-fuzz/request_limits.log"
+      - name: Fuzz streaming byte and pixel equivalence
+        run: |
+          set -o pipefail
+          nice -n 19 cargo fuzz run --codegen-units 16 streaming_roundtrip "$HOME/tmp/encoder-fuzz/corpus/streaming_roundtrip" -- -artifact_prefix="$HOME/tmp/encoder-fuzz/artifacts/streaming_roundtrip/" -rss_limit_mb=2048 -max_total_time=300 -timeout=60 -max_len=500000 -print_final_stats=1 2>&1 | tee "$HOME/tmp/encoder-fuzz/streaming_roundtrip.log"
+      - name: Preserve fuzz corpus and failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: encoder-fuzz-${{ github.sha }}
+          path: ~/tmp/encoder-fuzz
+          if-no-files-found: error
+          retention-days: 30
