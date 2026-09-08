@@ -1691,7 +1691,66 @@ impl LosslessConfig {
         animation: &AnimationParams,
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
-        encode_animation_lossless(self, width, height, layout, animation, frames, None).at()
+        self.encode_animation_inner(width, height, layout, animation, frames, None, None)
+    }
+
+    /// Encode a multi-frame animation with embedded metadata (EXIF, XMP,
+    /// JUMBF, ICC, `colr`, `hCdR`).
+    ///
+    /// The still and streaming paths thread metadata through
+    /// [`EncodeRequest::with_metadata`] and
+    /// [`LossyEncoder::with_exif`](crate::api::LossyEncoder::with_exif); this
+    /// is the animation equivalent (imazen/jxl-encoder#100). Without it the
+    /// only route was a post-encode call to the doc-hidden
+    /// `container::wrap_in_container`, which meant a second writer of the
+    /// same ISO/IEC 18181-2 boxes living downstream.
+    ///
+    /// Metadata implies a container, so the output is never a bare
+    /// codestream when any field is set.
+    #[track_caller]
+    pub fn encode_animation_with_metadata(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+        metadata: &ImageMetadata<'_>,
+    ) -> Result<Vec<u8>> {
+        self.encode_animation_inner(
+            width,
+            height,
+            layout,
+            animation,
+            frames,
+            None,
+            Some(metadata),
+        )
+    }
+
+    #[track_caller]
+    /// Both public animation entry points funnel here. The argument count is
+    /// the public signature (dimensions, layout, params, frames) plus the two
+    /// optional tails; grouping the tails into a struct was tried and only
+    /// moved the noise to every call site, so the lint is silenced here with
+    /// the reason rather than worked around.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_animation_inner(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+        limits: Option<&Limits>,
+        metadata: Option<&ImageMetadata<'_>>,
+    ) -> Result<Vec<u8>> {
+        let codestream =
+            encode_animation_lossless(self, width, height, layout, animation, frames, limits)
+                .at()?;
+        crate::api::ingest::finish_animation_output(
+            codestream, width, height, layout, true, metadata, None,
+        )
     }
 
     /// Encode a multi-frame animation with explicit resource [`Limits`].
@@ -1711,7 +1770,7 @@ impl LosslessConfig {
         frames: &[AnimationFrame<'_>],
         limits: &Limits,
     ) -> Result<Vec<u8>> {
-        encode_animation_lossless(self, width, height, layout, animation, frames, Some(limits)).at()
+        self.encode_animation_inner(width, height, layout, animation, frames, Some(limits), None)
     }
 
     // ── JPEG → JXL lossless transcoding ─────────────────────────────────
@@ -5303,7 +5362,59 @@ impl LossyConfig {
         animation: &AnimationParams,
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
-        encode_animation_lossy(self, width, height, layout, animation, frames, None).at()
+        self.encode_animation_inner(width, height, layout, animation, frames, None, None)
+    }
+
+    /// Encode a multi-frame animation with embedded metadata (EXIF, XMP,
+    /// JUMBF, ICC, `colr`, `hCdR`).
+    ///
+    /// The lossy counterpart of
+    /// [`LosslessConfig::encode_animation_with_metadata`]
+    /// (imazen/jxl-encoder#100). Metadata implies a container, so the output
+    /// is never a bare codestream when any field is set.
+    #[track_caller]
+    pub fn encode_animation_with_metadata(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+        metadata: &ImageMetadata<'_>,
+    ) -> Result<Vec<u8>> {
+        self.encode_animation_inner(
+            width,
+            height,
+            layout,
+            animation,
+            frames,
+            None,
+            Some(metadata),
+        )
+    }
+
+    #[track_caller]
+    /// Both public animation entry points funnel here. The argument count is
+    /// the public signature (dimensions, layout, params, frames) plus the two
+    /// optional tails; grouping the tails into a struct was tried and only
+    /// moved the noise to every call site, so the lint is silenced here with
+    /// the reason rather than worked around.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_animation_inner(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+        limits: Option<&Limits>,
+        metadata: Option<&ImageMetadata<'_>>,
+    ) -> Result<Vec<u8>> {
+        let codestream =
+            encode_animation_lossy(self, width, height, layout, animation, frames, limits).at()?;
+        crate::api::ingest::finish_animation_output(
+            codestream, width, height, layout, false, metadata, None,
+        )
     }
 
     /// Encode a multi-frame animation with explicit resource [`Limits`].
@@ -5323,7 +5434,7 @@ impl LossyConfig {
         frames: &[AnimationFrame<'_>],
         limits: &Limits,
     ) -> Result<Vec<u8>> {
-        encode_animation_lossy(self, width, height, layout, animation, frames, Some(limits)).at()
+        self.encode_animation_inner(width, height, layout, animation, frames, Some(limits), None)
     }
 }
 

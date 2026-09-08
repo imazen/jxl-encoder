@@ -296,3 +296,146 @@ fn compat_block_76_items_stay_reachable() {
     let info: jxl_encoder::ThreadingInfo = jxl_encoder::encode_threading_info(true, 7);
     assert!(info.max_useful_threads >= 1);
 }
+
+// ── #100 second half: metadata on the supported animation surface ──────────
+
+/// `encode_animation_with_metadata` is the supported route the compat
+/// re-export above exists to replace. Same fixture, same assertions, but
+/// through the public API instead of a post-encode wrap — which is what lets
+/// zenjxl delete its local port of the box layout rather than re-point it.
+#[test]
+fn animation_metadata_api_matches_the_manual_wrap() {
+    let red = solid_rgb(255, 0, 0);
+    let green = solid_rgb(0, 255, 0);
+    let blue = solid_rgb(0, 0, 255);
+    let frames = [
+        AnimationFrame {
+            pixels: &red,
+            duration: 1,
+            ..Default::default()
+        },
+        AnimationFrame {
+            pixels: &green,
+            duration: 2,
+            ..Default::default()
+        },
+        AnimationFrame {
+            pixels: &blue,
+            duration: 3,
+            ..Default::default()
+        },
+    ];
+    let animation = AnimationParams {
+        tps_numerator: 10,
+        tps_denominator: 1,
+        num_loops: 0,
+        premultiplied_alpha: false,
+    };
+
+    let exif: &[u8] = &[
+        0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x01, 0x03, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let xmp: &[u8] = br#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"/><?xpacket end="w"?>"#;
+    let meta = jxl_encoder::api::ImageMetadata::new()
+        .with_exif(exif)
+        .with_xmp(xmp);
+
+    let cfg = LosslessConfig::new();
+    let via_api = cfg
+        .encode_animation_with_metadata(64, 64, PixelLayout::Rgb8, &animation, &frames, &meta)
+        .expect("encode_animation_with_metadata");
+
+    // Byte-for-byte the same thing the manual route produces. This is the
+    // claim that lets the downstream port be deleted rather than kept in sync.
+    let bare = cfg
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .expect("encode_animation");
+    let via_manual = jxl_encoder::wrap_in_container(&bare, Some(exif), Some(xmp));
+    assert_eq!(
+        via_api, via_manual,
+        "the supported API must emit exactly what the manual wrap did"
+    );
+
+    assert!(jxl_encoder::is_container(&via_api));
+    let (w, h, api_frames) = decode_frames_oxide(&via_api);
+    assert_eq!((w, h), (64, 64));
+    assert_eq!(api_frames.len(), 3);
+    assert_eq!(
+        api_frames,
+        decode_frames_oxide(&bare).2,
+        "metadata must not change decoded pixels"
+    );
+    let (rw, rh, _) = decode_first_frame_jxlrs(&via_api);
+    assert_eq!((rw, rh), (64, 64), "jxl-rs must accept it");
+
+    let dir = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "compat_surface_76");
+    let path = dir.join("animation_api_metadata.jxl");
+    std::fs::write(&path, &via_api).expect("write");
+    let out = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(&path)
+        .arg("--disable_output")
+        .arg("--num_threads=1")
+        .output()
+        .expect("run djxl v0.12");
+    assert!(
+        out.status.success(),
+        "djxl rejected the API-produced container: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Animation with no metadata must still be a bare codestream at 8-bit — the
+/// guard that routing every animation through the wrapper did not start
+/// wrapping unconditionally.
+#[test]
+fn animation_without_metadata_stays_bare_at_8bit() {
+    let bare = three_frame_animation();
+    assert!(
+        jxl_encoder::is_bare_codestream(&bare),
+        "8-bit animation with no metadata needs no container"
+    );
+}
+
+/// The animation path had the same level defect the still paths did: a 16-bit
+/// LOSSLESS animation signals `modular_16_bit_buffer_sufficient = false` and
+/// so cannot be level 5. It previously never wrapped at all, so it always was.
+#[test]
+fn lossless_16bit_animation_signals_level_10() {
+    let mut px = Vec::with_capacity(32 * 32 * 6);
+    for y in 0..32u32 {
+        for x in 0..32u32 {
+            for c in 0..3u32 {
+                let v = ((x * 2003 + y * 6151 + c * 21841) % 65536) as u16;
+                px.extend_from_slice(&v.to_ne_bytes());
+            }
+        }
+    }
+    let frames = [
+        AnimationFrame {
+            pixels: &px,
+            duration: 1,
+            ..Default::default()
+        },
+        AnimationFrame {
+            pixels: &px,
+            duration: 1,
+            ..Default::default()
+        },
+    ];
+    let data = LosslessConfig::new()
+        .encode_animation(
+            32,
+            32,
+            PixelLayout::Rgb16,
+            &AnimationParams::default(),
+            &frames,
+        )
+        .expect("encode 16-bit animation");
+    assert!(
+        !data.starts_with(&[0xff, 0x0a]),
+        "16-bit lossless animation cannot be a bare codestream (that implies level 5)"
+    );
+    let i = find_subseq(&data, b"jxll").expect("jxll box");
+    assert_eq!(data[i + 4], 10, "16-bit lossless animation is level 10");
+}

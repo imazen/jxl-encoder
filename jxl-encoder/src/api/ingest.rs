@@ -823,6 +823,94 @@ pub(crate) fn wrap_metadata_container(
 /// the pixel layout carries alpha — the level-5 cap is `<= 4` extras
 /// *including* alpha, matching libjxl `VerifyLevelSettings` which
 /// reads `m.num_extra_channels` (alpha is one of them).
+/// Wrap an animation codestream: attach metadata boxes when the caller
+/// supplied any, and emit the `jxll` box when the level demands one.
+///
+/// Animation previously never wrapped at all, which meant it carried the same
+/// level defect the still paths had until 2026-09-08: a 16-bit LOSSLESS
+/// animation signals `modular_16_bit_buffer_sufficient = false` and then
+/// claimed level 5 by staying a bare codestream, which level 5 forbids
+/// (libjxl `VerifyLevelSettings`, `encode.cc:585`). Routing every animation
+/// through here fixes that and gives metadata a home in the same step.
+///
+/// The `modular_16_bit_buffer_sufficient` value is derived by building the
+/// same [`crate::headers::file_header::ImageMetadata`] shape the frame writer
+/// will and asking it — never by restating the rule, which is how the field
+/// and the level it gates drifted apart in the first place.
+pub(crate) fn finish_animation_output(
+    codestream: Vec<u8>,
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    is_lossless: bool,
+    metadata: Option<&ImageMetadata<'_>>,
+    brotli_metadata_quality: Option<u32>,
+) -> Result<Vec<u8>> {
+    use crate::headers::extra_channels::ExtraChannelInfo;
+    use crate::headers::file_header::{BitDepth, ImageMetadata as HeaderMetadata};
+
+    let bits = if layout.is_16bit() { 16 } else { 8 };
+    let mut probe = HeaderMetadata {
+        bit_depth: BitDepth {
+            float_sample: false,
+            bits_per_sample: bits,
+            exponent_bits: 0,
+        },
+        xyb_encoded: !is_lossless,
+        ..Default::default()
+    };
+    if layout.has_alpha() {
+        let mut alpha = ExtraChannelInfo::alpha();
+        alpha.bit_depth.bits_per_sample = bits;
+        probe.extra_channels.push(alpha);
+    }
+
+    let icc_size = metadata
+        .and_then(|m| m.icc_profile)
+        .map_or(0u64, |icc| icc.len() as u64);
+    let num_ec = u32::from(layout.has_alpha());
+    let level = compute_required_level(
+        width,
+        height,
+        num_ec,
+        false,
+        icc_size,
+        probe.modular_16bit_buffer_sufficient(),
+    )?;
+
+    let (exif, xmp, jumbf) = match metadata {
+        Some(m) => (m.exif, m.xmp, m.jumbf),
+        None => (None, None, None),
+    };
+    let has_meta = exif.is_some() || xmp.is_some() || jumbf.is_some();
+    let colr = metadata.and_then(|m| m.colr_payload);
+    let hcdr = metadata.and_then(|m| m.hcdr_payload);
+
+    let mut out = if has_meta
+        || colr.is_some()
+        || hcdr.is_some()
+        || crate::container::level_requires_container(level)
+    {
+        wrap_metadata_container(
+            &codestream,
+            exif,
+            xmp,
+            jumbf,
+            brotli_metadata_quality,
+            level,
+        )
+    } else {
+        codestream
+    };
+    if let Some(payload) = colr {
+        out = crate::container::append_colr_box(&out, payload);
+    }
+    if let Some(payload) = hcdr {
+        out = crate::container::append_hcdr_box(&out, payload);
+    }
+    Ok(out)
+}
+
 pub(crate) fn compute_required_level(
     width: u32,
     height: u32,
