@@ -3604,6 +3604,19 @@ fn streaming_default_admission_rejects_large_shape_without_allocating() {
     // One narrow row describes a huge image. Construction and rejection must
     // never allocate the billion-pixel backing planes.
     let (w, h) = (1, 1_000_000_000);
+    // On 32-bit targets the working-buffer arithmetic rejects this shape
+    // in the constructor, before deferred memory admission is reached.
+    if usize::BITS == 32 {
+        assert!(matches!(
+            LossyConfig::new(1.0).encoder(w, h, PixelLayout::Rgb8),
+            Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. })
+        ));
+        assert!(matches!(
+            LosslessConfig::new().encoder(w, h, PixelLayout::Rgb8),
+            Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. })
+        ));
+        return;
+    }
     let mut lossy = LossyConfig::new(1.0)
         .encoder(w, h, PixelLayout::Rgb8)
         .unwrap();
