@@ -486,6 +486,87 @@ impl ModularImage {
     /// `bit_depth` is set to the sample width, which is also what gates the
     /// transform budget: 32 disables RCT and palette, exactly as libjxl's
     /// `max_bitdepth` accounting does.
+    /// Build a modular image from PLANAR integer channels of arbitrary width
+    /// up to the spec's 31-bit ceiling (imazen/jxl-engine#95).
+    ///
+    /// Each entry of `planes` is one channel in row-major order, exactly
+    /// `width * height` samples. Values must be in `0 ..= 2^bits - 1`; the
+    /// codestream's `bits_per_sample` is unsigned, so a caller with signed data
+    /// offsets it before calling.
+    ///
+    /// Planar rather than interleaved because that is how the data this serves
+    /// actually arrives — DEM tiles, instrument rasters, depth maps — and it
+    /// avoids inventing an interleaved-pixel model for single-channel content.
+    ///
+    /// 31 is the spec ceiling, not an arbitrary cap: jxl-oxide's header parser
+    /// rejects integer `bits_per_sample > 31`, and libjxl's own public API caps
+    /// it lower still, at 24 (`encode.cc:632`), refusing 32-bit integer modular
+    /// outright (`enc_modular.cc:744`). So 17..=24 is libjxl parity and 25..=31
+    /// is beyond it.
+    pub fn from_planar_int(
+        planes: &[&[u32]],
+        width: usize,
+        height: usize,
+        bits_per_sample: u32,
+        is_grayscale: bool,
+        has_alpha: bool,
+    ) -> Result<Self> {
+        if !(1..=31).contains(&bits_per_sample) {
+            return Err(Error::InvalidInput(alloc::format!(
+                "bits_per_sample {bits_per_sample} out of range; the JPEG XL \
+                 codestream allows 1..=31 for integer samples"
+            )));
+        }
+        if planes.is_empty() || planes.len() > 4 {
+            return Err(Error::InvalidInput(alloc::format!(
+                "expected 1..=4 planes, got {}",
+                planes.len()
+            )));
+        }
+        let expected = width.checked_mul(height).ok_or(Error::DimensionOverflow {
+            width,
+            height,
+            channels: planes.len(),
+        })?;
+        for (i, plane) in planes.iter().enumerate() {
+            if plane.len() != expected {
+                return Err(Error::InvalidInput(alloc::format!(
+                    "plane {i}: expected {expected} samples for {width}x{height}, got {}",
+                    plane.len()
+                )));
+            }
+        }
+        // `bits_per_sample == 32` is excluded above, so this cannot overflow.
+        let max = (1u32 << bits_per_sample) - 1;
+        for (i, plane) in planes.iter().enumerate() {
+            if let Some(bad) = plane.iter().find(|&&v| v > max) {
+                return Err(Error::InvalidInput(alloc::format!(
+                    "plane {i}: sample {bad} exceeds the {bits_per_sample}-bit \
+                     maximum {max}"
+                )));
+            }
+        }
+
+        let mut channels = Vec::with_capacity(planes.len());
+        for plane in planes {
+            let mut ch = Channel::new(width, height)?;
+            for y in 0..height {
+                for x in 0..width {
+                    // In range by the check above, so the cast is exact.
+                    ch.set(x, y, plane[y * width + x] as i32);
+                }
+            }
+            channels.push(ch);
+        }
+
+        Ok(Self {
+            channels,
+            bit_depth: bits_per_sample,
+            is_grayscale,
+            has_alpha,
+        })
+    }
+
     pub fn from_float_native(
         data: &[u8],
         width: usize,

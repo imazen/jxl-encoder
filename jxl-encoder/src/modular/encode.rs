@@ -2209,6 +2209,18 @@ pub(crate) fn tree_self_repair_ratio_flags_aliasing(clustered_cost: f64, ideal_c
 /// `enc_params.h:channel_colors_pre_transform_percent`), and
 /// `nb_prev_channels` (caps `max_ref_channels` for tree-learner reference
 /// properties, libjxl `options.max_properties`).
+/// Highest sample `bit_depth` for which an RCT (and the palette path that
+/// precedes it) still fits the codestream's 32-bit modular buffers.
+///
+/// libjxl gates on `max_bitdepth + 1 < level_max_bitdepth` where
+/// `max_bitdepth = bits_per_sample + (fp ? 0 : 1)` and `level_max_bitdepth` is
+/// 32 at level 10 (`enc_modular.cc:753, 868, 905`). Using the integer form
+/// `bits + 1` uniformly yields `bits + 2 < 32`, i.e. `bits < 30`, and gives the
+/// same verdict libjxl gives on every case we can represent: f32 (`bit_depth`
+/// 32) refused, f16 (16) permitted, u16 permitted. Nothing has to know whether
+/// the samples are float.
+pub(crate) const RCT_BUDGET_LIMIT: u32 = 30;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     image: &ModularImage,
@@ -2248,8 +2260,16 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     // reachable only from a 32-bit float sample — integer input tops out at 16
     // — so the two are the same predicate today, and libjxl's own budget for
     // f16 (`max_bitdepth` 16, RCT permitted at level 10) falls out unchanged.
-    let rct = rct && image.bit_depth < 32;
-    let palette = palette && image.bit_depth < 32;
+    // RCT_BUDGET_LIMIT is the real budget: libjxl refuses an RCT unless
+    // `max_bitdepth + 1 < level_max_bitdepth`, with `max_bitdepth = bits +
+    // (fp ? 0 : 1)` and `level_max_bitdepth = 32` at level 10
+    // (`enc_modular.cc:753,868,905`). Taking the integer form `bits + 1`
+    // uniformly gives the SAME verdict as libjxl on every representable case —
+    // f32 (32) refused, f16 (16) permitted, u16 permitted — so no float flag is
+    // needed, and it additionally refuses 30- and 31-bit integers, which is
+    // correct and becomes reachable with imazen/jxl-encoder#95.
+    let rct = rct && image.bit_depth < RCT_BUDGET_LIMIT;
+    let palette = palette && image.bit_depth < RCT_BUDGET_LIMIT;
 
     // Check if multi-channel palette is beneficial (only for lossless, non-lossy images).
     // When palette is active, it replaces RCT for the color channels — palette

@@ -798,7 +798,9 @@ impl FrameEncoder {
         // `encode::write_modular_stream_with_tree_dc_quant_knobs`; both are
         // needed because the sectioned/multi-group path reaches RCT through
         // this function rather than that one.
-        let has_rct = !self.options.skip_rct && image.channels.len() >= 3 && image.bit_depth < 32;
+        let has_rct = !self.options.skip_rct
+            && image.channels.len() >= 3
+            && image.bit_depth < super::encode::RCT_BUDGET_LIMIT;
         let num_color_channels = if has_rct {
             3
         } else {
@@ -1896,7 +1898,8 @@ impl FrameEncoder {
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
         let squeeze_params = default_squeeze_params(image);
         let mut squeezed = image.clone();
-        let has_rct = squeezed.channels.len() >= 3 && squeezed.bit_depth < 32;
+        let has_rct =
+            squeezed.channels.len() >= 3 && squeezed.bit_depth < super::encode::RCT_BUDGET_LIMIT;
         if has_rct {
             forward_rct(&mut squeezed.channels, 0, RctType::YCOCG)?;
         }

@@ -55,6 +55,7 @@ mod hdr_suite;
 mod hdr_vdp2_chunk3;
 mod hdr_vdp2_chunk4_auto;
 mod hdr_vdp2_loss;
+mod high_bit_depth_int;
 mod idct_parity;
 mod jbrd_roundtrip_conformance;
 mod jpeg_public_api;

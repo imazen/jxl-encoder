@@ -8972,6 +8972,19 @@ pub struct LosslessEncoder {
     /// Brotli-compressed metadata box quality (#15). Mirrors
     /// `EncodeRequest::with_brotli_metadata`.
     brotli_metadata_quality: Option<u32>,
+    /// Set when the planes came from
+    /// [`LosslessConfig::encode_planar_int`] rather than a `PixelLayout`
+    /// (imazen/jxl-encoder#95): the sample width, `1..=31`.
+    ///
+    /// That path has no `PixelLayout` — none can carry more than 16 bits — so
+    /// it borrows the same-shaped 16-bit layout purely so the memory pre-flight
+    /// and limit checks have something to size against. Recording the real
+    /// width here keeps the two places that would otherwise be WRONG honest:
+    /// the header takes its `bits_per_sample` from this, and the #72 16-bit
+    /// tree-learning lift is suppressed, since it is calibrated for 16-bit
+    /// RGB(A) and would fire here only as an artefact of the borrowed layout.
+    /// Everything else the layout feeds is a byte-count estimate.
+    planar_bits: Option<u32>,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
     /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~4 GB) as
@@ -9539,7 +9552,17 @@ impl LosslessEncoder {
             // preserves pixels bit-exactly so this only affects header
             // signaling — the encoded values stay whatever the caller
             // pushed via push_rows.
-            if let Some((bits, exponent_bits)) = self.layout.lossless_float_bit_depth() {
+            if let Some(bits) = self.planar_bits {
+                // #95: the real sample width, which no PixelLayout expresses.
+                file_header.metadata.bit_depth = crate::headers::file_header::BitDepth {
+                    float_sample: false,
+                    bits_per_sample: bits,
+                    exponent_bits: 0,
+                };
+                for ec in &mut file_header.metadata.extra_channels {
+                    ec.bit_depth = file_header.metadata.bit_depth;
+                }
+            } else if let Some((bits, exponent_bits)) = self.layout.lossless_float_bit_depth() {
                 // Mirrors the one-shot path; also drives the level, since
                 // `modular_16bit_buffer_sufficient` is false for any float.
                 let bd = crate::headers::file_header::BitDepth {
@@ -9609,11 +9632,16 @@ impl LosslessEncoder {
             let mut use_tree_learning_l = cfg.effective_tree_learning();
             let mut smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
             // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
-            use_tree_learning_l |= cfg.lift_integer_tree_learning(
-                self.layout,
-                (w as u64) * (h as u64),
-                &mut smart_profile,
-            );
+            // Not on the planar path: the lift is calibrated for 16-bit
+            // RGB(A) and would fire here only because that path borrows a
+            // 16-bit layout for sizing (#95).
+            if self.planar_bits.is_none() {
+                use_tree_learning_l |= cfg.lift_integer_tree_learning(
+                    self.layout,
+                    (w as u64) * (h as u64),
+                    &mut smart_profile,
+                );
+            }
             let frame_encoder = FrameEncoder::new(
                 w,
                 h,
@@ -9728,6 +9756,90 @@ impl LosslessConfig {
     /// [`LosslessEncoder::finish`] — input streaming does not bound peak
     /// encoder memory.
     #[track_caller]
+    /// Encode PLANAR integer channels at an arbitrary bit depth up to 31
+    /// (imazen/jxl-encoder#95).
+    ///
+    /// The `PixelLayout` surface tops out at 16-bit, which is a limitation of
+    /// the input plumbing rather than of the codec: the modular path stores
+    /// `i32` samples and codes them through a 32-bit token path. This is the
+    /// route for the imagery that needs more — DEM and terrain rasters,
+    /// instrument and photon counts, 24/32-bit depth and disparity maps,
+    /// masters that must round-trip as exact integers rather than
+    /// reinterpreted floats.
+    ///
+    /// * `planes` — 1 to 4 channels, row-major, exactly `width * height`
+    ///   samples each. Planar because that is how this data arrives, and
+    ///   because forcing an interleaved-pixel model on single-channel rasters
+    ///   would be gratuitous.
+    /// * `bits_per_sample` — `1..=31`. Samples must be in `0 ..= 2^bits - 1`;
+    ///   JPEG XL's `bits_per_sample` is unsigned, so signed data is offset by
+    ///   the caller.
+    /// * `is_grayscale` / `has_alpha` — how the planes are interpreted. One
+    ///   plane grayscale, two grayscale+alpha, three RGB, four RGBA.
+    ///
+    /// # Where this sits relative to libjxl
+    ///
+    /// libjxl's public API caps integer `bits_per_sample` at **24**
+    /// (`encode.cc:632`, whose comment notes the spec allows 31) and its
+    /// encoder refuses 32-bit integer modular outright
+    /// (`enc_modular.cc:744`). So `17..=24` is parity and `25..=31` is beyond
+    /// what libjxl will encode. Above 29 bits the RCT is automatically
+    /// disabled, because an RCT's channel sums need a spare bit that a
+    /// 30-or-31-bit sample does not leave — the same budget libjxl applies.
+    ///
+    /// Lossless only, by construction: this is `LosslessConfig`. There is no
+    /// lossy counterpart because VarDCT works in an `f32` perceptual domain
+    /// and cannot round-trip wide integers exactly.
+    pub fn encode_planar_int(
+        &self,
+        width: u32,
+        height: u32,
+        planes: &[&[u32]],
+        bits_per_sample: u32,
+        is_grayscale: bool,
+        has_alpha: bool,
+    ) -> Result<Vec<u8>> {
+        validate_dims(width, height).at()?;
+        let expected_channels = usize::from(!is_grayscale) * 2 + 1 + usize::from(has_alpha);
+        if planes.len() != expected_channels {
+            return Err(at!(EncodeError::InvalidInput {
+                message: format!(
+                    "expected {expected_channels} planes for is_grayscale={is_grayscale} \
+                     has_alpha={has_alpha}, got {}",
+                    planes.len()
+                ),
+            }));
+        }
+        let image = crate::modular::channel::ModularImage::from_planar_int(
+            planes,
+            width as usize,
+            height as usize,
+            bits_per_sample,
+            is_grayscale,
+            has_alpha,
+        )
+        .map_err(|e| at(EncodeError::from(e)))?;
+
+        // Borrow the same-shaped 16-bit layout so the pre-flight and limit
+        // checks have something to size against; `planar_bits` carries the real
+        // width and overrides everywhere it matters. See that field's doc.
+        let layout = match (is_grayscale, has_alpha) {
+            (true, false) => PixelLayout::Gray16,
+            (true, true) => PixelLayout::GrayAlpha16,
+            (false, false) => PixelLayout::Rgb16,
+            (false, true) => PixelLayout::Rgba16,
+        };
+        let mut enc = self.encoder(width, height, layout)?;
+        enc.planar_bits = Some(bits_per_sample);
+        enc.channels = image.channels;
+        enc.bit_depth = image.bit_depth;
+        enc.is_grayscale = image.is_grayscale;
+        enc.has_alpha = image.has_alpha;
+        enc.rows_pushed = height;
+        enc.input_admitted = true;
+        enc.finish()
+    }
+
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LosslessEncoder> {
         validate_dims(width, height).at()?;
 
@@ -9764,6 +9876,7 @@ impl LosslessConfig {
         let channels = Vec::new();
 
         Ok(LosslessEncoder {
+            planar_bits: None,
             cfg: self.clone(),
             width,
             height,
