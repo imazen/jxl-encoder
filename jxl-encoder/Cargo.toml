@@ -3230,3 +3230,7 @@ required-features = ["_dev"]
 [[example]]
 name = "bit_depth_perf"
 path = "examples/bit_depth_perf.rs"
+
+[[example]]
+name = "cliff_bisect"
+path = "examples/cliff_bisect.rs"

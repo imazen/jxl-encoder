@@ -2829,20 +2829,41 @@ fn bucketize_with_thresholds<T: PropScalar>(values: &[T], ts: &[i32]) -> Vec<u8>
 /// value range is <= 4x the bucket count and the sparse (sort+dedup) path
 /// otherwise, and those two round the sub-sampling step differently. This
 /// tracks min/max alongside the set so the same choice can be made.
-#[derive(Default)]
 struct DistinctPropertyValues {
     /// Amortized distinct set: values land in `buf`, sorted+deduped whenever it
-    /// exceeds `COMPACT_AT`. A `BTreeSet` was measured WORSE than the column it
+    /// reaches `compact_at`. A `BTreeSet` was measured WORSE than the column it
     /// replaces — per-node overhead dominates for i32 keys. A sorted Vec holds
     /// the same information at 4 bytes per distinct value.
     buf: Vec<i32>,
+    /// Buffer length that triggers the next compaction. Starts at
+    /// [`Self::COMPACT_AT`] and DOUBLES past the surviving distinct count after
+    /// each compaction. Without that growth the collector degenerates: once a
+    /// property's distinct set approaches the fixed threshold, each compaction
+    /// reclaims almost nothing, so the next one fires a handful of pushes later
+    /// and the walk becomes a full sort per push — quadratic. See #115.
+    compact_at: usize,
     min: Option<i32>,
     max: Option<i32>,
 }
 
+impl Default for DistinctPropertyValues {
+    fn default() -> Self {
+        Self {
+            buf: Vec::new(),
+            // MUST start at the real threshold: a derived `Default` would put
+            // 0 here, which compacts on every push — worse than the #115 bug it
+            // is meant to fix.
+            compact_at: Self::COMPACT_AT,
+            min: None,
+            max: None,
+        }
+    }
+}
+
 impl DistinctPropertyValues {
-    /// Compact once the buffer reaches this many entries, bounding the
-    /// collector at ~256 KB plus the distinct set regardless of sample count.
+    /// Initial compaction threshold. The collector holds ~256 KB while the
+    /// distinct set is small; past that it keeps at most ~2x the distinct set,
+    /// which is what makes the amortization work (see `compact_at`).
     const COMPACT_AT: usize = 65_536;
 
     /// Merge another collector's values into this one. The distinct SET is
@@ -2863,16 +2884,30 @@ impl DistinctPropertyValues {
 
     fn push(&mut self, v: i32) {
         self.buf.push(v);
-        if self.buf.len() >= Self::COMPACT_AT {
+        if self.buf.len() >= self.compact_at {
             self.compact();
         }
         self.min = Some(self.min.map_or(v, |m| m.min(v)));
         self.max = Some(self.max.map_or(v, |m| m.max(v)));
     }
 
+    /// Sort + dedup, then set the next threshold to twice what survived.
+    ///
+    /// The doubling is the whole fix for #115. With a FIXED threshold, a
+    /// property whose distinct count reaches it compacts on nearly every push —
+    /// each one a full sort of the buffer — so the walk goes quadratic in the
+    /// sample count. Doubling guarantees at least as many pushes as there are
+    /// surviving distinct values before the next compaction, which is the
+    /// standard amortization and makes the total O(n log n).
+    ///
+    /// This changes only WHEN compaction happens, never WHAT the collector
+    /// yields: both `into_sorted_distinct` and `thresholds` sort and dedup
+    /// again on the way out, so the distinct set — and therefore the
+    /// thresholds, the tree, and the bytes — are independent of the schedule.
     fn compact(&mut self) {
         self.buf.sort_unstable();
         self.buf.dedup();
+        self.compact_at = core::cmp::max(Self::COMPACT_AT, self.buf.len().saturating_mul(2));
     }
 
     /// Consume into the ascending distinct value set.
@@ -12491,6 +12526,74 @@ mod tests {
     /// Covers both `pre_quantize` branches (they round the sub-sampling step
     /// differently) and the boundary between them: `range <= 4 * max_buckets`
     /// selects dense, above selects sparse.
+    #[test]
+    fn distinct_collector_amortizes_instead_of_sorting_every_push() {
+        // Regression pin for #115. `DistinctPropertyValues` compacted at a
+        // FIXED buffer length, so once a property's distinct set approached
+        // that length each compaction reclaimed almost nothing and the next
+        // one fired a few pushes later — a full sort per push, i.e. quadratic
+        // in the sample count. Measured: a smooth 512x512 ramp went from 24 ms
+        // to 8456 ms as its value range crossed the threshold.
+        //
+        // The fix is to double the threshold past whatever survived. This test
+        // pins the MECHANISM rather than a wall-clock number, because timing
+        // assertions are flaky and this invariant is what makes the timing
+        // hold: after compaction there must be at least as much headroom as
+        // there are surviving distinct values.
+        let mut c = DistinctPropertyValues::default();
+        assert_eq!(
+            c.compact_at,
+            DistinctPropertyValues::COMPACT_AT,
+            "a derived Default would leave compact_at at 0, which compacts on \
+             every push — worse than the bug"
+        );
+
+        // Push far more DISTINCT values than the initial threshold, which is
+        // the case that used to degenerate.
+        let n = DistinctPropertyValues::COMPACT_AT * 3;
+        for v in 0..n {
+            c.push(v as i32);
+        }
+        assert!(
+            c.compact_at >= c.buf.len(),
+            "after any compaction the next threshold ({}) must leave room for \
+             at least the surviving distinct set ({}), or the collector is \
+             back to sorting on nearly every push",
+            c.compact_at,
+            c.buf.len()
+        );
+
+        // And the answer is unchanged: the schedule must not affect the set.
+        let got = c.into_sorted_distinct();
+        let want: Vec<i32> = (0..n as i32).collect();
+        assert_eq!(got, want, "compaction schedule changed the distinct set");
+    }
+
+    /// The pathological shape specifically: many samples, a distinct set that
+    /// straddles the initial threshold, and heavy repetition — i.e. exactly the
+    /// ramp that produced the 8.4-second cell. Correctness only; the timing
+    /// claim lives in the benchmark record.
+    #[test]
+    fn distinct_collector_is_correct_when_distinct_set_straddles_the_threshold() {
+        for distinct in [
+            DistinctPropertyValues::COMPACT_AT - 1,
+            DistinctPropertyValues::COMPACT_AT,
+            DistinctPropertyValues::COMPACT_AT + 1,
+        ] {
+            let mut c = DistinctPropertyValues::default();
+            // Four passes, so every value repeats and dedup has real work.
+            for _ in 0..4 {
+                for v in 0..distinct {
+                    c.push(v as i32);
+                }
+            }
+            let got = c.into_sorted_distinct();
+            assert_eq!(got.len(), distinct, "distinct count at {distinct}");
+            assert_eq!(got[0], 0);
+            assert_eq!(got[distinct - 1], distinct as i32 - 1);
+        }
+    }
+
     #[test]
     fn distinct_value_collector_matches_full_column_thresholds() {
         // Reference: exactly what pre_quantize does with the full column.

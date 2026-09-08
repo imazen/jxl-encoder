@@ -90,3 +90,96 @@ catastrophically slow were maximally-noisy fixtures, and §4 shows integer
 content of the same entropy behaves identically. Optimising the float packing
 would be optimising a measured non-bottleneck; the cliff in §4 is the thing
 worth fixing, and fixing it helps integer and float alike.
+
+---
+
+# ADDENDUM, same day: §4's cliff had a single root cause, and it is fixed
+
+Investigated on request. Everything in §4 — and the "float is catastrophically
+slow" reading of §5's headline table — turned out to be **one bug**, in
+`DistinctPropertyValues` (`modular/tree_learn.rs`), the streaming collector that
+feeds property threshold derivation.
+
+## How it was found
+
+Bisecting the value range at 512x512, declared 17-bit, isolated a transition
+between range 70000 (24 ms) and 76000 (8456 ms). Two hypotheses were wrong and
+are recorded so they are not re-tried: it is **not** the 2^16 boundary (65535
+and 65537 are both fast), and it is **not** a sharp cliff in distinct count (the
+profile shows a threshold followed by roughly linear growth). At 256x256 it does
+not reproduce at all.
+
+`--features profile-phases` then named it outright:
+
+| phase | range 70000 | range 76000 |
+|---|--:|--:|
+| `modular/compute_best_tree` | 12.2 ms | 8438.8 ms |
+| **`tree/pre_quantize`** | **8.4 ms** | **8435.2 ms** |
+| everything else | ~18 ms | ~18 ms |
+
+## The bug
+
+`DistinctPropertyValues::push` compacted (full `sort_unstable` + `dedup`)
+whenever the buffer reached a FIXED `COMPACT_AT = 65_536`. Once a property's
+distinct set approaches that number, each compaction reclaims almost nothing, so
+the next one fires a handful of pushes later — a full 65k-element sort per push.
+Quadratic in the sample count, with a threshold exactly where the distinct set
+meets the constant.
+
+## The fix
+
+Double the threshold past whatever survived compaction
+(`compact_at = max(COMPACT_AT, 2 * surviving)`). Standard amortization; total
+work returns to O(n log n). It changes only WHEN compaction happens, never what
+the collector yields — both exit paths sort and dedup again — so thresholds, the
+tree, and the bytes are independent of the schedule.
+
+One trap worth recording: the struct had `#[derive(Default)]`, which would have
+initialised the new field to 0 and compacted on EVERY push — worse than the bug.
+It now has an explicit `Default`, and a test asserts that.
+
+## Result (all byte-identical to before)
+
+| cell | before | after | factor |
+|---|--:|--:|--:|
+| declared 17-bit, 512x512 | 30338.8 ms | **22.3 ms** | 1360x |
+| declared 24-bit, 512x512 | 29303.8 ms | **22.4 ms** | 1308x |
+| declared 31-bit, 512x512 | 28727.0 ms | **22.3 ms** | 1288x |
+| end-to-end 24-bit | 23964.8 ms | **25.4 ms** | 943x |
+| end-to-end 31-bit | 42813.3 ms | **27.6 ms** | 1551x |
+| end-to-end f32 | 42758.1 ms | **55.1 ms** | 776x |
+
+Range sweep at 512x512 after the fix is **flat**: 70000 / 71000 / 76000 /
+100000 / 131000 all land at 22–24 ms. The cliff is gone rather than moved.
+
+## What the corrected end-to-end table says
+
+| path | ms | bytes | vs Gray16 |
+|---|--:|--:|--:|
+| Gray8 (layout) | 16.7 | 181 | 0.87x |
+| Gray16 (layout) | 19.2 | 208 | 1.00x |
+| 17-bit (planar) | 20.3 | 181 | 1.06x |
+| 24-bit (planar) | 25.4 | 4784 | 1.32x |
+| 31-bit (planar) | 27.6 | 18595 | 1.44x |
+| f16 (layout) | 19.0 | 182 | 0.99x |
+| f32 (layout) | 55.1 | 205387 | 2.87x |
+
+The wide and float paths are now ordinary. f16 is indistinguishable from
+`Gray16`. f32's 2.87x is not a path cost — its fixture produces 205 KB against
+`Gray16`'s 208 bytes, i.e. it is doing ~1000x more entropy coding.
+
+**§5's conclusion is unchanged and now better supported: no float-specific
+optimised path is warranted.** The thing that looked like a float problem was
+this collector, and fixing it helped integer and float alike.
+
+## Scope: who was affected
+
+The trigger is a *sampled property's* distinct set approaching 65536. Sampled
+property columns carry neighbour values and their differences, so:
+
+- reachable from the new >16-bit and float paths, whose samples span more than
+  16 bits — confirmed here;
+- **plausibly reachable from existing multi-channel 16-bit content**, where a
+  property that is a difference of two 16-bit values spans 17 bits — NOT
+  verified, and worth checking, since it decides whether this was a latent bug
+  or a shipping one. A checker can revert the one-line doubling and re-run.
