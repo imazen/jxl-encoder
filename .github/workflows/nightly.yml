@@ -100,7 +100,7 @@ jobs:
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
         run: |
-          cargo test \
+          cargo test --locked \
             --release \
             -p jxl-encoder \
             --features "parallel butteraugli-loop ssim2-loop zenjxl-regression-gate" \
@@ -115,18 +115,18 @@ jobs:
       - name: Validate two-pass input canonicalization
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
-        run: cargo test --release -p jxl-encoder --lib --features corpus-tests canonicalization_corpus_roundtrip -- --nocapture
+        run: cargo test --locked --release -p jxl-encoder --lib --features corpus-tests canonicalization_corpus_roundtrip -- --nocapture
 
       - name: Validate cancellation and concurrent canonicalization
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
-        run: cargo test --release -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
+        run: cargo test --locked --release -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
 
       - name: Run corpus decoder-roundtrip gates
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
         run: |
-          cargo test \
+          cargo test --locked \
             --release \
             -p jxl-encoder \
             --features "parallel butteraugli-loop" \

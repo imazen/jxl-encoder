@@ -52,10 +52,10 @@ jobs:
           prefix-key: v1-rust
 
       - name: Build workspace
-        run: cargo build --workspace --release
+        run: cargo build --locked --workspace --release
 
       - name: Run tests
-        run: cargo test --workspace --release
+        run: cargo test --locked --workspace --release
 
       # Belt-and-suspenders: ensure the no_std + alloc path keeps
       # compiling. `jxl-encoder-simd` is `#![no_std]` unconditionally
@@ -65,7 +65,7 @@ jobs:
       # downstream builds.
       - name: Build (no-std, no-default-features)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo build -p jxl-encoder --no-default-features
+        run: cargo build --locked -p jxl-encoder --no-default-features
 
   # ==========================================================================
   # Native ARM64 + macOS Intel testing
@@ -100,11 +100,11 @@ jobs:
           prefix-key: v1-rust
 
       - name: Build workspace
-        run: cargo build --workspace --release
+        run: cargo build --locked --workspace --release
 
       - name: Run tests
         if: matrix.run_tests
-        run: cargo test --workspace --release
+        run: cargo test --locked --workspace --release
 
   # ==========================================================================
   # Cross-compiled testing with QEMU emulation (32-bit targets)
@@ -149,11 +149,11 @@ jobs:
       # parquet/zstd C deps don't build on the old cross images, so it
       # is excluded here (native jobs still build + test it).
       - name: Build (cross)
-        run: cross build --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target ${{ matrix.target }}
+        run: cross build --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target ${{ matrix.target }}
 
       - name: Test lib (cross/QEMU)
         if: matrix.run_tests
-        run: cross test --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --lib --target ${{ matrix.target }}
+        run: cross test --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --lib --target ${{ matrix.target }}
 
   # ==========================================================================
   # WASM Runtime Tests (wasm32-wasip1 + simd128)
@@ -194,13 +194,13 @@ jobs:
       - name: Build for WASM
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-        run: cargo build --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target wasm32-wasip1
+        run: cargo build --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target wasm32-wasip1
 
       - name: Test jxl-encoder-simd (SIMD-vs-scalar tests)
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
           CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime run --dir=."
-        run: cargo test -p jxl-encoder-simd --release --target wasm32-wasip1 --lib
+        run: cargo test --locked -p jxl-encoder-simd --release --target wasm32-wasip1 --lib
 
   # ==========================================================================
   # Code Coverage
@@ -232,7 +232,7 @@ jobs:
           prefix-key: v1-rust
 
       - name: Generate coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info --exclude jxl-encoder-simd
+        run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info --exclude jxl-encoder-simd
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
@@ -269,7 +269,7 @@ jobs:
         with:
           prefix-key: v1-rust
       - name: Test (__expert __internals)
-        run: cargo test -p jxl-encoder --features "__expert __internals" --release --lib --test it
+        run: cargo test --locked -p jxl-encoder --features "__expert __internals" --release --lib --test it
 
   clippy:
     name: Clippy (${{ matrix.name }})
@@ -298,10 +298,10 @@ jobs:
           prefix-key: v1-rust
 
       - name: Clippy (default features)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Clippy (zensim-loop)
-        run: cargo clippy --workspace --all-targets --features zensim-loop -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --features zensim-loop -- -D warnings
 
       # `__expert` is not in either clippy lane above, and that is why the 19
       # examples importing `jxl_encoder::effort::{EntropyMulTable,
@@ -316,7 +316,7 @@ jobs:
       # earned file by file. `check` is green today and catches the
       # compile-breakage class that actually rotted.
       - name: Check (__expert examples compile)
-        run: cargo check -p jxl-encoder --features "__expert,parallel,butteraugli-loop,ssim2-loop" --examples
+        run: cargo check --locked -p jxl-encoder --features "__expert,parallel,butteraugli-loop,ssim2-loop" --examples
 
 
   # ==========================================================================
@@ -368,4 +368,4 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check MSRV
-        run: cargo hack check --rust-version --workspace
+        run: cargo hack check --locked --rust-version --workspace

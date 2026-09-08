@@ -1,4 +1,5 @@
 Cargo.lock
+!/Cargo.lock
 # The apidoc snapshot runner is a standalone package; pin its lockfile.
 !apidoc/Cargo.lock
 *.orig
