@@ -26,6 +26,9 @@
 //! dedicated n-thread pool). `budget` defaults to `max`; `default` attaches
 //! no Limits (the production path-aware soft caps apply).
 //!
+//! `MEM_PROBE_OUT` persists the encoded bitstream for external validation.
+//! On macOS measure process RSS with `/usr/bin/time -l`; VmHWM is Linux-only.
+//!
 //! Prints one parseable line; on encode error, prints the line with
 //! `ok=0 err=…` and exits 3 (so a driver records rejections as data).
 
@@ -152,6 +155,10 @@ fn main() {
 
     match result {
         Ok(res) => {
+            if let Some(path) = std::env::var_os("MEM_PROBE_OUT") {
+                std::fs::write(path, res.data().expect("encoded data"))
+                    .expect("persist encoded bitstream");
+            }
             let stats = res.stats();
             println!(
                 "w={} h={} mode={} effort={} distance={} threads={} budget={} \

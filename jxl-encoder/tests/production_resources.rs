@@ -196,3 +196,62 @@ fn real_screenshot_streaming_keeps_one_shot_content_dispatch() {
         verify(&streamed, width, height);
     }
 }
+
+/// Real spatial content in distinct storage/transfer representations. This
+/// verifies entry-point equivalence, not HDR perceptual quality calibration.
+#[test]
+fn streaming_preserves_source_layout_and_color_metadata() {
+    for (width, height) in [(63, 47), (511, 259)] {
+        let rgb = photo(width, height);
+        for layout in [
+            PixelLayout::Rgb8,
+            PixelLayout::Bgra8,
+            PixelLayout::Rgb16,
+            PixelLayout::Rgba16,
+            PixelLayout::RgbLinearF32,
+            PixelLayout::RgbaLinearF32,
+            PixelLayout::RgbPqF32,
+            PixelLayout::RgbaPqF32,
+            PixelLayout::RgbHlgF32,
+            PixelLayout::RgbaHlgF32,
+        ] {
+            let mut pixels = Vec::new();
+            for p in rgb.chunks_exact(3) {
+                let values = [p[0], p[1], p[2], p[1]];
+                match layout {
+                    PixelLayout::Rgb8 => pixels.extend_from_slice(p),
+                    PixelLayout::Bgra8 => pixels.extend_from_slice(&[p[2], p[1], p[0], p[1]]),
+                    PixelLayout::Rgb16 | PixelLayout::Rgba16 => {
+                        for &v in &values[..if layout.has_alpha() { 4 } else { 3 }] {
+                            pixels.extend_from_slice(&(u16::from(v) * 257).to_ne_bytes());
+                        }
+                    }
+                    _ => {
+                        for &v in &values[..if layout.has_alpha() { 4 } else { 3 }] {
+                            pixels.extend_from_slice(&(f32::from(v) / 255.0).to_ne_bytes());
+                        }
+                    }
+                }
+            }
+            for effort in [5, 8] {
+                let cfg = LossyConfig::new(4.0).with_effort(effort).with_threads(1);
+                let baseline = cfg.encode(&pixels, width, height, layout).unwrap();
+                for rows in [1, 7] {
+                    let mut encoder = cfg.encoder(width, height, layout).unwrap();
+                    let row_bytes = width as usize * layout.bytes_per_pixel();
+                    for chunk in pixels.chunks(row_bytes * rows) {
+                        encoder
+                            .push_rows(chunk, (chunk.len() / row_bytes) as u32)
+                            .unwrap();
+                    }
+                    let streamed = encoder.finish().unwrap();
+                    assert!(
+                        baseline == streamed,
+                        "layout={layout:?} effort={effort} chunk={rows} size={width}x{height}"
+                    );
+                }
+                verify(&baseline, width, height);
+            }
+        }
+    }
+}
