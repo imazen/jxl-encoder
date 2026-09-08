@@ -3217,3 +3217,36 @@ across that config boundary. Public APIs and production encoding are unchanged.
 Next test an actual coarse policy at matched quality/bytes through the existing
 owner; do not repeat the completed mechanism screen or claim these oracle
 intervention probes are a product controller.
+
+
+## Coarse density allocation: actual output screen fails (2026-09-08)
+
+The existing intervention example adds `--intervention-regions coarse-policy`.
+Its pure private allocator sees only baseline complete attribution and original
+raw q. All local globally rescaled raw fields in [2/3,3/2] are enumerated at exact
+rational rounding breakpoints and encoded before map application; that is an
+exhaustive declared integer-field comparator, not the separate global-scale /
+distance controls or full-codec optimum. Zero-map identity and independent
+Python policy/state recomputation pass. There is no new public API or library
+encoder change. [Failed screen](benchmarks/zensim_coarse_allocation_2026-09-08.md).
+
+D gains at budget in all eight 256 training cells, but photo 2010/d3 loses
+0.021502 Butteraugli and screen 8206/d1 loses 0.143189 SSIM2, failing registered
+noninferiority bars. Later same-family 512 engineering coverage adds losses;
+it cannot overturn the original failure. No validation/terminal family used.
+All 249 primary outputs and 498 judges reproduce exactly; 36 analyzer and 11
+CLI refusals, scoped formatting, exact example and CI-pinned workspace/zensim/
+example Clippy pass. Total work including reproduction/512 is 764 encodes,
+24 maps and 1,528 judges. Do not promote this policy or rerun its finished screen.
+Next distinguish model guidance from allocation-rule weaknesses under a new
+registration; strengthen ordinary scalar quality control before product claims.
+
+
+Delivery rebase note: remote JXL advanced to `c0aedb14` during this screen.
+Its new high-bit-depth sensitivity tests are preserved byte-for-byte. Its
+regenerated lockfile did not match the pinned sibling graph and failed a
+locked build; Cargo offline resolution restored the previously validated lock.
+The rebased release instrument is byte-identical to the measured binary, so no
+scientific result changed. The incoming lock, exact source comparison and
+rebase/build/check logs are retained in `REBASE_VERIFICATION.json` and the
+artifact packet. No force push or remote-history replacement was used.

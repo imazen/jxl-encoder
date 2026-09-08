@@ -362,7 +362,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--intervention-regions" => {
                 intervention_regions = Some(
                     args.next()
-                        .expect("--intervention-regions needs transform or coarse4"),
+                        .expect("--intervention-regions needs transform, coarse4 or coarse-policy"),
                 )
             }
             "--native-fit" => native_fit = args.next().map(PathBuf::from),

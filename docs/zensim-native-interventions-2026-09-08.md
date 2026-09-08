@@ -141,3 +141,86 @@ It cannot establish held-out RD gains, 1/2/3-shot target accuracy, or release
 qualification. Do not turn descriptive correlation into a retrospective gate.
 No runtime oracle probing or new allocation policy is authorized by these
 measurements alone; preregister the next intervention separately.
+
+
+# Coarse JXL allocation policy — registered 2026-09-08T20:35:32.658483+00:00
+
+Question: can one complete-model coarse map improve an actual emitted JXL
+against all locally reachable global quantizer fields, not just correlate with
+single-region quality responses? No fitted model or seed, no new public API.
+
+Reuse the current native precomputed e8 Reference/CfL/gaborish/pixel-loss path,
+D bake cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6,
+formula 1, exact decoder transfer, native PNG IO and complete Rust surface.
+First canonical train origin per class: 2010/6068/7066/8206, distances 1 and 3,
+existing 256-long-edge variants. No validation or terminal sources in this
+first bounded policy screen. No new feature/model training or source admission
+exception. Frozen AC strategies are shared by all fields in each cell.
+
+Build all scalar control fields BEFORE applying the policy. Domain: multiply
+all initial integer raw q by one common factor in [2/3,3/2], half-up round,
+clamp [1,255]. Enumerate exact rational breakpoints (2n+1)/(2q), n=1..254,
+plus both endpoints; sort by integer cross-products and deduplicate resulting
+full raw fields. Every distinct state of this declared scalar operation is
+represented. Do not resample only convenient factors. Refuse more than 4096
+states in a cell rather than silently truncate. Encode/decode/score each
+unique field, retain counts/order and attained D/byte bounds. Baseline and an
+independent exact neutral repeat remain explicit. This is an exhaustive local
+raw-field comparator, not a claim to exhaust the codec's full distance range.
+
+Policy inputs are ONLY baseline complete attribution, existing whole-transform
+4x4 groups, and the original raw field. No control outcome, judge, bound or
+intervention derivative is available to the policy. For group density d and
+pixel area A, compute area-weighted center mu and mean absolute deviation m.
+If m <= 1e-20, factors are one. Otherwise set f=1+0.2*clamp((d-mu)/m,-1,1).
+Expand each factor to every block in its complete transforms. Preserve the
+initial sum of requested q before rounding by multiplying all factors by
+sum(raw)/sum(raw*f); then half-up round and clamp [1,255]. This preserves a
+quantizer-sum proxy, not actual bytes. Record unnormalized/normalized factors,
+center, dispersion, raw-sum normalization and actual requested/captured fields.
+Apply the same function to zero densities and require raw-field/byte/pixel/
+score identity with the neutral repeat. Active is one actual full encode after
+one baseline full encode and one map: two encodes and one map, with all extra
+control encodes separately labeled engineering cost. No runtime oracle probes.
+
+Every emitted control and active output receives native JXL decoding, complete
+D scoring and independent CPU SSIMULACRA2/Butteraugli. Bounded libjxl v0.12
+compatibility checks remain port-only. Report exact measured scalar frontiers:
+for each active byte budget, best scalar D/SSIM2/-BA within budget; for each
+active quality, minimum measured scalar bytes meeting/exceeding that quality.
+Keep no-match/coverage failures explicit. No interpolation or extrapolation.
+Also report a single scalar output chosen by best D within the active budget,
+including its independent judges, and any scalar output that dominates active
+on bytes and all three qualities. Only compare in the attained scalar D/byte
+ranges; do not count uncovered cells as wins.
+
+Advance this fixed policy to a separately registered broader evaluation only
+if every covered training cell is noninferior to best scalar at budget in D
+(>= -0.05), SSIM2 (>= -0.1), and -BA (>= -0.005), every content class has positive
+median D gain, and at least half the cells improve D by >= 0.05. These are
+screening bars, not new release gates. Predefine floating comparison slack
+1e-5 for D, 1e-6 for independent metrics, zero bytes. Report all counts regardless
+of verdict. If it fails, preserve the failure and revise the hypothesis before
+spending validation families. No opportunistic alternate arm/gain sweep.
+
+Require complete native hash/region/scalar-state/policy coverage, exact neutral
+identity, independently recomputed policy fields and rational state enumeration,
+negative controls, final-source reproduction, scoped Rustfmt and local CI-exact
+Clippy. Preserve any prototypes. Count all full encodes, JXL/PNG decodes, scalar
+comparisons, maps, independent judges, preparation/IO time and RSS separately.
+This screen does not establish general target attainment or shippability. The
+full goal still requires train-calibrated 1/2/3-shot targeting and matched-RD
+validation on separate families, model qualification and all four codecs.
+
+
+## Engineering multigroup coverage, registered 2026-09-08T20:47:36.951101+00:00
+
+The fixed 256 policy failed the independent-judge screen; that verdict is
+unchanged and no separate validation family will be spent on it. JXL's repo
+requires a multigroup roundtrip for changed encoding paths. Run the same final
+policy/control instrument on the existing 512 variants of the SAME four
+training origins from the previous multigroup manifest. This is software
+coverage and a descriptive scale check, not promotion or a larger independent
+validation set. Preserve all outcomes, direct scalar-state comparisons, native
+PNG/JXL hashes, exact neutral controls and independent judges. Keep results
+separate; they cannot overturn the registered 256 screening failure.

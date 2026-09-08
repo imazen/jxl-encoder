@@ -28,6 +28,107 @@ struct AllocationRegion {
     map_density: f64,
 }
 
+// Exact breakpoints of half-up rounded global rescaling. The returned
+// fields, rather than an arbitrary float grid, exhaust the declared domain.
+fn scalar_states(raw: &[u8]) -> Result<Vec<(u64, u64, Vec<u8>)>> {
+    ensure!(
+        !raw.is_empty() && raw.iter().all(|&v| v > 0),
+        "invalid scalar raw field"
+    );
+    let values: BTreeSet<_> = raw.iter().copied().collect();
+    let mut cuts = vec![(2u64, 3u64), (3, 2)];
+    for q in values {
+        for n in 1..255u64 {
+            let (num, den) = (2 * n + 1, 2 * u64::from(q));
+            if num * 3 > 2 * den && num * 2 < 3 * den {
+                cuts.push((num, den));
+            }
+        }
+    }
+    cuts.sort_by(|&(a, b), &(c, d)| (a * d).cmp(&(c * b)));
+    cuts.dedup_by(|(a, b), (c, d)| *a * *d == *c * *b);
+    let mut seen = BTreeSet::new();
+    let mut states = Vec::new();
+    for (num, den) in cuts {
+        let field: Vec<u8> = raw
+            .iter()
+            .map(|&q| ((2 * u64::from(q) * num + den) / (2 * den)).clamp(1, 255) as u8)
+            .collect();
+        if seen.insert(field.clone()) {
+            states.push((num, den, field));
+        }
+    }
+    ensure!(states.len() <= 4096, "scalar state budget exceeded");
+    ensure!(
+        states.iter().any(|(_, _, q)| q == raw),
+        "baseline absent from scalar states"
+    );
+    Ok(states)
+}
+
+// This policy receives no bound, scalar-control outcome, judge or probe
+// derivative. Only the baseline model map and original encoder field enter.
+fn allocate(
+    raw: &[u8],
+    regions: &[Region],
+    groups: &[AllocationRegion],
+    blocks_x: usize,
+    zero_map: bool,
+) -> Result<(Vec<u8>, serde_json::Value)> {
+    let area = groups.iter().map(|g| g.area).sum::<usize>() as f64;
+    let densities: Vec<f64> = groups
+        .iter()
+        .map(|g| if zero_map { 0. } else { g.map_density })
+        .collect();
+    let center = groups
+        .iter()
+        .zip(&densities)
+        .map(|(g, d)| g.area as f64 * d)
+        .sum::<f64>()
+        / area;
+    let dispersion = groups
+        .iter()
+        .zip(&densities)
+        .map(|(g, d)| g.area as f64 * (d - center).abs())
+        .sum::<f64>()
+        / area;
+    let factors: Vec<f64> = densities
+        .iter()
+        .map(|d| {
+            if dispersion <= 1e-20 {
+                1.
+            } else {
+                1. + 0.2 * ((d - center) / dispersion).clamp(-1., 1.)
+            }
+        })
+        .collect();
+    let mut field = vec![f64::NAN; raw.len()];
+    for (g, &factor) in groups.iter().zip(&factors) {
+        for &i in &g.transform_indices {
+            let r = &regions[i];
+            for y in r.y..r.y + r.blocks_y {
+                for x in r.x..r.x + r.blocks_x {
+                    let i = y * blocks_x + x;
+                    ensure!(field[i].is_nan(), "overlapping allocation blocks");
+                    field[i] = f64::from(raw[i]) * factor;
+                }
+            }
+        }
+    }
+    ensure!(
+        field.iter().all(|v| v.is_finite() && *v > 0.),
+        "incomplete allocation field"
+    );
+    let normalization = raw.iter().map(|&q| f64::from(q)).sum::<f64>() / field.iter().sum::<f64>();
+    let requested: Vec<u8> = field
+        .iter()
+        .map(|v| (v * normalization).round().clamp(1., 255.) as u8)
+        .collect();
+    let work = json!({"zero_map":zero_map,"center":center,"mean_absolute_deviation":dispersion,
+        "factors":factors,"normalization":normalization,"requested_q_sha256":sha(&requested)});
+    Ok((requested, work))
+}
+
 struct Probe {
     encoded: Vec<u8>,
     decoded: Vec<u8>,
@@ -104,10 +205,11 @@ fn probe(
 
 pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) -> Result<()> {
     ensure!(
-        matches!(region_mode, "transform" | "coarse4"),
+        matches!(region_mode, "transform" | "coarse4" | "coarse-policy"),
         "unknown intervention region mode"
     );
-    let coarse = region_mode == "coarse4";
+    let policy = region_mode == "coarse-policy";
+    let coarse = region_mode != "transform";
     let factors = if coarse { [0.8f32, 1.2] } else { [0.9, 1.1] };
     ensure!(
         std::env::var("ZENSIM_FORMULA_REV").as_deref() == Ok("1"),
@@ -143,7 +245,7 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
     fs::write(
         out.join("INPUTS.json"),
         serde_json::to_vec_pretty(&json!({
-            "schema":"native-jxl-interventions-v2","config":CONFIG,
+            "schema":if policy {"native-jxl-allocation-v1"} else {"native-jxl-interventions-v2"},"config":CONFIG,
             "region_mode":region_mode,"raw_q_factors":factors,
             "png_io":"zenpng-0.1.4-packed-opaque-rgb8-v1",
             "model_sha256":sha(&model_bytes),"driver_sha256":driver_sha()?,
@@ -215,6 +317,42 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
                     && baseline.quant.quant_field_u8 == neutral.quant.quant_field_u8,
                 "neutral repeat differs"
             );
+            let mut controls = Vec::new();
+            if policy {
+                let states = scalar_states(&raw)?;
+                let mut state_records = Vec::new();
+                let mut scores = vec![baseline.score];
+                let mut sizes = vec![baseline.encoded.len()];
+                for (i, (num, den, requested)) in states.into_iter().enumerate() {
+                    let name = if requested == raw {
+                        "baseline".to_string()
+                    } else {
+                        format!("scalar-{i}")
+                    };
+                    let record = json!({"state_index":i,"name":name,"numerator":num,"denominator":den,
+                        "requested_q_sha256":sha(&requested)});
+                    if requested != raw {
+                        let p = probe(&encoder, &pre, &requested, &mut scorer, &rgb, &dir, &name)?;
+                        scores.push(p.score);
+                        sizes.push(p.encoded.len());
+                        controls.push((p, json!({"scalar":record})));
+                    }
+                    state_records.push(record);
+                }
+                fs::write(
+                    dir.join("scalar_states.json"),
+                    serde_json::to_vec_pretty(&state_records)?,
+                )?;
+                fs::write(
+                    dir.join("SCALAR_BOUNDS.json"),
+                    serde_json::to_vec_pretty(&json!({
+                        "states":state_records.len(),"before_map_and_policy":true,
+                        "score_min":scores.iter().copied().fold(f32::INFINITY,f32::min),
+                        "score_max":scores.iter().copied().fold(f32::NEG_INFINITY,f32::max),
+                        "bytes_min":sizes.iter().min(),"bytes_max":sizes.iter().max()
+                    }))?,
+                )?;
+            }
             let start = Instant::now();
             let spatial = scorer.compute_with_ref_and_attribution(
                 &source_view,
@@ -334,7 +472,34 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
             };
             record(&baseline, serde_json::Value::Null)?;
             record(&neutral, serde_json::Value::Null)?;
-            let count = if coarse {
+            if policy {
+                for (p, recorded) in &controls {
+                    record(p, recorded.clone())?;
+                }
+                let (neutral_q, neutral_work) =
+                    allocate(&raw, &regions, &allocation, pre.xsize_blocks, true)?;
+                ensure!(neutral_q == raw, "zero-map policy changes raw q");
+                let (active_q, active_work) =
+                    allocate(&raw, &regions, &allocation, pre.xsize_blocks, false)?;
+                let active = probe(&encoder, &pre, &active_q, &mut scorer, &rgb, &dir, "active")?;
+                ensure!(
+                    active.quant.global_scale == baseline.quant.global_scale
+                        && active.quant.scale == baseline.quant.scale
+                        && active.quant.inv_scale == baseline.quant.inv_scale,
+                    "policy changed global quantization"
+                );
+                record(&active, json!({"allocation":active_work}))?;
+                fs::write(
+                    dir.join("POLICY.json"),
+                    serde_json::to_vec_pretty(&json!({
+                        "neutral":neutral_work,"active":active_work,"runtime_full_encodes":2,"runtime_maps":1,
+                        "control_encodes":controls.len(),"bounds_visible_to_policy":false
+                    }))?,
+                )?;
+            }
+            let count = if policy {
+                0
+            } else if coarse {
                 allocation.len()
             } else {
                 regions.len().min(16)
@@ -461,7 +626,11 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
         let origin = cell["origin"].as_str().context("origin")?;
         let distance = cell["distance"].as_f64().context("distance")?;
         let dir = out.join(format!("o_{origin}-d{distance}"));
-        for name in ["baseline", "r0-down", "r0-up"] {
+        for name in if policy {
+            ["baseline", "neutral", "active"]
+        } else {
+            ["baseline", "r0-down", "r0-up"]
+        } {
             let encoded = dir.join(format!("{name}.jxl"));
             let output = compat.join(format!("{origin}-d{distance}-{name}.png"));
             let command = std::process::Command::new(&djxl)

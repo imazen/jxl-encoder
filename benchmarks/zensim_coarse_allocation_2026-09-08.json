@@ -1,0 +1,1705 @@
+{
+  "schema": "native-jxl-coarse-allocation-screen-v1",
+  "screen_complete": true,
+  "screen_passed": false,
+  "model_qualified": false,
+  "advance_fixed_policy": false,
+  "artifact_root": "/mnt/v/output/zensim/jxl-coarse-allocation-2026-09-08",
+  "model_sha256": "cd1098b450ef6941b6925b24bcbd129715b6f07c4fe84838a92e13ab364ddea6",
+  "driver_sha256": "d71d1512f3b802488746a9f3febb52830fd9ff84e7fd31971d73249443841a67",
+  "training_families": 4,
+  "validation_families": 0,
+  "terminal_families": 0,
+  "total_full_encodes": 764,
+  "total_primary_jxl_decodes": 764,
+  "total_ordinary_scalar_pixel_comparisons": 764,
+  "total_scored_maps": 24,
+  "total_independent_judge_comparisons": 1528,
+  "total_libjxl_compatibility_decodes": 72,
+  "total_source_png_decodes": 12,
+  "total_png_roundtrip_decodes": 764,
+  "total_compatibility_png_decodes": 144,
+  "analyzer_rejection_controls": 36,
+  "cli_rejection_controls": 11,
+  "local_clippy": [
+    "zensim CI-exact",
+    "JXL exact example",
+    "JXL CI-pinned workspace",
+    "JXL CI-pinned zensim all-targets",
+    "JXL CI-pinned exact example"
+  ],
+  "lint_scripts": 605,
+  "source_closure_checks": [
+    {
+      "route": "workspace",
+      "command": [
+        "/home/lilith/work/zen/scripts/run-heavy",
+        "--mem",
+        "16G",
+        "--jobs",
+        "8",
+        "cargo",
+        "clippy",
+        "--locked",
+        "--manifest-path",
+        "/home/lilith/tmp/jxl-coarse-allocation-ci-2026-09-08/siblings/jxl-encoder/Cargo.toml",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0
+    },
+    {
+      "route": "zensim",
+      "command": [
+        "/home/lilith/work/zen/scripts/run-heavy",
+        "--mem",
+        "16G",
+        "--jobs",
+        "8",
+        "cargo",
+        "clippy",
+        "--locked",
+        "--manifest-path",
+        "/home/lilith/tmp/jxl-coarse-allocation-ci-2026-09-08/siblings/jxl-encoder/Cargo.toml",
+        "--workspace",
+        "--all-targets",
+        "--features",
+        "zensim-loop",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0
+    },
+    {
+      "route": "example",
+      "command": [
+        "/home/lilith/work/zen/scripts/run-heavy",
+        "--mem",
+        "16G",
+        "--jobs",
+        "8",
+        "cargo",
+        "clippy",
+        "--locked",
+        "--manifest-path",
+        "/home/lilith/tmp/jxl-coarse-allocation-ci-2026-09-08/siblings/jxl-encoder/Cargo.toml",
+        "-p",
+        "jxl-encoder",
+        "--features",
+        "__expert,zensim-loop,ssim2-loop,parallel,__pre_quantized,__internal_recon_hook",
+        "--example",
+        "zensim_diffmap_rd",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0
+    }
+  ],
+  "panels": {
+    "screen": {
+      "work": {
+        "additional_scored_maps": 8,
+        "cells": [
+          {
+            "distance": 1.0,
+            "full_encodes": 30,
+            "map_seconds": 0.001521586,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "2010",
+            "preparation_seconds": 0.004227557,
+            "sampled_regions": 0,
+            "transform_regions": 815
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 30,
+            "map_seconds": 0.001493956,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "2010",
+            "preparation_seconds": 0.002896872,
+            "sampled_regions": 0,
+            "transform_regions": 497
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 30,
+            "map_seconds": 0.001725297,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "6068",
+            "preparation_seconds": 0.003049283,
+            "sampled_regions": 0,
+            "transform_regions": 615
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 30,
+            "map_seconds": 0.00267453,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "6068",
+            "preparation_seconds": 0.002770702,
+            "sampled_regions": 0,
+            "transform_regions": 278
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 30,
+            "map_seconds": 0.002231749,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "7066",
+            "preparation_seconds": 0.005342491,
+            "sampled_regions": 0,
+            "transform_regions": 906
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 23,
+            "map_seconds": 0.001735146,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "7066",
+            "preparation_seconds": 0.004403007,
+            "sampled_regions": 0,
+            "transform_regions": 804
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 41,
+            "map_seconds": 0.001234915,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "8206",
+            "preparation_seconds": 0.002059728,
+            "sampled_regions": 0,
+            "transform_regions": 246
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 35,
+            "map_seconds": 0.001168984,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "8206",
+            "preparation_seconds": 0.002287339,
+            "sampled_regions": 0,
+            "transform_regions": 223
+          }
+        ],
+        "compatibility_png_decodes": 48,
+        "elapsed_seconds": 2.243509317,
+        "full_encodes": 249,
+        "independent_decodes": 249,
+        "independent_judges": "pending external owner",
+        "internal_reconstructions": 0,
+        "libjxl_compatibility_decodes": 24,
+        "ordinary_scalar_pixel_comparisons": 249,
+        "png_roundtrip_decodes": 249,
+        "process_peak_rss_kib": 44972,
+        "source_png_decodes": 4
+      },
+      "cells": [
+        {
+          "origin": "2010",
+          "class": "photo",
+          "distance": 1.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 25903,
+            "bytes_min": 17646,
+            "score_max": 88.59343719482422,
+            "score_min": 83.28791046142578,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 20982,
+          "active_score": 86.10653686523438,
+          "comparisons": {
+            "D": {
+              "active_quality": 86.10653686523438,
+              "best_scalar_quality_at_budget": 85.8945541381836,
+              "gain_at_budget": 0.21198272705078125,
+              "minimum_scalar_bytes_at_quality": 21769
+            },
+            "ssim2": {
+              "active_quality": 83.387811,
+              "best_scalar_quality_at_budget": 82.805983,
+              "gain_at_budget": 0.5818280000000016,
+              "minimum_scalar_bytes_at_quality": 23013
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.720007,
+              "best_scalar_quality_at_budget": -0.722709,
+              "gain_at_budget": 0.002702000000000093,
+              "minimum_scalar_bytes_at_quality": 21172
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-13",
+            "bytes": 20915,
+            "qualities": {
+              "D": 85.8945541381836,
+              "ssim2": 82.805983,
+              "negative_butteraugli": -0.722709
+            }
+          },
+          "requested_blocks_changed": 572,
+          "actual_blocks_changed": 529,
+          "pixels_changed": 34470
+        },
+        {
+          "origin": "2010",
+          "class": "photo",
+          "distance": 3.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 12255,
+            "bytes_min": 7618,
+            "score_max": 71.8171157836914,
+            "score_min": 59.749385833740234,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 9338,
+          "active_score": 64.54756164550781,
+          "comparisons": {
+            "D": {
+              "active_quality": 64.54756164550781,
+              "best_scalar_quality_at_budget": 64.19039154052734,
+              "gain_at_budget": 0.35717010498046875,
+              "minimum_scalar_bytes_at_quality": 9666
+            },
+            "ssim2": {
+              "active_quality": 64.16306,
+              "best_scalar_quality_at_budget": 64.094309,
+              "gain_at_budget": 0.068751000000006,
+              "minimum_scalar_bytes_at_quality": 9666
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.651572,
+              "best_scalar_quality_at_budget": -1.63007,
+              "gain_at_budget": -0.021502000000000132,
+              "minimum_scalar_bytes_at_quality": 8986
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-14",
+            "bytes": 9263,
+            "qualities": {
+              "D": 64.19039154052734,
+              "ssim2": 64.094309,
+              "negative_butteraugli": -1.63007
+            }
+          },
+          "requested_blocks_changed": 642,
+          "actual_blocks_changed": 639,
+          "pixels_changed": 39325
+        },
+        {
+          "origin": "6068",
+          "class": "document",
+          "distance": 1.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 15266,
+            "bytes_min": 11943,
+            "score_max": 90.21090698242188,
+            "score_min": 86.91577911376953,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 13605,
+          "active_score": 88.46830749511719,
+          "comparisons": {
+            "D": {
+              "active_quality": 88.46830749511719,
+              "best_scalar_quality_at_budget": 87.88406372070312,
+              "gain_at_budget": 0.5842437744140625,
+              "minimum_scalar_bytes_at_quality": 14047
+            },
+            "ssim2": {
+              "active_quality": 88.994643,
+              "best_scalar_quality_at_budget": 88.045746,
+              "gain_at_budget": 0.9488970000000023,
+              "minimum_scalar_bytes_at_quality": 14047
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.485783,
+              "best_scalar_quality_at_budget": -0.502617,
+              "gain_at_budget": 0.01683399999999996,
+              "minimum_scalar_bytes_at_quality": 14047
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 13244,
+            "qualities": {
+              "D": 87.88406372070312,
+              "ssim2": 88.045746,
+              "negative_butteraugli": -0.502617
+            }
+          },
+          "requested_blocks_changed": 647,
+          "actual_blocks_changed": 647,
+          "pixels_changed": 18647
+        },
+        {
+          "origin": "6068",
+          "class": "document",
+          "distance": 3.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 7746,
+            "bytes_min": 5095,
+            "score_max": 77.0190200805664,
+            "score_min": 68.23535919189453,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 6132,
+          "active_score": 71.80461883544922,
+          "comparisons": {
+            "D": {
+              "active_quality": 71.80461883544922,
+              "best_scalar_quality_at_budget": 70.93133544921875,
+              "gain_at_budget": 0.8732833862304688,
+              "minimum_scalar_bytes_at_quality": 6494
+            },
+            "ssim2": {
+              "active_quality": 69.890671,
+              "best_scalar_quality_at_budget": 68.206487,
+              "gain_at_budget": 1.684184000000002,
+              "minimum_scalar_bytes_at_quality": 6494
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.312183,
+              "best_scalar_quality_at_budget": -1.332474,
+              "gain_at_budget": 0.020290999999999837,
+              "minimum_scalar_bytes_at_quality": 6494
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 6031,
+            "qualities": {
+              "D": 70.93133544921875,
+              "ssim2": 68.206487,
+              "negative_butteraugli": -1.332474
+            }
+          },
+          "requested_blocks_changed": 612,
+          "actual_blocks_changed": 612,
+          "pixels_changed": 17792
+        },
+        {
+          "origin": "7066",
+          "class": "graphic",
+          "distance": 1.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 33137,
+            "bytes_min": 25635,
+            "score_max": 88.32975769042969,
+            "score_min": 84.28364562988281,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 28917,
+          "active_score": 86.32186126708984,
+          "comparisons": {
+            "D": {
+              "active_quality": 86.32186126708984,
+              "best_scalar_quality_at_budget": 86.17754364013672,
+              "gain_at_budget": 0.144317626953125,
+              "minimum_scalar_bytes_at_quality": 29841
+            },
+            "ssim2": {
+              "active_quality": 87.366264,
+              "best_scalar_quality_at_budget": 87.081349,
+              "gain_at_budget": 0.28491499999999803,
+              "minimum_scalar_bytes_at_quality": 29841
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.517135,
+              "best_scalar_quality_at_budget": -0.51239,
+              "gain_at_budget": -0.004744999999999999,
+              "minimum_scalar_bytes_at_quality": 28782
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 28782,
+            "qualities": {
+              "D": 86.17754364013672,
+              "ssim2": 87.081349,
+              "negative_butteraugli": -0.51239
+            }
+          },
+          "requested_blocks_changed": 639,
+          "actual_blocks_changed": 607,
+          "pixels_changed": 33351
+        },
+        {
+          "origin": "7066",
+          "class": "graphic",
+          "distance": 3.0,
+          "scalar_states": 21,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 19867,
+            "bytes_min": 14224,
+            "score_max": 76.48346710205078,
+            "score_min": 66.03860473632812,
+            "states": 21
+          },
+          "covered": true,
+          "active_bytes": 16841,
+          "active_score": 71.31517791748047,
+          "comparisons": {
+            "D": {
+              "active_quality": 71.31517791748047,
+              "best_scalar_quality_at_budget": 71.12153625488281,
+              "gain_at_budget": 0.19364166259765625,
+              "minimum_scalar_bytes_at_quality": 17536
+            },
+            "ssim2": {
+              "active_quality": 71.28957,
+              "best_scalar_quality_at_budget": 70.548862,
+              "gain_at_budget": 0.7407079999999979,
+              "minimum_scalar_bytes_at_quality": 17536
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.327088,
+              "best_scalar_quality_at_budget": -1.370975,
+              "gain_at_budget": 0.04388700000000001,
+              "minimum_scalar_bytes_at_quality": 17536
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-11",
+            "bytes": 16534,
+            "qualities": {
+              "D": 71.12153625488281,
+              "ssim2": 70.548862,
+              "negative_butteraugli": -1.370975
+            }
+          },
+          "requested_blocks_changed": 651,
+          "actual_blocks_changed": 644,
+          "pixels_changed": 37992
+        },
+        {
+          "origin": "8206",
+          "class": "screen",
+          "distance": 1.0,
+          "scalar_states": 39,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 6001,
+            "bytes_min": 4489,
+            "score_max": 91.29635620117188,
+            "score_min": 88.91578674316406,
+            "states": 39
+          },
+          "covered": true,
+          "active_bytes": 5330,
+          "active_score": 90.81465148925781,
+          "comparisons": {
+            "D": {
+              "active_quality": 90.81465148925781,
+              "best_scalar_quality_at_budget": 90.65878295898438,
+              "gain_at_budget": 0.1558685302734375,
+              "minimum_scalar_bytes_at_quality": 5464
+            },
+            "ssim2": {
+              "active_quality": 91.201222,
+              "best_scalar_quality_at_budget": 91.344411,
+              "gain_at_budget": -0.14318899999999246,
+              "minimum_scalar_bytes_at_quality": 5199
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.331523,
+              "best_scalar_quality_at_budget": -0.328839,
+              "gain_at_budget": -0.0026840000000000197,
+              "minimum_scalar_bytes_at_quality": 5308
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-14",
+            "bytes": 5184,
+            "qualities": {
+              "D": 90.65878295898438,
+              "ssim2": 91.150464,
+              "negative_butteraugli": -0.340891
+            }
+          },
+          "requested_blocks_changed": 445,
+          "actual_blocks_changed": 445,
+          "pixels_changed": 8540
+        },
+        {
+          "origin": "8206",
+          "class": "screen",
+          "distance": 3.0,
+          "scalar_states": 33,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 3762,
+            "bytes_min": 2655,
+            "score_max": 82.23112487792969,
+            "score_min": 74.36664581298828,
+            "states": 33
+          },
+          "covered": true,
+          "active_bytes": 3267,
+          "active_score": 79.679443359375,
+          "comparisons": {
+            "D": {
+              "active_quality": 79.679443359375,
+              "best_scalar_quality_at_budget": 79.04708862304688,
+              "gain_at_budget": 0.632354736328125,
+              "minimum_scalar_bytes_at_quality": 3313
+            },
+            "ssim2": {
+              "active_quality": 81.955946,
+              "best_scalar_quality_at_budget": 81.774418,
+              "gain_at_budget": 0.18152800000000013,
+              "minimum_scalar_bytes_at_quality": 3319
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.893817,
+              "best_scalar_quality_at_budget": -0.912218,
+              "gain_at_budget": 0.018401,
+              "minimum_scalar_bytes_at_quality": 3313
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-17",
+            "bytes": 3255,
+            "qualities": {
+              "D": 79.04708862304688,
+              "ssim2": 81.774418,
+              "negative_butteraugli": -0.912218
+            }
+          },
+          "requested_blocks_changed": 417,
+          "actual_blocks_changed": 417,
+          "pixels_changed": 11014
+        }
+      ],
+      "criteria": {
+        "all_cells_covered": true,
+        "D_noninferior": true,
+        "ssim2_noninferior": false,
+        "butteraugli_noninferior": false,
+        "every_class_positive_median_D": true,
+        "half_cells_D_gain_0.05": true
+      }
+    },
+    "screen-final": {
+      "work": {
+        "additional_scored_maps": 8,
+        "cells": [
+          {
+            "distance": 1.0,
+            "full_encodes": 30,
+            "map_seconds": 0.001581196,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "2010",
+            "preparation_seconds": 0.007878912,
+            "sampled_regions": 0,
+            "transform_regions": 815
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 30,
+            "map_seconds": 0.001788237,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "2010",
+            "preparation_seconds": 0.002832072,
+            "sampled_regions": 0,
+            "transform_regions": 497
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 30,
+            "map_seconds": 0.002315309,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "6068",
+            "preparation_seconds": 0.003105222,
+            "sampled_regions": 0,
+            "transform_regions": 615
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 30,
+            "map_seconds": 0.001499446,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "6068",
+            "preparation_seconds": 0.004827679,
+            "sampled_regions": 0,
+            "transform_regions": 278
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 30,
+            "map_seconds": 0.001987318,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "7066",
+            "preparation_seconds": 0.004498708,
+            "sampled_regions": 0,
+            "transform_regions": 906
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 23,
+            "map_seconds": 0.00251001,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "7066",
+            "preparation_seconds": 0.004527868,
+            "sampled_regions": 0,
+            "transform_regions": 804
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 41,
+            "map_seconds": 0.001273246,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "8206",
+            "preparation_seconds": 0.003314493,
+            "sampled_regions": 0,
+            "transform_regions": 246
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 35,
+            "map_seconds": 0.001368536,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "8206",
+            "preparation_seconds": 0.002000948,
+            "sampled_regions": 0,
+            "transform_regions": 223
+          }
+        ],
+        "compatibility_png_decodes": 48,
+        "elapsed_seconds": 2.337895609,
+        "full_encodes": 249,
+        "independent_decodes": 249,
+        "independent_judges": "pending external owner",
+        "internal_reconstructions": 0,
+        "libjxl_compatibility_decodes": 24,
+        "ordinary_scalar_pixel_comparisons": 249,
+        "png_roundtrip_decodes": 249,
+        "process_peak_rss_kib": 51292,
+        "source_png_decodes": 4
+      },
+      "cells": [
+        {
+          "origin": "2010",
+          "class": "photo",
+          "distance": 1.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 25903,
+            "bytes_min": 17646,
+            "score_max": 88.59343719482422,
+            "score_min": 83.28791046142578,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 20982,
+          "active_score": 86.10653686523438,
+          "comparisons": {
+            "D": {
+              "active_quality": 86.10653686523438,
+              "best_scalar_quality_at_budget": 85.8945541381836,
+              "gain_at_budget": 0.21198272705078125,
+              "minimum_scalar_bytes_at_quality": 21769
+            },
+            "ssim2": {
+              "active_quality": 83.387811,
+              "best_scalar_quality_at_budget": 82.805983,
+              "gain_at_budget": 0.5818280000000016,
+              "minimum_scalar_bytes_at_quality": 23013
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.720007,
+              "best_scalar_quality_at_budget": -0.722709,
+              "gain_at_budget": 0.002702000000000093,
+              "minimum_scalar_bytes_at_quality": 21172
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-13",
+            "bytes": 20915,
+            "qualities": {
+              "D": 85.8945541381836,
+              "ssim2": 82.805983,
+              "negative_butteraugli": -0.722709
+            }
+          },
+          "requested_blocks_changed": 572,
+          "actual_blocks_changed": 529,
+          "pixels_changed": 34470
+        },
+        {
+          "origin": "2010",
+          "class": "photo",
+          "distance": 3.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 12255,
+            "bytes_min": 7618,
+            "score_max": 71.8171157836914,
+            "score_min": 59.749385833740234,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 9338,
+          "active_score": 64.54756164550781,
+          "comparisons": {
+            "D": {
+              "active_quality": 64.54756164550781,
+              "best_scalar_quality_at_budget": 64.19039154052734,
+              "gain_at_budget": 0.35717010498046875,
+              "minimum_scalar_bytes_at_quality": 9666
+            },
+            "ssim2": {
+              "active_quality": 64.16306,
+              "best_scalar_quality_at_budget": 64.094309,
+              "gain_at_budget": 0.068751000000006,
+              "minimum_scalar_bytes_at_quality": 9666
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.651572,
+              "best_scalar_quality_at_budget": -1.63007,
+              "gain_at_budget": -0.021502000000000132,
+              "minimum_scalar_bytes_at_quality": 8986
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-14",
+            "bytes": 9263,
+            "qualities": {
+              "D": 64.19039154052734,
+              "ssim2": 64.094309,
+              "negative_butteraugli": -1.63007
+            }
+          },
+          "requested_blocks_changed": 642,
+          "actual_blocks_changed": 639,
+          "pixels_changed": 39325
+        },
+        {
+          "origin": "6068",
+          "class": "document",
+          "distance": 1.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 15266,
+            "bytes_min": 11943,
+            "score_max": 90.21090698242188,
+            "score_min": 86.91577911376953,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 13605,
+          "active_score": 88.46830749511719,
+          "comparisons": {
+            "D": {
+              "active_quality": 88.46830749511719,
+              "best_scalar_quality_at_budget": 87.88406372070312,
+              "gain_at_budget": 0.5842437744140625,
+              "minimum_scalar_bytes_at_quality": 14047
+            },
+            "ssim2": {
+              "active_quality": 88.994643,
+              "best_scalar_quality_at_budget": 88.045746,
+              "gain_at_budget": 0.9488970000000023,
+              "minimum_scalar_bytes_at_quality": 14047
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.485783,
+              "best_scalar_quality_at_budget": -0.502617,
+              "gain_at_budget": 0.01683399999999996,
+              "minimum_scalar_bytes_at_quality": 14047
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 13244,
+            "qualities": {
+              "D": 87.88406372070312,
+              "ssim2": 88.045746,
+              "negative_butteraugli": -0.502617
+            }
+          },
+          "requested_blocks_changed": 647,
+          "actual_blocks_changed": 647,
+          "pixels_changed": 18647
+        },
+        {
+          "origin": "6068",
+          "class": "document",
+          "distance": 3.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 7746,
+            "bytes_min": 5095,
+            "score_max": 77.0190200805664,
+            "score_min": 68.23535919189453,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 6132,
+          "active_score": 71.80461883544922,
+          "comparisons": {
+            "D": {
+              "active_quality": 71.80461883544922,
+              "best_scalar_quality_at_budget": 70.93133544921875,
+              "gain_at_budget": 0.8732833862304688,
+              "minimum_scalar_bytes_at_quality": 6494
+            },
+            "ssim2": {
+              "active_quality": 69.890671,
+              "best_scalar_quality_at_budget": 68.206487,
+              "gain_at_budget": 1.684184000000002,
+              "minimum_scalar_bytes_at_quality": 6494
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.312183,
+              "best_scalar_quality_at_budget": -1.332474,
+              "gain_at_budget": 0.020290999999999837,
+              "minimum_scalar_bytes_at_quality": 6494
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 6031,
+            "qualities": {
+              "D": 70.93133544921875,
+              "ssim2": 68.206487,
+              "negative_butteraugli": -1.332474
+            }
+          },
+          "requested_blocks_changed": 612,
+          "actual_blocks_changed": 612,
+          "pixels_changed": 17792
+        },
+        {
+          "origin": "7066",
+          "class": "graphic",
+          "distance": 1.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 33137,
+            "bytes_min": 25635,
+            "score_max": 88.32975769042969,
+            "score_min": 84.28364562988281,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 28917,
+          "active_score": 86.32186126708984,
+          "comparisons": {
+            "D": {
+              "active_quality": 86.32186126708984,
+              "best_scalar_quality_at_budget": 86.17754364013672,
+              "gain_at_budget": 0.144317626953125,
+              "minimum_scalar_bytes_at_quality": 29841
+            },
+            "ssim2": {
+              "active_quality": 87.366264,
+              "best_scalar_quality_at_budget": 87.081349,
+              "gain_at_budget": 0.28491499999999803,
+              "minimum_scalar_bytes_at_quality": 29841
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.517135,
+              "best_scalar_quality_at_budget": -0.51239,
+              "gain_at_budget": -0.004744999999999999,
+              "minimum_scalar_bytes_at_quality": 28782
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 28782,
+            "qualities": {
+              "D": 86.17754364013672,
+              "ssim2": 87.081349,
+              "negative_butteraugli": -0.51239
+            }
+          },
+          "requested_blocks_changed": 639,
+          "actual_blocks_changed": 607,
+          "pixels_changed": 33351
+        },
+        {
+          "origin": "7066",
+          "class": "graphic",
+          "distance": 3.0,
+          "scalar_states": 21,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 19867,
+            "bytes_min": 14224,
+            "score_max": 76.48346710205078,
+            "score_min": 66.03860473632812,
+            "states": 21
+          },
+          "covered": true,
+          "active_bytes": 16841,
+          "active_score": 71.31517791748047,
+          "comparisons": {
+            "D": {
+              "active_quality": 71.31517791748047,
+              "best_scalar_quality_at_budget": 71.12153625488281,
+              "gain_at_budget": 0.19364166259765625,
+              "minimum_scalar_bytes_at_quality": 17536
+            },
+            "ssim2": {
+              "active_quality": 71.28957,
+              "best_scalar_quality_at_budget": 70.548862,
+              "gain_at_budget": 0.7407079999999979,
+              "minimum_scalar_bytes_at_quality": 17536
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.327088,
+              "best_scalar_quality_at_budget": -1.370975,
+              "gain_at_budget": 0.04388700000000001,
+              "minimum_scalar_bytes_at_quality": 17536
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-11",
+            "bytes": 16534,
+            "qualities": {
+              "D": 71.12153625488281,
+              "ssim2": 70.548862,
+              "negative_butteraugli": -1.370975
+            }
+          },
+          "requested_blocks_changed": 651,
+          "actual_blocks_changed": 644,
+          "pixels_changed": 37992
+        },
+        {
+          "origin": "8206",
+          "class": "screen",
+          "distance": 1.0,
+          "scalar_states": 39,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 6001,
+            "bytes_min": 4489,
+            "score_max": 91.29635620117188,
+            "score_min": 88.91578674316406,
+            "states": 39
+          },
+          "covered": true,
+          "active_bytes": 5330,
+          "active_score": 90.81465148925781,
+          "comparisons": {
+            "D": {
+              "active_quality": 90.81465148925781,
+              "best_scalar_quality_at_budget": 90.65878295898438,
+              "gain_at_budget": 0.1558685302734375,
+              "minimum_scalar_bytes_at_quality": 5464
+            },
+            "ssim2": {
+              "active_quality": 91.201222,
+              "best_scalar_quality_at_budget": 91.344411,
+              "gain_at_budget": -0.14318899999999246,
+              "minimum_scalar_bytes_at_quality": 5199
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.331523,
+              "best_scalar_quality_at_budget": -0.328839,
+              "gain_at_budget": -0.0026840000000000197,
+              "minimum_scalar_bytes_at_quality": 5308
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-14",
+            "bytes": 5184,
+            "qualities": {
+              "D": 90.65878295898438,
+              "ssim2": 91.150464,
+              "negative_butteraugli": -0.340891
+            }
+          },
+          "requested_blocks_changed": 445,
+          "actual_blocks_changed": 445,
+          "pixels_changed": 8540
+        },
+        {
+          "origin": "8206",
+          "class": "screen",
+          "distance": 3.0,
+          "scalar_states": 33,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 3762,
+            "bytes_min": 2655,
+            "score_max": 82.23112487792969,
+            "score_min": 74.36664581298828,
+            "states": 33
+          },
+          "covered": true,
+          "active_bytes": 3267,
+          "active_score": 79.679443359375,
+          "comparisons": {
+            "D": {
+              "active_quality": 79.679443359375,
+              "best_scalar_quality_at_budget": 79.04708862304688,
+              "gain_at_budget": 0.632354736328125,
+              "minimum_scalar_bytes_at_quality": 3313
+            },
+            "ssim2": {
+              "active_quality": 81.955946,
+              "best_scalar_quality_at_budget": 81.774418,
+              "gain_at_budget": 0.18152800000000013,
+              "minimum_scalar_bytes_at_quality": 3319
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.893817,
+              "best_scalar_quality_at_budget": -0.912218,
+              "gain_at_budget": 0.018401,
+              "minimum_scalar_bytes_at_quality": 3313
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-17",
+            "bytes": 3255,
+            "qualities": {
+              "D": 79.04708862304688,
+              "ssim2": 81.774418,
+              "negative_butteraugli": -0.912218
+            }
+          },
+          "requested_blocks_changed": 417,
+          "actual_blocks_changed": 417,
+          "pixels_changed": 11014
+        }
+      ],
+      "criteria": {
+        "all_cells_covered": true,
+        "D_noninferior": true,
+        "ssim2_noninferior": false,
+        "butteraugli_noninferior": false,
+        "every_class_positive_median_D": true,
+        "half_cells_D_gain_0.05": true
+      }
+    },
+    "multigroup": {
+      "work": {
+        "additional_scored_maps": 8,
+        "cells": [
+          {
+            "distance": 1.0,
+            "full_encodes": 35,
+            "map_seconds": 0.005015221,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "2010",
+            "preparation_seconds": 0.016626337,
+            "sampled_regions": 0,
+            "transform_regions": 3180
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 30,
+            "map_seconds": 0.00481943,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "2010",
+            "preparation_seconds": 0.011248676,
+            "sampled_regions": 0,
+            "transform_regions": 1711
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 30,
+            "map_seconds": 0.004479458,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "6068",
+            "preparation_seconds": 0.010485373,
+            "sampled_regions": 0,
+            "transform_regions": 2205
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 30,
+            "map_seconds": 0.004605799,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "6068",
+            "preparation_seconds": 0.010990154,
+            "sampled_regions": 0,
+            "transform_regions": 1895
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 35,
+            "map_seconds": 0.007989833,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "7066",
+            "preparation_seconds": 0.016756387,
+            "sampled_regions": 0,
+            "transform_regions": 3302
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 30,
+            "map_seconds": 0.008583214,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "7066",
+            "preparation_seconds": 0.013083363,
+            "sampled_regions": 0,
+            "transform_regions": 2988
+          },
+          {
+            "distance": 1.0,
+            "full_encodes": 41,
+            "map_seconds": 0.005211111,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "8206",
+            "preparation_seconds": 0.007970562,
+            "sampled_regions": 0,
+            "transform_regions": 680
+          },
+          {
+            "distance": 3.0,
+            "full_encodes": 35,
+            "map_seconds": 0.005563223,
+            "neutral_byte_pixel_q_score_exact": true,
+            "origin": "8206",
+            "preparation_seconds": 0.006883298,
+            "sampled_regions": 0,
+            "transform_regions": 587
+          }
+        ],
+        "compatibility_png_decodes": 48,
+        "elapsed_seconds": 7.478550959,
+        "full_encodes": 266,
+        "independent_decodes": 266,
+        "independent_judges": "pending external owner",
+        "internal_reconstructions": 0,
+        "libjxl_compatibility_decodes": 24,
+        "ordinary_scalar_pixel_comparisons": 266,
+        "png_roundtrip_decodes": 266,
+        "process_peak_rss_kib": 134820,
+        "source_png_decodes": 4
+      },
+      "cells": [
+        {
+          "origin": "2010",
+          "class": "photo",
+          "distance": 1.0,
+          "scalar_states": 33,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 92415,
+            "bytes_min": 59678,
+            "score_max": 88.50482940673828,
+            "score_min": 82.96722412109375,
+            "states": 33
+          },
+          "covered": true,
+          "active_bytes": 72760,
+          "active_score": 85.84589385986328,
+          "comparisons": {
+            "D": {
+              "active_quality": 85.84589385986328,
+              "best_scalar_quality_at_budget": 85.89871215820312,
+              "gain_at_budget": -0.05281829833984375,
+              "minimum_scalar_bytes_at_quality": 72702
+            },
+            "ssim2": {
+              "active_quality": 83.126906,
+              "best_scalar_quality_at_budget": 83.138068,
+              "gain_at_budget": -0.011161999999998784,
+              "minimum_scalar_bytes_at_quality": 72702
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.712497,
+              "best_scalar_quality_at_budget": -0.695209,
+              "gain_at_budget": -0.01728800000000008,
+              "minimum_scalar_bytes_at_quality": 71442
+            }
+          },
+          "dominating_scalar_outputs": [
+            "scalar-10"
+          ],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-10",
+            "bytes": 72702,
+            "qualities": {
+              "D": 85.89871215820312,
+              "ssim2": 83.138068,
+              "negative_butteraugli": -0.695209
+            }
+          },
+          "requested_blocks_changed": 2202,
+          "actual_blocks_changed": 2133,
+          "pixels_changed": 131924
+        },
+        {
+          "origin": "2010",
+          "class": "photo",
+          "distance": 3.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 41074,
+            "bytes_min": 24998,
+            "score_max": 71.77296447753906,
+            "score_min": 60.66782760620117,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 30769,
+          "active_score": 64.99906158447266,
+          "comparisons": {
+            "D": {
+              "active_quality": 64.99906158447266,
+              "best_scalar_quality_at_budget": 64.95046997070312,
+              "gain_at_budget": 0.04859161376953125,
+              "minimum_scalar_bytes_at_quality": 31006
+            },
+            "ssim2": {
+              "active_quality": 64.678297,
+              "best_scalar_quality_at_budget": 64.305913,
+              "gain_at_budget": 0.3723839999999967,
+              "minimum_scalar_bytes_at_quality": 31006
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.632115,
+              "best_scalar_quality_at_budget": -1.610249,
+              "gain_at_budget": -0.02186599999999994,
+              "minimum_scalar_bytes_at_quality": 29771
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-13",
+            "bytes": 30458,
+            "qualities": {
+              "D": 64.95046997070312,
+              "ssim2": 64.305913,
+              "negative_butteraugli": -1.610249
+            }
+          },
+          "requested_blocks_changed": 1841,
+          "actual_blocks_changed": 1813,
+          "pixels_changed": 109484
+        },
+        {
+          "origin": "6068",
+          "class": "document",
+          "distance": 1.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 64211,
+            "bytes_min": 50278,
+            "score_max": 91.4566650390625,
+            "score_min": 88.12466430664062,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 57922,
+          "active_score": 89.90159606933594,
+          "comparisons": {
+            "D": {
+              "active_quality": 89.90159606933594,
+              "best_scalar_quality_at_budget": 89.90108489990234,
+              "gain_at_budget": 0.00051116943359375,
+              "minimum_scalar_bytes_at_quality": 59972
+            },
+            "ssim2": {
+              "active_quality": 90.627655,
+              "best_scalar_quality_at_budget": 90.640296,
+              "gain_at_budget": -0.012641000000002123,
+              "minimum_scalar_bytes_at_quality": 56049
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.448288,
+              "best_scalar_quality_at_budget": -0.433935,
+              "gain_at_budget": -0.014353000000000005,
+              "minimum_scalar_bytes_at_quality": 56049
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 56676,
+            "qualities": {
+              "D": 89.90108489990234,
+              "ssim2": 90.52458,
+              "negative_butteraugli": -0.433935
+            }
+          },
+          "requested_blocks_changed": 2799,
+          "actual_blocks_changed": 2797,
+          "pixels_changed": 74802
+        },
+        {
+          "origin": "6068",
+          "class": "document",
+          "distance": 3.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 38230,
+            "bytes_min": 26168,
+            "score_max": 80.60289764404297,
+            "score_min": 70.74309539794922,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 32115,
+          "active_score": 75.18589782714844,
+          "comparisons": {
+            "D": {
+              "active_quality": 75.18589782714844,
+              "best_scalar_quality_at_budget": 74.89622497558594,
+              "gain_at_budget": 0.2896728515625,
+              "minimum_scalar_bytes_at_quality": 34470
+            },
+            "ssim2": {
+              "active_quality": 76.248425,
+              "best_scalar_quality_at_budget": 76.201149,
+              "gain_at_budget": 0.04727599999999654,
+              "minimum_scalar_bytes_at_quality": 34470
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.273529,
+              "best_scalar_quality_at_budget": -1.254571,
+              "gain_at_budget": -0.01895799999999981,
+              "minimum_scalar_bytes_at_quality": 30263
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 31291,
+            "qualities": {
+              "D": 74.89622497558594,
+              "ssim2": 76.201149,
+              "negative_butteraugli": -1.254571
+            }
+          },
+          "requested_blocks_changed": 2725,
+          "actual_blocks_changed": 2711,
+          "pixels_changed": 75411
+        },
+        {
+          "origin": "7066",
+          "class": "graphic",
+          "distance": 1.0,
+          "scalar_states": 33,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 114701,
+            "bytes_min": 86886,
+            "score_max": 88.87661743164062,
+            "score_min": 85.3932113647461,
+            "states": 33
+          },
+          "covered": true,
+          "active_bytes": 99862,
+          "active_score": 87.43162536621094,
+          "comparisons": {
+            "D": {
+              "active_quality": 87.43162536621094,
+              "best_scalar_quality_at_budget": 87.16261291503906,
+              "gain_at_budget": 0.269012451171875,
+              "minimum_scalar_bytes_at_quality": 103400
+            },
+            "ssim2": {
+              "active_quality": 87.930385,
+              "best_scalar_quality_at_budget": 87.624529,
+              "gain_at_budget": 0.3058560000000057,
+              "minimum_scalar_bytes_at_quality": 103400
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.477922,
+              "best_scalar_quality_at_budget": -0.477021,
+              "gain_at_budget": -0.0009010000000000407,
+              "minimum_scalar_bytes_at_quality": 99527
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-18",
+            "bytes": 99527,
+            "qualities": {
+              "D": 87.16261291503906,
+              "ssim2": 87.624529,
+              "negative_butteraugli": -0.477021
+            }
+          },
+          "requested_blocks_changed": 2589,
+          "actual_blocks_changed": 2493,
+          "pixels_changed": 120174
+        },
+        {
+          "origin": "7066",
+          "class": "graphic",
+          "distance": 3.0,
+          "scalar_states": 28,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 70146,
+            "bytes_min": 50470,
+            "score_max": 77.93724822998047,
+            "score_min": 68.47535705566406,
+            "states": 28
+          },
+          "covered": true,
+          "active_bytes": 60253,
+          "active_score": 74.00218200683594,
+          "comparisons": {
+            "D": {
+              "active_quality": 74.00218200683594,
+              "best_scalar_quality_at_budget": 73.32728576660156,
+              "gain_at_budget": 0.674896240234375,
+              "minimum_scalar_bytes_at_quality": 62919
+            },
+            "ssim2": {
+              "active_quality": 75.170249,
+              "best_scalar_quality_at_budget": 74.858857,
+              "gain_at_budget": 0.3113919999999979,
+              "minimum_scalar_bytes_at_quality": 62919
+            },
+            "negative_butteraugli": {
+              "active_quality": -1.22766,
+              "best_scalar_quality_at_budget": -1.209665,
+              "gain_at_budget": -0.017994999999999983,
+              "minimum_scalar_bytes_at_quality": 58627
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 59787,
+            "qualities": {
+              "D": 73.32728576660156,
+              "ssim2": 74.858857,
+              "negative_butteraugli": -1.209665
+            }
+          },
+          "requested_blocks_changed": 2565,
+          "actual_blocks_changed": 2559,
+          "pixels_changed": 133079
+        },
+        {
+          "origin": "8206",
+          "class": "screen",
+          "distance": 1.0,
+          "scalar_states": 39,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 15086,
+            "bytes_min": 11205,
+            "score_max": 91.68236541748047,
+            "score_min": 89.14875793457031,
+            "states": 39
+          },
+          "covered": true,
+          "active_bytes": 13320,
+          "active_score": 90.9393539428711,
+          "comparisons": {
+            "D": {
+              "active_quality": 90.9393539428711,
+              "best_scalar_quality_at_budget": 90.78939056396484,
+              "gain_at_budget": 0.14996337890625,
+              "minimum_scalar_bytes_at_quality": 13657
+            },
+            "ssim2": {
+              "active_quality": 89.72205,
+              "best_scalar_quality_at_budget": 89.515967,
+              "gain_at_budget": 0.20608299999999247,
+              "minimum_scalar_bytes_at_quality": 13372
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.358923,
+              "best_scalar_quality_at_budget": -0.354965,
+              "gain_at_budget": -0.003958000000000017,
+              "minimum_scalar_bytes_at_quality": 12932
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-17",
+            "bytes": 13020,
+            "qualities": {
+              "D": 90.78939056396484,
+              "ssim2": 89.392313,
+              "negative_butteraugli": -0.364755
+            }
+          },
+          "requested_blocks_changed": 1962,
+          "actual_blocks_changed": 1966,
+          "pixels_changed": 23851
+        },
+        {
+          "origin": "8206",
+          "class": "screen",
+          "distance": 3.0,
+          "scalar_states": 33,
+          "bounds": {
+            "before_map_and_policy": true,
+            "bytes_max": 9508,
+            "bytes_min": 6632,
+            "score_max": 83.73356628417969,
+            "score_min": 76.25115203857422,
+            "states": 33
+          },
+          "covered": true,
+          "active_bytes": 8171,
+          "active_score": 81.30501556396484,
+          "comparisons": {
+            "D": {
+              "active_quality": 81.30501556396484,
+              "best_scalar_quality_at_budget": 80.58728790283203,
+              "gain_at_budget": 0.7177276611328125,
+              "minimum_scalar_bytes_at_quality": 8446
+            },
+            "ssim2": {
+              "active_quality": 80.836269,
+              "best_scalar_quality_at_budget": 80.510643,
+              "gain_at_budget": 0.32562599999999975,
+              "minimum_scalar_bytes_at_quality": 8446
+            },
+            "negative_butteraugli": {
+              "active_quality": -0.95038,
+              "best_scalar_quality_at_budget": -0.97271,
+              "gain_at_budget": 0.02232999999999996,
+              "minimum_scalar_bytes_at_quality": 8584
+            }
+          },
+          "dominating_scalar_outputs": [],
+          "best_D_scalar_at_budget": {
+            "name": "scalar-15",
+            "bytes": 8109,
+            "qualities": {
+              "D": 80.58728790283203,
+              "ssim2": 80.510643,
+              "negative_butteraugli": -0.980499
+            }
+          },
+          "requested_blocks_changed": 1842,
+          "actual_blocks_changed": 1843,
+          "pixels_changed": 31081
+        }
+      ],
+      "criteria": {
+        "all_cells_covered": true,
+        "D_noninferior": false,
+        "ssim2_noninferior": true,
+        "butteraugli_noninferior": false,
+        "every_class_positive_median_D": false,
+        "half_cells_D_gain_0.05": true
+      }
+    }
+  },
+  "delivery_rebase": {
+    "incoming_commit": "c0aedb14e7b6457c454046ed2ef8ee510ba52b5f",
+    "rebase_clean": true,
+    "incoming_tests_preserved": true,
+    "incoming_lock_failed_locked_build": true,
+    "resolution": "Cargo offline resolution restores the graph required by local manifests and existing CI sibling pins; incoming lock saved separately",
+    "resolved_lock_equals_previous_validated_lock": true,
+    "binary_sha256": "d71d1512f3b802488746a9f3febb52830fd9ff84e7fd31971d73249443841a67",
+    "binary_exact": true,
+    "changed_package_records": [
+      [
+        "cubecl-common",
+        "0.10.0"
+      ],
+      [
+        "cubecl-ir",
+        "0.10.0"
+      ],
+      [
+        "cubecl-macros",
+        "0.10.0"
+      ],
+      [
+        "cubecl-macros-internal",
+        "0.10.0"
+      ],
+      [
+        "cubecl-zspace",
+        "0.10.0"
+      ],
+      [
+        "zenforks-cubecl",
+        "0.10.2"
+      ],
+      [
+        "zenforks-cubecl-core",
+        "0.10.2"
+      ],
+      [
+        "zenforks-cubecl-cpp",
+        "0.10.2"
+      ],
+      [
+        "zenforks-cubecl-cuda",
+        "0.10.2"
+      ],
+      [
+        "zenforks-cubecl-opt",
+        "0.10.2"
+      ],
+      [
+        "zenforks-cubecl-runtime",
+        "0.10.2"
+      ],
+      [
+        "zenforks-cubecl-wgpu",
+        "0.10.2"
+      ],
+      [
+        "zensim",
+        "0.3.0"
+      ],
+      [
+        "zensim-target",
+        "0.1.0"
+      ]
+    ],
+    "only_changed_compiler_source": [
+      "jxl-encoder/tests/it/high_bit_depth_int.rs"
+    ],
+    "incoming_test_source_sha256": "ee8c44915e98e2e67036cea94bf1603c526399633859056ab46d67849a0071a0",
+    "incoming_tests_passed": 2,
+    "rebased_pinned_clippy_routes_passed": 3
+  }
+}
