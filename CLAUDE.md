@@ -3192,3 +3192,28 @@ mixed associations with native marginal response. Final quantizer identity
 alone does not prove an inert encode because thresholds also depend on the
 incoming field. Preserve decoded-pixel controls. This changes neither the
 model nor encoder policy and establishes no qualified spatial RD win.
+
+
+## Native PNG and coarse allocation intervention follow-up (2026-09-08)
+
+The existing private targeting/intervention PNG path now uses zenpng 0.1.4,
+with explicit opaque sRGB8 source admission and exact native PNG readback.
+The old image/PIL IO path was not native end to end; the new v2 analyzer reads
+raw buffers and native hash records, leaving PIL only in historical v1.
+All 272 prior transform probes reproduce byte/pixel/q/score/map-exactly.
+`--intervention-regions coarse4` groups whole transforms by anchor into 4×4
+unions with exact padded-block and source-area coverage. No strategy is disabled.
+The coarse / ±20% recipe has expected D direction 244/256 at 256 and 245/256
+at 512, with stronger mass/response association but uneven gain-per-byte value.
+Region size and amplitude changed together. No held-out RD win or qualification.
+
+[Complete screen](benchmarks/zensim_coarse_interventions_2026-09-08.md): final
+816 encodes and 1,632 independent judge values reproduce; 24 exact neutral
+cells, 31 analyzer and 11 CLI refusal controls. Workspace and exact-example
+Clippy pass locally and against the CI-pinned source closure. Original/final
+packets preserve an initially omitted source-sidecar failure. New target
+calibration identifies the native PNG era explicitly; old files are refused
+across that config boundary. Public APIs and production encoding are unchanged.
+Next test an actual coarse policy at matched quality/bytes through the existing
+owner; do not repeat the completed mechanism screen or claim these oracle
+intervention probes are a product controller.

@@ -2128,6 +2128,7 @@ dependencies = [
  "zenjpeg",
  "zenjxl-decoder",
  "zenpixels-convert",
+ "zenpng",
  "zenpredict",
  "zensim",
  "zensim-gpu",
@@ -2453,6 +2454,12 @@ name = "lz4_flex"
 version = "0.11.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
+
+[[package]]
+name = "lz4_flex"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
 
 [[package]]
 name = "magetypes"
@@ -4655,6 +4662,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenflate"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8409543ad469f954834da58409f0d9c463156f01cfaf8a8a03fe277c73b1e0f5"
+dependencies = [
+ "archmage",
+ "enough",
+ "libm",
+]
+
+[[package]]
 name = "zenforks-cubecl"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5069,11 +5087,36 @@ dependencies = [
  "garb",
  "libm",
  "linear-srgb",
+ "lz4_flex 0.13.1",
  "magetypes",
  "once_cell",
  "paste",
+ "rgb",
  "whereat",
  "zenpixels",
+]
+
+[[package]]
+name = "zenpng"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34ef0ff0cfac28ce74a9241dbe8ba3abe60f385819d55675c4daced1ac8ac4bd"
+dependencies = [
+ "almost-enough",
+ "archmage",
+ "bytemuck",
+ "enough",
+ "imgref",
+ "linear-srgb",
+ "memchr",
+ "rgb",
+ "safe_unaligned_simd",
+ "thiserror",
+ "whereat",
+ "zencodec",
+ "zenflate",
+ "zenpixels",
+ "zenpixels-convert",
 ]
 
 [[package]]
@@ -5084,7 +5127,7 @@ dependencies = [
  "archmage",
  "bytemuck",
  "libm",
- "lz4_flex",
+ "lz4_flex 0.11.6",
 ]
 
 [[package]]

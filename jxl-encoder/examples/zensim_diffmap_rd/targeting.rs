@@ -12,12 +12,13 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
+use zenpixels_convert::PixelBufferConvertTypedExt;
 use zensim::{BakeScorer, RgbSlice};
 use zensim_target::{
     CodecKind, SeedCurve, TargetSpec, codec::CodecBackend, target_search_with_backend_and_bake,
 };
 
-const CONFIG: &str = "jxl:distance0.01-25,e8,Zenjxl,no-auto-resampling,opaque-sRGB8;scalar:zero-updates;neutral:two-updates-H3gain0;active:two-updates-H3gain10;bin8;no-inner-target;formula1";
+const CONFIG: &str = "jxl:distance0.01-25,e8,Zenjxl,no-auto-resampling,opaque-sRGB8;scalar:zero-updates;neutral:two-updates-H3gain0;active:two-updates-H3gain10;bin8;no-inner-target;formula1;native-png-v1";
 const ARMS: [&str; 3] = ["scalar", "neutral", "active"];
 const FIXED: [f32; 5] = [-10., 30., 70., 90., 99.];
 const TOL: f32 = 1.;
@@ -135,14 +136,74 @@ fn source_set(path: &Path, split: &str) -> Result<Sources> {
     Ok(value)
 }
 fn pixels(source: &Source) -> Result<(Vec<u8>, u32, u32)> {
-    let img = image::open(&source.path)?;
+    read_png(&source.path, true)
+}
+
+// Private research IO: packed opaque RGB8, width*3 byte stride, no color
+// conversion. Source metadata is admitted explicitly; compatibility PNGs
+// from the port reference may carry its generated sRGB profile.
+fn read_png(path: &Path, source: bool) -> Result<(Vec<u8>, u32, u32)> {
+    let decoded = zenpng::decode(
+        &fs::read(path)?,
+        &zenpng::PngDecodeConfig::default(),
+        &enough::Unstoppable,
+    )?;
+    let info = &decoded.info;
     ensure!(
-        img.to_rgba8().pixels().all(|p| p[3] == 255),
+        info.bit_depth == 8,
+        "native instrument requires eight-bit PNG"
+    );
+    if source {
+        ensure!(
+            !info.sequence.is_animation()
+                && info.icc_profile.is_none()
+                && info.exif.is_none()
+                && info.cicp.is_none()
+                && info.content_light_level.is_none()
+                && info.mastering_display.is_none()
+                && info.chromaticities.is_none()
+                && info.source_gamma.is_none_or(|v| v == 45455),
+            "native instrument source metadata is outside opaque sRGB8 contract"
+        );
+    }
+    let rgba = decoded.pixels.to_rgba8().copy_to_contiguous_bytes();
+    ensure!(
+        rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
         "native instrument requires opaque sources"
     );
-    let rgb = img.to_rgb8();
-    let (w, h) = rgb.dimensions();
-    Ok((rgb.into_raw(), w, h))
+    let rgb: Vec<u8> = rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|p| p[..3].iter().copied())
+        .collect();
+    ensure!(
+        rgb.len() == info.width as usize * info.height as usize * 3,
+        "PNG packing"
+    );
+    Ok((rgb, info.width, info.height))
+}
+
+fn write_png(path: &Path, rgb: &[u8], w: u32, h: u32) -> Result<String> {
+    use rgb::FromSlice;
+    ensure!(
+        w > 0 && h > 0 && rgb.len() == w as usize * h as usize * 3,
+        "PNG RGB8 shape"
+    );
+    let bytes = zenpng::encode_rgb8(
+        imgref::ImgRef::new(rgb.as_rgb(), w as usize, h as usize),
+        None,
+        &zenpng::EncodeConfig::default().with_compression(zenpng::Compression::Fastest),
+        &enough::Unstoppable,
+        &enough::Unstoppable,
+    )?;
+    fs::write(path, &bytes)?;
+    let (decoded, dw, dh) = read_png(path, false)?;
+    ensure!(
+        dw == w && dh == h && decoded == rgb,
+        "native PNG readback differs"
+    );
+    Ok(sha(&bytes))
 }
 fn score(scorer: &mut BakeScorer<'_>, rgb: &[u8], decoded: &[u8], w: u32, h: u32) -> Result<f32> {
     ensure!(
@@ -308,9 +369,7 @@ fn ladder(
         };
         let stem = format!("{}-{arm}-{i}", source.origin);
         fs::write(out.join(format!("{stem}.jxl")), encoded)?;
-        image::RgbImage::from_raw(w, h, decoded)
-            .context("decoded image shape")?
-            .save(out.join(format!("{stem}.png")))?;
+        write_png(&out.join(format!("{stem}.png")), &decoded, w, h)?;
         writeln!(
             sink,
             "{}",
@@ -482,9 +541,7 @@ pub(super) fn evaluate(root: &Path, calibration_path: &Path, bake: &str, out: &P
                         let file = format!("case-{cases}.jxl");
                         fs::write(out.join(&file), &result.encoded)?;
                         let decoded_file = format!("case-{cases}.png");
-                        image::RgbImage::from_raw(w, h, verified)
-                            .context("verification shape")?
-                            .save(out.join(&decoded_file))?;
+                        write_png(&out.join(&decoded_file), &verified, w, h)?;
                         let probes:Vec<_>=result.probes.iter().map(|p|json!({"knob":p.knob,"score":p.achieved_score,"bytes":p.byte_count})).collect();
                         writeln!(
                             measurements,
@@ -515,6 +572,6 @@ pub(super) fn evaluate(root: &Path, calibration_path: &Path, bake: &str, out: &P
 mod interventions;
 
 #[cfg(all(feature = "__pre_quantized", feature = "__internal_recon_hook"))]
-pub(super) fn intervene(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
-    interventions::run(manifest, bake, out)
+pub(super) fn intervene(manifest: &Path, bake: &str, out: &Path, regions: &str) -> Result<()> {
+    interventions::run(manifest, bake, out, regions)
 }

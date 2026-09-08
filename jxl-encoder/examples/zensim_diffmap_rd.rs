@@ -315,6 +315,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut arms: Vec<String> = vec!["baseline".into(), "attr".into(), "attr-stale".into()];
     let mut bake: Option<String> = None;
     let mut native_interventions: Option<PathBuf> = None;
+    let mut intervention_regions: Option<String> = None;
     let mut native_fit: Option<PathBuf> = None;
     let mut native_eval: Option<PathBuf> = None;
     let mut native_calibration: Option<PathBuf> = None;
@@ -352,16 +353,31 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
             "--bake" => bake = args.next(),
-            "--native-interventions" => native_interventions = args.next().map(PathBuf::from),
+            "--native-interventions" => {
+                native_interventions = Some(PathBuf::from(
+                    args.next()
+                        .expect("--native-interventions needs a manifest"),
+                ))
+            }
+            "--intervention-regions" => {
+                intervention_regions = Some(
+                    args.next()
+                        .expect("--intervention-regions needs transform or coarse4"),
+                )
+            }
             "--native-fit" => native_fit = args.next().map(PathBuf::from),
             "--native-eval" => native_eval = args.next().map(PathBuf::from),
             "--native-calibration" => native_calibration = args.next().map(PathBuf::from),
             _ => {}
         }
     }
+    assert!(
+        intervention_regions.is_none() || native_interventions.is_some(),
+        "--intervention-regions requires --native-interventions"
+    );
     if let Some(manifest) = native_interventions.as_deref() {
         assert!(
-            native_fit.is_none() && native_eval.is_none(),
+            native_fit.is_none() && native_eval.is_none() && native_calibration.is_none(),
             "interventions are a separate operation"
         );
         #[cfg(all(feature = "__pre_quantized", feature = "__internal_recon_hook"))]
@@ -369,6 +385,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             manifest,
             bake.as_deref().expect("--bake required"),
             &out_dir,
+            intervention_regions.as_deref().unwrap_or("transform"),
         )
         .map_err(Into::into);
         #[cfg(not(all(feature = "__pre_quantized", feature = "__internal_recon_hook")))]

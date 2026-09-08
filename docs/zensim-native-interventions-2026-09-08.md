@@ -88,3 +88,56 @@ model fit. Keep this eight-cell/272-encode packet separate from the registered
 checks, 24 libjxl 0.12 compatibility decodes and complete independent judges.
 Report it as engineering coverage and a descriptive scale check; it cannot
 increase the independent family count or qualify a model.
+
+
+# Native PNG and coarse JXL intervention registration
+
+Registered 2026-09-08T20:09:41.967730+00:00, before implementation and new encodes. Extends the existing
+`zensim_diffmap_rd --native-interventions` owner and its existing analyzer.
+Previous per-transform +/-10% results remain immutable and mixed.
+
+Freeze the same D artifact, formula 1, source manifests, four training origins
+2010/6068/7066/8206, distances 1 and 3, effort 8 Reference, normal transform
+strategies/CfL/gaborish, exact decoder transfer and cached precomputed fields.
+No validation or terminal examples, no fit or policy selection.
+
+First replace this private instrument's PNG IO with zenpng 0.1.4 and record
+native decoded RGB hashes. Reproduce the old 272 transform probes using the
+new IO; require all emitted JXL bytes, raw RGB, quantizers, scores and map
+integrals to match the retained screen-final packet. PNG compression may
+change. Historical PIL checks remain only in the v1 analyzer branch.
+Source admission requires static, opaque, eight-bit sRGB-compatible PNG;
+unsupported metadata/depth/alpha fail explicitly, not silent conversion.
+
+Coarse mode: assign each complete transform to one of 4x4 grid cells by its
+anchor block: gx=floor(4*x/xsize_blocks), gy=floor(4*y/ysize_blocks).
+Keep all members whole; groups are unions of transforms, not assumed
+rectangles. Enumerate nonempty cells in raster order. Every source pixel and
+padded block belongs to exactly one group. Sum clipped areas and signed map
+integrals, with density=mass/area. Large transforms may cross grid boundaries.
+For each group change all covered raw quantizers by factors 0.8 and 1.2,
+rounding with minimum step one and clamp [1,255]. Baseline and exact neutral
+repeat plus two probes per nonempty group; at most 34 full encodes per cell.
+No response-based group sampling, threshold tuning or omitted inert probes.
+
+Measure actual captured quantizer changes, raw-pixel changes inside/outside
+the union, complete D score, bytes, CPU SSIMULACRA2 and Butteraugli. Retain
+nonpositive central byte differences; compute signed central derivatives
+normalized by actual mean-log-q span and rank associations with mass/density
+and quality gained per byte where the byte derivative is positive. Report
+each image/distance, not only pooled correlation. Count all encodes, native
+JXL decodes, comparisons, maps, source/PNG roundtrip decodes, compatibility
+decodes, times and RSS. libjxl v0.12 remains port compatibility only.
+
+Run the same coarse configuration on the existing 512-long-edge variants
+of these four origins as separate multigroup/scale coverage, not new families.
+Require whole-transform coverage, neutral byte/pixel/q/score equality, native
+PNG readback parity, complete independent judges and content hashes. Add
+negative controls for group membership, quantizer requests, PNG hashes and
+coverage. Reproduce final-source output if implementation changes after run.
+
+This bounded screen ends after these fixed experiments and integrity checks.
+It cannot establish held-out RD gains, 1/2/3-shot target accuracy, or release
+qualification. Do not turn descriptive correlation into a retrospective gate.
+No runtime oracle probing or new allocation policy is authorized by these
+measurements alone; preregister the next intervention separately.

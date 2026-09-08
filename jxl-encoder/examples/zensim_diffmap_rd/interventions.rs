@@ -6,7 +6,7 @@ use jxl_encoder::__pre_quantized::{
 use jxl_encoder::vardct::__recon_hook;
 use zensim::Fused944Session;
 
-const CONFIG: &str = "native-precomputed,e8,Reference,CfL,gaborish,pixel-loss,no-noise,no-denoise,no-patches,no-inner-loop;distances1,3;up-to16-raster-stratified-transforms;raw-qx0.9,1.1,min-step1;formula1,bin8";
+const CONFIG: &str = "native-precomputed,e8,Reference,CfL,gaborish,pixel-loss,no-noise,no-denoise,no-patches,no-inner-loop;distances1,3;min-step1;formula1,bin8";
 
 #[derive(Clone, Serialize)]
 struct Region {
@@ -14,6 +14,15 @@ struct Region {
     y: usize,
     blocks_x: usize,
     blocks_y: usize,
+    area: usize,
+    map_mass: f64,
+    map_density: f64,
+}
+
+#[derive(Clone, Serialize)]
+struct AllocationRegion {
+    grid_cell: usize,
+    transform_indices: Vec<usize>,
     area: usize,
     map_mass: f64,
     map_density: f64,
@@ -65,15 +74,18 @@ fn probe(
         dir.join(format!("{name}.actual-q.u8")),
         &quant.quant_field_u8,
     )?;
-    image::save_buffer(
-        dir.join(format!("{name}.png")),
+    let png_start = Instant::now();
+    let png_sha256 = write_png(
+        &dir.join(format!("{name}.png")),
         &decoded,
         pre.width as u32,
         pre.height as u32,
-        image::ColorType::Rgb8,
     )?;
+    let png_roundtrip_seconds = png_start.elapsed().as_secs_f64();
     let work = json!({
         "name":name,"bytes":encoded.len(),"score":value,
+        "png_sha256":png_sha256,"png_readback_rgb_sha256":sha(&decoded),
+        "png_roundtrip_seconds":png_roundtrip_seconds,"png_roundtrip_decodes":1,
         "encoded_sha256":sha(&encoded),"decoded_sha256":sha(&decoded),
         "requested_q_sha256":sha(requested),"actual_q_sha256":sha(&quant.quant_field_u8),
         "global_scale":quant.global_scale,"scale":quant.scale,"inv_scale":quant.inv_scale,
@@ -90,7 +102,13 @@ fn probe(
     })
 }
 
-pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
+pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) -> Result<()> {
+    ensure!(
+        matches!(region_mode, "transform" | "coarse4"),
+        "unknown intervention region mode"
+    );
+    let coarse = region_mode == "coarse4";
+    let factors = if coarse { [0.8f32, 1.2] } else { [0.9, 1.1] };
     ensure!(
         std::env::var("ZENSIM_FORMULA_REV").as_deref() == Ok("1"),
         "requires explicit ZENSIM_FORMULA_REV=1"
@@ -105,6 +123,7 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
             (native - reference).abs()
         })
         .fold(0.0f32, f32::max);
+    let manifest_sha = file_sha(manifest)?;
     let sources = source_set(manifest, "train")?;
     let mut classes = BTreeSet::new();
     let selected: Vec<Source> = sources
@@ -124,10 +143,12 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
     fs::write(
         out.join("INPUTS.json"),
         serde_json::to_vec_pretty(&json!({
-            "schema":"native-jxl-interventions-v1","config":CONFIG,
+            "schema":"native-jxl-interventions-v2","config":CONFIG,
+            "region_mode":region_mode,"raw_q_factors":factors,
+            "png_io":"zenpng-0.1.4-packed-opaque-rgb8-v1",
             "model_sha256":sha(&model_bytes),"driver_sha256":driver_sha()?,
         "srgb_conversion_max_abs_error":conversion_error,
-            "source_manifest_sha256":sha(&fs::read(manifest)?),"corpus_commit":sources.corpus_commit,
+            "source_manifest_sha256":manifest_sha,"corpus_commit":sources.corpus_commit,
             "split_manifest_sha256":sources.split_manifest_sha256,"sources":selected,
             "qualification":"mechanism screen only; no target attainment or held-out RD claim"
         }))?,
@@ -140,8 +161,18 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
     let mut maps = 0;
     let mut summaries = Vec::new();
     for source in &selected {
+        let source_start = Instant::now();
         let (rgb, width, height) = pixels(source)?;
+        let source_decode_seconds = source_start.elapsed().as_secs_f64();
         ensure!(width >= 8 && height >= 8, "source too small");
+        fs::write(out.join(format!("source-{}.rgb8", source.origin)), &rgb)?;
+        fs::write(
+            out.join(format!("source-{}.json", source.origin)),
+            serde_json::to_vec_pretty(&json!({
+                "source":source,"width":width,"height":height,"decoded_sha256":sha(&rgb),
+                "source_decodes":1,"source_decode_seconds":source_decode_seconds
+            }))?,
+        )?;
         let source_view = RgbSlice::new(rgb.as_chunks::<3>().0, width as usize, height as usize);
         let reference = scorer.precompute_reference(&source_view)?;
         for distance in [1., 3.] {
@@ -238,6 +269,47 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
                 dir.join("regions.json"),
                 serde_json::to_vec_pretty(&regions)?,
             )?;
+            let mut allocation = Vec::new();
+            if coarse {
+                let mut grouped: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+                for (i, region) in regions.iter().enumerate() {
+                    let gx = 4 * region.x / pre.xsize_blocks;
+                    let gy = 4 * region.y / pre.ysize_blocks;
+                    grouped.entry(gy * 4 + gx).or_default().push(i);
+                }
+                let mut coverage = vec![0u8; raw.len()];
+                for (grid_cell, indices) in grouped {
+                    let area = indices.iter().map(|&i| regions[i].area).sum();
+                    let map_mass: f64 = indices.iter().map(|&i| regions[i].map_mass).sum();
+                    for &i in &indices {
+                        let r = &regions[i];
+                        for y in r.y..r.y + r.blocks_y {
+                            for x in r.x..r.x + r.blocks_x {
+                                coverage[y * pre.xsize_blocks + x] += 1;
+                            }
+                        }
+                    }
+                    allocation.push(AllocationRegion {
+                        grid_cell,
+                        transform_indices: indices,
+                        area,
+                        map_mass,
+                        map_density: map_mass / area as f64,
+                    });
+                }
+                ensure!(
+                    coverage.iter().all(|&v| v == 1),
+                    "coarse regions do not partition padded blocks"
+                );
+                ensure!(
+                    allocation.iter().map(|r| r.area).sum::<usize>() == pre.width * pre.height,
+                    "coarse pixel area"
+                );
+                fs::write(
+                    dir.join("allocation_regions.json"),
+                    serde_json::to_vec_pretty(&allocation)?,
+                )?;
+            }
             let mut cell_encodes = 0;
             let mut record = |p: &Probe, intervention: serde_json::Value| -> Result<()> {
                 let name = p.work["name"].as_str().context("probe name")?;
@@ -262,26 +334,50 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
             };
             record(&baseline, serde_json::Value::Null)?;
             record(&neutral, serde_json::Value::Null)?;
-            let count = regions.len().min(16);
+            let count = if coarse {
+                allocation.len()
+            } else {
+                regions.len().min(16)
+            };
             for slot in 0..count {
-                let index = slot * (regions.len() - 1) / count.saturating_sub(1).max(1);
-                let region = &regions[index];
-                for factor in [0.9f32, 1.1] {
-                    let mut requested = raw.clone();
-                    let mut covered = BTreeSet::new();
-                    for y in region.y..region.y + region.blocks_y {
-                        for x in region.x..region.x + region.blocks_x {
-                            let i = y * pre.xsize_blocks + x;
-                            let old = i32::from(raw[i]);
-                            let wanted = (f32::from(raw[i]) * factor).round() as i32;
-                            requested[i] = if factor > 1. {
-                                wanted.max(old + 1)
-                            } else {
-                                wanted.min(old - 1)
-                            }
-                            .clamp(1, 255) as u8;
-                            covered.insert(i);
+                let index = if coarse {
+                    slot
+                } else {
+                    slot * (regions.len() - 1) / count.saturating_sub(1).max(1)
+                };
+                let indices = if coarse {
+                    allocation[index].transform_indices.clone()
+                } else {
+                    vec![index]
+                };
+                let region = if coarse {
+                    serde_json::to_value(&allocation[index])?
+                } else {
+                    serde_json::to_value(&regions[index])?
+                };
+                let mut covered = BTreeSet::new();
+                for &i in &indices {
+                    let r = &regions[i];
+                    for y in r.y..r.y + r.blocks_y {
+                        for x in r.x..r.x + r.blocks_x {
+                            ensure!(
+                                covered.insert(y * pre.xsize_blocks + x),
+                                "overlapping intervention transforms"
+                            );
                         }
+                    }
+                }
+                for factor in factors {
+                    let mut requested = raw.clone();
+                    for &i in &covered {
+                        let old = i32::from(raw[i]);
+                        let wanted = (f32::from(raw[i]) * factor).round() as i32;
+                        requested[i] = if factor > 1. {
+                            wanted.max(old + 1)
+                        } else {
+                            wanted.min(old - 1)
+                        }
+                        .clamp(1, 255) as u8;
                     }
                     let name = format!("r{index}-{}", if factor > 1. { "up" } else { "down" });
                     let p = probe(&encoder, &pre, &requested, &mut scorer, &rgb, &dir, &name)?;
@@ -341,6 +437,16 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
         sha(&fs::read(bake)?) == sha(&model_bytes),
         "model changed during run"
     );
+    ensure!(
+        file_sha(manifest)? == manifest_sha,
+        "manifest changed during run"
+    );
+    for source in &selected {
+        ensure!(
+            file_sha(&source.path)? == source.sha256,
+            "source changed during run"
+        );
+    }
     // Compatibility checks use the version-enforcing existing resolver. They
     // are additional decodes of retained bytes, never additional encodes.
     let djxl = jxl_encoder::test_helpers::djxl_path();
@@ -369,22 +475,20 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
                 "djxl failed for {}",
                 encoded.display()
             );
-            let independent = image::open(&output)?.to_rgb8();
-            let primary = image::open(dir.join(format!("{name}.png")))?.to_rgb8();
-            ensure!(
-                independent.dimensions() == primary.dimensions(),
-                "djxl dimensions differ"
-            );
+            let (independent, iw, ih) = read_png(&output, false)?;
+            let (primary, pw, ph) = read_png(&dir.join(format!("{name}.png")), false)?;
+            ensure!((iw, ih) == (pw, ph), "djxl dimensions differ");
             let max_abs = independent
-                .as_raw()
                 .iter()
-                .zip(primary.as_raw())
+                .zip(&primary)
                 .map(|(&a, &b)| a.abs_diff(b))
                 .max()
                 .unwrap_or(0);
+            fs::write(output.with_extension("rgb8"), &independent)?;
             compatibility.push(
                 json!({"encoded":encoded,"encoded_sha256":file_sha(&encoded)?,
-                "decoded":output,"decoded_sha256":sha(independent.as_raw()),
+                "decoded":output,"decoded_sha256":sha(&independent),"png_sha256":file_sha(&output)?,
+                "width":iw,"height":ih,"native_png_decodes":2,
                 "primary_max_abs_rgb8_difference":max_abs}),
             );
         }
@@ -403,6 +507,8 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path) -> Result<()> {
             "cells":summaries,"full_encodes":full_encodes,"independent_decodes":full_encodes,
             "ordinary_scalar_pixel_comparisons":full_encodes,"additional_scored_maps":maps,
             "internal_reconstructions":0,"libjxl_compatibility_decodes":compatibility.len(),
+            "source_png_decodes":selected.len(),"png_roundtrip_decodes":full_encodes,
+            "compatibility_png_decodes":compatibility.len()*2,
         "elapsed_seconds":started.elapsed().as_secs_f64(),
             "process_peak_rss_kib":rss_kib(),"independent_judges":"pending external owner"
         }))?,

@@ -397,6 +397,8 @@ required-features = ["std", "parallel"]
 
 [dev-dependencies]
 anyhow = "1"
+# Native PNG IO for canonical targeting/intervention instruments.
+zenpng = { version = "=0.1.4", default-features = false }
 # Shared Rust target controller/calibration; native adapters stay in this repo.
 zensim-target = { path = "../../zensim/zensim-target", default-features = false }
 serde_json = "1"
