@@ -147,7 +147,13 @@ fn first_running(env_key: &str, candidates: &[&str]) -> String {
     }
     panic!(
         "no libjxl {REQUIRED_LIBJXL_VERSION} binary found. Tried:\n  {}\n\
-         Build one (the system package is the wrong version):\n  \
+         On macOS this repo already ships one at .ci-libjxl/tools/ (gitignored) \
+         and the justfile passes it via CJXL_PATH/DJXL_PATH — run through \
+         `just` instead of cargo directly, or set {env_key} to it.\n  \
+         To build one, CHECK OUT THE TAG FIRST: ~/work/jxl-efforts/libjxl has \
+         moved to the v0.13 dev line and its HEAD builds as v0.13.0.\n  \
+         git -C ~/work/jxl-efforts/libjxl checkout v0.12.0\n  \
+         ~/work/jxl-efforts/libjxl/deps.sh\n  \
          cmake -S ~/work/jxl-efforts/libjxl -B ~/tmp/libjxl-v012-build \
          -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=OFF -DBUILD_TESTING=OFF\n  \
          cmake --build ~/tmp/libjxl-v012-build --target cjxl djxl -j 12\n\

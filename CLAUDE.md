@@ -21,14 +21,35 @@ correctness verification, but is no longer the reference for quality comparisons
 > #102. A wrong-version reference is worse than no reference, because it yields
 > a plausible number instead of an error.
 >
-> **Build the v0.12 tools** (the in-tree `build/tools/*` cannot load
+> **First: check whether you already have them.** On the macOS checkout there
+> is a correct `cjxl`/`djxl` **v0.12.0 (`a7a9c78`)** at `.ci-libjxl/tools/`
+> (gitignored), and the justfile passes it explicitly via `CJXL_PATH` /
+> `DJXL_PATH` (lines 230/257/293/307/316/332/351). `cjxl_path()`'s candidate
+> list is Linux-only (`/home/lilith/...`), so **on macOS the justfile is the
+> only route** — drive reference comparisons through `just`, or set those two
+> env vars yourself.
+>
+> **Only if you must build them** (the in-tree `build/tools/*` cannot load
 > `libIlmImf-2_5.so.25`, which is what made the resolver fall through to the
 > packaged binary in the first place):
 > ```
+> # MANDATORY: ~/work/jxl-efforts/libjxl has MOVED TO THE v0.13 DEV LINE.
+> # HEAD (d089091) builds as cjxl v0.13.0, which the resolver rejects.
+> # Check out the tag first (fetch it if absent — the local clone has no tags:
+> #   git fetch --tags origin 'refs/tags/v0.12*:refs/tags/v0.12*')
+> git -C ~/work/jxl-efforts/libjxl checkout v0.12.0
+> ~/work/jxl-efforts/libjxl/deps.sh   # fetches skcms; cmake fails without it
 > cmake -S ~/work/jxl-efforts/libjxl -B ~/tmp/libjxl-v012-build \
 >   -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=OFF -DBUILD_TESTING=OFF
 > cmake --build ~/tmp/libjxl-v012-build --target cjxl djxl -j 12
 > ```
+> (Verified 2026-09-08: the pre-correction recipe silently produced a v0.13.0
+> binary at a path named `v012`. The resolver refuses it, so nothing measured
+> the wrong thing — but the recipe no longer did what it said. Note also that
+> for the float/bit-depth work the five files that matter —
+> `lib/jxl/{enc_modular.cc,dec_modular.cc,encode.cc,image_metadata.h,image_metadata.cc}`
+> — are byte-identical between `v0.12.0` and `d089091`, so source READING at
+> HEAD is safe for those; binaries are not.)
 > **Enforcement**: `jxl_encoder::test_helpers::{cjxl_path, djxl_path}` accept
 > only `REQUIRED_LIBJXL_VERSION` and panic naming every candidate and its
 > version otherwise; `/usr/bin` is deliberately absent from their candidate
