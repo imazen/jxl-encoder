@@ -54,6 +54,21 @@ These are single measurements on two documents, not a production admission
 bound or a new calibration. Existing local sibling source differences are
 recorded with the raw results; pinned-clean validation is a separate gate.
 
+## Pinned source repeat
+
+The clean export of `db4b441c` plus all sixteen `.github/sibling-revisions.tsv`
+revisions passed the five production tests with `cargo test --locked`,
+`corpus-tests,parallel`, and the freshly resolved Cargo.lock preserved with
+its evidence. This includes the 24-layout matrix above.
+
+The [same 12 resource cells](production_resources_pinned_2026-09-08.tsv)
+were then repeated with a locked release build from that clean closure.
+[Provenance](production_resources_pinned_2026-09-08.meta.json) records the
+binary and lockfile hashes. All 12 bitstreams are byte-identical to the local
+sibling build and fully decode in both decoders. Whole encode-process peak RSS
+ranges from 548077568 to 2642804736 bytes. These remain two-source, single-run
+measurements; they do not establish a production concurrency budget.
+
 ## Persisted fuzz evidence
 
 Full working corpora, original failure, sanitizer logs and Cargo lockfiles:
