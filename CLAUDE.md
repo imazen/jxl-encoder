@@ -968,6 +968,14 @@ the optional all-target Clippy lane and attribution/candidate smoke tests;
 the tests require `parallel` alongside `zensim-loop`.
 Both smoke tests and optional all-target Clippy pass against the new pinned
 closure. CI now executes these tests on Linux x64 and ARM64.
+The `690f09f5`/`902aa68f` baseline and `c5892c2e`/`b33d6199` update
+produce identical bytes for all 384 configuration-matrix cells and 16
+default metric-backend cells (two CID22 validation photos plus two odd-size
+procedural fixtures, distances 1/4, efforts 6/7). All four deterministic
+trace files also match. This proves preservation on that matrix, not new
+model RD qualification. Reproduction uses `zensim_config_byte_identity`
+and `scripts/zensim-loop-eff/byte_identity_matrix.sh`, with `TMPDIR=$HOME/tmp`
+and four Rayon threads. The old binary and both output sets are retained.
 
 ### RESOLVED 2026-09-08: CPU Butteraugli comparison scratch evaded memory admission (#106)
 
