@@ -67,6 +67,8 @@ reference effort iteration schedule. This removes target-displacing seed
 boosts and distance-banded iteration skips; it does not promise exact measured
 Butteraugli or global byte monotonicity, which libjxl v0.12 also does not provide.
 Evidence: [policy ablation](../benchmarks/qfseed_unlifted_2026-09-08.pointer.md).
+The W44-213/221/222 wiring tests explicitly enable their Custom seed policies;
+their original byte-effect assertions remain binding.
 
 
 Per-image dispatch via zenanalyze proxies. These are SUPERSETS of libjxl behavior — libjxl uses one global path; we add narrow content-aware lifts on top.

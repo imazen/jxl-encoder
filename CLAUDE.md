@@ -1306,6 +1306,13 @@ named preset's `Off` policy. The enum-level `Default` remains legacy-compatible
 because the macro uses it to identify env-fallback eligibility; do not change
 that default without testing Libjxl isolation.
 
+**Test contract:** W44-213, W44-221 and W44-222 tuning wiring tests now
+select the Custom seed policy they exercise. Their byte-change, default-identity
+and error assertions remain intact; disabling a named preset must not turn an
+opt-in wiring test into a test of that preset. The five tuning binaries pass
+nine tests with `tuning-override,parallel`; W44-221 renders through jxl-rs,
+djxl v0.12 and jxl-oxide.
+
 **Measured:** 4,536 full three-decoder cells (nine sources, four crop caps,
 efforts 5/7/8, 21 distances, legacy versus unlifted) reduce >10% byte increases
 from 60 to 17 among 2,160 adjacent steps per policy. Above distance 2 they

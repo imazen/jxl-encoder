@@ -18,8 +18,12 @@
 use std::path::PathBuf;
 
 use jxl_encoder::__test_exports::coupling::Tier2Knobs;
+use jxl_encoder::api::{ButtloopQfSeedPolicy, EncoderImprovementsCustom, EncoderStrategy};
 use jxl_encoder::tuning_runtime::{install, is_loaded};
 use jxl_encoder::{LossyConfig, PixelLayout};
+
+#[path = "../examples/distance_targeting_probe/decode.rs"]
+mod decode;
 
 fn corpus_root() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("CODEC_CORPUS_DIR") {
@@ -74,7 +78,16 @@ fn load_screenshot() -> (Vec<u8>, u32, u32) {
 }
 
 fn encode_e8_d4(rgb: &[u8], w: u32, h: u32) -> Vec<u8> {
-    let cfg = LossyConfig::new(4.0).with_effort(8);
+    // This knob tunes the optional screenshot seed policy; named presets
+    // deliberately leave that policy disabled.
+    let cfg = LossyConfig::new(4.0)
+        .with_effort(8)
+        .with_strategy(EncoderStrategy::Custom(Box::new(
+            EncoderImprovementsCustom {
+                buttloop_qf_seed: ButtloopQfSeedPolicy::AutoScale4,
+                ..Default::default()
+            },
+        )));
     cfg.encode(rgb, w, h, PixelLayout::Rgb8)
         .expect("encode failed")
 }
@@ -137,7 +150,22 @@ fn nondefault_tier2_knobs_change_bytes_and_decode() {
         modified.len(),
     );
 
-    // Step 4: decode through jxl-oxide.
+    // Step 4: fully render with the primary decoder and both compatibility decoders.
+    decode::verify_jxl_rs(&modified, w as usize, h as usize);
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/tier2-wiring");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}.jxl", std::process::id()));
+    std::fs::write(&path, &modified).unwrap();
+    let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(path)
+        .args(["--disable_output", "--num_threads=1"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "djxl: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let cursor = std::io::Cursor::new(&modified);
     let img = jxl_oxide::JxlImage::builder()
         .read(cursor)

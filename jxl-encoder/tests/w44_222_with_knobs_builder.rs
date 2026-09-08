@@ -125,14 +125,12 @@ fn w44_222_with_knobs_builder_full_sequence() {
     let (rgb, w, h) = load_screenshot();
 
     // Encode A: no `.with_knobs()` at all → no install attempted.
-    let cfg_no_knobs = LossyConfig::new(2.0).with_effort(5);
+    let cfg_no_knobs = legacy_seed_config();
     let bytes_no_knobs = encode(cfg_no_knobs, &rgb, w, h);
 
     // Encode B: `.with_knobs(Tier2Knobs::default())` → the default-detection
     // short-circuit in encode_inner skips install_or_check_idempotent.
-    let cfg_default_knobs = LossyConfig::new(2.0)
-        .with_effort(5)
-        .with_knobs(Tier2Knobs::default());
+    let cfg_default_knobs = legacy_seed_config().with_knobs(Tier2Knobs::default());
     let bytes_default_knobs = encode(cfg_default_knobs, &rgb, w, h);
 
     assert_eq!(
@@ -151,7 +149,7 @@ fn w44_222_with_knobs_builder_full_sequence() {
     );
 
     // ─── Assertion 2: Non-default knobs change bytes AND install ───
-    let cfg_b = LossyConfig::new(2.0).with_effort(5).with_knobs(Tier2Knobs {
+    let cfg_b = legacy_seed_config().with_knobs(Tier2Knobs {
         buttloop_aq_balance: 0.5,
         ..Default::default()
     });
@@ -174,7 +172,7 @@ fn w44_222_with_knobs_builder_full_sequence() {
     );
 
     // ─── Assertion 3: Idempotent re-install with SAME knobs succeeds ───
-    let cfg_c = LossyConfig::new(2.0).with_effort(5).with_knobs(Tier2Knobs {
+    let cfg_c = legacy_seed_config().with_knobs(Tier2Knobs {
         buttloop_aq_balance: 0.5,
         ..Default::default()
     });
@@ -186,7 +184,7 @@ fn w44_222_with_knobs_builder_full_sequence() {
     );
 
     // ─── Assertion 4: MISMATCHED knobs return InvalidConfig ───
-    let cfg_d = LossyConfig::new(2.0).with_effort(5).with_knobs(Tier2Knobs {
+    let cfg_d = legacy_seed_config().with_knobs(Tier2Knobs {
         buttloop_aq_balance: 0.5,
         smoothness_bias: 0.3, // different from the installed override
         ..Default::default()
@@ -221,4 +219,18 @@ fn knobs_getter_returns_what_was_set() {
     };
     let cfg2 = cfg.with_knobs(k);
     assert_eq!(cfg2.knobs(), Some(k));
+}
+
+// These wiring assertions exercise the explicit e5 seed policy. Named
+// presets disable it to preserve reference distance behavior.
+fn legacy_seed_config() -> LossyConfig {
+    use jxl_encoder::api::{AdaptiveQuantQfSeedPolicy, EncoderImprovementsCustom, EncoderStrategy};
+    LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_strategy(EncoderStrategy::Custom(Box::new(
+            EncoderImprovementsCustom {
+                adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+                ..Default::default()
+            },
+        )))
 }
