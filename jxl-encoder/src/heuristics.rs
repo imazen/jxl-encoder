@@ -353,8 +353,9 @@ pub fn estimate_encode(
     }
     let working = (pixels as f64 * bpp) as u64;
     // #106: the e7 measured band does not cover an e8+ CPU perceptual
-    // comparison's scratch. Add the dependency's structural peak reservation
-    // beyond its persistent reference (already present in the old band).
+    // comparison. Add the dependency's complete structural peak reservation:
+    // e7 has no CPU perceptual reference, so subtracting that reference here
+    // would undercount a buffer that the measured e7 band never contained.
     // This dimension/effort API cannot see metric/HDR opt-outs, so it reserves
     // the CPU path conservatively whenever the loop can run.
     #[cfg(feature = "butteraugli-loop")]
@@ -365,12 +366,7 @@ pub fn estimate_encode(
             height as usize,
             &params,
         )?;
-        let reference = butteraugli::ButteraugliReference::estimated_reference_bytes(
-            width as usize,
-            height as usize,
-            &params,
-        );
-        u64::try_from(peak.checked_sub(reference)?).ok()?
+        u64::try_from(peak).ok()?
     } else {
         0
     };

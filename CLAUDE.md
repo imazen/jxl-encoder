@@ -928,10 +928,11 @@ and other encoder allocations also contribute. Do not label the delta a leak.
 to the default-cap cell and renders in both decoders. The cap is not a process
 RSS ceiling. This test does not distinguish live heap from retained pages.
 
-**Fix verified on the explicit-cap reproduction:** owner-approved Butteraugli API `eab74f26` provides
+**Fix verified on the explicit-cap reproduction:** owner-approved Butteraugli API `eab74f26`, refined in `d2466a4e`, provides
 `estimated_planar_peak_bytes`: reference + scratch + idle pool, including
-concurrent scales and oversized recycled capacities. Backend selection now
-precedes the reservation so CPU fallback/shadow paths participate. The maximum estimate adds structural scratch to the historical typical band;
+concurrent scales and exact-capacity pool reuse. Backend selection now
+precedes the reservation so CPU fallback/shadow paths participate. The maximum estimate adds the full reference-and-scratch bound to the historical
+e7 typical band, which contains no perceptual reference;
 e8+ admission uses that maximum. The typical estimate remains historical.
 This remains an allocation estimate, not an operating-system RSS limit.
 Do not claim a production concurrency budget from the two-source grid. The 1.6 GB

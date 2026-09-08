@@ -11592,6 +11592,24 @@ mod encode_preflight_walkdown {
     #[cfg(feature = "butteraugli-loop")]
     #[test]
     fn issue106_rejects_before_allocating_the_brochure_working_set() {
+        let screenshot_limit = crate::api::Limits::new().with_max_memory_bytes(2 << 30);
+        for threads in [1, 4] {
+            assert!(
+                crate::api::encode_preflight(
+                    2940,
+                    1912,
+                    3,
+                    false,
+                    false,
+                    9,
+                    threads,
+                    false,
+                    Some(&screenshot_limit),
+                )
+                .is_ok()
+            );
+        }
+
         let limits = crate::api::Limits::new().with_max_memory_bytes(1_600_000_000);
         for threads in [1, 4] {
             let result = crate::api::encode_preflight(
