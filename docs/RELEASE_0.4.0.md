@@ -64,6 +64,15 @@ locks, five Libjxl byte locks, divergence checks and both RD regressions.
 Exact CI and nightly results are recorded on the tracking issues; a local
 pass is not a substitute for the full platform matrix.
 
+The dependency follow-up [#107](https://github.com/imazen/jxl-encoder/issues/107)
+updates the tuning runner to Arrow/Parquet 59.3.0 (`6510695d`), removing Thrift
+from the lock. It also pins all thirteen secondary-decoder crates to the
+Imazen fork's upstream 0.12.6 merge (`08395e61`), retaining the empty-section
+fix. Decoder compatibility CI passes on i686, Windows ARM64, and macOS ARM64.
+The encoder's updated dependency closure passes local workspace all-target
+tests and both multigroup empty-section regressions through all three decoders.
+The per-push encoder matrix and nightly corpus checks remain separate gates.
+
 ## 1. What 0.4.0 is
 
 The deliberate public-surface narrowing tracked in #76, folding in the

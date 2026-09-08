@@ -323,6 +323,14 @@ release-semver *args:
 production-clippy manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" --workspace --all-targets -- -D warnings
 
+# Validate dependency changes against the source closure prepared for CI.
+development-dependency-tests manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 RUST_TEST_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p zenjxl-tuning-runner --all-targets
+
+# Caller supplies CODEC_CORPUS_DIR with gb82-sc/imac_g3.png; missing input fails.
+empty-modular-compatibility manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" RAYON_NUM_THREADS=4 RUST_TEST_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" just issue103-test --manifest-path "{{manifest}}" --locked --test it empty_modular_section_roundtrip -- --include-ignored --nocapture
+
 resource-build manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo build --locked --manifest-path "{{manifest}}" -p jxl-encoder --release --features std,parallel --example mem_grid_probe
 

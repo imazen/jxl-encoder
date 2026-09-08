@@ -51,24 +51,24 @@ homepage = "https://github.com/imazen/jxl-encoder"
 authors = ["Lilith River"]
 rust-version = "1.93"
 
-# Use imazen/jxl-oxide fork until the fix in commit fd4e2c3 lands upstream.
+# Use the imazen/jxl-oxide fork: upstream 0.12.6 plus the fd4e2c3 empty-section fix.
 # The fork carries a patch that lets jxl-oxide accept multi-group VarDCT/patches
 # bitstreams whose modular global section is empty — the same bitstreams djxl
 # and jxl-rs already accept.
 [patch.crates-io]
-jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-bitstream = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-coding = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-frame = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-grid = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-modular = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-render = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-vardct = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
-jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
+jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-bitstream = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-coding = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-frame = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-grid = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-modular = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-render = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-vardct = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 # crates.io zenjpeg (latest 0.8.4) does not ship
 # `DecodeConfig::decode_coefficients_with_jbrd_metadata`, which our
 # `jpeg-reencoding` feature requires, and 0.8.4's `parallel` feature does not

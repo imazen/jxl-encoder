@@ -410,7 +410,7 @@ image = "0.25"
 jxl = "0.4.0"
 jxl_transforms = "0.4.0"
 # jxl-oxide is secondary — always test jxl-rs first
-jxl-oxide = "0.12.5"
+jxl-oxide = "0.12.6"
 jxl-jbr = "0.2.1"
 # SSIMULACRA2 for perceptual quality metrics
 fast-ssim2 = { version = "0.7.1", features = ["imgref"] }

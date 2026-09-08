@@ -2049,7 +2049,7 @@ dependencies = [
 [[package]]
 name = "jxl-bitstream"
 version = "1.1.0"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "tracing",
 ]
@@ -2057,7 +2057,7 @@ dependencies = [
 [[package]]
 name = "jxl-coding"
 version = "1.0.1"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "jxl-bitstream",
  "tracing",
@@ -2066,7 +2066,7 @@ dependencies = [
 [[package]]
 name = "jxl-color"
 version = "0.11.0"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "jxl-bitstream",
  "jxl-coding",
@@ -2164,7 +2164,7 @@ dependencies = [
 [[package]]
 name = "jxl-frame"
 version = "0.13.3"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "jxl-bitstream",
  "jxl-coding",
@@ -2179,8 +2179,8 @@ dependencies = [
 
 [[package]]
 name = "jxl-grid"
-version = "0.6.1"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+version = "0.6.2"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "tracing",
 ]
@@ -2188,7 +2188,7 @@ dependencies = [
 [[package]]
 name = "jxl-image"
 version = "0.13.0"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "jxl-bitstream",
  "jxl-grid",
@@ -2199,7 +2199,7 @@ dependencies = [
 [[package]]
 name = "jxl-jbr"
 version = "0.2.1"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "brotli-decompressor",
  "jxl-bitstream",
@@ -2215,8 +2215,8 @@ dependencies = [
 
 [[package]]
 name = "jxl-modular"
-version = "0.11.2"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+version = "0.11.3"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "jxl-bitstream",
  "jxl-coding",
@@ -2228,8 +2228,8 @@ dependencies = [
 
 [[package]]
 name = "jxl-oxide"
-version = "0.12.5"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+version = "0.12.6"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "brotli-decompressor",
  "jxl-bitstream",
@@ -2247,15 +2247,15 @@ dependencies = [
 [[package]]
 name = "jxl-oxide-common"
 version = "1.0.0"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "jxl-bitstream",
 ]
 
 [[package]]
 name = "jxl-render"
-version = "0.12.3"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+version = "0.12.4"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "bytemuck",
  "jxl-bitstream",
@@ -2274,7 +2274,7 @@ dependencies = [
 [[package]]
 name = "jxl-threadpool"
 version = "1.0.0"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "rayon",
  "rayon-core",
@@ -2284,7 +2284,7 @@ dependencies = [
 [[package]]
 name = "jxl-vardct"
 version = "0.11.1"
-source = "git+https://github.com/imazen/jxl-oxide.git?rev=fd4e2c3#fd4e2c3e0947b8cbdd2b1022a8f951682d36ca02"
+source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
  "jxl-bitstream",
  "jxl-coding",

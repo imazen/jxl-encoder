@@ -909,7 +909,18 @@ The tuning runner now uses Arrow/Parquet 59.3.0. Its locked dependency graph
 no longer includes Thrift. The existing Parquet tests compare all 55 column
 types and values after writing and reading, including nullable artifact keys;
 all 21 runner tests and workspace all-target Clippy pass against the pinned
-sibling closure. The separate secondary-decoder update remains in progress.
+sibling closure (`6510695d`). The secondary decoder now uses the Imazen fork's
+upstream 0.12.6 merge (`08395e61`), preserving the empty-section handling in
+`fd4e2c3e`. All thirteen crate patches advance together: jxl-oxide 0.12.6,
+jxl-grid 0.6.2, and jxl-modular 0.11.3 contain the upstream fixes. Fork CI
+passes on i686, Windows ARM64, and macOS ARM64, alongside its existing suites.
+
+The encoder's `empty_modular_section_roundtrip` now fully decodes with jxl-rs,
+jxl-oxide, and djxl v0.12 and checks exact alpha in the reference output.
+Both the 512x512 RGBA case and real imac_g3 patches case pass. The patches
+test previously returned success when its fixture was absent; it now requires
+`CODEC_CORPUS_DIR`, fails on missing input, and is selected by nightly CI.
+Run locally with `just empty-modular-compatibility <manifest>`.
 
 The local sibling-resolution drift is preserved on the remote
 `research/local-sibling-resolution-drift` branch (`50aac4d7`), not applied

@@ -50,6 +50,34 @@
 
 use jxl_encoder::{LossyConfig, PixelLayout};
 
+fn decode_djxl(bytes: &[u8]) -> image::RgbaImage {
+    use sha2::{Digest, Sha256};
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/empty-modular-validation");
+    std::fs::create_dir_all(&dir).unwrap();
+    let digest: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let input = dir.join(format!("{digest}.jxl"));
+    let output = dir.join(format!("{digest}.png"));
+    std::fs::write(&input, bytes).unwrap();
+    let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(input)
+        .arg(&output)
+        .arg("--num_threads=1")
+        .output()
+        .expect("run djxl v0.12");
+    assert!(
+        result.status.success(),
+        "djxl: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    image::open(output)
+        .expect("read fully decoded PNG")
+        .to_rgba8()
+}
+
 /// Build an RGBA buffer with a non-trivial alpha pattern, so a regression
 /// that fills alpha with a constant or drops it entirely is caught
 /// immediately.
@@ -247,6 +275,13 @@ fn multigroup_vardct_alpha_roundtrips_when_global_section_is_empty() {
     let (ox_w, ox_h) = decode_jxl_oxide(&bytes);
     assert_eq!(ox_w, W as u32);
     assert_eq!(ox_h, H as u32);
+    let reference = decode_djxl(&bytes);
+    assert_eq!(reference.dimensions(), (W as u32, H as u32));
+    assert_eq!(
+        reference.pixels().map(|p| p[3]).collect::<Vec<_>>(),
+        input_alpha,
+        "djxl: alpha must remain exact"
+    );
 }
 
 /// Trigger 2: multi-group patches reference frame with all channels
@@ -257,21 +292,12 @@ fn multigroup_vardct_alpha_roundtrips_when_global_section_is_empty() {
 /// PassGroups). The fix emits the 32-bit ANS initial state for that
 /// section so jxl-oxide pre-fix decodes the file successfully.
 ///
-/// `#[ignore]` because the fixture isn't shipped in-tree; the test runs
-/// when the codec-corpus path is present. Run via:
-/// `cargo test -p jxl-encoder --test empty_modular_section_roundtrip \
-///   multigroup_patches_ref_frame -- --ignored --nocapture`.
+/// The caller supplies `CODEC_CORPUS_DIR` and explicitly selects this corpus
+/// test. Missing input fails instead of reporting an untested success.
 #[test]
-#[ignore = "requires ~/work/codec-corpus/gb82-sc/imac_g3.png fixture"]
+#[ignore = "requires CODEC_CORPUS_DIR/gb82-sc/imac_g3.png fixture"]
 fn multigroup_patches_ref_frame_roundtrips_when_global_section_is_empty() {
-    use std::path::PathBuf;
-
-    let home = std::env::var("HOME").expect("HOME must be set");
-    let path = PathBuf::from(home).join("work/codec-corpus/gb82-sc/imac_g3.png");
-    if !path.exists() {
-        eprintln!("Skipping: fixture not found at {}", path.display());
-        return;
-    }
+    let path = jxl_encoder::test_helpers::corpus_dir().join("gb82-sc/imac_g3.png");
 
     // Decode PNG to RGBA8 (codec-corpus screenshots are RGB but we
     // round-trip as RGB here — the patches reference frame trigger
@@ -299,4 +325,5 @@ fn multigroup_patches_ref_frame_roundtrips_when_global_section_is_empty() {
     let (ox_w, ox_h) = decode_jxl_oxide(&bytes);
     assert_eq!(ox_w, w);
     assert_eq!(ox_h, h);
+    assert_eq!(decode_djxl(&bytes).dimensions(), (w, h));
 }

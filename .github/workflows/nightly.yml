@@ -135,7 +135,7 @@ jobs:
             -- --include-ignored \
             w44_164_decoder_roundtrip w44_166_decoder_roundtrip \
             w44_176_decoder_roundtrip w44_205_decoder_roundtrip \
-            w44_78_decoder_roundtrip
+            w44_78_decoder_roundtrip empty_modular_section_roundtrip
 
   encoder-fuzz:
     name: Encoder admission and streaming fuzz
