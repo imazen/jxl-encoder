@@ -3226,3 +3226,7 @@ required-features = ["std"]
 name = "tier_isolation"
 harness = false
 required-features = ["_dev"]
+
+[[example]]
+name = "bit_depth_perf"
+path = "examples/bit_depth_perf.rs"
