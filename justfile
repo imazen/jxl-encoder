@@ -327,6 +327,11 @@ production-clippy manifest="Cargo.toml":
 development-dependency-tests manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 RUST_TEST_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p zenjxl-tuning-runner --all-targets
 
+# Match the optional zensim CI lane against a pinned source closure.
+zensim-dependency-validation manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" --workspace --all-targets --features zensim-loop -- -D warnings
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 RUST_TEST_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features zensim-loop,parallel --test zensim_attr_smoke --test zensim_h_arms_smoke
+
 # Caller supplies CODEC_CORPUS_DIR with gb82-sc/imac_g3.png; missing input fails.
 empty-modular-compatibility manifest="Cargo.toml":
     python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py

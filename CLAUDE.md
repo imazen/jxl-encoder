@@ -954,6 +954,21 @@ The local sibling-resolution drift is preserved on the remote
 to the release lock. Local sibling WIP changes CubeCL's git revision and
 zensim's dependencies; build validation must use the pinned closure.
 
+### 2026-09-08: zensim candidate integration source-pin mismatch
+
+Commit `9f038d4d` calls `zensim::BakeScorer` and
+`zensim::ScoredAttribution`, but CI still fetched sibling revision `902aa68f`,
+which exports neither. Both Clippy platforms fail on the missing APIs; the
+later ambiguous-float error is downstream inference, not a separate numeric
+bug. The candidate report names `b33d6199` as its source dependency. Pinning
+that committed revision resolves the APIs without changing Cargo.lock.
+Validate against the exported pinned siblings: local sibling WIP is not the
+CI dependency closure. `just zensim-dependency-validation <manifest>` runs
+the optional all-target Clippy lane and attribution/candidate smoke tests;
+the tests require `parallel` alongside `zensim-loop`.
+Both smoke tests and optional all-target Clippy pass against the new pinned
+closure. CI now executes these tests on Linux x64 and ARM64.
+
 ### RESOLVED 2026-09-08: CPU Butteraugli comparison scratch evaded memory admission (#106)
 
 **[PROVEN]** The pinned-clean 2550×3300 brochure, d4/e8/t4, measures
