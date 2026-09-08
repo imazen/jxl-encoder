@@ -329,6 +329,7 @@ development-dependency-tests manifest="Cargo.toml":
 
 # Caller supplies CODEC_CORPUS_DIR with gb82-sc/imac_g3.png; missing input fails.
 empty-modular-compatibility manifest="Cargo.toml":
+    python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
     TMPDIR="$HOME/tmp" RAYON_NUM_THREADS=4 RUST_TEST_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" just issue103-test --manifest-path "{{manifest}}" --locked --test it empty_modular_section_roundtrip -- --include-ignored --nocapture
 
 resource-build manifest="Cargo.toml":

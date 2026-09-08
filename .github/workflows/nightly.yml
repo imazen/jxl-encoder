@@ -126,6 +126,7 @@ jobs:
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
         run: |
+          python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
           cargo test --locked \
             --release \
             -p jxl-encoder \

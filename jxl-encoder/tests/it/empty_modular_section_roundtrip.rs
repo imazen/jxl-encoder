@@ -192,7 +192,7 @@ fn decode_jxl_rs_rgba8(data: &[u8]) -> (u32, u32, usize, Vec<u8>) {
 /// imazen fork (which carries `fd4e2c3`'s decoder-side workaround for
 /// the same bug). Stock 0.12.5 was verified separately by running the
 /// installed `jxl-oxide` CLI binary against the same fixture.
-fn decode_jxl_oxide(data: &[u8]) -> (u32, u32) {
+fn decode_jxl_oxide(data: &[u8], expect_multigroup_reference: bool) -> (u32, u32) {
     use jxl_oxide::JxlImage;
 
     let image = JxlImage::builder()
@@ -201,6 +201,28 @@ fn decode_jxl_oxide(data: &[u8]) -> (u32, u32) {
     let header = image.image_header();
     let width = header.size.width;
     let height = header.size.height;
+
+    if expect_multigroup_reference {
+        let reference = image.frame(0).expect("patches reference frame").header();
+        assert_eq!(
+            reference.frame_type as u8, 2,
+            "expected ReferenceOnly frame"
+        );
+        assert!(
+            reference.num_groups() > 1,
+            "reference must span multiple groups"
+        );
+        assert!(
+            image.num_loaded_frames() > 1,
+            "display frame must follow reference"
+        );
+        eprintln!(
+            "patches reference: {}x{}, {} groups",
+            reference.color_sample_width(),
+            reference.color_sample_height(),
+            reference.num_groups()
+        );
+    }
 
     let _frame = image.render_frame(0).unwrap_or_else(|e| {
         panic!(
@@ -272,7 +294,7 @@ fn multigroup_vardct_alpha_roundtrips_when_global_section_is_empty() {
     // pre-fix would EOF on. The in-process build is the imazen fork
     // (which has the workaround), so this won't catch a regression on
     // its own. Stock 0.12.5 was manually verified.
-    let (ox_w, ox_h) = decode_jxl_oxide(&bytes);
+    let (ox_w, ox_h) = decode_jxl_oxide(&bytes, false);
     assert_eq!(ox_w, W as u32);
     assert_eq!(ox_h, H as u32);
     let reference = decode_djxl(&bytes);
@@ -284,13 +306,11 @@ fn multigroup_vardct_alpha_roundtrips_when_global_section_is_empty() {
     );
 }
 
-/// Trigger 2: multi-group patches reference frame with all channels
-/// deferred to PassGroups. A 2940×1912 screenshot at d=1.0 e=7 detects
-/// text-like patches, packs them into a >256×256 reference frame, and
-/// writes a multi-group reference frame whose LfGlobal modular section
-/// has no decodable channels in section 0 (channels deferred to
-/// PassGroups). The fix emits the 32-bit ANS initial state for that
-/// section so jxl-oxide pre-fix decodes the file successfully.
+/// Trigger 2: a patches reference whose color channels are deferred to
+/// PassGroups. Stack the real screenshot with its horizontal and vertical
+/// reflections to provide distinct glyph orientations in the dictionary.
+/// The frame-header assertion below proves that the packed reference spans
+/// multiple groups; source dimensions alone cannot establish that property.
 ///
 /// The caller supplies `CODEC_CORPUS_DIR` and explicitly selects this corpus
 /// test. Missing input fails instead of reporting an untested success.
@@ -303,14 +323,17 @@ fn multigroup_patches_ref_frame_roundtrips_when_global_section_is_empty() {
     // round-trip as RGB here — the patches reference frame trigger
     // comes from the screenshot content, not alpha).
     let img = image::open(&path).expect("decode PNG fixture").to_rgb8();
-    let (w, h) = (img.width(), img.height());
-    let pixels: Vec<u8> = img.into_raw();
+    let (w, source_h) = (img.width(), img.height());
+    let h = source_h * 3;
+    let mut pixels = img.as_raw().clone();
+    pixels.extend(image::imageops::flip_horizontal(&img).into_raw());
+    pixels.extend(image::imageops::flip_vertical(&img).into_raw());
 
     let bytes = LossyConfig::new(1.0)
         .with_effort(7)
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(&pixels)
-        .expect("encode 2940x1912 screenshot at d=1.0 e=7 must succeed");
+        .expect("encode screenshot orientations at d=1.0 e=7 must succeed");
 
     assert_eq!(&bytes[..2], &[0xFF, 0x0A]);
 
@@ -322,7 +345,7 @@ fn multigroup_patches_ref_frame_roundtrips_when_global_section_is_empty() {
 
     // jxl-oxide roundtrip — exercises the patches-reference-frame
     // LfGlobal-empty-section path that pre-fix EOFs on.
-    let (ox_w, ox_h) = decode_jxl_oxide(&bytes);
+    let (ox_w, ox_h) = decode_jxl_oxide(&bytes, true);
     assert_eq!(ox_w, w);
     assert_eq!(ox_h, h);
     assert_eq!(decode_djxl(&bytes).dimensions(), (w, h));

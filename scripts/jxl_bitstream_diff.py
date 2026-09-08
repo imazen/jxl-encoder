@@ -445,7 +445,7 @@ class Parser:
                    br.u32([("V", 0), ("V", 1), ("V", 2), ("V", 3)]))
         if ft_i != 1:
             can_ref = (self.frame["frame_type"] != 0 or not is_last)
-            if can_ref and mode == 0 and not is_partial and ft_i in (0, 3):
+            if can_ref and ft_i in (0, 3) and mode == 0 and not is_partial:
                 self.f("frame.save_before_color_transform", br.bit())
             elif ft_i == 2:
                 self.f("frame.save_before_color_transform", br.bit())

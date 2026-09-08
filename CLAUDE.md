@@ -917,7 +917,17 @@ passes on i686, Windows ARM64, and macOS ARM64, alongside its existing suites.
 
 The encoder's `empty_modular_section_roundtrip` now fully decodes with jxl-rs,
 jxl-oxide, and djxl v0.12 and checks exact alpha in the reference output.
-Both the 512x512 RGBA case and real imac_g3 patches case pass. The patches
+Both the 512x512 RGBA case and real imac_g3 patches case pass.
+The original screenshot packed into a 268x260 reference with 512-pixel
+modular groups: ONE group, despite the old test's multigroup claim.
+The test now stacks the screenshot and its horizontal/vertical reflections;
+its reference is 464x448 with four 256-pixel groups. It asserts ReferenceOnly,
+more than one group, and a following display frame before full rendering.
+The old fixture fails the new assertion. The independent bitstream parser
+also now checks the frame type before reading a blending-mode variable that
+ReferenceOnly frames do not have; a frozen real header pins this regression.
+The script still inspects only the first frame, so its whole-file accounting
+warning is expected on a reference-plus-display codestream. The patches
 test previously returned success when its fixture was absent; it now requires
 `CODEC_CORPUS_DIR`, fails on missing input, and is selected by nightly CI.
 Run locally with `just empty-modular-compatibility <manifest>`.
