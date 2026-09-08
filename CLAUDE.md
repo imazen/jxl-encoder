@@ -698,7 +698,10 @@ neither this model nor its predecessor takes it as an input.
 
 Owner direction: preserve all work remotely, including rejected approaches
 and abandoned experiments under clearly labeled branches. This is an explicit
-exception to the main-only workflow for archival purposes. Posts to imazen
+exception to the main-only workflow for archival purposes. `abandoned/` requires
+a documented reason to stop, never merely "recovered" or "not tested". Use
+`experiment/` for active evaluation and `superseded/` when replacement is proven.
+Posts to imazen
 issues are authorized; mention nobody except lilith and do not link to issues
 or PRs outside imazen.
 
@@ -706,7 +709,10 @@ Before proposing fractional efforts, read [docs/SMART_EFFORT_AUDIT.md](docs/SMAR
 Intermediate behavior already exists through strategy bundles, the separate
 Experimental mode, per-image feature promotion, adaptive loop budgets, and
 lossless e7-lite sampling. Four nonempty dev-only encoder commits were archived;
-the original #45 design was recovered from dev's memory directory. Literal
+the original #45 design was recovered from dev's memory directory. The four
+commit dispositions are recorded in the audit: dedup and dependency workarounds
+are superseded; useful butteraugli timing was adopted into `profile-phases`
+(`butteraugli/set_reference`, `butteraugli/compare_into`). Literal
 fractional effort remains absent from the current u8 API/CLI. Do not confuse
 that missing spelling with missing dispatch machinery.
 
@@ -2031,11 +2037,17 @@ measurement at equal or better coverage.
   estimate_cost LUT, capacity reserves all SHIPPED byte-identical; WP
   batching / inline-dedup-≥8MP / pair-sort / rayon-entry variants
   measured-REJECTED with committed data. **MSD radix bucketing (chunk 2)
-  was NOT shipped** (corrected 2026-06-13): left as an unfinished orphan
-  WIP from 2026-06-10 (recovered + labeled `STRANDED WIP`; sibling to the
-  rejected pair-sort, never benched to conclusion) — only chunk-1's
-  inline comparator landed. Do not cite bucketing as
-  byte-identical-shipped. Day deltas: lossless e7 −8…−12 % on screens/docs
+  was NOT shipped by the cited `fdb8dae6`**: that commit contains the
+  benchmark report but no tree-learn source change. The old statement
+  "never benched" was wrong: `perf_radix2_msd_2026-06-10.{tsv,meta}`
+  records five cells under load, not a quiet acceptance result. **CLOSED as
+  superseded, 2026-09-08**: main's `packed_sort_walk` already performs
+  two-byte prefix partitioning (`5119668d`) plus adaptive refinement and
+  deterministic parallel scatter (`f8adc43f`), packing keys per partition.
+  Its raw-property-retaining path preserves representative order. The old
+  all-key-buffer patch `75882a9e` is preserved on
+  `superseded/dev-msd-radix-bucketing`; see the smart-effort audit for proof.
+  Do not reapply it or equate supersession with a measured slowdown. Day deltas: lossless e7 −8…−12 % on screens/docs
   (more on photos with hist-sub), e5 −9…−12 %, lossy e3/e4 ≈ −25 %
   (dump env-hook gates + classifier skip). Bench via
   `scripts/bench_lossless_ab.py` on

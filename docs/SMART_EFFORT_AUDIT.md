@@ -2,7 +2,8 @@
 
 Verified 2026-09-08 against main `0bc8348c` (the subsequent `b63dd001`
 changes only an EPF test and its investigation note), current issue discussions,
-and the dev checkout. This is a source/history audit, not a new benchmark.
+and the dev checkout. The recovery dispositions below were completed against `5c107b54`.
+Historical timings are labeled as such; no fresh performance ranking is claimed.
 
 Intermediate effort behavior already exists. The remaining design question is
 how to expose, consolidate, and calibrate those policies. A new numeric 8.5
@@ -35,10 +36,42 @@ GitHub without changing their contents:
 
 | Commit | Remote branch | What was actually stranded |
 |---|---|---|
-| `75882a9e4c65` | [abandoned/dev-msd-radix-bucketing](https://github.com/imazen/jxl-encoder/tree/abandoned/dev-msd-radix-bucketing) | The previously documented #41 tree-learning MSD bucketing WIP; not a fractional-effort selector. |
-| `f5a8baef5318` | [abandoned/dev-epf-timing-trace](https://github.com/imazen/jxl-encoder/tree/abandoned/dev-epf-timing-trace) | Timing instrumentation in `perceptual_backend.rs`; the branch name is only an archive label. |
-| `122f3d7de037` | [abandoned/dev-magetypes-path-override](https://github.com/imazen/jxl-encoder/tree/abandoned/dev-magetypes-path-override) | Local magetypes path dependency override. |
-| `0b875cca268a` | [abandoned/dev-brotli-resolver-pin](https://github.com/imazen/jxl-encoder/tree/abandoned/dev-brotli-resolver-pin) | Historical dependency-resolution pin. |
+| `75882a9e4c65` | [superseded/dev-msd-radix-bucketing](https://github.com/imazen/jxl-encoder/tree/superseded/dev-msd-radix-bucketing) | The previously documented #41 tree-learning MSD bucketing WIP; not a fractional-effort selector. |
+| `f5a8baef5318` | [experiment/dev-perceptual-timing](https://github.com/imazen/jxl-encoder/tree/experiment/dev-perceptual-timing) | Timing instrumentation in `perceptual_backend.rs`; the branch name is only an archive label. |
+| `122f3d7de037` | [superseded/dev-magetypes-path-override](https://github.com/imazen/jxl-encoder/tree/superseded/dev-magetypes-path-override) | Local magetypes path dependency override. |
+| `0b875cca268a` | [superseded/dev-brotli-resolver-pin](https://github.com/imazen/jxl-encoder/tree/superseded/dev-brotli-resolver-pin) | Historical dependency-resolution pin. |
+
+### Final dispositions of the four recovered commits
+
+`abandoned/` is reserved for a documented reason to stop pursuing an approach;
+recovery alone is not that reason. The four old `abandoned/dev-*` heads were
+replaced only after the same commit hashes were verified on the new remote
+heads. No recovered content was discarded.
+
+| Change | Verdict | Closure evidence |
+|---|---|---|
+| MSD radix bucketing `75882a9e` | **Superseded by the implementation on main.** Do not reapply the old whole-array patch. | `packed_sort_walk` in [tree_learn.rs](../jxl-encoder/src/modular/tree_learn.rs) already counting-sorts the two leading key bytes into 65,536 partitions (`5119668d`), then adaptively refines oversized partitions; `refine_scatter_level` adds deterministic parallel scatter (`f8adc43f`). Keys are packed per partition. The old patch packs every key before sorting and lacks this refinement. The current `props_retained` dispatch also deliberately keeps the historical whole-array sort where raw, unkeyed properties make representative choice observable. |
+| Timing instrumentation `f5a8baef` | **Useful diagnostic, adopted through the existing profiler.** Original implementation superseded once the replacement lands. | [perceptual_backend.rs](../jxl-encoder/src/vardct/perceptual_backend.rs) now records `butteraugli/set_reference` and `butteraugli/compare_into` via `profile_time!`. Enable `profile-phases` and consume the existing snapshot interface. Ordinary builds have no added environment queries or clocks. The old patch queried `JXL_BTRLOOP_TRACE` on each call and called `Instant::now()` even when unset. The B7 legacy comparison override is outside `compare_into`, matching the original experiment's scope. |
+| magetypes path override `122f3d7d` | **Superseded development workaround.** | The entire patch replaces the registry dependency with an absolute path on dev. Current [SIMD manifest](../jxl-encoder-simd/Cargo.toml) requires registry magetypes 0.9.27; the checked lock resolves 0.9.28. Current default all-target workspace clippy passes without that private path. No unique kernel implementation exists in this commit. |
+| Brotli resolver pin `0b875cca` | **Superseded by the landed resolver fix.** | Main `c573f8ee` pins `alloc-stdlib = "0.2.4"` in the [encoder manifest](../jxl-encoder/Cargo.toml). The checked lock has one `alloc-no-stdlib`, 2.0.4, shared by Brotli 8.0.4 and alloc-stdlib 0.2.4. The old direct `alloc-no-stdlib = "2"` pin is unnecessary in that graph; this is not a proposal to remove main's load-bearing alloc-stdlib constraint. |
+
+**Correction to the prior MSD assessment.** It was inaccurate to say there
+was no benchmark. [The historical table](../benchmarks/perf_radix2_msd_2026-06-10.tsv)
+and [metadata](../benchmarks/perf_radix2_msd_2026-06-10.meta) record five paired
+cells, four faster and one slower, under explicitly caveated machine load.
+They are not a quiet-machine acceptance result. `git show --stat fdb8dae6`
+proves the commit cited as the implementation contains benchmark/API/CI files
+but **no `tree_learn.rs` change**. The source remained in the recovered commit.
+The reason to close it now is the current replacement, not the old "shipped"
+claim or an invented negative benchmark. The historical assertion that every
+path can change equal-key representatives is also too broad: current main
+explicitly protects the raw-property-retaining path.
+
+Verification on the current baseline: `cargo test -p jxl-encoder --locked
+--lib dedup` passes all 22 selected tests; `cargo clippy --workspace
+--all-targets --locked -- -D warnings` passes. These establish baseline
+correctness/build status, not performance superiority over the old patch.
+The profiler replacement has its own feature-enabled phase-recording test.
 
 After fetching the archives, `~ancestors(remote_bookmarks()) & ~empty()`
 was empty on dev. There were no ignored files under its `docs/` or

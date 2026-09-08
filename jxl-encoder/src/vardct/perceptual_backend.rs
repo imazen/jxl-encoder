@@ -601,15 +601,17 @@ impl PerceptualBackend for CpuButteraugliBackend {
         width: usize,
         height: usize,
     ) -> Result<()> {
-        let r = butteraugli::ButteraugliReference::new_linear_planar(
-            ref_r,
-            ref_g,
-            ref_b,
-            width,
-            height,
-            width, // tight stride
-            self.params.clone(),
-        )
+        let r = crate::profile_time!("butteraugli/set_reference", {
+            butteraugli::ButteraugliReference::new_linear_planar(
+                ref_r,
+                ref_g,
+                ref_b,
+                width,
+                height,
+                width, // tight stride
+                self.params.clone(),
+            )
+        })
         .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli reference: {e}")))?;
         self.reference = Some(r);
         Ok(())
@@ -660,9 +662,10 @@ impl PerceptualBackend for CpuButteraugliBackend {
         // persistent pool, and fills the caller-owned `diffmap_out` Vec —
         // eliminating the per-iter `width*height*4 B` allocation that the
         // prior `compare_linear_planar` → `into_buf` path produced.
-        let (score, _pnorm_3) = bref
-            .compare_linear_planar_into(dist_r, dist_g, dist_b, padded_width, diffmap_out)
-            .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli compare: {e}")))?;
+        let (score, _pnorm_3) = crate::profile_time!("butteraugli/compare_into", {
+            bref.compare_linear_planar_into(dist_r, dist_g, dist_b, padded_width, diffmap_out)
+        })
+        .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli compare: {e}")))?;
         debug_assert_eq!(diffmap_out.len(), width * height);
         // Phase 8b: optional diffmap distribution dump.
         maybe_dump_diffmap_stats(
@@ -1786,6 +1789,21 @@ pub(crate) fn construct_backend(
 #[cfg(all(test, feature = "butteraugli-loop"))]
 mod tests {
     use super::*;
+
+    /// The recovered timing experiment belongs in the existing opt-in profiler.
+    #[test]
+    #[cfg(feature = "profile-phases")]
+    fn cpu_backend_records_profile_phases() {
+        cpu_backend_identical_zero_score();
+        let phases = crate::profile_phases::take_snapshot();
+        for name in ["butteraugli/set_reference", "butteraugli/compare_into"] {
+            assert!(
+                phases
+                    .iter()
+                    .any(|&(phase, nanos)| phase == name && nanos > 0)
+            );
+        }
+    }
 
     /// Smoke: CPU backend builds + reference roundtrips on a flat field.
     /// Identical reference == identical distorted should yield score ≈ 0.
