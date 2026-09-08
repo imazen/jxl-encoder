@@ -45,6 +45,13 @@ so its success is not used as API-validation evidence. Direct source-consumer
 semver invocation fails dependency resolution; using explicit rustdoc inputs
 isolates the API inventory from that separate packaging blocker.
 
+The worldwide-deployment resource gate remains blocked by
+[#106](https://github.com/imazen/jxl-encoder/issues/106): a real e8 encode
+succeeds at a 1.6 GB configured limit while reaching 2.81 GB process peak RSS.
+The full workspace all-targets suite passes, but that is not evidence of a
+process-memory ceiling. The proposed dependency scratch-accounting API and
+application concurrency limits still require owner input.
+
 ## 1. What 0.4.0 is
 
 The deliberate public-surface narrowing tracked in #76, folding in the

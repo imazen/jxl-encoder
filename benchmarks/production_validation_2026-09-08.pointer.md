@@ -100,3 +100,26 @@ seconds. Its companion quality job failed on the old Windows95 overshoot
 baseline. Both the corrected default baseline and the complete explicit legacy
 baseline now pass locally (21 cells each, all three decoders, unchanged slack).
 This does not substitute for a green nightly run on the resulting commit.
+
+## Explicit memory-limit failure — deployment blocker
+
+[Issue #106](https://github.com/imazen/jxl-encoder/issues/106) tracks the
+remaining pre-allocation accounting work. At a configured 1,600,000,000-byte
+limit, the pinned brochure encode succeeds and reaches 2,807,529,472 bytes
+process peak RSS. [Cell provenance](production_explicit_cap_2026-09-08.json).
+The cap is not a process RSS ceiling; the measurement does not distinguish
+live heap from allocator-retained pages. A guessed multiplier from this cell
+would not establish an admission bound.
+
+The explicit-cap bitstream, complete `/usr/bin/time -l` log, both decoder logs,
+and the full workspace all-targets output are preserved together:
+
+- Local: `~/tmp/jxl-explicit-cap-2026-09-08.tar`.
+- R2: `s3://zen-tuning-ephemeral/jxl-encoder/production-validation-2026-09-08/explicit-cap.tar`.
+- Tower: `/mnt/tower/output/jxl-encoder/production-validation-2026-09-08/explicit-cap.tar`.
+- SHA256: `4e28a4b5c151838f8613d4354d370ee4dc09840552140785d4a178ab3f00a934`.
+
+Both complete remote copies match the local hash. The workspace command
+`cargo test --workspace --all-targets -j 4` exits successfully: 2303 passed,
+215 ignored, and the SIMD benchmark target completed. These tests do not prove
+a process-memory cap; the measured counterexample above remains open.

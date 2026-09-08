@@ -1,0 +1,21 @@
+{
+  "host": "macOS ARM64, 24 GiB RAM",
+  "binary_sha256": "357d9fcae156e7896c2c42047f3fcc59e3a48483960ec65b3ff32e60bdbb43f1",
+  "command": "just resource-cell INPUT lossy 8 4 OUTPUT 1600000000",
+  "input_sha256": {
+    "6047.ppm": "e5196cc81c98d53db661be80ce3622a6cde927030cc6b504bf8ac3afcf6ff8a1",
+    "5058.ppm": "28c537ef4a82c3464d1b5c3cbb6ec0d32f6f48dbbf153dedf01e6b2f1f32a18a"
+  },
+  "measurement": "macOS /usr/bin/time -l maximum resident set size, whole encode process only; decoding in separate processes",
+  "limitations": "One explicit-cap cell; process RSS includes allocator retention and does not quantify peak live heap.",
+  "encoder_commit": "db4b441c76b2101029229266bb6f36196036b300",
+  "dependency_caveat": "All sixteen sibling revisions are pinned clean exports; Cargo build used --locked.",
+  "cargo_lock_sha256": "697c2d983e73672ead8088eb615da495625a7c149f215761266c65fcd89de98b",
+  "sibling_pins": ".github/sibling-revisions.tsv",
+  "build_command": "cargo build --locked -p jxl-encoder --release --features std,parallel --example mem_grid_probe",
+  "max_memory_bytes": 1600000000,
+  "rss_bytes": 2807529472,
+  "budget_peak_kib": 1465013,
+  "encoded_sha256": "2832f3afdd6960e6227d602a8825a04e40ed4433d73e7a9ce853e46ff7f63a1a",
+  "result": "encode succeeded; jxl-rs and djxl v0.12 fully rendered"
+}

@@ -903,6 +903,37 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-09-08: e8 process peaks exceed the admission model on real documents (#106)
+
+**[PROVEN]** The pinned-clean 2550×3300 brochure, d4/e8/t4, measures
+2,642,804,736 bytes maximum resident set size with macOS `/usr/bin/time -l`.
+The model reports TYP 1,192,576 KiB and MAX 2,080,096 KiB, while the runtime
+budget accounts for 1,465,013 KiB. All twelve pinned cells render in jxl-rs
+and djxl; this is a resource-accounting finding, not pixel corruption.
+[Measured cells](benchmarks/production_resources_pinned_2026-09-08.tsv).
+
+**[PROVEN]** `encode_preflight_with_sectioned` admits the whole-image path
+using TYP. `perceptual_loop.rs` reserves
+`ButteraugliReference::estimated_reference_bytes`, which covers persistent
+precompute only. The pinned butteraugli `precompute.rs` explicitly excludes
+comparison scratch, and `compare_linear_planar_impl_into` allocates both
+full/half-scale XYB, separated-frequency and diffmap working sets. Its
+`memory_bytes()` reports retained data, not peak transient live memory.
+Those omissions do not quantify the whole RSS delta: allocator-retained pages
+and other encoder allocations also contribute. Do not label the delta a leak.
+
+**[PROVEN] explicit-cap reproduction:** the same pinned binary succeeds with
+`max_memory_bytes = 1_600_000_000`, accounts for 1,465,013 KiB, and reaches
+2,807,529,472 bytes process peak RSS. The 148,626-byte bitstream is identical
+to the default-cap cell and renders in both decoders. The cap is not a process
+RSS ceiling. This test does not distinguish live heap from retained pages.
+
+**Next:** bound reference construction and comparison scratch before allocation,
+then revalidate admission over size/quality/content/mode axes. Extending the
+butteraugli API is pending the owner's explicit cross-repository/API approval. Do not raise a guessed B/px constant from these
+two sources or claim a production concurrency budget from the current grid.
+
+
 ### RESOLVED 2026-09-08: parallel-only tuning build had unused tree-learning helpers
 
 The MAB sink predicate and four parallel split/gather constants were compiled
