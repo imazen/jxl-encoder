@@ -256,8 +256,8 @@ variants.
 
 ## Resource limits
 
-`EncodeRequest::with_limits(&Limits)` bounds an encode against untrusted input.
-`Limits` primarily caps **encoder working-set memory** (it also exposes optional
+`EncodeRequest::with_limits(&Limits)` controls admission and tracked allocations.
+`Limits` sets an **encoder memory budget** (it also exposes optional
 `max_width` / `max_height` / `max_pixels` / `max_quant_loop_iters` setters, all
 `None` by default):
 
@@ -265,7 +265,7 @@ variants.
 use jxl_encoder::{LossyConfig, Limits, PixelLayout};
 
 let limits = Limits::default()              // no explicit caps set …
-    .with_max_memory_bytes(512 * 1024 * 1024); // … 512 MB hard ceiling
+    .with_max_memory_bytes(512 * 1024 * 1024); // … 512 MiB encoder budget
 
 let jxl = LossyConfig::new(1.0)
     .encode_request(width, height, PixelLayout::Rgb8)
@@ -273,15 +273,18 @@ let jxl = LossyConfig::new(1.0)
     .encode(&pixels)?;
 ```
 
-`Limits::default()` sets **no explicit** memory bound, but the encoder still
-applies a *soft default cap* so an unconfigured image proxy can't be OOM'd:
-**4 GiB for lossy**, **8 GiB for lossless** (lossless tree-learning is a heavier
-memory regime). These defaults are fixed ceilings — they are deliberately **not**
-scaled with image dimensions, so an oversized untrusted upload is still bounded.
-For trusted batch work, raise the cap with `with_max_memory_bytes(n)` (or pass
-`u64::MAX` to opt out of the soft cap entirely). If an encode exceeds the cap it
-returns `EncodeError::LimitExceeded`. `LossyConfig::estimate_peak_memory_bytes`
-(and the `LosslessConfig` equivalent) let callers plan a budget up front.
+`Limits::default()` supplies no explicit override; the encoder applies fixed
+budgets of **4 GiB for lossy** and **8 GiB for lossless**. Admission estimates
+and tracked allocations that exceed the budget return `EncodeError::LimitExceeded`.
+The CPU Butteraugli path reserves its reference and comparison scratch before
+constructing the reference. These budgets are not operating-system RSS limits:
+allocator retention, other process allocations and simultaneous requests also
+consume memory. Applications must bound their combined workload separately.
+
+For trusted batch work, raise the budget with `with_max_memory_bytes(n)` (or
+pass `u64::MAX` to remove the default budget). `LossyConfig::estimate_peak_memory_bytes`
+and its `LosslessConfig` equivalent expose a conservative planning estimate;
+the estimate is not a measured process peak.
 
 ## HDR / wide-gamut
 
@@ -290,7 +293,7 @@ returns `EncodeError::LimitExceeded`. `LossyConfig::estimate_peak_memory_bytes`
 | PQ / HLG / BT.709 f32 input | Pass the matching `PixelLayout` variant (e.g. `RgbPqF32`, `RgbHlgF32`); the encoder inverts the transfer function before XYB. |
 | BT.2100 PQ / HLG colour encoding | `ColorEncoding::bt2100_pq()` / `bt2100_hlg()`, via `EncodeRequest::with_color_encoding(...)`. |
 | `intensity_target` / `min_nits` | `EncodeRequest::with_intensity_target(nits)` / `with_min_nits(nits)`. |
-| HDR-aware perceptual loss in the quant loop | `LossyConfig::with_hdr_loss(HdrLoss::Auto)` — auto-dispatches to a VDP2 path on PQ/HLG content, butteraugli elsewhere. SDR encodes stay byte-identical. Requires the `butteraugli-loop` feature. |
+| HDR-aware perceptual loss in the quant loop | `LossyConfig::with_hdr_loss(HdrLoss::Auto)` disables perceptual-loop refinement on PQ/HLG input. Explicit `HdrLoss::Butteraugli` enables the HDR Butteraugli route. SDR uses Butteraugli by default. Requires the `butteraugli-loop` feature. |
 
 Measured HDR bytes/quality vs cjxl are in
 [the benchmark index](https://github.com/imazen/jxl-encoder/blob/main/benchmarks/README.md).
