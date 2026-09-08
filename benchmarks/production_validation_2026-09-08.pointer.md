@@ -81,3 +81,22 @@ The complete R2 download and Tower archive both match the local SHA256.
 No corpus or failure was deleted. Nightly automation now runs both targets
 with real-image seeds and retains corpus/failure artifacts.
 
+
+## Resource, release and CI evidence backup
+
+Raw input PPMs, all twelve local and twelve pinned bitstreams, process-memory
+logs, the clean Cargo.lock, sibling revisions, API-comparison inputs/logs,
+Windows95 three-way encodes/diffmaps, and the downloaded CI fuzz artifact:
+
+- Local: `~/tmp/jxl-production-evidence-2026-09-08-with-ci.tar`.
+- R2: `s3://zen-tuning-ephemeral/jxl-encoder/production-validation-2026-09-08/resource-release-evidence.tar`.
+- Tower: `/mnt/tower/output/jxl-encoder/production-validation-2026-09-08/resource-release-evidence.tar`.
+- SHA256: `0812fa83665ae5c1a4c4cf9d4e284acbabd8d0f5fd8f6c9518cbfb443eb69dfc`.
+
+The full R2 download and Tower archive both match the local hash.
+[CI sanitizer job](https://github.com/imazen/jxl-encoder/actions/runs/34186316210/job/101935245281)
+passed on `db4b441c`: admission 847 runs/121 seconds and streaming 65 runs/306
+seconds. Its companion quality job failed on the old Windows95 overshoot
+baseline. Both the corrected default baseline and the complete explicit legacy
+baseline now pass locally (21 cells each, all three decoders, unchanged slack).
+This does not substitute for a green nightly run on the resulting commit.

@@ -1,0 +1,9 @@
+{
+  "build_commit": "58373999c6ea6e935ba1003599e5c20618288a08",
+  "input": "gb82-sc/windows95.png",
+  "input_sha256": "ef88ea90dd22a8adbad1e7e9d91d9a92b8209dbd8db8b4ee1e171c51f87e10b8",
+  "command": "IMG=... DISTANCES=3.5 EFFORTS=7 TARGETING_POLICY={default,legacy,cjxl} ARTIFACT_DIR=... distance_targeting_probe",
+  "raw": "/Users/lilith/tmp/jxl-windows95-baseline-2026-09-08",
+  "note": "Fresh v0.12 normalized-input reference. Default lock uses CI db4b441c values; local score precision is lower in this probe. Wall columns are not rebaseline inputs.",
+  "default_lock_source": "https://github.com/imazen/jxl-encoder/actions/runs/34186316210/job/101935245440"
+}

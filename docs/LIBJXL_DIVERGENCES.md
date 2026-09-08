@@ -69,6 +69,10 @@ Butteraugli or global byte monotonicity, which libjxl v0.12 also does not provid
 Evidence: [policy ablation](../benchmarks/qfseed_unlifted_2026-09-08.pointer.md).
 The W44-213/221/222 wiring tests explicitly enable their Custom seed policies;
 their original byte-effect assertions remain binding.
+The nightly Windows95 e7/d3.5 default lock now follows the measured unscaled
+policy, validated against v0.12. The full old 21-cell baseline additionally
+runs with explicit legacy policies; no slack changed.
+[Three-way evidence](../benchmarks/windows95_reference_baseline_2026-09-08.tsv).
 
 
 Per-image dispatch via zenanalyze proxies. These are SUPERSETS of libjxl behavior — libjxl uses one global path; we add narrow content-aware lifts on top.

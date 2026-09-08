@@ -102,11 +102,17 @@
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
-use jxl_encoder::api::{EncoderStrategy, LossyConfig, PixelLayout};
+use jxl_encoder::api::{
+    AdaptiveQuantQfSeedPolicy, ButtloopQfSeedPolicy, EncoderImprovementsCustom, EncoderStrategy,
+    LossyConfig, PixelLayout,
+};
 use rgb::RGB;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+#[path = "../../examples/distance_targeting_probe/decode.rs"]
+mod decode;
 
 // ── Provenance ─────────────────────────────────────────────────────────────
 
@@ -695,10 +701,28 @@ fn rgb_to_srgb_arr3(rgb: &[u8], w: u32, h: u32) -> Img<Vec<[u8; 3]>> {
 
 // ── Encode + decode ────────────────────────────────────────────────────────
 
-fn encode_zenjxl(rgb: &[u8], w: u32, h: u32, distance: f32, effort: u8) -> (Vec<u8>, f64) {
+fn encode_zenjxl(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    distance: f32,
+    effort: u8,
+    legacy: bool,
+) -> (Vec<u8>, f64) {
+    let strategy = if legacy {
+        EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom {
+            buttloop_qf_seed: ButtloopQfSeedPolicy::AutoScale4,
+            adaptive_quant_qf_seed: AdaptiveQuantQfSeedPolicy::AutoScalePerEffort,
+            adaptive_buttloop_iters: true,
+            adaptive_buttloop_iters_narrow: true,
+            ..Default::default()
+        }))
+    } else {
+        EncoderStrategy::Zenjxl
+    };
     let cfg = LossyConfig::new(distance)
         .with_effort(effort)
-        .with_strategy(EncoderStrategy::Zenjxl)
+        .with_strategy(strategy)
         .with_threads(1);
     let start = Instant::now();
     let bytes = cfg
@@ -781,12 +805,33 @@ struct CellResult {
     cur_delta_ms_pct: f64,
 }
 
-fn run_cell(locked: &LockedCell) -> CellResult {
+fn run_cell(locked: &LockedCell, legacy: bool) -> CellResult {
     let png_path = corpus_dir().join(locked.relative_path);
     let (rgb, w, h) = load_png(&png_path);
     let orig_lin = rgb_to_linear_img(&rgb, w, h);
     let orig_srgb = rgb_to_srgb_arr3(&rgb, w, h);
-    let (bytes, ms) = encode_zenjxl(&rgb, w, h, locked.distance, locked.effort);
+    let (bytes, ms) = encode_zenjxl(&rgb, w, h, locked.distance, locked.effort, legacy);
+    decode::verify_jxl_rs(&bytes, w as usize, h as usize);
+    let artifact_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target/nightly-policy-gate")
+        .join(std::process::id().to_string())
+        .join(if legacy { "legacy" } else { "default" });
+    std::fs::create_dir_all(&artifact_dir).unwrap();
+    let path = artifact_dir.join(format!(
+        "{}-e{}-d{}.jxl",
+        locked.name, locked.effort, locked.distance
+    ));
+    std::fs::write(&path, &bytes).unwrap();
+    let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(&path)
+        .args(["--disable_output", "--num_threads=1"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "djxl v0.12: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let (bfly, ssim2) = score_jxl(&bytes, &orig_lin, &orig_srgb, w, h);
     let cur_bytes = bytes.len() as u64;
     let cjxl_b = locked.base_cjxl_bytes as f64;
@@ -859,6 +904,51 @@ fn format_cell_diff(r: &CellResult) -> String {
 #[test]
 #[ignore = "regression gate; run via --include-ignored when CODEC_CORPUS_DIR is set"]
 fn zenjxl_regression_gate_w44_202_baseline() {
+    run_policy_gate(false);
+    run_policy_gate(true);
+}
+
+// Owner directive: correct expectations where libjxl is clearly correct.
+// #103 removed preset seed lifts. Only windows95 e7/d3.5 changes its lock:
+// the old 1.533821 Butteraugli overshoot is not the d3.5 reference behavior.
+// Fresh v0.12: 3.4644; default: 3.3934; legacy: 1.5338. Full persisted probe:
+// benchmarks/windows95_reference_baseline_2026-09-08.tsv.
+// All old locks remain binding on the explicit legacy policy, and every
+// tolerance is unchanged. The default aggregate follows its changed cell.
+fn policy_cells(legacy: bool) -> Vec<LockedCell> {
+    LOCKED_CELLS
+        .iter()
+        .copied()
+        .map(|mut cell| {
+            if !legacy && cell.name == "windows95" && cell.effort == 7 && cell.distance == 3.5 {
+                cell.base_ours_bytes = 31423;
+                cell.base_ours_ssim2 = 73.7898;
+                cell.base_ours_bfly = 3.3935;
+                cell.base_delta_bytes_pct =
+                    (cell.base_ours_bytes as f64 / cell.base_cjxl_bytes as f64 - 1.0) * 100.0;
+                cell.base_delta_ssim2 = cell.base_ours_ssim2 - cell.base_cjxl_ssim2;
+                cell.base_delta_bfly_pct =
+                    (cell.base_ours_bfly / cell.base_cjxl_bfly - 1.0) * 100.0;
+            }
+            cell
+        })
+        .collect()
+}
+
+fn run_policy_gate(legacy: bool) {
+    let cells = policy_cells(legacy);
+    let n = cells.len() as f64;
+    let baseline_bytes = cells.iter().map(|c| c.base_delta_bytes_pct).sum::<f64>() / n;
+    let baseline_ssim2 = cells.iter().map(|c| c.base_delta_ssim2).sum::<f64>() / n;
+    let baseline_bfly = cells.iter().map(|c| c.base_delta_bfly_pct).sum::<f64>() / n;
+    eprintln!(
+        "Policy: {}",
+        if legacy {
+            "explicit legacy"
+        } else {
+            "Zenjxl, #103 correction at b7458106 (2026-09-08)"
+        }
+    );
     eprintln!(
         "Zenjxl regression gate — baseline {} (commit {}…), {} cells\n",
         BASELINE_DATE,
@@ -870,8 +960,8 @@ fn zenjxl_regression_gate_w44_202_baseline() {
     let mut per_cell_failures: Vec<(LockedCell, Vec<String>)> = Vec::new();
 
     let total_start = Instant::now();
-    for cell in LOCKED_CELLS {
-        let r = run_cell(cell);
+    for cell in &cells {
+        let r = run_cell(cell, legacy);
         let mut failures: Vec<String> = Vec::new();
 
         let bytes_drift = r.cur_delta_bytes_pct - cell.base_delta_bytes_pct;
@@ -928,17 +1018,17 @@ fn zenjxl_regression_gate_w44_202_baseline() {
     eprintln!(
         "Aggregate over {} cells:\n  delta_bytes_pct: locked={:+.3}, current={:+.3}, drift={:+.3}pp (slack +{}pp)\n  delta_ssim2:     locked={:+.4}, current={:+.4}, drift={:+.4} (slack -{})\n  delta_bfly_pct:  locked={:+.3}, current={:+.3}, drift={:+.3}pp (no aggregate gate)\n  delta_ms_pct:    locked={:+.2}, current={:+.2}, drift={:+.2}pp (slack +{}pp)\n",
         results.len(),
-        BASELINE_MEAN_BYTES_PCT,
+        baseline_bytes,
         mean_bytes_pct,
-        mean_bytes_pct - BASELINE_MEAN_BYTES_PCT,
+        mean_bytes_pct - baseline_bytes,
         AGG_BYTES_PCT_SLACK,
-        BASELINE_MEAN_DELTA_SSIM2,
+        baseline_ssim2,
         mean_ssim2,
-        mean_ssim2 - BASELINE_MEAN_DELTA_SSIM2,
+        mean_ssim2 - baseline_ssim2,
         AGG_SSIM2_SLACK,
-        BASELINE_MEAN_DELTA_BFLY_PCT,
+        baseline_bfly,
         mean_bfly_pct,
-        mean_bfly_pct - BASELINE_MEAN_DELTA_BFLY_PCT,
+        mean_bfly_pct - baseline_bfly,
         BASELINE_MEAN_MS_PCT,
         mean_ms_pct,
         mean_ms_pct - BASELINE_MEAN_MS_PCT,
@@ -947,17 +1037,17 @@ fn zenjxl_regression_gate_w44_202_baseline() {
 
     // Aggregate gates
     let mut agg_failures: Vec<String> = Vec::new();
-    if mean_bytes_pct - BASELINE_MEAN_BYTES_PCT > AGG_BYTES_PCT_SLACK {
+    if mean_bytes_pct - baseline_bytes > AGG_BYTES_PCT_SLACK {
         agg_failures.push(format!(
             "mean delta_bytes_pct drifted +{:.3}pp (slack +{:.1}pp)",
-            mean_bytes_pct - BASELINE_MEAN_BYTES_PCT,
+            mean_bytes_pct - baseline_bytes,
             AGG_BYTES_PCT_SLACK
         ));
     }
-    if mean_ssim2 - BASELINE_MEAN_DELTA_SSIM2 < -AGG_SSIM2_SLACK {
+    if mean_ssim2 - baseline_ssim2 < -AGG_SSIM2_SLACK {
         agg_failures.push(format!(
             "mean delta_ssim2 dropped {:+.4} (slack -{:.3})",
-            mean_ssim2 - BASELINE_MEAN_DELTA_SSIM2,
+            mean_ssim2 - baseline_ssim2,
             AGG_SSIM2_SLACK
         ));
     }

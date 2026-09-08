@@ -1341,6 +1341,16 @@ change restores monotonicity "by construction" was a proposal, not proof.
 Rejected loop controllers are preserved on the `rejected/issue103-*` branches;
 do not reopen them without new evidence.
 
+**Nightly baseline correction:** its Windows95 e7/d3.5 sentinel explicitly
+locked the old quality overshoot. Fresh three-way rendering/scoring gives
+Butteraugli 3.3934 (default), 1.5338 (Custom legacy), 3.4644 (C++ v0.12).
+The default lock uses the measured CI output at `db4b441c`: 31,423 bytes,
+SSIM2 73.7898, Butteraugli 3.3935. All other cell expectations and every
+slack are unchanged. The complete old 21-cell baseline also runs under the
+explicit legacy policy, so the useful experiments retain their quality gates.
+Both policies fully render with jxl-rs, djxl v0.12 and jxl-oxide.
+[Reference comparison](benchmarks/windows95_reference_baseline_2026-09-08.tsv).
+
 **Historical mechanism and alternatives (2026-09-06):** the following records
 why the previous defaults were investigated. The default-on descriptions and
 unimplemented proposals below are historical; the current policy above wins.

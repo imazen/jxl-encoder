@@ -15,6 +15,14 @@ step fetches those exact commits and rejects an existing checkout at another
 revision. This pins the source closure; it does not replace a dependency
 lockfile or prove a registry consumer can resolve the package.
 
+A clean export of `db4b441c` with all sixteen pinned sibling revisions and a
+fresh 133,272-byte lockfile passes the five production tests under `--locked`.
+The lockfile and source provenance are in the verified R2/Tower
+[validation archive](../benchmarks/production_validation_2026-09-08.pointer.md).
+Committing this lockfile is pending the owner's required large-file approval;
+CI does not yet enforce this resolution. Source-build success does not remove
+the registry publication blockers below.
+
 The crates.io API was checked again on 2026-09-08: the published versions in
 section 3 remain unchanged. The four GPU/CVVDP dependencies remain unpublished,
 and `jxl-encoder-macros` still has no registry release. No tag, GitHub release,
