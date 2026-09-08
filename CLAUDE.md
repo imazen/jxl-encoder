@@ -3144,3 +3144,20 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Support `Bgr8` and `Bgra8` pixel layouts (R↔B swap)
 - [x] Lossy+alpha: encode alpha as modular extra channel alongside VarDCT RGB
 - [ ] Support `Bgra8` for decode (future — no decoder yet)
+
+## September 8: shared Rust native target calibration
+
+The RD example's `--native-fit` and `--native-eval` modes reuse zensim-target's
+`SeedCurve` and injected-backend search, with complete surface scoring and
+independent jxl-rs decode. Scalar-only/neutral/active arms separate map cost from
+allocation effects. [810-cell record](benchmarks/zensim_native_targeting_2026-09-08.md):
+45/80 jointly witnessed targets, three-shot ±1 hits in all arms, but high-score
+coverage bias and mixed independent RD mean no product qualification. This mode
+is distinct from the older target harness. Its exact example features must be
+checked explicitly; `--all-targets --features zensim-loop` alone excludes it.
+
+This increment advances the CI zensim sibling pin to `f99b91eb`. The clean-source
+exporter's exact closure passes locked workspace and exact-example Clippy, and
+the pinned release binary reproduces every non-timing native experiment field.
+The earlier `9f038d4d` binding commit had not advanced that pin; use this updated
+closure when reproducing complete candidate serving.

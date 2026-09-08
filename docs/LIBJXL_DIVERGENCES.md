@@ -322,6 +322,24 @@ on `photo_512x512` at e5.)
 
 ## E. Per-API behavior divergences (opt-in)
 
+### Registered September 8: native 1/2/3 complete-encode targeting
+
+Extend the existing RD example with `--native-fit <ladder-artifact-root>` and
+`--native-eval <ladder-artifact-root>` plus `--native-calibration <file>`.
+The artifact root is the prior pinned 12-train/8-validation two-arm ladder
+record; fit never reads validation rows. `zensim-target::SeedCurve` owns
+median/envelope fitting and its native-backend entry owns the outer search.
+Regenerate ladders with this same driver before fitting/evaluation. In addition
+to active/neutral two-update H3, include a scalar-only zero-update arm as the
+latency baseline. The neutral arm isolates allocation at equal internal work.
+The JXL adapter stays here and records each complete encode, three internal
+reconstructions, maps/scalar compares, independent jxl-rs decode, bytes,
+latency and RSS. Source bytes/families, model hash, configuration, formula
+and driver identity must match before use. Compare midpoint/frozen training
+seeds, budgets 1/2/3 and H3 gains 0/10 on witnessed targets, retaining fixed
+unwitnessed requests and original negative-score units. These measures do
+not waive the existing independent-judge RD or model qualification gates.
+
 ### Registered September 8: complete candidate scalar/spatial serving
 
 For `JXL_ZENSIM_RD_PROFILE=bake:<path>`, replace the width-probed custom
@@ -680,3 +698,8 @@ The 25-scratch-planes-per-scale count and pool/padding rules live in Butteraugli
 `eab74f26` / `d2466a4e`; they are source-derived allocation bounds, not fitted RD
 constants. Exact-capacity reuse keeps half-resolution scratch at its own size
 and preserves the pre-existing 2 GiB screenshot admission contract.
+
+The native calibration preregistration above is implemented. See the
+[810-case result](../benchmarks/zensim_native_targeting_2026-09-08.md): complete
+encode accounting and admission controls pass, independent spatial RD remains
+unqualified. This changes the research harness, not default production coding.

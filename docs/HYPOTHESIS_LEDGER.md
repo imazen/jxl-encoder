@@ -90,3 +90,14 @@
   screen does not establish this: photo means regress slightly and documents
   regress on Butteraugli. Do not promote a near-zero median to a quality win.
 - Evidence: [September 8 binding screen](../benchmarks/zensim_candidate_binding_2026-09-08.md).
+
+## September 8: native targeting with train-only seeds
+
+- **PROVEN on the 8-family witnessed subset:** frozen train-only curves let all
+  three native arms reach ±1 in at most three full encodes; midpoint does not.
+- **NOT ESTABLISHED:** active D/H3 maps improve on a calibrated scalar controller
+  in delivered independent quality per byte or cost. Photo mean RD regresses
+  slightly on both judges and active maps add latency; sparse coverage excludes
+  many interior requests. Do not interpret 45/45 as a universal targeting gate.
+- [Native target record](../benchmarks/zensim_native_targeting_2026-09-08.md) owns
+  counts, exact artifacts, negative controls, reproduction and limitations.

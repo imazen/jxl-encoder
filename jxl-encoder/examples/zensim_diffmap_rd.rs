@@ -13,9 +13,9 @@
 //!   1. `--metric zensim` (+ ZENSIM_* env DiffmapOptions sweep)
 //!   2. `--metric cvvdp`  (cvvdp's own diffmap)
 //!   3. `--metric butteraugli` (the default baseline reference)
-//!    (Avenue 2 — the #33 structural diffmap — is a separate code path added
-//!    to the zensim loop; run it via `--metric zensim` once that env knob
-//!    exists.)
+//!
+//! Avenue 2, the #33 structural diffmap, is a separate code path in the
+//! zensim loop, selected through its explicit map-arm configuration.
 //!
 //! ## Run
 //!
@@ -40,6 +40,9 @@ use jxl_encoder::{LossyConfig, PixelLayout};
 
 #[path = "distance_targeting_probe/decode.rs"]
 mod decode;
+
+#[path = "zensim_diffmap_rd/targeting.rs"]
+mod targeting;
 
 const CID22_VAL_DIR: &str = "/home/lilith/work/codec-corpus/CID22/CID22-512/validation";
 const GB82_SC_DIR: &str = "/home/lilith/work/codec-corpus/gb82-sc";
@@ -139,16 +142,8 @@ fn parse_metric(s: &str) -> PerceptualMetric {
 /// candidate surface as native steering. No feature-width probing or profile
 /// mounts. Parse/setup time is included where callers time this whole function.
 fn judge_score(bake_path: &str, ref_rgb: &[u8], dec_rgb: &[u8], w: u32, h: u32) -> f64 {
-    let rp: Vec<[u8; 3]> = ref_rgb
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
-    let dp: Vec<[u8; 3]> = dec_rgb
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
-    let rs = zensim::RgbSlice::new(&rp, w as usize, h as usize);
-    let ds = zensim::RgbSlice::new(&dp, w as usize, h as usize);
+    let rs = zensim::RgbSlice::new(ref_rgb.as_chunks::<3>().0, w as usize, h as usize);
+    let ds = zensim::RgbSlice::new(dec_rgb.as_chunks::<3>().0, w as usize, h as usize);
     if let Some(name) = bake_path.strip_prefix("profile:") {
         let profile = match name {
             "b" => zensim::ZensimProfile::B,
@@ -319,6 +314,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut zensim_targets: Vec<f64> = Vec::new();
     let mut arms: Vec<String> = vec!["baseline".into(), "attr".into(), "attr-stale".into()];
     let mut bake: Option<String> = None;
+    let mut native_fit: Option<PathBuf> = None;
+    let mut native_eval: Option<PathBuf> = None;
+    let mut native_calibration: Option<PathBuf> = None;
     // Efficiency study E7 (2026-07-31): bytes-target outer-loop mode.
     let mut bytes_targets_file: Option<String> = None;
     // Metric-matrix study (2026-07-31): SCORE-target outer-loop mode —
@@ -353,8 +351,30 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
             "--bake" => bake = args.next(),
+            "--native-fit" => native_fit = args.next().map(PathBuf::from),
+            "--native-eval" => native_eval = args.next().map(PathBuf::from),
+            "--native-calibration" => native_calibration = args.next().map(PathBuf::from),
             _ => {}
         }
+    }
+    if let Some(root) = native_fit.as_deref() {
+        assert!(
+            native_eval.is_none(),
+            "fit and eval are separate operations"
+        );
+        return targeting::fit(root, bake.as_deref().expect("--bake required"), &out_dir)
+            .map_err(Into::into);
+    }
+    if let Some(root) = native_eval.as_deref() {
+        return targeting::evaluate(
+            root,
+            native_calibration
+                .as_deref()
+                .expect("--native-calibration required"),
+            bake.as_deref().expect("--bake required"),
+            &out_dir,
+        )
+        .map_err(Into::into);
     }
     let corpus = match &corpus_file {
         Some(f) => corpus_from_file(f),

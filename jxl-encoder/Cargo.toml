@@ -15,7 +15,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 # `readme` (../README.crates.md, the generated crates.io README) is always
 # packaged by cargo even though it lives at the workspace root, outside this
 # include whitelist. The GitHub README.md stays at the repo root only.
-include = ["/src/**", "/examples/*.rs", "/examples/distance_targeting_probe/decode.rs", "/tests/*.rs", "/tests/support/**", "/tests/*.txt", "/LICENSE*"]
+include = ["/src/**", "/examples/*.rs", "/examples/distance_targeting_probe/decode.rs", "/examples/zensim_diffmap_rd/*.rs", "/tests/*.rs", "/tests/support/**", "/tests/*.txt", "/LICENSE*"]
 # Disable example auto-discovery so internal-only tools (e.g. picker oracle
 # calibration harnesses with sibling-repo path deps) don't break out-of-tree
 # CI builds. Examples must be listed explicitly via [[example]] below.
@@ -396,6 +396,11 @@ path = "examples/sectioned_k_corpus.rs"
 required-features = ["std", "parallel"]
 
 [dev-dependencies]
+anyhow = "1"
+# Shared Rust target controller/calibration; native adapters stay in this repo.
+zensim-target = { path = "../../zensim/zensim-target", default-features = false }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 # Transitive-version pin (#82), NOT used directly. `brotli` (a dev-dep via
 # `zenjxl-decoder`, and our own optional `brotli-metadata` dep) pulls
 # `alloc-stdlib`, which provides `StandardAlloc: alloc_no_stdlib::Allocator`.
