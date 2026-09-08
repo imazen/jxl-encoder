@@ -694,6 +694,22 @@ neither this model nor its predecessor takes it as an input.
   workaround `cargo update -p magetypes --precise 0.9.23`. The 0.4.0 release
   fixes it. Path-dep local builds never exercise what a registry consumer gets.
 
+## Existing smart efforts and archive policy (2026-09-08)
+
+Owner direction: preserve all work remotely, including rejected approaches
+and abandoned experiments under clearly labeled branches. This is an explicit
+exception to the main-only workflow for archival purposes. Posts to imazen
+issues are authorized; mention nobody except lilith and do not link to issues
+or PRs outside imazen.
+
+Before proposing fractional efforts, read [docs/SMART_EFFORT_AUDIT.md](docs/SMART_EFFORT_AUDIT.md).
+Intermediate behavior already exists through strategy bundles, the separate
+Experimental mode, per-image feature promotion, adaptive loop budgets, and
+lossless e7-lite sampling. Four nonempty dev-only encoder commits were archived;
+the original #45 design was recovered from dev's memory directory. Literal
+fractional effort remains absent from the current u8 API/CLI. Do not confuse
+that missing spelling with missing dispatch machinery.
+
 ## Current Status
 
 The VarDCT encoder implements every algorithmic component libjxl evaluates
