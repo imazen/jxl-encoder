@@ -26,8 +26,14 @@
 //! dedicated n-thread pool). `budget` defaults to `max`; `default` attaches
 //! no Limits (the production path-aware soft caps apply).
 //!
+//! `MEM_PROBE_OUT` persists the encoded bitstream for external validation.
+//! On macOS measure process RSS with `/usr/bin/time -l`; VmHWM is Linux-only.
+//!
 //! Prints one parseable line; on encode error, prints the line with
 //! `ok=0 err=…` and exits 3 (so a driver records rejections as data).
+
+#[path = "distance_targeting_probe/decode.rs"]
+mod decode;
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -92,6 +98,23 @@ fn read_ppm_p6(path: &str) -> (u32, u32, Vec<u8>) {
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
+    if a.get(1).map(String::as_str) == Some("--decode") {
+        assert_eq!(a.len(), 5, "--decode encoded.jxl source.ppm lossy|lossless");
+        let bytes = std::fs::read(&a[2]).expect("encoded bytes");
+        let (width, height, source) = read_ppm_p6(&a[3]);
+        let pixels = decode::verify_jxl_rs(&bytes, width as usize, height as usize);
+        if a[4] == "lossless" {
+            for (&actual, &expected) in pixels.iter().zip(&source) {
+                assert_eq!(
+                    (actual * 255.0).round() as u8,
+                    expected,
+                    "lossless pixel changed"
+                );
+            }
+        }
+        println!("jxl-rs fully rendered {width}x{height}; mode={}", a[4]);
+        return;
+    }
     if a.len() < 6 {
         eprintln!(
             "usage: mem_grid_probe <img.ppm> <lossy|lossless> <effort> <distance> <threads> \
@@ -152,6 +175,10 @@ fn main() {
 
     match result {
         Ok(res) => {
+            if let Some(path) = std::env::var_os("MEM_PROBE_OUT") {
+                std::fs::write(path, res.data().expect("encoded data"))
+                    .expect("persist encoded bitstream");
+            }
             let stats = res.stats();
             println!(
                 "w={} h={} mode={} effort={} distance={} threads={} budget={} \

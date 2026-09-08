@@ -8313,18 +8313,16 @@ pub struct LossyEncoder {
     jumbf: Option<Vec<u8>>,
     source_gamma: Option<f32>,
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
-    intensity_target: f32,
-    min_nits: f32,
+    intensity_target: Option<f32>,
+    min_nits: Option<f32>,
     /// `ToneMapping.relative_to_max_display` (default `false`). When
     /// `true`, [`Self::linear_below`] is interpreted as a ratio in
     /// `[0, 1]` of the maximum display brightness. Issue #46 chunk 1a.
-    relative_to_max_display: bool,
+    relative_to_max_display: Option<bool>,
     /// `ToneMapping.linear_below` (default `0.0`). Issue #46 chunk 1a.
-    linear_below: f32,
+    linear_below: Option<f32>,
     intrinsic_size: Option<(u32, u32)>,
-    /// Premultiplied (associated) alpha signaling. On lossy this is a
-    /// no-op until the unpremultiplication pre-pass lands (#13);
-    /// `finish()` returns `EncodeError::InvalidInput` if set.
+    /// Unpremultiply through the shared request pipeline at finish.
     premultiplied_alpha: bool,
     /// Configurable bits_per_sample for u16 input (#18 sub-feature).
     /// Mirrors `EncodeRequest::with_bits_per_sample` on the streaming
@@ -8386,13 +8384,13 @@ impl LossyEncoder {
 
     /// Set the peak display luminance in nits for HDR content.
     pub fn with_intensity_target(mut self, nits: f32) -> Self {
-        self.intensity_target = nits;
+        self.intensity_target = Some(nits);
         self
     }
 
     /// Set the minimum display luminance in nits.
     pub fn with_min_nits(mut self, nits: f32) -> Self {
-        self.min_nits = nits;
+        self.min_nits = Some(nits);
         self
     }
 
@@ -8400,14 +8398,14 @@ impl LossyEncoder {
     /// [`Self::with_linear_below`] is a ratio in `[0, 1]` rather than
     /// absolute nits. Closes issue #46 chunk 1a.
     pub fn with_relative_to_max_display(mut self, relative: bool) -> Self {
-        self.relative_to_max_display = relative;
+        self.relative_to_max_display = Some(relative);
         self
     }
 
     /// Set `ToneMapping.linear_below`. Tone mapping leaves pixels
     /// strictly below this value unchanged. Closes issue #46 chunk 1a.
     pub fn with_linear_below(mut self, value: f32) -> Self {
-        self.linear_below = value;
+        self.linear_below = Some(value);
         self
     }
 
@@ -8672,11 +8670,10 @@ impl LossyEncoder {
         request.limits = self.limits.as_ref();
         request.source_gamma = self.source_gamma;
         request.color_encoding = self.color_encoding;
-        request.intensity_target =
-            (self.intensity_target != 255.0).then_some(self.intensity_target);
-        request.min_nits = (self.min_nits != 0.0).then_some(self.min_nits);
-        request.relative_to_max_display = self.relative_to_max_display.then_some(true);
-        request.linear_below = (self.linear_below != 0.0).then_some(self.linear_below);
+        request.intensity_target = self.intensity_target;
+        request.min_nits = self.min_nits;
+        request.relative_to_max_display = self.relative_to_max_display;
+        request.linear_below = self.linear_below;
         request.premultiplied_alpha = self.premultiplied_alpha;
         request.bits_per_sample = self.bits_per_sample;
         request.brotli_metadata_quality = self.brotli_metadata_quality;
@@ -8724,10 +8721,10 @@ impl LossyConfig {
             jumbf: None,
             source_gamma: None,
             color_encoding: None,
-            intensity_target: 255.0,
-            min_nits: 0.0,
-            relative_to_max_display: false,
-            linear_below: 0.0,
+            intensity_target: None,
+            min_nits: None,
+            relative_to_max_display: None,
+            linear_below: None,
             intrinsic_size: None,
             premultiplied_alpha: false,
             bits_per_sample: None,

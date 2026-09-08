@@ -128,7 +128,7 @@ cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "
 # NAME `cvvdp-cpu` (so `dep:cvvdp-cpu` + `cvvdp_cpu::` source are unchanged)
 # via `package = "cvvdp"`. Default features include `std` + `parallel` for
 # the rayon-backed per-band fan-out (matches the buttloop's rayon usage).
-cvvdp-cpu = { package = "cvvdp", path = "../../zenmetrics/crates/cvvdp", default-features = false, features = ["std", "parallel"], optional = true }
+cvvdp-cpu = { package = "cvvdp", version = "0.1.0", path = "../../zenmetrics/crates/cvvdp", default-features = false, features = ["std", "parallel"], optional = true }
 
 [features]
 # W44-231 learned qf-seed sub-band admission (see vardct/learned_admission.rs)
