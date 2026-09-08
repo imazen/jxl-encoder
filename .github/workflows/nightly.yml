@@ -85,6 +85,9 @@ jobs:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
         run: ./scripts/hunt/fetch_imazen26_gate_files.sh
 
+      - name: Set up libjxl v0.12 reference tools
+        uses: ./.github/actions/setup-libjxl
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -109,6 +112,11 @@ jobs:
       # checkout above provides exactly the files they read, so nightly is
       # where they stay exercised in automation. The skip decision lives HERE
       # (the caller), never inside the tests.
+      - name: Validate two-pass input canonicalization
+        env:
+          CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
+        run: cargo test --release -p jxl-encoder --lib --features corpus-tests canonicalization_corpus_roundtrip -- --nocapture
+
       - name: Run corpus decoder-roundtrip gates
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus

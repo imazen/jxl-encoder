@@ -903,17 +903,29 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### ACTIVE 2026-09-08: canonicalization setter has no encoding consumer (#104)
+### RESOLVED 2026-09-08: one-shot input canonicalization consumes its setter (#104)
 
-[PROVEN] `LossyConfig::with_canonicalize_input` writes a boolean that is read
-only by its getter. A whole-source search finds no one-shot or streaming
-consumer. The advertised alpha removal / grayscale / bit-depth conversion
-was therefore not implemented. Rustdoc now states the no-op behavior rather
-than promising savings. Tracked in [#104](https://github.com/imazen/jxl-encoder/issues/104).
-Do not implement the archived RFC's lossy rules as exact canonicalization:
-near-gray pixels and its 0.5% colored outliers are not equal RGB; dropping
-all-zero alpha changes transparent pixels to opaque. Exact subsets and both
-entry points need decoder and metadata validation before this can close.
+`LossyConfig::with_canonicalize_input(true)` now calls zenpixels-convert's
+exact analysis/rewrite before one-shot encoding. It removes uniformly opaque
+alpha, exactly equal RGB channels, and full-range u16 samples of the form
+257*k. All-zero alpha stays transparent; one colored outlier prevents gray
+collapse. ICC signaling is carried or replaced by the converter. BGR, CMYK,
+f16, non-linear f32 and reduced-precision u16 retain their original format
+because this adapter does not establish an exact reduction for them.
+
+User correction: canonicalization needs two passes over source pixels, so it
+is **one-shot only**. Streaming construction rejects the flag before allocating
+pixel planes. Temporary conversion storage is reserved on the encode budget;
+unaligned input and odd row strides are copied into aligned storage only when
+needed. Default-off encoding is unchanged.
+
+Verified by `just canonicalization-test`: exact-predicate, metadata,
+stride/alignment, precision, budget and cancellation checks plus 16 real-photo
+cells (63x47 and 511x259, colored/gray, opaque/transparent, u8/u16). The encoded
+bytes equal explicitly reduced inputs and fully decode in jxl-rs and djxl
+v0.12. The nightly caller enables `corpus-tests` and installs the pinned
+reference tools; no missing-corpus runtime skips. No claim of smaller output
+or identical lossy decisions across different input layouts.
 
 
 ### RESOLVED 2026-09-08: EPF padding test imposed scalar/SIMD bit identity

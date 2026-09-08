@@ -287,3 +287,10 @@ issue103-fmt:
 # Process isolation keeps the reconstruction capture from racing other encodes.
 issue103-reconstruction-parity:
     just issue103-test --features __internal_recon_hook --test reconstruction_decoder_parity -- --nocapture
+
+# Explicit corpus caller: requires CODEC_CORPUS_DIR and libjxl v0.12 tools.
+canonicalization-test:
+    TMPDIR="{{env_var('HOME')}}/tmp" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test -p jxl-encoder --lib --features corpus-tests -j 4 api::canonicalize -- --nocapture
+
+canonicalization-check:
+    nice -n 19 cargo clippy --workspace --all-targets -j 4 -- -D warnings

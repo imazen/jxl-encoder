@@ -28,6 +28,7 @@ autoexamples = false
 # [patch.crates-io] routes to ../zenanalyze until 0.2.0 publishes.
 zenanalyze = { version = "0.2.0", optional = true }
 enough = "0.4.3"
+zenpixels-convert = { version = "0.2.16", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
 hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
 # W44-192: strategy_def! proc-macro for declarative gate registries.

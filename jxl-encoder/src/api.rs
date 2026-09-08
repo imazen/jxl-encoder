@@ -3699,22 +3699,27 @@ impl LossyConfig {
         self
     }
 
-    /// Store the input-canonicalization preference (default: `false`).
+    /// Enable exact two-pass input canonicalization (default: `false`).
     ///
-    /// **Currently unimplemented:** encoding does not consume this flag.
-    /// Setting it does not remove alpha, convert RGB to gray, or reduce
-    /// bit depth. [`Self::canonicalize_input`] reports the stored preference.
-    /// Implementation is tracked in [issue #104](https://github.com/imazen/jxl-encoder/issues/104).
+    /// One-shot encoding uses zenpixels-convert to remove uniformly opaque
+    /// alpha, collapse exactly equal RGB channels, and narrow full-range u16
+    /// samples that are exact 8-bit replications. Transparent alpha and colored
+    /// outliers are retained. ICC signaling follows the reduced format.
     ///
-    /// Any future exact conversion must retain transparent alpha and colored
-    /// pixels. Near-gray detection alone cannot establish pixel preservation,
-    /// and fewer input channels do not guarantee fewer encoded bytes.
+    /// Unproven reductions are retained: BGR, CMYK, f16, non-linear f32 and
+    /// reduced-precision u16 inputs currently keep their original layout.
+    /// Canonicalization preserves input values; lossy encoder decisions and
+    /// encoded bytes can change, and smaller output is not guaranteed.
+    ///
+    /// Requires the whole source image for both passes. Creating a streaming
+    /// [`crate::LossyEncoder`] with this enabled returns an error; use
+    /// [`crate::EncodeRequest::encode`] instead.
     pub fn with_canonicalize_input(mut self, enable: bool) -> Self {
         self.canonicalize_input = enable;
         self
     }
 
-    /// Stored canonicalization preference; currently has no effect on encoding.
+    /// Whether exact two-pass canonicalization is enabled for one-shot encoding.
     pub fn canonicalize_input(&self) -> bool {
         self.canonicalize_input
     }
@@ -5905,7 +5910,7 @@ impl<'a> EncodeRequest<'a> {
         Ok(result)
     }
 
-    fn encode_inner(&self, pixels: &[u8]) -> Result<EncodeResult> {
+    fn encode_inner(self, pixels: &[u8]) -> Result<EncodeResult> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
         // Run the full config validator (distance, effort, iter
@@ -6008,6 +6013,31 @@ impl<'a> EncodeRequest<'a> {
             self.limits,
             sectioned,
         )?;
+        if matches!(self.config, ConfigRef::Lossy(cfg) if cfg.canonicalize_input) {
+            let canonical = canonicalize::prepare(&self, pixels, &preflight.budget)?;
+            if let Some((buffer, layout, _guard)) = canonical {
+                let view = buffer.as_slice();
+                let mut metadata = self.metadata.cloned().unwrap_or_default();
+                metadata.icc_profile = view.color_context().and_then(|c| c.icc.as_deref());
+                let bits_per_sample = if self.layout.is_16bit() && !layout.is_16bit() {
+                    None
+                } else {
+                    self.bits_per_sample
+                };
+                let request = EncodeRequest {
+                    layout,
+                    row_stride: Some(view.stride()),
+                    bits_per_sample,
+                    metadata: Some(&metadata),
+                    ..self
+                };
+                return request.encode_prepared(view.as_strided_bytes(), preflight);
+            }
+        }
+        self.encode_prepared(pixels, preflight)
+    }
+
+    fn encode_prepared(&self, pixels: &[u8], preflight: EncodePreflight) -> Result<EncodeResult> {
         let EncodePreflight {
             budget,
             threads,
@@ -9320,6 +9350,7 @@ impl LossyEncoder {
     }
 }
 
+mod canonicalize;
 mod validate;
 use validate::{
     validate_dims, validate_intrinsic_size, validate_metadata_sizes, validate_source_gamma,
@@ -9336,6 +9367,11 @@ impl LossyConfig {
     /// bound peak encoder memory.
     #[track_caller]
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LossyEncoder> {
+        if self.canonicalize_input {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "input canonicalization requires two passes over source pixels; use EncodeRequest::encode instead of streaming".into(),
+            }));
+        }
         validate_dims(width, height).at()?;
         let w = width as usize;
         let h = height as usize;
