@@ -903,6 +903,19 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-09-08: canonicalization setter has no encoding consumer (#104)
+
+[PROVEN] `LossyConfig::with_canonicalize_input` writes a boolean that is read
+only by its getter. A whole-source search finds no one-shot or streaming
+consumer. The advertised alpha removal / grayscale / bit-depth conversion
+was therefore not implemented. Rustdoc now states the no-op behavior rather
+than promising savings. Tracked in [#104](https://github.com/imazen/jxl-encoder/issues/104).
+Do not implement the archived RFC's lossy rules as exact canonicalization:
+near-gray pixels and its 0.5% colored outliers are not equal RGB; dropping
+all-zero alpha changes transparent pixels to opaque. Exact subsets and both
+entry points need decoder and metadata validation before this can close.
+
+
 ### RESOLVED 2026-09-08: EPF padding test imposed scalar/SIMD bit identity
 
 The new `epf_visible_pixels_ignore_transform_padding` test failed on x86 CI

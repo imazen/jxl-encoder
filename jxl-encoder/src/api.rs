@@ -2133,9 +2133,8 @@ pub struct LossyConfig {
     /// resolves correctly regardless of builder order (issue #80).
     #[cfg(feature = "__expert")]
     internal_overrides: Option<crate::effort::LossyInternalParams>,
-    /// Input canonicalization pre-pass (drop opaque alpha,
-    /// near-grayscale collapse, 16→8 downcast when safe). Default
-    /// `false` to keep existing hash-locks byte-identical. See
+    /// Reserved canonicalization preference, currently not consumed by
+    /// encoding. Default `false`. See
     /// [`Self::with_canonicalize_input`].
     canonicalize_input: bool,
     /// RFC #45 pick #4 chunk 1 — content-class dispatch override /
@@ -3700,45 +3699,22 @@ impl LossyConfig {
         self
     }
 
-    /// Enable/disable input canonicalization pre-pass (default: `false`).
+    /// Store the input-canonicalization preference (default: `false`).
     ///
-    /// When enabled, the encoder scans the input pixels once before
-    /// encoding and applies the following lossless transforms when
-    /// safe:
+    /// **Currently unimplemented:** encoding does not consume this flag.
+    /// Setting it does not remove alpha, convert RGB to gray, or reduce
+    /// bit depth. [`Self::canonicalize_input`] reports the stored preference.
+    /// Implementation is tracked in [issue #104](https://github.com/imazen/jxl-encoder/issues/104).
     ///
-    /// 1. **Drop opaque alpha** — if every alpha sample equals the
-    ///    layout's max value (`0xFF` for 8-bit, `0xFFFF` for 16-bit),
-    ///    strip the alpha plane and downgrade the layout
-    ///    (`Rgba8 → Rgb8`, `Bgra8 → Bgr8`, `Rgba16 → Rgb16`,
-    ///    `GrayAlpha8 → Gray8`, `GrayAlpha16 → Gray16`).
-    ///
-    /// 2. **Near-grayscale collapse** — if `R == G == B` (within
-    ///    ±1 LSB tolerance at 16-bit, exact at 8-bit) for ≥ 99.5 %
-    ///    of pixels, downgrade RGB(A) → Gray(Alpha). The green
-    ///    channel is preserved as the gray value.
-    ///
-    /// 3. **16→8 downcast** — if every 16-bit sample is
-    ///    byte-replicated (`high == low`, the canonical
-    ///    `* 0x0101` zero-extension), downcast to the matching
-    ///    8-bit layout.
-    ///
-    /// Each step is a no-op (single-pass O(pixels) scan, no
-    /// allocation) when its precondition fails. Outputs are
-    /// strictly smaller-or-equal and preserve every pixel value
-    /// bit-exactly within the new layout. Best suited for
-    /// accidentally-padded inputs from upstream pipelines (RGBA
-    /// with fully-opaque alpha, 16-bit storage of 8-bit content,
-    /// RGB storage of grayscale scans).
-    ///
-    /// **Default is `false`** so existing hash-locks remain
-    /// byte-identical. Enable to recover -25 % to -66 % bytes on
-    /// padded inputs; real-photo inputs see no change.
+    /// Any future exact conversion must retain transparent alpha and colored
+    /// pixels. Near-gray detection alone cannot establish pixel preservation,
+    /// and fewer input channels do not guarantee fewer encoded bytes.
     pub fn with_canonicalize_input(mut self, enable: bool) -> Self {
         self.canonicalize_input = enable;
         self
     }
 
-    /// Whether input canonicalization pre-pass is enabled.
+    /// Stored canonicalization preference; currently has no effect on encoding.
     pub fn canonicalize_input(&self) -> bool {
         self.canonicalize_input
     }
