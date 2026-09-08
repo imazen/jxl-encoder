@@ -166,3 +166,27 @@ lockfile, pins and resource harness:
 - SHA256: `67e7ce8e27d0fef623b78d679328282a7a4f6e04c7546517de6814b8115b36cf`.
 
 The complete R2 download and Tower archive both match this SHA256.
+
+## Integrated zensim dependency validation
+
+The `690f09f5`/zensim `902aa68f` baseline and
+`c5892c2e`/zensim `b33d6199` update match all 384 configuration-matrix
+bitstreams, 16 default metric-backend bitstreams, and four deterministic
+trace files. Two CID22 validation photos and two odd-size procedural
+fixtures cover distances 1/4 and efforts 6/7. This is byte-preservation
+evidence on those cells, not candidate-model quality qualification.
+
+The pinned integrated workspace passes all-target tests (2306 passed,
+zero failed, 215 existing ignored), default and zensim Clippy, and both
+attribution/candidate smoke tests. Cargo.lock is unchanged by the pin fix.
+The old and new binaries, hashes/traces, full local logs, source pins,
+prior Clippy failure logs and Windows ARM setup-failure log are retained:
+
+- Local: `~/tmp/jxl-dependency-pin-validation-2026-09-08.tar`.
+- R2: `s3://zen-tuning-ephemeral/jxl-encoder/production-validation-2026-09-08/dependency-pin-validation.tar`.
+- Tower: `/mnt/tower/output/jxl-encoder/production-validation-2026-09-08/dependency-pin-validation.tar`.
+- SHA256: `4644752ca043f90c89498898bfd80ff60687773ed36b8a0cf6455d4cffb792e4`.
+
+The complete R2 download and the Tower archive both match the local hash.
+CI completion is recorded separately; these local results do not stand in
+for a cancelled or unfinished platform job.
