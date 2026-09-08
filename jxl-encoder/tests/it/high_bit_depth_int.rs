@@ -309,3 +309,79 @@ fn planar_path_signals_the_same_depth_as_the_layout_path_at_16_bit() {
     }
     djxl_accepts(&planar, "planar_16bit");
 }
+
+/// The low bits above 16 must actually reach the codestream.
+///
+/// This closes the one thing the round-trip test above cannot see. That test
+/// compares decoded values to the originals within a derived f32 ULP, so any
+/// truncation, shift, endianness error or wrong-width signalling produces an
+/// error far larger than the bound and fails — but a defect confined to the
+/// LOWEST bits at wide depths would slip under it, because the decoder's
+/// normalise-to-[0,1] step cannot represent those bits in the first place.
+///
+/// So test it on the encoder side instead, where no decoder precision is
+/// involved: flip a single sample's least-significant bit and require the
+/// codestream to change. If the low bits were being truncated, dropped, or
+/// masked anywhere between the public API and the coded stream, the two
+/// encodes would be byte-identical.
+///
+/// Note the assertion is deliberately "differs", not "differs by N bytes" —
+/// an entropy coder is free to spend a different number of bytes on the same
+/// one-bit change, and pinning a size here would be pinning noise.
+#[test]
+fn the_lowest_bit_reaches_the_codestream_at_every_width() {
+    const W: usize = 24;
+    const H: usize = 18;
+    for bits in 17..=31u32 {
+        let base = ramp(W, H, bits);
+        // Pick a sample whose LSB is 0 so flipping it up stays in range.
+        let idx = base
+            .iter()
+            .position(|v| v & 1 == 0)
+            .expect("ramp must contain an even sample");
+        let mut flipped = base.clone();
+        flipped[idx] |= 1;
+        assert_ne!(base[idx], flipped[idx], "{bits}-bit: fixture must differ");
+
+        let cfg = LosslessConfig::new();
+        let a = cfg
+            .encode_planar_int(W as u32, H as u32, &[&base], bits, true, false)
+            .unwrap_or_else(|e| panic!("{bits}-bit base encode: {e:?}"));
+        let b = cfg
+            .encode_planar_int(W as u32, H as u32, &[&flipped], bits, true, false)
+            .unwrap_or_else(|e| panic!("{bits}-bit flipped encode: {e:?}"));
+        assert_ne!(
+            a, b,
+            "{bits}-bit: flipping one sample's LSB did not change the codestream, \
+             so the low bits are not reaching it"
+        );
+    }
+}
+
+/// The complement of the test above: a change in the HIGH bits must also
+/// register, and identical input must produce identical output. Together these
+/// bracket the sensitivity claim — the encoder is neither ignoring bits nor
+/// non-deterministic.
+#[test]
+fn encoding_is_deterministic_and_sensitive_at_every_width() {
+    const W: usize = 24;
+    const H: usize = 18;
+    let cfg = LosslessConfig::new();
+    for bits in [17u32, 24, 31] {
+        let base = ramp(W, H, bits);
+        let once = cfg
+            .encode_planar_int(W as u32, H as u32, &[&base], bits, true, false)
+            .expect("encode");
+        let twice = cfg
+            .encode_planar_int(W as u32, H as u32, &[&base], bits, true, false)
+            .expect("encode");
+        assert_eq!(once, twice, "{bits}-bit: encoding must be deterministic");
+
+        let mut high = base.clone();
+        high[5] ^= 1 << (bits - 1);
+        let changed = cfg
+            .encode_planar_int(W as u32, H as u32, &[&high], bits, true, false)
+            .expect("encode");
+        assert_ne!(once, changed, "{bits}-bit: a top-bit change must register");
+    }
+}
