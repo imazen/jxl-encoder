@@ -903,6 +903,38 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-09-08: streaming omitted content analysis and changed real-image output
+
+The new seeded streaming fuzz target stops on an unmutated codec_wiki center
+crop, 513×259 RGB8, effort 5, distance `0.1 + 40*(24.9/255)`, seven-row chunks.
+Input SHA256: `e04fba6274cb62e33c2d175cf639e7ed48a0404bf05cdc62fdb20f9d9fc25844`.
+Source verified: one-shot computes smooth-photo, content-class and zenanalyze
+proxies from the source; streaming calls only `effective_profile_for_image`
+and explicitly leaves proxies absent. This is a structural difference, not
+an allowed floating-point tolerance. Reproducer:
+`production_resources::real_screenshot_streaming_keeps_one_shot_content_dispatch`.
+Raw input is preserved outside git under
+`~/tmp/jxl-fuzz-2026-09-08/artifacts/streaming_roundtrip/`.
+The fix retains admitted source rows and routes finish through the same
+one-shot request pipeline. Before: 3135 bytes one-shot versus 3571 streaming.
+After: exact byte equality for chunk heights 1, 7 and 259, fully rendered by
+jxl-rs and djxl v0.12. This removes the duplicated analysis/conversion path.
+Canonicalization remains explicitly unavailable on the streaming API.
+
+
+### RESOLVED 2026-09-08: short lossless encodes did not poll late cancellation
+
+The real-photo resource gate found only one cancellation poll on a 63×47
+lossless e7 encode. Requests now poll before validation/allocation and before
+returning output, in addition to existing encoder checkpoints. The regression
+cancels after two successful checks on both lossless/lossy and single/multi-group
+photos, requires `Cancelled`, preserves the caller's destination, and fully
+renders the next successful encode through jxl-rs and djxl v0.12. This proves
+request-boundary cancellation; it does not establish a maximum polling latency
+inside every algorithm. `production_resources` also verifies isolated limits
+and byte identity for 1/2/4 concurrent RGBA encodes, e5/e8, with canonicalization
+on/off and opaque/nonopaque alpha.
+
 ### RESOLVED 2026-09-08: streaming input allocated before limits could attach
 
 [PROVEN] The lossy constructor reserved whole-image RGB/alpha vectors and the

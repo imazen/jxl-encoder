@@ -516,6 +516,17 @@ C. **SA-D-AUDIT**: Sweep all weight-generation paths (`generate_dct4x8_weights`,
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-09-08: streaming content-policy omission
+
+`LossyEncoder::finish_inner` now calls the one-shot request pipeline over
+retained source rows. Previously it omitted source-content analysis and
+zenanalyze proxies, so the same codec_wiki 513×259 input encoded to 3571 bytes
+versus one-shot 3135. The real-image regression now requires exact equality at
+chunk heights 1/7/259 and full jxl-rs/djxl v0.12 rendering. No effort gate,
+constant, or named-strategy value changes in this fix; the shared gate registry
+is consumed by both entry points. Canonicalization still requires one-shot.
+
+
 | `vardct/epf.rs::compute_inv_sigma_map` multi-block quantizers (#103) | Previously read each covered 8×8 slot; now broadcasts the transform-origin quantizer with per-block sharpness | libjxl v0.12 `epf.cc::ComputeSigma` uses only the first quantizer, which is the value actually serialized | Corrected in this change. Forced DCT8×16 decoder parity failed before and passes after; 36 real-image cases cover all nine multi-block transform shapes and odd dimensions. |
 | Quantization loops: extra DC precision (#103) | Previously rebuilt parameters with precision 0 even when the frame signaled 1; now retains the initial precision at all six loop rebuild sites | Decoder dequantization divides DC values by the signaled precision multiplier | Corrected in this change. Explicit e5/e7 loop decoder regression covers 64², 259×133 and 512²; effort-8 baseline cases stay covered. |
 | Perceptual-loop gaborish/EPF visible bounds (#103) | Previously filtered the full transform-padded rectangle; now clamp/mirror at the visible width and height while retaining the padded stride | libjxl v0.12 render-pipeline channel sizes describe visible pixels | Corrected in this change across Butteraugli, SSIM2 and Zensim calls. 259² DCT8 gaborish-only maximum decoder difference falls from 0.03493 to 1.91e-6. Sharpness selection policy is a separate issue. |

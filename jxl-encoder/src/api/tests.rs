@@ -3526,19 +3526,15 @@ fn streaming_admission_before_input_allocation() {
             .unwrap()
             .with_limits(&limits);
         assert_eq!(
-            lossy.linear_rgb.capacity(),
+            lossy.source_pixels.capacity(),
             0,
             "constructor allocated color before limits"
         );
-        assert_eq!(
-            lossy.alpha.as_ref().unwrap().capacity(),
-            0,
-            "constructor allocated alpha before limits"
-        );
+        // Alpha and color share the still-empty raw input allocation.
         let result = lossy.push_rows(&row, 1);
         assert!(matches!(result, Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. })));
         assert_eq!(lossy.rows_pushed(), 0);
-        assert_eq!(lossy.linear_rgb.capacity(), 0);
+        assert_eq!(lossy.source_pixels.capacity(), 0);
 
         let mut lossless = LosslessConfig::new()
             .encoder(w, h, PixelLayout::Rgba8)
@@ -3620,11 +3616,11 @@ fn streaming_default_admission_rejects_large_shape_without_allocating() {
     let mut lossy = LossyConfig::new(1.0)
         .encoder(w, h, PixelLayout::Rgb8)
         .unwrap();
-    assert_eq!(lossy.linear_rgb.capacity(), 0);
+    assert_eq!(lossy.source_pixels.capacity(), 0);
     assert!(
         matches!(lossy.push_rows(&[0, 0, 0], 1), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
     );
-    assert_eq!(lossy.linear_rgb.capacity(), 0);
+    assert_eq!(lossy.source_pixels.capacity(), 0);
     let mut lossless = LosslessConfig::new()
         .encoder(w, h, PixelLayout::Rgb8)
         .unwrap();

@@ -1,4 +1,4 @@
-//! Full jxl-rs frame decode for the distance-targeting probe's RGB inputs.
+//! Full jxl-rs frame decode, including extra channels; returns RGB samples.
 
 pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32> {
     use jxl::api::{
@@ -21,11 +21,11 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32
     assert_eq!(decoder.basic_info().size, (width, height));
     let format = decoder.current_pixel_format();
     assert_eq!(format.color_type.samples_per_pixel(), 3);
-    assert!(format.extra_channel_format.is_empty());
+    let num_extra = format.extra_channel_format.len();
     decoder.set_pixel_format(JxlPixelFormat {
         color_type: format.color_type,
         color_data_format: Some(JxlDataFormat::f32()),
-        extra_channel_format: Vec::new(),
+        extra_channel_format: vec![Some(JxlDataFormat::f32()); num_extra],
     });
     let mut decoder = loop {
         match decoder.process(&mut input).expect("jxl-rs frame header") {
@@ -37,7 +37,10 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32
         }
     };
     let mut pixels = Image::<f32>::new((width * 3, height)).expect("jxl-rs pixel buffer");
-    let mut buffers = [JxlOutputBuffer::from_image_rect_mut(
+    let mut extras: Vec<_> = (0..num_extra)
+        .map(|_| Image::<f32>::new((width, height)).expect("jxl-rs extra buffer"))
+        .collect();
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
         pixels
             .get_rect_mut(Rect {
                 origin: (0, 0),
@@ -45,6 +48,16 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32
             })
             .into_raw(),
     )];
+    for extra in &mut extras {
+        buffers.push(JxlOutputBuffer::from_image_rect_mut(
+            extra
+                .get_rect_mut(Rect {
+                    origin: (0, 0),
+                    size: (width, height),
+                })
+                .into_raw(),
+        ));
+    }
     loop {
         match decoder
             .process(&mut input, &mut buffers)
@@ -55,6 +68,14 @@ pub(super) fn verify_jxl_rs(data: &[u8], width: usize, height: usize) -> Vec<f32
                 assert!(!input.is_empty(), "truncated jxl-rs frame pixels");
                 decoder = fallback;
             }
+        }
+    }
+    for extra in &extras {
+        for y in 0..height {
+            assert!(
+                extra.row(y).iter().all(|v| v.is_finite()),
+                "non-finite extra channel"
+            );
         }
     }
     for y in 0..height {

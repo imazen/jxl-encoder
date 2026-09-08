@@ -5911,6 +5911,9 @@ impl<'a> EncodeRequest<'a> {
     }
 
     fn encode_inner(self, pixels: &[u8]) -> Result<EncodeResult> {
+        if let Some(stop) = self.stop {
+            stop.check().map_err(|_| at!(EncodeError::Cancelled))?;
+        }
         self.validate_pixels(pixels)?;
         self.check_limits()?;
         // Run the full config validator (distance, effort, iter
@@ -6137,6 +6140,11 @@ impl<'a> EncodeRequest<'a> {
         }
 
         stats.output_size = output.len();
+        // Poll before handing bytes to any caller-owned destination, including
+        // short paths with no iterative or multi-group cancellation checks.
+        if let Some(stop) = self.stop {
+            stop.check().map_err(|_| at!(EncodeError::Cancelled))?;
+        }
 
         Ok(EncodeResult {
             data: Some(output),
@@ -8267,11 +8275,10 @@ impl<'a> EncodeRequest<'a> {
 /// Streaming lossy (VarDCT) encoder.
 ///
 /// Accepts pixel rows incrementally via [`push_rows`](Self::push_rows), then
-/// encodes on [`finish`](Self::finish). Rows are converted to the internal
-/// linear-RGB f32 representation as they arrive, so callers can free the
-/// source pixel buffer incrementally. The converted full-image planes
-/// (12 bytes/pixel for RGB) are still held in memory until `finish` —
-/// streaming input bounds the caller's copy, not the encoder's peak memory.
+/// encodes on [`finish`](Self::finish). Exact source rows are retained until
+/// `finish` so whole-image content analysis and encoding match the one-shot
+/// path. Callers can free each submitted chunk; the encoder still holds a
+/// complete source image and its encoding working set.
 ///
 /// ```rust,no_run
 /// use jxl_encoder::{LossyConfig, PixelLayout};
@@ -8296,9 +8303,8 @@ pub struct LossyEncoder {
     layout: PixelLayout,
     rows_pushed: u32,
     input_admitted: bool,
-    linear_rgb: Vec<f32>,
-    alpha: Option<Vec<u8>>,
-    bit_depth_16: bool,
+    // Keep the exact source samples for the shared whole-image analysis.
+    source_pixels: Vec<u8>,
     icc_profile: Option<Vec<u8>>,
     exif: Option<Vec<u8>>,
     xmp: Option<Vec<u8>>,
@@ -8413,12 +8419,9 @@ impl LossyEncoder {
 
     /// Signal that the input alpha channel is premultiplied (associated).
     /// Mirrors [`EncodeRequest::with_premultiplied_alpha`]. See that
-    /// builder for the lossless-vs-lossy semantic discussion. On the
-    /// `LossyEncoder` this returns an `EncodeError::InvalidInput` from
-    /// [`finish`](Self::finish) until the unpremultiplication pre-pass
-    /// is implemented (#13). On the `LosslessEncoder` it sets
-    /// `alpha_associated=true` in the encoded header and writes pixels
-    /// unchanged.
+    /// builder for the lossless-vs-lossy semantic discussion. The lossy
+    /// encoder unpremultiplies through the shared one-shot pipeline at
+    /// [`finish`](Self::finish).
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
         self.premultiplied_alpha = enable;
         self
@@ -8476,8 +8479,8 @@ impl LossyEncoder {
     /// Push pixel rows into the encoder.
     ///
     /// `pixels` must contain exactly `width * num_rows * bytes_per_pixel` bytes.
-    /// Rows are converted to the internal linear f32 format immediately, so the
-    /// caller can free the source buffer after this call returns.
+    /// Source bytes are copied and retained until finish, so the caller can
+    /// free each submitted chunk after this call returns.
     #[track_caller]
     pub fn push_rows(&mut self, pixels: &[u8], num_rows: u32) -> Result<()> {
         self.push_rows_inner(pixels, num_rows).at()
@@ -8520,6 +8523,9 @@ impl LossyEncoder {
             }
         }
 
+        if self.layout.is_cmyk() {
+            return Err(at!(EncodeError::UnsupportedPixelLayout(self.layout)));
+        }
         if !self.input_admitted {
             self.cfg.validate().map_err(at_from)?;
             self.check_input_limits()?;
@@ -8534,299 +8540,13 @@ impl LossyEncoder {
                 false,
                 self.limits.as_ref(),
             )?;
-            let pixels = w * self.height as usize; // constructor validated overflow
-            self.linear_rgb
-                .try_reserve(pixels * 3 - self.linear_rgb.len())
+            let input_bytes = w * self.height as usize * self.layout.bytes_per_pixel();
+            self.source_pixels
+                .try_reserve(input_bytes - self.source_pixels.len())
                 .map_err(|e| at(EncodeError::from(crate::error::Error::from(e))))?;
-            if let Some(alpha) = &mut self.alpha {
-                alpha
-                    .try_reserve(pixels - alpha.len())
-                    .map_err(|e| at(EncodeError::from(crate::error::Error::from(e))))?;
-            }
             self.input_admitted = true;
         }
-
-        let gamma = self.source_gamma;
-        // Streaming-encoder bits_per_sample (#18 follow-up). Mirrors
-        // EncodeRequest::encode_lossy's u16_max computation.
-        let u16_max = self
-            .bits_per_sample
-            .map_or(65535.0_f32, |b| ((1u32 << b) - 1) as f32);
-        // Streaming PQ/HLG/BT.709 dispatch (#17). Mirrors the
-        // EncodeRequest::encode_lossy `source_is_*` predicates.
-        // Same dispatch order: gamma > PQ > HLG > BT.709 > sRGB.
-        let source_is_pq = gamma.is_none()
-            && self.color_encoding.as_ref().is_some_and(|ce| {
-                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Pq
-            });
-        let source_is_hlg = gamma.is_none()
-            && self.color_encoding.as_ref().is_some_and(|ce| {
-                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Hlg
-            });
-        let source_is_bt709 = gamma.is_none()
-            && self.color_encoding.as_ref().is_some_and(|ce| {
-                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Bt709
-            });
-
-        // Convert and append linear RGB
-        let new_linear: Vec<f32> = match self.layout {
-            PixelLayout::Rgb8 => {
-                if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(pixels, 3, g)
-                } else if source_is_pq {
-                    pq_u8_to_linear_f32(pixels, 3)
-                } else if source_is_hlg {
-                    hlg_u8_to_linear_f32(pixels, 3)
-                } else if source_is_bt709 {
-                    bt709_u8_to_linear_f32(pixels, 3)
-                } else {
-                    srgb_u8_to_linear_f32(pixels, 3)
-                }
-            }
-            PixelLayout::Bgr8 => {
-                let rgb = bgr_to_rgb(pixels, 3);
-                if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(&rgb, 3, g)
-                } else if source_is_pq {
-                    pq_u8_to_linear_f32(&rgb, 3)
-                } else if source_is_hlg {
-                    hlg_u8_to_linear_f32(&rgb, 3)
-                } else if source_is_bt709 {
-                    bt709_u8_to_linear_f32(&rgb, 3)
-                } else {
-                    srgb_u8_to_linear_f32(&rgb, 3)
-                }
-            }
-            PixelLayout::Rgba8 => {
-                if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(pixels, 4, g)
-                } else if source_is_pq {
-                    pq_u8_to_linear_f32(pixels, 4)
-                } else if source_is_hlg {
-                    hlg_u8_to_linear_f32(pixels, 4)
-                } else if source_is_bt709 {
-                    bt709_u8_to_linear_f32(pixels, 4)
-                } else {
-                    srgb_u8_to_linear_f32(pixels, 4)
-                }
-            }
-            PixelLayout::Bgra8 => {
-                let swapped = bgr_to_rgb(pixels, 4);
-                if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(&swapped, 4, g)
-                } else if source_is_pq {
-                    pq_u8_to_linear_f32(&swapped, 4)
-                } else if source_is_hlg {
-                    hlg_u8_to_linear_f32(&swapped, 4)
-                } else if source_is_bt709 {
-                    bt709_u8_to_linear_f32(&swapped, 4)
-                } else {
-                    srgb_u8_to_linear_f32(&swapped, 4)
-                }
-            }
-            PixelLayout::Gray8 => {
-                if let Some(g) = gamma {
-                    gamma_gray_u8_to_linear_f32_rgb(pixels, 1, g)
-                } else if source_is_pq {
-                    pq_gray_u8_to_linear_f32_rgb(pixels, 1)
-                } else if source_is_hlg {
-                    hlg_gray_u8_to_linear_f32_rgb(pixels, 1)
-                } else if source_is_bt709 {
-                    bt709_gray_u8_to_linear_f32_rgb(pixels, 1)
-                } else {
-                    gray_u8_to_linear_f32_rgb(pixels, 1)
-                }
-            }
-            PixelLayout::GrayAlpha8 => {
-                if let Some(g) = gamma {
-                    gamma_gray_u8_to_linear_f32_rgb(pixels, 2, g)
-                } else if source_is_pq {
-                    pq_gray_u8_to_linear_f32_rgb(pixels, 2)
-                } else if source_is_hlg {
-                    hlg_gray_u8_to_linear_f32_rgb(pixels, 2)
-                } else if source_is_bt709 {
-                    bt709_gray_u8_to_linear_f32_rgb(pixels, 2)
-                } else {
-                    gray_u8_to_linear_f32_rgb(pixels, 2)
-                }
-            }
-            PixelLayout::Rgb16 => {
-                if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 3, g, u16_max)
-                } else if source_is_pq {
-                    pq_u16_to_linear_f32(pixels, 3, u16_max)
-                } else if source_is_hlg {
-                    hlg_u16_to_linear_f32(pixels, 3, u16_max)
-                } else if source_is_bt709 {
-                    bt709_u16_to_linear_f32(pixels, 3, u16_max)
-                } else {
-                    srgb_u16_to_linear_f32(pixels, 3, u16_max)
-                }
-            }
-            PixelLayout::Rgba16 => {
-                if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 4, g, u16_max)
-                } else if source_is_pq {
-                    pq_u16_to_linear_f32(pixels, 4, u16_max)
-                } else if source_is_hlg {
-                    hlg_u16_to_linear_f32(pixels, 4, u16_max)
-                } else if source_is_bt709 {
-                    bt709_u16_to_linear_f32(pixels, 4, u16_max)
-                } else {
-                    srgb_u16_to_linear_f32(pixels, 4, u16_max)
-                }
-            }
-            PixelLayout::Gray16 => {
-                if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, u16_max)
-                } else if source_is_pq {
-                    pq_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
-                } else if source_is_hlg {
-                    hlg_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
-                } else if source_is_bt709 {
-                    bt709_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
-                } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
-                }
-            }
-            PixelLayout::GrayAlpha16 => {
-                if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, u16_max)
-                } else if source_is_pq {
-                    pq_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
-                } else if source_is_hlg {
-                    hlg_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
-                } else if source_is_bt709 {
-                    bt709_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
-                } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
-                }
-            }
-            PixelLayout::RgbLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                floats.to_vec()
-            }
-            PixelLayout::RgbaLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                floats
-                    .chunks(4)
-                    .flat_map(|px| [px[0], px[1], px[2]])
-                    .collect()
-            }
-            PixelLayout::GrayLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                gray_f32_to_linear_f32_rgb(floats, 1)
-            }
-            PixelLayout::GrayAlphaLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                gray_f32_to_linear_f32_rgb(floats, 2)
-            }
-            // FLOAT16 streaming input (closes FLOAT16 portion of #18).
-            PixelLayout::RgbLinearF16 => f16_to_linear_f32_rgb(pixels, 3),
-            PixelLayout::RgbaLinearF16 => f16_to_linear_f32_rgb(pixels, 4),
-            PixelLayout::GrayLinearF16 => f16_gray_to_linear_f32_rgb(pixels, 1),
-            PixelLayout::GrayAlphaLinearF16 => f16_gray_to_linear_f32_rgb(pixels, 2),
-            // A3 chunk 1b: f32 PQ/HLG/BT.709 streaming input (issue #46).
-            // Same linearization helpers as the one-shot path.
-            PixelLayout::RgbPqF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                pq_f32_to_linear_f32_rgb(floats, 3)
-            }
-            PixelLayout::RgbaPqF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                pq_f32_to_linear_f32_rgb(floats, 4)
-            }
-            PixelLayout::RgbHlgF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                hlg_f32_to_linear_f32_rgb(floats, 3)
-            }
-            PixelLayout::RgbaHlgF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                hlg_f32_to_linear_f32_rgb(floats, 4)
-            }
-            PixelLayout::RgbBt709F32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                bt709_f32_to_linear_f32_rgb(floats, 3)
-            }
-            PixelLayout::RgbaBt709F32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                bt709_f32_to_linear_f32_rgb(floats, 4)
-            }
-            // Streaming CMYK is not yet wired — only the one-shot
-            // lossless path (`LosslessConfig::encode`) handles CMYK
-            // input. The streaming lossy encoder would also need a
-            // C/M/Y → XYB mapping (see comment on `Cmyk8` in the
-            // first match site).
-            PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
-                return Err(at!(EncodeError::UnsupportedPixelLayout(self.layout)));
-            }
-        };
-        self.linear_rgb.extend_from_slice(&new_linear);
-
-        // Extract and append alpha
-        match self.layout {
-            PixelLayout::Rgba8 | PixelLayout::Bgra8 => {
-                let new_alpha = extract_alpha(pixels, 4, 3);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            PixelLayout::GrayAlpha8 => {
-                let new_alpha = extract_alpha(pixels, 2, 1);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            PixelLayout::Rgba16 => {
-                let new_alpha = extract_alpha_u16(pixels, 4, 3, u16_max);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            PixelLayout::GrayAlpha16 => {
-                let new_alpha = extract_alpha_u16(pixels, 2, 1, u16_max);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            PixelLayout::RgbaLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                let new_alpha = extract_alpha_f32(floats, 4, 3);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            PixelLayout::GrayAlphaLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                let new_alpha = extract_alpha_f32(floats, 2, 1);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            PixelLayout::RgbaLinearF16 => {
-                let new_alpha = extract_alpha_f16(pixels, 4, 3);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            PixelLayout::GrayAlphaLinearF16 => {
-                let new_alpha = extract_alpha_f16(pixels, 2, 1);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            // A3 chunk 1b (issue #46): alpha is linear in [0, 1]
-            // regardless of color transfer function — the inverse EOTF
-            // applies only to RGB.
-            PixelLayout::RgbaPqF32 | PixelLayout::RgbaHlgF32 | PixelLayout::RgbaBt709F32 => {
-                let floats: &[f32] = &cast_pixel_lanes(pixels);
-                let new_alpha = extract_alpha_f32(floats, 4, 3);
-                self.alpha
-                    .get_or_insert_with(Vec::new)
-                    .extend_from_slice(&new_alpha);
-            }
-            _ => {}
-        }
+        self.source_pixels.extend_from_slice(pixels);
 
         self.rows_pushed += num_rows;
         Ok(())
@@ -8920,15 +8640,8 @@ impl LossyEncoder {
                 ),
             }));
         }
-        // Mirror the one-shot chroma subsampling gate (issue #47).
-        // Streaming and one-shot must report subsampling support
-        // identically. The streaming path's eager linearisation
-        // (sRGB → f32) means we cannot route the JPEG-shaped pipeline
-        // (which needs the raw u8 RGB for BT.601 YCbCr conversion)
-        // without a sRGB-encode round-trip on the accumulated linear
-        // buffer. A future chunk will wire that; for now any
-        // subsampled mode on streaming returns InvalidConfig with a
-        // pointer to the one-shot path.
+        // Keep the existing streaming subsampling contract. Enabling that
+        // surface is separate from unifying supported RGB encoding paths.
         if !self.cfg.chroma_subsampling.is_full() {
             return Err(at!(EncodeError::InvalidConfig {
                 message: format!(
@@ -8941,450 +8654,33 @@ impl LossyEncoder {
                 ),
             }));
         }
-        // Run the full config validator (distance, effort, iter
-        // counts, mutual exclusivity). Mirrors
-        // `EncodeRequest::encode_inner`.
-        self.cfg.validate().map_err(at_from)?;
-        // Defensive caps on caller-supplied metadata buffers (mirrors
-        // EncodeRequest::encode_inner).
-        validate_metadata_sizes(
-            self.icc_profile.as_deref(),
-            self.exif.as_deref(),
-            self.xmp.as_deref(),
-            self.jumbf.as_deref(),
-        )?;
-        // Tone-mapping numeric range checks. Stored as plain f32 / bool
-        // on the encoder; pass `Some(_)` only when set away from the
-        // libjxl default so a caller who never touched these knobs
-        // gets the encoder default behavior. Issue #46 chunk 1a adds
-        // `relative_to_max_display` and `linear_below` to the bundle.
-        let it = (self.intensity_target != 255.0).then_some(self.intensity_target);
-        let mn = (self.min_nits != 0.0).then_some(self.min_nits);
-        let rtmd = self.relative_to_max_display.then_some(true);
-        let lb = (self.linear_below != 0.0).then_some(self.linear_below);
-        validate_tone_mapping_full(it, mn, rtmd, lb)?;
-        validate_source_gamma(self.source_gamma)?;
-        validate_intrinsic_size(self.intrinsic_size)?;
-        let cfg = &self.cfg;
-        let w = self.width as usize;
-        let h = self.height as usize;
-        let mut linear_rgb = self.linear_rgb;
-        let alpha = self.alpha;
-
-        // HLG forward OOTF — mirrors the block in
-        // `EncodeRequest::encode_lossy` (same position: after
-        // linearization, before unpremultiply) so `oneshot ==
-        // streaming` stays byte-exact (caught by
-        // `test_streaming_lossy_hlg_matches_oneshot`). Applied at
-        // finish (not push) so a `with_color_encoding` /
-        // `with_intensity_target` call after the first push still
-        // resolves identically to the one-shot path. push_rows expands
-        // gray layouts to interleaved RGB, so the 3-channel OOTF is
-        // always well-formed here.
-        let is_hlg_input = (self.source_gamma.is_none()
-            && self.color_encoding.as_ref().is_some_and(|ce| {
-                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Hlg
-            }))
-            || matches!(
-                self.layout,
-                PixelLayout::RgbHlgF32 | PixelLayout::RgbaHlgF32
-            );
-        if is_hlg_input {
-            // Streaming has no ImageMetadata channel; 255.0 is the
-            // untouched SDR default (same sentinel the intensity
-            // dispatch below uses), so: explicit > HLG 1,000-nit
-            // default.
-            let it = if self.intensity_target != 255.0 {
-                self.intensity_target
-            } else {
-                1_000.0
-            };
-            if let Some(g) = hlg_ootf_gamma(it) {
-                let primaries = self
-                    .color_encoding
-                    .as_ref()
-                    .map(|c| c.primaries)
-                    .unwrap_or(crate::headers::color_encoding::Primaries::Bt2100);
-                apply_hlg_forward_ootf(&mut linear_rgb, hlg_ootf_luminances(primaries), g);
-            }
-        }
-
-        // Unpremultiply BEFORE SimplifyInvisible / XYB — see the
-        // matching block in `EncodeRequest::encode_lossy` for the full
-        // reasoning. Closes lossy portion of #13.
-        if self.premultiplied_alpha
-            && let Some(ref alpha_buf) = alpha
-        {
-            unpremultiply_alpha_inplace(&mut linear_rgb, alpha_buf);
-        }
-
-        // SimplifyInvisible pre-pass (closes #10) — mirrored from the
-        // one-shot path in `EncodeRequest::encode_lossy`. Required to
-        // keep `oneshot == streaming` byte-exact when the input has any
-        // alpha=0 pixel (caught by `test_streaming_lossy_rgba`).
-        // Gated on !premultiplied_alpha to match libjxl
-        // `enc_frame.cc:1588`.
-        if cfg.simplify_invisible
-            && !self.premultiplied_alpha
-            && let Some(ref alpha_buf) = alpha
-            && crate::vardct::simplify_invisible::has_any_invisible_pixels(alpha_buf)
-        {
-            crate::vardct::simplify_invisible::simplify_invisible_rgb(
-                &mut linear_rgb,
-                alpha_buf,
-                w,
-                h,
-                false,
-            );
-        }
-
-        // Construct the per-encode allocation budget + thread choice.
-        // Streaming callers can attach a [`Limits`] via
-        // [`Self::with_limits`]; otherwise the path-aware soft default
-        // applies. Mirrors `EncodeRequest::encode_inner`: calibrated
-        // path/effort/thread-aware estimate, thread walk-down, rejection
-        // only when even the single-threaded estimate exceeds the cap.
-        let preflight = encode_preflight(
-            self.width,
-            self.height,
-            self.layout.bytes_per_pixel() as u8,
-            self.layout.has_alpha(),
-            false,
-            cfg.effort,
-            cfg.threads,
-            false,
-            self.limits.as_ref(),
-        )?;
-        let EncodePreflight {
-            budget,
-            threads,
-            estimated_peak_bytes,
-        } = preflight;
-
-        let (codestream, mut stats) = run_with_threads(threads, || {
-            let mut profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
-            if let Some(max_size) = cfg.max_strategy_size {
-                if max_size < 16 {
-                    profile.try_dct16 = false;
-                }
-                if max_size < 32 {
-                    profile.try_dct32 = false;
-                }
-                if max_size < 64 {
-                    profile.try_dct64 = false;
-                }
-            }
-
-            // Apply auto-resample-at-d≥10 (refs #12) before building
-            // the encoder so distance + resampling stay coherent.
-            let effective_resampling = cfg.effective_resampling();
-            let effective_distance = cfg.effective_distance();
-
-            let mut enc = crate::vardct::VarDctEncoder::new(effective_distance);
-            // W44-128 Chunk B + W44-130 Chunk D: resolve EncoderStrategy
-            // bundle once (streaming `LossyEncoder` path). Field is
-            // non-optional as of Chunk D.
-            enc.resolved_improvements = cfg.resolve_improvements();
-            enc.effort = cfg.effort;
-            enc.profile = profile;
-            enc.use_ans = cfg.ans();
-            enc.optimize_codes = enc.profile.optimize_codes;
-            enc.custom_orders = enc.profile.custom_orders;
-            enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
-            enc.enable_noise = cfg.noise;
-            enc.photon_noise_iso = cfg.photon_noise_iso;
-            // Streaming LossyEncoder must mirror the non-streaming
-            // `EncodeRequest::encode_lossy` wire-up (api.rs:4531-4569)
-            // and the animation `encode_animation_lossy` wire-up
-            // (api.rs:6892-6929). Forgetting any of these fields here
-            // is a silent-drop gate: the caller sets it on the
-            // `LossyConfig`, the `with_*` setter accepts the value, and
-            // the streaming `finish*()` path quietly ignores it. Audit
-            // 2026-05-17 surfaced `manual_noise_lut` (photon-noise
-            // siblings #2 audit) and four others.
-            enc.manual_noise_lut = cfg.manual_noise_lut;
-            enc.quant_ac_rescale = cfg.quant_ac_rescale;
-            // T4: see the one-shot path above.
-            enc.original_distance = cfg.original_distance.or({
-                if enc.resolved_improvements.x_qm_scale_from_original_distance
-                    && effective_distance < cfg.distance
-                {
-                    Some(cfg.distance)
-                } else {
-                    None
-                }
-            });
-            enc.enable_denoise = cfg.denoise;
-            enc.enable_gaborish = cfg.effective_gaborish() && effective_distance > 0.5;
-            // EX-J13: adaptive gaborish is silently gated to be a subset of
-            // gaborish (no-op when the fixed inverse is disabled).
-            enc.enable_adaptive_gaborish = enc.enable_gaborish && cfg.adaptive_gaborish;
-            // libjxl `--epf -1..3` override (enc_frame.cc:284-285). `-1`
-            // = encoder chooses by distance; otherwise force the given
-            // count.
-            enc.epf_level_override = if cfg.epf_level < 0 {
-                None
-            } else {
-                Some(cfg.epf_level as u32)
-            };
-            // W44-130 Chunk D: dispatch policies hydrated from the
-            // resolved bundle (LossyConfig setters deleted; absorbed
-            // into `EncoderImprovementsCustom`).
-            enc.epf_dispatch = enc.resolved_improvements.epf_dispatch;
-            enc.error_diffusion = cfg.error_diffusion();
-            enc.pixel_domain_loss = cfg.pixel_domain_loss();
-            enc.pixel_loss_dispatch = enc.resolved_improvements.pixel_loss_dispatch;
-            enc.single_pass_entropy_dispatch =
-                enc.resolved_improvements.single_pass_entropy_dispatch;
-            enc.enable_lz77 = cfg.effective_lz77();
-            enc.lz77_method = cfg.lz77_method();
-            enc.force_strategy = cfg.force_strategy;
-            // RFC #45 pick #4 — when the caller has explicitly pinned `cfg.patches()`
-            // via `with_patches`, that wins; otherwise read the per-image
-            // dispatched profile (the content-class adapter may have flipped
-            // patches on for Screenshot content at e5/e6).
-            enc.enable_patches = if cfg.patches.is_some() {
-                cfg.effective_patches()
-            } else if cfg.faster_decoding >= 2 {
-                // libjxl `enc_modular.cc:707` skips patches at
-                // `decoding_speed_tier >= 2`.
-                false
-            } else {
-                enc.profile.patches
-            };
-            enc.patches_dispatch = enc.resolved_improvements.patches_dispatch;
-            enc.enable_dot_detection = cfg.dot_detection;
-            enc.encoder_mode = cfg.mode;
-            enc.splines = cfg.splines.clone();
-            enc.auto_splines = cfg.auto_splines();
-            enc.is_grayscale = self.layout.is_grayscale();
-            enc.progressive = cfg.progressive;
-            enc.use_lf_frame = cfg.lf_frame;
-            // W44-130 Chunk D: `content_aware_entropy_mul` + legacy
-            // `with_*_hint` setters all deleted; strategy + overrides
-            // flow via `cfg.resolve_improvements()` into
-            // `enc.resolved_improvements`.
-            // W44-91: streaming `LossyEncoder` ingests pre-converted
-            // `linear_rgb` rows, so the sRGB u8 source bytes the
-            // zenanalyze-equivalent proxy needs are not available
-            // here — leave `zenanalyze_proxies = None`, which keeps
-            // the W44-91 gate dormant on this code path. Callers that
-            // need the W44-91 lift on a streaming encode can set
-            // [`LossyConfig::with_strategy_overrides`] with
-            // `high_d_photo_hint: Some(true)`
-            // explicitly after computing the proxy upstream.
-            // Streaming refactor #11 chunk 6 (streaming LossyEncoder
-            // path).
-            enc.buffering = cfg.buffering;
-            #[cfg(feature = "butteraugli-loop")]
-            {
-                enc.butteraugli_iters = cfg.butteraugli_iters();
-                // EX-J11 chunk 4: see `encode_lossy` site above for
-                // the resolution rationale. Auto → Vdp2 on PQ/HLG,
-                // Butteraugli otherwise.
-                enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
-                // #74/#11 (2026-07-15): DISABLE the perceptual quantization loop on
-                // the DEFAULT HDR path (PQ/HLG → `Vdp2`) — see the `encode_lossy`
-                // site above for the measured rationale + the exact gate semantics
-                // (loop over-refines HDR +100..500 %; the no-loop base beats cjxl).
-                // Zeroing `butteraugli_iters` reproduces `--no-butteraugli` exactly.
-                // SDR + explicit-Butteraugli-on-HDR untouched (byte-identical).
-                if cfg.is_hdr_pq_hlg(self.layout, self.color_encoding.as_ref())
-                    && matches!(enc.hdr_loss, crate::vardct::hdr_metrics::HdrLoss::Vdp2)
-                {
-                    enc.butteraugli_iters = 0;
-                }
-                // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate
-                // the resolved perceptual-metric selection (streaming
-                // LossyEncoder path). Same semantics as the still-image
-                // site above.
-                crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder(
-                    cfg.resolve_perceptual_metric_selection(),
-                    &mut enc,
-                );
-                // cvvdp-fork Phase 8d (2026-05-25): propagate
-                // bytes-tighten opt-in (streaming LossyEncoder path).
-                // Same semantics as the still-image site above.
-                enc.cvvdp_bytes_tighten = cfg.resolve_cvvdp_bytes_tighten();
-            }
-            #[cfg(feature = "ssim2-loop")]
-            {
-                enc.ssim2_iters = cfg.ssim2_iters;
-            }
-            #[cfg(feature = "zensim-loop")]
-            {
-                enc.zensim_iters = cfg.zensim_iters;
-            }
-            enc.bit_depth_16 = self.bit_depth_16;
-            enc.source_gamma = self.source_gamma;
-            // A3 chunk 1b (issue #46): mirrors EncodeRequest::encode_lossy
-            // — auto-derive a ColorEncoding from the layout's implied
-            // transfer function when the caller didn't set one
-            // explicitly. See that site for the full rationale.
-            enc.color_encoding = self.color_encoding.clone().or_else(|| {
-                if self.source_gamma.is_some() {
-                    return None;
-                }
-                use crate::headers::color_encoding::{ColorEncoding, TransferFunction};
-                match self.layout.implied_transfer_function() {
-                    Some(TransferFunction::Pq) => Some(ColorEncoding::bt2100_pq()),
-                    Some(TransferFunction::Hlg) => Some(ColorEncoding::bt2100_hlg()),
-                    Some(TransferFunction::Bt709) => Some(ColorEncoding {
-                        transfer_function: TransferFunction::Bt709,
-                        ..ColorEncoding::srgb()
-                    }),
-                    Some(TransferFunction::Linear) => Some(ColorEncoding::linear_srgb()),
-                    _ => None,
-                }
-            });
-            enc.intensity_target = self.intensity_target;
-            // HDR default — libjxl SetIntensityTarget parity (issue #73):
-            // PQ -> 10,000 nits, HLG -> 1,000, unless the caller moved
-            // intensity_target off the 255.0 SDR default explicitly.
-            if self.intensity_target == 255.0 {
-                use crate::headers::color_encoding::TransferFunction;
-                if let Some(ce) = enc.color_encoding.as_ref() {
-                    match ce.transfer_function {
-                        TransferFunction::Pq => enc.intensity_target = 10_000.0,
-                        TransferFunction::Hlg => enc.intensity_target = 1_000.0,
-                        _ => {}
-                    }
-                    // HDR QuantizeWP dispatch — mirrors the one-shot
-                    // site (see EncodeRequest::encode_lossy) so
-                    // `oneshot == streaming` holds on PQ/HLG input.
-                    if matches!(
-                        ce.transfer_function,
-                        TransferFunction::Pq | TransferFunction::Hlg
-                    ) && self.cfg.effort <= 7
-                        && !matches!(self.cfg.strategy(), crate::api::EncoderStrategy::Libjxl)
-                    {
-                        enc.profile.use_libjxl_wp_dc_quant = true;
-                    }
-                }
-            }
-            enc.min_nits = self.min_nits;
-            enc.relative_to_max_display = self.relative_to_max_display;
-            enc.linear_below = self.linear_below;
-            enc.intrinsic_size = self.intrinsic_size;
-            enc.alpha_associated = self.premultiplied_alpha;
-            enc.bits_per_sample_override = self.bits_per_sample;
-            enc.center_first = self.cfg.center_first;
-            // Decoder upsampling factor (refs #12). Mirrors the
-            // EncodeRequest::encode_lossy wire-up below, including the
-            // true pre-downsample size for the file header and the
-            // `already_downsampled` contract (the streaming path used to
-            // ignore the flag: it downsampled pre-downsampled input a
-            // second time and advertised the coded size, so streaming and
-            // one-shot output diverged — imazen/jxl-encoder#101).
-            enc.upsampling = effective_resampling;
-            if effective_resampling > 1 && !self.cfg.already_downsampled {
-                enc.display_dims = Some((w as u32, h as u32));
-            }
-            enc.non_finite_action = self.cfg.non_finite_action;
-            enc.budget = Some(alloc::sync::Arc::clone(&budget));
-            if let Some(ref icc) = self.icc_profile {
-                enc.icc_profile = Some(icc.clone());
-            }
-
-            let (encode_rgb, encode_alpha, encode_w, encode_h) = if effective_resampling > 1
-                && !self.cfg.already_downsampled
-            {
-                // Factor-2 kernel choice mirrors the one-shot path (and
-                // libjxl `enc_frame.cc:752`): iterative at effort ≥ 10,
-                // sharper below.
-                let (down_rgb, dw, dh) = if effective_resampling == 2 && self.cfg.effort >= 10 {
-                    crate::vardct::resampling::iterative_downsample_2x_rgb(
-                        &linear_rgb,
-                        w,
-                        h,
-                        Some(&budget),
-                    )?
-                } else if effective_resampling == 2 {
-                    crate::vardct::resampling::sharper_downsample_2x_rgb(
-                        &linear_rgb,
-                        w,
-                        h,
-                        Some(&budget),
-                    )?
-                } else {
-                    crate::vardct::resampling::box_downsample_rgb(
-                        &linear_rgb,
-                        w,
-                        h,
-                        effective_resampling,
-                        Some(&budget),
-                    )?
-                };
-                let down_alpha = match alpha.as_ref() {
-                    Some(a) => {
-                        let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
-                            a,
-                            w,
-                            h,
-                            effective_resampling,
-                            Some(&budget),
-                        )?;
-                        Some(a_down)
-                    }
-                    None => None,
-                };
-                (down_rgb, down_alpha, dw as usize, dh as usize)
-            } else {
-                (linear_rgb, alpha, w, h)
-            };
-
-            let output = enc
-                .encode(encode_w, encode_h, &encode_rgb, encode_alpha.as_deref())
-                .map_err(EncodeError::from)?;
-
-            #[cfg(feature = "butteraugli-loop")]
-            let butteraugli_iters_actual = cfg.butteraugli_iters();
-            #[cfg(not(feature = "butteraugli-loop"))]
-            let butteraugli_iters_actual = 0u32;
-
-            let stats = EncodeStats {
-                mode: EncodeMode::Lossy,
-                strategy_counts: output.strategy_counts,
-                gaborish: cfg.gaborish(),
-                ans: cfg.ans(),
-                butteraugli_iters: butteraugli_iters_actual,
-                pixel_domain_loss: cfg.pixel_domain_loss(),
-                ..Default::default()
-            };
-            Ok::<_, EncodeError>((output.data, stats))
-        })
-        .map_err(at_from)?;
-
-        stats.codestream_size = codestream.len();
-        stats.budget_peak_bytes = budget.peak();
-        stats.threads_used = threads as u32;
-        stats.estimated_peak_bytes = estimated_peak_bytes;
-
-        // Streaming LossyEncoder does not accept extra channels beyond
-        // alpha; count alpha from layout.
-        let icc_size = self.icc_profile.as_deref().map_or(0u64, |i| i.len() as u64);
-        let num_ec = u32::from(self.layout.has_alpha());
-        let level = compute_required_level(self.width, self.height, num_ec, false, icc_size)?;
-
-        let has_meta = self.exif.is_some() || self.xmp.is_some() || self.jumbf.is_some();
-        let output = if has_meta || crate::container::level_requires_container(level) {
-            wrap_metadata_container(
-                &codestream,
-                self.exif.as_deref(),
-                self.xmp.as_deref(),
-                self.jumbf.as_deref(),
-                self.brotli_metadata_quality,
-                level,
-            )
-        } else {
-            codestream
+        // Reuse the one-shot pipeline, including source-content analysis,
+        // color conversion, alpha handling, metadata and memory admission.
+        // The former duplicate pipeline silently omitted the smart policies.
+        let metadata = ImageMetadata {
+            icc_profile: self.icc_profile.as_deref(),
+            exif: self.exif.as_deref(),
+            xmp: self.xmp.as_deref(),
+            jumbf: self.jumbf.as_deref(),
+            intrinsic_size: self.intrinsic_size,
+            ..Default::default()
         };
-
-        stats.output_size = output.len();
-        Ok(EncodeResult {
-            data: Some(output),
-            stats,
-        })
+        let mut request = self
+            .cfg
+            .encode_request(self.width, self.height, self.layout);
+        request.metadata = Some(&metadata);
+        request.limits = self.limits.as_ref();
+        request.source_gamma = self.source_gamma;
+        request.color_encoding = self.color_encoding;
+        request.intensity_target =
+            (self.intensity_target != 255.0).then_some(self.intensity_target);
+        request.min_nits = (self.min_nits != 0.0).then_some(self.min_nits);
+        request.relative_to_max_display = self.relative_to_max_display.then_some(true);
+        request.linear_below = (self.linear_below != 0.0).then_some(self.linear_below);
+        request.premultiplied_alpha = self.premultiplied_alpha;
+        request.bits_per_sample = self.bits_per_sample;
+        request.brotli_metadata_quality = self.brotli_metadata_quality;
+        request.encode_inner(&self.source_pixels)
     }
 }
 
@@ -9398,11 +8694,10 @@ use validate::{
 impl LossyConfig {
     /// Create a streaming encoder for incremental row input.
     ///
-    /// Pixels are converted to the internal linear-f32 format as rows are
-    /// pushed via [`LossyEncoder::push_rows`], so callers can free source
-    /// buffers incrementally. The converted whole-image planes stay in
-    /// memory until [`LossyEncoder::finish`] — input streaming does not
-    /// bound peak encoder memory.
+    /// Source rows are retained exactly until [`LossyEncoder::finish`], which
+    /// uses the same whole-image pipeline as one-shot encoding. Callers can
+    /// release each submitted chunk, but input streaming does not bound peak
+    /// encoder memory. Input canonicalization requires the one-shot API.
     #[track_caller]
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LossyEncoder> {
         if self.canonicalize_input {
@@ -9411,11 +8706,9 @@ impl LossyConfig {
             }));
         }
         validate_dims(width, height).at()?;
-        let bit_depth_16 = layout.is_16bit();
         // Limits are attached to the returned encoder. Defer image storage
         // until push_rows can admit the image against those limits.
-        let alpha = layout.has_alpha().then(Vec::new);
-        let linear_rgb = Vec::new();
+        let source_pixels = Vec::new();
 
         Ok(LossyEncoder {
             cfg: self.clone(),
@@ -9424,9 +8717,7 @@ impl LossyConfig {
             layout,
             rows_pushed: 0,
             input_admitted: false,
-            linear_rgb,
-            alpha,
-            bit_depth_16,
+            source_pixels,
             icc_profile: None,
             exif: None,
             xmp: None,
@@ -9597,12 +8888,9 @@ impl LosslessEncoder {
 
     /// Signal that the input alpha channel is premultiplied (associated).
     /// Mirrors [`EncodeRequest::with_premultiplied_alpha`]. See that
-    /// builder for the lossless-vs-lossy semantic discussion. On the
-    /// `LossyEncoder` this returns an `EncodeError::InvalidInput` from
-    /// [`finish`](Self::finish) until the unpremultiplication pre-pass
-    /// is implemented (#13). On the `LosslessEncoder` it sets
-    /// `alpha_associated=true` in the encoded header and writes pixels
-    /// unchanged.
+    /// builder for the lossless-vs-lossy semantic discussion. The lossy
+    /// encoder unpremultiplies through the shared one-shot pipeline at
+    /// [`finish`](Self::finish).
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
         self.premultiplied_alpha = enable;
         self
