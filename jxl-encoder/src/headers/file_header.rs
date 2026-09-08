@@ -232,6 +232,45 @@ impl Default for ImageMetadata {
     }
 }
 
+impl ImageMetadata {
+    /// `modular_16_bit_buffer_sufficient` — whether a decoder may reconstruct
+    /// every modular sub-bitstream into 16-bit buffers.
+    ///
+    /// Mirrors libjxl `encode.cc:1330`
+    /// (`(!uses_original_profile || bits_per_sample <= 12) && alpha_bits <= 12`),
+    /// `image_metadata.h:241/246/254` (integer `> 12` and *any* float clear it)
+    /// and `encode.cc:1511` (each extra channel ANDs in its own `<= 12`).
+    ///
+    /// `uses_original_profile` is `!xyb_encoded`. That clause is the one that is
+    /// easy to miss and expensive to get wrong: on the LOSSY path the modular
+    /// sub-bitstreams carry XYB DC and AC metadata, not the caller's original
+    /// samples, so 16-bit buffers suffice regardless of input depth.
+    ///
+    /// This is also the level-5 gate — libjxl `VerifyLevelSettings`
+    /// (`encode.cc:585`) returns level 10 whenever this is false — so the value
+    /// here and the level in [`crate::container::compute_codestream_level`] must
+    /// be derived from the same rule or we emit a stream that violates the level
+    /// it claims.
+    #[must_use]
+    pub fn modular_16bit_buffer_sufficient(&self) -> bool {
+        if self.force_modular_32bit {
+            return false;
+        }
+        // Any float sample needs 32-bit modular buffers (the packed bit pattern
+        // spans the full width), regardless of `bits_per_sample`.
+        if self.bit_depth.float_sample {
+            return false;
+        }
+        // Lossy/XYB: the modular streams are not the original samples.
+        if !self.xyb_encoded && self.bit_depth.bits_per_sample > 12 {
+            return false;
+        }
+        self.extra_channels
+            .iter()
+            .all(|ec| !ec.bit_depth.float_sample && ec.bit_depth.bits_per_sample <= 12)
+    }
+}
+
 /// Complete JXL file header.
 #[derive(Debug, Clone)]
 pub struct FileHeader {
@@ -559,11 +598,29 @@ impl FileHeader {
         crate::trace::debug_eprintln!("META [bit {}]: After bit_depth", writer.bits_written());
 
         // modular_16_bit_buffer_sufficient
-        // Default is true for bit depths <= 12, BUT the VarDCT encoder forces it
-        // false when the quantized DC exceeds i16 (#94): a decoder honouring the
-        // "true" promise reconstructs the LF/DC modular image into i16 buffers,
-        // where oversized DC wraps and desynchronises the DC ANS stream.
-        let mod16_sufficient = meta.bit_depth.bits_per_sample <= 12 && !meta.force_modular_32bit;
+        //
+        // libjxl `encode.cc:1330`:
+        //     (!uses_original_profile || bits_per_sample <= 12) && alpha_bits <= 12
+        // plus `SetFloat32Samples`/`SetFloat16Samples` clearing it unconditionally
+        // (`image_metadata.h:246,254`) and every extra channel ANDing in its own
+        // `bits_per_sample <= 12` (`encode.cc:1511`).
+        //
+        // `uses_original_profile` is `!xyb_encoded`. The clause matters: on the
+        // LOSSY path the modular sub-bitstreams carry XYB DC and AC metadata, NOT
+        // the caller's original samples, so 16-bit modular buffers suffice no
+        // matter how deep the input was. We previously ignored that and wrote
+        // `false` for every 16-bit input — which, since the level rule below
+        // demands `true` at level 5, made every lossy 16-bit stream we emitted
+        // level-5-noncompliant. Verified against cjxl v0.12 with the repo's own
+        // independent parser (`scripts/jxl_bitstream_diff.py trace`): on the same
+        // 16-bit source cjxl writes `metadata.modular_16bit_buffers = 1` at bit 37
+        // and we wrote `0`.
+        //
+        // The `force_modular_32bit` override stays: the VarDCT encoder sets it
+        // when the quantized DC exceeds i16 (#94), and a decoder honouring the
+        // "true" promise would reconstruct the LF/DC modular image into i16
+        // buffers, where oversized DC wraps and desynchronises the DC ANS stream.
+        let mod16_sufficient = meta.modular_16bit_buffer_sufficient();
         crate::trace::debug_eprintln!(
             "META [bit {}]: modular_16_bit_buffer_sufficient = {}",
             writer.bits_written(),
@@ -823,6 +880,111 @@ impl BitDepth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `modular_16_bit_buffer_sufficient` rule, pinned directly against
+    /// libjxl's (`encode.cc:1330` + `image_metadata.h:241/246/254` +
+    /// `encode.cc:1511`). This field is also the level-5 gate
+    /// (`VerifyLevelSettings`, `encode.cc:585`), so getting it wrong emits a
+    /// stream that violates the level it claims — which is exactly what we did
+    /// for every 16-bit input until 2026-09-08.
+    mod modular_16bit_rule {
+        use super::*;
+
+        fn meta(bits: u32, xyb: bool) -> ImageMetadata {
+            ImageMetadata {
+                bit_depth: BitDepth {
+                    float_sample: false,
+                    bits_per_sample: bits,
+                    exponent_bits: 0,
+                },
+                xyb_encoded: xyb,
+                ..Default::default()
+            }
+        }
+
+        #[test]
+        fn integer_at_or_below_12_bits_is_sufficient_on_both_paths() {
+            for bits in [1u32, 8, 10, 12] {
+                assert!(
+                    meta(bits, false).modular_16bit_buffer_sufficient(),
+                    "lossless {bits}-bit"
+                );
+                assert!(
+                    meta(bits, true).modular_16bit_buffer_sufficient(),
+                    "lossy {bits}-bit"
+                );
+            }
+        }
+
+        /// The clause that was missing. On the XYB path the modular
+        /// sub-bitstreams carry DC and AC metadata, not the caller's samples,
+        /// so input depth is irrelevant — libjxl's `!uses_original_profile ||`.
+        #[test]
+        fn deep_integer_is_sufficient_only_on_the_lossy_path() {
+            for bits in [13u32, 14, 16, 24, 31] {
+                assert!(
+                    !meta(bits, false).modular_16bit_buffer_sufficient(),
+                    "lossless {bits}-bit really does put the caller's samples in the \
+                     modular streams, so 16-bit buffers do NOT suffice"
+                );
+                assert!(
+                    meta(bits, true).modular_16bit_buffer_sufficient(),
+                    "lossy {bits}-bit codes XYB, not the original samples"
+                );
+            }
+        }
+
+        /// Float clears it unconditionally in libjxl (`SetFloat32Samples` /
+        /// `SetFloat16Samples`), including f16, whose 16 bits would otherwise
+        /// look no worse than 16-bit integer.
+        #[test]
+        fn any_float_sample_needs_32bit_buffers() {
+            for bd in [BitDepth::float32(), BitDepth::float16()] {
+                let m = ImageMetadata {
+                    bit_depth: bd,
+                    ..Default::default()
+                };
+                assert!(!m.modular_16bit_buffer_sufficient(), "float {bd:?}");
+            }
+        }
+
+        /// Every extra channel ANDs in its own `<= 12` (`encode.cc:1511`), so a
+        /// deep alpha alone is enough to clear it even when colour is shallow.
+        #[test]
+        fn a_deep_extra_channel_alone_clears_it() {
+            let mut m = meta(8, true);
+            let mut alpha = ExtraChannelInfo::alpha();
+            alpha.bit_depth = BitDepth {
+                float_sample: false,
+                bits_per_sample: 16,
+                exponent_bits: 0,
+            };
+            m.extra_channels.push(alpha);
+            assert!(
+                !m.modular_16bit_buffer_sufficient(),
+                "8-bit colour with 16-bit alpha still needs 32-bit modular buffers"
+            );
+
+            let mut shallow = meta(8, true);
+            shallow.extra_channels.push(ExtraChannelInfo::alpha());
+            assert!(
+                shallow.modular_16bit_buffer_sufficient(),
+                "8-bit alpha is fine"
+            );
+        }
+
+        /// The #94 override still wins over everything: the VarDCT encoder sets
+        /// it when quantized DC exceeds i16, and a decoder taking the `true`
+        /// promise would reconstruct LF/DC into i16 buffers and desynchronise
+        /// the DC ANS stream.
+        #[test]
+        fn force_modular_32bit_overrides_every_other_clause() {
+            let mut m = meta(8, true);
+            assert!(m.modular_16bit_buffer_sufficient());
+            m.force_modular_32bit = true;
+            assert!(!m.modular_16bit_buffer_sufficient());
+        }
+    }
 
     #[test]
     fn test_signature() {

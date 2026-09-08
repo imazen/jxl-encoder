@@ -46,6 +46,31 @@ fn decode_oxide_16bit(data: &[u8]) -> (usize, usize, Vec<u16>, usize) {
 
 // ── 16-bit Lossless Tests ───────────────────────────────────────────────────
 
+/// A 16-bit **lossless** encode must be a container carrying `jxll = 10`.
+///
+/// Changed 2026-09-08. These three tests previously asserted a bare codestream,
+/// i.e. level 5. That expectation was wrong, not merely loose: a 16-bit
+/// lossless stream signals `modular_16_bit_buffer_sufficient = false` (its
+/// modular streams really do carry the caller's 16-bit samples), and libjxl
+/// `VerifyLevelSettings` (`encode.cc:585`) makes that its FIRST level-5 check
+/// and returns 10. cjxl v0.12 on the same input emits `jxll = 10`; we emitted
+/// a bare codestream, so every 16-bit lossless file we produced violated the
+/// level it declared. The assertion here is now STRICTER than what it
+/// replaced — it pins the level value, not just the container shape.
+fn assert_level_10_container(jxl: &[u8]) {
+    assert_ne!(
+        &jxl[..2],
+        &[0xFF, 0x0A],
+        "16-bit lossless cannot be a bare codestream: that implies level 5, \
+         which forbids modular_16_bit_buffer_sufficient = false"
+    );
+    let i = jxl
+        .windows(4)
+        .position(|w| w == b"jxll")
+        .expect("level-10 output must carry a jxll box");
+    assert_eq!(jxl[i + 4], 10, "jxll level must be 10, matching cjxl v0.12");
+}
+
 #[test]
 fn test_lossless_rgb16_roundtrip() {
     let width = 16u32;
@@ -70,7 +95,7 @@ fn test_lossless_rgb16_roundtrip() {
         .expect("encode failed");
 
     // Verify JXL signature
-    assert_eq!(&jxl[..2], &[0xFF, 0x0A], "not a bare codestream");
+    assert_level_10_container(&jxl);
 
     // Decode with jxl-oxide
     let (dec_w, dec_h, decoded, channels) = decode_oxide_16bit(&jxl);
@@ -113,7 +138,7 @@ fn test_lossless_gray16_roundtrip() {
         .encode(pixels, width, height, PixelLayout::Gray16)
         .expect("encode failed");
 
-    assert_eq!(&jxl[..2], &[0xFF, 0x0A]);
+    assert_level_10_container(&jxl);
 
     let (dec_w, dec_h, decoded, channels) = decode_oxide_16bit(&jxl);
     assert_eq!(dec_w, width as usize);
@@ -155,7 +180,7 @@ fn test_lossless_rgba16_roundtrip() {
         .encode(pixels, width, height, PixelLayout::Rgba16)
         .expect("encode failed");
 
-    assert_eq!(&jxl[..2], &[0xFF, 0x0A]);
+    assert_level_10_container(&jxl);
 
     let (dec_w, dec_h, decoded, channels) = decode_oxide_16bit(&jxl);
     assert_eq!(dec_w, width as usize);

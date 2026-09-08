@@ -49,9 +49,20 @@ const JXLL_BOX_HEADER: [u8; 8] = [
 ///
 /// Mirrors libjxl `VerifyLevelSettings` in `lib/jxl/encode.cc:550`.
 /// `has_black_channel` is `true` when one of the extra channels is a
-/// CMYK `Black` plane (level-5 forbids it). The encoder does not yet
-/// surface 32-bit modular buffers, so the corresponding level-5 cap
-/// is left to the encoder.
+/// CMYK `Black` plane (level-5 forbids it).
+///
+/// `modular_16bit_buffer_sufficient` is the value of the header field of the
+/// same name — compute it with
+/// [`crate::headers::file_header::ImageMetadata::modular_16bit_buffer_sufficient`]
+/// so the two cannot disagree. libjxl checks it FIRST among the level-5 caps
+/// (`encode.cc:585`) and returns 10 when it is false.
+///
+/// Before 2026-09-08 this function did not take the parameter and the doc here
+/// claimed the corresponding cap was "left to the encoder". It was not left to
+/// anything: a 16-bit lossless encode wrote the header field as `false` and
+/// then signalled level 5 by omitting the `jxll` box — exactly the combination
+/// level 5 forbids. Verified against cjxl v0.12 on the same 16-bit source:
+/// cjxl emits a container with `jxll = 10`; we emitted a bare codestream.
 #[must_use]
 pub fn compute_codestream_level(
     width: u32,
@@ -59,6 +70,7 @@ pub fn compute_codestream_level(
     num_extra_channels: u32,
     has_black_channel: bool,
     icc_size: u64,
+    modular_16bit_buffer_sufficient: bool,
 ) -> Option<u8> {
     let w = u64::from(width);
     let h = u64::from(height);
@@ -75,6 +87,12 @@ pub fn compute_codestream_level(
     }
     if num_extra_channels > 256 {
         return None;
+    }
+
+    // libjxl makes this the FIRST level-5 check (`encode.cc:585`): a stream
+    // that needs 32-bit modular buffers cannot be level 5.
+    if !modular_16bit_buffer_sufficient {
+        return Some(10);
     }
 
     // Level 5 caps (encode.cc:579-601). Any single violation bumps
@@ -1175,15 +1193,21 @@ mod tests {
     fn test_compute_level_baseline_fits_level5() {
         // Typical web-sized images (≤ 262 144 per axis, ≤ 2²⁸ pixels,
         // small ICC, ≤ 4 extras, no CMYK) → level 5.
-        assert_eq!(compute_codestream_level(1024, 1024, 0, false, 0), Some(5));
         assert_eq!(
-            compute_codestream_level(1024, 1024, 4, false, 1 << 22),
+            compute_codestream_level(1024, 1024, 0, false, 0, true),
             Some(5)
         );
-        assert_eq!(compute_codestream_level(262_144, 1, 0, false, 0), Some(5));
+        assert_eq!(
+            compute_codestream_level(1024, 1024, 4, false, 1 << 22, true),
+            Some(5)
+        );
+        assert_eq!(
+            compute_codestream_level(262_144, 1, 0, false, 0, true),
+            Some(5)
+        );
         // 16384 × 16384 = 2²⁸ pixels, exactly the level-5 ceiling.
         assert_eq!(
-            compute_codestream_level(16_384, 16_384, 0, false, 0),
+            compute_codestream_level(16_384, 16_384, 0, false, 0, true),
             Some(5)
         );
     }
@@ -1191,32 +1215,44 @@ mod tests {
     #[test]
     fn test_compute_level_exceeding_level5_bumps_to_10() {
         // > 262 144 per axis bumps to level 10.
-        assert_eq!(compute_codestream_level(262_145, 1, 0, false, 0), Some(10));
+        assert_eq!(
+            compute_codestream_level(262_145, 1, 0, false, 0, true),
+            Some(10)
+        );
         // > 2²⁸ total pixels bumps to level 10.
         assert_eq!(
-            compute_codestream_level(16_385, 16_385, 0, false, 0),
+            compute_codestream_level(16_385, 16_385, 0, false, 0, true),
             Some(10)
         );
         // ICC > 2²² bumps to level 10.
         assert_eq!(
-            compute_codestream_level(1024, 1024, 0, false, (1 << 22) + 1),
+            compute_codestream_level(1024, 1024, 0, false, (1 << 22) + 1, true),
             Some(10)
         );
         // 5+ extra channels bumps to level 10.
-        assert_eq!(compute_codestream_level(1024, 1024, 5, false, 0), Some(10));
+        assert_eq!(
+            compute_codestream_level(1024, 1024, 5, false, 0, true),
+            Some(10)
+        );
         // CMYK (`Black`) extra channel bumps to level 10.
-        assert_eq!(compute_codestream_level(1024, 1024, 1, true, 0), Some(10));
+        assert_eq!(
+            compute_codestream_level(1024, 1024, 1, true, 0, true),
+            Some(10)
+        );
     }
 
     #[test]
     fn test_compute_level_overflow_returns_none() {
         // Beyond the level-10 caps: not encodable.
-        assert_eq!(compute_codestream_level(u32::MAX, 1, 0, false, 0), None);
         assert_eq!(
-            compute_codestream_level(1, 1, 0, false, (1 << 28) + 1),
+            compute_codestream_level(u32::MAX, 1, 0, false, 0, true),
             None
         );
-        assert_eq!(compute_codestream_level(1, 1, 257, false, 0), None);
+        assert_eq!(
+            compute_codestream_level(1, 1, 0, false, (1 << 28) + 1, true),
+            None
+        );
+        assert_eq!(compute_codestream_level(1, 1, 257, false, 0, true), None);
     }
 
     #[test]

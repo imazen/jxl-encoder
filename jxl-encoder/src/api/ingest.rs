@@ -829,6 +829,7 @@ pub(crate) fn compute_required_level(
     num_extra_channels: u32,
     has_black_channel: bool,
     icc_size: u64,
+    modular_16bit_buffer_sufficient: bool,
 ) -> Result<u8> {
     crate::container::compute_codestream_level(
         width,
@@ -836,6 +837,7 @@ pub(crate) fn compute_required_level(
         num_extra_channels,
         has_black_channel,
         icc_size,
+        modular_16bit_buffer_sufficient,
     )
     .ok_or_else(|| {
         at!(EncodeError::InvalidInput {

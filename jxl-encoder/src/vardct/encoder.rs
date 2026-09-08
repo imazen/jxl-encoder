@@ -91,6 +91,14 @@ pub struct VarDctOutput {
     pub data: Vec<u8>,
     /// Per-strategy first-block counts, indexed by raw strategy code (0..19).
     pub strategy_counts: [u32; 19],
+    /// Whether the encoder had to signal `modular_16_bit_buffer_sufficient =
+    /// false` because the quantized DC exceeded `i16` (#94).
+    ///
+    /// The caller needs this to pick the codestream level: libjxl
+    /// `VerifyLevelSettings` (`encode.cc:585`) returns 10 whenever that header
+    /// field is false, so a stream carrying it while claiming level 5 violates
+    /// the level it declares.
+    pub needs_modular_32bit: bool,
 }
 
 // ── Squeeze-on-extras quantization constants (libjxl parity) ────────────────
@@ -6347,6 +6355,9 @@ impl VarDctEncoder {
             return Ok(VarDctOutput {
                 data,
                 strategy_counts,
+                needs_modular_32bit: self
+                    .force_modular_32bit
+                    .load(core::sync::atomic::Ordering::Relaxed),
             });
         }
 
@@ -6715,6 +6726,9 @@ impl VarDctEncoder {
         Ok(VarDctOutput {
             data: writer.finish_with_padding(),
             strategy_counts,
+            needs_modular_32bit: self
+                .force_modular_32bit
+                .load(core::sync::atomic::Ordering::Relaxed),
         })
     }
 

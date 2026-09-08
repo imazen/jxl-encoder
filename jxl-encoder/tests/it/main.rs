@@ -72,6 +72,7 @@ mod lossy_knobs_wiring;
 mod lossy_mixed_extras_alpha;
 mod lz77_oob_repro;
 mod minimal_ans;
+mod modular_16bit_level;
 mod modular_group_size_knob;
 mod night_sky_blocks;
 mod non_finite_action;

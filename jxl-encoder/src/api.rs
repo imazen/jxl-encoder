@@ -144,6 +144,15 @@ pub struct EncodeStats {
     budget_peak_bytes: u64,
     threads_used: u32,
     estimated_peak_bytes: u64,
+    /// Whether the codestream signals `modular_16_bit_buffer_sufficient =
+    /// false`, i.e. a decoder must use 32-bit modular buffers.
+    ///
+    /// Inverted deliberately so the derived `Default` (`false`) is the common,
+    /// safe case. Consumed by the level computation: libjxl
+    /// `VerifyLevelSettings` (`encode.cc:585`) returns 10 whenever the header
+    /// field is false, and a stream that carries it while claiming level 5
+    /// violates the level it declares.
+    needs_modular_32bit: bool,
 }
 
 impl EncodeStats {
@@ -6096,7 +6105,14 @@ impl<'a> EncodeRequest<'a> {
             || self.extra_channels.iter().any(|ec| {
                 ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
             });
-        let level = compute_required_level(self.width, self.height, num_ec, has_black, icc_size)?;
+        let level = compute_required_level(
+            self.width,
+            self.height,
+            num_ec,
+            has_black,
+            icc_size,
+            !stats.needs_modular_32bit,
+        )?;
 
         // Wrap in container if metadata (EXIF/XMP/JUMBF/colr/hCdR) is
         // present OR if the level requires a container (level != 5
@@ -7047,6 +7063,7 @@ impl<'a> EncodeRequest<'a> {
         let stats = EncodeStats {
             mode: EncodeMode::Lossless,
             ans: cfg.ans(),
+            needs_modular_32bit: !file_header.metadata.modular_16bit_buffer_sufficient(),
             ..Default::default()
         };
         Ok((writer.finish_with_padding(), stats))
@@ -8189,6 +8206,7 @@ impl<'a> EncodeRequest<'a> {
         let stats = EncodeStats {
             mode: EncodeMode::Lossy,
             strategy_counts: output.strategy_counts,
+            needs_modular_32bit: output.needs_modular_32bit,
             gaborish: cfg.gaborish(),
             ans: cfg.ans(),
             butteraugli_iters: butteraugli_iters_actual,
@@ -9441,6 +9459,7 @@ impl LosslessEncoder {
             let stats = EncodeStats {
                 mode: EncodeMode::Lossless,
                 ans: cfg.ans(),
+                needs_modular_32bit: !file_header.metadata.modular_16bit_buffer_sufficient(),
                 ..Default::default()
             };
             Ok::<_, EncodeError>((writer.finish_with_padding(), stats))
@@ -9456,7 +9475,14 @@ impl LosslessEncoder {
         // beyond alpha; count alpha from layout.
         let icc_size = self.icc_profile.as_deref().map_or(0u64, |i| i.len() as u64);
         let num_ec = u32::from(self.layout.has_alpha());
-        let level = compute_required_level(self.width, self.height, num_ec, false, icc_size)?;
+        let level = compute_required_level(
+            self.width,
+            self.height,
+            num_ec,
+            false,
+            icc_size,
+            !stats.needs_modular_32bit,
+        )?;
 
         let has_meta = self.exif.is_some() || self.xmp.is_some() || self.jumbf.is_some();
         let output = if has_meta || crate::container::level_requires_container(level) {
