@@ -390,6 +390,63 @@ fn max_chain_length_override() -> u32 {
     })
 }
 
+/// `JXL_LZ77_NO_EARLYOUT=1` disables the sound greedy early-out so its wall
+/// saving stays measurable after it ships. It cannot change output: the
+/// early-out only fires when the acceptance test is already unreachable, so
+/// both arms return None on exactly the same streams.
+fn early_out_disabled() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("JXL_LZ77_NO_EARLYOUT").as_deref() == Ok("1"))
+}
+
+/// `JXL_LZ77_SKIP_GREEDY=1` — diagnostic only (#110). See the match arm.
+fn skip_greedy() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("JXL_LZ77_SKIP_GREEDY").as_deref() == Ok("1"))
+}
+
+/// #110 diagnostic: how much the LZ77 matcher actually finds and emits.
+///
+/// Distinguishes "the chain length does not change the chosen match" from
+/// "the matcher emits nothing here, so nothing could change". A byte-identical
+/// A/B means very different things in those two worlds, so measure rather than
+/// assume. Enabled by `JXL_LZ77_STATS=1`; the counters are only touched when
+/// it is on, and the summary is printed once per `apply_lz77_*` call, not per
+/// position.
+pub(crate) mod lz77_stats {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    pub static POSITIONS: AtomicU64 = AtomicU64::new(0);
+    pub static FOUND: AtomicU64 = AtomicU64::new(0);
+    pub static EMITTED: AtomicU64 = AtomicU64::new(0);
+
+    pub fn on() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("JXL_LZ77_STATS").as_deref() == Ok("1"))
+    }
+    pub fn bump(c: &AtomicU64, n: u64) {
+        if on() {
+            c.fetch_add(n, Ordering::Relaxed);
+        }
+    }
+    pub fn report(tag: &str) {
+        if !on() {
+            return;
+        }
+        let (p, f, e) = (
+            POSITIONS.load(Ordering::Relaxed),
+            FOUND.load(Ordering::Relaxed),
+            EMITTED.load(Ordering::Relaxed),
+        );
+        if p > 0 {
+            eprintln!(
+                "LZ77STATS\t{tag}\tpositions={p}\tfound={f}\temitted={e}\tfound_pct={:.4}\temit_pct={:.4}",
+                100.0 * f as f64 / p as f64,
+                100.0 * e as f64 / p as f64
+            );
+        }
+    }
+}
+
 /// Matches libjxl's HashChain implementation in enc_lz77.cc.
 struct HashChain {
     /// Token values (we only hash on value, not context)
@@ -762,6 +819,24 @@ pub fn apply_lz77_backref(
     force_huffman: bool,
     distance_multiplier: i32,
 ) -> Option<(Vec<Token>, Lz77Params)> {
+    apply_lz77_backref_inner(
+        tokens,
+        num_contexts,
+        force_huffman,
+        distance_multiplier,
+        !early_out_disabled(),
+    )
+}
+
+/// `early_out` is a parameter rather than an env read so the soundness test can
+/// drive both arms in one process; the env hook only chooses the default.
+fn apply_lz77_backref_inner(
+    tokens: &[Token],
+    num_contexts: usize,
+    force_huffman: bool,
+    distance_multiplier: i32,
+    early_out: bool,
+) -> Option<(Vec<Token>, Lz77Params)> {
     if tokens.is_empty() {
         return None;
     }
@@ -782,6 +857,9 @@ pub fn apply_lz77_backref(
     let mut out = Vec::with_capacity(tokens.len());
     let mut bit_decrease: f32 = 0.0;
     let total_symbols = tokens.len();
+    // Known up front, and identical to the acceptance test at the end of this
+    // function — hoisted so the walk can prove it unreachable and stop early.
+    let accept_threshold = total_symbols as f32 * 0.2 + 16.0;
 
     let max_distance = tokens.len();
     let min_length = lz77.min_length as usize;
@@ -810,7 +888,29 @@ pub fn apply_lz77_backref(
     let mut already_updated = false;
 
     let mut i = 0usize;
+    let total_literal_cost = sym_cost[tokens.len()];
     while i < tokens.len() {
+        // SOUND EARLY-OUT (#110). Every future increment to `bit_decrease` is
+        // `literal_cost - lz77_cost` with `lz77_cost >= 0` (len_cost, dist_cost
+        // and add_symbol_cost are all non-negative bit counts), and the matches
+        // cover DISJOINT ranges because `i` advances past each one. So the sum
+        // of all remaining increments is bounded by the remaining literal cost,
+        // `sym_cost[n] - sym_cost[i]`. If even that bound cannot clear the
+        // acceptance threshold, this call is already destined to return None,
+        // and stopping now produces the SAME result — not an approximation of
+        // it. Measured motivation: the greedy pass is rejected on 98.5% of
+        // line-art streams and 92.7% of photo streams, so nearly all of this
+        // work was being computed and discarded.
+        if early_out && bit_decrease + (total_literal_cost - sym_cost[i]) <= accept_threshold {
+            if lz77_stats::on() {
+                eprintln!(
+                    "LZ77STATS\tgreedy-earlyout\tat={i}\tof={}\tbit_decrease={bit_decrease:.1}\tbound={:.1}\tthreshold={accept_threshold:.1}",
+                    tokens.len(),
+                    bit_decrease + (total_literal_cost - sym_cost[i])
+                );
+            }
+            return None;
+        }
         out.push(tokens[i]);
 
         if !already_updated {
@@ -819,8 +919,9 @@ pub fn apply_lz77_backref(
         already_updated = false;
 
         let (mut dist_symbol, mut len) = chain.find_match(i, max_distance);
-
+        lz77_stats::bump(&lz77_stats::POSITIONS, 1);
         if len >= min_length {
+            lz77_stats::bump(&lz77_stats::FOUND, 1);
             // Try lazy matching: check if next position has a longer match
             if len < MAX_LAZY_MATCH_LEN && i + 1 < tokens.len() {
                 chain.update(i + 1);
@@ -847,6 +948,7 @@ pub fn apply_lz77_backref(
                 + sce.add_symbol_cost(out.last().unwrap().context() as usize);
 
             if lz77_cost <= literal_cost {
+                lz77_stats::bump(&lz77_stats::EMITTED, 1);
                 // Emit LZ77 match
                 let last_token = out.last_mut().unwrap();
                 last_token.value = lz77_len as u32;
@@ -887,7 +989,15 @@ pub fn apply_lz77_backref(
         out.len(),
         out.iter().filter(|t| t.is_lz77_length()).count()
     );
-    if bit_decrease > threshold {
+    let accepted = bit_decrease > threshold;
+    if lz77_stats::on() {
+        eprintln!(
+            "LZ77STATS\tgreedy\tsymbols={total_symbols}\tbit_decrease={bit_decrease:.1}\tthreshold={threshold:.1}\taccepted={accepted}\tmatch_tokens={}",
+            out.iter().filter(|t| t.is_lz77_length()).count()
+        );
+        lz77_stats::report("greedy-cumulative");
+    }
+    if accepted {
         lz77.enabled = true;
         Some((out, lz77))
     } else {
@@ -1213,6 +1323,11 @@ pub fn apply_lz77(
             force_huffman,
             distance_multiplier,
         )),
+        // #110 diagnostic arm: measure the CEILING on any early-out by
+        // skipping the greedy pass outright. Not a shipping knob -- it forfeits
+        // the streams that would have been accepted, which is exactly the cost
+        // an early-out has to avoid paying.
+        Lz77Method::Greedy if skip_greedy() => Ok(None),
         Lz77Method::Greedy => Ok(apply_lz77_backref(
             tokens,
             num_contexts,
@@ -1939,5 +2054,125 @@ mod lz77_hash_tests_110 {
         if std::env::var("JXL_LZ77_MURMUR_HASH").is_err() {
             assert!(!murmur_hash_enabled());
         }
+    }
+}
+
+#[cfg(test)]
+mod lz77_early_out_tests_110 {
+    use super::*;
+
+    /// Deterministic streams spanning the regimes that matter: pure noise
+    /// (never accepted), highly repetitive (accepted), and mixtures near the
+    /// acceptance boundary — which is precisely where an unsound bound would
+    /// show up, since the early-out only fires when it proves the threshold
+    /// unreachable.
+    fn streams() -> Vec<Vec<Token>> {
+        let mut out = Vec::new();
+        let mut seed = 0x243F_6A88_85A3_08D3u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        // Density sweep: the acceptance test is `bit_decrease > 0.2*n + 16`, so
+        // walking the repetition density walks bit_decrease ACROSS that
+        // threshold. Streams near the boundary are the only ones where an
+        // unsound bound can change the verdict — an earlier version of this
+        // test omitted them and consequently passed against a deliberately
+        // halved (unsound) bound.
+        for n in [512usize, 4096] {
+            for d in 1..=24usize {
+                let period = d;
+                out.push(
+                    (0..n)
+                        .map(|i| {
+                            if (i / period) % 2 == 0 {
+                                Token::new(0, (i % period.max(1)) as u32)
+                            } else {
+                                Token::new(0, (next() >> 40) as u32)
+                            }
+                        })
+                        .collect(),
+                );
+            }
+        }
+        for n in [64usize, 1000, 8192] {
+            // pure noise
+            out.push(
+                (0..n)
+                    .map(|_| Token::new(0, (next() >> 40) as u32))
+                    .collect(),
+            );
+            // highly repetitive
+            out.push((0..n).map(|i| Token::new(0, (i % 4) as u32)).collect());
+            // long runs
+            out.push((0..n).map(|i| Token::new(0, (i / 32) as u32)).collect());
+            // mixture: repetitive prefix, noisy tail (boundary-ish)
+            out.push(
+                (0..n)
+                    .map(|i| {
+                        if i < n / 2 {
+                            Token::new(0, (i % 5) as u32)
+                        } else {
+                            Token::new(0, (next() >> 40) as u32)
+                        }
+                    })
+                    .collect(),
+            );
+            // mixture the other way round
+            out.push(
+                (0..n)
+                    .map(|i| {
+                        if i < n / 2 {
+                            Token::new(0, (next() >> 40) as u32)
+                        } else {
+                            Token::new(0, (i % 3) as u32)
+                        }
+                    })
+                    .collect(),
+            );
+        }
+        out
+    }
+
+    /// THE gate on the #110 early-out: it must produce EXACTLY the same result
+    /// as the full walk, not merely a similar one. The bound it uses is sound
+    /// (every future `bit_decrease` increment is `literal_cost - lz77_cost`
+    /// with all three cost terms non-negative, and matches cover disjoint
+    /// ranges), so this is a proof obligation, not a tolerance.
+    #[test]
+    fn early_out_is_result_identical_to_the_full_walk() {
+        let mut fired = 0usize;
+        let mut accepted = 0usize;
+        for (idx, toks) in streams().iter().enumerate() {
+            for &fh in &[false, true] {
+                let full = apply_lz77_backref_inner(toks, 1, fh, 0, false);
+                let early = apply_lz77_backref_inner(toks, 1, fh, 0, true);
+                match (&full, &early) {
+                    (None, None) => fired += 1,
+                    (Some((a, pa)), Some((b, pb))) => {
+                        accepted += 1;
+                        assert_eq!(a.len(), b.len(), "stream {idx} fh={fh}: token count");
+                        assert!(
+                            a.iter().zip(b.iter()).all(|(x, y)| x.value == y.value
+                                && x.context() == y.context()
+                                && x.is_lz77_length() == y.is_lz77_length()),
+                            "stream {idx} fh={fh}: token stream differs"
+                        );
+                        assert_eq!(pa.enabled, pb.enabled);
+                        assert_eq!(pa.min_length, pb.min_length);
+                    }
+                    _ => panic!(
+                        "stream {idx} fh={fh}: early-out changed acceptance (full={}, early={})",
+                        full.is_some(),
+                        early.is_some()
+                    ),
+                }
+            }
+        }
+        // Both regimes must be represented, else the test proves nothing.
+        assert!(fired > 0, "no rejected stream exercised the early-out");
+        assert!(accepted > 0, "no accepted stream exercised the full path");
     }
 }

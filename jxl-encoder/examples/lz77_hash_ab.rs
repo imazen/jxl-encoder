@@ -65,6 +65,11 @@ fn main() {
     let out_path = PathBuf::from(&a[2]);
     let max_images: usize = arg("--images", "6").parse().unwrap();
     let n: u32 = arg("--size", "512").parse().unwrap();
+    let efforts: Vec<u8> = arg("--efforts", "8,9")
+        .split(',')
+        .map(|x| x.parse().unwrap())
+        .collect();
+    let do_lossy = arg("--lossy", "1") == "1";
 
     let arm = if std::env::var("JXL_LZ77_MURMUR_HASH").as_deref() == Ok("1") {
         "murmur"
@@ -118,7 +123,7 @@ fn main() {
             .unwrap();
         };
 
-        for e in [8u8, 9] {
+        for &e in &efforts {
             for (depth, buf, layout) in [
                 ("u8", &b8, PixelLayout::Rgb8),
                 ("u16", &b16, PixelLayout::Rgb16),
@@ -141,6 +146,10 @@ fn main() {
         }
 
         // Lossy e9 also reaches Optimal LZ77 (effort.rs: lz77 at effort >= 9).
+        if !do_lossy {
+            eprintln!("{arm}: {name} done ({picked}/{max_images})");
+            continue;
+        }
         let t = Instant::now();
         let d = LossyConfig::new(1.0)
             .with_effort(9)

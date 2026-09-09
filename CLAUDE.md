@@ -941,6 +941,59 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-08: LZ77 greedy is REJECTED on ~95% of streams -- sound early-out shipped (#110)
+
+[PROVEN] Instrumenting the matcher (`JXL_LZ77_STATS=1`) shows the greedy pass is
+computed in full and then **discarded**: `apply_lz77_backref` returns `None`
+unless `bit_decrease > total_symbols * 0.2 + 16`, and that test **fails on 98.5 %
+of line-art streams and 92.7 % of photo streams**. It finds matches at ~87 % of
+positions and emits hundreds of match tokens, all thrown away. **That threshold
+is at exact libjxl parity** (`enc_lz77.cc:165` and `:634`), so this is the cost
+model working as designed, not a divergence -- libjxl discards the same work.
+
+**Two corrections to the #110 triage, both measured:**
+
+1. **Greedy is NOT confined to lossless e8.** `apply_lz77_optimal` calls
+   `apply_lz77_backref` as its Step 1 ("if greedy doesn't help, optimal won't
+   either", `lz77.rs:1358`) and returns `Ok(None)` immediately when greedy does.
+   So the greedy matcher runs at EVERY LZ77-enabled effort -- lossless e8 and
+   e9+, and lossy e9+. Verified by counting invocations per effort. A second
+   effort-independent caller is `icc.rs:771` (profiles >= 16 KB).
+2. **Reach is not effect.** The earlier entry ranked the new Murmur hash first
+   because of its reach; measurement says its effect is nil (see below).
+
+**Shipped: a SOUND early-out in the greedy walk** (default ON; disable with
+`JXL_LZ77_NO_EARLYOUT=1` for A/B). Every future `bit_decrease` increment is
+`literal_cost - lz77_cost` with all three cost terms non-negative, and matches
+cover DISJOINT ranges, so the remaining gain is bounded by the remaining literal
+cost `sym_cost[n] - sym_cost[i]`. When `bit_decrease + that bound <= threshold`,
+the call is already destined to return `None`, so stopping is **result-identical,
+not an approximation**. Because Optimal bails when greedy returns `None`, the
+saving cascades into the Viterbi path too.
+
+Measured (interleaved, 3 reps, min per arm; bytes 1.00000 on every cell):
+line-art lossless e8 **0.90-0.92x wall**, e9 0.95-0.96x; photo u8 e8 0.95x,
+photo lossy e9 0.97x. Photo f32/u16 e8 is ~neutral because LZ77 is accepted more
+often there, so the early-out fires less -- the saving is exactly proportional to
+the rejection rate. Ceiling check: skipping greedy outright gives 0.89-0.92x on
+line art but costs +1.01 % bytes on f32 photos, so the early-out captures nearly
+the whole win with none of the loss.
+
+Pinned by `lz77_early_out_tests_110::early_out_is_result_identical_to_the_full_walk`
+(63 fixtures incl. a repetition-density sweep across the acceptance boundary;
+asserts both regimes are exercised). **Test-strength caveat, stated honestly**: it
+CATCHES a premature bail (a zero bound fails it), but a merely-halved bound still
+passes, because `0.5 x total literal cost` still hugely exceeds a `0.2n` threshold
+-- so it proves the early-out does not fire too early, not that any conceivable
+bound is sound. 68/68 hash locks, 5/5 Libjxl byte locks, 507/507 it, 1579/1579 lib
+all byte-identical.
+
+**Still open**: why the acceptance threshold rejects so much is a cost-model
+question, not a matcher one. If LZ77 is genuinely not paying on modular
+residuals, the larger win is not searching at all at those efforts -- but that
+needs the acceptance rate measured across the full content grid before anyone
+touches a default.
+
 ### 2026-09-08: #110 LZ77 -- the new HASH is a byte no-op; the CHAIN-LENGTH dial is the win
 
 [PROVEN] Ported libjxl's post-v0.12 `GetHash<3>` (commit `e8ff0976`, PR #4928 --
