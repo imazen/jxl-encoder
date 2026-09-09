@@ -941,6 +941,45 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-09: the RD contract is IQA-monotonicity; bytes are advisory (#113/#114)
+
+Owner decision: **"byte monotonicity is a great-to-have, iqa monotonicity is the
+key"**, with mimic-libjxl mode staying faithful and zen mode fixing the cliffs.
+The gate `examples/rd_monotonicity_gate.rs` (`just rd-monotonicity`) enforces
+exactly that: delivered SSIM2 must be non-increasing as the requested distance
+coarsens, **everywhere including filter boundaries** (hard, exits non-zero);
+byte inversions are reported and never fail.
+
+**[PROVEN] The measured split is the opposite of what was predicted, and it
+simplifies the work.** An earlier draft assumed filter boundaries would be where
+IQA monotonicity breaks. On the #103 cliff images at e8:
+
+| | within-regime | at filter boundary |
+|---|---|---|
+| IQA inversions (hard) | **4 of 4** | **0** |
+| byte inversions (advisory) | 0 | all |
+
+So the boundary costs BYTES (5058 e8: 56,670 → 66,266 B at d 0.5 → 0.6, the
+crossing libjxl v0.12 is also non-monotone at) but never quality ordering. Every
+hard violation is a within-regime **targeting** bug. Consequence: design C
+(distance as a target, not a seed) covers the entire hard contract, and the
+filter-gating question sits wholly inside the deprioritised advisory half — do
+NOT redesign filter gating to chase the key contract.
+
+Photographic grid (4 images × e{3,5,7,9} × 19 distances = 304 cells): IQA clean,
+2 advisory byte inversions, both at boundaries.
+
+**Per-effort wall is now baselined and tracked against cjxl** (owner asked for
+both): e3 **0.714**, e5 **1.827**, e7 **2.541**, e9 1.062 ours/cjxl; stable
+against baseline at 0.996–1.006. **e7 at 2.54× is the standout** — e3 is faster
+than cjxl and e9 is near parity, so the gap is specifically the e5–e7 band.
+
+Oracle traps: `fast-ssim2` is PINNED at 0.7.1 (0.8.2 moves every score, 0 of 84
+cells bit-identical, so a bump silently rebases this gate), and both sides must
+be fed **sRGB, not linear** — `compute_ssimulacra2` linearises internally.
+Full contract, designs A–C and the per-effort keep-best constraint:
+[docs/RFC_RD_MONOTONICITY.md](docs/RFC_RD_MONOTONICITY.md).
+
 ### RESOLVED 2026-09-09 (2 of 3): `encode_planar_int` admits AFTER allocating, and sizes admission against a 16-bit layout (#95 chunk 4)
 
 [PROVEN by reading + probe `examples/planar_admission_probe.rs`] Three gaps in

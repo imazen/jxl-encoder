@@ -25,21 +25,44 @@ produced a lateral RD move. They need different mechanisms:
   must not increase bytes, and delivered IQA must track the request. This is
   #103.
 
-## 2. What is promised, and what provably cannot be
+## 2. What is promised — owner decision, 2026-09-09
 
-**Promised (zen mode):** within a reference-filter regime, bytes and delivered
-SSIM2 are non-increasing as distance coarsens.
+> "byte monotonicity is a great-to-have, iqa monotonicity is the key"
 
-**Not promised, with evidence:** monotonicity ACROSS a filter boundary. libjxl
-v0.12 is not byte-monotone there either — measured on imazen-26 7026, d = 0.5 →
-0.6 goes **71,368 → 94,002 B** — because Gaborish is gated at `d > 0.5` and the
-EPF thresholds step at 0.7 / 1.5 / 4.0. The gate therefore treats
-`FILTER_BOUNDARIES = [0.5, 0.7, 1.5, 4.0]` crossings as **declared
-discontinuities**: recorded, never silently tolerated, never failed. Demanding
-byte monotonicity across them is a deliberate divergence from libjxl and needs
-to be requested as one.
+So the two halves are graded differently, and the gate enforces exactly that:
 
-**Libjxl mode stays faithful.** Every knob below is zen-only.
+- **HARD — delivered IQA must be non-increasing as the requested distance
+  coarsens, EVERYWHERE, filter boundaries included.** This is the only thing
+  that fails the gate. A boundary crossing is not an excuse: a crossing that
+  raises delivered quality is precisely the case where the caller asked for
+  coarser output and got finer. Holding this line across boundaries is a
+  deliberate divergence from libjxl, which does not hold it.
+- **ADVISORY — byte monotonicity is reported, never failed.** It provably cannot
+  hold across a reference-filter transition without diverging further: libjxl
+  v0.12 measured at d = 0.5 → 0.6 goes **71,368 → 94,002 B** on imazen-26 7026,
+  because Gaborish is gated at `d > 0.5` and the EPF thresholds step at
+  0.7 / 1.5 / 4.0.
+
+**Libjxl mode stays faithful.** Every knob in §4/§5 is zen-only.
+
+### The measured split is cleaner than expected, and it simplifies the roadmap
+
+An earlier draft of this RFC predicted that filter boundaries would be where IQA
+monotonicity breaks. **Measured, that is wrong**, and the correction is useful:
+
+| | within-regime | at filter boundary |
+|---|---|---|
+| **IQA inversions** (hard) | **4 of 4** | **0** |
+| byte inversions (advisory) | 0 | all of them |
+
+On the #103 cliff images at e8, every IQA violation is a within-regime
+**targeting** bug, and the boundary crossing produces only a byte inversion —
+i.e. it lands entirely in the half just deprioritised.
+
+Consequence: **design C (distance as a target, not a seed) addresses the whole
+of the hard contract**, and the filter-boundary question is confined to the
+advisory half. There is no need to redesign the filter gating to satisfy the key
+contract.
 
 ## 3. Design D — the staircase gate (shipped)
 
@@ -61,14 +84,14 @@ and the ratio against cjxl. An RD win bought with unbounded time is not a win.
 ### Validation — it catches the known bug
 
 The gate is only worth having if it fails on the documented cliffs, so that was
-tested directly rather than assumed:
+tested directly rather than assumed.
 
-- **4 photographic images × e{3,5,7,9} × 19 distances = 304 cells: clean**, 64
-  boundary crossings skipped (`benchmarks/rd_monotonicity_2026-09-09.tsv`).
-- **The #103 cliff images at e8: 4 within-regime violations**
-  (`benchmarks/rd_monotonicity_knowncliffs_2026-09-09.tsv`), and they surface as
-  **quality** inversions, matching #103's mis-targeting framing rather than a
-  byte story:
+**Photographic grid** — 4 images × e{3,5,7,9} × 19 distances = 304 cells
+(`benchmarks/rd_monotonicity_2026-09-09.tsv`): **IQA monotonicity clean**, even
+with boundaries graded. 2 byte inversions, both at boundaries (advisory).
+
+**#103 cliff images at e8** (`benchmarks/rd_monotonicity_knowncliffs_2026-09-09.tsv`):
+exit 1, **4 IQA violations, all within-regime**:
 
 | cell | inversion |
 |---|---|
@@ -77,10 +100,24 @@ tested directly rather than assumed:
 | 5058 e8 | SSIM2 68.139 → 69.311 as d went 12 → 15 |
 | 9291 e8 | SSIM2 88.544 → 89.758 as d went 0.4 → 0.5 |
 
-Both branches are mutation-verified: tightening the byte tolerance to 0.5 makes
-the byte branch fire on 14 cells, and the SSIM2 branch fires unaided above.
+plus 1 advisory byte inversion at a boundary (56,670 → 66,266 B, d 0.5 → 0.6) —
+the same crossing libjxl is non-monotone at.
 
-Time datum from that run: e8 **ours/cjxl = 1.043**.
+Both branches are mutation-verified: tightening the byte tolerance to 0.5 fires
+the byte branch on 14 cells; the SSIM2 branch fires unaided above.
+
+**Time, per effort, against the committed baseline and against cjxl:**
+
+| effort | ours | cjxl | ours/cjxl | vs baseline |
+|---|---|---|---|---|
+| e3 | 672 ms | 942 ms | **0.714** | 1.006 |
+| e5 | 2,347 ms | 1,285 ms | **1.827** | 0.996 |
+| e7 | 4,862 ms | 1,914 ms | **2.541** | 1.000 |
+| e9 | 18,791 ms | 17,695 ms | 1.062 | 1.001 |
+
+e7 at 2.54× cjxl is the standout; e3 is faster than cjxl and e9 is near parity,
+so the gap is specifically the e5–e7 band. Wall is stable against baseline
+(0.996–1.006), which is the check the owner asked for.
 
 ## 4. Designs A–C (proposed)
 

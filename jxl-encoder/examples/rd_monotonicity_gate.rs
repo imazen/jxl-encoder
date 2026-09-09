@@ -237,15 +237,35 @@ fn main() {
     }
     println!("wrote {} cells to {}", cells.len(), out_path.display());
 
-    let violations = check_staircase(&cells);
+    let (fatal, advisory) = check_staircase(&cells);
     let time_report = check_time(&cells, Path::new(&baseline_path), update_baseline);
-
     println!("\n{time_report}");
-    if violations.is_empty() {
-        println!("\nSTAIRCASE: clean — no within-regime inversion");
+
+    if advisory.is_empty() {
+        println!("BYTES (advisory, great-to-have): no inversion");
     } else {
-        println!("\nSTAIRCASE: {} within-regime VIOLATIONS", violations.len());
-        for v in violations.iter().take(40) {
+        let boundary = advisory.iter().filter(|v| v.contains("[boundary]")).count();
+        println!(
+            "BYTES (advisory, great-to-have): {} inversions ({boundary} at filter boundaries, \
+             where libjxl is not monotone either)",
+            advisory.len()
+        );
+        for v in advisory.iter().take(12) {
+            println!("    {v}");
+        }
+    }
+
+    if fatal.is_empty() {
+        println!("\nIQA MONOTONICITY: clean — delivered SSIM2 never rises as distance coarsens");
+    } else {
+        let within = fatal.iter().filter(|v| v.contains("within regime")).count();
+        println!(
+            "\nIQA MONOTONICITY: {} VIOLATIONS ({within} within-regime targeting bugs, \
+             {} at filter boundaries)",
+            fatal.len(),
+            fatal.len() - within
+        );
+        for v in fatal.iter().take(40) {
             println!("  {v}");
         }
         std::process::exit(1);
@@ -296,51 +316,78 @@ fn score(encoded: &[u8], src: &[u8], n: u32) -> f64 {
     compute_ssimulacra2(a.as_ref(), b.as_ref()).unwrap_or(f64::NAN)
 }
 
-/// Within a filter regime, coarsening the distance must not increase bytes and
-/// must not increase delivered SSIM2. Boundary crossings are reported by the
-/// caller as declared discontinuities, never as violations.
-fn check_staircase(cells: &[Cell]) -> Vec<String> {
+/// The contract, per the owner decision of 2026-09-09:
+///
+/// > "byte monotonicity is a great-to-have, iqa monotonicity is the key"
+///
+/// So the two halves are graded DIFFERENTLY:
+///
+/// - **Delivered IQA must be non-increasing as the requested distance coarsens,
+///   EVERYWHERE — filter boundaries included.** This is the hard contract and
+///   the only thing that fails the gate. Crossing a boundary is not an excuse:
+///   a boundary crossing that raises delivered quality is precisely the case
+///   where the caller asked for coarser output and got finer, which is the
+///   cliff zen mode exists to fix. Enforcing it across boundaries is a
+///   deliberate divergence from libjxl, which does not hold this line.
+/// - **Byte monotonicity is reported, never failed.** It is a great-to-have,
+///   and it provably cannot hold across a reference-filter transition without
+///   diverging further (libjxl v0.12 measured at d 0.5 -> 0.6: 71,368 ->
+///   94,002 B).
+///
+/// Boundary-crossing IQA inversions are counted separately from within-regime
+/// ones, because they have different fixes: the former is the distance/filter
+/// interaction (design C), the latter is a targeting bug.
+fn check_staircase(cells: &[Cell]) -> (Vec<String>, Vec<String>) {
     use std::collections::BTreeMap;
     let mut by: BTreeMap<(String, u8), Vec<&Cell>> = BTreeMap::new();
     for c in cells {
         by.entry((c.image.clone(), c.effort)).or_default().push(c);
     }
-    let mut out = Vec::new();
-    let mut crossings = 0usize;
+    let mut fatal = Vec::new();
+    let mut advisory = Vec::new();
     for ((img, e), mut ladder) in by {
         ladder.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
         for w in ladder.windows(2) {
             let (lo, hi) = (w[0], w[1]);
-            if regime(lo.distance) != regime(hi.distance) {
-                crossings += 1;
-                continue; // declared discontinuity
-            }
-            // 0.5 % byte slack absorbs entropy-coder noise; SSIM2 slack is
-            // 0.30 points, the same per-cell budget CLAUDE.md uses elsewhere.
-            if hi.bytes as f64 > lo.bytes as f64 * 1.005 {
-                out.push(format!(
-                    "{img} e{e}: bytes ROSE {} -> {} as d went {} -> {} (same regime {})",
-                    lo.bytes,
-                    hi.bytes,
-                    lo.distance,
-                    hi.distance,
-                    regime(lo.distance)
-                ));
-            }
+            let crossing = regime(lo.distance) != regime(hi.distance);
+
+            // HARD: delivered IQA must not rise as the request coarsens.
+            // 0.30 SSIM2 points of slack, the same per-cell budget used
+            // elsewhere in this repo.
             if hi.ssim2.is_finite() && lo.ssim2.is_finite() && hi.ssim2 > lo.ssim2 + 0.30 {
-                out.push(format!(
-                    "{img} e{e}: SSIM2 ROSE {:.3} -> {:.3} as d went {} -> {} (same regime {})",
+                fatal.push(format!(
+                    "{img} e{e}: SSIM2 ROSE {:.3} -> {:.3} as d went {} -> {}{}",
                     lo.ssim2,
                     hi.ssim2,
                     lo.distance,
                     hi.distance,
-                    regime(lo.distance)
+                    if crossing {
+                        "  [filter-boundary crossing -- design C]"
+                    } else {
+                        "  [within regime -- targeting bug]"
+                    }
+                ));
+            }
+
+            // ADVISORY: bytes. Never fails; across a boundary it is not even
+            // expected to hold.
+            if hi.bytes as f64 > lo.bytes as f64 * 1.005 {
+                advisory.push(format!(
+                    "{img} e{e}: bytes rose {} -> {} as d went {} -> {}{}",
+                    lo.bytes,
+                    hi.bytes,
+                    lo.distance,
+                    hi.distance,
+                    if crossing {
+                        "  [boundary]"
+                    } else {
+                        "  [within regime]"
+                    }
                 ));
             }
         }
     }
-    eprintln!("(skipped {crossings} declared filter-boundary crossings)");
-    out
+    (fatal, advisory)
 }
 
 /// Per-effort wall: must not regress against the committed baseline, and the
