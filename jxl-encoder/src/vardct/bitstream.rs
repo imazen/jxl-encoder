@@ -4084,20 +4084,16 @@ impl VarDctEncoder {
                     .unwrap_or((height as u32) / 2);
                 let ac_group_order =
                     compute_center_first_ac_permutation(xsize_groups, _ysize_groups, cx, cy);
-                let mut inv_ac = vec![0u32; num_groups];
-                for (on_disk_pos, &orig_idx) in ac_group_order.iter().enumerate() {
-                    inv_ac[orig_idx as usize] = on_disk_pos as u32;
-                }
-                let prefix_len = 2 + num_dc_groups;
-                let total = prefix_len + num_groups;
-                let mut permutation = Vec::with_capacity(total);
-                for i in 0..prefix_len {
-                    permutation.push(i as u32);
-                }
-                let prefix_u32 = prefix_len as u32;
-                for &val in &inv_ac[..num_groups] {
-                    permutation.push(prefix_u32 + val);
-                }
+                // Shared with the other TOC-permuting site; the identity prefix
+                // keeping HfGlobal ahead of the AC groups is a decoder-visible
+                // contract (docs/STREAMING_CONTAINER_CONSTRAINTS.md Finding 3),
+                // pinned by `toc_permutation_contract`.
+                let permutation = crate::vardct::coeff_order::build_center_first_toc_permutation(
+                    num_dc_groups,
+                    num_groups,
+                    &ac_group_order,
+                );
+                let total = permutation.len();
                 let mut new_sections: Vec<Vec<u8>> = (0..total).map(|_| Vec::new()).collect();
                 for (logical_idx, section_data) in sections.into_iter().enumerate() {
                     let on_disk = permutation[logical_idx] as usize;

@@ -1034,6 +1034,56 @@ pub fn get_custom_order(
     Some(order)
 }
 
+/// Build the TOC permutation for center-first AC group ordering.
+///
+/// Returns `permutation[logical_index] = on_disk_position`, matching libjxl's
+/// permutation array: an **identity prefix** covering
+/// `[dc_global, dc_groups.., ac_global]` followed by the inverse of
+/// `ac_group_order`, offset past that prefix.
+///
+/// # The identity prefix is load-bearing, not incidental
+///
+/// `ac_global` (`HfGlobal`) sits at logical index `1 + num_dc_groups`, inside
+/// the prefix, so it is never moved behind the AC groups. That ordering is a
+/// **decoder-visible contract**, measured from the decoder side and recorded in
+/// [`docs/STREAMING_CONTAINER_CONSTRAINTS.md`](../../../docs/STREAMING_CONTAINER_CONSTRAINTS.md)
+/// (Finding 3): a decoder's `process_sections` cannot start ANY HF group until
+/// `HfGlobal` arrives, so emitting it last collapses the whole frame into one
+/// uninterruptible batch. Measured there on a 25 MP photo fed 4 KiB at a time:
+/// the largest single `process()` call became 58 ms of a 73 ms decode, and
+/// callers lost mid-frame cancellation and progressive rendering entirely.
+/// With `HfGlobal` early the same file yields 1-5 groups per call.
+///
+/// So do not "simplify" this into a permutation over all sections. The
+/// streaming work (refactor #11 chunk 8) permutes the TOC for its seek-back
+/// path and must preserve this prefix.
+pub(crate) fn build_center_first_toc_permutation(
+    num_dc_groups: usize,
+    num_groups: usize,
+    ac_group_order: &[u32],
+) -> Vec<u32> {
+    debug_assert_eq!(
+        ac_group_order.len(),
+        num_groups,
+        "ac_group_order must cover every AC group"
+    );
+    // inv[orig_idx] = on_disk_pos among the AC groups.
+    let mut inv_ac = vec![0u32; num_groups];
+    for (on_disk_pos, &orig_idx) in ac_group_order.iter().enumerate() {
+        inv_ac[orig_idx as usize] = on_disk_pos as u32;
+    }
+    let prefix_len = 2 + num_dc_groups;
+    let mut permutation = Vec::with_capacity(prefix_len + num_groups);
+    for i in 0..prefix_len {
+        permutation.push(i as u32);
+    }
+    let prefix_u32 = prefix_len as u32;
+    for &val in &inv_ac[..num_groups] {
+        permutation.push(prefix_u32 + val);
+    }
+    permutation
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1396,5 +1446,61 @@ mod tests {
         // The vec must be left in a valid (if unchanged) state — no
         // partial/corrupted resize.
         assert_eq!(v, vec![0i64; 4]);
+    }
+}
+
+#[cfg(test)]
+mod toc_permutation_contract {
+    use super::*;
+
+    /// Finding 3 of docs/STREAMING_CONTAINER_CONSTRAINTS.md: `HfGlobal` must
+    /// stay ahead of every AC group. Pinned here because nothing asserted it
+    /// before, and the streaming refactor (#11 chunk 8) permutes this TOC.
+    #[test]
+    fn hf_global_never_moves_behind_the_ac_groups() {
+        for (gx, gy) in [(1usize, 1usize), (2, 2), (3, 3), (4, 2), (5, 7)] {
+            let num_groups = gx * gy;
+            for num_dc_groups in [1usize, 2, 4, 30] {
+                let order = compute_center_first_ac_permutation(
+                    gx,
+                    gy,
+                    (gx as u32 * 256) / 2,
+                    (gy as u32 * 256) / 2,
+                );
+                let perm = build_center_first_toc_permutation(num_dc_groups, num_groups, &order);
+
+                let prefix_len = 2 + num_dc_groups;
+                assert_eq!(perm.len(), prefix_len + num_groups);
+
+                // 1. The prefix is identity: dc_global, every dc_group, and
+                //    ac_global (HfGlobal) keep their logical positions.
+                for (i, &at) in perm.iter().enumerate().take(prefix_len) {
+                    assert_eq!(
+                        at, i as u32,
+                        "{gx}x{gy} dc={num_dc_groups}: prefix index {i} moved -- \
+                         this breaks progressive decode and mid-frame cancellation"
+                    );
+                }
+
+                // 2. HfGlobal specifically lands before EVERY AC group on disk.
+                let hf_global_on_disk = perm[1 + num_dc_groups];
+                for (logical, &on_disk) in perm.iter().enumerate().skip(prefix_len) {
+                    assert!(
+                        hf_global_on_disk < on_disk,
+                        "{gx}x{gy} dc={num_dc_groups}: HfGlobal at {hf_global_on_disk} \
+                         is not before AC group (logical {logical}) at {on_disk}"
+                    );
+                }
+
+                // 3. It is a genuine bijection -- a permutation that dropped or
+                //    duplicated a slot would silently corrupt the TOC.
+                let mut seen = perm.clone();
+                seen.sort_unstable();
+                assert!(
+                    seen.iter().enumerate().all(|(i, &v)| v == i as u32),
+                    "{gx}x{gy} dc={num_dc_groups}: permutation is not a bijection"
+                );
+            }
+        }
     }
 }
