@@ -941,6 +941,97 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-08: #110 LZ77 -- the new HASH is a byte no-op; the CHAIN-LENGTH dial is the win
+
+[PROVEN] Ported libjxl's post-v0.12 `GetHash<3>` (commit `e8ff0976`, PR #4928 --
+boost-style accumulate + Murmur3 finalizer) behind `JXL_LZ77_MURMUR_HASH=1`, and
+measured it. **It does not move bytes.** Synthetic line art: **70/70 cells
+byte-identical**. HDR photos: 36/42 identical, the rest within 0.06 % in either
+direction (aggregate f32 1.00001 -- marginally WORSE). Measured across u8/u16/f32
+built from identical content, lossless e8 (Greedy) + e9 (Optimal) and lossy e9.
+
+**The null is real, not a broken experiment** -- a probe that panics inside
+`get_hash_murmur` fires, so the toggle reaches the matcher. Verify this way
+before reporting any null result on a gated path.
+
+Mechanism, confirmed by measurement: a better hash only reduces COLLISIONS, and
+collisions only change the selected match when the chain walk is TRUNCATED at
+`max_chain_length`. At the shipped 256 nothing truncates (42/42 identical); at
+8, one cell moves; at 1, two move and u16 improves 0.03 %. So the hash's reach
+is broad but its effect is nil. **This CORRECTS the ordering in the #110 triage
+comment, which predicted the hash was the high-value item because it reaches
+both Greedy and Optimal.** Reach is not effect.
+
+**`max_chain_length` IS a real dial** (`JXL_LZ77_MAX_CHAIN`, default 256 =
+shipped; upstream makes it a template param with {1,3,8,256}). Process-level
+INTERLEAVED timing, 3 reps, min per arm:
+
+| path | chain 1 vs 256 wall | bytes |
+|---|---|---|
+| lossless e8 | **0.91-0.93** | **1.00000 (zero change)** |
+| lossless e9 | 0.95-0.97 | **1.00000** |
+| lossy e9 | **0.741** | 1.00135 mean, worst cell 1.0127 |
+
+Lossless gets 7-9 % off e8 wall for **literally zero bytes** -- free. Lossy e9
+gets **26 % off wall** for +0.14 % mean bytes (chain 8: 24.5 % off for +0.04 %),
+which is a trade worth putting to the owner rather than taking silently.
+
+**Do NOT trust block-ordered timing here.** Running chain 1, then 8, then 256
+reported chain=1 as 1.45-2.54x SLOWER -- the exact inversion the T3 work hit.
+Only the interleaved numbers above are usable.
+
+Both knobs are OFF/default and byte-locks are unmoved (68/68 hash, 5/5 Libjxl).
+Data: `benchmarks/lz77_hash_ab_2026-09-08.{tsv,meta}`, harness
+`examples/lz77_hash_ab.rs` + `scripts/lz77_hash_ab_join.py`. Mechanism pinned by
+`lz77_hash_tests_110` (the fold is blind to bits 15..30; Murmur moves on >90 % of
+positions and spreads wide tokens over >4x the buckets; the `& 0xFFFF` per lane
+is a proven NO-OP because `hash_mask` is 0x7FFF).
+
+### 2026-09-08: lossless FLOAT effort ladder is inert below e7 (#109 F5)
+
+[PROVEN] On the f32 lossless path our **e3 and e5 produce BYTE-IDENTICAL
+output** — 24/24 (image, size) pairs across 8 HDR photos x {64,256,1024};
+cjxl v0.12's own e3/e5 differ in 24/24. The `max_bitdepth` budget disables RCT
+and palette at `bit_depth = 32` (the #109 F3 row), which is most of what the e5
+profile would otherwise add, so the profile change has nothing left to apply.
+The entire gain arrives in one step at e7, where `tree_learning` turns on
+(`effort.rs`: `tree_learning: effort >= 7`). **e5 is a dominated operating
+point for lossless float** — e5 time for e3 bytes, and the only cell where cjxl
+beats us (1024^2 e5 ratio 1.012, 0/8 wins).
+
+Parity, verified bit-exact on BOTH sides (ours via djxl on all 96 cells; cjxl's
+own output separately confirmed lossless, 0 of 3,145,728 samples differing at
+1024^2 e5/e7/e9 — without that control the comparison could have been
+lossless-vs-lossy): aggregate bytes ours/cjxl **e3 0.958, e5 1.010, e7 0.508,
+e9 0.518**. At 1024^2 e7 median ours 3,411,209 B vs cjxl 7,203,886 B (raw
+12,582,912 B).
+
+The e7 win is a FIXED-COST-vs-RATE trade, not a uniform lift: fitting
+`alpha + beta*pixels` gives ours `alpha = 107,053 B, beta = 3.26 MB/MP` against
+cjxl's `2,687 B / 6.97 MB/MP` — the learned tree is ~106 KB of fixed cost that
+halves the per-pixel rate. Equating the two puts the crossover at **0.028 MP
+~= 168x168 px**, which is why the 64^2 win is only ~4 % while 1024^2 is 2x.
+Do NOT quote a bare MB/MP or a single-size ratio for this path; the intercept
+is the whole story at small sizes.
+
+Cost: **33x slower than cjxl at 1024^2 e7** (2,891 vs 88 ms) and 10x at e9. So
+the float ladder currently offers two useful points, e3 (fast, ~parity) and e7
+(2x smaller, ~33x slower); e9 buys 1.5 % over e7 for 5x the time.
+
+Scope limit worth respecting: the corpus's float set (`.hdr.png`) is
+**photographic only** (nature/interiors/photos-general/food), so none of this
+transfers to float line-art, plots, screenshots or synthetic data — that needs
+a different corpus. n=8, single aarch64 host, mantissas derived from 16-bit
+integer sources. Data + method:
+[benchmarks/lossless_float_parity_2026-09-08.md](benchmarks/lossless_float_parity_2026-09-08.md),
+harness `examples/lossless_float_parity.rs`.
+
+**Harness trap**: djxl v0.12 writes PFM with scale **+1.0 (big-endian)** where
+we write -1.0 (little-endian). A reader that assumes one endianness silently
+byte-swaps every sample and reports a bit-exact stream as corrupt; that is
+exactly what happened until the bit-exactness gate caught it. The reader in
+`lossless_float_parity.rs` now honours the sign of the scale field.
+
 ### 2026-09-08: development dependency refresh (#107)
 
 The tuning runner now uses Arrow/Parquet 59.3.0. Its locked dependency graph

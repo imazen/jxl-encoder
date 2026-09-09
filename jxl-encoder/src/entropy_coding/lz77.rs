@@ -359,6 +359,37 @@ impl SymbolCostEstimator {
 /// Hash chain for LZ77 match finding.
 ///
 /// Uses a sliding window and hash table to efficiently find matching sequences.
+/// `JXL_LZ77_MURMUR_HASH=1` selects the post-v0.12 Murmur-style LZ77 hash
+/// (#110). Read once — this sits under the per-position matcher inner loop, so
+/// a per-call `env::var` would allocate a String per token.
+fn murmur_hash_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("JXL_LZ77_MURMUR_HASH")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
+/// `JXL_LZ77_MAX_CHAIN` overrides the hash-chain walk limit (default 256,
+/// libjxl's historical hard-coded value and its post-v0.12 `kOptc256`).
+///
+/// EXPERIMENTAL (#110 item 3). Upstream's rewrite makes this a template
+/// parameter with {1, 3, 8, 256} shipped, so it is a genuine speed/bytes dial
+/// we do not otherwise expose. It also isolates WHY the new hash function is a
+/// no-op on bytes: a better hash only reduces collisions, and collisions only
+/// change the selected match when the walk is TRUNCATED by this limit.
+fn max_chain_length_override() -> u32 {
+    static N: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        std::env::var("JXL_LZ77_MAX_CHAIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n >= 1)
+            .unwrap_or(256)
+    })
+}
+
 /// Matches libjxl's HashChain implementation in enc_lz77.cc.
 struct HashChain {
     /// Token values (we only hash on value, not context)
@@ -467,12 +498,34 @@ impl HashChain {
             numzeros: 0,
             special_dist_table,
             num_special_distances,
-            max_chain_length: 256,
+            max_chain_length: max_chain_length_override(),
         }
     }
 
     /// Compute hash of 3 consecutive values starting at pos.
     fn get_hash(&self, pos: usize) -> u32 {
+        if murmur_hash_enabled() {
+            return self.get_hash_murmur(pos);
+        }
+        self.get_hash_shift_fold(pos)
+    }
+
+    /// The pre-#4928 shift-xor fold (libjxl `HashChain::GetHash`, the version
+    /// our port was taken from).
+    ///
+    /// The `& 0xFFFF` on each lane looks like a divergence from libjxl, which
+    /// masks nothing, but it is provably a NO-OP here: `hash_num_values` is
+    /// 32768, so the trailing `& hash_mask` keeps only bits 0..=14, and every
+    /// bit the pre-mask removes (16 and up) lands at or above bit 16 after a
+    /// non-negative shift. Verified by `hash_premask_is_a_noop`.
+    ///
+    /// What the structure DOES cost: with `hash_shift = 5` and a 15-bit mask,
+    /// the three lanes contribute only `data[pos]` bits 0..=14, `data[pos+1]`
+    /// bits 0..=9 and `data[pos+2]` bits 0..=4. Token values above 2^15 are
+    /// therefore almost entirely invisible to the hash — which is the TODO
+    /// libjxl closed in #4928, and which matters most on the wide-token
+    /// content the high-bit-depth / float paths produce.
+    fn get_hash_shift_fold(&self, pos: usize) -> u32 {
         if pos + 2 >= self.size {
             return 0;
         }
@@ -481,6 +534,37 @@ impl HashChain {
         result ^= (self.data[pos + 1] & 0xFFFF) << self.hash_shift;
         result ^= (self.data[pos + 2] & 0xFFFF) << (self.hash_shift * 2);
         result & self.hash_mask as u32
+    }
+
+    /// Port of libjxl's post-v0.12 `GetHash<3>` (commit `e8ff0976`, PR #4928):
+    /// a boost-style accumulate over three tokens followed by the Murmur3
+    /// finalizer, so the WHOLE 32-bit token value reaches the hash.
+    ///
+    /// Upstream is `h ^= data_[pos+i] + 0x9e3779b9 + (h << 6) + (h >> 2)` and
+    /// guards on `pos + kHashSize <= data_.size()`, which is the same bound as
+    /// the fold's `pos + 2 < size_`. Both additions and shifts are wrapping in
+    /// C++ on `uint32_t`, hence `wrapping_add` / `wrapping_mul` here.
+    ///
+    /// EXPERIMENTAL — off by default, selected by `JXL_LZ77_MURMUR_HASH=1`.
+    /// This is post-v0.12 and therefore outside our pinned reference, so it is
+    /// judged on our own measurements, not on parity (#110).
+    fn get_hash_murmur(&self, pos: usize) -> u32 {
+        if pos + 2 >= self.size {
+            return 0;
+        }
+        let mut h = 0u32;
+        for i in 0..3 {
+            h ^= self.data[pos + i]
+                .wrapping_add(0x9e37_79b9)
+                .wrapping_add(h << 6)
+                .wrapping_add(h >> 2);
+        }
+        h ^= h >> 16;
+        h = h.wrapping_mul(0x85eb_ca6b);
+        h ^= h >> 13;
+        h = h.wrapping_mul(0xc2b2_ae35);
+        h ^= h >> 16;
+        h & self.hash_mask as u32
     }
 
     /// Count consecutive zeros starting at pos.
@@ -1762,5 +1846,98 @@ mod tests {
         // Special distances: 0 entries since multiplier=0
         // So dist_symbol = num_special_distances + dist - 1 = 0 + 4 - 1 = 3
         assert_eq!(dist_symbol, 3, "distance symbol for dist=4 should be 3");
+    }
+}
+
+#[cfg(test)]
+mod lz77_hash_tests_110 {
+    use super::*;
+
+    fn chain_for(vals: &[u32]) -> HashChain {
+        let tokens: Vec<Token> = vals.iter().map(|&v| Token::new(0, v)).collect();
+        HashChain::new(&tokens, 512, 3, 128, 0)
+    }
+
+    /// The `& 0xFFFF` per lane in the shift-fold hash is a NO-OP, because
+    /// `hash_mask` is 0x7FFF. Asserted over values that actually exceed 16
+    /// bits — the only place a difference could appear. This pins the claim
+    /// made in `get_hash_shift_fold`'s doc comment so it cannot rot.
+    #[test]
+    fn hash_premask_is_a_noop() {
+        let vals: Vec<u32> = (0..64)
+            .map(|i| (i as u32).wrapping_mul(0x0001_0001) ^ 0xDEAD_0000)
+            .collect();
+        let c = chain_for(&vals);
+        assert_eq!(c.hash_mask, 0x7FFF, "premise: 15-bit hash mask");
+        for pos in 0..vals.len().saturating_sub(3) {
+            let with_mask = c.get_hash_shift_fold(pos);
+            let without = {
+                let mut r = 0u32;
+                r ^= c.data[pos];
+                r ^= c.data[pos + 1] << c.hash_shift;
+                r ^= c.data[pos + 2] << (c.hash_shift * 2);
+                r & c.hash_mask as u32
+            };
+            assert_eq!(with_mask, without, "pos {pos}: pre-mask changed the hash");
+        }
+    }
+
+    /// The shift-fold hash is nearly blind to bits above 2^15: changing only
+    /// the HIGH half of every token leaves most hashes unchanged, while the
+    /// Murmur hash moves. This is the defect libjxl #4928 closed, and it is
+    /// why the port is expected to matter most on wide-token (high-bit-depth
+    /// and float) content.
+    #[test]
+    fn murmur_sees_high_token_bits_that_the_fold_discards() {
+        let lo: Vec<u32> = (0..256).map(|i| (i * 7) as u32 & 0x7FFF).collect();
+        let hi: Vec<u32> = lo.iter().map(|v| v | 0x3FFF_8000).collect();
+        let (a, b) = (chain_for(&lo), chain_for(&hi));
+        let n = lo.len() - 3;
+
+        let fold_changed = (0..n)
+            .filter(|&p| a.get_hash_shift_fold(p) != b.get_hash_shift_fold(p))
+            .count();
+        let murmur_changed = (0..n)
+            .filter(|&p| a.get_hash_murmur(p) != b.get_hash_murmur(p))
+            .count();
+
+        assert_eq!(
+            fold_changed, 0,
+            "the shift-fold hash should be entirely blind to bits 15..30"
+        );
+        assert!(
+            murmur_changed > n * 9 / 10,
+            "the Murmur hash must see high token bits: only {murmur_changed}/{n} moved"
+        );
+    }
+
+    /// Distinct-bucket occupancy on wide tokens: the fold collapses them,
+    /// Murmur spreads them. Reported as a ratio so the test states a property
+    /// rather than a magic number.
+    #[test]
+    fn murmur_spreads_wide_tokens_better_than_the_fold() {
+        use std::collections::HashSet;
+        // Values shaped like 16-bit-plus samples: low bits vary slowly, high
+        // bits carry the signal (exactly the high-bit-depth residual shape).
+        let vals: Vec<u32> = (0..1024u32).map(|i| (i << 16) | (i & 0x1F)).collect();
+        let c = chain_for(&vals);
+        let n = vals.len() - 3;
+        let fold: HashSet<u32> = (0..n).map(|p| c.get_hash_shift_fold(p)).collect();
+        let murmur: HashSet<u32> = (0..n).map(|p| c.get_hash_murmur(p)).collect();
+        assert!(
+            murmur.len() > fold.len() * 4,
+            "murmur {} buckets vs fold {} on wide tokens",
+            murmur.len(),
+            fold.len()
+        );
+    }
+
+    /// The toggle is off unless explicitly set, so the default path is the
+    /// shipped one. (Env is process-global; this only asserts the default.)
+    #[test]
+    fn murmur_is_off_by_default() {
+        if std::env::var("JXL_LZ77_MURMUR_HASH").is_err() {
+            assert!(!murmur_hash_enabled());
+        }
     }
 }

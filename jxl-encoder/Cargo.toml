@@ -3238,3 +3238,11 @@ path = "examples/cliff_bisect.rs"
 [[example]]
 name = "scope_probe_16bit"
 path = "examples/scope_probe_16bit.rs"
+
+[[example]]
+name = "lossless_float_parity"
+path = "examples/lossless_float_parity.rs"
+
+[[example]]
+name = "lz77_hash_ab"
+path = "examples/lz77_hash_ab.rs"
