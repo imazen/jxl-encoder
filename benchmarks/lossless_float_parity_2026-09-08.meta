@@ -1,0 +1,11 @@
+harness: jxl-encoder/examples/lossless_float_parity.rs
+command: cargo run --release --example lossless_float_parity -- \
+    ~/work/zen/imazen-26-png-v3/png-v3 benchmarks/lossless_float_parity_2026-09-08.tsv \
+    --sizes 64,256,1024 --efforts 3,5,7,9 --images 8 --reps 3
+  (invoked with --sizes 64,256,1024,4096; the 4096 class produced no rows because
+   no picked source is >=4096 in both dims. Large class: see the _large_ TSV.)
+reference: cjxl/djxl v0.12.0 a7a9c78 (pinned .ci-libjxl tools)
+host: Mac aarch64 (darwin 25.5.0)
+corpus: imazen-26 png-v3 .hdr.png (16-bit RGB) -> f32 /65535, centre crops
+gate: our output djxl-decoded and asserted bit-exact (96/96 true);
+      cjxl output separately verified lossless on 1024^2 e5/e7/e9 (0/3145728 differ)

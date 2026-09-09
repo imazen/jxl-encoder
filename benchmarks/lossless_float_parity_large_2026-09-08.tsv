@@ -1,0 +1,9 @@
+class	image	size	effort	ours_bytes	cjxl_bytes	bytes_ratio	ours_ms	cjxl_ms	wall_ratio	ours_bitexact
+1400-lilith-nature	1520_nature_tulips-in-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3545_4284x5712.hdr.png	4096	3	106961580	113738635	0.9404	3799.5	299.2	12.700	true
+1400-lilith-nature	1520_nature_tulips-in-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3545_4284x5712.hdr.png	4096	5	106961580	105444375	1.0144	4090.0	626.1	6.533	true
+1400-lilith-nature	1520_nature_tulips-in-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3545_4284x5712.hdr.png	4096	7	49231011	105009623	0.4688	47831.8	1086.6	44.021	true
+1400-lilith-nature	1520_nature_tulips-in-garden_notre-dame-versailles-france_ip15pro_iso80-f1p8_img-3545_4284x5712.hdr.png	4096	9	46994838	99203248	0.4737	198543.6	18548.8	10.704	true
+1600-lilith-food	1640_food_birthday-cake-table_colorado_ip16pro_iso125-f1p8_img-2666_4284x5712.hdr.png	4096	3	105103771	115492594	0.9100	3185.9	250.3	12.728	true
+1600-lilith-food	1640_food_birthday-cake-table_colorado_ip16pro_iso125-f1p8_img-2666_4284x5712.hdr.png	4096	5	105103771	100908871	1.0416	3321.3	528.1	6.289	true
+1600-lilith-food	1640_food_birthday-cake-table_colorado_ip16pro_iso125-f1p8_img-2666_4284x5712.hdr.png	4096	7	46552288	100487735	0.4633	40044.9	931.5	42.990	true
+1600-lilith-food	1640_food_birthday-cake-table_colorado_ip16pro_iso125-f1p8_img-2666_4284x5712.hdr.png	4096	9	42938503	88146525	0.4871	181085.0	20921.6	8.655	true
