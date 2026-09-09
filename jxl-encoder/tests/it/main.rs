@@ -127,10 +127,12 @@ pub(crate) fn corpus_file(rel: &str) -> String {
 // and default-tuning byte-identity tests (including the hash-locks) become
 // order-dependent on whether an installer ran first. One process per
 // installer is the isolation contract those tests document in their headers.
+mod lossy_float_bitdepth;
 mod w44_63_decoder_roundtrip;
 mod w44_65_decoder_roundtrip;
 mod w44_78_decoder_roundtrip;
 mod w44_phase3_b1_gpu_buttloop_roundtrip;
+mod wall_clock_gates;
 mod with_effort_preserves_explicit;
 mod with_patches_data;
 mod zenjxl_regression_gate;

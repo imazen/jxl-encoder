@@ -908,10 +908,16 @@ impl VarDctEncoder {
         height: usize,
         extras_info: &[ExtraChannelInfo],
     ) -> FileHeader {
-        let mut bit_depth = if self.bit_depth_16 {
-            BitDepth::uint16()
-        } else {
-            BitDepth::uint8()
+        let mut bit_depth = match self.source_bit_depth {
+            // #109 F0: the caller's real input format. Float layouts were
+            // previously announced as 8/16-bit integer.
+            Some((float_sample, bits_per_sample, exponent_bits)) => BitDepth {
+                float_sample,
+                bits_per_sample,
+                exponent_bits,
+            },
+            None if self.bit_depth_16 => BitDepth::uint16(),
+            None => BitDepth::uint8(),
         };
         // Optional bits_per_sample override (#18 sub-feature). Keeps
         // float_sample / exponent_bits from the int default; only the

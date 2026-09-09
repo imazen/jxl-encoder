@@ -2293,6 +2293,17 @@ pub struct VarDctEncoder {
     /// is always f32 internally), but the decoder uses this to reconstruct at
     /// the correct output bit depth.
     pub bit_depth_16: bool,
+    /// The caller's ORIGINAL sample format, `(float, bits, exponent_bits)`,
+    /// when it is not plain 8/16-bit integer (imazen/jxl-encoder#109 F0).
+    ///
+    /// `ImageMetadata.bit_depth` is metadata about the INPUT, not about the
+    /// coded representation, and libjxl fills it from the caller's declared
+    /// format in every mode. We derived it solely from `bit_depth_16`, so a
+    /// f32 or f16 input was announced as 8- or 16-bit INTEGER — verified
+    /// against cjxl v0.12, which writes `floating_point = 1,
+    /// bits_per_sample = 32` for the same input. `None` keeps the historic
+    /// integer behaviour.
+    pub source_bit_depth: Option<(bool, u32, u32)>,
     /// Set during encoding when the quantized VarDCT DC exceeds the i16 range
     /// (`|DC| > 32767`). A spec decoder that honours `modular_16bit_buffers`
     /// (e.g. jxl-oxide's `narrow_modular` path) reconstructs the LF/DC modular
@@ -2693,6 +2704,7 @@ impl Default for VarDctEncoder {
             #[cfg(feature = "zensim-loop")]
             zensim_iters: 0, // Off by default. Set via LossyConfig.
             bit_depth_16: false,
+            source_bit_depth: None,
             force_modular_32bit: core::sync::atomic::AtomicBool::new(false),
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
@@ -2856,6 +2868,7 @@ impl VarDctEncoder {
             #[cfg(feature = "zensim-loop")]
             zensim_iters: 0, // Off by default. Set via LossyConfig.
             bit_depth_16: false,
+            source_bit_depth: None,
             force_modular_32bit: core::sync::atomic::AtomicBool::new(false),
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos

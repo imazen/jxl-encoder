@@ -8027,6 +8027,14 @@ impl<'a> EncodeRequest<'a> {
         }
 
         enc.bit_depth_16 = bit_depth_16;
+        // #109 F0: announce the caller's REAL input format. Only float layouts
+        // move — every integer layout's `source_bit_depth` reproduces exactly
+        // what `bit_depth_16` produced, and the `bits_per_sample` override
+        // below still wins for integer input.
+        {
+            let sbd = self.layout.source_bit_depth();
+            enc.source_bit_depth = if sbd.0 { Some(sbd) } else { None };
+        }
         enc.source_gamma = self.source_gamma;
         // A3 chunk 1b (issue #46): if the caller didn't set an
         // explicit color encoding but the layout name carries an

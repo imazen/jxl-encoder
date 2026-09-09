@@ -7491,9 +7491,83 @@ fn test_streaming_lossy_premultiplied_alpha_round_trip() {
     assert_eq!(alpha_assoc, Some(true));
 }
 
-/// Closes FLOAT16 portion of #18: encoder accepts the new
-/// PixelLayout::*LinearF16 variants and produces identical bitstreams
-/// to the equivalent f32 layout (at f16 precision).
+/// Shared check for the two f16-vs-f32 tests: the CODED payload must match
+/// exactly, while the two files must carry their own (different, correct)
+/// `BitDepth`. Splitting the file at each side's own header length is what
+/// makes this meaningful — reusing one length for both would compare
+/// misaligned bytes and could pass or fail for the wrong reason.
+fn assert_float_pair_codes_identically(
+    bytes_f32: &[u8],
+    bytes_f16: &[u8],
+    w: u32,
+    h: u32,
+    has_alpha: bool,
+    what: &str,
+) {
+    let hdr32 =
+        crate::test_helpers::measure_file_header_len_float(w, h, true, has_alpha, false, 32, 8);
+    let hdr16 =
+        crate::test_helpers::measure_file_header_len_float(w, h, true, has_alpha, false, 16, 5);
+
+    assert_eq!(
+        &bytes_f32[hdr32..],
+        &bytes_f16[hdr16..],
+        "{what}F16 must code the SAME payload as {what}F32 for f16-representable input"
+    );
+
+    // And the labels must differ, in the direction libjxl uses.
+    let bd = |data: &[u8]| {
+        jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(data.to_vec()))
+            .expect("jxl-oxide parse")
+            .image_header()
+            .metadata
+            .bit_depth
+    };
+    assert_eq!(
+        bd(bytes_f32),
+        jxl_image::BitDepth::FloatSample {
+            bits_per_sample: 32,
+            exp_bits: 8
+        },
+        "{what}F32 must announce binary32"
+    );
+    assert_eq!(
+        bd(bytes_f16),
+        jxl_image::BitDepth::FloatSample {
+            bits_per_sample: 16,
+            exp_bits: 5
+        },
+        "{what}F16 must announce binary16 — not binary32, and not integer"
+    );
+    assert_ne!(
+        bytes_f32, bytes_f16,
+        "{what}F16 and F32 must NOT be byte-identical: identical bytes means one \
+         of them is mislabelled (that was the #109 F0 bug)"
+    );
+}
+
+/// Closes FLOAT16 portion of #18: the encoder accepts the
+/// `PixelLayout::*LinearF16` variants and codes them identically to the
+/// equivalent f32 layout (at f16 precision).
+///
+/// **The assertion is on the FRAME payload, not the whole file** (changed
+/// 2026-09-08 by #109 F0). These two layouts declare different source
+/// formats, and `ImageMetadata.bit_depth` describes the caller's samples:
+/// libjxl signals binary16 as `(bits 16, exponent 5)` and binary32 as
+/// `(32, 8)` via `SetFloat16Samples` / `SetFloat32Samples`
+/// (`image_metadata.h:246,253`), and its public API copies the caller's
+/// declared values straight through (`encode.cc:1326`). So whole-file
+/// equality could only hold while one of the two was MISLABELLED — which is
+/// exactly the bug F0 fixed, and byte identity was its symptom.
+///
+/// The property actually worth pinning is that the f16 and f32 pixel paths
+/// agree, and that survives: measured on this fixture the payload after the
+/// file header is byte-identical and the only differing byte in the whole
+/// file is the BitDepth field. Asserting payload equality AND the two
+/// distinct labels is strictly stronger than the old whole-file compare — it
+/// still catches a pixel-path divergence, and now also catches a wrong
+/// label, which the old form could not.
 #[test]
 fn test_pixel_layout_f16_rgb_matches_f32() {
     use crate::f16::{f16_bits_to_f32, f32_to_f16_bits};
@@ -7519,10 +7593,7 @@ fn test_pixel_layout_f16_rgb_matches_f32() {
     let bytes_f16 = cfg
         .encode(f16_bytes, w, h, PixelLayout::RgbLinearF16)
         .unwrap();
-    assert_eq!(
-        bytes_f32, bytes_f16,
-        "RgbLinearF16 should produce same bytes as RgbLinearF32 for f16-representable input"
-    );
+    assert_float_pair_codes_identically(&bytes_f32, &bytes_f16, w, h, false, "RgbLinear");
 }
 
 #[test]
@@ -7549,7 +7620,7 @@ fn test_pixel_layout_f16_rgba_matches_f32() {
     let bytes_f16 = cfg
         .encode(f16_bytes, w, h, PixelLayout::RgbaLinearF16)
         .unwrap();
-    assert_eq!(bytes_f32, bytes_f16);
+    assert_float_pair_codes_identically(&bytes_f32, &bytes_f16, w, h, true, "RgbaLinear");
 }
 
 #[test]

@@ -148,6 +148,42 @@ impl PixelLayout {
         )
     }
 
+    /// The ORIGINAL sample format of this layout, as
+    /// `(float_sample, bits_per_sample, exponent_bits)`.
+    ///
+    /// This is what `ImageMetadata.bit_depth` is for: the depth the caller's
+    /// pixels came in at, which decoders use to choose a default output format.
+    /// It is *metadata* — on a lossy XYB frame it does not change how anything
+    /// is coded (libjxl says as much: "bits_per_sample is just metadata for XYB
+    /// images", `enc_modular.cc:742`) — but it is still expected to be right,
+    /// and libjxl fills it in from the caller's declared format regardless of
+    /// mode (`SetFloat32Samples` / `SetFloat16Samples`, `image_metadata.h`).
+    ///
+    /// Unlike [`Self::lossless_float_bit_depth`] this DOES cover the
+    /// transfer-function-tagged float layouts: they are lossy-only for
+    /// encoding purposes, but their samples are still binary32 and the header
+    /// should say so (imazen/jxl-encoder#109 F0).
+    pub const fn source_bit_depth(self) -> (bool, u32, u32) {
+        match self {
+            Self::RgbLinearF32
+            | Self::RgbaLinearF32
+            | Self::GrayLinearF32
+            | Self::GrayAlphaLinearF32
+            | Self::RgbPqF32
+            | Self::RgbaPqF32
+            | Self::RgbHlgF32
+            | Self::RgbaHlgF32
+            | Self::RgbBt709F32
+            | Self::RgbaBt709F32 => (true, 32, 8),
+            Self::RgbLinearF16
+            | Self::RgbaLinearF16
+            | Self::GrayLinearF16
+            | Self::GrayAlphaLinearF16 => (true, 16, 5),
+            _ if self.is_16bit() => (false, 16, 0),
+            _ => (false, 8, 0),
+        }
+    }
+
     /// For a floating-point layout, the codestream `BitDepth` it encodes to:
     /// `(bits_per_sample, exponent_bits)`. `None` for integer layouts.
     ///

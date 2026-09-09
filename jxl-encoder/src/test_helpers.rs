@@ -936,6 +936,68 @@ pub fn measure_file_header_len(
     writer.finish_with_padding().len()
 }
 
+/// `measure_file_header_len` for a FLOAT-sample header (#109 F0).
+///
+/// The integer variant models only `uint8`/`uint16`, so using it to split a
+/// float-input codestream would compute a header length for a header that was
+/// never written — the hash would then cover the wrong byte boundary and still
+/// look like a stable lock. Float `BitDepth` serializes differently (the
+/// `float_sample` flag plus an exponent field), so it needs its own measure.
+pub fn measure_file_header_len_float(
+    width: u32,
+    height: u32,
+    xyb_encoded: bool,
+    has_alpha: bool,
+    is_gray: bool,
+    bits_per_sample: u32,
+    exponent_bits: u32,
+) -> usize {
+    use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
+    use crate::headers::extra_channels::ExtraChannelInfo;
+    use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
+
+    let mut color_encoding = if is_gray {
+        ColorEncoding::gray()
+    } else {
+        ColorEncoding::srgb()
+    };
+    if xyb_encoded {
+        color_encoding.rendering_intent = RenderingIntent::Relative;
+    }
+
+    let extra_channels = if has_alpha {
+        vec![ExtraChannelInfo::alpha()]
+    } else {
+        Vec::new()
+    };
+
+    let file_header = FileHeader {
+        width,
+        height,
+        metadata: ImageMetadata {
+            bit_depth: BitDepth {
+                bits_per_sample,
+                exponent_bits,
+                float_sample: true,
+            },
+            color_encoding,
+            extra_channels,
+            xyb_encoded,
+            ..ImageMetadata::default()
+        },
+        upsampling_mode: None,
+        upsampling_factor: 1,
+        header_all_default_fast_paths: false,
+    };
+
+    let mut writer = crate::bit_writer::BitWriter::new();
+    file_header
+        .write(&mut writer)
+        .expect("file header serialization cannot fail in-memory");
+    writer.zero_pad_to_byte();
+    writer.finish_with_padding().len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -106,6 +106,104 @@ fn hash_bytes(data: &[u8]) -> u64 {
 // header/bit-writer internals it re-serialized are now `pub(crate)`.
 
 /// Hash both header and frame portions, returning (header_hash, frame_hash).
+/// `hash_split` + `assert_hashes` for a FLOAT-input lossy cell (#109 F0).
+///
+/// Kept separate from `assert_hashes` because the header length must be
+/// measured against a float `BitDepth`; reusing the integer measure would split
+/// at a boundary the encoder never wrote (see
+/// `measure_file_header_len_float`).
+#[allow(clippy::too_many_arguments)]
+fn assert_hashes_float(
+    name: &str,
+    data: &[u8],
+    width: u32,
+    height: u32,
+    has_alpha: bool,
+    is_gray: bool,
+    bits_per_sample: u32,
+    exponent_bits: u32,
+) {
+    let header_len = jxl_encoder::test_helpers::measure_file_header_len_float(
+        width,
+        height,
+        true, // every lossy VarDCT cell is xyb_encoded
+        has_alpha,
+        is_gray,
+        bits_per_sample,
+        exponent_bits,
+    );
+    assert!(
+        header_len <= data.len(),
+        "{name}: header_len {header_len} > data.len() {}",
+        data.len()
+    );
+
+    // Independent confirmation that the split point is REAL: jxl-oxide must
+    // agree the header announces this float format. Without this the length
+    // could be self-consistently wrong on both sides.
+    {
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(data))
+            .unwrap_or_else(|e| panic!("{name}: jxl-oxide header parse failed: {e:?}"));
+        let header = image.image_header();
+        assert_eq!(
+            (header.size.width, header.size.height),
+            (width, height),
+            "{name}: decoded dimensions"
+        );
+        assert_eq!(
+            header.metadata.bit_depth,
+            jxl_image::BitDepth::FloatSample {
+                bits_per_sample,
+                exp_bits: exponent_bits,
+            },
+            "{name}: signalled BitDepth must be the caller's float format"
+        );
+        image
+            .render_frame(0)
+            .unwrap_or_else(|e| panic!("{name}: jxl-oxide render failed: {e:?}"));
+    }
+
+    let (header, frame) = data.split_at(header_len);
+    let (hdr, frm) = (hash_bytes(header), hash_bytes(frame));
+
+    if is_update_mode() {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(SIDECAR_PATH)
+            .unwrap();
+        writeln!(f, "{name} {} {hdr:#018x} {frm:#018x}", data.len()).unwrap();
+        return;
+    }
+
+    // Mirror `assert_hashes`'s per-arch override lookup so a float cell can
+    // carry an `name@<arch>` line if one ever proves necessary.
+    let expected = load_expected();
+    let arch_key = format!("{name}@{}", std::env::consts::ARCH);
+    let variants = expected
+        .get(&arch_key)
+        .or_else(|| expected.get(name))
+        .unwrap_or_else(|| panic!("{name}: no expected hash in sidecar; run UPDATE_HASHES=1"));
+    let got = (data.len(), hdr, frm);
+    assert!(
+        variants
+            .iter()
+            .any(|e| (e.size, e.hdr_hash, e.frm_hash) == got),
+        "{name}: bytes moved. got (len={}, hdr={hdr:#018x}, frm={frm:#018x}), expected one of {:?}",
+        data.len(),
+        variants
+            .iter()
+            .map(|e| (
+                e.size,
+                format!("{:#018x}", e.hdr_hash),
+                format!("{:#018x}", e.frm_hash)
+            ))
+            .collect::<Vec<_>>()
+    );
+}
+
 fn hash_split(
     data: &[u8],
     width: u32,
@@ -1692,4 +1790,118 @@ fn lossless_bgr8() {
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Bgr8)
         .unwrap();
     assert_hashes("lossless_bgr8", &data, 32, 32, false, false, false, false);
+}
+
+// ---------------------------------------------------------------------------
+// #109 F0: LOSSY FLOAT-INPUT cells.
+//
+// Before 2026-09-08 the lossy path had NO lock cell with float input, which is
+// exactly why it could announce f32 content as 8-bit integer for as long as the
+// float layouts have existed. These cells lock both the header (where the
+// BitDepth lives) and the frame, at single-group AND multi-group sizes per the
+// multi-group directive in CLAUDE.md.
+// ---------------------------------------------------------------------------
+
+/// Deterministic float RGB in [0,1] — value noise, not a gradient, so the
+/// entropy coder sees a real distribution (see the no-synthetic-only rule).
+fn noise_rgb_f32(w: usize, h: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(w * h * 3 * 4);
+    let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+    for _ in 0..w * h * 3 {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let v = ((seed >> 40) as u32 as f32) / (u32::MAX >> 8) as f32;
+        out.extend_from_slice(&v.to_ne_bytes());
+    }
+    out
+}
+
+/// Same content as binary16, built by narrowing the f32 samples so the two
+/// cells differ only in declared precision.
+fn noise_rgb_f16(w: usize, h: usize) -> Vec<u8> {
+    let f32s = noise_rgb_f32(w, h);
+    let mut out = Vec::with_capacity(w * h * 3 * 2);
+    for c in f32s.as_chunks::<4>().0 {
+        let v = f32::from_ne_bytes(*c);
+        // Minimal f32 -> binary16 (round-to-nearest-even); inputs are in
+        // [0,1] so no infinity/subnormal handling is needed here.
+        let bits = v.to_bits();
+        let sign = ((bits >> 16) & 0x8000) as u16;
+        let exp = ((bits >> 23) & 0xff) as i32 - 127 + 15;
+        let half = if exp <= 0 {
+            sign
+        } else {
+            let mant = ((bits >> 13) & 0x3ff) as u16;
+            sign | ((exp as u16) << 10) | mant
+        };
+        out.extend_from_slice(&half.to_ne_bytes());
+    }
+    out
+}
+
+/// Single-group lossy VarDCT from binary32 input.
+#[test]
+fn lossy_sg_rgb_f32_64x64_noise_e7_d1() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .encode(&noise_rgb_f32(64, 64), 64, 64, PixelLayout::RgbLinearF32)
+        .unwrap();
+    assert_hashes_float(
+        "lossy_sg_rgb_f32_64x64_noise_e7_d1",
+        &data,
+        64,
+        64,
+        false,
+        false,
+        32,
+        8,
+    );
+}
+
+/// MULTI-GROUP lossy VarDCT from binary32 input (2x2 groups).
+#[test]
+fn lossy_mg_rgb_f32_512x512_noise_e7_d1() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .encode(
+            &noise_rgb_f32(512, 512),
+            512,
+            512,
+            PixelLayout::RgbLinearF32,
+        )
+        .unwrap();
+    assert_hashes_float(
+        "lossy_mg_rgb_f32_512x512_noise_e7_d1",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        32,
+        8,
+    );
+}
+
+/// Binary16 input — a DIFFERENT signalled BitDepth on the same content, so a
+/// regression that collapses both float layouts to one value moves this cell.
+#[test]
+fn lossy_mg_rgb_f16_512x512_noise_e7_d1() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(7)
+        .encode(
+            &noise_rgb_f16(512, 512),
+            512,
+            512,
+            PixelLayout::RgbLinearF16,
+        )
+        .unwrap();
+    assert_hashes_float(
+        "lossy_mg_rgb_f16_512x512_noise_e7_d1",
+        &data,
+        512,
+        512,
+        false,
+        false,
+        16,
+        5,
+    );
 }
