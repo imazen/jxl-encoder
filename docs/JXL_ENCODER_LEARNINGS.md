@@ -8,6 +8,7 @@ For current encoder status, divergences vs libjxl, and the live tuning surface, 
 - [`docs/LIBJXL_DIVERGENCES.md`](LIBJXL_DIVERGENCES.md) — Section A-G divergence table (where we differ from libjxl)
 - [`docs/TUNING_RELATIONS.md`](TUNING_RELATIONS.md) — VarDCT consts + their algebra
 - [`docs/HYPOTHESIS_LEDGER.md`](HYPOTHESIS_LEDGER.md) — what we believe + what's open
+- [`docs/STREAMING_CONTAINER_CONSTRAINTS.md`](STREAMING_CONTAINER_CONSTRAINTS.md) — decoder-side constraints on the streaming-output container shape (read before chunk 8 picks one)
 
 ---
 
