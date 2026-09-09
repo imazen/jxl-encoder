@@ -1,0 +1,10 @@
+harness: jxl-encoder/examples/lz77_hash_ab.rs with JXL_LZ77_STATS=1 JXL_LZ77_NO_EARLYOUT=1
+  (the early-out must be DISABLED or it returns before the summary line and biases the sample)
+command: cargo run --release --example lz77_hash_ab -- \
+    ~/work/zen/imazen-26-png-v3/png-v3 ~/tmp/acc_grid.tsv --images 40 --size 512
+corpus: imazen-26 png-v3, 40 images walked across all 21 strata (8-bit sources
+  widened <<8 so the grid is not restricted to the 4 photographic 16-bit strata)
+cells: 1200 greedy streams (u8/u16/f32 x lossless e8/e9 x lossy e9 per image)
+host: Mac aarch64
+what a row is: one apply_lz77_backref call; `ratio` is bit_decrease/threshold,
+  where the acceptance test is `bit_decrease > total_symbols*0.2 + 16`

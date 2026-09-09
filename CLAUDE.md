@@ -941,13 +941,62 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### ACTIVE 2026-09-09: `encode_planar_int` admits AFTER allocating, and sizes admission against a 16-bit layout (#95 chunk 4)
+
+[PROVEN by reading + probe `examples/planar_admission_probe.rs`] Three gaps in
+the wide-integer entry point, all in #95's un-started chunk 4:
+
+1. **Allocation precedes admission.** `encode_planar_int` calls
+   `ModularImage::from_planar_int` -- which materialises every channel -- then
+   builds the encoder and sets `enc.input_admitted = true` **by hand**,
+   skipping the push-time admission that the 2026-09-08 streaming fix added
+   precisely to stop allocate-then-check. `finish_inner` does still run
+   `encode_preflight_with_sectioned`, so there IS a cap; it just applies after
+   the whole image exists.
+2. **The admission is sized against a BORROWED 16-bit layout.** The path
+   deliberately borrows `Rgb16`/`Gray16` "so the pre-flight has something to
+   size against", and `finish_inner` passes `self.layout.bytes_per_pixel()`.
+   Measured at 2048x2048 RGB 31-bit: real input planes **50,331,648 B** vs the
+   admission's input term **25,165,824 B** -- a clean **2x under-count**.
+   `api.rs` already guards the tree-learning lift against this same borrowed-
+   layout hazard (see the `planar_bits.is_none()` check); the memory estimate
+   is not guarded.
+3. **Callers cannot tighten this path.** `LosslessConfig` exposes no
+   `with_limits` (lossless limits arrive via `EncodeRequest`), and
+   `encode_planar_int` bypasses `EncodeRequest`, so it always runs on defaults.
+
+**Severity: LATENT, not live -- do not overstate it.** The same probe measures
+peak RSS **413,220,864 B** against an `estimate_peak_memory_bytes` of
+**736,519,782 B**, so the total estimate is still conservative at this size: the
+generous per-pixel working-set term more than covers the under-counted input
+term. The under-count bites only where input bytes grow relative to working set
+(very large or very wide input), or if that per-pixel term is ever tightened.
+So this is a correctness gap to close on its own terms, not an OOM emergency.
+
+No fuzz target covers this path either (`fuzz/fuzz_targets/` has only
+`request_limits.rs` and `streaming_roundtrip.rs`), which is the rest of #95
+chunk 4.
+
 ### 2026-09-08: LZ77 greedy is REJECTED on ~95% of streams -- sound early-out shipped (#110)
 
 [PROVEN] Instrumenting the matcher (`JXL_LZ77_STATS=1`) shows the greedy pass is
 computed in full and then **discarded**: `apply_lz77_backref` returns `None`
-unless `bit_decrease > total_symbols * 0.2 + 16`, and that test **fails on 98.5 %
-of line-art streams and 92.7 % of photo streams**. It finds matches at ~87 % of
-positions and emits hundreds of match tokens, all thrown away. **That threshold
+unless `bit_decrease > total_symbols * 0.2 + 16`, and that test **fails on 86.7 % of
+streams** measured across the full content grid (1200 greedy streams, 40 images,
+all 21 imazen-26 strata -- `benchmarks/lz77_acceptance_grid_2026-09-09.tsv`).
+An earlier 8-image sample put this at 98.5 % line-art / 92.7 % photo; the wider
+grid is the number to quote. It finds matches at ~87 % of
+positions and emits hundreds of match tokens, all thrown away.
+
+**The distribution is strongly BIMODAL, and that is the useful part.** Of 1200
+streams, **877 (73.1 %) sit below 0.01x the threshold** -- they miss by two
+orders of magnitude -- while the 160 accepted ones clear it by a mean of 6.9x
+(max 78.5x). **Exactly ZERO streams land between 0.5x and 1.0x.** So the 0.2
+constant is nowhere near a decision boundary: it could move several-fold in
+either direction without changing a single verdict on this corpus. Two
+consequences: the early-out is cheap to trigger (most rejections are provable
+almost immediately, which is why it fires at position 0 so often), and there is
+no point tuning that threshold. **That threshold
 is at exact libjxl parity** (`enc_lz77.cc:165` and `:634`), so this is the cost
 model working as designed, not a divergence -- libjxl discards the same work.
 

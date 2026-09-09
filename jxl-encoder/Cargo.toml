@@ -3249,3 +3249,7 @@ path = "examples/lossless_float_parity.rs"
 [[example]]
 name = "lz77_hash_ab"
 path = "examples/lz77_hash_ab.rs"
+
+[[example]]
+name = "planar_admission_probe"
+path = "examples/planar_admission_probe.rs"

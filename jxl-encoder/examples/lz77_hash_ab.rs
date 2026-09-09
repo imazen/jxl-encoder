@@ -93,14 +93,32 @@ fn main() {
             continue;
         }
         let Ok(img) = image::open(&f) else { continue };
-        let Some(rgb16) = img.as_rgb16() else {
-            continue;
+        // Accept 8-bit sources too (widened by <<8) so the content grid covers
+        // every imazen-26 stratum, not just the four photographic ones that
+        // ship 16-bit HDR. For an ACCEPTANCE-RATE measurement what matters is
+        // token-stream structure, not the low 8 bits.
+        let (sw, sh, flat): (u32, u32, Vec<u16>) = if let Some(r) = img.as_rgb16() {
+            (
+                r.width(),
+                r.height(),
+                r.pixels().flat_map(|p| [p.0[0], p.0[1], p.0[2]]).collect(),
+            )
+        } else {
+            let r = img.to_rgb8();
+            (
+                r.width(),
+                r.height(),
+                r.pixels()
+                    .flat_map(|p| {
+                        [
+                            (p.0[0] as u16) << 8,
+                            (p.0[1] as u16) << 8,
+                            (p.0[2] as u16) << 8,
+                        ]
+                    })
+                    .collect(),
+            )
         };
-        let (sw, sh) = (rgb16.width(), rgb16.height());
-        let flat: Vec<u16> = rgb16
-            .pixels()
-            .flat_map(|p| [p.0[0], p.0[1], p.0[2]])
-            .collect();
         let Some(c16) = crop16(&flat, sw, sh, n) else {
             continue;
         };
