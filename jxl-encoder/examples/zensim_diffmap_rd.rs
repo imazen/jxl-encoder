@@ -108,8 +108,17 @@ fn decode_jxl_srgb_u8(
     w: u32,
     h: u32,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    // Reuse the primary decoder owner. Inputs in this harness are RGB8 sRGB;
-    // the encoder signals that color encoding, and jxl-rs returns its samples.
+    decode_canonical_srgb_u8(encoded, w, h, true)
+}
+
+// Retained only as the named historical decoder control in --decode-probe.
+fn decode_legacy_srgb_u8(
+    encoded: &[u8],
+    w: u32,
+    h: u32,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    // Historical upstream-jxl f32 output followed by plain rounding. This
+    // differs from canonical delivered U8 output and must not drive targeting.
     let values = decode::verify_jxl_rs(encoded, w as usize, h as usize);
     let n = w as usize * h as usize;
     let channels = values.len() / n;
@@ -120,6 +129,36 @@ fn decode_jxl_srgb_u8(
             rgb.extend_from_slice(&[sample(0); 3]);
         } else {
             rgb.extend_from_slice(&[sample(0), sample(1), sample(2)]);
+        }
+    }
+    Ok(rgb)
+}
+
+fn decode_canonical_srgb_u8(
+    encoded: &[u8],
+    w: u32,
+    h: u32,
+    dither: bool,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let image = zensim_decoder::decode_with(
+        encoded,
+        zensim_decoder::api::JxlDecoderOptions::default().with_dither_u8(dither),
+    )?;
+    if (image.width, image.height) != (w as usize, h as usize)
+        || !matches!(image.channels, 2 | 4)
+        || image.data.len() != image.width * image.height * image.channels
+    {
+        return Err("canonical decoder image shape mismatch".into());
+    }
+    let mut rgb = Vec::with_capacity(image.width * image.height * 3);
+    for pixel in image.data.chunks_exact(image.channels) {
+        if pixel[image.channels - 1] != 255 {
+            return Err("canonical zensim decoder requires opaque RGB8".into());
+        }
+        if image.channels == 2 {
+            rgb.extend_from_slice(&[pixel[0]; 3]);
+        } else {
+            rgb.extend_from_slice(&pixel[..3]);
         }
     }
     Ok(rgb)
@@ -315,6 +354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut arms: Vec<String> = vec!["baseline".into(), "attr".into(), "attr-stale".into()];
     let mut bake: Option<String> = None;
     let mut native_interventions: Option<PathBuf> = None;
+    let mut decode_probe: Option<PathBuf> = None;
     let mut intervention_regions: Option<String> = None;
     let mut native_fit: Option<PathBuf> = None;
     let mut native_eval: Option<PathBuf> = None;
@@ -366,10 +406,28 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 )
             }
             "--native-fit" => native_fit = args.next().map(PathBuf::from),
+            "--decode-probe" => {
+                decode_probe = Some(
+                    args.next()
+                        .expect("--decode-probe requires manifest")
+                        .into(),
+                );
+            }
             "--native-eval" => native_eval = args.next().map(PathBuf::from),
             "--native-calibration" => native_calibration = args.next().map(PathBuf::from),
             _ => {}
         }
+    }
+    if let Some(manifest) = decode_probe {
+        assert!(
+            native_fit.is_none()
+                && native_eval.is_none()
+                && native_interventions.is_none()
+                && native_calibration.is_none()
+                && intervention_regions.is_none(),
+            "decode probe is a separate operation"
+        );
+        return targeting::decode_probe(&manifest, &out_dir).map_err(Into::into);
     }
     assert!(
         intervention_regions.is_none() || native_interventions.is_some(),

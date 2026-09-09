@@ -3341,3 +3341,17 @@ The rebased release instrument is byte-identical to the measured binary, so no
 scientific result changed. The incoming lock, exact source comparison and
 rebase/build/check logs are retained in `REBASE_VERIFICATION.json` and the
 artifact packet. No force push or remote-history replacement was used.
+
+## Zensim delivered-pixel decoder repair (2026-09-08, after coarse policy)
+
+The private RD/targeting harness now uses canonical zenjxl-decoder 0.4 U8 with
+blue-noise dithering, through a separate dev dependency. The legacy jxl f32
+helper remains only in `--decode-probe`. Dithering accounts for nearly all of
+the previously measured 2.425-score-unit drift: 8,646,810 samples change by
+one code, versus 178 residual one-code differences between undithered decoders.
+All 336 historical/canonical hashes reproduce, and all 756 regenerated train
+outputs have exact independent pixel hashes and f32-reported D scores.
+Calibration CONFIG names this decoder era; older files refuse before encoding.
+[Registration and validation](benchmarks/zensim_decode_contract_2026-09-08.md).
+This repairs measurement consistency. The failed D model/allocation screen
+remains failed; decoder parity is not a spatial or model qualification pass.

@@ -18,10 +18,80 @@ use zensim_target::{
     CodecKind, SeedCurve, TargetSpec, codec::CodecBackend, target_search_with_backend_and_bake,
 };
 
-const CONFIG: &str = "jxl:distance0.01-25,e8,Zenjxl,no-auto-resampling,opaque-sRGB8;scalar:zero-updates;neutral:two-updates-H3gain0;active:two-updates-H3gain10;bin8;no-inner-target;formula1;native-png-v1";
+const CONFIG: &str = "jxl:distance0.01-25,e8,Zenjxl,no-auto-resampling,opaque-sRGB8;scalar:zero-updates;neutral:two-updates-H3gain0;active:two-updates-H3gain10;bin8;no-inner-target;formula1;native-png-v1;decode:zenjxl-decoder-0.4-u8-dither";
 const ARMS: [&str; 3] = ["scalar", "neutral", "active"];
 const FIXED: [f32; 5] = [-10., 30., 70., 90., 99.];
 const TOL: f32 = 1.;
+
+pub(super) fn decode_probe(manifest: &Path, out: &Path) -> Result<()> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Row {
+        bitstream: PathBuf,
+        sha256: String,
+        width: u32,
+        height: u32,
+        canonical_rgb_sha256: String,
+        legacy_rgb_sha256: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Probe {
+        schema: String,
+        expected_rows: usize,
+        rows: Vec<Row>,
+    }
+    let probe: Probe = serde_json::from_slice(&fs::read(manifest)?)?;
+    ensure!(
+        probe.schema == "zensim-jxl-decode-probe-v1"
+            && probe.expected_rows > 0
+            && probe.rows.len() == probe.expected_rows,
+        "decode probe schema/coverage"
+    );
+    ensure!(!out.exists(), "decode probe output must be fresh");
+    let mut seen = BTreeSet::new();
+    let mut results = Vec::new();
+    for row in probe.rows {
+        ensure!(
+            seen.insert(row.bitstream.clone()) && row.width > 0 && row.height > 0,
+            "duplicate probe or invalid geometry"
+        );
+        let bytes = fs::read(&row.bitstream)?;
+        ensure!(sha(&bytes) == row.sha256, "probe bitstream SHA mismatch");
+        let on = super::decode_canonical_srgb_u8(&bytes, row.width, row.height, true)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let off = super::decode_canonical_srgb_u8(&bytes, row.width, row.height, false)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let legacy = super::decode_legacy_srgb_u8(&bytes, row.width, row.height)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let delta = |a: &[u8], b: &[u8]| {
+            let mut count = [0_u64; 3];
+            let mut maximum = [0_u8; 3];
+            for (i, (&a, &b)) in a.iter().zip(b).enumerate() {
+                let d = a.abs_diff(b);
+                count[i % 3] += u64::from(d != 0);
+                maximum[i % 3] = maximum[i % 3].max(d);
+            }
+            json!({"changed_samples_by_channel":count, "max_abs_by_channel":maximum})
+        };
+        results.push(json!({"bitstream":row.bitstream,"sha256":row.sha256,
+            "width":row.width,"height":row.height,
+            "canonical_match":sha(&on)==row.canonical_rgb_sha256,
+            "legacy_match":sha(&legacy)==row.legacy_rgb_sha256,
+            "undithered_matches_legacy":off==legacy,
+            "dither_on_sha256":sha(&on),"dither_off_sha256":sha(&off),"legacy_sha256":sha(&legacy),
+            "dither_effect":delta(&on,&off),"decoder_effect_without_dither":delta(&off,&legacy)}));
+    }
+    fs::create_dir_all(out)?;
+    let report = json!({"schema":"zensim-jxl-decode-probe-result-v1",
+        "manifest_sha256":sha(&fs::read(manifest)?),"rows":results,"full_encodes":0,
+        "model_qualified":false});
+    fs::write(
+        out.join("decode-probe.json"),
+        serde_json::to_vec_pretty(&report)?,
+    )?;
+    Ok(())
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Source {

@@ -2126,7 +2126,8 @@ dependencies = [
  "zenbench",
  "zenforks-cubecl 0.10.1",
  "zenjpeg",
- "zenjxl-decoder",
+ "zenjxl-decoder 0.3.10",
+ "zenjxl-decoder 0.4.0",
  "zenpixels-convert",
  "zenpng",
  "zenpredict",
@@ -5005,8 +5006,37 @@ dependencies = [
  "paste",
  "smallvec",
  "thiserror",
- "zenjxl-decoder-macros",
- "zenjxl-decoder-simd",
+ "zenjxl-decoder-macros 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zenjxl-decoder-simd 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zenjxl-decoder"
+version = "0.4.0"
+dependencies = [
+ "aligned-vec",
+ "array-init",
+ "atomic_refcell",
+ "bytemuck",
+ "byteorder",
+ "enough",
+ "num-derive",
+ "num-traits",
+ "paste",
+ "smallvec",
+ "thiserror",
+ "whereat",
+ "zenjxl-decoder-macros 0.3.9",
+ "zenjxl-decoder-simd 0.3.9",
+]
+
+[[package]]
+name = "zenjxl-decoder-macros"
+version = "0.3.9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -5019,6 +5049,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "zenjxl-decoder-simd"
+version = "0.3.9"
+dependencies = [
+ "archmage",
+ "paste",
 ]
 
 [[package]]
@@ -5301,7 +5339,3 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
-
-[[patch.unused]]
-name = "zenjxl-decoder"
-version = "0.4.0"

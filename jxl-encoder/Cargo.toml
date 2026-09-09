@@ -442,6 +442,9 @@ zenjpeg = { version = "0.9.0", default-features = false, features = ["parallel"]
 # oracle in the JBRD round-trip conformance gate. The `jpeg` feature enables
 # `take_jpeg_reconstruction()`. Path-patched via workspace `[patch.crates-io]`.
 zenjxl-decoder = { version = "0.3.8", features = ["jpeg"] }
+# Canonical delivered RGB8 for the zensim experiment. Keep the older JBRD
+# oracle above distinct; this aliases the same 0.4 decoder used by zenjxl.
+zensim-decoder = { package = "zenjxl-decoder", path = "../../zenjxl-decoder/zenjxl-decoder" }
 # Microbench harness for the chunk-1 SplitTreeSamples primitive (issue #40).
 # zenbench is the workspace-standard benchmarking tool — interleaved sampling
 # and paired statistics give cleaner signal than criterion's isolated rounds.
