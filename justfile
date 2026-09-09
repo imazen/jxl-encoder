@@ -356,3 +356,16 @@ release-semver-json current baseline *args:
 # The baseline supplies the exact cell grid and expected bitstream hashes.
 resource-verify baseline inputs output commit:
     nice -n 19 python3 scripts/verify_resource_cells.py "{{baseline}}" "{{inputs}}" "{{output}}" --build-commit "{{commit}}"
+
+# Design D (docs/RFC_RD_MONOTONICITY.md): the Pareto-staircase invariant with
+# SSIMULACRA2 as the oracle. Asserts that WITHIN a reference-filter regime both
+# bytes and delivered SSIM2 are non-increasing as distance coarsens, records
+# filter-boundary crossings as declared discontinuities, and checks per-effort
+# wall against the committed baseline plus the ratio vs cjxl v0.12.
+rd-monotonicity corpus='~/work/zen/imazen-26-png-v3/png-v3' args='':
+    CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" \
+    DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" \
+    TMPDIR="{{env_var('HOME')}}/tmp" nice -n 19 cargo run -p jxl-encoder --release \
+      --example rd_monotonicity_gate -j 4 -- \
+      {{corpus}} benchmarks/rd_monotonicity_2026-09-09.tsv --images 4 --size 512 \
+      --efforts 3,5,7,9 {{args}}

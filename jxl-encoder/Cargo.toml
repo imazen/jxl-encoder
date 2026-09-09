@@ -3253,3 +3253,7 @@ path = "examples/lz77_hash_ab.rs"
 [[example]]
 name = "planar_admission_probe"
 path = "examples/planar_admission_probe.rs"
+
+[[example]]
+name = "rd_monotonicity_gate"
+path = "examples/rd_monotonicity_gate.rs"
