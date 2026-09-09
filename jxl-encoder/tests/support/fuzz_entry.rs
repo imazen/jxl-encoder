@@ -126,3 +126,62 @@ pub fn streaming_roundtrip(data: &[u8]) -> Option<Vec<u8>> {
         ),
     }
 }
+
+/// #95 chunk 4 / #109: the WIDE-INTEGER and FLOAT lossless surfaces.
+///
+/// Neither was reachable from a fuzz target before: `request_limits` drives the
+/// lossy `EncodeRequest` path and `streaming_roundtrip` the streaming one, so
+/// `encode_planar_int` (u32 planes, 1..=31 bits) and the lossless float layouts
+/// had no coverage at all — which is also where the admission gaps of #95
+/// chunk 4 live.
+///
+/// Contract under test: every malformed request returns an error rather than
+/// panicking, over-/under-wide samples are refused rather than truncated, and
+/// nothing allocates from unchecked dimensions.
+pub fn wide_lossless(data: &[u8]) {
+    if data.len() < 12 {
+        return;
+    }
+    // Keep dimensions small: this target is about REJECTION paths, and a fuzzer
+    // that spends its budget on 4 MP encodes finds nothing.
+    let width = u32::from(u16::from_le_bytes(data[0..2].try_into().unwrap()) % 67);
+    let height = u32::from(u16::from_le_bytes(data[2..4].try_into().unwrap()) % 67);
+    let bits = u32::from(data[4]); // deliberately includes 0 and >31
+    let is_gray = data[5] & 1 != 0;
+    let has_alpha = data[5] & 2 != 0;
+    let effort = data[6];
+
+    let cfg = LosslessConfig::new().with_effort(effort).with_threads(1);
+
+    // Plane count deliberately derived from the fuzzer, not from the flags, so
+    // mismatched plane counts exercise the validation rather than being
+    // impossible to express.
+    let declared = usize::from(data[7] % 6);
+    let n = (width as usize).saturating_mul(height as usize);
+    let seed = u32::from_le_bytes(data[8..12].try_into().unwrap());
+    let plane: Vec<u32> = (0..n)
+        .map(|i| (i as u32).wrapping_mul(2_654_435_761).wrapping_add(seed))
+        .collect();
+    let planes: Vec<&[u32]> = (0..declared).map(|_| plane.as_slice()).collect();
+    let _ = cfg.encode_planar_int(width, height, &planes, bits, is_gray, has_alpha);
+
+    // The lossless FLOAT layouts, same rejection contract.
+    let layout = [
+        PixelLayout::RgbLinearF32,
+        PixelLayout::RgbaLinearF32,
+        PixelLayout::GrayLinearF32,
+        PixelLayout::RgbLinearF16,
+        PixelLayout::GrayAlphaLinearF16,
+        PixelLayout::RgbPqF32,
+    ][usize::from(data[5] >> 2) % 6];
+    let bpp = layout.bytes_per_pixel();
+    let want = n.saturating_mul(bpp);
+    // Feed a buffer that is usually the WRONG length, so the length check runs.
+    let take = want.min(data.len().saturating_mul(3));
+    let mut buf = Vec::with_capacity(take);
+    while buf.len() < take {
+        buf.extend_from_slice(&data[12.min(data.len())..]);
+    }
+    buf.truncate(take);
+    let _ = cfg.encode_request(width, height, layout).encode(&buf);
+}

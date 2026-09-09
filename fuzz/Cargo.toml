@@ -105,3 +105,9 @@ zensim-gpu = { path = "../../zenmetrics/crates/zensim-gpu" }
 # zensim-gpu.
 zensim = { path = "../../zensim/zensim" }
 zenanalyze = { path = "../../zenanalyze" }
+
+[[bin]]
+name = "wide_lossless"
+path = "fuzz_targets/wide_lossless.rs"
+test = false
+doc = false

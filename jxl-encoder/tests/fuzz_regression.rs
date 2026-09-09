@@ -39,4 +39,25 @@ fn encoder_fuzz_entry_point_regressions() {
         seed.extend_from_slice(&[4, 255, 255, 255, 127, 255, 1, 0]);
         entry::request_limits(&seed);
     }
+
+    // #95 chunk 4 / #109: the wide-integer and lossless-float surfaces, which
+    // had no fuzz coverage at all. Walk the sample widths that bracket the
+    // modular limits (0 and 32 are invalid, 1 and 31 are the ends of the legal
+    // range) against every plane-count/flag combination the entry derives.
+    for bits in [0u8, 1, 8, 16, 31, 32, 255] {
+        for flags in 0u8..8 {
+            for planes in 0u8..6 {
+                let mut seed = Vec::new();
+                seed.extend_from_slice(&17u16.to_le_bytes()); // width
+                seed.extend_from_slice(&13u16.to_le_bytes()); // height
+                seed.push(bits);
+                seed.push(flags);
+                seed.push(7); // effort
+                seed.push(planes);
+                seed.extend_from_slice(&0xA5A5_1234u32.to_le_bytes());
+                seed.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+                entry::wide_lossless(&seed);
+            }
+        }
+    }
 }

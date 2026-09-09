@@ -941,7 +941,7 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### ACTIVE 2026-09-09: `encode_planar_int` admits AFTER allocating, and sizes admission against a 16-bit layout (#95 chunk 4)
+### RESOLVED 2026-09-09 (2 of 3): `encode_planar_int` admits AFTER allocating, and sizes admission against a 16-bit layout (#95 chunk 4)
 
 [PROVEN by reading + probe `examples/planar_admission_probe.rs`] Three gaps in
 the wide-integer entry point, all in #95's un-started chunk 4:
@@ -973,9 +973,23 @@ term. The under-count bites only where input bytes grow relative to working set
 (very large or very wide input), or if that per-pixel term is ever tightened.
 So this is a correctness gap to close on its own terms, not an OOM emergency.
 
-No fuzz target covers this path either (`fuzz/fuzz_targets/` has only
-`request_limits.rs` and `streaming_roundtrip.rs`), which is the rest of #95
-chunk 4.
+**FIXED (1) and (2), plus the fuzz gap.** `LosslessEncoder::admission_input_bpp`
+charges the real u32 width whenever `planar_bits` is set and is used by BOTH the
+`push_rows` and `finish_inner` pre-flights; `LosslessEncoder::admit_input` runs
+the checks with no allocation and `encode_planar_int` calls it BEFORE
+`from_planar_int`. New `wide_lossless` fuzz target + 336 stable regression seeds
+cover the planar and lossless-float surfaces, which had none.
+
+**(3) is NOT fixed and needs an API decision**: `LosslessConfig` still exposes no
+`with_limits`, so this path always runs on defaults. That is a public API
+addition, which needs owner approval.
+
+**Test-coverage caveat, stated rather than papered over**: the two regressions
+pin the gate's behaviour and the charged width (both mutation-verified), but NOT
+the call ORDER -- deleting `enc.admit_input()?` leaves them green. Pinning the
+order needs a request the default 8 GiB cap actually refuses (~61 MP, ~732 MB of
+input planes), or the `with_limits` surface from (3). Until then the ordering is
+verified by reading and by `examples/planar_admission_probe.rs`.
 
 ### 2026-09-08: LZ77 greedy is REJECTED on ~95% of streams -- sound early-out shipped (#110)
 
@@ -991,12 +1005,31 @@ positions and emits hundreds of match tokens, all thrown away.
 **The distribution is strongly BIMODAL, and that is the useful part.** Of 1200
 streams, **877 (73.1 %) sit below 0.01x the threshold** -- they miss by two
 orders of magnitude -- while the 160 accepted ones clear it by a mean of 6.9x
-(max 78.5x). **Exactly ZERO streams land between 0.5x and 1.0x.** So the 0.2
-constant is nowhere near a decision boundary: it could move several-fold in
-either direction without changing a single verdict on this corpus. Two
-consequences: the early-out is cheap to trigger (most rejections are provable
-almost immediately, which is why it fires at position 0 so often), and there is
-no point tuning that threshold. **That threshold
+(max 78.5x). Zero streams land between 0.5x and 1.0x **on that corpus** -- but that
+gap is NOT universal and an earlier version of this entry wrongly generalised
+it: the synthetic float line-art set has **6 of 132 streams (4.5 %) in exactly
+that band**. So the gap is a property of imazen-26 photo/document content, not
+of the cost model.
+
+**The threshold DOES cost runtime, and mostly not through the early-out**
+(measured 2x2, `JXL_LZ77_ACCEPT_SCALE` x early-out, interleaved, 3 reps, min per
+arm, on the float-synth corpus):
+
+| scale | wall vs 1.0 (early-out on) | wall vs 1.0 (off) | bytes vs 1.0 |
+|---|---|---|---|
+| 0.5 | **1.377** | 1.362 | **0.971** |
+| 1.0 | 1.000 | 1.000 | 1.000 |
+| 2.0 | 0.949 | 0.957 | 1.0029 |
+| 10.0 | 0.927 | 0.956 | 1.0029 |
+
+Halving the bar buys **2.9 % smaller files for 37 % more wall**; doubling it
+saves ~5 % wall for +0.29 % bytes, and past 2x nothing further changes (2.0 and
+10.0 are byte-identical). The effect survives with the early-out DISABLED, so
+the dominant cost is **the downstream work an ACCEPTED stream causes** -- the
+optimal/Viterbi path plus entropy coding with LZ77 params -- not the length of
+the greedy walk. That makes 0.2 a genuine rate/time dial rather than an inert
+constant, which is the opposite of what the bimodality alone suggested. It is at
+libjxl parity, so moving it is a deliberate divergence, not a free win. **That threshold
 is at exact libjxl parity** (`enc_lz77.cc:165` and `:634`), so this is the cost
 model working as designed, not a divergence -- libjxl discards the same work.
 

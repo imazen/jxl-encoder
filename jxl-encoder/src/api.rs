@@ -9001,6 +9001,52 @@ pub struct LosslessEncoder {
 }
 
 impl LosslessEncoder {
+    /// Bytes per pixel of the CALLER'S input, for memory admission.
+    ///
+    /// The planar wide-integer path borrows a 16-bit `PixelLayout` so the rest
+    /// of the encoder has a correctly shaped stand-in, but its real input is
+    /// `u32` planes. Sizing admission from the borrowed layout under-counts the
+    /// input term by 2x -- measured at 2048^2 RGB 31-bit, 50,331,648 B of real
+    /// input against 25,165,824 B charged. `planar_bits` is the flag that says
+    /// the layout is a stand-in; the tree-learning lift already guards on it
+    /// for exactly this reason. (#95 chunk 4)
+    pub(crate) fn admission_input_bpp(&self) -> u8 {
+        match self.planar_bits {
+            Some(_) => {
+                let channels =
+                    usize::from(!self.is_grayscale) * 2 + 1 + usize::from(self.has_alpha);
+                (channels * core::mem::size_of::<u32>()).min(u8::MAX as usize) as u8
+            }
+            None => self.layout.bytes_per_pixel() as u8,
+        }
+    }
+
+    /// Run the admission checks WITHOUT allocating anything.
+    ///
+    /// `encode_planar_int` calls this before `ModularImage::from_planar_int`
+    /// materialises the channels, so an over-budget request is refused before
+    /// the large allocation instead of after it -- the shape the 2026-09-08
+    /// streaming-admission fix removed elsewhere. `finish_inner` still re-runs
+    /// the full pre-flight for the budget and thread choice it needs; this is
+    /// only the early gate. (#95 chunk 4)
+    pub(crate) fn admit_input(&mut self) -> Result<()> {
+        self.cfg.validate().map_err(at_from)?;
+        self.check_input_limits()?;
+        encode_preflight_with_sectioned(
+            self.width,
+            self.height,
+            self.admission_input_bpp(),
+            self.layout.has_alpha(),
+            true,
+            self.cfg.effort,
+            self.cfg.threads,
+            false,
+            self.limits.as_ref(),
+            self.cfg.sectioned_trees(),
+        )?;
+        Ok(())
+    }
+
     /// Attach an ICC color profile.
     pub fn with_icc_profile(mut self, data: &[u8]) -> Self {
         self.icc_profile = Some(data.to_vec());
@@ -9187,7 +9233,7 @@ impl LosslessEncoder {
             let preflight = encode_preflight_with_sectioned(
                 self.width,
                 self.height,
-                self.layout.bytes_per_pixel() as u8,
+                self.admission_input_bpp(),
                 self.layout.has_alpha(),
                 true,
                 self.cfg.effort,
@@ -9458,7 +9504,7 @@ impl LosslessEncoder {
         let preflight = encode_preflight_with_sectioned(
             self.width,
             self.height,
-            self.layout.bytes_per_pixel() as u8,
+            self.admission_input_bpp(),
             self.layout.has_alpha(),
             true,
             cfg.effort,
@@ -9818,16 +9864,6 @@ impl LosslessConfig {
                 ),
             }));
         }
-        let image = crate::modular::channel::ModularImage::from_planar_int(
-            planes,
-            width as usize,
-            height as usize,
-            bits_per_sample,
-            is_grayscale,
-            has_alpha,
-        )
-        .map_err(|e| at(EncodeError::from(e)))?;
-
         // Borrow the same-shaped 16-bit layout so the pre-flight and limit
         // checks have something to size against; `planar_bits` carries the real
         // width and overrides everywhere it matters. See that field's doc.
@@ -9839,6 +9875,25 @@ impl LosslessConfig {
         };
         let mut enc = self.encoder(width, height, layout)?;
         enc.planar_bits = Some(bits_per_sample);
+        enc.is_grayscale = is_grayscale;
+        enc.has_alpha = has_alpha;
+
+        // ADMIT BEFORE ALLOCATING: `from_planar_int` materialises every
+        // channel, so running it first would repeat the allocate-then-check
+        // shape the 2026-09-08 streaming fix removed. `planar_bits` is set
+        // above so the estimate is charged at the real u32 input width.
+        // (#95 chunk 4)
+        enc.admit_input()?;
+
+        let image = crate::modular::channel::ModularImage::from_planar_int(
+            planes,
+            width as usize,
+            height as usize,
+            bits_per_sample,
+            is_grayscale,
+            has_alpha,
+        )
+        .map_err(|e| at(EncodeError::from(e)))?;
         enc.channels = image.channels;
         enc.bit_depth = image.bit_depth;
         enc.is_grayscale = image.is_grayscale;
@@ -10284,3 +10339,87 @@ use ingest::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+/// #95 chunk 4 regressions for the planar wide-integer admission.
+///
+/// **What these pin, and what they do NOT.** They pin the gate's behaviour
+/// (`admit_input` refuses an over-budget request without allocating channels)
+/// and the charged input width (`admission_input_bpp` returns the u32 width
+/// when the layout is a planar stand-in). Both are mutation-verified.
+///
+/// They do NOT pin the CALL ORDER inside `encode_planar_int` -- deleting its
+/// `enc.admit_input()?` line leaves these green, because they drive the gate
+/// directly. Pinning the order would need a request the default 8 GiB lossless
+/// cap actually refuses, i.e. ~61 MP, whose input planes alone are ~732 MB --
+/// too large for a unit test, and `LosslessConfig` exposes no `with_limits` to
+/// tighten the cap instead (that is the third, unfixed gap). The ordering is
+/// verified by reading and by `examples/planar_admission_probe.rs`; treat it as
+/// unpinned until the limits surface exists.
+mod planar_admission_tests_95 {
+    use super::*;
+
+    // ── #95 chunk 4: planar wide-integer admission ──────────────────────────────
+
+    /// The planar path borrows a 16-bit `PixelLayout` as a stand-in, so admission
+    /// must NOT size the input from that layout: the real input is `u32` planes.
+    /// Measured under-count before this fix, at 2048x2048 RGB 31-bit: 50,331,648 B
+    /// of real input charged as 25,165,824 B.
+    #[test]
+    fn planar_admission_charges_the_real_u32_input_width() {
+        let cfg = LosslessConfig::new();
+        for (gray, alpha, layout, want_planar, want_borrowed) in [
+            (false, false, PixelLayout::Rgb16, 12u8, 6u8),
+            (false, true, PixelLayout::Rgba16, 16, 8),
+            (true, false, PixelLayout::Gray16, 4, 2),
+            (true, true, PixelLayout::GrayAlpha16, 8, 4),
+        ] {
+            let mut enc = cfg.encoder(64, 64, layout).unwrap();
+            // Without planar_bits it is an ordinary 16-bit encode: borrowed width.
+            assert_eq!(
+                enc.admission_input_bpp(),
+                want_borrowed,
+                "{layout:?}: non-planar must charge the layout's own width"
+            );
+            // With planar_bits set, the layout is a stand-in and the real input is u32.
+            enc.planar_bits = Some(31);
+            enc.is_grayscale = gray;
+            enc.has_alpha = alpha;
+            assert_eq!(
+                enc.admission_input_bpp(),
+                want_planar,
+                "{layout:?}: planar must charge 4 bytes per sample, not 2"
+            );
+        }
+    }
+
+    /// `encode_planar_int` must refuse an over-budget request BEFORE
+    /// `from_planar_int` materialises the channels. Exercised through the gate
+    /// itself, since the entry point builds its own encoder.
+    #[test]
+    fn planar_admit_input_rejects_before_any_allocation() {
+        let cfg = LosslessConfig::new();
+        let mut enc = cfg.encoder(2048, 2048, PixelLayout::Rgb16).unwrap();
+        enc.planar_bits = Some(31);
+        enc.limits = Some(crate::api::Limits::default().with_max_memory_bytes(8 * 1024 * 1024));
+
+        // The gate must fail, and it must do so without the encoder having taken
+        // any channel storage.
+        let err = enc
+            .admit_input()
+            .expect_err("8 MB cap must refuse a 2048^2 encode");
+        assert!(
+            enc.channels.is_empty(),
+            "admission refused but channels were already allocated: {err}"
+        );
+
+        // And a generous cap admits the same request, so the refusal is the budget
+        // talking and not a permanent failure.
+        let mut ok = cfg.encoder(2048, 2048, PixelLayout::Rgb16).unwrap();
+        ok.planar_bits = Some(31);
+        ok.limits =
+            Some(crate::api::Limits::default().with_max_memory_bytes(8 * 1024 * 1024 * 1024));
+        ok.admit_input()
+            .expect("8 GiB cap must admit a 2048^2 encode");
+    }
+}

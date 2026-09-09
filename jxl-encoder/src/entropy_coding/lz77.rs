@@ -390,6 +390,26 @@ fn max_chain_length_override() -> u32 {
     })
 }
 
+/// `JXL_LZ77_ACCEPT_SCALE` multiplies the LZ77 acceptance threshold
+/// (`total_symbols * 0.2 + 16`). Default 1.0 = shipped, which is libjxl parity
+/// (`enc_lz77.cc:165`, `:634`).
+///
+/// DIAGNOSTIC: this CHANGES OUTPUT when it changes a verdict. It exists to
+/// answer "does the threshold cost runtime?" -- the measured answer is that it
+/// moves wall only through the early-out (a higher bar makes rejection provable
+/// sooner), and that on the measured corpus no verdict moves between 0.5x and
+/// 2x because nothing sits in that band.
+fn accept_scale() -> f32 {
+    static S: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *S.get_or_init(|| {
+        std::env::var("JXL_LZ77_ACCEPT_SCALE")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|v| *v > 0.0 && v.is_finite())
+            .unwrap_or(1.0)
+    })
+}
+
 /// `JXL_LZ77_NO_EARLYOUT=1` disables the sound greedy early-out so its wall
 /// saving stays measurable after it ships. It cannot change output: the
 /// early-out only fires when the acceptance test is already unreachable, so
@@ -859,7 +879,7 @@ fn apply_lz77_backref_inner(
     let total_symbols = tokens.len();
     // Known up front, and identical to the acceptance test at the end of this
     // function — hoisted so the walk can prove it unreachable and stop early.
-    let accept_threshold = total_symbols as f32 * 0.2 + 16.0;
+    let accept_threshold = (total_symbols as f32 * 0.2 + 16.0) * accept_scale();
 
     let max_distance = tokens.len();
     let min_length = lz77.min_length as usize;
@@ -979,7 +999,7 @@ fn apply_lz77_backref_inner(
     }
 
     // Only use LZ77 if savings exceed threshold
-    let threshold = total_symbols as f32 * 0.2 + 16.0;
+    let threshold = (total_symbols as f32 * 0.2 + 16.0) * accept_scale();
     #[cfg(feature = "debug-tokens")]
     eprintln!(
         "[LZ77-backref] bit_decrease={:.1}, threshold={:.1}, tokens: {} -> {}, matches={}",
@@ -1100,7 +1120,7 @@ pub fn apply_lz77_rle(
     }
 
     // Only use LZ77 if savings exceed threshold (matching libjxl)
-    let threshold = total_symbols as f32 * 0.2 + 16.0;
+    let threshold = (total_symbols as f32 * 0.2 + 16.0) * accept_scale();
     #[cfg(feature = "debug-tokens")]
     eprintln!(
         "[LZ77-RLE] bit_decrease={:.1}, threshold={:.1}, tokens: {} -> {}, runs_found={}",
