@@ -963,8 +963,11 @@ Two things worth acting on:
   coefficient orders change only how the SAME quantised coefficients are entropy
   coded. Decoded pixels are bit-identical; only the byte count moves. Lossless is
   unaffected (e4/e3 = 1.0000) because `custom_orders` is VarDCT-only.
-  So e3 is a dominated operating point on the lossy path -- it costs the same
-  pixels for more bytes.
+  **But "dominated" is the wrong word once TIME is counted**: e3 is ~5 % faster,
+  so on the three axes that matter (bytes, quality, wall) e3 is the cheaper
+  point and e4 is the smaller one. 0.28 % bytes for 5 % wall is a real trade at
+  the fast end of the ladder, not a free upgrade -- an earlier version of this
+  entry called e3 dominated, which overstates it.
 - **e7 is dominated by e5 at d=1**: MORE bytes (0.9892 vs 0.9860) at the same
   quality for 1.5x the wall. The margin is 0.32 %, just under the effort gate's
   0.5 % slack, which is why the gate does not flag it -- worth knowing the slack
