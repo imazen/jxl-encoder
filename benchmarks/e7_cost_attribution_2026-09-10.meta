@@ -54,3 +54,34 @@ phase breakdown (plots 7078, `__JXL_ENC_PHASE_TIMING=1`, e5 arm):
   patches-scan: steps12-done at 0.3ms / bfs-done at 9.9ms / dfs-done at 10.6ms
   encode_inner: total=57.6 patches=11.6 acstrat=20.9 entropy=14.7
   -> the BFS pass is ~90 % of the scan; steps 1-2 are 0.3 ms.
+
+FINDING 5 (added after the cjxl cross-check) — the e7 BYTE rise on plots is
+INHERITED, not ours. `chromacity_adjustment` is the arm responsible: at e7 on
+the plots crop it costs +11.6 % bytes (96,873 with vs 86,824 without), which
+makes our e7 output LARGER than our e5 output (86,922).
+
+Our gate is at parity. `EffortProfile::chromacity_adjustment = effort >= 7`
+matches libjxl `enc_frame.cc:685`, which runs `pixel_stats.Calc` only under
+`cparams.speed_tier <= SpeedTier::kSquirrel` — kSquirrel is effort 7 in the
+inverted enum. And skipping the call entirely at e<7 is equivalent to libjxl's
+zero-stats path: `b_qm_scale = 2 + 0` is already the default 2, and
+`x_qm_scale.max(2 + 0)` cannot lower a distance-ladder value that is >= 3.
+
+cjxl v0.12 measured on the SAME 1024^2 centre crops (metadata stripped, see the
+iCCP trap in CLAUDE.md), bytes e5 -> e7:
+
+  image      d=1                    d=4
+  plots      89,670 -> 96,529 +7.6%   40,947 -> 43,882 +7.2%
+  webshot    83,976 -> 85,645 +2.0%   39,823 -> 39,147 -1.7%
+  nature    121,474 -> 123,040 +1.3%  38,427 -> 40,908 +6.5%
+  brochure  162,549 -> 162,139 -0.3%  97,940 -> 44,873 -54.2%
+
+So the reference also spends more bytes at e7 than e5 on plots, in both
+distance cells. Ours is +11.4 % where cjxl is +7.6 %, i.e. the same behaviour
+slightly stronger, not a divergence. Do NOT file this as an effort-monotonicity
+bug or gate `chromacity_adjustment` off to "fix" it without a matched-quality
+measurement — at a fixed distance it is buying finer chroma, the same shape as
+the #103 qf-seed displacement.
+
+For scale on the same cells we are at or ahead of cjxl on bytes: plots e5
+86,922 vs 89,670 (-3.1 %), e7 96,873 vs 96,529 (+0.4 %).
