@@ -1,0 +1,41 @@
+harness: scripts/ladder_vs_cjxl.py --cjxl-flags ours (two cjxl-rs builds
+         alternated inside each repeat, leading arm flipped per repeat)
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10; min of 7; threads=8
+change: `vardct::adaptive_quant::per_block_modulations` strip-parallelised over
+        block rows (8 block rows per task).
+
+WHY: on the e5 thread ladder `quant_field` was the Amdahl limiter — at 2048^2
+nature it scaled only 1.18x from t=1 to t=8 (32.6 -> 27.7 ms) while `acstrat`
+scaled 5.0x, leaving it ~20 % of an 8-thread encode.
+
+Inside the phase (temporary instrumentation, nature 2048^2 e5, since removed):
+
+  step             t=1      t=8 before   t=8 after
+  pre_erosion      2.48        2.44        2.44     sequential
+  fuzzy_erosion    7.92        7.84        7.84     sequential  <- now the limiter
+  masking_loop     0.03        0.01        0.01
+  per_block_mod    5.12        5.12        0.79     6.5x
+  extract          0.02        0.01        0.01
+  PHASE TOTAL     32.6        27.7        23.0
+
+The phase total exceeds the sum of these steps because the encoder's
+`quant_field` timing window also covers `compute_mask1x1` and the pre-scale
+work, which are already parallel.
+
+PROCESS WALL is a much smaller effect than the 6.5x on the step, and should be
+quoted as such: median after/before over 6 images at threads=8 is
+e3 0.999x, e5 0.982x, e7 0.981x, e9 1.002x — about 2 % at e5/e7, nothing at e3
+(quant_field is skipped there) or e9 (dominated by the perceptual loop).
+
+BIT-IDENTICAL BY CONSTRUCTION, and checked: every output aq_map[iy][ix] is a
+function of its own prior value plus a READ-ONLY 8x8 window of the XYB planes,
+so no block observes another block's write and no float op changes order.
+`rect_y0_blocks` only shifts the pixel coordinates the kernel reads.
+  - 24/24 A/B cells byte-equal.
+  - 84 cells (7 images x efforts {3,5,7,9} x d {0.5,1,4}) equal across
+    threads=1, threads=8 AND the pre-change build.
+  - 68/68 hash locks, 5/5 Libjxl byte locks, full release suite green.
+
+NEXT LIMITER in this phase is `fuzzy_erosion` at 7.8 ms sequential. Not attempted
+here — it is a stencil over the pre-erosion map and would need its halo checked
+before any row split can claim bit-exactness.

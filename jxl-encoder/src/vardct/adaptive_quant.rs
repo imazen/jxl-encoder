@@ -376,6 +376,52 @@ fn per_block_modulations(
     aq_map: &mut [f32],
     aq_map_w: usize,
 ) {
+    // Strip-parallel over BLOCK ROWS, and bit-identical to the single call:
+    // every output `aq_map[iy][ix]` is a function of its own prior value plus a
+    // read-only 8x8 window of the XYB planes, so no block observes another
+    // block's write and no float operation changes order or association.
+    // `rect_y0_blocks` only shifts the PIXEL coordinates the kernel reads, so a
+    // strip starting at block row `r` passes `rect_y0_blocks + r` and its own
+    // slice of `aq_map` — which the kernel indexes from zero.
+    //
+    // Worth doing because this is the Amdahl limiter on the lossy e5 thread
+    // ladder: at 2048^2 the whole `quant_field` phase scaled only 1.18x from
+    // t=1 to t=8 (32.6 -> 27.7 ms) while `acstrat` scaled 5.0x, leaving it ~20 %
+    // of an 8-thread encode (`benchmarks/ladder_vs_cjxl_2026-09-10.meta`).
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        /// Block rows per task. 8 block rows = 64 pixel rows, enough to amortise
+        /// the task hand-off against ~64 x rect_w_blocks 8x8-window evaluations.
+        const STRIP_BLOCK_ROWS: usize = 8;
+        let rows_touched = rect_h_blocks * aq_map_w;
+        if rect_h_blocks > STRIP_BLOCK_ROWS
+            && crate::parallel::effective_threads() > 1
+            && aq_map.len() >= rows_touched
+        {
+            aq_map[..rows_touched]
+                .par_chunks_mut(STRIP_BLOCK_ROWS * aq_map_w)
+                .enumerate()
+                .for_each(|(si, strip)| {
+                    jxl_simd::per_block_modulations(
+                        xyb_x,
+                        xyb_y,
+                        xyb_b,
+                        stride,
+                        butteraugli_target,
+                        scale,
+                        rect_x0_blocks,
+                        rect_y0_blocks + si * STRIP_BLOCK_ROWS,
+                        rect_w_blocks,
+                        strip.len() / aq_map_w,
+                        strip,
+                        aq_map_w,
+                    );
+                });
+            return;
+        }
+    }
+
     jxl_simd::per_block_modulations(
         xyb_x,
         xyb_y,
