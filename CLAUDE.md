@@ -2879,6 +2879,27 @@ measurement at equal or better coverage.
   `parallel_map_result` collects in index order. **e3 0.891x, e5 0.952x,
   e7 0.966x, e9 0.982x** at t=8, best cell 0.793x.
 
+- **e5 at threads=8 is now the loosest band on the ladder, and `acstrat` is NOT
+  its lever (MEASURED 2026-09-10).** After the cube-root change it sits at 1.30x
+  cjxl v0.12 at 2048² / 1.11x at 1024², against 0.85-0.89x at threads=1 — so it
+  is a SCALING problem, not per-pixel cost. Phase scaling at 2048², t=1 -> t=8:
+  `acstrat` 5.14x (44 % of the t=8 encode — the largest phase and also the
+  best-scaling one), `xform` 5.38x, `cfl1` 6.14x, but **`entropy` 2.29x and
+  `quant_field` 2.08x**, together 37.4 ms of a 106 ms encode. At `acstrat`'s
+  scaling those two would cost ~15 ms, which is about the whole gap to cjxl on
+  that cell. Three named fully-serial blocks carry most of it:
+  `cluster_histograms` (6.8 ms, 1.00x, 6930 histograms -> 67 — Phase A of the
+  ANS build is already parallel, Phase B is 95 % clustering),
+  `compute_pre_erosion` (2.44 ms, 1.00x — the one step of
+  `compute_quant_field_float` never strip-parallelised, and structurally
+  strip-parallel: each output row consumes 4 input rows plus a 1-row halo), and
+  ~8.3 ms inside `quant_field` not yet attributed. All three are scaling fixes
+  rather than algorithm changes, so all three should be byte-identical.
+  Full record, method, target list, and the TWO harness traps that produced
+  convincing fake numbers first (the profile example ignored thread count
+  entirely; `parallel` is not a jxl-encoder default feature):
+  [benchmarks/e5_t8_phase_scaling_2026-09-10.md](benchmarks/e5_t8_phase_scaling_2026-09-10.md).
+
 - **XYB forward transform: the cube root is 91 % of it, and ours is the
   expensive kind — OWNER DECISION, not taken (2026-09-10).**
   `benchmarks/e3_profile_2026-09-10.md`. `convert_rows_to_xyb` is the single

@@ -7810,13 +7810,13 @@ impl<'a> EncodeRequest<'a> {
         #[cfg(not(feature = "learned-admission"))]
         let learned_subband_bad: Option<bool> = None;
         #[cfg(feature = "__env_var_diagnostics")]
-        if std::env::var_os("JXL_PROXY_DEBUG").is_some() {
-            if let Some(p) = shared_proxies.as_ref() {
-                eprintln!(
-                    "[proxies] m3={:.6} fcbr={:.6} ed={:.6} lv={:.3}",
-                    p.m3_colourfulness, p.flat_color_block_ratio, p.edge_density, p.luma_var
-                );
-            }
+        if std::env::var_os("JXL_PROXY_DEBUG").is_some()
+            && let Some(p) = shared_proxies.as_ref()
+        {
+            eprintln!(
+                "[proxies] m3={:.6} fcbr={:.6} ed={:.6} lv={:.3}",
+                p.m3_colourfulness, p.flat_color_block_ratio, p.edge_density, p.luma_var
+            );
         }
         let auto_content_class = if class_consumed
             && (w as u64) * (h as u64) >= crate::api::content_detect::W44_164_MIN_PIXELS
