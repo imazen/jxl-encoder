@@ -846,28 +846,43 @@ pub(crate) fn encode_dc_group(
     let num_passes = ac_built_codes.len();
     let mut ac_sections_per_pass: Vec<Vec<Vec<u8>>> = Vec::with_capacity(num_passes);
 
+    // The HF groups of a DC group are encoded in PARALLEL, in the same order
+    // the nested loop produced.
+    //
+    // Byte-identical: `encode_ac_group_section` is a pure function of its
+    // arguments — read-only token slices, the shared built code, and the
+    // group's own index — and returns that section's bytes. Nothing is shared
+    // mutably between iterations, and `parallel_map_result` collects in index
+    // order, so the concatenation is unchanged.
+    //
+    // This is the only parallelism available here at ordinary sizes. The outer
+    // `parallel_map_result(num_dc_groups, ..)` at the call site is the only
+    // other one, and a DC group is 2048x2048 px — so a 1024^2 OR 2048^2 image
+    // has exactly ONE, and `pass2_write` measured 1.0x from threads=1 to
+    // threads=8 (16.2 -> 16.8 ms at 2048^2 e5) before this.
+    let hf_rows = hf_y_end.saturating_sub(hf_y_start);
+    let hf_cols = hf_x_end.saturating_sub(hf_x_start);
+    let n_hf = hf_rows * hf_cols;
     for pass in 0..num_passes {
         let is_last_pass = pass == num_passes - 1;
-        let mut pass_sections: Vec<Vec<u8>> = Vec::new();
-        for hf_gy in hf_y_start..hf_y_end {
-            for hf_gx in hf_x_start..hf_x_end {
-                let group_idx = hf_gy * xsize_groups + hf_gx;
-                let section = encode_ac_group_section(
-                    &ac_section_tokens_per_pass[pass][group_idx],
-                    &ac_built_codes[pass],
-                    ac_lz77_params_per_pass[pass].as_ref(),
-                    extras,
-                    is_last_pass,
-                    group_idx,
-                    xsize_groups,
-                    width,
-                    height,
-                    extras_quantizers,
-                    modular_hf_extras,
-                )?;
-                pass_sections.push(section);
-            }
-        }
+        let pass_sections: Vec<Vec<u8>> = crate::parallel::parallel_map_result(n_hf, |i| {
+            let hf_gy = hf_y_start + i / hf_cols;
+            let hf_gx = hf_x_start + i % hf_cols;
+            let group_idx = hf_gy * xsize_groups + hf_gx;
+            encode_ac_group_section(
+                &ac_section_tokens_per_pass[pass][group_idx],
+                &ac_built_codes[pass],
+                ac_lz77_params_per_pass[pass].as_ref(),
+                extras,
+                is_last_pass,
+                group_idx,
+                xsize_groups,
+                width,
+                height,
+                extras_quantizers,
+                modular_hf_extras,
+            )
+        })?;
         ac_sections_per_pass.push(pass_sections);
     }
 

@@ -1,0 +1,35 @@
+harness: scripts/ladder_vs_cjxl.py --cjxl-flags ours (two cjxl-rs builds
+         alternated inside each repeat, leading arm flipped per repeat)
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10; min of 7; threads=8
+change: the HF groups of a DC group are encoded in parallel in
+        `vardct::bitstream::encode_dc_group` (was a sequential nested loop).
+baseline: the build that already has the value-freq skip and both
+          quant_field splits.
+
+WHY: `pass2_write` measured 16.2 -> 16.8 ms from threads=1 to threads=8 at
+2048^2 e5 — no scaling at all. The reason is structural: pass 2 parallelises
+over DC GROUPS at the call site, and a DC group is 2048x2048 px, so a 1024^2
+image AND a 2048^2 image each have exactly ONE. Every HF group inside it was
+written sequentially.
+
+Median after/before, threads=8:
+  e3 0.891x   e5 0.952x   e7 0.966x   e9 0.982x
+Best cells: brochure_2048 e3 0.793x, brochure e3 0.839x, nature_2048 e3 0.871x.
+e3 gains most because entropy coding is the largest share of its encode; e9 is
+dominated by the perceptual loop, so pass 2 is a small slice there.
+
+BIT-IDENTICAL BY CONSTRUCTION: `encode_ac_group_section` is a pure function of
+read-only token slices, the shared built code and the group's own index, and
+returns that section's bytes. No iteration shares mutable state, and
+`parallel_map_result` collects in index order, so the section concatenation is
+unchanged.
+
+Checked: 24/24 A/B cells byte-equal; 96 cells (8 images x efforts {3,5,7,9} x
+d {0.5,1,4}) equal across threads=1, threads=8 AND the pre-change build;
+68/68 hash locks; 5/5 Libjxl byte locks; full release suite and workspace
+all-targets clippy green.
+
+NOTE on nesting: this sits inside the existing
+`parallel_map_result(num_dc_groups, ..)`. That is deliberate — with one DC
+group the outer map has a single item and the inner one is the only
+parallelism available; with several, rayon's work-stealing composes.
