@@ -54,10 +54,28 @@ Together with the other checks landed today the byte-identity evidence is:
   - `just rd-regression` green (2/2, all cells within thresholds)
   - fuzz regression seeds green
 
-CAVEAT: one host, one architecture (aarch64 macOS). Byte identity is
-platform-independent by construction for these changes (no float arithmetic was
-reordered — the two strip-parallel fixes preserve per-element operation order,
-and the two group-loop fixes only reorder INDEPENDENT work collected in index
-order), but that is an argument, not a measurement, on other architectures. CI's
-native x64 / Windows-ARM / i686 test jobs are the measurement, and they were
-cancelled by supersession on every push of this series until the last one.
+CROSS-PLATFORM: the local grids above are one host, one architecture (aarch64
+macOS). Byte identity is platform-independent by construction for these changes
+— no float arithmetic was reordered; the two strip-parallel fixes preserve
+per-element operation order and the two group-loop fixes only reorder
+INDEPENDENT work collected in index order — but that is an argument, not a
+measurement, elsewhere. **The measurement is CI run 34482089038** on `fd5c7ba5`
+(the commit carrying all six fixes), which is the first run of this series NOT
+cancelled by supersession. Every correctness job passed:
+
+  Build native (Linux)          success
+  Build native (macOS)          success
+  Build native (Windows ARM)    success
+  Build x64 (ubuntu-latest)     success
+  Build x64 (windows-latest)    success
+  Cross (i686-unknown-linux-gnu)      success
+  Cross (armv7-unknown-linux-gnueabihf) success
+  Expert tests (__expert)       success
+  Clippy (aarch64) / Clippy (x64) / Format / MSRV / WASM x2   success
+
+So the encoder'"'"'s own test suites ran green on x86-64 Linux, x86-64 Windows,
+ARM64 Windows and ARM64 macOS, plus i686 and armv7 cross-builds. **Process note
+worth keeping**: every earlier push in this series cancelled its predecessor'"'"'s
+run, and the jobs that always finished first were the fast lint/format/WASM ones
+— so a tally of "N success, 0 failures" mid-series looked reassuring while the
+native TEST jobs had never once completed. Check job NAMES, not just counts.
