@@ -1,0 +1,48 @@
+harness: scripts/ladder_vs_cjxl.py --cjxl-flags ours (two cjxl-rs builds
+         alternated inside each repeat, leading arm flipped per repeat)
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10; min of 5
+after: current main (all six 2026-09-10 wall fixes)
+before: the pre-session build
+
+WHY THIS GRID EXISTS: every other measurement and byte-equality check today used
+images <= 2048x2048, which is EXACTLY ONE DC group. Two of the fixes add a
+`parallel_map` INSIDE the existing `parallel_map_result(num_dc_groups, ..)`, so
+the nested case — more than one DC group — was entirely untested. If rayon
+nesting were going to over-subscribe or change results, this is where it would.
+
+Shapes: nature crops at 2560x2560, 3000x3000 and **2500x3100** (deliberately not
+a multiple of the 2048 DC-group dimension, so the DC-group grid has partial edge
+rows and columns) — each 2x2 DC groups.
+
+BYTES: 9/9 (image, effort) cells byte-identical to the pre-session build, and
+18/18 A/B cells byte-identical. Thread determinism separately checked at
+t = {1, 2, 8}: no mismatches.
+
+WALL, after/before (<1.00 = faster):
+
+  image              e  thr   after   before   ratio
+  nature_2560        3    1     188      222   0.846
+  nature_2560        3    8      95      117   0.815
+  nature_2560        5    1     737      777   0.948
+  nature_2560        5    8     213      256   0.832
+  nature_2560        7    1    1564     1596   0.980
+  nature_2560        7    8     341      382   0.893
+  nature_3000        3    1     265      308   0.860
+  nature_3000        3    8     128      150   0.853
+  nature_3000        5    1    1010     1063   0.950
+  nature_3000        5    8     285      339   0.841
+  nature_3000        7    1    2139     2181   0.981
+  nature_3000        7    8     461      512   0.901
+  nature_2500x3100   3    1     232      270   0.859
+  nature_2500x3100   3    8     114      136   0.836
+  nature_2500x3100   5    1     878      926   0.948
+  nature_2500x3100   5    8     250      301   0.829
+  nature_2500x3100   7    1    1870     1912   0.978
+  nature_2500x3100   7    8     410      459   0.892
+
+  median: e3 0.859 (t1) / 0.836 (t8);  e5 0.948 / 0.832;  e7 0.980 / 0.893
+
+No nesting penalty. The t=8 gains are LARGER here (0.83-0.89x) than on the
+one-DC-group cells (0.95-0.99x for the same two fixes), which is what more total
+parallel work should look like. Note the ratios are against the pre-session
+build, so they carry all six fixes, not just the two nested ones.
