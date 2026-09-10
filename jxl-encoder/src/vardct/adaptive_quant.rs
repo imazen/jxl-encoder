@@ -63,6 +63,72 @@ fn compute_pre_erosion(
     jxl_simd::compute_pre_erosion(xyb_y, width, height, tile_x0, tile_y0, tile_x1, tile_y1)
 }
 
+/// One `fuzzy_erosion` output contribution: the weighted sum of the four
+/// smallest of the 3x3 neighbourhood around `(x, y)` in `from`.
+///
+/// Split out so the sequential walk and the row-parallel walk cannot drift —
+/// the whole bit-identity argument for the parallel path rests on both running
+/// exactly this arithmetic in exactly this order.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn fuzzy_erosion_cell(
+    from: &[f32],
+    from_w: usize,
+    x: usize,
+    xm1: usize,
+    xp1: usize,
+    y: usize,
+    ym1: usize,
+    yp1: usize,
+    k_mul: &[f32; 4],
+) -> f32 {
+    // Get all 9 neighbors
+    let center = from[y * from_w + x];
+    let left = from[y * from_w + xm1];
+    let right = from[y * from_w + xp1];
+    let top_left = from[ym1 * from_w + xm1];
+    let top = from[ym1 * from_w + x];
+    let top_right = from[ym1 * from_w + xp1];
+    let bot_left = from[yp1 * from_w + xm1];
+    let bot = from[yp1 * from_w + x];
+    let bot_right = from[yp1 * from_w + xp1];
+
+    // Find smallest 4 from 9 values
+    let mut min0 = center;
+    let mut min1 = left;
+    let mut min2 = right;
+    let mut min3 = top_left;
+
+    // Sort first 4
+    if min0 > min1 {
+        core::mem::swap(&mut min0, &mut min1);
+    }
+    if min0 > min2 {
+        core::mem::swap(&mut min0, &mut min2);
+    }
+    if min0 > min3 {
+        core::mem::swap(&mut min0, &mut min3);
+    }
+    if min1 > min2 {
+        core::mem::swap(&mut min1, &mut min2);
+    }
+    if min1 > min3 {
+        core::mem::swap(&mut min1, &mut min3);
+    }
+    if min2 > min3 {
+        core::mem::swap(&mut min2, &mut min3);
+    }
+
+    // Insert remaining 5 values
+    store_min4(top, &mut min0, &mut min1, &mut min2, &mut min3);
+    store_min4(top_right, &mut min0, &mut min1, &mut min2, &mut min3);
+    store_min4(bot_left, &mut min0, &mut min1, &mut min2, &mut min3);
+    store_min4(bot, &mut min0, &mut min1, &mut min2, &mut min3);
+    store_min4(bot_right, &mut min0, &mut min1, &mut min2, &mut min3);
+
+    k_mul[0] * min0 + k_mul[1] * min1 + k_mul[2] * min2 + k_mul[3] * min3
+}
+
 /// FuzzyErosion: 3×3 min-4 weighted sum, then 2x downsample.
 /// Full libjxl version: distance-dependent weights.
 #[allow(clippy::too_many_arguments)]
@@ -101,6 +167,53 @@ fn fuzzy_erosion(
         *k *= K_TOTAL / norm_sum;
     }
 
+    // Strip-parallel over OUTPUT rows, bit-identical to the sequential walk.
+    //
+    // Output cell `out[oy][ox]` is touched by exactly four input cells —
+    // (2oy, 2ox), (2oy, 2ox+1), (2oy+1, 2ox), (2oy+1, 2ox+1) — and the
+    // sequential loop visits them in that order (assign on the even/even one,
+    // `+=` on the other three). Giving output row `oy` both of its input rows
+    // keeps that order exactly, and `from` is read-only, so the 3x3 stencil
+    // (which reaches one row above and below) is unaffected by the split.
+    //
+    // Guarded on `region_h` being even: with an odd `region_h` the sequential
+    // loop's last iteration computes `oy = fy / 2 == out_h` and indexes past
+    // `out`. That is pre-existing behaviour (a panic) and this path must not
+    // silently turn it into a dropped row, so odd heights take the old loop.
+    //
+    // `fuzzy_erosion` is the largest sequential step left in the `quant_field`
+    // phase: 7.8 ms of a 23 ms phase at threads=8 on 2048^2
+    // (`benchmarks/per_block_modulations_parallel_ab_2026-09-10.meta`).
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        if region_h.is_multiple_of(2) && out_h > 1 && crate::parallel::effective_threads() > 1 {
+            out.par_chunks_mut(out_w)
+                .enumerate()
+                .for_each(|(oy, out_row)| {
+                    for fy in (oy * 2)..(oy * 2 + 2) {
+                        let y = fy + from_y0;
+                        let ym1 = if y >= 1 { y - 1 } else { y };
+                        let yp1 = if y + 1 < from_h { y + 1 } else { y };
+                        for fx in 0..region_w {
+                            let x = fx + from_x0;
+                            let xm1 = if x >= 1 { x - 1 } else { x };
+                            let xp1 = if x + 1 < from_w { x + 1 } else { x };
+                            let v =
+                                fuzzy_erosion_cell(from, from_w, x, xm1, xp1, y, ym1, yp1, &k_mul);
+                            let ox = fx / 2;
+                            if fx % 2 == 0 && fy % 2 == 0 {
+                                out_row[ox] = v;
+                            } else {
+                                out_row[ox] += v;
+                            }
+                        }
+                    }
+                });
+            return (out, out_w, out_h);
+        }
+    }
+
     for fy in 0..region_h {
         let y = fy + from_y0;
         let ym1 = if y >= 1 { y - 1 } else { y };
@@ -111,51 +224,7 @@ fn fuzzy_erosion(
             let xm1 = if x >= 1 { x - 1 } else { x };
             let xp1 = if x + 1 < from_w { x + 1 } else { x };
 
-            // Get all 9 neighbors
-            let center = from[y * from_w + x];
-            let left = from[y * from_w + xm1];
-            let right = from[y * from_w + xp1];
-            let top_left = from[ym1 * from_w + xm1];
-            let top = from[ym1 * from_w + x];
-            let top_right = from[ym1 * from_w + xp1];
-            let bot_left = from[yp1 * from_w + xm1];
-            let bot = from[yp1 * from_w + x];
-            let bot_right = from[yp1 * from_w + xp1];
-
-            // Find smallest 4 from 9 values
-            let mut min0 = center;
-            let mut min1 = left;
-            let mut min2 = right;
-            let mut min3 = top_left;
-
-            // Sort first 4
-            if min0 > min1 {
-                core::mem::swap(&mut min0, &mut min1);
-            }
-            if min0 > min2 {
-                core::mem::swap(&mut min0, &mut min2);
-            }
-            if min0 > min3 {
-                core::mem::swap(&mut min0, &mut min3);
-            }
-            if min1 > min2 {
-                core::mem::swap(&mut min1, &mut min2);
-            }
-            if min1 > min3 {
-                core::mem::swap(&mut min1, &mut min3);
-            }
-            if min2 > min3 {
-                core::mem::swap(&mut min2, &mut min3);
-            }
-
-            // Insert remaining 5 values
-            store_min4(top, &mut min0, &mut min1, &mut min2, &mut min3);
-            store_min4(top_right, &mut min0, &mut min1, &mut min2, &mut min3);
-            store_min4(bot_left, &mut min0, &mut min1, &mut min2, &mut min3);
-            store_min4(bot, &mut min0, &mut min1, &mut min2, &mut min3);
-            store_min4(bot_right, &mut min0, &mut min1, &mut min2, &mut min3);
-
-            let v = k_mul[0] * min0 + k_mul[1] * min1 + k_mul[2] * min2 + k_mul[3] * min3;
+            let v = fuzzy_erosion_cell(from, from_w, x, xm1, xp1, y, ym1, yp1, &k_mul);
 
             let ox = fx / 2;
             let oy = fy / 2;

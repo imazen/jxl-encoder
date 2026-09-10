@@ -1,0 +1,32 @@
+harness: scripts/ladder_vs_cjxl.py --cjxl-flags ours (two cjxl-rs builds
+         alternated inside each repeat, leading arm flipped per repeat)
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10; min of 7; threads=8
+change: `vardct::adaptive_quant::fuzzy_erosion` strip-parallelised over OUTPUT
+        rows. Baseline is the build that already has the
+        `per_block_modulations` split (per_block_modulations_parallel_ab).
+
+It was the largest sequential step left in the `quant_field` phase — 7.8 ms of a
+23 ms phase at threads=8 on 2048^2, unchanged between t=1 and t=8.
+
+Median after/before, threads=8: **e5 0.982x, e7 0.988x**. Composed with the
+`per_block_modulations` split (0.982x / 0.981x) the phase's two fixes together
+are about 0.965x at e5 and 0.969x at e7 on 8 threads — small, and stated small.
+
+BIT-IDENTICAL BY CONSTRUCTION: output cell `out[oy][ox]` is touched by exactly
+four input cells — (2oy,2ox), (2oy,2ox+1), (2oy+1,2ox), (2oy+1,2ox+1) — and the
+sequential loop visits them in that order (assign on even/even, `+=` on the
+other three). Giving output row `oy` both of its input rows preserves that order
+exactly, and `from` is read-only so the 3x3 stencil's reach above and below the
+strip is unaffected. The cell arithmetic was factored into one
+`fuzzy_erosion_cell` helper used by BOTH walks, so they cannot drift.
+
+GUARD: the parallel path is taken only when `region_h` is even. With an odd
+`region_h` the sequential loop's last iteration computes `oy = fy / 2 == out_h`
+and indexes past `out` — a pre-existing panic. The parallel walk would silently
+drop that row instead, which is a different behaviour, so odd heights keep the
+old loop. This is NOT a fix for that latent bug and does not claim to be.
+
+Checked: 60 cells (5 images x efforts {3,5,7,9} x d {0.5,1,4}) byte-equal across
+threads=1, threads=8 and the pre-change build; 12/12 A/B cells byte-equal;
+68/68 hash locks; 5/5 Libjxl byte locks; full release suite and workspace
+all-targets clippy green.
