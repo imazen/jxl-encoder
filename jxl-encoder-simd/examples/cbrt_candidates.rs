@@ -16,6 +16,10 @@
 //! * `mt_lowp` / `mt_midp` — `magetypes`' own `cbrt_lowp` / `cbrt_midp`
 //!   (Kahan bit-hack + 1 or 2 Halley steps; 1 resp. 2 divisions).
 //!   `cbrt_lowp`'s own docs name perceptual colour (Oklab/XYB) as its target.
+//! * `cbrt_lowp, vector bit-hack` — `cbrt_lowp` with the Kahan initial guess
+//!   computed in integer vector lanes (exact `divu3`) rather than through
+//!   `to_array()`/`from_array()`. Prices that scalar round trip; it must be
+//!   BIT-IDENTICAL to `mt_lowp`, which the max-ULP column shows directly.
 //! * `libjxl` — a transcription of libjxl `base/fast_math-inl.h`
 //!   `CubeRootAndAdd`: Newton on the INVERSE cube root using only multiplies
 //!   and FMAs, with the initial guess done in INTEGER VECTOR LANES. No
@@ -86,15 +90,16 @@ fn main() {
     let reference: Vec<f64> = src.iter().map(|&x| f64::from(x).cbrt()).collect();
 
     type Arm = (&'static str, fn(&[f32], &mut [f32]));
-    let arms: [Arm; 5] = [
+    let arms: [Arm; 6] = [
         ("ours_f64 (shipped cbrt_fast)", run_ours),
         ("magetypes cbrt_lowp", run_mt_lowp),
+        ("cbrt_lowp, vector bit-hack", run_mt_lowp_vecguess),
         ("magetypes cbrt_midp", run_mt_midp),
         ("libjxl CubeRootAndAdd", run_libjxl),
         ("std cbrtf (scalar)", run_std),
     ];
 
-    let mut best = [f64::INFINITY; 5];
+    let mut best = [f64::INFINITY; 6];
     for rep in 0..reps {
         for k in 0..arms.len() {
             let a = (k + rep) % arms.len();
@@ -154,6 +159,9 @@ fn run_std(src: &[f32], out: &mut [f32]) {
 
 fn run_mt_lowp(src: &[f32], out: &mut [f32]) {
     jxl_encoder_simd::bench_cbrt::cbrt_lowp_batch(src, out);
+}
+fn run_mt_lowp_vecguess(src: &[f32], out: &mut [f32]) {
+    jxl_encoder_simd::bench_cbrt::cbrt_lowp_vecguess_batch(src, out);
 }
 fn run_mt_midp(src: &[f32], out: &mut [f32]) {
     jxl_encoder_simd::bench_cbrt::cbrt_midp_batch(src, out);

@@ -1,0 +1,117 @@
+# Hand-written NEON forward-XYB kernel — the measurement behind shipping it
+#
+# host      : Apple silicon, macOS 25.5.0 (aarch64), single-threaded
+# repo      : jxl-encoder, workspace ~/work/zen/jxl-encoder--highbitdepth
+# base      : c7de490df405 ("zen XYB cube root is cbrt_lowp")
+# date      : 2026-09-10
+#
+# WHAT SHIPPED
+#   `forward_xyb_impl`'s `#[magetypes(...)]` list gained `-neon` (and `-scalar`,
+#   for a separate reason recorded below), and `forward_xyb_impl_neon` is now
+#   hand-written in jxl-encoder-simd/src/xyb.rs. The `incant!` call site is
+#   unchanged — the `<fn>_neon` naming convention is what makes a hand-written
+#   tier a drop-in.
+#
+# THE HEADLINE, STATED HONESTLY
+#   On the path zen actually ships (`XybCubeRoot::LowP`) the hand-written kernel
+#   is a WASH: median 0.989 over 10 runs, spread 0.962-1.014. It is a real win
+#   only on `MidP` (median 0.936) and a wash on `Libjxl` (0.986). So this landed
+#   because it was asked for and because it is non-regressing everywhere and
+#   bit-identical — NOT because it made the encoder faster.
+#
+#   Data: xyb_neon_handwritten_2026-09-10.tsv (30 rows = 10 runs x 3 cube roots).
+#
+# METHOD, AND WHY THE FIRST METHOD WAS NOT GOOD ENOUGH
+#   Comparing two BINARIES (build A, build B, alternate process invocations,
+#   min of N) could not resolve this effect. Four arms in the harness are
+#   untouched by the change and serve as controls; across runs they drifted
+#   0.957-1.025, i.e. a +-4 % noise floor, while the effect is 1-6 %. Two runs
+#   of the same comparison reported the shipped LowP path at 0.991 and at 0.914.
+#   Neither number was usable.
+#
+#   The measurement that IS usable compiles BOTH bodies into ONE binary and
+#   calls them back to back inside a single process, alternating which goes
+#   first on each repeat. Same page cache, same thermal state, same allocator.
+#   That is where the numbers in the .tsv come from.
+#
+#   Reproducing it needs a temporary scaffold, because the two bodies cannot
+#   normally coexist (they claim the same symbol). In jxl-encoder-simd/src/xyb.rs:
+#     1. `-neon` -> `neon` in `forward_xyb_impl`'s `#[magetypes(...)]` list, so
+#        the generated tier exists again as `forward_xyb_impl_neon`;
+#     2. rename the hand-written fn to `forward_xyb_impl_hand_neon`;
+#     3. add two `#[doc(hidden)] pub fn` wrappers that `NeonToken::summon()` and
+#        call each directly, re-export them from lib.rs;
+#     4. an example that times both, alternating order, and diffs the outputs
+#        bitwise.
+#   The scaffold was deliberately NOT committed: keeping it would mean carrying
+#   a second copy of the shared kernel body forever to benchmark against.
+#
+# TWO CANDIDATES MEASURED AND REJECTED
+#   1. NATIVE 128-BIT WIDTH. The first hand-written version worked in f32x4 —
+#      NEON's natural width — on the theory that the generated tier's f32x8 is a
+#      2x f32x4 polyfill and therefore buys nothing. That theory is WRONG: the
+#      128-bit body ran 1.24-1.39x SLOWER (an effect far outside the +-4 % floor
+#      of even the weak method). `cbrt_lowp`/`cbrt_midp` build their Kahan guess
+#      through `to_array()`/`from_array()`, and LLVM SLP-vectorises that window
+#      better at 8 elements than at 4. Width is not free to change.
+#   2. VECTORISING THE KAHAN BIT-HACK. `cbrt_lowp` computes its initial guess as
+#      `f32::from_bits((bits / 3) + MAGIC)` through a scalar round trip, which
+#      looks like the obvious thing to remove. Doing the `/ 3` in integer vector
+#      lanes (Hacker's Delight `divu3`, verified EXACT against `n / 3` over the
+#      whole u32 range — exactness is mandatory, the result is a bit pattern)
+#      costs 0.36 ms/Mvalue against `cbrt_lowp`'s 0.29. LLVM's version of the
+#      scalar path is cheaper than 14 vector ops. Kept as
+#      `bench_cbrt::cbrt_lowp_vecguess_batch` so the null stays checkable:
+#        cargo run --release -p jxl-encoder-simd --example cbrt_candidates
+#
+# WHY THERE IS NO HEADROOM LEFT HERE
+#   The whole transform at 1 Mpx costs 1.19 ms on LowP, of which 0.40 ms is the
+#   matrix+bias with the cube root skipped entirely. The remaining ~0.8 ms is
+#   3 Mvalues of `cbrt_lowp`, and `cbrt_lowp` standalone measures 0.29 ms/Mvalue
+#   = 0.87 ms for 3 M. The kernel is already AT the standalone cube-root
+#   throughput: there is no XYB-specific overhead left to remove, and the
+#   cube root itself is the fastest of the four candidates measured on
+#   2026-09-10 (cbrt_candidates_2026-09-10.*). Further work on this kernel needs
+#   a cheaper cube root, not a better loop.
+#
+# A PRE-EXISTING BUG THE WORK SURFACED — `_scalar` TIER WAS NOT BIT-IDENTICAL
+#   The new test `forward_xyb_dispatch_is_bit_identical_to_scalar` compares the
+#   dispatched kernel against `forward_xyb_scalar` BITWISE (the pre-existing
+#   parity test allows 16 ULP and so could not see this) across all 25 archmage
+#   token permutations. It failed on exactly one: everything disabled, i.e. the
+#   `_scalar` tier — for ALL THREE cube roots and every n >= 8.
+#
+#   Cause: magetypes' scalar backend implements `mul_add` as `a * b + c`
+#   (simd/impls/scalar.rs), NOT fused, while `forward_xyb_scalar` and every
+#   vector backend use a genuinely fused multiply-add. The opsin matrix multiply
+#   alone was enough to diverge; the cube root was never the issue.
+#
+#   Consequence: on a host that cannot summon a vector token — pre-AVX2 x86_64,
+#   i686, any architecture magetypes has no backend for — the encoder emitted
+#   DIFFERENT BYTES than on one that can. hash_lock_expected.txt is a single
+#   committed sidecar, so it could only ever have been correct on one of them.
+#   CI never caught it: every CI host summons AVX2 or NEON, and the i686 job is
+#   cross-BUILD only.
+#
+#   Verified PRE-EXISTING, not introduced here: the same test dropped into the
+#   parent commit's xyb.rs fails identically (14 sizes x 3 cube roots).
+#
+#   Fixed the same way: `-scalar` in the tier list, and `forward_xyb_impl_scalar`
+#   hand-written as a delegation to `forward_xyb_scalar`. There is now exactly
+#   one scalar implementation instead of two that happened to be close. No
+#   shipping bytes move — no measured platform ever reached that tier.
+#
+#   NOT INVESTIGATED, and worth someone's time: this is a property of magetypes'
+#   scalar backend, so EVERY `#[magetypes(...)]` kernel in this crate that uses
+#   `mul_add` has the same divergence. Only forward-XYB was checked. The general
+#   fix belongs in magetypes (a sibling repo — not touched from here).
+#
+# VALIDATION AT THE COMMIT
+#   hash locks                     63/63 byte-identical
+#   Libjxl strategy byte lock      5/5 byte-identical
+#   jxl-encoder-simd               189/189
+#   jxl-encoder `it`               527/527 (CJXL_PATH/DJXL_PATH set to
+#                                  .ci-libjxl/tools; without them 17 tests
+#                                  panic in the version guard, which is the
+#                                  guard working, not a failure)
+#   clippy -p jxl-encoder-simd --all-targets -D warnings   clean

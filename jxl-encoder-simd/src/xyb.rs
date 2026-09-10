@@ -236,10 +236,17 @@ pub(crate) fn cbrt_libjxl_scalar(x: f32) -> f32 {
     r2 * x
 }
 
-// --- Scalar fallbacks (also reused by the magetypes `_scalar` tier internally) ---
+// --- Scalar fallbacks ---
 
-/// Scalar forward XYB. `cbrt` selects the same cube root the vector tiers use,
-/// so the tail of a vectorised run and the `_scalar` tier agree lane for lane.
+/// Scalar forward XYB — the tail of every vectorised tier, AND (since
+/// 2026-09-10) the whole of the `_scalar` tier, which `forward_xyb_impl_scalar`
+/// now delegates to rather than reimplementing.
+///
+/// That delegation is what makes "the tail and the `_scalar` tier agree lane
+/// for lane" true. It used to be merely asserted: the generated `_scalar` tier
+/// was a second implementation via magetypes' scalar backend, whose `mul_add`
+/// is `a * b + c` and therefore NOT fused, so it disagreed with this function
+/// and with every vector tier. See `forward_xyb_impl_scalar`.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn forward_xyb_scalar(
@@ -405,28 +412,30 @@ pub fn inverse_xyb_scalar(
 // magetypes-consolidated SIMD implementation — forward (RGB → XYB)
 // ============================================================================
 //
-// Single body, one source of truth. The `#[magetypes(...)]` macro generates
-// one `#[arcane]`-wrapped variant per listed tier:
+// Single body, one source of truth for every tier BUT NEON. The
+// `#[magetypes(...)]` macro generates one `#[arcane]`-wrapped variant per
+// listed tier:
 //   - `forward_xyb_impl_v4`      (x86_64 AVX-512 256-bit f32x8, opt-in `avx512`)
 //   - `forward_xyb_impl_v3`      (x86_64 AVX2, native 256-bit f32x8)
-//   - `forward_xyb_impl_neon`    (aarch64, 2× f32x4 polyfill of f32x8)
 //   - `forward_xyb_impl_wasm128` (wasm32, 2× f32x4 polyfill of f32x8)
 //   - `forward_xyb_impl_scalar`  (portable scalar fallback)
 //
+// `neon` is EXCLUDED from that list (`-neon`) and hand-written below as
+// `forward_xyb_impl_neon`, which is the name `incant!` resolves — the naming
+// convention is what makes the hand-written variant a drop-in, so the
+// `incant!` call site is unchanged and still lists `neon`. See that function
+// for why it exists and what it must stay bit-identical to.
+//
 // FMA association: outermost is `m00 * r + (m01 * g + (m02 * b + bias0))`,
-// matching the pre-consolidation AVX2/NEON/WASM bodies bit-for-bit. The
-// cube root keeps `cbrt_fast`'s exact f64 Newton-Raphson math — integer
-// initial guess per lane (scalar, cheap), then the two Newton iterations
-// run in `f64x4` with the SAME per-lane IEEE operations in the SAME
-// order (`(t*t)*t`, `(x+x)+r`, `(x+r)+r`, `(t*num)/den` — plain
-// mul/add/div, NO fma), so every lane is bit-identical to the scalar
-// `cbrt_fast` and hash-locks are unaffected. What the vectorization buys
-// is pipelined f64 division (the walk's latency bottleneck: 2 divides
-// per element). **Do not** replace with a SIMD `cbrt_lowp` and do not
-// re-associate or fma-fuse the Newton arithmetic; the f64 op-for-op
-// discipline is what this kernel relies on for hash-lock byte-identity
-// through downstream quantization. `v4` omitted: no `F64x4Backend` for
-// `X64V4Token` (pixel_loss.rs precedent).
+// matching the pre-consolidation AVX2/NEON/WASM bodies bit-for-bit.
+//
+// **Every tier must produce BIT-IDENTICAL output**, including the hand-written
+// NEON one and the scalar fallback: `hash_lock_expected.txt` is a single
+// committed sidecar and CI runs the full suite on x86_64 AND aarch64, so a
+// per-tier arithmetic difference fails the locks on one of them. The gate that
+// catches it locally is `forward_xyb_dispatch_is_bit_identical_to_scalar` below, which
+// compares the dispatched kernel against `forward_xyb_scalar` bitwise for all
+// three `XybCubeRoot` variants.
 
 /// Which cube root the forward XYB transform uses.
 ///
@@ -485,7 +494,7 @@ where
     r2 * x
 }
 
-#[magetypes(define(f32x8, i32x8), v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(f32x8, i32x8), v4, v3, -neon, wasm128, -scalar)]
 #[allow(clippy::too_many_arguments)]
 pub fn forward_xyb_impl(
     token: Token,
@@ -578,6 +587,169 @@ pub fn forward_xyb_impl(
             n - simd_n,
         );
     }
+}
+
+// ============================================================================
+// Hand-written aarch64 NEON forward kernel
+// ============================================================================
+
+/// Hand-written NEON forward XYB — the `neon` tier `incant!` dispatches to.
+///
+/// `neon` is `-neon`-excluded from `forward_xyb_impl`'s `#[magetypes(...)]`
+/// list, so nothing generates this name and the hand-written body takes it
+/// over; the naming convention (`<fn>_neon`) is what keeps the `incant!` call
+/// site unchanged.
+///
+/// Two things it does that the shared body cannot: the cube-root selector is
+/// hoisted OUT of the pixel loop into three monomorphic loops, and each
+/// iteration walks 16 pixels as two independent 8-lane groups so the cube
+/// root's division (`cbrt_lowp` has one, `cbrt_midp` two) has a second group
+/// to overlap with.
+///
+/// **Bit-identity is a hard requirement, not a nicety**: this must agree with
+/// `forward_xyb_impl_v3` / `_scalar` lane for lane, because
+/// `hash_lock_expected.txt` is one committed sidecar and CI runs the suite on
+/// x86_64 AND aarch64. Every operation below is per-lane IEEE with the same
+/// association as the shared body, so the agreement is structural;
+/// `forward_xyb_dispatch_is_bit_identical_to_scalar` is the test that proves it.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+pub fn forward_xyb_impl_neon(
+    token: archmage::NeonToken,
+    cbrt: XybCubeRoot,
+    r: &[f32],
+    g: &[f32],
+    b: &[f32],
+    x_out: &mut [f32],
+    y_out: &mut [f32],
+    b_out: &mut [f32],
+    n: usize,
+) {
+    use magetypes::simd::f32x8;
+
+    let m00 = f32x8::splat(token, OPSIN_MATRIX[0][0]);
+    let m01 = f32x8::splat(token, OPSIN_MATRIX[0][1]);
+    let m02 = f32x8::splat(token, OPSIN_MATRIX[0][2]);
+    let m10 = f32x8::splat(token, OPSIN_MATRIX[1][0]);
+    let m11 = f32x8::splat(token, OPSIN_MATRIX[1][1]);
+    let m12 = f32x8::splat(token, OPSIN_MATRIX[1][2]);
+    let m20 = f32x8::splat(token, OPSIN_MATRIX[2][0]);
+    let m21 = f32x8::splat(token, OPSIN_MATRIX[2][1]);
+    let m22 = f32x8::splat(token, OPSIN_MATRIX[2][2]);
+    let bias0 = f32x8::splat(token, OPSIN_BIAS[0]);
+    let bias1 = f32x8::splat(token, OPSIN_BIAS[1]);
+    let bias2 = f32x8::splat(token, OPSIN_BIAS[2]);
+    let neg_cbrt0 = f32x8::splat(token, NEG_CBRT_BIAS[0]);
+    let neg_cbrt1 = f32x8::splat(token, NEG_CBRT_BIAS[1]);
+    let neg_cbrt2 = f32x8::splat(token, NEG_CBRT_BIAS[2]);
+    let half = f32x8::splat(token, 0.5);
+    let zero = f32x8::splat(token, 0.0);
+
+    // One 8-lane group: matrix + bias (same association as every other tier),
+    // clamp, `$cb`, bias offset, XYB mix, store.
+    macro_rules! group {
+        ($base:expr, $cb:expr) => {{
+            let base = $base;
+            let rv = f32x8::from_slice(token, &r[base..]);
+            let gv = f32x8::from_slice(token, &g[base..]);
+            let bv = f32x8::from_slice(token, &b[base..]);
+
+            let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
+            let mixed1 = m10.mul_add(rv, m11.mul_add(gv, m12.mul_add(bv, bias1)));
+            let mixed2 = m20.mul_add(rv, m21.mul_add(gv, m22.mul_add(bv, bias2)));
+
+            let c0v = $cb(mixed0.max(zero));
+            let c1v = $cb(mixed1.max(zero));
+            let c2v = $cb(mixed2.max(zero));
+
+            let l = c0v + neg_cbrt0;
+            let m = c1v + neg_cbrt1;
+            let s = c2v + neg_cbrt2;
+
+            let o: &mut [f32; 8] = (&mut x_out[base..base + 8]).try_into().unwrap();
+            (half * (l - m)).store(o);
+            let o: &mut [f32; 8] = (&mut y_out[base..base + 8]).try_into().unwrap();
+            (half * (l + m)).store(o);
+            let o: &mut [f32; 8] = (&mut b_out[base..base + 8]).try_into().unwrap();
+            s.store(o);
+        }};
+    }
+
+    // 16 pixels per iteration, then a single 8-lane pass, then scalar. The
+    // selector is matched ONCE, outside the loop.
+    macro_rules! walk {
+        ($cb:expr) => {{
+            let pairs = n / 16;
+            for p in 0..pairs {
+                group!(p * 16, $cb);
+                group!(p * 16 + 8, $cb);
+            }
+            let mut done = pairs * 16;
+            if done + 8 <= n {
+                group!(done, $cb);
+                done += 8;
+            }
+            done
+        }};
+    }
+
+    let simd_n = match cbrt {
+        XybCubeRoot::Libjxl => walk!(|v| cbrt_libjxl_vec(token, v)),
+        XybCubeRoot::MidP => walk!(|v: f32x8| v.cbrt_midp()),
+        XybCubeRoot::LowP => walk!(|v: f32x8| v.cbrt_lowp()),
+    };
+
+    // Remaining 0..8 pixels. The scalar fallback is bit-identical to the
+    // vector body, so where the split falls does not affect output.
+    if simd_n < n {
+        forward_xyb_scalar(
+            cbrt,
+            &r[simd_n..],
+            &g[simd_n..],
+            &b[simd_n..],
+            &mut x_out[simd_n..],
+            &mut y_out[simd_n..],
+            &mut b_out[simd_n..],
+            n - simd_n,
+        );
+    }
+}
+
+/// The `scalar` tier `incant!` falls through to when no token can be summoned
+/// — pre-AVX2 x86_64, i686, and any architecture magetypes has no backend for.
+///
+/// Hand-written for the same reason `neon` is, but for CORRECTNESS rather than
+/// speed. magetypes' scalar backend implements `mul_add` as `a * b + c`
+/// (`simd/impls/scalar.rs`), i.e. NOT fused, while `forward_xyb_scalar` uses a
+/// genuinely fused `mul_add` — as do the AVX2/NEON/WASM backends, and as libjxl
+/// does through Highway. The generated `_scalar` tier therefore disagreed with
+/// every other tier, so the encoder emitted DIFFERENT BYTES on a host without
+/// AVX2 than on one with it: `hash_lock_expected.txt` is one committed sidecar,
+/// so it can only have been correct on one of them. Delegating to
+/// `forward_xyb_scalar` makes the agreement structural — there is now exactly
+/// one scalar implementation, not two that happen to be close.
+///
+/// Found 2026-09-10 by `forward_xyb_dispatch_is_bit_identical_to_scalar`, and
+/// verified pre-existing: the same test fails identically on the parent commit,
+/// for all three `XybCubeRoot` variants (so it was never about the cube root —
+/// the opsin matrix multiply alone was enough). Nothing that ships today
+/// changes bytes, because every CI host and every measured platform summons a
+/// vector token and never reached this tier.
+#[allow(clippy::too_many_arguments)]
+pub fn forward_xyb_impl_scalar(
+    _token: archmage::ScalarToken,
+    cbrt: XybCubeRoot,
+    r: &[f32],
+    g: &[f32],
+    b: &[f32],
+    x_out: &mut [f32],
+    y_out: &mut [f32],
+    b_out: &mut [f32],
+    n: usize,
+) {
+    forward_xyb_scalar(cbrt, r, g, b, x_out, y_out, b_out, n);
 }
 
 // ============================================================================
@@ -1205,6 +1377,60 @@ mod expanded_coverage {
     use crate::test_helpers::*;
     use alloc::format;
     use alloc::vec;
+
+    /// The forward XYB tiers must be BIT-IDENTICAL, not merely close.
+    ///
+    /// `hash_lock_expected.txt` is a single committed sidecar and CI runs the
+    /// full suite on x86_64 AND aarch64, so one tier rounding differently from
+    /// another fails the locks on whichever architecture did not bake them.
+    /// `linear_rgb_to_xyb_scalar_vs_dispatch_sizes` below allows 16 ULP — a
+    /// tolerance inherited from kernels that genuinely cannot be bit-exact —
+    /// so it would not catch that. This one does.
+    ///
+    /// It is the gate on the hand-written `forward_xyb_impl_neon`, which is
+    /// the one tier not generated from the shared body.
+    #[test]
+    fn forward_xyb_dispatch_is_bit_identical_to_scalar() {
+        for cbrt in [XybCubeRoot::Libjxl, XybCubeRoot::MidP, XybCubeRoot::LowP] {
+            // Sizes that straddle every unroll boundary the tiers use: the
+            // hand-written NEON walks 16 at a time then 8, the shared body 8.
+            for &n in &[
+                1_usize, 7, 8, 9, 15, 16, 17, 23, 24, 25, 31, 32, 33, 64, 129, 1000,
+            ] {
+                let r = gen_f32_unit(0xB001_AAAA ^ n as u64, n);
+                let g = gen_f32_unit(0xB002_BBBB ^ n as u64, n);
+                let b_in = gen_f32_unit(0xB003_CCCC ^ n as u64, n);
+
+                let mut rx = vec![0.0_f32; n];
+                let mut ry = vec![0.0_f32; n];
+                let mut rb = vec![0.0_f32; n];
+                forward_xyb_scalar(cbrt, &r, &g, &b_in, &mut rx, &mut ry, &mut rb, n);
+
+                run_dispatch_parity(|perm| {
+                    let mut ax = vec![0.0_f32; n];
+                    let mut ay = vec![0.0_f32; n];
+                    let mut ab = vec![0.0_f32; n];
+                    linear_rgb_to_xyb_batch(cbrt, &r, &g, &b_in, &mut ax, &mut ay, &mut ab);
+                    for (plane, (want, got)) in
+                        [("x", (&rx, &ax)), ("y", (&ry, &ay)), ("b", (&rb, &ab))]
+                    {
+                        for i in 0..n {
+                            assert_eq!(
+                                want[i].to_bits(),
+                                got[i].to_bits(),
+                                "{perm}: {cbrt:?} n={n} plane {plane} lane {i}: \
+                                 scalar {:?} vs dispatch {:?} — the tiers must agree \
+                                 bitwise or hash_lock_expected.txt cannot hold on both \
+                                 architectures",
+                                want[i],
+                                got[i]
+                            );
+                        }
+                    }
+                });
+            }
+        }
+    }
 
     /// linear_rgb_to_xyb_batch across multiple sizes and edge inputs.
     /// XYB uses cube-root via f64 Newton + 3x3 matrix.  SIMD vs scalar

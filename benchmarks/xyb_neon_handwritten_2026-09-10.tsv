@@ -1,0 +1,38 @@
+# In-process, interleaved A/B of the forward-XYB NEON kernel: the
+# magetypes-GENERATED tier (2x f32x4 polyfill of f32x8) vs the HAND-WRITTEN
+# one (native f32x8, cube-root selector hoisted out of the loop, 16 px per
+# iteration).  Both bodies compiled into ONE binary and called back to back,
+# alternating which runs first each repeat.  min of 41 repeats per arm per run,
+# 1 Mpx, single-threaded, aarch64 (Apple, macOS 25.5.0).
+# Every run reported 0 of 1048576 px differing, on all three cube roots.
+run	cbrt	generated_ms	handwritten_ms	hand_over_gen
+1	LowP	1.191	1.159	0.973
+1	MidP	1.726	1.637	0.948
+1	Libjxl	1.577	1.623	1.029
+2	LowP	1.166	1.181	1.013
+2	MidP	1.762	1.622	0.921
+2	Libjxl	1.547	1.500	0.969
+3	LowP	1.217	1.213	0.996
+3	MidP	1.845	1.617	0.876
+3	Libjxl	1.543	1.529	0.991
+4	LowP	1.239	1.209	0.976
+4	MidP	1.740	1.733	0.996
+4	Libjxl	1.548	1.524	0.984
+5	LowP	1.169	1.185	1.013
+5	MidP	1.731	1.652	0.955
+5	Libjxl	1.621	1.526	0.941
+6	LowP	1.229	1.184	0.964
+6	MidP	1.727	1.617	0.936
+6	Libjxl	1.551	1.500	0.967
+7	LowP	1.207	1.185	0.982
+7	MidP	1.733	1.622	0.936
+7	Libjxl	1.529	1.527	0.999
+8	LowP	1.194	1.211	1.014
+8	MidP	1.732	1.619	0.935
+8	Libjxl	1.576	1.504	0.954
+9	LowP	1.242	1.196	0.962
+9	MidP	1.759	1.623	0.923
+9	Libjxl	1.524	1.504	0.987
+10	LowP	1.201	1.203	1.002
+10	MidP	1.761	1.698	0.964
+10	Libjxl	1.531	1.516	0.990

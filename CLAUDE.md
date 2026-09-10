@@ -784,6 +784,49 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 See [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md) for full chronological bug narrative.
 
+### RESOLVED 2026-09-10: forward XYB emitted DIFFERENT BYTES on a host that cannot summon a vector token
+
+[PROVEN] `jxl-encoder-simd`'s `forward_xyb_impl` was generated from one body for
+every tier including `scalar`, and magetypes' scalar backend implements
+`mul_add` as `a * b + c` (`simd/impls/scalar.rs`) — **not fused**, while the
+AVX2 / AVX-512 / NEON / WASM backends and the hand-written `forward_xyb_scalar`
+all use a genuinely fused multiply-add, as libjxl does through Highway. The
+generated `_scalar` tier therefore disagreed with every other tier. The opsin
+matrix multiply alone was enough; it reproduced on all three `XybCubeRoot`
+variants, so the cube root was never involved.
+
+Consequence: `incant!` falls through to `_scalar` when no token can be summoned
+— pre-AVX2 x86_64, i686, any architecture magetypes has no backend for — so the
+encoder produced different bytes there. `hash_lock_expected.txt` is a SINGLE
+committed sidecar, so it could only ever have been correct on the vector hosts.
+CI never saw it: every CI runner summons AVX2 or NEON, and the i686 job is
+cross-BUILD only.
+
+**Why it hid for so long**: the pre-existing parity test
+(`linear_rgb_to_xyb_scalar_vs_dispatch_sizes`) allows **16 ULP** — a tolerance
+inherited from kernels that genuinely cannot be bit-exact — and the divergence
+is ~1 ULP per FMA. A tolerance that is right for one kernel is a blindfold on
+another. The new `forward_xyb_dispatch_is_bit_identical_to_scalar` compares
+BITWISE across all 25 archmage token permutations and fails on exactly the
+all-disabled one. Verified pre-existing: dropped into the parent commit's
+`xyb.rs` it fails identically (14 sizes x 3 cube roots).
+
+**Fix**: `-scalar` in the `#[magetypes(...)]` tier list and
+`forward_xyb_impl_scalar` hand-written as a delegation to `forward_xyb_scalar`.
+There is now exactly one scalar implementation instead of two that happened to
+be close. No shipping bytes moved — 63/63 hash locks and 5/5 Libjxl byte locks
+byte-identical, because no measured platform ever reached that tier.
+
+**NOT INVESTIGATED, and someone should**: this is a property of magetypes'
+scalar backend, so **every `#[magetypes(...)]` kernel in `jxl-encoder-simd` that
+uses `mul_add` has the same divergence**. Only forward-XYB was checked and
+fixed. The general fix belongs in magetypes (a sibling repo — not touched from
+here); the in-crate pattern above (`-scalar` + delegate) is available per kernel
+in the meantime. The cheap audit is to add a bitwise dispatch-vs-scalar test to
+each kernel and see which ones fail the all-disabled permutation.
+
+Full record: `benchmarks/xyb_neon_handwritten_2026-09-10.meta`.
+
 ### RESOLVED 2026-08-01: 108 MP encodes kernel-OOM-killed 32 GiB boxes — QUADRATIC per-tile AC-strategy peak + dishonest flat pre-flight
 
 zensysbench fleet (2026-07-31): 108 MP lossy e5/e7 encodes OOM-killed 32 GiB
