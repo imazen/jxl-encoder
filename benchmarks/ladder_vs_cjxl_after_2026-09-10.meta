@@ -68,6 +68,12 @@ WHAT MOVED, AND WHY IT IS WHERE IT IS:
   - e9 t=1 is unchanged at 1.03-1.05 (perceptual-loop bound); e9 t=8 stays
     0.44-0.46.
 
-STILL OPEN, in priority order: e5 at threads=8 (1.32 at 2048), e3 at threads=1
-(1.23-1.25), and the byte intercept at 64x64 where we are still 9-22 % larger
-than cjxl (unchanged — nothing here touched bytes).
+STILL OPEN, in priority order: e5 at threads=8 (1.32 at 2048) and e3 at
+threads=1 (1.23-1.25).
+
+The byte gap at 64x64 is unchanged (nothing here touched bytes) but has since
+been RE-FRAMED — see small_image_byte_gap_2026-09-10.{tsv,meta}. It is not a
+per-file intercept: the header part is a constant +4 B that is the deliberate
+Libjxl-only `all_default` fast-path gate, and the payload part persists at 256^2
+(+12.7 % on webshot), so it is an e3-e7 graphics-content gap rather than a
+small-image one. e9 favours us in 7 of 8 (image, size) pairs.

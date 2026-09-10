@@ -1,0 +1,41 @@
+harness: scripts/jxl_bitstream_diff.py (T4 envelope parser) `toc` mode, to split
+  each file into header+TOC and section payload.
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10; threads=1; d=1.0
+reference: cjxl v0.12 from .ci-libjxl/tools/cjxl. Same metadata-stripped centre
+  crops as the ladder grid.
+
+**CORRECTS `ladder_vs_cjxl_2026-09-10.meta`**, which said of the 64x64 byte gap:
+"that per-file intercept is real, shrinks with effort, and is un-attributed".
+Two of those three claims are wrong.
+
+1. It is NOT a per-file intercept. The header+TOC difference is a CONSTANT
+   **+4 bytes** on colour and **+1 / 0** on grayscale — 4 B of a 70 B gap on
+   webshot_64. The rest is section payload, and the payload gap does not behave
+   like an intercept: webshot is +66 B (+22 %) at 64^2 and still +329 B (+12.7 %)
+   at 256^2. It is a payload-efficiency difference on some content, not a fixed
+   cost being amortised away.
+
+2. The +4 B header IS attributed, and to a KNOWN, INTENTIONAL divergence.
+   `--strategy libjxl` reproduces cjxl's header exactly — 11 bytes on nature_64
+   and 14 on brochure_64, against zen mode's 15 in both cases. That is the T4
+   `header_all_default_fast_paths` gate, which is Libjxl-only by design because
+   the four `all_default` predicates it fixed were previously unreachable. So
+   zen mode pays a deliberate 4 bytes per file for not taking those fast paths.
+   Nothing to investigate; it is a documented Section-D row.
+
+3. "Shrinks with effort" DOES hold, and strongly: **e9 favours us in 7 of the 8
+   (image, size) pairs** — nature -31 / -354, plots -30 / -236, brochure_256
+   -224, webshot_256 -36, plots_64 at e3 -15. The losses concentrate at e3-e7 on
+   screenshot-like content: webshot +62..+71 at 64^2 and +252..+333 at 256^2,
+   brochure_64 +23..+52.
+
+So the honest statement is: **we are not worse on small files in general — we
+are worse at e3-e7 on some graphics content at every size measured here, and
+better at e9 nearly everywhere.** The 64x64 row of the ladder grid is a sample of
+that, not a separate small-image phenomenon.
+
+NOT INVESTIGATED FURTHER HERE: the payload difference itself. This grid stops at
+the section boundary because the T4 parser does (localising to a section is its
+actionable unit, and there is only ONE section on these single-group files, so
+the split cannot go finer without an ANS reader). Four images, two sizes; this
+localises and re-frames the gap, it does not characterise a corpus.

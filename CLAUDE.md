@@ -2694,8 +2694,26 @@ measurement at equal or better coverage.
   is 0.88-1.01x at 64/256; (2) **thread scaling at e5**, 1.32x/1.47x at t=8
   where t=1 is 0.91x/0.93x (not a general parallelism deficit — e7 t8 is
   0.99-1.08x and e9 t8 is 0.45-0.50x). Bytes: at 64x64 we are **9-22 % LARGER**
-  than cjxl and at 256+ at or below it; that per-file intercept is real,
-  shrinks with effort, and is un-attributed.
+  than cjxl and at 256+ at or below it. **NOT a per-file intercept** (corrected
+  the same day, `benchmarks/small_image_byte_gap_2026-09-10.{tsv,meta}`): the
+  header part is a constant +4 B colour / +1..0 B gray and is the deliberate
+  Libjxl-only `header_all_default_fast_paths` gate — `--strategy libjxl`
+  reproduces cjxl's header exactly — while the payload part persists at 256^2
+  (+12.7 % on webshot). The real shape is **e3-e7 losses on graphics content at
+  every size, with e9 favouring us in 7 of 8 (image, size) pairs**; the 64x64 row
+  is a sample of that, not a small-image phenomenon. **Localised** at 512^2
+  (`small_image_byte_gap_sections_2026-09-10.{tsv,meta}`, the smallest size with
+  separate sections): the loss is in the DC/LF/global plumbing, and **`LfGroup`
+  (DC + AC metadata) is the largest single contributor on every losing cell**
+  (48-87 %), with `HfGlobal` largest on the grayscale document. `HfGroups` — the
+  AC coefficients, most of the file — is neutral or in OUR favour on 6 of 10
+  usable cells and is where both of our wins come from. Consistent with the T4
+  by-section result and it RAISES the priority of T4's named next step (an ANS
+  reader in `jxl_bitstream_diff.py`), which now blocks two investigations.
+  **Trap**: at e7/e9 patches emit a ReferenceOnly + display frame and the parser
+  reads only frame 1, so 6 of 16 rows have meaningless per-section deltas that
+  look plausible — the TSV carries a `sections_sum == delta` consistency column
+  and you must filter on it.
 
   **RE-MEASURED after the same day's five byte-identical wall fixes (below)**
   (`benchmarks/ladder_vs_cjxl_after_2026-09-10.{tsv,meta}`, same grid, 0 of 224

@@ -1,0 +1,56 @@
+harness: scripts/jxl_bitstream_diff.py (T4 envelope parser) `toc` mode.
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10; threads=1; d=1.0
+grid: 4 images x 512x512 centre crops (metadata stripped) x efforts {3,5,7,9}.
+  512 is the smallest size that yields SEPARATE sections — at 256 and below the
+  whole frame is one `all-in-one` section and the split cannot be taken.
+reference: cjxl v0.12 from .ci-libjxl/tools/cjxl.
+
+**READ THE `consistent` COLUMN FIRST. 6 of 16 rows are NOT usable.** The parser
+inspects only the FIRST frame, and at e7/e9 our encoder emits patches — a
+ReferenceOnly frame followed by the display frame — so its section table
+describes a different frame from cjxl's and the per-section deltas are
+meaningless. The `sections_sum == delta` check catches every one of them
+(webshot e7/e9, plots e7/e9 sum to ~27k/~19k against deltas of +614/-2325/-62/
+-3160; brochure e7/e9 fail to parse and report zeros). Do not read those rows.
+This check is the reason the column exists: the raw numbers look plausible.
+
+ON THE 10 CONSISTENT ROWS, the loss is in the DC / LF / global plumbing, NOT in
+the AC coefficient data:
+
+  image     e   delta   LfGlobal  LfGroup  HfGlobal  HfGroups  header
+  webshot   3   +1032      +175     +825      +300      -272      +4
+  webshot   5    +796       +69     +468       -21      +276      +4
+  brochure  3    +649       +85     +250      +371       -58      +1
+  brochure  5    +693      +113     +197      +454       -73      +2
+  nature    3   +1573      +327    +1371      +141      -270      +4
+  nature    5   +1129      +145     +807       +18      +155      +4
+  nature    7    +636      +185     +306       +17      +124      +4
+  nature    9   -1093       -67    -1134       -62      +166      +4
+  plots     3   -2063      +210     +404      -221     -2459      +3
+  plots     5    -169      +149     +223       -31      -514      +4
+
+- **`LfGroup[0]` (DC + AC metadata) is the largest single contributor on every
+  losing cell**: 80 % of webshot e3, 59 % of webshot e5, 87 % of nature e3,
+  71 % of nature e5, 48 % of nature e7.
+- `HfGlobal` is the largest contributor on the GRAYSCALE brochure (57 % / 65 %).
+- `HfGroups` — the actual AC coefficients, most of the file — is neutral or in
+  OUR favour on 6 of the 10 rows, and is where our two wins come from
+  (plots e3 -2459, plots e5 -514).
+- `LfGlobal` is consistently positive but small (+69..+327).
+- Where we WIN (nature e9, plots e3/e5) the win is in `LfGroup` or `HfGroups`.
+
+This is CONSISTENT with the T4 standing-by-section result at larger sizes
+(`docs/LIBJXL_DIVERGENCES.md` §D: HfGroup +0.9 % while carrying 85 % of the
+bytes, HfGlobal +36.2 %, LfGlobal +34.2 %) and adds one thing T4 did not name:
+at these sizes **`LfGroup` is the biggest absolute contributor**, not the two
+global sections. That is why the gap is worse on smaller files — LfGroup carries
+the DC and the AC metadata, whose cost scales with blocks rather than with
+coefficient entropy.
+
+NOT ATTRIBUTED FURTHER: what inside LfGroup. That needs the ANS reader T4 already
+named as its next step ("Port DecodeContextMap + an ANS reader into
+jxl_bitstream_diff.py"). This grid raises that item's priority — it is now the
+blocker for two separate investigations, not one.
+
+CAVEATS: 4 images, one size, one distance, threads=1. Ten usable cells. This
+localises a gap; it does not size it across a corpus.

@@ -73,11 +73,19 @@ WHAT IS ACTUALLY SLOW, in priority order:
 3. e9 t=1 is at parity (1.03-1.05x) while e9 t=8 is 0.45-0.50x: our e9 scales
    much better than cjxl's.
 
-BYTES — the intercept is real and it is ours. At 64x64 we are 9-22 % LARGER
-than cjxl (1.151 at e3, 1.220 at e5, 1.204 at e7, 1.090 at e9) while at 256 and
-above we are at or below it. A per-file overhead that is invisible at 1 MP is
-worth ~0.4 bpp on a thumbnail. This grid does not attribute it; it only
-establishes that it exists and that it shrinks with effort.
+BYTES — at 64x64 we are 9-22 % LARGER than cjxl (1.151 at e3, 1.220 at e5,
+1.204 at e7, 1.090 at e9) while at 256 and above we are at or below it.
+
+  **CORRECTED 2026-09-10 by small_image_byte_gap_2026-09-10.{tsv,meta}** — this
+  paragraph originally called that a "per-file intercept" that is
+  "un-attributed", and two of those claims are wrong. The header+TOC part is a
+  constant +4 B (colour) / +1..0 B (gray) and IS attributed: `--strategy libjxl`
+  reproduces cjxl's header exactly, so it is the T4 `header_all_default_fast_paths`
+  gate, Libjxl-only by design. The rest is section payload and does NOT behave
+  like an intercept — webshot is +22 % at 64^2 and still +12.7 % at 256^2. The
+  real shape is e3-e7 losses on graphics content at every size, with e9 favouring
+  us in 7 of 8 (image, size) pairs. Read the 64x64 row as a sample of that, not
+  as a small-image phenomenon.
 
 CAVEATS: 4 images, 2 of them at 2048, so the 2048 byte ratios (0.652 at e5,
 0.694 at e9) are two-image medians dominated by the brochure's patches win and
