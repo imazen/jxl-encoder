@@ -2890,11 +2890,27 @@ measurement at equal or better coverage.
   that cell. Three named fully-serial blocks carry most of it:
   `cluster_histograms` (6.8 ms, 1.00x, 6930 histograms -> 67 — Phase A of the
   ANS build is already parallel, Phase B is 95 % clustering),
-  `compute_pre_erosion` (2.44 ms, 1.00x — the one step of
-  `compute_quant_field_float` never strip-parallelised, and structurally
-  strip-parallel: each output row consumes 4 input rows plus a 1-row halo), and
+  `compute_pre_erosion` (2.44 ms, 1.00x — **FIXED same day**, see below), and
   ~8.3 ms inside `quant_field` not yet attributed. All three are scaling fixes
   rather than algorithm changes, so all three should be byte-identical.
+
+  **`compute_pre_erosion` is done** (`benchmarks/pre_erosion_parallel_ab_2026-09-10.*`):
+  strip-parallel over output rows, `quant_field` 14.40 -> 12.40 ms at threads=8
+  (0.861x) and the whole encode 107.1 -> 103.4 ms; threads=1 unchanged by
+  construction. Bytes unchanged, verified on 72 cells (8 images x e{3,5,7} x
+  threads{1,4,8}) SHA256-identical — which is the check that matters, because
+  the hash locks run at threads=1 and would pass whether or not the parallel
+  branch is correct. Two traps worth carrying forward: (a) the split does NOT
+  pass a sub-rectangle — it passes the two `tile_y*` values that make the kernel
+  derive the row range it wants, so `tile_y1 < tile_y0` on a one-row strip is
+  correct and must not be "fixed"; (b) the shape checks inside the strip loop
+  are real `assert_eq!` because a mis-mapping that produces EXTRA rows is
+  silently truncated away by `copy_from_slice` — measured: with
+  `debug_assert_eq!` the mutation `4 * end - 4` -> `4 * end` passes the parity
+  test in release. The parity test itself had to be made non-vacuous first: it
+  forces the strip height instead of taking it from `effective_threads()`,
+  which on a single-threaded runner is one strip and compares the kernel to
+  itself.
   Full record, method, target list, and the TWO harness traps that produced
   convincing fake numbers first (the profile example ignored thread count
   entirely; `parallel` is not a jxl-encoder default feature):

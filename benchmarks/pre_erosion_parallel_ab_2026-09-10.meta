@@ -1,0 +1,63 @@
+# `compute_pre_erosion` strip-parallel — the last unparallelised step of
+# `compute_quant_field_float`
+#
+# WHY: benchmarks/e5_t8_phase_scaling_2026-09-10.md measured it at 2.44 ms at
+# BOTH threads=1 and threads=8 — a 1.00x speedup, the only step of that
+# function with no thread scaling at all, after `fuzzy_erosion` (7.06x) and
+# `per_block_modulations` (6.69x) were strip-parallelised earlier the same day.
+#
+# RESULT (data in the .tsv):
+#   threads=8  quant_field 14.40 -> 12.40 ms  (0.861x, -2.0 ms)
+#              encode_inner 102.4 -> 100.5 ms (0.981x)
+#              process wall 107.1 -> 103.4 ms (0.965x)
+#   threads=1  unchanged on every axis (0.997x / 1.000x / 1.000x)
+#
+# The -2.0 ms on the phase is the number to quote; it matches the predicted
+# saving (2.44 ms serial -> ~0.4 ms across 8 threads) almost exactly. The
+# encode-level 0.965x is slightly larger than the phase delta alone accounts
+# for and is within run noise — do not quote it as if the phase produced it.
+#
+# threads=1 is unchanged BY CONSTRUCTION: the parallel path is gated on
+# `effective_threads() > 1`, so a single-threaded encode takes the same call it
+# always did.
+#
+# BYTES: unchanged. 72 cells (8 images x e{3,5,7} x threads{1,4,8}) SHA256-
+# identical against the pre-change binary, which is the check that matters here
+# because the hash locks alone do not exercise the new path — they would pass
+# whether or not the parallel branch is correct. Plus hash locks 68/68 and the
+# Libjxl byte lock 5/5.
+#
+# HOW THE SPLIT IS ADDRESSED, AND WHY IT NEEDS ASSERTS
+#   The kernel takes a tile RECT and derives its own row range from it
+#   (`y_start = tile_y0.saturating_sub(4)`, `y_end = tile_y1 + 4` when
+#   `tile_y1 < height`). To make it walk output rows `[b, e)` — input rows
+#   `4b .. 4e` — the strip passes `tile_y0 = 4b + 4` and `tile_y1 = 4e - 4`.
+#   For a one-row strip that means `tile_y1 < tile_y0`, which looks like a bug
+#   and is not: the kernel never compares them.
+#
+#   That indirection is why the two shape checks inside the strip loop are real
+#   `assert_eq!` and not `debug_assert_eq!`. MEASURED: mutating `4 * end - 4`
+#   to `4 * end` makes every non-final strip compute one EXTRA output row,
+#   which `copy_from_slice` then silently truncates away — correct output,
+#   wasted work, and the parity test PASSES in release because debug asserts
+#   are compiled out. With real asserts that mutation fails on "strip 0: row
+#   count". The other mutation (`4 * begin + 4` -> `+ 8`) was caught either way.
+#
+# THE PARITY TEST HAD TO BE MADE NON-VACUOUS FIRST
+#   `compute_pre_erosion_strip_parallel` derives its strip height from
+#   `effective_threads()`. On a single-threaded test runner that is one strip,
+#   and the test would have compared the kernel against itself and passed
+#   without testing anything. The body is therefore split out as
+#   `compute_pre_erosion_in_strips(..., rows_per_strip)` and the test forces
+#   rows_per_strip in {1, 2, 3, all} over 11 sizes that straddle the strip
+#   boundary, the `height / 4` truncation, and the single-row strip.
+#
+# SCOPE: one image, one size, one effort, one distance, one host. The saving is
+# a fixed ~2 ms of serial work at 2048²; it will scale with pixel count and be
+# invisible at small sizes, and it does nothing at threads=1.
+#
+# STILL OPEN on this cell, in measured order (unchanged from
+# e5_t8_phase_scaling_2026-09-10.md except that item 3 is now done):
+#   1. `cluster_histograms` — 6.8 ms, 1.00x. Now the largest serial block.
+#   2. ~8.3 ms inside `quant_field` still unattributed.
+#   3. `ac_tok` (4.8 ms, 1.98x) and `pass2_write` (5.6 ms, 2.93x).

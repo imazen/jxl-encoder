@@ -1,0 +1,11 @@
+# compute_pre_erosion strip-parallel A/B — 2026-09-10
+# nature photo 2048² centre crop, e5, d=1.0, aarch64 macOS 25.5.0.
+# Both binaries built --features "parallel,__env_var_diagnostics"; arms
+# ALTERNATED inside each of 5 repeats with the leading arm flipped each time;
+# min per (arm, threads). before = main@origin 07cfd664 (kernel called
+# sequentially), after = the strip-parallel path.
+arm	threads	quant_field_ms	encode_inner_ms	process_ms_per_encode
+before	1	30.90	409.9	428.6
+after	1	30.80	410.0	428.6
+before	8	14.40	102.4	107.1
+after	8	12.40	100.5	103.4

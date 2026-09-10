@@ -60,7 +60,125 @@ fn compute_pre_erosion(
     tile_x1: usize,
     tile_y1: usize,
 ) -> (Vec<f32>, usize, usize) {
+    #[cfg(feature = "parallel")]
+    if tile_x0 == 0
+        && tile_y0 == 0
+        && tile_x1 == width
+        && tile_y1 == height
+        && crate::parallel::effective_threads() > 1
+        && let Some(out) = compute_pre_erosion_strip_parallel(xyb_y, width, height)
+    {
+        return out;
+    }
     jxl_simd::compute_pre_erosion(xyb_y, width, height, tile_x0, tile_y0, tile_x1, tile_y1)
+}
+
+/// Whole-image `compute_pre_erosion`, split across threads by OUTPUT row.
+///
+/// Why this exists: after `fuzzy_erosion` and `per_block_modulations` were
+/// strip-parallelised on 2026-09-10, this was the only step of
+/// `compute_quant_field_float` with NO thread scaling at all — 2.44 ms at both
+/// threads=1 and threads=8 on a 2048² e5 encode
+/// (`benchmarks/e5_t8_phase_scaling_2026-09-10.md`).
+///
+/// Why the split is bit-identical: the kernel walks input rows in groups of
+/// four, accumulating into a row-local `diff_buffer` that it RESETS on every
+/// `(y - y_start) % 4 == 0` and reduces on every `== 3`. Output row `r`
+/// therefore consumes exactly input rows `y_start + 4r ..= y_start + 4r + 3`
+/// and nothing else. Reads reach one row above and below, but they read
+/// `xyb_y`, which is immutable and shared, and they clamp against the TRUE
+/// image height — which each strip is still given. So handing a strip a whole
+/// multiple of four input rows reproduces its outputs exactly, in the same
+/// arithmetic and the same order.
+///
+/// **How the strip is addressed, because it is not obvious and a future reader
+/// could easily break it**: this does not pass a sub-rectangle. The kernel
+/// derives its own row range as `y_start = tile_y0.saturating_sub(4)` and
+/// `y_end = tile_y1 + 4` (when `tile_y1 < height`), so to make it walk
+/// `4b .. 4e` the arguments are `tile_y0 = 4b + 4` and `tile_y1 = 4e - 4`.
+/// For a single-row strip that gives `tile_y1 < tile_y0`, which looks wrong and
+/// is not — the kernel never compares them, it only expands each independently.
+/// `tile_x0`/`tile_x1` are passed through unchanged so `pre_erosion_w` matches.
+/// The guarantee rests on `pre_erosion_strip_parallel_matches_whole_image`
+/// rather than on this reasoning.
+///
+/// Returns `None` when the image is too small to split, leaving the caller on
+/// the sequential kernel.
+#[cfg(feature = "parallel")]
+fn compute_pre_erosion_strip_parallel(
+    xyb_y: &[f32],
+    width: usize,
+    height: usize,
+) -> Option<(Vec<f32>, usize, usize)> {
+    // Whole-image rect only, so the kernel's own derivation is x0 = 0,
+    // x1 = width, y_start = 0, y_end = height.
+    let pre_erosion_w = width / 4;
+    let pre_erosion_h = height / 4;
+    if pre_erosion_w == 0 || pre_erosion_h < 2 {
+        return None;
+    }
+
+    let threads = crate::parallel::effective_threads();
+    let rows_per_strip = pre_erosion_h.div_ceil(threads).max(1);
+    Some(compute_pre_erosion_in_strips(
+        xyb_y,
+        width,
+        height,
+        pre_erosion_w,
+        pre_erosion_h,
+        rows_per_strip,
+    ))
+}
+
+/// The body of [`compute_pre_erosion_strip_parallel`] with the strip height as
+/// an explicit parameter.
+///
+/// Split out ONLY so the parity test can force a real split. With
+/// `rows_per_strip` derived from `effective_threads()` a single-threaded test
+/// runner would produce exactly one strip and the test would compare the
+/// kernel against itself and pass vacuously.
+#[cfg(feature = "parallel")]
+fn compute_pre_erosion_in_strips(
+    xyb_y: &[f32],
+    width: usize,
+    height: usize,
+    pre_erosion_w: usize,
+    pre_erosion_h: usize,
+    rows_per_strip: usize,
+) -> (Vec<f32>, usize, usize) {
+    use rayon::prelude::*;
+
+    let mut out = vec![0.0_f32; pre_erosion_w * pre_erosion_h];
+    out.par_chunks_mut(pre_erosion_w * rows_per_strip)
+        .enumerate()
+        .for_each(|(strip, dst)| {
+            let begin = strip * rows_per_strip;
+            let rows = dst.len() / pre_erosion_w;
+            let end = begin + rows;
+            // See the doc comment: these two numbers are chosen so the kernel
+            // derives y_start = 4 * begin and y_end = 4 * end.
+            let (part, part_w, part_h) = jxl_simd::compute_pre_erosion(
+                xyb_y,
+                width,
+                height,
+                0,
+                4 * begin + 4,
+                width,
+                4 * end - 4,
+            );
+            // Real asserts, not `debug_assert`: the row-range addressing above
+            // is indirect, and a mis-mapping that produces EXTRA rows is
+            // silently absorbed by the `copy_from_slice` truncation below —
+            // correct output, wasted work, and no test failure. (Verified: the
+            // mutation `4 * end - 4` -> `4 * end` passes the parity test with
+            // debug asserts, because release builds compile them out.) One
+            // comparison per strip is free next to the walk it guards.
+            assert_eq!(part_w, pre_erosion_w, "strip {strip}: width");
+            assert_eq!(part_h, rows, "strip {strip}: row count");
+            dst.copy_from_slice(&part);
+        });
+
+    (out, pre_erosion_w, pre_erosion_h)
 }
 
 /// One `fuzzy_erosion` output contribution: the weighted sum of the four
@@ -1126,6 +1244,86 @@ mod tests {
 
     // Scalar math unit tests (fast_log2f, fast_pow2f, masking_sqrt, ratio_of_derivatives,
     // compute_mask) migrated to jxl_simd::adaptive_quant::tests.
+
+    /// The strip-parallel `compute_pre_erosion` must be BIT-IDENTICAL to the
+    /// sequential kernel — not close, identical: `pre_erosion` feeds
+    /// `fuzzy_erosion` -> the quant field -> quantisation, so a single moved
+    /// ULP moves encoded bytes and `hash_lock_expected.txt` with them.
+    ///
+    /// This is the guarantee behind
+    /// `compute_pre_erosion_strip_parallel`'s row-range addressing, which is
+    /// deliberately non-obvious (it feeds the kernel the two `tile_y*` values
+    /// that make it derive the row range it wants, rather than a
+    /// sub-rectangle). Sizes below straddle the strip boundary, the `height/4`
+    /// truncation, and the single-output-row strip where `tile_y1 < tile_y0`.
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn pre_erosion_strip_parallel_matches_whole_image() {
+        for &(w, h) in &[
+            (32_usize, 8_usize),
+            (32, 9),
+            (32, 12),
+            (32, 16),
+            (33, 17),
+            (64, 32),
+            (64, 33),
+            (68, 36),
+            (128, 64),
+            (129, 67),
+            (256, 128),
+        ] {
+            let n = w * h;
+            // Structured, non-degenerate input: a smooth field with a couple
+            // of sharp features, so the limit clamp and the gamma ratio are
+            // both exercised rather than a flat plane that agrees trivially.
+            let xyb_y: Vec<f32> = (0..n)
+                .map(|i| {
+                    let (x, y) = ((i % w) as f32, (i / w) as f32);
+                    let base = 0.35 + 0.25 * (x * 0.07).sin() * (y * 0.05).cos();
+                    if (i * 7919) % 97 == 0 {
+                        base + 0.4
+                    } else {
+                        base
+                    }
+                })
+                .collect();
+
+            let (seq, seq_w, seq_h) = jxl_simd::compute_pre_erosion(&xyb_y, w, h, 0, 0, w, h);
+            if compute_pre_erosion_strip_parallel(&xyb_y, w, h).is_none() {
+                // Only legitimate for images too small to split.
+                assert!(
+                    w / 4 == 0 || h / 4 < 2,
+                    "{w}x{h}: strip-parallel declined to split an image that is big enough"
+                );
+                continue;
+            }
+
+            // Force real splits regardless of the runner's thread count: one
+            // output row per strip is the finest, and it is the case where
+            // `tile_y1 < tile_y0`.
+            for rows_per_strip in [1_usize, 2, 3, seq_h.max(1)] {
+                let (par, par_w, par_h) =
+                    compute_pre_erosion_in_strips(&xyb_y, w, h, seq_w, seq_h, rows_per_strip);
+                assert_eq!(
+                    (par_w, par_h),
+                    (seq_w, seq_h),
+                    "{w}x{h}/{rows_per_strip}: shape"
+                );
+                for i in 0..seq.len() {
+                    assert_eq!(
+                        seq[i].to_bits(),
+                        par[i].to_bits(),
+                        "{w}x{h} rows_per_strip={rows_per_strip}: cell {i} (row {}, col {}): \
+                         sequential {:?} vs strip-parallel {:?}",
+                        i / seq_w,
+                        i % seq_w,
+                        seq[i],
+                        par[i]
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_store_min4() {

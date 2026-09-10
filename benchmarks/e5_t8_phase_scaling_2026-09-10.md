@@ -122,8 +122,10 @@ there. Attributing it is the next measurement, not a guess.
 
 1. `cluster_histograms` — 6.8 ms, 1.00x. Biggest single serial block.
 2. the ~8.3 ms unattributed inside `quant_field` — measure before touching.
-3. `compute_pre_erosion` — 2.44 ms, 1.00x. Smallest of the three but the
-   clearest: the parallel shape is already proven twice in the same file.
+3. ~~`compute_pre_erosion` — 2.44 ms, 1.00x.~~ **DONE the same day** —
+   `benchmarks/pre_erosion_parallel_ab_2026-09-10.*`. `quant_field` 14.40 ->
+   12.40 ms at threads=8, whole encode 107.1 -> 103.4 ms, threads=1 unchanged,
+   bytes identical on 72 cells.
 4. `ac_tok` (4.8 ms, 1.98x) and `pass2_write` (5.6 ms, 2.93x).
 
 Every one of these is a scaling fix, not an algorithm change, so each should be
