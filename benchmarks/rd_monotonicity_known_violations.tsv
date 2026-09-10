@@ -11,6 +11,15 @@
 # texture content; at 5058 d=3.0 the encoder also spends MORE bytes than at
 # d=3.25 (39,322 vs 37,972), so that one is an efficiency failure too.
 #
+# SCOPE WARNING: these keys are IMAGE FILENAMES from the local imazen-26
+# `png-v3` renders (`*.sdr.png`). The nightly workflow runs the gate against the
+# sha256-pinned `imazen-26-unprocessed` gate set, whose files have DIFFERENT
+# pixels and different names, so none of these entries apply there. A nightly
+# line reading "0 known" therefore means the allowlist did not APPLY -- it does
+# NOT mean these violations are fixed. The gate now prints how many entries name
+# an image actually present in the corpus it just ran, so the distinction is
+# visible in the log instead of being inferred.
+#
 # format: image<TAB>eNN<TAB>lo_distance<TAB>hi_distance
 2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	e5	12	15
 5058_nps_shen-bigmeadows-roadtrail_gray_p02_2550x3300.sdr.png	e8	2.25	2.5

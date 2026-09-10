@@ -283,10 +283,25 @@ fn main() {
     }
     println!("wrote {} cells to {}", cells.len(), out_path.display());
 
-    let known = load_known(&arg(
-        "--known",
-        "benchmarks/rd_monotonicity_known_violations.tsv",
-    ));
+    let known_path = arg("--known", "benchmarks/rd_monotonicity_known_violations.tsv");
+    let known = load_known(&known_path);
+    // Report the allowlist's reach explicitly. It keys on IMAGE FILENAME, and
+    // nightly runs against the sha256-pinned `imazen-26-unprocessed` gate set
+    // whose files differ (different pixels AND different names) from the
+    // `png-v3` renders these entries were measured on. So a nightly line
+    // reading "0 known" means the allowlist did not APPLY -- not that the known
+    // violations are fixed. Printing the counts keeps that visible.
+    println!(
+        "allowlist: {} entries from {known_path}; {} of them name an image in this corpus",
+        known.len(),
+        known
+            .iter()
+            .filter(|k| {
+                let name = k.split('\t').next().unwrap_or("");
+                cells.iter().any(|c| c.image == name)
+            })
+            .count()
+    );
     let (fatal, advisory, known_hits) = check_staircase(&cells, &known);
     let time_report = check_time(&cells, Path::new(&baseline_path), update_baseline);
     println!("\n{time_report}");
