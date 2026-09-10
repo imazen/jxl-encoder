@@ -112,12 +112,21 @@
 #   source. Recorded as xyb-001 in docs/SIMD_PARITY_KNOWN_DIVERGENCES.md; the
 #   test is `#[ignore]`d on wasm32 only and still gates x86_64 and aarch64.
 #
-#   NOT INVESTIGATED, and worth someone's time: both causes are properties of
-#   magetypes' BACKENDS, not of this kernel, so every `#[magetypes(...)]` kernel
-#   in this crate that uses `mul_add` shares them — entropy.rs (3 kernels),
-#   gaborish5x5.rs, and xyb.rs's own inverse_xyb_planar_impl. Only forward-XYB
-#   was audited. The cheap audit: drop the tolerance in each kernel's existing
-#   parity test to 0 ULP / 0.0 abs and see which permutations fail.
+#   THE AUDIT WAS THEN DONE and it is four of five kernels, not one. Method:
+#   drop each kernel's existing parity tolerance to 0 ULP / 0.0 abs and see
+#   which of the 25 archmage token permutations fail. Every failure was the
+#   all-disabled one, i.e. the `_scalar` tier:
+#       forward_xyb_impl          diverges  -> FIXED (-scalar + delegate)
+#       inverse_xyb_planar_impl   4 ULP     -> FIXED (-scalar + delegate)
+#       gaborish_5x5_impl         49 ULP    -> FIXED (-scalar + hand-written;
+#                                              delegating would have been WRONG)
+#       entropy_coeffs_impl       1/18 cases-> OPEN, entropy-001 in
+#                                              docs/SIMD_PARITY_KNOWN_DIVERGENCES.md
+#       pixel_domain_loss_impl    clean (uses no mul_add)
+#   The general fix is upstream: magetypes' scalar backend is what implements
+#   `mul_add` as `a * b + c`, and `f32::mul_add` / `libm::fmaf` are fused. One
+#   change there fixes every kernel here at once. magetypes is a sibling repo
+#   and is not touched from this one — it is the user's call.
 #
 # VALIDATION AT THE COMMIT
 #   hash locks                     63/63 byte-identical

@@ -759,7 +759,7 @@ pub fn forward_xyb_impl_scalar(
 // Inverse direction has no cube root (the cube is a SIMD-friendly multiply
 // chain), so the body is shorter and entirely vectorizable.
 
-#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, -scalar)]
 #[allow(clippy::too_many_arguments)]
 pub fn inverse_xyb_planar_impl(
     token: Token,
@@ -838,6 +838,31 @@ pub fn inverse_xyb_planar_impl(
             n - simd_n,
         );
     }
+}
+
+/// The `scalar` tier for the inverse transform, for exactly the reason
+/// `forward_xyb_impl_scalar` exists: magetypes' scalar backend implements
+/// `mul_add` as `a * b + c`, not fused, so the generated `_scalar` tier
+/// disagreed with `inverse_xyb_planar_scalar` and with every vector tier —
+/// measured at 4 ULP here, on a host that cannot summon a vector token.
+///
+/// Found 2026-09-10 by the audit the forward-transform fix called for: tighten
+/// each kernel's existing parity tolerance to 0 ULP / 0.0 abs and see which
+/// permutations fail. `inverse_xyb_planar` failed the all-disabled one; so it
+/// gets the same `-scalar` + delegate treatment. See the Resolved Bugs entry in
+/// CLAUDE.md for the shape of the hazard.
+#[allow(clippy::too_many_arguments)]
+pub fn inverse_xyb_planar_impl_scalar(
+    _token: archmage::ScalarToken,
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    out_r: &mut [f32],
+    out_g: &mut [f32],
+    out_b: &mut [f32],
+    n: usize,
+) {
+    inverse_xyb_planar_scalar(xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, n);
 }
 
 // ============================================================================
@@ -1501,6 +1526,63 @@ mod expanded_coverage {
                     );
                 });
             }
+        }
+    }
+
+    /// The INVERSE transform's tiers must be bit-identical too, for the same
+    /// reason as the forward one, and this is the test that found that they
+    /// were not: the generated `_scalar` tier disagreed by 4 ULP, exactly like
+    /// `forward_xyb_impl_scalar` did. It passes now that
+    /// `inverse_xyb_planar_impl_scalar` delegates to
+    /// `inverse_xyb_planar_scalar` instead of being a second implementation.
+    ///
+    /// This is ADDITIVE to `xyb_to_linear_rgb_planar_scalar_vs_dispatch_sizes`
+    /// below, which keeps its 16-ULP tolerance and therefore keeps running on
+    /// wasm32 — where this one cannot (xyb-001: WASM SIMD has no FMA).
+    #[test]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        ignore = "FIXME(SIMD-parity): xyb-001 — WASM SIMD has no FMA instruction; see docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"
+    )]
+    fn inverse_xyb_dispatch_is_bit_identical_to_scalar() {
+        for &n in &[
+            1_usize, 7, 8, 9, 15, 16, 17, 23, 24, 25, 31, 32, 33, 64, 129, 1000,
+        ] {
+            let xyb_x: alloc::vec::Vec<f32> =
+                (0..n).map(|i| (i as f32 * 0.001).sin() * 0.025).collect();
+            let xyb_y: alloc::vec::Vec<f32> = (0..n)
+                .map(|i| 0.5 + (i as f32 * 0.0013).cos() * 0.3)
+                .collect();
+            let xyb_b: alloc::vec::Vec<f32> = (0..n)
+                .map(|i| 0.5 + (i as f32 * 0.0017).sin() * 0.3)
+                .collect();
+
+            let mut rr = vec![0.0_f32; n];
+            let mut rg = vec![0.0_f32; n];
+            let mut rb = vec![0.0_f32; n];
+            inverse_xyb_planar_scalar(&xyb_x, &xyb_y, &xyb_b, &mut rr, &mut rg, &mut rb, n);
+
+            run_dispatch_parity(|perm| {
+                let mut ar = vec![0.0_f32; n];
+                let mut ag = vec![0.0_f32; n];
+                let mut ab = vec![0.0_f32; n];
+                xyb_to_linear_rgb_planar(&xyb_x, &xyb_y, &xyb_b, &mut ar, &mut ag, &mut ab, n);
+                for (plane, (want, got)) in
+                    [("r", (&rr, &ar)), ("g", (&rg, &ag)), ("b", (&rb, &ab))]
+                {
+                    for i in 0..n {
+                        assert_eq!(
+                            want[i].to_bits(),
+                            got[i].to_bits(),
+                            "{perm}: n={n} plane {plane} lane {i}: scalar {:?} vs dispatch {:?} \
+                             — the tiers must agree bitwise or hash_lock_expected.txt cannot \
+                             hold on both architectures",
+                            want[i],
+                            got[i]
+                        );
+                    }
+                }
+            });
         }
     }
 

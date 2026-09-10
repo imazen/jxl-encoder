@@ -150,7 +150,7 @@ pub fn gaborish_5x5_scalar(
 // The `define(f32x8)` clause injects a `f32x8` type alias substituting
 // `Token` for the concrete token at each tier.
 
-#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, -scalar)]
 #[allow(clippy::too_many_arguments)]
 pub fn gaborish_5x5_impl(
     token: Token,
@@ -304,6 +304,162 @@ pub fn gaborish_5x5_impl(
         }
 
         // Scalar right border + remainder
+        while x < width {
+            output[y * width + x] = scalar_pixel(x as isize, iy);
+            x += 1;
+        }
+    }
+}
+
+/// The `scalar` tier, hand-written — and NOT a delegation to
+/// `gaborish_5x5_scalar`, which is the interesting part.
+///
+/// The generated `_scalar` tier disagreed with the AVX2 / AVX-512 / NEON tiers
+/// by up to **49 ULP**, because magetypes' scalar backend implements `mul_add`
+/// as `a * b + c` (`simd/impls/scalar.rs`) rather than fusing it. On a host
+/// that cannot summon a vector token — pre-AVX2 x86_64, i686, any architecture
+/// magetypes has no backend for — this kernel therefore produced different
+/// output, and it is on the byte-affecting path
+/// (`jxl-encoder/src/vardct/gaborish.rs` calls `gaborish_5x5_channel`).
+///
+/// **Delegating to `gaborish_5x5_scalar` would make it worse, not better.**
+/// That function accumulates left to right (`val = wc*c; val += wr*r; ...`)
+/// while the vector interior uses a nested FMA chain
+/// (`wc*c + (wr*r + (wd*d + (wR*R + (wl*L + wD*D))))`), and the two differ by
+/// up to 40 ULP on the same inputs. That difference is deliberate and already
+/// shipped: the vector body itself uses the left-to-right form for BORDER
+/// pixels (`scalar_pixel`) and the nested chain for interior ones. So the
+/// scalar tier has to reproduce the vector body's structure exactly — border
+/// rows and columns left-to-right, interior in the nested chain — and differ
+/// from it only in walking one pixel at a time instead of eight. Per lane the
+/// arithmetic is then identical, so the bits are.
+///
+/// Found 2026-09-10 by the cross-kernel audit that the forward-XYB fix called
+/// for; the third kernel of five to have this, after `forward_xyb_impl` and
+/// `inverse_xyb_planar_impl` (both of which COULD just delegate). Pinned by
+/// `gaborish_5x5_dispatch_is_bit_identical_across_tiers`.
+#[allow(clippy::too_many_arguments)]
+pub fn gaborish_5x5_impl_scalar(
+    _token: archmage::ScalarToken,
+    output: &mut [f32],
+    input: &[f32],
+    width: usize,
+    height: usize,
+    wc: f32,
+    wr: f32,
+    wd: f32,
+    w_big_r: f32,
+    wl: f32,
+    w_big_d: f32,
+) {
+    use crate::scalarmath::mul_add_f32 as fma;
+
+    // Same early-out as the vector body, delegating to the same function.
+    if width < 13 || height < 5 {
+        gaborish_5x5_scalar(
+            output, input, width, height, wc, wr, wd, w_big_r, wl, w_big_d,
+        );
+        return;
+    }
+
+    let px = |x: isize, y: isize| -> f32 {
+        let cx = x.clamp(0, (width - 1) as isize) as usize;
+        let cy = y.clamp(0, (height - 1) as isize) as usize;
+        input[cy * width + cx]
+    };
+
+    // Byte-for-byte the vector body's `scalar_pixel`: left-to-right accumulation.
+    let scalar_pixel = |ix: isize, iy: isize| -> f32 {
+        let mut val = wc * px(ix, iy);
+        val += wr * (px(ix - 1, iy) + px(ix + 1, iy) + px(ix, iy - 1) + px(ix, iy + 1));
+        val += wd
+            * (px(ix - 1, iy - 1) + px(ix + 1, iy - 1) + px(ix - 1, iy + 1) + px(ix + 1, iy + 1));
+        val += w_big_r * (px(ix - 2, iy) + px(ix + 2, iy) + px(ix, iy - 2) + px(ix, iy + 2));
+        val += wl
+            * (px(ix - 2, iy - 1)
+                + px(ix - 2, iy + 1)
+                + px(ix + 2, iy - 1)
+                + px(ix + 2, iy + 1)
+                + px(ix - 1, iy - 2)
+                + px(ix + 1, iy - 2)
+                + px(ix - 1, iy + 2)
+                + px(ix + 1, iy + 2));
+        val += w_big_d
+            * (px(ix - 2, iy - 2) + px(ix + 2, iy - 2) + px(ix - 2, iy + 2) + px(ix + 2, iy + 2));
+        val
+    };
+
+    for y in 0..height {
+        let iy = y as isize;
+
+        if y < 2 || y >= height - 2 {
+            for x in 0..width {
+                output[y * width + x] = scalar_pixel(x as isize, iy);
+            }
+            continue;
+        }
+
+        for x in 0..2 {
+            output[y * width + x] = scalar_pixel(x as isize, iy);
+        }
+
+        let r_m2 = (y - 2) * width;
+        let r_m1 = (y - 1) * width;
+        let r_0 = y * width;
+        let r_p1 = (y + 1) * width;
+        let r_p2 = (y + 2) * width;
+
+        let simd_end = if width >= 12 { width - 10 } else { 2 };
+        let mut x = 2;
+
+        // The iteration structure is the vector body's, verbatim: chunks of
+        // eight starting at 2 while the START is below `simd_end`, so the last
+        // chunk may run past it. Reproducing the loop rather than computing an
+        // end index is what keeps the boundary exactly where the vector tiers
+        // put it.
+        while x < simd_end {
+            for i in 0..8 {
+                let cx = x + i;
+                let r_sum =
+                    input[r_0 + cx - 1] + input[r_0 + cx + 1] + input[r_m1 + cx] + input[r_p1 + cx];
+                let d_sum = input[r_m1 + cx - 1]
+                    + input[r_m1 + cx + 1]
+                    + input[r_p1 + cx - 1]
+                    + input[r_p1 + cx + 1];
+                let big_r_sum =
+                    input[r_0 + cx - 2] + input[r_0 + cx + 2] + input[r_m2 + cx] + input[r_p2 + cx];
+                let l_sum = input[r_m1 + cx - 2]
+                    + input[r_p1 + cx - 2]
+                    + input[r_m1 + cx + 2]
+                    + input[r_p1 + cx + 2]
+                    + input[r_m2 + cx - 1]
+                    + input[r_m2 + cx + 1]
+                    + input[r_p2 + cx - 1]
+                    + input[r_p2 + cx + 1];
+                let big_d_sum = input[r_m2 + cx - 2]
+                    + input[r_m2 + cx + 2]
+                    + input[r_p2 + cx - 2]
+                    + input[r_p2 + cx + 2];
+
+                // Same nesting as the vector combine: outermost `wc * center`,
+                // innermost a plain multiply on the `w_big_d` tail.
+                output[r_0 + cx] = fma(
+                    wc,
+                    input[r_0 + cx],
+                    fma(
+                        wr,
+                        r_sum,
+                        fma(
+                            wd,
+                            d_sum,
+                            fma(w_big_r, big_r_sum, fma(wl, l_sum, w_big_d * big_d_sum)),
+                        ),
+                    ),
+                );
+            }
+            x += 8;
+        }
+
         while x < width {
             output[y * width + x] = scalar_pixel(x as isize, iy);
             x += 1;
@@ -523,6 +679,85 @@ mod expanded_coverage {
     const W_BIG_D: f32 = 0.004_8;
 
     /// Sweep image sizes including kernel-boundary cases.
+    /// Every tier of `gaborish_5x5_impl` must produce BIT-IDENTICAL output.
+    ///
+    /// This compares tier against TIER, not tier against
+    /// `gaborish_5x5_scalar` — and that distinction is the whole point here.
+    /// The shipped kernel deliberately uses two different summation orders:
+    /// left-to-right for border pixels (`scalar_pixel`) and a nested FMA chain
+    /// for the interior. `gaborish_5x5_scalar` uses the left-to-right form
+    /// everywhere, so it differs from the interior by up to 40 ULP by design,
+    /// and `gaborish_5x5_scalar_vs_dispatch_sizes` below tolerates that with a
+    /// 16-ULP + 1e-4 bound. What must NOT differ is one tier from another,
+    /// because `hash_lock_expected.txt` is one committed sidecar and this
+    /// kernel is on the byte-affecting path.
+    ///
+    /// It caught the generated `_scalar` tier diverging by up to 49 ULP
+    /// (magetypes' scalar `mul_add` is unfused); see
+    /// `gaborish_5x5_impl_scalar`.
+    ///
+    /// Skipped on wasm32 for the reason in `docs/SIMD_PARITY_KNOWN_DIVERGENCES.md`
+    /// (xyb-001): WASM SIMD has no FMA instruction, so its tier cannot agree
+    /// with a fused one.
+    #[test]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        ignore = "FIXME(SIMD-parity): xyb-001 — WASM SIMD has no FMA instruction; see docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"
+    )]
+    fn gaborish_5x5_dispatch_is_bit_identical_across_tiers() {
+        // Sizes that straddle the width<13/height<5 early-out, the 2-pixel
+        // borders and the 8-wide interior chunking.
+        for &(w, h) in &[
+            (5_usize, 5_usize),
+            (12, 5),
+            (13, 5),
+            (16, 16),
+            (17, 17),
+            (23, 9),
+            (24, 9),
+            (25, 9),
+            (32, 16),
+            (33, 17),
+            (64, 32),
+        ] {
+            let n = w * h;
+            let input = gen_f32_unit(0xC0FF_EE00 ^ n as u64, n);
+            let mut first: Option<alloc::vec::Vec<f32>> = None;
+            run_dispatch_parity(|perm| {
+                let mut out = input.clone();
+                let mut scratch = vec![0.0_f32; n];
+                gaborish_5x5_channel(
+                    &mut out,
+                    &mut scratch,
+                    w,
+                    h,
+                    WC,
+                    WR,
+                    WD,
+                    W_BIG_R,
+                    WL,
+                    W_BIG_D,
+                );
+                match &first {
+                    None => first = Some(out),
+                    Some(base) => {
+                        for i in 0..n {
+                            assert_eq!(
+                                base[i].to_bits(),
+                                out[i].to_bits(),
+                                "{perm}: {w}x{h} lane {i}: this tier gives {:?} where the first \
+                                 permutation gave {:?} — the tiers must agree bitwise or \
+                                 hash_lock_expected.txt cannot hold across architectures",
+                                out[i],
+                                base[i]
+                            );
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     #[test]
     fn gaborish_5x5_scalar_vs_dispatch_sizes() {
         let cases: &[(usize, usize)] = &[
