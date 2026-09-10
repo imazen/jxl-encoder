@@ -261,6 +261,9 @@ jxl_encoder_macros::strategy_def! {
             // W44-205: same — Libjxl preserves the libjxl `is_nondefault`
             // admission of ALL buckets, including medium 2 + 4.
             coeff_orders_disable_medium_buckets = false,
+            // XYB cube root: libjxl `CubeRootAndAdd`, bit-exact with the
+            // reference. Byte parity is the whole point of this strategy.
+            xyb_cbrt_libjxl_parity = true,
             // W44-AUDIT-9 / SA-G Fix C: force cmap=zeros during AC
             // strategy SEARCH (only — the emitted bitstream cmap stays
             // Newton-derived). Mirrors libjxl `enc_ac_strategy.cc`
@@ -355,6 +358,9 @@ jxl_encoder_macros::strategy_def! {
             // extension is strictly additive to the W44-201 fix and
             // not per-image / calibration-sensitive.
             coeff_orders_disable_medium_buckets = true,
+            // XYB cube root: the fastest measured variant, not the
+            // libjxl one. See the Section D row.
+            xyb_cbrt_libjxl_parity = false,
             // W44-AUDIT-9 / SA-G Fix C: LeanFaster preserves Zenjxl's
             // cost-model calibration which is tuned against the current
             // (non-zero) cmap baseline used during search. Default OFF
@@ -461,6 +467,9 @@ jxl_encoder_macros::strategy_def! {
             // buckets 2 (DCT16x16) + 4 (DCT16x8/DCT8x16). Phase-1 probe
             // measured -0.97% on 27 cells with ZERO PROTECT regressions.
             coeff_orders_disable_medium_buckets = true,
+            // XYB cube root: the fastest measured variant, not the
+            // libjxl one. See the Section D row.
+            xyb_cbrt_libjxl_parity = false,
             // W44-AUDIT-9 / SA-G Fix C (2026-05-25): Zenjxl preserves
             // its cost-model calibration (W44-29..W44-172) which is
             // tuned against the current non-zero search-side cmap
@@ -537,6 +546,9 @@ jxl_encoder_macros::strategy_def! {
             coeff_orders_disable_large_buckets = true,
             // W44-205: same as Zenjxl — extend to medium buckets 2 + 4.
             coeff_orders_disable_medium_buckets = true,
+            // XYB cube root: the fastest measured variant, not the
+            // libjxl one. See the Section D row.
+            xyb_cbrt_libjxl_parity = false,
             // W44-AUDIT-9 / SA-G Fix C: Aggressive mirrors Zenjxl per
             // the standing pattern. See Zenjxl preset for the OPT-IN
             // rationale.
@@ -1138,6 +1150,30 @@ jxl_encoder_macros::strategy_def! {
         /// diagnostic A/B benching. The pre-existing
         /// `JXL_W44_201_DISABLE_BUCKETS` env hook is preserved for
         /// arbitrary bucket-set tests.
+        /// **XYB cube-root selection** (2026-09-10). `true` on
+        /// [`crate::api::EncoderStrategy::Libjxl`], `false` everywhere else.
+        ///
+        /// When `true` the forward opsin transform uses
+        /// [`jxl_simd::XybCubeRoot::Libjxl`], a transcription of libjxl
+        /// `base/fast_math-inl.h::CubeRootAndAdd` — Newton on the INVERSE cube
+        /// root with multiplies and FMAs only, initial guess in integer vector
+        /// lanes. Bit-exactness with the reference is the point of that
+        /// strategy, and the XYB values feed every downstream decision.
+        ///
+        /// When `false` the zen strategies use whichever variant measured
+        /// fastest within the accuracy budget
+        /// (`benchmarks/cbrt_candidates_2026-09-10.*`, four hosts, identical
+        /// ordering on all of them). The previous shared implementation was two
+        /// Newton iterations in **f64** with a division each — 8-16x slower than
+        /// the vector candidates on x86 — and its `f64x4` requirement is what
+        /// excluded the `v4`/AVX-512 tier from this kernel.
+        ///
+        /// Section D.
+        xyb_cbrt_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "XYB cube root (libjxl CubeRootAndAdd on Libjxl, fastest measured on zen)",
+        },
+
         coeff_orders_disable_medium_buckets: bool {
             divergence_section = "D",
             divergence_row_ref = "W44-205 coeff_orders skip buckets 2+4 (Zenjxl extension of W44-201)",
@@ -1481,6 +1517,12 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_DISABLE_LARGE_BUCKETS,
     },
     // Section D — W44-205 extension of W44-201 to medium buckets 2 + 4
+    DivergenceEntry {
+        gate_name: "xyb_cbrt_libjxl_parity",
+        section: "D",
+        row_ref: "XYB cube root (libjxl CubeRootAndAdd on Libjxl, fastest measured on zen)",
+        raw: __CUSTOM_DIVERGENCE_XYB_CBRT_LIBJXL_PARITY,
+    },
     DivergenceEntry {
         gate_name: "coeff_orders_disable_medium_buckets",
         section: "D",

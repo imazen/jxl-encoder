@@ -78,7 +78,7 @@ fn one_pass_dispatch(
     y_out: &mut [f32],
     b_out: &mut [f32],
 ) {
-    jxl_simd::linear_rgb_to_xyb_batch(r, g, b, x_out, y_out, b_out);
+    jxl_simd::linear_rgb_to_xyb_batch(jxl_simd::XybCubeRoot::MidP, r, g, b, x_out, y_out, b_out);
 }
 
 fn one_pass_scalar(
@@ -90,7 +90,7 @@ fn one_pass_scalar(
     b_out: &mut [f32],
 ) {
     let n = r.len();
-    jxl_simd::forward_xyb_scalar(r, g, b, x_out, y_out, b_out, n);
+    jxl_simd::forward_xyb_scalar(jxl_simd::XybCubeRoot::MidP, r, g, b, x_out, y_out, b_out, n);
 }
 
 fn run_dispatch(

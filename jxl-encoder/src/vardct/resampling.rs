@@ -75,8 +75,24 @@ fn to_opsin_planes(rgb_interleaved: &[f32], n: usize) -> (Vec<f32>, Vec<f32>, Ve
     let mut xyb_x = alloc::vec![0.0_f32; n];
     let mut xyb_y = alloc::vec![0.0_f32; n];
     let mut xyb_b = alloc::vec![0.0_f32; n];
+    // Pinned to the libjxl cube root, deliberately, and NOT threaded from the
+    // encoder's `xyb_cbrt_libjxl_parity` gate. Two reasons: under
+    // `EncoderStrategy::Libjxl` this is exactly the parity-correct choice
+    // (libjxl downsamples ITS opsin image), and in zen mode resampling is off
+    // by default (user directive 2026-09-06) so the path is opt-in only. It is
+    // also the most accurate of the fast variants (5 ULP), which is what a
+    // filter round-trip wants. Threading a selector here would put it through
+    // five internal wrappers and the `__internals` resample API for a path that
+    // does not ship on by default.
     jxl_simd::forward_xyb_scalar(
-        &plane_r, &plane_g, &plane_b, &mut xyb_x, &mut xyb_y, &mut xyb_b, n,
+        jxl_simd::XybCubeRoot::Libjxl,
+        &plane_r,
+        &plane_g,
+        &plane_b,
+        &mut xyb_x,
+        &mut xyb_y,
+        &mut xyb_b,
+        n,
     );
     (xyb_x, xyb_y, xyb_b)
 }

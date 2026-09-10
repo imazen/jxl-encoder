@@ -144,11 +144,28 @@ fn main() {
             let arm = (k + rep) % 5;
             let t = Instant::now();
             match arm {
-                0 => jxl_simd::linear_rgb_to_xyb_batch(&r, &g, &b, &mut xo, &mut yo, &mut bo),
+                0 => jxl_simd::linear_rgb_to_xyb_batch(
+                    jxl_simd::XybCubeRoot::MidP,
+                    &r,
+                    &g,
+                    &b,
+                    &mut xo,
+                    &mut yo,
+                    &mut bo,
+                ),
                 // The crate's OWN scalar fallback. Its dispatch-parity tests
                 // assert it is bit-identical to the SIMD variants, so if this
                 // is faster the win is available with no byte change at all.
-                1 => jxl_simd::forward_xyb_scalar(&r, &g, &b, &mut sx, &mut sy, &mut sb, n),
+                1 => jxl_simd::forward_xyb_scalar(
+                    jxl_simd::XybCubeRoot::MidP,
+                    &r,
+                    &g,
+                    &b,
+                    &mut sx,
+                    &mut sy,
+                    &mut sb,
+                    n,
+                ),
                 2 => local(&r, &g, &b, &mut sx, &mut sy, &mut sb, cbrt_ours),
                 3 => local(&r, &g, &b, &mut sx, &mut sy, &mut sb, cbrt_libjxl),
                 _ => local(&r, &g, &b, &mut sx, &mut sy, &mut sb, |v| v),
@@ -181,8 +198,25 @@ fn main() {
     {
         let (mut ax, mut ay, mut ab) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
         let (mut bx, mut by, mut bb) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
-        jxl_simd::linear_rgb_to_xyb_batch(&r, &g, &b, &mut ax, &mut ay, &mut ab);
-        jxl_simd::forward_xyb_scalar(&r, &g, &b, &mut bx, &mut by, &mut bb, n);
+        jxl_simd::linear_rgb_to_xyb_batch(
+            jxl_simd::XybCubeRoot::MidP,
+            &r,
+            &g,
+            &b,
+            &mut ax,
+            &mut ay,
+            &mut ab,
+        );
+        jxl_simd::forward_xyb_scalar(
+            jxl_simd::XybCubeRoot::MidP,
+            &r,
+            &g,
+            &b,
+            &mut bx,
+            &mut by,
+            &mut bb,
+            n,
+        );
         let mut diff = 0usize;
         for i in 0..n {
             if ax[i].to_bits() != bx[i].to_bits()

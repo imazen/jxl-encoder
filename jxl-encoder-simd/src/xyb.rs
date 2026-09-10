@@ -7,10 +7,11 @@
 //! Forward (linear RGB → XYB): matrix multiply + cube root + mix.
 //! Inverse (XYB → linear RGB): unmix + cube + inverse matrix multiply.
 //!
-//! The cube root uses Newton-Raphson in f64 with bit-manipulation initial guess,
-//! following the proven approach from fast-ssim2/yuvxyb. The SIMD path extracts
-//! each lane to scalar, runs Newton-Raphson, then reloads — same as the
-//! pre-consolidation AVX2 body.
+//! The forward cube root is SELECTABLE — see [`XybCubeRoot`]. Every variant is
+//! pure f32 and stays in vector lanes; the previous shared implementation ran
+//! two Newton iterations in f64 with a division each and extracted every lane
+//! to scalar for its bit-hack guess, which cost 8-16x the vector candidates on
+//! x86 and forced a doubled polyfill on NEON.
 //!
 //! Data layout: separate channel buffers (SoA), not interleaved.
 //!
@@ -77,7 +78,9 @@ const NEG_CBRT_BIAS: [f32; 3] = [-0.155_954_2; 3];
 /// All buffers must be at least `n` elements. Uses SIMD for the inner loop.
 /// The cube root uses Newton-Raphson in f64 for precision.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn linear_rgb_to_xyb_batch(
+    cbrt: XybCubeRoot,
     r: &[f32],
     g: &[f32],
     b: &[f32],
@@ -94,15 +97,15 @@ pub fn linear_rgb_to_xyb_batch(
         .min(b_out.len());
 
     // Dispatch through incant! — picks the best magetypes-generated variant
-    // at runtime. Falls through to `_scalar` on platforms without a SIMD
-    // token. Tier list omits `v4` (AVX-512) because the body now uses
-    // `f64x4` for the vectorized cube-root Newton iterations and magetypes
-    // has no `F64x4Backend` for `X64V4Token` (same constraint + precedent
-    // as `pixel_loss.rs`); `v3` is the x86_64 ceiling. This kernel's `v4`
-    // variant was f32x8-wide anyway, so nothing narrows.
+    // at runtime, falling through to `_scalar` where there is no token.
+    //
+    // `v4` (AVX-512) is BACK in the tier list. It was excluded while the body
+    // needed `f64x4` for the cube-root Newton iterations, which magetypes has
+    // no `F64x4Backend` for on `X64V4Token`. Every cube root offered by
+    // `XybCubeRoot` is pure f32, so that constraint is gone.
     incant!(
-        forward_xyb_impl(r, g, b, x_out, y_out, b_out, n),
-        [v3, neon, wasm128, scalar]
+        forward_xyb_impl(cbrt, r, g, b, x_out, y_out, b_out, n),
+        [v4, v3, neon, wasm128, scalar]
     )
 }
 
@@ -174,19 +177,36 @@ pub fn xyb_to_linear_rgb_batch(
 
 // --- Scalar cube root helper ---
 
-/// The integer-bit-trick initial guess + f64 promotion shared by
-/// [`cbrt_fast`] and the vectorized Newton path in `forward_xyb_impl`.
-/// Returns `(t0, x as f64)`. Note: no zero early-out here — the
-/// vectorized caller applies the x == 0 fixup after the iterations,
-/// producing exactly `cbrt_fast`'s 0.0.
+/// `magetypes::cbrt_midp`'s math, scalar — Kahan bit-hack + 2 Halley steps.
+/// Kept lane-identical to the vector form so a vectorised run's scalar TAIL and
+/// the `_scalar` tier agree.
 #[inline(always)]
-fn cbrt_newton_init(x: f32) -> (f64, f64) {
-    const B1: u32 = 709_958_130;
-    let ui = x.to_bits();
-    let sign = ui & 0x8000_0000;
-    let hx = ui & 0x7FFF_FFFF;
-    let approx = hx / 3 + B1;
-    (f64::from(f32::from_bits(sign | approx)), f64::from(x))
+pub(crate) fn cbrt_midp_scalar(x: f32) -> f32 {
+    if x == 0.0 {
+        return x;
+    }
+    const MAGIC: u32 = 0x2a50_8c2d;
+    let a = x.abs();
+    let mut y = f32::from_bits((a.to_bits() / 3) + MAGIC);
+    for _ in 0..2 {
+        let y3 = y * y * y;
+        y *= (y3 + 2.0 * a) / (2.0 * y3 + a);
+    }
+    if x.is_sign_negative() { -y } else { y }
+}
+
+/// `magetypes::cbrt_lowp`'s math, scalar — one Halley step.
+#[inline(always)]
+pub(crate) fn cbrt_lowp_scalar(x: f32) -> f32 {
+    if x == 0.0 {
+        return x;
+    }
+    const MAGIC: u32 = 0x2a50_8c2d;
+    let a = x.abs();
+    let mut y = f32::from_bits((a.to_bits() / 3) + MAGIC);
+    let y3 = y * y * y;
+    y *= (y3 + 2.0 * a) / (2.0 * y3 + a);
+    if x.is_sign_negative() { -y } else { y }
 }
 
 /// libjxl `base/fast_math-inl.h::CubeRootAndAdd` (with `add == 0`), scalar.
@@ -216,33 +236,14 @@ pub(crate) fn cbrt_libjxl_scalar(x: f32) -> f32 {
     r2 * x
 }
 
-/// Newton-Raphson cube root with bit-manipulation initial guess.
-/// 2 iterations in f64 gives ~1e-7 relative error.
-#[inline]
-fn cbrt_fast(x: f32) -> f32 {
-    if x == 0.0 {
-        return 0.0;
-    }
-    const B1: u32 = 709_958_130;
-    let ui = x.to_bits();
-    let sign = ui & 0x8000_0000;
-    let hx = ui & 0x7FFF_FFFF;
-    let approx = hx / 3 + B1;
-    let mut t = f64::from(f32::from_bits(sign | approx));
-    let xf64 = f64::from(x);
-    // First Newton iteration: t = t * (2x + t³) / (x + 2t³)
-    let r = t * t * t;
-    t = t * (xf64 + xf64 + r) / (xf64 + r + r);
-    // Second Newton iteration
-    let r = t * t * t;
-    t = t * (xf64 + xf64 + r) / (xf64 + r + r);
-    t as f32
-}
-
 // --- Scalar fallbacks (also reused by the magetypes `_scalar` tier internally) ---
 
+/// Scalar forward XYB. `cbrt` selects the same cube root the vector tiers use,
+/// so the tail of a vectorised run and the `_scalar` tier agree lane for lane.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn forward_xyb_scalar(
+    cbrt: XybCubeRoot,
     r: &[f32],
     g: &[f32],
     b: &[f32],
@@ -252,6 +253,11 @@ pub fn forward_xyb_scalar(
     n: usize,
 ) {
     use crate::scalarmath::mul_add_f32 as fma;
+    let cb = |v: f32| match cbrt {
+        XybCubeRoot::Libjxl => cbrt_libjxl_scalar(v),
+        XybCubeRoot::MidP => cbrt_midp_scalar(v),
+        XybCubeRoot::LowP => cbrt_lowp_scalar(v),
+    };
     for i in 0..n {
         // Matrix multiply + bias (chained FMA for single-rounding parity with SIMD path)
         let mixed0 = fma(
@@ -283,9 +289,9 @@ pub fn forward_xyb_scalar(
         );
 
         // Clamp + cube root + bias offset
-        let l = cbrt_fast(mixed0.max(0.0)) + NEG_CBRT_BIAS[0];
-        let m = cbrt_fast(mixed1.max(0.0)) + NEG_CBRT_BIAS[1];
-        let s = cbrt_fast(mixed2.max(0.0)) + NEG_CBRT_BIAS[2];
+        let l = cb(mixed0.max(0.0)) + NEG_CBRT_BIAS[0];
+        let m = cb(mixed1.max(0.0)) + NEG_CBRT_BIAS[1];
+        let s = cb(mixed2.max(0.0)) + NEG_CBRT_BIAS[2];
 
         // Mix into XYB
         x_out[i] = 0.5 * (l - m);
@@ -422,10 +428,68 @@ pub fn inverse_xyb_scalar(
 // through downstream quantization. `v4` omitted: no `F64x4Backend` for
 // `X64V4Token` (pixel_loss.rs precedent).
 
-#[magetypes(define(f32x8, f64x4), v3, neon, wasm128, scalar)]
+/// Which cube root the forward XYB transform uses.
+///
+/// The cube root is 86-87 % of the transform's cost
+/// (`jxl-encoder/benchmarks/cbrt_candidates_2026-09-10.*`), so it is worth
+/// selecting rather than fixing. All variants are pure f32 — that is what lets
+/// this kernel drop the `f64x4` requirement, which previously forced a doubled
+/// polyfill on NEON AND excluded the `v4`/AVX-512 tier.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum XybCubeRoot {
+    /// Bit-exact transcription of libjxl `base/fast_math-inl.h::CubeRootAndAdd`.
+    /// Selected by `EncoderStrategy::Libjxl`, where matching the reference
+    /// matters more than speed — though it happens to be one of the fastest too.
+    Libjxl,
+    /// `magetypes::cbrt_midp` — Kahan bit-hack + 2 Halley steps, max 3 ULP.
+    MidP,
+    /// `magetypes::cbrt_lowp` — 1 Halley step, max 259 ULP. Fastest measured.
+    LowP,
+}
+
+/// libjxl `CubeRootAndAdd` with `add == 0`, vectorised.
+///
+/// Newton on the INVERSE cube root: multiplies and FMAs only, no divisions, and
+/// the initial guess runs in INTEGER VECTOR LANES rather than round-tripping
+/// through `to_array()`. `x == 0` is a SELECT, matching the original's
+/// `IfThenZeroElse` — an early return would be a branch in the inner loop.
+#[inline(always)]
+fn cbrt_libjxl_vec<T>(
+    token: T,
+    x: magetypes::simd::generic::f32x8<T>,
+) -> magetypes::simd::generic::f32x8<T>
+where
+    T: magetypes::simd::backends::F32x8Convert,
+{
+    use magetypes::simd::generic::{f32x8, i32x8};
+    let k1_3 = f32x8::splat(token, 1.0 / 3.0);
+    let k4_3 = f32x8::splat(token, 4.0 / 3.0);
+    let xa_3 = k1_3 * x;
+
+    let m1 = x.bitcast_i32x8();
+    let izero = i32x8::splat(token, 0);
+    let m2 = i32x8::splat(token, 0x5480_0000)
+        - m1.shr_arithmetic_const::<23>() * i32x8::splat(token, 0x002A_AAAA);
+    let m2 = i32x8::blend(m1.simd_eq(izero), izero, m2);
+    let mut r = m2.bitcast_f32x8();
+
+    for _ in 0..3 {
+        let r2 = r * r;
+        // NegMulAdd(xa_3, r^4, k4_3*r) == k4_3*r - xa_3*r^4, fused.
+        r = (-xa_3).mul_add(r2 * r2, k4_3 * r);
+    }
+    let r2 = r * r;
+    // MulAdd(k1_3, NegMulAdd(xa, r^4, r), r)
+    r = k1_3.mul_add((-x).mul_add(r2 * r2, r), r);
+    let r2 = r * r;
+    r2 * x
+}
+
+#[magetypes(define(f32x8, i32x8), v4, v3, neon, wasm128, scalar)]
 #[allow(clippy::too_many_arguments)]
 pub fn forward_xyb_impl(
     token: Token,
+    cbrt: XybCubeRoot,
     r: &[f32],
     g: &[f32],
     b: &[f32],
@@ -471,84 +535,23 @@ pub fn forward_xyb_impl(
         let mixed1 = mixed1.max(zero);
         let mixed2 = mixed2.max(zero);
 
-        // Cube root — `cbrt_fast`'s math, vectorized (see module note
-        // above): scalar integer initial guess per lane, then the two
-        // f64 Newton iterations in f64x4 (6 groups of 4 across the 24
-        // lane-values). Plain mul/add/div in the scalar op order — each
-        // lane is bit-identical to `cbrt_fast`, including the x == 0
-        // fixup (scalar's early return).
-        let m0_arr = mixed0.to_array();
-        let m1_arr = mixed1.to_array();
-        let m2_arr = mixed2.to_array();
-        let mut init_t = [0.0f64; 24];
-        let mut init_x = [0.0f64; 24];
-        for j in 0..8 {
-            let (t, xf) = cbrt_newton_init(m0_arr[j]);
-            init_t[j] = t;
-            init_x[j] = xf;
-            let (t, xf) = cbrt_newton_init(m1_arr[j]);
-            init_t[8 + j] = t;
-            init_x[8 + j] = xf;
-            let (t, xf) = cbrt_newton_init(m2_arr[j]);
-            init_t[16 + j] = t;
-            init_x[16 + j] = xf;
-        }
-        let mut out24 = [0.0f32; 24];
-        for grp in 0..6 {
-            let base4 = grp * 4;
-            let t0 = f64x4::from_array(
-                token,
-                [
-                    init_t[base4],
-                    init_t[base4 + 1],
-                    init_t[base4 + 2],
-                    init_t[base4 + 3],
-                ],
-            );
-            let x = f64x4::from_array(
-                token,
-                [
-                    init_x[base4],
-                    init_x[base4 + 1],
-                    init_x[base4 + 2],
-                    init_x[base4 + 3],
-                ],
-            );
-            let x2 = x + x; // (x + x) — matches scalar `xf64 + xf64`
-            // First Newton iteration: t = (t * ((x+x) + r)) / ((x + r) + r)
-            let r0 = (t0 * t0) * t0;
-            let t1 = (t0 * (x2 + r0)) / ((x + r0) + r0);
-            // Second Newton iteration
-            let r1 = (t1 * t1) * t1;
-            let t2 = (t1 * (x2 + r1)) / ((x + r1) + r1);
-            let arr = t2.to_array();
-            out24[base4] = arr[0] as f32;
-            out24[base4 + 1] = arr[1] as f32;
-            out24[base4 + 2] = arr[2] as f32;
-            out24[base4 + 3] = arr[3] as f32;
-        }
-        // Scalar `cbrt_fast` early-returns 0.0 for x == 0; apply the
-        // same fixup (the Newton path would produce a tiny nonzero).
-        for j in 0..8 {
-            if m0_arr[j] == 0.0 {
-                out24[j] = 0.0;
-            }
-            if m1_arr[j] == 0.0 {
-                out24[8 + j] = 0.0;
-            }
-            if m2_arr[j] == 0.0 {
-                out24[16 + j] = 0.0;
-            }
-        }
-        let mut c0 = [0.0f32; 8];
-        let mut c1 = [0.0f32; 8];
-        let mut c2 = [0.0f32; 8];
-        c0.copy_from_slice(&out24[..8]);
-        c1.copy_from_slice(&out24[8..16]);
-        c2.copy_from_slice(&out24[16..24]);
-        let l = f32x8::from_array(token, c0) + neg_cbrt0;
-        let m = f32x8::from_array(token, c1) + neg_cbrt1;
-        let s = f32x8::from_array(token, c2) + neg_cbrt2;
+        // Cube root, fully in vector lanes. The previous body left the
+        // vector domain here — `to_array()` on all three mixed vectors, a
+        // SCALAR loop over 24 lanes for the bit-hack guess, six `f64x4`
+        // rebuilds, then three `[f32; 8]` staging arrays — which is what made
+        // this kernel slower than its own scalar fallback on NEON.
+        let (c0v, c1v, c2v) = match cbrt {
+            XybCubeRoot::Libjxl => (
+                cbrt_libjxl_vec(token, mixed0),
+                cbrt_libjxl_vec(token, mixed1),
+                cbrt_libjxl_vec(token, mixed2),
+            ),
+            XybCubeRoot::MidP => (mixed0.cbrt_midp(), mixed1.cbrt_midp(), mixed2.cbrt_midp()),
+            XybCubeRoot::LowP => (mixed0.cbrt_lowp(), mixed1.cbrt_lowp(), mixed2.cbrt_lowp()),
+        };
+        let l = c0v + neg_cbrt0;
+        let m = c1v + neg_cbrt1;
+        let s = c2v + neg_cbrt2;
 
         // XYB mixing
         let xv = half * (l - m);
@@ -565,6 +568,7 @@ pub fn forward_xyb_impl(
     // Scalar remainder
     if simd_n < n {
         forward_xyb_scalar(
+            cbrt,
             &r[simd_n..],
             &g[simd_n..],
             &b[simd_n..],
@@ -794,7 +798,15 @@ mod tests {
                 let mut x_out = vec![0.0f32; n];
                 let mut y_out = vec![0.0f32; n];
                 let mut b_out = vec![0.0f32; n];
-                linear_rgb_to_xyb_batch(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+                linear_rgb_to_xyb_batch(
+                    XybCubeRoot::MidP,
+                    &r,
+                    &g,
+                    &b,
+                    &mut x_out,
+                    &mut y_out,
+                    &mut b_out,
+                );
 
                 for i in 0..n {
                     let ex = (x_out[i] - x_ref[i]).abs();
@@ -881,7 +893,7 @@ mod tests {
         let mut x = vec![0.0f32; n];
         let mut y = vec![0.0f32; n];
         let mut bv = vec![0.0f32; n];
-        linear_rgb_to_xyb_batch(&r, &g, &b, &mut x, &mut y, &mut bv);
+        linear_rgb_to_xyb_batch(XybCubeRoot::MidP, &r, &g, &b, &mut x, &mut y, &mut bv);
 
         // Inverse: XYB → RGB
         let mut rgb_out = vec![0.0f32; n * 3];
@@ -952,7 +964,15 @@ mod tests {
                 let mut x_out = vec![0.0f32; n];
                 let mut y_out = vec![0.0f32; n];
                 let mut b_out = vec![0.0f32; n];
-                linear_rgb_to_xyb_batch(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+                linear_rgb_to_xyb_batch(
+                    XybCubeRoot::MidP,
+                    &r,
+                    &g,
+                    &b,
+                    &mut x_out,
+                    &mut y_out,
+                    &mut b_out,
+                );
 
                 for i in 0..n {
                     let ex = (x_out[i] - x_ref[i]).abs();
@@ -997,7 +1017,7 @@ mod tests {
         let mut x = vec![0.0f32; n];
         let mut y = vec![0.0f32; n];
         let mut bv = vec![0.0f32; n];
-        forward_xyb_scalar(&r, &g, &b, &mut x, &mut y, &mut bv, n);
+        forward_xyb_scalar(XybCubeRoot::MidP, &r, &g, &b, &mut x, &mut y, &mut bv, n);
 
         // Scalar reference for interleaved inverse
         let mut ref_rgb = vec![0.0f32; n * 3];
@@ -1193,46 +1213,53 @@ mod expanded_coverage {
     fn linear_rgb_to_xyb_scalar_vs_dispatch_sizes() {
         // Use only NON-NEGATIVE inputs — cube root of negative produces
         // NaN in the standard branch.  Use unit-range random values.
-        for &n in &[1_usize, 7, 8, 9, 16, 17, 64, 129] {
-            let r = gen_f32_unit(0xA001_AAAA ^ n as u64, n);
-            let g = gen_f32_unit(0xA002_BBBB ^ n as u64, n);
-            let b_in = gen_f32_unit(0xA003_CCCC ^ n as u64, n);
+        // EVERY cube root the selector can pick, not just the shipped default —
+        // a tier that disagrees on `Libjxl` but agrees on `MidP` would
+        // otherwise ship silently to `EncoderStrategy::Libjxl` only.
+        for cbrt in [XybCubeRoot::Libjxl, XybCubeRoot::MidP, XybCubeRoot::LowP] {
+            for &n in &[1_usize, 7, 8, 9, 16, 17, 64, 129] {
+                let r = gen_f32_unit(0xA001_AAAA ^ n as u64, n);
+                let g = gen_f32_unit(0xA002_BBBB ^ n as u64, n);
+                let b_in = gen_f32_unit(0xA003_CCCC ^ n as u64, n);
 
-            let mut ref_x = vec![0.0_f32; n];
-            let mut ref_y = vec![0.0_f32; n];
-            let mut ref_b = vec![0.0_f32; n];
-            forward_xyb_scalar(&r, &g, &b_in, &mut ref_x, &mut ref_y, &mut ref_b, n);
+                let mut ref_x = vec![0.0_f32; n];
+                let mut ref_y = vec![0.0_f32; n];
+                let mut ref_b = vec![0.0_f32; n];
+                forward_xyb_scalar(cbrt, &r, &g, &b_in, &mut ref_x, &mut ref_y, &mut ref_b, n);
 
-            run_dispatch_parity(|perm| {
-                let mut act_x = vec![0.0_f32; n];
-                let mut act_y = vec![0.0_f32; n];
-                let mut act_b = vec![0.0_f32; n];
-                linear_rgb_to_xyb_batch(&r, &g, &b_in, &mut act_x, &mut act_y, &mut act_b);
-                assert_f32_slice_close_ulps_abs(
-                    &ref_x,
-                    &act_x,
-                    16,
-                    1e-5,
-                    perm,
-                    &format!("fwd_x(n={n})"),
-                );
-                assert_f32_slice_close_ulps_abs(
-                    &ref_y,
-                    &act_y,
-                    16,
-                    1e-5,
-                    perm,
-                    &format!("fwd_y(n={n})"),
-                );
-                assert_f32_slice_close_ulps_abs(
-                    &ref_b,
-                    &act_b,
-                    16,
-                    1e-5,
-                    perm,
-                    &format!("fwd_b(n={n})"),
-                );
-            });
+                run_dispatch_parity(|perm| {
+                    let mut act_x = vec![0.0_f32; n];
+                    let mut act_y = vec![0.0_f32; n];
+                    let mut act_b = vec![0.0_f32; n];
+                    linear_rgb_to_xyb_batch(
+                        cbrt, &r, &g, &b_in, &mut act_x, &mut act_y, &mut act_b,
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_x,
+                        &act_x,
+                        16,
+                        1e-5,
+                        perm,
+                        &format!("fwd_x(n={n})"),
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_y,
+                        &act_y,
+                        16,
+                        1e-5,
+                        perm,
+                        &format!("fwd_y(n={n})"),
+                    );
+                    assert_f32_slice_close_ulps_abs(
+                        &ref_b,
+                        &act_b,
+                        16,
+                        1e-5,
+                        perm,
+                        &format!("fwd_b(n={n})"),
+                    );
+                });
+            }
         }
     }
 

@@ -95,7 +95,7 @@ use std::path::PathBuf;
 /// T4 (2026-08-31) added `dc_adaptive_smoothing` Section D gate → 36.
 /// T4 (2026-08-31) added `x_qm_scale_from_original_distance` Section D gate → 37.
 // #103 changes four preset defaults; no gate was added or removed.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 38;
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 39;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -237,6 +237,11 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // no W-code; its table row carries this phrase verbatim.
         if row_ref.contains("auto-resample regime switch") {
             out.push("auto-resample regime switch".to_string());
+        }
+        // 2026-09-10: the XYB cube-root selection gate has no W-code; its
+        // Section D row carries this phrase verbatim.
+        if row_ref.contains("XYB cube root") {
+            out.push("XYB cube root".to_string());
         }
         // #74 keep-best CfL Pass-2 guard: issue-numbered ref, no W-code.
         // The doc table row carries "keep-best CfL Pass-2 guard" verbatim.

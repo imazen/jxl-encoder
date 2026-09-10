@@ -1,0 +1,58 @@
+date: 2026-09-10; host Darwin 25.5.0 aarch64 (mac) for the encode-level numbers,
+  four hosts for the kernel numbers (`cbrt_candidates_2026-09-10.*`).
+
+WHAT SHIPPED: the forward XYB cube root is now SELECTED, not fixed.
+  * `EncoderStrategy::Libjxl` -> `XybCubeRoot::Libjxl`, a transcription of
+    libjxl `base/fast_math-inl.h::CubeRootAndAdd`. Bit-exactness with the
+    reference is the point of that strategy.
+  * zen strategies -> `XybCubeRoot::MidP` (`magetypes::cbrt_midp`, 3 ULP),
+    named once as `vardct::xyb::ZEN_XYB_CBRT`.
+  Gate `xyb_cbrt_libjxl_parity`, Section D. Verified LIVE, not assumed: the two
+  modes produce different bytes on all four probed cells, so the selector really
+  reaches the kernel (the LZ77-hash null of 2026-09-08 is the reason this check
+  is mandatory).
+
+The replaced implementation ran two Newton iterations in **f64**, each with a
+DIVISION, and extracted every lane to scalar for its bit-hack guess. It was
+neither libjxl's algorithm nor fast.
+
+WHY MidP AND NOT THE FASTEST. `cbrt_lowp` is the fastest on all four hosts, and
+it is NOT taken. Measured at the ENCODE level, e3 threads=1, 15 reps, 6 images:
+LowP is **0.984x** MidP (1.6 % faster), consistent across all six (0.979-0.992).
+That is the only band where it shows — e5/e7/e9 are inside noise — and it costs
+259 ULP against MidP's 3 (86x the error) on values that feed quantisation and
+the perceptual loop. `ZEN_XYB_CBRT` is one constant, so the trade is one line
+away if the owner wants it.
+
+RD: `just rd-regression` green on ALL THREE variants (MidP, LowP, Libjxl), with
+per-image SSIM2 differing by <= 0.09 between them — no measurable quality
+separation on that gate.
+
+ENCODE WALL vs cjxl v0.12, 1024^2 d=1, before -> after this change:
+  e3 t1  1.14 -> 1.05      e3 t8  0.93 -> 0.89
+  e5 t1  1.02 -> 1.00      e5 t8  1.20 -> 1.18
+  e7 t1  0.97 -> 0.97      e7 t8  1.04 -> 1.02
+  e9 t1  1.03 -> 1.03      e9 t8  0.46 -> 0.47
+(These "before" figures are the same-run subset at d=1.0 only, so they do not
+equal the both-distance medians in `ladder_vs_cjxl_after_2026-09-10.meta`.)
+
+SIDE EFFECT WORTH MORE THAN THE SPEED: every `XybCubeRoot` variant is pure f32,
+so the kernel no longer needs `f64x4` — and **the `v4`/AVX-512 tier is back in
+its `incant!` list**, having been excluded precisely because magetypes has no
+`F64x4Backend` for `X64V4Token`. Not measured on an AVX-512 host in this change.
+
+BYTES: 7 of 63 hash-lock cells moved, all lossy (lossless never touches XYB —
+a correctness signal, not a coincidence). Deltas 0 to -236 bytes on 58 KB-330 KB
+files, i.e. <= 0.07 %. 0 cells added or removed. The Libjxl byte lock (5 cells)
+did NOT move.
+
+VERIFIED: full release suite (1586 + 507 + ...), `--features "__expert
+__internals"` it-suite 527, workspace all-targets clippy, divergence drift 7/7
+(new Section D row + `extract_anchors` fallback), djxl decode 20/20 incl. 1x1 and
+259x133, thread determinism 0 mismatches over t {1,3,8}.
+
+TRAPS HIT: (1) `UPDATE_HASHES=1` without `rm -f` APPENDS a second full set, and
+without `--test-threads=1` it produces a TORN file with interleaved half-lines.
+`just update-hashes` does both correctly — use it. (2) The dispatch-parity test
+now loops over ALL THREE cube roots; a tier that agreed on `MidP` but not
+`Libjxl` would otherwise have shipped silently to Libjxl-strategy users only.

@@ -282,7 +282,9 @@ pub use special8x8::{
     identity_to_pixels_scalar,
 };
 pub use transpose::transpose_8x8;
-pub use xyb::{linear_rgb_to_xyb_batch, xyb_to_linear_rgb_batch, xyb_to_linear_rgb_planar};
+pub use xyb::{
+    XybCubeRoot, linear_rgb_to_xyb_batch, xyb_to_linear_rgb_batch, xyb_to_linear_rgb_planar,
+};
 
 // --- Scalar variants (no token needed) ---
 

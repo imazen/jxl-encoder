@@ -212,6 +212,13 @@ pub(crate) fn apply_matrix_3x3(r: &mut [f32], g: &mut [f32], b: &mut [f32], m: &
     }
 }
 
+/// The cube root the zen strategies use in the forward opsin transform.
+///
+/// One named place so the choice is a decision, not a scattered literal.
+/// Selected from `benchmarks/cbrt_candidates_2026-09-10.*` (four hosts,
+/// identical ordering on all of them) plus the RD check recorded alongside it.
+pub(crate) const ZEN_XYB_CBRT: jxl_simd::XybCubeRoot = jxl_simd::XybCubeRoot::MidP;
+
 impl VarDctEncoder {
     /// Convert linear RGB to XYB color space with padding to block boundaries.
     ///
@@ -260,7 +267,17 @@ impl VarDctEncoder {
         // functions resolve to intensity_target 10,000 (PQ) / 1,000
         // (HLG); SDR stays 255 → mul == 1.0 exactly (identity).
         let intensity_mul = self.intensity_target / 255.0;
+        // Gate `xyb_cbrt_libjxl_parity` (Section D): `EncoderStrategy::Libjxl`
+        // takes libjxl's own cube root so the opsin values match the reference
+        // bit for bit; the zen strategies take the fastest variant that met the
+        // accuracy budget.
+        let cbrt = if self.resolved_improvements.xyb_cbrt_libjxl_parity {
+            jxl_simd::XybCubeRoot::Libjxl
+        } else {
+            ZEN_XYB_CBRT
+        };
         convert_rows_to_xyb(
+            cbrt,
             width,
             height,
             padded_width,
@@ -358,6 +375,7 @@ const XYB_STRIP_ROWS: usize = 16;
 /// for each pixel, and the per-row right-edge replication).
 #[allow(clippy::too_many_arguments)]
 fn convert_rows_to_xyb(
+    cbrt: jxl_simd::XybCubeRoot,
     width: usize,
     height: usize,
     padded_width: usize,
@@ -382,6 +400,7 @@ fn convert_rows_to_xyb(
                 let y_start = strip_idx * XYB_STRIP_ROWS;
                 let strip_rows = strip_x.len() / padded_width;
                 convert_strip(
+                    cbrt,
                     width,
                     padded_width,
                     y_start,
@@ -405,6 +424,7 @@ fn convert_rows_to_xyb(
             let this_len = strip_len.min(full_len - offset);
             let strip_rows = this_len / padded_width;
             convert_strip(
+                cbrt,
                 width,
                 padded_width,
                 y_start,
@@ -429,6 +449,7 @@ fn convert_rows_to_xyb(
 /// dirty-initialized output slices.
 #[allow(clippy::too_many_arguments)]
 fn convert_strip(
+    cbrt: jxl_simd::XybCubeRoot,
     width: usize,
     padded_width: usize,
     y_start: usize,
@@ -476,6 +497,7 @@ fn convert_strip(
         // row slice, offset by local_y within the strip.
         let dst_row = local_y * padded_width;
         jxl_simd::linear_rgb_to_xyb_batch(
+            cbrt,
             &row_r,
             &row_g,
             &row_b,
