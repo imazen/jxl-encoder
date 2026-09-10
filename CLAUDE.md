@@ -941,6 +941,70 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-10: design C diagnosis -- the IQA violations are the LOOP's stopping rule, not the seed
+
+[PROVEN] Ran the hard IQA violations from design D's gate to ground with
+`examples/d3_dip_probe.rs`. Five findings, in the order they change the picture:
+
+**1. It is OURS, not inherited.** On 5058 e8 our ladder dips at d=3.0
+(SSIM2 86.655) between 89.403 at d=2.5 and 88.359 at d=3.25, while **cjxl v0.12
+is monotone through the same points** (89.650 / 89.326 / 88.342). Contrast with
+the design-B finding, where the e4->e5 domination WAS inherited -- ask this
+question first, the answer differs per bug.
+
+**2. It is not a metric artifact.** Butteraugli -- the metric the loop actually
+optimises -- inverts at the same place: d=3.0 delivers **2.7128** while d=3.25
+delivers **2.4520**, i.e. the coarser request gets better quality with FEWER
+bytes (37,972 vs 39,322). Both oracles agree, so this is a real efficiency
+failure, not SSIM2 disagreeing with butteraugli.
+
+**3. It is not dot detection**, despite `kMinButteraugliForDots` gating at
+exactly `distance >= 3.0`. Output is byte-identical with `with_dot_detection`
+on and off on this image (the "no text-like patches" precondition excludes it).
+The coincidence of thresholds is a red herring.
+
+**4. It is not under-convergence, and TWO SEPARATE non-monotonicities are in
+play** -- printing both metrics per iteration count is what separated them, and
+a butteraugli-only read had me briefly reporting this wrong:
+
+| 5058 e8 | it=0 (no loop) | converged (it>=2) |
+|---|---|---|
+| butteraugli | **monotone** 1.841 / 1.857 / 2.100 / 2.165 / 2.326 | **NOT** (d3.0 = 2.713 > d3.25 = 2.452) |
+| SSIM2 | **NOT** 90.6 / 87.8 / 87.5 / 89.7 / 89.4 | **NOT** 89.4 / 86.7 / 86.7 / 88.4 / 88.2 |
+
+So the **SSIM2 dip at d=2.75-3.0 PREDATES the loop** -- it is in the base
+quantisation, not the loop -- while the **loop additionally breaks butteraugli
+monotonicity**, on the very metric it optimises. Any fix has to address both;
+fixing the loop alone would leave the SSIM2 dip standing.
+
+Other convergence facts from the same sweep: 5058 converges by **it=2**
+(it=2..6 byte-identical); on 9291 and a photo the loop is a net FIX (it=0
+non-monotone, converged monotone); 9291 needs **it=3** at d=2.75 (it=2 gives
+3.233, it=3 gives 2.872) while **e8 defaults to 2** (libjxl's
+`kDefaultButteraugliIters=2`; e9/e10 get 4). So the loop helps on some content
+and hurts on other, and e8's budget is occasionally short of convergence.
+
+**5. The flagged violations are EFFORT-INDEPENDENT.** The same four fire with
+identical numbers at e8 (2 iters) and e9 (4 iters), so they are not the
+iteration budget -- they are the stopping rule delivering inconsistent quality
+relative to target across distances.
+
+**Two cells are simply inefficient operating points**, strictly worse than their
+coarser neighbours on BOTH axes: 5058 d=0.4 (58,862 B / 92.589) vs d=0.5
+(56,670 B / **92.924**), and d=12 (22,048 B / 68.139) vs d=15 (20,249 B /
+**69.311**). Spending more to deliver less is never right regardless of contract.
+
+**Aside worth keeping: at d >= 10 we are enormously better than cjxl on this
+document** -- ours 77.99 / 68.14 / 69.31 SSIM2 against cjxl's 22.17 / 21.61 /
+20.79 -- because cjxl auto-resamples there and we do not (the never-resample
+default). That is the #101 resampling verdict showing up as a quality cliff in
+the reference, and it is a reason not to re-enable auto-resampling.
+
+**Status: diagnosis, not a fix.** The fix is design C proper -- make the loop
+converge to the requested target consistently rather than stopping at whatever
+quality its rule admits. Data: `benchmarks/rd_monotonicity_knowncliffs_2026-09-09.tsv`,
+probe `examples/d3_dip_probe.rs`.
+
 ### 2026-09-10: LZ77 keep-best (design A) -- lossless-only, and the lossy win was SYNTHETIC-ONLY
 
 [PROVEN] `JXL_LZ77_KEEP_BEST=1` replaces the estimator threshold

@@ -3265,3 +3265,7 @@ path = "examples/effort_monotonicity_gate.rs"
 [[example]]
 name = "e3_e5_domination_probe"
 path = "examples/e3_e5_domination_probe.rs"
+
+[[example]]
+name = "d3_dip_probe"
+path = "examples/d3_dip_probe.rs"
