@@ -1,0 +1,63 @@
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10
+subject: the six wall fixes of 2026-09-10, ALL of which claim byte identity:
+  patches BFS prefilter, value-freq skip below e9, per_block_modulations
+  strip-parallel, fuzzy_erosion strip-parallel, HF-group section encode
+  parallel, AC-group tokenization parallel.
+
+This is the widest byte-identity check of the set. Everything else today used
+4-8 images; this one uses the imazen-26 corpus stratification.
+
+GRID: **42 images — the first TWO `.sdr.png` files (sorted, deterministic) from
+each of the 21 strata** — 512x512 centre crops, metadata stripped
+x efforts {3, 5, 7, 9} x distances {0.5, 2.0, 8.0} x threads=8.
+Distances deliberately span the aggressive end (d=8), not just the
+high-quality end.
+
+  **504 cells. 504 byte-identical to the pre-session build. 0 differing.
+  0 encode failures.**
+
+LOSSLESS, same 42 images x efforts {3,5,7,9}, run at BOTH thread counts because
+they take different code paths (see the non-finding below): **threads=8 168/168
+byte-identical (sectioned-tree path at e<=7), threads=1 168/168 byte-identical
+(global-tree path). 336 lossless cells, 0 differing.** This matters separately because the value-freq
+skip touches `build_entropy_code_ans_from_token_groups_with_strategy`, which the
+modular/LZ77 path also reaches — the lossy sweep alone would not have covered
+it. Lossless thread determinism additionally checked on 12 images x efforts
+{5, 8, 9} x threads {1, 4, 8}: e8 and e9 are thread-invariant (0 mismatches);
+**e5 is NOT, and that is BY DESIGN — see below.**
+
+NON-FINDING, recorded because it looks exactly like a bug and cost real time to
+clear: lossless **e5** output differs between threads=1 and threads>1 on 12 of 12
+images. It is not a defect and it is not caused by anything landed today — the
+PRE-SESSION binary reproduces it identically (12/12 the same way). It is the
+owner-approved `SectionedTrees::Auto` policy: `api.rs`'s gate engages sectioned
+trees when `effort <= 7 && threads > 1`, so a single-threaded lossless e5 encode
+keeps the GLOBAL tree and a multi-threaded one uses per-section trees — a
+different, equally valid bitstream. `parallel.rs:16` names this as the ONE
+sanctioned exception to "do NOT branch output-affecting logic on
+`effective_threads()`", and `modular/frame.rs:40-43` documents it and gives the
+workaround: **pin `with_sectioned_trees(On/Off)` for thread-invariant output.**
+e8/e9 are stable precisely because `Auto` routes e >= 8 to the global tree.
+
+The lossless byte-identity result above is unaffected: it compares the two builds
+at the SAME thread count (8), so the policy applies equally to both arms.
+
+Together with the other checks landed today the byte-identity evidence is:
+  - 504 cells, 42 images, 21 strata, e{3,5,7,9}, d{0.5,2,8}      (this file)
+  - 224 cells re-running the full ladder grid, 4 sizes 64..2048  (ladder_after)
+  - 1,330 cells matching on bytes AND all 15 patches-scan counters (patches yield)
+  - 96 cells across t=1, t=8 and the pre-session build            (per fix)
+  -   9 cells on MULTI-DC-group shapes incl. 2500x3100           (multi_dc_group)
+  - 216 encodes over 18 odd/degenerate shapes, 1x1 to 2047x17     (determinism)
+  - 560 encodes over 10 thread counts {1..8, 11, 16}              (determinism)
+  -  68/68 hash locks and 5/5 Libjxl byte locks, unmoved throughout
+  - `just rd-regression` green (2/2, all cells within thresholds)
+  - fuzz regression seeds green
+
+CAVEAT: one host, one architecture (aarch64 macOS). Byte identity is
+platform-independent by construction for these changes (no float arithmetic was
+reordered — the two strip-parallel fixes preserve per-element operation order,
+and the two group-loop fixes only reorder INDEPENDENT work collected in index
+order), but that is an argument, not a measurement, on other architectures. CI's
+native x64 / Windows-ARM / i686 test jobs are the measurement, and they were
+cancelled by supersession on every push of this series until the last one.
