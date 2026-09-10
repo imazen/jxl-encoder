@@ -37,7 +37,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
+use imgref::Img;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
+use rgb::RGB;
 
 /// Distances at which libjxl (and we) change reference filters, so byte and
 /// quality monotonicity are not promised ACROSS them. Read from source:
@@ -48,8 +51,8 @@ const FILTER_BOUNDARIES: &[f32] = &[0.5, 0.7, 1.5, 4.0];
 /// structural problems live, and a grid denser at high quality than low is
 /// already wrong (CLAUDE.md sweep discipline).
 const DISTANCES: &[f32] = &[
-    0.4, 0.5, 0.6, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0,
-    15.0,
+    0.4, 0.5, 0.6, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 4.0, 5.0, 6.0,
+    8.0, 10.0, 12.0, 15.0,
 ];
 
 fn arg(name: &str, default: &str) -> String {
@@ -88,6 +91,7 @@ struct Cell {
     distance: f32,
     bytes: usize,
     ssim2: f64,
+    bfly: f64,
     ms: f64,
     cjxl_bytes: usize,
     cjxl_ssim2: f64,
@@ -156,6 +160,19 @@ fn main() {
         let (x0, y0) = ((rgb.width() - n) / 2, (rgb.height() - n) / 2);
         let crop = image::imageops::crop_imm(&rgb, x0, y0, n, n).to_image();
         let src: Vec<u8> = crop.as_raw().clone();
+        let orig_lin_px: Vec<RGB<f32>> = src
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| {
+                RGB::new(
+                    srgb_to_linear(c[0]),
+                    srgb_to_linear(c[1]),
+                    srgb_to_linear(c[2]),
+                )
+            })
+            .collect();
+        let orig_lin: Img<Vec<RGB<f32>>> = Img::new(orig_lin_px, n as usize, n as usize);
         let name = path.file_name().unwrap().to_string_lossy().to_string();
 
         // Fresh PNG for cjxl: written from raw RGB8, so it carries no ICC and
@@ -202,6 +219,7 @@ fn main() {
                     distance: d,
                     bytes: enc.len(),
                     ssim2,
+                    bfly: bfly_of(&enc, &orig_lin),
                     ms,
                     cjxl_bytes,
                     cjxl_ssim2,
@@ -256,7 +274,7 @@ fn main() {
     }
 
     if fatal.is_empty() {
-        println!("\nIQA MONOTONICITY: clean — delivered SSIM2 never rises as distance coarsens");
+        println!("\nIQA MONOTONICITY: clean — no cell where BOTH oracles invert");
     } else {
         let within = fatal.iter().filter(|v| v.contains("within regime")).count();
         println!(
@@ -270,6 +288,42 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+/// Delivered butteraugli (LINEAR domain, lower = better).
+///
+/// The gate corroborates with a second metric because SSIM2 alone is not a
+/// reliable ORDERING oracle near its ceiling: measured on two images at
+/// d = 0.25..0.6, SSIM2 jitters +/-1-2 points with no trend (91.9, 91.7, 91.3,
+/// 93.0, 91.3, 92.3, ...) while butteraugli over the same cells is smooth and
+/// monotone (0.316 -> 0.613). Flagging those as violations would make the gate
+/// cry wolf on exactly the high-quality cells that matter most.
+fn bfly_of(encoded: &[u8], orig_linear: &Img<Vec<RGB<f32>>>) -> f64 {
+    let Ok(mut img) = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(encoded)) else {
+        return f64::NAN;
+    };
+    img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
+    let Ok(render) = img.render_frame(0) else {
+        return f64::NAN;
+    };
+    let fb = render.image_all_channels();
+    let (buf, ch) = (fb.buf(), fb.channels());
+    if ch < 3 {
+        return f64::NAN;
+    }
+    let px: Vec<RGB<f32>> = (0..fb.width() * fb.height())
+        .map(|i| RGB::new(buf[i * ch], buf[i * ch + 1], buf[i * ch + 2]))
+        .collect();
+    let dist: Img<Vec<RGB<f32>>> = Img::new(px, fb.width(), fb.height());
+    butteraugli_linear(
+        orig_linear.as_ref(),
+        dist.as_ref(),
+        &ButteraugliParams::default(),
+    )
+    .map(|r| r.score)
+    .unwrap_or(f64::NAN)
 }
 
 /// Delivered SSIMULACRA2 of an encoded stream against the source.
@@ -351,21 +405,52 @@ fn check_staircase(cells: &[Cell]) -> (Vec<String>, Vec<String>) {
             let (lo, hi) = (w[0], w[1]);
             let crossing = regime(lo.distance) != regime(hi.distance);
 
-            // HARD: delivered IQA must not rise as the request coarsens.
-            // 0.30 SSIM2 points of slack, the same per-cell budget used
-            // elsewhere in this repo.
-            if hi.ssim2.is_finite() && lo.ssim2.is_finite() && hi.ssim2 > lo.ssim2 + 0.30 {
+            // HARD: delivered IQA must not rise as the request coarsens --
+            // but a SINGLE metric is not enough to convict. Measured at
+            // d = 0.25..0.6 on two images, SSIM2 jitters +/-1-2 points with no
+            // trend near its ceiling (91.9, 91.7, 91.3, 93.0, 91.3, 92.3) while
+            // butteraugli over the same cells is smooth and monotone
+            // (0.316 -> 0.613). Convicting on SSIM2 alone would fail the gate on
+            // exactly the high-quality cells that matter most, for a
+            // disagreement between metrics rather than an encoder fault.
+            //
+            // So a hard violation needs BOTH oracles to agree the ordering
+            // inverted. Single-metric inversions are reported as advisories.
+            let ssim2_inverted =
+                hi.ssim2.is_finite() && lo.ssim2.is_finite() && hi.ssim2 > lo.ssim2 + 0.30;
+            // butteraugli: LOWER is better, so an inversion is hi < lo.
+            let bfly_inverted =
+                hi.bfly.is_finite() && lo.bfly.is_finite() && hi.bfly < lo.bfly * 0.98;
+
+            if ssim2_inverted && bfly_inverted {
                 fatal.push(format!(
-                    "{img} e{e}: SSIM2 ROSE {:.3} -> {:.3} as d went {} -> {}{}",
-                    lo.ssim2,
-                    hi.ssim2,
+                    "{img} e{e}: BOTH oracles invert d {} -> {}: ssim2 {:.3} -> {:.3}, bfly {:.4} -> {:.4}{}",
                     lo.distance,
                     hi.distance,
+                    lo.ssim2,
+                    hi.ssim2,
+                    lo.bfly,
+                    hi.bfly,
                     if crossing {
                         "  [filter-boundary crossing -- design C]"
                     } else {
                         "  [within regime -- targeting bug]"
                     }
+                ));
+            } else if ssim2_inverted || bfly_inverted {
+                advisory.push(format!(
+                    "{img} e{e}: {} only, d {} -> {}: ssim2 {:.3} -> {:.3}, bfly {:.4} -> {:.4}",
+                    if ssim2_inverted {
+                        "SSIM2"
+                    } else {
+                        "butteraugli"
+                    },
+                    lo.distance,
+                    hi.distance,
+                    lo.ssim2,
+                    hi.ssim2,
+                    lo.bfly,
+                    hi.bfly
                 ));
             }
 

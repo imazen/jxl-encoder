@@ -120,7 +120,11 @@ fn main() {
         "{:>6}{:>17}{:>17}{:>17}{:>17}   (bytes/ssim2/butteraugli; the loop optimises butteraugli)",
         "d", "it=0", "it=2", "it=3", "it=6"
     );
-    for &d in &[2.5f32, 2.75, 3.0, 3.25, 3.5] {
+    let dists: Vec<f32> = std::env::args()
+        .nth(4)
+        .map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect())
+        .unwrap_or_else(|| vec![2.5, 2.75, 3.0, 3.25, 3.5]);
+    for &d in &dists {
         print!("{d:>6}");
         for iters in [0u32, 2, 3, 6] {
             let enc = LossyConfig::new(d)

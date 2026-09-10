@@ -1000,6 +1000,25 @@ document** -- ours 77.99 / 68.14 / 69.31 SSIM2 against cjxl's 22.17 / 21.61 /
 default). That is the #101 resampling verdict showing up as a quality cliff in
 the reference, and it is a reason not to re-enable auto-resampling.
 
+**Scope check -- the violations are CONTENT-SPECIFIC, not systemic.** Running
+the same it=0/converged ladder at 512^2 over a photo, a landscape, a web
+screenshot and the 9291 product shot: **SSIM2 is monotone at it=0 AND converged
+in all four**. The it=0 SSIM2 dip is specific to 5058 (a grayscale document
+scan) at 1024^2. That matches design D's corpus result -- the 4-image
+photographic grid was IQA-clean over 304 cells -- so the hard-contract failures
+live on document/graphics content, not in the general photo path. Butteraugli
+non-monotonicity at it=0 is more widespread (it shows on the car photo too).
+
+**Do NOT reopen the rejected loop controllers on this evidence.** Two prior
+attempts are preserved on `rejected/issue103-full-distance-feedback` and
+`rejected/issue103-coordinate-control`; both improved distance accuracy and both
+**failed the matched-quality screenshot RD gate** ("three of thirteen firing
+cells reach the requested band; matched-quality screenshot losses remain").
+Nothing measured here suggests that gate would now pass -- and since the
+violations are concentrated on exactly the document/graphics content those
+controllers regressed, the risk is if anything higher. New evidence must include
+the screenshot RD gate passing, not just better targeting.
+
 **Status: diagnosis, not a fix.** The fix is design C proper -- make the loop
 converge to the requested target consistently rather than stopping at whatever
 quality its rule admits. Data: `benchmarks/rd_monotonicity_knowncliffs_2026-09-09.tsv`,
