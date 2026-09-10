@@ -148,10 +148,13 @@ jobs:
       # the ordering inverted -- SSIM2 alone jitters near its ceiling and would
       # cry wolf on the highest-quality cells.
       - name: RD distance-monotonicity gate
+        # CJXL_PATH / DJXL_PATH are exported to $GITHUB_ENV by the
+        # setup-libjxl action above, which locates the binaries with `find`
+        # and version-checks them. Setting them here would OVERRIDE those
+        # verified paths with a guess -- which is exactly how the first version
+        # of this step failed, panicking in the v0.12 version guard.
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
-          CJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/cjxl
-          DJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/djxl
         run: |
           cargo run --locked --release -p jxl-encoder \
             --example rd_monotonicity_gate -- \
@@ -160,10 +163,13 @@ jobs:
 
       # Effort axis: effort N may not be Pareto-dominated by N-1.
       - name: RD effort-envelope gate
+        # CJXL_PATH / DJXL_PATH are exported to $GITHUB_ENV by the
+        # setup-libjxl action above, which locates the binaries with `find`
+        # and version-checks them. Setting them here would OVERRIDE those
+        # verified paths with a guess -- which is exactly how the first version
+        # of this step failed, panicking in the v0.12 version guard.
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
-          CJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/cjxl
-          DJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/djxl
         run: |
           cargo run --locked --release -p jxl-encoder \
             --example effort_monotonicity_gate -- \
