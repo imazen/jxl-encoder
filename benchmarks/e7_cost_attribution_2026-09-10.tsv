@@ -1,0 +1,45 @@
+image	class	arm	wall_ms	ratio_vs_e5	bytes
+1518_nature_pink-flowers-and-bee	photo	e5 (reference)	40.9	1.00	123569
+1518_nature_pink-flowers-and-bee	photo	e5, patches OFF	40.8	1.00	123569
+1518_nature_pink-flowers-and-bee	photo	e7 default	63.9	1.56	123182
+1518_nature_pink-flowers-and-bee	photo	e7, patches OFF	56.4	1.38	123182
+1518_nature_pink-flowers-and-bee	photo	e7, dots OFF	64.0	1.57	123182
+1518_nature_pink-flowers-and-bee	photo	e7, patches+dots OFF	56.7	1.39	123182
+1518_nature_pink-flowers-and-bee	photo	e7, try_dct64 OFF	62.1	1.52	123498
+1518_nature_pink-flowers-and-bee	photo	e7, dct32+64 OFF	60.5	1.48	126910
+1518_nature_pink-flowers-and-bee	photo	e7, cfl_two_pass OFF	61.7	1.51	123061
+1518_nature_pink-flowers-and-bee	photo	e7, chromacity_adj OFF	63.9	1.56	123182
+1518_nature_pink-flowers-and-bee	photo	e7, all reachable OFF	51.3	1.25	126847
+8210_web-screenshots_usgs-main-home	web-screenshot	e5 (reference)	59.8	1.00	86716
+8210_web-screenshots_usgs-main-home	web-screenshot	e5, patches OFF	50.0	0.84	86716
+8210_web-screenshots_usgs-main-home	web-screenshot	e7 default	64.4	1.08	86679
+8210_web-screenshots_usgs-main-home	web-screenshot	e7, patches OFF	54.3	0.91	86679
+8210_web-screenshots_usgs-main-home	web-screenshot	e7, dots OFF	64.5	1.08	86679
+8210_web-screenshots_usgs-main-home	web-screenshot	e7, patches+dots OFF	54.2	0.91	86679
+8210_web-screenshots_usgs-main-home	web-screenshot	e7, try_dct64 OFF	64.6	1.08	86679
+8210_web-screenshots_usgs-main-home	web-screenshot	e7, dct32+64 OFF	64.0	1.07	86679
+8210_web-screenshots_usgs-main-home	web-screenshot	e7, cfl_two_pass OFF	63.0	1.05	86716
+8210_web-screenshots_usgs-main-home	web-screenshot	e7, chromacity_adj OFF	64.4	1.08	86679
+8210_web-screenshots_usgs-main-home	web-screenshot	e7, all reachable OFF	52.7	0.88	86716
+7078_plots_line-polygons	plots	e5 (reference)	58.5	1.00	86922
+7078_plots_line-polygons	plots	e5, patches OFF	46.9	0.80	86922
+7078_plots_line-polygons	plots	e7 default	63.9	1.09	96873
+7078_plots_line-polygons	plots	e7, patches OFF	52.3	0.89	96873
+7078_plots_line-polygons	plots	e7, dots OFF	63.9	1.09	96873
+7078_plots_line-polygons	plots	e7, patches+dots OFF	52.2	0.89	96873
+7078_plots_line-polygons	plots	e7, try_dct64 OFF	63.5	1.09	96873
+7078_plots_line-polygons	plots	e7, dct32+64 OFF	63.8	1.09	96873
+7078_plots_line-polygons	plots	e7, cfl_two_pass OFF	62.7	1.07	97005
+7078_plots_line-polygons	plots	e7, chromacity_adj OFF	62.7	1.07	86824
+7078_plots_line-polygons	plots	e7, all reachable OFF	49.6	0.85	86922
+5058_nps_shen-bigmeadows_gray	document-scan	e5 (reference)	89.1	1.00	61742
+5058_nps_shen-bigmeadows_gray	document-scan	e5, patches OFF	48.4	0.54	163281
+5058_nps_shen-bigmeadows_gray	document-scan	e7 default	93.2	1.05	61733
+5058_nps_shen-bigmeadows_gray	document-scan	e7, patches OFF	54.2	0.61	163281
+5058_nps_shen-bigmeadows_gray	document-scan	e7, dots OFF	92.8	1.04	61733
+5058_nps_shen-bigmeadows_gray	document-scan	e7, patches+dots OFF	54.1	0.61	163281
+5058_nps_shen-bigmeadows_gray	document-scan	e7, try_dct64 OFF	93.0	1.04	61733
+5058_nps_shen-bigmeadows_gray	document-scan	e7, dct32+64 OFF	93.2	1.05	61733
+5058_nps_shen-bigmeadows_gray	document-scan	e7, cfl_two_pass OFF	91.4	1.03	61742
+5058_nps_shen-bigmeadows_gray	document-scan	e7, chromacity_adj OFF	92.9	1.04	61733
+5058_nps_shen-bigmeadows_gray	document-scan	e7, all reachable OFF	52.3	0.59	163281

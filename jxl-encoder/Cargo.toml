@@ -3273,3 +3273,8 @@ path = "examples/d3_dip_probe.rs"
 [[example]]
 name = "extreme_distance_probe"
 path = "examples/extreme_distance_probe.rs"
+
+[[example]]
+name = "e7_cost_attribution"
+path = "examples/e7_cost_attribution.rs"
+required-features = ["__expert"]

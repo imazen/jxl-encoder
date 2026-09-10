@@ -1,0 +1,56 @@
+harness: jxl-encoder/examples/e7_cost_attribution.rs
+command: cargo run --release --features "__expert __env_var_diagnostics" \
+           --example e7_cost_attribution -- <png> 1024 1.0 5
+host: Darwin 25.5.0 aarch64 (mac)
+date: 2026-09-10
+corpus: ~/work/zen/imazen-26-png-v3/png-v3, 1024x1024 CENTRE crops, d=1.0
+timing: min of 5, arms INTERLEAVED inside each repeat and the starting arm
+        ROTATED per repeat, plus one untimed warm-up encode. Block-ordered
+        repeats are known to invert the sign of ~8 % effects on short cells
+        (T3, 2026-08-31); a fixed interleave order still let the first arm eat
+        the cold start in every repeat.
+caveat: absolute wall drifted ~+10 % between the 3-rep and 5-rep runs of the
+        same arms (background load). RATIOS WITHIN AN IMAGE reproduced; do not
+        compare absolute ms across runs.
+
+FINDING 1 — patch DETECTION is the dominant reachable e5..e7 cost, and on
+3 of 4 content classes it returns BYTE-IDENTICAL output.
+
+  image           e7 patch cost      bytes with / without patches
+  nature           7.5 ms (+13 %)    123182 / 123182   identical
+  web-screenshot  10.1 ms (+19 %)     86679 /  86679   identical
+  plots           11.6 ms (+22 %)     96873 /  96873   identical
+  nps brochure    39.0 ms (+72 %)     61733 / 163281   2.65x SMALLER
+
+FINDING 2 — e5 is NOT patch-free on graphics. Issue #43 chunk 2a
+(`EffortProfile::adapt_to_image_content`, effort.rs:2661) lifts `patches` to
+e5/e6 on Screenshot-class content, so the same scan cost lands one effort
+level lower: web-screenshot +9.8 ms (+20 %), plots +11.6 ms (+25 %),
+brochure +40.7 ms (+84 %) — and again byte-identical on the first two.
+The photo does not fire (40.9 vs 40.8 ms, same bytes).
+
+  Consequence: `e7, patches OFF` is FASTER than plain e5 on all three
+  graphics images (0.89x / 0.91x / 0.61x). The "e7 is much slower than e5"
+  framing is wrong for graphics — the delta is patch scanning, present at
+  both efforts.
+
+FINDING 3 — everything else on the e7 band is small.
+  try_dct64        0..4 %      (photo only; 0 % on the three graphics images)
+  try_dct32+64     0..8 %      (photo only)
+  cfl_two_pass     1..3 %
+  chromacity_adj   0..2 %      (photo 0 %)
+  dot_detection    ~0 %        on all four
+  tree_learning    NOT MEASURED — no `LossyInternalParams` override field.
+
+FINDING 4 — correction to the earlier in-session claim that "e7 is 2.72x e5
+and patches+dots are ~1.5 % of the cost". That measurement is not reproduced
+here: in release mode e7/e5 is 1.05x..1.56x, and patches is 13..72 % of e7's
+wall. The earlier figure (e5 113.0 ms at 1024^2, where release measures
+36-40 ms) is ~3x slower than release throughout, so it was very likely a
+debug-profile build. Use the numbers in this file.
+
+phase breakdown (plots 7078, `__JXL_ENC_PHASE_TIMING=1`, e5 arm):
+  patches: dispatch=1.0ms scan=true
+  patches-scan: steps12-done at 0.3ms / bfs-done at 9.9ms / dfs-done at 10.6ms
+  encode_inner: total=57.6 patches=11.6 acstrat=20.9 entropy=14.7
+  -> the BFS pass is ~90 % of the scan; steps 1-2 are 0.3 ms.
