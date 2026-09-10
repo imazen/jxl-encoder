@@ -1,0 +1,19 @@
+harness: jxl-encoder/examples/rd_monotonicity_gate.rs
+command: --images 6 --size 512 --efforts 5,8 (22-point distance ladder)
+corpus: the EXACT set nightly uses -- scripts/hunt/fetch_imazen26_gate_files.sh,
+  5 sha256-pinned images from imazen-26-unprocessed (NOAA document, manuscript
+  scan, aliased plot, web screenshot, product shot)
+cells: 220
+oracles: SSIMULACRA2 (fast-ssim2 PINNED 0.7.1) + butteraugli; a hard violation
+  needs BOTH to agree the ordering inverted
+host: Mac aarch64
+
+RESULT: IQA monotonicity CLEAN -- 0 corroborated violations.
+  13 advisory byte inversions (2 at filter boundaries).
+  allowlist: 0 of 3 entries name an image in this corpus.
+
+WHY THAT LAST LINE MATTERS: the three known violations live on local `png-v3`
+renders (5058, 2400_textures), which are NOT in the CI gate set -- different
+pixels, different filenames. So nightly's "0 known" is expected and correct, and
+its "clean" verdict is a genuine result ON THIS CORPUS rather than the allowlist
+hiding anything. Verified by running the identical corpus locally.
