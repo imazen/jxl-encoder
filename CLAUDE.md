@@ -941,6 +941,36 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-10: where we actually sit against cjxl, by distance band (660-cell census)
+
+Matched-DISTANCE comparison over the 660-cell census (16 stratified images, e5
+and e8, 22 distances). Read the two efforts differently -- they are at different
+points on the curve, not better and worse:
+
+| band | e5 bytes ours/cjxl | e5 we score higher | e8 bytes | e8 we score higher |
+|---|---|---|---|---|
+| d <= 1 | 0.996 | **74/75** | 0.910 | 14/75 |
+| 1 < d <= 4 | 0.996 | **165/165** | 0.848 | 12/165 |
+| 4 < d <= 10 | 0.983 | 55/60 | 0.788 | 6/60 |
+| d > 10 | 0.893 | 19/30 | 0.773 | 17/30 |
+
+**At e5 we PARETO-DOMINATE cjxl** -- smaller AND higher-scoring on essentially
+every cell, 165/165 in the mid band. That is a clean win.
+
+**At e8 do NOT read "we score lower" as a loss.** We are 15-23 % smaller at the
+same requested distance, i.e. sitting at a lower-rate point on the curve.
+Matched-distance byte ratios cannot settle that; only a matched-QUALITY
+comparison can, and this census does not do one. This repo has made that mistake
+before (see the HDR and screenshot entries), so the census tooling deliberately
+reports both columns rather than a single "ratio".
+
+The one corroborated census violation lives in the extreme band: on
+`2400_textures` at e5, d 12 -> 15 inverts on both oracles, and at d >= 12 our
+BYTES are non-monotone too (2,940 -> 2,972 at d 12 -> 14; 2,531 -> 2,818 at
+15 -> 17 on a 512 crop). cjxl is monotone and smaller through the same points
+(52.92 -> 48.85 SSIM2, 2,644 -> 2,196 B), so the extreme-distance instability on
+that content is OURS.
+
 ### 2026-09-10: CI was red for ~10 commits -- the local sibling lock drift reached the release lock
 
 [PROVEN] Every CI job (x64/aarch64 clippy, Linux/macOS/Windows-ARM builds, both

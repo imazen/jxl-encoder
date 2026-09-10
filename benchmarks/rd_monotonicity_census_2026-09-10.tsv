@@ -1,661 +1,661 @@
-image	effort	distance	regime	bytes	ssim2	ms	cjxl_bytes	cjxl_ssim2	cjxl_ms
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	0.4	0	51848	94.0256	33.73	50303	93.7885	18.45
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	0.5	0	47147	93.5076	31.02	45650	93.0547	17.75
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	0.6	1	42831	92.1786	30.42	41947	91.9328	17.11
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	0.75	2	39643	90.6006	29.62	38826	90.1882	16.55
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	1	2	34742	87.7769	29.17	34046	87.2375	16.73
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	1.25	2	28551	84.6835	28.75	27773	83.8190	16.54
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	1.5	2	24324	82.0686	28.37	23611	81.0225	16.32
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	1.75	3	21205	80.0069	29.23	20439	78.7797	16.12
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	2	3	18496	77.7627	29.83	17771	76.2009	15.81
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	2.25	3	16387	75.4254	29.69	15703	73.6817	15.83
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	2.5	3	14137	73.0607	28.94	13491	71.2377	15.69
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	2.75	3	12839	70.8066	28.75	12090	68.8684	15.81
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	3	3	11459	69.2607	28.54	10640	66.7318	15.51
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	3.25	3	10486	67.6788	28.41	9673	64.6678	15.50
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	3.5	3	9984	65.8190	29.68	9011	63.1364	15.43
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	4	3	8734	61.2760	28.18	7769	58.8343	14.94
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	5	4	6888	56.7021	29.13	6440	53.8952	15.63
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	6	4	6063	51.6411	27.87	5495	49.1083	15.22
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	8	4	4782	43.8339	28.87	4324	40.4793	14.70
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	10	4	4454	36.9915	27.49	5360	38.7185	28.20
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	12	4	3831	31.7692	28.51	3995	32.5029	27.69
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	15	4	3136	24.8699	28.49	3308	23.2695	27.60
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	0.4	0	48032	93.1528	136.16	49002	93.4674	163.80
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	0.5	0	44387	92.6067	132.40	45615	92.8346	163.53
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	0.6	1	40318	91.6281	131.80	41651	91.5582	164.15
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	0.75	2	37679	89.3117	139.33	38490	89.9148	166.29
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	1	2	32121	86.5914	134.54	33057	86.5875	167.68
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	1.25	2	26178	82.7947	125.51	27038	83.3156	165.80
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	1.5	2	21776	79.9410	127.83	23105	80.7055	165.38
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	1.75	3	18260	77.3233	123.45	19726	77.8806	168.22
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	2	3	15801	74.7742	138.00	17140	75.5134	164.52
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	2.25	3	13831	70.8348	138.53	14993	72.7623	164.09
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	2.5	3	12216	68.0302	135.57	13218	70.5538	162.31
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	2.75	3	10497	66.8396	135.37	11912	68.0284	161.44
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	3	3	9436	64.8841	137.28	10681	66.1864	163.66
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	3.25	3	8529	62.6823	136.36	9568	64.0311	161.73
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	3.5	3	7655	60.7988	134.95	8746	62.6535	162.89
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	4	3	7034	55.3930	177.65	7829	59.9360	165.10
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	5	4	5603	48.5454	175.55	6109	54.2785	165.37
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	6	4	4567	44.1460	175.62	5446	50.2631	165.32
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	8	4	3651	32.6157	173.31	4282	41.9823	161.12
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	10	4	3061	23.0344	172.79	3865	31.4120	168.62
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	12	4	2625	17.5560	171.78	3173	25.3680	173.23
-1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	15	4	2447	3.4755	170.18	2633	18.3046	174.87
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	0.4	0	127694	92.0742	38.06	126180	91.9974	19.10
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	0.5	0	114536	91.3021	36.63	113157	90.8540	18.49
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	0.6	1	104475	90.1443	35.70	103171	89.9539	18.21
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	0.75	2	92063	88.9178	34.31	90728	88.7233	17.73
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	1	2	77570	86.7116	34.27	76410	86.3709	17.61
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	1.25	2	67416	84.8959	32.08	66184	84.4212	17.43
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	1.5	2	59936	82.9089	31.33	58934	82.5137	17.22
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	1.75	3	54074	81.0794	32.13	53158	80.6640	17.14
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	2	3	49308	79.2037	33.40	48390	78.6581	16.88
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	2.25	3	45560	77.5770	33.03	44675	77.0778	16.87
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	2.5	3	42061	75.7013	32.68	41149	75.0530	16.84
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	2.75	3	39335	74.4249	31.59	38417	73.6393	16.86
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	3	3	36357	72.5704	31.48	36066	71.8557	16.58
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	3.25	3	34056	70.6322	31.87	33840	69.9533	16.43
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	3.5	3	32158	69.0796	31.94	31842	68.3836	16.62
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	4	3	29175	63.9400	31.79	28872	63.1989	16.44
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	5	4	24743	57.9847	30.18	24538	56.7049	16.68
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	6	4	21622	51.8564	30.60	21367	49.2579	16.55
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	8	4	17430	40.1141	30.18	17142	38.3770	16.30
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	10	4	14773	30.4142	29.83	17884	29.9799	27.85
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	12	4	13200	23.3432	28.75	15976	24.2151	27.81
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	15	4	11133	11.4096	29.42	13983	16.0780	27.59
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	0.4	0	124511	92.1637	139.60	124760	92.5179	157.61
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	0.5	0	111478	90.9693	142.45	111594	91.2955	155.67
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	0.6	1	98007	89.5826	141.95	98283	89.9628	156.62
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	0.75	2	85755	88.3279	155.39	86328	88.3696	163.02
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	1	2	71262	85.7568	150.98	72021	86.0026	164.07
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	1.25	2	61422	83.3264	148.29	62115	83.5656	162.19
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	1.5	2	54344	81.1824	148.91	55079	81.4050	163.46
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	1.75	3	48815	79.1692	144.93	49605	79.4184	166.15
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	2	3	44286	77.1512	156.92	45154	77.4833	163.82
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	2.25	3	40842	75.4885	154.78	41777	75.6874	166.27
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	2.5	3	37744	73.3135	151.21	38624	73.7163	163.94
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	2.75	3	35181	71.6118	147.69	36164	71.8611	164.39
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	3	3	32697	69.6364	153.53	34424	70.1245	169.86
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	3.25	3	30514	67.6113	151.26	32304	67.9859	167.13
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	3.5	3	28540	65.5557	152.18	30456	66.4257	169.42
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	4	3	26165	63.1377	221.46	27698	62.9626	173.59
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	5	4	21694	56.8444	200.06	22967	57.2089	171.47
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	6	4	18798	50.5647	199.84	20029	50.9088	173.35
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	8	4	14946	38.6066	201.73	16106	39.6011	172.08
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	10	4	12419	27.4732	197.60	15556	22.5548	172.90
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	12	4	10473	17.4277	197.73	13725	13.4994	176.16
-1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	15	4	8589	2.1456	197.91	11749	-2.0203	179.31
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	0.4	0	68624	93.7257	33.33	66507	93.5055	18.80
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	0.5	0	64221	93.2555	32.15	62388	92.8981	18.03
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	0.6	1	61413	91.9192	31.37	59922	91.8077	17.45
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	0.75	2	56626	91.0662	31.94	55387	90.6513	17.38
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	1	2	52023	89.0009	30.45	50987	88.4883	17.09
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	1.25	2	47649	86.7189	29.92	46743	86.1423	16.59
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	1.5	2	43568	83.9172	30.89	42742	83.2317	16.64
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	1.75	3	40093	81.3809	30.17	39199	80.5326	16.78
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	2	3	36702	79.2020	32.21	35842	78.1390	16.59
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	2.25	3	33809	77.2137	31.22	33035	76.0825	16.56
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	2.5	3	31371	75.0121	30.67	30529	73.7510	16.50
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	2.75	3	29054	72.7854	30.33	28353	71.4875	16.04
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	3	3	26456	70.3426	29.91	26533	69.4638	16.32
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	3.25	3	24552	68.1229	29.83	24421	66.9688	15.93
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	3.5	3	22896	66.2700	29.74	22661	65.1293	16.55
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	4	3	20709	59.7951	29.35	20388	58.5305	16.38
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	5	4	17379	52.0311	29.18	17010	50.5007	16.77
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	6	4	15161	45.2355	30.07	14745	43.1374	16.13
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	8	4	12272	32.1652	28.45	11875	28.7343	15.72
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	10	4	10458	21.7591	28.33	12515	23.7239	27.59
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	12	4	9106	12.8751	28.06	11176	15.4739	27.53
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	15	4	7662	1.9670	28.93	9686	3.8202	27.26
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	0.4	0	64362	93.2229	137.03	64201	93.3016	155.80
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	0.5	0	60729	92.5456	134.77	60689	92.5930	157.71
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	0.6	1	57041	91.1373	133.90	57475	91.0369	157.42
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	0.75	2	52831	89.7776	149.67	53489	89.6988	162.47
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	1	2	47852	87.1183	148.56	48617	87.4138	161.69
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	1.25	2	43778	84.3699	144.67	44543	84.6373	162.83
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	1.5	2	39993	81.3769	145.28	40829	81.7457	162.99
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	1.75	3	36342	78.9742	140.71	37219	79.3415	165.50
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	2	3	32938	76.2306	154.26	33944	76.6015	164.65
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	2.25	3	30298	73.6421	152.14	31310	74.3948	164.66
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	2.5	3	28019	71.4600	149.58	29036	71.8215	162.98
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	2.75	3	26072	68.6895	149.27	27032	69.7495	165.53
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	3	3	23680	65.9089	152.13	25540	67.6645	170.22
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	3.25	3	21785	63.8958	151.85	23575	64.8858	169.19
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	3.5	3	20363	61.3182	152.63	22002	63.1582	167.98
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	4	3	18368	57.3745	222.38	19690	58.7285	174.01
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	5	4	14971	49.1117	202.27	16138	51.3863	169.02
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	6	4	13040	42.5497	198.78	13936	43.6641	170.21
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	8	4	10419	26.6020	199.47	11140	29.6525	169.44
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	10	4	8527	15.2012	201.00	10466	10.9571	170.23
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	12	4	7224	4.8613	196.85	9224	3.5025	172.07
-1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	15	4	6075	-9.2562	199.71	7867	-10.8508	179.37
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	0.4	0	50798	92.7205	40.38	58873	91.4005	17.71
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	0.5	0	47188	91.2435	37.93	53996	90.4300	16.88
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	0.6	1	46961	91.0432	37.72	55899	89.8872	15.97
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	0.75	2	43543	90.6566	36.13	50530	89.2321	15.92
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	1	2	37541	89.5307	46.19	44041	87.6030	15.21
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	1.25	2	33797	88.5634	48.08	39029	87.0432	14.84
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	1.5	2	30789	87.6533	47.59	35576	86.3038	14.96
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	1.75	3	28785	86.7566	46.57	33284	85.5010	14.05
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	2	3	26790	85.9226	46.55	30959	84.5225	14.04
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	2.25	3	25276	85.1480	37.59	28823	83.3387	14.24
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	2.5	3	23985	84.0213	35.12	26594	82.0315	14.48
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	2.75	3	23025	83.4792	35.84	25710	80.9774	14.37
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	3	3	22099	83.1127	36.71	24471	80.7651	14.02
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	3.25	3	20994	82.0104	33.55	23620	79.2287	13.78
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	3.5	3	20196	80.7601	36.38	22508	78.5226	13.94
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	4	3	18767	79.9039	32.91	21138	77.2343	13.73
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	5	4	16659	75.9310	35.44	18208	72.7662	13.76
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	6	4	15183	72.5886	32.29	16413	70.0160	13.55
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	8	4	12989	65.8516	31.82	14943	62.6553	13.47
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	10	4	11316	59.9346	33.47	12530	5.8280	22.47
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	12	4	9991	52.4419	32.61	11571	4.5417	22.28
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	15	4	9100	46.4271	30.15	10022	2.8001	22.31
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	0.4	0	45722	91.6968	135.12	70795	91.5480	160.62
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	0.5	0	41610	91.3246	131.25	65862	91.4691	157.64
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	0.6	1	42874	90.5497	133.61	71947	91.7279	156.86
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	0.75	2	39095	90.3200	141.09	65828	90.8676	161.09
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	1	2	33891	88.9988	151.14	57657	89.8452	161.89
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	1.25	2	30323	87.5981	148.94	51845	88.5880	160.82
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	1.5	2	27299	86.5442	144.98	47426	88.3029	161.67
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	1.75	3	25248	85.2600	145.15	43999	87.4316	160.12
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	2	3	23476	84.5947	144.43	41486	86.0687	162.34
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	2.25	3	21943	82.3320	143.25	39178	85.6270	159.20
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	2.5	3	20899	81.8842	144.08	37489	84.2011	161.12
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	2.75	3	19911	81.1273	141.19	36857	83.7910	160.53
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	3	3	19010	80.1568	141.79	34789	83.1586	159.86
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	3.25	3	18152	79.5135	140.02	33309	82.1182	157.12
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	3.5	3	17386	78.3199	138.71	32015	82.1222	156.96
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	4	3	16145	75.5759	185.55	29403	80.0805	162.87
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	5	4	14074	71.5226	161.67	25256	77.0036	160.75
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	6	4	12799	66.6953	157.05	22892	74.0407	157.59
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	8	4	10821	60.2672	155.81	18118	65.1864	160.68
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	10	4	9358	51.1330	157.86	14905	5.8093	155.49
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	12	4	8368	42.7826	155.26	12501	4.8137	156.20
-8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	15	4	7479	33.2155	157.50	10164	2.0385	158.56
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	0.4	0	26845	93.9182	40.18	25471	93.6251	15.57
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	0.5	0	24363	93.7056	39.92	22901	93.2451	15.30
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	0.6	1	25388	93.2022	40.48	24188	92.8162	15.38
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	0.75	2	22656	92.5197	40.72	21547	92.0223	15.45
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	1	2	20229	90.8716	39.99	19180	90.1982	15.42
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	1.25	2	19109	89.1924	39.88	18168	88.4708	15.14
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	1.5	2	18411	87.2405	39.45	17599	86.1528	15.20
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	1.75	3	17424	85.1942	39.51	16580	84.0864	15.10
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	2	3	16065	83.6116	28.89	15265	82.0215	14.90
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	2.25	3	14917	81.7929	29.03	14069	80.1528	14.83
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	2.5	3	13841	80.3226	28.76	13025	78.3730	14.78
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	2.75	3	12971	78.8520	28.81	12136	76.3197	14.84
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	3	3	12275	77.5876	28.74	11387	74.5039	14.75
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	3.25	3	11478	76.2162	28.52	10701	72.6859	15.00
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	3.5	3	10862	75.0804	28.39	9948	70.7338	14.71
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	4	3	9989	69.8789	28.33	9057	65.9677	14.60
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	5	4	8592	65.0860	28.10	7835	59.9597	14.96
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	6	4	7290	59.2050	28.05	6493	51.7186	14.63
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	8	4	6001	51.0365	27.77	5288	41.8179	14.36
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	10	4	4836	41.6657	27.62	5313	44.8068	26.52
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	12	4	4113	32.6341	27.47	4509	36.9330	26.43
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	15	4	3628	27.2232	27.47	3561	22.8899	26.48
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	0.4	0	23980	93.3060	141.03	24108	93.4875	158.31
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	0.5	0	21731	92.9756	137.65	22316	93.1560	161.06
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	0.6	1	22441	92.3730	140.00	22902	92.5751	162.07
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	0.75	2	19935	91.1922	145.57	20988	91.7205	165.66
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	1	2	17782	88.9631	143.38	18801	89.7111	166.09
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	1.25	2	16558	87.6065	138.98	17697	88.3964	165.38
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	1.5	2	16065	84.2001	137.56	17376	85.5777	165.95
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	1.75	3	14688	81.8762	137.74	16005	82.9880	165.46
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	2	3	13378	79.8900	137.87	14688	81.3093	165.90
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	2.25	3	12475	77.7792	137.72	13686	79.2913	163.90
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	2.5	3	11473	75.6130	136.04	12737	77.2871	164.31
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	2.75	3	10619	73.2379	134.95	11889	75.1392	164.40
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	3	3	9782	71.2703	136.48	11183	73.4512	165.53
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	3.25	3	9102	69.6278	139.84	10469	71.4267	166.15
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	3.5	3	8595	66.6066	135.20	9793	69.0688	165.61
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	4	3	7596	61.9430	178.37	8982	65.8477	171.28
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	5	4	6187	53.7637	177.49	7383	57.9380	168.39
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	6	4	5211	46.7888	176.08	6410	50.1437	167.88
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	8	4	4066	35.1540	177.11	5200	38.0803	165.85
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	10	4	3422	24.6281	174.62	4370	35.8654	168.55
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	12	4	2977	18.0255	174.03	3598	27.0679	168.13
-1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	15	4	2537	9.9979	175.04	2855	14.9665	171.49
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	0.4	0	70510	92.7677	41.76	70908	91.9279	19.24
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	0.5	0	64362	91.4524	38.95	65595	91.0860	18.25
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	0.6	1	60007	91.0674	37.93	62334	90.6255	17.35
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	0.75	2	53698	90.5655	36.15	55541	90.1522	16.24
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	1	2	45418	89.6314	45.95	47912	88.8499	15.48
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	1.25	2	40451	88.3717	45.05	42341	87.9248	15.29
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	1.5	2	36730	87.4253	45.03	38709	86.9655	14.60
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	1.75	3	33867	86.5912	44.38	35387	85.8351	14.69
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	2	3	31651	85.6452	45.93	32512	85.0737	14.24
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	2.25	3	29871	84.6915	34.35	30258	83.6161	14.28
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	2.5	3	27847	83.4761	33.99	28398	82.5570	13.92
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	2.75	3	26782	82.8140	33.76	27338	81.5783	13.87
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	3	3	25464	82.2004	33.68	26046	81.0462	13.93
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	3.25	3	24307	81.3964	33.48	24730	79.4924	14.04
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	3.5	3	23132	80.0993	32.68	23634	78.3122	14.11
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	4	3	21560	78.6855	32.56	21925	77.3749	14.52
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	5	4	19046	74.9117	32.37	19423	72.8253	14.27
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	6	4	17216	70.7460	31.78	17440	69.5036	13.96
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	8	4	14543	64.5625	30.54	14799	62.1847	13.47
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	10	4	12630	57.4713	30.77	13471	-1.7191	24.01
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	12	4	11139	50.9032	29.54	11992	-3.1259	23.96
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	15	4	9847	41.5345	29.03	10584	-4.5107	23.70
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	0.4	0	64087	91.4554	136.30	94747	91.7086	163.93
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	0.5	0	57736	91.6179	134.08	86422	91.6923	158.40
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	0.6	1	54973	90.8742	135.39	84398	91.3745	156.91
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	0.75	2	48834	90.4250	140.80	75420	91.1924	158.90
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	1	2	41489	88.6617	150.28	65021	89.8657	161.63
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	1.25	2	36708	87.6320	147.96	57591	88.6367	162.06
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	1.5	2	33006	86.4962	144.46	51686	87.3442	160.71
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	1.75	3	30297	85.4061	144.33	47518	86.8212	160.35
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	2	3	27925	84.0652	144.13	44420	85.6777	159.91
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	2.25	3	26058	83.0706	144.54	41149	84.8796	160.76
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	2.5	3	24401	81.8541	141.73	38549	83.3857	161.19
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	2.75	3	23353	80.6394	142.07	36878	82.9860	160.76
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	3	3	22092	79.4303	141.40	34769	82.0671	159.25
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	3.25	3	21159	78.6738	142.30	33021	81.2511	158.86
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	3.5	3	19954	76.7604	140.99	31522	80.0263	158.63
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	4	3	18336	74.9666	186.55	29065	78.8110	163.86
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	5	4	16177	70.6823	162.05	24633	74.1292	160.00
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	6	4	14688	65.5285	160.91	22066	70.0602	160.44
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	8	4	12231	57.4520	153.41	17665	62.1821	157.62
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	10	4	10396	49.2089	152.39	17035	-0.8818	160.81
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	12	4	9342	38.8746	152.54	13819	-2.3817	157.59
-8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	15	4	8026	29.5478	150.66	10974	-5.6095	163.28
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	0.4	0	65817	94.3570	30.07	64660	94.0136	17.33
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	0.5	0	58149	93.6338	31.05	57097	93.1888	16.53
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	0.6	1	49548	92.2352	30.29	48606	91.7712	16.28
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	0.75	2	41444	90.6326	29.26	40538	90.0157	15.89
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	1	2	32115	88.3489	28.30	31105	87.6841	16.10
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	1.25	2	26439	86.5660	28.07	25439	85.5996	16.08
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	1.5	2	22860	84.3776	27.68	22034	83.2119	16.05
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	1.75	3	20148	82.6149	29.01	19357	81.2769	15.60
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	2	3	17840	80.7993	28.98	17100	79.0769	15.72
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	2.25	3	15968	78.9874	28.87	15267	77.0906	15.57
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	2.5	3	14351	76.8135	30.09	13538	74.3327	15.27
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	2.75	3	12796	75.0360	28.42	12037	71.7091	15.07
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	3	3	11501	73.0909	28.37	10674	69.1953	15.07
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	3.25	3	10514	71.3266	29.53	9667	66.9041	14.99
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	3.5	3	9722	69.4946	28.04	8872	64.2970	14.71
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	4	3	8591	64.0994	27.78	7668	59.0138	14.76
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	5	4	6868	59.0780	27.58	5876	52.1987	14.33
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	6	4	5520	53.4258	27.28	4549	44.6380	14.48
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	8	4	4422	45.4870	27.32	3546	35.4674	14.40
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	10	4	3612	38.3509	27.11	2729	32.0638	26.43
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	12	4	3103	31.0780	26.92	2257	24.3938	26.11
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	15	4	2728	26.0207	26.77	1914	13.8224	26.10
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	0.4	0	62933	93.6994	127.37	63781	93.8498	161.86
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	0.5	0	55158	92.6350	124.91	56226	92.9931	164.49
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	0.6	1	46364	91.2866	125.30	46705	91.6204	166.19
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	0.75	2	38422	89.3096	130.69	39304	89.8197	166.43
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	1	2	29159	86.6868	122.96	30077	87.3280	166.62
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	1.25	2	23037	84.0496	119.38	23968	84.8281	167.02
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	1.5	2	19356	81.1851	121.94	20537	82.4086	166.00
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	1.75	3	16648	78.8434	120.59	17827	80.2927	166.03
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	2	3	14320	76.0572	131.89	15539	77.4937	163.84
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	2.25	3	12445	73.7959	133.64	13700	75.1302	164.40
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	2.5	3	10888	70.4356	130.87	12221	72.1650	162.79
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	2.75	3	9608	67.5941	130.26	10810	69.2346	164.42
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	3	3	8469	64.5134	133.40	9737	66.6075	166.35
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	3.25	3	7708	61.9308	132.53	8914	64.1388	166.45
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	3.5	3	6847	58.9183	134.12	8219	61.9448	164.56
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	4	3	5741	54.0233	170.78	6864	56.8948	170.67
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	5	4	4260	46.1836	170.93	5229	49.5720	165.38
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	6	4	3566	41.4695	171.44	4339	42.6580	166.78
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	8	4	2684	28.8105	171.48	3420	32.5153	163.54
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	10	4	2325	19.0158	172.43	2198	24.6406	169.75
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	12	4	2120	13.6336	169.94	1845	16.3492	171.09
-2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	15	4	1856	7.9364	169.09	1594	6.5690	174.28
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	0.4	0	30853	87.5783	29.21	30338	87.2371	15.57
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	0.5	0	28531	88.1043	28.92	27755	86.9764	14.71
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	0.6	1	24716	86.4762	29.22	23847	85.4419	15.13
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	0.75	2	21922	84.0792	28.83	21103	82.6524	14.29
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	1	2	18254	79.7400	41.74	17748	79.1341	14.19
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	1.25	2	15172	75.8529	38.75	14659	74.7938	14.03
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	1.5	2	12724	72.9155	38.17	12300	71.3474	13.86
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	1.75	3	10882	68.7363	38.00	10381	68.1657	13.76
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	2	3	9337	66.5185	39.51	8878	65.2404	13.53
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	2.25	3	8178	63.7561	28.56	7740	61.7269	13.59
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	2.5	3	7412	61.0583	28.50	6995	60.5417	13.45
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	2.75	3	6403	58.8449	28.31	6019	57.8930	13.35
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	3	3	5844	57.6209	31.03	5435	56.6275	13.23
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	3.25	3	5443	56.6841	28.20	5035	55.5280	12.95
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	3.5	3	5075	56.2465	30.67	4627	53.9378	13.28
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	4	3	4504	52.6944	30.46	4111	50.8946	13.15
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	5	4	3589	49.0554	30.35	3181	48.2646	13.07
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	6	4	3028	47.0086	30.17	2752	46.0491	13.29
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	8	4	2515	43.1178	30.18	2243	41.6655	13.12
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	10	4	2345	40.2130	29.92	2272	41.7517	26.13
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	12	4	2265	38.5982	29.96	1913	39.6869	26.10
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	15	4	2002	34.6592	27.84	1687	31.4826	26.21
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	0.4	0	28448	87.8544	118.53	29002	87.5195	158.53
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	0.5	0	26412	87.2308	115.12	26869	87.2634	156.97
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	0.6	1	22412	85.2352	117.45	22804	85.4253	156.34
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	0.75	2	20708	82.5925	132.60	20748	82.7479	159.96
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	1	2	17544	80.4094	131.98	18181	79.4988	161.10
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	1.25	2	14895	76.6491	131.11	15278	76.0491	160.74
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	1.5	2	13000	74.6169	135.89	13182	73.1565	157.29
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	1.75	3	11089	71.7602	129.99	11475	70.9675	158.50
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	2	3	9488	67.4230	140.84	9936	67.6771	157.07
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	2.25	3	8203	65.3286	139.08	8890	65.4990	158.14
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	2.5	3	6890	62.0233	142.17	7505	62.1950	157.91
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	2.75	3	6197	60.3877	140.17	6564	60.7146	155.54
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	3	3	5417	58.0161	142.79	5884	58.0866	157.41
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	3.25	3	4575	54.7138	143.05	4980	55.3218	155.21
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	3.5	3	4247	52.9949	144.35	4649	53.7958	155.87
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	4	3	3626	50.6810	212.11	4033	50.9545	162.74
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	5	4	3093	46.8266	192.75	3096	49.0467	157.30
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	6	4	2723	43.5307	193.29	2699	46.7745	159.84
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	8	4	2289	36.4881	191.92	2352	43.0252	161.27
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	10	4	1679	34.7239	192.59	1752	38.4718	161.93
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	12	4	1509	30.9289	191.85	1530	34.4609	164.13
-2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	15	4	1358	26.7905	193.79	1277	26.6189	168.18
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	0.4	0	54669	93.1319	36.92	53728	92.8307	17.82
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	0.5	0	46904	92.7174	35.85	45897	92.1130	16.82
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	0.6	1	37993	91.9249	36.19	36892	91.3987	16.48
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	0.75	2	31937	90.9024	37.09	30721	90.0816	15.47
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	1	2	25406	88.9886	44.62	24335	87.9335	15.27
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	1.25	2	20925	86.6836	44.11	19962	85.4839	16.17
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	1.5	2	17176	84.4440	43.83	16227	82.7385	15.11
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	1.75	3	14652	82.5116	45.88	13677	80.8003	15.00
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	2	3	12688	80.6294	47.46	11787	78.8112	14.90
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	2.25	3	11158	79.2313	36.26	10428	77.3349	14.99
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	2.5	3	9976	77.8256	36.13	9314	75.9002	14.89
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	2.75	3	9017	76.7285	35.87	8430	74.5473	14.53
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	3	3	8232	75.7041	35.65	7833	73.2786	14.72
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	3.25	3	7533	74.4100	35.74	6989	72.1322	14.24
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	3.5	3	7171	73.0839	35.74	6574	70.8347	14.43
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	4	3	6574	70.8712	35.47	5718	67.8421	13.94
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	5	4	5403	68.0209	35.21	4670	63.6879	14.11
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	6	4	4705	65.4800	35.24	4015	61.2279	14.24
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	8	4	4088	59.5660	35.03	3238	56.3061	14.26
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	10	4	3360	57.4166	32.68	3278	55.7128	27.47
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	12	4	3134	52.7004	32.90	2644	52.9247	26.97
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	15	4	2313	53.9936	35.10	2196	48.8484	27.01
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	0.4	0	54759	92.8487	133.77	51232	92.9096	165.10
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	0.5	0	46102	91.8337	129.32	43705	92.3934	162.31
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	0.6	1	36109	91.3123	130.87	35215	91.2948	163.20
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	0.75	2	30296	89.7690	136.13	30026	90.1925	166.87
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	1	2	23416	87.5689	134.03	23921	87.7646	167.67
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	1.25	2	18800	85.2156	130.07	19429	85.0628	167.04
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	1.5	2	15188	82.0955	132.23	15814	82.7076	165.50
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	1.75	3	12552	80.0807	130.83	13550	80.7009	164.57
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	2	3	10262	77.6378	143.02	11457	78.5021	165.69
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	2.25	3	8802	74.8968	141.13	10026	76.9987	161.22
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	2.5	3	7773	73.6789	139.77	8902	75.4646	162.39
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	2.75	3	6990	72.2289	141.46	7959	73.7574	162.16
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	3	3	6214	71.2373	142.10	7399	72.5751	162.25
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	3.25	3	5679	69.7128	145.42	6868	71.1998	163.80
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	3.5	3	5275	67.2214	144.57	6218	70.0999	163.00
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	4	3	4689	63.5428	185.12	5631	67.8132	167.85
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	5	4	3614	59.0581	184.59	4524	63.1505	167.30
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	6	4	3192	55.0475	183.84	3871	59.8312	164.41
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	8	4	2144	53.7668	181.60	3043	54.6160	165.24
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	10	4	2489	37.0316	183.91	2658	52.5365	167.54
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	12	4	1912	38.5521	181.88	2150	48.2026	169.95
-2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	15	4	1415	43.8064	175.60	1804	44.9097	175.10
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	0.4	0	25231	93.1149	30.87	26705	92.3986	14.63
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	0.5	0	23354	91.2749	28.85	24899	90.7109	14.43
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	0.6	1	22639	90.2578	30.92	24568	90.1750	14.11
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	0.75	2	20567	90.1318	29.28	22115	89.7710	13.99
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	1	2	17667	89.8033	39.39	19500	88.5708	13.96
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	1.25	2	16031	88.4138	39.39	17722	87.9754	14.56
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	1.5	2	14659	88.3475	38.83	16200	87.9183	14.48
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	1.75	3	13625	87.8557	38.60	14950	87.3290	14.35
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	2	3	12930	85.8826	40.15	14038	85.3878	13.23
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	2.25	3	12271	85.6353	29.50	13222	85.3056	13.13
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	2.5	3	11594	85.1217	29.19	12591	84.5210	12.83
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	2.75	3	11168	84.7043	29.33	12033	84.0530	13.05
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	3	3	10600	83.9617	29.00	11475	83.0235	12.93
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	3.25	3	10148	83.8360	28.90	11119	82.2818	12.59
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	3.5	3	9936	82.2794	28.72	10644	82.2656	12.76
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	4	3	9278	82.2286	28.71	9905	81.4549	12.68
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	5	4	8355	79.8593	28.41	9282	79.2061	12.73
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	6	4	7560	77.4890	28.50	8417	75.9298	12.87
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	8	4	6438	73.1279	27.80	7260	71.1047	12.79
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	10	4	5702	67.7801	27.45	6750	41.0022	20.66
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	12	4	5066	62.4812	27.03	6237	40.0806	20.70
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	15	4	4476	56.8507	26.69	5591	39.9212	20.44
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	0.4	0	22448	90.6552	116.99	24455	90.7660	137.36
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	0.5	0	20582	91.4843	115.80	22321	90.6705	137.79
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	0.6	1	20409	89.8120	117.22	21894	89.7216	137.13
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	0.75	2	18384	90.2129	125.85	20017	88.9770	142.24
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	1	2	15808	89.3631	134.66	17652	89.7295	142.20
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	1.25	2	14275	87.7364	135.72	16103	88.0067	144.17
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	1.5	2	12935	86.5917	130.71	14866	86.4339	142.36
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	1.75	3	11897	86.5761	129.59	13831	86.1084	142.37
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	2	3	11130	85.8846	131.62	12961	85.3661	142.66
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	2.25	3	10520	84.8076	130.25	12501	84.3417	141.64
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	2.5	3	10090	83.7086	130.49	11737	83.2609	163.22
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	2.75	3	9481	83.7204	131.07	11334	82.4590	141.16
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	3	3	9016	82.6290	127.97	10719	82.9994	143.40
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	3.25	3	8655	81.7249	129.38	10432	81.4756	142.13
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	3.5	3	8555	80.8027	128.43	10091	81.1026	141.70
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	4	3	7729	79.2220	170.14	9423	80.0903	145.87
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	5	4	6810	76.0053	146.90	8825	77.4469	144.31
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	6	4	6313	74.0348	145.39	8120	74.0573	144.05
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	8	4	5254	67.8903	144.53	6962	67.9262	144.51
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	10	4	4603	59.1678	144.03	6479	40.4406	147.81
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	12	4	4292	52.8567	143.57	5906	39.1391	145.18
-8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	15	4	3744	50.3010	141.59	5150	36.3726	152.16
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	0.4	0	104826	92.8191	36.09	103226	92.6005	17.92
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	0.5	0	92212	91.6925	34.26	90654	91.4731	17.38
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	0.6	1	82344	90.9165	33.76	80574	90.6682	16.78
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	0.75	2	70140	89.1784	32.56	68530	88.8058	16.98
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	1	2	56656	86.4305	31.17	55462	85.9385	16.78
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	1.25	2	47402	83.8286	30.40	46506	83.2148	16.58
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	1.5	2	40677	80.8546	29.87	39726	80.2818	16.41
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	1.75	3	35557	78.6591	29.44	34714	77.7633	16.46
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	2	3	31087	76.3030	30.60	30409	75.1786	16.16
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	2.25	3	27698	73.8502	30.35	26896	72.3841	16.73
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	2.5	3	24795	71.3886	30.02	24055	70.0223	15.90
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	2.75	3	22312	69.1915	29.89	21744	67.2029	16.06
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	3	3	20414	66.5953	29.56	19741	64.6372	15.71
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	3.25	3	18649	64.7540	29.47	18049	61.9003	15.85
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	3.5	3	17282	62.4628	29.40	16571	59.1928	15.81
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	4	3	15159	55.9900	28.76	14497	52.4457	15.72
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	5	4	12279	48.3399	28.76	11893	45.3091	15.67
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	6	4	10174	41.8496	28.29	9962	37.9830	15.67
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	8	4	7904	31.1376	27.79	7527	25.6980	15.34
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	10	4	6493	21.5742	27.99	7675	22.7670	27.48
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	12	4	5566	16.1338	27.29	6297	14.0306	27.49
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	15	4	4729	8.6676	27.59	4889	2.3113	27.18
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	0.4	0	104526	92.4904	138.59	104527	92.6002	163.78
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	0.5	0	91268	91.4862	136.84	91679	91.5390	163.85
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	0.6	1	79235	90.1988	136.18	79136	90.4045	163.92
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	0.75	2	67482	88.3259	150.07	67656	88.4871	170.02
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	1	2	54109	85.5683	145.60	54737	85.6348	171.03
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	1.25	2	45019	82.5369	141.37	45630	82.6889	167.32
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	1.5	2	38129	79.5573	139.71	39048	79.7521	170.42
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	1.75	3	33080	76.9402	139.57	33960	77.2074	171.05
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	2	3	28762	74.0305	150.48	29642	74.0851	170.07
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	2.25	3	25362	71.0537	146.97	26158	71.4891	168.55
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	2.5	3	22549	68.0242	143.83	23256	68.8673	169.82
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	2.75	3	20353	65.1987	142.53	21027	66.2465	167.89
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	3	3	18410	62.2519	149.43	20348	63.5208	172.00
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	3.25	3	16715	59.5395	147.08	18328	60.0413	170.84
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	3.5	3	15264	56.3470	150.15	17054	58.3113	171.26
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	4	3	13515	53.0951	215.17	14851	54.3302	174.79
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	5	4	10382	44.8273	197.68	11519	46.1625	173.09
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	6	4	8278	36.8067	196.38	9605	38.3426	171.12
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	8	4	6238	23.8407	192.83	7259	26.1088	170.50
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	10	4	4990	12.9441	192.13	6410	14.1867	171.68
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	12	4	4264	4.8339	192.38	5289	5.4932	170.62
-3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	15	4	3593	-5.9480	192.31	4046	-3.0566	173.71
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	0.4	0	104243	93.1756	35.79	102725	92.9092	17.90
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	0.5	0	92472	92.1341	34.31	91158	91.8212	17.47
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	0.6	1	83569	91.0379	33.50	82384	90.7902	17.49
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	0.75	2	72625	89.3101	33.90	71509	88.9682	17.10
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	1	2	59936	86.1646	32.56	58849	85.6428	16.70
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	1.25	2	50190	83.1626	32.12	49306	82.7469	16.65
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	1.5	2	42829	80.3917	30.33	42029	79.7476	16.80
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	1.75	3	37104	77.8281	31.12	36341	77.0170	16.65
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	2	3	32648	75.1135	32.18	31826	74.3294	16.70
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	2.25	3	29162	72.8680	30.73	28341	71.8373	16.46
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	2.5	3	25977	69.7765	30.26	25211	68.6974	16.43
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	2.75	3	23567	67.3477	30.05	22805	66.1106	16.65
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	3	3	21261	63.8977	29.62	20667	62.7607	16.12
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	3.25	3	19366	60.6574	29.45	18641	59.3215	15.88
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	3.5	3	17994	58.4077	29.30	17276	56.9833	15.66
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	4	3	15721	49.2203	28.95	15070	47.5914	15.78
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	5	4	12706	39.6685	28.69	12347	37.1879	15.99
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	6	4	10581	33.0141	28.37	10191	29.8587	15.30
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	8	4	8241	20.5416	29.46	7563	13.1593	15.26
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	10	4	6876	10.5467	27.75	6933	10.4070	27.51
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	12	4	5772	3.2781	28.91	5839	1.1199	27.20
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	15	4	4862	-4.9873	27.28	4917	-11.5277	26.75
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	0.4	0	102602	92.8866	140.69	103504	93.0078	161.86
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	0.5	0	90763	91.8381	139.35	91526	91.9877	162.81
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	0.6	1	79307	90.2781	138.57	79853	90.4829	160.64
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	0.75	2	68461	88.2522	155.31	69413	88.6353	167.76
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	1	2	55728	84.8621	150.19	56662	84.9928	168.01
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	1.25	2	46347	81.5583	144.69	47332	81.8643	166.02
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	1.5	2	39501	78.5031	144.75	40540	78.8556	166.63
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	1.75	3	33963	75.6810	138.75	34890	76.1094	168.49
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	2	3	29619	72.7416	149.52	30628	73.0007	167.34
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	2.25	3	26092	69.6841	150.79	27025	70.0476	166.30
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	2.5	3	23142	66.6499	149.15	24182	67.1081	165.89
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	2.75	3	20805	63.6541	149.30	21723	64.0526	166.75
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	3	3	18567	60.4650	149.63	20353	61.9812	170.63
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	3.25	3	16727	57.0424	151.24	18424	59.0462	169.64
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	3.5	3	15407	54.0634	151.81	16854	56.0164	169.11
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	4	3	13490	48.6859	217.97	14867	50.4692	173.03
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	5	4	10357	39.0192	198.55	11749	40.5683	170.69
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	6	4	8504	29.6102	198.11	9814	30.5786	169.22
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	8	4	6288	11.0104	195.60	7309	13.3255	168.80
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	10	4	4989	-1.0353	196.76	5734	0.3598	171.19
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	12	4	4263	-8.6892	194.41	4891	-9.6861	172.19
-3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	15	4	3750	-20.1748	196.11	4035	-20.9279	175.17
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	0.4	0	94345	93.5539	34.82	91430	93.3631	17.17
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	0.5	0	84765	92.9833	33.33	82059	92.7183	16.49
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	0.6	1	79977	91.8733	33.06	78353	91.7044	15.81
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	0.75	2	70178	90.6757	32.21	68706	90.4002	15.44
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	1	2	58752	88.9482	31.19	57229	88.5523	15.21
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	1.25	2	50858	87.0029	30.19	49403	86.7034	14.80
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	1.5	2	44566	85.4386	30.22	43446	84.5331	14.90
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	1.75	3	40076	83.9173	29.74	38975	83.0285	14.87
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	2	3	36127	82.0461	31.25	35243	81.3183	14.99
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	2.25	3	32743	80.9018	31.27	31785	79.7228	14.19
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	2.5	3	29693	79.0619	32.10	28682	77.9163	14.49
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	2.75	3	27395	77.7201	31.57	26457	76.3134	14.44
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	3	3	25362	76.0952	31.17	24480	74.6774	14.59
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	3.25	3	23498	74.7243	31.24	22627	73.1119	14.03
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	3.5	3	21946	73.2510	30.94	21214	71.7197	14.45
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	4	3	19506	69.2143	30.57	18749	67.4153	14.06
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	5	4	16269	64.1189	30.21	15963	61.8964	14.25
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	6	4	13962	58.6538	30.08	13505	55.6258	13.83
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	8	4	11009	48.7378	29.42	10676	45.3456	13.81
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	10	4	9057	39.9471	29.28	9601	39.1479	25.38
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	12	4	7523	31.5591	28.84	8411	33.7876	24.93
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	15	4	6580	22.8211	28.64	7226	21.6433	24.96
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	0.4	0	87391	93.1515	139.93	85986	93.1991	156.49
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	0.5	0	78529	92.3052	132.48	77169	92.4381	155.85
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	0.6	1	74467	91.0169	134.04	73923	91.2345	155.66
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	0.75	2	65383	89.8349	150.39	64761	90.0024	160.28
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	1	2	54853	87.9261	145.93	54096	88.1402	163.50
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	1.25	2	46596	85.6584	145.91	46431	86.0402	162.17
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	1.5	2	40803	83.7606	144.24	40864	84.0366	164.10
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	1.75	3	36349	82.0000	146.30	36501	82.3361	163.31
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	2	3	32649	79.8347	156.69	32820	80.4835	163.07
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	2.25	3	29562	78.1977	153.19	29707	78.7110	163.52
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	2.5	3	26622	76.0377	151.71	27090	76.9408	162.55
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	2.75	3	24605	74.5062	150.33	25076	75.1197	160.99
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	3	3	22505	72.3487	155.93	23032	73.3730	163.34
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	3.25	3	20775	70.5129	154.48	21441	71.9486	165.35
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	3.5	3	19277	68.5904	155.31	19838	69.7951	165.20
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	4	3	17096	65.3891	222.79	17847	66.5228	170.98
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	5	4	13599	59.5031	202.23	14685	61.2784	168.26
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	6	4	11584	53.2090	201.05	12573	55.2426	168.59
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	8	4	9076	42.1996	198.50	9966	45.5242	167.05
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	10	4	7375	31.7165	199.10	8219	31.8993	166.58
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	12	4	6189	22.1044	201.78	7079	23.6749	165.89
-5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	15	4	5290	10.8189	198.25	5896	5.5180	170.13
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	0.4	0	47675	92.2855	45.85	53972	92.0552	16.63
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	0.5	0	44092	91.3249	44.38	50506	91.0726	15.92
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	0.6	1	44670	91.3255	42.35	53035	90.5702	15.89
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	0.75	2	41246	91.3692	41.05	48412	90.4584	14.62
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	1	2	36474	90.8294	51.73	43121	90.0423	14.70
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	1.25	2	33281	89.5782	52.01	39436	88.7397	14.39
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	1.5	2	30850	89.4486	49.32	36568	88.7254	14.41
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	1.75	3	29209	88.4499	49.46	34774	87.6770	14.02
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	2	3	27640	87.8898	52.56	32872	86.2461	14.57
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	2.25	3	26769	86.9266	41.43	31152	85.9152	13.95
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	2.5	3	25464	85.9010	41.35	29651	84.5494	13.72
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	2.75	3	24519	85.2567	40.28	28442	84.0000	14.51
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	3	3	23579	84.3305	40.79	27407	83.1239	13.69
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	3.25	3	22747	83.5284	39.69	26288	82.2858	14.21
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	3.5	3	21944	82.0104	38.88	25049	80.8650	13.90
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	4	3	20549	79.7175	38.69	23613	78.4958	13.67
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	5	4	18407	76.3324	36.11	20808	74.2426	13.78
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	6	4	16591	70.0523	38.07	18733	68.2460	14.22
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	8	4	14210	63.5973	34.35	15722	61.6412	13.68
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	10	4	12233	58.6317	34.48	12752	37.9730	23.46
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	12	4	10753	50.1607	35.14	11767	36.9418	23.73
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	15	4	9569	44.1831	34.80	10629	35.6924	22.88
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	0.4	0	43341	92.0121	137.29	61233	91.1250	164.34
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	0.5	0	40462	91.7253	135.14	56529	90.8040	162.50
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	0.6	1	41023	91.3324	135.42	60682	91.6141	161.03
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	0.75	2	37285	90.4808	142.63	54738	91.0825	166.13
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	1	2	32896	89.5165	153.41	47948	89.3769	167.72
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	1.25	2	30122	88.6891	149.47	43412	89.5345	167.97
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	1.5	2	27742	87.8884	143.76	40264	88.7199	168.40
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	1.75	3	26079	86.5816	144.76	37002	88.0042	168.87
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	2	3	24644	85.1635	146.85	34967	86.7472	168.36
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	2.25	3	23387	85.5417	145.82	33584	86.2416	168.29
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	2.5	3	22113	83.7036	143.39	31246	84.9406	167.89
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	2.75	3	21253	83.2243	144.35	30460	83.6954	167.56
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	3	3	20521	82.2555	143.86	29313	82.5897	166.96
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	3.25	3	19657	81.1697	140.60	28239	81.9505	165.81
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	3.5	3	19193	79.3376	140.82	26889	80.7251	168.47
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	4	3	17752	76.8073	187.79	25154	78.8042	171.69
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	5	4	15765	69.2909	161.50	22035	73.0847	166.25
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	6	4	14100	65.6506	157.66	19699	68.4944	165.07
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	8	4	11979	57.8242	155.07	17076	60.8455	164.16
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	10	4	10275	48.5043	154.27	13680	37.4730	157.37
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	12	4	9205	42.9495	153.06	12067	34.8700	155.40
-5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	15	4	7879	34.8113	155.24	10565	31.6697	161.62
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	0.4	0	71609	91.8990	32.39	70182	91.6130	17.99
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	0.5	0	63904	90.9343	31.95	62319	90.7462	17.71
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	0.6	1	53476	90.2546	31.32	52090	90.3622	17.17
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	0.75	2	47353	89.7416	30.26	46128	89.2723	16.45
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	1	2	40599	88.2876	29.86	39447	87.7372	16.38
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	1.25	2	35630	86.9071	29.16	34528	86.1972	16.17
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	1.5	2	31769	85.3611	28.84	30828	84.6601	15.91
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	1.75	3	28985	83.8665	28.60	27928	83.1877	15.97
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	2	3	26418	82.2739	30.07	25442	81.4880	16.00
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	2.25	3	24493	81.0795	29.96	23569	80.0946	15.59
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	2.5	3	22682	79.7228	29.59	21859	78.7545	15.75
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	2.75	3	21542	78.3583	29.70	20671	77.5467	15.97
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	3	3	20356	77.1684	29.45	19351	75.9123	15.59
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	3.25	3	19047	75.7914	29.29	18219	74.7369	15.49
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	3.5	3	17982	74.3807	29.13	17131	73.2359	15.59
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	4	3	16222	71.3402	28.94	15499	69.8997	15.47
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	5	4	14048	67.7051	28.69	13364	66.2726	15.52
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	6	4	12602	64.3286	28.51	12082	62.8664	15.47
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	8	4	10500	57.7850	28.17	10089	55.9189	15.89
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	10	4	9109	52.2496	28.10	11413	51.4841	28.04
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	12	4	7956	44.7199	27.93	10526	46.5816	27.84
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	15	4	6966	36.4088	27.78	8955	41.0401	27.49
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	0.4	0	68876	91.3087	133.02	68956	91.3997	160.25
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	0.5	0	60990	90.6482	131.85	61480	90.7032	159.49
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	0.6	1	52994	90.1197	130.59	53260	90.4652	159.59
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	0.75	2	46332	89.3885	139.48	47300	89.5026	164.16
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	1	2	38928	87.8704	136.33	39687	87.9798	165.48
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	1.25	2	33604	86.0181	133.20	34495	86.1567	161.53
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	1.5	2	29504	84.1888	133.21	30575	84.2939	165.00
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	1.75	3	26443	82.3600	132.36	27554	82.5988	164.78
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	2	3	24056	80.8239	143.13	25196	81.1010	162.85
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	2.25	3	21951	78.6639	141.70	23223	79.1174	166.06
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	2.5	3	20177	77.0015	140.64	21396	77.7395	163.65
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	2.75	3	19058	75.6716	141.05	20334	76.5110	163.05
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	3	3	17943	74.6901	142.49	19730	74.7632	166.70
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	3.25	3	16593	73.1272	142.92	18592	73.9828	167.73
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	3.5	3	15862	71.6138	142.92	17919	72.4981	166.89
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	4	3	14158	67.6681	180.99	16035	69.9797	173.15
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	5	4	11535	63.2741	180.35	13113	65.0188	168.45
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	6	4	10321	56.9656	178.13	11985	61.5346	168.91
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	8	4	8442	47.3908	179.63	9777	54.4394	166.52
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	10	4	7134	42.0978	182.19	10032	44.5971	170.49
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	12	4	6305	31.7734	178.82	9218	40.1667	171.91
-6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	15	4	5117	21.7621	177.56	7614	31.1469	175.97
+image	effort	distance	regime	bytes	ssim2	bfly	ms	cjxl_bytes	cjxl_ssim2	cjxl_ms
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	0.4	0	51848	94.0256	0.41251	33.16	50303	93.7885	17.83
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	0.5	0	47147	93.5076	0.47167	29.28	45650	93.0547	17.03
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	0.6	1	42831	92.1786	0.71774	29.57	41947	91.9328	15.97
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	0.75	2	39643	90.6006	0.87092	28.80	38826	90.1882	16.22
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	1	2	34742	87.7769	1.35866	28.10	34046	87.2375	15.99
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	1.25	2	28551	84.6835	1.46789	28.18	27773	83.8190	15.64
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	1.5	2	24324	82.0686	1.69109	27.26	23611	81.0225	15.43
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	1.75	3	21205	80.0069	1.91622	27.25	20439	78.7797	15.42
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	2	3	18496	77.7627	2.02749	28.97	17771	76.2009	15.14
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	2.25	3	16387	75.4254	2.38480	28.53	15703	73.6817	14.92
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	2.5	3	14137	73.0607	2.29578	29.14	13491	71.2377	15.07
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	2.75	3	12839	70.8066	2.37917	27.86	12090	68.8684	14.66
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	3	3	11459	69.2607	2.88018	28.18	10640	66.7318	14.55
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	3.25	3	10486	67.6788	2.82045	27.04	9673	64.6678	14.53
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	3.5	3	9984	65.8190	3.09589	27.45	9011	63.1364	14.42
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	4	3	8734	61.2760	3.11499	27.65	7769	58.8343	14.47
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	5	4	6888	56.7021	3.57054	27.42	6440	53.8952	14.50
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	6	4	6063	51.6411	4.22026	26.61	5495	49.1083	14.45
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	8	4	4782	43.8339	5.54322	27.12	4324	40.4793	14.26
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	10	4	4454	36.9915	6.42291	26.09	5360	38.7185	26.06
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	12	4	3831	31.7692	7.78618	26.08	3995	32.5029	25.74
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	5	15	4	3136	24.8699	9.37326	27.30	3308	23.2695	25.39
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	0.4	0	48032	93.1528	0.41427	129.58	49002	93.4674	156.26
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	0.5	0	44387	92.6067	0.55460	126.32	45615	92.8346	155.37
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	0.6	1	40318	91.6281	0.71453	127.08	41651	91.5582	156.96
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	0.75	2	37679	89.3117	0.86448	136.77	38490	89.9148	157.91
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	1	2	32121	86.5914	1.16662	131.71	33057	86.5875	159.93
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	1.25	2	26178	82.7947	1.43366	124.02	27038	83.3156	156.76
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	1.5	2	21776	79.9410	1.84463	124.76	23105	80.7055	159.09
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	1.75	3	18260	77.3233	1.93695	121.69	19726	77.8806	159.21
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	2	3	15801	74.7742	2.12416	134.80	17140	75.5134	156.36
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	2.25	3	13831	70.8348	2.59343	131.98	14993	72.7623	156.86
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	2.5	3	12216	68.0302	2.67365	133.90	13218	70.5538	157.83
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	2.75	3	10497	66.8396	2.86735	130.53	11912	68.0284	155.16
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	3	3	9436	64.8841	2.91192	132.54	10681	66.1864	155.96
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	3.25	3	8529	62.6823	3.04623	132.45	9568	64.0311	155.57
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	3.5	3	7655	60.7988	3.06635	130.92	8746	62.6535	155.46
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	4	3	7034	55.3930	3.96863	173.56	7829	59.9360	160.96
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	5	4	5603	48.5454	4.09793	173.40	6109	54.2785	158.27
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	6	4	4567	44.1460	4.59284	171.47	5446	50.2631	157.39
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	8	4	3651	32.6157	7.97676	169.71	4282	41.9823	155.92
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	10	4	3061	23.0344	8.38723	168.87	3865	31.4120	161.32
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	12	4	2625	17.5560	9.17278	166.79	3173	25.3680	163.11
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	8	15	4	2447	3.4755	12.60339	165.96	2633	18.3046	164.84
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	0.4	0	127694	92.0742	0.61888	36.46	126180	91.9974	18.11
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	0.5	0	114536	91.3021	0.76308	35.81	113157	90.8540	17.65
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	0.6	1	104475	90.1443	0.87196	35.01	103171	89.9539	17.22
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	0.75	2	92063	88.9178	0.87110	33.82	90728	88.7233	16.92
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	1	2	77570	86.7116	1.20363	31.70	76410	86.3709	16.62
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	1.25	2	67416	84.8959	1.56582	32.43	66184	84.4212	16.52
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	1.5	2	59936	82.9089	1.59724	31.73	58934	82.5137	16.26
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	1.75	3	54074	81.0794	1.79904	31.22	53158	80.6640	16.10
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	2	3	49308	79.2037	2.03546	30.82	48390	78.6581	16.12
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	2.25	3	45560	77.5770	2.48719	32.46	44675	77.0778	15.89
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	2.5	3	42061	75.7013	2.68565	31.84	41149	75.0530	15.98
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	2.75	3	39335	74.4249	2.69438	31.79	38417	73.6393	16.00
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	3	3	36357	72.5704	2.99971	31.96	36066	71.8557	16.18
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	3.25	3	34056	70.6322	3.28241	30.97	33840	69.9533	15.99
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	3.5	3	32158	69.0796	3.86957	30.87	31842	68.3836	15.98
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	4	3	29175	63.9400	3.91979	29.36	28872	63.1989	15.85
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	5	4	24743	57.9847	4.73181	28.77	24538	56.7049	16.58
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	6	4	21622	51.8564	5.17592	30.04	21367	49.2579	15.84
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	8	4	17430	40.1141	6.07758	29.09	17142	38.3770	15.64
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	10	4	14773	30.4142	6.99745	29.07	17884	29.9799	25.57
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	12	4	13200	23.3432	8.51833	28.39	15976	24.2151	25.79
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	5	15	4	11133	11.4096	10.15888	27.19	13983	16.0780	25.67
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	0.4	0	124511	92.1637	0.52836	137.41	124760	92.5179	151.45
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	0.5	0	111478	90.9693	0.62881	136.98	111594	91.2955	151.45
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	0.6	1	98007	89.5826	0.76757	138.41	98283	89.9628	152.32
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	0.75	2	85755	88.3279	1.04975	151.77	86328	88.3696	154.54
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	1	2	71262	85.7568	1.18410	145.78	72021	86.0026	155.53
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	1.25	2	61422	83.3264	1.42953	147.90	62115	83.5656	156.75
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	1.5	2	54344	81.1824	1.77463	142.11	55079	81.4050	158.92
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	1.75	3	48815	79.1692	2.02556	144.82	49605	79.4184	158.92
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	2	3	44286	77.1512	2.32957	150.51	45154	77.4833	157.69
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	2.25	3	40842	75.4885	2.48778	149.32	41777	75.6874	158.62
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	2.5	3	37744	73.3135	2.69524	147.01	38624	73.7163	157.07
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	2.75	3	35181	71.6118	3.21104	147.18	36164	71.8611	156.79
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	3	3	32697	69.6364	3.11432	150.32	34424	70.1245	162.78
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	3.25	3	30514	67.6113	3.34653	149.20	32304	67.9859	160.14
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	3.5	3	28540	65.5557	3.76574	150.39	30456	66.4257	162.82
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	4	3	26165	63.1377	4.52377	218.14	27698	62.9626	168.81
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	5	4	21694	56.8444	5.47719	199.74	22967	57.2089	164.15
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	6	4	18798	50.5647	5.45034	197.97	20029	50.9088	165.72
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	8	4	14946	38.6066	7.29954	195.27	16106	39.6011	164.15
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	10	4	12419	27.4732	10.14987	198.16	15556	22.5548	166.88
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	12	4	10473	17.4277	9.30098	195.44	13725	13.4994	167.54
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	8	15	4	8589	2.1456	11.53908	195.09	11749	-2.0203	172.25
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	0.4	0	68624	93.7257	0.37693	32.59	66507	93.5055	17.75
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	0.5	0	64221	93.2555	0.47276	31.62	62388	92.8981	17.07
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	0.6	1	61413	91.9192	0.71802	30.02	59922	91.8077	16.54
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	0.75	2	56626	91.0662	0.83947	30.20	55387	90.6513	16.15
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	1	2	52023	89.0009	1.14737	29.96	50987	88.4883	15.80
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	1.25	2	47649	86.7189	1.30615	29.86	46743	86.1423	16.51
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	1.5	2	43568	83.9172	1.61680	29.06	42742	83.2317	16.18
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	1.75	3	40093	81.3809	2.01732	29.26	39199	80.5326	15.96
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	2	3	36702	79.2020	2.30823	30.37	35842	78.1390	16.28
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	2.25	3	33809	77.2137	2.47909	30.45	33035	76.0825	15.87
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	2.5	3	31371	75.0121	2.38298	30.45	30529	73.7510	15.63
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	2.75	3	29054	72.7854	2.79727	29.43	28353	71.4875	15.52
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	3	3	26456	70.3426	3.16600	30.05	26533	69.4638	15.25
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	3.25	3	24552	68.1229	3.24332	29.52	24421	66.9688	15.25
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	3.5	3	22896	66.2700	3.55242	28.80	22661	65.1293	16.08
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	4	3	20709	59.7951	3.63379	29.22	20388	58.5305	15.17
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	5	4	17379	52.0311	4.92576	28.40	17010	50.5007	15.21
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	6	4	15161	45.2355	6.31243	27.87	14745	43.1374	15.45
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	8	4	12272	32.1652	6.29271	27.49	11875	28.7343	14.94
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	10	4	10458	21.7591	7.48648	28.65	12515	23.7239	25.17
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	12	4	9106	12.8751	8.69009	28.69	11176	15.4739	25.58
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	5	15	4	7662	1.9670	9.89539	28.49	9686	3.8202	25.53
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	0.4	0	64362	93.2229	0.41438	135.47	64201	93.3016	152.04
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	0.5	0	60729	92.5456	0.52404	130.64	60689	92.5930	150.81
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	0.6	1	57041	91.1373	0.65358	131.08	57475	91.0369	152.29
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	0.75	2	52831	89.7776	0.81067	144.58	53489	89.6988	155.47
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	1	2	47852	87.1183	1.13221	143.37	48617	87.4138	155.25
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	1.25	2	43778	84.3699	1.40977	142.28	44543	84.6373	157.22
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	1.5	2	39993	81.3769	1.67043	144.05	40829	81.7457	156.98
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	1.75	3	36342	78.9742	1.99697	140.34	37219	79.3415	158.37
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	2	3	32938	76.2306	2.10107	148.99	33944	76.6015	157.89
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	2.25	3	30298	73.6421	2.53120	149.39	31310	74.3948	158.88
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	2.5	3	28019	71.4600	2.51987	147.83	29036	71.8215	157.33
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	2.75	3	26072	68.6895	2.93218	147.09	27032	69.7495	156.94
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	3	3	23680	65.9089	3.13255	149.92	25540	67.6645	161.63
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	3.25	3	21785	63.8958	3.46011	150.64	23575	64.8858	162.35
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	3.5	3	20363	61.3182	3.55706	149.44	22002	63.1582	162.23
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	4	3	18368	57.3745	3.84078	218.47	19690	58.7285	166.04
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	5	4	14971	49.1117	5.02830	199.60	16138	51.3863	164.50
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	6	4	13040	42.5497	5.72356	198.64	13936	43.6641	163.97
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	8	4	10419	26.6020	7.41263	196.35	11140	29.6525	161.64
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	10	4	8527	15.2012	8.34258	197.80	10466	10.9571	162.83
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	12	4	7224	4.8613	9.85400	194.34	9224	3.5025	166.18
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	8	15	4	6075	-9.2562	11.84578	197.18	7867	-10.8508	172.59
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	0.4	0	50798	92.7205	0.45718	38.96	58873	91.4005	16.88
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	0.5	0	47188	91.2435	0.56642	37.57	53996	90.4300	15.67
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	0.6	1	46961	91.0432	0.70133	38.12	55899	89.8872	15.06
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	0.75	2	43543	90.6566	0.77587	35.41	50530	89.2321	14.68
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	1	2	37541	89.5307	1.06118	44.65	44041	87.6030	14.12
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	1.25	2	33797	88.5634	1.16754	45.08	39029	87.0432	14.26
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	1.5	2	30789	87.6533	1.36933	44.67	35576	86.3038	14.04
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	1.75	3	28785	86.7566	1.64798	43.76	33284	85.5010	13.61
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	2	3	26790	85.9226	1.87071	45.46	30959	84.5225	13.72
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	2.25	3	25276	85.1480	2.10294	34.68	28823	83.3387	13.65
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	2.5	3	23985	84.0213	2.04984	35.33	26594	82.0315	13.66
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	2.75	3	23025	83.4792	2.19319	33.23	25710	80.9774	13.45
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	3	3	22099	83.1127	2.37779	33.68	24471	80.7651	13.81
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	3.25	3	20994	82.0104	2.63625	32.66	23620	79.2287	13.49
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	3.5	3	20196	80.7601	2.68948	33.16	22508	78.5226	13.24
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	4	3	18767	79.9039	3.42470	33.22	21138	77.2343	13.09
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	5	4	16659	75.9310	4.10918	32.51	18208	72.7662	13.20
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	6	4	15183	72.5886	4.70317	31.86	16413	70.0160	13.13
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	8	4	12989	65.8516	6.57874	31.92	14943	62.6553	12.89
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	10	4	11316	59.9346	7.07288	31.13	12530	5.8280	20.74
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	12	4	9991	52.4419	8.90757	29.82	11571	4.5417	20.94
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	5	15	4	9100	46.4271	11.35781	29.49	10022	2.8001	20.69
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	0.4	0	45722	91.6968	0.45866	130.28	70795	91.5480	154.29
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	0.5	0	41610	91.3246	0.57055	129.72	65862	91.4691	151.59
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	0.6	1	42874	90.5497	0.68558	130.89	71947	91.7279	150.10
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	0.75	2	39095	90.3200	0.84703	138.01	65828	90.8676	157.95
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	1	2	33891	88.9988	1.05435	150.80	57657	89.8452	156.17
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	1.25	2	30323	87.5981	1.32384	148.01	51845	88.5880	154.92
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	1.5	2	27299	86.5442	1.38272	144.51	47426	88.3029	156.92
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	1.75	3	25248	85.2600	1.73678	144.37	43999	87.4316	156.00
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	2	3	23476	84.5947	1.93107	145.11	41486	86.0687	155.89
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	2.25	3	21943	82.3320	2.05134	144.62	39178	85.6270	153.80
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	2.5	3	20899	81.8842	2.25824	143.77	37489	84.2011	157.55
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	2.75	3	19911	81.1273	2.40905	140.88	36857	83.7910	156.31
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	3	3	19010	80.1568	2.67789	142.22	34789	83.1586	152.18
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	3.25	3	18152	79.5135	3.05383	141.21	33309	82.1182	152.69
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	3.5	3	17386	78.3199	3.06850	141.18	32015	82.1222	152.75
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	4	3	16145	75.5759	3.78440	184.37	29403	80.0805	158.23
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	5	4	14074	71.5226	4.38036	160.60	25256	77.0036	154.89
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	6	4	12799	66.6953	4.90295	155.60	22892	74.0407	153.00
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	8	4	10821	60.2672	6.86953	153.81	18118	65.1864	153.96
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	10	4	9358	51.1330	9.94722	153.89	14905	5.8093	148.83
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	12	4	8368	42.7826	11.04062	150.44	12501	4.8137	150.09
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	8	15	4	7479	33.2155	14.19201	152.27	10164	2.0385	153.53
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	0.4	0	26845	93.9182	0.40853	39.40	25471	93.6251	14.92
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	0.5	0	24363	93.7056	0.52298	38.94	22901	93.2451	14.71
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	0.6	1	25388	93.2022	0.61646	39.98	24188	92.8162	14.93
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	0.75	2	22656	92.5197	0.84851	39.64	21547	92.0223	14.46
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	1	2	20229	90.8716	0.90661	39.44	19180	90.1982	14.49
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	1.25	2	19109	89.1924	1.21172	40.12	18168	88.4708	14.61
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	1.5	2	18411	87.2405	1.37173	39.01	17599	86.1528	14.20
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	1.75	3	17424	85.1942	1.43821	38.89	16580	84.0864	14.27
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	2	3	16065	83.6116	1.78257	29.06	15265	82.0215	14.48
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	2.25	3	14917	81.7929	1.96887	28.65	14069	80.1528	14.40
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	2.5	3	13841	80.3226	2.24257	28.77	13025	78.3730	14.23
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	2.75	3	12971	78.8520	1.98351	28.42	12136	76.3197	14.06
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	3	3	12275	77.5876	2.37048	28.13	11387	74.5039	14.12
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	3.25	3	11478	76.2162	2.54947	29.03	10701	72.6859	15.20
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	3.5	3	10862	75.0804	2.48978	29.36	9948	70.7338	13.94
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	4	3	9989	69.8789	2.96991	28.92	9057	65.9677	14.09
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	5	4	8592	65.0860	3.68593	28.91	7835	59.9597	14.15
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	6	4	7290	59.2050	3.85514	27.26	6493	51.7186	14.00
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	8	4	6001	51.0365	5.00971	27.29	5288	41.8179	13.66
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	10	4	4836	41.6657	6.23344	28.63	5313	44.8068	24.91
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	12	4	4113	32.6341	7.70070	28.43	4509	36.9330	24.88
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	5	15	4	3628	27.2232	8.36129	26.63	3561	22.8899	24.74
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	0.4	0	23980	93.3060	0.39505	139.04	24108	93.4875	155.60
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	0.5	0	21731	92.9756	0.51006	140.26	22316	93.1560	154.04
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	0.6	1	22441	92.3730	0.69649	141.68	22902	92.5751	156.85
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	0.75	2	19935	91.1922	0.80006	147.76	20988	91.7205	160.58
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	1	2	17782	88.9631	0.97255	144.22	18801	89.7111	159.64
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	1.25	2	16558	87.6065	1.30625	142.50	17697	88.3964	160.24
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	1.5	2	16065	84.2001	1.51265	139.91	17376	85.5777	161.26
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	1.75	3	14688	81.8762	1.75396	138.86	16005	82.9880	161.51
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	2	3	13378	79.8900	2.00071	139.51	14688	81.3093	159.95
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	2.25	3	12475	77.7792	2.02016	137.64	13686	79.2913	159.87
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	2.5	3	11473	75.6130	2.32561	136.36	12737	77.2871	159.19
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	2.75	3	10619	73.2379	2.44597	133.87	11889	75.1392	160.88
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	3	3	9782	71.2703	2.77049	137.56	11183	73.4512	159.26
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	3.25	3	9102	69.6278	2.99194	138.07	10469	71.4267	162.37
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	3.5	3	8595	66.6066	3.22328	136.30	9793	69.0688	159.41
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	4	3	7596	61.9430	3.58318	179.21	8982	65.8477	165.70
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	5	4	6187	53.7637	4.14820	177.56	7383	57.9380	164.48
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	6	4	5211	46.7888	5.29758	174.36	6410	50.1437	164.33
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	8	4	4066	35.1540	6.74016	178.55	5200	38.0803	163.31
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	10	4	3422	24.6281	8.64848	176.85	4370	35.8654	165.32
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	12	4	2977	18.0255	8.91700	174.38	3598	27.0679	162.29
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	8	15	4	2537	9.9979	10.44569	173.81	2855	14.9665	168.88
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	0.4	0	70510	92.7677	0.52632	41.21	70908	91.9279	18.39
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	0.5	0	64362	91.4524	0.67530	38.27	65595	91.0860	17.59
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	0.6	1	60007	91.0674	0.76182	37.04	62334	90.6255	16.58
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	0.75	2	53698	90.5655	0.83564	37.73	55541	90.1522	16.13
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	1	2	45418	89.6314	1.02721	45.52	47912	88.8499	14.87
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	1.25	2	40451	88.3717	1.34731	44.26	42341	87.9248	14.75
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	1.5	2	36730	87.4253	1.61122	43.91	38709	86.9655	13.95
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	1.75	3	33867	86.5912	1.64457	46.09	35387	85.8351	13.91
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	2	3	31651	85.6452	1.83496	44.92	32512	85.0737	13.64
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	2.25	3	29871	84.6915	2.11763	36.37	30258	83.6161	13.83
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	2.5	3	27847	83.4761	2.25239	36.37	28398	82.5570	13.42
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	2.75	3	26782	82.8140	2.82537	35.52	27338	81.5783	13.08
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	3	3	25464	82.2004	2.54447	35.45	26046	81.0462	13.19
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	3.25	3	24307	81.3964	2.74416	35.04	24730	79.4924	13.42
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	3.5	3	23132	80.0993	3.05818	34.66	23634	78.3122	13.79
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	4	3	21560	78.6855	3.48899	34.60	21925	77.3749	13.58
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	5	4	19046	74.9117	3.92591	34.23	19423	72.8253	13.32
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	6	4	17216	70.7460	4.91485	31.72	17440	69.5036	13.30
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	8	4	14543	64.5625	5.54282	30.07	14799	62.1847	13.23
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	10	4	12630	57.4713	6.89809	30.07	13471	-1.7191	22.53
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	12	4	11139	50.9032	7.74847	31.87	11992	-3.1259	21.99
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	5	15	4	9847	41.5345	9.97001	31.25	10584	-4.5107	22.01
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	0.4	0	64087	91.4554	0.44762	139.01	94747	91.7086	156.78
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	0.5	0	57736	91.6179	0.65947	132.28	86422	91.6923	154.08
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	0.6	1	54973	90.8742	0.74352	134.62	84398	91.3745	151.93
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	0.75	2	48834	90.4250	0.83781	140.63	75420	91.1924	154.32
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	1	2	41489	88.6617	1.13783	150.58	65021	89.8657	155.98
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	1.25	2	36708	87.6320	1.33969	149.09	57591	88.6367	154.75
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	1.5	2	33006	86.4962	1.63027	145.99	51686	87.3442	156.67
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	1.75	3	30297	85.4061	1.72679	145.05	47518	86.8212	154.88
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	2	3	27925	84.0652	2.39410	145.12	44420	85.6777	153.40
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	2.25	3	26058	83.0706	2.56877	143.48	41149	84.8796	156.66
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	2.5	3	24401	81.8541	2.47591	142.95	38549	83.3857	154.98
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	2.75	3	23353	80.6394	2.76573	143.06	36878	82.9860	154.68
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	3	3	22092	79.4303	3.19870	142.71	34769	82.0671	154.34
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	3.25	3	21159	78.6738	2.96860	142.97	33021	81.2511	157.35
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	3.5	3	19954	76.7604	3.23704	141.16	31522	80.0263	153.93
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	4	3	18336	74.9666	3.71546	188.96	29065	78.8110	158.37
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	5	4	16177	70.6823	4.21694	163.84	24633	74.1292	155.95
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	6	4	14688	65.5285	5.55586	158.27	22066	70.0602	158.46
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	8	4	12231	57.4520	6.71371	152.60	17665	62.1821	156.39
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	10	4	10396	49.2089	8.07652	155.75	17035	-0.8818	153.83
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	12	4	9342	38.8746	11.25782	151.76	13819	-2.3817	152.88
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	8	15	4	8026	29.5478	13.87269	154.06	10974	-5.6095	158.92
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	0.4	0	65817	94.3570	0.45229	30.03	64660	94.0136	16.38
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	0.5	0	58149	93.6338	0.57653	29.04	57097	93.1888	15.95
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	0.6	1	49548	92.2352	0.66418	29.77	48606	91.7712	16.21
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	0.75	2	41444	90.6326	0.81647	28.43	40538	90.0157	15.37
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	1	2	32115	88.3489	1.07254	28.04	31105	87.6841	15.13
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	1.25	2	26439	86.5660	1.32322	28.01	25439	85.5996	15.24
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	1.5	2	22860	84.3776	1.39089	27.99	22034	83.2119	15.25
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	1.75	3	20148	82.6149	1.57385	27.52	19357	81.2769	14.74
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	2	3	17840	80.7993	1.84874	28.93	17100	79.0769	15.66
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	2.25	3	15968	78.9874	1.84289	28.38	15267	77.0906	14.57
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	2.5	3	14351	76.8135	1.95214	28.93	13538	74.3327	14.23
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	2.75	3	12796	75.0360	2.04808	28.39	12037	71.7091	14.24
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	3	3	11501	73.0909	2.19178	28.23	10674	69.1953	14.61
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	3.25	3	10514	71.3266	2.29601	27.80	9667	66.9041	13.87
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	3.5	3	9722	69.4946	2.52084	28.23	8872	64.2970	14.24
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	4	3	8591	64.0994	2.91981	27.84	7668	59.0138	13.84
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	5	4	6868	59.0780	3.27747	27.41	5876	52.1987	13.67
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	6	4	5520	53.4258	3.55524	27.50	4549	44.6380	13.45
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	8	4	4422	45.4870	4.67553	26.88	3546	35.4674	17.90
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	10	4	3612	38.3509	5.43443	27.02	2729	32.0638	24.66
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	12	4	3103	31.0780	5.80366	26.89	2257	24.3938	24.86
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	5	15	4	2728	26.0207	6.75960	26.43	1914	13.8224	24.90
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	0.4	0	62933	93.6994	0.44114	125.29	63781	93.8498	155.91
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	0.5	0	55158	92.6350	0.58905	124.32	56226	92.9931	158.39
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	0.6	1	46364	91.2866	0.68178	123.56	46705	91.6204	158.46
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	0.75	2	38422	89.3096	0.87130	127.51	39304	89.8197	162.43
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	1	2	29159	86.6868	1.16388	120.05	30077	87.3280	161.03
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	1.25	2	23037	84.0496	1.33893	117.14	23968	84.8281	161.56
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	1.5	2	19356	81.1851	1.57603	118.31	20537	82.4086	161.92
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	1.75	3	16648	78.8434	1.70943	117.37	17827	80.2927	160.00
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	2	3	14320	76.0572	1.90353	128.77	15539	77.4937	161.74
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	2.25	3	12445	73.7959	1.99525	129.57	13700	75.1302	161.90
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	2.5	3	10888	70.4356	2.34589	127.88	12221	72.1650	159.69
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	2.75	3	9608	67.5941	2.25795	127.31	10810	69.2346	161.63
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	3	3	8469	64.5134	2.49026	130.81	9737	66.6075	161.41
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	3.25	3	7708	61.9308	2.74335	130.75	8914	64.1388	160.90
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	3.5	3	6847	58.9183	2.84342	132.28	8219	61.9448	160.97
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	4	3	5741	54.0233	3.07686	168.90	6864	56.8948	165.34
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	5	4	4260	46.1836	3.90853	171.16	5229	49.5720	161.85
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	6	4	3566	41.4695	4.53277	167.79	4339	42.6580	162.24
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	8	4	2684	28.8105	5.40098	169.35	3420	32.5153	161.33
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	10	4	2325	19.0158	7.32838	170.23	2198	24.6406	167.77
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	12	4	2120	13.6336	7.59218	167.89	1845	16.3492	165.18
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	8	15	4	1856	7.9364	8.13166	169.47	1594	6.5690	170.12
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	0.4	0	30853	87.5783	0.49157	29.38	30338	87.2371	14.88
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	0.5	0	28531	88.1043	0.68030	28.70	27755	86.9764	14.27
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	0.6	1	24716	86.4762	0.83276	31.15	23847	85.4419	13.95
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	0.75	2	21922	84.0792	1.04965	30.56	21103	82.6524	13.45
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	1	2	18254	79.7400	1.57927	38.66	17748	79.1341	13.96
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	1.25	2	15172	75.8529	1.90073	38.28	14659	74.7938	13.42
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	1.5	2	12724	72.9155	2.35787	39.93	12300	71.3474	13.03
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	1.75	3	10882	68.7363	2.54237	39.66	10381	68.1657	12.96
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	2	3	9337	66.5185	2.88220	41.62	8878	65.2404	12.96
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	2.25	3	8178	63.7561	3.12012	28.39	7740	61.7269	12.63
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	2.5	3	7412	61.0583	3.30127	28.40	6995	60.5417	13.10
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	2.75	3	6403	58.8449	3.87121	28.16	6019	57.8930	12.76
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	3	3	5844	57.6209	3.95984	27.98	5435	56.6275	12.65
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	3.25	3	5443	56.6841	3.80013	28.14	5035	55.5280	12.50
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	3.5	3	5075	56.2465	4.18677	28.13	4627	53.9378	12.38
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	4	3	4504	52.6944	4.30976	29.85	4111	50.8946	12.47
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	5	4	3589	49.0554	5.12729	27.90	3181	48.2646	12.68
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	6	4	3028	47.0086	5.54190	27.69	2752	46.0491	12.66
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	8	4	2515	43.1178	5.83600	29.40	2243	41.6655	12.52
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	10	4	2345	40.2130	6.41700	27.47	2272	41.7517	24.52
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	12	4	2265	38.5982	7.00562	27.07	1913	39.6869	24.76
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	5	15	4	2002	34.6592	7.22420	27.03	1687	31.4826	24.42
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	0.4	0	28448	87.8544	0.48199	115.12	29002	87.5195	156.89
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	0.5	0	26412	87.2308	0.63106	112.12	26869	87.2634	153.79
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	0.6	1	22412	85.2352	0.81360	115.66	22804	85.4253	153.88
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	0.75	2	20708	82.5925	0.92353	132.22	20748	82.7479	158.04
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	1	2	17544	80.4094	1.23771	130.90	18181	79.4988	156.61
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	1.25	2	14895	76.6491	1.54551	129.37	15278	76.0491	156.42
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	1.5	2	13000	74.6169	1.92545	131.88	13182	73.1565	155.55
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	1.75	3	11089	71.7602	2.27110	130.14	11475	70.9675	154.73
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	2	3	9488	67.4230	2.49967	140.95	9936	67.6771	156.65
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	2.25	3	8203	65.3286	2.74801	136.92	8890	65.4990	156.71
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	2.5	3	6890	62.0233	3.49970	141.52	7505	62.1950	153.69
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	2.75	3	6197	60.3877	3.89598	141.95	6564	60.7146	152.96
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	3	3	5417	58.0161	3.91155	143.69	5884	58.0866	153.15
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	3.25	3	4575	54.7138	3.94565	142.78	4980	55.3218	154.74
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	3.5	3	4247	52.9949	4.07165	141.39	4649	53.7958	154.69
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	4	3	3626	50.6810	4.34070	210.65	4033	50.9545	161.39
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	5	4	3093	46.8266	4.64969	193.10	3096	49.0467	154.68
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	6	4	2723	43.5307	5.96112	191.78	2699	46.7745	156.08
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	8	4	2289	36.4881	5.86131	191.04	2352	43.0252	155.55
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	10	4	1679	34.7239	8.37652	191.26	1752	38.4718	158.72
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	12	4	1509	30.9289	7.49671	190.85	1530	34.4609	159.57
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	8	15	4	1358	26.7905	8.50028	192.64	1277	26.6189	164.59
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	0.4	0	54669	93.1319	0.65001	36.66	53728	92.8307	17.05
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	0.5	0	46904	92.7174	0.75641	35.30	45897	92.1130	15.82
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	0.6	1	37993	91.9249	1.09617	35.43	36892	91.3987	15.67
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	0.75	2	31937	90.9024	1.08535	36.98	30721	90.0816	14.92
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	1	2	25406	88.9886	1.30155	44.29	24335	87.9335	14.45
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	1.25	2	20925	86.6836	1.42893	46.08	19962	85.4839	14.79
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	1.5	2	17176	84.4440	1.72285	43.48	16227	82.7385	14.27
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	1.75	3	14652	82.5116	2.04082	43.28	13677	80.8003	14.59
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	2	3	12688	80.6294	2.18185	44.57	11787	78.8112	14.74
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	2.25	3	11158	79.2313	2.36784	33.49	10428	77.3349	14.39
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	2.5	3	9976	77.8256	2.61263	33.49	9314	75.9002	13.92
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	2.75	3	9017	76.7285	2.79151	33.45	8430	74.5473	14.11
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	3	3	8232	75.7041	2.90983	33.43	7833	73.2786	14.18
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	3.25	3	7533	74.4100	3.06665	35.43	6989	72.1322	13.87
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	3.5	3	7171	73.0839	3.49514	35.40	6574	70.8347	13.87
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	4	3	6574	70.8712	3.16808	35.21	5718	67.8421	13.86
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	5	4	5403	68.0209	3.60969	32.63	4670	63.6879	13.48
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	6	4	4705	65.4800	4.27377	32.52	4015	61.2279	13.63
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	8	4	4088	59.5660	4.61804	34.91	3238	56.3061	13.59
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	10	4	3360	57.4166	6.11724	32.34	3278	55.7128	25.70
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	12	4	3134	52.7004	6.80205	34.28	2644	52.9247	26.01
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	5	15	4	2313	53.9936	6.33033	35.01	2196	48.8484	25.18
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	0.4	0	54759	92.8487	0.50288	133.54	51232	92.9096	162.32
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	0.5	0	46102	91.8337	0.67689	129.09	43705	92.3934	161.13
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	0.6	1	36109	91.3123	0.85808	129.74	35215	91.2948	161.67
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	0.75	2	30296	89.7690	0.91567	137.62	30026	90.1925	165.48
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	1	2	23416	87.5689	1.18981	134.17	23921	87.7646	165.23
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	1.25	2	18800	85.2156	1.49365	131.25	19429	85.0628	164.27
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	1.5	2	15188	82.0955	1.78435	132.27	15814	82.7076	162.31
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	1.75	3	12552	80.0807	2.03962	130.14	13550	80.7009	161.07
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	2	3	10262	77.6378	2.46103	144.33	11457	78.5021	160.94
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	2.25	3	8802	74.8968	2.63092	141.07	10026	76.9987	161.07
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	2.5	3	7773	73.6789	2.76501	139.17	8902	75.4646	160.14
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	2.75	3	6990	72.2289	2.77058	140.10	7959	73.7574	158.82
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	3	3	6214	71.2373	3.08995	141.07	7399	72.5751	159.96
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	3.25	3	5679	69.7128	3.37367	143.67	6868	71.1998	163.28
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	3.5	3	5275	67.2214	3.26214	143.36	6218	70.0999	160.63
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	4	3	4689	63.5428	3.52115	184.22	5631	67.8132	167.75
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	5	4	3614	59.0581	4.88953	183.15	4524	63.1505	163.88
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	6	4	3192	55.0475	4.62360	184.79	3871	59.8312	161.88
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	8	4	2144	53.7668	5.43779	179.06	3043	54.6160	160.41
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	10	4	2489	37.0316	6.81505	181.03	2658	52.5365	165.21
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	12	4	1912	38.5521	7.46624	183.26	2150	48.2026	164.57
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	8	15	4	1415	43.8064	8.17595	177.48	1804	44.9097	170.40
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	0.4	0	25231	93.1149	0.45800	30.77	26705	92.3986	13.69
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	0.5	0	23354	91.2749	0.55898	28.77	24899	90.7109	14.38
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	0.6	1	22639	90.2578	0.60416	30.27	24568	90.1750	13.85
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	0.75	2	20567	90.1318	0.73654	28.64	22115	89.7710	13.20
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	1	2	17667	89.8033	0.97731	39.38	19500	88.5708	13.34
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	1.25	2	16031	88.4138	1.19813	39.19	17722	87.9754	13.54
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	1.5	2	14659	88.3475	1.37280	38.87	16200	87.9183	13.65
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	1.75	3	13625	87.8557	1.52167	38.53	14950	87.3290	13.19
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	2	3	12930	85.8826	1.75811	39.63	14038	85.3878	12.79
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	2.25	3	12271	85.6353	1.93031	28.90	13222	85.3056	12.87
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	2.5	3	11594	85.1217	2.41191	28.72	12591	84.5210	12.17
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	2.75	3	11168	84.7043	2.14957	29.26	12033	84.0530	12.55
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	3	3	10600	83.9617	2.40276	28.86	11475	83.0235	12.41
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	3.25	3	10148	83.8360	2.54388	29.03	11119	82.2818	12.34
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	3.5	3	9936	82.2794	2.72318	28.24	10644	82.2656	12.30
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	4	3	9278	82.2286	2.85783	28.75	9905	81.4549	12.51
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	5	4	8355	79.8593	3.36268	28.12	9282	79.2061	12.74
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	6	4	7560	77.4890	4.25004	28.30	8417	75.9298	12.39
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	8	4	6438	73.1279	4.87258	27.88	7260	71.1047	12.23
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	10	4	5702	67.7801	6.87497	27.76	6750	41.0022	19.40
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	12	4	5066	62.4812	7.09317	26.56	6237	40.0806	20.10
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	5	15	4	4476	56.8507	10.71272	27.03	5591	39.9212	19.51
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	0.4	0	22448	90.6552	0.45951	116.88	24455	90.7660	134.15
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	0.5	0	20582	91.4843	0.56935	116.73	22321	90.6705	132.21
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	0.6	1	20409	89.8120	0.61510	117.17	21894	89.7216	135.08
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	0.75	2	18384	90.2129	0.75698	125.90	20017	88.9770	139.85
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	1	2	15808	89.3631	1.10729	135.36	17652	89.7295	137.85
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	1.25	2	14275	87.7364	1.37433	134.94	16103	88.0067	139.80
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	1.5	2	12935	86.5917	1.53546	128.76	14866	86.4339	140.75
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	1.75	3	11897	86.5761	1.75080	130.17	13831	86.1084	140.23
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	2	3	11130	85.8846	2.20702	131.12	12961	85.3661	157.38
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	2.25	3	10520	84.8076	2.08261	129.32	12501	84.3417	139.26
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	2.5	3	10090	83.7086	2.21156	130.14	11737	83.2609	138.19
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	2.75	3	9481	83.7204	2.49642	129.66	11334	82.4590	139.55
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	3	3	9016	82.6290	2.61417	129.52	10719	82.9994	138.44
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	3.25	3	8655	81.7249	2.95975	128.74	10432	81.4756	137.99
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	3.5	3	8555	80.8027	2.69778	128.95	10091	81.1026	138.64
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	4	3	7729	79.2220	3.04548	169.32	9423	80.0903	144.28
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	5	4	6810	76.0053	4.39336	147.77	8825	77.4469	141.42
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	6	4	6313	74.0348	5.13428	148.63	8120	74.0573	143.09
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	8	4	5254	67.8903	5.93211	143.40	6962	67.9262	140.56
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	10	4	4603	59.1678	7.27694	142.80	6479	40.4406	143.29
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	12	4	4292	52.8567	9.52252	142.42	5906	39.1391	142.53
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	8	15	4	3744	50.3010	10.66109	142.12	5150	36.3726	147.80
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	0.4	0	104826	92.8191	0.64811	35.96	103226	92.6005	17.11
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	0.5	0	92212	91.6925	0.74922	34.20	90654	91.4731	17.40
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	0.6	1	82344	90.9165	0.73764	33.59	80574	90.6682	16.39
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	0.75	2	70140	89.1784	1.14556	32.55	68530	88.8058	16.67
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	1	2	56656	86.4305	1.37192	31.17	55462	85.9385	16.38
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	1.25	2	47402	83.8286	1.84093	30.37	46506	83.2148	16.06
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	1.5	2	40677	80.8546	2.16510	29.59	39726	80.2818	16.13
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	1.75	3	35557	78.6591	2.16333	29.29	34714	77.7633	15.58
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	2	3	31087	76.3030	2.19264	30.54	30409	75.1786	15.80
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	2.25	3	27698	73.8502	2.45898	30.33	26896	72.3841	15.93
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	2.5	3	24795	71.3886	2.82025	30.02	24055	70.0223	15.38
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	2.75	3	22312	69.1915	3.09199	29.30	21744	67.2029	15.60
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	3	3	20414	66.5953	3.21539	29.40	19741	64.6372	15.42
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	3.25	3	18649	64.7540	3.61085	29.24	18049	61.9003	15.39
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	3.5	3	17282	62.4628	3.63343	28.95	16571	59.1928	14.92
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	4	3	15159	55.9900	4.04500	28.70	14497	52.4457	15.26
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	5	4	12279	48.3399	5.16848	28.54	11893	45.3091	15.34
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	6	4	10174	41.8496	5.55639	28.09	9962	37.9830	14.85
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	8	4	7904	31.1376	6.34221	27.82	7527	25.6980	14.65
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	10	4	6493	21.5742	8.56468	27.51	7675	22.7670	26.88
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	12	4	5566	16.1338	8.66261	27.27	6297	14.0306	26.72
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	5	15	4	4729	8.6676	11.49359	26.86	4889	2.3113	25.91
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	0.4	0	104526	92.4904	0.66283	138.34	104527	92.6002	161.13
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	0.5	0	91268	91.4862	0.66721	136.34	91679	91.5390	163.13
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	0.6	1	79235	90.1988	0.79191	136.28	79136	90.4045	161.13
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	0.75	2	67482	88.3259	0.92282	150.27	67656	88.4871	165.11
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	1	2	54109	85.5683	1.20441	144.35	54737	85.6348	166.49
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	1.25	2	45019	82.5369	1.52303	141.31	45630	82.6889	166.25
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	1.5	2	38129	79.5573	1.77702	140.83	39048	79.7521	168.15
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	1.75	3	33080	76.9402	1.98435	139.74	33960	77.2074	165.92
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	2	3	28762	74.0305	2.29239	148.23	29642	74.0851	165.72
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	2.25	3	25362	71.0537	2.62988	146.75	26158	71.4891	166.68
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	2.5	3	22549	68.0242	2.97609	144.58	23256	68.8673	164.01
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	2.75	3	20353	65.1987	3.05303	144.16	21027	66.2465	165.23
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	3	3	18410	62.2519	3.53144	148.23	20348	63.5208	170.66
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	3.25	3	16715	59.5395	3.61331	147.81	18328	60.0413	167.82
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	3.5	3	15264	56.3470	3.82278	147.58	17054	58.3113	168.42
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	4	3	13515	53.0951	3.93595	215.57	14851	54.3302	173.36
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	5	4	10382	44.8273	5.26042	198.76	11519	46.1625	169.59
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	6	4	8278	36.8067	5.55779	195.44	9605	38.3426	169.15
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	8	4	6238	23.8407	7.17283	194.50	7259	26.1088	167.85
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	10	4	4990	12.9441	8.73019	192.38	6410	14.1867	166.01
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	12	4	4264	4.8339	10.75984	193.36	5289	5.4932	168.26
+3000_aic_for-sunday-s-dinner_111377_1269x2250.sdr.png	8	15	4	3593	-5.9480	13.54076	191.59	4046	-3.0566	171.03
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	0.4	0	104243	93.1756	0.66753	35.31	102725	92.9092	17.70
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	0.5	0	92472	92.1341	0.79086	34.03	91158	91.8212	16.99
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	0.6	1	83569	91.0379	0.78638	33.48	82384	90.7902	17.05
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	0.75	2	72625	89.3101	0.97111	32.24	71509	88.9682	16.48
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	1	2	59936	86.1646	1.23581	31.15	58849	85.6428	16.27
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	1.25	2	50190	83.1626	1.53847	30.61	49306	82.7469	16.34
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	1.5	2	42829	80.3917	1.83244	30.15	42029	79.7476	16.29
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	1.75	3	37104	77.8281	2.35139	29.40	36341	77.0170	16.37
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	2	3	32648	75.1135	2.48519	30.68	31826	74.3294	15.96
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	2.25	3	29162	72.8680	2.87150	30.38	28341	71.8373	15.97
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	2.5	3	25977	69.7765	3.11466	30.44	25211	68.6974	15.66
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	2.75	3	23567	67.3477	2.99613	29.87	22805	66.1106	16.55
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	3	3	21261	63.8977	3.12856	29.62	20667	62.7607	15.51
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	3.25	3	19366	60.6574	3.57247	29.51	18641	59.3215	15.39
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	3.5	3	17994	58.4077	3.78392	29.16	17276	56.9833	15.81
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	4	3	15721	49.2203	4.11027	29.07	15070	47.5914	15.22
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	5	4	12706	39.6685	4.62701	28.63	12347	37.1879	15.19
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	6	4	10581	33.0141	4.94301	28.61	10191	29.8587	15.15
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	8	4	8241	20.5416	6.20148	28.05	7563	13.1593	14.76
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	10	4	6876	10.5467	7.29270	27.69	6933	10.4070	27.23
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	12	4	5772	3.2781	7.82926	27.32	5839	1.1199	25.85
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	5	15	4	4862	-4.9873	8.37226	27.27	4917	-11.5277	25.95
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	0.4	0	102602	92.8866	0.52852	139.16	103504	93.0078	158.86
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	0.5	0	90763	91.8381	0.64184	136.64	91526	91.9877	158.13
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	0.6	1	79307	90.2781	0.69866	136.79	79853	90.4829	157.68
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	0.75	2	68461	88.2522	0.88226	153.41	69413	88.6353	162.92
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	1	2	55728	84.8621	1.22813	148.11	56662	84.9928	165.44
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	1.25	2	46347	81.5583	1.47446	144.80	47332	81.8643	163.96
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	1.5	2	39501	78.5031	1.85933	141.51	40540	78.8556	164.46
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	1.75	3	33963	75.6810	2.05329	136.74	34890	76.1094	165.89
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	2	3	29619	72.7416	2.45472	148.21	30628	73.0007	165.61
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	2.25	3	26092	69.6841	2.56628	146.91	27025	70.0476	164.09
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	2.5	3	23142	66.6499	2.99970	146.83	24182	67.1081	163.49
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	2.75	3	20805	63.6541	3.04529	147.35	21723	64.0526	164.13
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	3	3	18567	60.4650	3.28990	149.14	20353	61.9812	166.12
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	3.25	3	16727	57.0424	3.59377	149.71	18424	59.0462	165.23
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	3.5	3	15407	54.0634	3.75310	148.33	16854	56.0164	166.40
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	4	3	13490	48.6859	3.99447	217.47	14867	50.4692	171.54
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	5	4	10357	39.0192	4.78162	198.60	11749	40.5683	167.66
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	6	4	8504	29.6102	5.23278	193.54	9814	30.5786	168.22
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	8	4	6288	11.0104	6.93026	196.16	7309	13.3255	167.07
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	10	4	4989	-1.0353	8.35198	191.85	5734	0.3598	169.19
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	12	4	4263	-8.6892	10.09395	193.55	4891	-9.6861	169.89
+3300_met_still-life-violin-and-music_10997_2832x3722.sdr.png	8	15	4	3750	-20.1748	13.17099	192.87	4035	-20.9279	173.43
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	0.4	0	94345	93.5539	0.50964	34.69	91430	93.3631	16.77
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	0.5	0	84765	92.9833	0.59171	33.27	82059	92.7183	15.91
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	0.6	1	79977	91.8733	0.81632	33.15	78353	91.7044	15.43
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	0.75	2	70178	90.6757	0.91290	32.24	68706	90.4002	14.98
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	1	2	58752	88.9482	1.13265	31.06	57229	88.5523	14.73
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	1.25	2	50858	87.0029	1.39300	30.36	49403	86.7034	14.54
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	1.5	2	44566	85.4386	1.54940	29.89	43446	84.5331	14.20
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	1.75	3	40076	83.9173	1.71120	29.68	38975	83.0285	14.54
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	2	3	36127	82.0461	2.06251	31.04	35243	81.3183	14.27
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	2.25	3	32743	80.9018	2.02180	31.79	31785	79.7228	14.23
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	2.5	3	29693	79.0619	2.17272	30.53	28682	77.9163	14.22
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	2.75	3	27395	77.7201	2.28035	29.92	26457	76.3134	14.12
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	3	3	25362	76.0952	2.48277	30.01	24480	74.6774	13.74
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	3.25	3	23498	74.7243	2.57441	29.57	22627	73.1119	13.78
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	3.5	3	21946	73.2510	2.84137	30.59	21214	71.7197	13.70
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	4	3	19506	69.2143	3.28258	30.57	18749	67.4153	13.87
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	5	4	16269	64.1189	3.86393	28.92	15963	61.8964	13.96
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	6	4	13962	58.6538	4.75584	29.67	13505	55.6258	13.13
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	8	4	11009	48.7378	5.53214	28.32	10676	45.3456	13.56
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	10	4	9057	39.9471	6.51406	28.09	9601	39.1479	24.16
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	12	4	7523	31.5591	7.23830	27.49	8411	33.7876	24.38
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	5	15	4	6580	22.8211	9.67224	27.56	7226	21.6433	24.02
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	0.4	0	87391	93.1515	0.47416	136.84	85986	93.1991	154.92
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	0.5	0	78529	92.3052	0.57435	131.84	77169	92.4381	153.53
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	0.6	1	74467	91.0169	0.73804	133.76	73923	91.2345	156.50
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	0.75	2	65383	89.8349	0.89277	150.31	64761	90.0024	159.40
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	1	2	54853	87.9261	1.10983	147.94	54096	88.1402	159.51
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	1.25	2	46596	85.6584	1.43323	146.26	46431	86.0402	158.02
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	1.5	2	40803	83.7606	1.58289	142.93	40864	84.0366	160.20
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	1.75	3	36349	82.0000	1.73475	142.63	36501	82.3361	159.23
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	2	3	32649	79.8347	1.95845	157.04	32820	80.4835	160.32
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	2.25	3	29562	78.1977	2.21788	155.72	29707	78.7110	161.18
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	2.5	3	26622	76.0377	2.22816	153.41	27090	76.9408	159.36
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	2.75	3	24605	74.5062	2.64278	152.88	25076	75.1197	158.95
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	3	3	22505	72.3487	2.81145	156.34	23032	73.3730	163.09
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	3.25	3	20775	70.5129	2.87552	154.01	21441	71.9486	163.04
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	3.5	3	19277	68.5904	3.09449	153.32	19838	69.7951	162.89
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	4	3	17096	65.3891	3.45561	220.64	17847	66.5228	169.19
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	5	4	13599	59.5031	4.26182	204.66	14685	61.2784	165.48
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	6	4	11584	53.2090	5.05706	200.10	12573	55.2426	164.99
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	8	4	9076	42.1996	7.20299	199.02	9966	45.5242	163.97
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	10	4	7375	31.7165	7.87914	197.67	8219	31.8993	163.13
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	12	4	6189	22.1044	11.23666	198.81	7079	23.6749	164.41
+5200_epa_climate-impact-2021_cover_p001_2968x3841.sdr.png	8	15	4	5290	10.8189	11.87783	197.87	5896	5.5180	168.49
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	0.4	0	47675	92.2855	0.54566	42.86	53972	92.0552	16.14
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	0.5	0	44092	91.3249	0.61952	42.27	50506	91.0726	15.57
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	0.6	1	44670	91.3255	0.63253	41.79	53035	90.5702	15.02
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	0.75	2	41246	91.3692	0.86379	41.04	48412	90.4584	14.35
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	1	2	36474	90.8294	1.08479	51.74	43121	90.0423	14.23
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	1.25	2	33281	89.5782	1.07811	49.29	39436	88.7397	13.87
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	1.5	2	30850	89.4486	1.34490	49.00	36568	88.7254	13.88
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	1.75	3	29209	88.4499	1.52164	49.26	34774	87.6770	13.90
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	2	3	27640	87.8898	1.65478	50.44	32872	86.2461	13.82
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	2.25	3	26769	86.9266	1.82756	39.06	31152	85.9152	13.59
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	2.5	3	25464	85.9010	1.88603	39.31	29651	84.5494	13.34
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	2.75	3	24519	85.2567	2.22190	38.01	28442	84.0000	14.49
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	3	3	23579	84.3305	2.49101	38.54	27407	83.1239	13.17
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	3.25	3	22747	83.5284	2.58606	37.06	26288	82.2858	13.51
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	3.5	3	21944	82.0104	2.49317	36.87	25049	80.8650	13.51
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	4	3	20549	79.7175	3.71150	36.29	23613	78.4958	13.61
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	5	4	18407	76.3324	4.01970	36.15	20808	74.2426	13.31
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	6	4	16591	70.0523	5.30343	35.87	18733	68.2460	13.80
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	8	4	14210	63.5973	6.28892	34.24	15722	61.6412	13.94
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	10	4	12233	58.6317	7.24920	34.43	12752	37.9730	22.19
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	12	4	10753	50.1607	9.68896	33.08	11767	36.9418	22.83
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	5	15	4	9569	44.1831	10.93544	32.82	10629	35.6924	22.04
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	0.4	0	43341	92.0121	0.44283	138.15	61233	91.1250	161.22
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	0.5	0	40462	91.7253	0.57787	133.88	56529	90.8040	158.93
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	0.6	1	41023	91.3324	0.69475	135.13	60682	91.6141	159.24
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	0.75	2	37285	90.4808	0.74955	141.52	54738	91.0825	163.86
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	1	2	32896	89.5165	1.03291	151.95	47948	89.3769	163.09
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	1.25	2	30122	88.6891	1.44495	148.83	43412	89.5345	164.87
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	1.5	2	27742	87.8884	1.31429	143.90	40264	88.7199	162.83
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	1.75	3	26079	86.5816	1.61419	143.35	37002	88.0042	166.86
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	2	3	24644	85.1635	1.82650	144.21	34967	86.7472	166.07
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	2.25	3	23387	85.5417	1.99115	143.47	33584	86.2416	164.76
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	2.5	3	22113	83.7036	2.86162	143.03	31246	84.9406	165.77
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	2.75	3	21253	83.2243	2.57128	143.40	30460	83.6954	163.64
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	3	3	20521	82.2555	2.63157	141.51	29313	82.5897	164.24
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	3.25	3	19657	81.1697	2.67874	140.22	28239	81.9505	162.09
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	3.5	3	19193	79.3376	2.98221	140.09	26889	80.7251	165.64
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	4	3	17752	76.8073	3.38672	182.98	25154	78.8042	169.58
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	5	4	15765	69.2909	4.55557	159.76	22035	73.0847	164.55
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	6	4	14100	65.6506	5.30472	156.07	19699	68.4944	162.84
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	8	4	11979	57.8242	8.54884	152.77	17076	60.8455	164.16
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	10	4	10275	48.5043	9.67361	153.84	13680	37.4730	155.06
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	12	4	9205	42.9495	11.20852	150.60	12067	34.8700	155.37
+5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png	8	15	4	7879	34.8113	14.34723	151.40	10565	31.6697	160.86
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	0.4	0	71609	91.8990	0.57153	32.49	70182	91.6130	17.33
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	0.5	0	63904	90.9343	0.72947	31.68	62319	90.7462	17.37
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	0.6	1	53476	90.2546	0.75899	31.27	52090	90.3622	16.41
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	0.75	2	47353	89.7416	0.93971	30.34	46128	89.2723	16.03
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	1	2	40599	88.2876	1.19138	29.73	39447	87.7372	16.01
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	1.25	2	35630	86.9071	1.44552	29.18	34528	86.1972	15.61
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	1.5	2	31769	85.3611	1.77189	28.76	30828	84.6601	15.78
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	1.75	3	28985	83.8665	1.74204	28.58	27928	83.1877	15.46
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	2	3	26418	82.2739	2.07758	30.11	25442	81.4880	15.48
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	2.25	3	24493	81.0795	2.28329	29.95	23569	80.0946	15.34
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	2.5	3	22682	79.7228	2.59782	29.65	21859	78.7545	15.74
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	2.75	3	21542	78.3583	2.60752	29.62	20671	77.5467	14.98
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	3	3	20356	77.1684	3.08285	29.20	19351	75.9123	14.97
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	3.25	3	19047	75.7914	3.50474	29.28	18219	74.7369	16.41
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	3.5	3	17982	74.3807	3.60462	29.37	17131	73.2359	15.19
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	4	3	16222	71.3402	4.03796	28.96	15499	69.8997	15.12
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	5	4	14048	67.7051	4.39990	28.83	13364	66.2726	15.07
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	6	4	12602	64.3286	4.99776	28.70	12082	62.8664	15.58
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	8	4	10500	57.7850	6.94892	28.30	10089	55.9189	14.83
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	10	4	9109	52.2496	8.20586	28.51	11413	51.4841	26.67
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	12	4	7956	44.7199	9.34788	27.90	10526	46.5816	27.34
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	5	15	4	6966	36.4088	11.08905	27.99	8955	41.0401	26.58
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	0.4	0	68876	91.3087	0.54766	133.87	68956	91.3997	156.40
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	0.5	0	60990	90.6482	0.63900	131.26	61480	90.7032	156.61
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	0.6	1	52994	90.1197	0.73369	131.08	53260	90.4652	156.54
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	0.75	2	46332	89.3885	0.87248	138.75	47300	89.5026	161.96
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	1	2	38928	87.8704	1.13788	135.78	39687	87.9798	161.35
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	1.25	2	33604	86.0181	1.38518	133.89	34495	86.1567	162.14
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	1.5	2	29504	84.1888	1.73421	135.22	30575	84.2939	163.33
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	1.75	3	26443	82.3600	1.93082	131.95	27554	82.5988	161.12
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	2	3	24056	80.8239	2.10191	142.93	25196	81.1010	161.83
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	2.25	3	21951	78.6639	2.31903	142.01	23223	79.1174	161.73
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	2.5	3	20177	77.0015	2.58825	141.22	21396	77.7395	161.08
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	2.75	3	19058	75.6716	2.78099	140.22	20334	76.5110	160.84
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	3	3	17943	74.6901	3.09595	142.41	19730	74.7632	166.84
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	3.25	3	16593	73.1272	3.37666	141.98	18592	73.9828	166.33
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	3.5	3	15862	71.6138	3.44913	143.48	17919	72.4981	164.31
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	4	3	14158	67.6681	4.19484	184.43	16035	69.9797	171.80
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	5	4	11535	63.2741	4.82427	181.93	13113	65.0188	167.75
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	6	4	10321	56.9656	5.32884	178.31	11985	61.5346	165.27
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	8	4	8442	47.3908	7.20353	178.89	9777	54.4394	164.60
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	10	4	7134	42.0978	10.39783	179.85	10032	44.5971	165.91
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	12	4	6305	31.7734	9.66643	179.25	9218	40.1667	168.39
+6600_scans-illustrations_haeckel-cephalopods_plate0007_4988x7151.sdr.png	8	15	4	5117	21.7621	12.80730	179.88	7614	31.1469	172.44

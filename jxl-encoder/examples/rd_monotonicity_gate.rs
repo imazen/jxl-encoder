@@ -260,19 +260,20 @@ fn main() {
     let mut out = std::fs::File::create(&out_path).unwrap();
     writeln!(
         out,
-        "image\teffort\tdistance\tregime\tbytes\tssim2\tms\tcjxl_bytes\tcjxl_ssim2\tcjxl_ms"
+        "image\teffort\tdistance\tregime\tbytes\tssim2\tbfly\tms\tcjxl_bytes\tcjxl_ssim2\tcjxl_ms"
     )
     .unwrap();
     for c in &cells {
         writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.2}\t{}\t{:.4}\t{:.2}",
+            "{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.5}\t{:.2}\t{}\t{:.4}\t{:.2}",
             c.image,
             c.effort,
             c.distance,
             regime(c.distance),
             c.bytes,
             c.ssim2,
+            c.bfly,
             c.ms,
             c.cjxl_bytes,
             c.cjxl_ssim2,
