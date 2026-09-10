@@ -40,6 +40,15 @@ def main():
                         "cjxl-rs builds against each other")
     p.add_argument('images', nargs='+')
     a = p.parse_args()
+    # A wrong --ours/--cjxl path used to produce a header-only TSV, one FAILED
+    # line per cell on stderr, and exit code 0 — an hour of measurement that
+    # looked like it ran. Prove both binaries encode BEFORE the grid starts.
+    # (2026-09-10: `--cjxl .ci-libjxl/tools/cjxl` from the wrong working
+    # directory failed all 224 cells exactly this way.)
+    for label, exe in (('--ours', a.ours), ('--cjxl', a.cjxl)):
+        if not (os.path.isfile(exe) and os.access(exe, os.X_OK)):
+            sys.exit(f'{label}: not an executable file: {exe}')
+
     efforts = [int(x) for x in a.efforts.split(',')]
     dists = [float(x) for x in a.distances.split(',')]
     threads = [int(x) for x in a.threads.split(',')]
@@ -47,6 +56,17 @@ def main():
     tmp = tempfile.mkdtemp(prefix='ladder', dir=os.path.expanduser('~/tmp'))
     o_out, c_out = os.path.join(tmp, 'o.jxl'), os.path.join(tmp, 'c.jxl')
 
+    probe = a.images[0]
+    for label, exe, thr in (('--ours', a.ours, ['--threads', '1']),
+                            ('--cjxl', a.cjxl,
+                             ['--threads', '1'] if a.cjxl_flags == 'ours'
+                             else ['--num_threads=1'])):
+        ms, _ = run([exe, probe, o_out, '-e', '3', '-d', '1.0'] + thr, o_out)
+        if ms is None:
+            sys.exit(f'{label}: {exe} failed to encode {probe} — check the path, '
+                     f'the flag dialect (--cjxl-flags) and the input.')
+
+    failed = 0
     with open(a.out, 'w') as f:
         f.write('image\teffort\tdistance\tthreads\tours_ms\tcjxl_ms\twall_ratio\t'
                 'ours_bytes\tcjxl_bytes\tbyte_ratio\n')
@@ -78,6 +98,7 @@ def main():
                                         continue
                                     mc = min(mc, ms); bc = b
                         if bo is None or bc is None:
+                            failed += 1
                             print(f'FAILED {tag} e{e} d{d} t{t}', file=sys.stderr)
                             continue
                         f.write(f'{tag}\t{e}\t{d}\t{t}\t{mo:.0f}\t{mc:.0f}\t'
@@ -86,6 +107,9 @@ def main():
                         print(f'{tag} e{e} d{d} t{t}: {mo:.0f} vs {mc:.0f} ms '
                               f'({mo/mc:.2f}x), {bo} vs {bc} B ({bo/bc:.3f}x)',
                               file=sys.stderr)
+    if failed:
+        print(f'wrote {a.out} with {failed} FAILED cells', file=sys.stderr)
+        sys.exit(1)
     print(f'wrote {a.out}', file=sys.stderr)
 
 main()

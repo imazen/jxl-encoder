@@ -90,8 +90,13 @@
 #   i686, any architecture magetypes has no backend for — the encoder emitted
 #   DIFFERENT BYTES than on one that can. hash_lock_expected.txt is a single
 #   committed sidecar, so it could only ever have been correct on one of them.
-#   CI never caught it: every CI host summons AVX2 or NEON, and the i686 job is
-#   cross-BUILD only.
+#   CI never caught it: every CI host summons AVX2 or NEON, and the one job that
+#   does reach the scalar tier — Cross (i686-unknown-linux-gnu) — runs `--lib`
+#   tests ONLY (ci.yml "Test lib (cross/QEMU)"), while the hash locks live in
+#   `tests/it`. The new bitwise test IS a `--lib` test in jxl-encoder-simd, so
+#   from this commit on that job is the gate that would have caught it — and it
+#   PASSES there with the fix (CI run 34502381016), which is direct confirmation
+#   on the one target where the scalar tier is what actually dispatches.
 #
 #   Verified PRE-EXISTING, not introduced here: the same test dropped into the
 #   parent commit's xyb.rs fails identically (14 sizes x 3 cube roots).
@@ -101,10 +106,18 @@
 #   one scalar implementation instead of two that happened to be close. No
 #   shipping bytes move — no measured platform ever reached that tier.
 #
-#   NOT INVESTIGATED, and worth someone's time: this is a property of magetypes'
-#   scalar backend, so EVERY `#[magetypes(...)]` kernel in this crate that uses
-#   `mul_add` has the same divergence. Only forward-XYB was checked. The general
-#   fix belongs in magetypes (a sibling repo — not touched from here).
+#   A SECOND divergent tier, found by the same test on CI and NOT fixable:
+#   `wasm128`. WASM SIMD has no FMA instruction at all — magetypes' wasm128
+#   backend implements `mul_add` as multiply-then-add and says so in its own
+#   source. Recorded as xyb-001 in docs/SIMD_PARITY_KNOWN_DIVERGENCES.md; the
+#   test is `#[ignore]`d on wasm32 only and still gates x86_64 and aarch64.
+#
+#   NOT INVESTIGATED, and worth someone's time: both causes are properties of
+#   magetypes' BACKENDS, not of this kernel, so every `#[magetypes(...)]` kernel
+#   in this crate that uses `mul_add` shares them — entropy.rs (3 kernels),
+#   gaborish5x5.rs, and xyb.rs's own inverse_xyb_planar_impl. Only forward-XYB
+#   was audited. The cheap audit: drop the tolerance in each kernel's existing
+#   parity test to 0 ULP / 0.0 abs and see which permutations fail.
 #
 # VALIDATION AT THE COMMIT
 #   hash locks                     63/63 byte-identical

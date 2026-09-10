@@ -40,7 +40,41 @@ cargo test -p jxl-encoder-simd --lib -- --include-ignored
 
 ## Active divergences
 
-(none)
+### xyb-001 — `forward_xyb_impl` wasm128 tier is not bit-identical (WASM has no FMA)
+
+**Test**: `xyb::expanded_coverage::forward_xyb_dispatch_is_bit_identical_to_scalar`,
+`#[cfg_attr(target_arch = "wasm32", ignore = ...)]`. Runs and passes on x86_64
+and aarch64; skipped only on wasm32.
+
+**Divergence**: the `wasm128` tier of `forward_xyb_impl` disagrees with
+`forward_xyb_scalar` (and therefore with the AVX2 / AVX-512 / NEON tiers) by
+~1 ULP per fused multiply-add, on all three `XybCubeRoot` variants.
+
+**Cause — a hardware fact, not a tolerance choice**: WASM SIMD has no FMA
+instruction. magetypes' wasm128 backend implements `mul_add` as
+`f32x4_add(f32x4_mul(a, b), c)` and says so in its own source comment ("WASM has
+no native FMA", `simd/impls/wasm128.rs`), while `forward_xyb_scalar` uses a
+genuinely fused `f32::mul_add` — matching what libjxl gets from Highway on x86
+and ARM. The opsin matrix multiply alone is enough to diverge; the cube root is
+not involved.
+
+**Why it is not fixed**: closing it would mean either giving up SIMD on wasm
+(per-lane scalar `f32::mul_add`, which is software-emulated there and slow), or
+making x86 and ARM stop fusing — which would move bytes on every platform that
+matters and diverge from libjxl. Neither is a trade worth making for a target
+that has no byte lock.
+
+**Consequence, stated honestly and NOT measured**: a wasm32 build of the
+encoder very likely emits different bytes than a native one. It is *likely*
+rather than *known* because the WASM CI job runs `--lib` tests only, so
+`tests/it` — where `hash_lock_expected.txt` lives — has never run there. If
+byte-identical wasm output is ever a requirement, this is the first thing to
+measure, and it is a per-kernel property: every `#[magetypes(...)]` kernel in
+this crate that uses `mul_add` shares the cause.
+
+**Found**: 2026-09-10, by the same test that found the (fixed) scalar-tier
+divergence — see `benchmarks/xyb_neon_handwritten_2026-09-10.meta` and the
+matching Resolved Bugs entry in CLAUDE.md.
 
 ---
 

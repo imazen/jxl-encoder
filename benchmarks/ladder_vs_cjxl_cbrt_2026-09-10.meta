@@ -1,0 +1,115 @@
+harness / grid / timing: IDENTICAL to ladder_vs_cjxl_after_2026-09-10.meta —
+  same script, same four images and crops, same efforts {3,5,7,9} x distances
+  {1.0,4.0} x threads {1,8}, same min-of-5 (3 at 2048) with both arms
+  ALTERNATED inside each repeat and the leading arm flipped every repeat.
+  224 cells.
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10
+build: bb108c76 — the `_after_` build (a700e6df, six byte-identical wall fixes)
+  PLUS the two changes measured here:
+    1. the forward-XYB cube-root selector: `cbrt_lowp` in zen mode, a bit-exact
+       libjxl transcription under `EncoderStrategy::Libjxl`   (dd20175d, c7de490d)
+    2. the hand-written NEON forward-XYB tier + the `_scalar` tier fix (bb108c76)
+reference: cjxl v0.12 from .ci-libjxl/tools/cjxl.
+
+THE CONTROL THAT MAKES THIS COMPARABLE: the cjxl arm was RE-MEASURED in the
+same run, and it lands within 1 % of the `_after_` run on every one of the 32
+(size, effort, threads) cells — 26->27, 126->126, 1146->1148, 840->841,
+4634->4640 ms. The machine was in the same state, so the ours-side deltas below
+are the change, not drift. Quote them; do not quote a wall ratio from one run
+against a wall ratio from another without this check.
+
+MEDIAN ours/cjxl PROCESS wall, `_after_` -> now (<1.00 = we are faster):
+
+  size    e  thr    was     now    delta
+    64    3    1   0.87    0.86     -1 %
+    64    3    8   0.84    0.83     -2 %
+    64    5    1   0.89    0.88     -1 %
+    64    5    8   0.87    0.87     -0 %
+    64    7    1   0.85    0.88     +3 %
+    64    7    8   0.83    0.81     -2 %
+    64    9    1   0.67    0.68     +2 %
+    64    9    8   0.62    0.61     -1 %
+   256    3    1   0.93    0.93     -1 %
+   256    3    8   0.89    0.90     +2 %
+   256    5    1   0.95    0.94     -1 %
+   256    5    8   1.02    1.04     +2 %
+   256    7    1   0.85    0.84     -1 %
+   256    7    8   0.76    0.77     +1 %
+   256    9    1   0.84    0.85     +2 %
+   256    9    8   0.51    0.51     -0 %
+  1024    3    1   1.25    1.17     -7 %
+  1024    3    8   1.05    1.00     -4 %
+  1024    5    1   0.88    0.85     -3 %
+  1024    5    8   1.14    1.11     -2 %
+  1024    7    1   0.86    0.86     -1 %
+  1024    7    8   1.00    0.98     -2 %
+  1024    9    1   1.03    1.04     +0 %
+  1024    9    8   0.46    0.46     +1 %
+  2048    3    1   1.23    1.14     -8 %
+  2048    3    8   0.94    0.88     -7 %
+  2048    5    1   0.91    0.89     -2 %
+  2048    5    8   1.32    1.30     -2 %
+  2048    7    1   0.86    0.85     -1 %
+  2048    7    8   0.90    0.89     -2 %
+  2048    9    1   1.05    1.06     +1 %
+  2048    9    8   0.44    0.44     +0 %
+
+"DO NOT INCREASE TIME PER EFFORT OVER OUR BASELINE" — checked directly on OUR
+OWN wall (median ours_ms), not on the ratio, because the ratio can move when the
+denominator does:
+
+  every cell at 1 MP and above improved or held:
+    2048 e3 t1  125 -> 116 ms   -7.2 %      1024 e3 t1  34 -> 32 ms   -7.4 %
+    2048 e3 t8   64 ->  61 ms   -5.4 %      1024 e3 t8  20 -> 20 ms   -4.9 %
+    2048 e5 t8  168 -> 163 ms   -3.3 %      1024 e5 t1 112 ->111 ms   -1.3 %
+    2048 e7 t8  238 -> 234 ms   -2.1 %      1024 e7 t8  67 -> 66 ms   -1.5 %
+  the largest INCREASE anywhere in the grid is +1.9 % (1024 e9 t8, 371 -> 378 ms),
+  which is inside the run-to-run band for that cell — e9 t=8 is perceptual-loop
+  and thread-scheduling bound and this change does not touch either.
+
+WHERE IT LANDED, AND WHY IT IS WHERE IT IS:
+  - **e3 is where the cube root lives.** `convert_rows_to_xyb` is 15.3 % of
+    lossy e3 CPU (e3_profile_2026-09-10.md) and the cube root is 86-87 % of that
+    transform, so e3 is the band with the most cube root per byte of output.
+    It moved most: -7 to -8 % of ours/cjxl at 1 MP and 4 MP.
+  - **e3 at >= 1 MP was one of the two open items the `_after_` run named.** It
+    goes 1.25 -> 1.17 (1024 t=1) and 1.23 -> 1.14 (2048 t=1), and at t=8 it is
+    now AT or BELOW parity (1.00 and 0.88). The other open item, e5 at t=8, is
+    barely touched (1.32 -> 1.30 at 2048) and is now the loosest cell in the
+    grid by a clear margin — that band is `acstrat`-bound, not XYB-bound.
+  - **<= 256 px is flat within noise (+-2 %), as it should be.** At 4-6 ms the
+    encode is dominated by per-call fixed cost; a per-pixel kernel has nothing
+    to bite on. Do not read the flat 64/256 rows as a failed change.
+  - **e9 is flat.** The perceptual loop re-runs the transform per iteration but
+    is dominated by the metric, not by XYB.
+
+ATTRIBUTION, STATED HONESTLY: this grid measures the cube-root change and the
+hand-written NEON tier TOGETHER and cannot separate them by itself. The separate
+in-process A/B (xyb_neon_handwritten_2026-09-10.{tsv,meta}) puts the NEON tier
+at a WASH on the `LowP` path that zen ships — median 0.989 over 10 runs — so
+effectively all of the movement above is the cube root. Do not credit the NEON
+kernel for it.
+
+BYTES: the cube-root change moves them; the NEON tier does not (byte-identical).
+Over the 112 (image, effort, distance) cells:
+
+  median +0.000 %   mean +0.018 %   50 of 112 byte-IDENTICAL
+  p25 -0.002 %      p75 +0.006 %
+  min  -0.972 % (nature_256 e9 d1.0, 8437 -> 8355 B)
+  max  +2.387 % (nature_64  e9 d4.0,  419 ->  429 B — ten bytes on a 64x64)
+
+  **Every moved cell is at e9**, which is the expected shape: e9 runs the
+  perceptual loop, so a sub-ULP change in the XYB planes changes where the loop
+  converges. e3/e5/e7 are byte-identical throughout. The one real-size increase
+  worth naming is brochure_2048 e9 d1.0, 132340 -> 134420 B (+1.57 %); the
+  quality side of that trade was measured separately at the cube-root commit
+  (60 cells across all 21 imazen-26 strata: SSIM2 delta median +0.0005, min
+  -0.0517, max +0.1886).
+
+STILL OPEN, in priority order, unchanged except that item 1 has moved:
+  1. **e5 at threads=8** — 1.30 at 2048, 1.11 at 1024. Now the loosest band on
+     the ladder by a clear margin. The lever named for it is `acstrat`
+     (~40 % of e5 t8), which is algorithmic, not a kernel.
+  2. **e3 at threads=1** — 1.14 (2048) / 1.17 (1024). Improved but still above
+     parity.
+  3. e9 t=1 sits at 1.04-1.06 and is perceptual-loop bound.

@@ -799,8 +799,13 @@ Consequence: `incant!` falls through to `_scalar` when no token can be summoned
 — pre-AVX2 x86_64, i686, any architecture magetypes has no backend for — so the
 encoder produced different bytes there. `hash_lock_expected.txt` is a SINGLE
 committed sidecar, so it could only ever have been correct on the vector hosts.
-CI never saw it: every CI runner summons AVX2 or NEON, and the i686 job is
-cross-BUILD only.
+CI never saw it: every CI runner summons AVX2 or NEON, and the one job that does
+reach the scalar tier — `Cross (i686-unknown-linux-gnu)` — runs `--lib` tests
+ONLY (`ci.yml`, step "Test lib (cross/QEMU)"), while the hash locks live in
+`tests/it`. The new bitwise test is a `--lib` test in `jxl-encoder-simd`, so that
+job is now the gate that would have caught it — and it PASSES there with the
+fix, verified on CI run 34502381016, which is direct confirmation on the 32-bit
+target where the scalar tier is what actually dispatches.
 
 **Why it hid for so long**: the pre-existing parity test
 (`linear_rgb_to_xyb_scalar_vs_dispatch_sizes`) allows **16 ULP** — a tolerance
@@ -817,13 +822,24 @@ There is now exactly one scalar implementation instead of two that happened to
 be close. No shipping bytes moved — 63/63 hash locks and 5/5 Libjxl byte locks
 byte-identical, because no measured platform ever reached that tier.
 
-**NOT INVESTIGATED, and someone should**: this is a property of magetypes'
-scalar backend, so **every `#[magetypes(...)]` kernel in `jxl-encoder-simd` that
-uses `mul_add` has the same divergence**. Only forward-XYB was checked and
-fixed. The general fix belongs in magetypes (a sibling repo — not touched from
-here); the in-crate pattern above (`-scalar` + delegate) is available per kernel
-in the meantime. The cheap audit is to add a bitwise dispatch-vs-scalar test to
-each kernel and see which ones fail the all-disabled permutation.
+**The same test then found a SECOND divergent tier, which is NOT fixable**:
+`wasm128`. WASM SIMD has no FMA instruction, so magetypes' wasm128 backend also
+implements `mul_add` as multiply-then-add and says so in its own source. Closing
+that would mean giving up SIMD on wasm, or making x86/ARM stop fusing and
+diverge from libjxl. Recorded as `xyb-001` in
+`docs/SIMD_PARITY_KNOWN_DIVERGENCES.md`; the test is `#[ignore]`d on wasm32
+only and still gates x86_64 and aarch64, which are the architectures the hash
+locks pin. A wasm32 build very likely emits different bytes than a native one —
+*likely*, not known, because the WASM CI job also runs `--lib` only.
+
+**NOT INVESTIGATED, and someone should**: both causes are properties of
+magetypes' backends, not of this kernel, so **every `#[magetypes(...)]` kernel
+in `jxl-encoder-simd` that uses `mul_add` shares them** — `entropy.rs` (3
+kernels), `gaborish5x5.rs`, and `xyb.rs`'s own `inverse_xyb_planar_impl`. Only
+forward-XYB was audited. The cheap audit is to drop the tolerance in each
+kernel's existing parity test to 0 ULP / 0.0 abs and see which permutations
+fail; the scalar half is then fixable in-crate with the `-scalar` + delegate
+pattern above, and the wasm half is not.
 
 Full record: `benchmarks/xyb_neon_handwritten_2026-09-10.meta`.
 
