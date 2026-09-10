@@ -1,0 +1,32 @@
+harness: scripts/ladder_vs_cjxl.py --cjxl-flags ours (two cjxl-rs builds
+         alternated inside each repeat, leading arm flipped per repeat)
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10; min of 7; threads=8
+change: the AC-group loop inside the per-DC-group tokenization map runs in
+        parallel (was a sequential nested loop over the AC grid).
+baseline: the build that already carries the five earlier wall fixes.
+
+WHY: exactly the same structural reason as the pass-2 HF-group fix — the outer
+map is over DC GROUPS, a DC group is 2048x2048 px, so a 1024^2 or 2048^2 image
+has exactly ONE and this inner loop was the serial tail. `ac_tok` measured
+9.7 -> 9.5 ms from threads=1 to threads=8 at 2048^2 e5, i.e. no scaling.
+
+Median after/before at threads=8:
+  e3 0.972x (min 0.949)   e5 0.984x (0.970)
+  e7 0.988x (0.981)       e9 0.990x (0.969)
+Smaller than the pass-2 fix because `ac_tok` is ~8 % of an e5 encode where
+`pass2_write` was ~12 %, and both are dwarfed by `acstrat` at ~40 %.
+
+BIT-IDENTICAL BY CONSTRUCTION: `tokenize_ac_group` takes only shared references
+plus its own group index and returns that group's tokens; `parallel_map`
+collects in index order, so the assembled vector is element-for-element what the
+nested loop produced.
+
+Checked: 24/24 A/B cells byte-equal; 96 cells (8 images x efforts {3,5,7,9} x
+d {0.5,1,4}) equal across threads=1, threads=8 AND the pre-change build;
+68/68 hash locks; 5/5 Libjxl byte locks; full release suite and workspace
+all-targets clippy green.
+
+WHERE THE e5 t=8 TIME NOW IS (2048^2 nature, phase timers, after this fix's
+predecessors): total 121.7 ms — acstrat 49.3 (40 %), entropy 27.6 (23 %),
+quant_field 17.3 (14 %), xform 12.4. `acstrat` already scales 5.0x from t=1, so
+the next lever there is algorithmic, not parallelism.

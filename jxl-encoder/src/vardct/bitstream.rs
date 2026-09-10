@@ -3115,14 +3115,30 @@ impl VarDctEncoder {
                 let ac_gx_end = (ac_gx_start + ac_groups_per_dc).min(xsize_groups);
                 let ac_gy_end = (ac_gy_start + ac_groups_per_dc).min(_ysize_groups);
 
-                let ac_count = (ac_gx_end - ac_gx_start) * (ac_gy_end - ac_gy_start);
-                let mut ac_group_tokens: Vec<AcGroupTokens> = Vec::with_capacity(ac_count);
                 // Raster order within the DC region (ac_gy outer, ac_gx
                 // inner) — global indices are still
                 // `ac_gy * xsize_groups + ac_gx`, so downstream sees the
                 // same ordering as before.
-                for ac_gy in ac_gy_start..ac_gy_end {
-                    for ac_gx in ac_gx_start..ac_gx_end {
+                //
+                // Run in PARALLEL over that grid. `tokenize_ac_group` takes only
+                // shared references plus its own group index and returns that
+                // group's tokens, so no iteration observes another's work and
+                // `parallel_map` collects in index order — the resulting vector
+                // is element-for-element what the nested loop produced.
+                //
+                // Same structural reason as the pass-2 HF-group fix: the outer
+                // `parallel_map_result(num_dc_groups, ..)` is the only other
+                // parallelism here and a DC group is 2048x2048 px, so at 1024^2
+                // and 2048^2 there is exactly ONE and this loop was the whole
+                // serial tail. `ac_tok` measured 9.7 -> 9.5 ms from threads=1 to
+                // threads=8 at 2048^2 e5 before this.
+                let ac_cols = ac_gx_end.saturating_sub(ac_gx_start);
+                let ac_rows = ac_gy_end.saturating_sub(ac_gy_start);
+                let ac_count = ac_cols * ac_rows;
+                let ac_group_tokens: Vec<AcGroupTokens> =
+                    crate::parallel::parallel_map(ac_count, |i| {
+                        let ac_gy = ac_gy_start + i / ac_cols;
+                        let ac_gx = ac_gx_start + i % ac_cols;
                         let global_ac_idx = ac_gy * xsize_groups + ac_gx;
                         let per_pass = tokenize_ac_group(
                             global_ac_idx,
@@ -3139,9 +3155,8 @@ impl VarDctEncoder {
                             used_orders,
                             &pass_config,
                         );
-                        ac_group_tokens.push((global_ac_idx, per_pass));
-                    }
-                }
+                        (global_ac_idx, per_pass)
+                    });
 
                 crate::error::Result::Ok((dc_tokens, ac_meta_tokens, ac_group_tokens))
             })?;
