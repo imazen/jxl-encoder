@@ -1,0 +1,86 @@
+harness: scripts/ladder_vs_cjxl.py
+command: scripts/ladder_vs_cjxl.py --ours target/release/cjxl-rs \
+           --cjxl .ci-libjxl/tools/cjxl --out <tsv> --reps 5 <png>...
+         (--reps 3 for the 2048 cells)
+host: Darwin 25.5.0 aarch64 (mac)
+date: 2026-09-10
+build: a91c6882 (includes the patches-BFS prefilter of 800b295f)
+reference: cjxl v0.12 from .ci-libjxl/tools/cjxl -- NOT the packaged v0.11.1,
+           per the version rule in CLAUDE.md.
+grid: 4 images (plots / web-screenshot / nature photo / NPS grayscale brochure)
+      x sizes {64, 256, 1024, 2048} centre crops, metadata STRIPPED (the iCCP
+      trap) and never upscaled -- plots and web-screenshot have no 2048 cell
+      x efforts {3,5,7,9} x d {1.0, 4.0} x threads {1, 8}
+timing: PROCESS wall, min of 5 (3 at 2048), arms alternated inside each repeat
+        with the leading arm flipped every repeat. Both arms read the same PNG
+        and write a real file, so process start, PNG decode and file write are
+        in BOTH denominators. This is "how long does the user wait" -- it is NOT
+        an encode-only ratio and must not be quoted as one.
+
+MEDIAN ours/cjxl wall ratio (<1.00 = we are faster) and byte ratio:
+
+  size    e  thr  ours_ms  cjxl_ms   wall   bytes
+    64    3    1        4        4   0.88   1.151
+    64    3    8        4        5   0.84   1.151
+    64    5    1        4        5   0.89   1.220
+    64    5    8        4        5   0.86   1.220
+    64    7    1        5        5   0.86   1.204
+    64    7    8        5        6   0.84   1.204
+    64    9    1        8       12   0.68   1.090
+    64    9    8        8       13   0.62   1.090
+   256    3    1        6        6   1.01   1.026
+   256    3    8        6        6   0.94   1.026
+   256    5    1       12       12   0.98   1.016
+   256    5    8        9        8   1.08   1.016
+   256    7    1       16       20   0.86   0.999
+   256    7    8       10       14   0.79   0.999
+   256    9    1       68       80   0.84   0.929
+   256    9    8       38       74   0.50   0.929
+  1024    3    1       38       26   1.40   1.013
+  1024    3    8       24       20   1.13   1.013
+  1024    5    1      114      126   0.91   1.016
+  1024    5    8       48       36   1.32   1.016
+  1024    7    1      214      248   0.88   1.002
+  1024    7    8       73       68   1.08   1.002
+  1024    9    1     1134     1145   1.03   0.896
+  1024    9    8      382      840   0.47   0.896
+  2048    3    1      140       96   1.45   1.022
+  2048    3    8       74       66   1.19   1.022
+  2048    5    1      485      500   0.93   0.652
+  2048    5    8      188      126   1.47   0.652
+  2048    7    1      886     1042   0.87   0.925
+  2048    7    8      256      274   0.99   0.925
+  2048    9    1     4861     4622   1.05   0.694
+  2048    9    8     1533     3448   0.45   0.694
+
+CORRECTION — "lossy e7 is 2.54x cjxl, the worst ratio on our ladder (e3 is
+0.71x, e9 1.06x)" is NOT reproduced anywhere in this grid, and it is the premise
+the whole e7 attribution thread started from. At threads=1 e7 is 0.86-0.88x at
+EVERY size, i.e. we are consistently faster than cjxl there, and e7 is the best
+band we have at t=1. Whatever produced 2.54x was a different corpus, size,
+thread count or build; do not carry that number forward.
+
+WHAT IS ACTUALLY SLOW, in priority order:
+
+1. **e3 at >= 1 MP, single-threaded: 1.40x (1024) / 1.45x (2048).** The worst
+   band in the grid. It is NOT fixed overhead -- at 64 and 256 e3 sits at
+   0.88-1.01x and only opens up as the image grows, so this is per-pixel cost.
+   That makes it the top wall target.
+2. **Thread scaling at e5: 1.32x (1024 t8) / 1.47x (2048 t8)** where the same
+   cells are 0.91x / 0.93x at t=1. We convert threads into speed worse than
+   cjxl does at e5 specifically -- e7 t8 is 0.99-1.08x and e9 t8 is 0.45-0.50x,
+   so it is not a general parallelism deficit.
+3. e9 t=1 is at parity (1.03-1.05x) while e9 t=8 is 0.45-0.50x: our e9 scales
+   much better than cjxl's.
+
+BYTES — the intercept is real and it is ours. At 64x64 we are 9-22 % LARGER
+than cjxl (1.151 at e3, 1.220 at e5, 1.204 at e7, 1.090 at e9) while at 256 and
+above we are at or below it. A per-file overhead that is invisible at 1 MP is
+worth ~0.4 bpp on a thumbnail. This grid does not attribute it; it only
+establishes that it exists and that it shrinks with effort.
+
+CAVEATS: 4 images, 2 of them at 2048, so the 2048 byte ratios (0.652 at e5,
+0.694 at e9) are two-image medians dominated by the brochure's patches win and
+must not be read as a corpus figure. Distances are only {1.0, 4.0}; this is a
+WALL measurement, and no quality metric was computed, so no RD claim follows
+from it.
