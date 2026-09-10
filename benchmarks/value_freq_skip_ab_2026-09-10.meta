@@ -1,0 +1,66 @@
+harness: scripts/ladder_vs_cjxl.py --cjxl-flags ours (two cjxl-rs builds
+         alternated inside each repeat, leading arm flipped per repeat)
+command: scripts/ladder_vs_cjxl.py --ours <after> --cjxl <before> --cjxl-flags ours \
+           --reps 7 --threads 1 --efforts 3,5,7,9 --distances 1.0 <png>...
+host: Darwin 25.5.0 aarch64 (mac)
+date: 2026-09-10
+change: AccumulatedAnsData stops building its per-token `value_freqs` /
+        `lz77_freqs` BTreeMaps when `optimize_uint_configs` is false
+        (libjxl `uint_method == kNone`, effort < 9). Columns are named
+        after_/before_ (the script's ours_/cjxl_ slots).
+
+  image          e   after_ms  before_ms   ratio   bytes
+  plots          3       31        36      0.842   identical
+  plots          5      152       158      0.961   identical
+  plots          7      196       203      0.966   identical
+  plots          9     1107      1106      1.001   identical
+  webshot        3       33        38      0.865   identical
+  webshot        5      153       160      0.959   identical
+  webshot        7      199       205      0.971   identical
+  webshot        9     1060      1062      0.998   identical
+  nature         3       36        42      0.855   identical
+  nature         5      126       134      0.942   identical
+  nature         7      259       265      0.977   identical
+  nature         9     1232      1232      1.000   identical
+  brochure       3       33        42      0.790   identical
+  brochure       5       85        95      0.892   identical
+  brochure       7      231       235      0.983   identical
+  brochure       9     1019      1021      0.998   identical
+  nature_2048    3      129       151      0.853   identical
+  nature_2048    5      483       508      0.951   identical
+  nature_2048    7     1010      1031      0.979   identical
+  nature_2048    9     5175      5172      1.001   identical
+
+  median by effort: e3 0.853x  e5 0.951x  e7 0.977x  e9 1.000x
+
+e9 at exactly 1.000x is the control, not a null result: `optimize_uint_configs`
+is TRUE at e9, so the maps are still built there and nothing should move. The
+saving grows as the share of encode time spent in entropy coding grows, which is
+why e3 — where entropy is 51-61 % of `encode_inner`
+(`benchmarks/e3_profile_2026-09-10.md`) — gets the most.
+
+Against cjxl v0.12 this takes e3 at 1024^2 t=1 from 1.40x to about 1.19x
+(1.40 x 0.853); that composition is arithmetic, not a fresh measurement, and the
+ladder grid should be re-run before the 1.19x is quoted as measured.
+
+BYTE IDENTITY:
+  - 20/20 cells above, bytes equal.
+  - 112 (image, size, effort, distance) cells re-run through the ladder grid
+    (efforts 3/5/7/9 x sizes 64/256/1024/2048 x d {1,4} x 4 images): 0 mismatches.
+  - 68/68 hash locks and 5/5 Libjxl byte locks unchanged.
+  - Full `cargo test -p jxl-encoder --release` green.
+
+WHY IT IS SAFE: `value_freqs` exists only to re-derive per-histogram symbol
+counts under a NON-default `HybridUintConfig`. Below effort 9 the config is
+always the default {4, 2, 0} — the same one `encode_token_value` already used to
+fill `data.histograms` — so the clustered histograms ARE those counts. Verified
+symbol-for-symbol before the change with a temporary probe over every clustered
+histogram on real content: 0 mismatches, the only difference being the trailing
+zeros `Histogram` pads to `HISTOGRAM_ROUNDING`.
+
+That padding is trimmed on the new path so `counts.len()` (which feeds
+`log_alpha_size`) cannot move. Measured honestly: removing the trim is
+byte-identical on 144 real encodes and the unit test does not discriminate it
+either, so the trim is defensive rather than load-bearing — it is kept because
+it makes the two paths equal by construction. Recorded so nobody later "proves"
+the trim matters from a green test.

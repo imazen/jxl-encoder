@@ -57,22 +57,40 @@ pub struct AccumulatedAnsData {
     pub lz77_freqs: Vec<alloc::collections::BTreeMap<u32, u32>>,
     /// Number of contexts.
     pub num_contexts: usize,
+    /// Whether `value_freqs` / `lz77_freqs` are being populated at all.
+    ///
+    /// They exist only to re-derive per-histogram symbol counts under a
+    /// NON-default `HybridUintConfig`, which only happens when the caller asks
+    /// for uint-config optimisation (`optimize_uint_configs`, libjxl
+    /// `uint_method != kNone`, effort >= 9). Below that the config is always
+    /// the default {4, 2, 0} and the clustered histograms already hold exactly
+    /// those counts — verified symbol-for-symbol on real content before this
+    /// was introduced — so the per-token `BTreeMap` insert was pure overhead.
+    /// It is not cheap overhead: `AccumulatedAnsData::add_tokens` is 12.8 % of
+    /// lossy e3 CPU (`benchmarks/e3_profile_2026-09-10.md`).
+    pub track_value_freqs: bool,
 }
 
 impl AccumulatedAnsData {
     /// Create a new empty accumulator for the given number of contexts.
-    pub fn new(num_contexts: usize) -> Self {
+    ///
+    /// `track_value_freqs` decides whether the per-token value/LZ77 frequency
+    /// maps are built at all; pass `false` when nothing downstream will read
+    /// them. See [`Self::track_value_freqs`].
+    pub fn with_value_freq_tracking(num_contexts: usize, track_value_freqs: bool) -> Self {
+        let maps = |n: usize| {
+            (0..n)
+                .map(|_| alloc::collections::BTreeMap::new())
+                .collect::<Vec<_>>()
+        };
         Self {
             histograms: (0..num_contexts)
                 .map(|_| super::histogram::Histogram::new())
                 .collect(),
-            value_freqs: (0..num_contexts)
-                .map(|_| alloc::collections::BTreeMap::new())
-                .collect(),
-            lz77_freqs: (0..num_contexts)
-                .map(|_| alloc::collections::BTreeMap::new())
-                .collect(),
+            value_freqs: maps(if track_value_freqs { num_contexts } else { 0 }),
+            lz77_freqs: maps(if track_value_freqs { num_contexts } else { 0 }),
             num_contexts,
+            track_value_freqs,
         }
     }
 
@@ -83,6 +101,9 @@ impl AccumulatedAnsData {
         if ctx < self.num_contexts {
             let (_encoded, sym) = encode_token_value(token, lz77);
             self.histograms[ctx].add(sym as usize);
+            if !self.track_value_freqs {
+                return;
+            }
             if token.is_lz77_length() {
                 if let Some(lz77_params) = lz77 {
                     let encoded = Lz77UintCoder::encode(token.value);
@@ -106,8 +127,12 @@ impl AccumulatedAnsData {
     #[cfg_attr(not(feature = "parallel"), allow(dead_code))] // used by the parallel accumulate map-reduce
     pub fn merge(&mut self, other: &Self) {
         debug_assert_eq!(self.num_contexts, other.num_contexts);
+        debug_assert_eq!(self.track_value_freqs, other.track_value_freqs);
         for ctx in 0..self.num_contexts {
             self.histograms[ctx].add_histogram(&other.histograms[ctx]);
+            if !self.track_value_freqs {
+                continue;
+            }
             for (&val, &count) in &other.value_freqs[ctx] {
                 *self.value_freqs[ctx].entry(val).or_insert(0) += count;
             }
@@ -126,10 +151,11 @@ fn accumulate_groups_parallel(
     groups: &[&[Token]],
     num_contexts: usize,
     lz77: Option<&Lz77Params>,
+    track_value_freqs: bool,
 ) -> AccumulatedAnsData {
     use rayon::prelude::*;
     if groups.len() <= 1 {
-        let mut acc = AccumulatedAnsData::new(num_contexts);
+        let mut acc = AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
         for group in groups {
             acc.add_tokens(group, lz77);
         }
@@ -138,12 +164,13 @@ fn accumulate_groups_parallel(
     groups
         .par_iter()
         .map(|group| {
-            let mut acc = AccumulatedAnsData::new(num_contexts);
+            let mut acc =
+                AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
             acc.add_tokens(group, lz77);
             acc
         })
         .reduce(
-            || AccumulatedAnsData::new(num_contexts),
+            || AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs),
             |mut a, b| {
                 a.merge(&b);
                 a
@@ -157,8 +184,9 @@ fn accumulate_groups_parallel(
     groups: &[&[Token]],
     num_contexts: usize,
     lz77: Option<&Lz77Params>,
+    track_value_freqs: bool,
 ) -> AccumulatedAnsData {
-    let mut acc = AccumulatedAnsData::new(num_contexts);
+    let mut acc = AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
     for group in groups {
         acc.add_tokens(group, lz77);
     }
@@ -238,21 +266,31 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
 
     // Merge per-context value frequencies into per-merged-histogram frequencies
     // using the context map from clustering.
+    //
+    // Only needed to re-derive symbol counts under a NON-default
+    // `HybridUintConfig`. When `optimize_uint_configs` is false the config is
+    // always {4, 2, 0} — the same one `encode_token_value` already used to fill
+    // `data.histograms` — so the clustered histograms ARE those counts and
+    // `data.value_freqs` was never populated. See `track_value_freqs`.
     let num_histograms = result.histograms.len();
-    let mut merged_value_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
-        .map(|_| alloc::collections::BTreeMap::new())
-        .collect();
-    let mut merged_lz77_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
-        .map(|_| alloc::collections::BTreeMap::new())
-        .collect();
-    for (ctx, &cm) in context_map.iter().enumerate() {
-        let histo_idx = cm as usize;
-        if histo_idx < num_histograms {
-            for (&val, &count) in &data.value_freqs[ctx] {
-                *merged_value_freqs[histo_idx].entry(val).or_insert(0) += count;
-            }
-            for (&sym, &count) in &data.lz77_freqs[ctx] {
-                *merged_lz77_freqs[histo_idx].entry(sym).or_insert(0) += count;
+    let mut merged_value_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = Vec::new();
+    let mut merged_lz77_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = Vec::new();
+    if data.track_value_freqs {
+        merged_value_freqs = (0..num_histograms)
+            .map(|_| alloc::collections::BTreeMap::new())
+            .collect();
+        merged_lz77_freqs = (0..num_histograms)
+            .map(|_| alloc::collections::BTreeMap::new())
+            .collect();
+        for (ctx, &cm) in context_map.iter().enumerate() {
+            let histo_idx = cm as usize;
+            if histo_idx < num_histograms {
+                for (&val, &count) in &data.value_freqs[ctx] {
+                    *merged_value_freqs[histo_idx].entry(val).or_insert(0) += count;
+                }
+                for (&sym, &count) in &data.lz77_freqs[ctx] {
+                    *merged_lz77_freqs[histo_idx].entry(sym).or_insert(0) += count;
+                }
             }
         }
     }
@@ -273,13 +311,14 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
     // independent: each iteration reads merged_value_freqs[h],
     // merged_lz77_freqs[h], uint_configs[h] and the read-only
     // allowed_cache. Parallelizes cleanly via parallel_map.
-    let allowed_cache = super::ans::AllowedCountsCache::new();
-    let ans_histograms: Vec<ANSEncodingHistogram> =
-        crate::parallel::parallel_map(num_histograms, |h| {
-            let config = &uint_configs[h];
+    // TEMPORARY PROBE (2026-09-10): does the clustered histogram already equal
+    // the counts re-derived from value_freqs when the config is the default?
+    if !optimize_uint_configs && std::env::var_os("__JXL_VALUE_FREQS_PROBE").is_some() {
+        for h in 0..num_histograms {
+            let cfg = HybridUintConfig::new(4, 2, 0);
             let mut counts: Vec<u32> = Vec::new();
             for (&val, &freq) in &merged_value_freqs[h] {
-                let (tok, _, _) = config.encode(val);
+                let (tok, _, _) = cfg.encode(val);
                 let sym = tok as usize;
                 if sym >= counts.len() {
                     counts.resize(sym + 1, 0);
@@ -292,6 +331,75 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
                     counts.resize(s + 1, 0);
                 }
                 counts[s] += freq;
+            }
+            let clustered: Vec<u32> = result.histograms[h]
+                .counts
+                .iter()
+                .map(|&c| c as u32)
+                .collect();
+            let n = counts.len().max(clustered.len());
+            let mut ok = true;
+            for i in 0..n {
+                let a = counts.get(i).copied().unwrap_or(0);
+                let b = clustered.get(i).copied().unwrap_or(0);
+                if a != b {
+                    ok = false;
+                    eprintln!("VFPROBE h={h} sym={i}: freqs={a} clustered={b}");
+                }
+            }
+            eprintln!(
+                "VFPROBE h={h} match={ok} len_freqs={} len_clustered={}",
+                counts.len(),
+                clustered.len()
+            );
+        }
+    }
+
+    // `Histogram` carries a `Cell<f32>` entropy cache and so is not `Sync`;
+    // lift the counts we need out of it before the parallel map.
+    let clustered_counts: Vec<Vec<u32>> = if data.track_value_freqs {
+        Vec::new()
+    } else {
+        result
+            .histograms
+            .iter()
+            .map(|h| {
+                let end = h.counts.iter().rposition(|&c| c != 0).map_or(0, |i| i + 1);
+                h.counts[..end].iter().map(|&c| c as u32).collect()
+            })
+            .collect()
+    };
+    let track_value_freqs = data.track_value_freqs;
+
+    let allowed_cache = super::ans::AllowedCountsCache::new();
+    let ans_histograms: Vec<ANSEncodingHistogram> =
+        crate::parallel::parallel_map(num_histograms, |h| {
+            let mut counts: Vec<u32> = Vec::new();
+            if track_value_freqs {
+                let config = &uint_configs[h];
+                for (&val, &freq) in &merged_value_freqs[h] {
+                    let (tok, _, _) = config.encode(val);
+                    let sym = tok as usize;
+                    if sym >= counts.len() {
+                        counts.resize(sym + 1, 0);
+                    }
+                    counts[sym] += freq;
+                }
+                for (&sym, &freq) in &merged_lz77_freqs[h] {
+                    let s = sym as usize;
+                    if s >= counts.len() {
+                        counts.resize(s + 1, 0);
+                    }
+                    counts[s] += freq;
+                }
+            } else {
+                // The clustered histogram already holds these counts, trimmed
+                // above of the trailing zeros `Histogram` pads to
+                // `HISTOGRAM_ROUNDING`: the frequency-derived vector ends at the
+                // highest symbol that actually occurred, and `counts.len()`
+                // feeds `log_alpha_size` — keeping the padding would widen the
+                // alphabet and MOVE BYTES.
+                counts.extend_from_slice(&clustered_counts[h]);
             }
             if counts.is_empty() {
                 counts.push(0);
@@ -420,7 +528,7 @@ pub fn build_entropy_code_ans_from_token_groups_with_strategy(
     // Phase A: Accumulate per-context histograms and value frequencies.
     // Per-group accumulators are independent and merge associatively;
     // run a parallel map-reduce over the groups.
-    let accumulated = accumulate_groups_parallel(groups, num_contexts, lz77);
+    let accumulated = accumulate_groups_parallel(groups, num_contexts, lz77, optimize_uint_configs);
 
     // Phase B: Build entropy code from accumulated data.
     let code = build_entropy_code_from_accumulated_ans_with_strategy(
@@ -1874,5 +1982,144 @@ mod verify_tests {
 
         verify_ans_roundtrip_parsed(&tokens, &code)
             .expect("parsed-header ANS roundtrip must reproduce every token");
+    }
+}
+
+#[cfg(test)]
+mod value_freq_skip_tests {
+    use super::*;
+
+    /// Realistic-ish token stream: several contexts with different shapes
+    /// (geometric-ish AC magnitudes, a near-constant DC context, a sparse
+    /// context, and one that is a single repeated symbol so clustering has
+    /// something to merge).
+    fn token_groups() -> Vec<Vec<Token>> {
+        let mut seed = 0x1234_5678u32;
+        let mut next = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed >> 8
+        };
+        let mut groups = Vec::new();
+        for g in 0..4u32 {
+            let mut toks = Vec::new();
+            for i in 0..4000u32 {
+                let ctx = i % 7;
+                let v = match ctx {
+                    0 => next() % 3,
+                    1 => next() % 40,
+                    2 => 7,
+                    3 => next() % 1000,
+                    4 => (next() % 8) * 111,
+                    5 => next() % 2,
+                    _ => next() % 65536,
+                };
+                toks.push(Token::new(ctx + g % 2, v));
+            }
+            groups.push(toks);
+        }
+        groups
+    }
+
+    fn build(track: bool) -> OwnedAnsEntropyCode {
+        let groups = token_groups();
+        let refs: Vec<&[Token]> = groups.iter().map(|g| g.as_slice()).collect();
+        // 10 contexts, only 0..=7 ever receive a token: contexts 8 and 9 stay
+        // empty so clustering can produce an all-zero cluster, which is the one
+        // place the trailing-zero trim is observable.
+        let mut acc = AccumulatedAnsData::with_value_freq_tracking(10, track);
+        for g in &refs {
+            acc.add_tokens(g, None);
+        }
+        build_entropy_code_from_accumulated_ans_with_strategy(
+            acc,
+            false,
+            // The whole point: uint-config optimisation OFF, so the config is
+            // the default {4, 2, 0} on both sides.
+            false,
+            None,
+            None,
+            ANSHistogramStrategy::Approximate,
+        )
+    }
+
+    /// Dropping the per-token value/LZ77 frequency maps below effort 9 must be
+    /// a pure no-op on the emitted entropy code.
+    ///
+    /// This is the equivalence the `track_value_freqs` fast path rests on: with
+    /// the default `HybridUintConfig`, the counts re-derived from
+    /// `value_freqs` are exactly the clustered histograms, so the maps are
+    /// write-only. The saving is real — 0.853x process wall at lossy e3
+    /// (`benchmarks/value_freq_skip_ab_2026-09-10.tsv`) — which is why the
+    /// equivalence needs a gate rather than a comment.
+    ///
+    /// Compares the parts that reach the bitstream: the context map, the
+    /// alphabet size, and every histogram's normalised counts. Comparing only
+    /// the final byte count would pass on a code that happened to be the same
+    /// size while assigning different symbols.
+    ///
+    /// KNOWN LIMITATION, stated rather than papered over: this test does NOT
+    /// discriminate the trailing-zero trim on the clustered histogram.
+    /// Replacing that trim with `h.counts.len()` leaves this test green, and
+    /// separately leaves 144 real encodes (6 images x efforts {3,5,7,9} x
+    /// d {0.5, 1, 4}) byte-identical — `Histogram::from_counts` re-rounds to
+    /// `HISTOGRAM_ROUNDING` and the ANS normaliser ignores trailing zeros, so
+    /// the padding is only observable through `counts.len()` on an ALL-ZERO
+    /// cluster, which clustering does not appear to produce (a fixture with two
+    /// never-used contexts still failed to reach it). The trim stays because it
+    /// makes the two paths equal by construction rather than by a property of
+    /// the normaliser, but do not believe it is covered here.
+    #[test]
+    fn skipping_value_freqs_below_e9_changes_nothing() {
+        let tracked = build(true);
+        let skipped = build(false);
+
+        assert_eq!(
+            tracked.context_map, skipped.context_map,
+            "context map moved"
+        );
+        assert_eq!(
+            tracked.log_alpha_size, skipped.log_alpha_size,
+            "log_alpha_size moved — the trailing-zero trim on the clustered \
+             histogram is wrong, and this WILL move bytes"
+        );
+        assert_eq!(
+            tracked.histograms.len(),
+            skipped.histograms.len(),
+            "histogram count moved"
+        );
+        for (h, (a, b)) in tracked
+            .histograms
+            .iter()
+            .zip(skipped.histograms.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                a.counts, b.counts,
+                "normalised counts moved at histogram {h}"
+            );
+        }
+        assert_eq!(
+            tracked.uint_configs.len(),
+            skipped.uint_configs.len(),
+            "uint config count moved"
+        );
+
+        // Non-vacuity: the fixture has to actually produce several clustered
+        // histograms and a non-trivial alphabet, or the assertions above are
+        // comparing two empty vectors.
+        assert!(
+            skipped.histograms.len() >= 2,
+            "fixture collapsed to {} histogram(s)",
+            skipped.histograms.len()
+        );
+        assert!(
+            skipped.histograms.iter().any(|h| h.counts.len() > 8),
+            "fixture never exercised a wide alphabet"
+        );
+        // And the skipped side must genuinely not have built the maps.
+        let mut acc = AccumulatedAnsData::with_value_freq_tracking(8, false);
+        acc.add_tokens(&token_groups()[0], None);
+        assert!(acc.value_freqs.is_empty() && acc.lz77_freqs.is_empty());
+        assert!(acc.histograms.iter().any(|h| h.total_count > 0));
     }
 }

@@ -34,6 +34,10 @@ def main():
     p.add_argument('--efforts', default='3,5,7,9')
     p.add_argument('--distances', default='1.0,4.0')
     p.add_argument('--threads', default='1,8')
+    p.add_argument('--cjxl-flags', default='libjxl',
+                   choices=['libjxl', 'ours'],
+                   help="flag dialect for the --cjxl arm; use 'ours' to A/B two "
+                        "cjxl-rs builds against each other")
     p.add_argument('images', nargs='+')
     a = p.parse_args()
     efforts = [int(x) for x in a.efforts.split(',')]
@@ -64,9 +68,11 @@ def main():
                                         continue
                                     mo = min(mo, ms); bo = b
                                 else:
+                                    thr = (['--threads', str(t)]
+                                           if a.cjxl_flags == 'ours'
+                                           else [f'--num_threads={t}'])
                                     cmd = ['nice', '-n', '19', a.cjxl, img, c_out,
-                                           '-e', str(e), '-d', str(d),
-                                           f'--num_threads={t}']
+                                           '-e', str(e), '-d', str(d)] + thr
                                     ms, b = run(cmd, c_out)
                                     if ms is None:
                                         continue
