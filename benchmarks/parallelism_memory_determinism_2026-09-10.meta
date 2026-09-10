@@ -1,0 +1,60 @@
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10
+subject: the four PARALLELISATION fixes of 2026-09-10 (per_block_modulations,
+  fuzzy_erosion, HF-group section encode, AC-group tokenization). Each adds
+  concurrency inside a phase, so the two things that needed checking beyond
+  bytes were thread-count DETERMINISM and PEAK MEMORY.
+
+1. THREAD-COUNT DETERMINISM — 560 encodes, 0 mismatches.
+   7 images x efforts {3,5,7,9} x d {1.0, 4.0} x threads {1,2,3,4,5,6,7,8,11,16},
+   SHA256 of the output compared against the threads=1 result for every cell.
+   This matters more than usual here: CI's native test jobs have been cancelled
+   by supersession on every push of this series (the jobs that DO complete are
+   Clippy/Format/MSRV/WASM/Cross/Expert-tests), so a thread-count-dependent
+   ordering bug would not have been caught there. 10 thread counts including
+   values that are not powers of two and one above the core count.
+
+2. ODD / DEGENERATE SHAPES — 216 encodes, 0 failures, 0 nondeterminism.
+   The new index arithmetic in the two group-loop parallelisations recovers
+   (gy, gx) from a linear index as `i / cols` and `i % cols`, which is exactly
+   the kind of thing that breaks on a zero-width grid or a partial edge row —
+   and the regular-image sweep above cannot reach those. 18 deterministic
+   procedural PNGs covering 1x1, 1x17, 17x1, 3x3, 7x13, 63x47, 64x64, 65x65,
+   127x255, 255x257, 256x256, 257x255, 259x133, 511x259, 513x769, 1023x1025,
+   2047x17 and 17x2047 (group boundaries at 256 and DC-group boundaries at 2048,
+   approached from both sides) x efforts {3,5,7,9} x threads {1,3,8}, SHA256
+   compared against threads=1. A zero-size grid is safe because
+   `parallel_map(0, ..)` never calls the closure; that is now also verified
+   rather than argued.
+   36 of those cells (efforts {3,7}, threads=8) were additionally decoded with
+   djxl v0.12 and the decoded dimensions checked against the source: 36/36 exact,
+   0 failures.
+
+3. PEAK RSS — unchanged. `/usr/bin/time -l`, nature 2048^2, max of 3 per cell,
+   pre-session build vs current:
+
+     cell                  before_MB   after_MB   delta
+     e3 t1                    218.6      217.9    -0.3 %
+     e3 t8                    224.8      220.5    -1.9 %
+     e5 t1                    256.1      254.5    -0.6 %
+     e5 t8                    339.5      332.1    -2.2 %
+     e7 t1                    292.5      291.9    -0.2 %
+     e7 t8                    361.0      351.8    -2.5 %
+     e9 t1                   1024.6     1068.5    +4.3 %   <- NOT REAL, see below
+     e9 t8                   1106.3     1105.4    -0.1 %
+
+   The e9 t=1 "+4.3 %" is run-to-run variance and was chased down rather than
+   reported: that cell is BIMODAL at ~1016 MB or ~1067 MB, and BOTH arms show
+   both modes. Interleaved, 5 reps each: before min/median/max
+   1016.2 / 1016.5 / 1068.5, after 1016.5 / 1017.1 / 1066.6 — median delta
+   **+0.1 %**, min delta **+0.0 %**. A max-of-3 that happens to catch the high
+   mode on one arm and the low mode on the other manufactures a 4 % regression.
+   Do not take a max-of-N RSS delta on this cell as evidence of anything.
+
+   Flat peak is what the change shape predicts: all four fixes parallelise
+   producers whose outputs were ALREADY all retained (every HF section, every
+   AC group's tokens) or write into a pre-allocated destination
+   (per_block_modulations, fuzzy_erosion). None of them widens the live set.
+
+CAVEAT: one machine, one architecture (aarch64 macOS), one image for the memory
+grid. This shows the changes do not move peak memory on that cell; it is not a
+memory characterisation of the encoder.
