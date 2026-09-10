@@ -941,6 +941,52 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-10: e5 is strictly DOMINATED by e4 at d=1 on photos -- and libjxl does it too (design B)
+
+[PROVEN] The new effort-envelope gate (`examples/effort_monotonicity_gate.rs`,
+design B of the RD RFC) found 2 cells where **e5 is worse than e3/e4 on BOTH
+axes** at d=1 -- more bytes AND lower SSIM2, which no effort level should ever
+be. Data: `benchmarks/effort_monotonicity_2026-09-10.tsv`.
+
+**e4 is the strict optimum of the low ladder**, matching e3's quality for fewer
+bytes (car 31,664 B @ 88.954 vs e3 32,128 @ 88.954; food 17,254 @ 91.617 vs
+17,338 @ 91.617). The whole regression is the **e4 -> e5 step**.
+
+**Mechanism, isolated with `examples/e3_e5_domination_probe.rs`** -- it splits
+in two, and only one half is about quality:
+- **Gaborish costs ~1-1.3 SSIM2 points.** Disabling it at e5 lifts the car
+  87.777 -> 88.736 and the food 90.872 -> **92.201**.
+- **The AC-strategy search spends the bytes.** Even with gaborish off, e5 uses
+  36,472 B against e4's 31,664.
+`adaptive_gaborish` does NOT recover it (87.175 / 90.685 -- slightly worse than
+plain e5), so that is not the lever.
+
+**[PROVEN] It is INHERITED, not ours.** cjxl v0.12 on the same crop, same
+distance, shows the same domination: food e4 16,256 B/90.769 -> e5 19,180
+B/90.198 (+18 % bytes, -0.57 SSIM2); car e4 30,938/88.308 -> e5 34,046/87.237
+(+10 %, -1.07). So this is not a porting defect and **Libjxl mode must keep it**
+to stay faithful. It is a legitimate zen-mode divergence candidate under the
+owner's "zen mode should fix the cliffs" directive.
+
+**Caveat that must travel with this finding: gaborish is tuned against
+BUTTERAUGLI, not SSIM2** (the adaptive-gaborish work was validated on a 480-cell
+butteraugli bench, EX-J13/W20-1/W25-1). SSIM2 may penalise exactly the smoothing
+butteraugli rewards, so "gaborish costs 1.3 SSIM2" is metric-dependent and is
+NOT by itself a verdict that gaborish is wrong at e5. SSIM2 is the oracle by
+owner choice *for now*; re-check against butteraugli before moving any gate.
+
+**Do NOT "fix" this by re-gating `ac_strategy_enabled`/`try_dct16`/`try_dct32`
+from `effort >= 5` to `>= 6`** -- that just renames e5 to e4. The measured shape
+says the AC search does not pay at d=1 but clearly does at d=4 (e5 -> e7 trades
+of +2.47 and +3.32 SSIM2 for ~2 % bytes on the same corpus), so any fix is
+distance-dependent, which makes it a keep-best (design A) evaluated per effort,
+exactly as the owner scoped it.
+
+Grading note worth keeping: the gate's first draft flagged any byte rise where
+quality merely failed to fall, which mislabels genuine Pareto TRADES as
+regressions -- it produced 5 false positives before being tightened to strict
+domination (worse on BOTH axes). Trades are now recorded as advisories.
+
 ### 2026-09-09: the RD contract is IQA-monotonicity; bytes are advisory (#113/#114)
 
 Owner decision: **"byte monotonicity is a great-to-have, iqa monotonicity is the

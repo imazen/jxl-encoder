@@ -3257,3 +3257,11 @@ path = "examples/planar_admission_probe.rs"
 [[example]]
 name = "rd_monotonicity_gate"
 path = "examples/rd_monotonicity_gate.rs"
+
+[[example]]
+name = "effort_monotonicity_gate"
+path = "examples/effort_monotonicity_gate.rs"
+
+[[example]]
+name = "e3_e5_domination_probe"
+path = "examples/e3_e5_domination_probe.rs"

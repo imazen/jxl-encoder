@@ -135,9 +135,32 @@ which is affordable at high effort and may not be at low effort; the shipped
 `cfl_keep_best` is already `effort >= 7`, and any LZ77 analogue needs its own
 per-effort measurement before it defaults on anywhere.
 
-**B — monotone envelope over the ladder.** Effort *N* may not lose to *N−1*;
-where features are nested this holds by construction, otherwise *N* falls back
-to *N−1*'s decision. This is what removes the measured e3≡e5 dominated point.
+**B — monotone envelope over the ladder — GATE SHIPPED, finding is inherited.**
+`examples/effort_monotonicity_gate.rs` grades the effort axis on strict **Pareto
+domination**: effort *N* "loses" only when worse on BOTH axes. (An earlier draft
+flagged any byte rise where quality merely failed to fall; that mislabels
+genuine trades and produced 5 false positives before being tightened.) It also
+reports DOMINATED (byte-identical for measurably more wall — hard on lossless,
+which has no quality axis to trade against) and THIN (>1.5× wall for <0.5 %
+bytes) as advisories.
+
+**Result: 2 violations, both `e4 → e5` at d=1, and libjxl has them too.** e4 is
+the strict optimum of the low ladder (car 31,664 B @ 88.954 vs e3's 32,128 @
+88.954). The mechanism splits: **gaborish costs ~1–1.3 SSIM2** (disabling it at
+e5 lifts the food crop 90.872 → 92.201) and **the AC-strategy search spends the
+bytes** (36,472 vs 31,664 even with gaborish off). `adaptive_gaborish` does not
+recover it.
+
+cjxl v0.12 on the same crops shows the same domination — food e4 16,256/90.769 →
+e5 19,180/90.198, car e4 30,938/88.308 → e5 34,046/87.237 — so **Libjxl mode
+must keep it** and this is a zen-mode divergence candidate, not a porting bug.
+
+Two constraints on any fix. **Gaborish is tuned against butteraugli, not
+SSIM2**, so the quality half is metric-dependent and must be re-checked against
+butteraugli before a gate moves. And **do not re-gate the AC search from effort
+5 to 6** — that merely renames e5 to e4; the search does not pay at d=1 but
+clearly does at d=4 (e5 → e7 trades of +2.47 and +3.32 SSIM2 for ~2 % bytes), so
+the fix is distance-dependent, i.e. a keep-best evaluated per effort — design A.
 
 **C — distance as a target, not a seed.** The real #103 fix. Feasibility is
 already measured: with the seed lift off, the same perceptual loop lands at
