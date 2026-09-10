@@ -2695,9 +2695,18 @@ measurement at equal or better coverage.
   where t=1 is 0.91x/0.93x (not a general parallelism deficit — e7 t8 is
   0.99-1.08x and e9 t8 is 0.45-0.50x). Bytes: at 64x64 we are **9-22 % LARGER**
   than cjxl and at 256+ at or below it; that per-file intercept is real,
-  shrinks with effort, and is un-attributed. Two wall fixes landed the same day
-  (below) take e3 to roughly 1.19x by arithmetic — RE-RUN the grid before
-  quoting that as measured.
+  shrinks with effort, and is un-attributed.
+
+  **RE-MEASURED after the same day's five byte-identical wall fixes (below)**
+  (`benchmarks/ladder_vs_cjxl_after_2026-09-10.{tsv,meta}`, same grid, 0 of 224
+  cells changed a byte): e3 at 2048 t=8 goes **1.19 -> 0.94** (from 19 % slower
+  than cjxl to 6 % faster) and at 1024 t=1 **1.40 -> 1.25**; e5 t=8 goes
+  1.32 -> 1.14 (1024) and 1.47 -> **1.32** (2048), now the loosest cell in the
+  grid; e7 t=8 at 1024 reaches 1.00. 64x64 is unchanged, as expected — 4-5 ms
+  encodes dominated by fixed cost give per-pixel parallelism nothing to bite on.
+  An arithmetic composition of two fixes predicted 1.19x for e3/1024/t1 where
+  the measured value is 1.25x, so compose ratios only as a hypothesis and
+  re-run the grid before quoting one.
 
 - **The patches SCAN is 11 % of lossy encode wall and 80 % of its runs produce
   nothing (2026-09-10).** `benchmarks/patches_scan_yield_2026-09-10.pointer.md`
@@ -2718,8 +2727,9 @@ measurement at equal or better coverage.
   band: try_dct64 0-4 %, cfl_two_pass 1-3 %, chromacity_adjustment 0-2 %, dot
   detection ~0 %.
 
-- **Two byte-identical wall fixes landed 2026-09-10; both have frozen-output
-  gates, and both gates document what they do NOT cover.**
+- **Five byte-identical wall fixes landed 2026-09-10; each carries a
+  frozen-output gate or a byte-equality grid, and the gates document what they
+  do NOT cover.**
   (1) The patches BFS skipped nothing: it evaluated
   `weighted_distance_to_color_idx` for all 8 neighbours of every frontier
   pixel, including the ~3 already background from the previous level, whose
@@ -2735,6 +2745,22 @@ measurement at equal or better coverage.
   first). **e3 0.853x, e5 0.951x, e7 0.977x, e9 1.000x** (e9 is the control —
   the maps are still built there). Gate:
   `skipping_value_freqs_below_e9_changes_nothing`.
+  (3)+(4) The `quant_field` phase scaled only 1.18x from t=1 to t=8 while
+  `acstrat` scaled 5.0x. Its two sequential steps are now strip-parallel:
+  `per_block_modulations` over block rows (5.12 -> 0.79 ms) and `fuzzy_erosion`
+  over OUTPUT rows — each output cell is touched by exactly four input cells in
+  a fixed order, so giving an output row both of its input rows preserves that
+  order. About 0.98x process wall each at e5/e7 on 8 threads: small, and stated
+  small. `fuzzy_erosion`'s parallel path is guarded to EVEN `region_h` because
+  with an odd one the sequential loop indexes past `out`; that pre-existing
+  panic is left exactly as it is rather than silently becoming a dropped row.
+  (5) Pass 2 had **no parallelism at ordinary sizes**: it parallelises over DC
+  GROUPS, and a DC group is 2048x2048 px, so a 1024^2 or 2048^2 image has
+  exactly ONE and every HF group inside it was written sequentially
+  (`pass2_write` 16.2 -> 16.8 ms from t=1 to t=8 — no scaling). The HF groups
+  are now encoded in parallel; `encode_ac_group_section` is pure and
+  `parallel_map_result` collects in index order. **e3 0.891x, e5 0.952x,
+  e7 0.966x, e9 0.982x** at t=8, best cell 0.793x.
 
 - **XYB forward transform: the cube root is 91 % of it, and ours is the
   expensive kind — OWNER DECISION, not taken (2026-09-10).**

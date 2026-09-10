@@ -1,0 +1,73 @@
+harness / grid / timing: IDENTICAL to ladder_vs_cjxl_2026-09-10.meta — same
+  script, same four images, same crops, same efforts/distances/threads, same
+  min-of-5 (3 at 2048) with both arms alternated inside each repeat.
+host: Darwin 25.5.0 aarch64 (mac); date 2026-09-10
+build: a700e6df — the pre-session baseline PLUS the four byte-identical wall
+  fixes of 2026-09-10, in order:
+    1. patches BFS already-background prefilter          (800b295f)
+    2. skip per-token value-frequency maps below e9      (52f17b1a)
+    3. per_block_modulations strip-parallel              (ae9f8052)
+    4. fuzzy_erosion strip-parallel                      (0ad032fd)
+    5. HF groups of a DC group encoded in parallel       (a700e6df)
+reference: cjxl v0.12 from .ci-libjxl/tools/cjxl.
+
+**0 of 224 cells changed a single byte** against the pre-session build. This
+is a pure wall re-measure.
+
+MEDIAN ours/cjxl PROCESS wall, before -> after (<1.00 = we are faster):
+
+  size    e  thr    was     now    delta
+    64    3    1   0.88    0.87     -1 %
+    64    3    8   0.84    0.84     -0 %
+    64    5    1   0.89    0.89     +1 %
+    64    5    8   0.86    0.87     +1 %
+    64    7    1   0.86    0.85     -0 %
+    64    7    8   0.84    0.83     -1 %
+    64    9    1   0.68    0.67     -2 %
+    64    9    8   0.62    0.62     -1 %
+   256    3    1   1.01    0.93     -7 %
+   256    3    8   0.94    0.89     -6 %
+   256    5    1   0.98    0.95     -3 %
+   256    5    8   1.08    1.02     -5 %
+   256    7    1   0.86    0.85     -1 %
+   256    7    8   0.79    0.76     -4 %
+   256    9    1   0.84    0.84     -1 %
+   256    9    8   0.50    0.51     +1 %
+  1024    3    1   1.40    1.25    -10 %
+  1024    3    8   1.13    1.05     -8 %
+  1024    5    1   0.91    0.88     -4 %
+  1024    5    8   1.32    1.14    -13 %
+  1024    7    1   0.88    0.86     -2 %
+  1024    7    8   1.08    1.00     -7 %
+  1024    9    1   1.03    1.03      0 %
+  1024    9    8   0.47    0.46     -2 %
+  2048    3    1   1.45    1.23    -15 %
+  2048    3    8   1.19    0.94    -20 %
+  2048    5    1   0.93    0.91     -2 %
+  2048    5    8   1.47    1.32    -10 %
+  2048    7    1   0.87    0.86     -1 %
+  2048    7    8   0.99    0.90     -9 %
+  2048    9    1   1.05    1.05     -0 %
+  2048    9    8   0.45    0.44     -2 %
+
+CORRECTS the arithmetic estimate in value_freq_skip_ab_2026-09-10.meta, which
+composed two ratios to predict "e3 at 1024^2 t=1 about 1.19x" and explicitly
+flagged that as not measured. Measured, it is **1.25x** — the composition was
+optimistic, because the two fixes overlap in what they speed up.
+
+WHAT MOVED, AND WHY IT IS WHERE IT IS:
+  - **e3 at >= 1 MP was the worst band on the ladder and is no longer the worst
+    anywhere on 8 threads**: 2048 t=8 goes 1.19 -> **0.94**, i.e. from 19 %
+    slower than cjxl to 6 % faster. t=1 remains above parity (1.23-1.25).
+  - **e5 thread scaling improved but is still the weakest axis**: 1024 t=8
+    1.32 -> 1.14 and 2048 t=8 1.47 -> **1.32**, which is now the single loosest
+    cell in the grid.
+  - **64x64 is unchanged, as expected.** At that size the encode is 4-5 ms and
+    dominated by per-call fixed cost, so parallelising per-pixel phases has
+    nothing to bite on. Do not read the flat 64^2 row as a failed fix.
+  - e9 t=1 is unchanged at 1.03-1.05 (perceptual-loop bound); e9 t=8 stays
+    0.44-0.46.
+
+STILL OPEN, in priority order: e5 at threads=8 (1.32 at 2048), e3 at threads=1
+(1.23-1.25), and the byte intercept at 64x64 where we are still 9-22 % larger
+than cjxl (unchanged — nothing here touched bytes).
