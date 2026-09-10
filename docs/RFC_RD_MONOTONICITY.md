@@ -228,6 +228,40 @@ Note the early-out shipped in `06019e25` needs **no** mode gate: it is
 result-identical, so it is faithful in both modes. That is the shape to prefer —
 wins that cost no fidelity.
 
+## 5b. Where the contract actually stands (2026-09-10 census)
+
+With the gate corrected — **both oracles must agree** before a hard failure, and
+a denser ladder (2.25 / 2.75 / 3.25) — the picture is much better than the first
+run suggested:
+
+| grid | cells | corroborated IQA violations |
+|---|---|---|
+| 16 stratified images × e5/e8 × 22 distances | 660 | **1** |
+| the two #103 cliff images at e8 | 44 | 2 |
+
+The three, in full:
+
+| cell | SSIM2 | butteraugli |
+|---|---|---|
+| 2400_textures e5, d 12 → 15 | 52.700 → 53.994 | 6.8020 → 6.3303 |
+| 5058 e8, d 2.25 → 2.5 | 88.133 → 89.403 | 1.9871 → 1.9220 |
+| 5058 e8, d 3.0 → 3.25 | 86.655 → 88.359 | 2.7128 → 2.4520 |
+
+Advisories: 1 SSIM2-only, 9 butteraugli-only, 37 byte inversions (5 at filter
+boundaries, where libjxl is not monotone either).
+
+**This reframes C.** The hard contract is nearly met; what remains is three
+cells on document and texture content, at low-quality or mid-ladder distances.
+Set that against the fact that **both prior loop controllers were rejected for
+regressing matched-quality screenshot bytes**
+(`rejected/issue103-full-distance-feedback`, `rejected/issue103-coordinate-control`
+— "three of thirteen firing cells reach the requested band; matched-quality
+screenshot losses remain"). The cost of a general controller is known and high;
+the remaining benefit is now measured and small. A targeted fix for the
+mid-ladder inversion is a better bet than a rebuild, and any attempt must show
+the screenshot RD gate passing, not merely better targeting.
+
+## 6. Order of work
 ## 6. Order of work
 
 1. **D** — shipped. Without it A–C are unfalsifiable.

@@ -1,0 +1,19 @@
+harness: jxl-encoder/examples/rd_monotonicity_gate.rs (`just rd-monotonicity`)
+command: --images 16 --size 512 --efforts 5,8   (22-point distance ladder 0.4..15)
+corpus: imazen-26 png-v3, round-robin across all 21 strata
+cells: 660 (16 images x 2 efforts x 22 distances, minus sources smaller than 512)
+oracles: SSIMULACRA2 (fast-ssim2 PINNED 0.7.1, sRGB in) AND butteraugli (linear in)
+grading: a HARD violation needs BOTH oracles to agree the ordering inverted;
+  single-oracle inversions are advisories, because SSIM2 alone jitters +/-1-2
+  points near its ceiling while butteraugli stays smooth there.
+host: Mac aarch64
+
+RESULT: 1 corroborated IQA violation in 660 cells
+  2400_textures e5, d 12 -> 15: ssim2 52.700 -> 53.994 AND bfly 6.8020 -> 6.3303
+advisories: 1 SSIM2-only, 9 butteraugli-only, 37 byte inversions (5 at filter
+  boundaries, where libjxl is not monotone either)
+
+Known corroborated violations NOT in this census because the round-robin pick
+does not include them (see benchmarks/rd_monotonicity_knowncliffs_2026-09-09.tsv):
+  5058 e8, d 2.25 -> 2.5 : ssim2 88.133 -> 89.403, bfly 1.9871 -> 1.9220
+  5058 e8, d 3.0  -> 3.25: ssim2 86.655 -> 88.359, bfly 2.7128 -> 2.4520

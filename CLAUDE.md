@@ -941,6 +941,39 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-10: RD gate corrected twice, and the hard contract is nearly MET (1 violation / 660 cells)
+
+Two corrections to the design-D gate shipped a day earlier, both found by
+measuring the gate against itself, both producing wrong verdicts in OPPOSITE
+directions:
+
+1. **SSIM2 alone is not a reliable ORDERING oracle near its ceiling.** At
+   d = 0.25..0.6 on two images SSIM2 jitters +/-1-2 points with no trend (91.9,
+   91.7, 91.3, **93.0**, 91.3, 92.3) while butteraugli over the same cells is
+   smooth and monotone (0.316 -> 0.613). A hard violation now requires **BOTH**
+   oracles to agree; single-metric inversions are advisories. All four
+   previously "hard" cliff-set violations demote to SSIM2-only -- butteraugli
+   says every one is correctly ordered.
+2. **The ladder was too coarse to see the real bug.** It jumped 3.0 -> 3.5 and
+   missed a CORROBORATED inversion at 3.0 -> 3.25 that `d3_dip_probe` had
+   already found. Added 2.25 / 2.75 / 3.25.
+
+**Census with the corrected gate: 660 cells (16 stratified images x e5/e8 x 22
+distances) yield exactly ONE corroborated IQA violation** --
+`2400_textures e5, d 12 -> 15: ssim2 52.700 -> 53.994 AND bfly 6.8020 -> 6.3303`,
+in the SSIM2 ~53 regime. Plus 2 on 5058 e8 from the cliff set (d 2.25 -> 2.5 and
+d 3.0 -> 3.25). **Three known corroborated violations in total.** Advisories: 1
+SSIM2-only, 9 butteraugli-only, 37 byte inversions (5 at filter boundaries).
+
+So the hard contract the owner set -- IQA monotonicity -- is very nearly met
+already, and design C's remaining target is three specific cells on
+document/texture content, not a systemic rebuild. Weigh that against the fact
+that the two prior loop controllers were rejected for regressing matched-quality
+screenshot bytes: the cost of a general fix is known to be high and the
+remaining benefit is now measured to be small.
+
+Data: `benchmarks/rd_monotonicity_census_2026-09-10.{tsv,meta}`.
+
 ### 2026-09-10: design C diagnosis -- the IQA violations are the LOOP's stopping rule, not the seed
 
 [PROVEN] Ran the hard IQA violations from design D's gate to ground with
