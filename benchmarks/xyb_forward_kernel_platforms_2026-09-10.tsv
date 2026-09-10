@@ -1,0 +1,5 @@
+host	arch	cpu	simd_ms	scalar_ms	simd_over_scalar	ns_px_simd	ns_px_scalar	bitwise_differing_px	total_px
+mac	aarch64	Apple Silicon (Darwin 25.5.0)	3.61	2.63	1.37	3.44	2.51	0	1048576
+dev	x86_64	AMD Ryzen 9 9950X3D (Zen 5)	2.81	14.36	0.20	2.68	13.69	0	1048576
+r7900x	x86_64	AMD Ryzen 9 7900X (Zen 4)	3.34	14.37	0.23	3.19	13.70	0	1048576
+i265	x86_64	Intel Core Ultra 7 265K	2.60	13.99	0.19	2.48	13.34	0	1048576

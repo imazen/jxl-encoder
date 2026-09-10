@@ -1,0 +1,65 @@
+date: 2026-09-10
+subject: `jxl_simd::linear_rgb_to_xyb_batch` (the dispatched forward XYB SIMD
+  kernel) vs `jxl_simd::forward_xyb_scalar` (the crate's own scalar fallback).
+harness: a standalone crate path-depending ONLY on `jxl-encoder-simd`, so the
+  measured code is the kernel and not a whole encode. 1 Mpx, min of 25, arms
+  alternated inside each repeat with the leading arm rotated, threads=1.
+  `jxl-encoder-simd/src/xyb.rs` verified sha256-identical on all four hosts
+  before running (the i265 checkout reports crate version 0.3.2 but the kernel
+  source matches, which is what is being measured).
+
+  host     arch      cpu                          SIMD ms  scalar ms  SIMD/scalar
+  mac      aarch64   Apple Silicon                  3.61      2.63       **1.37**
+  dev      x86_64    Ryzen 9 9950X3D (Zen 5)        2.81     14.36        0.20
+  r7900x   x86_64    Ryzen 9 7900X (Zen 4)          3.34     14.37        0.23
+  i265     x86_64    Core Ultra 7 265K              2.60     13.99        0.19
+
+  Bitwise differing pixels between the two arms: **0 of 1,048,576 on every
+  host**, all three planes. The dispatch-parity claim holds, and it holds across
+  architectures.
+
+**THE FINDING DOES NOT GENERALISE, AND THAT IS THE POINT.** On x86 the SIMD
+kernel is 4.3-5.3x FASTER than scalar on three different microarchitectures. On
+aarch64 it is **1.37x SLOWER** than the crate's own scalar fallback, bit for bit.
+
+So the aarch64-only opportunity is real — routing forward XYB to the scalar path
+there would be a byte-identical ~27 % cut on a kernel that is 15.3 % of lossy e3
+CPU (`e3_profile_2026-09-10.md`) — but the same change on x86 would be a **5x
+regression on the primary platform**. This is precisely the case CLAUDE.md's
+"a 512-bit kernel measured only on Zen 4 does not generalise" rule exists for; an
+aarch64-only measurement here would have produced a confident, catastrophic
+recommendation.
+
+MECHANISM (consistent with the numbers, not separately proven): the kernel's
+cube root runs two Newton iterations in **f64**, so it needs `f64x4`. On x86 that
+is native. On aarch64 `f64x4` is a 2x`f64x2` polyfill and `f32x8` is a
+2x`f32x4` polyfill, and the body additionally leaves the vector domain — it calls
+`to_array()` on all three mixed vectors, runs the bit-hack initial guess in a
+SCALAR loop over 24 lanes, rebuilds six `f64x4`s with `from_array`, and
+reassembles through three `[f32; 8]` staging arrays. Doubly-polyfilled f64
+division plus that round-trip is evidently worse than just writing the scalar
+loop.
+
+WHAT IS **NOT** BEING PROPOSED: a platform-specific dispatch change. One aarch64
+machine (Apple Silicon) is not enough to change a tier list that also serves the
+Windows ARM64 CI target and armv7, and the better fix probably subsumes it —
+libjxl's division-free f32 cube root (`base/fast_math-inl.h::CubeRootAndAdd`)
+would remove the f64 requirement entirely, which is what forces both the polyfill
+AND the exclusion of the `v4`/AVX-512 tier. That route MOVES BYTES (max relative
+disagreement 3.0e-7) and is an owner decision; see e3_profile_2026-09-10.md.
+
+Measured alongside, same harness, aarch64, monomorphised so each arm is its own
+branch-free loop: libjxl's division-free f32 cbrt costs **67-70 %** of our f64
+two-divide cbrt in an identical loop, and the cube root is 86-87 % of the whole
+transform.
+
+MEASUREMENT TRAPS HIT AND FIXED ON THE WAY HERE — all three produced a confident
+WRONG answer first:
+  1. An arm writing ONE output plane instead of three made the SIMD kernel look
+     35 % slower than scalar on aarch64. Store traffic must match.
+  2. A `mode: u8` matched per pixel left a branch in the inner loop, stopped LLVM
+     specialising, and made every arm measure the same (4.47 ms) regardless of
+     what it computed. Monomorphise per arm.
+  3. An `if x == 0.0 { return 0.0 }` early return in the libjxl cbrt transcription
+     blocked auto-vectorisation; the Highway original uses a SELECT. With the
+     branch removed the same arm went 4.47 -> 2.01 ms.
