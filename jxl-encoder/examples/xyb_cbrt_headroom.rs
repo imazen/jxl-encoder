@@ -131,17 +131,19 @@ fn main() {
     let (mut xo, mut yo, mut bo) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
     let (mut sx, mut sy, mut sb) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
 
-    let mut best = [f64::INFINITY; 5];
+    let mut best = [f64::INFINITY; 7];
     let labels = [
-        "shipped dispatch (jxl_simd SIMD)",
+        "dispatch, MidP (shipped zen)",
         "jxl_simd::forward_xyb_scalar",
         "local scalar, our f64 Newton",
         "local scalar, libjxl f32 div-free",
         "matrix only (no cbrt)",
+        "dispatch, Libjxl cbrt",
+        "dispatch, LowP cbrt",
     ];
     for rep in 0..reps {
-        for k in 0..5 {
-            let arm = (k + rep) % 5;
+        for k in 0..7 {
+            let arm = (k + rep) % 7;
             let t = Instant::now();
             match arm {
                 0 => jxl_simd::linear_rgb_to_xyb_batch(
@@ -168,14 +170,32 @@ fn main() {
                 ),
                 2 => local(&r, &g, &b, &mut sx, &mut sy, &mut sb, cbrt_ours),
                 3 => local(&r, &g, &b, &mut sx, &mut sy, &mut sb, cbrt_libjxl),
-                _ => local(&r, &g, &b, &mut sx, &mut sy, &mut sb, |v| v),
+                4 => local(&r, &g, &b, &mut sx, &mut sy, &mut sb, |v| v),
+                5 => jxl_simd::linear_rgb_to_xyb_batch(
+                    jxl_simd::XybCubeRoot::Libjxl,
+                    &r,
+                    &g,
+                    &b,
+                    &mut xo,
+                    &mut yo,
+                    &mut bo,
+                ),
+                _ => jxl_simd::linear_rgb_to_xyb_batch(
+                    jxl_simd::XybCubeRoot::LowP,
+                    &r,
+                    &g,
+                    &b,
+                    &mut xo,
+                    &mut yo,
+                    &mut bo,
+                ),
             }
             let ms = t.elapsed().as_secs_f64() * 1000.0;
             best[arm] = best[arm].min(ms);
         }
     }
     println!("{n} px, min of {reps}, single-threaded:");
-    for k in 0..5 {
+    for k in 0..7 {
         println!(
             "  {:<32} {:>8.2} ms  ({:>5.2} ns/px)",
             labels[k],
