@@ -1504,42 +1504,63 @@ pub(crate) fn find_text_like_patches_with_min_peak(
             let chunk = BFS_LEVEL_PAR_CHUNK;
             let n_chunks = level.len().div_ceil(chunk);
             let level_parallel = bfs_threads && level.len() >= BFS_LEVEL_PAR_MIN_ENTRIES;
-            let eval_chunk = |ci: usize| {
-                let lo = ci * chunk;
-                let hi = (lo + chunk).min(level.len());
-                let mut out = Vec::with_capacity(hi - lo);
-                for &(cx, cy, sx, sy) in &level[lo..hi] {
-                    let si = sy as usize * stride + sx as usize;
-                    let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
-                    let ci_flat = cy as usize * stride + cx as usize;
-                    let mut mask = 0u8;
-                    for k in 0..8 {
-                        let (dx, dy) = NEIGHBORS_8[k];
-                        let nx = cx as i32 + dx;
-                        let ny = cy as i32 + dy;
-                        if (nx as usize) >= width || (ny as usize) >= height {
-                            continue;
+            //
+            // Skipping neighbours that are ALREADY background at the start of
+            // this level is exactly equivalent, not an approximation: the claim
+            // pass below re-tests `!is_background[ni]` and drops the bit, and
+            // `is_background` only ever goes false -> true, so a pixel set at
+            // level start is still set at claim time. The snapshot is read-only
+            // for the whole eval phase (the claim pass is what mutates it, and
+            // it runs after `masks` is materialised), so the parallel arm sees a
+            // consistent view and stays byte-identical to the sequential one.
+            //
+            // It matters because a flood fill spends most of its neighbour
+            // budget looking backwards: an interior frontier pixel has ~3 of its
+            // 8 neighbours in the previous level. Those were paying a full
+            // `weighted_distance_to_color_idx` to produce a bit that was then
+            // thrown away.
+            let masks: Vec<Vec<u8>> = {
+                let already_bg: &[bool] = &is_background;
+                let eval_chunk = |ci: usize| {
+                    let lo = ci * chunk;
+                    let hi = (lo + chunk).min(level.len());
+                    let mut out = Vec::with_capacity(hi - lo);
+                    for &(cx, cy, sx, sy) in &level[lo..hi] {
+                        let si = sy as usize * stride + sx as usize;
+                        let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
+                        let ci_flat = cy as usize * stride + cx as usize;
+                        let mut mask = 0u8;
+                        for k in 0..8 {
+                            let (dx, dy) = NEIGHBORS_8[k];
+                            let nx = cx as i32 + dx;
+                            let ny = cy as i32 + dy;
+                            if (nx as usize) >= width || (ny as usize) >= height {
+                                continue;
+                            }
+                            let ni = (ci_flat as isize + neighbor_offsets[k]) as usize;
+                            if already_bg[ni] {
+                                continue;
+                            }
+                            let manhattan =
+                                (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
+                            if manhattan > DISTANCE_LIMIT as u32 {
+                                continue;
+                            }
+                            if weighted_distance_to_color_idx(&xyb_ref, ni, &src_color, &cs)
+                                <= SIMILAR_THRESHOLD
+                            {
+                                mask |= 1 << k;
+                            }
                         }
-                        let ni = (ci_flat as isize + neighbor_offsets[k]) as usize;
-                        let manhattan =
-                            (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
-                        if manhattan > DISTANCE_LIMIT as u32 {
-                            continue;
-                        }
-                        if weighted_distance_to_color_idx(&xyb_ref, ni, &src_color, &cs)
-                            <= SIMILAR_THRESHOLD
-                        {
-                            mask |= 1 << k;
-                        }
+                        out.push(mask);
                     }
-                    out.push(mask);
+                    out
+                };
+                if level_parallel {
+                    crate::parallel::parallel_map(n_chunks, eval_chunk)
+                } else {
+                    (0..n_chunks).map(eval_chunk).collect()
                 }
-                out
-            };
-            let masks: Vec<Vec<u8>> = if level_parallel {
-                crate::parallel::parallel_map(n_chunks, eval_chunk)
-            } else {
-                (0..n_chunks).map(eval_chunk).collect()
             };
             // Sequential claim application in exact (pop, k) order.
             let mut mask_iter = masks.iter().flat_map(|v| v.iter().copied());
@@ -3811,6 +3832,125 @@ mod tests {
             let total_occurrences: usize = result.iter().map(|p| p.positions.len()).sum();
             assert!(total_occurrences >= 2, "Should have at least 2 occurrences");
         }
+    }
+
+    /// Builds a screenshot-like plane trio big enough that the BFS background
+    /// flood-fill does real work: a flat ground, a repeated 5x7 glyph laid out
+    /// on a text-line grid, and a textured block the fill must refuse to cross.
+    fn synthetic_screenshot_planes(w: usize, h: usize) -> [Vec<f32>; 3] {
+        let n = w * h;
+        let mut x = vec![0.42f32; n];
+        let mut y = vec![0.77f32; n];
+        let mut b = vec![0.31f32; n];
+        // 5x7 glyph bitmap, repeated on a 16x24 grid.
+        const GLYPH: [u8; 35] = [
+            0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0,
+            1, 1, 0, 0, 0, 1,
+        ];
+        for gy in (8..h.saturating_sub(24)).step_by(24) {
+            for gx in (8..w.saturating_sub(16)).step_by(16) {
+                for dy in 0..7 {
+                    for dx in 0..5 {
+                        if GLYPH[dy * 5 + dx] == 0 {
+                            continue;
+                        }
+                        let i = (gy + dy) * w + gx + dx;
+                        x[i] = 0.08;
+                        y[i] = 0.19;
+                        b[i] = 0.93;
+                    }
+                }
+            }
+        }
+        // A textured region: deterministic LCG noise, no flat 4x4 blocks, so the
+        // fill has a hard boundary to stop at.
+        let mut seed = 0x2545_F491u32;
+        for py in (h / 2)..(h / 2 + h / 8).min(h) {
+            for px in 0..w {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let v = (seed >> 16) as f32 / 65535.0;
+                let i = py * w + px;
+                x[i] = 0.2 + 0.4 * v;
+                y[i] = 0.3 + 0.5 * v;
+                b[i] = 0.1 + 0.6 * v;
+            }
+        }
+        [x, y, b]
+    }
+
+    /// Frozen per-stage counters for the patches scan on
+    /// [`synthetic_screenshot_planes`].
+    ///
+    /// This exists because the BFS flood-fill is the single most expensive
+    /// stage of lossy encoding on graphics content (measured at 21-35 % of the
+    /// scan and 13-72 % of e7 wall,
+    /// `benchmarks/e7_cost_attribution_2026-09-10.*`), so it attracts
+    /// optimisation — and every legitimate optimisation of it is required to be
+    /// output-preserving. The existing coverage could not see a change here:
+    /// the hash-lock fixtures are procedural noise/blocky patterns where the
+    /// scan finds nothing, and `test_patches_on_synthetic_screenshot` above
+    /// asserts nothing at all when the result is empty.
+    ///
+    /// Every counter is pinned, not just the final ones, so a change is
+    /// localised to the stage that moved rather than showing up as one wrong
+    /// patch count at the end. If you are here because this test failed after a
+    /// perf change, the change altered detection output — that is a bug, not a
+    /// baseline to re-bless.
+    #[test]
+    fn patches_scan_stage_counters_are_frozen() {
+        let (w, h) = (256usize, 256usize);
+        let [x, y, b] = synthetic_screenshot_planes(w, h);
+        let _ = take_last_patches_detect_stats();
+        let result = find_text_like_patches([&x, &y, &b], w, h, w, true, None).unwrap();
+        let s = take_last_patches_detect_stats().expect("scan populates stats unconditionally");
+
+        // Non-vacuity: the fixture must actually drive the flood-fill, or the
+        // frozen numbers below would pin nothing.
+        assert!(
+            s.num_seeds > 100,
+            "fixture stopped seeding the BFS: {} seeds",
+            s.num_seeds
+        );
+        assert!(
+            s.bg_count > w * h / 4,
+            "fixture stopped filling: {} background px of {}",
+            s.bg_count,
+            w * h
+        );
+        assert!(s.raw_ccs > 0, "fixture found no connected components");
+
+        // A 15-element array rather than a tuple: `Debug`/`PartialEq` stop at
+        // 12-tuples, and the failure message must name every stage.
+        let got: [u64; 15] = [
+            s.num_seeds.into(),
+            s.bg_count as u64,
+            s.raw_ccs.into(),
+            s.reject_no_border.into(),
+            s.reject_inconsistent.into(),
+            s.reject_too_large.into(),
+            s.reject_no_similar.into(),
+            s.reject_low_peak.into(),
+            s.accepted_ccs.into(),
+            s.accepted_pixels,
+            s.unique_before_min_occ.into(),
+            s.singletons_dropped.into(),
+            s.final_unique.into(),
+            s.final_occurrences as u64,
+            s.final_total_patch_pixels,
+        ];
+        // Verified identical with the 2026-09-10 BFS already-background
+        // prefilter reverted, i.e. these numbers predate that optimisation.
+        const FROZEN: [u64; 15] = [
+            2442, 55191, 121, 0, 0, 1, 0, 0, 120, 4200, 1, 0, 1, 120, 4200,
+        ];
+        assert_eq!(
+            got, FROZEN,
+            "patches scan stage counters moved (order: num_seeds, bg_count, \
+raw_ccs, reject_{{no_border, inconsistent, too_large, no_similar, low_peak}}, \
+accepted_ccs, accepted_pixels, unique_before_min_occ, singletons_dropped, \
+final_unique, final_occurrences, final_total_patch_pixels)"
+        );
+        assert_eq!(result.len(), s.final_unique as usize);
     }
 
     /// Test reference frame integer value ranges for XYB patches.

@@ -1,0 +1,61 @@
+image	arm	rep	steps12_ms	bfs_done_ms	scan_ms	bytes
+7078_plots_line-polygons-00038-s33	before	1	0.4	11.3	14.1	96873
+7078_plots_line-polygons-00038-s33	after	1	0.5	8.2	10.7	96873
+7078_plots_line-polygons-00038-s33	before	2	0.4	11.4	13.8	96873
+7078_plots_line-polygons-00038-s33	after	2	0.4	8.0	10.4	96873
+7078_plots_line-polygons-00038-s33	before	3	0.4	11.8	14.4	96873
+7078_plots_line-polygons-00038-s33	after	3	0.4	7.7	10.3	96873
+7078_plots_line-polygons-00038-s33	before	4	0.3	11.3	13.8	96873
+7078_plots_line-polygons-00038-s33	after	4	0.5	7.9	10.4	96873
+7078_plots_line-polygons-00038-s33	before	5	0.4	11.4	13.8	96873
+7078_plots_line-polygons-00038-s33	after	5	0.4	7.9	10.4	96873
+8210_web-screenshots_usgs-main-hom	before	1	0.4	8.9	12.2	86679
+8210_web-screenshots_usgs-main-hom	after	1	0.3	6.0	9.3	86679
+8210_web-screenshots_usgs-main-hom	before	2	0.3	8.5	11.6	86679
+8210_web-screenshots_usgs-main-hom	after	2	0.4	5.9	9.1	86679
+8210_web-screenshots_usgs-main-hom	before	3	0.3	8.4	11.5	86679
+8210_web-screenshots_usgs-main-hom	after	3	0.3	5.9	9.1	86679
+8210_web-screenshots_usgs-main-hom	before	4	0.4	8.7	11.9	86679
+8210_web-screenshots_usgs-main-hom	after	4	0.4	6.1	9.3	86679
+8210_web-screenshots_usgs-main-hom	before	5	0.3	8.5	11.5	86679
+8210_web-screenshots_usgs-main-hom	after	5	0.3	5.8	9.0	86679
+5058_nps_shen-bigmeadows-roadtrail	before	1	0.4	10.6	15.9	61733
+5058_nps_shen-bigmeadows-roadtrail	after	1	0.4	7.8	13.3	61733
+5058_nps_shen-bigmeadows-roadtrail	before	2	0.4	10.6	16.0	61733
+5058_nps_shen-bigmeadows-roadtrail	after	2	0.4	8.0	13.5	61733
+5058_nps_shen-bigmeadows-roadtrail	before	3	0.4	11.0	16.5	61733
+5058_nps_shen-bigmeadows-roadtrail	after	3	0.5	7.8	13.3	61733
+5058_nps_shen-bigmeadows-roadtrail	before	4	0.4	10.6	16.0	61733
+5058_nps_shen-bigmeadows-roadtrail	after	4	0.5	7.7	13.2	61733
+5058_nps_shen-bigmeadows-roadtrail	before	5	0.4	10.3	15.7	61733
+5058_nps_shen-bigmeadows-roadtrail	after	5	0.4	7.7	13.1	61733
+6800_scans-text_haeckel-de-title_p	before	1	0.4	13.7	16.1	56426
+6800_scans-text_haeckel-de-title_p	after	1	0.5	10.6	13.1	56426
+6800_scans-text_haeckel-de-title_p	before	2	0.4	13.3	15.7	56426
+6800_scans-text_haeckel-de-title_p	after	2	0.4	10.4	12.9	56426
+6800_scans-text_haeckel-de-title_p	before	3	0.4	13.0	15.3	56426
+6800_scans-text_haeckel-de-title_p	after	3	0.4	10.7	13.0	56426
+6800_scans-text_haeckel-de-title_p	before	4	0.4	13.6	16.0	56426
+6800_scans-text_haeckel-de-title_p	after	4	0.4	11.7	14.1	56426
+6800_scans-text_haeckel-de-title_p	before	5	0.5	14.0	16.5	56426
+6800_scans-text_haeckel-de-title_p	after	5	0.4	10.6	13.1	56426
+8000_mobile-screenshots_imageflow-	before	1	0.4	11.4	14.2	85544
+8000_mobile-screenshots_imageflow-	after	1	0.4	7.8	10.6	85544
+8000_mobile-screenshots_imageflow-	before	2	0.5	11.3	14.3	85544
+8000_mobile-screenshots_imageflow-	after	2	0.4	8.2	11.2	85544
+8000_mobile-screenshots_imageflow-	before	3	0.4	11.0	13.9	85544
+8000_mobile-screenshots_imageflow-	after	3	0.4	7.3	10.0	85544
+8000_mobile-screenshots_imageflow-	before	4	0.4	11.1	13.8	85544
+8000_mobile-screenshots_imageflow-	after	4	0.4	7.6	10.6	85544
+8000_mobile-screenshots_imageflow-	before	5	0.5	11.9	14.8	85544
+8000_mobile-screenshots_imageflow-	after	5	0.4	8.4	11.2	85544
+6000_scans-patents_lynn-conway-us5	before	1				
+6000_scans-patents_lynn-conway-us5	after	1				
+6000_scans-patents_lynn-conway-us5	before	2				
+6000_scans-patents_lynn-conway-us5	after	2				
+6000_scans-patents_lynn-conway-us5	before	3				
+6000_scans-patents_lynn-conway-us5	after	3				
+6000_scans-patents_lynn-conway-us5	before	4				
+6000_scans-patents_lynn-conway-us5	after	4				
+6000_scans-patents_lynn-conway-us5	before	5				
+6000_scans-patents_lynn-conway-us5	after	5				

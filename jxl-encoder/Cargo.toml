@@ -3278,3 +3278,8 @@ path = "examples/extreme_distance_probe.rs"
 name = "e7_cost_attribution"
 path = "examples/e7_cost_attribution.rs"
 required-features = ["__expert"]
+
+[[example]]
+name = "patches_scan_yield_probe"
+path = "examples/patches_scan_yield_probe.rs"
+required-features = ["__expert", "__internals"]

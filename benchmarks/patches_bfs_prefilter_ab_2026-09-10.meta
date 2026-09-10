@@ -1,0 +1,32 @@
+harness: jxl-encoder/examples/e7_cost_attribution.rs with E7_ARM="e7 default"
+         and __JXL_ENC_PHASE_TIMING=1 (feature `__env_var_diagnostics`)
+host: Darwin 25.5.0 aarch64 (mac)
+date: 2026-09-10
+arms: TWO BINARIES, alternated within the run — `before` is the parent revision
+      c7decbb3, `after` is that plus the BFS already-background prefilter.
+      5 alternations per image; the table reports min per arm. Cross-run
+      before/after comparison was rejected: the same grid re-run drifted +7.2 %
+      on total wall between builds.
+cells: 5 images x 5 reps x 2 arms, 1024x1024 centre crops, d=1.0, effort 7.
+columns: bfs_done_ms is cumulative from scan start, so BFS = bfs_done - steps12.
+
+  image                       BFS before  BFS after   delta   scan before  after  delta   bytes
+  7078 plots                    10.90       7.30      -33 %      13.80    10.30   -25 %   96873 both
+  8210 web-screenshot            8.10       5.50      -32 %      11.50     9.00   -22 %   86679 both
+  5058 nps brochure              9.90       7.20      -27 %      15.70    13.10   -17 %   61733 both
+  6800 manuscript-text          12.60      10.00      -21 %      15.30    12.90   -16 %   56426 both
+  8000 mobile screenshot        10.60       6.90      -35 %      13.80    10.00   -28 %   85544 both
+
+The 6th image in the loop (6000 patents) is absent: the path used was wrong and
+the probe panicked on open. It is covered by the 1,330-cell byte-identity grid.
+
+byte identity: all five images identical between arms on every repeat, and the
+  1,330-cell corpus grid (patches_scan_yield_2026-09-10.pointer.md) matches on
+  bytes AND all fifteen per-stage scan counters.
+locks: 68/68 hash locks and 5/5 Libjxl byte locks byte-identical; full
+  `cargo test -p jxl-encoder --release` green (1585 + 507 + ...).
+regression gate: `patches_scan_stage_counters_are_frozen` in patches.rs pins all
+  fifteen counters on a synthetic screenshot fixture. Its frozen values were
+  captured with the prefilter REVERTED, so they predate the optimisation.
+  Mutation-verified: widening the BFS colour threshold 10 % moves bg_count
+  55191 -> 55206 and fails the test.
