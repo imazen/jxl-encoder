@@ -2681,6 +2681,81 @@ measurement at equal or better coverage.
 
 ### Live follow-ons
 
+- **Lossy wall vs cjxl v0.12 — RE-BASELINED 2026-09-10, and the old "e7 is
+  2.54x cjxl" figure is WITHDRAWN.** 224-cell process-wall grid
+  (`benchmarks/ladder_vs_cjxl_2026-09-10.{tsv,meta}`, harness
+  `scripts/ladder_vs_cjxl.py`): 4 images x sizes {64,256,1024,2048} x efforts
+  {3,5,7,9} x d {1,4} x threads {1,8}, both arms alternated inside each repeat,
+  both reading the same metadata-stripped PNG and writing a file. **e7 is
+  0.86-0.88x at threads=1 at EVERY size — our best band there, not our worst.**
+  Do not carry 2.54x forward; whatever produced it used a different corpus,
+  size, thread count or build. What IS slow: (1) **e3 at >= 1 MP t=1, 1.40x
+  (1024) / 1.45x (2048)** — per-pixel, not fixed overhead, since the same band
+  is 0.88-1.01x at 64/256; (2) **thread scaling at e5**, 1.32x/1.47x at t=8
+  where t=1 is 0.91x/0.93x (not a general parallelism deficit — e7 t8 is
+  0.99-1.08x and e9 t8 is 0.45-0.50x). Bytes: at 64x64 we are **9-22 % LARGER**
+  than cjxl and at 256+ at or below it; that per-file intercept is real,
+  shrinks with effort, and is un-attributed. Two wall fixes landed the same day
+  (below) take e3 to roughly 1.19x by arithmetic — RE-RUN the grid before
+  quoting that as measured.
+
+- **The patches SCAN is 11 % of lossy encode wall and 80 % of its runs produce
+  nothing (2026-09-10).** `benchmarks/patches_scan_yield_2026-09-10.pointer.md`
+  (1,330 cells, 21 imazen-26 strata): 542 scans ran, only 109 changed any bytes.
+  ~0 % on photo/illustration strata (it never fires), 20-29 % on documents,
+  screenshots, clipart, patents and textures — and on patents,
+  manuscript-text, ai-clipart and textures **every scan was wasted**. The W36-3
+  `PatchesDispatch::Auto` gate had ZERO false negatives here, so its problem is
+  precision, not recall. **DO NOT ship a `num_seeds` early-out**: a strict cut
+  looks like it kills 60 % of wasted scans with no used cells lost, but that is
+  image SIZE leaking in — as a density the classes overlap completely (used
+  cells down to 0.023 seeds/block, wasted up to 0.71). The stats that separate
+  (`accepted_ccs < 39`, `final_occurrences < 15`) all arrive AFTER the BFS,
+  which is ~90 % of the scan. Also note **e5 is not patch-free on graphics** —
+  issue #43 chunk 2a lifts `patches` to e5/e6 on Screenshot-class content, so
+  `e7, patches OFF` is FASTER than plain e5 there.
+  `benchmarks/e7_cost_attribution_2026-09-10.*` prices the rest of the e5->e7
+  band: try_dct64 0-4 %, cfl_two_pass 1-3 %, chromacity_adjustment 0-2 %, dot
+  detection ~0 %.
+
+- **Two byte-identical wall fixes landed 2026-09-10; both have frozen-output
+  gates, and both gates document what they do NOT cover.**
+  (1) The patches BFS skipped nothing: it evaluated
+  `weighted_distance_to_color_idx` for all 8 neighbours of every frontier
+  pixel, including the ~3 already background from the previous level, whose
+  bits the claim pass then discarded. Filtering on the level-start snapshot is
+  exactly equivalent (`is_background` only goes false -> true). **BFS -21..-35 %,
+  whole scan -16..-28 %.** Gate: `patches_scan_stage_counters_are_frozen`
+  (all fifteen stage counters, values captured with the change REVERTED;
+  mutation-verified).
+  (2) `AccumulatedAnsData` built a `BTreeMap` entry per token into
+  `value_freqs`/`lz77_freqs`, which are only read to re-derive symbol counts
+  under a non-default `HybridUintConfig` — i.e. only at effort >= 9. Below that
+  the clustered histograms already ARE those counts (verified symbol-for-symbol
+  first). **e3 0.853x, e5 0.951x, e7 0.977x, e9 1.000x** (e9 is the control —
+  the maps are still built there). Gate:
+  `skipping_value_freqs_below_e9_changes_nothing`.
+
+- **XYB forward transform: the cube root is 91 % of it, and ours is the
+  expensive kind — OWNER DECISION, not taken (2026-09-10).**
+  `benchmarks/e3_profile_2026-09-10.md`. `convert_rows_to_xyb` is the single
+  largest self-time consumer at lossy e3 (15.3 %), ahead of every entropy
+  symbol. `cbrt_fast` runs two Newton iterations on the cube root directly,
+  each with an **f64 division**, three channels per pixel. libjxl
+  (`base/fast_math-inl.h::CubeRootAndAdd`) Newtons the INVERSE cube root with
+  multiplies and FMAs only, in f32, and recovers `x^(1/3)` as `r*r*x` —
+  division-free; max relative disagreement with ours is 3.0e-7. Adopting it
+  would keep `forward_xyb_impl` in `f32x8` lanes instead of round-tripping
+  through `to_array()` + a scalar 24-lane guess loop + six `f64x4` rebuilds,
+  and would restore the `v4` (AVX-512) tier that the f64 requirement currently
+  excludes. It MOVES BYTES, so it needs lock regeneration and an RD check.
+  **Two traps recorded there**: an arm writing one output plane instead of
+  three made the shipped SIMD kernel look 35 % slower than scalar (it is 16 %
+  faster), and libjxl's cbrt is 4 % SLOWER than ours in SCALAR form — its
+  advantage is contingent on vector lanes, so the scalar table does not by
+  itself prove a win. Byte-identical alternatives not yet measured: vectorise
+  the initial-guess loop, drop the `[f32; 8]` staging arrays.
+
 - **#24 lossless-docs stride-aliasing — MECHANISM FOUND + COST-BASED SELF-REPAIR
   DEFAULT-ON for the lossless path (2026-07-15, ledger #33, task #14).** Root cause (source-verified
   vs libjxl): our modular tree-learning sample gather uses a FIXED stride
