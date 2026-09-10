@@ -207,6 +207,8 @@ pub(crate) fn scatter_col_strided(
 mod test_helpers;
 
 mod adaptive_quant;
+#[doc(hidden)]
+pub mod bench_cbrt;
 mod block_l2;
 mod cfl;
 mod dct16;

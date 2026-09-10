@@ -189,6 +189,33 @@ fn cbrt_newton_init(x: f32) -> (f64, f64) {
     (f64::from(f32::from_bits(sign | approx)), f64::from(x))
 }
 
+/// libjxl `base/fast_math-inl.h::CubeRootAndAdd` (with `add == 0`), scalar.
+///
+/// Division-free: Newton on the INVERSE cube root with multiplies and FMAs
+/// only, then `r*r*x`. Branch-free — the `x == 0` case is a select, not an
+/// early return, so this shape vectorises.
+#[inline(always)]
+pub(crate) fn cbrt_libjxl_scalar(x: f32) -> f32 {
+    const K_EXP_BIAS: i32 = 0x5480_0000;
+    const K_EXP_MUL: i32 = 0x002A_AAAA;
+    let xa_3 = x * (1.0 / 3.0);
+    let m1 = x.to_bits() as i32;
+    let m2 = if m1 == 0 {
+        0
+    } else {
+        K_EXP_BIAS - ((m1 >> 23) * K_EXP_MUL)
+    };
+    let mut r = f32::from_bits(m2 as u32);
+    for _ in 0..3 {
+        let r2 = r * r;
+        r = (-xa_3).mul_add(r2 * r2, (4.0 / 3.0) * r);
+    }
+    let r2 = r * r;
+    r = (1.0f32 / 3.0).mul_add((-x).mul_add(r2 * r2, r), r);
+    let r2 = r * r;
+    r2 * x
+}
+
 /// Newton-Raphson cube root with bit-manipulation initial guess.
 /// 2 iterations in f64 gives ~1e-7 relative error.
 #[inline]

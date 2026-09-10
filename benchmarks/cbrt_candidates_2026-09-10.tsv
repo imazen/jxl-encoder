@@ -1,0 +1,21 @@
+host	arch	cpu	candidate	ns_per_value	max_rel_err	max_ulp
+mac	aarch64	Apple Silicon	ours_f64_cbrt_fast	0.71	5.956e-8	0
+mac	aarch64	Apple Silicon	magetypes_cbrt_lowp	0.26	2.975e-5	259
+mac	aarch64	Apple Silicon	magetypes_cbrt_midp	0.38	2.321e-7	3
+mac	aarch64	Apple Silicon	libjxl_CubeRootAndAdd	0.34	3.832e-7	5
+mac	aarch64	Apple Silicon	std_cbrtf	1.81	5.956e-8	0
+dev	x86_64	Ryzen 9 9950X3D (Zen 5)	ours_f64_cbrt_fast	2.26	5.956e-8	0
+dev	x86_64	Ryzen 9 9950X3D (Zen 5)	magetypes_cbrt_lowp	0.17	2.975e-5	259
+dev	x86_64	Ryzen 9 9950X3D (Zen 5)	magetypes_cbrt_midp	0.28	2.321e-7	3
+dev	x86_64	Ryzen 9 9950X3D (Zen 5)	libjxl_CubeRootAndAdd	0.28	3.832e-7	5
+dev	x86_64	Ryzen 9 9950X3D (Zen 5)	std_cbrtf	2.22	5.956e-8	0
+r7900x	x86_64	Ryzen 9 7900X (Zen 4)	ours_f64_cbrt_fast	2.73	5.956e-8	0
+r7900x	x86_64	Ryzen 9 7900X (Zen 4)	magetypes_cbrt_lowp	0.19	2.975e-5	259
+r7900x	x86_64	Ryzen 9 7900X (Zen 4)	magetypes_cbrt_midp	0.32	2.321e-7	3
+r7900x	x86_64	Ryzen 9 7900X (Zen 4)	libjxl_CubeRootAndAdd	0.31	3.832e-7	5
+r7900x	x86_64	Ryzen 9 7900X (Zen 4)	std_cbrtf	2.56	5.956e-8	0
+i265	x86_64	Intel Core Ultra 7 265K	ours_f64_cbrt_fast	2.04	5.956e-8	0
+i265	x86_64	Intel Core Ultra 7 265K	magetypes_cbrt_lowp	0.18	2.975e-5	259
+i265	x86_64	Intel Core Ultra 7 265K	magetypes_cbrt_midp	0.26	2.321e-7	3
+i265	x86_64	Intel Core Ultra 7 265K	libjxl_CubeRootAndAdd	0.28	3.832e-7	5
+i265	x86_64	Intel Core Ultra 7 265K	std_cbrtf	2.08	5.956e-8	0

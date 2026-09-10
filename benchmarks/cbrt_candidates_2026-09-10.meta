@@ -1,0 +1,35 @@
+harness: jxl-encoder-simd/examples/cbrt_candidates.rs
+date: 2026-09-10; 1 Mpx, min of 15-25, single-threaded, arms alternated inside
+  each repeat with the leading arm rotated.
+inputs: the range the opsin matrix actually produces — linear RGB in [0,1]
+  through the matrix plus `OPSIN_BIAS`, clamped at 0, so ~[bias, 1.1], with 3 %
+  of values exactly at the bias (black pixels — the zero/denormal case).
+  Accuracy is against `f64::cbrt` over THAT range, not over all of f32.
+
+  ns/value                       mac      dev      r7900x   i265    rel err   ULP
+                              aarch64   Zen 5     Zen 4    Intel
+  ours (f64, 2 Newton, 2 div)    0.71     2.26     2.73     2.04    5.96e-8     0
+  magetypes cbrt_lowp            0.26     0.17     0.19     0.18    2.98e-5   259
+  magetypes cbrt_midp            0.38     0.28     0.32     0.26    2.32e-7     3
+  libjxl CubeRootAndAdd          0.34     0.28     0.31     0.28    3.83e-7     5
+  std cbrtf (scalar)             1.81     2.22     2.56     2.08    5.96e-8     0
+
+The ordering is identical on all four hosts, which is what makes this safe to
+act on — unlike the whole-kernel comparison in
+`xyb_forward_kernel_platforms_2026-09-10.meta`, which inverted between
+architectures.
+
+HEADLINE: **our current cube root is 8-16x slower than the vector candidates on
+x86** (2.0-2.7 ns vs 0.17-0.32) and 2-2.7x slower on aarch64. It runs two Newton
+iterations in f64, each with a division, and its bit-hack guess forces a
+per-lane scalar round-trip. `std::f32::cbrt` is no better.
+
+`cbrt_lowp` is the fastest everywhere (1.3-1.6x faster than the next), but at
+259 ULP / 3.0e-5 relative error it is the only candidate whose error is large
+enough to need an RD check rather than an eyeball — 3e-5 on a value that then
+gets quantised can flip borderline decisions. `cbrt_midp` (3 ULP) and libjxl's
+(5 ULP) are within a few percent of each other in speed on every host.
+
+The `ours` row is measured as a plain scalar loop, which is GENEROUS to it: the
+shipped kernel additionally pays `to_array()` / `from_array` round-trips and, on
+NEON, doubled f64 polyfill. So the real gap is larger than the table shows.
