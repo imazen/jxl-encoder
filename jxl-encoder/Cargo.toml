@@ -3283,3 +3283,11 @@ required-features = ["__expert"]
 name = "patches_scan_yield_probe"
 path = "examples/patches_scan_yield_probe.rs"
 required-features = ["__expert", "__internals"]
+
+[[example]]
+name = "effort_loop_profile"
+path = "examples/effort_loop_profile.rs"
+
+[[example]]
+name = "xyb_cbrt_headroom"
+path = "examples/xyb_cbrt_headroom.rs"
