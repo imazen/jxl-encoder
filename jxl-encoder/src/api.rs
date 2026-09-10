@@ -344,6 +344,21 @@ pub enum SectionedTrees {
 #[derive(Clone, Debug)]
 pub struct LosslessConfig {
     effort: u8,
+    /// Which divergence bundle this encode uses. See [`Self::with_strategy`].
+    ///
+    /// The lossless path does not consume this yet, so it is byte-inert today:
+    /// every strategy produces the output it always did. It exists because the
+    /// axis has to be reachable before any lossless divergence can be gated on
+    /// it, and its absence is what has kept the whole of
+    /// `docs/LIBJXL_PARITY_TRACKING.md` un-A/B-able.
+    strategy: EncoderStrategy,
+    /// Caller-supplied resource limits. See [`Self::with_limits`].
+    ///
+    /// Previously unreachable on this type: lossless limits arrived only via
+    /// [`EncodeRequest::with_limits`], so entry points that bypass
+    /// `EncodeRequest` — notably [`Self::encode_planar_int`] — could only ever
+    /// run on defaults.
+    limits: Option<Limits>,
     /// Sectioned local-tree mode selection. See [`SectionedTrees`].
     sectioned_trees: SectionedTrees,
     mode: EncoderMode,
@@ -525,6 +540,52 @@ impl Default for LosslessConfig {
 }
 
 impl LosslessConfig {
+    /// Select the divergence bundle for this lossless encode.
+    ///
+    /// **Byte-inert today, and deliberately so.** No lossless gate reads this
+    /// yet, so every strategy currently produces identical output — adding the
+    /// axis is a prerequisite, not a behaviour change. The point is that
+    /// `EncoderStrategy` was a `LossyConfig`-only field, which meant no
+    /// lossless divergence could be expressed at all: `EncoderStrategy::Libjxl`
+    /// makes no distinct lossless bitstream today, and every row of
+    /// `docs/LIBJXL_PARITY_TRACKING.md` stayed un-A/B-able for want of this
+    /// setter.
+    ///
+    /// The first intended consumer is the LZ77 acceptance threshold
+    /// (`total_symbols * 0.2 + 16`), which is a measured rate/time dial —
+    /// halving it buys 2.9 % smaller output for 37 % more wall, doubling it
+    /// saves ~5 % wall for +0.29 % bytes. That constant is libjxl parity
+    /// (`enc_lz77.cc:165`), so it can only become effort-dependent for zen mode
+    /// if `Libjxl` can be pinned to the parity value — which needs this axis.
+    /// See [`docs/RFC_RD_MONOTONICITY.md`](../../docs/RFC_RD_MONOTONICITY.md) §5.
+    pub fn with_strategy(mut self, strategy: EncoderStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    /// The strategy set by [`Self::with_strategy`] (default
+    /// [`EncoderStrategy::Zenjxl`]).
+    pub fn strategy(&self) -> &EncoderStrategy {
+        &self.strategy
+    }
+
+    /// Attach resource limits to this lossless encode.
+    ///
+    /// Lossless limits previously arrived only through
+    /// [`EncodeRequest::with_limits`], so any entry point that does not build
+    /// an `EncodeRequest` ran on defaults with no way for the caller to tighten
+    /// them. [`Self::encode_planar_int`] is exactly such an entry point, which
+    /// meant the wide-integer path — the one that accepts up to 31-bit samples
+    /// and therefore the widest inputs in the API — was the least constrainable.
+    pub fn with_limits(mut self, limits: &Limits) -> Self {
+        self.limits = Some(limits.clone());
+        self
+    }
+
+    /// The limits set by [`Self::with_limits`], if any.
+    pub fn limits(&self) -> Option<&Limits> {
+        self.limits.as_ref()
+    }
     /// Sectioned local-tree mode selection — see [`SectionedTrees`].
     /// Additive knob (imazen/jxl-encoder#96); `Auto` is the default and
     /// keeps ordinary encodes byte-identical.
@@ -542,6 +603,8 @@ impl LosslessConfig {
     fn with_effort_level(effort: u8) -> Self {
         let profile = crate::effort::EffortProfile::lossless(effort, EncoderMode::Reference);
         Self {
+            strategy: EncoderStrategy::default(),
+            limits: None,
             effort: profile.effort,
             sectioned_trees: SectionedTrees::Auto,
             mode: EncoderMode::Reference,
@@ -9965,7 +10028,11 @@ impl LosslessConfig {
             premultiplied_alpha: false,
             bits_per_sample: None,
             brotli_metadata_quality: None,
-            limits: None,
+            // Inherit the config's limits so callers who never build an
+            // `EncodeRequest` -- `encode_planar_int` above all -- are still
+            // constrainable. Previously hardcoded `None`, which is why that
+            // path could only ever run on defaults.
+            limits: self.limits.clone(),
         })
     }
 }
@@ -10348,14 +10415,12 @@ mod tests;
 /// and the charged input width (`admission_input_bpp` returns the u32 width
 /// when the layout is a planar stand-in). Both are mutation-verified.
 ///
-/// They do NOT pin the CALL ORDER inside `encode_planar_int` -- deleting its
-/// `enc.admit_input()?` line leaves these green, because they drive the gate
-/// directly. Pinning the order would need a request the default 8 GiB lossless
-/// cap actually refuses, i.e. ~61 MP, whose input planes alone are ~732 MB --
-/// too large for a unit test, and `LosslessConfig` exposes no `with_limits` to
-/// tighten the cap instead (that is the third, unfixed gap). The ordering is
-/// verified by reading and by `examples/planar_admission_probe.rs`; treat it as
-/// unpinned until the limits surface exists.
+/// The CALL ORDER is pinned too, since `LosslessConfig::with_limits` landed
+/// (2026-09-09). It is pinned by making the two orders produce DIFFERENT
+/// errors: an input that is both over-budget AND out-of-range yields a budget
+/// refusal if admission runs first, and a sample-range error if
+/// `from_planar_int` runs first. Asserting merely that it errors would pass
+/// either way -- which is exactly what the first version of this module did.
 mod planar_admission_tests_95 {
     use super::*;
 
@@ -10421,5 +10486,89 @@ mod planar_admission_tests_95 {
             Some(crate::api::Limits::default().with_max_memory_bytes(8 * 1024 * 1024 * 1024));
         ok.admit_input()
             .expect("8 GiB cap must admit a 2048^2 encode");
+    }
+
+    /// With `LosslessConfig::with_limits` reachable (added 2026-09-09), the
+    /// call ORDER inside `encode_planar_int` is finally pinnable: a cap this
+    /// tight must refuse BEFORE `from_planar_int` materialises the channels.
+    ///
+    /// Deleting `enc.admit_input()?` from `encode_planar_int` makes this fail,
+    /// which is what the earlier version of this module could not achieve.
+    #[test]
+    fn planar_refuses_over_budget_before_materialising_channels() {
+        let n = 512usize * 512;
+        let plane: Vec<u32> = (0..n).map(|i| (i as u32) & 0x7FFF_FFFF).collect();
+        let planes: Vec<&[u32]> = vec![&plane, &plane, &plane];
+
+        let tight = Limits::default().with_max_memory_bytes(4 * 1024 * 1024);
+        let err = LosslessConfig::new()
+            .with_effort(5)
+            .with_limits(&tight)
+            .encode_planar_int(512, 512, &planes, 31, false, false)
+            .expect_err("a 4 MB cap must refuse a 512x512 31-bit planar encode");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("memory") || msg.contains("budget") || msg.contains("limit"),
+            "expected a budget refusal, got: {msg}"
+        );
+
+        // ORDER, pinned by making the two orders produce DIFFERENT errors.
+        // `from_planar_int` rejects a sample wider than `bits_per_sample`, so
+        // an input that is BOTH over-budget AND out-of-range discriminates:
+        //   admit-then-allocate -> budget error (correct)
+        //   allocate-then-admit -> sample-range error (the old order)
+        // Asserting merely that it errors would pass either way, which is what
+        // the first version of this test did.
+        let mut bad = plane.clone();
+        bad[0] = u32::MAX; // far beyond 31 bits
+        let bad_planes: Vec<&[u32]> = vec![&bad, &bad, &bad];
+        let ordered = LosslessConfig::new()
+            .with_effort(5)
+            .with_limits(&tight)
+            .encode_planar_int(512, 512, &bad_planes, 31, false, false)
+            .expect_err("over-budget AND out-of-range must still error");
+        let omsg = format!("{ordered}");
+        assert!(
+            omsg.contains("memory") || omsg.contains("budget") || omsg.contains("limit"),
+            "admission must run BEFORE from_planar_int materialises channels, \
+             but the error came from sample validation: {omsg}"
+        );
+
+        // The same request succeeds under a generous cap, so the refusal is the
+        // budget talking rather than a permanent rejection of the input.
+        let loose = Limits::default().with_max_memory_bytes(4 * 1024 * 1024 * 1024);
+        LosslessConfig::new()
+            .with_effort(5)
+            .with_limits(&loose)
+            .encode_planar_int(512, 512, &planes, 31, false, false)
+            .expect("a 4 GiB cap must admit the same encode");
+    }
+
+    /// `with_strategy` is byte-inert on the lossless path today. Pinned so the
+    /// first gate that consumes it has to move this test deliberately rather
+    /// than silently changing every lossless encode.
+    #[test]
+    fn lossless_strategy_axis_is_byte_inert_for_now() {
+        let src: Vec<u8> = (0..64 * 64 * 3).map(|i| (i % 251) as u8).collect();
+        let base = LosslessConfig::new()
+            .with_effort(5)
+            .encode(&src, 64, 64, PixelLayout::Rgb8)
+            .unwrap();
+        for s in [
+            EncoderStrategy::Libjxl,
+            EncoderStrategy::Zenjxl,
+            EncoderStrategy::LeanFaster,
+            EncoderStrategy::Aggressive,
+        ] {
+            let got = LosslessConfig::new()
+                .with_effort(5)
+                .with_strategy(s.clone())
+                .encode(&src, 64, 64, PixelLayout::Rgb8)
+                .unwrap();
+            assert_eq!(
+                got, base,
+                "{s:?}: lossless output must be strategy-invariant until a gate consumes the axis"
+            );
+        }
     }
 }

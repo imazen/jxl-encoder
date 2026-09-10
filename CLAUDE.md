@@ -1019,16 +1019,18 @@ the checks with no allocation and `encode_planar_int` calls it BEFORE
 `from_planar_int`. New `wide_lossless` fuzz target + 336 stable regression seeds
 cover the planar and lossless-float surfaces, which had none.
 
-**(3) is NOT fixed and needs an API decision**: `LosslessConfig` still exposes no
-`with_limits`, so this path always runs on defaults. That is a public API
-addition, which needs owner approval.
+**(3) FIXED 2026-09-09 with owner approval**: `LosslessConfig::with_limits` was
+added and the lossless encoder now inherits the config's limits (it hardcoded
+`limits: None`), so `encode_planar_int` is constrainable. `LosslessConfig::
+with_strategy` landed alongside it -- byte-inert on the lossless path today, and
+pinned as such, but it is the axis every lossless divergence needs.
 
-**Test-coverage caveat, stated rather than papered over**: the two regressions
-pin the gate's behaviour and the charged width (both mutation-verified), but NOT
-the call ORDER -- deleting `enc.admit_input()?` leaves them green. Pinning the
-order needs a request the default 8 GiB cap actually refuses (~61 MP, ~732 MB of
-input planes), or the `with_limits` surface from (3). Until then the ordering is
-verified by reading and by `examples/planar_admission_probe.rs`.
+**The call ORDER is now pinned too**, via `with_limits`: an input that is both
+over-budget AND out-of-range discriminates the two orders, because admission
+first yields a budget refusal while `from_planar_int` first yields a
+sample-range error. Mutation-verified -- removing `enc.admit_input()?` produces
+`sample 4294967295 exceeds the 31-bit maximum` and fails the test. Asserting
+merely that it errors would have passed either way.
 
 ### 2026-09-08: LZ77 greedy is REJECTED on ~95% of streams -- sound early-out shipped (#110)
 
