@@ -120,7 +120,13 @@ there. Attributing it is the next measurement, not a guess.
 
 ## Target list, in measured order
 
-1. `cluster_histograms` — 6.8 ms, 1.00x. Biggest single serial block.
+1. ~~`cluster_histograms` — 6.8 ms, 1.00x.~~ **ATTEMPTED AND REVERTED** —
+   `benchmarks/cluster_parallel_ab_2026-09-10.md`. The main walk parallelises
+   2.2x and `entropy` drops 1.5 ms, but the encode measures slower on a code
+   LAYOUT artifact worth +2.4 ms in `acstrat` (proved with a layout probe: the
+   same binary with the new branch disabled reproduces it). Also settled there:
+   the assignment half can NEVER be parallelised (libjxl-faithful sequential
+   dependency), so this block is worth at most ~3.5 ms, not 6.8.
 2. the ~8.3 ms unattributed inside `quant_field` — measure before touching.
 3. ~~`compute_pre_erosion` — 2.44 ms, 1.00x.~~ **DONE the same day** —
    `benchmarks/pre_erosion_parallel_ab_2026-09-10.*`. `quant_field` 14.40 ->

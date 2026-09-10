@@ -2894,6 +2894,23 @@ measurement at equal or better coverage.
   ~8.3 ms inside `quant_field` not yet attributed. All three are scaling fixes
   rather than algorithm changes, so all three should be byte-identical.
 
+  **`cluster_histograms` was ATTEMPTED AND REVERTED — do not re-try it without
+  reading the record first** (`benchmarks/cluster_parallel_ab_2026-09-10.md`).
+  The main clustering walk does parallelise (3.49 -> 1.57 ms, 2.2x) and
+  `entropy` does drop 1.5 ms, but the whole encode measured SLOWER: `acstrat`
+  gained +2.4 ms. A LAYOUT PROBE — the identical binary with the new branch
+  disabled by a constant so it can never execute — reproduces that +2.4 ms, so
+  it is code layout from adding the function, not anything the change does at
+  runtime. Net on the shipping binary: **+0.6 ms**. Three durable findings:
+  (a) the ASSIGNMENT half of `cluster_histograms` can never be parallelised —
+  it calls `out[best].add_histogram()` as it walks, which is libjxl-faithful,
+  so the whole block is worth at most ~3.5 ms of a 106 ms encode; (b)
+  `Histogram`'s `Cell<f32>` -> `AtomicU32` (to make `&[Histogram]` `Sync`) is
+  FREE, already priced; (c) per-worker scratch must be hoisted out of the outer
+  loop — 536 small `Vec`s per clustering call cost 2.4 ms. **And the layout
+  probe is the technique to reuse: any perf work in this crate with an effect
+  under ~3 ms should run one before believing the sign of its A/B.**
+
   **`compute_pre_erosion` is done** (`benchmarks/pre_erosion_parallel_ab_2026-09-10.*`):
   strip-parallel over output rows, `quant_field` 14.40 -> 12.40 ms at threads=8
   (0.861x) and the whole encode 107.1 -> 103.4 ms; threads=1 unchanged by
