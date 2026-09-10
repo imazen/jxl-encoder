@@ -1,0 +1,12 @@
+harness: jxl-encoder/examples/lz77_hash_ab.rs, arms JXL_LZ77_KEEP_BEST unset vs =1
+what: design A (docs/RFC_RD_MONOTONICITY.md §4) -- decide LZ77 by REAL clustered
+  ANS coded size (build both candidates, write header+tokens, compare bits)
+  instead of the estimator threshold `bit_decrease > total_symbols*0.2 + 16`.
+corpora: realgfx = imazen-26 web-screenshots/plots/ai-clipart/patents (8 images);
+  lineart = imazen26-float-synth (synthetic); photo = imazen-26 round-robin
+efforts: lossless e8 (Greedy) + e9 (Optimal); lossy e9. Rle efforts never build
+  a HashChain so keep-best cannot reach them.
+timing: 3 reps, min per arm, interleaved by arm within each rep
+host: Mac aarch64
+NOTE: keep-best disables the sound early-out, whose proof is derived from the
+  threshold it replaces. Under keep-best there is no threshold to be unreachable.

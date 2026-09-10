@@ -410,6 +410,63 @@ fn accept_scale() -> f32 {
     })
 }
 
+/// Design A (#110 / RFC_RD_MONOTONICITY §4): decide LZ77 by REAL coded size
+/// instead of the estimator's `bit_decrease > total_symbols * 0.2 + 16`.
+///
+/// The threshold is a proxy, and CLAUDE.md records that the proxy is weak in
+/// exactly this regime: only the <=96-histogram-CLUSTERED ANS cost reproduces
+/// the real gap, while the ideal per-context entropy saw 1.7 % of a measured
+/// 27 % effect. So this builds both candidate streams for real — histogram plus
+/// tokens, through the same writers production uses — and keeps whichever is
+/// actually smaller.
+///
+/// Returns `true` when the LZ77 stream genuinely codes smaller.
+///
+/// **Cost is the whole question.** This is two full entropy builds and two full
+/// token writes per stream, so it is opt-in and must be judged per effort — the
+/// owner's constraint on design A. `JXL_LZ77_KEEP_BEST=1` enables it.
+///
+/// **It also invalidates the early-out's proof.** That bail is sound only
+/// against the threshold it was derived from; under keep-best there is no
+/// threshold, so the caller must not skip candidates the bound rejected.
+fn lz77_beats_plain_on_real_cost(
+    plain: &[Token],
+    lz77_tokens: &[Token],
+    num_contexts: usize,
+    params: &Lz77Params,
+    force_huffman: bool,
+) -> bool {
+    // Huffman streams take a different writer; keep-best is ANS-only for now
+    // and says so rather than guessing.
+    if force_huffman {
+        return true;
+    }
+    let coded_bits = |toks: &[Token], ctx: usize, lz: Option<&Lz77Params>| -> Option<usize> {
+        let code = crate::entropy_coding::encode_ans::build_entropy_code_ans_with_options(
+            toks, ctx, true, true, lz, None,
+        );
+        let mut w = crate::bit_writer::BitWriter::new();
+        crate::entropy_coding::encode_ans::write_entropy_code_ans(&code, &mut w).ok()?;
+        crate::entropy_coding::encode_ans::write_tokens_ans(toks, &code, lz, &mut w).ok()?;
+        Some(w.bits_written())
+    };
+    match (
+        coded_bits(plain, num_contexts, None),
+        coded_bits(lz77_tokens, num_contexts + 1, Some(params)),
+    ) {
+        (Some(a), Some(b)) => b < a,
+        // If either candidate cannot be built, fall back to the estimator's
+        // verdict rather than silently dropping LZ77.
+        _ => true,
+    }
+}
+
+/// `JXL_LZ77_KEEP_BEST=1` — decide LZ77 by real coded size (design A).
+fn keep_best_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("JXL_LZ77_KEEP_BEST").as_deref() == Ok("1"))
+}
+
 /// `JXL_LZ77_NO_EARLYOUT=1` disables the sound greedy early-out so its wall
 /// saving stays measurable after it ships. It cannot change output: the
 /// early-out only fires when the acceptance test is already unreachable, so
@@ -921,7 +978,10 @@ fn apply_lz77_backref_inner(
         // it. Measured motivation: the greedy pass is rejected on 98.5% of
         // line-art streams and 92.7% of photo streams, so nearly all of this
         // work was being computed and discarded.
-        if early_out && bit_decrease + (total_literal_cost - sym_cost[i]) <= accept_threshold {
+        if early_out
+            && !keep_best_enabled()
+            && bit_decrease + (total_literal_cost - sym_cost[i]) <= accept_threshold
+        {
             if lz77_stats::on() {
                 eprintln!(
                     "LZ77STATS\tgreedy-earlyout\tat={i}\tof={}\tbit_decrease={bit_decrease:.1}\tbound={:.1}\tthreshold={accept_threshold:.1}",
@@ -1009,7 +1069,17 @@ fn apply_lz77_backref_inner(
         out.len(),
         out.iter().filter(|t| t.is_lz77_length()).count()
     );
-    let accepted = bit_decrease > threshold;
+    // Design A: when keep-best is on, the estimator's threshold is replaced by
+    // an actual coded-size comparison. `bit_decrease` still gates cheaply --
+    // a stream with literally zero estimated saving cannot code smaller once
+    // the LZ77 header and the extra distance context are paid for -- but any
+    // stream with real savings is decided by building both candidates.
+    let accepted = if keep_best_enabled() {
+        bit_decrease > 0.0
+            && lz77_beats_plain_on_real_cost(tokens, &out, num_contexts, &lz77, force_huffman)
+    } else {
+        bit_decrease > threshold
+    };
     if lz77_stats::on() {
         eprintln!(
             "LZ77STATS\tgreedy\tsymbols={total_symbols}\tbit_decrease={bit_decrease:.1}\tthreshold={threshold:.1}\taccepted={accepted}\tmatch_tokens={}",

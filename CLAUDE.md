@@ -941,6 +941,39 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-10: LZ77 keep-best (design A) -- lossless-only, and the lossy win was SYNTHETIC-ONLY
+
+[PROVEN] `JXL_LZ77_KEEP_BEST=1` replaces the estimator threshold
+(`bit_decrease > total_symbols*0.2 + 16`) with a real clustered-ANS coded-size
+comparison -- both candidates built and written through production's writers,
+smaller wins. Opt-in; default byte-identical (68/68 hash locks, 5/5 byte locks).
+
+| content | path | bytes on/off | best cell | wall |
+|---|---|---|---|---|
+| **real graphics** | **lossless e8/e9** | **0.9934-0.9946** | **0.928** | +10 % |
+| real graphics | lossy e9 | **1.0037 (worse)** | 1.0000 | +13 % |
+| synthetic line-art | lossy e9 | 0.944 | -- | +172 % |
+| photos | either | 1.0000 | -- | +8 % |
+
+**The lossy result INVERTS between synthetic and real content** -- 0.944 on the
+synthetic float line-art set, 1.0037 on real screenshots/plots/clipart/patents.
+Had the real-graphics arm not been run, this would have shipped as a 5.6 % lossy
+win that does not exist. This is the no-synthetic-only rule paying for itself;
+run the real arm before concluding.
+
+**Recommendation: lossless at high effort only** (0.5-0.7 % mean, up to 7.2 % on
+the best cell, ~10 % wall). **Do not enable on the lossy path at any effort.**
+Not flipped by default -- 8 images is not a corpus for a byte-moving change.
+
+Two caveats that must travel with it. (1) Keep-best **disables the sound
+early-out**, because that bail's proof is derived from the threshold keep-best
+removes; the ~73 % of streams it discards nearly free are then evaluated in
+full, which is most of the +10 % wall. (2) The comparison runs in a STANDALONE
+context (`total_pixel_hint: None`, per-stream clustering) while production
+builds with the real hint and may group differently -- the +0.22 % on one
+photo-lossless cell and the +0.37 % on real-graphics lossy are that gap, not
+noise. Data: `benchmarks/lz77_keep_best_2026-09-10.{tsv,meta}`.
+
 ### 2026-09-10: e5 is strictly DOMINATED by e4 at d=1 on photos -- and libjxl does it too (design B)
 
 [PROVEN] The new effort-envelope gate (`examples/effort_monotonicity_gate.rs`,

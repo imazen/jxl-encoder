@@ -121,13 +121,44 @@ so the gap is specifically the e5–e7 band. Wall is stable against baseline
 
 ## 4. Designs A–C (proposed)
 
-**A — keep-best instead of a threshold.** Generalise the shipped
-`cfl_keep_best` pattern (per-tile: compute both candidates, keep the cheaper
-under a coded-cost proxy; +17.7 % on aliased line art, 0/24 regressions).
-Applied to LZ77: accept iff it reduces the **clustered ANS** cost, not the
-estimator's guess — CLAUDE.md records that only the ≤96-histogram-clustered cost
-reproduces the real gap, while the ideal estimator saw 1.7 % of a 27 % effect.
-Structurally monotone, and it deletes a constant instead of tuning it.
+**A — keep-best instead of a threshold — IMPLEMENTED opt-in, MEASURED, and the
+recommendation is narrow.** `JXL_LZ77_KEEP_BEST=1` replaces the estimator's
+`bit_decrease > total_symbols * 0.2 + 16` with an actual coded-size comparison:
+both candidate streams are built for real — clustered ANS histogram plus tokens,
+through the writers production uses — and the smaller wins. The motivation was
+that CLAUDE.md records the proxy as weak in exactly this regime (only the
+≤96-histogram-clustered cost reproduces the real gap; the ideal per-context
+entropy saw 1.7 % of a measured 27 % effect).
+
+Measured (`benchmarks/lz77_keep_best_2026-09-10.{tsv,meta}`, 3 reps, min per
+arm, interleaved):
+
+| content | path | bytes on/off | best cell | wall |
+|---|---|---|---|---|
+| **real graphics** | **lossless e8/e9** | **0.9934–0.9946** | **0.928** | +10 % |
+| real graphics | lossy e9 | **1.0037** (worse) | 1.0000 | +13 % |
+| synthetic line-art | lossy e9 | 0.944 | — | +172 % |
+| photos | either | 1.0000 | — | +8 % |
+
+**The lossy win was synthetic-only and inverts on real content** — a textbook
+instance of the no-synthetic-only rule, and the reason the real-graphics arm was
+run before drawing any conclusion.
+
+**Recommendation:** worth considering for **lossless at high effort only**
+(0.5–0.7 % mean, up to 7.2 % on the best cell, for ~10 % wall, on content where
+time is already being spent). **Do not enable on the lossy path** at any effort.
+Not flipped by default here: that is a byte-moving change on 8 images, which is
+not a corpus.
+
+**Two caveats that must travel with it.** (1) Keep-best **disables the sound
+early-out**, whose proof is derived from the very threshold keep-best removes —
+under keep-best there is no threshold for the bound to prove unreachable, so the
+~73 % of streams the early-out discards nearly free are all evaluated in full.
+That is most of the +10 % wall. (2) The comparison is made in a *standalone*
+context (`total_pixel_hint: None`, per-stream clustering) while production
+builds with the real hint and may group differently, so keep-best can
+mis-decide: the measured +0.22 % on one photo-lossless cell and the +0.37 % on
+real-graphics lossy are that gap showing up, not noise.
 
 **Binding owner constraint:** keep-best must be **measured and decided per
 effort level**, not adopted globally. Its cost is a second candidate evaluation,
