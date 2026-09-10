@@ -1,0 +1,17 @@
+# Accepted IQA-monotonicity violations, 2026-09-10.
+#
+# The gate (examples/rd_monotonicity_gate.rs, `just rd-monotonicity`) fails on
+# any NEW cell where BOTH oracles agree the ordering inverted. These three are
+# known, measured and diagnosed; they are listed so the gate can go into
+# automation now and catch REGRESSIONS, rather than being disabled for failing
+# on day one. Removing a line here is how a fix gets proven.
+#
+# Diagnosis: docs/RFC_RD_MONOTONICITY.md §5b and the CLAUDE.md entry of
+# 2026-09-10. All three are within-regime targeting failures on document /
+# texture content; at 5058 d=3.0 the encoder also spends MORE bytes than at
+# d=3.25 (39,322 vs 37,972), so that one is an efficiency failure too.
+#
+# format: image<TAB>eNN<TAB>lo_distance<TAB>hi_distance
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	e5	12	15
+5058_nps_shen-bigmeadows-roadtrail_gray_p02_2550x3300.sdr.png	e8	2.25	2.5
+5058_nps_shen-bigmeadows-roadtrail_gray_p02_2550x3300.sdr.png	e8	3	3.25

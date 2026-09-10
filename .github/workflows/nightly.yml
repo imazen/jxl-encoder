@@ -138,6 +138,39 @@ jobs:
             w44_176_decoder_roundtrip w44_205_decoder_roundtrip \
             w44_78_decoder_roundtrip empty_modular_section_roundtrip
 
+      # RD monotonicity gates (docs/RFC_RD_MONOTONICITY.md). These fail only
+      # on NEW violations: the three known, diagnosed ones are allow-listed in
+      # benchmarks/rd_monotonicity_known_violations.tsv, so the gate can run in
+      # automation instead of being disabled for failing on day one. Removing a
+      # line from that file is how a fix gets proven.
+      #
+      # A hard failure needs BOTH oracles (SSIMULACRA2 and butteraugli) to agree
+      # the ordering inverted -- SSIM2 alone jitters near its ceiling and would
+      # cry wolf on the highest-quality cells.
+      - name: RD distance-monotonicity gate
+        env:
+          CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
+          CJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/cjxl
+          DJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/djxl
+        run: |
+          cargo run --locked --release -p jxl-encoder \
+            --example rd_monotonicity_gate -- \
+            "${CODEC_CORPUS_DIR}" "${RUNNER_TEMP}/rd_monotonicity.tsv" \
+            --images 6 --size 512 --efforts 5,8 --baseline /dev/null
+
+      # Effort axis: effort N may not be Pareto-dominated by N-1.
+      - name: RD effort-envelope gate
+        env:
+          CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
+          CJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/cjxl
+          DJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/djxl
+        run: |
+          cargo run --locked --release -p jxl-encoder \
+            --example effort_monotonicity_gate -- \
+            "${CODEC_CORPUS_DIR}" "${RUNNER_TEMP}/effort_monotonicity.tsv" \
+            --images 4 --size 512 --efforts 3,5,7,9 --distances 1.0,4.0 --reps 1
+
+
   encoder-fuzz:
     name: Encoder admission and streaming fuzz
     runs-on: ubuntu-latest

@@ -66,6 +66,33 @@ fn flag(name: &str) -> bool {
     std::env::args().any(|x| x == name)
 }
 
+/// A stable identity for one adjacent-distance comparison, so a KNOWN
+/// violation can be allow-listed without allow-listing a whole image.
+fn violation_key(image: &str, effort: u8, lo: f32, hi: f32) -> String {
+    format!("{image}\te{effort}\t{lo}\t{hi}")
+}
+
+/// Load the accepted-violation allowlist.
+///
+/// A gate that fails on day one for pre-existing issues gets disabled, not
+/// fixed. This lets the gate go into automation NOW and fail only on NEW
+/// regressions, while the known set stays visible in a committed file rather
+/// than as a silently loosened threshold. Entries are
+/// `image<TAB>eNN<TAB>lo_distance<TAB>hi_distance`; `#` comments allowed.
+fn load_known(path: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    if let Ok(text) = std::fs::read_to_string(path) {
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            out.insert(line.to_string());
+        }
+    }
+    out
+}
+
 fn regime(d: f32) -> usize {
     FILTER_BOUNDARIES.iter().filter(|&&b| d > b).count()
 }
@@ -255,7 +282,11 @@ fn main() {
     }
     println!("wrote {} cells to {}", cells.len(), out_path.display());
 
-    let (fatal, advisory) = check_staircase(&cells);
+    let known = load_known(&arg(
+        "--known",
+        "benchmarks/rd_monotonicity_known_violations.tsv",
+    ));
+    let (fatal, advisory, known_hits) = check_staircase(&cells, &known);
     let time_report = check_time(&cells, Path::new(&baseline_path), update_baseline);
     println!("\n{time_report}");
 
@@ -273,12 +304,25 @@ fn main() {
         }
     }
 
+    if !known_hits.is_empty() {
+        println!(
+            "\nKNOWN violations (allow-listed, not failing): {}",
+            known_hits.len()
+        );
+        for v in known_hits.iter().take(20) {
+            println!("    {v}");
+        }
+    }
+
     if fatal.is_empty() {
-        println!("\nIQA MONOTONICITY: clean — no cell where BOTH oracles invert");
+        println!(
+            "\nIQA MONOTONICITY: clean — no NEW cell where both oracles invert ({} known)",
+            known_hits.len()
+        );
     } else {
         let within = fatal.iter().filter(|v| v.contains("within regime")).count();
         println!(
-            "\nIQA MONOTONICITY: {} VIOLATIONS ({within} within-regime targeting bugs, \
+            "\nIQA MONOTONICITY: {} NEW VIOLATIONS ({within} within-regime targeting bugs, \
              {} at filter boundaries)",
             fatal.len(),
             fatal.len() - within
@@ -391,7 +435,10 @@ fn score(encoded: &[u8], src: &[u8], n: u32) -> f64 {
 /// Boundary-crossing IQA inversions are counted separately from within-regime
 /// ones, because they have different fixes: the former is the distance/filter
 /// interaction (design C), the latter is a targeting bug.
-fn check_staircase(cells: &[Cell]) -> (Vec<String>, Vec<String>) {
+fn check_staircase(
+    cells: &[Cell],
+    known: &std::collections::HashSet<String>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
     use std::collections::BTreeMap;
     let mut by: BTreeMap<(String, u8), Vec<&Cell>> = BTreeMap::new();
     for c in cells {
@@ -399,6 +446,7 @@ fn check_staircase(cells: &[Cell]) -> (Vec<String>, Vec<String>) {
     }
     let mut fatal = Vec::new();
     let mut advisory = Vec::new();
+    let mut known_hits = Vec::new();
     for ((img, e), mut ladder) in by {
         ladder.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
         for w in ladder.windows(2) {
@@ -423,7 +471,13 @@ fn check_staircase(cells: &[Cell]) -> (Vec<String>, Vec<String>) {
                 hi.bfly.is_finite() && lo.bfly.is_finite() && hi.bfly < lo.bfly * 0.98;
 
             if ssim2_inverted && bfly_inverted {
-                fatal.push(format!(
+                let key = violation_key(&img, e, lo.distance, hi.distance);
+                let sink = if known.contains(&key) {
+                    &mut known_hits
+                } else {
+                    &mut fatal
+                };
+                sink.push(format!(
                     "{img} e{e}: BOTH oracles invert d {} -> {}: ssim2 {:.3} -> {:.3}, bfly {:.4} -> {:.4}{}",
                     lo.distance,
                     hi.distance,
@@ -472,7 +526,7 @@ fn check_staircase(cells: &[Cell]) -> (Vec<String>, Vec<String>) {
             }
         }
     }
-    (fatal, advisory)
+    (fatal, advisory, known_hits)
 }
 
 /// Per-effort wall: must not regress against the committed baseline, and the
