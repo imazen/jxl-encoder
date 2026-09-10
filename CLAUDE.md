@@ -941,6 +941,45 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-10: CI was red for ~10 commits -- the local sibling lock drift reached the release lock
+
+[PROVEN] Every CI job (x64/aarch64 clippy, Linux/macOS/Windows-ARM builds, both
+WASM targets, coverage) failed with
+
+    error: cannot update the lock file ... because --locked was passed
+
+from `587778f7` onward; `87f6aec7` immediately before it was green. **Cause: that
+commit put the LOCAL SIBLING RESOLUTION DRIFT into `Cargo.lock`**, moving
+`zenforks-cubecl` from rev `9084240103f9` to `92e4a157e160`. The net diff
+between the green lock and the red one was ONLY that rev (29 source lines plus
+two feature entries that follow from it).
+
+This is the drift this file already warns about -- "not applied to the release
+lock ... build validation must use the pinned closure" -- arriving by the exact
+route the warning anticipates. CI resolves the sibling path-dependencies at
+their committed state, which needs `9084240103f9`; a developer machine with
+sibling WIP resolves `92e4a157e160`. Committing the latter makes the lock
+unsatisfiable under `--locked` everywhere else. Fixed in `13eae858` by restoring
+the lock to its `87f6aec7` content.
+
+**THE TRAP, and it is easy to fall into: running ANY cargo command on a machine
+with sibling WIP rewrites `Cargo.lock` straight back to the drifted rev.** The
+restore has to be the LAST step before committing. My first attempt at this fix
+was silently undone by the `cargo build` I ran to verify it -- `jj diff` then
+showed zero changes and the "fix" would have been an empty commit.
+
+Practical rule for this repo: after any cargo invocation, and immediately before
+`jj describe`/push, re-run
+`git -C <primary> show <last-green>:Cargo.lock > Cargo.lock` (or otherwise
+restore the pinned lock) and CHECK
+`grep -o "zenforks-cubecl?rev=[0-9a-f]\{8\}" Cargo.lock` shows `90842401`,
+not `92e4a157`.
+
+**Related process note:** the run for the fix itself came back `cancelled`
+because the next push superseded it. Per the existing cancellation warning in
+this file, a cancelled run is an ABSENCE of a verdict -- do not read it as a
+pass, and re-check the head commit's own run.
+
 ### 2026-09-10: RD gate corrected twice, and the hard contract is nearly MET (1 violation / 660 cells)
 
 Two corrections to the design-D gate shipped a day earlier, both found by
