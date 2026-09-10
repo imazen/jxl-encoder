@@ -1,0 +1,101 @@
+image	path	effort	bytes	ssim2	ms
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossless	3	215722	NaN	16.50
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossy d=1	3	32128	88.9542	7.35
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossless	4	215722	NaN	16.25
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossy d=1	4	31664	88.9542	7.87
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossless	5	155861	NaN	95.25
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossy d=1	5	34742	87.7769	28.64
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossless	7	150311	NaN	254.37
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossy d=1	7	34815	87.7472	52.86
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossless	9	145489	NaN	1589.04
+1000_general_red-convertible-car_mission-hills-san-diego-california_note9_iso50-f2p4_20190514-100811_4032x3024.sdr.png	lossy d=1	9	31763	86.5914	238.49
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossless	3	355536	NaN	21.59
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossy d=1	3	80643	87.7056	10.90
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossless	4	355536	NaN	21.61
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossy d=1	4	80646	87.7056	11.99
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossless	5	292759	NaN	114.65
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossy d=1	5	77570	86.7116	32.49
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossless	7	276647	NaN	326.26
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossy d=1	7	77353	86.7952	69.44
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossless	9	269068	NaN	1576.70
+1200_interiors_reflective-egg-sculptures_s23u_iso10-f1p7_20230704-121114_4000x3000.sdr.png	lossy d=1	9	71312	85.8827	281.49
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossless	3	265034	NaN	18.37
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossy d=1	3	54050	91.1956	9.46
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossless	4	265034	NaN	18.33
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossy d=1	4	53694	91.1956	9.97
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossless	5	199297	NaN	99.91
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossy d=1	5	52023	89.0009	29.80
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossless	7	187689	NaN	307.88
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossy d=1	7	52259	89.1621	68.32
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossless	9	178594	NaN	1658.31
+1400_nature_snowy-mountain-landscape_colorado_s10_iso50-f2p2_20200226-105616_4608x3456.sdr.png	lossy d=1	9	47656	87.2825	250.39
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossless	3	88766	NaN	13.64
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossy d=1	3	42902	86.3462	9.24
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossless	4	88766	NaN	13.63
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossy d=1	4	43032	86.3462	9.74
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossless	5	45379	NaN	82.61
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossy d=1	5	37541	89.5307	45.36
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossless	7	38592	NaN	173.67
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossy d=1	7	37506	89.4708	57.88
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossless	9	31463	NaN	1078.34
+8100_web-screenshots_archive-wayback-search_dpr1_page1_1440x900.sdr.png	lossy d=1	9	33211	88.9988	235.98
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossless	3	168032	NaN	15.16
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossy d=1	3	17338	91.6166	5.74
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossless	4	168032	NaN	15.14
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossy d=1	4	17254	91.6166	6.02
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossless	5	118973	NaN	91.47
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossy d=1	5	20229	90.8716	40.06
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossless	7	109938	NaN	245.30
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossy d=1	7	20376	90.7563	66.09
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossless	9	102653	NaN	1336.36
+1600_food_steamed-dumplings-basket_university-city-san-diego-california_note9_iso64-f2p4_20190516-185153_4032x3024.sdr.png	lossy d=1	9	17720	88.9631	230.76
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossless	3	115921	NaN	14.23
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossy d=1	3	46439	87.2458	9.57
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossless	4	115921	NaN	14.22
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossy d=1	4	46611	87.2458	9.93
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossless	5	63858	NaN	84.60
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossy d=1	5	45418	89.6314	45.25
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossless	7	50385	NaN	178.09
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossy d=1	7	45459	89.4755	59.32
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossless	9	44109	NaN	1209.88
+8159_web-screenshots_archive-wayback-search_dpr1_page1_1920x1080.sdr.png	lossy d=1	9	41032	88.6472	251.45
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossless	3	184260	NaN	16.59
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossy d=1	3	29641	87.1014	6.38
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossless	4	184260	NaN	15.39
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossy d=1	4	29409	87.1014	6.86
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossless	5	135693	NaN	83.55
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossy d=1	5	32115	88.3489	27.95
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossless	7	122947	NaN	256.70
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossy d=1	7	32345	88.3990	44.74
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossless	9	119999	NaN	1232.58
+2000_people_by-alexander-aguero-enppvuxbcce-unsplash_4400x6600.sdr.png	lossy d=1	9	29071	86.6868	216.80
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossless	3	133452	NaN	14.84
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossy d=1	3	21814	88.3366	6.27
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossless	4	133452	NaN	14.97
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossy d=1	4	21730	88.3366	6.64
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossless	5	89861	NaN	80.33
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossy d=1	5	18254	79.7400	38.57
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossless	7	82897	NaN	186.89
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossy d=1	7	18932	79.9040	52.55
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossless	9	78115	NaN	1182.34
+2200_renders_abstract-folded-ribbons_by-a-chosen-soul-moigsaj8te0-unsplash_7680x4320.sdr.png	lossy d=1	9	17515	80.6432	211.79
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossless	3	199348	NaN	15.73
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossy d=1	3	21948	86.9089	5.95
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossless	4	199348	NaN	15.82
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossy d=1	4	21896	86.9089	6.58
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossless	5	142263	NaN	98.44
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossy d=1	5	25406	88.9886	44.46
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossless	7	131901	NaN	253.44
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossy d=1	7	25423	89.0797	52.60
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossless	9	131205	NaN	1579.34
+2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png	lossy d=1	9	23236	87.6042	228.74
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossless	3	33778	NaN	12.16
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossy d=1	3	19202	88.8696	6.90
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossless	4	33778	NaN	12.29
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossy d=1	4	19138	88.8696	7.19
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossless	5	12651	NaN	35.10
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossy d=1	5	17667	89.8033	38.31
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossless	7	11687	NaN	54.80
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossy d=1	7	17667	89.8033	49.42
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossless	9	11834	NaN	257.74
+8219_web-screenshots_archive-wayback-search_dpr2_page1_2880x1800.sdr.png	lossy d=1	9	15421	89.3013	203.64

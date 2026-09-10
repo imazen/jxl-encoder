@@ -1,0 +1,19 @@
+harness: jxl-encoder/examples/effort_monotonicity_gate.rs
+command: --images 10 --size 512 --efforts 3,4,5,7,9 --distances 1.0 --reps 3
+corpus: imazen-26 png-v3, round-robin across all 21 strata
+metric: SSIMULACRA2 (fast-ssim2 PINNED 0.7.1, sRGB both sides)
+timing: min of 3 reps per cell
+host: Mac aarch64
+
+Aggregate over the 10 lossy d=1.0 cells:
+  e   bytes vs e3   mean ssim2   wall vs e3
+  3      1.0000       88.428       1.00x
+  4      0.9972       88.428       1.06x
+  5      0.9860       88.040       4.77x
+  7      0.9892       88.059       7.37x
+  9      0.8957       87.060      30.22x
+
+CAVEAT: this is a matched-DISTANCE comparison. "Higher effort scores lower" is
+not by itself an RD loss -- e9 is 10.4% smaller, so it may simply sit at a
+lower-rate point. Only a matched-QUALITY comparison can settle that, and this
+grid does not do one.

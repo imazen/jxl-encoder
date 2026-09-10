@@ -941,6 +941,70 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-10: the d=1 effort ladder is poorly calibrated -- e4 is free, e7 is dominated by e5
+
+[MEASURED] 10 stratified images, 512^2, lossy d=1.0, min of 3 reps
+(`benchmarks/effort_ladder_d1_2026-09-10.{tsv,meta}`):
+
+| e | bytes vs e3 | mean ssim2 | wall vs e3 |
+|---|---|---|---|
+| 3 | 1.0000 | 88.428 | 1.00x |
+| **4** | **0.9972** | **88.428** | **1.06x** |
+| 5 | 0.9860 | 88.040 | 4.77x |
+| 7 | 0.9892 | 88.059 | 7.37x |
+| 9 | 0.8957 | 87.060 | 30.22x |
+
+Two things worth acting on:
+
+- **e4 STRICTLY DOMINATES e3, and the mechanism explains why it is free.** It is
+  0.28 % smaller at IDENTICAL mean SSIM2 for ~5 % more wall. The SSIM2 delta is
+  exactly **+0.0000** at both d=1 and d=4 and at both 512^2 and 1024^2, which is
+  the tell: e4 = e3 + `custom_orders` (gated `effort >= 4`), and custom
+  coefficient orders change only how the SAME quantised coefficients are entropy
+  coded. Decoded pixels are bit-identical; only the byte count moves. Lossless is
+  unaffected (e4/e3 = 1.0000) because `custom_orders` is VarDCT-only.
+  So e3 is a dominated operating point on the lossy path -- it costs the same
+  pixels for more bytes.
+- **e7 is dominated by e5 at d=1**: MORE bytes (0.9892 vs 0.9860) at the same
+  quality for 1.5x the wall. The margin is 0.32 %, just under the effort gate's
+  0.5 % slack, which is why the gate does not flag it -- worth knowing the slack
+  hides an inefficiency of that size.
+
+**The e5-e7 cost is NOT in entropy coding.** `__JXL_ENC_PHASE_TIMING=1` (needs
+the `__env_var_diagnostics` feature, NOT `profile-phases`) shows
+`encode_two_pass` essentially identical at e5 and e7 -- tok_dc 0.0, co 0.7-1.0,
+bcm 0.0, ac_tok 0.5-0.6, lz77 0.0, build_codes 3.1-3.7, pass2_write 1.5-1.8 ms
+at both. The time is entirely in pre-entropy analysis (the e>=7 additions:
+patches, tree_learning, try_dct64, chromacity_adjustment).
+
+**Across distances (same 10 images, d in {0.5,1,2,4,8},
+`benchmarks/effort_ladder_by_distance_2026-09-10.tsv`)**: e4 is ~0.3 % smaller
+at identical SSIM2 for ~1.05x wall at EVERY distance -- free everywhere. e5 is
+strictly bad at d=0.5 (+0.83 % bytes, -0.03 ssim2, 3.5x wall) and clearly good
+from d=2 up (-1.6 % to -11 % bytes). And **e7 returns MORE bytes than e5 at four
+of five distances** while sitting within +/-0.4 SSIM2, for about twice the wall.
+
+**BUT that last one is SIZE-DEPENDENT, and a 512-crop-only read overstates it.**
+Re-measured at 1024^2 (`benchmarks/effort_ladder_1024_2026-09-10.tsv`, 5 images):
+
+| size | d | e7/e5 bytes | e7 - e5 ssim2 | wall |
+|---|---|---|---|---|
+| 512^2 | 1..8 | 1.000-1.007 | +/-0.4 | ~2x |
+| 1024^2 | 1 | 0.9983 | +0.024 | 2.48x |
+| 1024^2 | 4 | 1.0087 | **+0.783** | 2.81x |
+
+At 1024^2 d=4 e7 buys real quality (+0.78 SSIM2 for +0.87 % bytes) that it does
+NOT buy at 512^2. So **do not conclude "e7 does not earn its cost" from
+512-crop data** -- the e7 features (patches, tree_learning, try_dct64,
+chromacity_adjustment) have more to work with as size grows, which is consistent
+with the T3 sectioned work having been measured at 3840x2160.
+
+**CAVEAT, the same one this repo has been bitten by before**: these are matched
+DISTANCE. "Higher effort scores lower" is not by itself an RD loss -- e9 is
+10.4 % smaller at d=1, so it may simply sit at a lower-rate point on the curve.
+Only a matched-QUALITY comparison can settle that, and none of these grids do
+one.
+
 ### 2026-09-10: where we actually sit against cjxl, by distance band (660-cell census)
 
 Matched-DISTANCE comparison over the 660-cell census (16 stratified images, e5

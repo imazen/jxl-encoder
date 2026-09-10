@@ -3269,3 +3269,7 @@ path = "examples/e3_e5_domination_probe.rs"
 [[example]]
 name = "d3_dip_probe"
 path = "examples/d3_dip_probe.rs"
+
+[[example]]
+name = "extreme_distance_probe"
+path = "examples/extreme_distance_probe.rs"
