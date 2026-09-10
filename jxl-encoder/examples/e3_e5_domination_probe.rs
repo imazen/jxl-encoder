@@ -8,7 +8,43 @@
 //! the two that have public setters, and reports the rest as unreachable from
 //! here. It also runs cjxl v0.12 over the same crop, because "is this ours or
 //! inherited?" changes the disposition completely.
+use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
+use imgref::Img;
 use jxl_encoder::api::{LossyConfig, PixelLayout};
+use rgb::RGB;
+
+/// Delivered butteraugli (LINEAR input, lower = better).
+///
+/// Gaborish is calibrated against BUTTERAUGLI, not SSIM2, so "gaborish costs
+/// SSIM2" cannot be read as a quality loss without checking the metric it was
+/// actually tuned for. If butteraugli improves while SSIM2 falls, the filter is
+/// doing its job and the SSIM2 delta is a metric disagreement.
+fn bfly_of(encoded: &[u8], orig_linear: &Img<Vec<RGB<f32>>>) -> f64 {
+    let Ok(mut img) = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(encoded)) else {
+        return f64::NAN;
+    };
+    img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
+    let Ok(render) = img.render_frame(0) else {
+        return f64::NAN;
+    };
+    let fb = render.image_all_channels();
+    let (buf, ch) = (fb.buf(), fb.channels());
+    if ch < 3 {
+        return f64::NAN;
+    }
+    let px: Vec<RGB<f32>> = (0..fb.width() * fb.height())
+        .map(|i| RGB::new(buf[i * ch], buf[i * ch + 1], buf[i * ch + 2]))
+        .collect();
+    butteraugli_linear(
+        orig_linear.as_ref(),
+        Img::new(px, fb.width(), fb.height()).as_ref(),
+        &ButteraugliParams::default(),
+    )
+    .map(|r| r.score)
+    .unwrap_or(f64::NAN)
+}
 
 fn score(encoded: &[u8], src: &[u8], n: u32) -> f64 {
     use fast_ssim2::compute_ssimulacra2;
@@ -56,15 +92,30 @@ fn main() {
         .as_raw()
         .clone();
 
+    let orig_lin_px: Vec<RGB<f32>> = src
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| {
+            RGB::new(
+                srgb_to_linear(c[0]),
+                srgb_to_linear(c[1]),
+                srgb_to_linear(c[2]),
+            )
+        })
+        .collect();
+    let orig_lin: Img<Vec<RGB<f32>>> = Img::new(orig_lin_px, n as usize, n as usize);
+
     let run = |label: &str, cfg: LossyConfig| {
         let enc = cfg
             .encode_request(n, n, PixelLayout::Rgb8)
             .encode(&src)
             .expect("encode");
         println!(
-            "  {label:<34} {:>8} B   ssim2 {:>8.3}",
+            "  {label:<34} {:>8} B   ssim2 {:>7.3}   bfly {:>7.4}",
             enc.len(),
-            score(&enc, &src, n)
+            score(&enc, &src, n),
+            bfly_of(&enc, &orig_lin)
         );
     };
 

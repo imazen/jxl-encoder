@@ -1253,12 +1253,29 @@ B/90.198 (+18 % bytes, -0.57 SSIM2); car e4 30,938/88.308 -> e5 34,046/87.237
 to stay faithful. It is a legitimate zen-mode divergence candidate under the
 owner's "zen mode should fix the cliffs" directive.
 
-**Caveat that must travel with this finding: gaborish is tuned against
-BUTTERAUGLI, not SSIM2** (the adaptive-gaborish work was validated on a 480-cell
-butteraugli bench, EX-J13/W20-1/W25-1). SSIM2 may penalise exactly the smoothing
-butteraugli rewards, so "gaborish costs 1.3 SSIM2" is metric-dependent and is
-NOT by itself a verdict that gaborish is wrong at e5. SSIM2 is the oracle by
-owner choice *for now*; re-check against butteraugli before moving any gate.
+**Now measured against BOTH metrics (2026-09-10), and the answer splits:**
+
+| 512^2, d=1 | bytes | ssim2 | butteraugli |
+|---|---|---|---|
+| food e3 | 17,338 | 91.617 | 0.8420 |
+| food e4 | 17,254 | 91.617 | **0.8420** |
+| food e5 | 20,229 | 90.872 | 0.9066 |
+| food e5, gaborish OFF | 20,687 | **92.201** | **1.0584** |
+| nature e5 | 52,023 | 89.001 | 1.1474 |
+| nature e5, gaborish OFF | 54,196 | **90.397** | **1.0181** |
+
+- **The e5 domination is CORROBORATED by butteraugli on food**: e5 is worse than
+  e3 on all THREE axes -- more bytes, lower SSIM2 AND higher butteraugli. The
+  original finding used SSIM2 alone; it survives the second oracle.
+- **"Gaborish costs quality" is CONTENT-DEPENDENT, not general.** On food,
+  disabling it improves SSIM2 (+1.33) while WORSENING butteraugli (+0.15) -- a
+  genuine metric disagreement, and gaborish is doing the job it was calibrated
+  for (EX-J13/W20-1/W25-1, a 480-cell butteraugli bench). On nature, disabling
+  it improves BOTH (+1.40 SSIM2, -0.13 butteraugli) at +4 % bytes. So do not
+  generalise either way from one image.
+- **e4 has butteraugli IDENTICAL to e3** (0.8420 and 0.9102 to four decimals),
+  independently confirming that `custom_orders` leaves decoded pixels
+  bit-identical and only moves bytes.
 
 **Do NOT "fix" this by re-gating `ac_strategy_enabled`/`try_dct16`/`try_dct32`
 from `effort >= 5` to `>= 6`** -- that just renames e5 to e4. The measured shape
