@@ -79,39 +79,47 @@ matching Resolved Bugs entry in CLAUDE.md.
 **Scope**: the same `#[cfg_attr(target_arch = "wasm32", ignore = ...)]` and the
 same reason apply to `xyb::expanded_coverage::inverse_xyb_dispatch_is_bit_identical_to_scalar`
 and `gaborish5x5::expanded_coverage::gaborish_5x5_dispatch_is_bit_identical_across_tiers`,
-which were added by the cross-kernel audit on the same day. All three gate
+and `entropy::expanded_coverage::entropy_coeffs_dispatch_is_bit_identical_across_tiers`,
+which were added by the cross-kernel audit on the same day. All four gate
 x86_64 and aarch64 and are skipped only on wasm32.
 
 ---
 
-### entropy-001 — `entropy_coeffs_impl` scalar tier is not bit-identical (OPEN, not ignored)
+### ~~`entropy-002`~~ — `entropy_coeffs_impl` scalar tier was not bit-identical — RESOLVED (2026-09-10)
 
-**Test**: none yet — this is recorded so it is not re-discovered, not gated.
-`entropy::expanded_coverage::entropy_coeffs_scalar_vs_dispatch_edge_battery`
-keeps its existing tolerances (32 ULP + 1e-4 on the error plane, 1e-2 absolute
-on `entropy_sum`) and passes.
+(Numbered 002 because `entropy-001` is taken by the resolved ties-to-even
+rounding divergence further down. Different kernel-internal cause, same file.)
 
-**Divergence**: measured 2026-09-10 by comparing `entropy_sum` BITWISE across
-the 25 token permutations. The all-disabled permutation — the `_scalar` tier —
-differs on 1 of 18 cases: `ramp(n=64)`, `pd=true`, 381.90704 vs 381.907. Every
-other permutation agrees bitwise.
+**Divergence**: measured by comparing `entropy_sum` BITWISE across the 25 token
+permutations. The all-disabled permutation — the `_scalar` tier, which is what
+`incant!` reaches on pre-AVX2 x86_64, on i686 and on any architecture magetypes
+has no backend for — differed on 1 of 18 cases: `ramp(n=64)`, `pixel_domain=true`,
+381.90704 vs 381.907. Every other permutation agreed bitwise.
 
-**Cause**: the same unfused `mul_add` in magetypes' scalar backend as xyb-001's
-sibling (the FIXED scalar-tier bug — see the Resolved Bugs entry in CLAUDE.md).
-The effect is small here because the vector body accumulates into five `f32x8`
-accumulators and `reduce_add()`s at the end, so the scalar tier already has the
-right REDUCTION order and differs only by the fusion.
+**Cause**: magetypes' scalar backend implements `mul_add(a, b, c)` as
+`a * b + c`, not fused, while every vector backend and libjxl's Highway fuse it.
+Same root cause as the forward/inverse XYB and gaborish scalar tiers fixed the
+same day; see the Resolved Bugs entry in CLAUDE.md.
 
-**Why it is not fixed**: unlike the two XYB kernels, it cannot delegate to
-`entropy_coeffs_scalar` — that function accumulates into ONE `f32` and is
-therefore ~1e-2 away from every vector tier BY DESIGN, which is what its own
-tolerance encodes. A correct scalar tier has to carry `[f32; 8]` accumulators
-and reduce in the same tree. That is real work and was not attempted.
+**Why it mattered**: `entropy_sum` feeds AC-strategy cost comparisons, so a
+different value there can flip a strategy decision and change encoded bytes.
 
-**The general fix is upstream**: magetypes' scalar backend implements
-`mul_add(a, b, c)` as `a * b + c`, and `f32::mul_add` (std) / `libm::fmaf`
-(no_std) are genuinely fused. One change there fixes this kernel and any other
-consumer. magetypes is a sibling repo and is not modified from this one.
+**Why the effect was small**: the vector body carries five `f32x8` accumulators
+and `reduce_add()`s at the end, so the generated scalar tier already had the
+right REDUCTION order and differed only by the fusion — a sub-ULP effect per
+operation that only occasionally survives to the reduced sum.
+
+**Fix**: `-scalar` in the tier list plus a hand-written
+`entropy_coeffs_impl_scalar`. It could NOT delegate to `entropy_coeffs_scalar`,
+which accumulates into ONE `f32` and is therefore ~1e-2 from every vector tier
+by design (exactly what the existing test's `1e-2` bound encodes). Instead it
+keeps magetypes' own `f32x8<ScalarToken>` for everything whose behaviour already
+agreed — `round`, `abs`, `sqrt`, `blend`, `simd_ne`, `reduce_add` — and replaces
+ONLY the two `mul_add` call sites with a lane-wise fused
+`crate::scalarmath::mul_add_f32`.
+
+**Pinned by**: `entropy_coeffs_dispatch_is_bit_identical_across_tiers`,
+mutation-verified against the generated tier.
 
 ---
 

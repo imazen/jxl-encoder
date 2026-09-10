@@ -833,6 +833,7 @@ locks pin. A wasm32 build very likely emits different bytes than a native one �
 *likely*, not known, because the WASM CI job also runs `--lib` only.
 
 **THE AUDIT WAS THEN DONE, and it is not one kernel — it is four of five.**
+(All four are now fixed.)
 Method: drop each kernel's existing parity tolerance to 0 ULP / 0.0 abs and see
 which of the 25 archmage token permutations fail. Every failure was the
 all-disabled permutation, i.e. the `_scalar` tier, on aarch64:
@@ -842,7 +843,7 @@ all-disabled permutation, i.e. the `_scalar` tier, on aarch64:
 | `forward_xyb_impl` | diverges | yes | `-scalar`, delegate to `forward_xyb_scalar` |
 | `inverse_xyb_planar_impl` | diverges, 4 ULP | yes | `-scalar`, delegate to `inverse_xyb_planar_scalar` |
 | `gaborish_5x5_impl` | diverges, **49 ULP** | yes | `-scalar`, hand-written (delegation would be WRONG — see below) |
-| `entropy_coeffs_impl` | diverges, 1 of 18 cases | **NO** | needs an 8-lane scalar body, see below |
+| `entropy_coeffs_impl` | diverges, 1 of 18 cases | yes | `-scalar`, hand-written 8-lane body (see below) |
 | `pixel_domain_loss_impl` | clean | n/a | uses no `mul_add` |
 
 `gaborish_5x5_impl_scalar` could not simply delegate to `gaborish_5x5_scalar`,
@@ -855,20 +856,30 @@ left-to-right, interior nested — and differ only in walking one pixel at a tim
 hand-written scalar reference actually matches the vector body**; for the two
 XYB kernels it did, for gaborish it did not.
 
-`entropy_coeffs_impl` is the one left. It accumulates into five `f32x8`
-accumulators and `reduce_add()`s at the end, so its scalar tier already has the
-right REDUCTION order and differs only by the unfused `mul_add` — which is why
-only 1 of 18 cases moves (`ramp(n=64)`, pd=true, 381.90704 vs 381.907). Fixing
-it means a hand-written scalar tier carrying `[f32; 8]` accumulators, not a
-delegation: `entropy_coeffs_scalar` accumulates into ONE f32 and is therefore
-~1e-2 away from every vector tier by design (its existing test tolerates exactly
-that).
+`entropy_coeffs_impl` was the last one. It accumulates into five `f32x8`
+accumulators and `reduce_add()`s at the end, so its scalar tier already had the
+right REDUCTION order and differed only by the unfused `mul_add` — which is why
+only 1 of 18 cases moved (`ramp(n=64)`, pd=true, 381.90704 vs 381.907). It could
+not delegate either: `entropy_coeffs_scalar` accumulates into ONE f32 and is
+therefore ~1e-2 from every vector tier by design (its existing test tolerates
+exactly that). The hand-written tier instead keeps magetypes' own
+`f32x8<ScalarToken>` for everything whose behaviour already agreed — `round`,
+`abs`, `sqrt`, `blend`, `simd_ne`, `reduce_add` — and replaces ONLY the two
+`mul_add` call sites with a lane-wise fused one. **That is the cheapest correct
+shape when the generated tier is right about structure and wrong only about
+fusion**, and it is the third distinct shape this fix has taken across four
+kernels: delegate (XYB x2), re-derive the vector structure in scalar
+(gaborish), keep the vector structure and swap one operation (entropy).
+Recorded as `entropy-002` in `docs/SIMD_PARITY_KNOWN_DIVERGENCES.md` — 002
+because 001 there is an older, unrelated entropy divergence.
 
 **The general fix is upstream, not here.** All of this is one property of
 magetypes' scalar backend — `fn mul_add(a, b, c) { a * b + c }` — and `f32` has
 a genuinely fused `mul_add` in both `std` and `libm`. Changing it there would
 fix every kernel in this crate at once and any other consumer besides. magetypes
 is a sibling repo and is not touched from here; it is the user's call.
+All five kernels in this crate are bit-identical across tiers on x86_64 and
+aarch64 regardless, each pinned by its own `*_is_bit_identical_*` test.
 
 Full record: `benchmarks/xyb_neon_handwritten_2026-09-10.meta`.
 

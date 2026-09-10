@@ -120,8 +120,8 @@
 #       inverse_xyb_planar_impl   4 ULP     -> FIXED (-scalar + delegate)
 #       gaborish_5x5_impl         49 ULP    -> FIXED (-scalar + hand-written;
 #                                              delegating would have been WRONG)
-#       entropy_coeffs_impl       1/18 cases-> OPEN, entropy-001 in
-#                                              docs/SIMD_PARITY_KNOWN_DIVERGENCES.md
+#       entropy_coeffs_impl       1/18 cases-> FIXED (-scalar + hand-written
+#                                              8-lane body; entropy-002)
 #       pixel_domain_loss_impl    clean (uses no mul_add)
 #   The general fix is upstream: magetypes' scalar backend is what implements
 #   `mul_add` as `a * b + c`, and `f32::mul_add` / `libm::fmaf` are fused. One

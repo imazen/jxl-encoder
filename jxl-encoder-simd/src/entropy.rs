@@ -212,7 +212,7 @@ pub fn entropy_coeffs_scalar(
 // — even subtle reduction-order perturbations can affect AC-strategy
 // selection and risk bitstream divergence downstream.
 
-#[magetypes(define(f32x8), v4, v3, neon, wasm128, scalar)]
+#[magetypes(define(f32x8), v4, v3, neon, wasm128, -scalar)]
 #[allow(clippy::too_many_arguments)]
 pub fn entropy_coeffs_impl(
     token: Token,
@@ -291,6 +291,152 @@ pub fn entropy_coeffs_impl(
     }
 
     // Handle remainder with scalar fallback (skip when n is multiple of 8)
+    let start = chunks * 8;
+    let remainder = if start < n {
+        entropy_coeffs_scalar(
+            &block_c[start..n],
+            &block_y[start..n],
+            &weights[start..n],
+            &inv_weights[start..n],
+            n - start,
+            cmap_factor,
+            quant,
+            k_cost_delta,
+            k_cost2,
+            pixel_domain,
+            &mut error_coeffs[start..n],
+        )
+    } else {
+        EntropyCoeffResult::ZERO
+    };
+
+    let mut entropy_sum = entropy_acc.reduce_add() + remainder.entropy_sum;
+    if !pixel_domain {
+        entropy_sum += cost2_acc.reduce_add();
+    }
+
+    EntropyCoeffResult {
+        entropy_sum,
+        nzeros_sum: nzeros_acc.reduce_add() + remainder.nzeros_sum,
+        info_loss_sum: info_loss_acc.reduce_add() + remainder.info_loss_sum,
+        info_loss2_sum: info_loss2_acc.reduce_add() + remainder.info_loss2_sum,
+    }
+}
+
+/// The `scalar` tier — the fourth and last kernel in this crate to need one
+/// hand-written, and the one that could NOT be a delegation.
+///
+/// magetypes' scalar backend implements `mul_add` as `a * b + c`
+/// (`simd/impls/scalar.rs`), not fused, so the generated `_scalar` tier
+/// disagreed with the AVX2 / AVX-512 / NEON tiers — measured 2026-09-10 on
+/// 1 of 18 parity cases (`ramp(n=64)`, `pixel_domain=true`: `entropy_sum`
+/// 381.90704 vs 381.907). `entropy_sum` feeds AC-strategy cost comparisons, so
+/// on a host that cannot summon a vector token — pre-AVX2 x86_64, i686, any
+/// architecture magetypes has no backend for — a different value there can flip
+/// a strategy decision and change the encoded bytes.
+///
+/// **Why not delegate to `entropy_coeffs_scalar`**: that function accumulates
+/// into ONE `f32`, while this body carries five `f32x8` accumulators and
+/// `reduce_add()`s at the end. Summation order alone puts them ~1e-2 apart —
+/// which is exactly what the existing parity test's `1e-2` bound encodes. The
+/// scalar tier has to keep the eight-lane shape.
+///
+/// **Why the divergence was small**: precisely because the shape already
+/// matched. The generated tier had the right reduction tree and differed only
+/// in the fusion, which is a sub-ULP effect per operation. So the fix is to
+/// keep magetypes' own `f32x8<ScalarToken>` for everything — `round`, `abs`,
+/// `sqrt`, `blend`, `simd_ne`, `reduce_add`, all of which already agree — and
+/// replace ONLY the two `mul_add` call sites with a lane-wise fused one.
+///
+/// Recorded as `entropy-001` in `docs/SIMD_PARITY_KNOWN_DIVERGENCES.md`, now
+/// resolved; pinned by
+/// `entropy_coeffs_dispatch_is_bit_identical_across_tiers`.
+#[allow(clippy::too_many_arguments)]
+pub fn entropy_coeffs_impl_scalar(
+    token: archmage::ScalarToken,
+    block_c: &[f32],
+    block_y: &[f32],
+    weights: &[f32],
+    inv_weights: &[f32],
+    n: usize,
+    cmap_factor: f32,
+    quant: f32,
+    k_cost_delta: f32,
+    k_cost2: f32,
+    pixel_domain: bool,
+    error_coeffs: &mut [f32],
+) -> EntropyCoeffResult {
+    type F = magetypes::simd::generic::f32x8<archmage::ScalarToken>;
+
+    /// `a * b + c`, FUSED, lane by lane — the one thing the generated tier got
+    /// wrong. `mul_add_f32` is `f32::mul_add` under `std` and `libm::fmaf`
+    /// otherwise; both are genuinely fused, which is what the vector backends
+    /// give and what libjxl gets from Highway.
+    #[inline(always)]
+    fn fma8(token: archmage::ScalarToken, a: F, b: F, c: F) -> F {
+        let (a, b, c) = (a.to_array(), b.to_array(), c.to_array());
+        F::from_array(
+            token,
+            core::array::from_fn(|i| crate::scalarmath::mul_add_f32(a[i], b[i], c[i])),
+        )
+    }
+
+    let cmap_v = F::splat(token, cmap_factor);
+    let quant_v = F::splat(token, quant);
+    let cost_delta_v = F::splat(token, k_cost_delta);
+    let cost2_v = F::splat(token, k_cost2);
+    let zero = F::zero(token);
+    let one = F::splat(token, 1.0);
+    let thr_1_5 = F::splat(token, 1.5);
+
+    let mut entropy_acc = F::zero(token);
+    let mut nzeros_acc = F::zero(token);
+    let mut info_loss_acc = F::zero(token);
+    let mut info_loss2_acc = F::zero(token);
+    let mut cost2_acc = F::zero(token);
+
+    let chunks = n / 8;
+    let simd_n = chunks * 8;
+    let block_c_s = &block_c[..simd_n];
+    let block_y_s = &block_y[..simd_n];
+    let weights_s = &weights[..simd_n];
+    let inv_weights_s = &inv_weights[..simd_n];
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+
+        let bc = F::from_slice(token, &block_c_s[base..]);
+        let by_v = F::from_slice(token, &block_y_s[base..]);
+        let w = F::from_slice(token, &weights_s[base..]);
+        let iw = F::from_slice(token, &inv_weights_s[base..]);
+
+        let adjusted = bc - by_v * cmap_v;
+        let val = adjusted * iw * quant_v;
+
+        let rval = val.round();
+        let diff = val - rval;
+
+        if pixel_domain {
+            let err = w * diff;
+            let out: &mut [f32; 8] = (&mut error_coeffs[base..base + 8]).try_into().unwrap();
+            err.store(out);
+        }
+
+        let q = rval.abs();
+        entropy_acc = fma8(token, q.sqrt(), cost_delta_v, entropy_acc);
+
+        let nz_mask = q.simd_ne(zero);
+        nzeros_acc += F::blend(nz_mask, one, zero);
+
+        if !pixel_domain {
+            let diff_abs = diff.abs();
+            info_loss_acc += diff_abs;
+            info_loss2_acc = fma8(token, diff_abs, diff_abs, info_loss2_acc);
+
+            let ge_mask = q.simd_ge(thr_1_5);
+            cost2_acc += F::blend(ge_mask, cost2_v, zero);
+        }
+    }
+
     let start = chunks * 8;
     let remainder = if start < n {
         entropy_coeffs_scalar(
@@ -1261,6 +1407,79 @@ mod expanded_coverage {
     use crate::test_helpers::*;
     use alloc::format;
     use alloc::vec::Vec;
+
+    /// Every tier of `entropy_coeffs_impl` must produce BIT-IDENTICAL results.
+    ///
+    /// Tier against TIER, not tier against `entropy_coeffs_scalar` — that
+    /// reference accumulates into ONE `f32` where the vector body carries five
+    /// `f32x8` accumulators, so summation order alone puts them ~1e-2 apart,
+    /// which is what `entropy_coeffs_scalar_vs_dispatch_edge_battery` below
+    /// tolerates. What must NOT differ is one tier from another:
+    /// `entropy_sum` feeds AC-strategy cost comparisons, so a different value
+    /// on a host that reaches a different tier can flip a decision and change
+    /// the encoded bytes, and `hash_lock_expected.txt` is one committed
+    /// sidecar.
+    ///
+    /// It caught the generated `_scalar` tier diverging on 1 of 18 cases
+    /// (`entropy-002`); see `entropy_coeffs_impl_scalar` for the fix and why it
+    /// is not a delegation.
+    ///
+    /// Skipped on wasm32 for the reason in
+    /// `docs/SIMD_PARITY_KNOWN_DIVERGENCES.md` (xyb-001): WASM SIMD has no FMA
+    /// instruction, so its tier cannot agree with a fused one.
+    #[test]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        ignore = "FIXME(SIMD-parity): xyb-001 — WASM SIMD has no FMA instruction; see docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"
+    )]
+    fn entropy_coeffs_dispatch_is_bit_identical_across_tiers() {
+        for pd in [false, true] {
+            // Sizes straddling the 8-wide chunking and its scalar remainder.
+            for &n in &[1_usize, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 128] {
+                let block_c = gen_f32(0xE001_1111 ^ n as u64, n, 40.0);
+                let block_y = gen_f32(0xE002_2222 ^ n as u64, n, 40.0);
+                let weights: alloc::vec::Vec<f32> =
+                    (0..n).map(|i| 0.25 + (i % 13) as f32 * 0.5).collect();
+                let inv_weights: alloc::vec::Vec<f32> = weights.iter().map(|w| 1.0 / w).collect();
+
+                let mut first: Option<(u32, u32, u32, u32, alloc::vec::Vec<u32>)> = None;
+                run_dispatch_parity(|perm| {
+                    let mut err = alloc::vec![0.0_f32; n];
+                    let r = entropy_estimate_coeffs(
+                        &block_c,
+                        &block_y,
+                        &weights,
+                        &inv_weights,
+                        n,
+                        0.7,
+                        2.5,
+                        5.335,
+                        3.5,
+                        pd,
+                        &mut err,
+                    );
+                    let got = (
+                        r.entropy_sum.to_bits(),
+                        r.nzeros_sum.to_bits(),
+                        r.info_loss_sum.to_bits(),
+                        r.info_loss2_sum.to_bits(),
+                        err.iter()
+                            .map(|v| v.to_bits())
+                            .collect::<alloc::vec::Vec<u32>>(),
+                    );
+                    match &first {
+                        None => first = Some(got),
+                        Some(base) => assert_eq!(
+                            *base, got,
+                            "{perm}: pd={pd} n={n} — this tier disagrees with the first \
+                             permutation; the tiers must agree bitwise or \
+                             hash_lock_expected.txt cannot hold across architectures"
+                        ),
+                    }
+                });
+            }
+        }
+    }
 
     /// entropy_estimate_coeffs across edge battery (n=64 representative block).
     /// Both pixel_domain modes (true/false).
