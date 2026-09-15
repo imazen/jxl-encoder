@@ -1,5 +1,15 @@
 # JPEG XL Encoder (Rust) - Claude Code Instructions
 
+## September 15: candidate tiles consume max refinement
+
+[Contract and validation](docs/ZENSIM_REFINEMENT_2026-09-15.md): candidate tile
+queries use complete `ScoredAttribution::refinement_gain`, including max terms;
+coverage checks use the matching refinement list. Named-profile density
+controls are unchanged. Both frozen Rev3 recovery ensembles finish native
+assessment, 756 neutral ladder pairs exact and 1,782 old/new fast records exact.
+RD/target gates still fail; do not promote or tune from these EVAL results.
+
+
 ## September 14: frozen ensembles and native neutral control
 
 [Current evidence](docs/ZENSIM_ENSEMBLE_NATIVE_2026-09-14.md): optional candidate

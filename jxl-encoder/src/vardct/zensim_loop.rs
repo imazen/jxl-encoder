@@ -1085,6 +1085,32 @@ fn compute_tile_dist(
     }
 }
 
+// Named-profile maps contain additive density. Candidate maps additionally
+// retain non-additive maxima; each complete transform rectangle must query
+// the scored owner once rather than sum maxima from smaller rectangles.
+trait TileAttribution {
+    fn dimensions(&self) -> (usize, usize);
+    fn tile_gain(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> f64;
+}
+
+impl TileAttribution for zensim::AttributionResult {
+    fn dimensions(&self) -> (usize, usize) {
+        (self.width(), self.height())
+    }
+    fn tile_gain(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> f64 {
+        self.query_rect(x0, y0, x1, y1)
+    }
+}
+
+impl TileAttribution for zensim::ScoredAttribution {
+    fn dimensions(&self) -> (usize, usize) {
+        (self.attribution().width(), self.attribution().height())
+    }
+    fn tile_gain(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> f64 {
+        self.refinement_gain(x0, y0, x1, y1)
+    }
+}
+
 /// C3b (task #67): per-tile steering from the C3a attribution map — the
 /// per-tile raw value is the CLAMPED mean attribution density over the
 /// tile's pixel rect (`max(0, query_rect)/pixels`; clamping at the TILE
@@ -1095,7 +1121,7 @@ fn compute_tile_dist(
 /// [`compute_tile_dist`] so the A/B isolates the MAP change alone.
 #[allow(clippy::too_many_arguments)]
 fn compute_tile_dist_attr(
-    attr: &zensim::AttributionResult,
+    attr: &impl TileAttribution,
     ac_strategy: &AcStrategyMap,
     xsize_blocks: usize,
     ysize_blocks: usize,
@@ -1104,7 +1130,7 @@ fn compute_tile_dist_attr(
     params: &ZensimParams,
 ) {
     tile_dist.fill(0.0);
-    let (width, height) = (attr.width(), attr.height());
+    let (width, height) = attr.dimensions();
     let mut sum_raw = 0.0f64;
     let mut n_tiles = 0u32;
     for by in 0..ysize_blocks {
@@ -1122,10 +1148,9 @@ fn compute_tile_dist_attr(
                 continue;
             }
             let pixels = ((px_end_x - px_start_x) * (px_end_y - px_start_y)).max(1) as f64;
-            // O(1) SAT rectangle query — the C3a steering contract: the
-            // tile's summed density ≈ the first-order score gain from
-            // refining exactly this tile.
-            let gain = attr.query_rect(px_start_x, px_start_y, px_end_x, px_end_y);
+            // Query the complete transform footprint, including candidate max
+            // removal. Finite edits still approximate frozen signal behavior.
+            let gain = attr.tile_gain(px_start_x, px_start_y, px_end_x, px_end_y);
             let tile_norm = (gain.max(0.0) / pixels) as f32;
 
             for sy in 0..covered_y {
@@ -1162,7 +1187,7 @@ fn compute_tile_dist_attr(
 /// No clamp, no normalization — the arm-specific redistribution applies its
 /// own registered rule.
 fn compute_tile_signed_attr(
-    attr: &zensim::AttributionResult,
+    attr: &impl TileAttribution,
     ac_strategy: &AcStrategyMap,
     xsize_blocks: usize,
     ysize_blocks: usize,
@@ -1171,7 +1196,7 @@ fn compute_tile_signed_attr(
 ) {
     tile_signed.fill(0.0);
     tile_q.fill(0.0);
-    let (width, height) = (attr.width(), attr.height());
+    let (width, height) = attr.dimensions();
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
             if !ac_strategy.is_first(bx, by) {
@@ -1187,7 +1212,7 @@ fn compute_tile_signed_attr(
                 continue;
             }
             let pixels = ((px_end_x - px_start_x) * (px_end_y - px_start_y)).max(1) as f64;
-            let gain = attr.query_rect(px_start_x, px_start_y, px_end_x, px_end_y);
+            let gain = attr.tile_gain(px_start_x, px_start_y, px_end_x, px_end_y);
             let s = (gain / pixels) as f32;
             let q = gain as f32;
             for sy in 0..covered_y {
@@ -1834,12 +1859,12 @@ impl VarDctEncoder {
                                 attr_bin,
                             )
                             .map_err(candidate_error)?;
-                        if !value.unsupported_feature_ids().is_empty()
+                        if !value.unsupported_refinement_feature_ids().is_empty()
                             || value.has_corruption_gate()
                         {
                             return Err(crate::error::Error::InvalidInput(format!(
                                 "candidate spatial terms unavailable: {:?}; corruption gate: {}",
-                                value.unsupported_feature_ids(),
+                                value.unsupported_refinement_feature_ids(),
                                 value.has_corruption_gate(),
                             )));
                         }
@@ -1865,7 +1890,7 @@ impl VarDctEncoder {
                         fresh.as_ref()
                     }
                     .expect("candidate map available");
-                    let steer_map = value.attribution();
+                    let steer_map = value;
                     if h_arm.is_some() {
                         compute_tile_signed_attr(
                             steer_map,
