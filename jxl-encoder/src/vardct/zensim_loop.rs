@@ -58,6 +58,69 @@ fn load_candidate(path: &str) -> Result<zenpredict::Model> {
         .map_err(|e| crate::error::Error::InvalidInput(format!("zensim bake {path}: {e}")))
 }
 
+/// Owned per-encode inputs; BakeScorer owns every inference operation.
+struct CandidateModels {
+    models: Vec<zenpredict::Model>,
+    weights: Option<Vec<f64>>,
+}
+impl CandidateModels {
+    fn scorer(&self) -> Result<zensim::BakeScorer<'_>> {
+        zensim::BakeScorer::ensemble(&self.models, self.weights.as_deref()).map_err(candidate_error)
+    }
+    fn from_spec(spec: &str) -> Result<Option<Self>> {
+        if let Some(path) = spec.strip_prefix("bake:") {
+            return Ok(Some(Self {
+                models: vec![load_candidate(path)?],
+                weights: None,
+            }));
+        }
+        let Some(path) = spec.strip_prefix("ensemble:") else {
+            return Ok(None);
+        };
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Member {
+            path: String,
+            sha256: String,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Manifest {
+            name: String,
+            members: Vec<Member>,
+            weights: Vec<f64>,
+        }
+        let invalid = |e| crate::error::Error::InvalidInput(format!("zensim ensemble: {e}"));
+        let manifest: Manifest =
+            serde_json::from_slice(&std::fs::read(path)?).map_err(|e| invalid(format!("{e}")))?;
+        if manifest.name.is_empty() {
+            return Err(invalid("empty name".into()));
+        }
+        use sha2::{Digest, Sha256};
+        let models = manifest
+            .members
+            .iter()
+            .map(|member| {
+                let bytes = std::fs::read(&member.path)?;
+                let actual: String = Sha256::digest(&bytes)
+                    .iter()
+                    .map(|v| format!("{v:02x}"))
+                    .collect();
+                if actual != member.sha256 {
+                    return Err(invalid(format!("member hash mismatch: {}", member.path)));
+                }
+                zenpredict::Model::from_bytes(&bytes).map_err(|e| invalid(format!("{e}")))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let owned = Self {
+            models,
+            weights: Some(manifest.weights),
+        };
+        owned.scorer()?;
+        Ok(Some(owned))
+    }
+}
+
 fn candidate_error(e: zensim::ZensimError) -> crate::error::Error {
     crate::error::Error::InvalidInput(format!("zensim candidate: {e}"))
 }
@@ -1259,16 +1322,11 @@ impl VarDctEncoder {
         // Fresh attribution uses the current reconstruction from iteration 0;
         // the legacy first-iteration gradient below is for named profiles only.
         // Unset and a|b|latest retain their historical named-profile route.
-        let candidate_model = cfg
-            .rd_profile_spec
-            .strip_prefix("bake:")
-            .map(load_candidate)
-            .transpose()?;
+        let candidate_model = CandidateModels::from_spec(&cfg.rd_profile_spec)?;
         let mut candidate = candidate_model
             .as_ref()
-            .map(zensim::BakeScorer::new)
-            .transpose()
-            .map_err(candidate_error)?;
+            .map(CandidateModels::scorer)
+            .transpose()?;
         let map_model = if candidate.is_some() {
             cfg.map_bake_path
                 .as_deref()
@@ -1635,14 +1693,22 @@ impl VarDctEncoder {
         // Saturate at consumption — see butteraugli_loop.rs for rationale.
         let iters = (self.zensim_iters.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
         let mut current_params;
+        // Reparameterizing an unchanged float field can alter the integer
+        // global scale and raw quantizers. Keep the actual seed state until
+        // an intervention changes the field, including emit-best restoration.
+        let seed_quant_field = quant_field.to_vec();
 
         for iter in 0..iters + 1 {
             let t_iter = std::time::Instant::now();
-            // Step 1: SetQuantField — recompute global_scale from float field
-            current_params = initial_params.with_quant_field(quant_field_float);
-
-            let qf_vec = quantize_quant_field(quant_field_float, current_params.inv_scale);
-            quant_field.copy_from_slice(&qf_vec);
+            // Step 1: preserve the seed's exact discrete representation.
+            if quant_field_float == initial_quant_field_float {
+                current_params = initial_params.clone();
+                quant_field.copy_from_slice(&seed_quant_field);
+            } else {
+                current_params = initial_params.with_quant_field(quant_field_float);
+                let qf_vec = quantize_quant_field(quant_field_float, current_params.inv_scale);
+                quant_field.copy_from_slice(&qf_vec);
+            }
 
             // Step 2: Transform and quantize
             self.transform_and_quantize_into(
@@ -2581,13 +2647,16 @@ impl VarDctEncoder {
             iter_ms: &iter_ms,
         });
 
-        // Final SetQuantField
-        let final_params = initial_params.with_quant_field(quant_field_float);
-
-        let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
-        quant_field.copy_from_slice(&qf_vec);
-
-        Ok(final_params)
+        // Final SetQuantField uses the same state that was compared above.
+        if quant_field_float == initial_quant_field_float {
+            quant_field.copy_from_slice(&seed_quant_field);
+            Ok(initial_params.clone())
+        } else {
+            let final_params = initial_params.with_quant_field(quant_field_float);
+            let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
+            quant_field.copy_from_slice(&qf_vec);
+            Ok(final_params)
+        }
     }
 }
 
@@ -2616,6 +2685,128 @@ mod c10_loud_tests {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+
+    #[test]
+    fn zero_gain_keeps_the_actual_seed_bitstream() {
+        const CHILD: &str = "JXL_TEST_NEUTRAL_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let bake = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/support/zensim_d_byid_2026-09-06.bin");
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "vardct::zensim_loop::config_tests::zero_gain_keeps_the_actual_seed_bitstream",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("ZENSIM_FORMULA_REV", "1")
+                .env("JXL_ZENSIM_RD_PROFILE", format!("bake:{}", bake.display()))
+                .env("JXL_ZENSIM_MODEL_MAP", "h3-mag")
+                .env("ZENSIM_H3_GAIN", "0")
+                .env("ZENSIM_H3_GAIN_MODE", "fixed")
+                .env("JXL_ZENSIM_S4_EPS", "0")
+                .env_remove("JXL_ZENSIM_MAP_BAKE")
+                .env_remove("JXL_ZENSIM_QF_GLOBAL_SCALE")
+                .env_remove("JXL_ZENSIM_TARGET_SCORE")
+                .env_remove("JXL_ZENSIM_EMIT_BEST")
+                .output()
+                .unwrap();
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+                "child test did not execute: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let (w, h) = (96, 80);
+        let pixels: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let x = i % w;
+                let y = i / w;
+                [
+                    (x * 255 / (w - 1)) as u8,
+                    (y * 255 / (h - 1)) as u8,
+                    ((x * 13 + y * 17) % 256) as u8,
+                ]
+            })
+            .collect();
+        for distance in [0.25, 0.5, 1.0, 3.0, 10.0, 25.0] {
+            let encode = |iters| {
+                crate::LossyConfig::new(distance)
+                    .with_strategy(crate::api::EncoderStrategy::Zenjxl)
+                    .with_effort(8)
+                    .with_auto_resampling(false)
+                    .with_perceptual_metric(crate::api::PerceptualMetric::Zensim)
+                    .with_butteraugli_iters(0)
+                    .with_zensim_iters(iters)
+                    .encode(&pixels, w, h, crate::PixelLayout::Rgb8)
+                    .unwrap()
+            };
+            assert_eq!(encode(0), encode(2), "neutral changed distance {distance}");
+        }
+    }
+
+    #[test]
+    fn candidate_ensemble_checks_every_member_and_preserves_single_bake() {
+        use sha2::{Digest, Sha256};
+        let bytes = include_bytes!("../../tests/support/zensim_d_byid_2026-09-06.bin");
+        let digest: String = Sha256::digest(bytes)
+            .iter()
+            .map(|v| format!("{v:02x}"))
+            .collect();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("jxl-candidate-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let a = dir.join("a.bin");
+        let b = dir.join("b.bin");
+        std::fs::write(&a, bytes).unwrap();
+        std::fs::write(&b, bytes).unwrap();
+        let path = dir.join("ensemble.json");
+        let mut manifest = serde_json::json!({"name":"test", "members":[
+            {"path":a,"sha256":digest},{"path":b,"sha256":digest}],"weights":[0.25,0.75]});
+        let write =
+            |v: &serde_json::Value| std::fs::write(&path, serde_json::to_vec(v).unwrap()).unwrap();
+        write(&manifest);
+        let spec = format!("ensemble:{}", path.display());
+        let owned = CandidateModels::from_spec(&spec).unwrap().unwrap();
+        assert_eq!(owned.models.len(), 2);
+        assert_eq!(owned.weights.as_deref(), Some([0.25, 0.75].as_slice()));
+        let single = CandidateModels::from_spec(&format!("bake:{}", a.display()))
+            .unwrap()
+            .unwrap();
+        assert!(single.weights.is_none());
+        let row = vec![0.01; 372];
+        let got = owned
+            .scorer()
+            .unwrap()
+            .score_features(&row, 64, 64, Some("jxl"))
+            .unwrap();
+        let expected = single
+            .scorer()
+            .unwrap()
+            .score_features(&row, 64, 64, Some("jxl"))
+            .unwrap();
+        assert!((got - expected).abs() < 1e-10);
+        manifest["weights"] = serde_json::json!([0.25, 0.5]);
+        write(&manifest);
+        assert!(CandidateModels::from_spec(&spec).is_err());
+        manifest["weights"] = serde_json::json!([0.25, 0.75]);
+        write(&manifest);
+        std::fs::write(&b, b"changed non-primary member").unwrap();
+        assert!(CandidateModels::from_spec(&spec).is_err());
+        assert!(CandidateModels::from_spec("b").unwrap().is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     /// `Default` must BE the shipped behaviour — that is the whole premise of
     /// the config-over-flags migration. If someone changes a fitted constant,

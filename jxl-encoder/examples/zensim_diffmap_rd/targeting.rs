@@ -18,7 +18,74 @@ use zensim_target::{
     CodecKind, SeedCurve, TargetSpec, codec::CodecBackend, target_search_with_backend_and_bake,
 };
 
-const CONFIG: &str = "jxl:distance0.01-25,e8,Zenjxl,no-auto-resampling,opaque-sRGB8;scalar:zero-updates;neutral:two-updates-H3gain0;active:two-updates-H3gain10;bin8;no-inner-target;formula1;native-png-v1;decode:zenjxl-decoder-0.4-u8-dither";
+const CONFIG: &str = "jxl:distance0.01-25,e8,Zenjxl,no-auto-resampling,opaque-sRGB8;scalar:zero-updates;neutral:two-updates-H3gain0;active:two-updates-H3gain10;bin8;no-inner-target;candidate-v2;native-png-v1;decode:zenjxl-decoder-0.4-u8-dither";
+fn configuration() -> String {
+    format!(
+        "{CONFIG};formula{}",
+        std::env::var("ZENSIM_FORMULA_REV").unwrap_or_else(|_| "1".into())
+    )
+}
+
+// Loading/provenance only; the complete Rust surface owns inference.
+struct ModelInput {
+    models: Vec<zenpredict::Model>,
+    weights: Option<Vec<f64>>,
+    sha256: String,
+}
+impl ModelInput {
+    fn load(spec: &str) -> Result<Self> {
+        let revision = std::env::var("ZENSIM_FORMULA_REV").unwrap_or_else(|_| "1".into());
+        ensure!(
+            revision == "1" || revision == "3",
+            "native experiment requires explicit revision 1 or 3"
+        );
+        if let Some(path) = spec.strip_prefix("ensemble:") {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Member {
+                path: PathBuf,
+                sha256: String,
+            }
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Manifest {
+                name: String,
+                members: Vec<Member>,
+                weights: Vec<f64>,
+            }
+            let bytes = fs::read(path)?;
+            let m: Manifest = serde_json::from_slice(&bytes)?;
+            ensure!(!m.name.is_empty(), "empty ensemble name");
+            let models = m
+                .members
+                .iter()
+                .map(|member| -> Result<_> {
+                    let data = fs::read(&member.path)?;
+                    ensure!(sha(&data) == member.sha256, "ensemble member hash mismatch");
+                    Ok(zenpredict::Model::from_bytes(&data)?)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let input = Self {
+                models,
+                weights: Some(m.weights),
+                sha256: sha(&bytes),
+            };
+            input.scorer()?;
+            Ok(input)
+        } else {
+            let bytes = fs::read(spec)?;
+            Ok(Self {
+                models: vec![zenpredict::Model::from_bytes(&bytes)?],
+                weights: None,
+                sha256: sha(&bytes),
+            })
+        }
+    }
+    fn scorer(&self) -> Result<BakeScorer<'_>> {
+        Ok(BakeScorer::ensemble(&self.models, self.weights.as_deref())?)
+    }
+}
+
 const ARMS: [&str; 3] = ["scalar", "neutral", "active"];
 const FIXED: [f32; 5] = [-10., 30., 70., 90., 99.];
 const TOL: f32 = 1.;
@@ -321,8 +388,14 @@ fn configure(arm: &str, bake: &str, stats: &Path, probe: &Path) {
         ] {
             std::env::remove_var(name);
         }
-        std::env::set_var("ZENSIM_FORMULA_REV", "1");
-        std::env::set_var("JXL_ZENSIM_RD_PROFILE", format!("bake:{bake}"));
+        let revision = std::env::var("ZENSIM_FORMULA_REV").unwrap_or_else(|_| "1".into());
+        std::env::set_var("ZENSIM_FORMULA_REV", revision);
+        let spec = if bake.starts_with("ensemble:") {
+            bake.to_owned()
+        } else {
+            format!("bake:{bake}")
+        };
+        std::env::set_var("JXL_ZENSIM_RD_PROFILE", spec);
         std::env::set_var("JXL_ZENSIM_MODEL_MAP", "h3-mag");
         std::env::set_var("ZENSIM_H3_GAIN", if arm == "active" { "10" } else { "0" });
         std::env::set_var("JXL_ZENSIM_S4_EPS", "0");
@@ -452,10 +525,9 @@ fn ladder(
 
 pub(super) fn fit(root: &Path, bake: &str, out: &Path) -> Result<()> {
     let training = source_set(&root.join("train_source_manifest.json"), "train")?;
-    let bytes = fs::read(bake)?;
-    let model = zenpredict::Model::from_bytes(&bytes)?;
+    let input = ModelInput::load(bake)?;
     fresh(out)?;
-    let mut scorer = BakeScorer::new(&model)?;
+    let mut scorer = input.scorer()?;
     let mut sink = fs::File::create(out.join("bounds.jsonl"))?;
     let mut curves = BTreeMap::new();
     for arm in ARMS {
@@ -468,9 +540,9 @@ pub(super) fn fit(root: &Path, bake: &str, out: &Path) -> Result<()> {
     }
     let calibration = Calibration {
         schema: "native-jxl-target-v1".into(),
-        config: CONFIG.into(),
+        config: configuration(),
         driver_sha256: driver_sha()?,
-        model_sha256: sha(&bytes),
+        model_sha256: input.sha256,
         training,
         curves,
     };
@@ -488,12 +560,12 @@ pub(super) fn fit(root: &Path, bake: &str, out: &Path) -> Result<()> {
 pub(super) fn evaluate(root: &Path, calibration_path: &Path, bake: &str, out: &Path) -> Result<()> {
     let validation = source_set(&root.join("source_manifest.json"), "validate")?;
     let calibration: Calibration = serde_json::from_slice(&fs::read(calibration_path)?)?;
-    let bytes = fs::read(bake)?;
+    let input = ModelInput::load(bake)?;
     ensure!(
         calibration.schema == "native-jxl-target-v1"
-            && calibration.config == CONFIG
+            && calibration.config == configuration()
             && calibration.driver_sha256 == driver_sha()?
-            && calibration.model_sha256 == sha(&bytes),
+            && calibration.model_sha256 == input.sha256,
         "calibration model/configuration/driver mismatch"
     );
     ensure!(
@@ -521,8 +593,7 @@ pub(super) fn evaluate(root: &Path, calibration_path: &Path, bake: &str, out: &P
             .context("missing calibration arm")?
             .estimate(50.)?;
     }
-    let model = zenpredict::Model::from_bytes(&bytes)?;
-    let mut scorer = BakeScorer::new(&model)?;
+    let mut scorer = input.scorer()?;
     fresh(out)?;
     let mut sink = fs::File::create(out.join("bounds.jsonl"))?;
     let mut bounds = BTreeMap::new();
@@ -539,7 +610,7 @@ pub(super) fn evaluate(root: &Path, calibration_path: &Path, bake: &str, out: &P
     fs::write(
         out.join("INPUTS.json"),
         serde_json::to_vec_pretty(
-            &json!({"schema":"native-jxl-target-v1","config":CONFIG,"model_sha256":sha(&bytes),"driver_sha256":driver_sha()?,"calibration_sha256":sha(&fs::read(calibration_path)?),"sources":validation,"fixed_requests":FIXED,"tolerance":TOL,"budgets":[1,2,3],"policies":["midpoint","train_curve"],"arms":ARMS,"bounds_are_not_controller_inputs":true}),
+            &json!({"schema":"native-jxl-target-v1","config":configuration(),"model_sha256":input.sha256,"driver_sha256":driver_sha()?,"calibration_sha256":sha(&fs::read(calibration_path)?),"sources":validation,"fixed_requests":FIXED,"tolerance":TOL,"budgets":[1,2,3],"policies":["midpoint","train_curve"],"arms":ARMS,"bounds_are_not_controller_inputs":true}),
         )?,
     )?;
     let mut measurements = fs::File::create(out.join("measurements.jsonl"))?;

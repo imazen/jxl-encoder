@@ -4651,6 +4651,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenblend"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d66daf1f95f9f3a3c7c4529ea1f993069e2691cc89a4f8b0f4002ced96179f68"
+dependencies = [
+ "archmage",
+ "magetypes",
+ "safe_unaligned_simd",
+]
+
+[[package]]
 name = "zencodec"
 version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5169,6 +5180,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenresize"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenresize?rev=e3975fb9d6d6b7baa96038a0eb8e27febb37c012#e3975fb9d6d6b7baa96038a0eb8e27febb37c012"
+dependencies = [
+ "archmage",
+ "imgref",
+ "libm",
+ "linear-srgb",
+ "magetypes",
+ "rgb",
+ "safe_unaligned_simd",
+ "whereat",
+ "zenblend",
+ "zenpixels",
+]
+
+[[package]]
 name = "zensim"
 version = "0.3.0"
 dependencies = [
@@ -5183,6 +5211,7 @@ dependencies = [
  "rgb",
  "thiserror",
  "zenpredict",
+ "zenresize",
 ]
 
 [[package]]

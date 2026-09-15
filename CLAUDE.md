@@ -1,5 +1,16 @@
 # JPEG XL Encoder (Rust) - Claude Code Instructions
 
+## September 14: frozen ensembles and native neutral control
+
+[Current evidence](docs/ZENSIM_ENSEMBLE_NATIVE_2026-09-14.md): optional candidate
+mounts accept hash-bound ensembles through the existing Rust scorer. Native
+calibration binds complete composition and actual formula revision. Preserve the
+original discrete seed when its float quantizer field is unchanged: recomputing
+it changed zero-gain outputs. All 2,646 neutral ladder pairs now match exactly;
+seven models complete native assessment, four refuse unsupported spatial terms.
+No model is promoted; see the sibling zensim report for independent RD diagnostics.
+
+
 ## Project Overview
 
 This is a work-in-progress Rust implementation of a JPEG XL encoder.
