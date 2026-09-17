@@ -667,6 +667,16 @@ pub struct EffortProfile {
     pub epf_dynamic_sharpness: bool,
     /// Recompute CfL map after initial quantization for better estimates (effort >= 7 in libjxl).
     pub cfl_two_pass: bool,
+    /// Run the CfL pass-1 map computation at all. Ours runs it
+    /// unconditionally; libjxl only runs pass-1 at `speed_tier <=
+    /// kSquirrel` (effort >= 7, `enc_heuristics.cc:1170`). Below e7
+    /// libjxl emits the zero-initialized `ColorCorrelationMap`
+    /// (`chroma_from_luma.cc:52-56`); at e5/6 pass-2 (`refine_cfl_map`)
+    /// still runs and fills every tile. `false` makes the encoder emit
+    /// `CflMap::zeros` instead of computing pass-1 — used only under
+    /// `EncoderStrategy::Libjxl` via
+    /// [`crate::api::EffortGate::Libjxl`] on `cfl_pass1_min_effort`.
+    pub cfl_pass1: bool,
     /// **Keep-best CfL Pass-2 guard** (#74, task #10). When `true`, the Pass-2
     /// CfL refit ([`crate::vardct::chroma_from_luma::refine_cfl_map`]) keeps the
     /// Pass-1 multiplier for any tile where it codes chroma AC more cheaply than
@@ -1518,6 +1528,12 @@ impl EffortProfile {
             // activation at e7, not by CFL Pass-2. Gate retained at
             // effort >= 7. Do NOT re-investigate widening this gate.
             cfl_two_pass: effort >= 7,
+            // Ours computes the pass-1 CfL map unconditionally (better
+            // compression at every effort). libjxl only runs pass-1 at
+            // `speed_tier <= kSquirrel` (effort >= 7) — the
+            // `cfl_pass1_min_effort` strategy gate flips this off below
+            // e7 under `EncoderStrategy::Libjxl`.
+            cfl_pass1: true,
             // #74 task #10: keep-best Pass-2 CfL guard, same effort gate as
             // cfl_two_pass (only runs when Pass-2 does). ANDed with the
             // strategy-level `resolved.cfl_keep_best` in
@@ -1752,6 +1768,7 @@ impl EffortProfile {
             ans_histogram_strategy_vardct: ANSHistogramStrategy::Precise, // N/A for lossless
             epf_dynamic_sharpness: false,
             cfl_two_pass: false,
+            cfl_pass1: false,
             // N/A for lossless (no VarDCT CfL); keep shape parity, moot since
             // `cfl_two_pass: false` means refine_cfl_map never runs.
             cfl_keep_best: false,
@@ -2466,7 +2483,16 @@ impl EffortProfile {
     /// - `cfl_two_pass`: `(7, 5)`
     /// - `try_dct64`: `(7, 0)` — libjxl has no effort gate
     ///   (`enc_ac_strategy.cc:948` uses `decoding_speed_tier < 4`)
-    /// - `epf_dynamic_sharpness`: `(6, 0)` — libjxl has no effort gate
+    /// - `epf_dynamic_sharpness`: `(6, 6)` — libjxl gates the
+    ///   ComputeARHeuristics sharpness search at `speed_tier <=
+    ///   kWombat` ≡ effort >= 6 (`enc_heuristics.cc:905`), filling
+    ///   uniform 4 below that. The earlier "no effort gate" claim in
+    ///   `docs/LIBJXL_DIVERGENCES.md` was wrong (the same doc's
+    ///   W44-AUDIT-8 SA-C row has the correct gate); corrected 2026-09-17.
+    /// - `cfl_pass1`: `(0, 7)` — we compute the pass-1 CfL map at every
+    ///   effort; libjxl only at `speed_tier <= kSquirrel` ≡ effort >= 7
+    ///   (`enc_heuristics.cc:1170`), emitting the zero-initialized cmap
+    ///   below that (`chroma_from_luma.cc:52-56`).
     ///
     /// **Important — `EffortGate::Ours` is a NO-OP**: when the resolved
     /// field equals the default [`crate::api::EffortGate::Ours`], the
@@ -2501,11 +2527,22 @@ impl EffortProfile {
                 .try_dct64_min_effort
                 .evaluate(effort, /*ours=*/ 7, /*libjxl=*/ 0);
         }
-        // epf_dynamic_sharpness: we e6+, libjxl has no effort gate
+        // epf_dynamic_sharpness: we e6+, libjxl e6+ (kWombat — see above)
         if !matches!(resolved.epf_dynamic_sharpness_min_effort, EffortGate::Ours) {
             self.epf_dynamic_sharpness = resolved
                 .epf_dynamic_sharpness_min_effort
-                .evaluate(effort, /*ours=*/ 6, /*libjxl=*/ 0);
+                .evaluate(effort, /*ours=*/ 6, /*libjxl=*/ 6);
+        }
+        // cfl_pass1: we run it at every effort, libjxl e7+ (kSquirrel).
+        // When the resolved gate flips it off the encoder emits
+        // `CflMap::zeros`, matching libjxl's never-computed cmap; pass-2
+        // (`refine_cfl_map`, e5+ under Libjxl) refills every tile at
+        // e5/6, so skipping pass-1 there is byte-identical as well as
+        // parity-faithful at e1-e4.
+        if !matches!(resolved.cfl_pass1_min_effort, EffortGate::Ours) {
+            self.cfl_pass1 = resolved
+                .cfl_pass1_min_effort
+                .evaluate(effort, /*ours=*/ 0, /*libjxl=*/ 7);
         }
     }
 
@@ -4867,19 +4904,24 @@ mod tests {
 
     #[test]
     fn test_apply_section_a_effort_gates_libjxl_widens() {
-        // At e5: Ours gates all 3 to FALSE; Libjxl widens:
+        // At e5 under Ours: cfl_two_pass/try_dct64/epf_dynamic_sharpness
+        // are FALSE, cfl_pass1 is TRUE (we run it at every effort).
+        // Under Libjxl:
         //  - cfl_two_pass: libjxl >= 5 → true at e5
         //  - try_dct64: libjxl no effort gate → true at e5
-        //  - epf_dynamic_sharpness: libjxl no effort gate → true at e5
+        //  - epf_dynamic_sharpness: libjxl >= 6 (kWombat) → FALSE at e5
+        //  - cfl_pass1: libjxl >= 7 (kSquirrel) → FALSE at e5
         let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
         assert!(!p.cfl_two_pass); // ours: e5 < 7
         assert!(!p.try_dct64); // ours: e5 < 7
         assert!(!p.epf_dynamic_sharpness); // ours: e5 < 6
+        assert!(p.cfl_pass1); // ours: runs at every effort
 
         let libjxl = crate::api::ResolvedImprovements {
             cfl_two_pass_min_effort: crate::api::EffortGate::Libjxl,
             try_dct64_min_effort: crate::api::EffortGate::Libjxl,
             epf_dynamic_sharpness_min_effort: crate::api::EffortGate::Libjxl,
+            cfl_pass1_min_effort: crate::api::EffortGate::Libjxl,
             ..Default::default()
         };
         p.apply_section_a_effort_gates(&libjxl);
@@ -4889,9 +4931,35 @@ mod tests {
             "Libjxl: try_dct64 fires at e5 (no effort gate)"
         );
         assert!(
-            p.epf_dynamic_sharpness,
-            "Libjxl: epf_dynamic_sharpness fires at e5 (no effort gate)"
+            !p.epf_dynamic_sharpness,
+            "Libjxl: epf_dynamic_sharpness skips at e5 (libjxl gate e>=6, kWombat)"
         );
+        assert!(
+            !p.cfl_pass1,
+            "Libjxl: cfl_pass1 skips at e5 (libjxl gate e>=7, kSquirrel)"
+        );
+    }
+
+    /// `cfl_pass1` threshold sweep under `EffortGate::Libjxl`: pass-1
+    /// runs at e7+ only (libjxl `speed_tier <= kSquirrel`,
+    /// `enc_heuristics.cc:1170`); `Ours` keeps it on at every effort.
+    #[test]
+    fn test_cfl_pass1_libjxl_threshold() {
+        let libjxl = crate::api::ResolvedImprovements {
+            cfl_pass1_min_effort: crate::api::EffortGate::Libjxl,
+            ..Default::default()
+        };
+        for effort in [1u8, 3, 5, 6] {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(p.cfl_pass1, "Ours: cfl_pass1 on at e{effort}");
+            p.apply_section_a_effort_gates(&libjxl);
+            assert!(!p.cfl_pass1, "Libjxl: cfl_pass1 off at e{effort}");
+        }
+        for effort in [7u8, 9] {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            p.apply_section_a_effort_gates(&libjxl);
+            assert!(p.cfl_pass1, "Libjxl: cfl_pass1 on at e{effort}");
+        }
     }
 
     #[test]

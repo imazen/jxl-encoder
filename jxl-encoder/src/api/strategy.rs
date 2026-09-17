@@ -696,8 +696,9 @@ pub enum EffortGate {
     #[default]
     Ours,
     /// Use the libjxl threshold (Section A "libjxl" column). For
-    /// `cfl_two_pass` this is `>= 5`; for `try_dct64` and
-    /// `epf_dynamic_sharpness` this is no effort gate at all.
+    /// `cfl_two_pass` this is `>= 5`; for `epf_dynamic_sharpness` and
+    /// `cfl_pass1` it is `>= 6` / `>= 7` respectively; for `try_dct64`
+    /// there is no effort gate at all.
     Libjxl,
     /// Disable the effort gate entirely (always run / never run
     /// depending on the consuming site's semantics).
@@ -718,7 +719,8 @@ impl EffortGate {
     /// |---|---|---|
     /// | `cfl_two_pass` | `7` (we) | `5` (libjxl `speed_tier <= kHare`) |
     /// | `try_dct64` | `7` (we) | `0` (libjxl has no effort gate; uses `decoding_speed_tier`) |
-    /// | `epf_dynamic_sharpness` | `6` (we) | `0` (libjxl has no effort gate) |
+    /// | `epf_dynamic_sharpness` | `6` (we) | `6` (libjxl `speed_tier <= kWombat`, `enc_heuristics.cc:905`) |
+    /// | `cfl_pass1` | `0` (we run it at every effort) | `7` (libjxl `speed_tier <= kSquirrel`, `enc_heuristics.cc:1170`) |
     ///
     /// Semantics:
     /// - [`Ours`](EffortGate::Ours) → `effort >= ours_min_effort`

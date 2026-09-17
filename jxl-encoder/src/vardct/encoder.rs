@@ -4813,7 +4813,14 @@ impl VarDctEncoder {
         let pass1_use_newton = self.profile.cfl_newton
             && (cfl_newton_libjxl_parity_effective
                 || self.profile.cfl_newton_libjxl_math_with_ls_warm_start);
-        let mut cfl_map = if self.cfl_enabled {
+        // CfL pass-1 presence gate: `cfl_enabled` is the feature switch;
+        // `profile.cfl_pass1` is the effort gate — false only under
+        // `EncoderStrategy::Libjxl` below e7 (libjxl runs pass-1 at
+        // `speed_tier <= kSquirrel` and emits the zero-initialized cmap
+        // below that). At e5/6 under Libjxl pass-2 (`refine_cfl_map`)
+        // refills every tile anyway, so skipping pass-1 there is
+        // byte-identical as well as parity-faithful.
+        let mut cfl_map = if self.cfl_enabled && self.profile.cfl_pass1 {
             compute_cfl_map(
                 &xyb_x,
                 &xyb_y,
@@ -7142,30 +7149,31 @@ impl VarDctEncoder {
         let patched_pass1_use_newton = self.profile.cfl_newton
             && (patched_cfl_newton_libjxl_parity_effective
                 || self.profile.cfl_newton_libjxl_math_with_ls_warm_start);
-        let cfl_map_patched: Option<CflMap> = if patched_xyb.is_some() && self.cfl_enabled {
-            Some(compute_cfl_map(
-                xyb_x_for_dct,
-                xyb_y_for_dct,
-                xyb_b_for_dct,
-                padded_width,
-                precomputed.padded_height,
-                xsize_blocks,
-                ysize_blocks,
-                patched_pass1_use_newton,
-                self.profile.cfl_newton_eps,
-                self.profile.cfl_newton_max_iters,
-                // W44-195 / W44-AUDIT-5 Phase 3: composed effective parity
-                // flag — Phase 3 forces libjxl_parity ON for screenshot-
-                // class images even on Zenjxl/Aggressive. Ignored when LS
-                // is used.
-                patched_cfl_newton_libjxl_parity_effective,
-                // W44-AUDIT-5 Phase 2 (Mode C): same propagation as the
-                // main Pass-1 site above.
-                self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
-            ))
-        } else {
-            None
-        };
+        let cfl_map_patched: Option<CflMap> =
+            if patched_xyb.is_some() && self.cfl_enabled && self.profile.cfl_pass1 {
+                Some(compute_cfl_map(
+                    xyb_x_for_dct,
+                    xyb_y_for_dct,
+                    xyb_b_for_dct,
+                    padded_width,
+                    precomputed.padded_height,
+                    xsize_blocks,
+                    ysize_blocks,
+                    patched_pass1_use_newton,
+                    self.profile.cfl_newton_eps,
+                    self.profile.cfl_newton_max_iters,
+                    // W44-195 / W44-AUDIT-5 Phase 3: composed effective parity
+                    // flag — Phase 3 forces libjxl_parity ON for screenshot-
+                    // class images even on Zenjxl/Aggressive. Ignored when LS
+                    // is used.
+                    patched_cfl_newton_libjxl_parity_effective,
+                    // W44-AUDIT-5 Phase 2 (Mode C): same propagation as the
+                    // main Pass-1 site above.
+                    self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
+                ))
+            } else {
+                None
+            };
         let cfl_map_for_encode: &CflMap = cfl_map_patched.as_ref().unwrap_or(&precomputed.cfl_map);
         let _ms_cfl = _t_cfl.elapsed().as_secs_f64() * 1000.0;
 

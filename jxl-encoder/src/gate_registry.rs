@@ -206,6 +206,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_two_pass_min_effort = EffortGate::Libjxl,
             try_dct64_min_effort = EffortGate::Libjxl,
             epf_dynamic_sharpness_min_effort = EffortGate::Libjxl,
+            cfl_pass1_min_effort = EffortGate::Libjxl,
             // Section D KNOWN-BUG: deliberately re-enable to match libjxl
             block_ctx_map_15_cluster = true,
             header_all_default_fast_paths = true,
@@ -308,6 +309,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_two_pass_min_effort = EffortGate::Ours,
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
+            cfl_pass1_min_effort = EffortGate::Ours,
             // Section D: NOT re-enabled on LeanFaster (only on Libjxl).
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
@@ -399,6 +401,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_two_pass_min_effort = EffortGate::Ours,
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
+            cfl_pass1_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
             // #101: libjxl's d>=10 auto-resample regime switch — parity-only.
@@ -506,6 +509,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_two_pass_min_effort = EffortGate::Ours,
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
+            cfl_pass1_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
             // #101: libjxl's d>=10 auto-resample regime switch — parity-only.
@@ -663,7 +667,15 @@ jxl_encoder_macros::strategy_def! {
         /// `epf_dynamic_sharpness` effort gate. Section A.
         epf_dynamic_sharpness_min_effort: EffortGate {
             divergence_section = "A",
-            divergence_row_ref = "epf_dynamic_sharpness effort gate (ours >=6, libjxl none)",
+            divergence_row_ref = "epf_dynamic_sharpness effort gate (ours >=6, libjxl >=6)",
+        },
+
+        /// CfL pass-1 effort gate — we compute the pass-1 map at every
+        /// effort; libjxl only at `speed_tier <= kSquirrel` ≡ e7+
+        /// (`enc_heuristics.cc:1170`). Section A.
+        cfl_pass1_min_effort: EffortGate {
+            divergence_section = "A",
+            divergence_row_ref = "cfl_pass1 effort gate (ours none, libjxl >=7)",
         },
 
         // ── Section D KNOWN-BUG re-enables (Libjxl-only) ─────────────
@@ -1378,8 +1390,14 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
     DivergenceEntry {
         gate_name: "epf_dynamic_sharpness_min_effort",
         section: "A",
-        row_ref: "epf_dynamic_sharpness effort gate (ours >=6, libjxl none)",
+        row_ref: "epf_dynamic_sharpness effort gate (ours >=6, libjxl >=6)",
         raw: __CUSTOM_DIVERGENCE_EPF_DYNAMIC_SHARPNESS_MIN_EFFORT,
+    },
+    DivergenceEntry {
+        gate_name: "cfl_pass1_min_effort",
+        section: "A",
+        row_ref: "cfl_pass1 effort gate (ours none, libjxl >=7)",
+        raw: __CUSTOM_DIVERGENCE_CFL_PASS1_MIN_EFFORT,
     },
     // Section D — KNOWN-BUG re-enables (Libjxl-only)
     DivergenceEntry {
@@ -1596,6 +1614,7 @@ mod tests {
         assert_eq!(d.cfl_two_pass_min_effort, EffortGate::Ours);
         assert_eq!(d.try_dct64_min_effort, EffortGate::Ours);
         assert_eq!(d.epf_dynamic_sharpness_min_effort, EffortGate::Ours);
+        assert_eq!(d.cfl_pass1_min_effort, EffortGate::Ours);
         // Section D
         assert!(!d.block_ctx_map_15_cluster);
         // Smart-Zenjxl
@@ -1648,6 +1667,7 @@ mod tests {
             l.epf_dynamic_sharpness_min_effort,
             z.epf_dynamic_sharpness_min_effort
         );
+        assert_ne!(l.cfl_pass1_min_effort, z.cfl_pass1_min_effort);
         assert_ne!(l.block_ctx_map_15_cluster, z.block_ctx_map_15_cluster);
         assert_ne!(l.content_class_auto_classify, z.content_class_auto_classify);
         assert_ne!(l.cfl_newton_libjxl_parity, z.cfl_newton_libjxl_parity);

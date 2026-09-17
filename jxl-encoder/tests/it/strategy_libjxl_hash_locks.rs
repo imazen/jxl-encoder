@@ -212,8 +212,15 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
-        size: 310,
-        hash: 0xc1de936a255ca4a5,
+        // libjxl-exact (2026-09-17): size 316 -> 306 (-10 B), hash
+        // drift. `dc_encode_libjxl_parity` corrected the W44-AUDIT-8
+        // inverted `nl_dc` gate: `extra_dc_precision` is now
+        // `effort >= 4` (libjxl `speed_tier < kFalcon`, verified vs
+        // cjxl v0.12.0 `jxl-inspect dc-coeffs`), so e3 emits 1x DC
+        // precision + plain round and reaches bit-identical quantized
+        // DC coefficients vs cjxl.
+        size: 306,
+        hash: 0x9019ff5b35b56454,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",

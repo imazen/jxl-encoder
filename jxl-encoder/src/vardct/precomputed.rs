@@ -1498,7 +1498,7 @@ pub(crate) fn compute_dc_group(
     // byte-identical to the corresponding slice of the whole-image
     // `compute_cfl_map`. Dep #4 (CfL tile alignment) resolved by
     // construction.
-    let (cfl_region_ytox, cfl_region_ytob) = if cfl_enabled {
+    let (cfl_region_ytox, cfl_region_ytob) = if cfl_enabled && profile.cfl_pass1 {
         super::chroma_from_luma::compute_cfl_map_for_tiles(
             &global.xyb_x,
             &global.xyb_y,

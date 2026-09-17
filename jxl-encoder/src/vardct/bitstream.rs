@@ -2027,7 +2027,7 @@ impl VarDctEncoder {
             );
         let anim_cfl_newton_libjxl_parity_effective =
             self.profile.cfl_newton_libjxl_parity || anim_p3_force_libjxl_parity;
-        let mut cfl_map = if self.cfl_enabled {
+        let mut cfl_map = if self.cfl_enabled && self.profile.cfl_pass1 {
             super::chroma_from_luma::compute_cfl_map(
                 &xyb_x,
                 &xyb_y,
