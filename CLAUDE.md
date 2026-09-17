@@ -775,6 +775,15 @@ are superseded; useful butteraugli timing was adopted into `profile-phases`
 fractional effort remains absent from the current u8 API/CLI. Do not confuse
 that missing spelling with missing dispatch machinery.
 
+## Performance work — start at docs/PERFORMANCE.md
+
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) is the handoff for encoder wall-time
+work: where we stand against cjxl v0.12 per effort/size/threads, what landed,
+what was tried and rejected (with records), a ranked target list, the A/B
+protocol that survived, and ten measurement traps that each produced a confident
+wrong number on 2026-09-10. Read its **Traps** section before measuring anything.
+`scripts/make_ladder_crops.sh` regenerates the exact benchmark inputs.
+
 ## Current Status
 
 The VarDCT encoder implements every algorithmic component libjxl evaluates
