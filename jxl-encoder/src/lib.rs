@@ -67,7 +67,10 @@ pub(crate) mod sweep;
 #[cfg(feature = "hdr-gainmap")]
 pub mod hdr;
 pub(crate) mod heuristics;
-pub(crate) mod profile_phases;
+// `pub` (not pub(crate)) so the `cjxl-rs --features profile-phases`
+// phase snapshot in jxl-encoder-cli can reach `take_snapshot`.
+#[doc(hidden)]
+pub mod profile_phases;
 // W44-192: side-by-side prototype proving the `strategy_def!` proc-macro
 // generates code equivalent to the hand-written gate plumbing in `api.rs`.
 // Phase 1 of the W44-190 RFC. W44-193 migrated the production

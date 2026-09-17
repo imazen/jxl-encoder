@@ -4365,10 +4365,30 @@ impl VarDctEncoder {
             } else {
                 None
             };
-        let mask1x1_median_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
-            .as_deref()
-            .map(|m| median_mask1x1(m, padded_width, width, height, self.budget.as_ref()))
-            .transpose()?;
+        // The median/p25 discriminators feed only three consumers, all
+        // gated: the W44-109 qf pre-scale (`adaptive_quant_qf_seed != Off`
+        // — `resolved_adaptive_quant_qf_seed_scale_with_policy` early-returns
+        // on `Off` before reading them), the W44-168 env diagnostic path
+        // (`adaptive_buttloop_iters`), and the W44-169 narrow production
+        // dispatch (`adaptive_buttloop_iters_narrow`). When all three gates
+        // are off — `EncoderStrategy::Libjxl` sets them all off — the
+        // values are dead: skip the two full-image `select_nth_unstable`
+        // passes (each a `width*height` f32 copy + nth-element, ~10 ms at
+        // 2048²). Over-inclusive on purpose: any new consumer of either
+        // stat must extend this predicate.
+        let pre_scale_stats_consumed = !matches!(
+            self.resolved_improvements.adaptive_quant_qf_seed,
+            crate::api::AdaptiveQuantQfSeedPolicy::Off
+        ) || self.resolved_improvements.adaptive_buttloop_iters
+            || self.resolved_improvements.adaptive_buttloop_iters_narrow;
+        let mask1x1_median_for_pre_scale: Option<f32> = if pre_scale_stats_consumed {
+            mask1x1_for_pre_scale
+                .as_deref()
+                .map(|m| median_mask1x1(m, padded_width, width, height, self.budget.as_ref()))
+                .transpose()?
+        } else {
+            None
+        };
         #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
         if std::env::var_os("JXL_WP_DISPATCH_DUMP_MASK").is_some() {
             eprintln!(
@@ -4391,10 +4411,16 @@ impl VarDctEncoder {
         // mask is already in scope). `edge_density` comes from
         // `self.zenanalyze_proxies` (already on the encoder for 8-bit
         // sRGB layouts).
-        let mask1x1_p25_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
-            .as_deref()
-            .map(|m| percentile_mask1x1(m, padded_width, width, height, 0.25, self.budget.as_ref()))
-            .transpose()?;
+        let mask1x1_p25_for_pre_scale: Option<f32> = if pre_scale_stats_consumed {
+            mask1x1_for_pre_scale
+                .as_deref()
+                .map(|m| {
+                    percentile_mask1x1(m, padded_width, width, height, 0.25, self.budget.as_ref())
+                })
+                .transpose()?
+        } else {
+            None
+        };
         #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
         if std::env::var_os("JXL_WP_DISPATCH_DUMP_MASK").is_some() {
             eprintln!(
