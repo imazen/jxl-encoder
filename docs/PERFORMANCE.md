@@ -1,12 +1,67 @@
 # Encoder performance: state of play and handoff
 
-Last updated 2026-09-17. Every number here is copied from a committed benchmark
+Last updated 2026-09-17. **Nearly all measurements are from one Apple M4 Pro — see §0 before trusting them on x86.** Every number here is copied from a committed benchmark
 record, named inline — none is recalled or estimated. Where the record and this
 page disagree, **the record wins**; fix this page.
 
 This page is for picking the work up cold. Read **Traps** before measuring
 anything: most of the time lost on 2026-09-10 went to harnesses that produced a
 confident wrong number, not to the code.
+
+---
+
+## 0. Platform coverage — read this first if you are not on the Mac
+
+**Almost every number on this page is from ONE machine: an Apple M4 Pro
+(aarch64, 8 performance + 4 efficiency cores, macOS 25.5.0).** Only two
+microbenchmarks were run on x86. Treat everything else as an aarch64 result that
+has not been checked elsewhere.
+
+| measurement | Mac (aarch64) | x86 |
+|---|:-:|:-:|
+| forward-XYB kernel, SIMD vs scalar ([xyb_forward_kernel_platforms](../benchmarks/xyb_forward_kernel_platforms_2026-09-10.meta)) | yes | **yes** — Zen 5 (dev), Zen 4 (r7900x), Core Ultra 7 265K (i265) |
+| cube-root candidates ([cbrt_candidates](../benchmarks/cbrt_candidates_2026-09-10.meta)) | yes | **yes** — same three hosts |
+| ladder vs cjxl, every A/B in §2, e5 t8 phase scaling, the §4 rejections | yes | **no** |
+| byte identity / test suites | yes | yes, via CI (x86-64 Linux + Windows) |
+
+**What is known to differ by platform (measured):**
+
+- **SIMD vs scalar for forward XYB inverts.** On the Mac the old kernel's SIMD
+  path was 1.37× *slower* than scalar; on all three x86 hosts SIMD was 4.3-5.3×
+  *faster*. (That kernel has since been rewritten; the inversion is the lesson,
+  not the current state.)
+- **The cube-root speedup is much larger on x86.** The old f64 cube root was
+  2-2.7× slower than the vector candidates on aarch64 but **8-16× slower on
+  x86** (2.0-2.7 ns/value vs 0.17-0.32). The candidate *ordering* was identical
+  on all four hosts, which is why the choice was safe — but the encode-level win
+  in §2 (e3 −7…−8 %) was measured on the Mac only, so on x86 it is probably
+  larger and is **unmeasured**.
+
+**What is platform-specific by construction (not measured on x86):**
+
+- The **hand-written NEON tier** and both NEON rejections in §4 (128-bit width,
+  vectorised bit-hack) are aarch64 codegen findings. On x86 the `v3` tier runs
+  `f32x8` as native 256-bit AVX2, so the "polyfill vs native width" question does
+  not arise the same way.
+- The **code-layout artifact** that killed parallel `cluster_histograms` is a
+  property of that binary on that target. Its size, and possibly its sign, can
+  differ on x86 — which is a reason to re-measure there, not to ship blind.
+- **Every threads=8 number.** 8 threads on an M4 Pro is roughly its P-core
+  count on a hybrid CPU; the Zen hosts have 24-32 homogeneous SMT threads, and
+  the 265K (20 threads) is hybrid P+E in a different split. The t1→t8 scaling factors in §3 — and cjxl's own, which set the
+  ratios in §1 — are likely different there. **The claim "e5 t8 is a
+  thread-scaling problem" has not been checked on x86.**
+- cjxl dispatches through Highway, so the **reference arm's** speed is
+  platform-dependent too: the ours/cjxl ratios cannot be transferred.
+
+**What is platform-INDEPENDENT (correctness, checked):** the §8 bit-identity
+constraints. Cross-tier SIMD parity is gated on both architectures in CI, and
+the magetypes unfused-`mul_add` scalar-tier issue is a property of the scalar
+backend, reachable on any host without a vector token.
+
+**If the next box is x86, the highest-value first step is to re-run §1's ladder
+and §3's phase scaling there** (`r5900xt` is the quiet box; Zen 3, AVX2, no
+AVX-512) before acting on any target in §5.
 
 ---
 
