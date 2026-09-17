@@ -27,6 +27,10 @@ enum StrategyArg {
     /// against `cjxl` output as a regression gate. Bytes may be
     /// LARGER than `zenjxl` — that IS the point.
     Libjxl,
+    /// Bit-exact target: same strict bundle as `libjxl`, exposed under
+    /// the goal name. `--strategy libjxl` remains accepted as an alias.
+    #[value(name = "libjxl-exact", alias = "libjxl-strict")]
+    LibjxlExact,
     /// Lean Faster. Drops the heavy per-image content gates and the
     /// EPF/buttloop corrections to keep encode time leaner. Keeps the
     /// at-parity algorithm fixes plus the cheap photo-class entropy-mul
@@ -70,7 +74,9 @@ fn apply_strategy_to_lossy(
             };
             cfg.with_strategy(EncoderStrategy::Custom(Box::new(custom)))
         }
-        StrategyArg::Libjxl => cfg.with_strategy(EncoderStrategy::Libjxl),
+        StrategyArg::Libjxl | StrategyArg::LibjxlExact => {
+            cfg.with_strategy(EncoderStrategy::Libjxl)
+        }
         StrategyArg::LeanFaster => cfg.with_strategy(EncoderStrategy::LeanFaster),
         StrategyArg::Aggressive => cfg.with_strategy(EncoderStrategy::Aggressive),
     }
@@ -123,16 +129,10 @@ struct Args {
     /// bytes may be larger than `zenjxl`, that IS the point).
     /// `Custom` is API-only — drive it from Rust via
     /// `LossyConfig::with_strategy(EncoderStrategy::Custom(...))`
-    /// (W44-131 Chunk E). Mutually exclusive with `--lossless`.
-    /// Until Chunk G ships, `--strategy libjxl` flips only the
-    /// Section B/D divergences; the Section A effort-gate
-    /// consultation lands in Chunk G.
-    #[arg(
-        long,
-        value_enum,
-        default_value_t = StrategyArg::default(),
-        conflicts_with = "lossless",
-    )]
+    /// (W44-131 Chunk E). Accepted but ignored on the `--lossless`
+    /// path — strategy bundles are lossy-scoped (lossless parity has
+    /// its own knobs: --force-rct, --tree-learning, effort).
+    #[arg(long, value_enum, default_value_t = StrategyArg::default())]
     strategy: StrategyArg,
 
     /// Distance (alternative to quality, 0 = lossless, 1 = visually lossless)

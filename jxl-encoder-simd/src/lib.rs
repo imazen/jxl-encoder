@@ -267,7 +267,7 @@ pub use entropy::{
 pub use epf::{epf_step1, epf_step2, pad_plane};
 pub use fused_dct8::fused_dct8_entropy;
 pub use gab::gab_smooth_channel;
-pub use gaborish5x5::gaborish_5x5_channel;
+pub use gaborish5x5::{gaborish_5x5_channel, gaborish_5x5_channel_libjxl};
 pub use idct16::{idct_8x16, idct_16x8, idct_16x16};
 pub use idct32::{idct_16x32, idct_32x16, idct_32x32};
 pub use idct64::{idct_32x64, idct_64x32, idct_64x64};

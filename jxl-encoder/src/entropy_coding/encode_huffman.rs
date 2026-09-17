@@ -11,6 +11,7 @@ use super::encode::{
     ALPHABET_SIZE, CODE_LENGTH_CODES, EntropyCode, PrefixCode, encode_token_value,
     write_var_len_uint16,
 };
+use super::encode_ans::{copy_bits, write_context_map_nonsimple};
 use super::lz77::Lz77Params;
 use super::token::{Token, UintCoder};
 use crate::bit_writer::BitWriter;
@@ -680,6 +681,13 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
 }
 
 /// Write the context map.
+///
+/// Matches libjxl's `EncodeContextMap` (`enc_context_map.cc:65-139`):
+/// compares three encodings by actual bit cost and emits the cheapest —
+/// simple raw-bits, MTF-or-direct Huffman, and ANS+LZ77. Previously this
+/// unconditionally emitted raw prefix-code tokens, which is a ~7.6 Kbit
+/// regression on the 7425-entry 15-cluster AC context map versus the
+/// ANS+LZ77 encoding libjxl produces for the same map.
 pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<()> {
     #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
@@ -688,98 +696,48 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
         return Ok(());
     }
 
-    // Check if all context map values are 0
-    let max_val = *code.context_map.iter().max().unwrap_or(&0);
-    if max_val == 0 {
-        writer.write(3, 1)?; // simple code, 0 bits per entry
+    let context_map = &code.context_map[..code.num_contexts];
+    let num_histograms = code.num_prefix_codes;
+
+    // num_histograms == 1 (or an all-zero map): trivial 3-bit encoding.
+    let max_val = *context_map.iter().max().unwrap_or(&0);
+    if num_histograms <= 1 || max_val == 0 {
+        writer.write(1, 1)?; // simple code
+        writer.write(2, 0)?; // 0 bits per entry
         return Ok(());
     }
 
-    // Not simple: write 0, no MTF, no LZ77
-    writer.write(3, 0)?;
+    // Simple encoding is only possible when entry_bits < 4 (≤8 histograms).
+    // When possible, compare simple vs non-simple and pick the cheaper one —
+    // same as libjxl enc_context_map.cc:113 and the ANS-path writer.
+    let entry_bits = super::encode_ans::ceil_log2_nonzero_usize(num_histograms);
+    if entry_bits < 4 {
+        let simple_cost = 3 + entry_bits * context_map.len();
+        let mut scratch = BitWriter::with_capacity(context_map.len());
+        write_context_map_nonsimple(context_map, &mut scratch)?;
+        let nonsimple_cost = scratch.bits_written();
 
-    // Build tokens from context map
-    let mut tokens: Vec<Token> = Vec::with_capacity(code.num_contexts);
-    for i in 0..code.num_contexts {
-        tokens.push(Token::new(0, code.context_map[i] as u32));
-    }
-
-    // Build histogram for context map values
-    let mut histogram = [0u32; ALPHABET_SIZE];
-    for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
-        histogram[encoded.token as usize] += 1;
-    }
-
-    // Create a single prefix code for the context map
-    let mut ctxmap_depths = [0u8; ALPHABET_SIZE];
-    let mut length = ALPHABET_SIZE;
-    while length > 0 && histogram[length - 1] == 0 {
-        length -= 1;
-    }
-    create_huffman_tree(&histogram, length.max(1), 15, &mut ctxmap_depths);
-
-    #[cfg(feature = "debug-tokens")]
-    {
-        let depth_slice: Vec<u8> = ctxmap_depths.iter().take(length).copied().collect();
-        debug_log!(
-            "  write_context_map: {} contexts, length={}, depths={:?}",
-            code.num_contexts,
-            length,
-            depth_slice
-        );
-    }
-
-    let mut ctxmap_bits = [0u16; ALPHABET_SIZE];
-    convert_bit_depths_to_symbols(&ctxmap_depths, &mut ctxmap_bits);
-
-    let ctxmap_code = PrefixCode {
-        depths: ctxmap_depths,
-        bits: ctxmap_bits,
-    };
-
-    #[cfg(feature = "debug-tokens")]
-    let before_prefix = writer.bits_written();
-
-    // Write the prefix code for the context map
-    write_prefix_codes(&[ctxmap_code], writer)?;
-
-    #[cfg(feature = "debug-tokens")]
-    let after_prefix = writer.bits_written();
-
-    // Write the context map tokens. Singleton ctxmap codes are 0-bit
-    // simple codes — see `has_single_used_symbol`.
-    let ctxmap_zero_bit = has_single_used_symbol(&ctxmap_code.depths);
-    for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
-        let tok = encoded.token as usize;
-        let depth = if ctxmap_zero_bit {
-            0
+        if simple_cost <= nonsimple_cost {
+            writer.write(1, 1)?; // simple_context_map = true
+            writer.write(2, entry_bits as u64)?;
+            for &ctx in context_map {
+                writer.write(entry_bits, ctx as u64)?;
+            }
         } else {
-            ctxmap_code.depths[tok] as usize
-        };
-        let bits = if depth == 0 {
-            0
-        } else {
-            ctxmap_code.bits[tok] as u64
-        };
-
-        // Combine Huffman bits and extra bits
-        let data = bits | ((encoded.bits as u64) << depth);
-        let total_bits = depth + encoded.nbits as usize;
-
-        writer.write(total_bits, data)?;
+            let scratch_bytes = scratch.finish_with_padding();
+            copy_bits(&scratch_bytes, nonsimple_cost, writer)?;
+        }
+    } else {
+        write_context_map_nonsimple(context_map, writer)?;
     }
 
     #[cfg(feature = "debug-tokens")]
     {
         let total = writer.bits_written() - start_bits;
-        let prefix_bits = after_prefix - before_prefix;
-        let token_bits = writer.bits_written() - after_prefix;
         debug_log!(
-            "  write_context_map bits: header=3, prefix_code={}, tokens={}, total={}",
-            prefix_bits,
-            token_bits,
+            "  write_context_map: {} contexts, {} histograms, total={} bits",
+            code.num_contexts,
+            num_histograms,
             total
         );
     }
@@ -1117,7 +1075,30 @@ pub fn build_entropy_code_from_token_groups(
             tiny_histograms[ctx].total_count = total;
         }
 
+        #[cfg(feature = "debug-tokens")]
+        {
+            for (i, h) in tiny_histograms.iter().enumerate() {
+                let nz: Vec<(usize, u32)> = h
+                    .counts
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &c)| c > 0)
+                    .map(|(s, &c)| (s, c))
+                    .collect();
+                crate::vardct::debug_log::write_debug_log(&format!(
+                    "  precluster ctx {}: total={} syms={:?}",
+                    i, h.total_count, nz
+                ));
+            }
+        }
         let context_map = cluster_histograms(&mut tiny_histograms);
+        #[cfg(feature = "debug-tokens")]
+        crate::vardct::debug_log::write_debug_log(&format!(
+            "  precluster result: {} -> {} histograms, ctx_map={:?}",
+            num_contexts,
+            tiny_histograms.len(),
+            context_map
+        ));
         let counts: Vec<Vec<u32>> = tiny_histograms.iter().map(|h| h.counts.to_vec()).collect();
         let totals: Vec<u32> = tiny_histograms.iter().map(|h| h.total_count).collect();
         (context_map, counts, totals)

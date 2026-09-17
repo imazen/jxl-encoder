@@ -97,7 +97,10 @@ use std::path::PathBuf;
 // #103 changes four preset defaults; no gate was added or removed.
 /// 2026-09-17 added `cfl_pass1_min_effort` Section A gate → 40.
 /// 2026-09-17 added `dc_encode_libjxl_parity` Section D gate → 41.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 41;
+/// 2026-09-17 added `ac_meta_libjxl_tree` Section D gate → 42.
+/// 2026-09-17 added `gaborish_libjxl_parity` Section D gate → 43.
+/// 2026-09-17 added `entropy_codes_libjxl_parity` Section D gate → 44.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 44;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -267,6 +270,29 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         }
         if row_ref.contains("x_qm_scale") {
             out.push("x_qm_scale".to_string());
+        }
+        // 2026-09-17: `dc_encode_libjxl_parity` Section D gate — no
+        // W-code; the table row carries the bitstream field verbatim.
+        if row_ref.contains("extra_dc_precision") {
+            out.push("extra_dc_precision".to_string());
+        }
+        // 2026-09-17: `ac_meta_libjxl_tree` Section D gate — "W45-SPEC-1"
+        // is not a W-code; the table row carries the libjxl tree-kind
+        // name verbatim.
+        if row_ref.contains("kFalconACMeta") {
+            out.push("kFalconACMeta".to_string());
+        }
+        // 2026-09-17: `gaborish_libjxl_parity` Section D gate —
+        // "W45-SPEC-2" is not a W-code; the table row carries the
+        // libjxl kernel name verbatim.
+        if row_ref.contains("Symmetric5") {
+            out.push("Symmetric5".to_string());
+        }
+        // 2026-09-17: `entropy_codes_libjxl_parity` Section D gate —
+        // "W45-SPEC-3" is not a W-code; the table row carries the
+        // libjxl params name verbatim.
+        if row_ref.contains("ForModular") {
+            out.push("ForModular".to_string());
         }
     }
     out

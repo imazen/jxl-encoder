@@ -1257,6 +1257,7 @@ fn fill_dc_group_state_dispatch(
                         region_w,
                         region_h,
                         enable_adaptive_gaborish,
+                        profile.gaborish_libjxl_kernel,
                         budget,
                     )?;
                 }
@@ -1297,6 +1298,7 @@ fn fill_dc_group_state_dispatch(
                 padded_width,
                 padded_height,
                 enable_adaptive_gaborish,
+                profile.gaborish_libjxl_kernel,
                 budget,
             )?;
         }

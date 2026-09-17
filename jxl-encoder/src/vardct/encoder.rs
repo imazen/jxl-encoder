@@ -4774,6 +4774,7 @@ impl VarDctEncoder {
                 padded_width,
                 padded_height,
                 self.enable_adaptive_gaborish,
+                self.profile.gaborish_libjxl_kernel,
                 self.budget.as_ref(),
             )?;
         }
@@ -7120,6 +7121,7 @@ impl VarDctEncoder {
                     padded_width,
                     precomputed.padded_height,
                     self.enable_adaptive_gaborish,
+                    self.profile.gaborish_libjxl_kernel,
                     self.budget.as_ref(),
                 )?;
                 Some([x, y, b])
