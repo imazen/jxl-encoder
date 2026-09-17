@@ -276,6 +276,22 @@ jxl_encoder_macros::strategy_def! {
             // clic_22ea12 e9 d=4 partial first-blocks 2,241 → 2,495
             // (vs cjxl 2,499 = +0.16% parity) and bytes -0.6%.
             cfl_zero_for_search = true,
+            // Strict parity: mirror libjxl's `nl_dc` cluster —
+            // `extra_dc_precision = 1` at effort >= 4 and the
+            // QuantizeWP DC shape alongside it. Corrects the
+            // W44-AUDIT-8 inversion (the audit read `speed_tier <
+            // kFalcon` as effort <= 7; the tier ordering is
+            // kTortoise=1..kLightning=9 so it is effort >= 4).
+            dc_encode_libjxl_parity = true,
+            ac_meta_libjxl_tree = true,
+            // Strict parity: mirror borders + row-grouped accumulation
+            // + f32 weight chain — libjxl `Symmetric5` bit-exact.
+            gaborish_libjxl_parity = true,
+            // Strict parity: always dynamic (two-pass) entropy codes,
+            // and the DC/AC-meta modular stream picks ANS vs prefix per
+            // libjxl's `ForModular` rule instead of gating on the
+            // VarDCT `use_ans` effort flag.
+            entropy_codes_libjxl_parity = true,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -371,6 +387,12 @@ jxl_encoder_macros::strategy_def! {
             // behaviour at the search side regresses Zenjxl-class cost
             // model assumptions).
             cfl_zero_for_search = false,
+            // DC encode stays on the Zenjxl schedule (2x precision at
+            // effort <= 7, plain round) — not a libjxl mirror.
+            dc_encode_libjxl_parity = false,
+            ac_meta_libjxl_tree = false,
+            gaborish_libjxl_parity = false,
+            entropy_codes_libjxl_parity = false,
         },
 
         /// Zenjxl — production-shipping bundle. Every field matches
@@ -484,6 +506,12 @@ jxl_encoder_macros::strategy_def! {
             // Default-flip discussion deferred to a follow-on chunk
             // after wider-corpus measurement on the Zenjxl path.
             cfl_zero_for_search = false,
+            // DC encode stays on the Zenjxl schedule — not a libjxl
+            // mirror (see Section D row).
+            dc_encode_libjxl_parity = false,
+            ac_meta_libjxl_tree = false,
+            gaborish_libjxl_parity = false,
+            entropy_codes_libjxl_parity = false,
         },
 
         /// Aggressive — currently equivalent to `Zenjxl` after
@@ -557,6 +585,12 @@ jxl_encoder_macros::strategy_def! {
             // the standing pattern. See Zenjxl preset for the OPT-IN
             // rationale.
             cfl_zero_for_search = false,
+            // DC encode stays on the Zenjxl schedule — not a libjxl
+            // mirror (see Section D row).
+            dc_encode_libjxl_parity = false,
+            ac_meta_libjxl_tree = false,
+            gaborish_libjxl_parity = false,
+            entropy_codes_libjxl_parity = false,
         },
     }
 
@@ -1190,6 +1224,93 @@ jxl_encoder_macros::strategy_def! {
             divergence_section = "D",
             divergence_row_ref = "W44-205 coeff_orders skip buckets 2+4 (Zenjxl extension of W44-201)",
         },
+
+        /// DC encode `nl_dc` cluster: `extra_dc_precision` effort gate
+        /// + `QuantizeWP` DC shaping, mirroring libjxl
+        /// `enc_cache.cc:232` (`nl_dc = speed_tier < kFalcon` ⇒
+        /// effort >= 4) + `enc_modular.cc:1587-1674` (nl_dc ⇒
+        /// `extra_dc_precision = 1` and the WP-predicted/deadzoned
+        /// `QuantizeWP` quantizer).
+        ///
+        /// The W44-AUDIT-8 audit misread the `SpeedTier` ordering
+        /// (`kTortoise = 1` .. `kLightning = 9`; `speed_tier = 10 -
+        /// effort`) as "effort <= 7", so the shared profile emits the
+        /// inverted schedule: `extra_dc_precision = 1` at effort 1-7
+        /// where libjxl wants it only at effort >= 4, and `0` at
+        /// effort >= 8 where libjxl keeps `1`. Verified against cjxl
+        /// v0.12.0 output (`jxl-inspect dc-coeffs`): `extra_precision`
+        /// is 0 at e1-e3 and 1 at e4-e10.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`]:
+        /// on it, `extra_dc_precision` becomes `effort >= 4` and
+        /// `use_libjxl_wp_dc_quant` becomes `effort >= 4` (the nl_dc
+        /// branch fires exactly when libjxl's does). Zenjxl keeps its
+        /// own DC schedule — the W44-AUDIT-8 claim of unconditional
+        /// cjxl parity was wrong, but the current shape is now part of
+        /// the Zenjxl quality/byte calibration and flips need their
+        /// own re-validation. Section D.
+        dc_encode_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "extra_dc_precision + QuantizeWP nl_dc gate (libjxl effort >= 4; W44-AUDIT-8 inversion)",
+        },
+
+        /// Whether the AC-metadata modular stream's MA tree follows
+        /// libjxl's per-effort predefined-tree policy instead of our
+        /// fixed 11-leaf subtree.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`]:
+        /// the AC-metadata stream emits `kFalconACMeta` (single
+        /// `Predictor::Left` leaf) at effort <= 3 and on < 1024-pixel
+        /// streams at effort 4-7, `kACMeta` (27-node) otherwise at
+        /// effort 4-7 — mirroring `AddACMetadata`'s `tree_kind`
+        /// selection (`enc_modular.cc:1749-1763`). Effort >= 8 uses
+        /// `kLearn` upstream, not yet ported — strict parity remains
+        /// approximate there.
+        ///
+        /// Zenjxl keeps its fixed subtree — the structured contexts
+        /// repay their tree header on complex content while the
+        /// single-leaf policy optimises header size on small/flat
+        /// inputs (content-dependent → Tier-1 fork). Section D.
+        ac_meta_libjxl_tree: bool {
+            divergence_section = "D",
+            divergence_row_ref = "ac_meta tree kind (libjxl kFalconACMeta/kACMeta/kLearn per-effort vs fixed subtree; W45-SPEC-1)",
+        },
+
+        /// Whether the gaborish 5x5 inverse uses the libjxl-bit-exact
+        /// `Symmetric5` kernel instead of the shipping SIMD kernel.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`]:
+        /// reproduces `convolve_symmetric5.cc` exactly — `Mirror`
+        /// border wrap (`-2 → 1` vs our clamp `-2 → 0`), per-row
+        /// horizontal 1x5 weighted sums combined as `sum0 + sum1`
+        /// (vs our distance-class sums + FMA chain), and the f32
+        /// `normalize` / `normalize_mul` weight chain (vs our f64
+        /// chain rounded per-weight).
+        ///
+        /// Zenjxl keeps its kernel — the differences are parity-only
+        /// (border ring + ULP-scale rounding), not a quality axis;
+        /// carrying a second convolution in the shared path is not
+        /// justified for default output. Section D.
+        gaborish_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "gaborish 5x5 kernel (libjxl Symmetric5 mirror borders + row-grouped accumulation vs distance-class FMA; W45-SPEC-2)",
+        },
+        /// Always-dynamic entropy codes + per-stream ANS rule. Under
+        /// `EncoderStrategy::Libjxl` forces `optimize_codes = true`
+        /// (libjxl has no static-Huffman path — it builds fast dynamic
+        /// codes at every effort) and makes the DC/AC-metadata modular
+        /// stream pick ANS vs prefix by libjxl's `ForModular`
+        /// `use_prefix_code` rule (ANS unless <100 tokens or
+        /// all-singleton) instead of gating on the VarDCT `use_ans`
+        /// effort flag. The AC stream's own ANS choice is unchanged —
+        /// libjxl's `HistogramParams(tier)` kFastest clustering at
+        /// effort <= 2 maps exactly onto our `use_ans = effort >= 3`
+        /// schedule. `false` (default) keeps the shipping Zenjxl
+        /// single-pass/static-Huffman path at effort 1-2.
+        entropy_codes_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "entropy code construction (libjxl always dynamic + per-stream ANS-vs-prefix ForModular rule vs single-pass static Huffman at e1-e2; W45-SPEC-3)",
+        },
     }
 }
 
@@ -1547,12 +1668,39 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         row_ref: "W44-205 coeff_orders skip buckets 2+4 (Zenjxl extension of W44-201)",
         raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_DISABLE_MEDIUM_BUCKETS,
     },
+    DivergenceEntry {
+        gate_name: "dc_encode_libjxl_parity",
+        section: "D",
+        row_ref: "extra_dc_precision + QuantizeWP nl_dc gate (libjxl effort >= 4; W44-AUDIT-8 inversion)",
+        raw: __CUSTOM_DIVERGENCE_DC_ENCODE_LIBJXL_PARITY,
+    },
     // Section A — #101 auto-resample regime switch (measured OFF for zen strategies)
     DivergenceEntry {
         gate_name: "auto_resample_libjxl_rule",
         section: "A",
         row_ref: "#101 auto-resample regime switch (libjxl d>=10 -> 2x + d*0.25+0.25): Libjxl on, Zenjxl/Aggressive/LeanFaster off",
         raw: __CUSTOM_DIVERGENCE_AUTO_RESAMPLE_LIBJXL_RULE,
+    },
+    // Section D — AC-metadata predefined-tree policy (2026-09-17)
+    DivergenceEntry {
+        gate_name: "ac_meta_libjxl_tree",
+        section: "D",
+        row_ref: "ac_meta tree kind (libjxl kFalconACMeta/kACMeta/kLearn per-effort vs fixed subtree; W45-SPEC-1)",
+        raw: __CUSTOM_DIVERGENCE_AC_META_LIBJXL_TREE,
+    },
+    // Section D — gaborish 5x5 kernel parity (2026-09-17)
+    DivergenceEntry {
+        gate_name: "gaborish_libjxl_parity",
+        section: "D",
+        row_ref: "gaborish 5x5 kernel (libjxl Symmetric5 mirror borders + row-grouped accumulation vs distance-class FMA; W45-SPEC-2)",
+        raw: __CUSTOM_DIVERGENCE_GABORISH_LIBJXL_PARITY,
+    },
+    // Section D — entropy code construction parity (2026-09-17)
+    DivergenceEntry {
+        gate_name: "entropy_codes_libjxl_parity",
+        section: "D",
+        row_ref: "entropy code construction (libjxl always dynamic + per-stream ANS-vs-prefix ForModular rule vs single-pass static Huffman at e1-e2; W45-SPEC-3)",
+        raw: __CUSTOM_DIVERGENCE_ENTROPY_CODES_LIBJXL_PARITY,
     },
 ];
 

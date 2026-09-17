@@ -734,8 +734,10 @@ pub struct ANSEncodingHistogram {
     pub cost: f32,
     /// Encoding method:
     /// - 0: flat distribution
-    /// - 1: small code (1-2 symbols)
-    /// - 2-13: shift value + 1
+    /// - 1: small code (only when `num_symbols <= 2`) OR shift=0 general
+    /// - 2-13: shift value + 1 (general code)
+    /// libjxl shares this numbering: `method_ = min(shift, 11) + 1`, so
+    /// method 1 is shift-0 general whenever `num_symbols > 2`.
     pub method: u32,
     /// Position of the balancing bin (absorbs rounding error).
     pub omit_pos: usize,
@@ -845,7 +847,6 @@ impl ANSEncodingHistogram {
             let log2_alpha = jxl_simd::fast_log2f(alphabet_size as f32);
             histo.total_count as f32 * log2_alpha
         };
-        let flat_header_cost = 2.0 + 8.0; // method=0 marker + alphabet size
         let mut best = Self {
             counts: {
                 let alpha = alphabet_size as u32;
@@ -859,12 +860,13 @@ impl ANSEncodingHistogram {
                 c
             },
             alphabet_size,
-            cost: flat_header_cost + flat_data_cost,
+            cost: 0.0, // measured below via exact serialization
             method: 0, // Flat
             omit_pos: 0,
             num_symbols,
             symbols,
         };
+        best.cost = best.exact_header_cost() + flat_data_cost;
 
         // Reuse a single candidate buffer across all shift iterations to avoid
         // allocating a new vec![0i32; alphabet_size] for each shift.
@@ -1179,9 +1181,13 @@ impl ANSEncodingHistogram {
     }
 
     /// Estimate encoding cost (header + data bits).
-    /// Uses precise ANS cost model matching libjxl's `Cost()` (enc_ans.cc:376-380).
+    /// Matches libjxl's approach (enc_ans.cc:139-143): the header cost is the
+    /// *exact* serialized size measured by encoding the candidate into a
+    /// scratch writer (`SizeWriter` in libjxl), not a formulaic estimate —
+    /// high-precision shifts serialize counts with more bits, which only the
+    /// real write path can price correctly.
     fn estimate_cost(&self, histo: &super::histogram::Histogram) -> f32 {
-        let header_cost = self.estimate_header_cost();
+        let header_cost = self.exact_header_cost();
         let data_cost = estimate_data_bits_normalized(
             &histo.counts,
             &self.counts,
@@ -1191,24 +1197,14 @@ impl ANSEncodingHistogram {
         header_cost + data_cost
     }
 
-    /// Estimate header encoding cost.
-    fn estimate_header_cost(&self) -> f32 {
-        if self.method == 0 {
-            // Flat: 2 bits + alphabet size encoding
-            2.0 + 8.0
-        } else if self.num_symbols <= 2 {
-            // Small code
-            if self.num_symbols <= 1 {
-                3.0 + 8.0 // nsym=0: marker + symbol
-            } else {
-                3.0 + 16.0 + 12.0 // nsym=2: marker + 2 symbols + count
-            }
-        } else {
-            // General code: method encoding + alphabet + frequencies
-            let method_bits = 4.0; // Unary + suffix for method
-            let alphabet_bits = 8.0;
-            let freq_bits = self.alphabet_size as f32 * 5.0; // Rough estimate
-            method_bits + alphabet_bits + freq_bits
+    /// Exact serialized header size in bits, measured by writing the
+    /// histogram to a scratch `BitWriter` (libjxl uses a counting
+    /// `SizeWriter`; the encoding is identical either way).
+    fn exact_header_cost(&self) -> f32 {
+        let mut scratch = BitWriter::with_capacity(self.alphabet_size + 16);
+        match self.write(&mut scratch) {
+            Ok(()) => scratch.bits_written() as f32,
+            Err(_) => f32::MAX,
         }
     }
 

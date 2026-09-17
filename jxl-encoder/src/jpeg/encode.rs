@@ -539,6 +539,7 @@ fn encode_jpeg_to_jxl_inner(
                 &wp_tree,
                 wp_num_ctx,
                 num_dc_groups,
+                crate::vardct::dc_tree_learn::AcMetaTreeKind::Ours,
             );
         Some((wp_tree, wrapped, total_ctx, dc_remap, ac_map))
     } else {
@@ -607,6 +608,7 @@ fn encode_jpeg_to_jxl_inner(
                 &cfl_map,
                 &ac_strategy,
                 None,
+                crate::vardct::dc_tree_learn::AcMetaTreeKind::Ours,
             );
             for tok in t.iter_mut() {
                 tok.set_context(ac_map[tok.context() as usize]);
@@ -635,6 +637,7 @@ fn encode_jpeg_to_jxl_inner(
                 &cfl_map,
                 &ac_strategy,
                 None,
+                crate::vardct::dc_tree_learn::AcMetaTreeKind::Ours,
             )
         };
         dc_tokens_per_group.push(dc_tokens);
@@ -1518,7 +1521,7 @@ type WpDcTreeState = (
     Vec<(u32, u32)>,
     u32,
     Vec<u32>,
-    [u32; crate::vardct::dc_tree_learn::NUM_AC_META_CONTEXTS as usize],
+    [u32; crate::vardct::dc_tree_learn::NUM_AC_META_CLASSES as usize],
 );
 
 /// Per-channel JPEG coefficient planes produced by [`map_jpeg_coefficients`]:

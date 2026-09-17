@@ -199,6 +199,7 @@ fn tokenize_dc_group_lf_frame(
     ac_strategy: &AcStrategyMap,
     sharpness_map: Option<&[u8]>,
     ac_meta_ctx_map: &[u32],
+    ac_meta_kind: super::dc_tree_learn::AcMetaTreeKind,
 ) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
     let dc_gy = dc_group_idx / xsize_dc_groups;
@@ -221,6 +222,7 @@ fn tokenize_dc_group_lf_frame(
         cfl_map,
         ac_strategy,
         sharpness_map,
+        ac_meta_kind,
     );
     let md_tokens: Vec<Token> = md_tokens
         .into_iter()
@@ -248,6 +250,7 @@ fn tokenize_dc_group_wp(
     wp_dc_tree: &super::dc_tree_learn::DcTree,
     dc_ctx_remap: &[u32],
     ac_meta_ctx_map: &[u32],
+    ac_meta_kind: super::dc_tree_learn::AcMetaTreeKind,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
@@ -275,6 +278,7 @@ fn tokenize_dc_group_wp(
         cfl_map,
         ac_strategy,
         sharpness_map,
+        ac_meta_kind,
     );
     // Remap DC token contexts to match BFS ordering of merged tree.
     let dc_tokens: Vec<Token> = dc_tokens
@@ -320,6 +324,7 @@ fn tokenize_dc_group_learned(
     learned_dc_tree: &super::dc_tree_learn::DcTree,
     dc_ctx_remap: &[u32],
     ac_meta_ctx_map: &[u32],
+    ac_meta_kind: super::dc_tree_learn::AcMetaTreeKind,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
@@ -356,6 +361,7 @@ fn tokenize_dc_group_learned(
         cfl_map,
         ac_strategy,
         sharpness_map,
+        ac_meta_kind,
     );
     // Remap DC token contexts to match BFS ordering of merged tree.
     let dc_tokens: Vec<Token> = dc_tokens
@@ -2009,6 +2015,7 @@ impl VarDctEncoder {
                 padded_width,
                 padded_height,
                 self.enable_adaptive_gaborish,
+                self.profile.gaborish_libjxl_kernel,
                 self.budget.as_ref(),
             )?;
         }
@@ -2697,6 +2704,62 @@ impl VarDctEncoder {
         // task returns; 8c dispatches DC-group sections through
         // `Buffering::BufferedOutput` via `WritableSeek`.
 
+        // AC-metadata subtree shape. Default is our fixed 11-leaf tree;
+        // strict Libjxl (`profile.ac_meta_libjxl_tree`) selects libjxl's
+        // per-effort predefined trees — `AddACMetadata`'s `tree_kind`
+        // selection (`enc_modular.cc:1749-1763`):
+        //   effort <= 3 (`speed_tier >= kFalcon`)  → kFalconACMeta
+        //   effort 4-7 (`speed_tier > kKitten`)   → kACMeta
+        //   effort >= 8                            → kLearn (not ported;
+        //                                             stays on our tree)
+        // `kACMeta` collapses to the single-leaf `Predictor::Left` tree
+        // when the stream's total pixels < 1024
+        // (`enc_encoding.cc:497-499`). The pixel total is the sum over
+        // all four AC-metadata channels across every LF group:
+        // 2·(CfL tiles) + 2·(first blocks) + (block grid).
+        let cfl_tiles = cfl_map.xsize_tiles * cfl_map.ysize_tiles;
+        let mut first_blocks = 0usize;
+        for by in 0..ysize_blocks {
+            for bx in 0..xsize_blocks {
+                first_blocks += usize::from(ac_strategy.is_first(bx, by));
+            }
+        }
+        let ac_meta_pixels = 2 * cfl_tiles + 2 * first_blocks + xsize_blocks * ysize_blocks;
+        let ac_meta_kind = if self.profile.ac_meta_libjxl_tree {
+            if self.effort <= 3 {
+                super::dc_tree_learn::AcMetaTreeKind::Falcon
+            } else if self.effort <= 7 {
+                if ac_meta_pixels < 1024 {
+                    super::dc_tree_learn::AcMetaTreeKind::Falcon
+                } else {
+                    super::dc_tree_learn::AcMetaTreeKind::AcMeta
+                }
+            } else {
+                // libjxl uses kLearn for AC-meta at effort >= 8 — not
+                // ported; strict parity stays approximate there.
+                super::dc_tree_learn::AcMetaTreeKind::Ours
+            }
+        } else {
+            // Zen hybrid (measured 2026-09-17, arm-D A/B on abcorpus +
+            // chroma fixtures, ~40 cells): the ~50-token structured-tree
+            // header only pays when the AC-meta stream is large enough.
+            // Wins are unambiguous below ~300 stream px (64 px cells
+            // −1.6 % to −2.4 %, flat64 −21 B); the 350-800 px band is
+            // genuinely content-dependent (webshot_112 +0.50 % vs
+            // webshot_128 −1.11 % at ~370 px — a cost-based pick was
+            // tried and its estimator couldn't resolve the ~50-bit
+            // margins). At effort ≤3 QF/EPF values are flat, so the win
+            // band extends to ~600 px with ties at 776. Conservative
+            // thresholds sit inside the measured all-win zones:
+            // strictly better-or-neutral on every corpus cell.
+            let falcon_limit = if self.effort <= 3 { 640 } else { 320 };
+            if ac_meta_pixels < falcon_limit {
+                super::dc_tree_learn::AcMetaTreeKind::Falcon
+            } else {
+                super::dc_tree_learn::AcMetaTreeKind::Ours
+            }
+        };
+
         // Build context tree and remap tables (shared across DC groups).
         // Four modes:
         //   1. `use_lf_frame`: DC is in a separate frame — only AC metadata
@@ -2731,7 +2794,8 @@ impl VarDctEncoder {
 
         if self.use_lf_frame {
             // AC-metadata-only tree (no DC contexts needed)
-            let (tree_tokens, num_ctx, ctx_map) = super::dc_tree_learn::ac_metadata_only_tree();
+            let (tree_tokens, num_ctx, ctx_map) =
+                super::dc_tree_learn::ac_metadata_only_tree(ac_meta_kind);
             learned_tree_tokens = Some(tree_tokens);
             total_contexts = num_ctx;
             ac_meta_ctx_map = ctx_map;
@@ -2817,6 +2881,7 @@ impl VarDctEncoder {
                     &learned_tree,
                     learned_num_contexts,
                     num_dc_groups,
+                    ac_meta_kind,
                 );
 
             // Candidate B: predefined kWPFixedDC (libjxl per-stream override).
@@ -2828,6 +2893,7 @@ impl VarDctEncoder {
                     &wp_dc_tree,
                     wp_dc_num_contexts,
                     num_dc_groups,
+                    ac_meta_kind,
                 );
 
             // Trial-tokenize DC residuals for both candidates over the full image.
@@ -2938,6 +3004,7 @@ impl VarDctEncoder {
                     &wp_dc_tree,
                     wp_dc_num_contexts,
                     num_dc_groups,
+                    ac_meta_kind,
                 );
 
             learned_tree_tokens = Some(wrapped_tokens);
@@ -3072,6 +3139,7 @@ impl VarDctEncoder {
                             learned_tree,
                             dc_ctx_remap,
                             &ac_meta_ctx_map,
+                            ac_meta_kind,
                             dc_budget,
                         )?
                     } else if let Some((wp_dc_tree, dc_ctx_remap)) = wp_dc_state.as_ref() {
@@ -3088,6 +3156,7 @@ impl VarDctEncoder {
                             wp_dc_tree,
                             dc_ctx_remap,
                             &ac_meta_ctx_map,
+                            ac_meta_kind,
                             dc_budget,
                         )?
                     } else {
@@ -3101,6 +3170,7 @@ impl VarDctEncoder {
                             ac_strategy,
                             sharpness_map,
                             &ac_meta_ctx_map,
+                            ac_meta_kind,
                         )?
                     };
 
@@ -3427,7 +3497,20 @@ impl VarDctEncoder {
             // fully-deterministic streams (see
             // prefix_beats_ans_for_token_groups). Streams carrying LZ77
             // params stay ANS — our LZ77 writer is ANS-only.
-            let dc_use_ans = self.use_ans
+            //
+            // Strict `EncoderStrategy::Libjxl`
+            // (`entropy_codes_libjxl_parity`): the DC/AC-metadata
+            // modular stream is ANS-eligible regardless of the VarDCT
+            // `use_ans` effort flag — libjxl's
+            // `HistogramParams::ForModular` never effort-gates the
+            // modular stream's ANS choice (kFast clustering at
+            // effort <= 7 → `use_prefix_code` fires only for <100
+            // tokens or all-singleton histograms). Only the AC stream
+            // is effort-gated in libjxl (`HistogramParams(tier)`
+            // kFastest at effort <= 2 → prefix), which the shared
+            // `use_ans` schedule already mirrors.
+            let dc_ans_eligible = self.use_ans || self.profile.entropy_codes_libjxl_parity;
+            let dc_use_ans = dc_ans_eligible
                 && (dc_lz77_params.is_some()
                     || !crate::entropy_coding::encode::prefix_beats_ans_for_token_groups(
                         &dc_groups,
@@ -5258,7 +5341,16 @@ impl VarDctEncoder {
             writer.write(4, 3)?; // use global tree, default wp, no transforms
 
             // Write DC tokens
+            #[cfg(feature = "debug-tokens")]
+            let _dc_tok_start = writer.bits_written();
             dc_code.write_tokens(dc_tokens, dc_lz77_params, writer)?;
+            #[cfg(feature = "debug-tokens")]
+            debug_log!(
+                "dc_group {}: dc_tokens={} tokens, {} bits",
+                dc_group_idx,
+                dc_tokens.len(),
+                writer.bits_written() - _dc_tok_start
+            );
         }
 
         // Chunk-2.b: modular DC sub-bitstream (squeeze LfGroup band)
@@ -5292,7 +5384,16 @@ impl VarDctEncoder {
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
         // Write AC metadata tokens
+        #[cfg(feature = "debug-tokens")]
+        let _acm_tok_start = writer.bits_written();
         dc_code.write_tokens(ac_metadata_tokens, dc_lz77_params, writer)?;
+        #[cfg(feature = "debug-tokens")]
+        debug_log!(
+            "dc_group {}: ac_meta={} tokens, {} bits",
+            dc_group_idx,
+            ac_metadata_tokens.len(),
+            writer.bits_written() - _acm_tok_start
+        );
 
         Ok(())
     }

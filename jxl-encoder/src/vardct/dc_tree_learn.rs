@@ -2116,6 +2116,91 @@ mod tests {
 /// Number of AC metadata contexts (EPF=1, CfL=2, QF=4, ACS=4).
 pub const NUM_AC_META_CONTEXTS: u32 = 11;
 
+/// Number of AC-metadata *semantic classes* the ctx map can route.
+///
+/// Classes 0-10 match [`NUM_AC_META_CONTEXTS`] (EPF=0, YtoB=1, YtoX=2,
+/// QF=3-6, ACS=7-10). Classes 11-14 are the four EPF quadrants of the
+/// libjxl `kACMeta` predefined tree (top>3 / left>3) — only emitted by
+/// the [`AcMetaTreeKind::AcMeta`] tokenizer variant.
+pub const NUM_AC_META_CLASSES: u32 = 15;
+
+/// Which predefined subtree shape to emit for the AC-metadata modular
+/// stream (CfL maps + ACS/QF block info + EPF sharpness).
+///
+/// Mirrors libjxl's `ModularOptions::TreeKind` selection in
+/// `AddACMetadata` (`enc_modular.cc:1749-1763`): `kFalconACMeta` at
+/// `speed_tier >= kFalcon` (effort <= 3), `kACMeta` at
+/// `speed_tier > kKitten` (effort 4-7), `kLearn` at effort >= 8.
+/// [`Self::AcMeta`] additionally collapses to the single-leaf tree when
+/// the stream's total pixels < 1024, matching `PredefinedTree`'s
+/// small-image early return (`enc_encoding.cc:497-499`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcMetaTreeKind {
+    /// Our fixed 11-leaf subtree (kACMeta minus the EPF quad-split).
+    /// Default for all non-Libjxl strategies at every effort.
+    Ours,
+    /// libjxl `kFalconACMeta`: single `Predictor::Left` leaf covering all
+    /// four channels. Emitted by libjxl at effort <= 3 (and at 4-7 when
+    /// the stream totals < 1024 pixels).
+    Falcon,
+    /// libjxl `kACMeta`: the 27-node predefined tree — identical channel
+    /// routing and QF/ACS left-neighbour splits as [`Self::Ours`], plus a
+    /// 4-way EPF split on (top>3, left>3). Emitted by libjxl at effort
+    /// 4-7 for larger images. Effort >= 8 uses `kLearn` upstream, which
+    /// is not yet ported — strict parity stays approximate there.
+    AcMeta,
+}
+
+/// libjxl `kACMeta` predefined tree (enc_encoding.cc:495-531), 27 nodes
+/// in libjxl's `push_back` order. `(property, splitval, lchild, rchild)`
+/// where `lchild` is taken when `property > splitval` — matching
+/// `PropertyDecisionNode::Split`. `property == -1` marks a leaf; its
+/// predictor and semantic class come from [`ac_meta_leaf_pred_class`].
+const AC_META_TREE_SPEC: [(i32, i32, usize, usize); 27] = [
+    (0, 1, 1, 2),    // 0: channel > 1
+    (0, 2, 3, 4),    // 1: channel > 2 → EPF; ≤ 2 → block_info
+    (0, 0, 5, 6),    // 2: channel > 0 → b_from_y; ≤ 0 → x_from_y
+    (6, 3, 21, 22),  // 3: EPF — top > 3
+    (2, 0, 7, 8),    // 4: block_info — y > 0 → QF; ≤ 0 → ACS
+    (-1, 0, 0, 0),   // 5: b_from_y leaf (Gradient)
+    (-1, 0, 0, 0),   // 6: x_from_y leaf (Gradient)
+    (7, 5, 9, 10),   // 7: QF — left > 5
+    (7, 5, 15, 16),  // 8: ACS — left > 5
+    (7, 11, 11, 12), // 9: QF left>5 — left > 11
+    (7, 3, 13, 14),  // 10: QF left≤5 — left > 3
+    (-1, 0, 0, 0),   // 11: QF left>11
+    (-1, 0, 0, 0),   // 12: QF 5<left≤11
+    (-1, 0, 0, 0),   // 13: QF 3<left≤5
+    (-1, 0, 0, 0),   // 14: QF left≤3
+    (7, 11, 17, 18), // 15: ACS left>5 — left > 11
+    (7, 3, 19, 20),  // 16: ACS left≤5 — left > 3
+    (-1, 0, 0, 0),   // 17: ACS left>11
+    (-1, 0, 0, 0),   // 18: ACS 5<left≤11
+    (-1, 0, 0, 0),   // 19: ACS 3<left≤5
+    (-1, 0, 0, 0),   // 20: ACS left≤3
+    (7, 3, 23, 24),  // 21: EPF top>3 — left > 3
+    (7, 3, 25, 26),  // 22: EPF top≤3 — left > 3
+    (-1, 0, 0, 0),   // 23: EPF top>3, left>3
+    (-1, 0, 0, 0),   // 24: EPF top>3, left≤3
+    (-1, 0, 0, 0),   // 25: EPF top≤3, left>3
+    (-1, 0, 0, 0),   // 26: EPF top≤3, left≤3
+];
+
+/// `(predictor, semantic_class)` for each leaf index of
+/// [`AC_META_TREE_SPEC`]. Predictor ids: 0=Zero, 1=Left, 5=Gradient.
+/// Classes: YtoB=1, YtoX=2, QF=3-6, ACS=7-10, EPF-quadrants=11-14
+/// (leaf order top>3·left>3, top>3·left≤3, top≤3·left>3, top≤3·left≤3).
+fn ac_meta_leaf_pred_class(i: usize) -> (u32, u32) {
+    match i {
+        5 => (5, 1),                          // b_from_y → Gradient
+        6 => (5, 2),                          // x_from_y → Gradient
+        11..=14 => (1, (i - 11 + 3) as u32),  // QF → Left, classes 3-6
+        17..=20 => (0, (i - 17 + 7) as u32),  // ACS → Zero, classes 7-10
+        23..=26 => (0, (i - 23 + 11) as u32), // EPF quads → classes 11-14
+        _ => unreachable!("kACMeta leaf index {i}"),
+    }
+}
+
 /// Create tree tokens for a merged MA tree with AC metadata routing and learned DC subtree.
 ///
 /// Builds a tree where:
@@ -2130,16 +2215,18 @@ pub const NUM_AC_META_CONTEXTS: u32 = 11;
 /// - `total_contexts`: total number of contexts (AC meta + dummy + DC)
 /// - `dc_ctx_remap`: maps original DC context ID → BFS context ID
 ///   (needed because BFS leaf order may differ from DFS context assignment)
-/// - `ac_meta_ctx_map`: maps original AC metadata context [0-10] → BFS context ID
+/// - `ac_meta_ctx_map`: maps original AC metadata context [0-14] → BFS context ID
+///   (slots 11-14 only populated for [`AcMetaTreeKind::AcMeta`])
 pub fn tree_tokens_with_ac_metadata_prefix(
     dc_tree: &DcTree,
     learned_num_contexts: u32,
     num_dc_groups: usize,
+    ac_meta_kind: AcMetaTreeKind,
 ) -> (
     Vec<(u32, u32)>,
     u32,
     Vec<u32>,
-    [u32; NUM_AC_META_CONTEXTS as usize],
+    [u32; NUM_AC_META_CLASSES as usize],
 ) {
     use super::common::pack_signed;
     use alloc::collections::VecDeque;
@@ -2147,7 +2234,8 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     // ─── Node types for building the merged tree ───
 
     enum LeafType {
-        AcMeta(u32), // original AC metadata context 0-10
+        AcMeta(u32), // original AC metadata context 0-14
+        AcMetaAll,   // single-leaf tree — every AC-meta class lands here
         Dummy,       // padding chain leaf (no tokens, wasted context)
         Dc(u32),     // original DC context from learned tree
     }
@@ -2190,7 +2278,7 @@ pub fn tree_tokens_with_ac_metadata_prefix(
         idx
     };
 
-    // ─── Build AC metadata subtree (bottom-up for correct index references) ───
+    // ─── Build AC metadata subtree ───
     //
     // Channel ordering (from jxl-oxide hf_metadata.rs):
     //   ch0 = x_from_y (YtoX CfL), ch1 = b_from_y (YtoB CfL),
@@ -2198,36 +2286,58 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     //
     // Context assignment (from dc_coding.rs):
     //   EPF=0(Zero), YtoB=1(Gradient), YtoX=2(Gradient),
-    //   QF=3-6(Left), ACS=7-10(Zero)
+    //   QF=3-6(Left), ACS=7-10(Zero), EPF-quadrants=11-14 (AcMeta only)
 
-    // QF leaves: predictor=1 (Left), contexts 3-6
-    let qf3 = mk_leaf(&mut flat, 1, LeafType::AcMeta(3));
-    let qf4 = mk_leaf(&mut flat, 1, LeafType::AcMeta(4));
-    let qf5 = mk_leaf(&mut flat, 1, LeafType::AcMeta(5));
-    let qf6 = mk_leaf(&mut flat, 1, LeafType::AcMeta(6));
-    // ACS leaves: predictor=0 (Zero), contexts 7-10
-    let acs7 = mk_leaf(&mut flat, 0, LeafType::AcMeta(7));
-    let acs8 = mk_leaf(&mut flat, 0, LeafType::AcMeta(8));
-    let acs9 = mk_leaf(&mut flat, 0, LeafType::AcMeta(9));
-    let acs10 = mk_leaf(&mut flat, 0, LeafType::AcMeta(10));
-    // QF splits on property 7 (left neighbor): >11, >5, >3, <=3
-    let qf_l = mk_internal(&mut flat, 7, 11, qf3, qf4);
-    let qf_r = mk_internal(&mut flat, 7, 3, qf5, qf6);
-    let qf_root = mk_internal(&mut flat, 7, 5, qf_l, qf_r);
-    // ACS splits on property 7 (left neighbor): same thresholds
-    let acs_l = mk_internal(&mut flat, 7, 11, acs7, acs8);
-    let acs_r = mk_internal(&mut flat, 7, 3, acs9, acs10);
-    let acs_root = mk_internal(&mut flat, 7, 5, acs_l, acs_r);
-    // Block info: property 2 (y), splitval=0 → LEFT=QF(y>0), RIGHT=ACS(y=0)
-    let blockinfo = mk_internal(&mut flat, 2, 0, qf_root, acs_root);
-    // Channel leaves
-    let epf = mk_leaf(&mut flat, 0, LeafType::AcMeta(0)); // ch3, Zero pred
-    let ytob = mk_leaf(&mut flat, 5, LeafType::AcMeta(1)); // ch1, Gradient pred
-    let ytox = mk_leaf(&mut flat, 5, LeafType::AcMeta(2)); // ch0, Gradient pred
-    // Channel routing: prop 0 (channel)
-    let ch2 = mk_internal(&mut flat, 0, 2, epf, blockinfo); // ch>2→EPF, ch<=2→blockinfo
-    let ch0 = mk_internal(&mut flat, 0, 0, ytob, ytox); // ch>0→YtoB, ch<=0→YtoX
-    let ac_root = mk_internal(&mut flat, 0, 1, ch2, ch0); // ch>1→ch2, ch<=1→ch0
+    let ac_root = match ac_meta_kind {
+        AcMetaTreeKind::Falcon => {
+            // libjxl `kFalconACMeta` (enc_encoding.cc:491-494): a single
+            // `Predictor::Left` leaf covering every channel.
+            mk_leaf(&mut flat, 1, LeafType::AcMetaAll)
+        }
+        AcMetaTreeKind::AcMeta => {
+            // libjxl `kACMeta` — see AC_META_TREE_SPEC.
+            let base = flat.len();
+            for (i, &(p, s, l, r)) in AC_META_TREE_SPEC.iter().enumerate() {
+                if p < 0 {
+                    let (pred, class) = ac_meta_leaf_pred_class(i);
+                    mk_leaf(&mut flat, pred, LeafType::AcMeta(class));
+                } else {
+                    mk_internal(&mut flat, p, s, base + l, base + r);
+                }
+            }
+            base
+        }
+        AcMetaTreeKind::Ours => {
+            // QF leaves: predictor=1 (Left), contexts 3-6
+            let qf3 = mk_leaf(&mut flat, 1, LeafType::AcMeta(3));
+            let qf4 = mk_leaf(&mut flat, 1, LeafType::AcMeta(4));
+            let qf5 = mk_leaf(&mut flat, 1, LeafType::AcMeta(5));
+            let qf6 = mk_leaf(&mut flat, 1, LeafType::AcMeta(6));
+            // ACS leaves: predictor=0 (Zero), contexts 7-10
+            let acs7 = mk_leaf(&mut flat, 0, LeafType::AcMeta(7));
+            let acs8 = mk_leaf(&mut flat, 0, LeafType::AcMeta(8));
+            let acs9 = mk_leaf(&mut flat, 0, LeafType::AcMeta(9));
+            let acs10 = mk_leaf(&mut flat, 0, LeafType::AcMeta(10));
+            // QF splits on property 7 (left neighbor): >11, >5, >3, <=3
+            let qf_l = mk_internal(&mut flat, 7, 11, qf3, qf4);
+            let qf_r = mk_internal(&mut flat, 7, 3, qf5, qf6);
+            let qf_root = mk_internal(&mut flat, 7, 5, qf_l, qf_r);
+            // ACS splits on property 7 (left neighbor): same thresholds
+            let acs_l = mk_internal(&mut flat, 7, 11, acs7, acs8);
+            let acs_r = mk_internal(&mut flat, 7, 3, acs9, acs10);
+            let acs_root = mk_internal(&mut flat, 7, 5, acs_l, acs_r);
+            // Block info: property 2 (y), splitval=0 → LEFT=QF(y>0), RIGHT=ACS(y=0)
+            let blockinfo = mk_internal(&mut flat, 2, 0, qf_root, acs_root);
+            // Channel leaves
+            let epf = mk_leaf(&mut flat, 0, LeafType::AcMeta(0)); // ch3, Zero pred
+            let ytob = mk_leaf(&mut flat, 5, LeafType::AcMeta(1)); // ch1, Gradient pred
+            let ytox = mk_leaf(&mut flat, 5, LeafType::AcMeta(2)); // ch0, Gradient pred
+            // Channel routing: prop 0 (channel)
+            let ch2 = mk_internal(&mut flat, 0, 2, epf, blockinfo); // ch>2→EPF, ch<=2→blockinfo
+            let ch0 = mk_internal(&mut flat, 0, 0, ytob, ytox); // ch>0→YtoB, ch<=0→YtoX
+            mk_internal(&mut flat, 0, 1, ch2, ch0) // ch>1→ch2, ch<=1→ch0
+        }
+    };
 
     // ─── Build DC subtree ───
     //
@@ -2282,7 +2392,7 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     let mut tokens = Vec::new();
     let mut queue = VecDeque::new();
     let mut leaf_ctx = 0u32;
-    let mut ac_meta_ctx_map = [0u32; NUM_AC_META_CONTEXTS as usize];
+    let mut ac_meta_ctx_map = [0u32; NUM_AC_META_CLASSES as usize];
     let mut dc_ctx_map = Vec::new();
 
     // Emit root token
@@ -2304,6 +2414,9 @@ pub fn tree_tokens_with_ac_metadata_prefix(
                 match cn.leaf_type {
                     LeafType::AcMeta(orig) => {
                         ac_meta_ctx_map[orig as usize] = leaf_ctx;
+                    }
+                    LeafType::AcMetaAll => {
+                        ac_meta_ctx_map.fill(leaf_ctx);
                     }
                     LeafType::Dc(orig) => {
                         dc_ctx_map.push((orig, leaf_ctx));
@@ -2338,12 +2451,15 @@ pub fn tree_tokens_with_ac_metadata_prefix(
 /// so the main VarDCT frame's LfGlobal tree only needs AC metadata contexts.
 ///
 /// Returns (tree_tokens, total_contexts, ac_meta_ctx_map).
-pub fn ac_metadata_only_tree() -> (Vec<(u32, u32)>, u32, [u32; NUM_AC_META_CONTEXTS as usize]) {
+pub fn ac_metadata_only_tree(
+    ac_meta_kind: AcMetaTreeKind,
+) -> (Vec<(u32, u32)>, u32, [u32; NUM_AC_META_CLASSES as usize]) {
     use super::common::pack_signed;
     use alloc::collections::VecDeque;
 
     enum LeafType {
         AcMeta(u32),
+        AcMetaAll,
     }
 
     struct FlatNode {
@@ -2385,33 +2501,62 @@ pub fn ac_metadata_only_tree() -> (Vec<(u32, u32)>, u32, [u32; NUM_AC_META_CONTE
     };
 
     // Build AC metadata subtree (same structure as in tree_tokens_with_ac_metadata_prefix)
-    let qf3 = mk_leaf(&mut flat, 1, LeafType::AcMeta(3));
-    let qf4 = mk_leaf(&mut flat, 1, LeafType::AcMeta(4));
-    let qf5 = mk_leaf(&mut flat, 1, LeafType::AcMeta(5));
-    let qf6 = mk_leaf(&mut flat, 1, LeafType::AcMeta(6));
-    let acs7 = mk_leaf(&mut flat, 0, LeafType::AcMeta(7));
-    let acs8 = mk_leaf(&mut flat, 0, LeafType::AcMeta(8));
-    let acs9 = mk_leaf(&mut flat, 0, LeafType::AcMeta(9));
-    let acs10 = mk_leaf(&mut flat, 0, LeafType::AcMeta(10));
-    let qf_l = mk_internal(&mut flat, 7, 11, qf3, qf4);
-    let qf_r = mk_internal(&mut flat, 7, 3, qf5, qf6);
-    let qf_root = mk_internal(&mut flat, 7, 5, qf_l, qf_r);
-    let acs_l = mk_internal(&mut flat, 7, 11, acs7, acs8);
-    let acs_r = mk_internal(&mut flat, 7, 3, acs9, acs10);
-    let acs_root = mk_internal(&mut flat, 7, 5, acs_l, acs_r);
-    let blockinfo = mk_internal(&mut flat, 2, 0, qf_root, acs_root);
-    let epf = mk_leaf(&mut flat, 0, LeafType::AcMeta(0));
-    let ytob = mk_leaf(&mut flat, 5, LeafType::AcMeta(1));
-    let ytox = mk_leaf(&mut flat, 5, LeafType::AcMeta(2));
-    let ch2 = mk_internal(&mut flat, 0, 2, epf, blockinfo);
-    let ch0 = mk_internal(&mut flat, 0, 0, ytob, ytox);
-    let root = mk_internal(&mut flat, 0, 1, ch2, ch0);
+    let root = match ac_meta_kind {
+        AcMetaTreeKind::Falcon => mk_leaf(&mut flat, 1, LeafType::AcMetaAll),
+        AcMetaTreeKind::AcMeta => {
+            let base = flat.len();
+            for (i, &(p, s, l, r)) in AC_META_TREE_SPEC.iter().enumerate() {
+                if p < 0 {
+                    let (pred, class) = ac_meta_leaf_pred_class(i);
+                    mk_leaf(&mut flat, pred, LeafType::AcMeta(class));
+                } else {
+                    mk_internal(&mut flat, p, s, base + l, base + r);
+                }
+            }
+            base
+        }
+        AcMetaTreeKind::Ours => {
+            let qf3 = mk_leaf(&mut flat, 1, LeafType::AcMeta(3));
+            let qf4 = mk_leaf(&mut flat, 1, LeafType::AcMeta(4));
+            let qf5 = mk_leaf(&mut flat, 1, LeafType::AcMeta(5));
+            let qf6 = mk_leaf(&mut flat, 1, LeafType::AcMeta(6));
+            let acs7 = mk_leaf(&mut flat, 0, LeafType::AcMeta(7));
+            let acs8 = mk_leaf(&mut flat, 0, LeafType::AcMeta(8));
+            let acs9 = mk_leaf(&mut flat, 0, LeafType::AcMeta(9));
+            let acs10 = mk_leaf(&mut flat, 0, LeafType::AcMeta(10));
+            let qf_l = mk_internal(&mut flat, 7, 11, qf3, qf4);
+            let qf_r = mk_internal(&mut flat, 7, 3, qf5, qf6);
+            let qf_root = mk_internal(&mut flat, 7, 5, qf_l, qf_r);
+            let acs_l = mk_internal(&mut flat, 7, 11, acs7, acs8);
+            let acs_r = mk_internal(&mut flat, 7, 3, acs9, acs10);
+            let acs_root = mk_internal(&mut flat, 7, 5, acs_l, acs_r);
+            let blockinfo = mk_internal(&mut flat, 2, 0, qf_root, acs_root);
+            let epf = mk_leaf(&mut flat, 0, LeafType::AcMeta(0));
+            let ytob = mk_leaf(&mut flat, 5, LeafType::AcMeta(1));
+            let ytox = mk_leaf(&mut flat, 5, LeafType::AcMeta(2));
+            let ch2 = mk_internal(&mut flat, 0, 2, epf, blockinfo);
+            let ch0 = mk_internal(&mut flat, 0, 0, ytob, ytox);
+            mk_internal(&mut flat, 0, 1, ch2, ch0)
+        }
+    };
 
     // BFS to generate token stream
     let mut tokens = Vec::new();
     let mut queue = VecDeque::new();
     let mut leaf_ctx = 0u32;
-    let mut ac_meta_ctx_map = [0u32; NUM_AC_META_CONTEXTS as usize];
+    let mut ac_meta_ctx_map = [0u32; NUM_AC_META_CLASSES as usize];
+
+    if flat[root].property < 0 {
+        // Single-leaf tree (Falcon): emit just the leaf's 5 tokens.
+        let cn = &flat[root];
+        tokens.push((1, 0));
+        tokens.push((2, cn.predictor));
+        tokens.push((3, 0));
+        tokens.push((4, 0));
+        tokens.push((5, 0));
+        ac_meta_ctx_map.fill(0);
+        return (tokens, 1, ac_meta_ctx_map);
+    }
 
     let rn = &flat[root];
     tokens.push((1, (rn.property + 1) as u32));
@@ -2427,8 +2572,14 @@ pub fn ac_metadata_only_tree() -> (Vec<(u32, u32)>, u32, [u32; NUM_AC_META_CONTE
                 tokens.push((3, 0));
                 tokens.push((4, 0));
                 tokens.push((5, 0));
-                if let Some(LeafType::AcMeta(orig)) = &cn.leaf_type {
-                    ac_meta_ctx_map[*orig as usize] = leaf_ctx;
+                match &cn.leaf_type {
+                    Some(LeafType::AcMeta(orig)) => {
+                        ac_meta_ctx_map[*orig as usize] = leaf_ctx;
+                    }
+                    Some(LeafType::AcMetaAll) => {
+                        ac_meta_ctx_map.fill(leaf_ctx);
+                    }
+                    None => {}
                 }
                 leaf_ctx += 1;
             } else {
@@ -2989,7 +3140,7 @@ fn test_wrapped_tree_tokens() {
     }];
 
     let (wrapped_tokens, total_contexts, dc_remap, ac_map) =
-        tree_tokens_with_ac_metadata_prefix(&tree, 1, 1);
+        tree_tokens_with_ac_metadata_prefix(&tree, 1, 1, AcMetaTreeKind::Ours);
     eprintln!(
         "Merged tree: {} tokens, {} contexts, dc_remap={:?}, ac_map={:?}",
         wrapped_tokens.len(),
@@ -3053,7 +3204,8 @@ fn test_wrapped_tree_tokens_depth1_dc() {
         },
     ];
 
-    let (_, total_contexts, dc_remap, ac_map) = tree_tokens_with_ac_metadata_prefix(&tree, 2, 1);
+    let (_, total_contexts, dc_remap, ac_map) =
+        tree_tokens_with_ac_metadata_prefix(&tree, 2, 1, AcMetaTreeKind::Ours);
     eprintln!(
         "Depth-1 DC: total={}, dc_remap={:?}, ac_map={:?}",
         total_contexts, dc_remap, ac_map
@@ -3121,7 +3273,8 @@ fn test_wrapped_tree_tokens_deep_dc() {
         });
     }
 
-    let (_, total_contexts, dc_remap, ac_map) = tree_tokens_with_ac_metadata_prefix(&tree, 32, 1);
+    let (_, total_contexts, dc_remap, ac_map) =
+        tree_tokens_with_ac_metadata_prefix(&tree, 32, 1, AcMetaTreeKind::Ours);
     eprintln!(
         "Deep DC: total={}, dc_remap={:?}, ac_map={:?}",
         total_contexts, dc_remap, ac_map

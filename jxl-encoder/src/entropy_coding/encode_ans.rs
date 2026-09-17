@@ -935,7 +935,10 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
 /// The inner entropy code has 1 context (the context map itself). When LZ77 is
 /// enabled, the inner Histograms decoder bumps that to 2 (LZ77 distance
 /// context) and reads a 2-entry inner-inner context map.
-fn write_context_map_nonsimple(context_map: &[u8], writer: &mut BitWriter) -> Result<()> {
+pub(crate) fn write_context_map_nonsimple(
+    context_map: &[u8],
+    writer: &mut BitWriter,
+) -> Result<()> {
     // Strategy 1: legacy Huffman+MTF, write to scratch and measure cost.
     let mut huffman_scratch = BitWriter::with_capacity(context_map.len());
     write_context_map_nonsimple_huffman(context_map, &mut huffman_scratch)?;
@@ -1324,7 +1327,7 @@ fn write_hybrid_uint_config_value(
 }
 
 /// CeilLog2Nonzero for usize, matching libjxl.
-fn ceil_log2_nonzero_usize(x: usize) -> usize {
+pub(crate) fn ceil_log2_nonzero_usize(x: usize) -> usize {
     debug_assert!(x > 0);
     let x = x as u32;
     let floor = 31 - x.leading_zeros();
