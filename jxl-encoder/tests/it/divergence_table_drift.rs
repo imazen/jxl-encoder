@@ -95,7 +95,9 @@ use std::path::PathBuf;
 /// T4 (2026-08-31) added `dc_adaptive_smoothing` Section D gate → 36.
 /// T4 (2026-08-31) added `x_qm_scale_from_original_distance` Section D gate → 37.
 // #103 changes four preset defaults; no gate was added or removed.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 39;
+/// 2026-09-17 added `cfl_pass1_min_effort` Section A gate → 40.
+/// 2026-09-17 added `dc_encode_libjxl_parity` Section D gate → 41.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 41;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -225,6 +227,11 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         }
         if row_ref.contains("epf_dynamic_sharpness") {
             out.push("epf_dynamic_sharpness".to_string());
+        }
+        // 2026-09-17: `cfl_pass1_min_effort` Section A gate — no W-code;
+        // the table row carries the identifier verbatim.
+        if row_ref.contains("cfl_pass1") {
+            out.push("cfl_pass1".to_string());
         }
         // W44-AUDIT-9 / SA-G Fix C: the row_ref carries an `AUDIT-N`
         // suffix which the W-code parser doesn't recognise (digits-only
