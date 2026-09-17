@@ -500,90 +500,99 @@ pub(crate) fn compute_cfl_map_for_tiles(
     }
 
     // Process region tiles in parallel. Each tile is independent (reads
-    // shared XYB, writes only to its own ytox/ytob slot).
-    let tile_results = crate::parallel::parallel_map(num_region_tiles, |idx| {
-        let sub_tx = idx % region_w;
-        let sub_ty = idx / region_w;
-        let abs_tx = tile_bx0 + sub_tx;
-        let abs_ty = tile_by0 + sub_ty;
-        let tile_blk_x0 = abs_tx * TILE_DIM_IN_BLOCKS;
-        let tile_blk_y0 = abs_ty * TILE_DIM_IN_BLOCKS;
-        let tile_blk_x1 = (tile_blk_x0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
-        let tile_blk_y1 = (tile_blk_y0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
+    // shared XYB, writes only to its own ytox/ytob slot). Scratch buffers
+    // are per-worker (`map_init`), not per-tile: every read of a scratch
+    // element is preceded by a write inside the same tile, so stale values
+    // from the previous tile are never observed.
+    let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
+    let tile_results = crate::parallel::parallel_map_with_scratch(
+        num_region_tiles,
+        || {
+            (
+                vec![0.0f32; max_coeffs_per_tile],
+                vec![0.0f32; max_coeffs_per_tile],
+                vec![0.0f32; max_coeffs_per_tile],
+                vec![0.0f32; max_coeffs_per_tile],
+            )
+        },
+        |scratch, idx| {
+            let (coeffs_yx, coeffs_x, coeffs_yb, coeffs_b) = scratch;
+            let sub_tx = idx % region_w;
+            let sub_ty = idx / region_w;
+            let abs_tx = tile_bx0 + sub_tx;
+            let abs_ty = tile_by0 + sub_ty;
+            let tile_blk_x0 = abs_tx * TILE_DIM_IN_BLOCKS;
+            let tile_blk_y0 = abs_ty * TILE_DIM_IN_BLOCKS;
+            let tile_blk_x1 = (tile_blk_x0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
+            let tile_blk_y1 = (tile_blk_y0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
 
-        // Thread-local scratch buffers
-        let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
-        let mut coeffs_yx = vec![0.0f32; max_coeffs_per_tile];
-        let mut coeffs_x = vec![0.0f32; max_coeffs_per_tile];
-        let mut coeffs_yb = vec![0.0f32; max_coeffs_per_tile];
-        let mut coeffs_b = vec![0.0f32; max_coeffs_per_tile];
+            let mut num_ac = 0usize;
 
-        let mut num_ac = 0usize;
+            for by in tile_blk_y0..tile_blk_y1 {
+                for bx in tile_blk_x0..tile_blk_x1 {
+                    let mut block_y = [0.0f32; DCT_BLOCK_SIZE];
+                    let mut block_x = [0.0f32; DCT_BLOCK_SIZE];
+                    let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
 
-        for by in tile_blk_y0..tile_blk_y1 {
-            for bx in tile_blk_x0..tile_blk_x1 {
-                let mut block_y = [0.0f32; DCT_BLOCK_SIZE];
-                let mut block_x = [0.0f32; DCT_BLOCK_SIZE];
-                let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
+                    let x0 = bx * BLOCK_DIM;
+                    for dy in 0..BLOCK_DIM {
+                        let src = (by * BLOCK_DIM + dy) * stride + x0;
+                        let dst = dy * BLOCK_DIM;
+                        block_y[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_y[src..src + BLOCK_DIM]);
+                        block_x[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_x[src..src + BLOCK_DIM]);
+                        block_b[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_b[src..src + BLOCK_DIM]);
+                    }
 
-                let x0 = bx * BLOCK_DIM;
-                for dy in 0..BLOCK_DIM {
-                    let src = (by * BLOCK_DIM + dy) * stride + x0;
-                    let dst = dy * BLOCK_DIM;
-                    block_y[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_y[src..src + BLOCK_DIM]);
-                    block_x[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_x[src..src + BLOCK_DIM]);
-                    block_b[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_b[src..src + BLOCK_DIM]);
+                    let mut dct_y = [0.0f32; DCT_BLOCK_SIZE];
+                    let mut dct_x = [0.0f32; DCT_BLOCK_SIZE];
+                    let mut dct_b = [0.0f32; DCT_BLOCK_SIZE];
+                    dct_8x8(&block_y, &mut dct_y);
+                    dct_8x8(&block_x, &mut dct_x);
+                    dct_8x8(&block_b, &mut dct_b);
+
+                    // Zero out DC so it doesn't affect the AC-only fitting.
+                    dct_y[0] = 0.0;
+                    dct_x[0] = 0.0;
+                    dct_b[0] = 0.0;
+
+                    for i in 0..DCT_BLOCK_SIZE {
+                        coeffs_yx[num_ac + i] = dct_y[i] * inv_qm_x[i];
+                        coeffs_x[num_ac + i] = dct_x[i] * inv_qm_x[i];
+                        coeffs_yb[num_ac + i] = dct_y[i] * inv_qm_b[i];
+                        coeffs_b[num_ac + i] = dct_b[i] * inv_qm_b[i];
+                    }
+                    num_ac += DCT_BLOCK_SIZE;
                 }
-
-                let mut dct_y = [0.0f32; DCT_BLOCK_SIZE];
-                let mut dct_x = [0.0f32; DCT_BLOCK_SIZE];
-                let mut dct_b = [0.0f32; DCT_BLOCK_SIZE];
-                dct_8x8(&block_y, &mut dct_y);
-                dct_8x8(&block_x, &mut dct_x);
-                dct_8x8(&block_b, &mut dct_b);
-
-                // Zero out DC so it doesn't affect the AC-only fitting.
-                dct_y[0] = 0.0;
-                dct_x[0] = 0.0;
-                dct_b[0] = 0.0;
-
-                for i in 0..DCT_BLOCK_SIZE {
-                    coeffs_yx[num_ac + i] = dct_y[i] * inv_qm_x[i];
-                    coeffs_x[num_ac + i] = dct_x[i] * inv_qm_x[i];
-                    coeffs_yb[num_ac + i] = dct_y[i] * inv_qm_b[i];
-                    coeffs_b[num_ac + i] = dct_b[i] * inv_qm_b[i];
-                }
-                num_ac += DCT_BLOCK_SIZE;
             }
-        }
 
-        let tx_val = find_best_multiplier(
-            &coeffs_yx,
-            &coeffs_x,
-            num_ac,
-            0.0,
-            K_DISTANCE_MULTIPLIER_AC,
-            use_newton,
-            newton_eps,
-            newton_max_iters,
-            newton_libjxl_parity,
-            newton_libjxl_math_with_ls_warm_start,
-        );
-        let tb_val = find_best_multiplier(
-            &coeffs_yb,
-            &coeffs_b,
-            num_ac,
-            1.0,
-            K_DISTANCE_MULTIPLIER_AC,
-            use_newton,
-            newton_eps,
-            newton_max_iters,
-            newton_libjxl_parity,
-            newton_libjxl_math_with_ls_warm_start,
-        );
+            let tx_val = find_best_multiplier(
+                coeffs_yx.as_slice(),
+                coeffs_x.as_slice(),
+                num_ac,
+                0.0,
+                K_DISTANCE_MULTIPLIER_AC,
+                use_newton,
+                newton_eps,
+                newton_max_iters,
+                newton_libjxl_parity,
+                newton_libjxl_math_with_ls_warm_start,
+            );
+            let tb_val = find_best_multiplier(
+                coeffs_yb.as_slice(),
+                coeffs_b.as_slice(),
+                num_ac,
+                1.0,
+                K_DISTANCE_MULTIPLIER_AC,
+                use_newton,
+                newton_eps,
+                newton_max_iters,
+                newton_libjxl_parity,
+                newton_libjxl_math_with_ls_warm_start,
+            );
 
-        (tx_val, tb_val)
-    });
+            (tx_val, tb_val)
+        },
+    );
 
     // Unpack results into ytox/ytob arrays in region-local row-major
     // order.
@@ -647,178 +656,186 @@ pub fn refine_cfl_map(
     let pass1_ytox = cfl_map.ytox.clone();
     let pass1_ytob = cfl_map.ytob.clone();
 
-    // Process tiles in parallel. Each tile is independent.
-    let tile_results = crate::parallel::parallel_map(num_tiles, |tile_idx| {
-        let tx = tile_idx % xsize_tiles;
-        let ty = tile_idx / xsize_tiles;
-        let tile_bx0 = tx * TILE_DIM_IN_BLOCKS;
-        let tile_by0 = ty * TILE_DIM_IN_BLOCKS;
-        let tile_bx1 = (tile_bx0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
-        let tile_by1 = (tile_by0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
+    // Process tiles in parallel. Each tile is independent. Scratch buffers
+    // are per-worker (`map_init`), not per-tile: every read of a scratch
+    // element is preceded by a write inside the same tile, so stale values
+    // from the previous tile are never observed.
+    const MAX_COEFF_AREA: usize = 4096;
+    let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
+    let tile_results = crate::parallel::parallel_map_with_scratch(
+        num_tiles,
+        || {
+            (
+                vec![0.0f32; max_coeffs_per_tile],
+                vec![0.0f32; max_coeffs_per_tile],
+                vec![0.0f32; max_coeffs_per_tile],
+                vec![0.0f32; max_coeffs_per_tile],
+                vec![0.0f32; MAX_COEFF_AREA],
+                vec![0.0f32; MAX_COEFF_AREA],
+                vec![0.0f32; MAX_COEFF_AREA],
+            )
+        },
+        |scratch, tile_idx| {
+            let (coeffs_yx, coeffs_x, coeffs_yb, coeffs_b, dct_y, dct_x, dct_b) = scratch;
+            let tx = tile_idx % xsize_tiles;
+            let ty = tile_idx / xsize_tiles;
+            let tile_bx0 = tx * TILE_DIM_IN_BLOCKS;
+            let tile_by0 = ty * TILE_DIM_IN_BLOCKS;
+            let tile_bx1 = (tile_bx0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
+            let tile_by1 = (tile_by0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
 
-        // Thread-local scratch buffers
-        let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
-        let mut coeffs_yx = vec![0.0f32; max_coeffs_per_tile];
-        let mut coeffs_x = vec![0.0f32; max_coeffs_per_tile];
-        let mut coeffs_yb = vec![0.0f32; max_coeffs_per_tile];
-        let mut coeffs_b = vec![0.0f32; max_coeffs_per_tile];
+            let mut num_ac = 0usize;
+            let buf_cap = coeffs_yx.len();
 
-        const MAX_COEFF_AREA: usize = 4096;
-        let mut dct_y = vec![0.0f32; MAX_COEFF_AREA];
-        let mut dct_x = vec![0.0f32; MAX_COEFF_AREA];
-        let mut dct_b = vec![0.0f32; MAX_COEFF_AREA];
+            'tile_loop: for by in tile_by0..tile_by1 {
+                for bx in tile_bx0..tile_bx1 {
+                    if !ac_strategy.is_first(bx, by) {
+                        continue;
+                    }
 
-        let mut num_ac = 0usize;
-        let buf_cap = coeffs_yx.len();
+                    let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                    let covered_x = COVERED_X[raw_strategy as usize];
+                    let covered_y = COVERED_Y[raw_strategy as usize];
 
-        'tile_loop: for by in tile_by0..tile_by1 {
-            for bx in tile_bx0..tile_bx1 {
-                if !ac_strategy.is_first(bx, by) {
-                    continue;
-                }
+                    if covered_x + tile_bx0 > tile_bx1 || covered_y + tile_by0 > tile_by1 {
+                        continue;
+                    }
 
-                let raw_strategy = ac_strategy.raw_strategy(bx, by);
-                let covered_x = COVERED_X[raw_strategy as usize];
-                let covered_y = COVERED_Y[raw_strategy as usize];
+                    VarDctEncoder::apply_dct(xyb_y, stride, bx, by, raw_strategy, dct_y);
+                    VarDctEncoder::apply_dct(xyb_x, stride, bx, by, raw_strategy, dct_x);
+                    VarDctEncoder::apply_dct(xyb_b, stride, bx, by, raw_strategy, dct_b);
 
-                if covered_x + tile_bx0 > tile_bx1 || covered_y + tile_by0 > tile_by1 {
-                    continue;
-                }
+                    let (cx, cy) = if covered_x >= covered_y {
+                        (covered_x, covered_y)
+                    } else {
+                        (covered_y, covered_x)
+                    };
 
-                VarDctEncoder::apply_dct(xyb_y, stride, bx, by, raw_strategy, &mut dct_y);
-                VarDctEncoder::apply_dct(xyb_x, stride, bx, by, raw_strategy, &mut dct_x);
-                VarDctEncoder::apply_dct(xyb_b, stride, bx, by, raw_strategy, &mut dct_b);
+                    for iy in 0..cy {
+                        for ix in 0..cx {
+                            let pos = cx * BLOCK_DIM * iy + ix;
+                            dct_y[pos] = 0.0;
+                            dct_x[pos] = 0.0;
+                            dct_b[pos] = 0.0;
+                        }
+                    }
 
-                let (cx, cy) = if covered_x >= covered_y {
-                    (covered_x, covered_y)
-                } else {
-                    (covered_y, covered_x)
-                };
+                    let qq = quant_field[by * xsize_blocks + bx] as f32;
+                    let q = quant_scale * 128.0 * qq;
 
-                for iy in 0..cy {
-                    for ix in 0..cx {
-                        let pos = cx * BLOCK_DIM * iy + ix;
-                        dct_y[pos] = 0.0;
-                        dct_x[pos] = 0.0;
-                        dct_b[pos] = 0.0;
+                    // **W44-197 Candidate C (perf)**: replace per-coefficient
+                    // division `q / qw_x[i]` with multiplication
+                    // `q * inv_qw_x[i]` using the static precomputed reciprocal
+                    // tables (`quant::dequant_weights`, which already exist and
+                    // OnceBox-cache the `1/w` values per (strategy, channel)).
+                    // Mirrors libjxl `enc_chroma_from_luma.cc:337-343` which
+                    // loads `qm_x = dequant.InvMatrix(...)` and applies
+                    // `Mul(qv, Load(df, qm_x + i))`.
+                    //
+                    // Saves two f32 divisions per coefficient (multiplications
+                    // are 3-5× faster than divisions on modern f32 pipes; ~4M
+                    // divisions eliminated per 12 MP at e>=7 or when W44-197
+                    // Candidate B widens the gate to e=5/6). W44-189 D13
+                    // identified this as the LOW-EV-but-cheap perf chunk.
+                    //
+                    // Output is within ULP of the divide form (a/b vs a*(1/b)
+                    // are different bit-patterns at the last 1-2 bits, but CfL
+                    // output is i8 — both forms round to the same integer
+                    // multiplier on realistic inputs).
+                    let inv_qw_x = quant::dequant_weights(raw_strategy as usize, 0);
+                    let inv_qw_b = quant::dequant_weights(raw_strategy as usize, 2);
+
+                    let num_coeffs = cx * cy * DCT_BLOCK_SIZE;
+                    // Bound by accumulator buffer size. libjxl's heuristic at
+                    // enc_chroma_from_luma.cc:304-306 (`covered + x0 > x1`)
+                    // uses the TILE ORIGIN as the reference, not the current
+                    // block's `bx`/`by`, so a multi-block first-block whose
+                    // (bx, by) sits near the tile-end edge isn't filtered out
+                    // — its coefficient contribution is fully counted in
+                    // *this* tile (libjxl does the same). In pathological
+                    // ac_strategy configurations the sum can exceed the
+                    // accumulator (`kColorTileDim * kColorTileDim = 4096`).
+                    // libjxl writes past it via SIMD stores and treats the
+                    // tail as undefined; we clamp here to keep release builds
+                    // panic-free for downstream callers (notably the GPU
+                    // strat-search injector) that can construct ac_strategy
+                    // configurations the in-tree CPU strategy search wouldn't.
+                    let buf_remaining = buf_cap.saturating_sub(num_ac);
+                    let take = num_coeffs.min(buf_remaining);
+                    for i in 0..take {
+                        let qqm_x = q * inv_qw_x[i];
+                        let qqm_b = q * inv_qw_b[i];
+                        coeffs_yx[num_ac + i] = dct_y[i] * qqm_x;
+                        coeffs_x[num_ac + i] = dct_x[i] * qqm_x;
+                        coeffs_yb[num_ac + i] = dct_y[i] * qqm_b;
+                        coeffs_b[num_ac + i] = dct_b[i] * qqm_b;
+                    }
+                    num_ac += take;
+                    if num_ac >= buf_cap {
+                        break 'tile_loop;
                     }
                 }
-
-                let qq = quant_field[by * xsize_blocks + bx] as f32;
-                let q = quant_scale * 128.0 * qq;
-
-                // **W44-197 Candidate C (perf)**: replace per-coefficient
-                // division `q / qw_x[i]` with multiplication
-                // `q * inv_qw_x[i]` using the static precomputed reciprocal
-                // tables (`quant::dequant_weights`, which already exist and
-                // OnceBox-cache the `1/w` values per (strategy, channel)).
-                // Mirrors libjxl `enc_chroma_from_luma.cc:337-343` which
-                // loads `qm_x = dequant.InvMatrix(...)` and applies
-                // `Mul(qv, Load(df, qm_x + i))`.
-                //
-                // Saves two f32 divisions per coefficient (multiplications
-                // are 3-5× faster than divisions on modern f32 pipes; ~4M
-                // divisions eliminated per 12 MP at e>=7 or when W44-197
-                // Candidate B widens the gate to e=5/6). W44-189 D13
-                // identified this as the LOW-EV-but-cheap perf chunk.
-                //
-                // Output is within ULP of the divide form (a/b vs a*(1/b)
-                // are different bit-patterns at the last 1-2 bits, but CfL
-                // output is i8 — both forms round to the same integer
-                // multiplier on realistic inputs).
-                let inv_qw_x = quant::dequant_weights(raw_strategy as usize, 0);
-                let inv_qw_b = quant::dequant_weights(raw_strategy as usize, 2);
-
-                let num_coeffs = cx * cy * DCT_BLOCK_SIZE;
-                // Bound by accumulator buffer size. libjxl's heuristic at
-                // enc_chroma_from_luma.cc:304-306 (`covered + x0 > x1`)
-                // uses the TILE ORIGIN as the reference, not the current
-                // block's `bx`/`by`, so a multi-block first-block whose
-                // (bx, by) sits near the tile-end edge isn't filtered out
-                // — its coefficient contribution is fully counted in
-                // *this* tile (libjxl does the same). In pathological
-                // ac_strategy configurations the sum can exceed the
-                // accumulator (`kColorTileDim * kColorTileDim = 4096`).
-                // libjxl writes past it via SIMD stores and treats the
-                // tail as undefined; we clamp here to keep release builds
-                // panic-free for downstream callers (notably the GPU
-                // strat-search injector) that can construct ac_strategy
-                // configurations the in-tree CPU strategy search wouldn't.
-                let buf_remaining = buf_cap.saturating_sub(num_ac);
-                let take = num_coeffs.min(buf_remaining);
-                for i in 0..take {
-                    let qqm_x = q * inv_qw_x[i];
-                    let qqm_b = q * inv_qw_b[i];
-                    coeffs_yx[num_ac + i] = dct_y[i] * qqm_x;
-                    coeffs_x[num_ac + i] = dct_x[i] * qqm_x;
-                    coeffs_yb[num_ac + i] = dct_y[i] * qqm_b;
-                    coeffs_b[num_ac + i] = dct_b[i] * qqm_b;
-                }
-                num_ac += take;
-                if num_ac >= buf_cap {
-                    break 'tile_loop;
-                }
             }
-        }
 
-        let tx_val = find_best_multiplier(
-            &coeffs_yx,
-            &coeffs_x,
-            num_ac,
-            0.0,
-            K_DISTANCE_MULTIPLIER_AC,
-            use_newton,
-            newton_eps,
-            newton_max_iters,
-            newton_libjxl_parity,
-            newton_libjxl_math_with_ls_warm_start,
-        );
-        let tb_val = find_best_multiplier(
-            &coeffs_yb,
-            &coeffs_b,
-            num_ac,
-            1.0,
-            K_DISTANCE_MULTIPLIER_AC,
-            use_newton,
-            newton_eps,
-            newton_max_iters,
-            newton_libjxl_parity,
-            newton_libjxl_math_with_ls_warm_start,
-        );
+            let tx_val = find_best_multiplier(
+                coeffs_yx.as_slice(),
+                coeffs_x.as_slice(),
+                num_ac,
+                0.0,
+                K_DISTANCE_MULTIPLIER_AC,
+                use_newton,
+                newton_eps,
+                newton_max_iters,
+                newton_libjxl_parity,
+                newton_libjxl_math_with_ls_warm_start,
+            );
+            let tb_val = find_best_multiplier(
+                coeffs_yb.as_slice(),
+                coeffs_b.as_slice(),
+                num_ac,
+                1.0,
+                K_DISTANCE_MULTIPLIER_AC,
+                use_newton,
+                newton_eps,
+                newton_max_iters,
+                newton_libjxl_parity,
+                newton_libjxl_math_with_ls_warm_start,
+            );
 
-        // Keep-best: revert to the pass-1 multiplier per channel when it zeros
-        // strictly more chroma AC coefficients than pass-2 over THIS tile's
-        // actual coefficients. `num_ac` is the accumulated coefficient count
-        // shared by both channels' X/B accumulators.
-        if keep_best {
-            // Revert to Pass-1 only when its cost is cheaper than Pass-2's by
-            // more than CFL_KEEP_BEST_MARGIN (confidence guard vs proxy noise).
-            let cheaper = |c1: f32, c2: f32| c1 < c2 * (1.0 - CFL_KEEP_BEST_MARGIN);
-            let p1x = pass1_ytox[tile_idx];
-            let tx_kept = if p1x != tx_val
-                && cheaper(
-                    cfl_cost_x(&coeffs_yx, &coeffs_x, num_ac, p1x),
-                    cfl_cost_x(&coeffs_yx, &coeffs_x, num_ac, tx_val),
-                ) {
-                p1x
+            // Keep-best: revert to the pass-1 multiplier per channel when it zeros
+            // strictly more chroma AC coefficients than pass-2 over THIS tile's
+            // actual coefficients. `num_ac` is the accumulated coefficient count
+            // shared by both channels' X/B accumulators.
+            if keep_best {
+                // Revert to Pass-1 only when its cost is cheaper than Pass-2's by
+                // more than CFL_KEEP_BEST_MARGIN (confidence guard vs proxy noise).
+                let cheaper = |c1: f32, c2: f32| c1 < c2 * (1.0 - CFL_KEEP_BEST_MARGIN);
+                let p1x = pass1_ytox[tile_idx];
+                let tx_kept = if p1x != tx_val
+                    && cheaper(
+                        cfl_cost_x(coeffs_yx, coeffs_x, num_ac, p1x),
+                        cfl_cost_x(coeffs_yx, coeffs_x, num_ac, tx_val),
+                    ) {
+                    p1x
+                } else {
+                    tx_val
+                };
+                let p1b = pass1_ytob[tile_idx];
+                let tb_kept = if p1b != tb_val
+                    && cheaper(
+                        cfl_cost_b(coeffs_yb, coeffs_b, num_ac, p1b),
+                        cfl_cost_b(coeffs_yb, coeffs_b, num_ac, tb_val),
+                    ) {
+                    p1b
+                } else {
+                    tb_val
+                };
+                (tx_kept, tb_kept)
             } else {
-                tx_val
-            };
-            let p1b = pass1_ytob[tile_idx];
-            let tb_kept = if p1b != tb_val
-                && cheaper(
-                    cfl_cost_b(&coeffs_yb, &coeffs_b, num_ac, p1b),
-                    cfl_cost_b(&coeffs_yb, &coeffs_b, num_ac, tb_val),
-                ) {
-                p1b
-            } else {
-                tb_val
-            };
-            (tx_kept, tb_kept)
-        } else {
-            (tx_val, tb_val)
-        }
-    });
+                (tx_val, tb_val)
+            }
+        },
+    );
 
     // Write results back to cfl_map
     for (tile_idx, &(tx_val, tb_val)) in tile_results.iter().enumerate() {

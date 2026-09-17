@@ -7788,11 +7788,60 @@ impl<'a> EncodeRequest<'a> {
         // the identical full-image pass again ~60 lines later — 2 x
         // ~78 ms at 4K e5. The band is the union of both consumers'
         // gates (class band eff 5-6 is a subset of the proxies band).
-        let shared_proxies = if cfg.effort() >= 5 || cfg.effective_distance() >= 2.0 {
-            compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout)
-        } else {
-            None
+        //
+        // 2026-09-17: also skip when NO resolved gate that can read the
+        // proxies is enabled — under `EncoderStrategy::Libjxl` every
+        // consumer (W44-91/96/98/124 sub-discriminators via
+        // `high_d_photo_entropy_mul`, the screenshot lifts,
+        // `adaptive_quant_qf_seed`, `buttloop_qf_seed`, the W44-117
+        // EPF seed, the Smart-Zenjxl admits/excludes and
+        // `learned_subband_exclude`) is off, so the full-image sweep
+        // (~26 ms at 2048², ~4.5 % of an e5 encode) was computed and
+        // discarded. The list is deliberately OVER-inclusive: any
+        // plausibly-consuming policy keeps the sweep. If a future
+        // consumer reads `enc.zenanalyze_proxies` under a flag missing
+        // here, add it — skipping while a consumer is live is a byte
+        // change.
+        let ri_for_proxies = cfg.resolve_improvements();
+        let proxies_consumed = {
+            use crate::api::{
+                AdaptiveQuantQfSeedPolicy, ButtloopQfSeedPolicy, EpfSharpnessSeed,
+                HighDPhotoEntropyMulPolicy, ScreenshotEntropyMulPolicy,
+            };
+            let ri = &ri_for_proxies;
+            class_consumed
+                || !matches!(
+                    ri.high_d_photo_entropy_mul,
+                    HighDPhotoEntropyMulPolicy::Disabled
+                )
+                || !matches!(
+                    ri.screenshot_entropy_mul,
+                    ScreenshotEntropyMulPolicy::Disabled
+                )
+                || !matches!(ri.adaptive_quant_qf_seed, AdaptiveQuantQfSeedPolicy::Off)
+                || !matches!(ri.buttloop_qf_seed, ButtloopQfSeedPolicy::Off)
+                || !matches!(
+                    ri.buttloop_epf_sharpness_seed,
+                    EpfSharpnessSeed::LegacyUniform4
+                )
+                || ri.content_class_auto_classify
+                || ri.photo_epf_seed_admit
+                || ri.photo_variant_z_admit
+                || ri.find_best_32_per_m3_lift
+                || ri.adaptive_buttloop_iters
+                || ri.adaptive_buttloop_iters_narrow
+                || ri.terminal_class_exclude
+                || ri.high_colour_class_exclude
+                || ri.textured_low_colour_exclude
+                || ri.learned_subband_exclude
+                || ri.cfl_pass1_screenshot_x0_start
         };
+        let shared_proxies =
+            if proxies_consumed && (cfg.effort() >= 5 || cfg.effective_distance() >= 2.0) {
+                compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout)
+            } else {
+                None
+            };
         // W44-231: learned sub-band lift admission (confident-BAD model,
         // vardct::learned_admission). Only consulted by the d < 3.5
         // qf-seed band, so compute inside the same band as the proxies
