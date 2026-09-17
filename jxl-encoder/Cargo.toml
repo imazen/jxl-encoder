@@ -834,6 +834,12 @@ name = "score_jxl_files"
 path = "examples/score_jxl_files.rs"
 required-features = ["butteraugli-loop"]
 
+# strict-libjxl buttloop debug: internal recon vs shipped decode.
+[[example]]
+name = "dbg_flat_recon"
+path = "examples/dbg_flat_recon.rs"
+required-features = ["__internal_recon_hook", "butteraugli-loop"]
+
 # W44-35 acceptance check: 1418519 cells + screenshot regressions +
 # F-D residual cells. Does not need zenanalyze (uses default API).
 [[example]]

@@ -734,8 +734,10 @@ pub struct ANSEncodingHistogram {
     pub cost: f32,
     /// Encoding method:
     /// - 0: flat distribution
-    /// - 1: small code (1-2 symbols)
-    /// - 2-13: shift value + 1
+    /// - 1: small code (only when `num_symbols <= 2`) OR shift=0 general
+    /// - 2-13: shift value + 1 (general code)
+    /// libjxl shares this numbering: `method_ = min(shift, 11) + 1`, so
+    /// method 1 is shift-0 general whenever `num_symbols > 2`.
     pub method: u32,
     /// Position of the balancing bin (absorbs rounding error).
     pub omit_pos: usize,
@@ -845,7 +847,6 @@ impl ANSEncodingHistogram {
             let log2_alpha = jxl_simd::fast_log2f(alphabet_size as f32);
             histo.total_count as f32 * log2_alpha
         };
-        let flat_header_cost = 2.0 + 8.0; // method=0 marker + alphabet size
         let mut best = Self {
             counts: {
                 let alpha = alphabet_size as u32;
@@ -859,12 +860,13 @@ impl ANSEncodingHistogram {
                 c
             },
             alphabet_size,
-            cost: flat_header_cost + flat_data_cost,
+            cost: 0.0, // measured below via exact serialization
             method: 0, // Flat
             omit_pos: 0,
             num_symbols,
             symbols,
         };
+        best.cost = best.exact_header_cost() + flat_data_cost;
 
         // Reuse a single candidate buffer across all shift iterations to avoid
         // allocating a new vec![0i32; alphabet_size] for each shift.
@@ -896,6 +898,12 @@ impl ANSEncodingHistogram {
 
             if candidate.rebalance_histogram_cached(histo, shift, cache.get(shift)) {
                 candidate.cost = candidate.estimate_cost(histo);
+                if std::env::var_os("__JXL_SHIFT_PROBE").is_some() {
+                    eprintln!(
+                        "  shift={} cost={:.2} counts={:?} histo={:?}",
+                        shift, candidate.cost, candidate.counts, histo.counts
+                    );
+                }
                 if candidate.cost < best.cost {
                     // This candidate wins — take its counts and give it the old best's
                     // buffer (or a fresh one) for the next iteration
@@ -1118,70 +1126,17 @@ impl ANSEncodingHistogram {
         self.counts[remainder_pos] = rest;
         self.omit_pos = remainder_pos;
 
-        if rest <= 0 {
-            return false;
-        }
-
-        // Ensure remainder_pos is the FIRST symbol with the highest logcount.
-        // The decoder re-derives omit_pos by scanning symbols in order and picking
-        // the first one with the maximum logcount. If another symbol has equal or
-        // higher logcount, the decoder picks the wrong one and decoding fails.
-        for _ in 0..10 {
-            let omit_logcount = floor_log2(self.counts[remainder_pos] as u32) + 1;
-            let mut adjusted = false;
-            for i in 0..self.alphabet_size {
-                if i == remainder_pos || self.counts[i] <= 0 {
-                    continue;
-                }
-                let logcount = floor_log2(self.counts[i] as u32) + 1;
-                let needs_fix =
-                    logcount > omit_logcount || (logcount == omit_logcount && i < remainder_pos);
-                if needs_fix {
-                    // Reduce this symbol to a representable value with lower logcount.
-                    // Find the highest allowed count with logcount < omit_logcount
-                    // (or <= omit_logcount for symbols after remainder_pos).
-                    let target_logcount = if i < remainder_pos {
-                        omit_logcount.saturating_sub(1)
-                    } else {
-                        omit_logcount
-                    };
-                    let max_value = (1i32 << target_logcount) - 1;
-                    let new_ai = find_allowed_leq(allowed, max_value);
-                    let new_count = allowed[new_ai].max(1);
-                    let reduction = self.counts[i] - new_count;
-                    if reduction > 0 {
-                        self.counts[i] = new_count;
-                        self.counts[remainder_pos] += reduction;
-                        adjusted = true;
-                    }
-                }
-            }
-            if !adjusted {
-                break;
-            }
-        }
-
-        // Final verification
-        let omit_logcount = floor_log2(self.counts[remainder_pos] as u32) + 1;
-        for (i, &count) in self.counts.iter().enumerate().take(self.alphabet_size) {
-            if i == remainder_pos || count <= 0 {
-                continue;
-            }
-            let logcount = floor_log2(count as u32) + 1;
-            if logcount > omit_logcount || (logcount == omit_logcount && i < remainder_pos) {
-                return false;
-            }
-        }
-
-        // Verify sum
-        let sum: i32 = self.counts.iter().sum();
-        sum == ANS_TAB_SIZE as i32
+        rest > 0
     }
 
     /// Estimate encoding cost (header + data bits).
-    /// Uses precise ANS cost model matching libjxl's `Cost()` (enc_ans.cc:376-380).
+    /// Matches libjxl's approach (enc_ans.cc:139-143): the header cost is the
+    /// *exact* serialized size measured by encoding the candidate into a
+    /// scratch writer (`SizeWriter` in libjxl), not a formulaic estimate —
+    /// high-precision shifts serialize counts with more bits, which only the
+    /// real write path can price correctly.
     fn estimate_cost(&self, histo: &super::histogram::Histogram) -> f32 {
-        let header_cost = self.estimate_header_cost();
+        let header_cost = self.exact_header_cost();
         let data_cost = estimate_data_bits_normalized(
             &histo.counts,
             &self.counts,
@@ -1191,24 +1146,14 @@ impl ANSEncodingHistogram {
         header_cost + data_cost
     }
 
-    /// Estimate header encoding cost.
-    fn estimate_header_cost(&self) -> f32 {
-        if self.method == 0 {
-            // Flat: 2 bits + alphabet size encoding
-            2.0 + 8.0
-        } else if self.num_symbols <= 2 {
-            // Small code
-            if self.num_symbols <= 1 {
-                3.0 + 8.0 // nsym=0: marker + symbol
-            } else {
-                3.0 + 16.0 + 12.0 // nsym=2: marker + 2 symbols + count
-            }
-        } else {
-            // General code: method encoding + alphabet + frequencies
-            let method_bits = 4.0; // Unary + suffix for method
-            let alphabet_bits = 8.0;
-            let freq_bits = self.alphabet_size as f32 * 5.0; // Rough estimate
-            method_bits + alphabet_bits + freq_bits
+    /// Exact serialized header size in bits, measured by writing the
+    /// histogram to a scratch `BitWriter` (libjxl uses a counting
+    /// `SizeWriter`; the encoding is identical either way).
+    fn exact_header_cost(&self) -> f32 {
+        let mut scratch = BitWriter::with_capacity(self.alphabet_size + 16);
+        match self.write(&mut scratch) {
+            Ok(()) => scratch.bits_written() as f32,
+            Err(_) => f32::MAX,
         }
     }
 
@@ -1288,7 +1233,7 @@ impl ANSEncodingHistogram {
         write_var_len_uint8(writer, (self.alphabet_size - 3) as u8)?;
 
         // Pre-compute logcounts for all symbols
-        let logcounts: Vec<u32> = (0..self.alphabet_size)
+        let mut logcounts: Vec<u32> = (0..self.alphabet_size)
             .map(|i| {
                 let count = self.counts[i];
                 if count <= 0 {
@@ -1298,6 +1243,18 @@ impl ANSEncodingHistogram {
                 }
             })
             .collect();
+
+        // libjxl enc_ans.cc:276-286: the omitted (balancing) symbol is encoded
+        // with a synthetic bit width so the decoder's "first maximal logcount"
+        // scan lands on omit_pos regardless of its actual count. Symbols before
+        // omit_pos get +1 so omit stays strictly first-maximal.
+        let mut omit_width = 10u32;
+        for i in 0..self.alphabet_size {
+            if i != self.omit_pos && self.counts[i] > 0 {
+                omit_width = omit_width.max(logcounts[i] + (i < self.omit_pos) as u32);
+            }
+        }
+        logcounts[self.omit_pos] = omit_width;
 
         // Pre-compute RLE: for each position i, same[i] = number of consecutive
         // symbols starting at i+1 that have the same actual count as i.
@@ -1460,8 +1417,9 @@ mod tests {
         let h = Histogram::from_counts(&[100, 50, 25, 10, 5, 3, 2, 1]);
         let encoded = ANSEncodingHistogram::from_histogram(&h, ANSHistogramStrategy::Fast).unwrap();
 
-        // Should use general code (more than 2 symbols)
-        assert!(encoded.method >= 2 || encoded.method == 0);
+        // Should use general code (more than 2 symbols): method 0 = flat,
+        // method 1 = shift-0 general, methods 2-13 = shift+1.
+        assert!(encoded.method >= 1);
 
         // Sum should be exactly ANS_TAB_SIZE
         let sum: i32 = encoded.counts.iter().sum();

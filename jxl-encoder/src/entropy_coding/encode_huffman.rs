@@ -8,11 +8,13 @@
 //! context map writing, and token writing for Huffman-coded bitstreams.
 
 use super::encode::{
-    ALPHABET_SIZE, CODE_LENGTH_CODES, EntropyCode, PrefixCode, encode_token_value,
-    write_var_len_uint16,
+    ALPHABET_SIZE, CODE_LENGTH_CODES, EntropyCode, PrefixCode, UintConfigMethod,
+    encode_token_value, encode_token_value_with_config, write_var_len_uint16,
 };
+use super::encode_ans::{copy_bits, write_context_map_nonsimple};
+use super::hybrid_uint::HybridUintConfig;
 use super::lz77::Lz77Params;
-use super::token::{Token, UintCoder};
+use super::token::{EncodedUint, Token};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
@@ -599,17 +601,27 @@ pub(super) fn write_prefix_code(code: &PrefixCode, writer: &mut BitWriter) -> Re
 }
 
 /// Write all prefix codes.
-pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -> Result<()> {
+///
+/// `uint_configs` carries the per-code HybridUint config (empty slice =
+/// default {4,2,0} for every code), serialized exactly like libjxl's
+/// `EncodeUintConfig` with `log_alpha_size = 15`.
+pub fn write_prefix_codes(
+    prefix_codes: &[PrefixCode],
+    uint_configs: &[HybridUintConfig],
+    writer: &mut BitWriter,
+) -> Result<()> {
     #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
 
     writer.write(1, 1)?; // use_prefix_code = true (Huffman, not ANS)
 
     // Write HybridUint config for each code
-    for _ in prefix_codes {
-        writer.write(4, 4)?; // split_exponent = 4
-        writer.write(3, 2)?; // msb_in_token = 2
-        writer.write(2, 0)?; // lsb_in_token = 0
+    for (i, _) in prefix_codes.iter().enumerate() {
+        let config = uint_configs
+            .get(i)
+            .copied()
+            .unwrap_or_else(HybridUintConfig::default_config);
+        super::encode_ans::write_hybrid_uint_config_value(15, &config, writer)?;
     }
 
     #[cfg(feature = "debug-tokens")]
@@ -680,6 +692,13 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
 }
 
 /// Write the context map.
+///
+/// Matches libjxl's `EncodeContextMap` (`enc_context_map.cc:65-139`):
+/// compares three encodings by actual bit cost and emits the cheapest —
+/// simple raw-bits, MTF-or-direct Huffman, and ANS+LZ77. Previously this
+/// unconditionally emitted raw prefix-code tokens, which is a ~7.6 Kbit
+/// regression on the 7425-entry 15-cluster AC context map versus the
+/// ANS+LZ77 encoding libjxl produces for the same map.
 pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<()> {
     #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
@@ -688,98 +707,48 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
         return Ok(());
     }
 
-    // Check if all context map values are 0
-    let max_val = *code.context_map.iter().max().unwrap_or(&0);
-    if max_val == 0 {
-        writer.write(3, 1)?; // simple code, 0 bits per entry
+    let context_map = &code.context_map[..code.num_contexts];
+    let num_histograms = code.num_prefix_codes;
+
+    // num_histograms == 1 (or an all-zero map): trivial 3-bit encoding.
+    let max_val = *context_map.iter().max().unwrap_or(&0);
+    if num_histograms <= 1 || max_val == 0 {
+        writer.write(1, 1)?; // simple code
+        writer.write(2, 0)?; // 0 bits per entry
         return Ok(());
     }
 
-    // Not simple: write 0, no MTF, no LZ77
-    writer.write(3, 0)?;
+    // Simple encoding is only possible when entry_bits < 4 (≤8 histograms).
+    // When possible, compare simple vs non-simple and pick the cheaper one —
+    // same as libjxl enc_context_map.cc:113 and the ANS-path writer.
+    let entry_bits = super::encode_ans::ceil_log2_nonzero_usize(num_histograms);
+    if entry_bits < 4 {
+        let simple_cost = 3 + entry_bits * context_map.len();
+        let mut scratch = BitWriter::with_capacity(context_map.len());
+        write_context_map_nonsimple(context_map, &mut scratch)?;
+        let nonsimple_cost = scratch.bits_written();
 
-    // Build tokens from context map
-    let mut tokens: Vec<Token> = Vec::with_capacity(code.num_contexts);
-    for i in 0..code.num_contexts {
-        tokens.push(Token::new(0, code.context_map[i] as u32));
-    }
-
-    // Build histogram for context map values
-    let mut histogram = [0u32; ALPHABET_SIZE];
-    for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
-        histogram[encoded.token as usize] += 1;
-    }
-
-    // Create a single prefix code for the context map
-    let mut ctxmap_depths = [0u8; ALPHABET_SIZE];
-    let mut length = ALPHABET_SIZE;
-    while length > 0 && histogram[length - 1] == 0 {
-        length -= 1;
-    }
-    create_huffman_tree(&histogram, length.max(1), 15, &mut ctxmap_depths);
-
-    #[cfg(feature = "debug-tokens")]
-    {
-        let depth_slice: Vec<u8> = ctxmap_depths.iter().take(length).copied().collect();
-        debug_log!(
-            "  write_context_map: {} contexts, length={}, depths={:?}",
-            code.num_contexts,
-            length,
-            depth_slice
-        );
-    }
-
-    let mut ctxmap_bits = [0u16; ALPHABET_SIZE];
-    convert_bit_depths_to_symbols(&ctxmap_depths, &mut ctxmap_bits);
-
-    let ctxmap_code = PrefixCode {
-        depths: ctxmap_depths,
-        bits: ctxmap_bits,
-    };
-
-    #[cfg(feature = "debug-tokens")]
-    let before_prefix = writer.bits_written();
-
-    // Write the prefix code for the context map
-    write_prefix_codes(&[ctxmap_code], writer)?;
-
-    #[cfg(feature = "debug-tokens")]
-    let after_prefix = writer.bits_written();
-
-    // Write the context map tokens. Singleton ctxmap codes are 0-bit
-    // simple codes — see `has_single_used_symbol`.
-    let ctxmap_zero_bit = has_single_used_symbol(&ctxmap_code.depths);
-    for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
-        let tok = encoded.token as usize;
-        let depth = if ctxmap_zero_bit {
-            0
+        if simple_cost <= nonsimple_cost {
+            writer.write(1, 1)?; // simple_context_map = true
+            writer.write(2, entry_bits as u64)?;
+            for &ctx in context_map {
+                writer.write(entry_bits, ctx as u64)?;
+            }
         } else {
-            ctxmap_code.depths[tok] as usize
-        };
-        let bits = if depth == 0 {
-            0
-        } else {
-            ctxmap_code.bits[tok] as u64
-        };
-
-        // Combine Huffman bits and extra bits
-        let data = bits | ((encoded.bits as u64) << depth);
-        let total_bits = depth + encoded.nbits as usize;
-
-        writer.write(total_bits, data)?;
+            let scratch_bytes = scratch.finish_with_padding();
+            copy_bits(&scratch_bytes, nonsimple_cost, writer)?;
+        }
+    } else {
+        write_context_map_nonsimple(context_map, writer)?;
     }
 
     #[cfg(feature = "debug-tokens")]
     {
         let total = writer.bits_written() - start_bits;
-        let prefix_bits = after_prefix - before_prefix;
-        let token_bits = writer.bits_written() - after_prefix;
         debug_log!(
-            "  write_context_map bits: header=3, prefix_code={}, tokens={}, total={}",
-            prefix_bits,
-            token_bits,
+            "  write_context_map: {} contexts, {} histograms, total={} bits",
+            code.num_contexts,
+            num_histograms,
             total
         );
     }
@@ -790,7 +759,7 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
 /// Write a complete entropy code (context map + prefix codes).
 pub fn write_entropy_code(code: &EntropyCode, writer: &mut BitWriter) -> Result<()> {
     write_context_map(code, writer)?;
-    write_prefix_codes(code.prefix_codes, writer)?;
+    write_prefix_codes(code.prefix_codes, code.uint_configs, writer)?;
     Ok(())
 }
 
@@ -855,10 +824,14 @@ fn write_dyn_context_map(context_map: &[u8], writer: &mut BitWriter) -> Result<(
         tokens.push(Token::new(0, v as u32));
     }
 
+    // libjxl `EncodeContextMap` uses `HybridUintMethod::kContextMap` —
+    // a fixed {2,0,1} config (`enc_ans_params.h` `UintConfig()`).
+    let ctxmap_cfg = [HybridUintConfig::new(2, 0, 1)];
+
     let mut histogram = [0u32; ALPHABET_SIZE];
     for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
-        histogram[encoded.token as usize] += 1;
+        let (tok, _, _) = ctxmap_cfg[0].encode(t.value);
+        histogram[tok as usize] += 1;
     }
 
     let mut ctxmap_depths = [0u8; ALPHABET_SIZE];
@@ -876,11 +849,16 @@ fn write_dyn_context_map(context_map: &[u8], writer: &mut BitWriter) -> Result<(
         bits: ctxmap_bits,
     };
 
-    write_prefix_codes(&[ctxmap_code], writer)?;
+    write_prefix_codes(&[ctxmap_code], &ctxmap_cfg, writer)?;
 
     let ctxmap_zero_bit = has_single_used_symbol(&ctxmap_code.depths);
     for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
+        let (tok, bits_x, nbits_x) = ctxmap_cfg[0].encode(t.value);
+        let encoded = EncodedUint {
+            token: tok,
+            nbits: nbits_x,
+            bits: bits_x,
+        };
         let tok = encoded.token as usize;
         let depth = if ctxmap_zero_bit {
             0
@@ -901,14 +879,20 @@ fn write_dyn_context_map(context_map: &[u8], writer: &mut BitWriter) -> Result<(
 }
 
 /// Write all dynamically-sized prefix codes.
-fn write_dyn_prefix_codes(prefix_codes: &[DynPrefixCode], writer: &mut BitWriter) -> Result<()> {
+fn write_dyn_prefix_codes(
+    prefix_codes: &[DynPrefixCode],
+    uint_configs: &[HybridUintConfig],
+    writer: &mut BitWriter,
+) -> Result<()> {
     writer.write(1, 1)?; // use_prefix_code = true (Huffman)
 
     // Write HybridUint config for each code
-    for _ in prefix_codes {
-        writer.write(4, 4)?; // split_exponent = 4
-        writer.write(3, 2)?; // msb_in_token = 2
-        writer.write(2, 0)?; // lsb_in_token = 0
+    for (i, _) in prefix_codes.iter().enumerate() {
+        let config = uint_configs
+            .get(i)
+            .copied()
+            .unwrap_or_else(HybridUintConfig::default_config);
+        super::encode_ans::write_hybrid_uint_config_value(15, &config, writer)?;
     }
 
     // Write alphabet sizes
@@ -962,6 +946,8 @@ pub struct OwnedEntropyCode {
     pub prefix_codes: Vec<DynPrefixCode>,
     /// Cached fixed-size prefix codes for as_entropy_code() (None if alphabet > 64).
     static_codes: Option<Vec<PrefixCode>>,
+    /// Per-prefix-code HybridUint configs (empty = default {4,2,0} for all).
+    pub uint_configs: Vec<HybridUintConfig>,
 }
 
 impl OwnedEntropyCode {
@@ -972,7 +958,10 @@ impl OwnedEntropyCode {
     pub fn as_entropy_code(&self) -> EntropyCode<'_> {
         self.static_codes
             .as_ref()
-            .map(|codes| EntropyCode::new(&self.context_map, codes))
+            .map(|codes| {
+                EntropyCode::new(&self.context_map, codes)
+                    .with_uint_configs(&self.uint_configs)
+            })
             .expect("as_entropy_code() called on code with alphabet > 64; use write_header()/write_tokens() instead")
     }
 
@@ -980,12 +969,13 @@ impl OwnedEntropyCode {
     pub fn write_header(&self, writer: &mut BitWriter) -> Result<()> {
         if let Some(ref codes) = self.static_codes {
             // Use proven fixed-size path when alphabet fits in ALPHABET_SIZE
-            let code = EntropyCode::new(&self.context_map, codes);
+            let code =
+                EntropyCode::new(&self.context_map, codes).with_uint_configs(&self.uint_configs);
             write_entropy_code(&code, writer)
         } else {
             // Dynamic path for large alphabets (e.g. Huffman+LZ77 with min_symbol=512)
             write_dyn_context_map(&self.context_map, writer)?;
-            write_dyn_prefix_codes(&self.prefix_codes, writer)?;
+            write_dyn_prefix_codes(&self.prefix_codes, &self.uint_configs, writer)?;
             Ok(())
         }
     }
@@ -999,7 +989,8 @@ impl OwnedEntropyCode {
     ) -> Result<()> {
         if let Some(ref codes) = self.static_codes {
             // Use proven fixed-size path when alphabet fits in ALPHABET_SIZE
-            let code = EntropyCode::new(&self.context_map, codes);
+            let code =
+                EntropyCode::new(&self.context_map, codes).with_uint_configs(&self.uint_configs);
             write_tokens(tokens, &code, lz77, writer)
         } else {
             // Dynamic path for large alphabets. Per-code singleton mask —
@@ -1010,8 +1001,11 @@ impl OwnedEntropyCode {
                 .map(|pc| has_single_used_symbol(&pc.depths))
                 .collect();
             for token in tokens {
-                let (encoded, sym) = encode_token_value(token, lz77);
                 let prefix_idx = self.context_map[token.context() as usize] as usize;
+                let (encoded, sym) = match self.uint_configs.get(prefix_idx) {
+                    Some(cfg) => encode_token_value_with_config(token, lz77, cfg),
+                    None => encode_token_value(token, lz77),
+                };
                 let pc = &self.prefix_codes[prefix_idx];
                 let tok = sym as usize;
                 let depth = if zero_bit[prefix_idx] {
@@ -1054,18 +1048,55 @@ pub fn build_entropy_code_with_options(
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
 ) -> OwnedEntropyCode {
-    build_entropy_code_from_token_groups(&[tokens], num_contexts, enhanced_clustering, lz77)
+    build_entropy_code_with_uint_method(
+        tokens,
+        num_contexts,
+        enhanced_clustering,
+        lz77,
+        UintConfigMethod::None,
+    )
+}
+
+/// `build_entropy_code_with_options` with an explicit HybridUint config
+/// selection method (libjxl `HistogramParams::HybridUintMethod`).
+///
+/// libjxl runs `ChooseUintConfigs` for prefix streams exactly like ANS
+/// (`enc_ans.cc` — the uint config is serialized and applied regardless of
+/// coder type). Streams built under default `HistogramParams` (permutation
+/// codes, MA-tree codes) use `Best`.
+pub fn build_entropy_code_with_uint_method(
+    tokens: &[Token],
+    num_contexts: usize,
+    enhanced_clustering: bool,
+    lz77: Option<&Lz77Params>,
+    uint_method: UintConfigMethod,
+) -> OwnedEntropyCode {
+    build_entropy_code_from_token_groups(
+        &[tokens],
+        num_contexts,
+        enhanced_clustering,
+        lz77,
+        uint_method,
+    )
 }
 
 /// Build an optimal Huffman entropy code from multiple token groups without merging.
 ///
 /// Like `build_entropy_code_with_options`, but accepts separate token slices
 /// (e.g., per-group tokens) to avoid allocating a merged copy.
+///
+/// `uint_method` selects the HybridUint config strategy applied after
+/// clustering — histograms are always built on the default {4,2,0} mapping
+/// (matching libjxl, which clusters `params.UintConfig()`-mapped symbols
+/// before `ChooseUintConfigs` re-bins under the chosen configs). The method
+/// is ignored when `lz77` is active (the merged LZ77 length histograms are
+/// not separable per config).
 pub fn build_entropy_code_from_token_groups(
     groups: &[&[Token]],
     num_contexts: usize,
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
+    uint_method: UintConfigMethod,
 ) -> OwnedEntropyCode {
     // Compute the required alphabet size. Most streams fit in ALPHABET_SIZE (64),
     // but large hybrid-uint values overflow it — e.g. VarDCT near-lossless DC
@@ -1086,6 +1117,18 @@ pub fn build_entropy_code_from_token_groups(
         (max_sym + 1).max(ALPHABET_SIZE)
     };
 
+    // Track raw token values per context so `ChooseUintConfigs`-style
+    // optimization can re-bin the clustered histograms under a non-default
+    // HybridUintConfig (libjxl `enc_ans.cc::ChooseUintConfigs`).
+    let track_freqs = uint_method != UintConfigMethod::None && lz77.is_none();
+    let mut value_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = if track_freqs {
+        (0..num_contexts)
+            .map(|_| alloc::collections::BTreeMap::new())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     // Build per-context histograms (Vec-based for arbitrary alphabet size)
     let mut histograms: Vec<Vec<u32>> = (0..num_contexts)
         .map(|_| vec![0u32; alphabet_size])
@@ -1097,6 +1140,9 @@ pub fn build_entropy_code_from_token_groups(
             let (_encoded, sym) = encode_token_value(token, lz77);
             histograms[ctx][sym as usize] += 1;
             total_counts[ctx] += 1;
+            if track_freqs {
+                *value_freqs[ctx].entry(token.value).or_insert(0) += 1;
+            }
         }
     }
 
@@ -1117,7 +1163,30 @@ pub fn build_entropy_code_from_token_groups(
             tiny_histograms[ctx].total_count = total;
         }
 
+        #[cfg(feature = "debug-tokens")]
+        {
+            for (i, h) in tiny_histograms.iter().enumerate() {
+                let nz: Vec<(usize, u32)> = h
+                    .counts
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &c)| c > 0)
+                    .map(|(s, &c)| (s, c))
+                    .collect();
+                crate::vardct::debug_log::write_debug_log(&format!(
+                    "  precluster ctx {}: total={} syms={:?}",
+                    i, h.total_count, nz
+                ));
+            }
+        }
         let context_map = cluster_histograms(&mut tiny_histograms);
+        #[cfg(feature = "debug-tokens")]
+        crate::vardct::debug_log::write_debug_log(&format!(
+            "  precluster result: {} -> {} histograms, ctx_map={:?}",
+            num_contexts,
+            tiny_histograms.len(),
+            context_map
+        ));
         let counts: Vec<Vec<u32>> = tiny_histograms.iter().map(|h| h.counts.to_vec()).collect();
         let totals: Vec<u32> = tiny_histograms.iter().map(|h| h.total_count).collect();
         (context_map, counts, totals)
@@ -1153,12 +1222,53 @@ pub fn build_entropy_code_from_token_groups(
         (ctx_map, counts, totals)
     };
 
+    // libjxl `ChooseUintConfigs` (enc_ans.cc): after clustering, pick a
+    // per-histogram HybridUint config by exact cost and re-bin the clustered
+    // histograms under it. Applies to prefix streams exactly like ANS — the
+    // serialized stream then carries the chosen configs.
+    let (clustered_counts, uint_configs): (Vec<Vec<u32>>, Vec<HybridUintConfig>) = if !track_freqs {
+        (clustered_counts, Vec::new())
+    } else {
+        let num_histograms = clustered_counts.len();
+        let mut merged: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
+            .map(|_| alloc::collections::BTreeMap::new())
+            .collect();
+        for (ctx, &cm) in context_map.iter().enumerate() {
+            for (&v, &c) in &value_freqs[ctx] {
+                *merged[cm as usize].entry(v).or_insert(0) += c;
+            }
+        }
+        let cfgs = match uint_method {
+            UintConfigMethod::Best => {
+                super::encode_ans::optimize_uint_configs_libjxl_best_from_freqs(&merged, None)
+            }
+            UintConfigMethod::Fast => {
+                super::encode_ans::optimize_uint_configs_fast_from_freqs(&merged, None)
+            }
+            UintConfigMethod::None => unreachable!(),
+        };
+        let mut rebinned: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
+        for (ctx, &cm) in context_map.iter().enumerate() {
+            let h = cm as usize;
+            let cfg = &cfgs[h];
+            for (&v, &c) in &value_freqs[ctx] {
+                let (tok, _, _) = cfg.encode(v);
+                let t = tok as usize;
+                if rebinned[h].len() <= t {
+                    rebinned[h].resize(t + 1, 0);
+                }
+                rebinned[h][t] += c;
+            }
+        }
+        (rebinned, cfgs)
+    };
+
     // Build a DynPrefixCode from each clustered histogram
     let prefix_codes: Vec<DynPrefixCode> = clustered_counts
         .iter()
         .zip(clustered_totals.iter())
         .map(|(counts, &total)| {
-            let alpha = counts.len();
+            let alpha = counts.len().max(1);
             let mut depths = vec![0u8; alpha];
             let mut bits = vec![0u16; alpha];
             if total > 0 {
@@ -1172,7 +1282,8 @@ pub fn build_entropy_code_from_token_groups(
         .collect();
 
     // Build cached static codes if alphabet fits in ALPHABET_SIZE
-    let static_codes = if alphabet_size <= ALPHABET_SIZE {
+    let max_sym = clustered_counts.iter().map(|c| c.len()).max().unwrap_or(0);
+    let static_codes = if max_sym <= ALPHABET_SIZE {
         Some(
             prefix_codes
                 .iter()
@@ -1194,6 +1305,7 @@ pub fn build_entropy_code_from_token_groups(
         context_map,
         prefix_codes,
         static_codes,
+        uint_configs,
     }
 }
 
@@ -1213,8 +1325,11 @@ pub fn write_tokens(
         .map(|pc| has_single_used_symbol(&pc.depths))
         .collect();
     for token in tokens {
-        let (encoded, sym) = super::encode::encode_token_value(token, lz77);
         let prefix_idx = code.context_map[token.context() as usize] as usize;
+        let (encoded, sym) = match code.uint_configs.get(prefix_idx) {
+            Some(cfg) => encode_token_value_with_config(token, lz77, cfg),
+            None => super::encode::encode_token_value(token, lz77),
+        };
         let pc = &code.prefix_codes[prefix_idx];
         let tok = sym as usize;
         // Bounds + coverage guards (sweep issue #97): an out-of-alphabet

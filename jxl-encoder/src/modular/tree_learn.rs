@@ -2254,7 +2254,7 @@ fn compute_spec_properties(
 /// `benchmarks/perf_gather_profile_2026-06-10.meta` addendum).
 #[allow(clippy::too_many_arguments)]
 #[inline]
-fn compute_spec_properties_into(
+pub(crate) fn compute_spec_properties_into(
     props: &mut [i32; NUM_PROPERTIES],
     channel_idx: u32,
     group_id: u32,

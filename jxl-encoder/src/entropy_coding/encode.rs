@@ -133,6 +133,24 @@ impl std::fmt::Debug for PrefixCode {
     }
 }
 
+/// HybridUint config selection for entropy-code building.
+///
+/// Mirrors libjxl `HistogramParams::HybridUintMethod` (`enc_ans_params.h`):
+/// streams built with default params (permutation codes, MA-tree codes)
+/// get `Best`; the VarDCT modular DC code gets `Fast` when
+/// `extra_dc_precision != 0` (`ForModular`); AC streams get `None` below
+/// kTortoise and `Best` there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UintConfigMethod {
+    /// Fixed {4,2,0} — libjxl `kNone`.
+    #[default]
+    None,
+    /// 4-candidate optimization — libjxl `kFast`.
+    Fast,
+    /// Full candidate sweep — libjxl `kBest`.
+    Best,
+}
+
 /// An entropy code consisting of context map and prefix codes.
 #[derive(Debug, Clone, Copy)]
 pub struct EntropyCode<'a> {
@@ -144,6 +162,13 @@ pub struct EntropyCode<'a> {
     pub prefix_codes: &'a [PrefixCode],
     /// Number of prefix codes.
     pub num_prefix_codes: usize,
+    /// Per-prefix-code HybridUint configs (empty = default {4,2,0} for all).
+    ///
+    /// libjxl runs `ChooseUintConfigs` for prefix streams exactly like ANS
+    /// (`enc_ans.cc` — the uint config is serialized regardless of coder
+    /// type). Streams built under libjxl-parity populate this with the
+    /// optimized per-histogram configs.
+    pub uint_configs: &'a [HybridUintConfig],
 }
 
 impl<'a> EntropyCode<'a> {
@@ -154,7 +179,15 @@ impl<'a> EntropyCode<'a> {
             num_contexts: context_map.len(),
             prefix_codes,
             num_prefix_codes: prefix_codes.len(),
+            uint_configs: &[],
         }
+    }
+
+    /// Attach per-prefix-code HybridUint configs (one per entry in
+    /// `prefix_codes`).
+    pub fn with_uint_configs(mut self, uint_configs: &'a [HybridUintConfig]) -> Self {
+        self.uint_configs = uint_configs;
+        self
     }
 }
 
@@ -170,10 +203,12 @@ pub fn write_token(
     lz77: Option<&Lz77Params>,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    let (encoded, sym) = encode_token_value(token, lz77);
-
-    // Look up the prefix code index from the context map
     let prefix_idx = code.context_map[token.context() as usize] as usize;
+    let (encoded, sym) = match code.uint_configs.get(prefix_idx) {
+        Some(cfg) => encode_token_value_with_config(token, lz77, cfg),
+        None => encode_token_value(token, lz77),
+    };
+
     let pc = &code.prefix_codes[prefix_idx];
 
     // Get the Huffman code for this token. A token beyond the table's

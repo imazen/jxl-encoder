@@ -199,6 +199,7 @@ fn tokenize_dc_group_lf_frame(
     ac_strategy: &AcStrategyMap,
     sharpness_map: Option<&[u8]>,
     ac_meta_ctx_map: &[u32],
+    ac_meta_kind: super::dc_tree_learn::AcMetaTreeKind,
 ) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
     let dc_gy = dc_group_idx / xsize_dc_groups;
@@ -221,10 +222,12 @@ fn tokenize_dc_group_lf_frame(
         cfl_map,
         ac_strategy,
         sharpness_map,
+        ac_meta_kind,
     );
     let md_tokens: Vec<Token> = md_tokens
         .into_iter()
         .map(|mut t| {
+            debug_assert_ne!(ac_meta_ctx_map[t.context() as usize], u32::MAX);
             t.set_context(ac_meta_ctx_map[t.context() as usize]);
             t
         })
@@ -248,6 +251,7 @@ fn tokenize_dc_group_wp(
     wp_dc_tree: &super::dc_tree_learn::DcTree,
     dc_ctx_remap: &[u32],
     ac_meta_ctx_map: &[u32],
+    ac_meta_kind: super::dc_tree_learn::AcMetaTreeKind,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
@@ -275,6 +279,7 @@ fn tokenize_dc_group_wp(
         cfl_map,
         ac_strategy,
         sharpness_map,
+        ac_meta_kind,
     );
     // Remap DC token contexts to match BFS ordering of merged tree.
     let dc_tokens: Vec<Token> = dc_tokens
@@ -288,6 +293,7 @@ fn tokenize_dc_group_wp(
     let md_tokens: Vec<Token> = md_tokens
         .into_iter()
         .map(|mut t| {
+            debug_assert_ne!(ac_meta_ctx_map[t.context() as usize], u32::MAX);
             t.set_context(ac_meta_ctx_map[t.context() as usize]);
             t
         })
@@ -320,6 +326,7 @@ fn tokenize_dc_group_learned(
     learned_dc_tree: &super::dc_tree_learn::DcTree,
     dc_ctx_remap: &[u32],
     ac_meta_ctx_map: &[u32],
+    ac_meta_kind: super::dc_tree_learn::AcMetaTreeKind,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<(Vec<Token>, Vec<Token>)> {
     let dc_gx = dc_group_idx % xsize_dc_groups;
@@ -356,6 +363,7 @@ fn tokenize_dc_group_learned(
         cfl_map,
         ac_strategy,
         sharpness_map,
+        ac_meta_kind,
     );
     // Remap DC token contexts to match BFS ordering of merged tree.
     let dc_tokens: Vec<Token> = dc_tokens
@@ -369,11 +377,189 @@ fn tokenize_dc_group_learned(
     let md_tokens: Vec<Token> = md_tokens
         .into_iter()
         .map(|mut t| {
+            debug_assert_ne!(ac_meta_ctx_map[t.context() as usize], u32::MAX);
             t.set_context(ac_meta_ctx_map[t.context() as usize]);
             t
         })
         .collect();
 
+    Ok((dc_tokens, md_tokens))
+}
+
+/// Build the libjxl `AddVarDCTDC` stream image for one DC group
+/// (`enc_modular.cc:1608-1738`, Is444 + `nl_dc=false` path): three
+/// channels in stream order `[Y, X, B]` — i.e. `quant_dc` components
+/// `[1, 0, 2]` — restricted to the group's block rect.
+///
+/// Used only on the strict `EncoderStrategy::Libjxl` effort ≥ 8 path,
+/// where the DC stream's MA tree is learned over these exact images.
+fn build_vardct_dc_stream_image(
+    quant_dc: &[Vec<Vec<i32>>; 3],
+    dc_group_idx: usize,
+    xsize_dc_groups: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+) -> Result<crate::modular::channel::ModularImage> {
+    let dc_gx = dc_group_idx % xsize_dc_groups;
+    let dc_gy = dc_group_idx / xsize_dc_groups;
+    let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+    let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+    let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+    let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+    let w = end_bx - start_bx;
+    let h = end_by - start_by;
+
+    // Stream channel order is `channel[c < 2 ? c ^ 1 : c]` for
+    // c in {1, 0, 2}: ch0 = Y (quant_dc[1]), ch1 = X (quant_dc[0]),
+    // ch2 = B (quant_dc[2]).
+    let mut channels = Vec::with_capacity(3);
+    for &c in &[1usize, 0, 2] {
+        let plane = &quant_dc[c];
+        let mut data = Vec::with_capacity(w * h);
+        for row in plane.iter().take(end_by).skip(start_by) {
+            data.extend_from_slice(&row[start_bx..end_bx]);
+        }
+        channels.push(crate::modular::channel::Channel::from_vec(data, w, h)?);
+    }
+    Ok(crate::modular::channel::ModularImage {
+        channels,
+        bit_depth: 8,
+        is_grayscale: false,
+        has_alpha: false,
+    })
+}
+
+/// Build the libjxl `AddACMetadata` stream image for one DC group
+/// (`enc_modular.cc:1740-1816`, non-transcode path): four channels —
+///   ch0: YtoX CfL map at 8×8-block tiles (w = ceil(rw/8), h = ceil(rh/8))
+///   ch1: YtoB CfL map, same dims
+///   ch2: ACS + QF interleaved channel — `num_first_blocks × 2`,
+///        row 0 = raw strategy at first blocks (raster order),
+///        row 1 = quant_field − 1 at first blocks
+///   ch3: EPF sharpness at full block res (rw × rh)
+fn build_ac_metadata_stream_image(
+    dc_group_idx: usize,
+    xsize_dc_groups: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    quant_field: &[u8],
+    cfl_map: &CflMap,
+    ac_strategy: &AcStrategyMap,
+    sharpness_map: Option<&[u8]>,
+) -> Result<crate::modular::channel::ModularImage> {
+    const COLOR_TILE_DIM_IN_BLOCKS: usize = 8;
+    let dc_gx = dc_group_idx % xsize_dc_groups;
+    let dc_gy = dc_group_idx / xsize_dc_groups;
+    let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+    let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+    let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+    let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+    let rw = end_bx - start_bx;
+    let rh = end_by - start_by;
+
+    // `Rect cr(r.x0() >> 3, r.y0() >> 3, (r.xsize + 7) >> 3, (r.ysize + 7) >> 3)`
+    let cfl_w = rw.div_ceil(COLOR_TILE_DIM_IN_BLOCKS);
+    let cfl_h = rh.div_ceil(COLOR_TILE_DIM_IN_BLOCKS);
+    let tile_x0 = start_bx / COLOR_TILE_DIM_IN_BLOCKS;
+    let tile_y0 = start_by / COLOR_TILE_DIM_IN_BLOCKS;
+
+    let mut ch0 = Vec::with_capacity(cfl_w * cfl_h);
+    let mut ch1 = Vec::with_capacity(cfl_w * cfl_h);
+    for ty in 0..cfl_h {
+        for tx in 0..cfl_w {
+            ch0.push(cfl_map.ytox_at(tile_x0 + tx, tile_y0 + ty) as i32);
+            ch1.push(cfl_map.ytob_at(tile_x0 + tx, tile_y0 + ty) as i32);
+        }
+    }
+
+    // ch2: first-block ACS (row 0) and QF-1 (row 1), packed to `num`.
+    let mut acs_row = Vec::new();
+    let mut qf_row = Vec::new();
+    for by in start_by..end_by {
+        for bx in start_bx..end_bx {
+            if !ac_strategy.is_first(bx, by) {
+                continue;
+            }
+            // `out_acs[num] = row_acs[x].RawStrategy()` — the spec-order
+            // strategy code (`strategy_code`, not our internal order).
+            acs_row.push(ac_strategy.strategy_code(bx, by) as i32);
+            qf_row.push(quant_field[by * xsize_blocks + bx] as i32 - 1);
+        }
+    }
+    let num = acs_row.len();
+    let mut ch2 = Vec::with_capacity(num * 2);
+    ch2.extend_from_slice(&acs_row);
+    ch2.extend_from_slice(&qf_row);
+
+    let mut ch3 = Vec::with_capacity(rw * rh);
+    for by in start_by..end_by {
+        for bx in start_bx..end_bx {
+            let sharp = match sharpness_map {
+                Some(sm) => sm[by * xsize_blocks + bx] as i32,
+                None => 4, // libjxl default EPF sharpness
+            };
+            ch3.push(sharp);
+        }
+    }
+
+    Ok(crate::modular::channel::ModularImage {
+        channels: vec![
+            crate::modular::channel::Channel::from_vec(ch0, cfl_w, cfl_h)?,
+            crate::modular::channel::Channel::from_vec(ch1, cfl_w, cfl_h)?,
+            crate::modular::channel::Channel::from_vec(ch2, num.max(1), 2)?,
+            crate::modular::channel::Channel::from_vec(ch3, rw, rh)?,
+        ],
+        bit_depth: 8,
+        is_grayscale: false,
+        has_alpha: false,
+    })
+}
+
+/// Tokenize one DC group through the merged libjxl MA tree
+/// (`EncoderStrategy::Libjxl` effort ≥ 8 path).
+///
+/// Equivalent to libjxl's `EncodeStream(VarDCTDC(g))` +
+/// `EncodeStream(ACMetadata(g))`: each stream image's channels are walked
+/// with the merged tree, `group_id` = the stream id (property 1), channel
+/// index (property 0) is the index within the stream image. Leaf context
+/// ids are the merged tree's BFS leaf ids — no remap table is needed.
+fn tokenize_dc_group_libjxl(
+    dc_group_idx: usize,
+    num_dc_groups: usize,
+    stream_images: &[crate::modular::channel::ModularImage],
+    merged_tree: &crate::modular::tree::Tree,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> Result<(Vec<Token>, Vec<Token>)> {
+    let wp_params = crate::modular::predictor::WeightedPredictorParams::default();
+    let dc_stream_id = 1 + dc_group_idx;
+    let ac_meta_stream_id = 1 + 2 * num_dc_groups + dc_group_idx;
+    let dc_tokens = crate::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+        &stream_images[dc_stream_id],
+        merged_tree,
+        dc_stream_id as u32,
+        0,
+        &wp_params,
+        budget,
+        crate::modular::tree_learn::WpCacheMode::Off,
+    )?;
+    #[cfg(feature = "debug-dc")]
+    eprintln!(
+        "merged dc_tokens[0..8]: {:?}",
+        dc_tokens
+            .iter()
+            .take(8)
+            .map(|t| (t.context(), t.value))
+            .collect::<Vec<_>>()
+    );
+    let md_tokens = crate::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+        &stream_images[ac_meta_stream_id],
+        merged_tree,
+        ac_meta_stream_id as u32,
+        0,
+        &wp_params,
+        budget,
+        crate::modular::tree_learn::WpCacheMode::Off,
+    )?;
     Ok((dc_tokens, md_tokens))
 }
 
@@ -1399,7 +1585,15 @@ impl VarDctEncoder {
 
             // Write permutation data if we have custom orders
             if let Some(tokens) = coeff_order_tokens.filter(|_| used_orders != 0) {
-                super::coeff_order::build_and_write_coeff_orders(tokens, self.use_ans, writer)?;
+                let use_ans = if self.profile.coeff_orders_libjxl_parity {
+                    // libjxl EncodeCoeffOrders uses default HistogramParams:
+                    // the permutation stream is prefix-coded for small or
+                    // singleton token streams, not effort-gated ANS.
+                    !super::coeff_order::perm_stream_prefers_prefix(tokens)
+                } else {
+                    self.use_ans
+                };
+                super::coeff_order::build_and_write_coeff_orders(tokens, use_ans, writer)?;
             }
             let w44_200_after_coeff_orders_bits = writer.bits_written();
 
@@ -2009,6 +2203,7 @@ impl VarDctEncoder {
                 padded_width,
                 padded_height,
                 self.enable_adaptive_gaborish,
+                self.profile.gaborish_libjxl_kernel,
                 self.budget.as_ref(),
             )?;
         }
@@ -2438,6 +2633,7 @@ impl VarDctEncoder {
                                 xsize_blocks,
                                 ysize_blocks,
                                 self.budget.as_ref(),
+                                self.resolved_improvements.dc_adaptive_smoothing,
                             )?)
                         }
                     }
@@ -2697,6 +2893,62 @@ impl VarDctEncoder {
         // task returns; 8c dispatches DC-group sections through
         // `Buffering::BufferedOutput` via `WritableSeek`.
 
+        // AC-metadata subtree shape. Default is our fixed 11-leaf tree;
+        // strict Libjxl (`profile.ac_meta_libjxl_tree`) selects libjxl's
+        // per-effort predefined trees — `AddACMetadata`'s `tree_kind`
+        // selection (`enc_modular.cc:1749-1763`):
+        //   effort <= 3 (`speed_tier >= kFalcon`)  → kFalconACMeta
+        //   effort 4-7 (`speed_tier > kKitten`)   → kACMeta
+        //   effort >= 8                            → kLearn (not ported;
+        //                                             stays on our tree)
+        // `kACMeta` collapses to the single-leaf `Predictor::Left` tree
+        // when the stream's total pixels < 1024
+        // (`enc_encoding.cc:497-499`). The pixel total is the sum over
+        // all four AC-metadata channels across every LF group:
+        // 2·(CfL tiles) + 2·(first blocks) + (block grid).
+        let cfl_tiles = cfl_map.xsize_tiles * cfl_map.ysize_tiles;
+        let mut first_blocks = 0usize;
+        for by in 0..ysize_blocks {
+            for bx in 0..xsize_blocks {
+                first_blocks += usize::from(ac_strategy.is_first(bx, by));
+            }
+        }
+        let ac_meta_pixels = 2 * cfl_tiles + 2 * first_blocks + xsize_blocks * ysize_blocks;
+        let ac_meta_kind = if self.profile.ac_meta_libjxl_tree {
+            if self.effort <= 3 {
+                super::dc_tree_learn::AcMetaTreeKind::Falcon
+            } else if self.effort <= 7 {
+                if ac_meta_pixels < 1024 {
+                    super::dc_tree_learn::AcMetaTreeKind::Falcon
+                } else {
+                    super::dc_tree_learn::AcMetaTreeKind::AcMeta
+                }
+            } else {
+                // libjxl uses kLearn for AC-meta at effort >= 8 — not
+                // ported; strict parity stays approximate there.
+                super::dc_tree_learn::AcMetaTreeKind::Ours
+            }
+        } else {
+            // Zen hybrid (measured 2026-09-17, arm-D A/B on abcorpus +
+            // chroma fixtures, ~40 cells): the ~50-token structured-tree
+            // header only pays when the AC-meta stream is large enough.
+            // Wins are unambiguous below ~300 stream px (64 px cells
+            // −1.6 % to −2.4 %, flat64 −21 B); the 350-800 px band is
+            // genuinely content-dependent (webshot_112 +0.50 % vs
+            // webshot_128 −1.11 % at ~370 px — a cost-based pick was
+            // tried and its estimator couldn't resolve the ~50-bit
+            // margins). At effort ≤3 QF/EPF values are flat, so the win
+            // band extends to ~600 px with ties at 776. Conservative
+            // thresholds sit inside the measured all-win zones:
+            // strictly better-or-neutral on every corpus cell.
+            let falcon_limit = if self.effort <= 3 { 640 } else { 320 };
+            if ac_meta_pixels < falcon_limit {
+                super::dc_tree_learn::AcMetaTreeKind::Falcon
+            } else {
+                super::dc_tree_learn::AcMetaTreeKind::Ours
+            }
+        };
+
         // Build context tree and remap tables (shared across DC groups).
         // Four modes:
         //   1. `use_lf_frame`: DC is in a separate frame — only AC metadata
@@ -2725,18 +2977,172 @@ impl VarDctEncoder {
         // per image.
         let (learned_tree_tokens, total_contexts, ac_meta_ctx_map);
         // Per-mode DC tree state. At most one of `wp_dc_state` /
-        // `learned_dc_state` is populated; both are `None` for `use_lf_frame`.
+        // `learned_dc_state` / `merged_dc_state` is populated; all are
+        // `None` for `use_lf_frame`.
         let wp_dc_state: Option<(super::dc_tree_learn::DcTree, Vec<u32>)>;
         let learned_dc_state: Option<(super::dc_tree_learn::DcTree, Vec<u32>)>;
+        // Strict-Libjxl e8+ state: the full per-stream image array (indexed
+        // by libjxl stream id) plus the merged MA tree. Used by
+        // `tokenize_dc_group_libjxl` to emit DC/AC-meta residuals directly
+        // through `collect_residuals_with_tree_offset_with_budget_wp`.
+        let merged_dc_state: Option<(
+            Vec<crate::modular::channel::ModularImage>,
+            crate::modular::tree::Tree,
+        )>;
 
         if self.use_lf_frame {
             // AC-metadata-only tree (no DC contexts needed)
-            let (tree_tokens, num_ctx, ctx_map) = super::dc_tree_learn::ac_metadata_only_tree();
+            let (tree_tokens, num_ctx, ctx_map) =
+                super::dc_tree_learn::ac_metadata_only_tree(ac_meta_kind);
             learned_tree_tokens = Some(tree_tokens);
             total_contexts = num_ctx;
             ac_meta_ctx_map = ctx_map;
             wp_dc_state = None;
             learned_dc_state = None;
+            merged_dc_state = None;
+        } else if self.profile.ac_meta_libjxl_tree
+            && self.effort >= DC_TREE_VARIABLE_TRIAL_MIN_EFFORT
+        {
+            // Strict `EncoderStrategy::Libjxl` at effort >= 8
+            // (`speed_tier < kSquirrel`): libjxl learns ONE adaptive MA
+            // tree per non-empty stream chunk — VarDCTDC streams with
+            // `Predictor::Best` (e8) / `Variable` (e9+) + kDefault, and
+            // ACMetadata streams with `Predictor::Gradient` + kNoWP —
+            // then merges them under stream-id (property 1) splits via
+            // `ModularFrameEncoder::ComputeTree` + `MergeTrees`
+            // (`enc_modular.cc:1174-1227`). The merged tree's BFS leaves
+            // are the shared context ids for both DC-residual and
+            // AC-metadata tokens.
+            //
+            // Stream layout (`ModularStreamId`, dec_modular.h):
+            //   [0]                       GlobalData   (empty for VarDCT)
+            //   [1, 1+ndg)                VarDCTDC(g)
+            //   [1+ndg, 1+2·ndg)          ModularDC(g) (empty)
+            //   [1+2·ndg, 1+3·ndg)        ACMetadata(g)
+            //   [1+3·ndg, 1+3·ndg+17)     QuantTable   (empty here)
+            //   [1+3·ndg+17, num_streams) ModularAC    (empty — VarDCT AC
+            //                              coefficients are ANS-coded, not
+            //                              modular)
+            // `num_streams = ModularStreamId::Num(frame_dim, passes)`.
+            let num_passes_l =
+                ProgressivePassConfig::from_mode(self.progressive).num_passes as usize;
+            let num_streams = 1
+                + 3 * num_dc_groups
+                + crate::modular::ma_libjxl::NUM_QUANT_TABLES
+                + num_groups * num_passes_l;
+            let (dc_options, ac_meta_options) = crate::modular::ma_libjxl::vardct_stream_options(
+                10 - self.effort as i32,
+                num_streams,
+            );
+
+            let mut stream_images: Vec<crate::modular::channel::ModularImage> = (0..num_streams)
+                .map(|_| crate::modular::channel::ModularImage {
+                    channels: Vec::new(),
+                    bit_depth: 8,
+                    is_grayscale: false,
+                    has_alpha: false,
+                })
+                .collect();
+            let mut stream_options = vec![ac_meta_options.clone(); num_streams];
+            for g in 0..num_dc_groups {
+                stream_options[1 + g] = dc_options.clone();
+                stream_images[1 + g] = build_vardct_dc_stream_image(
+                    quant_dc,
+                    g,
+                    xsize_dc_groups,
+                    xsize_blocks,
+                    ysize_blocks,
+                )?;
+                stream_images[1 + 2 * num_dc_groups + g] = build_ac_metadata_stream_image(
+                    g,
+                    xsize_dc_groups,
+                    xsize_blocks,
+                    ysize_blocks,
+                    quant_field,
+                    cfl_map,
+                    ac_strategy,
+                    sharpness_map,
+                )?;
+            }
+
+            // `tree_splits_` (`enc_modular.cc:661-673`): six chunk
+            // boundaries over the stream-id space; `compute_vardct_tree`
+            // filters to chunks with pixels, learns each, and merges.
+            let ndg = num_dc_groups as u32;
+            let qt0 = 1 + 3 * ndg;
+            let chunks = [
+                crate::modular::ma_libjxl::TreeChunk { start: 0, stop: 1 },
+                crate::modular::ma_libjxl::TreeChunk {
+                    start: 1,
+                    stop: 1 + ndg,
+                },
+                crate::modular::ma_libjxl::TreeChunk {
+                    start: 1 + ndg,
+                    stop: 1 + 2 * ndg,
+                },
+                crate::modular::ma_libjxl::TreeChunk {
+                    start: 1 + 2 * ndg,
+                    stop: 1 + 3 * ndg,
+                },
+                crate::modular::ma_libjxl::TreeChunk {
+                    start: qt0,
+                    stop: qt0 + crate::modular::ma_libjxl::NUM_QUANT_TABLES as u32,
+                },
+                crate::modular::ma_libjxl::TreeChunk {
+                    start: qt0 + crate::modular::ma_libjxl::NUM_QUANT_TABLES as u32,
+                    stop: num_streams as u32,
+                },
+            ];
+            let merged = crate::modular::ma_libjxl::compute_vardct_tree(
+                &stream_images,
+                &stream_options,
+                &chunks,
+                num_streams,
+            )?;
+            let tree = merged.unwrap_or_else(|| {
+                vec![crate::modular::tree::PropertyDecisionNode {
+                    predictor: crate::modular::predictor::Predictor::Gradient,
+                    ..Default::default()
+                }]
+            });
+            #[cfg(feature = "debug-dc")]
+            for (i, n) in tree.iter().enumerate() {
+                eprintln!(
+                    "mergedtree[{}] prop={} val={} pred={:?} off={} mul={} l={} r={}",
+                    i,
+                    n.property,
+                    n.splitval,
+                    n.predictor,
+                    n.predictor_offset,
+                    n.multiplier,
+                    n.lchild,
+                    n.rchild
+                );
+            }
+            let leaf_count = tree.iter().filter(|n| n.property < 0).count() as u32;
+            let tree_tokens: Vec<(u32, u32)> = crate::modular::tree::collect_tree_tokens(&tree)
+                .iter()
+                .map(|t| {
+                    (
+                        t.context as u32,
+                        if t.is_signed {
+                            crate::modular::predictor::pack_signed(t.value)
+                        } else {
+                            t.value as u32
+                        },
+                    )
+                })
+                .collect();
+
+            learned_tree_tokens = Some(tree_tokens);
+            total_contexts = leaf_count;
+            // Unused on this path — the merged tree assigns contexts
+            // directly; the sentinel keeps the non-strict tokenizers'
+            // debug_assert honest if ever miswired.
+            ac_meta_ctx_map = [u32::MAX; super::dc_tree_learn::NUM_AC_META_CLASSES as usize];
+            wp_dc_state = None;
+            learned_dc_state = None;
+            merged_dc_state = Some((stream_images, tree));
         } else if self.effort >= DC_TREE_VARIABLE_TRIAL_MIN_EFFORT
             || std::env::var_os("JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS").is_some()
         {
@@ -2817,6 +3223,7 @@ impl VarDctEncoder {
                     &learned_tree,
                     learned_num_contexts,
                     num_dc_groups,
+                    ac_meta_kind,
                 );
 
             // Candidate B: predefined kWPFixedDC (libjxl per-stream override).
@@ -2828,6 +3235,7 @@ impl VarDctEncoder {
                     &wp_dc_tree,
                     wp_dc_num_contexts,
                     num_dc_groups,
+                    ac_meta_kind,
                 );
 
             // Trial-tokenize DC residuals for both candidates over the full image.
@@ -2924,6 +3332,7 @@ impl VarDctEncoder {
                 wp_dc_state = Some((wp_dc_tree, b_dc_remap));
                 learned_dc_state = None;
             }
+            merged_dc_state = None;
         } else {
             // kWPFixedDC tree at effort <= 3.
             // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
@@ -2938,6 +3347,7 @@ impl VarDctEncoder {
                     &wp_dc_tree,
                     wp_dc_num_contexts,
                     num_dc_groups,
+                    ac_meta_kind,
                 );
 
             learned_tree_tokens = Some(wrapped_tokens);
@@ -2952,6 +3362,7 @@ impl VarDctEncoder {
 
             wp_dc_state = Some((wp_dc_tree, dc_remap));
             learned_dc_state = None;
+            merged_dc_state = None;
         }
 
         let _t_tok_dc_setup = _t0.elapsed().as_secs_f64() * 1000.0;
@@ -2959,41 +3370,66 @@ impl VarDctEncoder {
         // Compute custom coefficient orders if enabled and image is large enough.
         // Required by AC-coefficient tokenization (inside the per-DC-group
         // loop below), so must be computed before that loop runs.
-        let (custom_order_map, used_orders) =
-            if self.custom_orders && (xsize_blocks >= 5 || ysize_blocks >= 5) {
-                let zero_counts = super::coeff_order::count_zero_coefficients(
+        let (custom_order_map, used_orders) = if (self.custom_orders
+            || self.profile.coeff_orders_libjxl_parity)
+            && (xsize_blocks >= 5 || ysize_blocks >= 5)
+        {
+            let strict_coeff_orders = self.profile.coeff_orders_libjxl_parity;
+            // Strict: replicate libjxl `ComputeCoeffOrder`'s deterministic
+            // ~50% xorshift128+ block subsample (effort <= 7, DCT8-only
+            // customizable) — including its `ac_offset`-only-advances-on-
+            // sample behaviour. Falls back to full counting when the
+            // subsample does not apply.
+            let sampled = strict_coeff_orders.then(|| {
+                super::coeff_order::count_zero_coefficients_libjxl_sampled(
+                    quant_ac,
+                    ac_strategy,
+                    xsize_blocks,
+                    ysize_blocks,
+                    self.profile.effort,
+                )
+            });
+            let zero_counts = match sampled.flatten() {
+                Some(zc) => zc,
+                None => super::coeff_order::count_zero_coefficients(
                     quant_ac,
                     ac_strategy,
                     xsize_blocks,
                     ysize_blocks,
                     self.budget.as_ref().is_some_and(|b| b.is_fallible()),
-                )?;
-                let (orders, used) = super::coeff_order::compute_custom_orders_with_options(
-                    &zero_counts,
-                    // W44-201: skip buckets 3 (DCT32x32) and 6
-                    // (DCT32x16/DCT16x32) from cost-benefit admission when
-                    // the Zenjxl-default gate is on. Libjxl strategy keeps
-                    // the gate off to preserve libjxl-parity behaviour.
-                    self.resolved_improvements
-                        .coeff_orders_disable_large_buckets,
-                    // W44-205: extension — skip medium buckets 2 (DCT16x16)
-                    // and 4 (DCT16x8/DCT8x16) too, same Zenjxl default,
-                    // same libjxl-parity opt-out on Libjxl strategy.
-                    self.resolved_improvements
-                        .coeff_orders_disable_medium_buckets,
-                    // EX-J29: VarDCT path keeps the cost-benefit gate
-                    // (unconditional_emit=false). The libjxl-exact
-                    // unconditional admission is JPEG-transcode-only.
-                    false,
-                );
-                if used != 0 {
-                    (Some(orders), used)
-                } else {
-                    (None, 0u32)
-                }
+                )?,
+            };
+            let (orders, mut used) = super::coeff_order::compute_custom_orders_with_options(
+                &zero_counts,
+                // W44-201: skip buckets 3 (DCT32x32) and 6
+                // (DCT32x16/DCT16x32) from cost-benefit admission when
+                // the Zenjxl-default gate is on. Libjxl strategy keeps
+                // the gate off to preserve libjxl-parity behaviour.
+                self.resolved_improvements
+                    .coeff_orders_disable_large_buckets,
+                // W44-205: extension — skip medium buckets 2 (DCT16x16)
+                // and 4 (DCT16x8/DCT8x16) too, same Zenjxl default,
+                // same libjxl-parity opt-out on Libjxl strategy.
+                self.resolved_improvements
+                    .coeff_orders_disable_medium_buckets,
+                // libjxl admits on `is_nondefault` alone (no cost-benefit
+                // gate) — `unconditional_emit` under strict parity.
+                strict_coeff_orders,
+            );
+            // libjxl `ComputeUsedOrders` early-returns {1,1} at
+            // tier >= kFalcon (effort <= 3): only the DCT8 bucket may
+            // carry a custom order there.
+            if strict_coeff_orders && self.profile.effort <= 3 {
+                used &= 1;
+            }
+            if used != 0 {
+                (Some(orders), used)
             } else {
                 (None, 0u32)
-            };
+            }
+        } else {
+            (None, 0u32)
+        };
 
         let _ms_co = _t_co.elapsed().as_secs_f64() * 1000.0;
         let _t_bcm = std::time::Instant::now();
@@ -3058,7 +3494,15 @@ impl VarDctEncoder {
 
                 // 1) DC + AC-metadata tokens for this DC group.
                 let (dc_tokens, ac_meta_tokens) =
-                    if let Some((learned_tree, dc_ctx_remap)) = learned_dc_state.as_ref() {
+                    if let Some((stream_images, merged_tree)) = merged_dc_state.as_ref() {
+                        tokenize_dc_group_libjxl(
+                            dc_group_idx,
+                            num_dc_groups,
+                            stream_images,
+                            merged_tree,
+                            dc_budget,
+                        )?
+                    } else if let Some((learned_tree, dc_ctx_remap)) = learned_dc_state.as_ref() {
                         tokenize_dc_group_learned(
                             dc_group_idx,
                             xsize_blocks,
@@ -3072,6 +3516,7 @@ impl VarDctEncoder {
                             learned_tree,
                             dc_ctx_remap,
                             &ac_meta_ctx_map,
+                            ac_meta_kind,
                             dc_budget,
                         )?
                     } else if let Some((wp_dc_tree, dc_ctx_remap)) = wp_dc_state.as_ref() {
@@ -3088,6 +3533,7 @@ impl VarDctEncoder {
                             wp_dc_tree,
                             dc_ctx_remap,
                             &ac_meta_ctx_map,
+                            ac_meta_kind,
                             dc_budget,
                         )?
                     } else {
@@ -3101,6 +3547,7 @@ impl VarDctEncoder {
                             ac_strategy,
                             sharpness_map,
                             &ac_meta_ctx_map,
+                            ac_meta_kind,
                         )?
                     };
 
@@ -3210,6 +3657,38 @@ impl VarDctEncoder {
         // ── Apply LZ77 if enabled (ANS only, before building codes) ──
 
         let use_lz77 = self.enable_lz77 && self.use_ans;
+
+        // Per-stream LZ77 method split. libjxl applies a *different*
+        // `lz77_method` to the DC/AC-metadata modular stream than to the
+        // AC coefficient token stream:
+        //
+        //   * DC modular stream — `HistogramParams::ForModular`
+        //     (enc_ans.cc:1344-1383): for VarDCT (`modular_mode=false`)
+        //     the fast branch yields `kNone` at effort <= 7; kKitten
+        //     (effort 8) falls to `kLZ77` (greedy hash-chain); effort
+        //     >= 9 (<= kTortoise) takes `kOptimal`.
+        //   * AC token stream — `HistogramParams(tier, num_ctx)`
+        //     overridden at enc_frame.cc:1290-1292: `kNone` at
+        //     `speed_tier > kTortoise` (effort <= 8), otherwise the
+        //     struct default `kRLE` survives — i.e. RLE-only at
+        //     effort >= 9, never greedy/optimal.
+        //
+        // Under `EncoderStrategy::Libjxl` (`entropy_codes_libjxl_parity`)
+        // the DC gate also overrides `enable_lz77`, mirroring libjxl's
+        // unconditional e8 `kLZ77`. Zenjxl keeps the single profile
+        // method on both streams.
+        let (dc_lz77_method, ac_lz77_method) = if self.profile.entropy_codes_libjxl_parity {
+            let dc = match self.effort {
+                0..=7 => None,
+                8 => Some(crate::entropy_coding::lz77::Lz77Method::Greedy),
+                _ => Some(crate::entropy_coding::lz77::Lz77Method::Optimal),
+            };
+            let ac = (self.effort >= 9).then_some(crate::entropy_coding::lz77::Lz77Method::Rle);
+            (dc, ac)
+        } else {
+            let m = use_lz77.then_some(self.lz77_method);
+            (m, m)
+        };
         let mut dc_lz77_params: Option<crate::entropy_coding::lz77::Lz77Params> = None;
         let mut ac_lz77_params_per_pass: Vec<Option<crate::entropy_coding::lz77::Lz77Params>> =
             vec![None; num_passes];
@@ -3225,171 +3704,175 @@ impl VarDctEncoder {
         let _dc_distance_multiplier = xsize_blocks as i32;
         let ac_distance_multiplier = 0i32;
 
-        if use_lz77 {
+        if dc_lz77_method.is_some() || ac_lz77_method.is_some() {
             #[cfg(feature = "debug-tokens")]
             eprintln!(
-                "[LZ77] Attempting LZ77 {:?} on DC ({} groups) and AC ({} groups)",
-                self.lz77_method, num_dc_groups, num_groups
+                "[LZ77] Attempting LZ77 dc={:?} ac={:?} ({} DC groups, {} AC groups)",
+                dc_lz77_method, ac_lz77_method, num_dc_groups, num_groups
             );
 
             // Apply LZ77 to DC token streams (each DC group independently)
             // Use actual merged tree context count (WP DC + AC metadata), not old constant.
             let dc_num_ctx = total_contexts as usize;
-            let merged_dc = {
-                let mut m = Vec::new();
-                for section in &dc_tokens_per_group {
-                    m.extend_from_slice(section);
-                }
-                for section in &ac_metadata_tokens_per_group {
-                    m.extend_from_slice(section);
-                }
-                m
-            };
-            #[cfg(feature = "debug-tokens")]
-            eprintln!(
-                "[LZ77] DC merged tokens: {}, num_contexts: {}",
-                merged_dc.len(),
-                dc_num_ctx
-            );
-
-            if let Some((lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
-                &merged_dc,
-                dc_num_ctx,
-                false,
-                self.lz77_method,
-                _dc_distance_multiplier,
-                self.budget.as_ref(),
-            )? {
-                #[cfg(feature = "debug-tokens")]
-                eprintln!(
-                    "[LZ77] DC LZ77 ACTIVATED: {} -> {} tokens",
-                    merged_dc.len(),
-                    lz77_tokens.len()
-                );
-                // Re-split LZ77 tokens back into per-group
-                // For now, store merged LZ77 tokens and use single-group split
-                dc_lz77_params = Some(params);
-                // Replace per-group tokens with LZ77 versions
-                // (apply per-group independently for correct splitting)
-                let mut new_dc_per_group = Vec::with_capacity(num_dc_groups);
-                let mut new_md_per_group = Vec::with_capacity(num_dc_groups);
-                for i in 0..num_dc_groups {
-                    // Compute per-group DC channel width for distance multiplier.
-                    // DC subimage channels have width = group's block width.
-                    let dc_gx = i % xsize_dc_groups;
-                    let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
-                    let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
-                    let group_dc_width = (end_bx - start_bx) as i32;
-
-                    if let Some((lz77_dc, _)) = crate::entropy_coding::lz77::apply_lz77(
-                        &dc_tokens_per_group[i],
-                        dc_num_ctx,
-                        false,
-                        self.lz77_method,
-                        group_dc_width,
-                        self.budget.as_ref(),
-                    )? {
-                        new_dc_per_group.push(lz77_dc);
-                    } else {
-                        new_dc_per_group.push(dc_tokens_per_group[i].clone());
-                    }
-
-                    // AC metadata subimage has channels with different widths.
-                    // Compute max(channel_widths) to match decoder's dist_multiplier.
-                    let dc_gy = i / xsize_dc_groups;
-                    let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
-                    let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
-                    let region_xblocks = end_bx - start_bx;
-                    let mut num_ac_blocks = 0u32;
-                    for ry in start_by..end_by {
-                        for rx in start_bx..end_bx {
-                            if ac_strategy.is_first(rx, ry) {
-                                num_ac_blocks += 1;
-                            }
-                        }
-                    }
-                    // Metadata channels: EPF (w/8), CfL (w/8), BlockInfo (nb_blocks x 2), QF (bw x bh)
-                    let epf_w = (region_xblocks * BLOCK_DIM).div_ceil(64) as u32;
-                    let qf_w = region_xblocks as u32;
-                    let md_dist_mult = epf_w.max(num_ac_blocks).max(qf_w) as i32;
-
-                    if let Some((lz77_md, _)) = crate::entropy_coding::lz77::apply_lz77(
-                        &ac_metadata_tokens_per_group[i],
-                        dc_num_ctx,
-                        false,
-                        self.lz77_method,
-                        md_dist_mult,
-                        self.budget.as_ref(),
-                    )? {
-                        new_md_per_group.push(lz77_md);
-                    } else {
-                        new_md_per_group.push(ac_metadata_tokens_per_group[i].clone());
-                    }
-                }
-                dc_tokens_per_group = new_dc_per_group;
-                ac_metadata_tokens_per_group = new_md_per_group;
-                let _ = lz77_tokens; // merged version not needed, per-group applied
-            } else {
-                #[cfg(feature = "debug-tokens")]
-                eprintln!("[LZ77] DC LZ77 not beneficial (threshold not met)");
-            }
-
-            // Apply LZ77 to AC token streams per-pass (each pass independently)
-            let ac_num_ctx = block_ctx_map.num_ac_contexts();
-            for pass in 0..num_passes {
-                let merged_ac = {
+            if let Some(dc_method) = dc_lz77_method {
+                let merged_dc = {
                     let mut m = Vec::new();
-                    for section in &ac_section_tokens_per_pass[pass] {
+                    for section in &dc_tokens_per_group {
+                        m.extend_from_slice(section);
+                    }
+                    for section in &ac_metadata_tokens_per_group {
                         m.extend_from_slice(section);
                     }
                     m
                 };
                 #[cfg(feature = "debug-tokens")]
                 eprintln!(
-                    "[LZ77] AC pass {} merged tokens: {}, num_contexts: {}",
-                    pass,
-                    merged_ac.len(),
-                    ac_num_ctx
+                    "[LZ77] DC merged tokens: {}, num_contexts: {}",
+                    merged_dc.len(),
+                    dc_num_ctx
                 );
 
-                if let Some((_lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
-                    &merged_ac,
-                    ac_num_ctx,
+                if let Some((lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
+                    &merged_dc,
+                    dc_num_ctx,
                     false,
-                    self.lz77_method,
-                    ac_distance_multiplier,
+                    dc_method,
+                    _dc_distance_multiplier,
                     self.budget.as_ref(),
                 )? {
                     #[cfg(feature = "debug-tokens")]
                     eprintln!(
-                        "[LZ77] AC pass {} LZ77 ACTIVATED: {} -> {} tokens",
-                        pass,
-                        merged_ac.len(),
-                        _lz77_tokens.len()
+                        "[LZ77] DC LZ77 ACTIVATED: {} -> {} tokens",
+                        merged_dc.len(),
+                        lz77_tokens.len()
                     );
-                    ac_lz77_params_per_pass[pass] = Some(params);
-                    let mut new_sections = Vec::with_capacity(num_groups);
-                    for tokens in &ac_section_tokens_per_pass[pass] {
-                        if let Some((lz77_ac, _)) = crate::entropy_coding::lz77::apply_lz77(
-                            tokens,
-                            ac_num_ctx,
+                    // Re-split LZ77 tokens back into per-group
+                    // For now, store merged LZ77 tokens and use single-group split
+                    dc_lz77_params = Some(params);
+                    // Replace per-group tokens with LZ77 versions
+                    // (apply per-group independently for correct splitting)
+                    let mut new_dc_per_group = Vec::with_capacity(num_dc_groups);
+                    let mut new_md_per_group = Vec::with_capacity(num_dc_groups);
+                    for i in 0..num_dc_groups {
+                        // Compute per-group DC channel width for distance multiplier.
+                        // DC subimage channels have width = group's block width.
+                        let dc_gx = i % xsize_dc_groups;
+                        let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+                        let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+                        let group_dc_width = (end_bx - start_bx) as i32;
+
+                        if let Some((lz77_dc, _)) = crate::entropy_coding::lz77::apply_lz77(
+                            &dc_tokens_per_group[i],
+                            dc_num_ctx,
                             false,
-                            self.lz77_method,
-                            ac_distance_multiplier,
+                            dc_method,
+                            group_dc_width,
                             self.budget.as_ref(),
                         )? {
-                            new_sections.push(lz77_ac);
+                            new_dc_per_group.push(lz77_dc);
                         } else {
-                            new_sections.push(tokens.clone());
+                            new_dc_per_group.push(dc_tokens_per_group[i].clone());
+                        }
+
+                        // AC metadata subimage has channels with different widths.
+                        // Compute max(channel_widths) to match decoder's dist_multiplier.
+                        let dc_gy = i / xsize_dc_groups;
+                        let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+                        let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+                        let region_xblocks = end_bx - start_bx;
+                        let mut num_ac_blocks = 0u32;
+                        for ry in start_by..end_by {
+                            for rx in start_bx..end_bx {
+                                if ac_strategy.is_first(rx, ry) {
+                                    num_ac_blocks += 1;
+                                }
+                            }
+                        }
+                        // Metadata channels: EPF (w/8), CfL (w/8), BlockInfo (nb_blocks x 2), QF (bw x bh)
+                        let epf_w = (region_xblocks * BLOCK_DIM).div_ceil(64) as u32;
+                        let qf_w = region_xblocks as u32;
+                        let md_dist_mult = epf_w.max(num_ac_blocks).max(qf_w) as i32;
+
+                        if let Some((lz77_md, _)) = crate::entropy_coding::lz77::apply_lz77(
+                            &ac_metadata_tokens_per_group[i],
+                            dc_num_ctx,
+                            false,
+                            dc_method,
+                            md_dist_mult,
+                            self.budget.as_ref(),
+                        )? {
+                            new_md_per_group.push(lz77_md);
+                        } else {
+                            new_md_per_group.push(ac_metadata_tokens_per_group[i].clone());
                         }
                     }
-                    ac_section_tokens_per_pass[pass] = new_sections;
+                    dc_tokens_per_group = new_dc_per_group;
+                    ac_metadata_tokens_per_group = new_md_per_group;
+                    let _ = lz77_tokens; // merged version not needed, per-group applied
                 } else {
                     #[cfg(feature = "debug-tokens")]
+                    eprintln!("[LZ77] DC LZ77 not beneficial (threshold not met)");
+                }
+            }
+
+            // Apply LZ77 to AC token streams per-pass (each pass independently)
+            let ac_num_ctx = block_ctx_map.num_ac_contexts();
+            if let Some(ac_method) = ac_lz77_method {
+                for pass in 0..num_passes {
+                    let merged_ac = {
+                        let mut m = Vec::new();
+                        for section in &ac_section_tokens_per_pass[pass] {
+                            m.extend_from_slice(section);
+                        }
+                        m
+                    };
+                    #[cfg(feature = "debug-tokens")]
                     eprintln!(
-                        "[LZ77] AC pass {} LZ77 not beneficial (threshold not met)",
-                        pass
+                        "[LZ77] AC pass {} merged tokens: {}, num_contexts: {}",
+                        pass,
+                        merged_ac.len(),
+                        ac_num_ctx
                     );
+
+                    if let Some((_lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
+                        &merged_ac,
+                        ac_num_ctx,
+                        false,
+                        ac_method,
+                        ac_distance_multiplier,
+                        self.budget.as_ref(),
+                    )? {
+                        #[cfg(feature = "debug-tokens")]
+                        eprintln!(
+                            "[LZ77] AC pass {} LZ77 ACTIVATED: {} -> {} tokens",
+                            pass,
+                            merged_ac.len(),
+                            _lz77_tokens.len()
+                        );
+                        ac_lz77_params_per_pass[pass] = Some(params);
+                        let mut new_sections = Vec::with_capacity(num_groups);
+                        for tokens in &ac_section_tokens_per_pass[pass] {
+                            if let Some((lz77_ac, _)) = crate::entropy_coding::lz77::apply_lz77(
+                                tokens,
+                                ac_num_ctx,
+                                false,
+                                ac_method,
+                                ac_distance_multiplier,
+                                self.budget.as_ref(),
+                            )? {
+                                new_sections.push(lz77_ac);
+                            } else {
+                                new_sections.push(tokens.clone());
+                            }
+                        }
+                        ac_section_tokens_per_pass[pass] = new_sections;
+                    } else {
+                        #[cfg(feature = "debug-tokens")]
+                        eprintln!(
+                            "[LZ77] AC pass {} LZ77 not beneficial (threshold not met)",
+                            pass
+                        );
+                    }
                 }
             }
         }
@@ -3427,30 +3910,61 @@ impl VarDctEncoder {
             // fully-deterministic streams (see
             // prefix_beats_ans_for_token_groups). Streams carrying LZ77
             // params stay ANS — our LZ77 writer is ANS-only.
-            let dc_use_ans = self.use_ans
+            //
+            // Strict `EncoderStrategy::Libjxl`
+            // (`entropy_codes_libjxl_parity`): the DC/AC-metadata
+            // modular stream is ANS-eligible regardless of the VarDCT
+            // `use_ans` effort flag — libjxl's
+            // `HistogramParams::ForModular` never effort-gates the
+            // modular stream's ANS choice (kFast clustering at
+            // effort <= 7 → `use_prefix_code` fires only for <100
+            // tokens or all-singleton histograms). Only the AC stream
+            // is effort-gated in libjxl (`HistogramParams(tier)`
+            // kFastest at effort <= 2 → prefix), which the shared
+            // `use_ans` schedule already mirrors.
+            let dc_ans_eligible = self.use_ans || self.profile.entropy_codes_libjxl_parity;
+            let dc_use_ans = dc_ans_eligible
                 && (dc_lz77_params.is_some()
                     || !crate::entropy_coding::encode::prefix_beats_ans_for_token_groups(
                         &dc_groups,
                         dc_num_contexts,
                     ));
+            // libjxl `HistogramParams::ForModular` (enc_ans.cc:1361-1366):
+            // `extra_dc_precision[0] != 0` → `uint_method = kFast`, i.e.
+            // the shared modular code (DC + AC-metadata) gets per-cluster
+            // HybridUint optimization whenever nl_dc is active
+            // (e4+ libjxl, e1-e7 Zenjxl). Verified vs cjxl v0.12.0:
+            // nature_128 e4 emits {4,1,2}/{0,0,0} configs (kFast
+            // candidates), not the kNone default (4,2,0).
+            let dc_optimize_uint =
+                self.profile.optimize_uint_configs_vardct || self.profile.extra_dc_precision > 0;
             if dc_use_ans {
                 BuiltEntropyCode::Ans(
                     crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
                         &dc_groups,
                         dc_num_contexts,
                         self.profile.enhanced_clustering_vardct,
-                        self.profile.optimize_uint_configs_vardct,
+                        dc_optimize_uint,
                         dc_lz77_params.as_ref(),
                         None,
                         self.profile.ans_histogram_strategy_vardct,
                     ),
                 )
             } else {
+                // libjxl runs `ChooseUintConfigs` for prefix streams too
+                // (`enc_ans.cc` — config selection precedes the prefix/ANS
+                // split), so the Huffman path gets the same `kFast` method
+                // the ANS branch applies under `dc_optimize_uint`.
                 BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
                     &dc_groups,
                     dc_num_contexts,
                     self.profile.enhanced_clustering_vardct,
                     dc_lz77_params.as_ref(),
+                    if dc_optimize_uint {
+                        crate::entropy_coding::encode::UintConfigMethod::Fast
+                    } else {
+                        crate::entropy_coding::encode::UintConfigMethod::None
+                    },
                 ))
             }
         };
@@ -3490,6 +4004,11 @@ impl VarDctEncoder {
                         ac_num_contexts,
                         self.profile.enhanced_clustering_vardct,
                         ac_lz77_params_per_pass[pass].as_ref(),
+                        if self.profile.optimize_uint_configs_vardct {
+                            crate::entropy_coding::encode::UintConfigMethod::Best
+                        } else {
+                            crate::entropy_coding::encode::UintConfigMethod::None
+                        },
                     ))
                 }
             })
@@ -5258,7 +5777,16 @@ impl VarDctEncoder {
             writer.write(4, 3)?; // use global tree, default wp, no transforms
 
             // Write DC tokens
+            #[cfg(feature = "debug-tokens")]
+            let _dc_tok_start = writer.bits_written();
             dc_code.write_tokens(dc_tokens, dc_lz77_params, writer)?;
+            #[cfg(feature = "debug-tokens")]
+            debug_log!(
+                "dc_group {}: dc_tokens={} tokens, {} bits",
+                dc_group_idx,
+                dc_tokens.len(),
+                writer.bits_written() - _dc_tok_start
+            );
         }
 
         // Chunk-2.b: modular DC sub-bitstream (squeeze LfGroup band)
@@ -5292,7 +5820,16 @@ impl VarDctEncoder {
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
         // Write AC metadata tokens
+        #[cfg(feature = "debug-tokens")]
+        let _acm_tok_start = writer.bits_written();
         dc_code.write_tokens(ac_metadata_tokens, dc_lz77_params, writer)?;
+        #[cfg(feature = "debug-tokens")]
+        debug_log!(
+            "dc_group {}: ac_meta={} tokens, {} bits",
+            dc_group_idx,
+            ac_metadata_tokens.len(),
+            writer.bits_written() - _acm_tok_start
+        );
 
         Ok(())
     }

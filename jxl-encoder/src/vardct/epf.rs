@@ -1015,6 +1015,7 @@ pub(crate) fn compute_epf_sharpness(
     xsize_blocks: usize,
     ysize_blocks: usize,
     budget: Option<&Arc<MemoryBudget>>,
+    dc_smoothing: bool,
 ) -> Result<Vec<u8>> {
     let nblocks = xsize_blocks * ysize_blocks;
     let padded_width = xsize_blocks * BLOCK_DIM;
@@ -1040,6 +1041,7 @@ pub(crate) fn compute_epf_sharpness(
         ac_strategy,
         xsize_blocks,
         ysize_blocks,
+        dc_smoothing,
     );
 
     #[cfg(feature = "__env_var_diagnostics")]

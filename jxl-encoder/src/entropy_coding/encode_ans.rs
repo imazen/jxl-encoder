@@ -18,7 +18,7 @@ use super::encode_huffman::{
 };
 use super::hybrid_uint::HybridUintConfig;
 use super::lz77::Lz77Params;
-use super::token::{Lz77UintCoder, Token, UintCoder};
+use super::token::{Lz77UintCoder, Token};
 use crate::bit_writer::BitWriter;
 use crate::error::{Error, Result};
 
@@ -582,7 +582,7 @@ pub fn build_entropy_code_ans_from_token_groups_with_strategy(
 ///
 /// Tries 4 configs per histogram (libjxl effort 7). Iterates (value, count) pairs
 /// from frequency maps instead of individual values, avoiding O(tokens) storage.
-fn optimize_uint_configs_fast_from_freqs(
+pub(crate) fn optimize_uint_configs_fast_from_freqs(
     freqs_per_histo: &[alloc::collections::BTreeMap<u32, u32>],
     lz77: Option<&Lz77Params>,
 ) -> Vec<HybridUintConfig> {
@@ -600,7 +600,10 @@ fn optimize_uint_configs_fast_from_freqs(
 
     let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
     let mut counts_buf: Vec<u32> = Vec::new();
+    let allowed_cache = super::ans::AllowedCountsCache::new();
+    let mut histo = crate::entropy_coding::histogram::Histogram::new();
 
+    let dbg = std::env::var_os("__JXL_UINTCFG_PROBE").is_some();
     for h in 0..num_histograms {
         let freqs = &freqs_per_histo[h];
         if freqs.is_empty() {
@@ -609,6 +612,15 @@ fn optimize_uint_configs_fast_from_freqs(
 
         let max_value = freqs.keys().copied().max().unwrap_or(0);
         let total: u32 = freqs.values().sum();
+        if dbg {
+            eprintln!(
+                "uintcfg kFast histo[{h}]: total={total} max_value={max_value} distinct={}",
+                freqs.len()
+            );
+            let mut items: Vec<_> = freqs.iter().collect();
+            items.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+            eprintln!("  freqs: {:?}", &items[..items.len().min(40)]);
+        }
         let mut best_cost = f64::MAX;
 
         for &cfg in &candidates {
@@ -633,16 +645,26 @@ fn optimize_uint_configs_fast_from_freqs(
                 extra_bits_total += nbits as u64 * freq as u64;
             }
 
-            let inv_total = 1.0f32 / total as f32;
-            let mut entropy_cost = 0.0f64;
-            let mut nonzero_count: usize = 0;
-            for &count in &counts_buf[..capacity] {
-                if count > 0 {
-                    nonzero_count += 1;
-                    let c = count as f32;
-                    entropy_cost -= c as f64 * jxl_simd::fast_log2f(c * inv_total) as f64;
-                }
-            }
+            // libjxl `ChooseUintConfigs` cost (enc_ans.cc:852-866):
+            // `histo.ANSPopulationCost()` — the *exact* normalized-ANS
+            // header+data cost (`ANSEncodingHistogram::ComputeBest` with the
+            // kFast shift set {0,6,12} serialized to a SizeWriter), not a
+            // Shannon estimate — plus extra token bits and the config's
+            // signaling cost. The flat `nonzero*8` header approximation we
+            // used before couldn't see that wide-alphabet configs serialize
+            // more expensive headers, so it mis-picked (e.g. {4,1,2} over
+            // {0,0,0} on flat DC streams where cjxl chooses direct coding).
+            histo.counts.clear();
+            histo.counts.extend(counts_buf.iter().map(|&c| c as i32));
+            histo.total_count = total as usize;
+            histo.condition();
+            let population_cost = ANSEncodingHistogram::from_histogram_cached(
+                &histo,
+                ANSHistogramStrategy::Fast,
+                &allowed_cache,
+            )
+            .map(|e| e.cost)
+            .unwrap_or(f32::MAX) as f64;
 
             let signaling_cost = if cfg.split_exponent == 0 {
                 0.0
@@ -651,25 +673,20 @@ fn optimize_uint_configs_fast_from_freqs(
                     + ceil_log2_nonzero_usize((cfg.split_exponent - cfg.msb_in_token) as usize + 1)
                         as f64
             };
-            // ANS distribution header cost: scales with the number of non-zero
-            // symbols in the per-config histogram. libjxl's `Histogram::ANS-
-            // PopulationCost()` (`enc_ans.cc:823-863`) ADDS this term; we were
-            // missing it, which caused the optimizer to UNDER-cost wide-alphabet
-            // configs like (0,0,0) (which can span up to 256 tokens) and pick
-            // them when (4,2,0)-style narrow-alphabet configs were actually
-            // smaller end-to-end. See `cluster.rs::ans_population_cost` for the
-            // companion estimate used in pair-merge cluster cost: `alphabet_size
-            // * 5.0`. Here we use `nonzero_count * 8.0` because the writer's
-            // RLE on zero runs (`ans.rs:1278-1313`) makes the per-zero-symbol
-            // cost negligible, so cost scales with non-zero entries (each
-            // costing ~3-6 bits logcount prefix + ~4-12 bits precision).
-            //
-            // Approximation: 8 bits per non-zero symbol. Calibrated against
-            // libjxl's actual `ANSPopulationCost()` differential between
-            // (0,0,0) and (4,2,0) on JPEG AC histograms.
-            let header_cost = nonzero_count as f64 * 8.0;
-            let cost = entropy_cost + extra_bits_total as f64 + signaling_cost + header_cost;
+            let cost = population_cost + extra_bits_total as f64 + signaling_cost;
 
+            if dbg {
+                eprintln!(
+                    "    cfg({},{},{}): pop={:.1} extra={} sig={:.1} total={:.1}",
+                    cfg.split_exponent,
+                    cfg.msb_in_token,
+                    cfg.lsb_in_token,
+                    population_cost,
+                    extra_bits_total,
+                    signaling_cost,
+                    cost
+                );
+            }
             if cost < best_cost {
                 best_cost = cost;
                 best_configs[h] = cfg;
@@ -685,12 +702,10 @@ fn optimize_uint_configs_fast_from_freqs(
 /// Tries 28 curated configs per histogram (from libjxl enc_ans.cc:747-783).
 /// More thorough than kFast (4 configs) but 7x more work. Iterates (value, count)
 /// pairs from frequency maps instead of individual values, avoiding O(tokens) storage.
-fn optimize_uint_configs_best_from_freqs(
+pub(crate) fn optimize_uint_configs_best_from_freqs(
     freqs_per_histo: &[alloc::collections::BTreeMap<u32, u32>],
     lz77: Option<&Lz77Params>,
 ) -> Vec<HybridUintConfig> {
-    use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
-
     // EX-J26 (2026-05-28): tested porting libjxl's exact 28-candidate
     // set from `enc_ans.cc:748-774` for parity. Measurement on 50-file
     // paired A/B: +133 bytes (noise-level regression). Our existing
@@ -698,7 +713,7 @@ fn optimize_uint_configs_best_from_freqs(
     // optima per histogram via brute-force. Reverted, kept our set
     // (better-by-noise margin).
     #[rustfmt::skip]
-    let candidates = [
+    const OUR_BEST: &[HybridUintConfig] = &[
         HybridUintConfig::new(0,0,0),  HybridUintConfig::new(1,0,0),
         HybridUintConfig::new(2,0,0),  HybridUintConfig::new(2,0,1),
         HybridUintConfig::new(3,0,0),  HybridUintConfig::new(3,1,0),
@@ -714,12 +729,64 @@ fn optimize_uint_configs_best_from_freqs(
         HybridUintConfig::new(8,0,0),  HybridUintConfig::new(8,2,0),
         HybridUintConfig::new(10,0,0), HybridUintConfig::new(12,0,0),
     ];
+    optimize_uint_configs_with_candidates(freqs_per_histo, lz77, OUR_BEST)
+}
+
+/// libjxl's exact kBest candidate set (`enc_ans.cc:748-774`), iterated in
+/// libjxl's order with strict `<` — required for strict-parity streams where
+/// the *choice* must match cjxl, not just the cost.
+pub(crate) fn optimize_uint_configs_libjxl_best_from_freqs(
+    freqs_per_histo: &[alloc::collections::BTreeMap<u32, u32>],
+    lz77: Option<&Lz77Params>,
+) -> Vec<HybridUintConfig> {
+    #[rustfmt::skip]
+    const LIBJXL_BEST: &[HybridUintConfig] = &[
+        HybridUintConfig::new(4, 2, 0),  // default
+        HybridUintConfig::new(4, 1, 0),  // less precise
+        HybridUintConfig::new(4, 2, 1),  // add sign
+        HybridUintConfig::new(4, 2, 2),  // add sign+parity
+        HybridUintConfig::new(4, 1, 2),  // add parity but less msb
+        // Same as above, but more direct coding.
+        HybridUintConfig::new(5, 2, 0), HybridUintConfig::new(5, 1, 0),
+        HybridUintConfig::new(5, 2, 1), HybridUintConfig::new(5, 2, 2),
+        HybridUintConfig::new(5, 1, 2),
+        // Same as above, but less direct coding.
+        HybridUintConfig::new(3, 2, 0), HybridUintConfig::new(3, 1, 0),
+        HybridUintConfig::new(3, 2, 1), HybridUintConfig::new(3, 1, 2),
+        // For near-lossless.
+        HybridUintConfig::new(4, 1, 3), HybridUintConfig::new(5, 1, 4),
+        HybridUintConfig::new(5, 2, 3), HybridUintConfig::new(6, 1, 5),
+        HybridUintConfig::new(6, 2, 4), HybridUintConfig::new(6, 0, 0),
+        // Other
+        HybridUintConfig::new(0, 0, 0),   // varlenuint
+        HybridUintConfig::new(2, 0, 1),   // works well for ctx map
+        HybridUintConfig::new(7, 0, 0),   // direct coding
+        HybridUintConfig::new(8, 0, 0),   // direct coding
+        HybridUintConfig::new(9, 0, 0),   // direct coding
+        HybridUintConfig::new(10, 0, 0),  // direct coding
+        HybridUintConfig::new(11, 0, 0),  // direct coding
+        HybridUintConfig::new(12, 0, 0),  // direct coding
+    ];
+    optimize_uint_configs_with_candidates(freqs_per_histo, lz77, LIBJXL_BEST)
+}
+
+/// Shared `ChooseUintConfigs` inner loop: per histogram, evaluate each
+/// candidate's exact normalized-ANS population cost + extra token bits +
+/// signaling bits, keep the strict minimum.
+fn optimize_uint_configs_with_candidates(
+    freqs_per_histo: &[alloc::collections::BTreeMap<u32, u32>],
+    lz77: Option<&Lz77Params>,
+    candidates: &[HybridUintConfig],
+) -> Vec<HybridUintConfig> {
+    use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
 
     let num_histograms = freqs_per_histo.len();
     let max_alpha = ANS_MAX_ALPHABET_SIZE;
 
     let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
     let mut counts_buf: Vec<u32> = Vec::new();
+    let allowed_cache = super::ans::AllowedCountsCache::new();
+    let mut histo = crate::entropy_coding::histogram::Histogram::new();
 
     for h in 0..num_histograms {
         let freqs = &freqs_per_histo[h];
@@ -731,7 +798,7 @@ fn optimize_uint_configs_best_from_freqs(
         let total: u32 = freqs.values().sum();
         let mut best_cost = f64::MAX;
 
-        for &cfg in &candidates {
+        for &cfg in candidates {
             let (max_tok, _, _) = cfg.encode(max_value);
             let max_tok_with_lsb = max_tok | ((1u32 << cfg.lsb_in_token) - 1);
             if max_tok_with_lsb as usize >= max_alpha {
@@ -753,16 +820,20 @@ fn optimize_uint_configs_best_from_freqs(
                 extra_bits_total += nbits as u64 * freq as u64;
             }
 
-            let inv_total = 1.0f32 / total as f32;
-            let mut entropy_cost = 0.0f64;
-            let mut nonzero_count: usize = 0;
-            for &count in &counts_buf[..capacity] {
-                if count > 0 {
-                    nonzero_count += 1;
-                    let c = count as f32;
-                    entropy_cost -= c as f64 * jxl_simd::fast_log2f(c * inv_total) as f64;
-                }
-            }
+            // Same libjxl `ChooseUintConfigs` cost as the kFast variant:
+            // exact normalized-ANS population cost (ComputeBest with kFast
+            // shifts serialized to a scratch writer), not a Shannon estimate.
+            histo.counts.clear();
+            histo.counts.extend(counts_buf.iter().map(|&c| c as i32));
+            histo.total_count = total as usize;
+            histo.condition();
+            let population_cost = ANSEncodingHistogram::from_histogram_cached(
+                &histo,
+                ANSHistogramStrategy::Fast,
+                &allowed_cache,
+            )
+            .map(|e| e.cost)
+            .unwrap_or(f32::MAX) as f64;
 
             let signaling_cost = if cfg.split_exponent == 0 {
                 0.0
@@ -771,13 +842,7 @@ fn optimize_uint_configs_best_from_freqs(
                     + ceil_log2_nonzero_usize((cfg.split_exponent - cfg.msb_in_token) as usize + 1)
                         as f64
             };
-            // ANS distribution header cost — same fix as in
-            // `optimize_uint_configs_fast_from_freqs`. See that function's
-            // comment block for the libjxl-parity rationale. 28 candidates
-            // in the kBest set include wide-alphabet configs like (12,0,0)
-            // which are even more bloat-prone than the kFast (0,0,0).
-            let header_cost = nonzero_count as f64 * 8.0;
-            let cost = entropy_cost + extra_bits_total as f64 + signaling_cost + header_cost;
+            let cost = population_cost + extra_bits_total as f64 + signaling_cost;
 
             if cost < best_cost {
                 best_cost = cost;
@@ -935,7 +1000,10 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
 /// The inner entropy code has 1 context (the context map itself). When LZ77 is
 /// enabled, the inner Histograms decoder bumps that to 2 (LZ77 distance
 /// context) and reads a 2-entry inner-inner context map.
-fn write_context_map_nonsimple(context_map: &[u8], writer: &mut BitWriter) -> Result<()> {
+pub(crate) fn write_context_map_nonsimple(
+    context_map: &[u8],
+    writer: &mut BitWriter,
+) -> Result<()> {
     // Strategy 1: legacy Huffman+MTF, write to scratch and measure cost.
     let mut huffman_scratch = BitWriter::with_capacity(context_map.len());
     write_context_map_nonsimple_huffman(context_map, &mut huffman_scratch)?;
@@ -1014,16 +1082,16 @@ fn write_huffman_payload_no_selector(tokens: &[u8], writer: &mut BitWriter) -> R
     // use_prefix_code = 1 (Huffman)
     writer.write(1, 1)?;
 
-    // HybridUint config: split=4, msb=2, lsb=0 (same as our UintCoder)
-    writer.write(4, 4)?; // split_exponent = 4
-    writer.write(3, 2)?; // msb_in_token = 2
-    writer.write(2, 0)?; // lsb_in_token = 0
+    // libjxl `EncodeContextMap` uses `HybridUintMethod::kContextMap` —
+    // fixed {2,0,1} (`enc_ans_params.h` `UintConfig()`).
+    let ctxmap_cfg = HybridUintConfig::new(2, 0, 1);
+    write_hybrid_uint_config_value(15, &ctxmap_cfg, writer)?;
 
     // Build histogram of encoded token symbols
     let mut histogram = [0u32; ALPHABET_SIZE];
     for &t in tokens {
-        let encoded = UintCoder::encode(t as u32);
-        histogram[encoded.token as usize] += 1;
+        let (tok, _, _) = ctxmap_cfg.encode(t as u32);
+        histogram[tok as usize] += 1;
     }
 
     // Find alphabet length (trim trailing zeros)
@@ -1051,12 +1119,12 @@ fn write_huffman_payload_no_selector(tokens: &[u8], writer: &mut BitWriter) -> R
 
     // Write encoded context map entries
     for &t in tokens {
-        let encoded = UintCoder::encode(t as u32);
-        let tok = encoded.token as usize;
+        let (tok_u32, bits_x, nbits_x) = ctxmap_cfg.encode(t as u32);
+        let tok = tok_u32 as usize;
         let depth = depths[tok] as usize;
         let b = bits[tok] as u64;
-        let data = b | ((encoded.bits as u64) << depth);
-        let total_bits = depth + encoded.nbits as usize;
+        let data = b | ((bits_x as u64) << depth);
+        let total_bits = depth + nbits_x as usize;
         writer.write(total_bits, data)?;
     }
 
@@ -1294,7 +1362,7 @@ fn estimate_context_map_cost(tokens: &[u8]) -> f64 {
 }
 
 /// Write HybridUint config with specific split/msb/lsb values.
-fn write_hybrid_uint_config_value(
+pub(crate) fn write_hybrid_uint_config_value(
     log_alpha_size: usize,
     config: &HybridUintConfig,
     writer: &mut BitWriter,
@@ -1324,7 +1392,7 @@ fn write_hybrid_uint_config_value(
 }
 
 /// CeilLog2Nonzero for usize, matching libjxl.
-fn ceil_log2_nonzero_usize(x: usize) -> usize {
+pub(crate) fn ceil_log2_nonzero_usize(x: usize) -> usize {
     debug_assert!(x > 0);
     let x = x as u32;
     let floor = 31 - x.leading_zeros();

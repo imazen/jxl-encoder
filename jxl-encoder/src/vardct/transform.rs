@@ -569,6 +569,14 @@ impl VarDctEncoder {
                         RAW_STRATEGY_DCT64X64 => {
                             // DCT64X64: 8×8 blocks, returns 64 DC values in row-major 8x8
                             let dcs = dc_from_dct_64x64(&dct_coeffs[1]);
+                            #[cfg(feature = "debug-dc")]
+                            eprintln!(
+                                "DCT64x64 block (by={}, bx={}): dcs[0..8]={:?} inv_factor={:.6}",
+                                by,
+                                bx,
+                                &dcs[..8],
+                                inv_factor
+                            );
                             for iy in 0..8 {
                                 for ix in 0..8 {
                                     float_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] =

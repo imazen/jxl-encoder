@@ -358,6 +358,13 @@ pub struct LosslessConfig {
     /// [`EncodeRequest::with_limits`], so entry points that bypass
     /// `EncodeRequest` — notably [`Self::encode_planar_int`] — could only ever
     /// run on defaults.
+    ///
+    /// With the `jpeg-reencoding` feature the untrusted JPEG-transcode path
+    /// ([`Self::encode_jpeg_transcode`] /
+    /// [`Self::encode_jpeg_transcode_codestream`]) also consults this field:
+    /// the transcode parser reads [`Limits::max_pixels`] as the pre-flight
+    /// SOF pixel cap (default [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] =
+    /// 120 MP when `None`).
     limits: Option<Limits>,
     /// Sectioned local-tree mode selection. See [`SectionedTrees`].
     sectioned_trees: SectionedTrees,
@@ -521,16 +528,6 @@ pub struct LosslessConfig {
     /// bytes are identical regardless of `buffering`. See
     /// [`Self::with_buffering`].
     buffering: Buffering,
-    /// Resource [`Limits`] consulted by the untrusted JPEG-transcode path
-    /// ([`Self::encode_jpeg_transcode`] /
-    /// [`Self::encode_jpeg_transcode_codestream`]). Currently the transcode
-    /// parser reads [`Limits::max_pixels`] as the pre-flight SOF pixel cap
-    /// (default [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] = 120 MP when
-    /// `None`). Set via [`Self::with_limits`]. (The pixel / [`EncodeRequest`]
-    /// lossless path takes its limits from [`EncodeRequest::with_limits`]
-    /// instead.)
-    #[cfg(feature = "jpeg-reencoding")]
-    limits: Option<Limits>,
 }
 
 impl Default for LosslessConfig {
@@ -636,8 +633,6 @@ impl LosslessConfig {
             modular_group_size_shift: None,
             auto_delta_frames: false,
             buffering: Buffering::Auto,
-            #[cfg(feature = "jpeg-reencoding")]
-            limits: None,
         }
     }
 
@@ -1867,38 +1862,6 @@ impl LosslessConfig {
     // `JPEG_E9_FORCE_UINT_OPT=1` / `JPEG_E9_FORCE_LZ77=1` re-enable each for
     // future investigation. Other `LosslessConfig` settings (mode, patches,
     // lossy_palette, etc.) do not affect the transcode path.
-
-    /// Attach resource [`Limits`] consulted by the JPEG-transcode path
-    /// ([`Self::encode_jpeg_transcode`] /
-    /// [`Self::encode_jpeg_transcode_codestream`]).
-    ///
-    /// The transcode parser reads [`Limits::max_pixels`] as the pre-flight
-    /// `width × height` cap applied to the untrusted SOF dimensions before
-    /// any coefficient buffer is allocated. When unset (or no `Limits` is
-    /// attached), the secure default
-    /// [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] (120 MP) applies; a
-    /// trusted batch caller can raise it (or pass
-    /// [`Limits::with_max_pixels`]`(u64::MAX)` to opt out), and a
-    /// hostile-input proxy can tighten it.
-    ///
-    /// Only the `max_pixels` field is consulted today; the rest of the
-    /// transcode-path [`Limits`] wiring (a full `MemoryBudget`) is tracked in
-    /// issue #77.
-    ///
-    /// Requires the `jpeg-reencoding` cargo feature.
-    #[cfg(feature = "jpeg-reencoding")]
-    pub fn with_limits(mut self, limits: &Limits) -> Self {
-        self.limits = Some(limits.clone());
-        self
-    }
-
-    /// The [`Limits`] attached via [`Self::with_limits`], if any.
-    ///
-    /// Requires the `jpeg-reencoding` cargo feature.
-    #[cfg(feature = "jpeg-reencoding")]
-    pub fn limits(&self) -> Option<&Limits> {
-        self.limits.as_ref()
-    }
 
     /// Losslessly transcode a JPEG file into JXL with JBRD container for
     /// byte-exact JPEG reconstruction.
@@ -3220,6 +3183,40 @@ impl LossyConfig {
             // ALSO flipped to libjxl-parity, which `EncoderStrategy::Libjxl`
             // does. Default (`false`) preserves byte-identical hash-locks.
             p.apply_section_c_cfl_newton_libjxl_parity(&resolved);
+            // DC-encode `nl_dc` parity: under
+            // `EncoderStrategy::Libjxl` rewrites `extra_dc_precision`
+            // + `use_libjxl_wp_dc_quant` to libjxl's actual effort >= 4
+            // schedule (the W44-AUDIT-8 "effort <= 7" reading of
+            // `speed_tier < kFalcon` was inverted). NO-OP on every
+            // other strategy — `dc_encode_libjxl_parity` resolves
+            // `false` there, preserving byte-identical output.
+            p.apply_dc_encode_libjxl_parity(&resolved);
+            // AC-metadata MA-tree parity: under
+            // `EncoderStrategy::Libjxl` selects libjxl's per-effort
+            // predefined AC-meta tree (kFalconACMeta / kACMeta /
+            // kLearn-at-e8+ policy) in place of our fixed subtree.
+            // NO-OP on every other strategy.
+            p.apply_ac_meta_tree_libjxl_parity(&resolved);
+            // Gaborish kernel parity: under
+            // `EncoderStrategy::Libjxl` runs the `Symmetric5`-bit-exact
+            // variant (mirror borders, row-grouped accumulation, f32
+            // weight chain) in place of the zen distance-class kernel.
+            // NO-OP on every other strategy.
+            p.apply_gaborish_libjxl_parity(&resolved);
+            // Entropy-code-construction parity: under
+            // `EncoderStrategy::Libjxl` forces `optimize_codes = true`
+            // (libjxl has no static-Huffman path — it builds fast
+            // dynamic codes at every effort) and decouples the
+            // DC/AC-metadata stream's ANS-vs-prefix choice from the
+            // VarDCT `use_ans` effort flag (libjxl `ForModular` rule:
+            // ANS unless <100 tokens or all-singleton). NO-OP on every
+            // other strategy.
+            p.apply_entropy_codes_libjxl_parity(&resolved);
+            // libjxl ComputeUsedOrders/ComputeCoeffOrder parity: DCT8
+            // order at every effort, bucket-0-only at effort <= 3,
+            // xorshift 50% block subsample at effort <= 7, unconditional
+            // is_nondefault admission. NO-OP on every other strategy.
+            p.apply_coeff_orders_libjxl_parity(&resolved);
         }
         p
     }

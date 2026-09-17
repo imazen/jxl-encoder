@@ -195,20 +195,61 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
     //   _d1_e5:        206 -> 205 (-1 B)  hash drift
     //   _d1_e3:        311 -> 310 (-1 B)  hash drift
     //   _noise_d1:    3212 -> 3211 (-1 B) hash drift
+    //
+    // **ac_meta_libjxl_tree (2026-09-17)**: re-pinned after porting
+    // libjxl's per-effort AC-metadata predefined trees
+    // (`AddACMetadata`, `enc_modular.cc:1749-1763`): `kFalconACMeta`
+    // (single `Predictor::Left` leaf) at effort <= 3 and on < 1024-px
+    // streams at effort 4-7, `kACMeta` (27-node, adds EPF quad-split)
+    // otherwise. The structured 11-leaf subtree's ~50-token header was
+    // pure overhead on these small fixtures — every pin got smaller:
+    //   _d1   (e7):    207 -> 183 (-24 B)  hash drift
+    //   _d4   (e7):    149 -> 125 (-24 B)  hash drift
+    //   _d1_e5:        205 -> 181 (-24 B)  hash drift
+    //   _d1_e3:        306 -> 279 (-27 B)  hash drift
+    //   _noise_d1:    3219 -> 3190 (-29 B) hash drift
+    //
+    // **gaborish_libjxl_parity (2026-09-17)**: re-pinned after porting
+    // libjxl's `Symmetric5` kernel bit-exactly
+    // (`convolve_symmetric5.cc` — Mirror borders, row-grouped
+    // `wx2*(m2+p2) + (wx1*(m1+p1) + wx0*c)` accumulation, f32 weight
+    // chain). Sizes unchanged on these fixtures; hashes drift where
+    // gaborish runs (e5+). e3 (falcon) does not run gaborish and its
+    // hash is unchanged.
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1",
-        size: 207,
-        hash: 0x4198175bbab35c15,
+        // ans exact-header-cost (2026-09-17): 183 → 172 (-11 B), hash
+        // drift — shift selection now measures real serialized size
+        // (libjxl SizeWriter parity) instead of the alphabet*5 formula,
+        // picking low-precision shifts whose headers cost 2x less.
+        // e8+ merged kLearn MA tree + ForModular LZ77 (2026-09-18):
+        // 172 → 164 (-8 B), hash drift. The strict e8+ path now learns
+        // one global MA tree over per-stream-chunk samples merged under
+        // stream-id splits (libjxl `ComputeTree`/`MergeTrees` parity),
+        // and the DC modular stream takes libjxl's `ForModular` LZ77
+        // table (kLZ77 at e8, kOptimal at e9+; AC token stream kRLE at
+        // e9+). Note: this cell is e7 — the size move here came from
+        // the same commit's entropy-code internals, not the e8+ tree.
+        size: 164,
+        hash: 0xec03fca271eef907,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
-        size: 150,
-        hash: 0x1a613cdddac087df,
+        // ans exact-header-cost (2026-09-17): byte-identical — the
+        // d4.0 histograms already picked minimum-cost shifts.
+        // e8+ merged kLearn MA tree + ForModular LZ77 (2026-09-18):
+        // 125 → 120 (-5 B), hash drift (see _d1 note).
+        size: 120,
+        hash: 0x88b45a2e2bc4a24e,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
-        size: 205,
-        hash: 0xd506cbff3be8dfda,
+        // ans exact-header-cost (2026-09-17): 181 → 170 (-11 B), hash
+        // drift (see _d1 note).
+        // e8+ merged kLearn MA tree + ForModular LZ77 (2026-09-18):
+        // 170 → 163 (-7 B), hash drift (see _d1 note).
+        size: 163,
+        hash: 0x488a175928e1e4ef,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
@@ -219,8 +260,12 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // cjxl v0.12.0 `jxl-inspect dc-coeffs`), so e3 emits 1x DC
         // precision + plain round and reaches bit-identical quantized
         // DC coefficients vs cjxl.
-        size: 306,
-        hash: 0x9019ff5b35b56454,
+        // ans exact-header-cost (2026-09-17): 279 → 265 (-14 B), hash
+        // drift (see _d1 note).
+        // e8+ merged kLearn MA tree + ForModular LZ77 (2026-09-18):
+        // 265 → 262 (-3 B), hash drift (see _d1 note).
+        size: 262,
+        hash: 0x4bfbb7769a072a6e,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
@@ -255,8 +300,27 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // T4 (2026-08-31): 3215 → 3212 (-3 B) for the all_default header
         // fast path, then 3212 → 3211 (-1 B) for the dc_adaptive_smoothing
         // flags flip — the same two fixed deltas as the cells above.
-        size: 3211,
-        hash: 0x23a274b1fafa2db1,
+        // libjxl-exact (2026-09-17): 3211 → 3211 (size stable), hash
+        // drift. `dc_encode_libjxl_parity` corrected the inverted
+        // `nl_dc` schedule and enabled the QuantizeWP DC shape at
+        // effort >= 4 under Libjxl strategy (`enc_modular.cc:1587-1674`);
+        // on this fixture token counts net out flat but the emitted
+        // DC residual stream changed.
+        // ac_meta_libjxl_tree (2026-09-17): 3211 → 3190 (-21 B), hash
+        // drift — the <1024-px-stream rule collapses kACMeta to the
+        // single `Predictor::Left` leaf on this 48×48 fixture.
+        // gaborish_libjxl_parity (2026-09-17): 3190 → 3172 (-18 B),
+        // hash drift — libjxl `Symmetric5` kernel (mirror borders,
+        // row-grouped accumulation, f32 weight chain) at e7.
+        // ans exact-header-cost (2026-09-17): 3172 → 3147 (-25 B),
+        // hash drift (see _d1 note).
+        // e8+ merged kLearn MA tree + ForModular LZ77 (2026-09-18):
+        // 3147 → 3183 (+36 B), hash drift (see _d1 note). This cell is
+        // e7 — the +36 B is pre-strict-branch entropy-code work in the
+        // same WIP, not the e8+ tree (cjxl v0.12 emits 3217 B here;
+        // we remain -34 B under it).
+        size: 3183,
+        hash: 0x7e81da6272734559,
     },
 ];
 

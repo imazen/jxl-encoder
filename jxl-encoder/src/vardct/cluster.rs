@@ -33,6 +33,7 @@ impl Histogram {
     }
 
     /// Add a symbol to the histogram.
+    #[allow(dead_code)] // used by unit tests; production code writes counts directly
     pub fn add(&mut self, symbol: usize) {
         self.counts[symbol] += 1;
         self.total_count += 1;

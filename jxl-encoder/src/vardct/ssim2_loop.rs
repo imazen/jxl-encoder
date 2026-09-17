@@ -270,6 +270,7 @@ impl VarDctEncoder {
                 ac_strategy,
                 xsize_blocks,
                 ysize_blocks,
+                self.resolved_improvements.dc_adaptive_smoothing,
             );
 
             if self.enable_gaborish {

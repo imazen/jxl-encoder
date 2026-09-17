@@ -4774,6 +4774,7 @@ impl VarDctEncoder {
                 padded_width,
                 padded_height,
                 self.enable_adaptive_gaborish,
+                self.profile.gaborish_libjxl_kernel,
                 self.budget.as_ref(),
             )?;
         }
@@ -6184,13 +6185,17 @@ impl VarDctEncoder {
         )?;
 
         // W44-AUDIT-8 Phase 6: apply libjxl QuantizeWP shape to DC
-        // values when the gate fires (effort ≤ 7 by default; libjxl
-        // `nl_dc = speed_tier < kFalcon` parity). Post-pass over the
+        // values when the gate fires (`nl_dc = speed_tier < kFalcon` =
+        // effort ≥ 4 under strict parity). Post-pass over the
         // already-computed `float_dc` + `quant_dc` from the transform
-        // pipeline. At effort ≥ 8 this is a no-op (the buttloop owns
-        // DC refinement and libjxl drops to plain `std::round`).
+        // pipeline. NOTE: this is NOT disabled at effort ≥ 8 — libjxl
+        // runs `QuantizeWP` unconditionally under `nl_dc`
+        // (`enc_modular.cc:1645` `else if (nl_dc)` has no further tier
+        // gate); the earlier "e8+ no-op" comment was wrong. The buttloop
+        // refines the *scale*, QuantizeWP rewrites the *values* so the
+        // shipped stream is self-consistent under WP prediction.
         // Env hook `JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP=1` force-enables
-        // for the Phase 6 bisect bench + diagnostic A/B at any effort.
+        // for the Phase 6 bisect bench + diagnostic A/B at low effort.
         let phase6_env_on = std::env::var_os("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP").is_some()
             && self.profile.effort <= 7;
         if self.profile.use_libjxl_wp_dc_quant || phase6_env_on {
@@ -6296,6 +6301,7 @@ impl VarDctEncoder {
                                 xsize_blocks,
                                 ysize_blocks,
                                 self.budget.as_ref(),
+                                self.resolved_improvements.dc_adaptive_smoothing,
                             )?)
                         }
                     }
@@ -7120,6 +7126,7 @@ impl VarDctEncoder {
                     padded_width,
                     precomputed.padded_height,
                     self.enable_adaptive_gaborish,
+                    self.profile.gaborish_libjxl_kernel,
                     self.budget.as_ref(),
                 )?;
                 Some([x, y, b])
@@ -7327,6 +7334,7 @@ impl VarDctEncoder {
                                 xsize_blocks,
                                 ysize_blocks,
                                 self.budget.as_ref(),
+                                self.resolved_improvements.dc_adaptive_smoothing,
                             )?)
                         }
                     }
@@ -8404,7 +8412,7 @@ mod tests {
         // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
         // -0.30/cell budget). Hash = pre-WP quantization + the kept
         // prefix-auto/singleton + static-sharpness changes.
-        const EXPECTED_HASH: u64 = 0x52c1ed32d4456952;
+        const EXPECTED_HASH: u64 = 0x4d14e8995a9cedf3;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8449,7 +8457,7 @@ mod tests {
         // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
         // -0.30/cell budget). Hash = pre-WP quantization + the kept
         // prefix-auto/singleton + static-sharpness changes.
-        const EXPECTED_HASH: u64 = 0x960e78c4971b42e3;
+        const EXPECTED_HASH: u64 = 0x27ca0cf2d966a459;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8516,7 +8524,7 @@ mod tests {
         // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
         // -0.30/cell budget). Hash = pre-WP quantization + the kept
         // prefix-auto/singleton + static-sharpness changes.
-        const EXPECTED_HASH: u64 = 0x06d5672f27096037;
+        const EXPECTED_HASH: u64 = 0x101ae1dc176dcb07;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8568,7 +8576,7 @@ mod tests {
         // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
         // -0.30/cell budget). Hash = pre-WP quantization + the kept
         // prefix-auto/singleton + static-sharpness changes.
-        const EXPECTED_HASH: u64 = 0x7afbca80d3d7cc13;
+        const EXPECTED_HASH: u64 = 0x6c9bad457286a84c;
         assert_eq!(
             hash,
             EXPECTED_HASH,

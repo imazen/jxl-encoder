@@ -7,17 +7,17 @@
 //! Ported from libjxl-tiny enc_frame.cc
 
 use super::ac_context::BlockCtxMap;
-use super::cluster::{Histogram, cluster_histograms};
 use super::common::{ceil_log2_nonzero, pack_signed};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 use crate::entropy_coding::encode::{
-    ALPHABET_SIZE, EntropyCode, PrefixCode, convert_bit_depths_to_symbols, create_huffman_tree,
-    write_entropy_code, write_prefix_codes, write_token,
+    ALPHABET_SIZE, PrefixCode, UintConfigMethod, build_entropy_code_from_token_groups,
+    convert_bit_depths_to_symbols, create_huffman_tree, write_prefix_codes,
 };
+use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 use crate::entropy_coding::move_to_front_transform;
-use crate::entropy_coding::token::{Token, UintCoder};
+use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
 /// Number of contexts for the context tree.
@@ -623,68 +623,6 @@ pub static JPEG_TRANSCODE_CONTEXT_TREE_TOKENS: [(u32, u32);
     (5, 0),
 ];
 
-/// Build an optimized entropy code for the context tree tokens.
-///
-/// This builds histograms from the tokens, clusters them, then creates Huffman codes.
-fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode>) {
-    // Build histograms for each context using the Histogram struct
-    let mut histograms: Vec<Histogram> = (0..NUM_TREE_CONTEXTS).map(|_| Histogram::new()).collect();
-
-    for token in tokens {
-        let encoded = UintCoder::encode(token.value);
-        let ctx = token.context() as usize;
-        histograms[ctx].add(encoded.token as usize);
-    }
-
-    // Cluster similar histograms together
-    // Note: cluster_histograms modifies histograms in place and returns context_map
-    let context_map = cluster_histograms(&mut histograms);
-
-    // Build Huffman codes for each clustered histogram
-    let mut prefix_codes = Vec::with_capacity(histograms.len());
-    #[allow(clippy::unused_enumerate_index)]
-    for (_i, hist) in histograms.iter().enumerate() {
-        let mut depths = [0u8; ALPHABET_SIZE];
-        let mut length = ALPHABET_SIZE;
-        while length > 0 && hist.counts[length - 1] == 0 {
-            length -= 1;
-        }
-        if length == 0 {
-            length = 1;
-        }
-        create_huffman_tree(&hist.counts, length, 15, &mut depths);
-
-        let mut bits = [0u16; ALPHABET_SIZE];
-        convert_bit_depths_to_symbols(&depths, &mut bits);
-
-        #[cfg(feature = "debug-tokens")]
-        {
-            let depth_slice: Vec<u8> = depths.iter().take(length.min(20)).copied().collect();
-            debug_log!(
-                "  context_tree BuildHuffmanCodes[{}]: length={}, depths={:?}{}",
-                _i,
-                length,
-                depth_slice,
-                if length > 20 { ", ..." } else { "" }
-            );
-        }
-
-        prefix_codes.push(PrefixCode { depths, bits });
-    }
-
-    #[cfg(feature = "debug-tokens")]
-    {
-        debug_log!(
-            "  context_tree_entropy: {} histograms -> {} prefix codes, context_map len={}",
-            NUM_TREE_CONTEXTS,
-            prefix_codes.len(),
-            context_map.len()
-        );
-    }
-
-    (context_map, prefix_codes)
-}
-
 /// Write the JPEG-transcode context tree for modular DC + AC-metadata streams.
 ///
 /// Lever A (2026-05-28): same as [`write_context_tree`] but emits the
@@ -715,17 +653,20 @@ pub fn write_jpeg_transcode_context_tree(
     // Matches the [`write_context_tree`] root layout.
     tokens[1].value = pack_signed(1 + num_dc_groups as i32);
 
-    let (context_map, prefix_codes) = build_context_tree_entropy_code(&tokens);
-
     writer.write(1, 1)?; // not an empty tree
     writer.write(1, 0)?; // no lz77
 
-    let code = EntropyCode::new(&context_map, &prefix_codes);
-    write_entropy_code(&code, writer)?;
-
-    for token in &tokens {
-        write_token(token, &code, None, writer)?;
-    }
+    // libjxl default `HistogramParams` → `uint_method = kBest` for the
+    // tree code (`enc_ans_params.h`).
+    let code = build_entropy_code_from_token_groups(
+        &[&tokens],
+        NUM_TREE_CONTEXTS,
+        false,
+        None,
+        UintConfigMethod::Best,
+    );
+    code.write_header(writer)?;
+    code.write_tokens_owned(&tokens, None, writer)?;
 
     Ok(())
 }
@@ -744,31 +685,21 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
     // Token[1] value encodes the number of streams (1 + num_dc_groups)
     tokens[1].value = pack_signed(1 + num_dc_groups as i32);
 
-    // Build entropy code for the tokens
-    let (context_map, prefix_codes) = build_context_tree_entropy_code(&tokens);
-
-    #[cfg(feature = "debug-tokens")]
-    {
-        debug_log!(
-            "context_tree: {} contexts, {} prefix codes, context_map={:?}",
-            context_map.len(),
-            prefix_codes.len(),
-            context_map
-        );
-    }
-
     // Write tree header
     writer.write(1, 1)?; // not an empty tree
     writer.write(1, 0)?; // no lz77
 
-    // Write the entropy code (context map + prefix codes)
-    let code = EntropyCode::new(&context_map, &prefix_codes);
-    write_entropy_code(&code, writer)?;
-
-    // Write all the tokens
-    for token in &tokens {
-        write_token(token, &code, None, writer)?;
-    }
+    // libjxl default `HistogramParams` → `uint_method = kBest` for the
+    // tree code (`enc_ans_params.h`).
+    let code = build_entropy_code_from_token_groups(
+        &[&tokens],
+        NUM_TREE_CONTEXTS,
+        false,
+        None,
+        UintConfigMethod::Best,
+    );
+    code.write_header(writer)?;
+    code.write_tokens_owned(&tokens, None, writer)?;
 
     Ok(())
 }
@@ -818,31 +749,21 @@ pub fn write_learned_context_tree(
 
 /// Inner function to write context tree tokens to bitstream.
 fn write_learned_context_tree_inner(tokens: &[Token], writer: &mut BitWriter) -> Result<()> {
-    // Build entropy code for the tokens
-    let (context_map, prefix_codes) = build_context_tree_entropy_code(tokens);
-
-    #[cfg(feature = "debug-tokens")]
-    {
-        debug_log!(
-            "learned_context_tree: {} tokens, {} contexts, {} prefix codes",
-            tokens.len(),
-            context_map.len(),
-            prefix_codes.len()
-        );
-    }
-
     // Write tree header
     writer.write(1, 1)?; // not an empty tree
     writer.write(1, 0)?; // no lz77
 
-    // Write the entropy code (context map + prefix codes)
-    let code = EntropyCode::new(&context_map, &prefix_codes);
-    write_entropy_code(&code, writer)?;
-
-    // Write all the tokens
-    for token in tokens {
-        write_token(token, &code, None, writer)?;
-    }
+    // libjxl default `HistogramParams` → `uint_method = kBest` for the
+    // tree code (`enc_ans_params.h`).
+    let code = build_entropy_code_from_token_groups(
+        &[tokens],
+        NUM_TREE_CONTEXTS,
+        false,
+        None,
+        UintConfigMethod::Best,
+    );
+    code.write_header(writer)?;
+    code.write_tokens_owned(tokens, None, writer)?;
 
     Ok(())
 }
@@ -870,11 +791,15 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
         .map(|&v| Token::new(0, v as u32))
         .collect();
 
+    // libjxl `EncodeContextMap` uses `HybridUintMethod::kContextMap` —
+    // fixed {2,0,1} (`enc_ans_params.h` `UintConfig()`).
+    let ctxmap_cfg = HybridUintConfig::new(2, 0, 1);
+
     // Build histogram for context map values
     let mut histogram = [0u32; ALPHABET_SIZE];
     for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
-        histogram[encoded.token as usize] += 1;
+        let (tok, _, _) = ctxmap_cfg.encode(t.value);
+        histogram[tok as usize] += 1;
     }
 
     // Create a single prefix code for the context map
@@ -908,14 +833,19 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
     let before_prefix = writer.bits_written();
 
     // Write the prefix code for the context map
-    write_prefix_codes(&[ctxmap_code], writer)?;
+    write_prefix_codes(&[ctxmap_code], &[ctxmap_cfg], writer)?;
 
     #[cfg(feature = "debug-tokens")]
     let after_prefix = writer.bits_written();
 
     // Write the context map tokens
     for t in &tokens {
-        let encoded = UintCoder::encode(t.value);
+        let (tok_u32, bits_x, nbits_x) = ctxmap_cfg.encode(t.value);
+        let encoded = crate::entropy_coding::token::EncodedUint {
+            token: tok_u32,
+            nbits: nbits_x,
+            bits: bits_x,
+        };
         let tok = encoded.token as usize;
         let depth = ctxmap_code.depths[tok] as usize;
         let bits = ctxmap_code.bits[tok] as u64;
@@ -1086,13 +1016,17 @@ pub fn write_block_ctx_map_adaptive_with_mode(
 /// Returns `(prefix_code, total_data_bits)` where `total_data_bits` is the
 /// exact number of bits the token stream will consume given this code
 /// (sum of `count[i] * depth[i]` plus extra UintCoder bits per token).
+/// libjxl `EncodeContextMap` codes context-map tokens under the fixed
+/// `kContextMap` HybridUint config {2,0,1} (`enc_ans_params.h` `UintConfig()`).
+const CTXMAP_UINT_CONFIG: HybridUintConfig = HybridUintConfig::new(2, 0, 1);
+
 fn build_ctxmap_prefix_code(bytes: &[u8]) -> (PrefixCode, usize) {
     let mut histogram = [0u32; ALPHABET_SIZE];
     let mut extra_bits_total: usize = 0;
     for &v in bytes {
-        let encoded = UintCoder::encode(v as u32);
-        histogram[encoded.token as usize] += 1;
-        extra_bits_total += encoded.nbits as usize;
+        let (tok, _, nbits) = CTXMAP_UINT_CONFIG.encode(v as u32);
+        histogram[tok as usize] += 1;
+        extra_bits_total += nbits as usize;
     }
 
     let mut depths = [0u8; ALPHABET_SIZE];
@@ -1130,7 +1064,7 @@ fn build_ctxmap_prefix_code(bytes: &[u8]) -> (PrefixCode, usize) {
 fn trial_ctxmap_huffman_cost(bytes: &[u8]) -> Result<(PrefixCode, usize)> {
     let (code, data_bits) = build_ctxmap_prefix_code(bytes);
     let mut scratch = BitWriter::with_capacity(64);
-    write_prefix_codes(&[code], &mut scratch)?;
+    write_prefix_codes(&[code], &[CTXMAP_UINT_CONFIG], &mut scratch)?;
     let header_bits = scratch.bits_written();
     Ok((code, header_bits + data_bits))
 }
@@ -1145,9 +1079,14 @@ fn write_ctxmap_huffman_payload(
     code: &PrefixCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    write_prefix_codes(&[*code], writer)?;
+    write_prefix_codes(&[*code], &[CTXMAP_UINT_CONFIG], writer)?;
     for &v in bytes {
-        let encoded = UintCoder::encode(v as u32);
+        let (tok_u32, bits_x, nbits_x) = CTXMAP_UINT_CONFIG.encode(v as u32);
+        let encoded = crate::entropy_coding::token::EncodedUint {
+            token: tok_u32,
+            nbits: nbits_x,
+            bits: bits_x,
+        };
         let tok = encoded.token as usize;
         let depth = code.depths[tok] as usize;
         let huff_bits = code.bits[tok] as u64;

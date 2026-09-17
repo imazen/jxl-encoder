@@ -265,8 +265,11 @@ fn test_histogram_serialization() {
     // - logcount for each symbol
     // - precision bits for non-omit symbols
 
-    // This is a general histogram (4 symbols), so method should be > 1
-    assert!(ans_histo.method > 1, "Expected general histogram");
+    // This is a general histogram (4 symbols), so it can't take the small
+    // code path (num_symbols > 2). method >= 1 is a general coded histogram;
+    // method == 1 specifically means shift=0, which the exact-header-cost
+    // model now legitimately picks when it minimizes total bits.
+    assert!(ans_histo.method >= 1, "Expected general histogram");
 
     // Basic sanity checks
     let sum: i32 = ans_histo.counts.iter().sum();
