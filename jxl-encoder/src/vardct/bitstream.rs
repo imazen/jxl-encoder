@@ -1148,8 +1148,19 @@ impl VarDctEncoder {
         } else {
             ColorEncoding::srgb()
         };
-        // VarDCT uses Relative rendering intent (matches libjxl)
-        color_encoding.rendering_intent = RenderingIntent::Relative;
+        // cjxl's PNM input path zero-initialises `PackedPixelFile.
+        // color_encoding` and its fallback fills only four fields, so
+        // `rendering_intent` survives as `JXL_RENDERING_INTENT_PERCEPTUAL`
+        // (0) — see `rendering_intent_libjxl_parity` in gate_registry.
+        // The historical Relative value is the bundle's spec default and
+        // keeps the `all_default` fast path eligible; the strict pick
+        // matches cjxl bytes at the cost of the long-form bundle.
+        color_encoding.rendering_intent =
+            if self.resolved_improvements.rendering_intent_libjxl_parity {
+                RenderingIntent::Perceptual
+            } else {
+                RenderingIntent::Relative
+            };
         if self.icc_profile.is_some() {
             color_encoding.want_icc = true;
         }

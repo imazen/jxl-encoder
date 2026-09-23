@@ -320,6 +320,7 @@ jxl_encoder_macros::strategy_def! {
             // approximation (and `u8 * (1/255)` normalization), NOT the
             // exact piecewise `x^2.4` EOTF the default LUT encodes.
             srgb_eotf_libjxl_parity = true,
+            rendering_intent_libjxl_parity = true,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -436,6 +437,7 @@ jxl_encoder_macros::strategy_def! {
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
             srgb_eotf_libjxl_parity = false,
+            rendering_intent_libjxl_parity = false,
         },
 
         /// Zenjxl — production-shipping bundle. Every field matches
@@ -571,6 +573,7 @@ jxl_encoder_macros::strategy_def! {
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
             srgb_eotf_libjxl_parity = false,
+            rendering_intent_libjxl_parity = false,
         },
 
         /// Aggressive — currently equivalent to `Zenjxl` after
@@ -664,6 +667,7 @@ jxl_encoder_macros::strategy_def! {
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
             srgb_eotf_libjxl_parity = false,
+            rendering_intent_libjxl_parity = false,
         },
     }
 
@@ -1549,6 +1553,27 @@ jxl_encoder_macros::strategy_def! {
             divergence_section = "D",
             divergence_row_ref = "sRGB→linear EOTF (libjxl TF_SRGB DisplayFromEncoded rational polynomial + v*(1/255) u8 normalization vs exact x^2.4 LUT; W45-RECON part 10)",
         },
+
+        /// W45-RECON part 13 (2026-09-23): emit `rendering_intent =
+        /// Perceptual` in the colour-encoding bundle instead of the spec
+        /// default `Relative`.
+        ///
+        /// cjxl's PNM/PNG-less input path leaves `PackedPixelFile.
+        /// color_encoding` zero-initialised (`= {}` in
+        /// `packed_image.h:223`) and `ApplyColorHints`'s fallback fills
+        /// only colour_space/white_point/primaries/transfer_function
+        /// (`color_hints.cc:70-76`) — `rendering_intent` stays
+        /// `JXL_RENDERING_INTENT_PERCEPTUAL` (0). The non-default field
+        /// then forces `ImageMetadata.all_default = false` and the
+        /// ~3-byte-longer long-form metadata bundle. Note the
+        /// asymmetry: a PNG input DOES get `kRelative` via
+        /// `extras/dec/apng.cc`, so this is a PNM-path quirk, not a
+        /// universal libjxl value — but it is the strict-parity
+        /// reference for every PPM-sourced fixture in this tree.
+        rendering_intent_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "ColorEncoding.rendering_intent (cjxl PNM-path zero-init → Perceptual vs spec default Relative; also forces all_default=false long-form bundle; W45-RECON part 13)",
+        },
     }
 }
 
@@ -1981,6 +2006,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "sRGB→linear EOTF (libjxl TF_SRGB DisplayFromEncoded rational polynomial + v*(1/255) u8 normalization vs exact x^2.4 LUT; W45-RECON part 10)",
         raw: __CUSTOM_DIVERGENCE_SRGB_EOTF_LIBJXL_PARITY,
+    },
+    // Section D — rendering intent parity (W45-RECON part 13)
+    DivergenceEntry {
+        gate_name: "rendering_intent_libjxl_parity",
+        section: "D",
+        row_ref: "ColorEncoding.rendering_intent (cjxl PNM-path zero-init → Perceptual vs spec default Relative; also forces all_default=false long-form bundle; W45-RECON part 13)",
+        raw: __CUSTOM_DIVERGENCE_RENDERING_INTENT_LIBJXL_PARITY,
     },
 ];
 

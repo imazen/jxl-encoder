@@ -457,6 +457,7 @@ on `photo_512x512` at e5.)
 | CfL Pass-2 OOB-safety clamp (`vardct/chroma_from_luma.rs:594-607`) | `take = num_coeffs.min(buf_remaining)` + `break 'tile_loop` when `num_ac >= buf_cap` — defensive guard against panicking on synthetic ac_strategy injections | no clamp; writes past `kColorTileDim * kColorTileDim = 4096` into `Span<float>` sized for worst case via `mem.remove_prefix` | INTENTIONAL (defensive, NEUTRAL EV) | W44-189 CfL deep audit (D14). Regression test `test_refine_cfl_map_clamps_at_buffer_capacity` documents this triggers on pathological injections (single DCT32x32 first-block at (5,5) in a 16×16-block image inside tile (0,0)) — the in-tree CPU strategy search wouldn't produce this, but the GPU strat-search injector can. DO NOT remove. |
 | Entropy code construction — `entropy_codes_libjxl_parity` resolved gate (2026-09-17) | Zenjxl at effort 1-2 (`use_ans = effort >= 3`, `optimize_codes = effort >= 3`): single-pass static-Huffman path (streaming, no second pass, fixed tables sized for the 4-context AC map); when the two-pass fallback does run, the DC/AC-metadata modular stream shares the VarDCT `use_ans` flag and goes prefix. Strict `EncoderStrategy::Libjxl`: `optimize_codes = true` always (dynamic codes) + the DC/AC-meta stream picks ANS vs prefix by libjxl's per-stream rule (ANS unless <100 tokens or all-singleton), decoupled from `use_ans`. The AC stream's ANS choice is NOT changed — libjxl's `HistogramParams(tier)` kFastest clustering at effort <= 2 → prefix maps exactly onto our `use_ans = effort >= 3` schedule. | `enc_ans.cc::BuildAndEncodeHistograms` runs dynamic codes at every speed tier (libjxl has no static-Huffman path); per-stream `use_prefix_code = force_huffman \|\| total_tokens < 100 \|\| clustering == kFastest \|\| all_singleton`. The VarDCT AC stream's `HistogramParams(tier, num_ctx)` sets kFastest at `tier > kFalcon` (effort <= 2 → prefix); the modular DC/AC-meta stream's `HistogramParams::ForModular` sets `clustering = kFast` at `tier > kKitten` (effort <= 7 → ANS-eligible at every effort, LZ77 kNone for VarDCT). | Libjxl strategy AT PARITY at effort <= 7 (2026-09-17); Zenjxl unchanged (single-pass static path is a real wall-time optimisation) | W45-SPEC-3 (2026-09-17, this change). Isolated via jxl-oxide bit-range probes on flat64 e1: cjxl's LfCoeff DC stream cost 79 bits vs our 215 — the gate's ANS arm landed flat64 e1/e2 at 84 B (cjxl 82 B, was 112), grad64 e1/e2 491 (474, was 505), nature_128 e1/e2 3525 (**3530**, now 5 B under cjxl), webshot_128 e1/e2 1375 (1350, was 1421); all djxl-decode-verified. Also fixes a latent strict-mode crash: the static AC table is sized for the 4-context map while strict's `block_ctx_map_15_cluster` emits block contexts up to 14 (token index 3824 vs 1980) — `optimize_codes = true` removes the entire broken path. e8+ note: `ForModular` switches to kLZ77/kOptimal at `tier <= kKitten` — **mirrored 2026-09-18**: under this gate the DC/AC-meta modular stream applies `Greedy` (libjxl `kLZ77` hash-chain + lazy matching) at e8 and `Optimal` (`kOptimal` Viterbi) at e9+, and the AC coefficient stream takes libjxl's `enc_frame.cc:1290` override — `kNone` at effort ≤ 8, the `kRLE` `HistogramParams` default at effort ≥ 9 (previously the shared `lz77_method` put `Optimal` on AC at e9+, which libjxl never does). Zenjxl keeps the single-method policy (Optimal on both streams at e9+; measured strictly-better RD than RLE on gradients). Per-stream `distance_multiplier` = max channel width of each DC/AC-meta stream image, matching `ModularCompress`'s `image_widths_`. **e3 closure (2026-09-17, Tier-0):** `ans.rs` candidate shift selection now uses the exact serialized header cost (scratch `BitWriter` per candidate, mirroring libjxl's `SizeWriter`) instead of the `method+alphabet*5` estimate — shift picks dropped from {10,8,10,...} to libjxl-like {0,2}; grad64 e3 445 B (cjxl 453), flat64 e3 byte-equal, all strict e3 cells ≤ cjxl. Same change fixed latent `BitReader::peek` terminal-lookahead bug (zero-pads past stream end) exposed by shift-0 histograms. e4 section probes show entropy headers at parity (AC code_bits 427 vs 427); residual e4/e5 deltas are upstream DC-value/AC-strategy decisions. |
 | sRGB→linear EOTF — `srgb_eotf_libjxl_parity` resolved gate (W45-RECON part 10) | All non-Libjxl strategies: exact piecewise sRGB EOTF `x^2.4` via 256-entry f64-precomputed `SRGB_U8_TO_LINEAR` LUT (`api/ingest.rs`), u8 index direct. Strict `EncoderStrategy::Libjxl`: `tf_srgb_display_from_encoded_libjxl` + `v * (1.0f/255)` u8 normalization, evaluated per-pixel through a rebuilt 256-entry table — identical coverage (Rgb8/Bgr8/Rgba8/Bgra8/Gray8/GrayAlpha8); u16/f32 inputs remain on the exact path (cjxl takes a different ingest branch there too — tracked residual). | libjxl `TF_SRGB().DisplayFromEncoded` (`cms/transfer_functions-inl.h:218-242`): `abs(x)`, degree-4/4 Chebyshev rational approximation `p(x)/q(x)` (af_cheb_rational k=100, ~5e-7 max error) via `EvalRationalPolynomial` Horner `MulAdd` chain + true `Div`, `x*(1/12.92)` below `x > 0.04045` breakpoint, `copysign`. u8→f32 is `data[0] * (1.0f/255)` (`extras/packed_image.h:76`) — multiply by rounded reciprocal, not exact division. | Libjxl strategy AT PARITY on the u8 sRGB ingest path (W45-RECON part 10); Zenjxl unchanged (exact LUT is a calibrated exactness choice, not a perf axis — table is f64-exact to f32) | The exact-vs-rational-poly delta (≤5e-7 linear, ~1 ulp XYB) was the EARLIEST measurable divergence in the strict pipeline — `pregab_xyb` diffs on 63-75% of pixels propagated into `acs_quant_field`/`mask1x1` → AQ iteration fields → tile distances → coefficient and entropy streams. Paired companion fix in the same part: `CubeRootAndAdd` final `MulAdd(r2, x, add)` now fuses the `-cbrt(bias)` offset inside `XybCubeRoot::Libjxl` across scalar/v3/v4/NEON tiers (was `r2*x` then separate add — one extra rounding). |
+| `ColorEncoding.rendering_intent` — `rendering_intent_libjxl_parity` resolved gate (W45-RECON part 13) | All non-Libjxl strategies: `RenderingIntent::Relative` forced at `vardct/bitstream.rs` (spec-bundle default, keeps the `ImageMetadata.all_default` + `color_encoding.all_default` 1-bit fast paths eligible — ~3 B smaller header). Strict `EncoderStrategy::Libjxl`: `RenderingIntent::Perceptual`, which is non-default and therefore writes the full metadata + colour-encoding bundles. | cjxl v0.12's PNM input path leaves `PackedPixelFile.color_encoding` zero-initialised (`= {}`, `extras/packed_image.h:223`); `ApplyColorHints`'s no-hint fallback fills only colour_space/white_point/primaries/transfer_function (`extras/dec/color_hints.cc:70-76`), so `rendering_intent` survives as `JXL_RENDERING_INTENT_PERCEPTUAL` (0). The non-default field forces `metadata.all_default = 0` + `color_encoding.all_default = 0` + long-form serialisation. (PNG inputs get `kRelative` via `extras/dec/apng.cc` — PNM-path quirk, not universal.) | Libjxl strategy AT PARITY on PPM-sourced inputs (W45-RECON part 13); Zenjxl unchanged (Relative + fast-path bundles byte-identical) | Companion fix in the same part: `write_with_spec_default_fast_path` now computes `all_default = is_spec_default()` when the spec-default path is permitted (was `is_srgb() || is_spec_default()`) — the `is_srgb()` arm was semantically wrong under strict since it emitted `all_default = 1` for a Perceptual bundle that decoders read back as kRelative. Verified on noise_512 e8: every header field and bit position through `transform_data` is now byte-identical to cjxl v0.12 (file 308436 vs 308410, residual +26 B all downstream of the header). |
 
 ---
 
@@ -1541,6 +1542,46 @@ divergent path). Unit tests:
 `libjxl_ctxmap_estimate_prefers_raw_on_run_heavy_map`,
 `legacy_ctxmap_path_uses_shannon_pick`,
 `libjxl_tree_use_prefix_rule`, `all_singleton_contexts_check`.
+
+### W45-RECON part 13 (2026-09-24): `ColorEncoding.rendering_intent` — file header bit-identical to cjxl through `transform_data`
+
+After part 12 the deterministic residual on noise_512 e8 was ~23 B of
+frame tokens plus a ~3 B header shortcut. Bit-level comparison against
+cjxl v0.12 (`metadata.color_encoding.all_default`) located the header
+piece: cjxl emits `rendering_intent = Perceptual` — which is **not**
+the spec-bundle default (`Relative`) — and therefore writes the full
+`ImageMetadata` + `ColorEncoding` bundles where we emitted
+`all_default = 1` (~20 fewer bits).
+
+Mechanism (verified in instrumented source): cjxl's PNM input path
+zero-initialises `PackedPixelFile.color_encoding` (`= {}`,
+`extras/packed_image.h:223`) and `ApplyColorHints`'s no-hint fallback
+(`extras/dec/color_hints.cc:70-76`) fills only
+colour_space/white_point/primaries/transfer_function — so
+`rendering_intent` survives as `JXL_RENDERING_INTENT_PERCEPTUAL` (0).
+PNG inputs get `kRelative` via `extras/dec/apng.cc`; this is a
+PNM-path quirk, not a universal choice.
+
+Two strict-gated changes:
+
+- **`rendering_intent_libjxl_parity` gate** — `vardct/bitstream.rs`
+  constructs the colour encoding with `RenderingIntent::Perceptual`
+  under `EncoderStrategy::Libjxl` (was forced `Relative` everywhere).
+- **`write_with_spec_default_fast_path` companion fix** —
+  `all_default` now computes `is_spec_default()` when the spec-default
+  fast path is permitted (was `is_srgb() || is_spec_default()`). The
+  `is_srgb()` arm was *semantically wrong* under strict: it emitted
+  `all_default = 1` for a Perceptual bundle, which decoders read back
+  as `kRelative` — a silent intent flip, not just a size delta. The
+  legacy arm is preserved bit-for-bit when the fast path is not
+  permitted, so Zenjxl output is unchanged.
+
+Measured on noise_512 e8: every header field and bit position through
+`transform_data` is now **byte-identical to cjxl v0.12**; file 308436
+vs 308410 (+26 B, all downstream of the header — token-level
+coefficient diffs). Strict lock cells drifted +3 B each by design
+(`noise_rgb_48x48_e2` landed at exactly cjxl's 3324); golden + pinned
+hashes regenerated. 63/63 normal-mode hash locks byte-identical.
 
 ---
 

@@ -245,8 +245,13 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // orders default-params) and libjxl `log_alpha_size` rule
         // (ANS default 7, refined by adaptive uint only). cjxl v0.12
         // reference for this cell: 171 B.
-        size: 166,
-        hash: 0x601ab9bf9aafa984,
+        // W45-RECON part 13 (2026-09-23): 166 → 169 (+3 B), hash
+        // drift — `rendering_intent = Perceptual` (cjxl PNM-path
+        // zero-init parity) forces `metadata.all_default = 0` and the
+        // long-form colour-encoding bundle; the file header is now
+        // byte-identical to cjxl through `transform_data`.
+        size: 169,
+        hash: 0xe63944a535437f54,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
@@ -260,8 +265,11 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift (see _d1 note).
         // W45-RECON part 11 (2026-09-23): 116 → 118 (+2 B), hash
         // drift (see _d1 note). cjxl v0.12 reference: 121 B.
-        size: 118,
-        hash: 0xc4dc27845ea49af2,
+        // W45-RECON part 13 (2026-09-23): 118 → 121 (+3 B), hash
+        // drift — Perceptual rendering intent + long-form bundles
+        // (see _d1 note). Now exact cjxl v0.12 size parity (121 B).
+        size: 121,
+        hash: 0x1063f7cdb12f4be2,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
@@ -273,8 +281,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift (see _d1 note).
         // W45-RECON part 11 (2026-09-23): 163 → 166 (+3 B), hash
         // drift (see _d1 note). cjxl v0.12 reference: 167 B.
-        size: 166,
-        hash: 0x8e7db756e27fd3c6,
+        // W45-RECON part 13 (2026-09-23): 166 → 169 (+3 B), hash
+        // drift (see _d1 note).
+        size: 169,
+        hash: 0x318ec347564e8ed6,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
@@ -297,8 +307,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift — tree stream now emits libjxl's `kNone` default
         // HybridUintConfig (4,2,0) instead of the kBest-derived
         // (0,0,0), matching cjxl v0.12 exactly on this cell (261 B).
-        size: 261,
-        hash: 0xbd5f88b85aea8663,
+        // W45-RECON part 13 (2026-09-23): 261 → 264 (+3 B), hash
+        // drift (see _d1 note).
+        size: 264,
+        hash: 0x9e59746bdd568773,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
@@ -369,8 +381,11 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // W45-RECON part 11 (2026-09-23): 3217 → 3219 (+2 B), hash
         // drift — libjxl `log_alpha_size` rule on the ANS streams
         // (cjxl v0.12 reference now 3220 B; delta −1 B).
-        size: 3219,
-        hash: 0x756440c695c51125,
+        // W45-RECON part 13 (2026-09-23): 3219 → 3222 (+3 B), hash
+        // drift (see _d1 note) — Perceptual rendering intent +
+        // long-form bundles (cjxl 3220 B; delta +2 B).
+        size: 3222,
+        hash: 0x218d531c76da4865,
     },
 ];
 

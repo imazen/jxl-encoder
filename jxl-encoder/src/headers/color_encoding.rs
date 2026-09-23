@@ -582,8 +582,19 @@ impl ColorEncoding {
         writer: &mut BitWriter,
         allow_spec_default: bool,
     ) -> Result<()> {
-        // all_default flag
-        let all_default = self.is_srgb() || (allow_spec_default && self.is_spec_default());
+        // all_default flag. libjxl `Bundle::AllDefault` requires every
+        // field at its SPEC default (`is_spec_default`, intent =
+        // kRelative). The `is_srgb()` shortcut (intent = kPerceptual)
+        // is only valid when the spec-default path is disallowed —
+        // permitting it while `allow_spec_default` is set would emit
+        // `all_default = 1` for a Perceptual bundle, which a decoder
+        // then reads back as kRelative. cjxl therefore always writes
+        // the long form for PNM-sourced (Perceptual) colour encodings.
+        let all_default = if allow_spec_default {
+            self.is_spec_default()
+        } else {
+            self.is_srgb()
+        };
         crate::trace::debug_eprintln!(
             "CENC [bit {}]: all_default = {}",
             writer.bits_written(),
