@@ -1489,6 +1489,59 @@ flag is false on every non-strict path); strict byte-lock + pins
 re-locked. Unit tests: `libjxl_log_alpha_tests` (kNone→7,
 adaptive→refined, legacy→6) and `libjxl_tree_code_params_schedule`.
 
+### W45-RECON part 12 (2026-09-23): tree-code LZ77/`use_prefix` + ctx-map estimate pick — all stream headers structurally identical
+
+Two further entropy-layer divergences on noise_512 e8, both in how
+single streams select their coder:
+
+**(a) Tree-code stream `use_prefix_code` + LZ77 schedule** — the MA
+tree stream emitted prefix where cjxl emits ANS. libjxl
+`BuildAndEncodeHistograms` picks prefix only when `force_huffman`,
+`tokens < 100`, `kFastest` clustering, or every context's histogram is
+near-singleton (`shannon < 1e-5`); otherwise ANS. Its LZ77 schedule for
+this stream is `ForModular`: `kLZ77` (greedy) at effort 8, `kOptimal`
+at 9+, `kNone` below. `LibjxlTreeCodeParams` now carries effort +
+ANS strategy through `write_context_tree`/`write_learned_context_tree`;
+`write_tree_code_libjxl` applies greedy/optimal LZ77 on schedule,
+evaluates `all_singleton_contexts` over {4,2,0}-encoded token values
+({0,0,0}+`min_symbol` for length tokens), then writes prefix (kFast
++kNone below e8, kBest+kBest at 8+) or ANS (matching ForModular's
+clustering/uint/strategy). MA-tree stream now `num_dist=6 ANS
+log_alpha=5, 2 clusters` — identical header to cjxl.
+
+**(b) Context-map candidate selection** — the AC context-map substream
+emitted `num_dist=1 log_alpha=7` (no LZ77) where cjxl emits
+`num_dist=2 log_alpha=8` (LZ77 on). Root cause: we applied LZ77-RLE
+once *after* choosing raw-vs-MTF, while libjxl `EncodeContextMap` runs
+`BuildAndEncodeHistograms` — including `ApplyLZ77` — on **each**
+candidate before comparing. On run-heavy maps MTF destroys the runs
+(dominant-symbol runs are nearly free literals), so our post-hoc LZ77
+rejected; the raw candidate would have accepted. Worse, libjxl's
+`use_mtf` pick uses the `writer == nullptr` **cost estimate**
+(histogram serialisation + `EstimateDataBits`, excluding hybrid-uint
+extra bits) — not serialized size: on the 1485-entry map cjxl estimates
+1716 vs 2073 bits → picks raw even though raw serialises *larger*
+(2644 vs 2391 real bits). New `estimate_ctxmap_cost_libjxl` reproduces
+the writer-null accumulation (measured 1717/2073 on cjxl's own map —
+within 1 bit) and the strict path now evaluates `apply_lz77_rle` per
+candidate before the estimate pick. Legacy behaviour is preserved
+verbatim under `libjxl_log_alpha == false` (Shannon pick, LZ77 on the
+winner only).
+
+Verified on noise_512 e8 vs instrumented cjxl 0.12.0: **all seven
+stream headers are now structurally identical** — including the AC
+ctx-map `num_dist=2 ANS log_alpha=8` and the MA tree
+`num_dist=6 ANS log_alpha=5`. Size: 308433 vs cjxl 308410 (+23 B —
+the file *grew* by ~34 B because matching libjxl's estimate-driven
+pick means matching its larger-real-bits raw+LZ77 choice; the residual
+is token-level coefficient diffs plus the ~3 B `all_default` header
+shortcut). Decode valid; 63/63 normal-mode hash locks byte-identical;
+strict byte-lock + pinned fixtures unchanged (no lock cell hits the
+divergent path). Unit tests:
+`libjxl_ctxmap_estimate_prefers_raw_on_run_heavy_map`,
+`legacy_ctxmap_path_uses_shannon_pick`,
+`libjxl_tree_use_prefix_rule`, `all_singleton_contexts_check`.
+
 ---
 
 ## G. RESOLVED divergences (historical)

@@ -674,37 +674,167 @@ pub fn write_jpeg_transcode_context_tree(
 /// Entropy-code parameters for a tree code stream under strict
 /// `EncoderStrategy::Libjxl` parity.
 ///
-/// libjxl runs the tree code through `stream_options_[0].histogram_params`
-/// = `HistogramParams::ForModular` (`enc_modular.cc`), NOT the default
+/// libjxl runs the tree code through `BuildAndEncodeHistograms` with
+/// `HistogramParams::ForModular` (`enc_modular.cc`), NOT the default
 /// `HistogramParams` the legacy callers here assume: clustering is `kFast`
-/// at effort ≤ 7 / `kBest` at 8+, and `uint_method` is `kNone` (the
-/// serialized config stays the {4,2,0} default) at effort ≤ 7 / `kBest` at
-/// 8+. `None` keeps the historical `Legacy` + `kBest` selection.
-pub type TreeCodeParams = Option<(
-    crate::entropy_coding::encode::PrefixClustering,
-    UintConfigMethod,
-)>;
+/// at effort ≤ 7 / `kBest` at 8+, `uint_method` is `kNone` (the serialized
+/// config stays the {4,2,0} default) at effort ≤ 7 / `kBest` at 8+, and
+/// `lz77_method` is `kNone` at effort ≤ 7 / `kLZ77` at 8 / `kOptimal` at 9+
+/// for VarDCT (`modular_mode` is false). The ANS-vs-prefix choice follows
+/// libjxl's `use_prefix_code` rule rather than a cost comparison.
+/// `None` keeps the historical `Legacy` + `kBest` selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LibjxlTreeCodeParams {
+    /// Encoder effort, selecting the `ForModular` schedule.
+    pub effort: u8,
+    /// ANS normalization strategy (the same `ForModular` schedule the DC
+    /// stream uses: `kApproximate`/`kFast` below effort 8, `kPrecise` at 8+).
+    pub ans_strategy: crate::entropy_coding::ans::ANSHistogramStrategy,
+}
+
+pub type TreeCodeParams = Option<LibjxlTreeCodeParams>;
 
 /// Resolve `code_params` for a VarDCT stream tree code.
 /// `effort` selects the `ForModular` schedule; only strict callers pass
 /// `Some`.
-pub fn libjxl_tree_code_params(libjxl_parity: bool, effort: u8) -> TreeCodeParams {
+pub fn libjxl_tree_code_params(
+    libjxl_parity: bool,
+    effort: u8,
+    ans_strategy: crate::entropy_coding::ans::ANSHistogramStrategy,
+) -> TreeCodeParams {
     if !libjxl_parity {
         return None;
     }
+    Some(LibjxlTreeCodeParams {
+        effort,
+        ans_strategy,
+    })
+}
+
+/// Prefix-code parameters for the tree stream when libjxl's
+/// `use_prefix_code` rule selects Huffman: `ForModular` gives `kFast`
+/// clustering + `kNone` uint at effort ≤ 7 and `kBest` + `kBest` at 8+.
+fn tree_prefix_code_params(
+    effort: u8,
+) -> (
+    crate::entropy_coding::encode::PrefixClustering,
+    UintConfigMethod,
+) {
     use crate::entropy_coding::cluster::ClusteringType;
     use crate::entropy_coding::encode::PrefixClustering;
     if effort >= 8 {
-        Some((
+        (
             PrefixClustering::Libjxl(ClusteringType::Best),
             UintConfigMethod::Best,
-        ))
+        )
     } else {
-        Some((
+        (
             PrefixClustering::Libjxl(ClusteringType::Fast),
             UintConfigMethod::None,
-        ))
+        )
     }
+}
+
+/// libjxl's `use_prefix_code` singleton test (`enc_ans.cc`): true when every
+/// context's histogram of uint-encoded token values has Shannon entropy
+/// below 1e-5. Values are encoded with the default {4,2,0} config, except
+/// LZ77 length tokens which use `length_uint_config` {0,0,0} plus the
+/// `min_symbol` offset.
+fn all_singleton_contexts(
+    tokens: &[Token],
+    num_contexts: usize,
+    lz77: Option<&crate::entropy_coding::lz77::Lz77Params>,
+) -> bool {
+    use crate::entropy_coding::histogram::Histogram;
+    use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+    let default_cfg = HybridUintConfig::default_config();
+    let len_cfg = HybridUintConfig::new(0, 0, 0);
+    let min_symbol = lz77.map_or(0, |l| l.min_symbol);
+    let mut builder = vec![Histogram::new(); num_contexts];
+    for token in tokens {
+        let (tok, _, _) = if token.is_lz77_length() {
+            let (t, n, b) = len_cfg.encode(token.value);
+            (t + min_symbol, n, b)
+        } else {
+            default_cfg.encode(token.value)
+        };
+        builder[token.context() as usize].add(tok as usize);
+    }
+    builder.iter().all(|h| h.shannon_entropy() < 1e-5)
+}
+
+/// Write the context-tree token stream under libjxl `ForModular` parity:
+/// LZ77 per the effort schedule, then libjxl's `use_prefix_code` rule
+/// (`total_tokens < 100` or all-singleton histograms → prefix; `force_huffman`
+/// and `kFastest` clustering never apply to this stream), and `kBest`
+/// clustering + `kBest`/`kNone` uint selection per `ForModular`.
+fn write_tree_code_libjxl(
+    tokens: &[Token],
+    writer: &mut BitWriter,
+    params: LibjxlTreeCodeParams,
+) -> Result<()> {
+    use crate::entropy_coding::encode_ans::{
+        build_entropy_code_ans_from_token_groups_with_strategy, write_entropy_code_ans,
+        write_tokens_ans,
+    };
+    use crate::entropy_coding::lz77::{
+        Lz77Method, apply_lz77, apply_lz77_optimal, write_lz77_header,
+    };
+
+    let effort = params.effort;
+    // `image_widths` is empty for the tree stream in libjxl → multiplier 0.
+    let lz77 = match effort {
+        8 => apply_lz77(
+            tokens,
+            NUM_TREE_CONTEXTS,
+            false,
+            Lz77Method::Greedy,
+            0,
+            None,
+        )?,
+        9.. => apply_lz77_optimal(tokens, NUM_TREE_CONTEXTS, false, 0, None)?,
+        _ => None,
+    };
+    let lz77_params = lz77.as_ref().map(|(_, p)| p.clone());
+    let lz_tokens: &[Token] = lz77.as_ref().map(|(t, _)| t.as_slice()).unwrap_or(tokens);
+    let num_contexts = NUM_TREE_CONTEXTS + usize::from(lz77_params.is_some());
+
+    writer.write(1, 1)?; // not an empty tree
+    write_lz77_header(lz77_params.as_ref(), writer)?;
+
+    let use_prefix = lz_tokens.len() < 100
+        || all_singleton_contexts(lz_tokens, num_contexts, lz77_params.as_ref());
+    if use_prefix {
+        let (clustering, uint_method) = tree_prefix_code_params(effort);
+        let code =
+            crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
+                &[lz_tokens],
+                num_contexts,
+                clustering,
+                lz77_params.as_ref(),
+                uint_method,
+                128,
+            );
+        code.write_header(writer)?;
+        code.write_tokens_owned(lz_tokens, lz77_params.as_ref(), writer)?;
+    } else {
+        // `ForModular`: `kFast` clustering + `kNone` uint (serialized
+        // {4,2,0}) at effort ≤ 7, `kBest` + `kBest` at 8+.
+        let best = effort >= 8;
+        let code = build_entropy_code_ans_from_token_groups_with_strategy(
+            &[lz_tokens],
+            num_contexts,
+            best,
+            best,
+            lz77_params.as_ref(),
+            None,
+            params.ans_strategy,
+            true,
+        );
+        write_entropy_code_ans(&code, writer)?;
+        write_tokens_ans(lz_tokens, &code, lz77_params.as_ref(), writer)?;
+    }
+    Ok(())
 }
 
 /// Write the context tree for modular stream DC coding.
@@ -725,20 +855,20 @@ pub fn write_context_tree(
     // Token[1] value encodes the number of streams (1 + num_dc_groups)
     tokens[1].value = pack_signed(1 + num_dc_groups as i32);
 
+    if let Some(params) = code_params {
+        return write_tree_code_libjxl(&tokens, writer, params);
+    }
+
     // Write tree header
     writer.write(1, 1)?; // not an empty tree
     writer.write(1, 0)?; // no lz77
 
-    let (clustering, uint_method) = code_params.unwrap_or((
-        crate::entropy_coding::encode::PrefixClustering::Legacy,
-        UintConfigMethod::Best,
-    ));
     let code = crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
         &[&tokens],
         NUM_TREE_CONTEXTS,
-        clustering,
+        crate::entropy_coding::encode::PrefixClustering::Legacy,
         None,
-        uint_method,
+        UintConfigMethod::Best,
         128,
     );
     code.write_header(writer)?;
@@ -798,20 +928,20 @@ fn write_learned_context_tree_inner(
     writer: &mut BitWriter,
     code_params: TreeCodeParams,
 ) -> Result<()> {
+    if let Some(params) = code_params {
+        return write_tree_code_libjxl(tokens, writer, params);
+    }
+
     // Write tree header
     writer.write(1, 1)?; // not an empty tree
     writer.write(1, 0)?; // no lz77
 
-    let (clustering, uint_method) = code_params.unwrap_or((
-        crate::entropy_coding::encode::PrefixClustering::Legacy,
-        UintConfigMethod::Best,
-    ));
     let code = crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
         &[tokens],
         NUM_TREE_CONTEXTS,
-        clustering,
+        crate::entropy_coding::encode::PrefixClustering::Legacy,
         None,
-        uint_method,
+        UintConfigMethod::Best,
         128,
     );
     code.write_header(writer)?;
@@ -1592,28 +1722,68 @@ mod tree_code_params_tests {
     /// (legacy path).
     #[test]
     fn libjxl_tree_code_params_schedule() {
-        assert!(libjxl_tree_code_params(false, 2).is_none());
-        assert!(libjxl_tree_code_params(false, 8).is_none());
+        use crate::entropy_coding::ans::ANSHistogramStrategy;
+        assert!(libjxl_tree_code_params(false, 2, ANSHistogramStrategy::Approximate).is_none());
+        assert!(libjxl_tree_code_params(false, 8, ANSHistogramStrategy::Precise).is_none());
         assert_eq!(
-            libjxl_tree_code_params(true, 2),
-            Some((
+            libjxl_tree_code_params(true, 2, ANSHistogramStrategy::Approximate),
+            Some(LibjxlTreeCodeParams {
+                effort: 2,
+                ans_strategy: ANSHistogramStrategy::Approximate,
+            })
+        );
+        // Prefix-branch parameters follow `ForModular`: Fast/None below
+        // effort 8, Best/Best at 8+.
+        assert_eq!(
+            tree_prefix_code_params(2),
+            (
                 PrefixClustering::Libjxl(ClusteringType::Fast),
                 UintConfigMethod::None
-            ))
+            )
         );
         assert_eq!(
-            libjxl_tree_code_params(true, 7),
-            Some((
+            tree_prefix_code_params(7),
+            (
                 PrefixClustering::Libjxl(ClusteringType::Fast),
                 UintConfigMethod::None
-            ))
+            )
         );
         assert_eq!(
-            libjxl_tree_code_params(true, 8),
-            Some((
+            tree_prefix_code_params(8),
+            (
                 PrefixClustering::Libjxl(ClusteringType::Best),
                 UintConfigMethod::Best
-            ))
+            )
         );
+    }
+
+    /// libjxl `use_prefix_code` for the tree stream: `total_tokens < 100`
+    /// forces prefix; otherwise the all-singleton test decides.
+    #[test]
+    fn libjxl_tree_use_prefix_rule() {
+        use crate::entropy_coding::ans::ANSHistogramStrategy;
+        let mut writer = BitWriter::new();
+        let params = LibjxlTreeCodeParams {
+            effort: 8,
+            ans_strategy: ANSHistogramStrategy::Precise,
+        };
+        // Fewer than 100 tokens → prefix path (tree header + lz77=0).
+        let few: Vec<Token> = (0..6).map(|i| Token::new(0, i)).collect();
+        write_tree_code_libjxl(&few, &mut writer, params).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    /// Singleton test: all contexts with a single distinct symbol must
+    /// report all-singleton (libjxl `ShannonEntropy() < 1e-5`).
+    #[test]
+    fn all_singleton_contexts_check() {
+        // Two contexts, each with a single repeated symbol → singleton.
+        let singletons: Vec<Token> = (0..200)
+            .map(|i| Token::new(i % 2, if i % 2 == 0 { 3 } else { 7 }))
+            .collect();
+        assert!(all_singleton_contexts(&singletons, 2, None));
+        // Context 0 with two distinct symbols → not singleton.
+        let mixed: Vec<Token> = (0..200).map(|i| Token::new(0, i % 3)).collect();
+        assert!(!all_singleton_contexts(&mixed, 2, None));
     }
 }

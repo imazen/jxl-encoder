@@ -478,7 +478,7 @@ pub fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &
 }
 
 /// Store a full Huffman tree (for >4 symbols).
-fn store_huffman_tree(depths: &[u8], num: usize, writer: &mut BitWriter) -> Result<()> {
+pub(crate) fn store_huffman_tree(depths: &[u8], num: usize, writer: &mut BitWriter) -> Result<()> {
     // Write the Huffman tree into the compact representation
     let mut huffman_tree = vec![0u8; num];
     let mut huffman_tree_extra_bits = vec![0u8; num];

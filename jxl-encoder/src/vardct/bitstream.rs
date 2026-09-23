@@ -1359,6 +1359,7 @@ impl VarDctEncoder {
         let tree_code_params = super::context_tree::libjxl_tree_code_params(
             self.profile.entropy_codes_libjxl_parity,
             self.effort,
+            self.profile.ans_histogram_strategy_vardct,
         );
         if let Some(tree_tokens) = learned_tree_tokens {
             super::context_tree::write_learned_context_tree(

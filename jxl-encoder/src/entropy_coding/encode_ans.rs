@@ -1202,7 +1202,6 @@ pub(crate) fn build_context_map_nonsimple_ans_lz77(
     context_map: &[u8],
     libjxl_log_alpha: bool,
 ) -> Result<BitWriter> {
-    use super::ans::ANSHistogramStrategy;
     use super::lz77::apply_lz77_rle;
 
     // Outer allow_lz77 gate: jxl-rs `decode_context_map` calls
@@ -1219,20 +1218,223 @@ pub(crate) fn build_context_map_nonsimple_ans_lz77(
     let mtf_bytes = move_to_front_transform(context_map);
     let mtf_tokens: Vec<Token> = mtf_bytes.iter().map(|&v| Token::new(0, v as u32)).collect();
 
-    let raw_cost = estimate_context_map_cost(context_map);
-    let mtf_cost_est = estimate_context_map_cost(&mtf_bytes);
-    let use_mtf = mtf_cost_est < raw_cost;
-    let tokens: &[Token] = if use_mtf { &mtf_tokens } else { &raw_tokens };
+    let try_lz77 = |tokens: &[Token]| {
+        if lz77_allowed_outer {
+            apply_lz77_rle(
+                tokens, /*num_contexts=*/ 1, /*force_huffman=*/ false, 0,
+            )
+        } else {
+            None
+        }
+    };
 
-    // Optionally apply LZ77-RLE. distance_multiplier=0 (no special distances
-    // for a 1-D context map). num_contexts=1 (single context).
-    let (final_tokens_owned, lz77_params) = if lz77_allowed_outer
-        && let Some((lz_tokens, lz_params)) = apply_lz77_rle(
-            tokens, /*num_contexts=*/ 1, /*force_huffman=*/ false, 0,
-        ) {
-        (Some(lz_tokens), Some(lz_params))
+    if libjxl_log_alpha {
+        // libjxl `EncodeContextMap` runs `BuildAndEncodeHistograms` on BOTH
+        // the raw and the MTF candidate, and `ApplyLZ77` runs inside each —
+        // so the LZ77 accept/reject decision is evaluated per candidate
+        // before the `use_mtf = mtf_cost < ans_cost` pick. Evaluating LZ77
+        // only after picking a candidate (the legacy order) lets the MTF
+        // candidate's destroyed runs suppress LZ77 entirely on maps where
+        // the raw stream would have accepted it.
+        let raw_lz77 = try_lz77(&raw_tokens);
+        let mtf_lz77 = try_lz77(&mtf_tokens);
+
+        // The `use_mtf` pick follows libjxl's `BuildAndEncodeHistograms`
+        // cost estimate (`writer == nullptr` path: histogram serialization +
+        // `EstimateDataBits`), NOT serialized size — the estimate excludes
+        // hybrid-uint extra bits, which systematically favors the LZ77
+        // candidate on run-heavy maps.
+        let ans_cost = estimate_ctxmap_cost_libjxl(&raw_tokens, raw_lz77.as_ref());
+        let mtf_cost = estimate_ctxmap_cost_libjxl(&mtf_tokens, mtf_lz77.as_ref());
+        let use_mtf = mtf_cost < ans_cost;
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "[CTXMAP] n={} est_raw={} est_mtf={} -> {}",
+            context_map.len(),
+            ans_cost,
+            mtf_cost,
+            if use_mtf { "mtf" } else { "raw" }
+        );
+
+        if use_mtf {
+            build_ctxmap_ans_candidate(&mtf_tokens, mtf_lz77, true, true)
+        } else {
+            build_ctxmap_ans_candidate(&raw_tokens, raw_lz77, false, true)
+        }
     } else {
-        (None, None)
+        // Legacy path: pick the candidate by Shannon-entropy estimate, then
+        // try LZ77-RLE on the winner only.
+        let raw_cost = estimate_context_map_cost(context_map);
+        let mtf_cost_est = estimate_context_map_cost(&mtf_bytes);
+        let use_mtf = mtf_cost_est < raw_cost;
+        let (tokens, use_mtf) = if use_mtf {
+            (mtf_tokens.as_slice(), true)
+        } else {
+            (raw_tokens.as_slice(), false)
+        };
+        build_ctxmap_ans_candidate(tokens, try_lz77(tokens), use_mtf, false)
+    }
+}
+
+fn estimate_context_map_cost(tokens: &[u8]) -> f64 {
+    if tokens.is_empty() {
+        return 0.0;
+    }
+    let mut counts = [0u32; 256];
+    for &t in tokens {
+        counts[t as usize] += 1;
+    }
+    let inv_total = 1.0f32 / tokens.len() as f32;
+    let mut cost = 0.0f32;
+    for &c in &counts {
+        if c > 0 {
+            let cf = c as f32;
+            let p = cf * inv_total;
+            cost -= p * jxl_simd::fast_log2f(p);
+        }
+    }
+    (cost * tokens.len() as f32) as f64
+}
+
+/// libjxl `BuildAndEncodeHistograms` cost estimate for a single-stream
+/// context-map candidate (`writer == nullptr` accumulation in `enc_ans.cc`):
+/// LZ77 bundle + length uint config + `use_prefix` selector + per-histogram
+/// uint config + histogram serialization + `EstimateDataBits`. Extra bits
+/// from hybrid-uint encoding are NOT counted.
+fn estimate_ctxmap_cost_libjxl(
+    tokens: &[Token],
+    lz77: Option<&(Vec<Token>, super::lz77::Lz77Params)>,
+) -> usize {
+    use super::ans::ANSHistogramStrategy;
+    use super::histogram::Histogram;
+    use super::hybrid_uint::HybridUintConfig;
+
+    let (final_tokens, lz77_params) = match lz77 {
+        Some((t, p)) => (t.as_slice(), Some(p)),
+        None => (tokens, None),
+    };
+    let num_contexts = 1 + usize::from(lz77_params.is_some());
+
+    // LZ77 bundle: enabled(1) + min_symbol selector(2) + min_length
+    // selector(2); when enabled, plus `length_uint_config` (0,0,0) at
+    // log_alpha 8 → CeilLog2Nonzero(9) = 4 bits.
+    let mut cost = if lz77_params.is_some() { 5 + 4 } else { 1 };
+
+    // Builder histograms: values encoded with the kContextMap {2,0,1} config;
+    // LZ77 length tokens use `length_uint_config` {0,0,0} + `min_symbol`.
+    let uint_cfg = HybridUintConfig::new(2, 0, 1);
+    let len_cfg = HybridUintConfig::new(0, 0, 0);
+    let min_symbol = lz77_params.map_or(0, |p| p.min_symbol);
+    let mut builder = vec![Histogram::new(); num_contexts];
+    for token in final_tokens {
+        let sym = if token.is_lz77_length() {
+            len_cfg.encode(token.value).0 + min_symbol
+        } else {
+            uint_cfg.encode(token.value).0
+        };
+        builder[token.context() as usize].add(sym as usize);
+    }
+
+    // `use_prefix_code` for `initialize_global_state` streams:
+    // total_tokens < 100 or every context a singleton. (`force_huffman` and
+    // `kFastest` never apply to context-map streams.)
+    let all_singleton = builder.iter().all(|h| h.shannon_entropy() < 1e-5);
+    let use_prefix = final_tokens.len() < 100 || all_singleton;
+
+    // Clustered histograms: libjxl runs `ClusterHistograms` (default
+    // `kBest`) whenever builder.size() > 1.
+    let clustered: Vec<Histogram> = if num_contexts == 1 {
+        vec![std::mem::take(&mut builder[0])]
+    } else {
+        super::cluster::cluster_histograms(
+            super::cluster::ClusteringType::Best,
+            super::cluster::EntropyType::Ans,
+            &builder,
+            128,
+        )
+        .map(|r| r.histograms)
+        .unwrap_or(builder)
+    };
+
+    // HybridUint config serialization: `EncodeUintConfig` writes
+    // CeilLog2Nonzero(las+1) bits for split_exponent, then CeilLog2Nonzero
+    // bit-lengths for msb/lsb (skipped when split_exponent == las).
+    fn ceil_log2_nonzero(n: usize) -> usize {
+        (usize::BITS - (n - 1).leading_zeros()) as usize
+    }
+    let uint_cfg_bits = |las: usize| -> usize {
+        let mut bits = ceil_log2_nonzero(las + 1); // split_exponent = 2
+        if 2 != las {
+            bits += ceil_log2_nonzero(3); // msb = 0
+            bits += ceil_log2_nonzero(2 - 0 + 1); // lsb = 1
+        }
+        bits
+    };
+
+    if use_prefix {
+        cost += 1;
+        let las = 15; // PREFIX_MAX_BITS
+        for h in &clustered {
+            cost += uint_cfg_bits(las);
+            let alphabet = h.counts.len().max(1);
+            // StoreVarLenUint16(alphabet-1): 1 bit; if nonzero, +4+floor_log2.
+            let n = alphabet - 1;
+            cost += if n == 0 {
+                1
+            } else {
+                1 + 4 + (usize::BITS - n.leading_zeros() - 1) as usize
+            };
+            // BuildAndStoreHuffmanTree cost: tree serialization + Σcount*depth.
+            if alphabet > 1 {
+                let mut depths = vec![0u8; alphabet];
+                let data: Vec<u32> = h.counts.iter().map(|&c| c.max(0) as u32).collect();
+                super::encode_huffman::create_huffman_tree(&data, alphabet, 15, &mut depths);
+                let mut scratch = BitWriter::with_capacity(alphabet * 4);
+                if super::encode_huffman::store_huffman_tree(&depths, alphabet, &mut scratch)
+                    .is_ok()
+                {
+                    cost += scratch.bits_written();
+                }
+                cost += h
+                    .counts
+                    .iter()
+                    .zip(depths.iter())
+                    .map(|(&c, &d)| c.max(0) as usize * d as usize)
+                    .sum::<usize>();
+            }
+        }
+    } else {
+        cost += 3;
+        let las = if lz77_params.is_some() { 8 } else { 7 };
+        let allowed = super::ans::AllowedCountsCache::new();
+        for h in &clustered {
+            cost += uint_cfg_bits(las);
+            if let Ok(aeh) = super::ans::ANSEncodingHistogram::from_histogram_cached(
+                h,
+                ANSHistogramStrategy::Precise,
+                &allowed,
+            ) {
+                cost += aeh.cost.ceil() as usize;
+            }
+        }
+    }
+    cost
+}
+
+/// Build the serialized `use_mtf | lz77 | inner-code | tokens` block for one
+/// context-map candidate (raw or MTF) under the libjxl `kContextMap` uint
+/// config. `lz77` is the per-candidate `ApplyLZ77_RLE` result.
+fn build_ctxmap_ans_candidate(
+    tokens: &[Token],
+    lz77: Option<(Vec<Token>, super::lz77::Lz77Params)>,
+    use_mtf: bool,
+    libjxl_log_alpha: bool,
+) -> Result<BitWriter> {
+    use super::ans::ANSHistogramStrategy;
+
+    let (final_tokens_owned, lz77_params) = match lz77 {
+        Some((lz_tokens, lz_params)) => (Some(lz_tokens), Some(lz_params)),
+        None => (None, None),
     };
     let final_tokens: &[Token] = final_tokens_owned.as_deref().unwrap_or(tokens);
 
@@ -1347,7 +1549,7 @@ pub(crate) fn build_context_map_nonsimple_ans_lz77(
     // SKIPPED entirely (the decoder falls back to `vec![0]`). Writing the
     // 3-bit "simple, nbits=0" shortcut in that case would misalign every
     // subsequent bit.
-    let mut scratch = BitWriter::with_capacity(context_map.len() * 2);
+    let mut scratch = BitWriter::with_capacity(tokens.len() * 2);
     scratch.write(1, 0)?; // is_simple = 0
     scratch.write(1, if use_mtf { 1 } else { 0 })?; // use_mtf
 
@@ -1395,27 +1597,6 @@ pub(crate) fn copy_bits(src: &[u8], num_bits: usize, writer: &mut BitWriter) -> 
         writer.write(remaining_bits, (last_byte as u64) & mask)?;
     }
     Ok(())
-}
-
-/// Estimate the Shannon entropy cost of a byte sequence (for context map cost comparison).
-fn estimate_context_map_cost(tokens: &[u8]) -> f64 {
-    if tokens.is_empty() {
-        return 0.0;
-    }
-    let mut counts = [0u32; 256];
-    for &t in tokens {
-        counts[t as usize] += 1;
-    }
-    let inv_total = 1.0f32 / tokens.len() as f32;
-    let mut cost = 0.0f32;
-    for &c in &counts {
-        if c > 0 {
-            let cf = c as f32;
-            let p = cf * inv_total;
-            cost -= p * jxl_simd::fast_log2f(p);
-        }
-    }
-    (cost * tokens.len() as f32) as f64
 }
 
 /// Write HybridUint config with specific split/msb/lsb values.
@@ -2317,5 +2498,54 @@ mod libjxl_log_alpha_tests {
         );
         assert_eq!(code.log_alpha_size, ANS_LOG_ALPHA_SIZE);
         assert!(!code.libjxl_log_alpha);
+    }
+
+    /// libjxl `EncodeContextMap` runs `ApplyLZ77` inside each candidate's
+    /// `BuildAndEncodeHistograms` and picks `use_mtf` on the *estimate*
+    /// (which excludes hybrid-uint extra bits), not on serialized size. On
+    /// a run-heavy map dominated by one symbol, the raw stream keeps its
+    /// runs (LZ77 accepted, estimate cheap) while MTF destroys them — the
+    /// estimate must select raw even though MTF serialises smaller.
+    /// Mirrors the measured cjxl v0.12 behaviour on the 1485-entry noise_512
+    /// AC context map (estimate 1716/2073 → raw; real 2644/2391).
+    #[test]
+    fn libjxl_ctxmap_estimate_prefers_raw_on_run_heavy_map() {
+        // Runs of moderately-frequent symbols: raw literals are pricey
+        // enough that LZ77 accepts; MTF collapses every run to zero-runs
+        // where literals are nearly free, so its candidate rejects LZ77 —
+        // the same asymmetry that made cjxl pick raw on the noise_512 map.
+        let mut map = Vec::new();
+        for i in 0..5u32 {
+            map.extend(std::iter::repeat((i + 1) as u8).take(300));
+            for j in 0..20u32 {
+                map.push((100 + (i * 20 + j) % 100) as u8);
+            }
+        }
+        let raw_t: Vec<Token> = map.iter().map(|&v| Token::new(0, v as u32)).collect();
+        let mtf = move_to_front_transform(&map);
+        let mtf_t: Vec<Token> = mtf.iter().map(|&v| Token::new(0, v as u32)).collect();
+        let lz = |t: &[Token]| crate::entropy_coding::lz77::apply_lz77_rle(t, 1, false, 0);
+        let rl = lz(&raw_t);
+        let ml = lz(&mtf_t);
+        // Raw candidate must have accepted LZ77 (its long runs survive).
+        assert!(rl.is_some());
+        let rb = estimate_ctxmap_cost_libjxl(&raw_t, rl.as_ref());
+        let mb = estimate_ctxmap_cost_libjxl(&mtf_t, ml.as_ref());
+        assert!(
+            rb < mb,
+            "libjxl estimate should prefer raw+lz77: raw={rb} mtf={mb}"
+        );
+    }
+
+    /// The legacy (non-strict) path is unchanged: Shannon-estimate pick, LZ77
+    /// tried on the winner only. On the same run-heavy map the legacy path
+    /// may pick differently — what matters is that it does not consult the
+    /// libjxl estimate and produces a decodable stream.
+    #[test]
+    fn legacy_ctxmap_path_uses_shannon_pick() {
+        let map: Vec<u8> = (0..64u8).collect();
+        // libjxl_log_alpha = false → legacy branch; must produce output.
+        let w = super::build_context_map_nonsimple_ans_lz77(&map, false).unwrap();
+        assert!(w.bits_written() > 0);
     }
 }
