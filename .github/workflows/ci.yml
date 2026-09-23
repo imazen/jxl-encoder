@@ -176,7 +176,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-wasip1
+          targets: wasm32-wasip1, wasm32-unknown-unknown
 
       - name: Install wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1
@@ -194,6 +194,14 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo build --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target wasm32-wasip1
+
+      # Browsers run wasm32-unknown-unknown, where std has no clock: the
+      # encoder's timers go through crate::clock (a stand-in there), and this
+      # build keeps that stand-in in step with how the encoder uses it.
+      - name: Build for the browser target
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo build --locked -p jxl-encoder --release --no-default-features --features "std" --target wasm32-unknown-unknown
 
       - name: Test jxl-encoder-simd (SIMD-vs-scalar tests)
         env:

@@ -1030,7 +1030,7 @@ pub(crate) fn compute_epf_sharpness(
     // Reconstruct once — the dequant→CfL→IDCT→gab result is identical for all
     // sharpness candidates. Only the EPF pass differs.
     #[cfg(feature = "__env_var_diagnostics")]
-    let _t_recon = std::time::Instant::now();
+    let _t_recon = crate::clock::Instant::now();
     let mut base_recon = reconstruct_xyb(
         quant_dc,
         quant_ac,
@@ -1045,14 +1045,14 @@ pub(crate) fn compute_epf_sharpness(
     #[cfg(feature = "__env_var_diagnostics")]
     let _ms_recon = _t_recon.elapsed().as_secs_f64() * 1000.0;
     #[cfg(feature = "__env_var_diagnostics")]
-    let _t_gab = std::time::Instant::now();
+    let _t_gab = crate::clock::Instant::now();
     if enable_gaborish {
         gab_smooth(&mut base_recon, padded_width, padded_height);
     }
     #[cfg(feature = "__env_var_diagnostics")]
     let _ms_gab = _t_gab.elapsed().as_secs_f64() * 1000.0;
     #[cfg(feature = "__env_var_diagnostics")]
-    let _t_cands = std::time::Instant::now();
+    let _t_cands = crate::clock::Instant::now();
 
     // Size for the largest padding needed (pad=3 for step 0)
     let max_pad = if params.epf_iters >= 3 {

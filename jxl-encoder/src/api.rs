@@ -7394,7 +7394,7 @@ impl<'a> EncodeRequest<'a> {
             });
         }
         #[cfg(feature = "__env_var_diagnostics")]
-        let _t_conv = std::time::Instant::now();
+        let _t_conv = crate::clock::Instant::now();
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
@@ -7746,7 +7746,7 @@ impl<'a> EncodeRequest<'a> {
         // (via `with_strategy_overrides`) always wins over the auto
         // value (resolved inside `effective_profile_*`).
         #[cfg(feature = "__env_var_diagnostics")]
-        let _t_an = std::time::Instant::now();
+        let _t_an = crate::clock::Instant::now();
         let smooth_photo_for_dct64 =
             detect_smooth_photo_for_dct64_from_layout(pixels, self.width, self.height, self.layout);
         #[cfg(feature = "__env_var_diagnostics")]
@@ -7754,7 +7754,7 @@ impl<'a> EncodeRequest<'a> {
             eprintln!("encode_lossy: smooth_detect={:?}", _t_an.elapsed());
         }
         #[cfg(feature = "__env_var_diagnostics")]
-        let _t_cc = std::time::Instant::now();
+        let _t_cc = crate::clock::Instant::now();
         // W44-164 Smart-Zenjxl chunk 1: cheap zenanalyze-proxy-based
         // ImageContentClass auto-classifier. Only computes on 8-bit sRGB
         // layouts and images >= CONTENT_CLASS_MIN_PIXELS (= 65,536 px).
@@ -7832,7 +7832,7 @@ impl<'a> EncodeRequest<'a> {
             eprintln!("encode_lossy: content_class={:?}", _t_cc.elapsed());
         }
         #[cfg(feature = "__env_var_diagnostics")]
-        let _t_prof = std::time::Instant::now();
+        let _t_prof = crate::clock::Instant::now();
         let mut profile = cfg.effective_profile_for_image_with_smoothness_and_class(
             (w as u64) * (h as u64),
             smooth_photo_for_dct64,
@@ -8401,7 +8401,7 @@ impl<'a> EncodeRequest<'a> {
             eprintln!("encode_lossy: post-class-setup={:?}", _t_prof.elapsed());
         }
         #[cfg(feature = "__env_var_diagnostics")]
-        let _t_pre = std::time::Instant::now();
+        let _t_pre = crate::clock::Instant::now();
         #[cfg(feature = "__env_var_diagnostics")]
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!("encode_lossy: conv+setup={:?}", _t_conv.elapsed());

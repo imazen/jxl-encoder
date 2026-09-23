@@ -575,7 +575,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     #[cfg(feature = "__env_var_diagnostics")]
     let _ll_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
     #[cfg(feature = "__env_var_diagnostics")]
-    let _ll_t0 = std::time::Instant::now();
+    let _ll_t0 = crate::clock::Instant::now();
     let enable_gather_dedup = profile.gather_dedup;
     // Phase 3 of issue #41: switch the gather-time dedup table to
     // [`InlineDedupTable`]. Only meaningful when `enable_gather_dedup` is
@@ -1327,7 +1327,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             super::tree_learn::walk_debug_dump("gather");
             let params = build_params(&samples);
             #[cfg(feature = "__env_var_diagnostics")]
-            let _ll_t_gather_done = std::time::Instant::now();
+            let _ll_t_gather_done = crate::clock::Instant::now();
             let t = crate::profile_time!("modular/compute_best_tree", {
                 match pre_pq {
                     Some(pq) => {
@@ -1376,7 +1376,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         // transform below can re-slice the winning seed's streams without
         // holding a second per-group copy.
         #[cfg(feature = "__env_var_diagnostics")]
-        let _ll_t_collect0 = std::time::Instant::now();
+        let _ll_t_collect0 = crate::clock::Instant::now();
         let (all_tokens, nb_meta_tokens, group_ranges) =
             crate::profile_time!("modular/collect_residuals_global", {
                 collect_for_tree(&tree)
@@ -1561,7 +1561,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     //   histogram-time slices and the write-time streams stay in lockstep.
     let lz77_applied = if use_lz77 {
         #[cfg(feature = "__env_var_diagnostics")]
-        let _ll_t_lz = std::time::Instant::now();
+        let _ll_t_lz = crate::clock::Instant::now();
         use crate::entropy_coding::lz77::{Lz77Params, apply_lz77};
         let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Result<Vec<AnsToken>> {
             if tokens.is_empty() {
@@ -1657,7 +1657,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     // So the cached code is byte-for-byte what this build would produce; the
     // `!use_lz77` guard is a belt-and-braces assertion of that invariant.
     #[cfg(feature = "__env_var_diagnostics")]
-    let _ll_t_ans0 = std::time::Instant::now();
+    let _ll_t_ans0 = crate::clock::Instant::now();
     let code = crate::profile_time!("modular/build_ans_code", {
         match cached_winner_code.take() {
             Some(cached) if !use_lz77 => cached,

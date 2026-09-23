@@ -24,9 +24,9 @@
 
 #[cfg(feature = "profile-phases")]
 mod inner {
+    use crate::clock::Instant;
     use std::collections::BTreeMap;
     use std::sync::{Mutex, OnceLock};
-    use std::time::Instant;
 
     fn acc() -> &'static Mutex<BTreeMap<&'static str, u128>> {
         static ACC: OnceLock<Mutex<BTreeMap<&'static str, u128>>> = OnceLock::new();

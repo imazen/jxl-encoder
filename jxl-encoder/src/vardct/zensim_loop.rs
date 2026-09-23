@@ -1609,7 +1609,7 @@ impl VarDctEncoder {
         // `SECANT_MIN_DLNL_DEFAULT` / `SECANT_MIN_EPS_DEFAULT` and
         // `Controller::step`.
         let controller = cfg.controller(ctrl_exp);
-        let t_loop = std::time::Instant::now();
+        let t_loop = crate::clock::Instant::now();
         let mut iter_ms: Vec<f64> = Vec::new();
         let mut compares_used = 0usize;
         let mut final_score = f64::NAN;
@@ -1724,7 +1724,7 @@ impl VarDctEncoder {
         let seed_quant_field = quant_field.to_vec();
 
         for iter in 0..iters + 1 {
-            let t_iter = std::time::Instant::now();
+            let t_iter = crate::clock::Instant::now();
             // Step 1: preserve the seed's exact discrete representation.
             if quant_field_float == initial_quant_field_float {
                 current_params = initial_params.clone();

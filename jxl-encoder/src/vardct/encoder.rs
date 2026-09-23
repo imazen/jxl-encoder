@@ -3830,7 +3830,7 @@ impl VarDctEncoder {
         let _phase_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
         #[cfg(not(feature = "__env_var_diagnostics"))]
         let _phase_dbg = false;
-        let _t_total = std::time::Instant::now();
+        let _t_total = crate::clock::Instant::now();
 
         // Calculate dimensions
         let xsize_blocks = div_ceil(width, BLOCK_DIM);
@@ -3892,7 +3892,7 @@ impl VarDctEncoder {
 
         // Convert to XYB with edge-replicated padding to block boundaries.
         // This allows SIMD to process full blocks without bounds checking.
-        let _t_xyb = std::time::Instant::now();
+        let _t_xyb = crate::clock::Instant::now();
         let (mut xyb_x, mut xyb_y, mut xyb_b) = self.convert_to_xyb_padded(
             width,
             height,
@@ -4032,7 +4032,7 @@ impl VarDctEncoder {
         // it to 2 saves ~0.7-1.5 % bytes at d>=3 but regresses ssim2
         // by 0.4-1.3 points (-0.7 at d=3, -1.3 at d=5). Wedge does not
         // close; not shipped. See benchmarks/patches_min_peak_distance_2026-05-19.tsv.
-        let _t_patches = std::time::Instant::now();
+        let _t_patches = crate::clock::Instant::now();
         let min_peak = if self.distance < 1.0 { 2 } else { 1 };
         // W36-3: patches photo-skip dispatch. Consult the per-block-mean
         // `median(mask1x1)` screenshot discriminator (same statistic the
@@ -4193,7 +4193,7 @@ impl VarDctEncoder {
         }
 
         let _ms_patches = _t_patches.elapsed().as_secs_f64() * 1000.0;
-        let _t_splines = std::time::Instant::now();
+        let _t_splines = crate::clock::Instant::now();
         // Build and subtract splines (after patches, before gaborish).
         // Splines are additive overlays: encoder subtracts, decoder adds back.
         // Uses default DC CfL params (y_to_x=0.0, y_to_b=1.0) since we write default DC cmap.
@@ -4294,7 +4294,7 @@ impl VarDctEncoder {
         };
 
         let _ms_splines = _t_splines.elapsed().as_secs_f64() * 1000.0;
-        let _t_quant_field = std::time::Instant::now();
+        let _t_quant_field = crate::clock::Instant::now();
         // Compute pixel chromacity stats BEFORE gaborish (matching libjxl pipeline).
         // Gaborish sharpening inflates gradients, producing overly aggressive adjustment.
         // Gated at effort >= 7 to skip the full-image gradient scan at low effort.
@@ -4733,7 +4733,7 @@ impl VarDctEncoder {
         };
 
         let _ms_quant_field = _t_quant_field.elapsed().as_secs_f64() * 1000.0;
-        let _t_gaborish = std::time::Instant::now();
+        let _t_gaborish = crate::clock::Instant::now();
         // Apply gaborish inverse (5x5 sharpening) AFTER quant field and mask1x1
         // but BEFORE CfL and AC strategy. This matches libjxl enc_heuristics.cc:
         //   line 1124: InitialQuantField (pre-gaborish)
@@ -4760,7 +4760,7 @@ impl VarDctEncoder {
         // DCT16+ (up to 31% error on gradient content, butteraugli 13-20 vs ~2.5).
 
         let _ms_gaborish = _t_gaborish.elapsed().as_secs_f64() * 1000.0;
-        let _t_cfl1 = std::time::Instant::now();
+        let _t_cfl1 = crate::clock::Instant::now();
         // Compute per-tile chroma-from-luma map on GABORISHED XYB.
         //
         // **W44-195: Pass-1 dispatch is gated on `cfl_newton_libjxl_parity`.**
@@ -4866,7 +4866,7 @@ impl VarDctEncoder {
         );
 
         let _ms_cfl1 = _t_cfl1.elapsed().as_secs_f64() * 1000.0;
-        let _t_acstrat = std::time::Instant::now();
+        let _t_acstrat = crate::clock::Instant::now();
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
         // Content-aware `entropy_mul` table dispatch (opt-in). When the
         // caller has set `LossyConfig::with_content_aware_entropy_mul(true)`
@@ -5622,7 +5622,7 @@ impl VarDctEncoder {
         }
 
         let _ms_acstrat = _t_acstrat.elapsed().as_secs_f64() * 1000.0;
-        let _t_cfl2 = std::time::Instant::now();
+        let _t_cfl2 = crate::clock::Instant::now();
         // Free masking — no longer needed after AC strategy selection.
         drop(masking);
 
@@ -5715,7 +5715,7 @@ impl VarDctEncoder {
         }
 
         let _ms_cfl2 = _t_cfl2.elapsed().as_secs_f64() * 1000.0;
-        let _t_buttloop = std::time::Instant::now();
+        let _t_buttloop = crate::clock::Instant::now();
         // Quantization loops: iteratively refine quant_field using perceptual
         // distance feedback. Butteraugli and zensim loops can stack: butteraugli
         // handles global convergence, zensim adds SSIM-aware spatial fine-tuning.
@@ -6107,7 +6107,7 @@ impl VarDctEncoder {
         // there for ordering rationale.
 
         let _ms_buttloop = _t_buttloop.elapsed().as_secs_f64() * 1000.0;
-        let _t_xform = std::time::Instant::now();
+        let _t_xform = crate::clock::Instant::now();
         // ── Streaming refactor chunk 8b (#11): region-source seam ──
         //
         // Wrap the three whole-image XYB Vecs in a
@@ -6174,7 +6174,7 @@ impl VarDctEncoder {
             );
         }
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
-        let _t_sharp = std::time::Instant::now();
+        let _t_sharp = crate::clock::Instant::now();
         let quant_dc = &transform_out.quant_dc;
         // #94: record whether the finalised DC exceeds i16 so the file header
         // signals 32-bit modular buffers (must run before write_file_header_and_pad).
@@ -6281,7 +6281,7 @@ impl VarDctEncoder {
         drop(mask1x1);
 
         let _ms_sharp = _t_sharp.elapsed().as_secs_f64() * 1000.0;
-        let _t_entropy = std::time::Instant::now();
+        let _t_entropy = crate::clock::Instant::now();
 
         // W44-87 single-pass-entropy dispatch — safety predicate +
         // override. The streaming/one-pass static-Huffman path cannot
@@ -7034,7 +7034,7 @@ impl VarDctEncoder {
         // patches detection before the GPU pipeline runs.
         //
         // (3) Both `None`: no patches.
-        let _t_patches = std::time::Instant::now();
+        let _t_patches = crate::clock::Instant::now();
         let mut patches_data: Option<super::patches::PatchesData> =
             if precomputed.patches_data.is_some() {
                 precomputed.patches_data.clone()
@@ -7120,7 +7120,7 @@ impl VarDctEncoder {
         // was computed on un-patched XYB — running pass 2 against a
         // mismatched strategy + patched XYB regressed file size by
         // 0.5-2% on gb82-sc screenshots in measurements 2026-05-15.
-        let _t_cfl = std::time::Instant::now();
+        let _t_cfl = crate::clock::Instant::now();
         // W44-195: same dispatch shape as the main Pass-1 site above —
         // Newton at e>=7 when `cfl_newton_libjxl_parity` is true (Libjxl
         // strategy), LS otherwise (Zenjxl / Aggressive / LeanFaster).
@@ -7176,7 +7176,7 @@ impl VarDctEncoder {
         // borrowed-source variant keeps the precomputed planes
         // owned by the caller (we don't take ownership of the
         // precomputed struct).
-        let _t_xform = std::time::Instant::now();
+        let _t_xform = crate::clock::Instant::now();
         let precomputed_source = super::region_source::BorrowedXybSource::new(
             width,
             height,
@@ -7245,7 +7245,7 @@ impl VarDctEncoder {
         // Dynamic sharpness gated at effort >= 6 (speed_tier <= kWombat) matching libjxl.
         // Without this the bitstream emits uniform sharpness=4, costing bytes on
         // content that benefits from per-block tuning.
-        let _t_sharp = std::time::Instant::now();
+        let _t_sharp = crate::clock::Instant::now();
         // W44-44: `padded_height` is hoisted to the top of the
         // function (see ~line 3353) so the earlier
         // `BorrowedXybSource::new` call site can see it under
@@ -7303,7 +7303,7 @@ impl VarDctEncoder {
         let _ms_sharp = _t_sharp.elapsed().as_secs_f64() * 1000.0;
 
         // Use two-pass mode for rate control (required for ANS)
-        let _t_two = std::time::Instant::now();
+        let _t_two = crate::clock::Instant::now();
         let res = self.encode_two_pass(
             width,
             height,

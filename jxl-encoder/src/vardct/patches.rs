@@ -1302,7 +1302,7 @@ pub(crate) fn find_text_like_patches_with_min_peak(
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<Vec<PatchInfo>> {
     #[cfg(feature = "__env_var_diagnostics")]
-    let _t_steps = std::time::Instant::now();
+    let _t_steps = crate::clock::Instant::now();
     let cs = if is_xyb {
         PatchColorspaceInfo::xyb()
     } else {

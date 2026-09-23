@@ -2675,7 +2675,7 @@ impl VarDctEncoder {
         let _phase_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
         #[cfg(not(feature = "__env_var_diagnostics"))]
         let _phase_dbg = false;
-        let _t0 = std::time::Instant::now();
+        let _t0 = crate::clock::Instant::now();
         // ── Pass 1: Collect tokens per DC group (chunk 8a refactor) ──
         //
         // The token-collection loop is organised per-DC-group instead of
@@ -2955,7 +2955,7 @@ impl VarDctEncoder {
         }
 
         let _t_tok_dc_setup = _t0.elapsed().as_secs_f64() * 1000.0;
-        let _t_co = std::time::Instant::now();
+        let _t_co = crate::clock::Instant::now();
         // Compute custom coefficient orders if enabled and image is large enough.
         // Required by AC-coefficient tokenization (inside the per-DC-group
         // loop below), so must be computed before that loop runs.
@@ -2996,7 +2996,7 @@ impl VarDctEncoder {
             };
 
         let _ms_co = _t_co.elapsed().as_secs_f64() * 1000.0;
-        let _t_bcm = std::time::Instant::now();
+        let _t_bcm = crate::clock::Instant::now();
         // Compute content-adaptive block context map.
         // Required by AC-coefficient tokenization (inside the per-DC-group
         // loop below).
@@ -3013,7 +3013,7 @@ impl VarDctEncoder {
         );
 
         let _ms_bcm = _t_bcm.elapsed().as_secs_f64() * 1000.0;
-        let _t_ac_tok = std::time::Instant::now();
+        let _t_ac_tok = crate::clock::Instant::now();
         // ── Progressive pass configuration ──
         let pass_config = ProgressivePassConfig::from_mode(self.progressive);
         let num_passes = pass_config.num_passes as usize;
@@ -3206,7 +3206,7 @@ impl VarDctEncoder {
 
         let _t_tok_dc = _t_tok_dc_setup; // legacy phase label (DC tree setup ms)
         let _ms_ac_tok = _t_ac_tok.elapsed().as_secs_f64() * 1000.0;
-        let _t_lz77 = std::time::Instant::now();
+        let _t_lz77 = crate::clock::Instant::now();
         // ── Apply LZ77 if enabled (ANS only, before building codes) ──
 
         let use_lz77 = self.enable_lz77 && self.use_ans;
@@ -3395,7 +3395,7 @@ impl VarDctEncoder {
         }
 
         let _ms_lz77 = _t_lz77.elapsed().as_secs_f64() * 1000.0;
-        let _t_codes = std::time::Instant::now();
+        let _t_codes = crate::clock::Instant::now();
         // ── Build optimal codes ──
 
         // Merge all DC section tokens (DC + AC metadata) for frequency counting
@@ -3498,7 +3498,7 @@ impl VarDctEncoder {
             crate::parallel::parallel_join(build_dc, build_ac_codes);
 
         let _ms_codes = _t_codes.elapsed().as_secs_f64() * 1000.0;
-        let _t_pass2 = std::time::Instant::now();
+        let _t_pass2 = crate::clock::Instant::now();
         // ── Tokenize coefficient orders (if custom) ──
         let coeff_order_tokens = if used_orders != 0 {
             let tokens = super::coeff_order::tokenize_coeff_orders(

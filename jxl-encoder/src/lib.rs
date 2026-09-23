@@ -25,6 +25,7 @@ pub mod api;
 // file) for in-flight downstream consumers (zenjxl).
 pub(crate) mod bit_writer;
 pub(crate) mod budget;
+pub(crate) mod clock;
 pub(crate) mod color;
 pub(crate) mod container;
 pub(crate) mod debug_rect;

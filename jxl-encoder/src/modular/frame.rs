@@ -1123,7 +1123,7 @@ impl FrameEncoder {
         }
 
         #[cfg(feature = "__env_var_diagnostics")]
-        let _fr_t0 = std::time::Instant::now();
+        let _fr_t0 = crate::clock::Instant::now();
         let global_state = if local_trees_mode {
             // LfGlobal for the sectioned mode: the proven global-tree byte
             // shape; stream 0 codes ONLY the meta channels (palette /
@@ -1289,7 +1289,7 @@ impl FrameEncoder {
         // PassGroup sections — parallelizable (each group writes to its own BitWriter)
         let budget = self.budget.as_ref();
         #[cfg(feature = "__env_var_diagnostics")]
-        let _fr_t_groups = std::time::Instant::now();
+        let _fr_t_groups = crate::clock::Instant::now();
         let pass_group_data: Vec<Vec<u8>> = if local_trees_mode {
             // Whole-image-equivalent stride for every per-group gather (see
             // the local writer's stride note).

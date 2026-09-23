@@ -5298,7 +5298,7 @@ fn build_tree_from_prequantized(
     #[cfg(feature = "__env_var_diagnostics")]
     let _bt_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
     #[cfg(feature = "__env_var_diagnostics")]
-    let _bt_t0 = std::time::Instant::now();
+    let _bt_t0 = crate::clock::Instant::now();
     crate::profile_time!("tree/dedup_samples", {
         dedup_samples(samples, &mut pq, params);
     });
@@ -5326,7 +5326,7 @@ fn build_tree_from_prequantized(
 
     // Start with root node
     #[cfg(feature = "__env_var_diagnostics")]
-    let _bt_t_dedup = std::time::Instant::now();
+    let _bt_t_dedup = crate::clock::Instant::now();
     let root_predictor = crate::profile_time!("tree/find_best_predictor", {
         find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts)
     });
