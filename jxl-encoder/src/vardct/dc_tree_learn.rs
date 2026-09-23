@@ -2204,7 +2204,7 @@ fn ac_meta_leaf_pred_class(i: usize) -> (u32, u32) {
 /// Create tree tokens for a merged MA tree with AC metadata routing and learned DC subtree.
 ///
 /// Builds a tree where:
-/// - Root splits on stream_id (property 1, splitval=2): LEFT → AC metadata, RIGHT → DC
+/// - Root splits on stream_id (property 1): LEFT (>) → AC metadata, RIGHT (≤) → DC
 /// - AC metadata subtree routes based on channel/y/left properties to 11 contexts
 /// - DC subtree uses the learned tree for context assignment
 /// - A padding chain pushes DC leaves deep enough in BFS that they appear after
@@ -2217,11 +2217,21 @@ fn ac_meta_leaf_pred_class(i: usize) -> (u32, u32) {
 ///   (needed because BFS leaf order may differ from DFS context assignment)
 /// - `ac_meta_ctx_map`: maps original AC metadata context [0-14] → BFS context ID
 ///   (slots 11-14 only populated for [`AcMetaTreeKind::AcMeta`])
+///
+/// `libjxl_root_split`: when `true` (strict `EncoderStrategy::Libjxl`),
+/// the root emits `splitval = 2·num_dc_groups` — matching libjxl
+/// `MergeTrees` (`enc_modular.cc:110-138`), where the root value is
+/// `useful_splits[mid] - 1` and the ACMetadata chunk starts at stream
+/// id `1 + 2·num_dc_groups` (verified: instrumented cjxl v0.12 emits
+/// `prop=1 val=2` at ndg=1). When `false`, the root emits the
+/// historical `splitval = num_dc_groups`. Routing is identical either
+/// way — only the emitted token differs.
 pub fn tree_tokens_with_ac_metadata_prefix(
     dc_tree: &DcTree,
     learned_num_contexts: u32,
     num_dc_groups: usize,
     ac_meta_kind: AcMetaTreeKind,
+    libjxl_root_split: bool,
 ) -> (
     Vec<(u32, u32)>,
     u32,
@@ -2372,15 +2382,26 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     // leaves deeper in BFS, but decoders validate that splitval is within the
     // property's narrowing range, making repeated same-property splits fail.
     //
-    // Property 1 (stream_id), splitval=num_dc_groups:
-    //   LEFT (stream_id > num_dc_groups): AC metadata
-    //   RIGHT (stream_id <= num_dc_groups): DC subtree
+    // Property 1 (stream_id):
+    //   LEFT (stream_id > splitval): AC metadata
+    //   RIGHT (stream_id <= splitval): DC subtree
     //
     // DC groups have stream_ids 1..num_dc_groups (from ModularStreamId::VarDCTDC).
     // AC metadata groups have stream_ids 1+2*num_dc_groups.. (from ModularStreamId::ACMetadata).
-    // So splitval=num_dc_groups correctly routes all DC groups to the DC subtree
-    // and all AC metadata groups to the AC metadata subtree.
-    let root = mk_internal(&mut flat, 1, num_dc_groups as i32, ac_root, dc_root_idx);
+    //
+    // libjxl `MergeTrees` emits `splitval = useful_splits[mid] - 1`; with
+    // default quant matrices the useful chunks are VarDCTDC + ACMetadata,
+    // so the emitted value is `(1 + 2*num_dc_groups) - 1 = 2*num_dc_groups`
+    // (the ">" comparison then also excludes the empty ModularDC and
+    // QuantTable id ranges on the AC-meta side, matching the emitted
+    // tree cjxl writes). The historical port emitted `num_dc_groups`,
+    // which routes identically but serializes a different token.
+    let root_splitval = if libjxl_root_split {
+        2 * num_dc_groups as i32
+    } else {
+        num_dc_groups as i32
+    };
+    let root = mk_internal(&mut flat, 1, root_splitval, ac_root, dc_root_idx);
 
     // ─── BFS to generate token stream and track context ID mapping ───
     //
@@ -3142,7 +3163,7 @@ fn test_wrapped_tree_tokens() {
     }];
 
     let (wrapped_tokens, total_contexts, dc_remap, ac_map) =
-        tree_tokens_with_ac_metadata_prefix(&tree, 1, 1, AcMetaTreeKind::Ours);
+        tree_tokens_with_ac_metadata_prefix(&tree, 1, 1, AcMetaTreeKind::Ours, false);
     eprintln!(
         "Merged tree: {} tokens, {} contexts, dc_remap={:?}, ac_map={:?}",
         wrapped_tokens.len(),
@@ -3211,7 +3232,7 @@ fn test_wrapped_tree_tokens_depth1_dc() {
     ];
 
     let (_, total_contexts, dc_remap, ac_map) =
-        tree_tokens_with_ac_metadata_prefix(&tree, 2, 1, AcMetaTreeKind::Ours);
+        tree_tokens_with_ac_metadata_prefix(&tree, 2, 1, AcMetaTreeKind::Ours, false);
     eprintln!(
         "Depth-1 DC: total={}, dc_remap={:?}, ac_map={:?}",
         total_contexts, dc_remap, ac_map
@@ -3284,7 +3305,7 @@ fn test_wrapped_tree_tokens_deep_dc() {
     }
 
     let (_, total_contexts, dc_remap, ac_map) =
-        tree_tokens_with_ac_metadata_prefix(&tree, 32, 1, AcMetaTreeKind::Ours);
+        tree_tokens_with_ac_metadata_prefix(&tree, 32, 1, AcMetaTreeKind::Ours, false);
     eprintln!(
         "Deep DC: total={}, dc_remap={:?}, ac_map={:?}",
         total_contexts, dc_remap, ac_map
@@ -3318,4 +3339,34 @@ fn test_wrapped_tree_tokens_deep_dc() {
             i
         );
     }
+}
+
+#[test]
+fn test_wrapped_tree_root_splitval() {
+    use super::common::pack_signed;
+    use super::*;
+
+    let tree = vec![DcTreeNode {
+        property: -1,
+        context_id: 0,
+        ..Default::default()
+    }];
+
+    // Historical port: root token emits pack_signed(num_dc_groups).
+    let (tokens, _, _, _) =
+        tree_tokens_with_ac_metadata_prefix(&tree, 1, 1, AcMetaTreeKind::Ours, false);
+    assert_eq!(tokens[0], (1, 2)); // property 1 + 1
+    assert_eq!(tokens[1], (0, pack_signed(1)));
+
+    // W45-RECON part 8: libjxl MergeTrees emits
+    // `useful_splits[mid] - 1 = 2·num_dc_groups` (cjxl v0.12 dumps
+    // `prop=1 val=2` at ndg=1; val=8 at ndg=4).
+    let (tokens, _, _, _) =
+        tree_tokens_with_ac_metadata_prefix(&tree, 1, 1, AcMetaTreeKind::Ours, true);
+    assert_eq!(tokens[0], (1, 2));
+    assert_eq!(tokens[1], (0, pack_signed(2)));
+
+    let (tokens, _, _, _) =
+        tree_tokens_with_ac_metadata_prefix(&tree, 1, 4, AcMetaTreeKind::Ours, true);
+    assert_eq!(tokens[1], (0, pack_signed(8)));
 }

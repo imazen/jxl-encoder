@@ -460,9 +460,7 @@ mod expanded_coverage {
                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect()
         }
-        let Ok(maskd) =
-            std::fs::read("/Users/lilith/tmp/aqdbg_ours_photo6/acs_mask1x1.f32")
-        else {
+        let Ok(maskd) = std::fs::read("/Users/lilith/tmp/aqdbg_ours_photo6/acs_mask1x1.f32") else {
             return;
         };
         let w = i32::from_le_bytes(maskd[0..4].try_into().unwrap()) as usize;

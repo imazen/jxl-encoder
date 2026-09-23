@@ -286,6 +286,10 @@ jxl_encoder_macros::strategy_def! {
             // only (seed 0), so the F-heuristic's downward
             // `*quant - activity` reduction applies.
             aqba_max_quant_libjxl = true,
+            // W45-RECON part 8: strict `MergeTrees` root splitval —
+            // `2·num_dc_groups` (ACMetadata chunk start - 1), matching
+            // libjxl's emitted `prop=1 val=2` at ndg=1.
+            ma_tree_root_splitval_libjxl = true,
             // Strict parity: mirror libjxl's `nl_dc` cluster —
             // `extra_dc_precision = 1` at effort >= 4 and the
             // QuantizeWP DC shape alongside it. Corrects the
@@ -410,6 +414,9 @@ jxl_encoder_macros::strategy_def! {
             // seed-with-field aggregation (downward quant
             // adjustments stay clamped) — production baseline.
             aqba_max_quant_libjxl = false,
+            // W45-RECON part 8: LeanFaster keeps the historical
+            // num_dc_groups root splitval — shipped bitstream.
+            ma_tree_root_splitval_libjxl = false,
             // DC encode stays on the Zenjxl schedule (2x precision at
             // effort <= 7, plain round) — not a libjxl mirror.
             dc_encode_libjxl_parity = false,
@@ -539,6 +546,9 @@ jxl_encoder_macros::strategy_def! {
             // aggregation (downward quant adjustments stay clamped)
             // — production baseline.
             aqba_max_quant_libjxl = false,
+            // W45-RECON part 8: Zenjxl keeps the historical
+            // num_dc_groups root splitval — shipped bitstream.
+            ma_tree_root_splitval_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -626,6 +636,9 @@ jxl_encoder_macros::strategy_def! {
             // W45-RECON part 7: Aggressive mirrors Zenjxl — keeps
             // the seed-with-field aggregation.
             aqba_max_quant_libjxl = false,
+            // W45-RECON part 8: Aggressive mirrors Zenjxl — keeps
+            // the num_dc_groups root splitval.
+            ma_tree_root_splitval_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -1214,6 +1227,36 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "W45-RECON part 7 — AdjustQuantBlockAC max-aggregation seeded with field quant (downward F-heuristic adjustments dropped; quant can only go finer)",
         },
 
+        /// **W45-RECON part 8**: merged MA-tree root `splitval` parity.
+        /// libjxl `MergeTrees` (`enc_modular.cc:110-138`) builds the
+        /// stream-id root as `splitval = useful_splits[mid] - 1`. With
+        /// default quant matrices the useful chunks are VarDCTDC and
+        /// ACMetadata, so the root emits
+        /// `prop=1 val = (1 + 2·num_dc_groups) - 1 = 2·num_dc_groups`.
+        /// The Rust port emitted `val = num_dc_groups`. Routing is
+        /// identical (DC stream ids 1..ndg and AC-meta ids
+        /// 1+2·ndg..3·ndg land on the same side of either threshold);
+        /// only the emitted tree token differs — measured +2 B on
+        /// `webshot_128`-class fixtures at e5-e7 (verified against
+        /// instrumented cjxl v0.12 `MERGEDTREE` dump: `val=2` at
+        /// ndg=1).
+        ///
+        /// When `true`,
+        /// [`crate::effort::EffortProfile::ma_root_split_2ndg`] makes
+        /// `vardct/dc_tree_learn.rs::tree_tokens_with_ac_metadata_prefix`
+        /// emit `splitval = 2·num_dc_groups` exactly like `MergeTrees`.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — the emitted
+        ///   token value is part of the shipped bitstream.
+        ///
+        /// Section C.
+        ma_tree_root_splitval_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 8 — merged MA-tree root splitval emitted num_dc_groups instead of 2·num_dc_groups (MergeTrees useful_splits[mid]-1)",
+        },
+
         // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
         /// **W44-201**: skip buckets 3 (DCT32x32) and 6 (DCT32x16/DCT16x32)
         /// when admitting custom coefficient orders via the W44-82
@@ -1794,6 +1837,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W45-RECON part 7 — AdjustQuantBlockAC max-aggregation seeded with field quant (downward F-heuristic adjustments dropped; quant can only go finer)",
         raw: __CUSTOM_DIVERGENCE_AQBA_MAX_QUANT_LIBJXL,
+    },
+    // Section C — W45-RECON part 8 merged MA-tree root splitval
+    DivergenceEntry {
+        gate_name: "ma_tree_root_splitval_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 8 — merged MA-tree root splitval emitted num_dc_groups instead of 2·num_dc_groups (MergeTrees useful_splits[mid]-1)",
+        raw: __CUSTOM_DIVERGENCE_MA_TREE_ROOT_SPLITVAL_LIBJXL,
     },
     // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
     DivergenceEntry {

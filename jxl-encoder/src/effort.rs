@@ -891,6 +891,19 @@ pub struct EffortProfile {
     /// Set only via
     /// [`crate::api::ResolvedImprovements::aqba_max_quant_libjxl`].
     pub aqba_max_over_channels: bool,
+    /// When `true` (strict `EncoderStrategy::Libjxl` only),
+    /// `vardct/dc_tree_learn.rs::tree_tokens_with_ac_metadata_prefix`
+    /// emits the merged MA-tree root as `prop=1 splitval =
+    /// 2·num_dc_groups` — matching libjxl `MergeTrees`
+    /// (`enc_modular.cc:110-138`), where the root split value is
+    /// `useful_splits[mid] - 1` and the ACMetadata chunk starts at
+    /// stream id `1 + 2·num_dc_groups`. When `false` (all non-Libjxl
+    /// strategies), the root emits `splitval = num_dc_groups` — the
+    /// historical shipped value. Routing is identical either way;
+    /// only the emitted tree token differs.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::ma_tree_root_splitval_libjxl`].
+    pub ma_root_split_2ndg: bool,
     /// Numerator for the effort-fixed q parameter used in global_scale computation.
     /// libjxl: 0.39 at effort >= 5, 0.79 at effort < 5.
     /// global_scale = 65536 * (initial_q_numerator / distance) / 5.0
@@ -1708,6 +1721,8 @@ impl EffortProfile {
             // aggregation (downward AQBA adjustments clamped);
             // `apply_aqba_max_quant_libjxl` flips for Libjxl only.
             aqba_max_over_channels: false,
+            // `apply_ma_tree_root_splitval_libjxl` flips for Libjxl only.
+            ma_root_split_2ndg: false,
             initial_q_numerator: if effort >= 5 { 0.39 } else { 0.79 },
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
@@ -1942,6 +1957,7 @@ impl EffortProfile {
             use_adaptive_quant: false,
             adjust_quant_ac: false,
             aqba_max_over_channels: false,
+            ma_root_split_2ndg: false,
             initial_q_numerator: 0.39,
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
@@ -2874,6 +2890,21 @@ impl EffortProfile {
     ) {
         if resolved.aqba_max_quant_libjxl {
             self.aqba_max_over_channels = true;
+        }
+    }
+
+    /// Apply the merged-MA-tree root splitval libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::ma_tree_root_splitval_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::ma_root_split_2ndg`] — the `MergeTrees`
+    /// `useful_splits[mid] - 1` root split value (see field docstring).
+    pub(crate) fn apply_ma_tree_root_splitval_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.ma_tree_root_splitval_libjxl {
+            self.ma_root_split_2ndg = true;
         }
     }
 

@@ -720,8 +720,9 @@ pub fn write_learned_context_tree(
     writer: &mut BitWriter,
 ) -> Result<()> {
     // The learned tree already has the correct root split on property 1
-    // (stream_id) with splitval=num_dc_groups, set by
-    // tree_tokens_with_ac_metadata_prefix. This routes DC groups
+    // (stream_id), set by tree_tokens_with_ac_metadata_prefix
+    // (splitval=num_dc_groups historically, 2*num_dc_groups under the
+    // Libjxl-strategy `ma_root_split_2ndg` gate). This routes DC groups
     // (stream_ids 1..num_dc_groups) to the DC subtree and AC metadata
     // (stream_ids 1+2*num_dc_groups..) to the AC metadata subtree.
     // Works for any number of DC groups.

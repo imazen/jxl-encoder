@@ -3228,6 +3228,10 @@ impl LossyConfig {
             // (seed 0), so downward F-heuristic adjustments land.
             // NO-OP on every other strategy.
             p.apply_aqba_max_quant_libjxl(&resolved);
+            // W45-RECON part 8: merged MA-tree root splitval parity —
+            // `prop=1 val=2·num_dc_groups` per libjxl `MergeTrees`.
+            // NO-OP on every other strategy.
+            p.apply_ma_tree_root_splitval_libjxl(&resolved);
         }
         p
     }

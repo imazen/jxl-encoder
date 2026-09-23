@@ -3248,6 +3248,7 @@ impl VarDctEncoder {
                     learned_num_contexts,
                     num_dc_groups,
                     ac_meta_kind,
+                    self.profile.ma_root_split_2ndg,
                 );
 
             // Candidate B: predefined kWPFixedDC (libjxl per-stream override).
@@ -3260,6 +3261,7 @@ impl VarDctEncoder {
                     wp_dc_num_contexts,
                     num_dc_groups,
                     ac_meta_kind,
+                    self.profile.ma_root_split_2ndg,
                 );
 
             // Trial-tokenize DC residuals for both candidates over the full image.
@@ -3372,6 +3374,7 @@ impl VarDctEncoder {
                     wp_dc_num_contexts,
                     num_dc_groups,
                     ac_meta_kind,
+                    self.profile.ma_root_split_2ndg,
                 );
 
             learned_tree_tokens = Some(wrapped_tokens);

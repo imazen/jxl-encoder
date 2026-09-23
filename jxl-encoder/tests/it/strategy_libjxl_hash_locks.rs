@@ -235,8 +235,12 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // on |v(x)| like libjxl `CFLFunction::Compute` (was per-eval
         // gates, which collapsed ddf at eps=100 and oscillated x to 0,
         // emitting ytox=0 where cjxl converges to ±5..9).
+        // W45-RECON part 8 (2026-10-13): 163 → 163 (size stable), hash
+        // drift — merged MA-tree root emits `prop=1 val=2·ndg` per
+        // libjxl `MergeTrees` (was `val=ndg`); same shape, one token
+        // value differs.
         size: 163,
-        hash: 0x6e09a9bb563ec6b6,
+        hash: 0xf0aa2295a5ffcb67,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
@@ -246,8 +250,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // 125 → 120 (-5 B), hash drift (see _d1 note).
         // CfL Newton shared-gate (2026-10-12): 120 → 116 (-4 B), hash
         // drift (see _d1 note).
+        // W45-RECON part 8 (2026-10-13): 116 → 116 (size stable), hash
+        // drift (see _d1 note).
         size: 116,
-        hash: 0x6810d2373ae6d673,
+        hash: 0x3510f6dba5c7fba3,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
@@ -255,8 +261,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift (see _d1 note).
         // e8+ merged kLearn MA tree + ForModular LZ77 (2026-09-18):
         // 170 → 163 (-7 B), hash drift (see _d1 note).
+        // W45-RECON part 8 (2026-10-13): 163 → 163 (size stable), hash
+        // drift (see _d1 note).
         size: 163,
-        hash: 0x488a175928e1e4ef,
+        hash: 0x1714712931dbc9c8,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
@@ -271,8 +279,12 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift (see _d1 note).
         // e8+ merged kLearn MA tree + ForModular LZ77 (2026-09-18):
         // 265 → 262 (-3 B), hash drift (see _d1 note).
-        size: 262,
-        hash: 0x4bfbb7769a072a6e,
+        // W45-RECON part 8 (2026-10-13): 262 → 263 (+1 B), hash drift —
+        // same root-token value change; ANS histogram shift on this
+        // e3 cell costs one byte (cjxl emits val=2·ndg too, so this is
+        // the parity-correct token).
+        size: 263,
+        hash: 0xe7c9b23f18a1627e,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
@@ -338,8 +350,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // SA-G Fix C zero-map workaround for the pre-shared-gate bug).
         // Also strict `mask1x1` (log1p + mirror-border Symmetric5).
         // Size now matches cjxl v0.12 exactly (3217 B).
+        // W45-RECON part 8 (2026-10-13): 3217 → 3217 (size stable),
+        // hash drift (see _d1 note) — still exact cjxl size parity.
         size: 3217,
-        hash: 0x8df476823a9ea88a,
+        hash: 0xcf68bf48928844aa,
     },
 ];
 
