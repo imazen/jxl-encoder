@@ -1217,7 +1217,12 @@ Residual: (a) noise_512 quant-field-update trajectory stall — our
 iter-0 content is better than cjxl's, so `diffmap`-driven field steps
 are weaker and `global_scale` stalls at 3481 vs cjxl 3990;
 (b) photo_512 iter-1+ trajectory / entropy layers (identical
-search-side state, −40 B net); (c) flat_64x64 +4 B knife-edge stands.
+search-side state, −40 B net); (c) flat_64x64 +4 B knife-edge stands;
+(d) `entropy_mul`/`cost_delta`/`zeros_mul` carry constant ~6e-5/~3e-5/
+~1e-5 diffs vs cjxl — float evaluation-order in the multiplicative
+constants, ~4 orders below decision relevance (emitted map is
+0-diff); (e) `entropy_pre_loss` residual diffs are knife-edge
+coefficient flips, not systematic.
 
 ---
 
