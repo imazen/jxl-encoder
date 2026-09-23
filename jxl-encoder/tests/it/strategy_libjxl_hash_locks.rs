@@ -239,8 +239,14 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift — merged MA-tree root emits `prop=1 val=2·ndg` per
         // libjxl `MergeTrees` (was `val=ndg`); same shape, one token
         // value differs.
-        size: 163,
-        hash: 0xf0aa2295a5ffcb67,
+        // W45-RECON part 11 (2026-09-23): 163 → 166 (+3 B), hash
+        // drift — stream-specific libjxl `HistogramParams` schedule
+        // (AC kFastest/kFast/kBest + tree/modular kFast/kBest +
+        // orders default-params) and libjxl `log_alpha_size` rule
+        // (ANS default 7, refined by adaptive uint only). cjxl v0.12
+        // reference for this cell: 171 B.
+        size: 166,
+        hash: 0x601ab9bf9aafa984,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
@@ -252,8 +258,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift (see _d1 note).
         // W45-RECON part 8 (2026-10-13): 116 → 116 (size stable), hash
         // drift (see _d1 note).
-        size: 116,
-        hash: 0x3510f6dba5c7fba3,
+        // W45-RECON part 11 (2026-09-23): 116 → 118 (+2 B), hash
+        // drift (see _d1 note). cjxl v0.12 reference: 121 B.
+        size: 118,
+        hash: 0xc4dc27845ea49af2,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
@@ -263,8 +271,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // 170 → 163 (-7 B), hash drift (see _d1 note).
         // W45-RECON part 8 (2026-10-13): 163 → 163 (size stable), hash
         // drift (see _d1 note).
-        size: 163,
-        hash: 0x1714712931dbc9c8,
+        // W45-RECON part 11 (2026-09-23): 163 → 166 (+3 B), hash
+        // drift (see _d1 note). cjxl v0.12 reference: 167 B.
+        size: 166,
+        hash: 0x8e7db756e27fd3c6,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
@@ -283,8 +293,12 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // same root-token value change; ANS histogram shift on this
         // e3 cell costs one byte (cjxl emits val=2·ndg too, so this is
         // the parity-correct token).
-        size: 263,
-        hash: 0xe7c9b23f18a1627e,
+        // W45-RECON part 11 (2026-09-23): 263 → 261 (-2 B), hash
+        // drift — tree stream now emits libjxl's `kNone` default
+        // HybridUintConfig (4,2,0) instead of the kBest-derived
+        // (0,0,0), matching cjxl v0.12 exactly on this cell (261 B).
+        size: 261,
+        hash: 0xbd5f88b85aea8663,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
@@ -352,8 +366,11 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // Size now matches cjxl v0.12 exactly (3217 B).
         // W45-RECON part 8 (2026-10-13): 3217 → 3217 (size stable),
         // hash drift (see _d1 note) — still exact cjxl size parity.
-        size: 3217,
-        hash: 0xcf68bf48928844aa,
+        // W45-RECON part 11 (2026-09-23): 3217 → 3219 (+2 B), hash
+        // drift — libjxl `log_alpha_size` rule on the ANS streams
+        // (cjxl v0.12 reference now 3220 B; delta −1 B).
+        size: 3219,
+        hash: 0x756440c695c51125,
     },
 ];
 

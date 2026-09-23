@@ -1430,6 +1430,65 @@ Unit tests `libjxl_srgb_eotf_golden_bits` (pins 8 f32 bit patterns
 across both EOTF branches) and `libjxl_srgb_lut_differs_from_exact`
 (lock the approximation-vs-exact distinction) ship in `api/ingest.rs`.
 
+### W45-RECON part 11 (2026-09-23): stream-specific `HistogramParams` + `log_alpha_size` — entropy headers at parity
+
+The n48 e2 cell was +142 B (4.3 %) with **bit-identical decoded pixels** —
+a pure entropy/header divergence. Decoding both files' six entropy
+headers against cjxl v0.12 showed four distinct mis-ports, all now
+corrected behind `entropy_codes_libjxl_parity` /
+`coeff_orders_libjxl_parity`:
+
+**(a) Per-stream clustering schedule** — strict prefix streams all
+reached the legacy TinyHistogram clustering (`MIN_DISTANCE=64`,
+8-cluster cap, Huffman-cost distance). libjxl `ClusterHistograms` is
+Shannon-entropy distance at `kMinDistanceForDistinct=48` with
+`kFastest` capped at 4 clusters and `kClustersLimit=128`. New
+`PrefixClustering` selector on the Huffman builder: strict AC stream
+gets `Fastest` (e0–e2) / `Fast` (e3–e8) / `Best` (e9+) per
+`HistogramParams(tier)` + the `tier > kTortoise` LZ77-off override;
+the DC/modular prefix path gets `ForModular`'s `Fast`/`Best` split at
+effort 8. AC clusters on n48 e2: 2 → **3, matching cjxl**.
+
+**(b) Tree-code stream uint method** — the context-tree writer used
+`UintConfigMethod::Best`, which picked (0,0,0) on this fixture; libjxl
+`EncodeStream` runs under `ForModular` params → `kNone` → default
+(4,2,0) below effort 8 and `kBest` at 8+. New `TreeCodeParams` +
+`libjxl_tree_code_params` resolver threads that schedule through
+`write_context_tree` / `write_learned_context_tree` (`None` preserves
+the legacy Best-uint behaviour for all non-strict callers).
+
+**(c) Coefficient-order stream params** — libjxl `EncodeCoeffOrders`
+uses **default `HistogramParams()`** at every effort: `kBest`
+clustering, `kBest` uint (26-candidate set), `kRLE` LZ77 attempt,
+`kPrecise` ANS. Strict now runs exactly that via
+`build_entropy_code_ans_from_token_groups_with_strategy` with
+`libjxl_params`, including the `apply_lz77_rle` pass on order tokens.
+
+**(d) `log_alpha_size`** — we emitted a fixed 6 on every ANS stream.
+libjxl `ChooseUintConfigs` (`enc_ans.cc:716-908`) defaults ANS to **7**,
+refines to `max(5, bits(max_tok))` only when the adaptive uint methods
+(kFast/kBest) ran, and keeps 7 for fixed methods (kNone, kContextMap).
+New `libjxl_params` flag on the ANS builders reproduces the rule;
+`libjxl_log_alpha` fields on `OwnedAnsEntropyCode` / `OwnedEntropyCode`
+/`EntropyCode` propagate it to nested non-simple context maps (which
+already emit libjxl's `kContextMap` cfg (2,0,1)).
+
+Verified on n48 e2 vs instrumented cjxl 0.12.0: **all six stream
+headers now match exactly** — ctx-map prefix cfg (2,0,1); tree prefix
+cfg (4,2,0); DC ANS `log_alpha=7` cfg (4,2,0)×2; orders ANS
+`log_alpha=5` cfg (0,0,0)×2; ctx-map ANS `log_alpha=7` cfg (2,0,1);
+AC prefix 3 clusters cfg (4,2,0)×3 — and the decode stays bit-identical.
+Sizes vs cjxl v0.12: n48 e2 3321/3324 (−3, was +142), e5 −1, e7 −1,
+e8 −3; noise_512 e8 308397/308410 (**−13**, was +24); grad32 e1/e3 and
+the e7 d12 resampled cell are **byte-size-exact** (258/258, 261/261,
+123/123). The remaining deltas are the header `all_default` shortcut
+(~3 B) plus the known ulp-order coefficient residuals.
+
+63/63 normal-mode hash locks byte-identical (Zenjxl unchanged — the
+flag is false on every non-strict path); strict byte-lock + pins
+re-locked. Unit tests: `libjxl_log_alpha_tests` (kNone→7,
+adaptive→refined, legacy→6) and `libjxl_tree_code_params_schedule`.
+
 ---
 
 ## G. RESOLVED divergences (historical)

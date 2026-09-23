@@ -20,7 +20,6 @@ use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 
-use crate::entropy_coding::encode::build_entropy_code_from_token_groups;
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 use crate::headers::color_encoding::{ColorEncoding, ColorSpace, RenderingIntent};
@@ -1357,10 +1356,19 @@ impl VarDctEncoder {
         writer.write(1, 1)?; // default DC cmap
 
         // Write context tree for modular stream DC header
+        let tree_code_params = super::context_tree::libjxl_tree_code_params(
+            self.profile.entropy_codes_libjxl_parity,
+            self.effort,
+        );
         if let Some(tree_tokens) = learned_tree_tokens {
-            super::context_tree::write_learned_context_tree(tree_tokens, num_dc_groups, writer)?;
+            super::context_tree::write_learned_context_tree(
+                tree_tokens,
+                num_dc_groups,
+                writer,
+                tree_code_params,
+            )?;
         } else {
-            super::context_tree::write_context_tree(num_dc_groups, writer)?;
+            super::context_tree::write_context_tree(num_dc_groups, writer, tree_code_params)?;
         }
 
         #[cfg(feature = "debug-tokens")]
@@ -1593,7 +1601,12 @@ impl VarDctEncoder {
                 } else {
                     self.use_ans
                 };
-                super::coeff_order::build_and_write_coeff_orders(tokens, use_ans, writer)?;
+                super::coeff_order::build_and_write_coeff_orders(
+                    tokens,
+                    use_ans,
+                    writer,
+                    self.profile.coeff_orders_libjxl_parity,
+                )?;
             }
             let w44_200_after_coeff_orders_bits = writer.bits_written();
 
@@ -3969,16 +3982,31 @@ impl VarDctEncoder {
             // candidates), not the kNone default (4,2,0).
             let dc_optimize_uint =
                 self.profile.optimize_uint_configs_vardct || self.profile.extra_dc_precision > 0;
+            // libjxl `ForModular` uint method: the `kFast` selection above
+            // applies to tier > kKitten (effort ≤ 7); at kKitten and slower
+            // (effort ≥ 8) the params fall through to the `kBest` default.
+            let dc_uint_method = if self.profile.entropy_codes_libjxl_parity && self.effort >= 8 {
+                crate::entropy_coding::encode::UintConfigMethod::Best
+            } else if dc_optimize_uint {
+                crate::entropy_coding::encode::UintConfigMethod::Fast
+            } else {
+                crate::entropy_coding::encode::UintConfigMethod::None
+            };
+            // libjxl `ForModular` clustering: `kFast` at effort ≤ 7, `kBest`
+            // (pair-merge) at effort ≥ 8.
+            let dc_enhanced_clustering = self.profile.enhanced_clustering_vardct
+                || (self.profile.entropy_codes_libjxl_parity && self.effort >= 8);
             if dc_use_ans {
                 BuiltEntropyCode::Ans(
                     crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
                         &dc_groups,
                         dc_num_contexts,
-                        self.profile.enhanced_clustering_vardct,
+                        dc_enhanced_clustering,
                         dc_optimize_uint,
                         dc_lz77_params.as_ref(),
                         None,
                         self.profile.ans_histogram_strategy_vardct,
+                        self.profile.entropy_codes_libjxl_parity,
                     ),
                 )
             } else {
@@ -3986,17 +4014,32 @@ impl VarDctEncoder {
                 // (`enc_ans.cc` — config selection precedes the prefix/ANS
                 // split), so the Huffman path gets the same `kFast` method
                 // the ANS branch applies under `dc_optimize_uint`.
-                BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
+                // libjxl `HistogramParams::ForModular` clustering for the
+                // DC/modular stream: `kFast` at effort ≤ 7, `kBest` at 8+.
+                let dc_clustering = if self.profile.entropy_codes_libjxl_parity {
+                    crate::entropy_coding::encode::PrefixClustering::Libjxl(if self.effort >= 8 {
+                        crate::entropy_coding::cluster::ClusteringType::Best
+                    } else {
+                        crate::entropy_coding::cluster::ClusteringType::Fast
+                    })
+                } else {
+                    match self.profile.enhanced_clustering_vardct {
+                        true => crate::entropy_coding::encode::PrefixClustering::Libjxl(
+                            crate::entropy_coding::cluster::ClusteringType::Best,
+                        ),
+                        false => crate::entropy_coding::encode::PrefixClustering::Legacy,
+                    }
+                };
+                let mut dc_code = crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
                     &dc_groups,
                     dc_num_contexts,
-                    self.profile.enhanced_clustering_vardct,
+                    dc_clustering,
                     dc_lz77_params.as_ref(),
-                    if dc_optimize_uint {
-                        crate::entropy_coding::encode::UintConfigMethod::Fast
-                    } else {
-                        crate::entropy_coding::encode::UintConfigMethod::None
-                    },
-                ))
+                    dc_uint_method,
+                    128,
+                );
+                dc_code.libjxl_log_alpha = self.profile.entropy_codes_libjxl_parity;
+                BuiltEntropyCode::Huffman(dc_code)
             }
         };
         let build_ac_codes = || -> Vec<BuiltEntropyCode> {
@@ -4027,20 +4070,44 @@ impl VarDctEncoder {
                             ac_lz77_params_per_pass[pass].as_ref(),
                             None,
                             self.profile.ans_histogram_strategy_vardct,
+                            self.profile.entropy_codes_libjxl_parity,
                         ),
                     )
                 } else {
-                    BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
+                    // libjxl `HistogramParams(tier)` for the AC stream
+                    // (`enc_ans_params.h`): `kFastest` clustering
+                    // (≤4 clusters, which also selects the prefix coder
+                    // upstream) at `tier > kFalcon` (effort ≤ 2), `kFast`
+                    // through kKitten (effort ≤ 8), `kBest` at kTortoise+.
+                    let ac_clustering = if self.profile.entropy_codes_libjxl_parity {
+                        crate::entropy_coding::encode::PrefixClustering::Libjxl(match self.effort {
+                            0..=2 => crate::entropy_coding::cluster::ClusteringType::Fastest,
+                            3..=8 => crate::entropy_coding::cluster::ClusteringType::Fast,
+                            _ => crate::entropy_coding::cluster::ClusteringType::Best,
+                        })
+                    } else {
+                        match self.profile.enhanced_clustering_vardct {
+                            true => crate::entropy_coding::encode::PrefixClustering::Libjxl(
+                                crate::entropy_coding::cluster::ClusteringType::Best,
+                            ),
+                            false => crate::entropy_coding::encode::PrefixClustering::Legacy,
+                        }
+                    };
+                    let mut ac_code = crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
                         &ac_groups,
                         ac_num_contexts,
-                        self.profile.enhanced_clustering_vardct,
+                        ac_clustering,
                         ac_lz77_params_per_pass[pass].as_ref(),
                         if self.profile.optimize_uint_configs_vardct {
                             crate::entropy_coding::encode::UintConfigMethod::Best
                         } else {
                             crate::entropy_coding::encode::UintConfigMethod::None
                         },
-                    ))
+                        // libjxl `kClustersLimit` = 128.
+                        128,
+                    );
+                    ac_code.libjxl_log_alpha = self.profile.entropy_codes_libjxl_parity;
+                    BuiltEntropyCode::Huffman(ac_code)
                 }
             })
         };

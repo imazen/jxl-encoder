@@ -1851,11 +1851,12 @@ fn write_dc_global_jpeg(
             tree_tokens,
             num_dc_groups,
             writer,
+            None,
         )?;
     } else if use_lever_a {
         crate::vardct::context_tree::write_jpeg_transcode_context_tree(num_dc_groups, writer)?;
     } else {
-        crate::vardct::context_tree::write_context_tree(num_dc_groups, writer)?;
+        crate::vardct::context_tree::write_context_tree(num_dc_groups, writer, None)?;
     }
 
     // LZ77: disabled
@@ -1912,7 +1913,7 @@ fn write_ac_global_jpeg(
     // AC entropy code header, matching the VarDCT write_ac_global flow.
     if let Some(tokens) = coeff_order_tokens.filter(|_| used_orders != 0) {
         // Always ANS on the JPEG path (use_ans=true), matching ac_code below.
-        build_and_write_coeff_orders(tokens, true, writer)?;
+        build_and_write_coeff_orders(tokens, true, writer, false)?;
     }
 
     // LZ77 header — written here per the entropy code spec; if `ac_lz77` is

@@ -3125,14 +3125,19 @@ mod debug_tests {
 
         // Write static tree via static path
         let mut static_writer = BitWriter::new();
-        write_context_tree(num_dc_groups, &mut static_writer).unwrap();
+        write_context_tree(num_dc_groups, &mut static_writer, None).unwrap();
         static_writer.zero_pad_to_byte();
         let static_bytes = static_writer.finish();
 
         // Write same tokens via learned path
         let mut learned_writer = BitWriter::new();
-        write_learned_context_tree(&static_token_pairs, num_dc_groups, &mut learned_writer)
-            .unwrap();
+        write_learned_context_tree(
+            &static_token_pairs,
+            num_dc_groups,
+            &mut learned_writer,
+            None,
+        )
+        .unwrap();
         learned_writer.zero_pad_to_byte();
         let learned_bytes = learned_writer.finish();
 

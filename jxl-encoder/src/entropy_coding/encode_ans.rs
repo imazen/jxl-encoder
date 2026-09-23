@@ -39,6 +39,11 @@ pub struct OwnedAnsEntropyCode {
     /// Per-histogram HybridUint configs (one per histogram).
     /// When empty, all histograms use the default {4, 2, 0} config.
     pub uint_configs: Vec<HybridUintConfig>,
+    /// When true, this code was built under the libjxl `log_alpha_size`
+    /// convention (`enc_ans.cc` `ChooseUintConfigs`: default 7 for ANS,
+    /// refined to `bits(max_tok)` only by the adaptive uint methods). A
+    /// nested non-simple context map inherits the convention.
+    pub libjxl_log_alpha: bool,
 }
 
 /// Accumulated histogram data from a token stream (or multiple token streams).
@@ -212,6 +217,7 @@ pub fn build_entropy_code_from_accumulated_ans(
         lz77,
         total_pixel_hint,
         ANSHistogramStrategy::Precise,
+        false,
     )
 }
 
@@ -234,6 +240,7 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
     ans_strategy: ANSHistogramStrategy,
+    libjxl_params: bool,
 ) -> OwnedAnsEntropyCode {
     use crate::entropy_coding::cluster::{
         ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
@@ -302,7 +309,11 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
     let uint_configs = if !optimize_uint_configs {
         vec![HybridUintConfig::new(4, 2, 0); num_histograms]
     } else if enhanced_clustering {
-        optimize_uint_configs_best_from_freqs(&merged_value_freqs, lz77)
+        if libjxl_params {
+            optimize_uint_configs_libjxl_best_from_freqs(&merged_value_freqs, lz77)
+        } else {
+            optimize_uint_configs_best_from_freqs(&merged_value_freqs, lz77)
+        }
     } else {
         optimize_uint_configs_fast_from_freqs(&merged_value_freqs, lz77)
     };
@@ -416,16 +427,25 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
         .map(|h| h.counts.len())
         .max()
         .unwrap_or(1);
+    let min_bits = if max_alphabet_size <= 1 {
+        5
+    } else {
+        (max_alphabet_size - 1).ilog2() as usize + 1
+    };
     let log_alpha_size = if lz77.is_some_and(|p| p.enabled) {
         8
+    } else if libjxl_params {
+        // libjxl `ChooseUintConfigs` (enc_ans.cc:716-910): the ANS default is
+        // 7; the adaptive uint methods (kFast/kBest — `optimize_uint_configs`)
+        // re-derive it as bits(max_tok) floored at 5 after re-binning.
+        if optimize_uint_configs {
+            min_bits.clamp(5, 8)
+        } else {
+            7
+        }
     } else if max_alphabet_size <= (1 << ANS_LOG_ALPHA_SIZE) {
         ANS_LOG_ALPHA_SIZE
     } else {
-        let min_bits = if max_alphabet_size <= 1 {
-            5
-        } else {
-            (max_alphabet_size - 1).ilog2() as usize + 1
-        };
         min_bits.clamp(5, 8)
     };
 
@@ -446,6 +466,7 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
         distributions: ans_distributions,
         log_alpha_size,
         uint_configs,
+        libjxl_log_alpha: libjxl_params,
     }
 }
 
@@ -507,6 +528,7 @@ pub fn build_entropy_code_ans_from_token_groups(
         lz77,
         total_pixel_hint,
         ANSHistogramStrategy::Precise,
+        false,
     )
 }
 
@@ -524,6 +546,7 @@ pub fn build_entropy_code_ans_from_token_groups_with_strategy(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
     ans_strategy: ANSHistogramStrategy,
+    libjxl_params: bool,
 ) -> OwnedAnsEntropyCode {
     // Phase A: Accumulate per-context histograms and value frequencies.
     // Per-group accumulators are independent and merge associatively;
@@ -538,6 +561,7 @@ pub fn build_entropy_code_ans_from_token_groups_with_strategy(
         lz77,
         total_pixel_hint,
         ans_strategy,
+        libjxl_params,
     );
 
     // Validate: every token in the stream must have a valid, non-zero frequency
@@ -856,6 +880,30 @@ fn optimize_uint_configs_with_candidates(
 
 /// Write ANS entropy code header (context map + distributions).
 pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_ENC_CODING_DUMP").is_some() {
+        let max_tok = code
+            .histograms
+            .iter()
+            .map(|h| h.counts.len().saturating_sub(1))
+            .max()
+            .unwrap_or(0);
+        eprintln!(
+            "[ENC-CODING] num_dist={} num_clusters={} prefix=false log_alpha={} max_tok={} ans hists={}",
+            code.context_map.len(),
+            code.histograms.len(),
+            code.log_alpha_size,
+            max_tok,
+            code.histograms.len()
+        );
+        eprintln!("[ENC-CODING] clusters={:?}", code.context_map);
+        for (i, c) in code.uint_configs.iter().enumerate() {
+            eprintln!(
+                "[ENC-CODING] cfg[{i}] split={} msb={} lsb={}",
+                c.split_exponent, c.msb_in_token, c.lsb_in_token
+            );
+        }
+    }
     #[cfg(feature = "debug-tokens")]
     {
         eprintln!("write_entropy_code_ans:");
@@ -959,7 +1007,7 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
 
         // Write non-simple to a scratch writer to measure actual cost
         let mut scratch = BitWriter::with_capacity(code.context_map.len());
-        write_context_map_nonsimple(&code.context_map, &mut scratch)?;
+        write_context_map_nonsimple(&code.context_map, &mut scratch, code.libjxl_log_alpha)?;
         let nonsimple_cost = scratch.bits_written();
 
         if simple_cost <= nonsimple_cost {
@@ -981,7 +1029,7 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
     }
 
     // > 8 histograms: always use non-simple
-    write_context_map_nonsimple(&code.context_map, writer)
+    write_context_map_nonsimple(&code.context_map, writer, code.libjxl_log_alpha)
 }
 
 /// Write a non-simple context map. Picks between Huffman+MTF (legacy) and
@@ -1003,6 +1051,7 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
 pub(crate) fn write_context_map_nonsimple(
     context_map: &[u8],
     writer: &mut BitWriter,
+    libjxl_log_alpha: bool,
 ) -> Result<()> {
     // Strategy 1: legacy Huffman+MTF, write to scratch and measure cost.
     let mut huffman_scratch = BitWriter::with_capacity(context_map.len());
@@ -1012,7 +1061,7 @@ pub(crate) fn write_context_map_nonsimple(
     // Strategy 2: libjxl-parity ANS+LZ77, write to scratch and measure cost.
     // Wrap in Result so we can fall back to Huffman if ANS path errors
     // (e.g. degenerate input that exposes a histogram-builder edge case).
-    let ans_lz77_scratch = build_context_map_nonsimple_ans_lz77(context_map).ok();
+    let ans_lz77_scratch = build_context_map_nonsimple_ans_lz77(context_map, libjxl_log_alpha).ok();
 
     let pick_ans = match &ans_lz77_scratch {
         Some(buf) => buf.bits_written() < huffman_cost,
@@ -1149,7 +1198,10 @@ fn write_huffman_payload_no_selector(tokens: &[u8], writer: &mut BitWriter) -> R
 /// it). That gate matches libjxl: `ApplyLZ77` skips LZ77 for streams whose
 /// post-RLE token count is too short to make headers pay off, which is
 /// effectively the same constraint for the tiny contexts.
-pub(crate) fn build_context_map_nonsimple_ans_lz77(context_map: &[u8]) -> Result<BitWriter> {
+pub(crate) fn build_context_map_nonsimple_ans_lz77(
+    context_map: &[u8],
+    libjxl_log_alpha: bool,
+) -> Result<BitWriter> {
     use super::ans::ANSHistogramStrategy;
     use super::lz77::apply_lz77_rle;
 
@@ -1197,6 +1249,7 @@ pub(crate) fn build_context_map_nonsimple_ans_lz77(context_map: &[u8]) -> Result
         lz77_params.as_ref(),
         /*total_pixel_hint=*/ None,
         ANSHistogramStrategy::Precise,
+        /*libjxl_params=*/ libjxl_log_alpha,
     );
 
     // Override the HybridUint config with libjxl's kContextMap = (2, 0, 1).
@@ -1256,6 +1309,10 @@ pub(crate) fn build_context_map_nonsimple_ans_lz77(context_map: &[u8]) -> Result
         .unwrap_or(1);
     let log_alpha_size = if lz77_params.as_ref().is_some_and(|p| p.enabled) {
         8
+    } else if libjxl_log_alpha {
+        // libjxl `kContextMap` is a fixed uint method: `ChooseUintConfigs`
+        // returns early and keeps the ANS default `log_alpha_size` of 7.
+        7
     } else if max_alpha <= (1 << ANS_LOG_ALPHA_SIZE) {
         ANS_LOG_ALPHA_SIZE
     } else {
@@ -2107,6 +2164,7 @@ mod value_freq_skip_tests {
             None,
             None,
             ANSHistogramStrategy::Approximate,
+            false,
         )
     }
 
@@ -2189,5 +2247,75 @@ mod value_freq_skip_tests {
         acc.add_tokens(&token_groups()[0], None);
         assert!(acc.value_freqs.is_empty() && acc.lz77_freqs.is_empty());
         assert!(acc.histograms.iter().any(|h| h.total_count > 0));
+    }
+}
+
+#[cfg(test)]
+mod libjxl_log_alpha_tests {
+    use super::*;
+
+    fn tokens(max_value: u32, n: usize) -> Vec<Token> {
+        (0..n)
+            .map(|i| Token::new(0, (i as u32 * 7) % (max_value + 1)))
+            .collect()
+    }
+
+    /// libjxl `ChooseUintConfigs` (enc_ans.cc:716-725): a fixed uint method
+    /// (`kNone`, `kContextMap`, `k000`) leaves the ANS `log_alpha_size` at
+    /// its default of 7 — even when the alphabet is tiny. Our historical
+    /// rule emitted 6, which cost a header field divergence vs cjxl.
+    #[test]
+    fn libjxl_fixed_uint_keeps_log_alpha_seven() {
+        let toks = tokens(37, 2000);
+        let code = build_entropy_code_ans_from_token_groups_with_strategy(
+            &[&toks],
+            1,
+            /*enhanced_clustering=*/ false,
+            /*optimize_uint_configs=*/ false,
+            None,
+            None,
+            ANSHistogramStrategy::Precise,
+            /*libjxl_params=*/ true,
+        );
+        assert_eq!(code.log_alpha_size, 7);
+        assert!(code.libjxl_log_alpha);
+    }
+
+    /// The adaptive methods (kFast/kBest — `optimize_uint_configs`) refine
+    /// `log_alpha_size` to `bits(max_tok)` floored at 5 after re-binning
+    /// (enc_ans.cc:897-908). A max token of 6 needs 3 bits → floored to 5.
+    #[test]
+    fn libjxl_adaptive_uint_refines_log_alpha() {
+        let toks = tokens(6, 500);
+        let code = build_entropy_code_ans_from_token_groups_with_strategy(
+            &[&toks],
+            1,
+            /*enhanced_clustering=*/ false,
+            /*optimize_uint_configs=*/ true,
+            None,
+            None,
+            ANSHistogramStrategy::Precise,
+            /*libjxl_params=*/ true,
+        );
+        assert_eq!(code.log_alpha_size, 5);
+    }
+
+    /// Same fixture without the flag keeps the historical sizing — the
+    /// strict rule must never leak into normal Zenjxl output.
+    #[test]
+    fn legacy_log_alpha_unchanged() {
+        let toks = tokens(37, 2000);
+        let code = build_entropy_code_ans_from_token_groups_with_strategy(
+            &[&toks],
+            1,
+            false,
+            false,
+            None,
+            None,
+            ANSHistogramStrategy::Precise,
+            false,
+        );
+        assert_eq!(code.log_alpha_size, ANS_LOG_ALPHA_SIZE);
+        assert!(!code.libjxl_log_alpha);
     }
 }

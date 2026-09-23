@@ -1206,40 +1206,73 @@ pub fn build_and_write_coeff_orders(
     tokens: &[Token],
     use_ans: bool,
     writer: &mut BitWriter,
+    libjxl_parity: bool,
 ) -> Result<()> {
     if tokens.is_empty() {
         return Ok(());
     }
 
-    // LZ77 flag: no LZ77 for permutation data
-    writer.write(1, 0)?;
-
-    if use_ans {
-        let code = build_entropy_code_ans_with_options(
+    // libjxl `EncodeCoeffOrders` builds the stream under default
+    // `HistogramParams` (`enc_ans_params.h`): `kBest` clustering, `kBest`
+    // uint, `kRLE` LZ77, `kPrecise` ANS. Strict-parity callers therefore
+    // attempt the RLE pass; historical callers keep `lz77 disabled`.
+    let lz77 = if libjxl_parity {
+        crate::entropy_coding::lz77::apply_lz77_rle(
             tokens,
             NUM_PERMUTATION_CONTEXTS,
-            false, // no enhanced clustering for permutation
-            true,  // optimize uint configs
-            None,  // no LZ77 for permutation data
-            None,  // no pixel hint for permutation data
-        );
+            /*force_huffman=*/ false,
+            /*distance_multiplier=*/ 0,
+        )
+    } else {
+        None
+    };
+    let (lz_tokens, lz_params) = match &lz77 {
+        Some((t, p)) => (t.as_slice(), Some(p)),
+        None => (tokens, None),
+    };
+    crate::entropy_coding::lz77::write_lz77_header(lz_params, writer)?;
+
+    if use_ans {
+        let code = if libjxl_parity {
+            let num_ctx = NUM_PERMUTATION_CONTEXTS + lz77.is_some() as usize;
+            crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
+                &[lz_tokens],
+                num_ctx,
+                /*enhanced_clustering=*/ true,
+                /*optimize_uint_configs=*/ true,
+                lz_params,
+                /*total_pixel_hint=*/ None,
+                crate::entropy_coding::ans::ANSHistogramStrategy::Precise,
+                /*libjxl_params=*/ true,
+            )
+        } else {
+            build_entropy_code_ans_with_options(
+                tokens,
+                NUM_PERMUTATION_CONTEXTS,
+                false, // no enhanced clustering for permutation
+                true,  // optimize uint configs
+                None,  // no LZ77 for permutation data
+                None,  // no pixel hint for permutation data
+            )
+        };
         write_entropy_code_ans(&code, writer)?;
-        write_tokens_ans(tokens, &code, None, writer)?;
+        write_tokens_ans(lz_tokens, &code, lz_params, writer)?;
     } else {
         // libjxl builds the permutation code under default `HistogramParams`
         // → `uint_method = kBest` (`enc_ans_params.h`), so prefix streams get
         // per-histogram HybridUint optimization too.
-        let code = crate::entropy_coding::encode::build_entropy_code_with_uint_method(
-            tokens,
-            NUM_PERMUTATION_CONTEXTS,
+        let mut code = crate::entropy_coding::encode::build_entropy_code_with_uint_method(
+            lz_tokens,
+            NUM_PERMUTATION_CONTEXTS + lz77.is_some() as usize,
             false,
-            None,
+            lz_params,
             UintConfigMethod::Best,
         );
+        code.libjxl_log_alpha = libjxl_parity;
         // Owned path: an optimized wide-direct config can exceed the
         // fixed ALPHABET_SIZE=64 `PrefixCode` alphabet.
         code.write_header(writer)?;
-        code.write_tokens_owned(tokens, None, writer)?;
+        code.write_tokens_owned(lz_tokens, lz_params, writer)?;
     }
 
     Ok(())

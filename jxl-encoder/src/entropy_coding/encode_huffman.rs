@@ -7,6 +7,7 @@
 //! Contains all Huffman-specific code: tree building, prefix code writing,
 //! context map writing, and token writing for Huffman-coded bitstreams.
 
+use super::cluster::ClusteringType;
 use super::encode::{
     ALPHABET_SIZE, CODE_LENGTH_CODES, EntropyCode, PrefixCode, UintConfigMethod,
     encode_token_value, encode_token_value_with_config, write_var_len_uint16,
@@ -725,7 +726,7 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
     if entry_bits < 4 {
         let simple_cost = 3 + entry_bits * context_map.len();
         let mut scratch = BitWriter::with_capacity(context_map.len());
-        write_context_map_nonsimple(context_map, &mut scratch)?;
+        write_context_map_nonsimple(context_map, &mut scratch, code.libjxl_log_alpha)?;
         let nonsimple_cost = scratch.bits_written();
 
         if simple_cost <= nonsimple_cost {
@@ -739,7 +740,7 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
             copy_bits(&scratch_bytes, nonsimple_cost, writer)?;
         }
     } else {
-        write_context_map_nonsimple(context_map, writer)?;
+        write_context_map_nonsimple(context_map, writer, code.libjxl_log_alpha)?;
     }
 
     #[cfg(feature = "debug-tokens")]
@@ -758,6 +759,22 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
 
 /// Write a complete entropy code (context map + prefix codes).
 pub fn write_entropy_code(code: &EntropyCode, writer: &mut BitWriter) -> Result<()> {
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_ENC_CODING_DUMP").is_some() {
+        eprintln!(
+            "[ENC-CODING] num_dist={} num_clusters={} prefix=true log_alpha=15 prefix hists={}",
+            code.context_map.len(),
+            code.prefix_codes.len(),
+            code.prefix_codes.len()
+        );
+        eprintln!("[ENC-CODING] clusters={:?}", code.context_map);
+        for (i, c) in code.uint_configs.iter().enumerate() {
+            eprintln!(
+                "[ENC-CODING] cfg[{i}] split={} msb={} lsb={}",
+                c.split_exponent, c.msb_in_token, c.lsb_in_token
+            );
+        }
+    }
     write_context_map(code, writer)?;
     write_prefix_codes(code.prefix_codes, code.uint_configs, writer)?;
     Ok(())
@@ -948,6 +965,9 @@ pub struct OwnedEntropyCode {
     static_codes: Option<Vec<PrefixCode>>,
     /// Per-prefix-code HybridUint configs (empty = default {4,2,0} for all).
     pub uint_configs: Vec<HybridUintConfig>,
+    /// When true, a nested non-simple context map is coded with libjxl's
+    /// `log_alpha_size` convention (strict-parity callers only).
+    pub libjxl_log_alpha: bool,
 }
 
 impl OwnedEntropyCode {
@@ -967,10 +987,27 @@ impl OwnedEntropyCode {
 
     /// Write the entropy code header (context map + prefix codes) to the bitstream.
     pub fn write_header(&self, writer: &mut BitWriter) -> Result<()> {
+        #[cfg(feature = "std")]
+        if self.static_codes.is_none() && std::env::var_os("JXL_ENC_CODING_DUMP").is_some() {
+            eprintln!(
+                "[ENC-CODING] num_dist={} num_clusters={} prefix=true log_alpha=15 prefix hists={}",
+                self.context_map.len(),
+                self.prefix_codes.len(),
+                self.prefix_codes.len()
+            );
+            eprintln!("[ENC-CODING] clusters={:?}", self.context_map);
+            for (i, c) in self.uint_configs.iter().enumerate() {
+                eprintln!(
+                    "[ENC-CODING] cfg[{i}] split={} msb={} lsb={}",
+                    c.split_exponent, c.msb_in_token, c.lsb_in_token
+                );
+            }
+        }
         if let Some(ref codes) = self.static_codes {
             // Use proven fixed-size path when alphabet fits in ALPHABET_SIZE
-            let code =
-                EntropyCode::new(&self.context_map, codes).with_uint_configs(&self.uint_configs);
+            let code = EntropyCode::new(&self.context_map, codes)
+                .with_uint_configs(&self.uint_configs)
+                .with_libjxl_log_alpha(self.libjxl_log_alpha);
             write_entropy_code(&code, writer)
         } else {
             // Dynamic path for large alphabets (e.g. Huffman+LZ77 with min_symbol=512)
@@ -1080,6 +1117,26 @@ pub fn build_entropy_code_with_uint_method(
     )
 }
 
+/// Clustering selector for the prefix-code path.
+///
+/// `Zenjxl` callers pass [`PrefixClustering::Legacy`] (the libjxl-tiny
+/// histogram clustering: Huffman bit-cost distance, 64-bit distinct
+/// threshold, 8-cluster cap). Strict `EncoderStrategy::Libjxl` callers pass
+/// [`PrefixClustering::Libjxl`] with the `ClusteringType` libjxl's
+/// `HistogramParams` schedule prescribes for that stream — the enhanced
+/// `FastClusterHistograms` port (Shannon-entropy distance, 48.0 threshold)
+/// is then used regardless of alphabet size, matching
+/// `enc_cluster.cc::ClusterHistograms`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PrefixClustering {
+    /// Historical tiny clustering; falls back to enhanced `Best` when the
+    /// alphabet exceeds [`ALPHABET_SIZE`].
+    Legacy,
+    /// libjxl `ClusterHistograms` with the given `ClusteringType`
+    /// (`Fastest` caps at 4 clusters, `Fast`/`Best` at `max_histograms`).
+    Libjxl(ClusteringType),
+}
+
 /// Build an optimal Huffman entropy code from multiple token groups without merging.
 ///
 /// Like `build_entropy_code_with_options`, but accepts separate token slices
@@ -1097,6 +1154,31 @@ pub fn build_entropy_code_from_token_groups(
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
     uint_method: UintConfigMethod,
+) -> OwnedEntropyCode {
+    build_entropy_code_from_token_groups_with_clustering(
+        groups,
+        num_contexts,
+        if enhanced_clustering {
+            PrefixClustering::Libjxl(ClusteringType::Best)
+        } else {
+            PrefixClustering::Legacy
+        },
+        lz77,
+        uint_method,
+        // Historical cap for the enhanced path.
+        8,
+    )
+}
+
+/// `build_entropy_code_from_token_groups` with an explicit clustering
+/// selector and histogram cap (libjxl `kClustersLimit` for strict callers).
+pub fn build_entropy_code_from_token_groups_with_clustering(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    clustering: PrefixClustering,
+    lz77: Option<&Lz77Params>,
+    uint_method: UintConfigMethod,
+    max_histograms: usize,
 ) -> OwnedEntropyCode {
     // Compute the required alphabet size. Most streams fit in ALPHABET_SIZE (64),
     // but large hybrid-uint values overflow it — e.g. VarDCT near-lossless DC
@@ -1149,7 +1231,12 @@ pub fn build_entropy_code_from_token_groups(
     // Cluster histograms
     // For large alphabets (LZ77 with Huffman), always use enhanced clustering to
     // merge histograms properly. The fast TinyHistogram path only supports ALPHABET_SIZE=64.
-    let use_enhanced = enhanced_clustering || alphabet_size > ALPHABET_SIZE;
+    // `PrefixClustering::Libjxl` always takes the enhanced path — libjxl's
+    // `ClusterHistograms` is Shannon-based for every stream kind.
+    let use_enhanced = match clustering {
+        PrefixClustering::Legacy => alphabet_size > ALPHABET_SIZE,
+        PrefixClustering::Libjxl(_) => true,
+    };
     let (context_map, clustered_counts, clustered_totals) = if !use_enhanced {
         // Fast path: use the fixed-size TinyHistogram clustering for small alphabets
         use crate::vardct::cluster::{Histogram as TinyHistogram, cluster_histograms};
@@ -1204,11 +1291,17 @@ pub fn build_entropy_code_from_token_groups(
             })
             .collect();
 
+        // `PrefixClustering::Legacy` reaches here only via the
+        // alphabet-overflow fallback, which historically hardcoded `Best`.
+        let cluster_type = match clustering {
+            PrefixClustering::Legacy => ClusteringType::Best,
+            PrefixClustering::Libjxl(ct) => ct,
+        };
         let result = enhanced_cluster(
-            ClusteringType::Best,
+            cluster_type,
             EntropyType::Huffman,
             &enhanced_histos,
-            8,
+            max_histograms,
         )
         .expect("Enhanced clustering failed");
 
@@ -1306,6 +1399,7 @@ pub fn build_entropy_code_from_token_groups(
         prefix_codes,
         static_codes,
         uint_configs,
+        libjxl_log_alpha: false,
     }
 }
 

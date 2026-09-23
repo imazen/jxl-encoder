@@ -12,8 +12,8 @@ use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 use crate::entropy_coding::encode::{
-    ALPHABET_SIZE, PrefixCode, UintConfigMethod, build_entropy_code_from_token_groups,
-    convert_bit_depths_to_symbols, create_huffman_tree, write_prefix_codes,
+    ALPHABET_SIZE, PrefixCode, UintConfigMethod, convert_bit_depths_to_symbols,
+    create_huffman_tree, write_prefix_codes,
 };
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 use crate::entropy_coding::move_to_front_transform;
@@ -671,11 +671,51 @@ pub fn write_jpeg_transcode_context_tree(
     Ok(())
 }
 
+/// Entropy-code parameters for a tree code stream under strict
+/// `EncoderStrategy::Libjxl` parity.
+///
+/// libjxl runs the tree code through `stream_options_[0].histogram_params`
+/// = `HistogramParams::ForModular` (`enc_modular.cc`), NOT the default
+/// `HistogramParams` the legacy callers here assume: clustering is `kFast`
+/// at effort ≤ 7 / `kBest` at 8+, and `uint_method` is `kNone` (the
+/// serialized config stays the {4,2,0} default) at effort ≤ 7 / `kBest` at
+/// 8+. `None` keeps the historical `Legacy` + `kBest` selection.
+pub type TreeCodeParams = Option<(
+    crate::entropy_coding::encode::PrefixClustering,
+    UintConfigMethod,
+)>;
+
+/// Resolve `code_params` for a VarDCT stream tree code.
+/// `effort` selects the `ForModular` schedule; only strict callers pass
+/// `Some`.
+pub fn libjxl_tree_code_params(libjxl_parity: bool, effort: u8) -> TreeCodeParams {
+    if !libjxl_parity {
+        return None;
+    }
+    use crate::entropy_coding::cluster::ClusteringType;
+    use crate::entropy_coding::encode::PrefixClustering;
+    if effort >= 8 {
+        Some((
+            PrefixClustering::Libjxl(ClusteringType::Best),
+            UintConfigMethod::Best,
+        ))
+    } else {
+        Some((
+            PrefixClustering::Libjxl(ClusteringType::Fast),
+            UintConfigMethod::None,
+        ))
+    }
+}
+
 /// Write the context tree for modular stream DC coding.
 ///
 /// This writes the context tree tokens that tell the decoder how to
 /// interpret DC coefficients in the modular stream.
-pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Result<()> {
+pub fn write_context_tree(
+    num_dc_groups: usize,
+    writer: &mut BitWriter,
+    code_params: TreeCodeParams,
+) -> Result<()> {
     // Copy tokens and modify token[1].value for num_dc_groups
     let mut tokens: Vec<Token> = CONTEXT_TREE_TOKENS
         .iter()
@@ -689,14 +729,17 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
     writer.write(1, 1)?; // not an empty tree
     writer.write(1, 0)?; // no lz77
 
-    // libjxl default `HistogramParams` → `uint_method = kBest` for the
-    // tree code (`enc_ans_params.h`).
-    let code = build_entropy_code_from_token_groups(
+    let (clustering, uint_method) = code_params.unwrap_or((
+        crate::entropy_coding::encode::PrefixClustering::Legacy,
+        UintConfigMethod::Best,
+    ));
+    let code = crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
         &[&tokens],
         NUM_TREE_CONTEXTS,
-        false,
+        clustering,
         None,
-        UintConfigMethod::Best,
+        uint_method,
+        128,
     );
     code.write_header(writer)?;
     code.write_tokens_owned(&tokens, None, writer)?;
@@ -718,6 +761,7 @@ pub fn write_learned_context_tree(
     tree_tokens: &[(u32, u32)],
     _num_dc_groups: usize,
     writer: &mut BitWriter,
+    code_params: TreeCodeParams,
 ) -> Result<()> {
     // The learned tree already has the correct root split on property 1
     // (stream_id), set by tree_tokens_with_ac_metadata_prefix
@@ -742,26 +786,33 @@ pub fn write_learned_context_tree(
             Token::new(4, 0), // mul_log = 0
             Token::new(5, 0), // mul_bits = 0
         ];
-        return write_learned_context_tree_inner(&simple_tree, writer);
+        return write_learned_context_tree_inner(&simple_tree, writer, code_params);
     }
 
-    write_learned_context_tree_inner(&tokens, writer)
+    write_learned_context_tree_inner(&tokens, writer, code_params)
 }
 
 /// Inner function to write context tree tokens to bitstream.
-fn write_learned_context_tree_inner(tokens: &[Token], writer: &mut BitWriter) -> Result<()> {
+fn write_learned_context_tree_inner(
+    tokens: &[Token],
+    writer: &mut BitWriter,
+    code_params: TreeCodeParams,
+) -> Result<()> {
     // Write tree header
     writer.write(1, 1)?; // not an empty tree
     writer.write(1, 0)?; // no lz77
 
-    // libjxl default `HistogramParams` → `uint_method = kBest` for the
-    // tree code (`enc_ans_params.h`).
-    let code = build_entropy_code_from_token_groups(
+    let (clustering, uint_method) = code_params.unwrap_or((
+        crate::entropy_coding::encode::PrefixClustering::Legacy,
+        UintConfigMethod::Best,
+    ));
+    let code = crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
         &[tokens],
         NUM_TREE_CONTEXTS,
-        false,
+        clustering,
         None,
-        UintConfigMethod::Best,
+        uint_method,
+        128,
     );
     code.write_header(writer)?;
     code.write_tokens_owned(tokens, None, writer)?;
@@ -1186,7 +1237,7 @@ fn write_context_map_from_slice(map: &[u8], jpeg_mode: bool, writer: &mut BitWri
         // byte-identical (preserves hash-locks + strategy byte-locks).
         None
     } else {
-        crate::entropy_coding::encode_ans::build_context_map_nonsimple_ans_lz77(map).ok()
+        crate::entropy_coding::encode_ans::build_context_map_nonsimple_ans_lz77(map, false).ok()
     };
     let cost_ans_lz77 = ans_lz77_scratch.as_ref().map(|b| b.bits_written());
 
@@ -1295,7 +1346,7 @@ mod tests {
     #[test]
     fn test_write_context_tree() {
         let mut writer = BitWriter::new();
-        let result = write_context_tree(1, &mut writer);
+        let result = write_context_tree(1, &mut writer, None);
         assert!(result.is_ok());
         // Should have written something
         assert!(writer.bits_written() > 0);
@@ -1525,6 +1576,44 @@ mod tests {
             bytes[0] & 0b111,
             0b010,
             "selector should be (simple=0, use_mtf=1, lz77=0)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tree_code_params_tests {
+    use super::*;
+    use crate::entropy_coding::cluster::ClusteringType;
+    use crate::entropy_coding::encode::PrefixClustering;
+
+    /// libjxl `ForModular` schedule for the tree-code stream: `kFast`
+    /// clustering + `kNone` uint (default (4,2,0)) below effort 8;
+    /// `kBest` + `kBest` at effort 8+. Non-strict callers get `None`
+    /// (legacy path).
+    #[test]
+    fn libjxl_tree_code_params_schedule() {
+        assert!(libjxl_tree_code_params(false, 2).is_none());
+        assert!(libjxl_tree_code_params(false, 8).is_none());
+        assert_eq!(
+            libjxl_tree_code_params(true, 2),
+            Some((
+                PrefixClustering::Libjxl(ClusteringType::Fast),
+                UintConfigMethod::None
+            ))
+        );
+        assert_eq!(
+            libjxl_tree_code_params(true, 7),
+            Some((
+                PrefixClustering::Libjxl(ClusteringType::Fast),
+                UintConfigMethod::None
+            ))
+        );
+        assert_eq!(
+            libjxl_tree_code_params(true, 8),
+            Some((
+                PrefixClustering::Libjxl(ClusteringType::Best),
+                UintConfigMethod::Best
+            ))
         );
     }
 }

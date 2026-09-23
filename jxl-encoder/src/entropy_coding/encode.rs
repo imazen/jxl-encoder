@@ -169,6 +169,10 @@ pub struct EntropyCode<'a> {
     /// type). Streams built under libjxl-parity populate this with the
     /// optimized per-histogram configs.
     pub uint_configs: &'a [HybridUintConfig],
+    /// When true, a nested non-simple context map is coded with libjxl's
+    /// `log_alpha_size` convention (default 7, refined only by adaptive
+    /// uint methods) instead of the historical fixed 6.
+    pub libjxl_log_alpha: bool,
 }
 
 impl<'a> EntropyCode<'a> {
@@ -180,6 +184,7 @@ impl<'a> EntropyCode<'a> {
             prefix_codes,
             num_prefix_codes: prefix_codes.len(),
             uint_configs: &[],
+            libjxl_log_alpha: false,
         }
     }
 
@@ -187,6 +192,13 @@ impl<'a> EntropyCode<'a> {
     /// `prefix_codes`).
     pub fn with_uint_configs(mut self, uint_configs: &'a [HybridUintConfig]) -> Self {
         self.uint_configs = uint_configs;
+        self
+    }
+
+    /// Mark the nested context-map stream for libjxl `log_alpha_size`
+    /// handling (strict-parity callers only).
+    pub fn with_libjxl_log_alpha(mut self, libjxl_log_alpha: bool) -> Self {
+        self.libjxl_log_alpha = libjxl_log_alpha;
         self
     }
 }

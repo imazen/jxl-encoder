@@ -238,6 +238,12 @@ pub(super) fn write_ans_modular_header(
 
     // log_alpha_size - 5 (2 bits)
     let las = code.log_alpha_size;
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_ENC_CODING_DUMP").is_some() {
+        eprintln!(
+            "[ENC-CODING] num_dist=1 num_clusters=1 prefix=false log_alpha={las} ans hists=1"
+        );
+    }
     writer.write(2, (las - 5) as u64)?;
 
     // HybridUint config (per-histogram optimized, or default {4,2,0})

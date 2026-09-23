@@ -859,6 +859,17 @@ name = "toc_dump"
 path = "examples/toc_dump.rs"
 required-features = ["__env_var_diagnostics"]
 
+# W45-RECON part 11: image/frame header field dump for parity diffing.
+[[example]]
+name = "hdr_dump"
+path = "examples/hdr_dump.rs"
+required-features = ["__env_var_diagnostics"]
+
+# W45-RECON part 11: decode probe — drives JXL_CODING_DUMP entropy-header dumps.
+[[example]]
+name = "dec_probe"
+path = "examples/dec_probe.rs"
+
 # W44-35 acceptance check: 1418519 cells + screenshot regressions +
 # F-D residual cells. Does not need zenanalyze (uses default API).
 [[example]]
@@ -3318,3 +3329,6 @@ path = "examples/effort_loop_profile.rs"
 [[example]]
 name = "xyb_cbrt_headroom"
 path = "examples/xyb_cbrt_headroom.rs"
+[[example]]
+name = "enc_file"
+path = "examples/enc_file.rs"
