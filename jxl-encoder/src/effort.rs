@@ -879,6 +879,18 @@ pub struct EffortProfile {
     pub use_adaptive_quant: bool,
     /// Enable per-block AdjustQuantBlockAC (effort >= 5 in libjxl).
     pub adjust_quant_ac: bool,
+    /// libjxl `AdjustQuantBlockAC` max-aggregation parity.
+    ///
+    /// When `true`, the per-block quant aggregation in
+    /// `vardct/transform.rs` takes `max` over the three per-channel
+    /// adjusted quants only (seed `0`) — matching
+    /// `enc_group.cc`'s `int max_quant = 0;` — so the F-heuristic's
+    /// `*quant - activity` downward adjustment can land. When `false`
+    /// (all non-Libjxl strategies), the aggregation seeds with the
+    /// raw field quant, so the encoded quant can only go finer.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::aqba_max_quant_libjxl`].
+    pub aqba_max_over_channels: bool,
     /// Numerator for the effort-fixed q parameter used in global_scale computation.
     /// libjxl: 0.39 at effort >= 5, 0.79 at effort < 5.
     /// global_scale = 65536 * (initial_q_numerator / distance) / 5.0
@@ -1692,6 +1704,10 @@ impl EffortProfile {
             // ── Quantization ──
             use_adaptive_quant: effort >= 5,
             adjust_quant_ac: effort >= 5,
+            // W45-RECON part 7: historical seed-with-field
+            // aggregation (downward AQBA adjustments clamped);
+            // `apply_aqba_max_quant_libjxl` flips for Libjxl only.
+            aqba_max_over_channels: false,
             initial_q_numerator: if effort >= 5 { 0.39 } else { 0.79 },
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
@@ -1925,6 +1941,7 @@ impl EffortProfile {
             // ── Quantization (N/A for lossless) ──
             use_adaptive_quant: false,
             adjust_quant_ac: false,
+            aqba_max_over_channels: false,
             initial_q_numerator: 0.39,
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
@@ -2841,6 +2858,22 @@ impl EffortProfile {
         if resolved.ac_channel_loss_mul_libjxl {
             self.entropy_mul_table.channel_loss_mul =
                 crate::vardct::ac_strategy::CHANNEL_MUL_LIBJXL;
+        }
+    }
+
+    /// Apply the `AdjustQuantBlockAC` max-aggregation libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::aqba_max_quant_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::aqba_max_over_channels`] — the `enc_group.cc`
+    /// `int max_quant = 0;` aggregation that lets downward per-channel
+    /// quant adjustments land (see field docstring).
+    pub(crate) fn apply_aqba_max_quant_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.aqba_max_quant_libjxl {
+            self.aqba_max_over_channels = true;
         }
     }
 

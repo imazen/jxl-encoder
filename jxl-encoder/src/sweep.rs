@@ -111,6 +111,7 @@ impl EffortProfile {
             self.cfl_zero_for_search,
             self.use_adaptive_quant,
             self.adjust_quant_ac,
+            self.aqba_max_over_channels,
             self.use_libjxl_wp_dc_quant,
             self.patch_ref_tree_learning,
             self.use_streaming_dedup,

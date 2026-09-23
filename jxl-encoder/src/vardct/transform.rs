@@ -659,6 +659,27 @@ impl VarDctEncoder {
                     );
                 }
 
+                // W45-RECON: dump pre-quantization coefficient buffer
+                // (post-DCT, post-DC-extraction, pre-CfL on X/B) for the
+                // same probe blocks as the cjxl COEFFIN dump.
+                #[cfg(feature = "std")]
+                if std::env::var_os("JXL_COEFF_IN_DUMP").is_some()
+                    && ((bx == 41 && by == 0)
+                        || (bx == 22 && by == 5)
+                        || (bx == 0 && by == 0)
+                        || (bx == 37 && by == 25))
+                {
+                    let mut out = alloc::format!("COEFFIN {} {} {}\n", bx, by, size);
+                    for (c, ch) in dct_coeffs.iter().enumerate() {
+                        out.push_str(&alloc::format!("c{}", c));
+                        for (k, &v) in ch[..size].iter().enumerate() {
+                            out.push_str(&alloc::format!(" {}:{:.9}", k, v));
+                        }
+                        out.push('\n');
+                    }
+                    eprint!("{out}");
+                }
+
                 // ── Step 2c: AdjustQuantBlockAC ──────────────────────────────
                 // Ported from libjxl enc_group.cc QuantizeRoundtripYBlockAC.
                 // libjxl gates on speed_tier <= kHare (effort >= 5):
@@ -674,7 +695,18 @@ impl VarDctEncoder {
                         // effort >= Hare: run AdjustQuantBlockAC for all 3 channels
                         let orig_qac = params.scale * quant_int as f32;
                         thresholds_y = self.profile.adjust_thresholds;
-                        let mut max_quant = quant_int;
+                        // W45-RECON part 7: libjxl `enc_group.cc` seeds
+                        // `int max_quant = 0;` — the aggregation is max
+                        // over the per-channel adjusted quants only, so
+                        // downward F-heuristic adjustments land. The
+                        // historical seed (`quant_int`) clamps every
+                        // downward adjustment away; kept for non-Libjxl
+                        // strategies (production baseline).
+                        let mut max_quant = if self.profile.aqba_max_over_channels {
+                            0
+                        } else {
+                            quant_int
+                        };
                         for &c in &[1usize, 0, 2] {
                             let mut thres = self.profile.adjust_thresholds;
                             let mut quant_c = quant_int;
@@ -767,6 +799,28 @@ impl VarDctEncoder {
                 {
                     let c = 1;
                     let weights = super::quant::quant_weights(raw_strategy as usize, c);
+                    #[cfg(feature = "std")]
+                    if std::env::var_os("JXL_COEFF_IN_DUMP").is_some() && bx == 41 && by == 0 {
+                        let mut ob = alloc::format!(
+                            "QPAR {} {} c={} kind={} quant={} qac={:.9} qm_mul={:.9}\nQM",
+                            bx,
+                            by,
+                            c,
+                            raw_strategy,
+                            quant_field[by * xsize_blocks + bx],
+                            qac,
+                            1.0f32
+                        );
+                        for (k, &w) in weights[..size].iter().enumerate() {
+                            ob.push_str(&alloc::format!(" {}:{:.9}", k, 1.0 / w));
+                        }
+                        eprint!("{ob}\n");
+                        let mut tb = String::from("THR");
+                        for (i, &t) in thresholds_y.iter().enumerate() {
+                            tb.push_str(&alloc::format!(" {}:{:.9}", i, t));
+                        }
+                        eprintln!("{tb}");
+                    }
                     let zigzag = if self.error_diffusion {
                         zigzag_cache
                             .iter()
@@ -1116,6 +1170,28 @@ impl VarDctEncoder {
                     // (different from libjxl-tiny's per-channel adjustments)
                     let thresholds_xb = Self::default_thresholds(c, covered_x, covered_y);
                     let weights = super::quant::quant_weights(raw_strategy as usize, c);
+                    #[cfg(feature = "std")]
+                    if std::env::var_os("JXL_COEFF_IN_DUMP").is_some() && bx == 41 && by == 0 {
+                        let mut ob = alloc::format!(
+                            "QPAR {} {} c={} kind={} quant={} qac={:.9} qm_mul={:.9}\nQM",
+                            bx,
+                            by,
+                            c,
+                            raw_strategy,
+                            quant_field[by * xsize_blocks + bx],
+                            qac,
+                            qm_multiplier
+                        );
+                        for (k, &w) in weights[..size].iter().enumerate() {
+                            ob.push_str(&alloc::format!(" {}:{:.9}", k, 1.0 / w));
+                        }
+                        eprint!("{ob}\n");
+                        let mut tb = String::from("THR");
+                        for (i, &t) in thresholds_xb.iter().enumerate() {
+                            tb.push_str(&alloc::format!(" {}:{:.9}", i, t));
+                        }
+                        eprintln!("{tb}");
+                    }
                     let zigzag = if self.error_diffusion {
                         zigzag_cache
                             .iter()

@@ -103,7 +103,8 @@ use std::path::PathBuf;
 /// 2026-09-17 added `coeff_orders_libjxl_parity` Section D gate → 45
 /// (count was left at 44 — pre-existing drift caught 2026-10-12).
 /// W45-RECON part 6 added `ac_channel_loss_mul_libjxl` Section C gate → 46.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 46;
+/// W45-RECON part 7 added `aqba_max_quant_libjxl` Section C gate → 47.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 47;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -302,6 +303,12 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // libjxl params name verbatim.
         if row_ref.contains("ForModular") {
             out.push("ForModular".to_string());
+        }
+        // W45-RECON part 7: `aqba_max_quant_libjxl` Section C gate —
+        // "W45-RECON" is not a W-code; the table row carries the
+        // libjxl function name verbatim.
+        if row_ref.contains("AdjustQuantBlockAC") {
+            out.push("AdjustQuantBlockAC".to_string());
         }
     }
     out

@@ -3223,6 +3223,11 @@ impl LossyConfig {
             // 8.2219^8 mis-port, +2.16% X-loss inflation). NO-OP on
             // every other strategy.
             p.apply_ac_loss_channel_mul_libjxl(&resolved);
+            // W45-RECON part 7: `AdjustQuantBlockAC` max-aggregation
+            // parity — max over per-channel adjusted quants only
+            // (seed 0), so downward F-heuristic adjustments land.
+            // NO-OP on every other strategy.
+            p.apply_aqba_max_quant_libjxl(&resolved);
         }
         p
     }

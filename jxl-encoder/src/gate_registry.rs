@@ -281,6 +281,11 @@ jxl_encoder_macros::strategy_def! {
             // `{8.2^8, 1, 1.03^8}` in place of the historical X-entry
             // mis-port (8.2219^8, +2.16% X-loss inflation).
             ac_channel_loss_mul_libjxl = true,
+            // W45-RECON part 7: strict `AdjustQuantBlockAC`
+            // max-aggregation — max over per-channel adjusted quants
+            // only (seed 0), so the F-heuristic's downward
+            // `*quant - activity` reduction applies.
+            aqba_max_quant_libjxl = true,
             // Strict parity: mirror libjxl's `nl_dc` cluster —
             // `extra_dc_precision = 1` at effort >= 4 and the
             // QuantizeWP DC shape alongside it. Corrects the
@@ -401,6 +406,10 @@ jxl_encoder_macros::strategy_def! {
             // X-entry mis-port — the W44-29..W44-172 cost-model
             // calibration is tuned against it.
             ac_channel_loss_mul_libjxl = false,
+            // W45-RECON part 7: LeanFaster keeps the
+            // seed-with-field aggregation (downward quant
+            // adjustments stay clamped) — production baseline.
+            aqba_max_quant_libjxl = false,
             // DC encode stays on the Zenjxl schedule (2x precision at
             // effort <= 7, plain round) — not a libjxl mirror.
             dc_encode_libjxl_parity = false,
@@ -526,6 +535,10 @@ jxl_encoder_macros::strategy_def! {
             // is tuned against it (same opt-in-only rationale as
             // `cfl_zero_for_search` above).
             ac_channel_loss_mul_libjxl = false,
+            // W45-RECON part 7: Zenjxl keeps the seed-with-field
+            // aggregation (downward quant adjustments stay clamped)
+            // — production baseline.
+            aqba_max_quant_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -610,6 +623,9 @@ jxl_encoder_macros::strategy_def! {
             // standing pattern — keeps the historical X-entry
             // mis-port the calibration is tuned against.
             ac_channel_loss_mul_libjxl = false,
+            // W45-RECON part 7: Aggressive mirrors Zenjxl — keeps
+            // the seed-with-field aggregation.
+            aqba_max_quant_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -1164,6 +1180,38 @@ jxl_encoder_macros::strategy_def! {
         ac_channel_loss_mul_libjxl: bool {
             divergence_section = "C",
             divergence_row_ref = "W45-RECON part 6 — AC-search pixel-domain kChannelMul X-entry mis-port (8.2219^8 vs 8.2^8, +2.16% X-loss inflation)",
+        },
+
+        /// **W45-RECON part 7**: `AdjustQuantBlockAC` max-aggregation
+        /// parity. libjxl `QuantizeRoundtripYBlockAC` seeds
+        /// `max_quant = 0` and takes `max` over the three per-channel
+        /// adjusted quants, so the activity-based (F-heuristic)
+        /// downward adjustments apply. The Rust port seeded
+        /// `max_quant = quant_int` (the raw field value), clamping
+        /// every downward adjustment away — the encoded quant can
+        /// only go finer, never coarser. Measured on `noise_512` e8:
+        /// 3207/4096 cells shipped `rawqf = cjxl+1`, ~25% of AC
+        /// coefficients quantized |ours| > |cjxl| (systematic, all
+        /// three channels), iter-0 recon scored 1.52 vs cjxl 1.99
+        /// (finer-than-intended) → weaker diffmap-driven field steps
+        /// → `global_scale` stall (3481 vs 3990) → non-monotonic
+        /// trajectory.
+        ///
+        /// When `true`,
+        /// [`crate::effort::EffortProfile::aqba_max_over_channels`]
+        /// makes `vardct/transform.rs` seed the aggregation at `0`
+        /// exactly like `enc_group.cc`.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — the
+        ///   always-finer aggregation is part of the production
+        ///   calibration baseline.
+        ///
+        /// Section C.
+        aqba_max_quant_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 7 — AdjustQuantBlockAC max-aggregation seeded with field quant (downward F-heuristic adjustments dropped; quant can only go finer)",
         },
 
         // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
@@ -1739,6 +1787,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W45-RECON part 6 — AC-search pixel-domain kChannelMul X-entry mis-port (8.2219^8 vs 8.2^8, +2.16% X-loss inflation)",
         raw: __CUSTOM_DIVERGENCE_AC_CHANNEL_LOSS_MUL_LIBJXL,
+    },
+    // Section C — W45-RECON part 7 AdjustQuantBlockAC max-aggregation
+    DivergenceEntry {
+        gate_name: "aqba_max_quant_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 7 — AdjustQuantBlockAC max-aggregation seeded with field quant (downward F-heuristic adjustments dropped; quant can only go finer)",
+        raw: __CUSTOM_DIVERGENCE_AQBA_MAX_QUANT_LIBJXL,
     },
     // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
     DivergenceEntry {

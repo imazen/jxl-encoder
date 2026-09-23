@@ -48,6 +48,9 @@ fn main() {
     std::fs::write(out_path, &bytes).unwrap();
     eprintln!("wrote {} bytes to {out_path}", bytes.len());
 
+    #[cfg(feature = "investigate-adjust-quant-block-ac")]
+    jxl_encoder::vardct::aqba_diag::emit_and_reset("dbg_flat_recon");
+
     let recon = __recon_hook::take_last().expect("no recon captured");
     stats("internal_recon.r", &recon.r);
     stats("internal_recon.g", &recon.g);
@@ -104,8 +107,8 @@ fn main() {
         recon.g[argmax], g[argmax]
     );
 
-    // Optional extra files: decode-only stats (arg 3+ = paths to .jxl)
-    for extra in &args[3..] {
+    // Optional extra files: decode-only stats (arg 4+ = paths to .jxl)
+    for extra in &args[4..] {
         let eb = std::fs::read(extra).unwrap();
         let mut eimg = jxl_oxide::JxlImage::builder()
             .read(Cursor::new(&eb))
