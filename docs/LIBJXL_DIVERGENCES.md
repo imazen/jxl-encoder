@@ -1012,6 +1012,74 @@ Locks after this change: `strategy_libjxl_byte_lock` 5/5 PASS (no drift —
 no locked cell's bytes changed), `strategy_libjxl_hash_locks` 5/5 +1
 ignored PASS.
 
+### W45-RECON part 4 (2026-10-12): CfL Newton shared-gate mis-port FIXED — photo_512 +328 → −186 B
+
+Iter-0 encoded-content divergence localized and fixed. Environment-gated
+dumps (`JXL_AQDBG_DUMP`) on both sides plus an instrumented cjxl v0.12.0
+(`~/work/jxl-efforts/libjxl--mac-instr`, built at
+`~/tmp/libjxl-v012-instr-build`) established, at identical gs=8813/qdc=10:
+
+- XYB input planes: identical to ~6e-7 — forward path exact.
+- Butteraugli: our metric scores cjxl's dumped iter-0 recon at
+  0.934126 vs cjxl's internal 0.934129 — metric is not the cause.
+- **`iter0_cmap` ytox: ours all-zero on 64/64 tiles; cjxl emits +4..+9.**
+  Root cause.
+
+Root cause — `CFLFunction::Compute` derivative gates. libjxl
+(`enc_chroma_from_luma.cc:108-112`) accumulates all three Newton
+derivative sums under a single mask evaluated at x:
+
+```cpp
+const auto above = Ge(av, thres);          // |v(x)| >= kThres
+fd_v   = Add(fd_v,   IfThenElse(above, zero, d));
+fdpe_v = Add(fdpe_v, IfThenElse(above, zero, dpe));  // same `above`
+fdme_v = Add(fdme_v, IfThenElse(above, zero, dme));  // same `above`
+```
+
+Our port gated fdpe/fdme on `|v(x±eps)| >= thres` instead. At eps=100
+nearly every term is excluded at x±100, so the central-difference `ddf`
+collapses (~96 vs libjxl's ~740 on a probed tile), the Newton step hits
+the ±20 clamp, and x oscillates 0↔20 for the full 20 iterations →
+`bias_and_quantize(0)` → ytox=0. Verified by scalar replication on
+dumped inputs (identical between encoders): shared gate converges to
+x≈8.31 matching cjxl's traced `x_newton=8.3081`; per-eval gates
+oscillate exactly as observed.
+
+Fix (`jxl-encoder-simd/src/cfl.rs`): on `libjxl_parity` all three
+accumulations gate on `above` — in `compute_newton_derivatives_
+libjxl_order` (lane loop + scalar tail) and in the AVX2/NEON kernels
+(vector loop + tail). The `libjxl_parity=false` path keeps the per-eval
+gates byte-identical (`compute_newton_derivatives_serial` untouched —
+the W44-183-calibrated baseline); `libjxl_math_with_ls_warm_start`
+(Mode C) also unchanged.
+
+Measured on the strict e8 d=1 fixture set (macOS, cjxl v0.12.0):
+
+| fixture | before | after | cjxl | Δ before → after |
+|---|---|---|---|---|
+| photo_512 | 11730 | 11216 | 11402 | +328 → **−186** |
+| noise_512 | 309425 | 308879 | 308166 | +1259 → **+713** |
+| rgba_64x32 | 257 | 221 | 245 | +12 → **−24** |
+| noise_48 | 3068 | 3035 | 3083 | −15 → **−48** |
+| gradient_512 | 3242 | 3185 | 3362 | −101 → **−177** |
+| gradient_32 | 155 | 158 | 160 | −5 → −2 |
+| webshot_64 | 279 | 279 | 295 | −16 → −16 |
+| flat_64x64 | 73 | 73 | 69 | +4 → +4 (knife-edge stands) |
+
+Post-fix iter-0 cmap on photo_512: ytox matches cjxl on 60/64 tiles
+(remaining 4 off by ±1–3), ytob 59/64 (one outlier tile: ours 17 vs
+cjxl −9 — under investigation). Iter-0 score 1.021 vs cjxl 0.934 —
+residual gap remains; quant field differs on 72/4096 blocks (±1,
+symmetric) and AC strategy on 368/4096. Decoded photo_512 now beats
+cjxl on both axes: 11216 B / 1.0067 butteraugli vs 11402 B / 1.0228.
+noise_512 keeps its RD gap: 1.5967 vs 1.4803 (was 1.6017).
+
+Locks: `strategy_libjxl_byte_lock` regenerated (7 cells drifted — all
+moved toward or under cjxl), `strategy_libjxl_hash_locks` re-pinned on
+the 3 cells where Newton CfL runs at e7+ (e3/e5 cells unchanged — LS
+pass-2 path unaffected), `hash_lock_features` 68/68 PASS (normal-mode
+bytes unchanged — `libjxl_parity=false` path untouched).
+
 ---
 
 ---

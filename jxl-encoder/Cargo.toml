@@ -834,6 +834,13 @@ name = "score_jxl_files"
 path = "examples/score_jxl_files.rs"
 required-features = ["butteraugli-loop"]
 
+# Score a PFM/f32 recon dump vs a source PNG with the loop's butteraugli
+# params (W45-RECON iter-0 cross-encoder comparison).
+[[example]]
+name = "score_pfm"
+path = "examples/score_pfm.rs"
+required-features = ["butteraugli-loop"]
+
 # strict-libjxl buttloop debug: internal recon vs shipped decode.
 [[example]]
 name = "dbg_flat_recon"

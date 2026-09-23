@@ -2631,6 +2631,168 @@ impl VarDctEncoder {
                 tile_dist,
             );
 
+            // W45-RECON (2026-09-23): AQDBG-style per-iter artifact dump,
+            // mirroring the JXL_AQDBG_DUMP hook in the instrumented libjxl
+            // v0.12.0 worktree (enc_adaptive_quantization.cc). Writes
+            // iter<n>_{quant_field.f32,rawqf.u8,acstrat.u8,diffmap.f32,
+            // tiledist.f32,recon.f32} — each with a small header (2×i32 dims;
+            // recon adds a third i32 = 3 channels, planar, visible region) —
+            // plus an `AQDBG iter=...` stderr line matching the cjxl format
+            // field-for-field. Diagnostic only; env-gated, zero cost unset.
+            #[cfg(feature = "__internal_recon_hook")]
+            if let Some(dump_dir) = std::env::var_os("JXL_AQDBG_DUMP") {
+                use std::io::Write as _;
+                let dir = std::path::PathBuf::from(dump_dir);
+                let write_buf = |name: String, v: &[u8]| {
+                    let _ = std::fs::File::create(dir.join(name)).map(|mut f| f.write_all(v));
+                };
+                let write_f32 = |name: String, w: usize, h: usize, data: &[f32]| {
+                    let mut v = alloc::vec::Vec::with_capacity(8 + data.len() * 4);
+                    v.extend_from_slice(&(w as i32).to_le_bytes());
+                    v.extend_from_slice(&(h as i32).to_le_bytes());
+                    for &x in data {
+                        v.extend_from_slice(&x.to_le_bytes());
+                    }
+                    write_buf(name, &v);
+                };
+                write_f32(
+                    alloc::format!("iter{iter}_quant_field.f32"),
+                    xsize_blocks,
+                    ysize_blocks,
+                    quant_field_float,
+                );
+                write_f32(
+                    alloc::format!("iter{iter}_diffmap.f32"),
+                    width,
+                    height,
+                    &diffmap_vec,
+                );
+                write_f32(
+                    alloc::format!("iter{iter}_tiledist.f32"),
+                    xsize_blocks,
+                    ysize_blocks,
+                    tile_dist,
+                );
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(8 + quant_field.len());
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(quant_field);
+                    write_buf(alloc::format!("iter{iter}_rawqf.u8"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(8 + num_blocks);
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    for by in 0..ysize_blocks {
+                        for bx in 0..xsize_blocks {
+                            v.push(ac_strategy.raw_strategy(bx, by));
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_acstrat.u8"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 3 * width * height * 4);
+                    v.extend_from_slice(&(width as i32).to_le_bytes());
+                    v.extend_from_slice(&(height as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for plane in [&*recon_r, &*recon_g, &*recon_b] {
+                        for y in 0..height {
+                            for x in 0..width {
+                                v.extend_from_slice(&plane[y * padded_width + x].to_le_bytes());
+                            }
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_recon.f32"), &v);
+                }
+                // Extended probes for encoded-content divergence analysis:
+                // XYB input planes (padded), quantized DC ints, float DC,
+                // quantized AC coefficient cells, CfL tile maps.
+                {
+                    let np = padded_width * padded_height;
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 3 * np * 4);
+                    v.extend_from_slice(&(padded_width as i32).to_le_bytes());
+                    v.extend_from_slice(&(padded_height as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for plane in [xyb_x, xyb_y, xyb_b] {
+                        for &x in &plane[..np] {
+                            v.extend_from_slice(&x.to_le_bytes());
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_xyb.f32"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 3 * num_blocks * 4);
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for ch in &transform_out.quant_dc {
+                        for row in ch {
+                            for &x in row {
+                                v.extend_from_slice(&x.to_le_bytes());
+                            }
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_quant_dc.i32"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 3 * num_blocks * 4);
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for ch in &transform_out.float_dc {
+                        for &x in ch {
+                            v.extend_from_slice(&x.to_le_bytes());
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_dcfloat.f32"), &v);
+                }
+                {
+                    let mut v =
+                        alloc::vec::Vec::with_capacity(12 + 3 * num_blocks * DCT_BLOCK_SIZE * 4);
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for ch in &transform_out.quant_ac {
+                        for row in ch {
+                            for cell in row {
+                                for &x in cell {
+                                    v.extend_from_slice(&x.to_le_bytes());
+                                }
+                            }
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_quant_ac.i32"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 2 * cfl_map.ytox.len());
+                    v.extend_from_slice(&(cfl_map.xsize_tiles as i32).to_le_bytes());
+                    v.extend_from_slice(&(cfl_map.ysize_tiles as i32).to_le_bytes());
+                    v.extend_from_slice(&2i32.to_le_bytes());
+                    for &x in &cfl_map.ytox {
+                        v.push(x as u8);
+                    }
+                    for &x in &cfl_map.ytob {
+                        v.push(x as u8);
+                    }
+                    write_buf(alloc::format!("iter{iter}_cmap.i8"), &v);
+                }
+                let mut sorted = quant_field_float.to_vec();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+                let qf_mean: f64 = quant_field_float.iter().map(|&v| v as f64).sum::<f64>()
+                    / quant_field_float.len() as f64;
+                eprintln!(
+                    "AQDBG iter={iter} score={iter_score:.6} gs={} qdc={} \
+                     qf_min={:.5} qf_med={:.5} qf_max={:.5} qf_mean={:.5}",
+                    current_params.global_scale,
+                    current_params.quant_dc,
+                    sorted[0],
+                    sorted[sorted.len() / 2],
+                    sorted[sorted.len() - 1],
+                    qf_mean,
+                );
+            }
+
             // Log per-iteration summary
             {
                 let qf_min = quant_field_float

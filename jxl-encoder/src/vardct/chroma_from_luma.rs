@@ -305,8 +305,77 @@ fn find_best_multiplier(
             };
             let sum_abs_s: f32 = values_s[..num].iter().map(|v| v.abs()).sum();
             let sum_abs_m: f32 = values_m[..num].iter().map(|v| v.abs()).sum();
+            let mut sum_aa = 0.0f32;
+            let mut sum_ab = 0.0f32;
+            for i in 0..num {
+                let a = K_INV_COLOR_FACTOR * values_m[i];
+                let b = base * values_m[i] - values_s[i];
+                sum_aa += a * a;
+                sum_ab += a * b;
+            }
+            let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
+            // Reproduce the first Newton step at x=0, eps=100 to see why
+            // the iteration exits (fd / ddf / step diagnostics).
+            let eps_dbg = 100.0f32;
+            let mut fd = 0.0f32;
+            let mut fd_pe = 0.0f32;
+            let mut fd_me = 0.0f32;
+            for i in 0..num {
+                let a = K_INV_COLOR_FACTOR * values_m[i];
+                let b = base * values_m[i] - values_s[i];
+                let v = b;
+                let vpe = a * eps_dbg + b;
+                let vme = -a * eps_dbg + b;
+                let ac2 = (2.0 / 3.0) * a;
+                let mut d = ac2 * (v.abs() + 1.0);
+                let mut dpe = ac2 * (vpe.abs() + 1.0);
+                let mut dme = ac2 * (vme.abs() + 1.0);
+                if v < 0.0 {
+                    d = -d;
+                }
+                if vpe < 0.0 {
+                    dpe = -dpe;
+                }
+                if vme < 0.0 {
+                    dme = -dme;
+                }
+                if v.abs() < 100.0 {
+                    fd += d;
+                }
+                if vpe.abs() < 100.0 {
+                    fd_pe += dpe;
+                }
+                if vme.abs() < 100.0 {
+                    fd_me += dme;
+                }
+            }
+            fd += 2.0 * distance_mul * num as f32 * 0.0;
+            fd_pe += 2.0 * distance_mul * num as f32 * eps_dbg;
+            fd_me += 2.0 * distance_mul * num as f32 * -eps_dbg;
+            let ddf = (fd_pe - fd_me) / (2.0 * eps_dbg);
+            let step0 = fd / (ddf + 0.85);
+            // Dump input arrays for offline Newton replication.
+            if let Some(dir) = std::env::var_os("JXL_CFL_DUMP_VALUES") {
+                use std::io::Write as _;
+                static CALL_IDX: core::sync::atomic::AtomicUsize =
+                    core::sync::atomic::AtomicUsize::new(0);
+                let ci = CALL_IDX.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                let dirp = std::path::PathBuf::from(dir);
+                let _ = std::fs::create_dir_all(&dirp);
+                let mut v = alloc::vec::Vec::with_capacity(20 + 8 * num);
+                v.extend_from_slice(&(num as i32).to_le_bytes());
+                v.extend_from_slice(&base.to_le_bytes());
+                for i in 0..num {
+                    v.extend_from_slice(&values_m[i].to_le_bytes());
+                }
+                for i in 0..num {
+                    v.extend_from_slice(&values_s[i].to_le_bytes());
+                }
+                let _ = std::fs::File::create(dirp.join(alloc::format!("call{ci:03}.bin")))
+                    .map(|mut f| f.write_all(&v));
+            }
             eprintln!(
-                "SA-G-FIX-A channel={} num={} base={:.1} use_newton={} libjxl_parity={} libjxl_math_ls_warm={} eps={} iters={} variant={} sum|s|={sum_abs_s:.3} sum|m|={sum_abs_m:.3} cmap_i8={}",
+                "SA-G-FIX-A channel={} num={} base={:.1} use_newton={} libjxl_parity={} libjxl_math_ls_warm={} eps={} iters={} variant={} sum|s|={sum_abs_s:.3} sum|m|={sum_abs_m:.3} ls_x={ls_x:.4} fd0={fd:.4} ddf0={ddf:.4} step0={step0:.4} cmap_i8={}",
                 channel,
                 num,
                 base,

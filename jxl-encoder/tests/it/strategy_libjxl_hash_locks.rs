@@ -230,8 +230,13 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // table (kLZ77 at e8, kOptimal at e9+; AC token stream kRLE at
         // e9+). Note: this cell is e7 — the size move here came from
         // the same commit's entropy-code internals, not the e8+ tree.
-        size: 164,
-        hash: 0xec03fca271eef907,
+        // CfL Newton shared-gate (2026-10-12): 164 → 163 (-1 B), hash
+        // drift — the parity path now gates all three derivative sums
+        // on |v(x)| like libjxl `CFLFunction::Compute` (was per-eval
+        // gates, which collapsed ddf at eps=100 and oscillated x to 0,
+        // emitting ytox=0 where cjxl converges to ±5..9).
+        size: 163,
+        hash: 0x6e09a9bb563ec6b6,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
@@ -239,8 +244,10 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // d4.0 histograms already picked minimum-cost shifts.
         // e8+ merged kLearn MA tree + ForModular LZ77 (2026-09-18):
         // 125 → 120 (-5 B), hash drift (see _d1 note).
-        size: 120,
-        hash: 0x88b45a2e2bc4a24e,
+        // CfL Newton shared-gate (2026-10-12): 120 → 116 (-4 B), hash
+        // drift (see _d1 note).
+        size: 116,
+        hash: 0x6810d2373ae6d673,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
@@ -319,8 +326,13 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // e7 — the +36 B is pre-strict-branch entropy-code work in the
         // same WIP, not the e8+ tree (cjxl v0.12 emits 3217 B here;
         // we remain -34 B under it).
-        size: 3183,
-        hash: 0x7e81da6272734559,
+        // CfL Newton shared-gate (2026-10-12): 3183 → 3187 (+4 B), hash
+        // drift — parity path now gates all three Newton derivative
+        // sums on |v(x)| like libjxl `CFLFunction::Compute` (was
+        // per-eval gates; at eps=100 that collapsed ddf and oscillated
+        // x to 0, emitting ytox=0 where cjxl converges).
+        size: 3187,
+        hash: 0xc4089de46f725ff9,
     },
 ];
 

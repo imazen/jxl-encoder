@@ -213,13 +213,16 @@ fn compute_newton_derivatives_libjxl_order(
             if vme < 0.0 {
                 dme = -dme;
             }
+            // libjxl `CFLFunction::Compute` gates ALL THREE derivative
+            // sums on `above` (|v(x)| >= kThres): the x+eps / x-eps
+            // evaluations reuse the x-gate. Per-eval gating instead
+            // collapses the central-difference ddf at eps=100 (nearly
+            // every term is excluded at x±100), clamps the Newton step
+            // to ±20, and oscillates x to 0 — emitting ytox=0 where
+            // cjxl converges to ±5..9.
             if av < NEWTON_THRES {
                 acc_fd[lane] += d;
-            }
-            if avpe < NEWTON_THRES {
                 acc_fdpe[lane] += dpe;
-            }
-            if avme < NEWTON_THRES {
                 acc_fdme[lane] += dme;
             }
         }
@@ -252,13 +255,10 @@ fn compute_newton_derivatives_libjxl_order(
         if vme < 0.0 {
             dme = -dme;
         }
+        // libjxl gates all three sums on |v(x)| — see the lane loop.
         if av < NEWTON_THRES {
             fd += d;
-        }
-        if avpe < NEWTON_THRES {
             fd_pe += dpe;
-        }
-        if avme < NEWTON_THRES {
             fd_me += dme;
         }
         i += 1;
@@ -270,7 +270,9 @@ fn compute_newton_derivatives_libjxl_order(
 /// `libjxl_parity=false` (Zenjxl / Aggressive / LeanFaster). The
 /// W44-29..W44-172 cost model is calibrated against the exact bytes
 /// produced by this reduction shape — DO NOT change without a wide
-/// regression sweep.
+/// regression sweep. This includes the per-eval derivative gates
+/// (`avpe`/`avme`), which differ from libjxl's shared `above` gate —
+/// the shared gate lives on the `libjxl_parity` path only.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn compute_newton_derivatives_serial(
@@ -901,13 +903,24 @@ pub fn find_best_multiplier_newton_avx2(
             let dpe = f32x8::blend(neg_vpe, zero - dpe_unsigned, dpe_unsigned);
             let dme = f32x8::blend(neg_vme, zero - dme_unsigned, dme_unsigned);
 
-            // Threshold: zero out when |v| >= THRES
+            // Threshold: zero out when |v| >= THRES. libjxl
+            // `CFLFunction::Compute` gates ALL THREE sums on `above`
+            // (evaluated at x) — the x±eps evaluations reuse the
+            // x-gate. Per-eval gating collapses the central-difference
+            // ddf at eps=100 (nearly every term excluded at x±100),
+            // clamps the Newton step to ±20, and oscillates x to 0 —
+            // emitting ytox=0 where cjxl converges to ±5..9. The shared
+            // gate is therefore applied on `libjxl_parity`; non-parity
+            // paths keep the calibrated per-eval gates byte-identical.
             let above = av.simd_ge(thres_v);
-            let above_pe = avpe.simd_ge(thres_v);
-            let above_me = avme.simd_ge(thres_v);
+            let (gate_pe, gate_me) = if libjxl_parity {
+                (above, above)
+            } else {
+                (avpe.simd_ge(thres_v), avme.simd_ge(thres_v))
+            };
             acc_fd += f32x8::blend(above, zero, d);
-            acc_fdpe += f32x8::blend(above_pe, zero, dpe);
-            acc_fdme += f32x8::blend(above_me, zero, dme);
+            acc_fdpe += f32x8::blend(gate_pe, zero, dpe);
+            acc_fdme += f32x8::blend(gate_me, zero, dme);
 
             i += 8;
         }
@@ -963,10 +976,18 @@ pub fn find_best_multiplier_newton_avx2(
             if av < NEWTON_THRES {
                 fd += d;
             }
-            if avpe < NEWTON_THRES {
+            if if libjxl_parity {
+                av < NEWTON_THRES
+            } else {
+                avpe < NEWTON_THRES
+            } {
                 fd_pe += dpe;
             }
-            if avme < NEWTON_THRES {
+            if if libjxl_parity {
+                av < NEWTON_THRES
+            } else {
+                avme < NEWTON_THRES
+            } {
                 fd_me += dme;
             }
             i += 1;
@@ -1114,12 +1135,24 @@ pub fn find_best_multiplier_newton_neon(
             let dpe = f32x4::blend(neg_vpe, zero - dpe_unsigned, dpe_unsigned);
             let dme = f32x4::blend(neg_vme, zero - dme_unsigned, dme_unsigned);
 
+            // Threshold: zero out when |v| >= THRES. libjxl
+            // `CFLFunction::Compute` gates ALL THREE sums on `above`
+            // (evaluated at x) — the x±eps evaluations reuse the
+            // x-gate. Per-eval gating collapses the central-difference
+            // ddf at eps=100 (nearly every term excluded at x±100),
+            // clamps the Newton step to ±20, and oscillates x to 0 —
+            // emitting ytox=0 where cjxl converges to ±5..9. The shared
+            // gate is therefore applied on `libjxl_parity`; non-parity
+            // paths keep the calibrated per-eval gates byte-identical.
             let above = av.simd_ge(thres_v);
-            let above_pe = avpe.simd_ge(thres_v);
-            let above_me = avme.simd_ge(thres_v);
+            let (gate_pe, gate_me) = if libjxl_parity {
+                (above, above)
+            } else {
+                (avpe.simd_ge(thres_v), avme.simd_ge(thres_v))
+            };
             acc_fd += f32x4::blend(above, zero, d);
-            acc_fdpe += f32x4::blend(above_pe, zero, dpe);
-            acc_fdme += f32x4::blend(above_me, zero, dme);
+            acc_fdpe += f32x4::blend(gate_pe, zero, dpe);
+            acc_fdme += f32x4::blend(gate_me, zero, dme);
 
             i += 4;
         }
@@ -1172,10 +1205,18 @@ pub fn find_best_multiplier_newton_neon(
             if av < NEWTON_THRES {
                 fd += d;
             }
-            if avpe < NEWTON_THRES {
+            if if libjxl_parity {
+                av < NEWTON_THRES
+            } else {
+                avpe < NEWTON_THRES
+            } {
                 fd_pe += dpe;
             }
-            if avme < NEWTON_THRES {
+            if if libjxl_parity {
+                av < NEWTON_THRES
+            } else {
+                avme < NEWTON_THRES
+            } {
                 fd_me += dme;
             }
             i += 1;
