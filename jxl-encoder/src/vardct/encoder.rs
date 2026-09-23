@@ -6373,6 +6373,73 @@ impl VarDctEncoder {
                 None
             };
 
+        // W45-RECON part 10 diagnostic: dump the shipped DC plane + AC
+        // metadata value grids for byte-level diffing against
+        // instrumented cjxl (`JXL_SYMDUMP` there emits identically-named
+        // files). Channel order follows libjxl `AddVarDCTDC`
+        // (`c < 2 ? c ^ 1 : c`): ch0 = Y (our index 1), ch1 = X
+        // (index 0), ch2 = B (index 2).
+        if let Ok(sym_dir) = std::env::var("JXL_SYMDUMP") {
+            let dump_i32 = |name: &str, w: usize, h: usize, vals: &[i32]| {
+                let path = format!("{sym_dir}/{name}.i32");
+                if let Ok(mut f) = std::fs::File::create(&path) {
+                    use std::io::Write;
+                    let _ = f.write_all(&(w as i32).to_le_bytes());
+                    let _ = f.write_all(&(h as i32).to_le_bytes());
+                    let mut buf = Vec::with_capacity(vals.len() * 4);
+                    for v in vals {
+                        buf.extend_from_slice(&v.to_le_bytes());
+                    }
+                    let _ = f.write_all(&buf);
+                }
+            };
+            let dc_planes: &[Vec<Vec<i32>>; 3] = &transform_out.quant_dc;
+            for (our_c, cjxl_ch) in [(1usize, 0usize), (0usize, 1usize), (2usize, 2usize)] {
+                let plane = &dc_planes[our_c];
+                let flat: Vec<i32> = plane.iter().flatten().copied().collect();
+                dump_i32(
+                    &format!("dc_ch{cjxl_ch}"),
+                    xsize_blocks,
+                    ysize_blocks,
+                    &flat,
+                );
+            }
+            // AC metadata: ch0/ch1 = ytox/ytob per 8x8-block color tile;
+            // ch2 = 2-row plane (acs libjxl-ordinal codes, qf-1) over
+            // first-blocks; ch3 = epf sharpness grid.
+            let tiles_x = (xsize_blocks + 7) / 8;
+            let tiles_y = (ysize_blocks + 7) / 8;
+            let mut ytox = Vec::with_capacity(tiles_x * tiles_y);
+            let mut ytob = Vec::with_capacity(tiles_x * tiles_y);
+            for ty in 0..tiles_y {
+                for tx in 0..tiles_x {
+                    ytox.push(cfl_map.ytox_at(tx, ty) as i32);
+                    ytob.push(cfl_map.ytob_at(tx, ty) as i32);
+                }
+            }
+            dump_i32("acmeta_g0_ch0", tiles_x, tiles_y, &ytox);
+            dump_i32("acmeta_g0_ch1", tiles_x, tiles_y, &ytob);
+            let mut acs_row = Vec::new();
+            let mut qf_row = Vec::new();
+            for by in 0..ysize_blocks {
+                for bx in 0..xsize_blocks {
+                    if !ac_strategy.is_first(bx, by) {
+                        continue;
+                    }
+                    acs_row.push(ac_strategy.strategy_code(bx, by) as i32);
+                    qf_row.push(quant_field[by * xsize_blocks + bx] as i32 - 1);
+                }
+            }
+            let num = acs_row.len();
+            let mut ch2 = acs_row;
+            ch2.extend_from_slice(&qf_row);
+            dump_i32("acmeta_g0_ch2", num, 2, &ch2);
+            if let Some(sm) = sharpness_map.as_deref() {
+                let epf: Vec<i32> = sm.iter().map(|&v| v as i32).collect();
+                dump_i32("acmeta_g0_ch3", xsize_blocks, ysize_blocks, &epf);
+            }
+        }
+
         // Free the XYB source — no longer needed after EPF sharpness
         // computation. At 4K (6720×4480), this frees ~339 MB
         // (3 channels × padded_pixels × f32) for the whole-image

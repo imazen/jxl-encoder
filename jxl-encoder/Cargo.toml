@@ -853,6 +853,12 @@ required-features = ["__internal_recon_hook", "butteraugli-loop"]
 name = "gen_photoish_1024"
 path = "examples/gen_photoish_1024.rs"
 
+# W45-RECON part 10: minimal per-section TOC dump for parity diffing.
+[[example]]
+name = "toc_dump"
+path = "examples/toc_dump.rs"
+required-features = ["__env_var_diagnostics"]
+
 # W44-35 acceptance check: 1418519 cells + screenshot regressions +
 # F-D residual cells. Does not need zenanalyze (uses default API).
 [[example]]

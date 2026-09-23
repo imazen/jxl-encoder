@@ -90,6 +90,87 @@ pub(crate) fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
     out
 }
 
+/// libjxl `TF_SRGB().DisplayFromEncoded` (`cms/transfer_functions-inl.h:218`).
+///
+/// This is NOT the exact piecewise sRGB EOTF — it is a degree-4/4 Chebyshev
+/// rational approximation (af_cheb_rational, k=100, ~5e-7 max error)
+/// evaluated by `EvalRationalPolynomial`'s Horner `MulAdd` chain with a true
+/// IEEE division, plus `x * (1/12.92)` below the 0.04045 breakpoint. Strict
+/// `EncoderStrategy::Libjxl` must reproduce this approximation bit-for-bit;
+/// every downstream float (XYB, masking, quant field) inherits the error.
+#[inline]
+fn tf_srgb_display_from_encoded_libjxl(x: f32) -> f32 {
+    const P: [f32; 5] = [
+        2.200248328e-04,
+        1.043637593e-02,
+        1.624820318e-01,
+        7.961564959e-01,
+        8.210152774e-01,
+    ];
+    const Q: [f32; 5] = [
+        2.631846970e-01,
+        1.076976492e+00,
+        4.987528350e-01,
+        -5.512498495e-02,
+        6.521209011e-03,
+    ];
+    let xa = x.abs();
+    let linear = xa * (1.0 / 12.92);
+    // Horner, highest-degree coefficient first — the exact op order of
+    // EvalRationalPolynomial (`MulAdd` = fused multiply-add, then `Div`).
+    let mut yp = P[4];
+    yp = yp.mul_add(xa, P[3]);
+    yp = yp.mul_add(xa, P[2]);
+    yp = yp.mul_add(xa, P[1]);
+    yp = yp.mul_add(xa, P[0]);
+    let mut yq = Q[4];
+    yq = yq.mul_add(xa, Q[3]);
+    yq = yq.mul_add(xa, Q[2]);
+    yq = yq.mul_add(xa, Q[1]);
+    yq = yq.mul_add(xa, Q[0]);
+    let poly = yp / yq;
+    // IfThenElse(Gt(x, kThreshSRGBToLinear), poly, linear)
+    let mag = if xa > 0.04045 { poly } else { linear };
+    mag.copysign(x)
+}
+
+/// sRGB u8 → linear f32 through libjxl's exact u8 normalization + rational
+/// EOTF: `v * (1.0f/255)` (`extras/packed_image.h:76` — a multiply by the
+/// rounded reciprocal, not exact division), then `DisplayFromEncoded`.
+#[inline]
+fn srgb_u8_to_linear_libjxl(c: u8) -> f32 {
+    tf_srgb_display_from_encoded_libjxl(c as f32 * (1.0 / 255.0))
+}
+
+/// `srgb_u8_to_linear_f32` variant selected by
+/// `ResolvedImprovements::srgb_eotf_libjxl_parity`. Builds the 256-entry
+/// table per call — the encoder calls this once per frame, so a stack table
+/// is cheaper than a shared `OnceLock`.
+pub(crate) fn srgb_u8_to_linear_f32_libjxl(data: &[u8], channels: usize) -> Vec<f32> {
+    let num_pixels = data.len() / channels;
+    let mut lut = [0.0f32; 256];
+    for (i, e) in lut.iter_mut().enumerate() {
+        *e = srgb_u8_to_linear_libjxl(i as u8);
+    }
+    let mut out = vec![0.0f32; num_pixels * 3];
+    for (px, rgb) in data.chunks_exact(channels).zip(out.as_chunks_mut::<3>().0) {
+        rgb[0] = lut[px[0] as usize];
+        rgb[1] = lut[px[1] as usize];
+        rgb[2] = lut[px[2] as usize];
+    }
+    out
+}
+
+/// `gray_u8_to_linear_f32_rgb` variant under `srgb_eotf_libjxl_parity`.
+pub(crate) fn gray_u8_to_linear_f32_rgb_libjxl(data: &[u8], stride: usize) -> Vec<f32> {
+    data.chunks(stride)
+        .flat_map(|px| {
+            let v = srgb_u8_to_linear_libjxl(px[0]);
+            [v, v, v]
+        })
+        .collect()
+}
+
 /// PQ u8 → linear f32 RGB. Uses a 256-entry LUT (avoids per-pixel
 /// powf — matches the gamma_u8_to_linear_f32 optimization). 8-bit
 /// PQ is unusual in practice (PQ's headroom rewards wider precision)
@@ -979,4 +1060,59 @@ pub(crate) fn extract_alpha_f16(bytes: &[u8], stride: usize, alpha_offset: usize
         .chunks(stride)
         .map(|px| (f16_bits_to_f32(px[alpha_offset]).clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins `tf_srgb_display_from_encoded_libjxl` to the f32 bit patterns
+    /// libjxl's `TF_SRGB().DisplayFromEncoded` produces — a regression in
+    /// the Horner chain, division, or breakpoint shows up here, not in a
+    /// 300 KB encode.
+    #[test]
+    fn libjxl_srgb_eotf_golden_bits() {
+        // (u8, expected linear f32 bits) — computed from
+        // cms/transfer_functions-inl.h:218-242 via the same rational
+        // polynomial; covers both branches (v<=10 linear, v>=11 poly).
+        const GOLDEN: &[(u8, u32)] = &[
+            (0, 0x0000_0000),
+            (10, 0x3b46_eb61), // linear branch (enc < 0.04045)
+            (11, 0x3b5b_51a9), // poly branch
+            (12, 0x3b70_f162),
+            (13, 0x3b83_e19c),
+            (128, 0x3e5d_0a89),
+            (200, 0x3f13_dc52),
+            (255, 0x3f80_0000),
+        ];
+        for &(v, want) in GOLDEN {
+            let got = srgb_u8_to_linear_libjxl(v).to_bits();
+            assert_eq!(got, want, "u8={v} eotf bits {got:#010x} != {want:#010x}");
+        }
+    }
+
+    /// The strict LUT must differ from the exact `SRGB_U8_TO_LINEAR` on the
+    /// polynomial branch (libjxl's ~5e-7 Chebyshev error is the point), and
+    /// the u8 normalization must be `v * (1/255)` — v=10 would round
+    /// differently under exact division on some platforms.
+    #[test]
+    fn libjxl_srgb_lut_differs_from_exact() {
+        let mut n_diff = 0;
+        for v in 0..=255u8 {
+            if srgb_u8_to_linear_libjxl(v) != srgb_to_linear(v) {
+                n_diff += 1;
+            }
+        }
+        // Nearly every entry differs at ~1 ulp — including the linear
+        // branch, where libjxl's two rounded multiplies
+        // (`v*(1/255)*(1/12.92)`) can differ from the LUT's f64-then-f32
+        // `v/255/12.92` by 1 ulp.
+        assert!(n_diff > 200, "only {n_diff}/256 entries differ");
+        // Linear branch: libjxl uses `x * kLowDivInv` on the *rounded*
+        // `v*(1/255)` input — assert that exact op chain, not LUT equality.
+        for v in 0..=10u8 {
+            let want = (v as f32 * (1.0 / 255.0)) * (1.0 / 12.92);
+            assert_eq!(srgb_u8_to_linear_libjxl(v), want, "u8={v}");
+        }
+    }
 }

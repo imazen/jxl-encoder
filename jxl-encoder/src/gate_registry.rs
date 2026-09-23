@@ -315,6 +315,11 @@ jxl_encoder_macros::strategy_def! {
             // xorshift 50% block subsample at effort <= 7, and
             // unconditional `is_nondefault` admission.
             coeff_orders_libjxl_parity = true,
+            // W45-RECON part 10: strict sRGB EOTF — libjxl's
+            // `TF_SRGB().DisplayFromEncoded` rational-polynomial
+            // approximation (and `u8 * (1/255)` normalization), NOT the
+            // exact piecewise `x^2.4` EOTF the default LUT encodes.
+            srgb_eotf_libjxl_parity = true,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -430,6 +435,7 @@ jxl_encoder_macros::strategy_def! {
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
+            srgb_eotf_libjxl_parity = false,
         },
 
         /// Zenjxl — production-shipping bundle. Every field matches
@@ -564,6 +570,7 @@ jxl_encoder_macros::strategy_def! {
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
+            srgb_eotf_libjxl_parity = false,
         },
 
         /// Aggressive — currently equivalent to `Zenjxl` after
@@ -656,6 +663,7 @@ jxl_encoder_macros::strategy_def! {
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
+            srgb_eotf_libjxl_parity = false,
         },
     }
 
@@ -1524,6 +1532,23 @@ jxl_encoder_macros::strategy_def! {
             divergence_section = "D",
             divergence_row_ref = "coefficient order selection (libjxl ComputeUsedOrders/ComputeCoeffOrder: DCT8 order at all efforts, 50% xorshift block subsample at effort<=7, is_nondefault-only admission vs Zenjxl effort>=4 + full counts + W44-82 cost-benefit gate; W45-SPEC-4)",
         },
+
+        /// sRGB EOTF parity: libjxl `TF_SRGB().DisplayFromEncoded`
+        /// (`cms/transfer_functions-inl.h:218`) is a degree-4/4
+        /// Chebyshev rational approximation (~5e-7 max error) evaluated
+        /// via Horner FMA + true division, with `x*(1/12.92)` below
+        /// 0.04045 — NOT the exact piecewise `x^2.4` formula the
+        /// `SRGB_U8_TO_LINEAR` LUT encodes. The u8→f32 step is
+        /// `v * (1.0f/255)` (multiply, `extras/packed_image.h:76`), not
+        /// exact division. Both feed every downstream float, so this is
+        /// the earliest measurable divergence in the strict pipeline
+        /// (W45-RECON part 10).
+        ///
+        /// Section D.
+        srgb_eotf_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "sRGB→linear EOTF (libjxl TF_SRGB DisplayFromEncoded rational polynomial + v*(1/255) u8 normalization vs exact x^2.4 LUT; W45-RECON part 10)",
+        },
     }
 }
 
@@ -1949,6 +1974,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "coefficient order selection (libjxl ComputeUsedOrders/ComputeCoeffOrder: DCT8 order at all efforts, 50% xorshift block subsample at effort<=7, is_nondefault-only admission vs Zenjxl effort>=4 + full counts + W44-82 cost-benefit gate; W45-SPEC-4)",
         raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_LIBJXL_PARITY,
+    },
+    // Section D — sRGB EOTF parity (W45-RECON part 10)
+    DivergenceEntry {
+        gate_name: "srgb_eotf_libjxl_parity",
+        section: "D",
+        row_ref: "sRGB→linear EOTF (libjxl TF_SRGB DisplayFromEncoded rational polynomial + v*(1/255) u8 normalization vs exact x^2.4 LUT; W45-RECON part 10)",
+        raw: __CUSTOM_DIVERGENCE_SRGB_EOTF_LIBJXL_PARITY,
     },
 ];
 

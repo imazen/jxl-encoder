@@ -216,6 +216,14 @@ pub(crate) fn cbrt_lowp_scalar(x: f32) -> f32 {
 /// early return, so this shape vectorises.
 #[inline(always)]
 pub(crate) fn cbrt_libjxl_scalar(x: f32) -> f32 {
+    cbrt_libjxl_scalar_add(x, 0.0)
+}
+
+/// libjxl `CubeRootAndAdd(x, add)` — the trailing `MulAdd(r2, x, add)` is a
+/// SINGLE fused rounding, so the `-cbrt(bias)` offset must be fused HERE,
+/// not added by the caller (`(r2*x) + add` would round twice).
+#[inline(always)]
+fn cbrt_libjxl_scalar_add(x: f32, add: f32) -> f32 {
     const K_EXP_BIAS: i32 = 0x5480_0000;
     const K_EXP_MUL: i32 = 0x002A_AAAA;
     let xa_3 = x * (1.0 / 3.0);
@@ -233,7 +241,7 @@ pub(crate) fn cbrt_libjxl_scalar(x: f32) -> f32 {
     let r2 = r * r;
     r = (1.0f32 / 3.0).mul_add((-x).mul_add(r2 * r2, r), r);
     let r2 = r * r;
-    r2 * x
+    r2.mul_add(x, add)
 }
 
 // --- Scalar fallbacks ---
@@ -260,10 +268,14 @@ pub fn forward_xyb_scalar(
     n: usize,
 ) {
     use crate::scalarmath::mul_add_f32 as fma;
-    let cb = |v: f32| match cbrt {
-        XybCubeRoot::Libjxl => cbrt_libjxl_scalar(v),
-        XybCubeRoot::MidP => cbrt_midp_scalar(v),
-        XybCubeRoot::LowP => cbrt_lowp_scalar(v),
+    // The `Libjxl` arm fuses the `-cbrt(bias)` offset into the final
+    // `MulAdd(r2, x, add)` — matching libjxl's `CubeRootAndAdd` — while the
+    // non-parity variants keep a separate (extra-rounding) add.
+    let cb = |v: f32, bias: f32| match cbrt {
+        XybCubeRoot::Libjxl => cbrt_libjxl_scalar_add(v, bias),
+        XybCubeRoot::LibjxlUnfused => cbrt_libjxl_scalar(v) + bias,
+        XybCubeRoot::MidP => cbrt_midp_scalar(v) + bias,
+        XybCubeRoot::LowP => cbrt_lowp_scalar(v) + bias,
     };
     for i in 0..n {
         // Matrix multiply + bias (chained FMA for single-rounding parity with SIMD path)
@@ -296,9 +308,9 @@ pub fn forward_xyb_scalar(
         );
 
         // Clamp + cube root + bias offset
-        let l = cb(mixed0.max(0.0)) + NEG_CBRT_BIAS[0];
-        let m = cb(mixed1.max(0.0)) + NEG_CBRT_BIAS[1];
-        let s = cb(mixed2.max(0.0)) + NEG_CBRT_BIAS[2];
+        let l = cb(mixed0.max(0.0), NEG_CBRT_BIAS[0]);
+        let m = cb(mixed1.max(0.0), NEG_CBRT_BIAS[1]);
+        let s = cb(mixed2.max(0.0), NEG_CBRT_BIAS[2]);
 
         // Mix into XYB
         x_out[i] = 0.5 * (l - m);
@@ -450,22 +462,32 @@ pub enum XybCubeRoot {
     /// Selected by `EncoderStrategy::Libjxl`, where matching the reference
     /// matters more than speed — though it happens to be one of the fastest too.
     Libjxl,
+    /// The same Newton cbrt as `Libjxl` but WITHOUT fusing the
+    /// `-cbrt(bias)` offset into the final `MulAdd(r2, x, add)` — the bias
+    /// is added separately (one extra rounding). This is the historical
+    /// behaviour: `vardct/resampling.rs`'s fixed opsin round-trip picked it
+    /// before the fused form existed and its byte-locks pin that output.
+    /// Not selected by any strategy — only the resampler calls it.
+    LibjxlUnfused,
     /// `magetypes::cbrt_midp` — Kahan bit-hack + 2 Halley steps, max 3 ULP.
     MidP,
     /// `magetypes::cbrt_lowp` — 1 Halley step, max 259 ULP. Fastest measured.
     LowP,
 }
 
-/// libjxl `CubeRootAndAdd` with `add == 0`, vectorised.
+/// libjxl `CubeRootAndAdd(x, add)`, vectorised.
 ///
 /// Newton on the INVERSE cube root: multiplies and FMAs only, no divisions, and
 /// the initial guess runs in INTEGER VECTOR LANES rather than round-tripping
 /// through `to_array()`. `x == 0` is a SELECT, matching the original's
 /// `IfThenZeroElse` — an early return would be a branch in the inner loop.
+/// The final `MulAdd(r2, x, add)` fuses the `-cbrt(bias)` offset into ONE
+/// rounding, exactly as libjxl's `CubeRootAndAdd` does.
 #[inline(always)]
-fn cbrt_libjxl_vec<T>(
+fn cbrt_libjxl_vec_add<T>(
     token: T,
     x: magetypes::simd::generic::f32x8<T>,
+    add: magetypes::simd::generic::f32x8<T>,
 ) -> magetypes::simd::generic::f32x8<T>
 where
     T: magetypes::simd::backends::F32x8Convert,
@@ -491,7 +513,7 @@ where
     // MulAdd(k1_3, NegMulAdd(xa, r^4, r), r)
     r = k1_3.mul_add((-x).mul_add(r2 * r2, r), r);
     let r2 = r * r;
-    r2 * x
+    r2.mul_add(x, add)
 }
 
 #[magetypes(define(f32x8, i32x8), v4, v3, -neon, wasm128, -scalar)]
@@ -549,18 +571,31 @@ pub fn forward_xyb_impl(
         // SCALAR loop over 24 lanes for the bit-hack guess, six `f64x4`
         // rebuilds, then three `[f32; 8]` staging arrays — which is what made
         // this kernel slower than its own scalar fallback on NEON.
-        let (c0v, c1v, c2v) = match cbrt {
+        // `Libjxl` fuses the `-cbrt(bias)` offset into the cube root's final
+        // `MulAdd(r2, x, add)` (single rounding, matching `CubeRootAndAdd`);
+        // the other variants keep the separate add.
+        let (l, m, s) = match cbrt {
             XybCubeRoot::Libjxl => (
-                cbrt_libjxl_vec(token, mixed0),
-                cbrt_libjxl_vec(token, mixed1),
-                cbrt_libjxl_vec(token, mixed2),
+                cbrt_libjxl_vec_add(token, mixed0, neg_cbrt0),
+                cbrt_libjxl_vec_add(token, mixed1, neg_cbrt1),
+                cbrt_libjxl_vec_add(token, mixed2, neg_cbrt2),
             ),
-            XybCubeRoot::MidP => (mixed0.cbrt_midp(), mixed1.cbrt_midp(), mixed2.cbrt_midp()),
-            XybCubeRoot::LowP => (mixed0.cbrt_lowp(), mixed1.cbrt_lowp(), mixed2.cbrt_lowp()),
+            XybCubeRoot::LibjxlUnfused => (
+                cbrt_libjxl_vec_add(token, mixed0, zero) + neg_cbrt0,
+                cbrt_libjxl_vec_add(token, mixed1, zero) + neg_cbrt1,
+                cbrt_libjxl_vec_add(token, mixed2, zero) + neg_cbrt2,
+            ),
+            XybCubeRoot::MidP => (
+                mixed0.cbrt_midp() + neg_cbrt0,
+                mixed1.cbrt_midp() + neg_cbrt1,
+                mixed2.cbrt_midp() + neg_cbrt2,
+            ),
+            XybCubeRoot::LowP => (
+                mixed0.cbrt_lowp() + neg_cbrt0,
+                mixed1.cbrt_lowp() + neg_cbrt1,
+                mixed2.cbrt_lowp() + neg_cbrt2,
+            ),
         };
-        let l = c0v + neg_cbrt0;
-        let m = c1v + neg_cbrt1;
-        let s = c2v + neg_cbrt2;
 
         // XYB mixing
         let xv = half * (l - m);
@@ -660,13 +695,12 @@ pub fn forward_xyb_impl_neon(
             let mixed1 = m10.mul_add(rv, m11.mul_add(gv, m12.mul_add(bv, bias1)));
             let mixed2 = m20.mul_add(rv, m21.mul_add(gv, m22.mul_add(bv, bias2)));
 
-            let c0v = $cb(mixed0.max(zero));
-            let c1v = $cb(mixed1.max(zero));
-            let c2v = $cb(mixed2.max(zero));
-
-            let l = c0v + neg_cbrt0;
-            let m = c1v + neg_cbrt1;
-            let s = c2v + neg_cbrt2;
+            // `$cb(v, bias)` returns cbrt(v) with the `-cbrt(bias)` offset
+            // already applied — FUSED into the final MulAdd for `Libjxl`
+            // (matching `CubeRootAndAdd`), a separate add for the others.
+            let l = $cb(mixed0.max(zero), neg_cbrt0);
+            let m = $cb(mixed1.max(zero), neg_cbrt1);
+            let s = $cb(mixed2.max(zero), neg_cbrt2);
 
             let o: &mut [f32; 8] = (&mut x_out[base..base + 8]).try_into().unwrap();
             (half * (l - m)).store(o);
@@ -696,9 +730,12 @@ pub fn forward_xyb_impl_neon(
     }
 
     let simd_n = match cbrt {
-        XybCubeRoot::Libjxl => walk!(|v| cbrt_libjxl_vec(token, v)),
-        XybCubeRoot::MidP => walk!(|v: f32x8| v.cbrt_midp()),
-        XybCubeRoot::LowP => walk!(|v: f32x8| v.cbrt_lowp()),
+        XybCubeRoot::Libjxl => walk!(|v: f32x8, add: f32x8| cbrt_libjxl_vec_add(token, v, add)),
+        XybCubeRoot::LibjxlUnfused => {
+            walk!(|v: f32x8, add: f32x8| cbrt_libjxl_vec_add(token, v, zero) + add)
+        }
+        XybCubeRoot::MidP => walk!(|v: f32x8, add: f32x8| v.cbrt_midp() + add),
+        XybCubeRoot::LowP => walk!(|v: f32x8, add: f32x8| v.cbrt_lowp() + add),
     };
 
     // Remaining 0..8 pixels. The scalar fallback is bit-identical to the
@@ -1431,7 +1468,12 @@ mod expanded_coverage {
         ignore = "FIXME(SIMD-parity): xyb-001 — WASM SIMD has no FMA instruction; see docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"
     )]
     fn forward_xyb_dispatch_is_bit_identical_to_scalar() {
-        for cbrt in [XybCubeRoot::Libjxl, XybCubeRoot::MidP, XybCubeRoot::LowP] {
+        for cbrt in [
+            XybCubeRoot::Libjxl,
+            XybCubeRoot::LibjxlUnfused,
+            XybCubeRoot::MidP,
+            XybCubeRoot::LowP,
+        ] {
             // Sizes that straddle every unroll boundary the tiers use: the
             // hand-written NEON walks 16 at a time then 8, the shared body 8.
             for &n in &[
@@ -1482,7 +1524,12 @@ mod expanded_coverage {
         // EVERY cube root the selector can pick, not just the shipped default —
         // a tier that disagrees on `Libjxl` but agrees on `MidP` would
         // otherwise ship silently to `EncoderStrategy::Libjxl` only.
-        for cbrt in [XybCubeRoot::Libjxl, XybCubeRoot::MidP, XybCubeRoot::LowP] {
+        for cbrt in [
+            XybCubeRoot::Libjxl,
+            XybCubeRoot::LibjxlUnfused,
+            XybCubeRoot::MidP,
+            XybCubeRoot::LowP,
+        ] {
             for &n in &[1_usize, 7, 8, 9, 16, 17, 64, 129] {
                 let r = gen_f32_unit(0xA001_AAAA ^ n as u64, n);
                 let g = gen_f32_unit(0xA002_BBBB ^ n as u64, n);

@@ -456,6 +456,7 @@ on `photo_512x512` at e5.)
 | Gaborish 5x5 inverse kernel — `gaborish_libjxl_parity` resolved gate (2026-09-17) | Zenjxl (`jxl_simd::gaborish_5x5_channel`): clamp/edge-replicate borders, per-distance-class neighbour sums combined by a nested FMA chain (`wc*c + (wr*r + (wd*d + (wR*R + (wl*L + wD*D))))`), weights computed in f64 then rounded per-weight. Strict `EncoderStrategy::Libjxl` (`jxl_simd::gaborish_5x5_channel_libjxl`, scalar): `Mirror` border wrap, per-row 1x5 weighted sums combined `sum0 + sum1`, f32 weight chain. | `enc_gaborish.cc::GaborishInverse` + `convolve_symmetric5.cc::Symmetric5`: `WrapMirror` borders (`Mirror(x): x<0 → -x-1`, `x>=size → 2*size-1-x` — `-2` reads pixel 1, not 0), each of the five kernel rows a horizontal 1x5 `WeightedSum` `wx2*(m2+p2) + (wx1*(m1+p1) + wx0*c)` (Mul+Add, no FMA) accumulated `sum0 = WS(0)+WS(-2)+WS(-1)`, `sum1 = WS(+2)+WS(+1)`, out `= sum0+sum1`; `normalize` cast to float before `normalize_mul = mul*normalize` in f32. | Libjxl strategy AT PARITY (2026-09-17); zen kernel unchanged (parity-only delta — border ring + ULP rounding, not a quality axis) | W45-SPEC-2 (2026-09-17, this change). Three sub-divergences isolated: (1) border wrap — mirror vs clamp, confined to the 2-px ring; (2) accumulation order — row-grouped `WeightedSum` triples vs distance-class FMA chain, ULP-scale on every pixel; (3) weight rounding — f32 product chain + `normalize`/`normalize_mul` vs f64-then-cast (note: libjxl's `mul*4*(kG-sum)` is f32 arithmetic on `static const float` constants, `1.0+` promotes to double; `WeightsSymmetric5` field order is `c,r,R,d,D,L` so `kG[4]→D` corner and `kG[3]→L` knight). Transcription verified line-by-line vs `convolve_symmetric5.cc` + `enc_gaborish.cc` + `image_ops.h::Mirror` + `convolve.h::WeightsSymmetric5`; golden-output unit test `gaborish5x5::tests::test_gaborish_5x5_libjxl_golden` locks the exact f32 output. End-to-end: strict `nature_128 e5` decode moved from 26,442 → 24,190 differing samples vs cjxl 0.12 decode (mean |Δ| 0.87 → 0.76); residual delta is the upstream e5 quant/ACS decision class, not the kernel. Scalar-only arm — strict path trades wall for parity; a SIMD port must keep the accumulation order. | The per-region path (`gaborish_inverse_for_region`, chunk-5 streaming) mirror-fills its pad under the gate; `test_per_region_libjxl_kernel_matches_whole_image_bitexact` proves region tilings are bit-identical to the whole-image `Symmetric5`. `mul={1,1,1}` confirmed vs `enc_heuristics.cc:1137-1140`. Adaptive gaborish (EX-J13, zen-only opt-in) is mutually exclusive — forced off when the parity kernel is active. |
 | CfL Pass-2 OOB-safety clamp (`vardct/chroma_from_luma.rs:594-607`) | `take = num_coeffs.min(buf_remaining)` + `break 'tile_loop` when `num_ac >= buf_cap` — defensive guard against panicking on synthetic ac_strategy injections | no clamp; writes past `kColorTileDim * kColorTileDim = 4096` into `Span<float>` sized for worst case via `mem.remove_prefix` | INTENTIONAL (defensive, NEUTRAL EV) | W44-189 CfL deep audit (D14). Regression test `test_refine_cfl_map_clamps_at_buffer_capacity` documents this triggers on pathological injections (single DCT32x32 first-block at (5,5) in a 16×16-block image inside tile (0,0)) — the in-tree CPU strategy search wouldn't produce this, but the GPU strat-search injector can. DO NOT remove. |
 | Entropy code construction — `entropy_codes_libjxl_parity` resolved gate (2026-09-17) | Zenjxl at effort 1-2 (`use_ans = effort >= 3`, `optimize_codes = effort >= 3`): single-pass static-Huffman path (streaming, no second pass, fixed tables sized for the 4-context AC map); when the two-pass fallback does run, the DC/AC-metadata modular stream shares the VarDCT `use_ans` flag and goes prefix. Strict `EncoderStrategy::Libjxl`: `optimize_codes = true` always (dynamic codes) + the DC/AC-meta stream picks ANS vs prefix by libjxl's per-stream rule (ANS unless <100 tokens or all-singleton), decoupled from `use_ans`. The AC stream's ANS choice is NOT changed — libjxl's `HistogramParams(tier)` kFastest clustering at effort <= 2 → prefix maps exactly onto our `use_ans = effort >= 3` schedule. | `enc_ans.cc::BuildAndEncodeHistograms` runs dynamic codes at every speed tier (libjxl has no static-Huffman path); per-stream `use_prefix_code = force_huffman \|\| total_tokens < 100 \|\| clustering == kFastest \|\| all_singleton`. The VarDCT AC stream's `HistogramParams(tier, num_ctx)` sets kFastest at `tier > kFalcon` (effort <= 2 → prefix); the modular DC/AC-meta stream's `HistogramParams::ForModular` sets `clustering = kFast` at `tier > kKitten` (effort <= 7 → ANS-eligible at every effort, LZ77 kNone for VarDCT). | Libjxl strategy AT PARITY at effort <= 7 (2026-09-17); Zenjxl unchanged (single-pass static path is a real wall-time optimisation) | W45-SPEC-3 (2026-09-17, this change). Isolated via jxl-oxide bit-range probes on flat64 e1: cjxl's LfCoeff DC stream cost 79 bits vs our 215 — the gate's ANS arm landed flat64 e1/e2 at 84 B (cjxl 82 B, was 112), grad64 e1/e2 491 (474, was 505), nature_128 e1/e2 3525 (**3530**, now 5 B under cjxl), webshot_128 e1/e2 1375 (1350, was 1421); all djxl-decode-verified. Also fixes a latent strict-mode crash: the static AC table is sized for the 4-context map while strict's `block_ctx_map_15_cluster` emits block contexts up to 14 (token index 3824 vs 1980) — `optimize_codes = true` removes the entire broken path. e8+ note: `ForModular` switches to kLZ77/kOptimal at `tier <= kKitten` — **mirrored 2026-09-18**: under this gate the DC/AC-meta modular stream applies `Greedy` (libjxl `kLZ77` hash-chain + lazy matching) at e8 and `Optimal` (`kOptimal` Viterbi) at e9+, and the AC coefficient stream takes libjxl's `enc_frame.cc:1290` override — `kNone` at effort ≤ 8, the `kRLE` `HistogramParams` default at effort ≥ 9 (previously the shared `lz77_method` put `Optimal` on AC at e9+, which libjxl never does). Zenjxl keeps the single-method policy (Optimal on both streams at e9+; measured strictly-better RD than RLE on gradients). Per-stream `distance_multiplier` = max channel width of each DC/AC-meta stream image, matching `ModularCompress`'s `image_widths_`. **e3 closure (2026-09-17, Tier-0):** `ans.rs` candidate shift selection now uses the exact serialized header cost (scratch `BitWriter` per candidate, mirroring libjxl's `SizeWriter`) instead of the `method+alphabet*5` estimate — shift picks dropped from {10,8,10,...} to libjxl-like {0,2}; grad64 e3 445 B (cjxl 453), flat64 e3 byte-equal, all strict e3 cells ≤ cjxl. Same change fixed latent `BitReader::peek` terminal-lookahead bug (zero-pads past stream end) exposed by shift-0 histograms. e4 section probes show entropy headers at parity (AC code_bits 427 vs 427); residual e4/e5 deltas are upstream DC-value/AC-strategy decisions. |
+| sRGB→linear EOTF — `srgb_eotf_libjxl_parity` resolved gate (W45-RECON part 10) | All non-Libjxl strategies: exact piecewise sRGB EOTF `x^2.4` via 256-entry f64-precomputed `SRGB_U8_TO_LINEAR` LUT (`api/ingest.rs`), u8 index direct. Strict `EncoderStrategy::Libjxl`: `tf_srgb_display_from_encoded_libjxl` + `v * (1.0f/255)` u8 normalization, evaluated per-pixel through a rebuilt 256-entry table — identical coverage (Rgb8/Bgr8/Rgba8/Bgra8/Gray8/GrayAlpha8); u16/f32 inputs remain on the exact path (cjxl takes a different ingest branch there too — tracked residual). | libjxl `TF_SRGB().DisplayFromEncoded` (`cms/transfer_functions-inl.h:218-242`): `abs(x)`, degree-4/4 Chebyshev rational approximation `p(x)/q(x)` (af_cheb_rational k=100, ~5e-7 max error) via `EvalRationalPolynomial` Horner `MulAdd` chain + true `Div`, `x*(1/12.92)` below `x > 0.04045` breakpoint, `copysign`. u8→f32 is `data[0] * (1.0f/255)` (`extras/packed_image.h:76`) — multiply by rounded reciprocal, not exact division. | Libjxl strategy AT PARITY on the u8 sRGB ingest path (W45-RECON part 10); Zenjxl unchanged (exact LUT is a calibrated exactness choice, not a perf axis — table is f64-exact to f32) | The exact-vs-rational-poly delta (≤5e-7 linear, ~1 ulp XYB) was the EARLIEST measurable divergence in the strict pipeline — `pregab_xyb` diffs on 63-75% of pixels propagated into `acs_quant_field`/`mask1x1` → AQ iteration fields → tile distances → coefficient and entropy streams. Paired companion fix in the same part: `CubeRootAndAdd` final `MulAdd(r2, x, add)` now fuses the `-cbrt(bias)` offset inside `XybCubeRoot::Libjxl` across scalar/v3/v4/NEON tiers (was `r2*x` then separate add — one extra rounding). |
 
 ---
 
@@ -1375,6 +1376,59 @@ Fix is gated: `ResolvedImprovements::block_ctx_map_qf_zero_based_libjxl`
 is part of the shipped Zenjxl bitstream). Unit test
 `test_compute_block_ctx_map_qf_zero_based_bins` pins both arms
 (uniform field 7 → legacy `qft=[7]`, strict `qft=[6]`).
+
+### W45-RECON part 10 (2026-10-13): sRGB→linear EOTF + fused `CubeRootAndAdd` bias — pregab XYB bit-exact
+
+Two companion corrections in the forward colour pipeline, found by
+bisecting the +30 B noise_512 e8 residual to its earliest measurable
+divergence (`pregab_xyb` differed on 63-75 % of pixels at ~3e-7):
+
+**(a) sRGB EOTF** — `api/ingest.rs::SRGB_U8_TO_LINEAR` encodes the
+*exact* piecewise `x^2.4` EOTF (f64-precomputed LUT), and our u8→f32
+normalisation was exact-division-exact. libjxl does neither:
+`TF_SRGB().DisplayFromEncoded` (`cms/transfer_functions-inl.h:218`) is a
+degree-4/4 Chebyshev rational approximation (af_cheb_rational k=100,
+~5e-7 max error) evaluated via `EvalRationalPolynomial`'s Horner
+`MulAdd` chain + true `Div`, with `x*(1/12.92)` below the `x > 0.04045`
+breakpoint; the u8→f32 step is `v * (1.0f/255)` — a multiply by the
+rounded reciprocal (`extras/packed_image.h:76`). Strict now reproduces
+both: `srgb_eotf_libjxl_parity` → `srgb_u8_to_linear_f32_libjxl` /
+`gray_u8_to_linear_f32_rgb_libjxl` across all six u8 sRGB layout arms
+(Rgb8/Bgr8/Rgba8/Bgra8/Gray8/GrayAlpha8). u16/f32 inputs stay on the
+exact path — cjxl's ingest takes a different branch there too; that is
+a tracked residual.
+
+**(b) `CubeRootAndAdd` fused bias** — libjxl ends the cbrt with
+`r = MulAdd(r2, x, add)` where `add = -cbrtf(opsin_bias)`: ONE fused
+rounding. Our `XybCubeRoot::Libjxl` variant computed `r2*x` and the
+caller added `NEG_CBRT_BIAS` — two roundings. `cbrt_libjxl_scalar_add`
+/ `cbrt_libjxl_vec_add` now take `add` and fuse it across scalar,
+v3/v4, wasm128 and NEON tiers. The historical unfused behaviour
+survives as `XybCubeRoot::LibjxlUnfused`. The resamplers' opsin
+round-trip (`to_opsin_planes`, threaded from `api.rs`) selects `Libjxl`
+under `xyb_cbrt_libjxl_parity` — libjxl downsamples ITS opsin image,
+produced by that same fused cbrt — and `LibjxlUnfused` elsewhere, so
+the opt-in normal-mode resampling byte-locks (`lossy_mg_*_r2_*`) hold.
+Measured on `gradient_rgb_64x64_e7_d12_resampled`: 121 B vs cjxl 123 B.
+
+Verified on `noise_512` e8 d1 vs instrumented cjxl 0.12.0: pre-gaborish
+XYB planes **0/786432 diffs (bit-exact)**, post-gaborish `iter0_xyb`
+**0 diffs**, `acs_mask1x1` **0 diffs**, iter-0 raw quant field **0 diffs**;
+`acs_masking` residual 1222/4098 cells at ≤5.6e-9 (aq_map internals),
+`acs_quant_field` 1907 cells at ≤9e-8. Size 308440 → **308434**
+(+24 B vs cjxl 308410); AC section +18 → +12. n48 sweep: e5 −2,
+e7 −3, **e8 −4** vs cjxl. The +24 B residual decomposes as
+lf_global +4 / lf_groups +33 / hf_global −22 / ac_total +12 — driven
+by the butteraugli-loop trajectory (iter-1 quant field diffs ≤3.4e-2
+propagating from tiledist ≤6e-3 / diffmap ≤3e-2 in the recon-metric
+pipeline), the next residual class.
+
+68/68 hash locks byte-identical (normal Zenjxl unchanged); strict
+byte-lock cells re-pinned (EOTF touches every byte by design — sizes
+moved toward cjxl on every measured cell); decode via djxl 0.12 clean.
+Unit tests `libjxl_srgb_eotf_golden_bits` (pins 8 f32 bit patterns
+across both EOTF branches) and `libjxl_srgb_lut_differs_from_exact`
+(lock the approximation-vs-exact distinction) ship in `api/ingest.rs`.
 
 ---
 

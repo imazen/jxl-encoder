@@ -7411,6 +7411,27 @@ impl<'a> EncodeRequest<'a> {
         }
         #[cfg(feature = "__env_var_diagnostics")]
         let _t_conv = std::time::Instant::now();
+        // Strict parity (W45-RECON part 10): under `srgb_eotf_libjxl_parity`
+        // the sRGB u8→linear conversion goes through libjxl's rational-
+        // polynomial `TF_SRGB().DisplayFromEncoded` + `v*(1/255)`
+        // normalization instead of the exact `x^2.4` LUT. Covers the u8
+        // layouts; u16/f32 inputs remain on the exact path (documented
+        // divergence — cjxl takes a different ingest branch there too).
+        let srgb_eotf_libjxl = cfg.resolve_improvements().srgb_eotf_libjxl_parity;
+        let srgb_u8 = |px: &[u8], ch: usize| -> Vec<f32> {
+            if srgb_eotf_libjxl {
+                srgb_u8_to_linear_f32_libjxl(px, ch)
+            } else {
+                srgb_u8_to_linear_f32(px, ch)
+            }
+        };
+        let gray_u8 = |px: &[u8], st: usize| -> Vec<f32> {
+            if srgb_eotf_libjxl {
+                gray_u8_to_linear_f32_rgb_libjxl(px, st)
+            } else {
+                gray_u8_to_linear_f32_rgb(px, st)
+            }
+        };
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
@@ -7422,7 +7443,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_u8_to_linear_f32(pixels, 3)
                 } else {
-                    srgb_u8_to_linear_f32(pixels, 3)
+                    srgb_u8(pixels, 3)
                 };
                 (linear, None, false)
             }
@@ -7437,7 +7458,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_u8_to_linear_f32(&rgb, 3)
                 } else {
-                    srgb_u8_to_linear_f32(&rgb, 3)
+                    srgb_u8(&rgb, 3)
                 };
                 (linear, None, false)
             }
@@ -7451,7 +7472,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_u8_to_linear_f32(pixels, 4)
                 } else {
-                    srgb_u8_to_linear_f32(pixels, 4)
+                    srgb_u8(pixels, 4)
                 };
                 let alpha = extract_alpha(pixels, 4, 3);
                 (rgb, Some(alpha), false)
@@ -7467,7 +7488,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_u8_to_linear_f32(&swapped, 4)
                 } else {
-                    srgb_u8_to_linear_f32(&swapped, 4)
+                    srgb_u8(&swapped, 4)
                 };
                 let alpha = extract_alpha(pixels, 4, 3);
                 (rgb, Some(alpha), false)
@@ -7482,7 +7503,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_gray_u8_to_linear_f32_rgb(pixels, 1)
                 } else {
-                    gray_u8_to_linear_f32_rgb(pixels, 1)
+                    gray_u8(pixels, 1)
                 };
                 (rgb, None, false)
             }
@@ -7496,7 +7517,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_gray_u8_to_linear_f32_rgb(pixels, 2)
                 } else {
-                    gray_u8_to_linear_f32_rgb(pixels, 2)
+                    gray_u8(pixels, 2)
                 };
                 let alpha = extract_alpha(pixels, 2, 1);
                 (rgb, Some(alpha), false)
@@ -8335,6 +8356,17 @@ impl<'a> EncodeRequest<'a> {
         // downsample and wants the encoder to honour the input dims;
         // skip the internal downsample but keep the upsampling factor
         // in the bitstream.
+        // Strict parity (W45-RECON part 10): the opsin round-trip inside
+        // the downsamplers uses libjxl's fused `CubeRootAndAdd`
+        // (`XybCubeRoot::Libjxl`) under `xyb_cbrt_libjxl_parity` — libjxl
+        // downsamples ITS opsin image, produced by that exact cbrt — and
+        // the historical unfused variant everywhere else so normal-mode
+        // resampling byte locks hold.
+        let resample_cbrt = if cfg.resolve_improvements().xyb_cbrt_libjxl_parity {
+            jxl_simd::XybCubeRoot::Libjxl
+        } else {
+            jxl_simd::XybCubeRoot::LibjxlUnfused
+        };
         let (encode_rgb, encode_alpha, encode_w, encode_h) =
             if effective_resampling > 1 && !cfg.already_downsampled {
                 let (down_rgb, dw, dh) = if effective_resampling == 2 && cfg.effort >= 10 {
@@ -8342,6 +8374,7 @@ impl<'a> EncodeRequest<'a> {
                         &linear_rgb,
                         w,
                         h,
+                        resample_cbrt,
                         Some(budget),
                     )?
                 } else if effective_resampling == 2 {
@@ -8349,6 +8382,7 @@ impl<'a> EncodeRequest<'a> {
                         &linear_rgb,
                         w,
                         h,
+                        resample_cbrt,
                         Some(budget),
                     )?
                 } else {
@@ -8357,6 +8391,7 @@ impl<'a> EncodeRequest<'a> {
                         w,
                         h,
                         effective_resampling,
+                        resample_cbrt,
                         Some(budget),
                     )?
                 };
