@@ -938,6 +938,16 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
     let _cm_start = writer.bits_written();
     write_context_map_for_ans(code, writer)?;
 
+    #[cfg(feature = "std")]
+    if std::env::var("JXL_ENC_HDR_DUMP").is_ok() {
+        eprintln!(
+            "[ENC-HDR] ctxs={} hists={} ctxmap_bits={}",
+            code.context_map.len(),
+            code.histograms.len(),
+            writer.bits_written() - _cm_start
+        );
+    }
+
     #[cfg(feature = "debug-tokens")]
     eprintln!("  context_map: {} bits", writer.bits_written() - _cm_start);
 
@@ -985,6 +995,15 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
         writer.bits_written() - _hist_start
     );
 
+    #[cfg(feature = "std")]
+    if std::env::var("JXL_ENC_HDR_DUMP").is_ok() {
+        eprintln!(
+            "[ENC-HDR] cfg+hist_bits={} total_after_ctxmap={}",
+            writer.bits_written() - _cfg_start,
+            writer.bits_written() - _cm_start
+        );
+    }
+
     Ok(())
 }
 
@@ -1014,13 +1033,21 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
     if entry_bits < 4 {
         let simple_cost = 3 + entry_bits * code.context_map.len(); // 1 (is_simple) + 2 (nbits) + data
 
-        // Write non-simple to a scratch writer to measure actual cost
-        let mut scratch = BitWriter::with_capacity(code.context_map.len());
-        write_context_map_nonsimple(&code.context_map, &mut scratch, code.libjxl_log_alpha)?;
-        let nonsimple_cost = scratch.bits_written();
+        let (scratch, pick_simple) = if code.libjxl_log_alpha {
+            // libjxl `EncodeContextMap` compares `simple_cost` against the
+            // two histogram-build ESTIMATES (`ans_cost`/`mtf_cost`), not
+            // the serialized size: `entry_bits < 4 && simple_cost <
+            // ans_cost && simple_cost < mtf_cost` (`enc_context_map.cc`).
+            let (buf, ans_cost, mtf_cost) = build_ctxmap_libjxl(&code.context_map)?;
+            (buf, simple_cost < ans_cost && simple_cost < mtf_cost)
+        } else {
+            let mut scratch = BitWriter::with_capacity(code.context_map.len());
+            write_context_map_nonsimple(&code.context_map, &mut scratch, false)?;
+            let pick_simple = simple_cost <= scratch.bits_written();
+            (scratch, pick_simple)
+        };
 
-        if simple_cost <= nonsimple_cost {
-            // Simple is cheaper (or equal), use it
+        if pick_simple {
             writer.write(1, 1)?; // simple_context_map = true
             writer.write(2, entry_bits as u64)?;
             for &ctx in &code.context_map {
@@ -1029,8 +1056,8 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
             return Ok(());
         }
         // Non-simple is cheaper — copy the scratch bits
+        let bits_to_copy = scratch.bits_written();
         let scratch_bytes = scratch.finish_with_padding();
-        let bits_to_copy = nonsimple_cost;
         // Copy bit-by-bit from scratch to writer (scratch is byte-aligned but
         // writer may not be). Use the raw bytes and copy the exact bit count.
         copy_bits(&scratch_bytes, bits_to_copy, writer)?;
@@ -1062,15 +1089,27 @@ pub(crate) fn write_context_map_nonsimple(
     writer: &mut BitWriter,
     libjxl_log_alpha: bool,
 ) -> Result<()> {
-    // Strategy 1: legacy Huffman+MTF, write to scratch and measure cost.
-    let mut huffman_scratch = BitWriter::with_capacity(context_map.len());
-    write_context_map_nonsimple_huffman(context_map, &mut huffman_scratch)?;
-    let huffman_cost = huffman_scratch.bits_written();
-
     // Strategy 2: libjxl-parity ANS+LZ77, write to scratch and measure cost.
     // Wrap in Result so we can fall back to Huffman if ANS path errors
     // (e.g. degenerate input that exposes a histogram-builder edge case).
     let ans_lz77_scratch = build_context_map_nonsimple_ans_lz77(context_map, libjxl_log_alpha).ok();
+
+    // libjxl `EncodeContextMap` has no Huffman candidate: non-simple maps
+    // always take the ANS(+LZ77) form chosen between raw and MTF tokens.
+    // In strict mode emit that form unconditionally; otherwise keep the
+    // legacy shoot-out so non-strict output is unchanged.
+    if libjxl_log_alpha {
+        if let Some(buf) = ans_lz77_scratch {
+            let bits_to_copy = buf.bits_written();
+            let bytes = buf.finish_with_padding();
+            return copy_bits(&bytes, bits_to_copy, writer);
+        }
+    }
+
+    // Strategy 1: legacy Huffman+MTF, write to scratch and measure cost.
+    let mut huffman_scratch = BitWriter::with_capacity(context_map.len());
+    write_context_map_nonsimple_huffman(context_map, &mut huffman_scratch)?;
+    let huffman_cost = huffman_scratch.bits_written();
 
     let pick_ans = match &ans_lz77_scratch {
         Some(buf) => buf.bits_written() < huffman_cost,
@@ -1211,6 +1250,9 @@ pub(crate) fn build_context_map_nonsimple_ans_lz77(
     context_map: &[u8],
     libjxl_log_alpha: bool,
 ) -> Result<BitWriter> {
+    if libjxl_log_alpha {
+        return Ok(build_ctxmap_libjxl(context_map)?.0);
+    }
     use super::lz77::apply_lz77_rle;
 
     // Outer allow_lz77 gate: jxl-rs `decode_context_map` calls
@@ -1237,40 +1279,7 @@ pub(crate) fn build_context_map_nonsimple_ans_lz77(
         }
     };
 
-    if libjxl_log_alpha {
-        // libjxl `EncodeContextMap` runs `BuildAndEncodeHistograms` on BOTH
-        // the raw and the MTF candidate, and `ApplyLZ77` runs inside each —
-        // so the LZ77 accept/reject decision is evaluated per candidate
-        // before the `use_mtf = mtf_cost < ans_cost` pick. Evaluating LZ77
-        // only after picking a candidate (the legacy order) lets the MTF
-        // candidate's destroyed runs suppress LZ77 entirely on maps where
-        // the raw stream would have accepted it.
-        let raw_lz77 = try_lz77(&raw_tokens);
-        let mtf_lz77 = try_lz77(&mtf_tokens);
-
-        // The `use_mtf` pick follows libjxl's `BuildAndEncodeHistograms`
-        // cost estimate (`writer == nullptr` path: histogram serialization +
-        // `EstimateDataBits`), NOT serialized size — the estimate excludes
-        // hybrid-uint extra bits, which systematically favors the LZ77
-        // candidate on run-heavy maps.
-        let ans_cost = estimate_ctxmap_cost_libjxl(&raw_tokens, raw_lz77.as_ref());
-        let mtf_cost = estimate_ctxmap_cost_libjxl(&mtf_tokens, mtf_lz77.as_ref());
-        let use_mtf = mtf_cost < ans_cost;
-        #[cfg(feature = "debug-tokens")]
-        eprintln!(
-            "[CTXMAP] n={} est_raw={} est_mtf={} -> {}",
-            context_map.len(),
-            ans_cost,
-            mtf_cost,
-            if use_mtf { "mtf" } else { "raw" }
-        );
-
-        if use_mtf {
-            build_ctxmap_ans_candidate(&mtf_tokens, mtf_lz77, true, true)
-        } else {
-            build_ctxmap_ans_candidate(&raw_tokens, raw_lz77, false, true)
-        }
-    } else {
+    {
         // Legacy path: pick the candidate by Shannon-entropy estimate, then
         // try LZ77-RLE on the winner only.
         let raw_cost = estimate_context_map_cost(context_map);
@@ -1283,6 +1292,89 @@ pub(crate) fn build_context_map_nonsimple_ans_lz77(
         };
         build_ctxmap_ans_candidate(tokens, try_lz77(tokens), use_mtf, false)
     }
+}
+
+/// Strict libjxl-parity context-map encoder. Mirrors
+/// `EncodeContextMap`'s non-simple branch (`enc_context_map.cc:77-137`):
+/// builds BOTH the raw and the MTF token stream, evaluates LZ77-RLE inside
+/// each candidate (`ApplyLZ77` runs inside `BuildAndEncodeHistograms`,
+/// before the `use_mtf` pick), picks `use_mtf = mtf_cost < ans_cost` on the
+/// histogram-build cost ESTIMATE (not serialized size), then serializes the
+/// winning candidate's inner entropy code.
+///
+/// Returns `(serialized, ans_cost, mtf_cost)` so callers can reproduce
+/// libjxl's simple-vs-nonsimple check, which compares `simple_cost` against
+/// the same estimates (`simple_cost < ans_cost && simple_cost < mtf_cost`)
+/// rather than real bit counts.
+pub(crate) fn build_ctxmap_libjxl(context_map: &[u8]) -> Result<(BitWriter, usize, usize)> {
+    use super::lz77::apply_lz77_rle;
+
+    // libjxl `EncodeContextMap` runs `BuildAndEncodeHistograms` on BOTH
+    // the raw and the MTF candidate, and `ApplyLZ77` runs inside each —
+    // so the LZ77 accept/reject decision is evaluated per candidate
+    // before the `use_mtf = mtf_cost < ans_cost` pick. Evaluating LZ77
+    // only after picking a candidate (the legacy order) lets the MTF
+    // candidate's destroyed runs suppress LZ77 entirely on maps where
+    // the raw stream would have accepted it.
+    //
+    // Outer allow_lz77 gate: jxl-rs `decode_context_map` calls
+    // `Histograms::decode(1, br, allow_lz77 = num_contexts > 2)`. When the
+    // outer num_contexts (= context_map.len()) is <= 2, we cannot signal
+    // LZ77-enabled — the decoder would error with `Lz77Disallowed`.
+    let lz77_allowed_outer = context_map.len() > 2;
+
+    let raw_tokens: Vec<Token> = context_map
+        .iter()
+        .map(|&v| Token::new(0, v as u32))
+        .collect();
+    let mtf_bytes = move_to_front_transform(context_map);
+    let mtf_tokens: Vec<Token> = mtf_bytes.iter().map(|&v| Token::new(0, v as u32)).collect();
+
+    let try_lz77 = |tokens: &[Token]| {
+        if lz77_allowed_outer {
+            apply_lz77_rle(tokens, /*num_contexts=*/ 1, /*force_huffman=*/ false, 0)
+        } else {
+            None
+        }
+    };
+    let raw_lz77 = try_lz77(&raw_tokens);
+    let mtf_lz77 = try_lz77(&mtf_tokens);
+
+    // The `use_mtf` pick follows libjxl's `BuildAndEncodeHistograms`
+    // cost estimate (`writer == nullptr` path: histogram serialization +
+    // `EstimateDataBits`), NOT serialized size — the estimate excludes
+    // hybrid-uint extra bits, which systematically favors the LZ77
+    // candidate on run-heavy maps.
+    let ans_cost = estimate_ctxmap_cost_libjxl(&raw_tokens, raw_lz77.as_ref());
+    let mtf_cost = estimate_ctxmap_cost_libjxl(&mtf_tokens, mtf_lz77.as_ref());
+    let use_mtf = mtf_cost < ans_cost;
+    #[cfg(feature = "std")]
+    if std::env::var("JXL_CTXMAP_DUMP").is_ok() {
+        eprintln!(
+            "[CTXMAP] n={} est_raw={} est_mtf={} lz_raw={} lz_mtf={} -> {}",
+            context_map.len(),
+            ans_cost,
+            mtf_cost,
+            raw_lz77.is_some(),
+            mtf_lz77.is_some(),
+            if use_mtf { "mtf" } else { "raw" }
+        );
+    }
+
+    let buf = if use_mtf {
+        build_ctxmap_ans_candidate(&mtf_tokens, mtf_lz77, true, true)?
+    } else {
+        build_ctxmap_ans_candidate(&raw_tokens, raw_lz77, false, true)?
+    };
+    #[cfg(feature = "std")]
+    if std::env::var("JXL_CTXMAP_DUMP").is_ok() {
+        eprintln!(
+            "[CTXMAP] n={} chosen_bits={}",
+            context_map.len(),
+            buf.bits_written()
+        );
+    }
+    Ok((buf, ans_cost, mtf_cost))
 }
 
 fn estimate_context_map_cost(tokens: &[u8]) -> f64 {
@@ -1447,6 +1539,26 @@ fn build_ctxmap_ans_candidate(
     };
     let final_tokens: &[Token] = final_tokens_owned.as_deref().unwrap_or(tokens);
 
+    // Diagnostic: transformed-token dump for libjxl `EncodeContextMap`
+    // parity work. `JXL_CTX_LZ_DUMP=<prefix>` writes
+    // `<prefix>_mtf{0,1}_n<N>.txt` lines of "lz ctx value".
+    #[cfg(feature = "std")]
+    if let Ok(prefix) = std::env::var("JXL_CTX_LZ_DUMP") {
+        let path = format!("{prefix}_mtf{}_n{}.txt", use_mtf as u8, tokens.len());
+        if let Ok(mut f) = std::fs::File::create(path) {
+            use std::io::Write as _;
+            for t in final_tokens {
+                let _ = writeln!(
+                    f,
+                    "{} {} {}",
+                    t.is_lz77_length() as u8,
+                    t.context(),
+                    t.value
+                );
+            }
+        }
+    }
+
     // Build a 1-context (literals only) or 2-context (literals + LZ77 distance)
     // ANS code over the (possibly LZ77-transformed) tokens. libjxl post-LZ77 has
     // num_contexts incremented by 1 for the distance context (`enc_ans.cc:1121`);
@@ -1545,6 +1657,39 @@ fn build_ctxmap_ans_candidate(
     code.log_alpha_size = log_alpha_size;
     code.uint_configs = vec![new_config; code.histograms.len()];
 
+    // libjxl `BuildAndEncodeHistograms` (`enc_ans.cc`): the inner entropy
+    // code is a PREFIX code when `force_huffman || total_tokens < 100 ||
+    // clustering == kFastest`, or when every context histogram is a
+    // singleton. For `EncodeContextMap`'s params only the token-count and
+    // singleton rules can fire. `total_tokens` counts the post-LZ77 stream.
+    let use_prefix_code = libjxl_log_alpha && {
+        // Per-CONTEXT singleton check (libjxl tests `builder[i]` before
+        // clustering, not the clustered histograms).
+        let mut per_ctx_syms: Vec<(u32, bool)> = vec![(0, false); post_lz77_num_contexts];
+        let mut all_singleton = true;
+        for token in final_tokens {
+            let sym = if token.is_lz77_length() {
+                let lz = lz77_params
+                    .as_ref()
+                    .expect("LZ77 length token requires lz77_params");
+                let e = Lz77UintCoder::encode(token.value);
+                e.token + lz.min_symbol
+            } else {
+                new_config.encode(token.value).0
+            };
+            let ctx = token.context() as usize;
+            let entry = &mut per_ctx_syms[ctx];
+            if !entry.1 {
+                entry.0 = sym;
+                entry.1 = true;
+            } else if entry.0 != sym {
+                all_singleton = false;
+                break;
+            }
+        }
+        final_tokens.len() < 100 || all_singleton
+    };
+
     // Now write to the scratch BitWriter:
     //
     //   is_simple=0 | use_mtf | LZ77 header
@@ -1558,16 +1703,122 @@ fn build_ctxmap_ans_candidate(
     // SKIPPED entirely (the decoder falls back to `vec![0]`). Writing the
     // 3-bit "simple, nbits=0" shortcut in that case would misalign every
     // subsequent bit.
+    #[cfg(feature = "std")]
+    let hdr_dump = std::env::var_os("JXL_ANS_HDR_DUMP").is_some();
+
     let mut scratch = BitWriter::with_capacity(tokens.len() * 2);
     scratch.write(1, 0)?; // is_simple = 0
     scratch.write(1, if use_mtf { 1 } else { 0 })?; // use_mtf
 
+    let bits_at_entry = scratch.bits_written();
     super::lz77::write_lz77_header(lz77_params.as_ref(), &mut scratch)?;
+    let bits_after_lzhdr = scratch.bits_written();
 
     // Inner context map: ONLY when decoder will actually read it.
     let inner_num_contexts = post_lz77_num_contexts;
     if inner_num_contexts > 1 {
         write_context_map_for_ans(&code, &mut scratch)?;
+    }
+    let bits_after_ctxmap = scratch.bits_written();
+
+    if use_prefix_code {
+        // Prefix-code inner entropy code, mirroring libjxl's
+        // `use_prefix_code` branch in `BuildAndStoreEntropyCodes`
+        // (`enc_ans.cc`): use_prefix(1) | uint configs @ log_alpha=15 |
+        // StoreVarLenUint16(alphabet-1) per histogram | Huffman tree per
+        // histogram | tokens.
+        scratch.write(1, 1)?; // use_prefix_code = 1
+        for _ in &code.histograms {
+            write_hybrid_uint_config_value(15, &new_config, &mut scratch)?;
+        }
+        let bits_after_cfgs = scratch.bits_written();
+
+        // Trimmed alphabet sizes first (libjxl writes all of them before
+        // any tree).
+        let mut trimmed_lens = Vec::with_capacity(counts_per_hist.len());
+        for counts in &counts_per_hist {
+            let len = counts
+                .iter()
+                .rposition(|&c| c > 0)
+                .map_or(0, |i| i + 1)
+                .max(1);
+            trimmed_lens.push(len);
+            write_var_len_uint16(len - 1, &mut scratch)?;
+        }
+
+        // Per-histogram Huffman trees; libjxl writes nothing when
+        // alphabet_size <= 1.
+        let mut emit_depths: Vec<Vec<u8>> = Vec::with_capacity(counts_per_hist.len());
+        let mut emit_bits: Vec<Vec<u16>> = Vec::with_capacity(counts_per_hist.len());
+        for (counts, &len) in counts_per_hist.iter().zip(trimmed_lens.iter()) {
+            let mut depths = [0u8; ALPHABET_SIZE];
+            let mut bits = [0u16; ALPHABET_SIZE];
+            if len > 1 {
+                create_huffman_tree(counts, len, 15, &mut depths);
+                convert_bit_depths_to_symbols(&depths, &mut bits);
+                write_prefix_code(
+                    &PrefixCode { depths, bits },
+                    &mut scratch,
+                )?;
+            }
+            // Token emission depths: a singleton code emits ZERO depth bits
+            // in libjxl (`encoding_info` stays zero-initialised when the
+            // tree write early-returns), while `create_huffman_tree` marks
+            // the lone symbol depth 1.
+            if len <= 1
+                || super::encode_huffman::has_single_used_symbol(&depths[..len])
+            {
+                depths = [0u8; ALPHABET_SIZE];
+            }
+            emit_depths.push(depths.to_vec());
+            emit_bits.push(bits.to_vec());
+        }
+        let bits_after_hists = scratch.bits_written();
+
+        // Tokens: `depth` bits of the prefix symbol, then the hybrid-uint
+        // extra bits (`enc_ans.cc WriteTokens` prefix branch).
+        let min_symbol = lz77_params.as_ref().map_or(0, |p| p.min_symbol);
+        for token in final_tokens {
+            let cm_idx = code
+                .context_map
+                .get(token.context() as usize)
+                .copied()
+                .unwrap_or(0) as usize;
+            let (sym, xbits, xnbits) = if token.is_lz77_length() {
+                let e = Lz77UintCoder::encode(token.value);
+                (e.token + min_symbol, e.bits, e.nbits)
+            } else {
+                let (t, rest_bits, n) = new_config.encode(token.value);
+                (t, rest_bits, n)
+            };
+            let depth = emit_depths[cm_idx]
+                .get(sym as usize)
+                .copied()
+                .unwrap_or(0) as usize;
+            let bits = emit_bits[cm_idx]
+                .get(sym as usize)
+                .copied()
+                .unwrap_or(0) as u64;
+            scratch.write(depth + xnbits as usize, bits | ((xbits as u64) << depth))?;
+        }
+
+        #[cfg(feature = "std")]
+        if hdr_dump {
+            eprintln!(
+                "[ANS-HDR-OURS] builders={} nhists={} lzhdr={} ctxmap={} prefix+las+cfgs={} hists={} tokens={} total={} las={} ntok={} prefix=1",
+                post_lz77_num_contexts,
+                code.histograms.len(),
+                bits_after_lzhdr - bits_at_entry,
+                bits_after_ctxmap - bits_after_lzhdr,
+                bits_after_cfgs - bits_after_ctxmap,
+                bits_after_hists - bits_after_cfgs,
+                scratch.bits_written() - bits_after_hists,
+                scratch.bits_written(),
+                15,
+                final_tokens.len(),
+            );
+        }
+        return Ok(scratch);
     }
 
     // use_prefix_code = 0 (ANS)
@@ -1580,14 +1831,33 @@ fn build_ctxmap_ans_candidate(
         let cfg = code.uint_configs.get(i).copied().unwrap_or_default();
         write_hybrid_uint_config_value(las, &cfg, &mut scratch)?;
     }
+    let bits_after_cfgs = scratch.bits_written();
 
     // ANS distributions.
     for h in &code.histograms {
         h.write(&mut scratch)?;
     }
+    let bits_after_hists = scratch.bits_written();
 
     // Tokens.
     write_tokens_ans(final_tokens, &code, lz77_params.as_ref(), &mut scratch)?;
+
+    #[cfg(feature = "std")]
+    if hdr_dump {
+        eprintln!(
+            "[ANS-HDR-OURS] builders={} nhists={} lzhdr={} ctxmap={} prefix+las+cfgs={} hists={} tokens={} total={} las={} ntok={}",
+            post_lz77_num_contexts,
+            code.histograms.len(),
+            bits_after_lzhdr - bits_at_entry,
+            bits_after_ctxmap - bits_after_lzhdr,
+            bits_after_cfgs - bits_after_ctxmap,
+            bits_after_hists - bits_after_cfgs,
+            scratch.bits_written() - bits_after_hists,
+            scratch.bits_written(),
+            code.log_alpha_size,
+            final_tokens.len(),
+        );
+    }
 
     Ok(scratch)
 }

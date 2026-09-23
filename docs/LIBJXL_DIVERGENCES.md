@@ -1730,6 +1730,65 @@ unchanged at +4 B (LfGlobal ctx-map candidate selection, a different
 layer: `estimate_ctxmap_cost_libjxl` picks raw vs MTF by estimate,
 libjxl compares real serialized sizes).
 
+### W45-RECON part 17 (2026-09-23): context-map inner-code parity — noise_512 e8 d4 **exact-size match to cjxl** (115451 B)
+
+The −48 B was never in clustering: input histograms, cluster outputs
+and context-map assignments were verified identical (1485 contexts →
+20 histograms, `kFast`). It was in the serialized non-simple context
+map. Three layered fixes, all inside the strict
+(`libjxl_log_alpha`/`libjxl_params`-gated) ctx-map path:
+
+1. **libjxl has no Huffman-vs-ANS shoot-out.** Our
+   `write_context_map_nonsimple` trial-encoded a legacy Huffman+MTF
+   candidate next to the ANS+LZ77 one and picked the shorter — for the
+   1485-entry AC map Huffman won at 2894 bits where libjxl's
+   `EncodeContextMap` unconditionally emits the ANS candidate (3277).
+   Strict path now always emits the libjxl form
+   (`build_ctxmap_libjxl`): raw-vs-MTF picked by the
+   `BuildAndEncodeHistograms` cost *estimate* (matching
+   `use_mtf = mtf_cost < ans_cost`), LZ77-RLE evaluated per candidate.
+
+2. **The inner entropy code is a PREFIX code for small streams.**
+   libjxl's `BuildAndEncodeHistograms` sets
+   `use_prefix_code = force_huffman || total_tokens < 100 ||
+   clustering == kFastest`, plus an all-singleton fallback
+   (`enc_ans.cc`). Small ctx-maps (2–39 entries, all `< 100` tokens)
+   are Huffman-coded inside — which is why the legacy shoot-out
+   accidentally produced the right *format* (but wrong picks) before.
+   `build_ctxmap_ans_candidate` now mirrors the rule: post-LZ77 token
+   count `< 100` or every context singleton → emit
+   `use_prefix_code=1` + HybridUint configs @ `log_alpha=15` +
+   `StoreVarLenUint16(alphabet−1)` + `BuildAndStoreHuffmanTree`-shape
+   trees + prefix-coded tokens (singleton codes emit 0 depth bits,
+   matching libjxl's zero-initialised `encoding_info`).
+
+3. **Simple-vs-nonsimple compares against estimates, not real bits.**
+   libjxl picks the fixed-width simple map iff
+   `entry_bits < 4 && simple_cost < ans_cost && simple_cost <
+   mtf_cost` — the two *estimates*, which can exceed the real
+   serialized size. Both ctx-map writers (`write_context_map_for_ans`
+   ANS path and `write_context_map` prefix path) now reproduce that
+   comparison for strict codes via `build_ctxmap_libjxl`, which
+   returns `(serialized, ans_cost, mtf_cost)`.
+
+**Result**: `noise_512 e8 d4` → **115451 B, exact match to cjxl**;
+decoded pixels identical; every context map's inner code is
+bit-*count*-exact (per-map breakdown: 27/112/61/23/3277 bits both
+sides). e8 d1 byte-identity preserved; e7 d1 unchanged (+4 B — its
+residual is elsewhere; the estimate-pick fix above is still required
+parity even though no borderline map fires on this fixture). Normal
+63/63 locks, strict locks and the `it` suite (507/507) all green —
+everything lives behind the existing strict flags, so Zenjxl bytes
+are untouched.
+
+Remaining byte-level divergence at d4 (equal-cost alternative
+encodings, size-identical): LfGlobal 29 diffs, HfGlobal 1, AC groups
+~17.6 k — the ANS **distribution normalization** layer
+(`ANSEncodingHistogram::ComputeBest` vs our `Precise` strategy
+producing different-but-equal-cost distributions and hence different
+token bits), plus residual Huffman-tree shape choices in small maps.
+Byte-exact AC streams need that normalization replicated exactly.
+
 ---
 
 ## G. RESOLVED divergences (historical)

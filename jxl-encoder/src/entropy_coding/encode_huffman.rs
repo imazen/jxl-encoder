@@ -725,19 +725,31 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
     let entry_bits = super::encode_ans::ceil_log2_nonzero_usize(num_histograms);
     if entry_bits < 4 {
         let simple_cost = 3 + entry_bits * context_map.len();
-        let mut scratch = BitWriter::with_capacity(context_map.len());
-        write_context_map_nonsimple(context_map, &mut scratch, code.libjxl_log_alpha)?;
-        let nonsimple_cost = scratch.bits_written();
+        let (scratch, pick_simple) = if code.libjxl_log_alpha {
+            // libjxl `EncodeContextMap` compares `simple_cost` against the
+            // two histogram-build ESTIMATES, not the serialized size
+            // (`enc_context_map.cc`: `simple_cost < ans_cost &&
+            // simple_cost < mtf_cost`).
+            let (buf, ans_cost, mtf_cost) =
+                super::encode_ans::build_ctxmap_libjxl(context_map)?;
+            (buf, simple_cost < ans_cost && simple_cost < mtf_cost)
+        } else {
+            let mut scratch = BitWriter::with_capacity(context_map.len());
+            write_context_map_nonsimple(context_map, &mut scratch, false)?;
+            let pick_simple = simple_cost <= scratch.bits_written();
+            (scratch, pick_simple)
+        };
 
-        if simple_cost <= nonsimple_cost {
+        if pick_simple {
             writer.write(1, 1)?; // simple_context_map = true
             writer.write(2, entry_bits as u64)?;
             for &ctx in context_map {
                 writer.write(entry_bits, ctx as u64)?;
             }
         } else {
+            let bits_to_copy = scratch.bits_written();
             let scratch_bytes = scratch.finish_with_padding();
-            copy_bits(&scratch_bytes, nonsimple_cost, writer)?;
+            copy_bits(&scratch_bytes, bits_to_copy, writer)?;
         }
     } else {
         write_context_map_nonsimple(context_map, writer, code.libjxl_log_alpha)?;
