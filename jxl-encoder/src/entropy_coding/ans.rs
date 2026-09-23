@@ -47,9 +47,83 @@ const LOGCOUNT_PREFIX_CODE: [(u8, u8); 14] = [
     (7, 0b1000001), // 13: RLE marker
 ];
 
-/// Build sorted table of all representable count values for a given shift.
-/// Matches libjxl's AllowedCounts precomputation (enc_ans.cc:581-615).
-/// Returns counts in DECREASING order (index 0 = highest count).
+/// libjxl `CountsEntropy` — one slot of the `allowed_counts[shift]` table
+/// (enc_ans.cc): an allowed normalized count in decreasing order, plus the
+/// fixed-point entropy delta to the next-larger allowed value and the log2 of
+/// that step's size.
+#[derive(Clone, Copy, Default)]
+struct CountsEntropy {
+    count: i32,
+    step_log: u32,
+    delta_lg2: i32,
+}
+
+/// One `allowed_counts[shift]` table (libjxl `AllowedCounts` row): the
+/// representable normalized counts in decreasing order plus a count→slot
+/// index. The last slot is the 0-count sentinel (delta_lg2 = i32::MAX) that
+/// walls off decrements below count 1.
+struct AllowedShiftTable {
+    entries: Vec<CountsEntropy>,
+    index: Vec<u16>,
+}
+
+/// libjxl `SmallestIncrementLog`: the drop-bits count for a given raw count
+/// at a given shift (ans_common.h GetPopulationCountPrecision applied).
+#[inline]
+fn smallest_increment_log(count: u32, shift: u32) -> u32 {
+    if count == 0 {
+        return 0;
+    }
+    let bits = floor_log2(count);
+    bits - get_population_count_precision(bits, shift)
+}
+
+/// Build one `allowed_counts[shift]` table exactly as libjxl does
+/// (enc_ans.cc `allowed_counts` lambda): scan i from 4095 down to 0, snap each
+/// to its increment grid, keep distinct values in decreasing order.
+fn build_allowed_shift_table(shift: u32) -> AllowedShiftTable {
+    let mut entries: Vec<CountsEntropy> = Vec::with_capacity(256);
+    let mut index = vec![0u16; ANS_TAB_SIZE as usize];
+    let mut last: i32 = -1;
+    for i in (0..ANS_TAB_SIZE as i32).rev() {
+        let curr = i & !((1i32 << smallest_increment_log(i as u32, shift)) - 1);
+        if curr == last {
+            continue;
+        }
+        last = curr;
+        let mut e = CountsEntropy {
+            count: curr,
+            step_log: 0,
+            delta_lg2: 0,
+        };
+        if curr == 0 {
+            e.delta_lg2 = i32::MAX;
+        } else if let Some(prev_entry) = entries.last() {
+            let prev = prev_entry.count;
+            e.delta_lg2 = (f64::log2(prev as f64 / curr as f64) / ANS_LOG_TAB_SIZE as f64
+                * (1u64 << 31) as f64)
+                .round() as i32;
+            e.step_log = floor_log2((prev - curr) as u32);
+        }
+        index[curr as usize] = entries.len() as u16;
+        entries.push(e);
+    }
+    AllowedShiftTable { entries, index }
+}
+
+/// libjxl fixed-point log2 LUT: `lg2[i] = round(log2(i)/12 * 2^31)` for
+/// i in [0, 4096], lg2[0] = 0 (enc_ans.cc `AEH::lg2`).
+fn build_lg2_lut() -> Vec<u32> {
+    let mut v = vec![0u32; ANS_TAB_SIZE as usize + 1];
+    for (i, e) in v.iter_mut().enumerate().skip(1) {
+        *e = (f64::log2(i as f64) / ANS_LOG_TAB_SIZE as f64 * (1u64 << 31) as f64).round() as u32;
+    }
+    v
+}
+
+/// Build sorted table of all representable count values for a given shift
+/// (legacy estimator form). Returns counts in DECREASING order
+/// (index 0 = highest count).
 fn build_allowed_counts(shift: u32) -> Vec<i32> {
     let mut counts = Vec::with_capacity(256);
     // Count = 1 is always representable (logcount=1, no precision bits)
@@ -69,35 +143,6 @@ fn build_allowed_counts(shift: u32) -> Vec<i32> {
     counts.dedup();
     counts.reverse(); // Decreasing order: index 0 = highest
     counts
-}
-
-/// Precomputed allowed counts tables for all shift values 0..=ANS_LOG_TAB_SIZE.
-/// These tables are deterministic (depend only on shift value) and can be
-/// computed once and reused across all histogram normalization calls.
-pub struct AllowedCountsCache {
-    // 13 entries: shifts 0 through 12 inclusive (ANS_LOG_TAB_SIZE = 12).
-    tables: [Vec<i32>; ANS_LOG_TAB_SIZE as usize + 1],
-}
-
-impl Default for AllowedCountsCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AllowedCountsCache {
-    /// Build all 13 allowed counts tables (one per shift value, 0..=12).
-    pub fn new() -> Self {
-        Self {
-            tables: core::array::from_fn(|shift| build_allowed_counts(shift as u32)),
-        }
-    }
-
-    /// Get the allowed counts table for a given shift.
-    #[inline]
-    pub fn get(&self, shift: u32) -> &[i32] {
-        &self.tables[shift as usize]
-    }
 }
 
 /// Find the index of the highest allowed count <= target in a decreasing-order table.
@@ -123,10 +168,10 @@ fn find_allowed_leq(allowed: &[i32], target: i32) -> usize {
     }
 }
 
-/// Estimate data cost of encoding `histo` using ANS with normalized `counts`.
-/// Matches libjxl's `EstimateDataBits` (enc_ans.cc:362-370).
-/// `cost = total * ANS_LOG_TAB_SIZE - sum(actual_count * log2(norm_count))`
-fn estimate_data_bits_normalized(
+/// Legacy f64 data-cost estimate (pre-libjxl-parity form, kept for the
+/// non-strict normalization path so normal-mode output is unchanged):
+/// `cost = total * ANS_LOG_TAB_SIZE - sum(actual * log2(norm))`.
+fn estimate_data_bits_normalized_f64(
     histo_counts: &[i32],
     norm_counts: &[i32],
     total_count: usize,
@@ -143,6 +188,71 @@ fn estimate_data_bits_normalized(
         }
     }
     total_count as f64 * ANS_LOG_TAB_SIZE as f64 - sum
+}
+
+/// Precomputed allowed counts tables for shifts 0..ANS_LOG_TAB_SIZE
+/// (libjxl has no shift-12 table — `method_ = min(shift, 11) + 1` caps the
+/// effective shift at 11) plus the fixed-point log2 LUT, and the legacy
+/// plain-count tables used by the non-strict normalization path.
+pub struct AllowedCountsCache {
+    tables: [AllowedShiftTable; ANS_LOG_TAB_SIZE as usize],
+    /// Legacy estimator tables for shifts 0..=12 (normal-mode path).
+    legacy_tables: [Vec<i32>; ANS_LOG_TAB_SIZE as usize + 1],
+    lg2: Vec<u32>,
+}
+
+impl Default for AllowedCountsCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AllowedCountsCache {
+    /// Build all allowed counts tables and the lg2 LUT.
+    pub fn new() -> Self {
+        Self {
+            tables: core::array::from_fn(|shift| build_allowed_shift_table(shift as u32)),
+            legacy_tables: core::array::from_fn(|shift| build_allowed_counts(shift as u32)),
+            lg2: build_lg2_lut(),
+        }
+    }
+
+    /// Get the allowed counts table for a given shift (0..ANS_LOG_TAB_SIZE-1).
+    #[inline]
+    fn table(&self, shift: u32) -> &AllowedShiftTable {
+        &self.tables[shift as usize]
+    }
+}
+
+/// Estimate data cost of encoding `histo` using ANS with normalized `counts`.
+/// Exact port of libjxl's `EstimateDataBits` (enc_ans.cc:372-380): the sum is
+/// accumulated in int64 against the fixed-point `lg2` LUT, then converted
+/// through float (`ldexpf`) semantics.
+/// `cost = (total - ldexpf(sum(histo[i] * lg2[counts[i]]), -31)) * 12`
+fn estimate_data_bits_normalized(
+    histo_counts: &[i32],
+    norm_counts: &[i32],
+    total_count: usize,
+    alphabet_size: usize,
+    lg2: &[u32],
+) -> f32 {
+    let mut sum: i64 = 0;
+    for (actual, norm) in histo_counts
+        .iter()
+        .zip(norm_counts.iter())
+        .take(alphabet_size)
+    {
+        sum += *actual as i64 * lg2[*norm as usize] as i64;
+    }
+    // ldexpf(sum, -31): i64 -> f32 conversion (rounds), then exact 2^-31 scale.
+    (total_count as f32 - (sum as f32 * (1f32 / (1u64 << 31) as f32))) * ANS_LOG_TAB_SIZE as f32
+}
+
+/// libjxl `EstimateDataBitsFlat` (enc_ans.cc:382-387): flat code data cost.
+/// `flat_bits = lg2[alphabet_size] * 12; ldexpf(total * flat_bits, -31)`
+fn estimate_data_bits_flat(total_count: usize, alphabet_size: usize, lg2: &[u32]) -> f32 {
+    let flat_bits = lg2[alphabet_size] as i64 * ANS_LOG_TAB_SIZE as i64;
+    (total_count as i64 * flat_bits) as f32 * (1f32 / (1u64 << 31) as f32)
 }
 
 /// Precision for reciprocal multiplication (avoids division).
@@ -771,7 +881,7 @@ impl ANSEncodingHistogram {
         strategy: ANSHistogramStrategy,
     ) -> Result<Self> {
         let cache = AllowedCountsCache::new();
-        Self::from_histogram_cached(histo, strategy, &cache)
+        Self::from_histogram_cached(histo, strategy, &cache, false)
     }
 
     /// Create from a Histogram using precomputed allowed counts tables.
@@ -779,18 +889,28 @@ impl ANSEncodingHistogram {
     /// This is the fast path — call `AllowedCountsCache::new()` once and reuse
     /// it across all histogram normalization calls to avoid repeated allocation
     /// and sorting of allowed counts tables.
+    ///
+    /// `libjxl_costs` selects libjxl-exact `cost` values for the degenerate
+    /// cases (empty/singleton histograms): libjxl sets `cost_` to the exact
+    /// serialized `Encode` size (enc_ans.cc:114-124), which feeds
+    /// `ChooseUintConfigs` and cluster-merge decisions. The legacy path keeps
+    /// the historical approximations (0.0/4.0) so non-strict callers' config
+    /// picks — and their output bytes — are unchanged.
     pub fn from_histogram_cached(
         histo: &super::histogram::Histogram,
         strategy: ANSHistogramStrategy,
         cache: &AllowedCountsCache,
+        libjxl_costs: bool,
     ) -> Result<Self> {
         if histo.total_count == 0 {
-            // Empty histogram
+            // libjxl (enc_ans.cc:114-119): method=1 small code with
+            // num_symbols=0, serialized as `1,0,varlen(0)` = 3 bits. Legacy
+            // used a flat code (`0,1,varlen(0)`), also 3 bits.
             return Ok(Self {
                 counts: vec![0i32; histo.counts.len().max(1)],
                 alphabet_size: 1,
-                cost: 0.0,
-                method: 0, // Flat
+                cost: if libjxl_costs { 3.0 } else { 0.0 },
+                method: if libjxl_costs { 1 } else { 0 },
                 omit_pos: 0,
                 num_symbols: 0,
                 symbols: [0, 0],
@@ -811,28 +931,52 @@ impl ANSEncodingHistogram {
             }
         }
 
-        // Single symbol or two symbols: use small code
-        if num_symbols <= 2 {
+        // Single symbol: small code (libjxl enc_ans.cc ComputeBest early return).
+        // Two symbols still go through the shift sweep below: each shift's
+        // RebalanceHistogram yields a different quantized split, and libjxl
+        // serializes `counts_[symbols_[0]]` in the small-code form of whichever
+        // shift minimizes header + estimated data cost.
+        if num_symbols == 1 {
             let mut counts = vec![0i32; alphabet_size];
-            if num_symbols == 1 {
-                counts[symbols[0]] = ANS_TAB_SIZE as i32;
-            } else {
-                // Two symbols: proportional allocation
-                let total = histo.total_count as f64;
-                let count0 = histo.counts[symbols[0]] as f64;
-                let norm0 = ((count0 / total) * ANS_TAB_SIZE as f64).round() as i32;
-                let norm0 = norm0.clamp(1, (ANS_TAB_SIZE - 1) as i32);
-                counts[symbols[0]] = norm0;
-                counts[symbols[1]] = ANS_TAB_SIZE as i32 - norm0;
-            }
+            counts[symbols[0]] = ANS_TAB_SIZE as i32;
 
-            // Cost is just the header
-            let cost = if num_symbols <= 1 { 4.0 } else { 4.0 + 12.0 }; // Approximate
+            let mut h = Self {
+                counts,
+                alphabet_size,
+                cost: 0.0,
+                method: 1, // Small code
+                omit_pos: symbols[0],
+                num_symbols,
+                symbols,
+            };
+            // libjxl sets cost_ = writer.size — the exact serialized size of
+            // the small code (no data bits for a single-bin distribution).
+            // Legacy callers keep the historical 4.0 approximation.
+            h.cost = if libjxl_costs {
+                h.exact_header_cost()
+            } else {
+                4.0
+            };
+
+            return Ok(h);
+        }
+
+        if !libjxl_costs && num_symbols == 2 {
+            // Legacy path: two symbols use a proportional split and always
+            // serialize as a small code (method=1). The libjxl path runs the
+            // full shift sweep instead.
+            let mut counts = vec![0i32; alphabet_size];
+            let total = histo.total_count as f64;
+            let count0 = histo.counts[symbols[0]] as f64;
+            let norm0 = ((count0 / total) * ANS_TAB_SIZE as f64).round() as i32;
+            let norm0 = norm0.clamp(1, (ANS_TAB_SIZE - 1) as i32);
+            counts[symbols[0]] = norm0;
+            counts[symbols[1]] = ANS_TAB_SIZE as i32 - norm0;
 
             return Ok(Self {
                 counts,
                 alphabet_size,
-                cost,
+                cost: 4.0 + 12.0,
                 method: 1, // Small code
                 omit_pos: symbols[0],
                 num_symbols,
@@ -843,9 +987,10 @@ impl ANSEncodingHistogram {
         // General case: start with flat distribution as baseline
         // libjxl always computes flat cost first (enc_ans.cc:97-102) and picks
         // the cheaper of flat vs shift-based encoding.
-        let flat_data_cost = {
-            let log2_alpha = jxl_simd::fast_log2f(alphabet_size as f32);
-            histo.total_count as f32 * log2_alpha
+        let flat_data_cost = if libjxl_costs {
+            estimate_data_bits_flat(histo.total_count, alphabet_size, &cache.lg2)
+        } else {
+            histo.total_count as f32 * jxl_simd::fast_log2f(alphabet_size as f32)
         };
         let mut best = Self {
             counts: {
@@ -896,8 +1041,17 @@ impl ANSEncodingHistogram {
             // Swap the reusable buffer in for this iteration
             core::mem::swap(&mut candidate.counts, &mut candidate_counts);
 
-            if candidate.rebalance_histogram_cached(histo, shift, cache.get(shift)) {
-                candidate.cost = candidate.estimate_cost(histo);
+            let rebalanced = if libjxl_costs {
+                candidate.rebalance_histogram_cached(histo, cache)
+            } else {
+                candidate.rebalance_histogram_legacy(histo, &cache.legacy_tables[shift as usize])
+            };
+            if rebalanced {
+                candidate.cost = if libjxl_costs {
+                    candidate.estimate_cost(histo, &cache.lg2)
+                } else {
+                    candidate.estimate_cost_legacy(histo)
+                };
                 if std::env::var_os("__JXL_SHIFT_PROBE").is_some() {
                     eprintln!(
                         "  shift={} cost={:.2} counts={:?} histo={:?}",
@@ -942,11 +1096,181 @@ impl ANSEncodingHistogram {
     }
 
     /// Rebalance histogram using precomputed allowed counts table and greedy optimization.
-    /// Matches libjxl's `RebalanceHistogram` (enc_ans.cc:416-559).
+    /// Exact port of libjxl's `RebalanceHistogram` (enc_ans.cc:425-568): all
+    /// entropy comparisons run in int64 fixed-point against the `lg2` LUT and
+    /// `allowed_counts` `delta_lg2`/`step_log`, with `>> step_log` (truncating)
+    /// normalization and the `rest` guard/tractor rules reproduced verbatim.
+    /// The effective shift is `self.method - 1`, matching libjxl.
     fn rebalance_histogram_cached(
         &mut self,
         histo: &super::histogram::Histogram,
-        _shift: u32,
+        cache: &AllowedCountsCache,
+    ) -> bool {
+        let total_count = histo.total_count;
+        if total_count == 0 {
+            return false;
+        }
+
+        let shift = self.method - 1;
+        let table = cache.table(shift);
+        let ac = &table.entries;
+        let ai = &table.index;
+        let lg2 = &cache.lg2;
+        let table_size = ANS_TAB_SIZE as i32;
+
+        let norm = table_size as f64 / total_count as f64;
+
+        // Find remainder_pos: symbol with highest original frequency (balancing bin).
+        let mut remainder_pos = 0;
+        let mut max_freq = 0i32;
+
+        // Bins eligible for greedy adjustment: (orig_freq, count_ind, bin_ind)
+        let mut bins: Vec<(i32, usize, usize)> = Vec::with_capacity(256);
+        let mut rest = table_size;
+
+        for (n, &freq) in histo.counts.iter().enumerate().take(self.alphabet_size) {
+            if freq > max_freq {
+                remainder_pos = n;
+                max_freq = freq;
+            }
+
+            let target = freq as f64 * norm;
+            // Keep zeros and clamp nonzero freq counts to [1, table_size)
+            let mut count = target.round().max(if freq > 0 { 1.0 } else { 0.0 }) as i32;
+            count = count.min(table_size - 1);
+            // Snap down to the increment grid at this count magnitude.
+            let step_log = smallest_increment_log(count as u32, shift);
+            count &= !((1i32 << step_log) - 1);
+
+            self.counts[n] = count;
+            rest -= count;
+
+            if target > 1.0 {
+                bins.push((freq, ai[count as usize] as usize, n));
+            }
+        }
+
+        // Delete the highest balancing bin from adjustable by `allowed_counts`
+        if let Some(pos) = bins.iter().position(|b| b.2 == remainder_pos) {
+            bins.remove(pos);
+        }
+        // From now on `rest` is the height of balancing bin; it can be negative,
+        // but will be tracted into positive domain later.
+        rest += self.counts[remainder_pos];
+
+        if !bins.is_empty() {
+            let max_log = ac[1].step_log;
+            // Penalties corresponding to different step sizes — entropy
+            // decrease in the balancing bin.
+            let mut balance_inc = [0i64; (ANS_LOG_TAB_SIZE - 1) as usize];
+            let mut balance_dec = [0i64; (ANS_LOG_TAB_SIZE - 1) as usize];
+
+            // Total entropy change by a step: increase/decrease in current bin
+            // together with corresponding decrease/increase in the balancing bin.
+            let delta_entropy_inc = |a: &(i32, usize, usize), binc: &[i64]| -> i64 {
+                a.0 as i64 * ac[a.1].delta_lg2 as i64 - binc[ac[a.1].step_log as usize]
+            };
+            let delta_entropy_dec = |a: &(i32, usize, usize), bdec: &[i64]| -> i64 {
+                a.0 as i64 * ac[a.1 + 1].delta_lg2 as i64 - bdec[ac[a.1 + 1].step_log as usize]
+            };
+
+            loop {
+                // Update balancing bin penalties, setting guards and tractors.
+                for log in 0..=max_log {
+                    let delta = 1i32 << log;
+                    if rest >= table_size {
+                        // Tract large `rest` into allowed domain:
+                        balance_inc[log as usize] = 0; // permit all inc steps
+                        balance_dec[log as usize] = 0; // forbid all dec steps
+                    } else if rest > 1 {
+                        // `rest` is OK; put guards against non-possible steps.
+                        balance_inc[log as usize] = if rest > delta {
+                            max_freq as i64
+                                * (lg2[rest as usize] - lg2[(rest - delta) as usize]) as i64
+                        } else {
+                            i64::MAX // forbidden
+                        };
+                        balance_dec[log as usize] = if rest + delta < table_size {
+                            max_freq as i64
+                                * (lg2[(rest + delta) as usize] - lg2[rest as usize]) as i64
+                        } else {
+                            0 // forbidden
+                        };
+                    } else {
+                        // Tract negative or zero `rest` into positive:
+                        balance_inc[log as usize] = i64::MAX; // forbid all inc steps
+                        balance_dec[log as usize] = i64::MAX; // permit all dec steps
+                    }
+                }
+
+                // Try to increase entropy: bin with the best histogram entropy
+                // increase (first maximal, matching std::max_element).
+                let mut best_inc = 0usize;
+                for i in 1..bins.len() {
+                    // inc_less: delta >> step_log comparison (truncating)
+                    let (a, b) = (&bins[best_inc], &bins[i]);
+                    if delta_entropy_inc(a, &balance_inc) >> ac[a.1].step_log
+                        < delta_entropy_inc(b, &balance_inc) >> ac[b.1].step_log
+                    {
+                        best_inc = i;
+                    }
+                }
+                if delta_entropy_inc(&bins[best_inc], &balance_inc) > 0 {
+                    // Grow the bin.
+                    rest -= 1 << ac[bins[best_inc].1].step_log;
+                    bins[best_inc].1 -= 1;
+                    continue;
+                }
+
+                // Otherwise find the best decrement (first minimal).
+                let mut best_dec = 0usize;
+                for i in 1..bins.len() {
+                    let (a, b) = (&bins[i], &bins[best_dec]);
+                    if delta_entropy_dec(a, &balance_dec) >> ac[a.1 + 1].step_log
+                        < delta_entropy_dec(b, &balance_dec) >> ac[b.1 + 1].step_log
+                    {
+                        best_dec = i;
+                    }
+                }
+                // Break if no reverse step can grow entropy (or is valid).
+                if delta_entropy_dec(&bins[best_dec], &balance_dec) >= 0 {
+                    break;
+                }
+                // Decrease the bin.
+                bins[best_dec].1 += 1;
+                rest += 1 << ac[bins[best_dec].1].step_log;
+            }
+
+            // Set counts besides the balancing bin.
+            for &(_freq, count_ind, bin_ind) in &bins {
+                self.counts[bin_ind] = ac[count_ind].count;
+            }
+
+            // Handle omit_pos bit-width constraint (libjxl enc_ans.cc:553-560):
+            // If an earlier bin has count >= 2048 (logcount >= 12), swap with
+            // remainder_pos so the balancing bin can grow without bit-width issues.
+            for n in 0..remainder_pos {
+                if self.counts[n] >= 2048 {
+                    self.counts[remainder_pos] = self.counts[n];
+                    remainder_pos = n;
+                    break;
+                }
+            }
+        }
+
+        // Set balancing bin
+        self.counts[remainder_pos] = rest;
+        self.omit_pos = remainder_pos;
+
+        rest > 0
+    }
+
+    /// Legacy (non-strict) rebalance: f64-entropy greedy walk over the
+    /// decreasing allowed-count table. Kept verbatim for normal-mode callers
+    /// so their serialized distributions — and output bytes — are unchanged.
+    fn rebalance_histogram_legacy(
+        &mut self,
+        histo: &super::histogram::Histogram,
         allowed: &[i32],
     ) -> bool {
         let total_count = histo.total_count;
@@ -1129,20 +1453,34 @@ impl ANSEncodingHistogram {
         rest > 0
     }
 
+    /// Legacy (non-strict) cost estimate: exact serialized header plus the
+    /// f64 `EstimateDataBits` form. Kept for normal-mode callers.
+    fn estimate_cost_legacy(&self, histo: &super::histogram::Histogram) -> f32 {
+        let header_cost = self.exact_header_cost();
+        let data_cost = estimate_data_bits_normalized_f64(
+            &histo.counts,
+            &self.counts,
+            histo.total_count,
+            self.alphabet_size,
+        ) as f32;
+        header_cost + data_cost
+    }
+
     /// Estimate encoding cost (header + data bits).
     /// Matches libjxl's approach (enc_ans.cc:139-143): the header cost is the
     /// *exact* serialized size measured by encoding the candidate into a
     /// scratch writer (`SizeWriter` in libjxl), not a formulaic estimate —
     /// high-precision shifts serialize counts with more bits, which only the
     /// real write path can price correctly.
-    fn estimate_cost(&self, histo: &super::histogram::Histogram) -> f32 {
+    fn estimate_cost(&self, histo: &super::histogram::Histogram, lg2: &[u32]) -> f32 {
         let header_cost = self.exact_header_cost();
         let data_cost = estimate_data_bits_normalized(
             &histo.counts,
             &self.counts,
             histo.total_count,
             self.alphabet_size,
-        ) as f32;
+            lg2,
+        );
         header_cost + data_cost
     }
 

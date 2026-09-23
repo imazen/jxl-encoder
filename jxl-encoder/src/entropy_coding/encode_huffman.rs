@@ -1348,7 +1348,7 @@ pub fn build_entropy_code_from_token_groups_with_clustering(
                 super::encode_ans::optimize_uint_configs_libjxl_best_from_freqs(&merged, None)
             }
             UintConfigMethod::Fast => {
-                super::encode_ans::optimize_uint_configs_fast_from_freqs(&merged, None)
+                super::encode_ans::optimize_uint_configs_fast_from_freqs(&merged, None, false)
             }
             UintConfigMethod::None => unreachable!(),
         };

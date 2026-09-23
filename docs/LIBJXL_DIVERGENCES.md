@@ -1789,6 +1789,65 @@ producing different-but-equal-cost distributions and hence different
 token bits), plus residual Huffman-tree shape choices in small maps.
 Byte-exact AC streams need that normalization replicated exactly.
 
+### W45-RECON part 18 (2026-09-24): ANS distribution-normalization parity — noise_512 e8 d4 **byte-identical to cjxl**
+
+The ~17.6 k same-size diffs were the `ANSEncodingHistogram::ComputeBest`
+normalization layer. Four layered changes closed it, all behind the
+strict flags (`libjxl_costs` plumbing through
+`ANSEncodingHistogram::from_histogram_cached`):
+
+1. **Two-symbol histograms run the full shift sweep.** The legacy path
+   proportional-split them into a small code (`method=1`); libjxl sweeps
+   `RebalanceHistogram` over all candidate shifts and serializes
+   `counts_[symbols_[0]]`/`[1]` of the winning shift in the small-code
+   form — which is why cjxl emitted `method=9/11` two-symbol
+   distributions (`2792/1304`, `2706/1390`) where we had `2793/1303`,
+   `2705/1391` one count off.
+
+2. **`RebalanceHistogram` ported to libjxl's integer arithmetic.** The
+   greedy inc/dec walk now uses the fixed-point `lg2` LUT
+   (`lg2[i] = round(log2(i)/12 * 2^31)`), `CountsEntropy`
+   `{count, step_log, delta_lg2}` allowed-count tables built exactly as
+   `allowed_counts[shift]` (descending scan snapped to the increment
+   grid, `delta_lg2 = round(log2(prev/curr)/12 * 2^31)`, zero-count
+   sentinel `delta_lg2 = INT_MAX`), truncating `>> step_log`
+   normalization, first-maximal/first-minimal tie behaviour, and the
+   verbatim `rest` guard/tractor conditions. `EstimateDataBits` likewise
+   accumulates `histo[i] * lg2[counts[i]]` in int64 and scales through
+   the `ldexpf(·, -31)` float conversion; `EstimateDataBitsFlat` uses
+   the same LUT. Method selection: `method = min(shift, 11) + 1`, so a
+   candidate shift of 12 normalizes against the shift-11 table — the
+   previous f64 code indexed a (nonexistent in libjxl) shift-12 table.
+
+3. **Degenerate-cost exactness flips a `ChooseUintConfigs` pick.**
+   libjxl sets `cost_` to the *real* serialized `Encode` size — 3 bits
+   for an empty histogram, `2 + varlen(symbol)` for a singleton —
+   while the legacy path used flat 0.0/4.0 approximations. The
+   under-priced singleton let a collapsing hybrid-uint config
+   (values `{5,6}` → one token symbol) win the per-cluster
+   `ChooseUintConfigs` sweep for a small code, where cjxl keeps the
+   finer config: our under-cost made the merged histogram look cheaper
+   than it serializes. With exact costs the pick matches cjxl and the
+   two-symbol distribution survives to serialization.
+
+4. **All of it gated behind `libjxl_costs`.** The normalization is
+   shared with normal `Zenjxl` ANS streams (uint-config selection and
+   cluster population costs), so `from_histogram_cached` keeps the
+   pre-part-18 legacy algorithm — proportional two-symbol split, f64
+   `fast_log2f` rebalance/costs, legacy allowed-count tables,
+   0.0/4.0/16.0 degenerate costs — for `libjxl_costs=false`, plumbed
+   from `libjxl_params`/`libjxl_log_alpha`/`AnsAccurate` call sites.
+   The uint-config optimizers take the flag too
+   (`optimize_uint_configs_{fast,best,libjxl_best}_from_freqs`).
+
+**Result**: `noise_512 e8 d4` is now **byte-identical to cjxl v0.12**
+(115451 B, 0 byte diffs — all 20 AC distributions, every small code and
+the ctx-map inner codes match the instrumented reference exactly).
+e8 d1 byte-identity preserved; normal 63/63 hash locks and strict
+byte/hash locks all green. `e7 d1` remains +4 B — the separate
+estimate-vs-real ctx-map pick residual noted in part 17, not in this
+layer.
+
 ---
 
 ## G. RESOLVED divergences (historical)

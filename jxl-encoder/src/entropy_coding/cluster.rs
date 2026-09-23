@@ -478,9 +478,12 @@ fn compute_cross_coding_cost(data: &Histogram, tree: &Histogram, alphabet_size: 
 /// table build fails.
 #[cfg(feature = "std")]
 fn accurate_ans_cost(h: &Histogram) -> Option<f32> {
-    super::ans::ANSEncodingHistogram::from_histogram(
+    let cache = super::ans::AllowedCountsCache::new();
+    super::ans::ANSEncodingHistogram::from_histogram_cached(
         h,
         super::ans::ANSHistogramStrategy::Fast,
+        &cache,
+        true,
     )
     .ok()
     .map(|enc| enc.cost)
@@ -752,9 +755,40 @@ pub fn cluster_histograms(
     // Fast clustering
     let mut result = fast_cluster_histograms(input, max_histograms)?;
 
+    #[cfg(feature = "std")]
+    let small_dump =
+        input.len() < 10 && std::env::var_os("JXL_ANS_DIST_DUMP").is_some();
+    #[cfg(feature = "std")]
+    if small_dump {
+        eprintln!(
+            "[CLUSTER-OURS] nin={} seeds={}",
+            input.len(),
+            result.histograms.len()
+        );
+        for (c, h) in input.iter().enumerate() {
+            eprint!("  in[{}]:", c);
+            for (i, &cnt) in h.counts.iter().enumerate() {
+                if cnt > 0 {
+                    eprint!(" {}:{}", i, cnt);
+                }
+            }
+            eprintln!(" -> {}", result.symbols[c]);
+        }
+    }
+
     // Pair merge refinement for Best quality
     if clustering_type == ClusteringType::Best && !result.histograms.is_empty() {
         refine_clusters_by_merging(&mut result.histograms, &mut result.symbols, entropy_type)?;
+    }
+
+    #[cfg(feature = "std")]
+    if small_dump {
+        eprintln!("[CLUSTER-FINAL-OURS] nhist={} assign=", result.histograms.len());
+        eprint!("  ");
+        for c in 0..input.len() {
+            eprint!("{},", result.symbols[c]);
+        }
+        eprintln!();
     }
 
     // Reindex for canonical form
@@ -1076,7 +1110,7 @@ mod tests {
         let h = make_histogram(&counts);
 
         let huffman_cost = huffman_population_cost(&h);
-        let ans_cost = ans_population_cost(&h);
+        let ans_cost = ans_population_cost(&h, true);
 
         // Both should be positive
         assert!(huffman_cost > 0.0);

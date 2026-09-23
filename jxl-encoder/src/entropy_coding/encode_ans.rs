@@ -324,7 +324,7 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
             optimize_uint_configs_best_from_freqs(&merged_value_freqs, lz77)
         }
     } else {
-        optimize_uint_configs_fast_from_freqs(&merged_value_freqs, lz77)
+        optimize_uint_configs_fast_from_freqs(&merged_value_freqs, lz77, libjxl_params)
     };
 
     // Build ANS histograms with the optimized configs. Per-histogram
@@ -426,8 +426,13 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
             }
             let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
             let histo = EnhancedHistogram::from_counts(&i32_counts);
-            ANSEncodingHistogram::from_histogram_cached(&histo, ans_strategy, &allowed_cache)
-                .expect("ANS histogram normalization failed")
+            ANSEncodingHistogram::from_histogram_cached(
+                &histo,
+                ans_strategy,
+                &allowed_cache,
+                libjxl_params,
+            )
+            .expect("ANS histogram normalization failed")
         });
 
     // Compute global log_alpha_size
@@ -618,6 +623,7 @@ pub fn build_entropy_code_ans_from_token_groups_with_strategy(
 pub(crate) fn optimize_uint_configs_fast_from_freqs(
     freqs_per_histo: &[alloc::collections::BTreeMap<u32, u32>],
     lz77: Option<&Lz77Params>,
+    libjxl_costs: bool,
 ) -> Vec<HybridUintConfig> {
     use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
 
@@ -695,6 +701,7 @@ pub(crate) fn optimize_uint_configs_fast_from_freqs(
                 &histo,
                 ANSHistogramStrategy::Fast,
                 &allowed_cache,
+                libjxl_costs,
             )
             .map(|e| e.cost)
             .unwrap_or(f32::MAX) as f64;
@@ -762,7 +769,7 @@ pub(crate) fn optimize_uint_configs_best_from_freqs(
         HybridUintConfig::new(8,0,0),  HybridUintConfig::new(8,2,0),
         HybridUintConfig::new(10,0,0), HybridUintConfig::new(12,0,0),
     ];
-    optimize_uint_configs_with_candidates(freqs_per_histo, lz77, OUR_BEST)
+    optimize_uint_configs_with_candidates(freqs_per_histo, lz77, OUR_BEST, false)
 }
 
 /// libjxl's exact kBest candidate set (`enc_ans.cc:748-774`), iterated in
@@ -800,7 +807,7 @@ pub(crate) fn optimize_uint_configs_libjxl_best_from_freqs(
         HybridUintConfig::new(11, 0, 0),  // direct coding
         HybridUintConfig::new(12, 0, 0),  // direct coding
     ];
-    optimize_uint_configs_with_candidates(freqs_per_histo, lz77, LIBJXL_BEST)
+    optimize_uint_configs_with_candidates(freqs_per_histo, lz77, LIBJXL_BEST, true)
 }
 
 /// Shared `ChooseUintConfigs` inner loop: per histogram, evaluate each
@@ -810,6 +817,7 @@ fn optimize_uint_configs_with_candidates(
     freqs_per_histo: &[alloc::collections::BTreeMap<u32, u32>],
     lz77: Option<&Lz77Params>,
     candidates: &[HybridUintConfig],
+    libjxl_costs: bool,
 ) -> Vec<HybridUintConfig> {
     use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
 
@@ -864,6 +872,7 @@ fn optimize_uint_configs_with_candidates(
                 &histo,
                 ANSHistogramStrategy::Fast,
                 &allowed_cache,
+                libjxl_costs,
             )
             .map(|e| e.cost)
             .unwrap_or(f32::MAX) as f64;
@@ -977,8 +986,37 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
 
     // Write ANS distributions
     let _hist_start = writer.bits_written();
+    #[cfg(feature = "std")]
+    let dist_dump = std::env::var_os("JXL_ANS_DIST_DUMP").is_some();
+    #[cfg(feature = "std")]
+    if dist_dump {
+        eprintln!(
+            "[CODE-OURS] nctx={} nhist={}",
+            if code.context_map.is_empty() {
+                1
+            } else {
+                code.context_map.len()
+            },
+            code.histograms.len()
+        );
+    }
     #[allow(clippy::unused_enumerate_index)]
     for (_i, histo) in code.histograms.iter().enumerate() {
+        #[cfg(feature = "std")]
+        if dist_dump {
+            eprint!(
+                "[DIST-OURS] method={} omit={} asize={} counts=",
+                histo.method, histo.omit_pos, histo.alphabet_size
+            );
+            let mut first = true;
+            for (i, &c) in histo.counts.iter().enumerate() {
+                if c > 0 {
+                    eprint!("{}{}:{}", if first { "" } else { "," }, i, c);
+                    first = false;
+                }
+            }
+            eprintln!();
+        }
         let _h_start = writer.bits_written();
         histo.write(writer)?;
         #[cfg(feature = "debug-tokens")]
@@ -1514,6 +1552,7 @@ fn estimate_ctxmap_cost_libjxl(
                 h,
                 ANSHistogramStrategy::Precise,
                 &allowed,
+                true,
             ) {
                 cost += aeh.cost.ceil() as usize;
             }
@@ -1620,6 +1659,7 @@ fn build_ctxmap_ans_candidate(
             &histo,
             ANSHistogramStrategy::Precise,
             &allowed_cache,
+            libjxl_log_alpha,
         )?;
         new_histograms.push(ans_hist);
     }
