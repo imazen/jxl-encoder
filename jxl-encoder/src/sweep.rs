@@ -199,6 +199,10 @@ impl EffortProfile {
         ]
         .map(f32::to_bits)
         .hash(&mut h);
+        // W45-RECON part 6: `channel_loss_mul` ([f64; 3]) — hash by bit
+        // pattern so tables differing only in the loss multipliers
+        // don't collide in sweep dedup.
+        e.channel_loss_mul.map(f64::to_bits).hash(&mut h);
 
         // Enums via discriminant / inner tag.
         core::mem::discriminant(&self.lz77_method).hash(&mut h);

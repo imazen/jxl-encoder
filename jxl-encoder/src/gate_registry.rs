@@ -277,6 +277,10 @@ jxl_encoder_macros::strategy_def! {
             // values; with pass-1 now bit-exact, zeroing diverges from
             // cjxl at e7+.
             cfl_zero_for_search = false,
+            // W45-RECON part 6: strict `kChannelMul` parity — installs
+            // `{8.2^8, 1, 1.03^8}` in place of the historical X-entry
+            // mis-port (8.2219^8, +2.16% X-loss inflation).
+            ac_channel_loss_mul_libjxl = true,
             // Strict parity: mirror libjxl's `nl_dc` cluster —
             // `extra_dc_precision = 1` at effort >= 4 and the
             // QuantizeWP DC shape alongside it. Corrects the
@@ -393,6 +397,10 @@ jxl_encoder_macros::strategy_def! {
             // behaviour at the search side regresses Zenjxl-class cost
             // model assumptions).
             cfl_zero_for_search = false,
+            // W45-RECON part 6: LeanFaster keeps the historical
+            // X-entry mis-port — the W44-29..W44-172 cost-model
+            // calibration is tuned against it.
+            ac_channel_loss_mul_libjxl = false,
             // DC encode stays on the Zenjxl schedule (2x precision at
             // effort <= 7, plain round) — not a libjxl mirror.
             dc_encode_libjxl_parity = false,
@@ -513,6 +521,11 @@ jxl_encoder_macros::strategy_def! {
             // Default-flip discussion deferred to a follow-on chunk
             // after wider-corpus measurement on the Zenjxl path.
             cfl_zero_for_search = false,
+            // W45-RECON part 6: Zenjxl keeps the historical X-entry
+            // mis-port — the W44-29..W44-172 cost-model calibration
+            // is tuned against it (same opt-in-only rationale as
+            // `cfl_zero_for_search` above).
+            ac_channel_loss_mul_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -593,6 +606,10 @@ jxl_encoder_macros::strategy_def! {
             // the standing pattern. See Zenjxl preset for the OPT-IN
             // rationale.
             cfl_zero_for_search = false,
+            // W45-RECON part 6: Aggressive mirrors Zenjxl per the
+            // standing pattern — keeps the historical X-entry
+            // mis-port the calibration is tuned against.
+            ac_channel_loss_mul_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -1117,6 +1134,36 @@ jxl_encoder_macros::strategy_def! {
         cfl_zero_for_search: bool {
             divergence_section = "C",
             divergence_row_ref = "W44-AUDIT-9 / SA-G Fix C — force cmap=zeros during AC strategy SEARCH (libjxl speed_tier > kSquirrel parity)",
+        },
+
+        /// **W45-RECON part 6**: AC-search pixel-domain
+        /// channel-loss-multiplier libjxl parity. The historical
+        /// [`crate::vardct::ac_strategy::CHANNEL_MUL`] X entry is a
+        /// mis-port — `20882706.4655936` ≈ `8.2219^8` instead of
+        /// libjxl `kChannelMul`'s `pow(8.2, 8.0)` =
+        /// `20441408.586549744` (+2.16% on the dominant X-channel
+        /// loss term → ~+0.25% systematic `loss_scalar` inflation on
+        /// every pixel-domain candidate evaluation, measured against
+        /// instrumented cjxl v0.12 `EstimateEntropy` dumps where all
+        /// other scalar inputs match exactly).
+        ///
+        /// When `true`,
+        /// [`crate::effort::EffortProfile::apply_ac_loss_channel_mul_libjxl`]
+        /// installs [`crate::vardct::ac_strategy::CHANNEL_MUL_LIBJXL`]
+        /// into [`crate::effort::EntropyMulTable::channel_loss_mul`],
+        /// which `estimate_entropy_with_mask` threads into the
+        /// `masku^8` channel accumulation.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict `kChannelMul` parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves
+        ///   the W44-29..W44-172 cost-model calibration baseline
+        ///   (the historical multiplier is part of that baseline).
+        ///
+        /// Section C.
+        ac_channel_loss_mul_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 6 — AC-search pixel-domain kChannelMul X-entry mis-port (8.2219^8 vs 8.2^8, +2.16% X-loss inflation)",
         },
 
         // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
@@ -1685,6 +1732,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W44-AUDIT-9 / SA-G Fix C — force cmap=zeros during AC strategy SEARCH (libjxl speed_tier > kSquirrel parity)",
         raw: __CUSTOM_DIVERGENCE_CFL_ZERO_FOR_SEARCH,
+    },
+    // Section C — W45-RECON part 6 AC-search kChannelMul parity
+    DivergenceEntry {
+        gate_name: "ac_channel_loss_mul_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 6 — AC-search pixel-domain kChannelMul X-entry mis-port (8.2219^8 vs 8.2^8, +2.16% X-loss inflation)",
+        raw: __CUSTOM_DIVERGENCE_AC_CHANNEL_LOSS_MUL_LIBJXL,
     },
     // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
     DivergenceEntry {

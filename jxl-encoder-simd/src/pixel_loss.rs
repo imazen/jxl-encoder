@@ -448,4 +448,41 @@ mod expanded_coverage {
             assert_eq!(act_loss, 0.0, "perm={perm}");
         });
     }
+
+    /// W45-RECON scratch check: run the REAL kernel on AQDBG-dumped photo_512
+    /// blocks vs the libjxl-formula recomputation (44.06 for block 0,0).
+    #[test]
+    fn w45_loss_vs_dumped_inputs() {
+        extern crate std;
+        fn rd_f32(p: &str) -> alloc::vec::Vec<f32> {
+            let d = std::fs::read(p).unwrap();
+            d.chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect()
+        }
+        let Ok(maskd) =
+            std::fs::read("/Users/lilith/tmp/aqdbg_ours_photo6/acs_mask1x1.f32")
+        else {
+            return;
+        };
+        let w = i32::from_le_bytes(maskd[0..4].try_into().unwrap()) as usize;
+        let mask: alloc::vec::Vec<f32> = maskd[8..]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        const CHM: [f64; 3] = [20882706.4655936, 1.0, 1.26677008064];
+        const OFF: [f32; 3] = [12.0, 0.0, 4.0];
+        for &(bx, by) in &[(0usize, 0usize), (0, 8), (0, 16)] {
+            let mut tot = 0.0f64;
+            for c in 0..3 {
+                let pe = rd_f32(&std::format!(
+                    "/tmp/acloss_ours/st00_x{bx}_y{by}_c{c}_pix.bin"
+                ));
+                let loss = pixel_domain_loss(&pe, &mask, by * w + bx, w, OFF[c], 8, 8);
+                tot += CHM[c] * loss;
+                std::eprintln!("  ({bx},{by}) c{c} kernel_loss={loss}");
+            }
+            std::eprintln!("block ({bx},{by}) kernel_loss_sum={tot}");
+        }
+    }
 }

@@ -742,11 +742,30 @@ pub(crate) const MASK_CHANNEL_OFFSET: [f32; 3] = [12.0, 0.0, 4.0];
 
 /// Channel multipliers for pixel-domain loss (8th power).
 /// From libjxl enc_ac_strategy.cc:479
-/// Pre-computed: 8.2^8 ≈ 2.088e7, 1.0^8 = 1.0, 1.03^8 ≈ 1.267
+/// Pre-computed: 8.2^8 ≈ 2.044e7, 1.0^8 = 1.0, 1.03^8 ≈ 1.267
+///
+/// W45-RECON part 6: the X entry below is the historical **mis-port**
+/// — `20882706.4655936` corresponds to `8.2219^8`, not `8.2^8`
+/// (= `20441408.586549744`, a +2.16% inflation on the dominant
+/// X-channel loss term → ~+0.25% on `loss_scalar` after the 8th
+/// root). Kept as the [`EntropyMulTable::channel_loss_mul`] default
+/// so Zenjxl / Aggressive / LeanFaster stay byte-identical; the
+/// strict `EncoderStrategy::Libjxl` profile swaps in
+/// [`CHANNEL_MUL_LIBJXL`] via
+/// [`EffortProfile::apply_ac_loss_channel_mul_libjxl`].
 pub(crate) const CHANNEL_MUL: [f64; 3] = [
-    20882706.4655936, // X channel: 8.2^8
+    20882706.4655936, // X channel: historical value (see note above)
     1.0,              // Y channel: 1.0^8
     1.26677008064,    // B channel: 1.03^8
+];
+
+/// libjxl `enc_ac_strategy.cc` `kChannelMul` —
+/// `{pow(8.2, 8.0), 1.0, pow(1.03, 8.0)}`. Used by the strict
+/// `EncoderStrategy::Libjxl` profile only (W45-RECON part 6).
+pub(crate) const CHANNEL_MUL_LIBJXL: [f64; 3] = [
+    20441408.586549744, // X channel: 8.2^8
+    1.0,                // Y channel: 1.0^8
+    1.2667700813876164, // B channel: 1.03^8
 ];
 
 /// Distance scaling exponents from libjxl enc_ac_strategy.cc:1115-1120
@@ -933,6 +952,7 @@ pub(super) fn estimate_entropy_with_mask(
         mask1x1_stride,
         entropy_mul,
         scaled_constants,
+        entropy_mul_table.channel_loss_mul,
         scratch,
     )
 }
@@ -973,6 +993,7 @@ pub(super) fn estimate_entropy_full(
     mask1x1_stride: usize,
     entropy_mul: f32,
     scaled_constants: (f32, f32, f32),
+    channel_loss_mul: [f64; 3],
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     estimate_entropy_full_impl(
@@ -991,6 +1012,7 @@ pub(super) fn estimate_entropy_full(
         mask1x1_stride,
         entropy_mul,
         scaled_constants,
+        channel_loss_mul,
         scratch,
     )
 }
@@ -1019,6 +1041,7 @@ fn estimate_entropy_full_impl(
     mask1x1_stride: usize,
     entropy_mul: f32,
     scaled_constants: (f32, f32, f32),
+    channel_loss_mul: [f64; 3],
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     let cx = COVERED_X[raw_strategy as usize];
@@ -1109,7 +1132,52 @@ fn estimate_entropy_full_impl(
                 let nbits = ceil_log2_nonzero(num_nzeros + 1) as usize + 1;
                 entropy += k_zeros_mul * (ceil_log2_nonzero(nbits + 17) + nbits as u32) as f32;
 
+                // W45-RECON diagnostic: stage-level loss bisection vs libjxl's
+                // JXL_AC_LOSS_DUMP. error_coeffs ↔ libjxl `mem` (matrix*diff),
+                // pixel_error_buf ↔ post-TransformToPixels `block`.
+                #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+                {
+                    use std::io::Write;
+                    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> =
+                        std::sync::OnceLock::new();
+                    let dir =
+                        DIR.get_or_init(|| std::env::var_os("JXL_AC_LOSS_DUMP").map(Into::into));
+                    if let Some(d) = dir {
+                        let nb = 1u64.to_le_bytes();
+                        let mut v = Vec::with_capacity(8 + 256);
+                        v.extend_from_slice(&nb);
+                        for &x in error_coeffs.iter() {
+                            v.extend_from_slice(&x.to_le_bytes());
+                        }
+                        let _ = std::fs::File::create(d.join(alloc::format!(
+                            "st00_x{}_y{}_c{c}.bin",
+                            bx * BLOCK_DIM,
+                            by * BLOCK_DIM
+                        )))
+                        .map(|mut f| f.write_all(&v));
+                    }
+                }
                 apply_idct_for_strategy(RAW_STRATEGY_DCT8, error_coeffs, pixel_error_buf);
+                #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+                {
+                    use std::io::Write;
+                    static DIR2: std::sync::OnceLock<Option<std::path::PathBuf>> =
+                        std::sync::OnceLock::new();
+                    let dir =
+                        DIR2.get_or_init(|| std::env::var_os("JXL_AC_LOSS_DUMP").map(Into::into));
+                    if let Some(d) = dir {
+                        let mut v = Vec::with_capacity(256);
+                        for &x in pixel_error_buf.iter() {
+                            v.extend_from_slice(&x.to_le_bytes());
+                        }
+                        let _ = std::fs::File::create(d.join(alloc::format!(
+                            "st00_x{}_y{}_c{c}_pix.bin",
+                            bx * BLOCK_DIM,
+                            by * BLOCK_DIM
+                        )))
+                        .map(|mut f| f.write_all(&v));
+                    }
+                }
                 let mask_offset = MASK_CHANNEL_OFFSET[c];
                 let mut channel_loss = jxl_simd::pixel_domain_loss(
                     pixel_error_buf,
@@ -1120,7 +1188,7 @@ fn estimate_entropy_full_impl(
                     BLOCK_DIM,
                     BLOCK_DIM,
                 );
-                channel_loss *= CHANNEL_MUL[c];
+                channel_loss *= channel_loss_mul[c];
                 total_pixel_loss += channel_loss;
             };
 
@@ -1557,7 +1625,7 @@ fn estimate_entropy_full_impl(
             );
 
             // Apply channel multiplier
-            channel_loss *= CHANNEL_MUL[c];
+            channel_loss *= channel_loss_mul[c];
 
             // W44-59: per-channel pixel loss
             if afv_coeff_target {
@@ -3049,6 +3117,7 @@ mod tests {
             0,
             1.0, // entropy_mul = 1.0 for coefficient-domain (caller applies mul8x8)
             COEFF_DOMAIN_CONSTANTS,
+            CHANNEL_MUL,
             &mut scratch,
         );
 
@@ -3069,6 +3138,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8, &EntropyMulTable::reference()), // Normalized entropy_mul for DCT8 = 1.0
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
 
@@ -3141,6 +3211,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8, &EntropyMulTable::reference()),
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
         eprintln!("DCT8 pixel-domain entropy: {}", ent_dct8);
@@ -3163,6 +3234,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8, &EntropyMulTable::reference()),
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
         eprintln!("DCT16x8 pixel-domain entropy: {}", ent_dct16x8);
@@ -3185,6 +3257,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8, &EntropyMulTable::reference()),
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
         eprintln!("DCT8x16 pixel-domain entropy: {}", ent_dct8x16);
@@ -3207,6 +3280,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X16, &EntropyMulTable::reference()),
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
         eprintln!("DCT16x16 pixel-domain entropy: {}", ent_dct16x16);

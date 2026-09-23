@@ -78,6 +78,20 @@ pub struct EntropyMulTable {
     /// DCT64x64.
     /// Reference: 2.25 (libjxl `enc_ac_strategy.cc`).
     pub dct64x64: f32,
+
+    /// Per-channel pixel-domain loss multipliers applied inside the
+    /// `mask1x1` (pixel-domain) branch of `estimate_entropy_full`
+    /// (libjxl `enc_ac_strategy.cc` `kChannelMul`, applied after the
+    /// `masku^8` accumulation, before the channel sum).
+    ///
+    /// Default = the historical [`crate::vardct::ac_strategy::CHANNEL_MUL`]
+    /// whose X entry is a mis-port (`8.2219^8`, +2.16% — W45-RECON
+    /// part 6). [`Self::reference`] and every derived variant keep it
+    /// so Zenjxl / Aggressive / LeanFaster stay byte-identical; the
+    /// strict `EncoderStrategy::Libjxl` profile swaps in
+    /// [`crate::vardct::ac_strategy::CHANNEL_MUL_LIBJXL`] via
+    /// [`EffortProfile::apply_ac_loss_channel_mul_libjxl`].
+    pub channel_loss_mul: [f64; 3],
 }
 
 impl EntropyMulTable {
@@ -96,6 +110,7 @@ impl EntropyMulTable {
             dct32x32: 1.48,
             dct64x32: 2.25,
             dct64x64: 2.25,
+            channel_loss_mul: crate::vardct::ac_strategy::CHANNEL_MUL,
         }
     }
 
@@ -2804,6 +2819,28 @@ impl EffortProfile {
     ) {
         if resolved.gaborish_libjxl_parity {
             self.gaborish_libjxl_kernel = true;
+        }
+    }
+
+    /// Apply the AC-search channel-loss-multiplier libjxl-parity flip
+    /// (W45-RECON part 6).
+    ///
+    /// When [`crate::api::ResolvedImprovements::ac_channel_loss_mul_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// installs libjxl's true `kChannelMul` (`{8.2^8, 1, 1.03^8}`) into
+    /// [`EntropyMulTable::channel_loss_mul`]. The historical default's
+    /// X entry is `20882706.4655936` ≈ `8.2219^8` — a +2.16%
+    /// over-weight on the dominant X-channel loss term that biases
+    /// `loss_scalar` by ~+0.25% on every pixel-domain candidate
+    /// evaluation. NO-OP on every other strategy: `false` preserves
+    /// the byte-identical W44-29..W44-172 calibration baseline.
+    pub(crate) fn apply_ac_loss_channel_mul_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.ac_channel_loss_mul_libjxl {
+            self.entropy_mul_table.channel_loss_mul =
+                crate::vardct::ac_strategy::CHANNEL_MUL_LIBJXL;
         }
     }
 

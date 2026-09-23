@@ -3217,6 +3217,12 @@ impl LossyConfig {
             // xorshift 50% block subsample at effort <= 7, unconditional
             // is_nondefault admission. NO-OP on every other strategy.
             p.apply_coeff_orders_libjxl_parity(&resolved);
+            // W45-RECON part 6: AC-search `kChannelMul` parity —
+            // installs libjxl's true `{8.2^8, 1, 1.03^8}` pixel-domain
+            // loss multipliers (the historical X entry is an
+            // 8.2219^8 mis-port, +2.16% X-loss inflation). NO-OP on
+            // every other strategy.
+            p.apply_ac_loss_channel_mul_libjxl(&resolved);
         }
         p
     }

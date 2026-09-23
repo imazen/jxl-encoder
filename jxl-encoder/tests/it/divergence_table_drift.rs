@@ -100,7 +100,10 @@ use std::path::PathBuf;
 /// 2026-09-17 added `ac_meta_libjxl_tree` Section D gate → 42.
 /// 2026-09-17 added `gaborish_libjxl_parity` Section D gate → 43.
 /// 2026-09-17 added `entropy_codes_libjxl_parity` Section D gate → 44.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 44;
+/// 2026-09-17 added `coeff_orders_libjxl_parity` Section D gate → 45
+/// (count was left at 44 — pre-existing drift caught 2026-10-12).
+/// W45-RECON part 6 added `ac_channel_loss_mul_libjxl` Section C gate → 46.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 46;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -287,6 +290,12 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // libjxl kernel name verbatim.
         if row_ref.contains("Symmetric5") {
             out.push("Symmetric5".to_string());
+        }
+        // W45-RECON part 6: `ac_channel_loss_mul_libjxl` Section C gate —
+        // "W45-RECON" is not a W-code (digits-only grammar); the table
+        // row carries the libjxl constant name verbatim.
+        if row_ref.contains("kChannelMul") {
+            out.push("kChannelMul".to_string());
         }
         // 2026-09-17: `entropy_codes_libjxl_parity` Section D gate —
         // "W45-SPEC-3" is not a W-code; the table row carries the
