@@ -3473,6 +3473,10 @@ impl VarDctEncoder {
             // libjxl 15-cluster default when `EncoderStrategy::Libjxl`
             // is selected. Default Zenjxl (`false`) is byte-identical.
             self.resolved_improvements.block_ctx_map_15_cluster,
+            // W45-RECON part 9: 0-based (raw_quant - 1) QF histogram
+            // bins under Libjxl parity; all other strategies keep the
+            // historical 1-based binning.
+            self.profile.bcm_qf_zero_based,
         );
 
         let _ms_bcm = _t_bcm.elapsed().as_secs_f64() * 1000.0;

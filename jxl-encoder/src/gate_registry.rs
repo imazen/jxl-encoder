@@ -290,6 +290,10 @@ jxl_encoder_macros::strategy_def! {
             // `2·num_dc_groups` (ACMetadata chunk start - 1), matching
             // libjxl's emitted `prop=1 val=2` at ndg=1.
             ma_tree_root_splitval_libjxl = true,
+            // Strict parity: 0-based (raw_quant - 1) QF histogram bins
+            // in FindBestBlockEntropyModel — shipped qf_thresholds and
+            // ctx_map clustering match cjxl.
+            block_ctx_map_qf_zero_based_libjxl = true,
             // Strict parity: mirror libjxl's `nl_dc` cluster —
             // `extra_dc_precision = 1` at effort >= 4 and the
             // QuantizeWP DC shape alongside it. Corrects the
@@ -417,6 +421,8 @@ jxl_encoder_macros::strategy_def! {
             // W45-RECON part 8: LeanFaster keeps the historical
             // num_dc_groups root splitval — shipped bitstream.
             ma_tree_root_splitval_libjxl = false,
+            // 1-based QF histogram bins — shipped bitstream.
+            block_ctx_map_qf_zero_based_libjxl = false,
             // DC encode stays on the Zenjxl schedule (2x precision at
             // effort <= 7, plain round) — not a libjxl mirror.
             dc_encode_libjxl_parity = false,
@@ -549,6 +555,8 @@ jxl_encoder_macros::strategy_def! {
             // W45-RECON part 8: Zenjxl keeps the historical
             // num_dc_groups root splitval — shipped bitstream.
             ma_tree_root_splitval_libjxl = false,
+            // 1-based QF histogram bins — shipped bitstream.
+            block_ctx_map_qf_zero_based_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -639,6 +647,8 @@ jxl_encoder_macros::strategy_def! {
             // W45-RECON part 8: Aggressive mirrors Zenjxl — keeps
             // the num_dc_groups root splitval.
             ma_tree_root_splitval_libjxl = false,
+            // 1-based QF histogram bins — shipped bitstream.
+            block_ctx_map_qf_zero_based_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -1257,6 +1267,33 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "W45-RECON part 8 — merged MA-tree root splitval emitted num_dc_groups instead of 2·num_dc_groups (MergeTrees useful_splits[mid]-1)",
         },
 
+        /// **W45-RECON part 9**: bin the block-context-map QF histogram
+        /// on `raw_quant - 1` (0-based) exactly like libjxl
+        /// `FindBestBlockEntropyModel`'s `qf = qf_row[x] - 1`
+        /// (`enc_heuristics.cc:97-103`). Our histogram historically used
+        /// the 1-based raw field directly, shifting every bin by +1 and
+        /// emitting `qf_thresholds` values +1 vs cjxl (measured:
+        /// photoish_1024 e7 d1 emits `qft=7` vs cjxl `qft=6`), with
+        /// boundary blocks segmented one bin off — different ctx_map
+        /// clustering and AC-context bytes. The encoder-side
+        /// `block_context_dc` lookup (`qf > t` on the 1-based field)
+        /// already maps to the decoder's `t <= raw_quant-1` convention,
+        /// so only the histogram binning changes.
+        ///
+        /// [`crate::effort::EffortProfile::bcm_qf_zero_based`] switches
+        /// `vardct/ac_context.rs::compute_block_ctx_map` to 0-based bins.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   shipped threshold values and ctx_map.
+        ///
+        /// Section C.
+        block_ctx_map_qf_zero_based_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 9 — block_ctx_map QF histogram binned on raw_quant (1-based) instead of raw_quant-1 (enc_heuristics.cc FindBestBlockEntropyModel)",
+        },
+
         // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
         /// **W44-201**: skip buckets 3 (DCT32x32) and 6 (DCT32x16/DCT16x32)
         /// when admitting custom coefficient orders via the W44-82
@@ -1844,6 +1881,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W45-RECON part 8 — merged MA-tree root splitval emitted num_dc_groups instead of 2·num_dc_groups (MergeTrees useful_splits[mid]-1)",
         raw: __CUSTOM_DIVERGENCE_MA_TREE_ROOT_SPLITVAL_LIBJXL,
+    },
+    // Section C — W45-RECON part 9 block_ctx_map QF histogram base
+    DivergenceEntry {
+        gate_name: "block_ctx_map_qf_zero_based_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 9 — block_ctx_map QF histogram binned on raw_quant (1-based) instead of raw_quant-1 (enc_heuristics.cc FindBestBlockEntropyModel)",
+        raw: __CUSTOM_DIVERGENCE_BLOCK_CTX_MAP_QF_ZERO_BASED_LIBJXL,
     },
     // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
     DivergenceEntry {

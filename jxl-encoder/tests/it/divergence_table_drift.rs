@@ -105,7 +105,8 @@ use std::path::PathBuf;
 /// W45-RECON part 6 added `ac_channel_loss_mul_libjxl` Section C gate → 46.
 /// W45-RECON part 7 added `aqba_max_quant_libjxl` Section C gate → 47.
 /// W45-RECON part 8 added `ma_tree_root_splitval_libjxl` Section C gate → 48.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 48;
+/// W45-RECON part 9 added `block_ctx_map_qf_zero_based_libjxl` Section C gate → 49.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 49;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -316,6 +317,12 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // function name verbatim.
         if row_ref.contains("MergeTrees") {
             out.push("MergeTrees".to_string());
+        }
+        // W45-RECON part 9: `block_ctx_map_qf_zero_based_libjxl`
+        // Section C gate — same convention; the table row carries the
+        // libjxl function name verbatim.
+        if row_ref.contains("FindBestBlockEntropyModel") {
+            out.push("FindBestBlockEntropyModel".to_string());
         }
     }
     out

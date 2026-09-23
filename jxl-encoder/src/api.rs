@@ -3232,6 +3232,10 @@ impl LossyConfig {
             // `prop=1 val=2·num_dc_groups` per libjxl `MergeTrees`.
             // NO-OP on every other strategy.
             p.apply_ma_tree_root_splitval_libjxl(&resolved);
+            // W45-RECON part 9: block_ctx_map QF histogram parity —
+            // 0-based `raw_quant - 1` bins per libjxl
+            // `FindBestBlockEntropyModel`. NO-OP on every other strategy.
+            p.apply_block_ctx_map_qf_zero_based_libjxl(&resolved);
         }
         p
     }

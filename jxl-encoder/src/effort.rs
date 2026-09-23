@@ -904,6 +904,19 @@ pub struct EffortProfile {
     /// Set only via
     /// [`crate::api::ResolvedImprovements::ma_tree_root_splitval_libjxl`].
     pub ma_root_split_2ndg: bool,
+    /// W45-RECON part 9: bin the block-context-map QF histogram on
+    /// `raw_quant - 1` (0-based) exactly like libjxl
+    /// `FindBestBlockEntropyModel`'s `qf = qf_row[x] - 1`
+    /// (`enc_heuristics.cc:97-103`). When `false`, the histogram bins on
+    /// the 1-based raw field (historical shipped behaviour) — every bin
+    /// shifts +1, emitted `qf_thresholds` land +1 vs cjxl, and boundary
+    /// blocks segment one bin off (different ctx_map clustering). The
+    /// `block_context_dc` lookup already uses the decoder-equivalent
+    /// `qf > t` convention on the 1-based field, so only the histogram
+    /// binning changes under this flag.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::block_ctx_map_qf_zero_based_libjxl`].
+    pub bcm_qf_zero_based: bool,
     /// Numerator for the effort-fixed q parameter used in global_scale computation.
     /// libjxl: 0.39 at effort >= 5, 0.79 at effort < 5.
     /// global_scale = 65536 * (initial_q_numerator / distance) / 5.0
@@ -1723,6 +1736,7 @@ impl EffortProfile {
             aqba_max_over_channels: false,
             // `apply_ma_tree_root_splitval_libjxl` flips for Libjxl only.
             ma_root_split_2ndg: false,
+            bcm_qf_zero_based: false,
             initial_q_numerator: if effort >= 5 { 0.39 } else { 0.79 },
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
@@ -1958,6 +1972,7 @@ impl EffortProfile {
             adjust_quant_ac: false,
             aqba_max_over_channels: false,
             ma_root_split_2ndg: false,
+            bcm_qf_zero_based: false,
             initial_q_numerator: 0.39,
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
@@ -2905,6 +2920,23 @@ impl EffortProfile {
     ) {
         if resolved.ma_tree_root_splitval_libjxl {
             self.ma_root_split_2ndg = true;
+        }
+    }
+
+    /// Apply the block-ctx-map QF zero-based-histogram libjxl-parity
+    /// flip.
+    ///
+    /// When
+    /// [`crate::api::ResolvedImprovements::block_ctx_map_qf_zero_based_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::bcm_qf_zero_based`] — `FindBestBlockEntropyModel`'s
+    /// `qf_row[x] - 1` histogram bins (see field docstring).
+    pub(crate) fn apply_block_ctx_map_qf_zero_based_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.block_ctx_map_qf_zero_based_libjxl {
+            self.bcm_qf_zero_based = true;
         }
     }
 
