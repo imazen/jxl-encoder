@@ -260,9 +260,18 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
     if let Some(tp) = total_pixel_hint {
         max_histograms = max_histograms.min((tp / 2048).max(1));
     }
+    // libjxl `ClusterHistograms` always merges on the real `ANSPopulationCost`
+    // (`enc_cluster.cc`); strict parity therefore uses the unconditional
+    // accurate cost model. Non-strict callers keep the legacy estimate unless
+    // the JPEG guard / `JXL_ACCURATE_ANS_COST` opts in.
+    let entropy_type = if libjxl_params {
+        EntropyType::AnsAccurate
+    } else {
+        EntropyType::Ans
+    };
     let result = enhanced_cluster(
         cluster_type,
-        EntropyType::Ans,
+        entropy_type,
         &data.histograms,
         max_histograms,
     )

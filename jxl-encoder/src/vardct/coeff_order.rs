@@ -1212,6 +1212,18 @@ pub fn build_and_write_coeff_orders(
         return Ok(());
     }
 
+    // Diagnostic: raw permutation-token dump for libjxl `EncodeCoeffOrders`
+    // parity work. `JXL_CO_DUMP=<file>` writes "ctx value" lines.
+    #[cfg(feature = "std")]
+    if let Ok(path) = std::env::var("JXL_CO_DUMP") {
+        if let Ok(mut f) = std::fs::File::create(path) {
+            use std::io::Write as _;
+            for t in tokens {
+                let _ = writeln!(f, "{} {}", t.context(), t.value);
+            }
+        }
+    }
+
     // libjxl `EncodeCoeffOrders` builds the stream under default
     // `HistogramParams` (`enc_ans_params.h`): `kBest` clustering, `kBest`
     // uint, `kRLE` LZ77, `kPrecise` ANS. Strict-parity callers therefore
@@ -1226,11 +1238,37 @@ pub fn build_and_write_coeff_orders(
     } else {
         None
     };
+    #[cfg(feature = "std")]
+    if std::env::var("JXL_CO_DUMP").is_ok() {
+        eprintln!(
+            "[CO-OURS] use_ans={} lz77={} n_tokens={}",
+            use_ans,
+            lz77.is_some(),
+            tokens.len()
+        );
+    }
     let (lz_tokens, lz_params) = match &lz77 {
         Some((t, p)) => (t.as_slice(), Some(p)),
         None => (tokens, None),
     };
+    #[cfg(feature = "std")]
+    if let Ok(path) = std::env::var("JXL_CO_LZ_DUMP") {
+        if let Ok(mut f) = std::fs::File::create(path) {
+            use std::io::Write as _;
+            for t in lz_tokens {
+                let _ = writeln!(
+                    f,
+                    "{} {} {}",
+                    t.is_lz77_length() as u8,
+                    t.context(),
+                    t.value
+                );
+            }
+        }
+    }
+    let lz_header_bits = writer.bits_written();
     crate::entropy_coding::lz77::write_lz77_header(lz_params, writer)?;
+    let pre_code_bits = writer.bits_written();
 
     if use_ans {
         let code = if libjxl_parity {
@@ -1256,7 +1294,21 @@ pub fn build_and_write_coeff_orders(
             )
         };
         write_entropy_code_ans(&code, writer)?;
+        #[cfg(feature = "std")]
+        if std::env::var("JXL_CO_DUMP").is_ok() {
+            eprintln!(
+                "[CO-OURS] lz_header={} header_bits={} n_histos={}",
+                pre_code_bits - lz_header_bits,
+                writer.bits_written() - pre_code_bits,
+                code.histograms.len()
+            );
+        }
+        let pre_tok = writer.bits_written();
         write_tokens_ans(lz_tokens, &code, lz_params, writer)?;
+        #[cfg(feature = "std")]
+        if std::env::var("JXL_CO_DUMP").is_ok() {
+            eprintln!("[CO-OURS] token_bits={}", writer.bits_written() - pre_tok);
+        }
     } else {
         // libjxl builds the permutation code under default `HistogramParams`
         // → `uint_method = kBest` (`enc_ans_params.h`), so prefix streams get

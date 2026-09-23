@@ -1689,6 +1689,49 @@ as the e7 residual, investigated next.
 
 ---
 
+### W45-RECON part 16 (2026-09-23): ANS pair-merge population cost — d4 residual reduced to −48 B
+
+Sub-section bit budgets inside HfGlobal showed the +164 B was not in
+the AC entropy header (ours was already 386 bits *smaller*) but in the
+coeff-order stream: 5824 bits vs cjxl's 4133 for a **byte-identical**
+token sequence (2110 raw / 1317 post-RLE-LZ77 tokens, verified
+symbol-for-symbol on both sides).
+
+Root cause: the permutation stream is built under libjxl's default
+`HistogramParams` → `kBest` clustering, and libjxl's `ClusterHistograms`
+pair-merge always scores merges on the real
+`Histogram::ANSPopulationCost()` (`ANSEncodingHistogram::ComputeBest(h,
+kFast).Cost()`). Our merge fell back to the legacy
+`shannon + alphabet*5` estimate (the accurate cost only engages for the
+JPEG transcode path via `AccurateAnsCostGuard`) — the known over-merge
+bias from EX-J30 — collapsing 9 contexts to **1 histogram** where cjxl
+keeps **7** (header 106 vs 608 bits, data 5709 vs 3525 bits).
+
+Fix: new `EntropyType::AnsAccurate` variant that unconditionally uses
+the real `ANSPopulationCost` in merge decisions, selected inside
+`build_entropy_code_from_accumulated_ans_with_strategy` whenever
+`libjxl_params` is set — i.e. exactly the already-strict-gated paths
+(`coeff_orders_libjxl_parity` permutation stream,
+`entropy_codes_libjxl_parity` DC at e8+ / AC at e9+, strict ctx-map ANS
+candidates). No new gate: `libjxl_params` is only ever passed `true`
+from Libjxl-strict call sites, so Zenjxl/Aggressive/LeanFaster output
+is untouched (63/63 normal hash locks green). Threading through
+`EntropyType` rather than the thread-local guard keeps the flag
+correct across rayon `parallel_map` workers.
+
+**Result at noise_512 e8 d4**: LfGlobal and LfGroup sections now
+**byte-identical** (the DC-stream kBest merge had the same over-merge
+bug); coeff-order stream 599 vs 608 header bits, token stream 3525
+bits identical. Remaining residual is **−48 B** (ours 115403 vs cjxl
+115451), entirely in the AC entropy-code header where our clustering
+is *more* efficient than libjxl's `kFast` — an over-compression
+divergence, investigated next. e8 d1 stays byte-identical; e7 d1
+unchanged at +4 B (LfGlobal ctx-map candidate selection, a different
+layer: `estimate_ctxmap_cost_libjxl` picks raw vs MTF by estimate,
+libjxl compares real serialized sizes).
+
+---
+
 ## G. RESOLVED divergences (historical)
 
 ### 2026-09-08: streaming content-policy omission
