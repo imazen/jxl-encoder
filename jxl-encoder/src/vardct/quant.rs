@@ -840,6 +840,552 @@ fn quant_weights_afv() -> &'static [f32] {
     QUANT_WEIGHTS_AFV.get_or_init(|| Box::new(generate_afv_weights()))
 }
 
+// =============================================================================
+// libjxl-faithful f32 weight generation (strict parity path)
+// =============================================================================
+//
+// libjxl generates quant matrices in f32 throughout (`GetQuantWeights`,
+// quant_weights.cc): an f32 band chain, f32 `rcpcol/rcprow`, `MulAdd`+`Sqrt`,
+// and `InterpolateVec` which uses the `FastPowf` polynomial approximations
+// (`base/fast_math-inl.h`), not precise `powf`. Our production tables
+// interpolate in f64 then cast — semantically equal but up to ~1 ulp off
+// almost everywhere, which flips quantize/AQBA decisions at rounding
+// boundaries (W45-RECON part 14).
+//
+// The strict path therefore builds libjxl's `weights` array bit-for-bit:
+// - `inv_dequant_matrix_lj` = libjxl `InvDequantMatrix`/`qm` (≈ our
+//   `dequant_weights`): the value multiplied into coefficients.
+// - `dequant_matrix_lj` = `1.0f` reciprocal, elementwise (≈ our
+//   `quant_weights`): libjxl `DequantMatrix` used in dequantization.
+//
+// Per-strategy table shapes and band params are identical to the production
+// generators except DCT4X8, whose params here use libjxl's exact literals
+// (the production array was truncated to 7 significant digits).
+
+/// libjxl `Mult()` (quant_weights.cc:102).
+#[inline]
+fn band_mult_lj(v: f32) -> f32 {
+    if v > 0.0 { 1.0 + v } else { 1.0 / (1.0 - v) }
+}
+
+/// libjxl `FastPow2f` (base/fast_math-inl.h:68-86). Polynomial
+/// approximation of `2^x`; max relative error ~3e-7.
+fn fast_pow2f(x: f32) -> f32 {
+    let floorx = x.floor();
+    let exp = f32::from_bits(((floorx as i32).wrapping_add(127) << 23) as u32);
+    let frac = x - floorx;
+    let mut num = frac + 1.01749063e+01;
+    num = num.mul_add(frac, 4.88687798e+01);
+    num = num.mul_add(frac, 9.85506591e+01);
+    num *= exp;
+    let mut den = frac.mul_add(2.10242958e-01, -2.22328856e-02);
+    den = den.mul_add(frac, -1.94414990e+01);
+    den = den.mul_add(frac, 9.85506633e+01);
+    num / den
+}
+
+/// libjxl `FastLog2f` (base/fast_math-inl.h:47-67). 2,2 rational polynomial
+/// approximation of `log1p(x)/log(2)`; L1 error ~3.9e-6.
+fn fast_log2f(x: f32) -> f32 {
+    const P: [f32; 3] = [
+        -1.8503833400518310e-06,
+        1.4287160470083755e+00,
+        7.4245873327820566e-01,
+    ];
+    const Q: [f32; 3] = [
+        9.9032814277590719e-01,
+        1.0096718572241148e+00,
+        1.7409343003366853e-01,
+    ];
+    let x_bits = x.to_bits() as i32;
+    let exp_bits = x_bits.wrapping_sub(0x3f2aaaab);
+    let exp_shifted = exp_bits >> 23;
+    let mantissa = f32::from_bits(x_bits.wrapping_sub(exp_shifted << 23) as u32);
+    let t = mantissa - 1.0;
+    // EvalRationalPolynomial, Horner form, real division.
+    let yp = (P[2].mul_add(t, P[1])).mul_add(t, P[0]);
+    let yq = (Q[2].mul_add(t, Q[1])).mul_add(t, Q[0]);
+    yp / yq + exp_shifted as f32
+}
+
+/// libjxl `FastPowf` = `FastPow2f(FastLog2f(b) * e)`.
+#[inline]
+fn fast_powf(b: f32, e: f32) -> f32 {
+    fast_pow2f(fast_log2f(b) * e)
+}
+
+/// Scalar equivalent of libjxl `InterpolateVec` (quant_weights.cc:109-123).
+/// `scaled_pos` is already scaled to band index space.
+#[inline]
+fn interpolate_vec_lj(scaled_pos: f32, bands: &[f32]) -> f32 {
+    let idx = scaled_pos as i32 as usize; // hwy ConvertTo: trunc toward zero
+    let frac = scaled_pos - idx as f32;
+    let a = bands[idx];
+    let b = bands[idx + 1];
+    a * fast_powf(b / a, frac)
+}
+
+/// Scalar `Interpolate` used by the AFV path (quant_weights.cc:94-99).
+#[inline]
+fn interpolate_scalar_lj(pos: f32, max: f32, bands: &[f32]) -> f32 {
+    let scaled_pos = pos * (bands.len() - 1) as f32 / max;
+    let idx = scaled_pos as usize;
+    let a = bands[idx];
+    let b = bands[idx + 1];
+    a * fast_powf(b / a, scaled_pos - idx as f32)
+}
+
+/// libjxl `GetQuantWeights(ROWS, COLS, ...)` (quant_weights.cc:129-162),
+/// elementwise scalar equivalent of the SIMD loop. Returns `3*ROWS*COLS`
+/// f32s = libjxl's `weights` (= `inv_table` = quantize multiplier).
+fn get_quant_weights_lj(
+    rows: usize,
+    cols: usize,
+    band_params: &[&[f64]; 3],
+    num_bands: usize,
+) -> Vec<f32> {
+    let num = rows * cols;
+    let mut out = vec![0.0f32; 3 * num];
+    let scale = (num_bands as f32 - 1.0) / (core::f32::consts::SQRT_2 + 1e-6);
+    let rcpcol = scale / (cols as f32 - 1.0);
+    let rcprow = scale / (rows as f32 - 1.0);
+
+    for c in 0..3 {
+        let params = band_params[c];
+        let mut bands = vec![0.0f32; num_bands];
+        bands[0] = params[0] as f32;
+        for i in 1..num_bands {
+            bands[i] = bands[i - 1] * band_mult_lj(params[i] as f32);
+        }
+        for y in 0..rows {
+            let dy = y as f32 * rcprow;
+            let dy2 = dy * dy;
+            for x in 0..cols {
+                let dx = x as f32 * rcpcol;
+                let scaled_distance = dx.mul_add(dx, dy2).sqrt();
+                out[c * num + y * cols + x] = if num_bands == 1 {
+                    bands[0]
+                } else {
+                    interpolate_vec_lj(scaled_distance, &bands)
+                };
+            }
+        }
+    }
+    out
+}
+
+/// DCT4X8 band params with libjxl's exact literals (quant_weights.cc:808-827).
+/// The production `DCT4X8_BAND_PARAMS` are truncated to ~7 digits, which is
+/// a real f32-ulp difference in `bands[0]` and the mult chain.
+const DCT4X8_BAND_PARAMS_LJ: [[f64; 4]; 3] = [
+    [
+        2198.050556016380522,
+        -0.96269623020744692,
+        -0.76194253026666783,
+        -0.6551140670773547,
+    ],
+    [
+        764.3655248643528689,
+        -0.92630200888366945,
+        -0.9675229603596517,
+        -0.27845290869168118,
+    ],
+    [
+        527.107573587542228,
+        -1.4594385811273854,
+        -1.450082094097871593,
+        -1.5843722511996204,
+    ],
+];
+
+/// DCT4X8 LLF multiplier per channel (libjxl `dct4x8multipliers`, all 1.0).
+const DCT4X8_MULTI_LJ: [f32; 3] = [1.0, 1.0, 1.0];
+
+/// libjxl `kQuantModeDCT4X8` table build (quant_weights.cc:212-227):
+/// 4x8 `GetQuantWeights`, duplicate each row into an 8x8, then divide the
+/// (1,0) position by `dct4x8multipliers`.
+fn generate_dct4x8_lj() -> Vec<f32> {
+    let w4x8 = get_quant_weights_lj(
+        4,
+        8,
+        &[
+            &DCT4X8_BAND_PARAMS_LJ[0],
+            &DCT4X8_BAND_PARAMS_LJ[1],
+            &DCT4X8_BAND_PARAMS_LJ[2],
+        ],
+        4,
+    );
+    let mut weights = vec![0.0f32; 192];
+    for c in 0..3 {
+        for y in 0..8usize {
+            for x in 0..8usize {
+                weights[c * 64 + y * 8 + x] = w4x8[c * 32 + (y / 2) * 8 + x];
+            }
+        }
+        weights[c * 64 + 8] /= DCT4X8_MULTI_LJ[c];
+    }
+    weights
+}
+
+/// DCT4X4 LLF multipliers (libjxl `dct4multipliers`, all 1.0).
+const DCT4_MULTI_LJ: [[f32; 2]; 3] = [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]];
+
+/// libjxl `kQuantModeDCT4` table build (quant_weights.cc:193-211):
+/// 4x4 `GetQuantWeights`, replicate each value to a 2x2 region, then divide
+/// positions 1 and 8 by `mul[0]` and position 9 by `mul[1]`.
+fn generate_dct4x4_lj() -> Vec<f32> {
+    let w4x4 = get_quant_weights_lj(
+        4,
+        4,
+        &[&DCT4_BAND_PARAMS[0], &DCT4_BAND_PARAMS[1], &DCT4_BAND_PARAMS[2]],
+        4,
+    );
+    let mut weights = vec![0.0f32; 192];
+    for c in 0..3 {
+        for y in 0..8usize {
+            for x in 0..8usize {
+                weights[c * 64 + y * 8 + x] = w4x4[c * 16 + (y / 2) * 4 + (x / 2)];
+            }
+        }
+        weights[c * 64 + 1] /= DCT4_MULTI_LJ[c][0];
+        weights[c * 64 + 8] /= DCT4_MULTI_LJ[c][0];
+        weights[c * 64 + 9] /= DCT4_MULTI_LJ[c][1];
+    }
+    weights
+}
+
+/// libjxl `kQuantModeID` table (quant_weights.cc:80-91 + :184).
+fn generate_identity_lj() -> Vec<f32> {
+    let mut weights = vec![0.0f32; 192];
+    for (c, ch) in IDENTITY_WEIGHTS.iter().enumerate() {
+        let start = c * 64;
+        for w in &mut weights[start..start + 64] {
+            *w = ch[0];
+        }
+        weights[start + 1] = ch[1];
+        weights[start + 8] = ch[1];
+        weights[start + 9] = ch[2];
+    }
+    weights
+}
+
+/// libjxl `kQuantModeDCT2` table (GetQuantWeightsDCT2, quant_weights.cc:48-77).
+fn generate_dct2x2_lj() -> Vec<f32> {
+    let mut weights = vec![0.0f32; 192];
+    for (c, w) in DCT2_WEIGHTS.iter().enumerate() {
+        let start = c * 64;
+        weights[start] = 0xBADu32 as f32;
+        weights[start + 1] = w[0];
+        weights[start + 8] = w[0];
+        weights[start + 9] = w[1];
+        for y in 0..2usize {
+            for x in 0..2usize {
+                weights[start + y * 8 + x + 2] = w[2];
+                weights[start + (y + 2) * 8 + x] = w[2];
+            }
+        }
+        for y in 0..2usize {
+            for x in 0..2usize {
+                weights[start + (y + 2) * 8 + x + 2] = w[3];
+            }
+        }
+        for y in 0..4usize {
+            for x in 0..4usize {
+                weights[start + y * 8 + x + 4] = w[4];
+                weights[start + (y + 4) * 8 + x] = w[4];
+            }
+        }
+        for y in 0..4usize {
+            for x in 0..4usize {
+                weights[start + (y + 4) * 8 + x + 4] = w[5];
+            }
+        }
+    }
+    weights
+}
+
+/// AFV frequency lookup as f32 (libjxl `kFreqs`, quant_weights.cc:238-255).
+const AFV_FREQS_LJ: [f32; 16] = [
+    0xBADu32 as f32,
+    0xBADu32 as f32,
+    0.8517778890324296,
+    5.37778436506804,
+    0xBADu32 as f32,
+    0xBADu32 as f32,
+    4.734747904497923,
+    5.449245381693219,
+    1.6598270267479331,
+    4.0,
+    7.275749096817861,
+    10.423227632456525,
+    2.662932286148962,
+    7.630657783650829,
+    8.962388608184032,
+    12.97166202570235,
+];
+
+/// libjxl `kQuantModeAFV` table build (quant_weights.cc:238-330): AFV-band
+/// interpolation on even rows/cols, 4x8 `GetQuantWeights` on odd rows,
+/// 4x4 `GetQuantWeights` on even-row odd cols.
+fn generate_afv_lj() -> Vec<f32> {
+    let weights4x8 = get_quant_weights_lj(
+        4,
+        8,
+        &[
+            &DCT4X8_BAND_PARAMS_LJ[0],
+            &DCT4X8_BAND_PARAMS_LJ[1],
+            &DCT4X8_BAND_PARAMS_LJ[2],
+        ],
+        4,
+    );
+    let weights4x4 = get_quant_weights_lj(
+        4,
+        4,
+        &[&DCT4_BAND_PARAMS[0], &DCT4_BAND_PARAMS[1], &DCT4_BAND_PARAMS[2]],
+        4,
+    );
+    const LO: f32 = 0.8517778890324296;
+    const HI: f32 = 12.97166202570235 - LO + 1e-6;
+
+    let mut weights = vec![0.0f32; 192];
+    for (c, afv) in AFV_WEIGHTS.iter().enumerate() {
+        let start = c * 64;
+        let mut bands = [0.0f32; 4];
+        bands[0] = afv[5] as f32;
+        for i in 1..4 {
+            bands[i] = bands[i - 1] * band_mult_lj(afv[5 + i] as f32);
+        }
+        weights[start] = 1.0; // libjxl: "Not used, but causes MSAN error otherwise."
+        // libjxl set_weight(x, y, v) → weights[y*8 + x]: afv[0]→(0,1)=idx 8,
+        // afv[1]→(1,0)=idx 1, afv[2]→(0,2)=idx 16, afv[3]→(2,0)=idx 2.
+        weights[start + 8] = afv[0] as f32;
+        weights[start + 1] = afv[1] as f32;
+        weights[start + 16] = afv[2] as f32;
+        weights[start + 2] = afv[3] as f32;
+        weights[start + 18] = afv[4] as f32;
+        for y in 0..4usize {
+            for x in 0..4usize {
+                if x < 2 && y < 2 {
+                    continue;
+                }
+                let val = interpolate_scalar_lj(AFV_FREQS_LJ[y * 4 + x] - LO, HI, &bands);
+                weights[start + (2 * y) * 8 + 2 * x] = val;
+            }
+        }
+        for y in 0..4usize {
+            for x in 0..8usize {
+                if x == 0 && y == 0 {
+                    continue;
+                }
+                weights[start + (2 * y + 1) * 8 + x] = weights4x8[c * 32 + y * 8 + x];
+            }
+        }
+        for y in 0..4usize {
+            for x in 0..4usize {
+                if x == 0 && y == 0 {
+                    continue;
+                }
+                weights[start + (2 * y) * 8 + 2 * x + 1] = weights4x4[c * 16 + y * 4 + x];
+            }
+        }
+    }
+    weights
+}
+
+static LJ_INV_DCT8: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT16X8: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT16X16: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT32X32: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT4X8: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT4X4: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_IDENTITY: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT2X2: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT16X32: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_AFV: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT64X64: OnceBox<Vec<f32>> = OnceBox::new();
+static LJ_INV_DCT32X64: OnceBox<Vec<f32>> = OnceBox::new();
+
+/// Canonical LLF region (xs, ys) per strategy — post-`CoefficientLayout`
+/// (xs >= ys) block coverage. libjxl `ComputeQuantTable` zeroes
+/// `inv_table[c][y * 8*xs + x]` for y < ys, x < xs after computing
+/// `table = 1/inv`, so the DC/LLF positions never quantize but still
+/// dequantize with finite weights.
+const LJ_LLF_XS: [usize; NUM_VALID_STRATEGIES] = [
+    1, 2, 2, 2, 4, 1, 1, 1, 1, 1, 4, 4, 1, 1, 1, 1, 8, 8, 8,
+];
+const LJ_LLF_YS: [usize; NUM_VALID_STRATEGIES] = [
+    1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 8, 4, 4,
+];
+
+/// Generated libjxl `weights` for a strategy (pre-LLF-zeroing) — the raw
+/// `GetQuantWeights`/`ComputeQuantTable` output used for both tables.
+#[inline]
+fn generate_weights_lj_full(strategy: usize) -> &'static [f32] {
+    match strategy {
+        0 => LJ_INV_DCT8.get_or_init(|| {
+            Box::new(get_quant_weights_lj(
+                8,
+                8,
+                &[&DCT8_PARAMS[0], &DCT8_PARAMS[1], &DCT8_PARAMS[2]],
+                6,
+            ))
+        }),
+        1 | 2 => LJ_INV_DCT16X8.get_or_init(|| {
+            Box::new(get_quant_weights_lj(
+                8,
+                16,
+                &[&DCT16X8_PARAMS[0], &DCT16X8_PARAMS[1], &DCT16X8_PARAMS[2]],
+                7,
+            ))
+        }),
+        3 => LJ_INV_DCT16X16.get_or_init(|| {
+            Box::new(get_quant_weights_lj(
+                16,
+                16,
+                &[
+                    &DCT16X16_PARAMS[0],
+                    &DCT16X16_PARAMS[1],
+                    &DCT16X16_PARAMS[2],
+                ],
+                7,
+            ))
+        }),
+        4 => LJ_INV_DCT32X32.get_or_init(|| {
+            Box::new(get_quant_weights_lj(
+                32,
+                32,
+                &[
+                    &DCT32X32_BAND_PARAMS[0],
+                    &DCT32X32_BAND_PARAMS[1],
+                    &DCT32X32_BAND_PARAMS[2],
+                ],
+                8,
+            ))
+        }),
+        5 | 6 => LJ_INV_DCT4X8.get_or_init(|| Box::new(generate_dct4x8_lj())),
+        7 => LJ_INV_DCT4X4.get_or_init(|| Box::new(generate_dct4x4_lj())),
+        8 => LJ_INV_IDENTITY.get_or_init(|| Box::new(generate_identity_lj())),
+        9 => LJ_INV_DCT2X2.get_or_init(|| Box::new(generate_dct2x2_lj())),
+        10 | 11 => LJ_INV_DCT16X32.get_or_init(|| {
+            Box::new(get_quant_weights_lj(
+                16,
+                32,
+                &[
+                    &DCT16X32_BAND_PARAMS[0],
+                    &DCT16X32_BAND_PARAMS[1],
+                    &DCT16X32_BAND_PARAMS[2],
+                ],
+                8,
+            ))
+        }),
+        12..=15 => LJ_INV_AFV.get_or_init(|| Box::new(generate_afv_lj())),
+        16 => LJ_INV_DCT64X64.get_or_init(|| {
+            Box::new(get_quant_weights_lj(
+                64,
+                64,
+                &[
+                    &DCT64X64_BAND_PARAMS[0],
+                    &DCT64X64_BAND_PARAMS[1],
+                    &DCT64X64_BAND_PARAMS[2],
+                ],
+                8,
+            ))
+        }),
+        17 | 18 => LJ_INV_DCT32X64.get_or_init(|| {
+            Box::new(get_quant_weights_lj(
+                32,
+                64,
+                &[
+                    &DCT32X64_BAND_PARAMS[0],
+                    &DCT32X64_BAND_PARAMS[1],
+                    &DCT32X64_BAND_PARAMS[2],
+                ],
+                8,
+            ))
+        }),
+        _ => unreachable!("Invalid strategy: {}", strategy),
+    }
+}
+
+/// libjxl `InvDequantMatrix` (`inv_table`) for a strategy+channel — the
+/// generated weights with the canonical LLF region zeroed
+/// (`ComputeQuantTable`'s post-pass), so DC/LLF positions quantize to 0.
+#[inline]
+pub fn inv_dequant_matrix_lj(strategy: usize, channel: usize) -> &'static [f32] {
+    static CACHE: [OnceBox<Vec<f32>>; NUM_VALID_STRATEGIES] = [
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+    ];
+    let per_ch = WEIGHT_SIZES[strategy];
+    let full = CACHE[strategy].get_or_init(|| {
+        let mut t = generate_weights_lj_full(strategy).to_vec();
+        let xs = LJ_LLF_XS[strategy];
+        let ys = LJ_LLF_YS[strategy];
+        for c in 0..3 {
+            let base = c * per_ch;
+            for y in 0..ys {
+                for x in 0..xs {
+                    t[base + y * (xs * 8) + x] = 0.0;
+                }
+            }
+        }
+        Box::new(t)
+    });
+    &full[channel * per_ch..channel * per_ch + per_ch]
+}
+
+/// libjxl `DequantMatrix` (`table`) for a strategy+channel — elementwise
+/// `1.0f` reciprocal of the *generated* weights (computed like
+/// `ComputeQuantTable`'s `Div(Set(1), inv_val)`, i.e. before the LLF
+/// region of the inverse table is zeroed).
+#[inline]
+pub fn dequant_matrix_lj(strategy: usize, channel: usize) -> &'static [f32] {
+    static CACHE: [OnceBox<Vec<f32>>; NUM_VALID_STRATEGIES] = [
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+        OnceBox::new(),
+    ];
+    let per_ch = WEIGHT_SIZES[strategy];
+    let full = CACHE[strategy].get_or_init(|| {
+        let inv = generate_weights_lj_full(strategy);
+        Box::new(inv.iter().map(|&w| 1.0 / w).collect())
+    });
+    &full[channel * per_ch..channel * per_ch + per_ch]
+}
+
 /// Per-channel weight count for each strategy.
 pub(super) const WEIGHT_SIZES: [usize; NUM_VALID_STRATEGIES] = [
     64, 128, 128, 256, 1024, 64, 64, 64, 64, 64, 512, 512, 64, 64, 64, 64, 4096, 2048, 2048,

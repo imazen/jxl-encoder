@@ -258,6 +258,563 @@ pub fn quantize_dct8_wasm128(
 }
 
 // ============================================================================
+// libjxl-parity variants (strict EncoderStrategy::Libjxl path)
+// ============================================================================
+//
+// libjxl `QuantizeBlockAC` (enc_group.cc) computes
+//   q   = Mul(Load(qm), quantv)     // qm = InvDequantMatrix, quantv = qac*mul
+//   val = Mul(q, in)
+// i.e. `val = (qm[i] * qac_qm) * in[i]` — a multiply by the stored matrix,
+// not a division by a reciprocal table. The production kernels compute
+// `coeffs / w * qac_qm`, which is a true division plus a different multiply
+// grouping — up to ~1 ulp different, enough to flip rounding boundaries
+// (W45-RECON part 14). The `weights` slices here carry the qm (≈3150-scale)
+// table, not the reciprocal table.
+
+/// libjxl-order DCT8 quantization: `val = (weights[i] * qac_qm) * coeffs[i]`.
+#[inline]
+pub fn quantize_block_dct8_libjxl(
+    dct_coeffs: &[f32; 64],
+    weights: &[f32; 64],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    output: &mut [i32; 64],
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            quantize_dct8_avx2_lj(token, dct_coeffs, weights, qac_qm, thresholds, output);
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            quantize_dct8_neon_lj(token, dct_coeffs, weights, qac_qm, thresholds, output);
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            quantize_dct8_wasm128_lj(token, dct_coeffs, weights, qac_qm, thresholds, output);
+            return;
+        }
+    }
+
+    quantize_dct8_scalar_lj(dct_coeffs, weights, qac_qm, thresholds, output);
+}
+
+#[inline]
+pub fn quantize_dct8_scalar_lj(
+    dct_coeffs: &[f32; 64],
+    weights: &[f32; 64],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    output: &mut [i32; 64],
+) {
+    output[0] = 0; // DC
+    for idx in 1..64 {
+        let y = idx / 8;
+        let x = idx % 8;
+        let thr_idx = (if y >= 4 { 2 } else { 0 }) + (if x >= 4 { 1 } else { 0 });
+        let val = (weights[idx] * qac_qm) * dct_coeffs[idx];
+        output[idx] = if val.abs() < thresholds[thr_idx] {
+            0
+        } else {
+            crate::scalarmath::round_ties_even_f32(val) as i32
+        };
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[archmage::arcane]
+pub fn quantize_dct8_avx2_lj(
+    token: archmage::X64V3Token,
+    dct_coeffs: &[f32; 64],
+    weights: &[f32; 64],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    output: &mut [i32; 64],
+) {
+    use magetypes::simd::f32x8;
+
+    let qac_qm_v = f32x8::splat(token, qac_qm);
+    let zero_f = f32x8::zero(token);
+
+    let thr_top = f32x8::from_array(
+        token,
+        [
+            thresholds[0],
+            thresholds[0],
+            thresholds[0],
+            thresholds[0],
+            thresholds[1],
+            thresholds[1],
+            thresholds[1],
+            thresholds[1],
+        ],
+    );
+    let thr_bot = f32x8::from_array(
+        token,
+        [
+            thresholds[2],
+            thresholds[2],
+            thresholds[2],
+            thresholds[2],
+            thresholds[3],
+            thresholds[3],
+            thresholds[3],
+            thresholds[3],
+        ],
+    );
+
+    for chunk in 0..8 {
+        let base = chunk * 8;
+        let coeffs = f32x8::from_slice(token, &dct_coeffs[base..]);
+        let w = f32x8::from_slice(token, &weights[base..]);
+        let thr = if chunk < 4 { thr_top } else { thr_bot };
+
+        // val = (w * qac_qm) * coeffs  (libjxl Mul(Mul(qm,quantv),in))
+        let val = w * qac_qm_v * coeffs;
+
+        let abs_val = val.abs();
+        let mask = abs_val.simd_ge(thr);
+        let rounded = val.round();
+        let result = f32x8::blend(mask, rounded, zero_f);
+        let result_i32 = result.to_i32x8();
+        result_i32.store((&mut output[base..base + 8]).try_into().unwrap());
+    }
+
+    output[0] = 0;
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[archmage::arcane]
+pub fn quantize_dct8_neon_lj(
+    token: archmage::NeonToken,
+    dct_coeffs: &[f32; 64],
+    weights: &[f32; 64],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    output: &mut [i32; 64],
+) {
+    use magetypes::simd::f32x4;
+
+    let qac_qm_v = f32x4::splat(token, qac_qm);
+    let zero_f = f32x4::zero(token);
+
+    let thr = [
+        f32x4::splat(token, thresholds[0]),
+        f32x4::splat(token, thresholds[1]),
+        f32x4::splat(token, thresholds[2]),
+        f32x4::splat(token, thresholds[3]),
+    ];
+
+    for row in 0..8 {
+        let thr_row = if row < 4 { 0 } else { 2 };
+        for half in 0..2usize {
+            let base = row * 8 + half * 4;
+            let coeffs = f32x4::from_slice(token, &dct_coeffs[base..]);
+            let w = f32x4::from_slice(token, &weights[base..]);
+            let t = thr[thr_row + half];
+
+            let val = w * qac_qm_v * coeffs;
+            let abs_val = val.abs();
+            let mask = abs_val.simd_ge(t);
+            let rounded = val.round();
+            let result = f32x4::blend(mask, rounded, zero_f);
+            let result_i32 = result.to_i32x4();
+            result_i32.store((&mut output[base..base + 4]).try_into().unwrap());
+        }
+    }
+
+    output[0] = 0;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+pub fn quantize_dct8_wasm128_lj(
+    token: archmage::Wasm128Token,
+    dct_coeffs: &[f32; 64],
+    weights: &[f32; 64],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    output: &mut [i32; 64],
+) {
+    use magetypes::simd::f32x4;
+
+    let qac_qm_v = f32x4::splat(token, qac_qm);
+    let zero_f = f32x4::zero(token);
+
+    let thr = [
+        f32x4::splat(token, thresholds[0]),
+        f32x4::splat(token, thresholds[1]),
+        f32x4::splat(token, thresholds[2]),
+        f32x4::splat(token, thresholds[3]),
+    ];
+
+    for row in 0..8 {
+        let thr_row = if row < 4 { 0 } else { 2 };
+        for half in 0..2usize {
+            let base = row * 8 + half * 4;
+            let coeffs = f32x4::from_slice(token, &dct_coeffs[base..]);
+            let w = f32x4::from_slice(token, &weights[base..]);
+            let t = thr[thr_row + half];
+
+            let val = w * qac_qm_v * coeffs;
+            let abs_val = val.abs();
+            let mask = abs_val.simd_ge(t);
+            let rounded = val.round();
+            let result = f32x4::blend(mask, rounded, zero_f);
+            let result_i32 = result.to_i32x4();
+            result_i32.store((&mut output[base..base + 4]).try_into().unwrap());
+        }
+    }
+
+    output[0] = 0;
+}
+
+/// libjxl-order large-block quantization: `val = (weights[i] * qac_qm) * coeffs[i]`.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn quantize_block_large_libjxl(
+    dct_coeffs: &[f32],
+    weights: &[f32],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    grid_width: usize,
+    grid_height: usize,
+    llf_x: usize,
+    llf_y: usize,
+    output: &mut [i32],
+) {
+    debug_assert_eq!(grid_width % 8, 0, "grid_width must be a multiple of 8");
+    let size = grid_width * grid_height;
+    debug_assert!(dct_coeffs.len() >= size);
+    debug_assert!(weights.len() >= size);
+    debug_assert!(output.len() >= size);
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            quantize_large_avx2_lj(
+                token,
+                dct_coeffs,
+                weights,
+                qac_qm,
+                thresholds,
+                grid_width,
+                grid_height,
+                llf_x,
+                llf_y,
+                output,
+            );
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            quantize_large_neon_lj(
+                token,
+                dct_coeffs,
+                weights,
+                qac_qm,
+                thresholds,
+                grid_width,
+                grid_height,
+                llf_x,
+                llf_y,
+                output,
+            );
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            quantize_large_wasm128_lj(
+                token,
+                dct_coeffs,
+                weights,
+                qac_qm,
+                thresholds,
+                grid_width,
+                grid_height,
+                llf_x,
+                llf_y,
+                output,
+            );
+            return;
+        }
+    }
+
+    quantize_large_scalar_lj(
+        dct_coeffs,
+        weights,
+        qac_qm,
+        thresholds,
+        grid_width,
+        grid_height,
+        llf_x,
+        llf_y,
+        output,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn quantize_large_scalar_lj(
+    dct_coeffs: &[f32],
+    weights: &[f32],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    grid_width: usize,
+    grid_height: usize,
+    llf_x: usize,
+    llf_y: usize,
+    output: &mut [i32],
+) {
+    let half_h = grid_height / 2;
+    let half_w = grid_width / 2;
+    let size = grid_width * grid_height;
+
+    for idx in 0..size {
+        let y = idx / grid_width;
+        let x = idx % grid_width;
+
+        if y < llf_y && x < llf_x {
+            output[idx] = 0;
+            continue;
+        }
+
+        let thr_idx = (if y >= half_h { 2 } else { 0 }) + (if x >= half_w { 1 } else { 0 });
+        let val = (weights[idx] * qac_qm) * dct_coeffs[idx];
+        output[idx] = if val.abs() < thresholds[thr_idx] {
+            0
+        } else {
+            crate::scalarmath::round_ties_even_f32(val) as i32
+        };
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[archmage::arcane]
+pub fn quantize_large_avx2_lj(
+    token: archmage::X64V3Token,
+    dct_coeffs: &[f32],
+    weights: &[f32],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    grid_width: usize,
+    grid_height: usize,
+    llf_x: usize,
+    llf_y: usize,
+    output: &mut [i32],
+) {
+    use magetypes::simd::f32x8;
+
+    let qac_v = f32x8::splat(token, qac_qm);
+    let zero_f = f32x8::zero(token);
+
+    let half_h = grid_height / 2;
+    let half_w = grid_width / 2;
+    let chunks_per_row = grid_width / 8;
+
+    let thr_splat = [
+        f32x8::splat(token, thresholds[0]),
+        f32x8::splat(token, thresholds[1]),
+        f32x8::splat(token, thresholds[2]),
+        f32x8::splat(token, thresholds[3]),
+    ];
+
+    let coeffs = &dct_coeffs[..grid_width * grid_height];
+    let wts = &weights[..grid_width * grid_height];
+    let out = &mut output[..grid_width * grid_height];
+
+    for y in 0..grid_height {
+        let row_thr_base = if y >= half_h { 2 } else { 0 };
+        let row_off = y * grid_width;
+
+        for chunk in 0..chunks_per_row {
+            let x_base = chunk * 8;
+            let base = row_off + x_base;
+            let thr_idx = row_thr_base + if x_base >= half_w { 1 } else { 0 };
+
+            let c = crate::load_f32x8(token, coeffs, base);
+            let w = crate::load_f32x8(token, wts, base);
+            let thr = thr_splat[thr_idx];
+
+            let val = w * qac_v * c;
+
+            let abs_val = val.abs();
+            let mask = abs_val.simd_ge(thr);
+            let rounded = val.round();
+            let result = f32x8::blend(mask, rounded, zero_f);
+
+            let result_i32 = result.to_i32x8();
+            result_i32.store((&mut out[base..base + 8]).try_into().unwrap());
+        }
+    }
+
+    for y in 0..llf_y {
+        for x in 0..llf_x {
+            out[y * grid_width + x] = 0;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[archmage::arcane]
+pub fn quantize_large_neon_lj(
+    token: archmage::NeonToken,
+    dct_coeffs: &[f32],
+    weights: &[f32],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    grid_width: usize,
+    grid_height: usize,
+    llf_x: usize,
+    llf_y: usize,
+    output: &mut [i32],
+) {
+    use magetypes::simd::f32x4;
+
+    let qac_v = f32x4::splat(token, qac_qm);
+    let zero_f = f32x4::zero(token);
+
+    let half_h = grid_height / 2;
+    let half_w = grid_width / 2;
+
+    let thr_splat = [
+        f32x4::splat(token, thresholds[0]),
+        f32x4::splat(token, thresholds[1]),
+        f32x4::splat(token, thresholds[2]),
+        f32x4::splat(token, thresholds[3]),
+    ];
+
+    let coeffs = &dct_coeffs[..grid_width * grid_height];
+    let wts = &weights[..grid_width * grid_height];
+    let out = &mut output[..grid_width * grid_height];
+
+    for y in 0..grid_height {
+        let row_thr_base = if y >= half_h { 2 } else { 0 };
+        let row_off = y * grid_width;
+
+        let chunks_per_row = grid_width / 4;
+        for chunk in 0..chunks_per_row {
+            let x_base = chunk * 4;
+            let base = row_off + x_base;
+            let thr_idx = row_thr_base + if x_base >= half_w { 1 } else { 0 };
+
+            let c = f32x4::from_slice(token, &coeffs[base..]);
+            let w = f32x4::from_slice(token, &wts[base..]);
+            let thr = thr_splat[thr_idx];
+
+            let val = w * qac_v * c;
+            let abs_val = val.abs();
+            let mask = abs_val.simd_ge(thr);
+            let rounded = val.round();
+            let result = f32x4::blend(mask, rounded, zero_f);
+
+            let result_i32 = result.to_i32x4();
+            result_i32.store((&mut out[base..base + 4]).try_into().unwrap());
+        }
+    }
+
+    for y in 0..llf_y {
+        for x in 0..llf_x {
+            out[y * grid_width + x] = 0;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+pub fn quantize_large_wasm128_lj(
+    token: archmage::Wasm128Token,
+    dct_coeffs: &[f32],
+    weights: &[f32],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    grid_width: usize,
+    grid_height: usize,
+    llf_x: usize,
+    llf_y: usize,
+    output: &mut [i32],
+) {
+    use magetypes::simd::f32x4;
+
+    let qac_v = f32x4::splat(token, qac_qm);
+    let zero_f = f32x4::zero(token);
+
+    let half_h = grid_height / 2;
+    let half_w = grid_width / 2;
+
+    let thr_splat = [
+        f32x4::splat(token, thresholds[0]),
+        f32x4::splat(token, thresholds[1]),
+        f32x4::splat(token, thresholds[2]),
+        f32x4::splat(token, thresholds[3]),
+    ];
+
+    let coeffs = &dct_coeffs[..grid_width * grid_height];
+    let wts = &weights[..grid_width * grid_height];
+    let out = &mut output[..grid_width * grid_height];
+
+    for y in 0..grid_height {
+        let row_thr_base = if y >= half_h { 2 } else { 0 };
+        let row_off = y * grid_width;
+
+        let chunks_per_row = grid_width / 4;
+        for chunk in 0..chunks_per_row {
+            let x_base = chunk * 4;
+            let base = row_off + x_base;
+            let thr_idx = row_thr_base + if x_base >= half_w { 1 } else { 0 };
+
+            let c = f32x4::from_slice(token, &coeffs[base..]);
+            let w = f32x4::from_slice(token, &wts[base..]);
+            let thr = thr_splat[thr_idx];
+
+            let val = w * qac_v * c;
+            let abs_val = val.abs();
+            let mask = abs_val.simd_ge(thr);
+            let rounded = val.round();
+            let result = f32x4::blend(mask, rounded, zero_f);
+
+            let result_i32 = result.to_i32x4();
+            result_i32.store((&mut out[base..base + 4]).try_into().unwrap());
+        }
+    }
+
+    for y in 0..llf_y {
+        for x in 0..llf_x {
+            out[y * grid_width + x] = 0;
+        }
+    }
+}
+
+// ============================================================================
 // Generic large-block quantization (DCT16+)
 // ============================================================================
 

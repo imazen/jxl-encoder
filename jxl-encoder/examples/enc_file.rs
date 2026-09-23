@@ -45,6 +45,8 @@ fn main() {
         .with_strategy(EncoderStrategy::Libjxl)
         .encode(pixels, w, h, PixelLayout::Rgb8)
         .expect("encode failed");
+    #[cfg(feature = "investigate-adjust-quant-block-ac")]
+    jxl_encoder::vardct::aqba_diag::emit_and_reset("enc_file");
     std::fs::write(output, &out).unwrap();
     eprintln!("wrote {} bytes to {output}", out.len());
 }

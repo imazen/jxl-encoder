@@ -18,6 +18,70 @@ use super::afv::{RAW_STRATEGY_AFV0, RAW_STRATEGY_AFV1, RAW_STRATEGY_AFV2, RAW_ST
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, as_array_ref};
 use super::encoder::VarDctEncoder;
 
+/// ARM `vrecpeq_f32` estimate table — the 256-entry significand lookup
+/// from the ARM ARM `RecipEstimate` pseudocode, captured on hardware.
+/// Indexed by `fraction[22:15]` of the (normal) input; the entry is the
+/// 9-bit output significand numerator over 256.
+#[rustfmt::skip]
+const VRECPE_EST: [u16; 256] = [
+    510, 506, 502, 498, 494, 490, 486, 482, 480, 476, 472, 468, 464, 460, 458, 454,
+    450, 446, 442, 440, 436, 432, 430, 426, 422, 420, 416, 412, 410, 406, 402, 400,
+    396, 394, 390, 388, 384, 382, 378, 376, 372, 370, 366, 364, 360, 358, 354, 352,
+    348, 346, 344, 340, 338, 334, 332, 330, 326, 324, 322, 318, 316, 314, 312, 308,
+    306, 304, 300, 298, 296, 294, 290, 288, 286, 284, 282, 278, 276, 274, 272, 270,
+    268, 264, 262, 260, 258, 256, 254, 252, 248, 246, 244, 242, 240, 238, 236, 234,
+    232, 230, 228, 226, 224, 222, 220, 218, 216, 214, 212, 210, 208, 206, 204, 202,
+    200, 198, 196, 194, 192, 190, 188, 186, 184, 182, 180, 178, 176, 176, 174, 172,
+    170, 168, 166, 164, 162, 162, 160, 158, 156, 154, 152, 150, 150, 148, 146, 144,
+    142, 140, 140, 138, 136, 134, 132, 132, 130, 128, 126, 126, 124, 122, 120, 118,
+    118, 116, 114, 112, 112, 110, 108, 106, 106, 104, 102, 102, 100, 98, 96, 96,
+    94, 92, 92, 90, 88, 88, 86, 84, 84, 82, 80, 80, 78, 76, 76, 74,
+    72, 72, 70, 68, 68, 66, 64, 64, 62, 60, 60, 58, 58, 56, 54, 54,
+    52, 52, 50, 48, 48, 46, 46, 44, 42, 42, 40, 40, 38, 36, 36, 34,
+    34, 32, 32, 30, 30, 28, 26, 26, 24, 24, 22, 22, 20, 20, 18, 18,
+    16, 14, 14, 12, 12, 10, 10, 8, 8, 6, 6, 4, 4, 2, 2, 0,
+];
+
+/// libjxl `ApproximateReciprocal` on the reference aarch64 build — NEON
+/// `vrecpeq_f32`. Input must be a normal nonzero f32 (all `AdjustQuantBias`
+/// inputs are integer-valued |q| >= 1.125).
+#[inline]
+fn approx_reciprocal_lj(x: f32) -> f32 {
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000;
+    let exp = ((bits >> 23) & 0xff) as i32;
+    let idx = ((bits >> 15) & 0xff) as usize;
+    // result = 2^(-(e-127)-1) * (est/256): biased exp = 253 - e.
+    let new_exp = 253 - exp;
+    let frac = (VRECPE_EST[idx] as u32) << 14;
+    f32::from_bits(sign | ((new_exp as u32) << 23) | frac)
+}
+
+/// libjxl `AdjustQuantBias` with the reference (aarch64) build's
+/// `ApproximateReciprocal`: `quant - biases[3] * vrecpe(quant)` as a fused
+/// `NegMulAdd`, and `+/-biases[c]` via sign-bit Xor for |q| < 1.125.
+#[inline]
+pub(super) fn adjust_quant_bias_lj(quantized: i32, channel: usize) -> f32 {
+    const BIAS: [f32; 4] = [
+        1.0 - 0.05465007330715401,
+        1.0 - 0.07005449891748593,
+        1.0 - 0.049935103337343655,
+        0.145,
+    ];
+    let q = quantized as f32;
+    if q.abs() < 1.125 {
+        // |q| <= 1: IfThenElseZero(|q|>0, Xor(biases[c], sign))
+        if q == 0.0 {
+            0.0
+        } else {
+            q.signum() * BIAS[channel]
+        }
+    } else {
+        // NegMulAdd(biases[3], ApproximateReciprocal(q), q) — single FMA.
+        (-BIAS[3]).mul_add(approx_reciprocal_lj(q), q)
+    }
+}
+
 /// Apply AdjustQuantBias to a quantized value for dequantization.
 ///
 /// Ported from libjxl-tiny's AdjustQuantBias. For +/-1 values, returns a
@@ -88,6 +152,11 @@ impl VarDctEncoder {
     ///
     /// `thresholds` are the pre-computed dead-zone thresholds for the 4 quadrants.
     /// `qm_multiplier` is typically 1.0, but for X channel it's `x_qm_mul`.
+    ///
+    /// When `libjxl_qm` is true, `inv_weight` carries libjxl's `qm` value
+    /// (InvDequantMatrix) and the multiply order matches `QuantizeBlockAC`:
+    /// `val = (qm * (qac*mul)) * in`. Otherwise `inv_weight` is `1/weight` and
+    /// the historical `inv_weight * qac * mul * coef` order is kept.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn quantize_coeff_ac(
@@ -100,13 +169,19 @@ impl VarDctEncoder {
         x_in_block: usize,
         block_height: usize,
         block_width: usize,
+        libjxl_qm: bool,
     ) -> i32 {
         // Quadrant selection: which of the 4 quadrants does this coeff fall in
         let y_half = if y_in_block >= block_height / 2 { 2 } else { 0 };
         let x_half = if x_in_block >= block_width / 2 { 1 } else { 0 };
         let thr = thresholds[y_half + x_half];
 
-        let val = inv_weight * qac * qm_multiplier * coef;
+        let val = if libjxl_qm {
+            // libjxl QuantizeBlockAC: q = Mul(qm, Set(qac*mul)); val = Mul(q, in)
+            (inv_weight * (qac * qm_multiplier)) * coef
+        } else {
+            inv_weight * qac * qm_multiplier * coef
+        };
         if val.abs() < thr {
             0
         } else {
@@ -142,6 +217,7 @@ impl VarDctEncoder {
         ysize: usize, // cy (8x8 blocks in y)
         thresholds: &mut [f32; 4],
         quant: &mut i32,
+        libjxl_qm: bool,
     ) -> (u8, f32, f32, i32) {
         const QUANT_MAX: i32 = 256;
 
@@ -192,8 +268,12 @@ impl VarDctEncoder {
                     + (if x >= block_width / 2 { 1 } else { 0 });
 
                 // Match our quantize_coeff_ac formula: val = (1/weight) * qac * qm_mul * coef
-                let inv_w = 1.0 / weights[pos];
-                let val = block_coeffs[pos] * inv_w * qac * qm_multiplier;
+                // libjxl AdjustQuantBlockAC: val = block_in[pos] * (qm[pos] * qac * mul)
+                let val = if libjxl_qm {
+                    block_coeffs[pos] * ((weights[pos] * qac) * qm_multiplier)
+                } else {
+                    block_coeffs[pos] * (1.0 / weights[pos]) * qac * qm_multiplier
+                };
                 let v = if val.abs() < thresholds[hfix] {
                     0.0
                 } else {
@@ -409,6 +489,7 @@ impl VarDctEncoder {
         zigzag_order: Option<&[u32]>,
         error_scratch: Option<&mut Vec<f32>>,
         quant_flat_scratch: &mut [i32],
+        libjxl_qm: bool,
     ) {
         // C++ QuantizeBlockAC uses post-swap (cx, cy) for the coefficient grid:
         // stride = cx * 8 (block_width), height = cy * 8 (block_height).
@@ -430,13 +511,23 @@ impl VarDctEncoder {
                 let coeffs: &[f32; 64] = as_array_ref(dct_coeffs, 0);
                 let w: &[f32; 64] = as_array_ref(weights, 0);
                 let qac_qm = qac * qm_multiplier;
-                jxl_simd::quantize_block_dct8(
-                    coeffs,
-                    w,
-                    qac_qm,
-                    thresholds,
-                    &mut quant_ac[by * width + bx],
-                );
+                if libjxl_qm {
+                    jxl_simd::quantize_block_dct8_libjxl(
+                        coeffs,
+                        w,
+                        qac_qm,
+                        thresholds,
+                        &mut quant_ac[by * width + bx],
+                    );
+                } else {
+                    jxl_simd::quantize_block_dct8(
+                        coeffs,
+                        w,
+                        qac_qm,
+                        thresholds,
+                        &mut quant_ac[by * width + bx],
+                    );
+                }
                 return;
             }
 
@@ -444,17 +535,31 @@ impl VarDctEncoder {
             if grid_width >= 16 {
                 let qac_qm = qac * qm_multiplier;
                 let flat = &mut quant_flat_scratch[..size];
-                jxl_simd::quantize_block_large(
-                    &dct_coeffs[..size],
-                    &weights[..size],
-                    qac_qm,
-                    thresholds,
-                    grid_width,
-                    grid_height,
-                    cx,
-                    cy,
-                    flat,
-                );
+                if libjxl_qm {
+                    jxl_simd::quantize_block_large_libjxl(
+                        &dct_coeffs[..size],
+                        &weights[..size],
+                        qac_qm,
+                        thresholds,
+                        grid_width,
+                        grid_height,
+                        cx,
+                        cy,
+                        flat,
+                    );
+                } else {
+                    jxl_simd::quantize_block_large(
+                        &dct_coeffs[..size],
+                        &weights[..size],
+                        qac_qm,
+                        thresholds,
+                        grid_width,
+                        grid_height,
+                        cx,
+                        cy,
+                        flat,
+                    );
+                }
 
                 // Scatter from flat layout to 8x8 block slots.
                 // Each aligned chunk of 8 in a row maps to consecutive positions
@@ -504,7 +609,11 @@ impl VarDctEncoder {
                 } else {
                     Self::quantize_coeff_ac(
                         dct_coeffs[idx],
-                        1.0 / weights[idx],
+                        if libjxl_qm {
+                            weights[idx]
+                        } else {
+                            1.0 / weights[idx]
+                        },
                         qac,
                         qm_multiplier,
                         thresholds,
@@ -512,6 +621,7 @@ impl VarDctEncoder {
                         x,
                         grid_height,
                         grid_width,
+                        libjxl_qm,
                     )
                 };
 
@@ -606,13 +716,27 @@ impl VarDctEncoder {
                     continue;
                 }
 
-                // Add accumulated error to this coefficient
-                corrected_coeffs[idx] += accumulated_error * weights[idx];
+                // Add accumulated error to this coefficient.
+                // Normal tables are reciprocal (1/qm); strict tables are qm —
+                // the error term scales by the dequant step (1/qm) either way.
+                corrected_coeffs[idx] += if libjxl_qm {
+                    accumulated_error * (1.0 / weights[idx])
+                } else {
+                    accumulated_error * weights[idx]
+                };
 
                 let y = idx / grid_width;
                 let x = idx % grid_width;
-                let inv_weight = 1.0 / weights[idx];
-                let scaled_coeff = corrected_coeffs[idx] * inv_weight * qac * qm_multiplier;
+                let inv_weight = if libjxl_qm {
+                    weights[idx]
+                } else {
+                    1.0 / weights[idx]
+                };
+                let scaled_coeff = if libjxl_qm {
+                    (inv_weight * (qac * qm_multiplier)) * corrected_coeffs[idx]
+                } else {
+                    corrected_coeffs[idx] * inv_weight * qac * qm_multiplier
+                };
 
                 // Quantize
                 let qval = Self::quantize_coeff_ac(
@@ -625,6 +749,7 @@ impl VarDctEncoder {
                     x,
                     grid_height,
                     grid_width,
+                    libjxl_qm,
                 );
 
                 // Compute quantization error
@@ -677,6 +802,7 @@ pub fn adjust_quant_block_ac_free(
     ysize: usize,
     thresholds: &mut [f32; 4],
     quant: &mut i32,
+    libjxl_qm: bool,
 ) -> (u8, f32, f32, i32) {
     VarDctEncoder::adjust_quant_block_ac(
         block_coeffs,
@@ -691,5 +817,6 @@ pub fn adjust_quant_block_ac_free(
         ysize,
         thresholds,
         quant,
+        libjxl_qm,
     )
 }

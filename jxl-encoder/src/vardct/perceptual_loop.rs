@@ -1524,6 +1524,7 @@ impl VarDctEncoder {
                 ysize_blocks,
                 budget,
                 self.resolved_improvements.dc_adaptive_smoothing,
+                self.profile.quant_weights_libjxl,
             )?
         } else {
             // Legacy / fallback path: uniform sharpness=4 seed.
@@ -2174,6 +2175,7 @@ impl VarDctEncoder {
                     ysize_blocks,
                     self.budget.as_ref(),
                     self.resolved_improvements.dc_adaptive_smoothing,
+                    self.profile.quant_weights_libjxl,
                 )
             {
                 // Overwrite sharpness with the per-iter computed map.
@@ -2191,6 +2193,7 @@ impl VarDctEncoder {
                 xsize_blocks,
                 ysize_blocks,
                 self.resolved_improvements.dc_adaptive_smoothing,
+                self.profile.quant_weights_libjxl,
             );
 
             // W44-116: per-step XYB capture (FINAL iter only). The hook is
@@ -3194,6 +3197,7 @@ impl VarDctEncoder {
                             xsize_blocks,
                             ysize_blocks,
                             self.resolved_improvements.dc_adaptive_smoothing,
+                            self.profile.quant_weights_libjxl,
                         );
 
                         if self.enable_gaborish {

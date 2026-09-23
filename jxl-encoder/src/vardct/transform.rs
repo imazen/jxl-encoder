@@ -26,7 +26,7 @@ use super::dct::{
 use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
 use super::quant::INV_DC_QUANT;
-use super::quantize::adjust_quant_bias;
+use super::quantize::{adjust_quant_bias, adjust_quant_bias_lj};
 use crate::budget::MemoryBudget;
 use crate::debug_rect;
 use crate::error::{Error, Result};
@@ -353,8 +353,23 @@ impl VarDctEncoder {
         let channels = [xyb_x, xyb_y, xyb_b];
 
         // Hoist constant computations out of the block loop
-        let x_qm_mul = jxl_simd::fast_powf(1.25, params.x_qm_scale as f32 - 2.0);
-        let b_qm_mul = jxl_simd::fast_powf(1.25, params.b_qm_scale as f32 - 2.0);
+        // W45-RECON part 14: libjxl enc_cache.cc computes the qm
+        // multipliers with `std::pow` — under strict parity use exact
+        // integer-exponent powers (1.25^k is exactly representable for
+        // the small exponents x/b_qm_scale-2 can take); the
+        // `FastPowf` polynomial approximation is ~3e-5 off and flips
+        // rounding-boundary coefficients.
+        let strict_qm_hoist = self.profile.quant_weights_libjxl;
+        let x_qm_mul = if strict_qm_hoist {
+            1.25f32.powi(params.x_qm_scale as i32 - 2)
+        } else {
+            jxl_simd::fast_powf(1.25, params.x_qm_scale as f32 - 2.0)
+        };
+        let b_qm_mul = if strict_qm_hoist {
+            1.25f32.powi(params.b_qm_scale as i32 - 2)
+        } else {
+            jxl_simd::fast_powf(1.25, params.b_qm_scale as f32 - 2.0)
+        };
 
         // Pre-allocate scratch buffers for DCT coefficients (max DCT64x64 = 4096)
         const MAX_BLOCK_SIZE: usize = 4096;
@@ -659,6 +674,17 @@ impl VarDctEncoder {
                     );
                 }
 
+                // W45-RECON part 14: snapshot pre-quant Y for the
+                // JXL_QAC_DUMP record (dct_coeffs[1] is overwritten by
+                // the roundtrip dequantization in Step 4).
+                #[cfg(feature = "std")]
+                let qac_pre_y: alloc::vec::Vec<f32> =
+                    if std::env::var_os("JXL_QAC_DUMP").is_some() {
+                        dct_coeffs[1][..size].to_vec()
+                    } else {
+                        alloc::vec::Vec::new()
+                    };
+
                 // W45-RECON: dump pre-quantization coefficient buffer
                 // (post-DCT, post-DC-extraction, pre-CfL on X/B) for the
                 // same probe blocks as the cjxl COEFFIN dump.
@@ -686,8 +712,14 @@ impl VarDctEncoder {
                 // adjusts per-block quant and Y thresholds based on coefficient
                 // statistics across all 3 channels.
                 // At effort < 5: uses fixed thresholds, no per-block adjustment.
+                // W45-RECON part 14: strict uses libjxl's f32-generated
+                // InvDequantMatrix/DequantMatrix tables + multiply order.
+                let strict_qm = self.profile.quant_weights_libjxl;
                 let mut thresholds_y;
                 let qac;
+                let quant_final_i32: i32;
+                #[cfg(feature = "std")]
+                let qac_quant_i32: i32;
                 {
                     let quant_idx = by * xsize_blocks + bx;
                     let mut quant_int = quant_field[quant_idx] as i32;
@@ -717,7 +749,11 @@ impl VarDctEncoder {
                             } else {
                                 1.0
                             };
-                            let weights_c = super::quant::quant_weights(raw_strategy as usize, c);
+                            let weights_c = if strict_qm {
+                                super::quant::inv_dequant_matrix_lj(raw_strategy as usize, c)
+                            } else {
+                                super::quant::quant_weights(raw_strategy as usize, c)
+                            };
                             #[cfg(feature = "investigate-adjust-quant-block-ac")]
                             let _orig_quant_c = quant_c;
                             let (hflags, vals, err, activity) = Self::adjust_quant_block_ac(
@@ -733,6 +769,7 @@ impl VarDctEncoder {
                                 cy,
                                 &mut thres,
                                 &mut quant_c,
+                                strict_qm,
                             );
                             #[cfg(feature = "investigate-adjust-quant-block-ac")]
                             super::aqba_diag::record(
@@ -793,12 +830,21 @@ impl VarDctEncoder {
                         thresholds_y = self.profile.fixed_thresholds_y;
                     }
                     qac = params.scale * quant_int as f32;
+                    quant_final_i32 = quant_int;
+                    #[cfg(feature = "std")]
+                    {
+                        qac_quant_i32 = quant_int;
+                    }
                 }
 
                 // ── Step 3: Quantize Y AC with thresholding ────────────────
                 {
                     let c = 1;
-                    let weights = super::quant::quant_weights(raw_strategy as usize, c);
+                    let weights = if strict_qm {
+                        super::quant::inv_dequant_matrix_lj(raw_strategy as usize, c)
+                    } else {
+                        super::quant::quant_weights(raw_strategy as usize, c)
+                    };
                     #[cfg(feature = "std")]
                     if std::env::var_os("JXL_COEFF_IN_DUMP").is_some() && bx == 41 && by == 0 {
                         let mut ob = alloc::format!(
@@ -812,7 +858,8 @@ impl VarDctEncoder {
                             1.0f32
                         );
                         for (k, &w) in weights[..size].iter().enumerate() {
-                            ob.push_str(&alloc::format!(" {}:{:.9}", k, 1.0 / w));
+                            let qm = if strict_qm { w } else { 1.0 / w };
+                            ob.push_str(&alloc::format!(" {}:{:.9}", k, qm));
                         }
                         eprint!("{ob}\n");
                         let mut tb = String::from("THR");
@@ -854,6 +901,7 @@ impl VarDctEncoder {
                             None
                         },
                         &mut quant_flat_scratch,
+                        strict_qm,
                     );
                 }
 
@@ -862,8 +910,24 @@ impl VarDctEncoder {
                 // We already quantized AC; now also quantize LLF (temporarily)
                 // and dequantize everything back into dct_coeffs[1].
                 {
-                    let weights = super::quant::quant_weights(raw_strategy as usize, 1);
-                    let inv_qac = 1.0 / qac;
+                    // Strict: w_row = libjxl DequantMatrix (1/qm), inv_qac =
+                    // inv_global_scale/quant (quantizer.inv_quant_ac), and the
+                    // LLF quantize uses the InvDequantMatrix (qm) directly.
+                    let weights = if strict_qm {
+                        super::quant::dequant_matrix_lj(raw_strategy as usize, 1)
+                    } else {
+                        super::quant::quant_weights(raw_strategy as usize, 1)
+                    };
+                    let qm_weights = if strict_qm {
+                        super::quant::inv_dequant_matrix_lj(raw_strategy as usize, 1)
+                    } else {
+                        weights
+                    };
+                    let inv_qac = if strict_qm {
+                        params.inv_scale / quant_final_i32 as f32
+                    } else {
+                        1.0 / qac
+                    };
                     let transpose_slots = covered_y > covered_x;
                     // Use post-swap dimensions for grid (matches C++ and quantize_ac_block).
                     // Nested loops eliminate per-element integer divisions.
@@ -882,7 +946,11 @@ impl VarDctEncoder {
                                     let q = if is_llf {
                                         Self::quantize_coeff_ac(
                                             coeff_row[x],
-                                            1.0 / w_row[x],
+                                            if strict_qm {
+                                                qm_weights[row_off + x]
+                                            } else {
+                                                1.0 / w_row[x]
+                                            },
                                             qac,
                                             1.0,
                                             &thresholds_y,
@@ -890,6 +958,7 @@ impl VarDctEncoder {
                                             x,
                                             block_height,
                                             block_width,
+                                            strict_qm,
                                         )
                                     } else {
                                         let (phys_row_off, phys_col_off) = if transpose_slots {
@@ -901,7 +970,11 @@ impl VarDctEncoder {
                                         quant_ac[1][(by - yoff + phys_row_off) * width
                                             + (bx - xoff + phys_col_off)][pos_in_8x8]
                                     };
-                                    let adj = adjust_quant_bias(q, 1);
+                                    let adj = if strict_qm {
+                                        adjust_quant_bias_lj(q, 1)
+                                    } else {
+                                        adjust_quant_bias(q, 1)
+                                    };
                                     coeff_row[x] = adj * w_row[x] * inv_qac;
                                 }
                             }
@@ -1169,7 +1242,11 @@ impl VarDctEncoder {
                     // libjxl uses [0.58, 0.62, 0.62, 0.62] for X/B channels
                     // (different from libjxl-tiny's per-channel adjustments)
                     let thresholds_xb = Self::default_thresholds(c, covered_x, covered_y);
-                    let weights = super::quant::quant_weights(raw_strategy as usize, c);
+                    let weights = if strict_qm {
+                        super::quant::inv_dequant_matrix_lj(raw_strategy as usize, c)
+                    } else {
+                        super::quant::quant_weights(raw_strategy as usize, c)
+                    };
                     #[cfg(feature = "std")]
                     if std::env::var_os("JXL_COEFF_IN_DUMP").is_some() && bx == 41 && by == 0 {
                         let mut ob = alloc::format!(
@@ -1183,7 +1260,8 @@ impl VarDctEncoder {
                             qm_multiplier
                         );
                         for (k, &w) in weights[..size].iter().enumerate() {
-                            ob.push_str(&alloc::format!(" {}:{:.9}", k, 1.0 / w));
+                            let qm = if strict_qm { w } else { 1.0 / w };
+                            ob.push_str(&alloc::format!(" {}:{:.9}", k, qm));
                         }
                         eprint!("{ob}\n");
                         let mut tb = String::from("THR");
@@ -1225,6 +1303,7 @@ impl VarDctEncoder {
                             None
                         },
                         &mut quant_flat_scratch,
+                        strict_qm,
                     );
                 }
 
@@ -1302,6 +1381,76 @@ impl VarDctEncoder {
                             }
                         }
                         raw_nzeros[c][(by - yoff) * width + (bx - xoff)] = raw_nz;
+                    }
+                }
+
+                // W45-RECON part 14 probe: full quantized-coeff dump in the
+                // same binary record format as the instrumented cjxl's
+                // JXL_QAC_DUMP — hdr {magic,bx,by,strat,size} u32×5 then
+                // 3*size f32 (dct_coeffs post-CfL/post-Y-roundtrip) then
+                // 3*size i32 flat-quantized in cx*8-stride layout.
+                #[cfg(feature = "std")]
+                if let Some(path) = std::env::var_os("JXL_QAC_DUMP") {
+                    use std::io::Write;
+                    let mut f = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path)
+                        .unwrap();
+                    let hdr = [
+                        0x5141_4342u32,
+                        0u32, // group_idx — our bx/by are already global
+                        bx as u32,
+                        by as u32,
+                        raw_strategy as u32,
+                        size as u32,
+                    ];
+                    for w in hdr {
+                        f.write_all(&w.to_le_bytes()).unwrap();
+                    }
+                    for v in &qac_pre_y[..size] {
+                        f.write_all(&v.to_le_bytes()).unwrap();
+                    }
+                    f.write_all(&qac_quant_i32.to_le_bytes()).unwrap();
+                    let stride = cx * BLOCK_DIM;
+                    let mut flat = alloc::vec![0f32; size];
+                    for c in 0..3 {
+                        flat[..size].copy_from_slice(&dct_coeffs[c][..size]);
+                        for v in &flat[..size] {
+                            f.write_all(&v.to_le_bytes()).unwrap();
+                        }
+                    }
+                    let mut qflat = alloc::vec![0i32; size];
+                    for c in 0..3 {
+                        if covered_blocks == 1 {
+                            qflat[..size].copy_from_slice(
+                                &quant_ac[c][(by - yoff) * width + (bx - xoff)][..size],
+                            );
+                        } else {
+                            for coef_slot_y in 0..cy {
+                                for pos_y in 0..BLOCK_DIM {
+                                    let y = coef_slot_y * BLOCK_DIM + pos_y;
+                                    for coef_slot_x in 0..cx {
+                                        let (phys_row_off, phys_col_off) = if transpose_slots {
+                                            (coef_slot_x, coef_slot_y)
+                                        } else {
+                                            (coef_slot_y, coef_slot_x)
+                                        };
+                                        let row = &quant_ac[c]
+                                            [(by - yoff + phys_row_off) * width
+                                                + (bx - xoff + phys_col_off)];
+                                        for pos_x in 0..BLOCK_DIM {
+                                            let x = coef_slot_x * BLOCK_DIM + pos_x;
+                                            qflat[y * stride + x] =
+                                                row[pos_y * BLOCK_DIM + pos_x];
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        for v in &qflat[..size] {
+                            f.write_all(&v.to_le_bytes()).unwrap();
+                        }
                     }
                 }
             }

@@ -306,6 +306,7 @@ Numeric constants where ours differ from libjxl's reference values.
 | `EffortProfile.bcm_qf_zero_based` (**W45-RECON part 9 — `block_ctx_map` QF histogram base**) | Historical: `compute_block_ctx_map` bins the **1-based** raw quant field directly (`qf = quant_field[..]`) on ALL strategies. Strict: bins `qf - 1` (0-based) under `EncoderStrategy::Libjxl` via `block_ctx_map_qf_zero_based_libjxl` + `apply_block_ctx_map_qf_zero_based_libjxl` | libjxl `FindBestBlockEntropyModel` (`enc_heuristics.cc:97-103`) bins `int qf = qf_row[x] - 1` — the raw field is 1-based | RESOLVED via opt-in (W45-RECON part 9) — INTENTIONAL historical binning on non-Libjxl paths | The 1-based binning shifted every histogram cell by +1: emitted `qf_thresholds` land +1 vs cjxl (measured on `photoish_1024` e7 d1 — ours `qft=7` vs cjxl `qft=6`), and the segment-counting boundary `j == t` disagreed with the lookup boundary `qf > t` by one bin, scrambling the merge clustering (different ctx_map even at equal `num_ctxs`). With 0-based bins the counting boundary `j ≥ t` ≡ lookup `field > t` ≡ decoder `qf > t` — all three consistent (libjxl's own encoder entropy coder also uses the raw field with `qf > t`, `enc_entropy_coder.cc:220`). Post-fix strict emits `qft=6` = cjxl. Residual ctx_map diff on this fixture is upstream quant-field trajectory (per-order cell totals match cjxl exactly: 716/24/14704/70/816), not a BCM-layer bug. Fixing the default path would change shipped Zenjxl bytes, so it ships Libjxl-gated. |
 | CfL Pass-2 division `q / qw_x[i]` (W44-197 Candidate C / W44-189 D13) | `q * inv_qw_x[i]` (multiplication; precomputed reciprocals via `quant::dequant_weights`) — default-on, BYTE-IDENTICAL to former division form at i8 CfL output granularity | `Mul(qv, Load(df, qm_x + i))` (`enc_chroma_from_luma.cc:337-343`; multiplication, precomputed `qm_x = dequant.InvMatrix(...)`) | RESOLVED (default-on) | W44-189 D13 audit identified this as a LOW-EV-but-cheap perf chunk. W44-197 ships the precompute-and-multiply form using the existing `quant::dequant_weights(strategy, channel)` table (which already OnceBox-caches the per-(strategy, channel) reciprocals). Eliminates two f32 divisions per coefficient on the Pass-2 hot loop (~4M divisions per 12 MP at e>=7 or when W44-197 Candidate B widens to e=5/6). 36/36 Zenjxl hash-locks BYTE-IDENTICAL; 4/4 Libjxl byte-lock cells BYTE-IDENTICAL — confirms the i8 output rounds identically on realistic data despite a/b vs a*(1/b) differing in the last 1-2 bits. Multiplications are 3-5× faster than divisions on modern f32 pipes. |
 | CfL Pass-2 weighting per-coefficient: `q / qw_x[i]` (division) vs libjxl `qv * qm_x[i]` (multiplication, with `qm_x` precomputed as inverse) at `chroma_from_luma.rs:594-603` | per-coefficient f32 DIVISION inside the tile loop | per-coefficient f32 MULTIPLICATION (with libjxl `qm_x = InvMatrix(...)` precomputed) | KNOWN-GAP (audit-only) | W44-189 CfL deep audit (D13) identified. Mathematically `q / qw == q * (1/qw)` but bit-different due to f32 non-associativity — within 1 ULP per coefficient. ALSO a ~5-10 ms perf regression at 12 MP (~4M divisions; f32 div is 3-5× slower than mul). CfL output is i8-clamped so output flips are unlikely on realistic data. Trivial salvage: precompute `inv_qw_x[i] = 1.0 / qw_x[i]` outside the inner loop (matches the Pass-1 precomputation at line 380-385). Memo §3 D13 has the full plan. |
+| `EffortProfile.quant_weights_libjxl` (**W45-RECON part 14 — f32 quant-matrix generation + multiply-order**) | Historical: quant tables interpolate band params in **f64** with precise `libm::powf` then cast/reciprocate; AC quantize computes `coeff * (1/weight) * qac_qm` (division form); `AdjustQuantBias` uses exact `0.145/quant`. Strict under `EncoderStrategy::Libjxl` via `quant_weights_libjxl` + `apply_quant_weights_libjxl`: `inv_dequant_matrix_lj` / `dequant_matrix_lj` tables + libjxl multiply-order kernels + `adjust_quant_bias_lj` | libjxl `GetQuantWeights` (`quant_weights.cc`) generates tables in **f32** throughout: f32 band chain, f32 `rcpcol/rcprow`, `MulAdd`+`Sqrt`, and `InterpolateVec` built on the `FastLog2f`/`FastPow2f` polynomial approximations (`base/fast_math-inl.h`) — ~3e-5 rel error vs precise powf. `ComputeQuantTable` then writes `inv_table` (raw weights, LLF region zeroed post-reciprocal) and `table = 1/weights`. `QuantizeBlockAC` computes `val = Mul(Mul(qm, quantv), in)`; `AdjustQuantBias` uses `ApproximateReciprocal` = NEON `vrecpe` estimate, not exact division | RESOLVED via opt-in (W45-RECON part 14) — INTENTIONAL f64 tables on non-Libjxl paths | The f64-vs-f32 tables differ by ≤1 ulp at ~all positions, which flips both `AdjustQuantBlockAC` integer decisions and single-coefficient quantize boundaries. Additional strict-path details reproduced: LLF region zeroed in `InvDequantMatrix` only (DequantMatrix keeps finite values), `AdjustQuantBlockAC` inner grouping `in * ((qm * qac) * mul)` vs `QuantizeBlockAC` `Mul(qm, qac*mul) * in`, `inv_qac = inv_global_scale/quant` (not `1/(scale*quant)`), `x_qm_multiplier` via exact `std::pow` (our `fast_powf` was ~0.01% high on `1.25^k`), NEON `vrecpe` 256-entry estimate ROM ported bit-exact from hardware, and the field-search `reconstruct_xyb` path mirrored to the decoder's `DequantLane` composition (`dm * (1/qm) * qac_mul` vs our `inv_qac * dequant`). Verified noise_512 e8 d1: **byte-identical to cjxl v0.12** (308 410 B, zero QAC/quant-field/AQBA-trajectory diffs, diagnostic and clean builds identical). Fixing the default path would re-derive every shipped Zenjxl byte, so it ships Libjxl-gated. |
 
 ---
 
@@ -1582,6 +1583,67 @@ vs 308410 (+26 B, all downstream of the header — token-level
 coefficient diffs). Strict lock cells drifted +3 B each by design
 (`noise_rgb_48x48_e2` landed at exactly cjxl's 3324); golden + pinned
 hashes regenerated. 63/63 normal-mode hash locks byte-identical.
+
+### W45-RECON part 14 (2026-09-23): f32 quant matrices + NEON `vrecpe` bias — noise_512 e8 **byte-identical to cjxl**
+
+After part 13 the +26 B residual lived entirely in frame content:
+`hf_global` +12 bits, AC groups −15/+6/+8/+15 bits, and 2 400/786 432
+decoded pixels differing. A quantized-coefficient dump added to the
+instrumented cjxl (`JXL_QAC_DUMP`, group-local coords) against a
+matching `dct_coeffs`/quantized snapshot on our side narrowed it to
+**8 blocks**: 5 with `max_quant` off-by-one (upstream quant-field
+evolution — all AQBA decisions were identical for identical inputs)
+and 3 single-position quantize-boundary flips with bit-identical
+inputs.
+
+Four compounding divergences, all under the new
+`quant_weights_libjxl` resolved gate:
+
+- **f32 matrix generation** — libjxl `GetQuantWeights`
+  (`quant_weights.cc`) builds every table in f32: f32 band chain,
+  f32 `rcpcol/rcprow`, `MulAdd`+`Sqrt`, and `InterpolateVec` on the
+  `FastLog2f`/`FastPow2f` rational polynomials
+  (`base/fast_math-inl.h`, ~3e-5 rel error vs precise powf). Ours
+  interpolated in f64 with `libm::powf` then reciprocated — ≤1 ulp off
+  almost everywhere. Ported bit-exact as `inv_dequant_matrix_lj` /
+  `dequant_matrix_lj` (`vardct/quant.rs`), including libjxl's
+  post-reciprocal LLF zeroing (the `InvDequantMatrix` LLF region is
+  zeroed AFTER `DequantMatrix = 1/inv` is taken, so dequant LLF
+  entries stay finite) and the exact `DCT4X8_BAND_PARAMS` literals
+  (production table was truncated to 7 significant digits).
+- **Multiply-order** — `QuantizeBlockAC` computes
+  `val = Mul(Mul(qm, quantv), in)`; `AdjustQuantBlockAC` uses a
+  *different* grouping `in * ((qm * qac) * mul)`. Our kernels did
+  `coeff * (1/weight) * qac_qm` (division form). New
+  `quantize_block_dct8_libjxl` + large-block counterpart in
+  jxl-encoder-simd mirror both groupings; scalar/ED paths likewise.
+- **`inv_qac` provenance** — libjxl uses `inv_global_scale_ / quant`;
+  ours computed `1.0 / (scale * quant)` (different rounding).
+- **`AdjustQuantBias` NEON `vrecpe`** — libjxl's
+  `quant - 0.145 * ApproximateReciprocal(quant)` uses the hardware
+  estimate (ARM `vrecpe_f32`, ~0.5% error — e.g. 0.49902 for 2.0),
+  not exact division. Ported as a 256-entry estimate ROM
+  (`VRECPE_EST`, captured on the aarch64 reference host) +
+  exponent/sign reconstruction in `adjust_quant_bias_lj`
+  (`vardct/quantize.rs`), fused `NegMulAdd` included.
+- **Field-search dequant parity** — the AQ refinement loop re-decodes
+  via `reconstruct_xyb` each round; it now mirrors libjxl's
+  `DequantLane` composition (`dm_c * (1/qm) * qac_mul` with
+  `inv_qac = inv_scale/quant`, `x_qm_multiplier` via exact `powi` —
+  our `fast_powf` ran ~0.01% high on `1.25^k`) and strict CfL
+  writeback, so the quant-field trajectory matches cjxl's.
+
+Measured on noise_512 e8 d1: **byte-identical to cjxl v0.12**
+(308 410 B) — zero quantized-int diff blocks, zero `max_quant`
+mismatches, zero AQBA trajectory diffs, identical on diagnostic and
+clean builds. Normal-mode hash locks 63/63 byte-identical; strict
+locks all green.
+
+Known remaining residuals (measured 2026-09-23): noise_512 e7 d1
++4 B (pure entropy-layer — decoded pixels identical); noise_512 e8
+d4 +107 B (single 32×32 forward-DCT 1-ulp input diff flipping one
+quant boundary at block (60,4) → ~2 k pixel diffs); grad64 e7 d12
++3 B and grad32 e7 d0.5 +2 B.
 
 ---
 

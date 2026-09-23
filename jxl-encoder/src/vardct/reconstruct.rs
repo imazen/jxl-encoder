@@ -143,6 +143,11 @@ pub(crate) fn reconstruct_xyb(
     xsize_blocks: usize,
     ysize_blocks: usize,
     dc_smoothing: bool,
+    // W45-RECON part 14: strict `DequantBlock` parity — `DequantMatrix`
+    // (1/qm f32 tables), `AdjustQuantBias` with the NEON
+    // `ApproximateReciprocal`, `inv_global_scale/quant * dm_mul`
+    // scaling, and fused `MulAdd` CfL (libjxl `dec_group.cc`).
+    strict_qm: bool,
 ) -> [Vec<f32>; 3] {
     // 7b.1a (#74): band-parallel reconstruction. Bands of
     // TILE_DIM_IN_BLOCKS (8) block rows = 64 px — transforms are
@@ -205,6 +210,7 @@ pub(crate) fn reconstruct_xyb(
                     by_start,
                     by_end,
                     band,
+                    strict_qm,
                 );
             }
         }
@@ -225,6 +231,7 @@ pub(crate) fn reconstruct_xyb(
                     by_start,
                     by_end,
                     band,
+                    strict_qm,
                 );
             }
         }
@@ -245,6 +252,7 @@ pub(crate) fn reconstruct_xyb(
                     by_start,
                     by_end,
                     band,
+                    strict_qm,
                 );
             }
         }
@@ -260,6 +268,7 @@ pub(crate) fn reconstruct_xyb(
             by_start,
             by_end,
             band,
+            strict_qm,
         )
     };
 
@@ -312,6 +321,7 @@ fn reconstruct_xyb_avx2(
     by_start: usize,
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
+    strict_qm: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
@@ -325,6 +335,7 @@ fn reconstruct_xyb_avx2(
         by_start,
         by_end,
         planes,
+        strict_qm,
     )
 }
 
@@ -344,6 +355,7 @@ fn reconstruct_xyb_neon(
     by_start: usize,
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
+    strict_qm: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
@@ -357,6 +369,7 @@ fn reconstruct_xyb_neon(
         by_start,
         by_end,
         planes,
+        strict_qm,
     )
 }
 
@@ -376,6 +389,7 @@ fn reconstruct_xyb_wasm128(
     by_start: usize,
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
+    strict_qm: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
@@ -389,6 +403,7 @@ fn reconstruct_xyb_wasm128(
         by_start,
         by_end,
         planes,
+        strict_qm,
     )
 }
 
@@ -406,6 +421,7 @@ fn reconstruct_xyb_impl(
     by_start: usize,
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
+    strict_qm: bool,
 ) {
     // 7b.1a (#74): band variant. `planes` are BAND slices covering pixel
     // rows `by_start*8 .. by_end*8`; all writes are band-relative
@@ -418,6 +434,10 @@ fn reconstruct_xyb_impl(
 
     let x_qm_mul = jxl_simd::fast_powf(1.25, params.x_qm_scale as f32 - 2.0);
     let b_qm_mul = jxl_simd::fast_powf(1.25, params.b_qm_scale as f32 - 2.0);
+    // libjxl dec_cache.h: dm multipliers via `std::pow(1/1.25f, scale-2)`
+    // — a true powf, not the `FastPowf` polynomial.
+    let x_dm_mul = (1.0f32 / 1.25f32).powf(params.x_qm_scale as f32 - 2.0);
+    let b_dm_mul = (1.0f32 / 1.25f32).powf(params.b_qm_scale as f32 - 2.0);
 
     // Pre-allocate scratch buffers to avoid per-block heap allocations.
     // Max block size is 4096 (DCT64x64 = 64x64 coefficients).
@@ -464,33 +484,84 @@ fn reconstruct_xyb_impl(
 
             // DCT8 fast path: SIMD dequant + CfL + IDCT in one optimized pass
             if raw_strategy == RAW_STRATEGY_DCT8 {
-                let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
-                let qac_qm = [qac * x_qm_mul, qac, qac * b_qm_mul];
-                let weights_x: &[f32; 64] =
-                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 0), 0);
-                let weights_y: &[f32; 64] =
-                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 1), 0);
-                let weights_b: &[f32; 64] =
-                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 2), 0);
+                let weights_x: &[f32; 64] = if strict_qm {
+                    as_array_ref(
+                        super::quant::dequant_matrix_lj(RAW_STRATEGY_DCT8 as usize, 0),
+                        0,
+                    )
+                } else {
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 0), 0)
+                };
+                let weights_y: &[f32; 64] = if strict_qm {
+                    as_array_ref(
+                        super::quant::dequant_matrix_lj(RAW_STRATEGY_DCT8 as usize, 1),
+                        0,
+                    )
+                } else {
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 1), 0)
+                };
+                let weights_b: &[f32; 64] = if strict_qm {
+                    as_array_ref(
+                        super::quant::dequant_matrix_lj(RAW_STRATEGY_DCT8 as usize, 2),
+                        0,
+                    )
+                } else {
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 2), 0)
+                };
 
                 let mut dq_x = uninit_buf::<64>();
                 let mut dq_y = uninit_buf::<64>();
                 let mut dq_b = uninit_buf::<64>();
 
-                jxl_simd::dequant_block_dct8(
-                    &quant_ac[0][by][bx],
-                    &quant_ac[1][by][bx],
-                    &quant_ac[2][by][bx],
-                    weights_x,
-                    weights_y,
-                    weights_b,
-                    qac_qm,
-                    x_factor,
-                    b_factor,
-                    &mut dq_x,
-                    &mut dq_y,
-                    &mut dq_b,
-                );
+                if strict_qm {
+                    // libjxl DequantBlock (dec_group.cc): scaled_dequant =
+                    // inv_global_scale/quant * dm_mul; dq = bias*(mat*scaled);
+                    // CfL via MulAdd.
+                    let quant = quant_field[by * xsize_blocks + bx] as f32;
+                    let s = params.inv_scale / quant;
+                    let scaled = [s * x_dm_mul, s, s * b_dm_mul];
+                    dq_x[0] = 0.0;
+                    dq_y[0] = 0.0;
+                    dq_b[0] = 0.0;
+                    for i in 1..64 {
+                        let dy = super::quantize::adjust_quant_bias_lj(
+                            quant_ac[1][by][bx][i],
+                            1,
+                        ) * (weights_y[i] * scaled[1]);
+                        dq_y[i] = dy;
+                        dq_x[i] = x_factor.mul_add(
+                            dy,
+                            super::quantize::adjust_quant_bias_lj(
+                                quant_ac[0][by][bx][i],
+                                0,
+                            ) * (weights_x[i] * scaled[0]),
+                        );
+                        dq_b[i] = b_factor.mul_add(
+                            dy,
+                            super::quantize::adjust_quant_bias_lj(
+                                quant_ac[2][by][bx][i],
+                                2,
+                            ) * (weights_b[i] * scaled[2]),
+                        );
+                    }
+                } else {
+                    let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
+                    let qac_qm = [qac * x_qm_mul, qac, qac * b_qm_mul];
+                    jxl_simd::dequant_block_dct8(
+                        &quant_ac[0][by][bx],
+                        &quant_ac[1][by][bx],
+                        &quant_ac[2][by][bx],
+                        weights_x,
+                        weights_y,
+                        weights_b,
+                        qac_qm,
+                        x_factor,
+                        b_factor,
+                        &mut dq_x,
+                        &mut dq_y,
+                        &mut dq_b,
+                    );
+                }
 
                 // Restore LLF (DC) for each channel
                 // DC CfL uses dc_cfl_factor (0.5 for B channel, 0 for X/Y) —
@@ -561,6 +632,11 @@ fn reconstruct_xyb_impl(
             }
 
             for c in 0..3usize {
+                let dm_mul = match c {
+                    0 => x_dm_mul,
+                    2 => b_dm_mul,
+                    _ => 1.0,
+                };
                 let qm_mul = match c {
                     0 => x_qm_mul,
                     2 => b_qm_mul,
@@ -569,11 +645,20 @@ fn reconstruct_xyb_impl(
 
                 // Dequantize AC coefficients
                 let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
-                let weights = quant_weights(raw_strategy as usize, c);
+                let weights = if strict_qm {
+                    super::quant::dequant_matrix_lj(raw_strategy as usize, c)
+                } else {
+                    quant_weights(raw_strategy as usize, c)
+                };
 
                 // Nested loops eliminate per-element integer divisions.
                 // Pre-slice weights and dequant rows to eliminate inner bounds checks.
                 let inv_qac_qm = 1.0 / (qac * qm_mul);
+                // libjxl DequantBlock: scaled_dequant =
+                // (inv_global_scale/quant) * dm_mul
+                let scaled = (params.inv_scale
+                    / quant_field[by * xsize_blocks + bx] as f32)
+                    * dm_mul;
                 for coef_slot_y in 0..cy {
                     for pos_y in 0..BLOCK_DIM {
                         let y = coef_slot_y * BLOCK_DIM + pos_y;
@@ -596,8 +681,14 @@ fn reconstruct_xyb_impl(
                                 let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
                                 let q_int = row[pos_in_8x8];
                                 if q_int != 0 {
-                                    let biased = adjust_quant_bias(q_int, c);
-                                    dq_row[x] = biased * w_row[x] * inv_qac_qm;
+                                    dq_row[x] = if strict_qm {
+                                        super::quantize::adjust_quant_bias_lj(q_int, c)
+                                            * (w_row[x] * scaled)
+                                    } else {
+                                        adjust_quant_bias(q_int, c)
+                                            * w_row[x]
+                                            * inv_qac_qm
+                                    };
                                 }
                             }
                         }
@@ -634,8 +725,14 @@ fn reconstruct_xyb_impl(
                     let xr = &mut dq_x[0][row_off..row_off + block_width];
                     let br = &mut dq_b[0][row_off..row_off + block_width];
                     for x in x_start..block_width {
-                        xr[x] += x_factor * yr[x];
-                        br[x] += b_factor * yr[x];
+                        if strict_qm {
+                            // libjxl DequantLane: fused MulAdd.
+                            xr[x] = x_factor.mul_add(yr[x], xr[x]);
+                            br[x] = b_factor.mul_add(yr[x], br[x]);
+                        } else {
+                            xr[x] += x_factor * yr[x];
+                            br[x] += b_factor * yr[x];
+                        }
                     }
                 }
             }

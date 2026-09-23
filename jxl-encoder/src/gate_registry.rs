@@ -321,6 +321,11 @@ jxl_encoder_macros::strategy_def! {
             // exact piecewise `x^2.4` EOTF the default LUT encodes.
             srgb_eotf_libjxl_parity = true,
             rendering_intent_libjxl_parity = true,
+            // W45-RECON part 14: strict f32 quant-matrix generation
+            // (libjxl `GetQuantWeights` + FastPowf chain) and
+            // multiply-order parity in QuantizeBlockAC /
+            // AdjustQuantBlockAC / the Y writeback.
+            quant_weights_libjxl = true,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -429,6 +434,9 @@ jxl_encoder_macros::strategy_def! {
             ma_tree_root_splitval_libjxl = false,
             // 1-based QF histogram bins — shipped bitstream.
             block_ctx_map_qf_zero_based_libjxl = false,
+            // f64-generated reciprocal tables + division form —
+            // production baseline.
+            quant_weights_libjxl = false,
             // DC encode stays on the Zenjxl schedule (2x precision at
             // effort <= 7, plain round) — not a libjxl mirror.
             dc_encode_libjxl_parity = false,
@@ -565,6 +573,9 @@ jxl_encoder_macros::strategy_def! {
             ma_tree_root_splitval_libjxl = false,
             // 1-based QF histogram bins — shipped bitstream.
             block_ctx_map_qf_zero_based_libjxl = false,
+            // f64-generated reciprocal tables + division form —
+            // production baseline.
+            quant_weights_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -659,6 +670,9 @@ jxl_encoder_macros::strategy_def! {
             ma_tree_root_splitval_libjxl = false,
             // 1-based QF histogram bins — shipped bitstream.
             block_ctx_map_qf_zero_based_libjxl = false,
+            // f64-generated reciprocal tables + division form —
+            // production baseline.
+            quant_weights_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -1306,6 +1320,41 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "W45-RECON part 9 — block_ctx_map QF histogram binned on raw_quant (1-based) instead of raw_quant-1 (enc_heuristics.cc FindBestBlockEntropyModel)",
         },
 
+        // ── Section C Zenjxl-only divergence: f64-generated reciprocal
+        // quant tables + division-form AC quantize vs libjxl's f32
+        // `GetQuantWeights` chain and direct `qm` multiplies ──────────
+        /// **W45-RECON part 14**: generate the strict-path quant
+        /// matrices in f32 exactly as libjxl `DequantMatrices` does
+        /// (f32 band chain, f32 `rcpcol`/`rcprow`, fused multiply-add +
+        /// sqrt, and the `FastLog2f`/`FastPow2f` polynomial
+        /// `FastPowf`/`InterpolateVec` path instead of precise `powf`),
+        /// keep the raw `InvDequantMatrix` orientation for
+        /// `AdjustQuantBlockAC`/`QuantizeBlockAC`, and mirror libjxl's
+        /// multiply groupings: `block_in * ((qm * qac) * qm_multiplier)`
+        /// in the adjust pass, `(qm * (qac * qm_multiplier)) * in` in
+        /// the quantize pass, and `inv_global_scale / quant` in the Y
+        /// round-trip writeback. The shipped Zenjxl tables interpolate
+        /// in f64 with precise `powf`, store `1/dequant` reciprocals,
+        /// and quantize via `coeff / weight` — all of which produce
+        /// 1-ulp `val` differences that flip quantize boundaries and
+        /// `max_quant` integer decisions (measured: 8 blocks on
+        /// noise_512 e8, +26 B residual).
+        ///
+        /// [`crate::effort::EffortProfile::quant_weights_libjxl`]
+        /// switches `vardct/transform.rs` to the `_lj` matrix accessors
+        /// and the libjxl-order quantize/adjust/writeback arithmetic.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   shipped f64 tables and division-form arithmetic.
+        ///
+        /// Section C.
+        quant_weights_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 14 — quant matrices generated in f64 with precise powf then reciprocated, and AC quantize via coeff/weight division, vs libjxl f32 GetQuantWeights+FastPowf tables and direct qm multiply-order (quant_weights.cc, enc_group.cc)",
+        },
+
         // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
         /// **W44-201**: skip buckets 3 (DCT32x32) and 6 (DCT32x16/DCT16x32)
         /// when admitting custom coefficient orders via the W44-82
@@ -1938,6 +1987,14 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W45-RECON part 9 — block_ctx_map QF histogram binned on raw_quant (1-based) instead of raw_quant-1 (enc_heuristics.cc FindBestBlockEntropyModel)",
         raw: __CUSTOM_DIVERGENCE_BLOCK_CTX_MAP_QF_ZERO_BASED_LIBJXL,
+    },
+    // Section C — W45-RECON part 14 f32 quant-matrix generation +
+    // multiply-order parity
+    DivergenceEntry {
+        gate_name: "quant_weights_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 14 — quant matrices generated in f64 with precise powf then reciprocated, and AC quantize via coeff/weight division, vs libjxl f32 GetQuantWeights+FastPowf tables and direct qm multiply-order (quant_weights.cc, enc_group.cc)",
+        raw: __CUSTOM_DIVERGENCE_QUANT_WEIGHTS_LIBJXL,
     },
     // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
     DivergenceEntry {

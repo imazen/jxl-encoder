@@ -1761,6 +1761,7 @@ impl VarDctEncoder {
                 xsize_blocks,
                 ysize_blocks,
                 self.resolved_improvements.dc_adaptive_smoothing,
+                self.profile.quant_weights_libjxl,
             );
 
             if self.enable_gaborish {

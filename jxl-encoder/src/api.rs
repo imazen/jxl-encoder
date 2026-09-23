@@ -3236,6 +3236,12 @@ impl LossyConfig {
             // 0-based `raw_quant - 1` bins per libjxl
             // `FindBestBlockEntropyModel`. NO-OP on every other strategy.
             p.apply_block_ctx_map_qf_zero_based_libjxl(&resolved);
+            // W45-RECON part 14: f32 quant-matrix generation +
+            // multiply-order parity — `GetQuantWeights`/`FastPowf`
+            // chain, `InvDequantMatrix` orientation, and libjxl
+            // groupings in adjust/quantize/writeback. NO-OP on every
+            // other strategy.
+            p.apply_quant_weights_libjxl(&resolved);
         }
         p
     }

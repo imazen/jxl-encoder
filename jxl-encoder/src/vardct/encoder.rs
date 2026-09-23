@@ -6365,6 +6365,7 @@ impl VarDctEncoder {
                                 ysize_blocks,
                                 self.budget.as_ref(),
                                 self.resolved_improvements.dc_adaptive_smoothing,
+                                self.profile.quant_weights_libjxl,
                             )?)
                         }
                     }
@@ -7465,6 +7466,7 @@ impl VarDctEncoder {
                                 ysize_blocks,
                                 self.budget.as_ref(),
                                 self.resolved_improvements.dc_adaptive_smoothing,
+                                self.profile.quant_weights_libjxl,
                             )?)
                         }
                     }

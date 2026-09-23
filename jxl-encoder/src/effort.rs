@@ -891,6 +891,19 @@ pub struct EffortProfile {
     /// Set only via
     /// [`crate::api::ResolvedImprovements::aqba_max_quant_libjxl`].
     pub aqba_max_over_channels: bool,
+    /// When `true` (strict `EncoderStrategy::Libjxl` only), the VarDCT
+    /// quantize/adjust/writeback path uses libjxl's f32-generated
+    /// `InvDequantMatrix`/`DequantMatrix` tables
+    /// (`quant::inv_dequant_matrix_lj` / `dequant_matrix_lj`) and libjxl's
+    /// multiply order — `val = (qm * (qac*mul)) * in` in
+    /// `QuantizeBlockAC`, `in * ((qm*qac)*mul)` in `AdjustQuantBlockAC`,
+    /// `inv_qac = inv_global_scale/quant` in the Y writeback — instead of
+    /// the f64-generated reciprocal tables and division form. When
+    /// `false` (all non-Libjxl strategies) the production tables and
+    /// `coeffs / w * qac_qm` arithmetic are kept.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::quant_weights_libjxl`].
+    pub quant_weights_libjxl: bool,
     /// When `true` (strict `EncoderStrategy::Libjxl` only),
     /// `vardct/dc_tree_learn.rs::tree_tokens_with_ac_metadata_prefix`
     /// emits the merged MA-tree root as `prop=1 splitval =
@@ -1734,6 +1747,8 @@ impl EffortProfile {
             // aggregation (downward AQBA adjustments clamped);
             // `apply_aqba_max_quant_libjxl` flips for Libjxl only.
             aqba_max_over_channels: false,
+            // `apply_quant_weights_libjxl` flips for Libjxl only.
+            quant_weights_libjxl: false,
             // `apply_ma_tree_root_splitval_libjxl` flips for Libjxl only.
             ma_root_split_2ndg: false,
             bcm_qf_zero_based: false,
@@ -1971,6 +1986,7 @@ impl EffortProfile {
             use_adaptive_quant: false,
             adjust_quant_ac: false,
             aqba_max_over_channels: false,
+            quant_weights_libjxl: false,
             ma_root_split_2ndg: false,
             bcm_qf_zero_based: false,
             initial_q_numerator: 0.39,
@@ -2905,6 +2921,23 @@ impl EffortProfile {
     ) {
         if resolved.aqba_max_quant_libjxl {
             self.aqba_max_over_channels = true;
+        }
+    }
+
+    /// Apply the f32 quant-matrix + multiply-order libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::quant_weights_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::quant_weights_libjxl`] — the strict
+    /// `InvDequantMatrix`/`DequantMatrix` tables and libjxl multiply
+    /// order in `QuantizeBlockAC`/`AdjustQuantBlockAC`/the Y writeback
+    /// (see field docstring).
+    pub(crate) fn apply_quant_weights_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.quant_weights_libjxl {
+            self.quant_weights_libjxl = true;
         }
     }
 

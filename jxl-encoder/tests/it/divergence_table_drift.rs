@@ -108,7 +108,8 @@ use std::path::PathBuf;
 /// W45-RECON part 9 added `block_ctx_map_qf_zero_based_libjxl` Section C gate → 49.
 /// W45-RECON part 10 added `srgb_eotf_libjxl_parity` Section D gate → 50.
 /// W45-RECON part 13 added `rendering_intent_libjxl_parity` Section D gate → 51.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 51;
+/// W45-RECON part 14 added `quant_weights_libjxl` Section C gate → 52.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 52;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -337,6 +338,12 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         // field name verbatim.
         if row_ref.contains("rendering_intent") {
             out.push("rendering_intent".to_string());
+        }
+        // W45-RECON part 14: `quant_weights_libjxl` Section C gate —
+        // same convention; the table row carries the libjxl function
+        // name verbatim.
+        if row_ref.contains("GetQuantWeights") {
+            out.push("GetQuantWeights".to_string());
         }
     }
     out
