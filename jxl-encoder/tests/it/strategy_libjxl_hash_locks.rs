@@ -331,8 +331,15 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // sums on |v(x)| like libjxl `CFLFunction::Compute` (was
         // per-eval gates; at eps=100 that collapsed ddf and oscillated
         // x to 0, emitting ytox=0 where cjxl converges).
-        size: 3187,
-        hash: 0xc4089de46f725ff9,
+        // W45-RECON part 5 (2026-10-12): 3187 → 3217 (+30 B), hash
+        // drift — `cfl_zero_for_search` off: v0.12 `enc_heuristics.cc`
+        // feeds the real pass-1 cmap to AC search at effort >= 7, so
+        // this e7 cell now searches with Newton-derived CfL (was the
+        // SA-G Fix C zero-map workaround for the pre-shared-gate bug).
+        // Also strict `mask1x1` (log1p + mirror-border Symmetric5).
+        // Size now matches cjxl v0.12 exactly (3217 B).
+        size: 3217,
+        hash: 0x8df476823a9ea88a,
     },
 ];
 

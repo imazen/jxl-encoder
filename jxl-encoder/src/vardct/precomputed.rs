@@ -1280,12 +1280,25 @@ fn fill_dc_group_state_dispatch(
         )?;
 
         let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
-            Some(super::adaptive_quant::compute_mask1x1_with_budget(
-                &global.xyb_y,
-                padded_width,
-                padded_height,
-                budget,
-            )?)
+            // W45-RECON part 5: strict parity routes mask1x1 through the
+            // libjxl-exact path (exact `ln_1p` + mirror-border
+            // `Symmetric5`); all other strategies keep the calibrated
+            // fast_log2f + clamp kernel byte-identically.
+            Some(if profile.gaborish_libjxl_kernel {
+                super::adaptive_quant::compute_mask1x1_libjxl_exact(
+                    &global.xyb_y,
+                    padded_width,
+                    padded_height,
+                    budget,
+                )?
+            } else {
+                super::adaptive_quant::compute_mask1x1_with_budget(
+                    &global.xyb_y,
+                    padded_width,
+                    padded_height,
+                    budget,
+                )?
+            })
         } else {
             None
         };

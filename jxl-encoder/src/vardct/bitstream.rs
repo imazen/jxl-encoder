@@ -2166,12 +2166,25 @@ impl VarDctEncoder {
             crate::api::PixelLossDispatch::AlwaysOff
         );
         let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss && !pld_force_off {
-            let m = super::adaptive_quant::compute_mask1x1_with_budget(
-                &xyb_y,
-                padded_width,
-                padded_height,
-                self.budget.as_ref(),
-            )?;
+            // W45-RECON part 5: strict parity routes mask1x1 through the
+            // libjxl-exact path (exact `ln_1p` + mirror-border
+            // `Symmetric5`); all other strategies keep the calibrated
+            // fast_log2f + clamp kernel byte-identically.
+            let m = if self.profile.gaborish_libjxl_kernel {
+                super::adaptive_quant::compute_mask1x1_libjxl_exact(
+                    &xyb_y,
+                    padded_width,
+                    padded_height,
+                    self.budget.as_ref(),
+                )?
+            } else {
+                super::adaptive_quant::compute_mask1x1_with_budget(
+                    &xyb_y,
+                    padded_width,
+                    padded_height,
+                    self.budget.as_ref(),
+                )?
+            };
             if matches!(
                 self.pixel_loss_dispatch,
                 crate::api::PixelLossDispatch::Auto
@@ -2605,12 +2618,23 @@ impl VarDctEncoder {
                     crate::api::EpfDispatch::Auto | crate::api::EpfDispatch::AlwaysSelect => {
                         let mask = match mask1x1 {
                             Some(m) => m,
-                            None => super::adaptive_quant::compute_mask1x1_with_budget(
-                                &xyb_y,
-                                padded_width,
-                                padded_height,
-                                self.budget.as_ref(),
-                            )?,
+                            None => {
+                                if self.profile.gaborish_libjxl_kernel {
+                                    super::adaptive_quant::compute_mask1x1_libjxl_exact(
+                                        &xyb_y,
+                                        padded_width,
+                                        padded_height,
+                                        self.budget.as_ref(),
+                                    )?
+                                } else {
+                                    super::adaptive_quant::compute_mask1x1_with_budget(
+                                        &xyb_y,
+                                        padded_width,
+                                        padded_height,
+                                        self.budget.as_ref(),
+                                    )?
+                                }
+                            }
                         };
                         if matches!(self.epf_dispatch, crate::api::EpfDispatch::Auto)
                             && super::epf::mask1x1_is_smooth_enough_to_skip_sharpness(&mask)

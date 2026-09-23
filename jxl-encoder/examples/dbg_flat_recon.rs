@@ -3,7 +3,7 @@
 
 //! Debug probe: capture the buttloop's internal final-iter recon for a strict
 //! libjxl encode, then decode the shipped bytes via jxl-oxide, and compare
-//! per-channel stats. Usage: dbg_flat_recon <in.png> <out.jxl>
+//! per-channel stats. Usage: dbg_flat_recon <in.png> <out.jxl> [effort]
 
 #![cfg(all(feature = "__internal_recon_hook", feature = "butteraugli-loop"))]
 
@@ -38,8 +38,9 @@ fn main() {
 
     __recon_hook::set_capture_enabled(true);
 
+    let effort: u8 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(8);
     let cfg = LossyConfig::new(1.0)
-        .with_effort(8)
+        .with_effort(effort)
         .with_strategy(EncoderStrategy::Libjxl);
     let bytes = cfg
         .encode(&raw, w as u32, h as u32, PixelLayout::Rgb8)

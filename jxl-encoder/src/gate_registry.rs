@@ -265,17 +265,18 @@ jxl_encoder_macros::strategy_def! {
             // XYB cube root: libjxl `CubeRootAndAdd`, bit-exact with the
             // reference. Byte parity is the whole point of this strategy.
             xyb_cbrt_libjxl_parity = true,
-            // W44-AUDIT-9 / SA-G Fix C: force cmap=zeros during AC
-            // strategy SEARCH (only — the emitted bitstream cmap stays
-            // Newton-derived). Mirrors libjxl `enc_ac_strategy.cc`
-            // `speed_tier > kSquirrel` behaviour where the search-side
-            // CfL contribution is suppressed because the cost model was
-            // tuned against zero-decorrelated entropy estimates at
-            // higher speed tiers. On Libjxl strategy: ON by default —
-            // the SA-G report (`7d383785`) measured this brings
-            // clic_22ea12 e9 d=4 partial first-blocks 2,241 → 2,495
-            // (vs cjxl 2,499 = +0.16% parity) and bytes -0.6%.
-            cfl_zero_for_search = true,
+            // W45-RECON part 5b: OFF under strict parity. In libjxl
+            // v0.12 the AC search consumes the *pass-1* CfL map
+            // (`enc_heuristics.cc` `process_tile`: pass-1 `ComputeTile`
+            // at `speed_tier <= kSquirrel` → `acs_heuristics.ProcessRect`
+            // reads `cmap` directly). Zeros reach the search only below
+            // e7 where pass-1 is skipped — which `profile.cfl_pass1`
+            // already reproduces (`CflMap::zeros`). The previous `true`
+            // (SA-G Fix C, `7d383785`) papered over the pre-shared-gate
+            // SIMD Newton bug by feeding zeros instead of *wrong*
+            // values; with pass-1 now bit-exact, zeroing diverges from
+            // cjxl at e7+.
+            cfl_zero_for_search = false,
             // Strict parity: mirror libjxl's `nl_dc` cluster —
             // `extra_dc_precision = 1` at effort >= 4 and the
             // QuantizeWP DC shape alongside it. Corrects the
@@ -1875,10 +1876,11 @@ mod tests {
             z.cfl_newton_libjxl_math_with_ls_warm_start
         );
         assert!(!l.cfl_newton_libjxl_math_with_ls_warm_start);
-        // W44-AUDIT-9 / SA-G Fix C: Libjxl flips this ON (libjxl-parity);
-        // Zenjxl keeps it OFF (cost-model calibration concern).
-        assert_ne!(l.cfl_zero_for_search, z.cfl_zero_for_search);
-        assert!(l.cfl_zero_for_search);
+        // W45-RECON part 5b: OFF on every strategy — in v0.12 the search
+        // consumes the real pass-1 cmap at e7+; zeros only appear below
+        // e7 via pass-1 skip (`profile.cfl_pass1`), which needs no gate.
+        assert_eq!(l.cfl_zero_for_search, z.cfl_zero_for_search);
+        assert!(!l.cfl_zero_for_search);
         assert!(!z.cfl_zero_for_search);
     }
 

@@ -229,6 +229,16 @@ impl CflMap {
     }
 }
 
+// SA-G Fix A diagnostic: per-call context for the value dumps. Set by the
+// pass-1/pass-2 tile loops before each `find_best_multiplier` dispatch so
+// the dumped `values_m`/`values_s` arrays are attributable to a specific
+// (pass, tx, ty). (pass: 1 = DCT8 fit, 2 = refined AC fit.)
+#[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+thread_local! {
+    static CFL_DBG_CTX: core::cell::Cell<(u32, u32, u32)> =
+        const { core::cell::Cell::new((0, u32::MAX, u32::MAX)) };
+}
+
 /// Find the best integer multiplier for a chroma-from-luma linear model.
 /// SIMD-accelerated via jxl_simd.
 ///
@@ -371,8 +381,11 @@ fn find_best_multiplier(
                 for i in 0..num {
                     v.extend_from_slice(&values_s[i].to_le_bytes());
                 }
-                let _ = std::fs::File::create(dirp.join(alloc::format!("call{ci:03}.bin")))
-                    .map(|mut f| f.write_all(&v));
+                let (d_pass, d_tx, d_ty) = CFL_DBG_CTX.with(|c| c.get());
+                let _ = std::fs::File::create(dirp.join(alloc::format!(
+                    "call{ci:03}_p{d_pass}_t{d_tx}x{d_ty}_{channel}.bin"
+                )))
+                .map(|mut f| f.write_all(&v));
             }
             eprintln!(
                 "SA-G-FIX-A channel={} num={} base={:.1} use_newton={} libjxl_parity={} libjxl_math_ls_warm={} eps={} iters={} variant={} sum|s|={sum_abs_s:.3} sum|m|={sum_abs_m:.3} ls_x={ls_x:.4} fd0={fd:.4} ddf0={ddf:.4} step0={step0:.4} cmap_i8={}",
@@ -634,6 +647,8 @@ pub(crate) fn compute_cfl_map_for_tiles(
                 }
             }
 
+            #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+            CFL_DBG_CTX.with(|c| c.set((1, abs_tx as u32, abs_ty as u32)));
             let tx_val = find_best_multiplier(
                 coeffs_yx.as_slice(),
                 coeffs_x.as_slice(),
@@ -846,6 +861,8 @@ pub fn refine_cfl_map(
                 }
             }
 
+            #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+            CFL_DBG_CTX.with(|c| c.set((2, tx as u32, ty as u32)));
             let tx_val = find_best_multiplier(
                 coeffs_yx.as_slice(),
                 coeffs_x.as_slice(),

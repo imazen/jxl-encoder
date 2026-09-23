@@ -4356,12 +4356,25 @@ impl VarDctEncoder {
         );
         let mask1x1_for_pre_scale: Option<Vec<f32>> =
             if self.ac_strategy_enabled && self.pixel_domain_loss && !pld_force_off_for_pre_scale {
-                Some(super::adaptive_quant::compute_mask1x1_with_budget(
-                    &xyb_y,
-                    padded_width,
-                    padded_height,
-                    self.budget.as_ref(),
-                )?)
+                // W45-RECON part 5: strict parity routes mask1x1 through
+                // the libjxl-exact path (exact `ln_1p` + mirror-border
+                // `Symmetric5`); all other strategies keep the calibrated
+                // fast_log2f + clamp kernel byte-identically.
+                Some(if self.profile.gaborish_libjxl_kernel {
+                    super::adaptive_quant::compute_mask1x1_libjxl_exact(
+                        &xyb_y,
+                        padded_width,
+                        padded_height,
+                        self.budget.as_ref(),
+                    )?
+                } else {
+                    super::adaptive_quant::compute_mask1x1_with_budget(
+                        &xyb_y,
+                        padded_width,
+                        padded_height,
+                        self.budget.as_ref(),
+                    )?
+                })
             } else {
                 None
             };
@@ -4760,6 +4773,25 @@ impl VarDctEncoder {
 
         let _ms_quant_field = _t_quant_field.elapsed().as_secs_f64() * 1000.0;
         let _t_gaborish = std::time::Instant::now();
+        // W45-RECON diagnostic: dump the pre-gaborish XYB planes (input to
+        // InitialQuantField / mask1x1), mirroring the cjxl `pregab_xyb_*`
+        // dump. Env-gated, zero cost when unset.
+        #[cfg(feature = "__internal_recon_hook")]
+        if let Some(dump_dir) = std::env::var_os("JXL_AQDBG_DUMP") {
+            use std::io::Write as _;
+            let dir = std::path::PathBuf::from(dump_dir);
+            for (c, plane) in [&*xyb_x, &*xyb_y, &*xyb_b].iter().enumerate() {
+                let mut v = alloc::vec::Vec::with_capacity(8 + plane.len() * 4);
+                v.extend_from_slice(&(padded_width as i32).to_le_bytes());
+                v.extend_from_slice(&(padded_height as i32).to_le_bytes());
+                for &x in plane.iter() {
+                    v.extend_from_slice(&x.to_le_bytes());
+                }
+                let _ = std::fs::File::create(dir.join(alloc::format!("pregab_xyb_{c}.f32")))
+                    .map(|mut f| f.write_all(&v));
+            }
+        }
+
         // Apply gaborish inverse (5x5 sharpening) AFTER quant field and mask1x1
         // but BEFORE CfL and AC strategy. This matches libjxl enc_heuristics.cc:
         //   line 1124: InitialQuantField (pre-gaborish)
@@ -5555,6 +5587,37 @@ impl VarDctEncoder {
         } else {
             &cfl_map
         };
+
+        // W45-RECON: AQDBG-style dump of the AC-search inputs (initial
+        // quant field, masking, mask1x1), mirroring the JXL_AQDBG_DUMP
+        // hook added to libjxl's DefaultHeuristics (enc_heuristics.cc).
+        // `quant_field_float` here is the PRE-AdjustQuantField initial
+        // field — same as libjxl's `initial_quant_field` consumed by
+        // acs_heuristics.Init. Diagnostic only; env-gated.
+        #[cfg(feature = "__internal_recon_hook")]
+        if let Some(dump_dir) = std::env::var_os("JXL_AQDBG_DUMP") {
+            use std::io::Write as _;
+            let dir = std::path::PathBuf::from(dump_dir);
+            let write_f32 = |name: &str, w: usize, h: usize, data: &[f32]| {
+                let mut v = alloc::vec::Vec::with_capacity(8 + data.len() * 4);
+                v.extend_from_slice(&(w as i32).to_le_bytes());
+                v.extend_from_slice(&(h as i32).to_le_bytes());
+                for &x in data {
+                    v.extend_from_slice(&x.to_le_bytes());
+                }
+                let _ = std::fs::File::create(dir.join(name)).map(|mut f| f.write_all(&v));
+            };
+            write_f32(
+                "acs_quant_field.f32",
+                xsize_blocks,
+                ysize_blocks,
+                &quant_field_float,
+            );
+            write_f32("acs_masking.f32", xsize_blocks, ysize_blocks, &masking);
+            if let Some(m) = mask1x1.as_deref() {
+                write_f32("acs_mask1x1.f32", padded_width, padded_height, m);
+            }
+        }
 
         #[allow(unused_mut)]
         let mut ac_strategy = if let Some(forced) = self.force_strategy {
