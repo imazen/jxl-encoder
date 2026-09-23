@@ -1371,6 +1371,7 @@ impl VarDctEncoder {
             self.profile.entropy_codes_libjxl_parity,
             self.effort,
             self.profile.ans_histogram_strategy_vardct,
+            self.profile.extra_dc_precision,
         );
         if let Some(tree_tokens) = learned_tree_tokens {
             super::context_tree::write_learned_context_tree(

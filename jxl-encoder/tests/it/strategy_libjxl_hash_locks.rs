@@ -250,8 +250,16 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // zero-init parity) forces `metadata.all_default = 0` and the
         // long-form colour-encoding bundle; the file header is now
         // byte-identical to cjxl through `transform_data`.
-        size: 169,
-        hash: 0xe63944a535437f54,
+        // W45-RECON part 19 (2026-09-24): 169 → 167 (-2 B), hash
+        // drift — the tree stream's `ForModular` `uint_method` now
+        // follows libjxl's `extra_dc_precision != 0 → kFast` rule
+        // (`enc_ans.cc::ForModular`) instead of `kNone` at effort ≤ 7,
+        // so the tree code re-bins under the kFast-picked config
+        // ({0,0,0} here) like cjxl. cjxl v0.12 reference: 171 B —
+        // the residual is upstream token content, not entropy coding
+        // (both sides pick identical configs).
+        size: 167,
+        hash: 0x2fd47470c333e99f,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
@@ -268,8 +276,12 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // W45-RECON part 13 (2026-09-23): 118 → 121 (+3 B), hash
         // drift — Perceptual rendering intent + long-form bundles
         // (see _d1 note). Now exact cjxl v0.12 size parity (121 B).
-        size: 121,
-        hash: 0x1063f7cdb12f4be2,
+        // W45-RECON part 19 (2026-09-24): 121 → 119 (-2 B), hash
+        // drift — tree-stream `uint_method` kFast under
+        // `extra_dc_precision` (see _d1 note). cjxl v0.12: 121 B —
+        // residual is upstream token content.
+        size: 119,
+        hash: 0xd6abf6ce07dc2af3,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
@@ -283,8 +295,12 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift (see _d1 note). cjxl v0.12 reference: 167 B.
         // W45-RECON part 13 (2026-09-23): 166 → 169 (+3 B), hash
         // drift (see _d1 note).
-        size: 169,
-        hash: 0x318ec347564e8ed6,
+        // W45-RECON part 19 (2026-09-24): 169 → 167 (-2 B), hash
+        // drift — tree-stream `uint_method` kFast under
+        // `extra_dc_precision` (see _d1 note). Now **byte-identical
+        // to cjxl v0.12** (167 B).
+        size: 167,
+        hash: 0x189dbfd81990f715,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
@@ -384,8 +400,12 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // W45-RECON part 13 (2026-09-23): 3219 → 3222 (+3 B), hash
         // drift (see _d1 note) — Perceptual rendering intent +
         // long-form bundles (cjxl 3220 B; delta +2 B).
-        size: 3222,
-        hash: 0x218d531c76da4865,
+        // W45-RECON part 19 (2026-09-24): 3222 → 3220 (-2 B), hash
+        // drift — tree-stream `uint_method` kFast under
+        // `extra_dc_precision` (see _d1 note). Now **byte-identical
+        // to cjxl v0.12** (3220 B).
+        size: 3220,
+        hash: 0xd3cc6a1999cc16c0,
     },
 ];
 

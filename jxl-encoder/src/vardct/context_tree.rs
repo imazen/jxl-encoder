@@ -690,6 +690,11 @@ pub struct LibjxlTreeCodeParams {
     /// ANS normalization strategy (the same `ForModular` schedule the DC
     /// stream uses: `kApproximate`/`kFast` below effort 8, `kPrecise` at 8+).
     pub ans_strategy: crate::entropy_coding::ans::ANSHistogramStrategy,
+    /// The frame's `extra_dc_precision` field (`nl_dc`). libjxl's
+    /// `ForModular` selects `uint_method = kFast` for the tree stream when
+    /// `extra_dc_precision[0] != 0` (enc_ans.cc `ForModular`), so the tree
+    /// code must see the same flag the DC stream writes.
+    pub extra_dc_precision: u8,
 }
 
 pub type TreeCodeParams = Option<LibjxlTreeCodeParams>;
@@ -701,6 +706,7 @@ pub fn libjxl_tree_code_params(
     libjxl_parity: bool,
     effort: u8,
     ans_strategy: crate::entropy_coding::ans::ANSHistogramStrategy,
+    extra_dc_precision: u8,
 ) -> TreeCodeParams {
     if !libjxl_parity {
         return None;
@@ -708,14 +714,18 @@ pub fn libjxl_tree_code_params(
     Some(LibjxlTreeCodeParams {
         effort,
         ans_strategy,
+        extra_dc_precision,
     })
 }
 
 /// Prefix-code parameters for the tree stream when libjxl's
-/// `use_prefix_code` rule selects Huffman: `ForModular` gives `kFast`
-/// clustering + `kNone` uint at effort ≤ 7 and `kBest` + `kBest` at 8+.
+/// `use_prefix_code` rule selects Huffman. `ForModular` gives `kFast`
+/// clustering at effort ≤ 7 and `kBest` at 8+; `uint_method` is `kFast`
+/// when `extra_dc_precision != 0` (effort ≤ 7 only — at 8+ the params
+/// fall through to the `kBest` default), `kNone` otherwise.
 fn tree_prefix_code_params(
     effort: u8,
+    extra_dc_precision: u8,
 ) -> (
     crate::entropy_coding::encode::PrefixClustering,
     UintConfigMethod,
@@ -730,7 +740,11 @@ fn tree_prefix_code_params(
     } else {
         (
             PrefixClustering::Libjxl(ClusteringType::Fast),
-            UintConfigMethod::None,
+            if extra_dc_precision != 0 {
+                UintConfigMethod::Fast
+            } else {
+                UintConfigMethod::None
+            },
         )
     }
 }
@@ -805,7 +819,8 @@ fn write_tree_code_libjxl(
     let use_prefix = lz_tokens.len() < 100
         || all_singleton_contexts(lz_tokens, num_contexts, lz77_params.as_ref());
     if use_prefix {
-        let (clustering, uint_method) = tree_prefix_code_params(effort);
+        let (clustering, uint_method) =
+            tree_prefix_code_params(effort, params.extra_dc_precision);
         let code =
             crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
                 &[lz_tokens],
@@ -818,14 +833,18 @@ fn write_tree_code_libjxl(
         code.write_header(writer)?;
         code.write_tokens_owned(lz_tokens, lz77_params.as_ref(), writer)?;
     } else {
-        // `ForModular`: `kFast` clustering + `kNone` uint (serialized
-        // {4,2,0}) at effort ≤ 7, `kBest` + `kBest` at 8+.
+        // `ForModular`: `kFast` clustering at effort ≤ 7, `kBest` at 8+.
+        // `uint_method` is `kFast` when `extra_dc_precision != 0` (the
+        // near-lossless-DC flag libjxl sets for VarDCT at effort ≥ 4 —
+        // `enc_ans.cc::ForModular`), `kBest` at effort ≥ 8, `kNone`
+        // (serialized {4,2,0}) otherwise.
         let best = effort >= 8;
+        let optimize_uint = best || params.extra_dc_precision != 0;
         let code = build_entropy_code_ans_from_token_groups_with_strategy(
             &[lz_tokens],
             num_contexts,
             best,
-            best,
+            optimize_uint,
             lz77_params.as_ref(),
             None,
             params.ans_strategy,
@@ -1717,39 +1736,41 @@ mod tree_code_params_tests {
     use crate::entropy_coding::encode::PrefixClustering;
 
     /// libjxl `ForModular` schedule for the tree-code stream: `kFast`
-    /// clustering + `kNone` uint (default (4,2,0)) below effort 8;
-    /// `kBest` + `kBest` at effort 8+. Non-strict callers get `None`
-    /// (legacy path).
+    /// clustering below effort 8, `kBest` at 8+; `uint_method` follows
+    /// `extra_dc_precision != 0` → `kFast` below effort 8, `kBest` at 8+,
+    /// `kNone` otherwise. Non-strict callers get `None` (legacy path).
     #[test]
     fn libjxl_tree_code_params_schedule() {
         use crate::entropy_coding::ans::ANSHistogramStrategy;
-        assert!(libjxl_tree_code_params(false, 2, ANSHistogramStrategy::Approximate).is_none());
-        assert!(libjxl_tree_code_params(false, 8, ANSHistogramStrategy::Precise).is_none());
+        assert!(libjxl_tree_code_params(false, 2, ANSHistogramStrategy::Approximate, 0).is_none());
+        assert!(libjxl_tree_code_params(false, 8, ANSHistogramStrategy::Precise, 0).is_none());
         assert_eq!(
-            libjxl_tree_code_params(true, 2, ANSHistogramStrategy::Approximate),
+            libjxl_tree_code_params(true, 2, ANSHistogramStrategy::Approximate, 1),
             Some(LibjxlTreeCodeParams {
                 effort: 2,
                 ans_strategy: ANSHistogramStrategy::Approximate,
+                extra_dc_precision: 1,
             })
         );
         // Prefix-branch parameters follow `ForModular`: Fast/None below
-        // effort 8, Best/Best at 8+.
+        // effort 8 without extra DC precision, Fast/Fast with it,
+        // Best/Best at 8+.
         assert_eq!(
-            tree_prefix_code_params(2),
+            tree_prefix_code_params(2, 0),
             (
                 PrefixClustering::Libjxl(ClusteringType::Fast),
                 UintConfigMethod::None
             )
         );
         assert_eq!(
-            tree_prefix_code_params(7),
+            tree_prefix_code_params(7, 1),
             (
                 PrefixClustering::Libjxl(ClusteringType::Fast),
-                UintConfigMethod::None
+                UintConfigMethod::Fast
             )
         );
         assert_eq!(
-            tree_prefix_code_params(8),
+            tree_prefix_code_params(8, 0),
             (
                 PrefixClustering::Libjxl(ClusteringType::Best),
                 UintConfigMethod::Best
@@ -1766,6 +1787,7 @@ mod tree_code_params_tests {
         let params = LibjxlTreeCodeParams {
             effort: 8,
             ans_strategy: ANSHistogramStrategy::Precise,
+            extra_dc_precision: 0,
         };
         // Fewer than 100 tokens → prefix path (tree header + lz77=0).
         let few: Vec<Token> = (0..6).map(|i| Token::new(0, i)).collect();

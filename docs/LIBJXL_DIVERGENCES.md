@@ -1848,6 +1848,46 @@ byte/hash locks all green. `e7 d1` remains +4 B — the separate
 estimate-vs-real ctx-map pick residual noted in part 17, not in this
 layer.
 
+### W45-RECON part 19 (2026-09-24): tree-stream `uint_method` schedule — noise_512 e7 d1 **byte-identical to cjxl**
+
+The +4 B residual lived entirely in LfGlobal (303 vs 299 B) and traced
+to the 6-context modular **tree stream's** entropy code. Cluster
+assignments matched (`1,0,2,0,0,0`), but the first clustered histogram
+serialized a flat 40-symbol distribution where cjxl emits 11 symbols —
+a `ChooseUintConfigs` divergence.
+
+The instrumented reference showed cjxl running the **kFast**
+4-candidate sweep for this code and picking `(0,0,0)` varlenuint
+(values `{0..1023}` → contiguous tokens `{0..10}`), while our writer
+fixed `(4,2,0)` under `best = effort >= 8` (`kNone` below effort 8).
+
+Root cause: libjxl `HistogramParams::ForModular` gives the tree stream
+`uint_method = kFast` when `extra_dc_precision[0] != 0`
+(`enc_ans.cc:1420-1442`) — i.e. `nl_dc`, which VarDCT sets at
+`speed_tier < kFalcon` = **effort ≥ 4** (`enc_cache.cc:234`), not just
+at effort 8+. Our comment claimed `kNone` at effort ≤ 7; that was only
+true for `extra_dc_precision == 0` streams (effort ≤ 3, or modular at
+faster tiers).
+
+**Fix**: `LibjxlTreeCodeParams` now carries the frame's
+`extra_dc_precision` field. `write_tree_code_libjxl` applies the
+ForModular schedule to both branches: `uint = kBest` at effort ≥ 8,
+`kFast` when `extra_dc_precision != 0` below 8, `kNone` otherwise —
+the same rule the DC stream path already used at
+`vardct/bitstream.rs` (`dc_optimize_uint`). The kFast branch reuses
+`optimize_uint_configs_fast_from_freqs` with libjxl costs
+(`libjxl_params`).
+
+**Result**: `noise_512 e7 d1` is **byte-identical to cjxl v0.12**
+(325667 B — the entire LfGlobal +4 B residual closed). Verified
+per-candidate picks against the instrumented reference on all three
+e7 codes (tree `(0,0,0)`, ctx `(0,0,0)`/`(4,1,2)`). Strict byte-lock
+cells `noise_rgb_48x48_e{5,7}_d1` and `gradient_rgb_32x32_e{5,d0.5}`
+also became byte-identical; `e7_d1`/`e7_d4`/RGBA cells retain small
+residuals from upstream token-content differences (the picks
+themselves match — verified candidate-by-candidate), not entropy
+coding. Normal 63/63 hash locks unaffected (strict-only path).
+
 ---
 
 ## G. RESOLVED divergences (historical)

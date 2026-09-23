@@ -829,6 +829,7 @@ fn optimize_uint_configs_with_candidates(
     let allowed_cache = super::ans::AllowedCountsCache::new();
     let mut histo = crate::entropy_coding::histogram::Histogram::new();
 
+    let dbg = std::env::var_os("__JXL_UINTCFG_PROBE").is_some();
     for h in 0..num_histograms {
         let freqs = &freqs_per_histo[h];
         if freqs.is_empty() {
@@ -837,6 +838,12 @@ fn optimize_uint_configs_with_candidates(
 
         let max_value = freqs.keys().copied().max().unwrap_or(0);
         let total: u32 = freqs.values().sum();
+        if dbg {
+            eprintln!(
+                "uintcfg cand histo[{h}]: total={total} max_value={max_value} distinct={} libjxl={libjxl_costs}",
+                freqs.len()
+            );
+        }
         let mut best_cost = f64::MAX;
 
         for &cfg in candidates {
@@ -885,6 +892,13 @@ fn optimize_uint_configs_with_candidates(
                         as f64
             };
             let cost = population_cost + extra_bits_total as f64 + signaling_cost;
+            if dbg {
+                eprintln!(
+                    "    cfg({},{},{}): pop={:.1} extra={} sig={:.1} total={:.1}",
+                    cfg.split_exponent, cfg.msb_in_token, cfg.lsb_in_token,
+                    population_cost, extra_bits_total, signaling_cost, cost
+                );
+            }
 
             if cost < best_cost {
                 best_cost = cost;
