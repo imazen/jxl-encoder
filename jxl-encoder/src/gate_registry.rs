@@ -326,6 +326,12 @@ jxl_encoder_macros::strategy_def! {
             // multiply-order parity in QuantizeBlockAC /
             // AdjustQuantBlockAC / the Y writeback.
             quant_weights_libjxl = true,
+            // W45-RECON part 15: strict `ComputeScaledDCT` pass order —
+            // `DCT1D<ROWS, COLS>` (storage-row direction) first — via
+            // transpose-wraps / transposed-shape sibling calls on all
+            // multi-pass forward and inverse transforms.
+            dct_pass_order_libjxl = true,
+            epf_sharpness_pre_gab_libjxl = true,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -437,6 +443,10 @@ jxl_encoder_macros::strategy_def! {
             // f64-generated reciprocal tables + division form —
             // production baseline.
             quant_weights_libjxl = false,
+            // storage-column-first DCT pass order — production
+            // baseline.
+            dct_pass_order_libjxl = false,
+            epf_sharpness_pre_gab_libjxl = false,
             // DC encode stays on the Zenjxl schedule (2x precision at
             // effort <= 7, plain round) — not a libjxl mirror.
             dc_encode_libjxl_parity = false,
@@ -576,6 +586,10 @@ jxl_encoder_macros::strategy_def! {
             // f64-generated reciprocal tables + division form —
             // production baseline.
             quant_weights_libjxl = false,
+            // storage-column-first DCT pass order — production
+            // baseline.
+            dct_pass_order_libjxl = false,
+            epf_sharpness_pre_gab_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -673,6 +687,10 @@ jxl_encoder_macros::strategy_def! {
             // f64-generated reciprocal tables + division form —
             // production baseline.
             quant_weights_libjxl = false,
+            // storage-column-first DCT pass order — production
+            // baseline.
+            dct_pass_order_libjxl = false,
+            epf_sharpness_pre_gab_libjxl = false,
             // DC encode stays on the Zenjxl schedule — not a libjxl
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
@@ -1355,6 +1373,65 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "W45-RECON part 14 — quant matrices generated in f64 with precise powf then reciprocated, and AC quantize via coeff/weight division, vs libjxl f32 GetQuantWeights+FastPowf tables and direct qm multiply-order (quant_weights.cc, enc_group.cc)",
         },
 
+        /// **W45-RECON part 15**: multi-pass DCT pass order —
+        /// `ComputeScaledDCT<R, C>` runs `DCT1D<ROWS, COLS>` (the
+        /// storage-row direction) first in libjxl (`dct-inl.h`), while
+        /// the production kernels run the storage-column direction
+        /// first. Mathematically identical, but the different f32
+        /// evaluation order produces ~1-ulp coefficient diffs that
+        /// flip quantization boundaries at moderate distances
+        /// (noise_512 e8 d4: one DCT32x32 coefficient at the quant
+        /// boundary, propagated through CfL).
+        ///
+        /// [`crate::effort::EffortProfile::dct_pass_order_libjxl`]
+        /// routes multi-pass forward transforms in
+        /// `vardct/transform.rs::apply_dct`, the CfL pass-2 evaluation
+        /// in `chroma_from_luma.rs::refine_cfl_map`, the strategy
+        /// search in `ac_strategy.rs::estimate_entropy_full_impl`, and
+        /// the inverse transforms in
+        /// `reconstruct.rs::idct_for_strategy` to the `dct/*_lj`
+        /// transpose-wrap / transposed-sibling variants.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   shipped storage-column-first order.
+        ///
+        /// Section C.
+        dct_pass_order_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 15 — multi-pass forward/inverse DCTs transform the storage-column direction first, vs libjxl ComputeScaledDCT/ComputeScaledIDCT DCT1D<ROWS,COLS> storage-row-first pass order (dct-inl.h)",
+        },
+
+        /// **W45-RECON part 15 (EPF)**: `ComputeARHeuristics` compares
+        /// each sharpness candidate's reconstruction against
+        /// `orig_opsin`, which libjxl snapshots *before*
+        /// `LossyFrameHeuristics` — i.e. pre-patches and pre
+        /// `GaborishInverse` (`enc_frame.cc` "Save pre-Gaborish opsin").
+        /// The production code passes the post-`gaborish_inverse`
+        /// (DCT-input) planes to `compute_epf_sharpness`, inflating the
+        /// block-error magnitudes ~6.5x and shifting marginal
+        /// sharpness selections.
+        ///
+        /// [`crate::effort::EffortProfile::epf_sharpness_pre_gab_libjxl`]
+        /// snapshots the XYB planes right after
+        /// `convert_to_xyb_padded` (the `orig_opsin` equivalent) and
+        /// feeds those to `compute_epf_sharpness` in
+        /// `vardct/encoder.rs` and `vardct/bitstream.rs`. The
+        /// precomputed path uses `precomputed.xyb_*` (the entry
+        /// planes) directly.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   shipped post-gaborish original for the EPF error metric.
+        ///
+        /// Section C.
+        epf_sharpness_pre_gab_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 15 — EPF sharpness block errors computed against post-GaborishInverse (DCT-input) XYB, vs libjxl orig_opsin snapshotted before LossyFrameHeuristics/GaborishInverse (enc_frame.cc, enc_heuristics.cc ComputeARHeuristics)",
+        },
+
         // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
         /// **W44-201**: skip buckets 3 (DCT32x32) and 6 (DCT32x16/DCT16x32)
         /// when admitting custom coefficient orders via the W44-82
@@ -1995,6 +2072,18 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "C",
         row_ref: "W45-RECON part 14 — quant matrices generated in f64 with precise powf then reciprocated, and AC quantize via coeff/weight division, vs libjxl f32 GetQuantWeights+FastPowf tables and direct qm multiply-order (quant_weights.cc, enc_group.cc)",
         raw: __CUSTOM_DIVERGENCE_QUANT_WEIGHTS_LIBJXL,
+    },
+    DivergenceEntry {
+        gate_name: "dct_pass_order_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 15 — multi-pass forward/inverse DCTs transform the storage-column direction first, vs libjxl ComputeScaledDCT/ComputeScaledIDCT DCT1D<ROWS,COLS> storage-row-first pass order (dct-inl.h)",
+        raw: __CUSTOM_DIVERGENCE_DCT_PASS_ORDER_LIBJXL,
+    },
+    DivergenceEntry {
+        gate_name: "epf_sharpness_pre_gab_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 15 — EPF sharpness block errors computed against post-GaborishInverse (DCT-input) XYB, vs libjxl orig_opsin snapshotted before LossyFrameHeuristics/GaborishInverse (enc_frame.cc, enc_heuristics.cc ComputeARHeuristics)",
+        raw: __CUSTOM_DIVERGENCE_EPF_SHARPNESS_PRE_GAB_LIBJXL,
     },
     // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
     DivergenceEntry {

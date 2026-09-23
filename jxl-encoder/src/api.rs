@@ -3242,6 +3242,11 @@ impl LossyConfig {
             // groupings in adjust/quantize/writeback. NO-OP on every
             // other strategy.
             p.apply_quant_weights_libjxl(&resolved);
+            // W45-RECON part 15: libjxl `ComputeScaledDCT` pass order —
+            // `DCT1D<ROWS, COLS>` storage-row-first via `dct/*_lj`
+            // wrappers. NO-OP on every other strategy.
+            p.apply_dct_pass_order_libjxl(&resolved);
+            p.apply_epf_sharpness_pre_gab_libjxl(&resolved);
         }
         p
     }

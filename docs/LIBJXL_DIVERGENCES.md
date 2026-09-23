@@ -308,6 +308,9 @@ Numeric constants where ours differ from libjxl's reference values.
 | CfL Pass-2 weighting per-coefficient: `q / qw_x[i]` (division) vs libjxl `qv * qm_x[i]` (multiplication, with `qm_x` precomputed as inverse) at `chroma_from_luma.rs:594-603` | per-coefficient f32 DIVISION inside the tile loop | per-coefficient f32 MULTIPLICATION (with libjxl `qm_x = InvMatrix(...)` precomputed) | KNOWN-GAP (audit-only) | W44-189 CfL deep audit (D13) identified. Mathematically `q / qw == q * (1/qw)` but bit-different due to f32 non-associativity — within 1 ULP per coefficient. ALSO a ~5-10 ms perf regression at 12 MP (~4M divisions; f32 div is 3-5× slower than mul). CfL output is i8-clamped so output flips are unlikely on realistic data. Trivial salvage: precompute `inv_qw_x[i] = 1.0 / qw_x[i]` outside the inner loop (matches the Pass-1 precomputation at line 380-385). Memo §3 D13 has the full plan. |
 | `EffortProfile.quant_weights_libjxl` (**W45-RECON part 14 — f32 quant-matrix generation + multiply-order**) | Historical: quant tables interpolate band params in **f64** with precise `libm::powf` then cast/reciprocate; AC quantize computes `coeff * (1/weight) * qac_qm` (division form); `AdjustQuantBias` uses exact `0.145/quant`. Strict under `EncoderStrategy::Libjxl` via `quant_weights_libjxl` + `apply_quant_weights_libjxl`: `inv_dequant_matrix_lj` / `dequant_matrix_lj` tables + libjxl multiply-order kernels + `adjust_quant_bias_lj` | libjxl `GetQuantWeights` (`quant_weights.cc`) generates tables in **f32** throughout: f32 band chain, f32 `rcpcol/rcprow`, `MulAdd`+`Sqrt`, and `InterpolateVec` built on the `FastLog2f`/`FastPow2f` polynomial approximations (`base/fast_math-inl.h`) — ~3e-5 rel error vs precise powf. `ComputeQuantTable` then writes `inv_table` (raw weights, LLF region zeroed post-reciprocal) and `table = 1/weights`. `QuantizeBlockAC` computes `val = Mul(Mul(qm, quantv), in)`; `AdjustQuantBias` uses `ApproximateReciprocal` = NEON `vrecpe` estimate, not exact division | RESOLVED via opt-in (W45-RECON part 14) — INTENTIONAL f64 tables on non-Libjxl paths | The f64-vs-f32 tables differ by ≤1 ulp at ~all positions, which flips both `AdjustQuantBlockAC` integer decisions and single-coefficient quantize boundaries. Additional strict-path details reproduced: LLF region zeroed in `InvDequantMatrix` only (DequantMatrix keeps finite values), `AdjustQuantBlockAC` inner grouping `in * ((qm * qac) * mul)` vs `QuantizeBlockAC` `Mul(qm, qac*mul) * in`, `inv_qac = inv_global_scale/quant` (not `1/(scale*quant)`), `x_qm_multiplier` via exact `std::pow` (our `fast_powf` was ~0.01% high on `1.25^k`), NEON `vrecpe` 256-entry estimate ROM ported bit-exact from hardware, and the field-search `reconstruct_xyb` path mirrored to the decoder's `DequantLane` composition (`dm * (1/qm) * qac_mul` vs our `inv_qac * dequant`). Verified noise_512 e8 d1: **byte-identical to cjxl v0.12** (308 410 B, zero QAC/quant-field/AQBA-trajectory diffs, diagnostic and clean builds identical). Fixing the default path would re-derive every shipped Zenjxl byte, so it ships Libjxl-gated. |
 
+| `EffortProfile.dct_pass_order_libjxl` (**W45-RECON part 15 — DCT1D pass order**) | Historical: multi-pass DCT kernels transform the storage-column (horizontal) direction first on all strategies. Strict under `EncoderStrategy::Libjxl` via `dct_pass_order_libjxl` + `apply_dct_pass_order_libjxl`: `apply_dct`, the strategy search (`ac_strategy.rs`), CfL pass-2 (`refine_cfl_map`), and `reconstruct.rs`/`ac_strategy` inverse paths route through `dct/*_lj` transpose-wrap / transposed-sibling variants | libjxl `ComputeScaledDCT`/`ComputeScaledIDCT` run `DCT1D<ROWS, COLS>` — the storage-ROW (vertical) direction first (`dct-inl.h`). Mathematically identical, different f32 evaluation order | RESOLVED via opt-in (W45-RECON part 15) — INTENTIONAL column-first order on non-Libjxl paths | ~1-ulp coefficient diffs per position that can cross quantization boundaries at moderate distances (noise_512 e8 d4 had ~950 ulp diffs/block on DCT32x32, one boundary flip propagating through CfL). Rectangular transforms map via the sibling rule `dct_RxC_lj(X) = dct_CxR(X^T)` — zero new kernels; square transforms transpose in and out; `_full` variants call the transposed sibling. Inverse: libjxl inverts horizontal-frequency first universally — `idct_16x8`/`idct_8x16` already matched and keep direct dispatch; square, large rectangular and `_full` inverses use `_lj` wraps. Bespoke strategies (DCT2X2 Hadamard, IDENTITY, AFV) unaffected. Also fixed a 1-ulp truncated `WC_MULTIPLIERS_16[4]` literal in `jxl-encoder-simd/dct16.rs`+`idct16.rs` (crate canonical `constants.rs` already carried the full value — SIMD-copy typo). Verified noise_512 e8 d4: 0 quantized-AC diffs; e8 d1 byte-identical; Zenjxl paths untouched. |
+| `EffortProfile.epf_sharpness_pre_gab_libjxl` (**W45-RECON part 15 — EPF error-metric original**) | Historical: `compute_epf_sharpness` evaluates candidate block errors against the post-`gaborish_inverse` (DCT-input) XYB planes on all strategies. Strict under `EncoderStrategy::Libjxl` via `epf_sharpness_pre_gab_libjxl` + `apply_epf_sharpness_pre_gab_libjxl`: snapshots the XYB planes right after `convert_to_xyb_padded` (the `orig_opsin` equivalent) and feeds them to `compute_epf_sharpness` (still-image + animation paths; precomputed path prefers `xyb_pre_gaborish`) | libjxl `ComputeARHeuristics` compares candidate reconstructions against `orig_opsin`, copied **before** `LossyFrameHeuristics` — pre-patches and pre-`GaborishInverse` (`enc_frame.cc` "Save pre-Gaborish opsin") | RESOLVED via opt-in (W45-RECON part 15) — INTENTIONAL post-gaborish original on non-Libjxl paths | The post-inverse-gaborish planes differ from orig_opsin by up to ~0.5 in Y/B (5x5 sharpening), inflating `ComputeBlockL2Distance` ~6.5x uniformly and flipping marginal sharpness picks (noise_512 e8 d4: cjxl chose sharpness 7 vs our 0 at 2 blocks). With the pre-gab snapshot the sharpness map is bit-identical and decoded pixels are 0-diff vs cjxl at d4. Diagnosis was dump-driven: candidate decoded images matched cjxl to <1e-6 while the "original" planes diverged — the metric inputs, not the EPF filter, were wrong. |
+
 ---
 
 ## D. Algorithm-choice divergences
@@ -1644,6 +1647,45 @@ Known remaining residuals (measured 2026-09-23): noise_512 e7 d1
 d4 +107 B (single 32×32 forward-DCT 1-ulp input diff flipping one
 quant boundary at block (60,4) → ~2 k pixel diffs); grad64 e7 d12
 +3 B and grad32 e7 d0.5 +2 B.
+
+---
+
+### W45-RECON part 15 (2026-09-23): DCT pass order + EPF error-metric original — noise_512 e8 d4 **decoded-identical to cjxl**
+
+The d4 residual decomposed into two independent divergences, each
+behind its own Section C gate.
+
+**DCT1D pass order** (`dct_pass_order_libjxl`). libjxl's
+`DCT1D<ROWS, COLS>` (`dct-inl.h`) transforms the storage-row
+(vertical) direction first; our multi-pass kernels did the
+storage-column direction first. Mathematically equivalent but the
+f32 evaluation order differs by ~1 ulp per coefficient — at d4 that
+was ~950 ulp diffs per 32×32 block, one crossing a quant boundary.
+Fixed with transposed-sibling wrappers (`dct_RxC_lj(X) :=
+dct_CxR(X^T)`, square = transpose-in/transpose-out) routed through
+`apply_dct`, the AC-strategy search, CfL pass-2, and all
+encoder-side inverse paths — no new kernels, no default-path
+changes. `idct_16x8`/`idct_8x16` already used libjxl's
+horizontal-first inverse order and stay direct. A 1-ulp truncated
+`WC_MULTIPLIERS_16[4]` literal in `jxl-encoder-simd/dct16.rs` and
+`idct16.rs` was also corrected to the canonical value.
+
+**EPF sharpness metric original** (`epf_sharpness_pre_gab_libjxl`).
+After coefficient parity, two `acmeta` channel-3 (EPF sharpness)
+blocks still differed and per-candidate error maps were ~6.5× off
+*everywhere*. Pixel dumps showed candidate reconstructions and EPF
+output already matched cjxl to <1e-6 — the error was the "original"
+operand: we compared against the post-`gaborish_inverse` (DCT-input)
+planes while libjxl snapshots `orig_opsin` before
+`LossyFrameHeuristics` (`enc_frame.cc`). Strict now snapshots the
+planes right after `convert_to_xyb_padded` and feeds them to
+`compute_epf_sharpness`; the sharpness map is bit-identical.
+
+**Result at noise_512 e8 d4**: quantized AC, DC, all `acmeta`
+channels and decoded pixels identical; 4/4 AC-group sections
+identical in size. Remaining +119 B is pure entropy-layer spread
+across LfGlobal +21 B / LfGroup −66 B / HfGlobal +164 B — same class
+as the e7 residual, investigated next.
 
 ---
 

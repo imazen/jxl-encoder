@@ -148,6 +148,9 @@ pub(crate) fn reconstruct_xyb(
     // `ApproximateReciprocal`, `inv_global_scale/quant * dm_mul`
     // scaling, and fused `MulAdd` CfL (libjxl `dec_group.cc`).
     strict_qm: bool,
+    // W45-RECON part 15: strict `ComputeScaledIDCT` pass order
+    // (horizontal-frequency inverse first) via the `*_lj` wrappers.
+    strict_dct_order: bool,
 ) -> [Vec<f32>; 3] {
     // 7b.1a (#74): band-parallel reconstruction. Bands of
     // TILE_DIM_IN_BLOCKS (8) block rows = 64 px — transforms are
@@ -211,6 +214,7 @@ pub(crate) fn reconstruct_xyb(
                     by_end,
                     band,
                     strict_qm,
+                    strict_dct_order,
                 );
             }
         }
@@ -232,6 +236,7 @@ pub(crate) fn reconstruct_xyb(
                     by_end,
                     band,
                     strict_qm,
+                    strict_dct_order,
                 );
             }
         }
@@ -253,6 +258,7 @@ pub(crate) fn reconstruct_xyb(
                     by_end,
                     band,
                     strict_qm,
+                    strict_dct_order,
                 );
             }
         }
@@ -269,6 +275,7 @@ pub(crate) fn reconstruct_xyb(
             by_end,
             band,
             strict_qm,
+            strict_dct_order,
         )
     };
 
@@ -322,6 +329,7 @@ fn reconstruct_xyb_avx2(
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
     strict_qm: bool,
+    strict_dct_order: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
@@ -336,6 +344,7 @@ fn reconstruct_xyb_avx2(
         by_end,
         planes,
         strict_qm,
+        strict_dct_order,
     )
 }
 
@@ -356,6 +365,7 @@ fn reconstruct_xyb_neon(
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
     strict_qm: bool,
+    strict_dct_order: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
@@ -370,6 +380,7 @@ fn reconstruct_xyb_neon(
         by_end,
         planes,
         strict_qm,
+        strict_dct_order,
     )
 }
 
@@ -390,6 +401,7 @@ fn reconstruct_xyb_wasm128(
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
     strict_qm: bool,
+    strict_dct_order: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
@@ -404,6 +416,7 @@ fn reconstruct_xyb_wasm128(
         by_end,
         planes,
         strict_qm,
+        strict_dct_order,
     )
 }
 
@@ -422,6 +435,7 @@ fn reconstruct_xyb_impl(
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
     strict_qm: bool,
+    strict_dct_order: bool,
 ) {
     // 7b.1a (#74): band variant. `planes` are BAND slices covering pixel
     // rows `by_start*8 .. by_end*8`; all writes are band-relative
@@ -762,7 +776,12 @@ fn reconstruct_xyb_impl(
                 } else {
                     &dequant_scratch[c][..size]
                 };
-                idct_for_strategy(raw_strategy, idct_input, &mut idct_scratch[..size]);
+                idct_for_strategy(
+                    raw_strategy,
+                    idct_input,
+                    &mut idct_scratch[..size],
+                    strict_dct_order,
+                );
 
                 // Write pixels to output plane using physical coverage dimensions
                 let pixel_x = bx * BLOCK_DIM;
@@ -1173,7 +1192,12 @@ fn restore_llf_from_dc(
 }
 
 /// Apply IDCT for a given strategy, producing pixel-domain output.
-fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
+fn idct_for_strategy(
+    raw_strategy: u8,
+    coeffs: &[f32],
+    output: &mut [f32],
+    strict_dct_order: bool,
+) {
     match raw_strategy {
         RAW_STRATEGY_DCT8 => {
             let mut input = [0.0f32; 64];
@@ -1181,6 +1205,18 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
             let mut tmp = [0.0f32; 64];
             idct_8x8(&input, &mut tmp);
             output[..64].copy_from_slice(&tmp);
+        }
+        RAW_STRATEGY_DCT4X4 if strict_dct_order => {
+            // libjxl ComputeScaledIDCT<4,4> pass order: transpose-in →
+            // idct_4x4_full (DC combine undo + sub-block IDCTs) →
+            // transpose-out.
+            idct_4x4_full_lj(as_array_ref(coeffs, 0), as_array_mut(output, 0));
+        }
+        RAW_STRATEGY_DCT4X8 if strict_dct_order => {
+            idct_4x8_full_lj(as_array_ref(coeffs, 0), as_array_mut(output, 0));
+        }
+        RAW_STRATEGY_DCT8X4 if strict_dct_order => {
+            idct_8x4_full_lj(as_array_ref(coeffs, 0), as_array_mut(output, 0));
         }
         RAW_STRATEGY_DCT4X4 => {
             // Inverse of dct_4x4_full: undo DC combining, de-interleave, apply idct_4x4
@@ -1307,39 +1343,67 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
             let mut input = [0.0f32; 256];
             input.copy_from_slice(&coeffs[..256]);
             let mut tmp = [0.0f32; 256];
-            idct_16x16(&input, &mut tmp);
+            if strict_dct_order {
+                idct_16x16_lj(&input, &mut tmp);
+            } else {
+                idct_16x16(&input, &mut tmp);
+            }
             output[..256].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X32 => {
             let mut input = [0.0f32; 1024];
             input.copy_from_slice(&coeffs[..1024]);
             let mut tmp = [0.0f32; 1024];
-            idct_32x32(&input, &mut tmp);
+            if strict_dct_order {
+                idct_32x32_lj(&input, &mut tmp);
+            } else {
+                idct_32x32(&input, &mut tmp);
+            }
             output[..1024].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X16 => {
             let mut input = [0.0f32; 512];
             input.copy_from_slice(&coeffs[..512]);
             let mut tmp = [0.0f32; 512];
-            idct_32x16(&input, &mut tmp);
+            if strict_dct_order {
+                idct_32x16_lj(&input, &mut tmp);
+            } else {
+                idct_32x16(&input, &mut tmp);
+            }
             output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X32 => {
             let mut input = [0.0f32; 512];
             input.copy_from_slice(&coeffs[..512]);
             let mut tmp = [0.0f32; 512];
-            idct_16x32(&input, &mut tmp);
+            if strict_dct_order {
+                idct_16x32_lj(&input, &mut tmp);
+            } else {
+                idct_16x32(&input, &mut tmp);
+            }
             output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT64X64 => {
             // DCT64 uses stack arrays via the output parameter
-            idct_64x64(&coeffs[..4096], &mut output[..4096]);
+            if strict_dct_order {
+                idct_64x64_lj(&coeffs[..4096], &mut output[..4096]);
+            } else {
+                idct_64x64(&coeffs[..4096], &mut output[..4096]);
+            }
         }
         RAW_STRATEGY_DCT64X32 => {
-            idct_64x32(&coeffs[..2048], &mut output[..2048]);
+            if strict_dct_order {
+                idct_64x32_lj(&coeffs[..2048], &mut output[..2048]);
+            } else {
+                idct_64x32(&coeffs[..2048], &mut output[..2048]);
+            }
         }
         RAW_STRATEGY_DCT32X64 => {
-            idct_32x64(&coeffs[..2048], &mut output[..2048]);
+            if strict_dct_order {
+                idct_32x64_lj(&coeffs[..2048], &mut output[..2048]);
+            } else {
+                idct_32x64(&coeffs[..2048], &mut output[..2048]);
+            }
         }
         RAW_STRATEGY_IDENTITY => {
             let mut tmp = [0.0f32; 64];
@@ -1515,7 +1579,7 @@ mod tests {
             let mut coefficients = [0.0; 64];
             coefficients[slot] = 1.0;
             let mut pixels = [0.0; 64];
-            idct_for_strategy(RAW_STRATEGY_DCT4X4, &coefficients, &mut pixels);
+            idct_for_strategy(RAW_STRATEGY_DCT4X4, &coefficients, &mut pixels, false);
             for y in 0..8 {
                 for x in 0..8 {
                     assert_eq!(

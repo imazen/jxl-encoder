@@ -3908,6 +3908,20 @@ impl VarDctEncoder {
         // forward_xyb is finite-output-for-finite-input.
         validate_xyb_planes(self.non_finite_action, &mut xyb_x, &mut xyb_y, &mut xyb_b)?;
 
+        // Strict Libjxl only: snapshot the opsin planes here — the
+        // equivalent of libjxl's `orig_opsin` copy before
+        // `LossyFrameHeuristics` (enc_frame.cc "Save pre-Gaborish
+        // opsin"). `compute_epf_sharpness` compares candidate
+        // reconstructions against this pre-patches / pre-GaborishInverse
+        // original; the shipped path uses the post-gaborish DCT-input
+        // planes instead (~6.5x inflated block errors).
+        let epf_orig_opsin: Option<[Vec<f32>; 3]> =
+            if self.profile.epf_sharpness_pre_gab_libjxl {
+                Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
+            } else {
+                None
+            };
+
         // The linear buffer's only readers past this point are the
         // perceptual refinement loops. When none can run (every effort
         // below the loop band), free an owned buffer NOW - it otherwise
@@ -5808,6 +5822,9 @@ impl VarDctEncoder {
                 // #74 task #10: keep-best Pass-2 guard (ON for Zenjxl /
                 // Aggressive at e>=7, OFF on Libjxl for byte parity).
                 self.profile.cfl_keep_best,
+                // W45-RECON part 15: libjxl `ComputeScaledDCT` pass
+                // order for the per-strategy coefficient evaluation.
+                self.profile.dct_pass_order_libjxl,
             );
         }
 
@@ -6352,7 +6369,12 @@ impl VarDctEncoder {
                             ))
                         } else {
                             Some(super::epf::compute_epf_sharpness(
-                                [xyb_x_ref, xyb_y_ref, xyb_b_ref],
+                                match &epf_orig_opsin {
+                                    Some([x, y, b]) => {
+                                        [x.as_slice(), y.as_slice(), b.as_slice()]
+                                    }
+                                    None => [xyb_x_ref, xyb_y_ref, xyb_b_ref],
+                                },
                                 quant_dc,
                                 quant_ac,
                                 &quant_field,
@@ -6366,6 +6388,7 @@ impl VarDctEncoder {
                                 self.budget.as_ref(),
                                 self.resolved_improvements.dc_adaptive_smoothing,
                                 self.profile.quant_weights_libjxl,
+                                self.profile.dct_pass_order_libjxl,
                             )?)
                         }
                     }
@@ -7453,7 +7476,31 @@ impl VarDctEncoder {
                             ))
                         } else {
                             Some(super::epf::compute_epf_sharpness(
-                                [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct],
+                                // Strict: prefer `xyb_pre_gaborish` —
+                                // the pre-GaborishInverse snapshot is
+                                // the closest available equivalent of
+                                // libjxl's `orig_opsin` on this path
+                                // (still post-patches for case-1
+                                // callers; libjxl snapshots before
+                                // patch subtraction). Falls back to the
+                                // entry planes when no snapshot was
+                                // supplied.
+                                match (
+                                    self.profile.epf_sharpness_pre_gab_libjxl,
+                                    &precomputed.xyb_pre_gaborish,
+                                ) {
+                                    (true, Some([x, y, b])) => {
+                                        [x.as_slice(), y.as_slice(), b.as_slice()]
+                                    }
+                                    (true, None) => [
+                                        &precomputed.xyb_x[..],
+                                        &precomputed.xyb_y[..],
+                                        &precomputed.xyb_b[..],
+                                    ],
+                                    (false, _) => {
+                                        [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct]
+                                    }
+                                },
                                 quant_dc,
                                 quant_ac,
                                 &quant_field,
@@ -7467,6 +7514,7 @@ impl VarDctEncoder {
                                 self.budget.as_ref(),
                                 self.resolved_improvements.dc_adaptive_smoothing,
                                 self.profile.quant_weights_libjxl,
+                                self.profile.dct_pass_order_libjxl,
                             )?)
                         }
                     }

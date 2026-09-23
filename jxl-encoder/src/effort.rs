@@ -905,6 +905,29 @@ pub struct EffortProfile {
     /// [`crate::api::ResolvedImprovements::quant_weights_libjxl`].
     pub quant_weights_libjxl: bool,
     /// When `true` (strict `EncoderStrategy::Libjxl` only),
+    /// multi-pass forward/inverse DCTs run the `dct/*_lj` wrappers that
+    /// reproduce libjxl `ComputeScaledDCT<R, C>`'s pass order —
+    /// `DCT1D<ROWS, COLS>` (storage-row direction) first, then the
+    /// column direction — via transpose-wraps / transposed-shape
+    /// sibling calls (`vardct/dct/forward.rs`, `forward_large.rs`,
+    /// `inverse.rs`). The production kernels transform the
+    /// storage-column direction first: mathematically identical but a
+    /// different f32 evaluation order (~1-ulp diffs that flip
+    /// quantization boundaries at moderate distances).
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::dct_pass_order_libjxl`].
+    pub dct_pass_order_libjxl: bool,
+    /// When `true` (strict `EncoderStrategy::Libjxl` only),
+    /// `vardct/epf.rs::compute_epf_sharpness` evaluates candidate block
+    /// errors against the XYB planes snapshotted *before* patch
+    /// subtraction and `gaborish_inverse` — matching libjxl
+    /// `orig_opsin` ("Save pre-Gaborish opsin", `enc_frame.cc`). When
+    /// `false`, the shipped post-gaborish (DCT-input) planes are used,
+    /// which inflates `ComputeBlockL2Distance` magnitudes ~6.5x.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::epf_sharpness_pre_gab_libjxl`].
+    pub epf_sharpness_pre_gab_libjxl: bool,
+    /// When `true` (strict `EncoderStrategy::Libjxl` only),
     /// `vardct/dc_tree_learn.rs::tree_tokens_with_ac_metadata_prefix`
     /// emits the merged MA-tree root as `prop=1 splitval =
     /// 2·num_dc_groups` — matching libjxl `MergeTrees`
@@ -1749,6 +1772,9 @@ impl EffortProfile {
             aqba_max_over_channels: false,
             // `apply_quant_weights_libjxl` flips for Libjxl only.
             quant_weights_libjxl: false,
+            // `apply_dct_pass_order_libjxl` flips for Libjxl only.
+            dct_pass_order_libjxl: false,
+            epf_sharpness_pre_gab_libjxl: false,
             // `apply_ma_tree_root_splitval_libjxl` flips for Libjxl only.
             ma_root_split_2ndg: false,
             bcm_qf_zero_based: false,
@@ -1987,6 +2013,8 @@ impl EffortProfile {
             adjust_quant_ac: false,
             aqba_max_over_channels: false,
             quant_weights_libjxl: false,
+            dct_pass_order_libjxl: false,
+            epf_sharpness_pre_gab_libjxl: false,
             ma_root_split_2ndg: false,
             bcm_qf_zero_based: false,
             initial_q_numerator: 0.39,
@@ -2938,6 +2966,39 @@ impl EffortProfile {
     ) {
         if resolved.quant_weights_libjxl {
             self.quant_weights_libjxl = true;
+        }
+    }
+
+    /// Apply the libjxl `ComputeScaledDCT` pass-order parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::dct_pass_order_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::dct_pass_order_libjxl`] — the storage-row-first
+    /// `DCT1D<ROWS, COLS>` pass order for multi-pass forward/inverse
+    /// transforms (see field docstring).
+    pub(crate) fn apply_dct_pass_order_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.dct_pass_order_libjxl {
+            self.dct_pass_order_libjxl = true;
+        }
+    }
+
+    /// Apply the EPF pre-gaborish-original libjxl-parity flip.
+    ///
+    /// When
+    /// [`crate::api::ResolvedImprovements::epf_sharpness_pre_gab_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::epf_sharpness_pre_gab_libjxl`] — snapshot the
+    /// `orig_opsin`-equivalent planes for the sharpness block-error
+    /// metric (see field docstring).
+    pub(crate) fn apply_epf_sharpness_pre_gab_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.epf_sharpness_pre_gab_libjxl {
+            self.epf_sharpness_pre_gab_libjxl = true;
         }
     }
 

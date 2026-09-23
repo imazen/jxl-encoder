@@ -1017,6 +1017,7 @@ pub(crate) fn compute_epf_sharpness(
     budget: Option<&Arc<MemoryBudget>>,
     dc_smoothing: bool,
     strict_qm: bool,
+    strict_dct_order: bool,
 ) -> Result<Vec<u8>> {
     let nblocks = xsize_blocks * ysize_blocks;
     let padded_width = xsize_blocks * BLOCK_DIM;
@@ -1044,6 +1045,7 @@ pub(crate) fn compute_epf_sharpness(
         ysize_blocks,
         dc_smoothing,
         strict_qm,
+        strict_dct_order,
     );
 
     #[cfg(feature = "__env_var_diagnostics")]
@@ -1142,6 +1144,38 @@ pub(crate) fn compute_epf_sharpness(
             xsize_blocks,
             ysize_blocks,
         ));
+
+        #[cfg(feature = "__env_var_diagnostics")]
+        if let Some(path) = std::env::var_os("JXL_EPF_RECON_DUMP") {
+            let mut f = std::io::BufWriter::new(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .unwrap(),
+            );
+            use std::io::Write;
+            for c in 0..3 {
+                f.write_all(bytemuck::cast_slice(&recon[c][..])).unwrap();
+            }
+        }
+    }
+
+    #[cfg(feature = "__env_var_diagnostics")]
+    if let Some(path) = std::env::var_os("JXL_EPF_RECON_DUMP") {
+        use std::io::Write;
+        let mut f = std::io::BufWriter::new(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap(),
+        );
+        for c in 0..3 {
+            f.write_all(bytemuck::cast_slice(&base_recon[c][..])).unwrap();
+        }
+        for c in 0..3 {
+            f.write_all(bytemuck::cast_slice(&original_xyb[c][..])).unwrap();
+        }
     }
 
     #[cfg(feature = "__env_var_diagnostics")]

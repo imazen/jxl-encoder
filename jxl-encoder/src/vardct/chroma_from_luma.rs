@@ -720,6 +720,9 @@ pub fn refine_cfl_map(
     newton_libjxl_parity: bool,
     newton_libjxl_math_with_ls_warm_start: bool,
     keep_best: bool,
+    // W45-RECON part 15: libjxl `ComputeScaledDCT` storage-row-first
+    // pass order for the per-strategy coefficient evaluation below.
+    dct_order_libjxl: bool,
 ) {
     let xsize_tiles = cfl_map.xsize_tiles;
     let ysize_tiles = cfl_map.ysize_tiles;
@@ -785,9 +788,33 @@ pub fn refine_cfl_map(
                         continue;
                     }
 
-                    VarDctEncoder::apply_dct(xyb_y, stride, bx, by, raw_strategy, dct_y);
-                    VarDctEncoder::apply_dct(xyb_x, stride, bx, by, raw_strategy, dct_x);
-                    VarDctEncoder::apply_dct(xyb_b, stride, bx, by, raw_strategy, dct_b);
+                    VarDctEncoder::apply_dct(
+                        xyb_y,
+                        stride,
+                        bx,
+                        by,
+                        raw_strategy,
+                        dct_y,
+                        dct_order_libjxl,
+                    );
+                    VarDctEncoder::apply_dct(
+                        xyb_x,
+                        stride,
+                        bx,
+                        by,
+                        raw_strategy,
+                        dct_x,
+                        dct_order_libjxl,
+                    );
+                    VarDctEncoder::apply_dct(
+                        xyb_b,
+                        stride,
+                        bx,
+                        by,
+                        raw_strategy,
+                        dct_b,
+                        dct_order_libjxl,
+                    );
 
                     let (cx, cy) = if covered_x >= covered_y {
                         (covered_x, covered_y)
@@ -1112,6 +1139,7 @@ mod tests {
             false, // newton_libjxl_parity (W44-184): default path
             false, // newton_libjxl_math_with_ls_warm_start (W44-AUDIT-5 Phase 2 Mode C): default off in unit tests
             false, // keep_best (#74 task #10): default off in unit tests (preserve pre-guard assertions)
+            false, // dct_order_libjxl (W45-RECON part 15): default off in unit tests
         );
         // The function ran without panic on a real input. Whether it
         // mutated the map depends on how much the per-block-weighted
@@ -1204,6 +1232,7 @@ mod tests {
             false, // newton_libjxl_parity (W44-184): default path
             false, // newton_libjxl_math_with_ls_warm_start (W44-AUDIT-5 Phase 2 Mode C): default off in unit tests
             false, // keep_best (#74 task #10): default off in unit tests (preserve pre-guard assertions)
+            false, // dct_order_libjxl (W45-RECON part 15): default off in unit tests
         );
 
         let changed = (0..cfl.ytox.len())
@@ -1349,6 +1378,7 @@ mod tests {
             false, // newton_libjxl_parity (W44-184): default path
             false, // newton_libjxl_math_with_ls_warm_start (W44-AUDIT-5 Phase 2 Mode C): default off in unit tests
             false, // keep_best (#74 task #10): default off in unit tests (preserve pre-guard assertions)
+            false, // dct_order_libjxl (W45-RECON part 15): default off in unit tests
         );
 
         // Sensibility check: every cfl entry must remain a valid i8

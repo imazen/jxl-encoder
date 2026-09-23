@@ -19,9 +19,11 @@ use super::common::*;
 use super::dct::{
     dc_from_dct_4x4_full, dc_from_dct_4x8_full, dc_from_dct_8x4_full, dc_from_dct_8x16,
     dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_16x32, dc_from_dct_32x16, dc_from_dct_32x32,
-    dc_from_dct_32x64, dc_from_dct_64x32, dc_from_dct_64x64, dct_4x4_full, dct_4x8_full,
-    dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32, dct_32x16, dct_32x32,
-    dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, identity_transform,
+    dc_from_dct_32x64, dc_from_dct_64x32, dc_from_dct_64x64, dct_4x4_full, dct_4x4_full_lj,
+    dct_4x8_full, dct_4x8_full_lj, dct_8x4_full, dct_8x4_full_lj, dct_8x8, dct_8x16, dct_8x16_lj,
+    dct_16x8, dct_16x8_lj, dct_16x16, dct_16x16_lj, dct_16x32, dct_16x32_lj, dct_32x16,
+    dct_32x16_lj, dct_32x32, dct_32x32_lj, dct_32x64, dct_32x64_lj, dct_64x32, dct_64x32_lj,
+    dct_64x64, dct_64x64_lj, dct2x2_transform, identity_transform,
 };
 use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
@@ -179,6 +181,13 @@ impl VarDctEncoder {
     ///
     /// The `channel_data` must be padded to block boundaries (stride = padded_width).
     /// No bounds checking is performed - caller must ensure data is properly padded.
+    ///
+    /// `dct_order_libjxl` (W45-RECON part 15): when `true`, multi-pass
+    /// transforms run the `*_lj` wrappers that reproduce libjxl
+    /// `ComputeScaledDCT`'s storage-row-first `DCT1D<ROWS, COLS>` pass
+    /// order. The kernels' default order (storage-column first) is
+    /// mathematically identical but differs at ~1 ulp per coefficient.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_dct(
         channel_data: &[f32],
         stride: usize, // padded_width (row stride)
@@ -186,6 +195,7 @@ impl VarDctEncoder {
         by: usize,
         raw_strategy: u8,
         output: &mut [f32],
+        dct_order_libjxl: bool,
     ) {
         use super::common::{as_array_mut, uninit_buf};
 
@@ -202,7 +212,11 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 8..dy * 8 + 8].copy_from_slice(&channel_data[src..src + 8]);
                 }
-                dct_16x8(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_16x8_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_16x8(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_DCT8X16 => {
                 let mut block = uninit_buf::<128>();
@@ -211,7 +225,11 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
-                dct_8x16(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_8x16_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_8x16(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_DCT16X16 => {
                 let mut block = uninit_buf::<256>();
@@ -220,7 +238,11 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
-                dct_16x16(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_16x16_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_16x16(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_DCT32X32 => {
                 let mut block = uninit_buf::<1024>();
@@ -229,22 +251,38 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
-                dct_32x32(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_32x32_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_32x32(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_DCT4X8 => {
                 let mut block = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut block);
-                dct_4x8_full(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_4x8_full_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_4x8_full(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_DCT8X4 => {
                 let mut block = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut block);
-                dct_8x4_full(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_8x4_full_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_8x4_full(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_DCT4X4 => {
                 let mut block = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut block);
-                dct_4x4_full(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_4x4_full_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_4x4_full(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_IDENTITY => {
                 let mut input = uninit_buf::<64>();
@@ -263,7 +301,11 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
-                dct_32x16(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_32x16_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_32x16(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_DCT16X32 => {
                 let mut block = uninit_buf::<512>();
@@ -272,7 +314,11 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
-                dct_16x32(&block, as_array_mut(output, 0));
+                if dct_order_libjxl {
+                    dct_16x32_lj(&block, as_array_mut(output, 0));
+                } else {
+                    dct_16x32(&block, as_array_mut(output, 0));
+                }
             }
             RAW_STRATEGY_DCT64X64 => {
                 let mut block = uninit_buf::<4096>();
@@ -281,7 +327,11 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 64..dy * 64 + 64].copy_from_slice(&channel_data[src..src + 64]);
                 }
-                dct_64x64(&block, &mut output[..4096]);
+                if dct_order_libjxl {
+                    dct_64x64_lj(&block, &mut output[..4096]);
+                } else {
+                    dct_64x64(&block, &mut output[..4096]);
+                }
             }
             RAW_STRATEGY_DCT64X32 => {
                 let mut block = uninit_buf::<2048>();
@@ -290,7 +340,11 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
-                dct_64x32(&block, &mut output[..2048]);
+                if dct_order_libjxl {
+                    dct_64x32_lj(&block, &mut output[..2048]);
+                } else {
+                    dct_64x32(&block, &mut output[..2048]);
+                }
             }
             RAW_STRATEGY_DCT32X64 => {
                 let mut block = uninit_buf::<2048>();
@@ -299,7 +353,11 @@ impl VarDctEncoder {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 64..dy * 64 + 64].copy_from_slice(&channel_data[src..src + 64]);
                 }
-                dct_32x64(&block, &mut output[..2048]);
+                if dct_order_libjxl {
+                    dct_32x64_lj(&block, &mut output[..2048]);
+                } else {
+                    dct_32x64(&block, &mut output[..2048]);
+                }
             }
             RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
                 let mut pixels = uninit_buf::<64>();
@@ -360,6 +418,9 @@ impl VarDctEncoder {
         // `FastPowf` polynomial approximation is ~3e-5 off and flips
         // rounding-boundary coefficients.
         let strict_qm_hoist = self.profile.quant_weights_libjxl;
+        // W45-RECON part 15: libjxl `ComputeScaledDCT` storage-row-first
+        // pass order (see `dct/*_lj` wrappers).
+        let strict_dct_order = self.profile.dct_pass_order_libjxl;
         let x_qm_mul = if strict_qm_hoist {
             1.25f32.powi(params.x_qm_scale as i32 - 2)
         } else {
@@ -447,6 +508,7 @@ impl VarDctEncoder {
                     by,
                     raw_strategy,
                     &mut dct_coeffs[1],
+                    strict_dct_order,
                 );
 
                 // ── Step 2: Extract Y DC (before roundtrip quantization) ───
@@ -671,6 +733,7 @@ impl VarDctEncoder {
                         by,
                         raw_strategy,
                         &mut dct_coeffs[c],
+                        strict_dct_order,
                     );
                 }
 
@@ -1392,32 +1455,30 @@ impl VarDctEncoder {
                 #[cfg(feature = "std")]
                 if let Some(path) = std::env::var_os("JXL_QAC_DUMP") {
                     use std::io::Write;
-                    let mut f = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&path)
-                        .unwrap();
-                    let hdr = [
+                    // Assemble the whole record in memory, then one
+                    // locked write — per-word writes interleave across
+                    // the band-parallel workers.
+                    let mut rec = alloc::vec::Vec::with_capacity(24 + size * 32 + 4);
+                    for w in [
                         0x5141_4342u32,
                         0u32, // group_idx — our bx/by are already global
                         bx as u32,
                         by as u32,
                         raw_strategy as u32,
                         size as u32,
-                    ];
-                    for w in hdr {
-                        f.write_all(&w.to_le_bytes()).unwrap();
+                    ] {
+                        rec.extend_from_slice(&w.to_le_bytes());
                     }
                     for v in &qac_pre_y[..size] {
-                        f.write_all(&v.to_le_bytes()).unwrap();
+                        rec.extend_from_slice(&v.to_le_bytes());
                     }
-                    f.write_all(&qac_quant_i32.to_le_bytes()).unwrap();
+                    rec.extend_from_slice(&qac_quant_i32.to_le_bytes());
                     let stride = cx * BLOCK_DIM;
                     let mut flat = alloc::vec![0f32; size];
                     for c in 0..3 {
                         flat[..size].copy_from_slice(&dct_coeffs[c][..size]);
                         for v in &flat[..size] {
-                            f.write_all(&v.to_le_bytes()).unwrap();
+                            rec.extend_from_slice(&v.to_le_bytes());
                         }
                     }
                     let mut qflat = alloc::vec![0i32; size];
@@ -1449,9 +1510,17 @@ impl VarDctEncoder {
                             }
                         }
                         for v in &qflat[..size] {
-                            f.write_all(&v.to_le_bytes()).unwrap();
+                            rec.extend_from_slice(&v.to_le_bytes());
                         }
                     }
+                    static QAC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+                    let _g = QAC_LOCK.lock().unwrap();
+                    let mut f = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path)
+                        .unwrap();
+                    f.write_all(&rec).unwrap();
                 }
             }
         }

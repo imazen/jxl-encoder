@@ -452,3 +452,71 @@ pub fn dc_from_dct_32x64(coeffs: &[f32]) -> [f32; 32] {
 
     result
 }
+
+// =============================================================================
+// libjxl pass-order variants (W45-RECON part 15)
+//
+// Same construction as `forward.rs`'s `*_lj` wrappers: libjxl
+// `ComputeScaledDCT<R, C>` transforms the storage-row direction first.
+// Rectangular shapes call the transposed-shape sibling on the transposed
+// input (which yields the identical output layout); square shapes wrap as
+// transpose-in → kernel → transpose-out.
+// =============================================================================
+
+/// libjxl-order `ComputeScaledDCT<32, 32>`: transpose-in → kernel →
+/// transpose-out.
+#[inline]
+pub fn dct_32x32_lj(input: &[f32; 1024], output: &mut [f32; 1024]) {
+    let mut t = [0.0f32; 1024];
+    crate::vardct::common::transpose_block::<32, 32>(input, &mut t);
+    let mut u = [0.0f32; 1024];
+    dct_32x32(&t, &mut u);
+    crate::vardct::common::transpose_block::<32, 32>(&u, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<32, 16>`: vertical-32 first via
+/// `dct_16x32` on the transposed input.
+#[inline]
+pub fn dct_32x16_lj(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut t = [0.0f32; 512];
+    crate::vardct::common::transpose_block::<32, 16>(input, &mut t);
+    dct_16x32(&t, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<16, 32>`: vertical-16 first via
+/// `dct_32x16` on the transposed input.
+#[inline]
+pub fn dct_16x32_lj(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut t = [0.0f32; 512];
+    crate::vardct::common::transpose_block::<16, 32>(input, &mut t);
+    dct_32x16(&t, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<64, 64>`: transpose-in → kernel →
+/// transpose-out.
+#[inline]
+pub fn dct_64x64_lj(input: &[f32], output: &mut [f32]) {
+    let mut t = [0.0f32; 4096];
+    crate::vardct::common::transpose_block::<64, 64>(&input[..4096], &mut t);
+    let mut u = [0.0f32; 4096];
+    dct_64x64(&t, &mut u);
+    crate::vardct::common::transpose_block::<64, 64>(&u, &mut output[..4096]);
+}
+
+/// libjxl-order `ComputeScaledDCT<64, 32>`: vertical-64 first via
+/// `dct_32x64` on the transposed input.
+#[inline]
+pub fn dct_64x32_lj(input: &[f32], output: &mut [f32]) {
+    let mut t = [0.0f32; 2048];
+    crate::vardct::common::transpose_block::<64, 32>(&input[..2048], &mut t);
+    dct_32x64(&t, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<32, 64>`: vertical-32 first via
+/// `dct_64x32` on the transposed input.
+#[inline]
+pub fn dct_32x64_lj(input: &[f32], output: &mut [f32]) {
+    let mut t = [0.0f32; 2048];
+    crate::vardct::common::transpose_block::<32, 64>(&input[..2048], &mut t);
+    dct_64x32(&t, output);
+}

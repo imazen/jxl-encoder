@@ -1976,6 +1976,18 @@ impl VarDctEncoder {
             &mut xyb_b,
         )?;
 
+        // Strict Libjxl only: snapshot the opsin planes here — the
+        // equivalent of libjxl's `orig_opsin` copy before
+        // `LossyFrameHeuristics` (enc_frame.cc "Save pre-Gaborish
+        // opsin"), consumed by `compute_epf_sharpness` below. Mirrors
+        // the still-image path in vardct/encoder.rs.
+        let epf_orig_opsin: Option<[Vec<f32>; 3]> =
+            if self.profile.epf_sharpness_pre_gab_libjxl {
+                Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
+            } else {
+                None
+            };
+
         // Noise parameters. Four sources, in priority order — mirrors the
         // still-image entry point at `vardct/encoder.rs:677-737` (libjxl
         // `enc_frame.cc:680-689`). The animation path was previously only
@@ -2432,6 +2444,9 @@ impl VarDctEncoder {
                 // #74 task #10: keep-best Pass-2 guard — same profile value as
                 // the still-image path so animation frames stay consistent.
                 self.profile.cfl_keep_best,
+                // W45-RECON part 15: libjxl `ComputeScaledDCT` pass
+                // order — same profile value as the still-image path.
+                self.profile.dct_pass_order_libjxl,
             );
         }
 
@@ -2670,7 +2685,12 @@ impl VarDctEncoder {
                             ))
                         } else {
                             Some(super::epf::compute_epf_sharpness(
-                                [&xyb_x, &xyb_y, &xyb_b],
+                                match &epf_orig_opsin {
+                                    Some([x, y, b]) => {
+                                        [x.as_slice(), y.as_slice(), b.as_slice()]
+                                    }
+                                    None => [&xyb_x, &xyb_y, &xyb_b],
+                                },
                                 &transform_out.quant_dc,
                                 &transform_out.quant_ac,
                                 &quant_field,
@@ -2684,6 +2704,7 @@ impl VarDctEncoder {
                                 self.budget.as_ref(),
                                 self.resolved_improvements.dc_adaptive_smoothing,
                                 self.profile.quant_weights_libjxl,
+                                self.profile.dct_pass_order_libjxl,
                             )?)
                         }
                     }
