@@ -1474,11 +1474,13 @@ pub struct EffortProfile {
     /// the self-repair only fires on the large-stride lossless tree-lift, so
     /// lossy stays byte-identical). Overridable at runtime via
     /// `JXL_TREE_SELF_REPAIR=0/1`. Read by
-    /// `modular/encode.rs::tree_self_repair_should_try`. Strategy-invariant:
-    /// the lossless `EffortProfile` does not flow through
-    /// `ResolvedImprovements`, so this is a plain profile field, not a
-    /// per-strategy gate-registry gate.
+    /// `modular/encode.rs::tree_self_repair_should_try`. Lossless strategy
+    /// resolution can disable this policy, including its environment override.
     pub tree_self_repair: bool,
+    /// Strategy permission checked before the legacy self-repair env override.
+    pub tree_self_repair_allowed: bool,
+    /// Lossless strategy permission for the large-image bucket adapter.
+    pub lossless_large_tree_bucket_reduction: bool,
 
     /// Number of butteraugli quantization-loop seeds to run in parallel,
     /// then pick the smallest-bytes result among those that meet the
@@ -1744,6 +1746,8 @@ impl EffortProfile {
             // large-stride lossless tree-lift (e5/e6). OFF for lossy keeps every
             // lossy path byte-identical (lossy byte-lock + hash-locks unchanged).
             tree_self_repair: false,
+            tree_self_repair_allowed: true,
+            lossless_large_tree_bucket_reduction: true,
             cfl_newton: effort >= 7,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
@@ -2004,6 +2008,8 @@ impl EffortProfile {
             // content skips the second pass via the ratio pre-filter ⇒
             // byte-identical). Overridable via `JXL_TREE_SELF_REPAIR=0`.
             tree_self_repair: true,
+            tree_self_repair_allowed: true,
+            lossless_large_tree_bucket_reduction: true,
             cfl_newton: false,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
@@ -2505,8 +2511,9 @@ impl EffortProfile {
     /// Pixel-count + effort gate for the `tree_max_buckets` dispatch
     /// (audit item #3, conditional-value catalog
     /// `rejected_optimizations_conditional_value_2026-05-17.md`).
-    /// Always-on (NOT opt-in) — bytes change at large+e9 only, where
-    /// the dispatch saves wall-clock at near-zero byte cost.
+    /// Enabled by Zen lossless strategies; Libjxl skips this adapter.
+    /// Bytes change at large+e9 only, where the measured dispatch trades
+    /// a small size increase for reduced encoding time.
     ///
     /// When `pixels >= LARGE_IMAGE_PIXEL_THRESHOLD` (4 MP) AND
     /// `effort >= 9`, drops `tree_max_buckets` from the effort default

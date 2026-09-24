@@ -345,12 +345,6 @@ pub enum SectionedTrees {
 pub struct LosslessConfig {
     effort: u8,
     /// Which divergence bundle this encode uses. See [`Self::with_strategy`].
-    ///
-    /// The lossless path does not consume this yet, so it is byte-inert today:
-    /// every strategy produces the output it always did. It exists because the
-    /// axis has to be reachable before any lossless divergence can be gated on
-    /// it, and its absence is what has kept the whole of
-    /// `docs/LIBJXL_PARITY_TRACKING.md` un-A/B-able.
     strategy: EncoderStrategy,
     /// Caller-supplied resource limits. See [`Self::with_limits`].
     ///
@@ -539,22 +533,11 @@ impl Default for LosslessConfig {
 impl LosslessConfig {
     /// Select the divergence bundle for this lossless encode.
     ///
-    /// **Byte-inert today, and deliberately so.** No lossless gate reads this
-    /// yet, so every strategy currently produces identical output — adding the
-    /// axis is a prerequisite, not a behaviour change. The point is that
-    /// `EncoderStrategy` was a `LossyConfig`-only field, which meant no
-    /// lossless divergence could be expressed at all: `EncoderStrategy::Libjxl`
-    /// makes no distinct lossless bitstream today, and every row of
-    /// `docs/LIBJXL_PARITY_TRACKING.md` stayed un-A/B-able for want of this
-    /// setter.
-    ///
-    /// The first intended consumer is the LZ77 acceptance threshold
-    /// (`total_symbols * 0.2 + 16`), which is a measured rate/time dial —
-    /// halving it buys 2.9 % smaller output for 37 % more wall, doubling it
-    /// saves ~5 % wall for +0.29 % bytes. That constant is libjxl parity
-    /// (`enc_lz77.cc:165`), so it can only become effort-dependent for zen mode
-    /// if `Libjxl` can be pinned to the parity value — which needs this axis.
-    /// See [`docs/RFC_RD_MONOTONICITY.md`](../../docs/RFC_RD_MONOTONICITY.md) §5.
+    /// Zen strategies retain cost-based tree self-repair and the large-image
+    /// tree-bucket reduction. [`EncoderStrategy::Libjxl`] disables both;
+    /// [`EncoderStrategy::Custom`] controls them individually through the shared
+    /// registry. Other modular divergences remain: this does not promise
+    /// byte-exact lossless output matching libjxl v0.12.
     pub fn with_strategy(mut self, strategy: EncoderStrategy) -> Self {
         self.strategy = strategy;
         self
@@ -811,6 +794,10 @@ impl LosslessConfig {
 
     pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
         let mut p = crate::effort::EffortProfile::lossless(self.effort, self.mode);
+        let resolved = self.strategy.resolve(&StrategyOverrides::default());
+        p.tree_self_repair_allowed = resolved.lossless_tree_self_repair;
+        p.tree_self_repair &= resolved.lossless_tree_self_repair;
+        p.lossless_large_tree_bucket_reduction = resolved.lossless_large_tree_bucket_reduction;
         // Sweep/picker internal-param overrides (issue #80): applied
         // lazily against the CURRENT effort.
         #[cfg(feature = "__expert")]
@@ -1056,14 +1043,14 @@ impl LosslessConfig {
         if let Some(true) = self.small_image_fallback_override {
             p.adapt_small_image_fallback(pixels);
         }
-        // Always-on tree_max_buckets dispatch (audit item #3): drops
+        // Zen tree_max_buckets dispatch (audit item #3): drops
         // bucket cap from 256 → 192 at large+e9 cells only. Hash-locks
         // shift at those cells (+0.09% bytes) in exchange for ~12% wall-
         // clock. All other (size, effort) cells stay byte-identical.
-        // Skipped only if the caller has supplied an explicit override
+        // Skipped when the strategy disables it or the caller supplies an override
         // via `with_internal_params` (profile_override), to avoid
         // silently re-overriding a sweep harness's pinned value.
-        if !self.has_internal_overrides() {
+        if p.lossless_large_tree_bucket_reduction && !self.has_internal_overrides() {
             p.adapt_tree_max_buckets_for_image(pixels);
         }
         // Opt-in smart-fanout re-tuning.
@@ -10528,6 +10515,8 @@ use ingest::*;
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+#[cfg(all(test, feature = "std"))]
+mod lossless_strategy_tests;
 #[cfg(test)]
 mod tests;
 
@@ -10666,33 +10655,5 @@ mod planar_admission_tests_95 {
             .with_limits(&loose)
             .encode_planar_int(512, 512, &planes, 31, false, false)
             .expect("a 4 GiB cap must admit the same encode");
-    }
-
-    /// `with_strategy` is byte-inert on the lossless path today. Pinned so the
-    /// first gate that consumes it has to move this test deliberately rather
-    /// than silently changing every lossless encode.
-    #[test]
-    fn lossless_strategy_axis_is_byte_inert_for_now() {
-        let src: Vec<u8> = (0..64 * 64 * 3).map(|i| (i % 251) as u8).collect();
-        let base = LosslessConfig::new()
-            .with_effort(5)
-            .encode(&src, 64, 64, PixelLayout::Rgb8)
-            .unwrap();
-        for s in [
-            EncoderStrategy::Libjxl,
-            EncoderStrategy::Zenjxl,
-            EncoderStrategy::LeanFaster,
-            EncoderStrategy::Aggressive,
-        ] {
-            let got = LosslessConfig::new()
-                .with_effort(5)
-                .with_strategy(s.clone())
-                .encode(&src, 64, 64, PixelLayout::Rgb8)
-                .unwrap();
-            assert_eq!(
-                got, base,
-                "{s:?}: lossless output must be strategy-invariant until a gate consumes the axis"
-            );
-        }
     }
 }

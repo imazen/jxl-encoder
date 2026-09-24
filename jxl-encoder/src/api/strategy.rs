@@ -424,7 +424,10 @@ pub enum SinglePassEntropyDispatch {
 /// ship today. Equivalent to leaving every `with_*_hint` setter at its
 /// current default value.
 ///
-/// Set via `LossyConfig::with_strategy` (added in Chunk B). Individual
+/// Set via [`crate::LossyConfig::with_strategy`] or
+/// [`crate::LosslessConfig::with_strategy`]. Lossless currently gates tree
+/// self-repair and the large-image bucket reduction; full lossless byte parity
+/// with libjxl v0.12 is not established. Individual
 /// `LossyConfig::with_*_hint` setters called AFTER `with_strategy`
 /// override the matching field on the resolved
 /// [`EncoderImprovementsCustom`]; this mirrors the
@@ -459,7 +462,7 @@ pub enum SinglePassEntropyDispatch {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum EncoderStrategy {
     /// **Strict libjxl-parity mode — all-divergence bundle.** See enum
-    /// doc-comment.
+    /// doc-comment. Lossless coverage is limited to the two policies above.
     Libjxl,
     /// **LeanFaster.** Skips heavy per-image content gates and the
     /// EPF/buttloop corrections. Keeps the at-parity algorithm fixes

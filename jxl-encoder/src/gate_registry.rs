@@ -311,6 +311,8 @@ jxl_encoder_macros::strategy_def! {
             // GlobalData stream (stream 0) under the shared tree+code
             // with ChannelCompact palettes, not a private sub-bitstream.
             extras_global_stream_libjxl = true,
+            lossless_tree_self_repair = false,
+            lossless_large_tree_bucket_reduction = false,
             // Strict parity: mirror borders + row-grouped accumulation
             // + f32 weight chain — libjxl `Symmetric5` bit-exact.
             gaborish_libjxl_parity = true,
@@ -461,6 +463,8 @@ jxl_encoder_macros::strategy_def! {
             dc_encode_libjxl_parity = false,
             ac_meta_libjxl_tree = false,
             extras_global_stream_libjxl = false,
+            lossless_tree_self_repair = true,
+            lossless_large_tree_bucket_reduction = true,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
@@ -605,6 +609,8 @@ jxl_encoder_macros::strategy_def! {
             dc_encode_libjxl_parity = false,
             ac_meta_libjxl_tree = false,
             extras_global_stream_libjxl = false,
+            lossless_tree_self_repair = true,
+            lossless_large_tree_bucket_reduction = true,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
@@ -707,6 +713,8 @@ jxl_encoder_macros::strategy_def! {
             dc_encode_libjxl_parity = false,
             ac_meta_libjxl_tree = false,
             extras_global_stream_libjxl = false,
+            lossless_tree_self_repair = true,
+            lossless_large_tree_bucket_reduction = true,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
@@ -1644,6 +1652,19 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "extra channel coding site (libjxl GlobalData stream 0 lossless + ChannelCompact + shared tree/code vs private sub-bitstream + lossy quantizer; W45-RECON part 21)",
         },
 
+        /// Permit lossless fixed-stride tree self-repair. A disabled gate
+        /// also blocks the legacy JXL_TREE_SELF_REPAIR environment override.
+        lossless_tree_self_repair: bool {
+            divergence_section = "D",
+            divergence_row_ref = "lossless_tree_self_repair (cost-based randomized re-gather)",
+        },
+        /// Reduce lossless tree buckets to 192 at effort >= 9 and
+        /// pixels >= 4,000,000, unless internal parameters were supplied.
+        lossless_large_tree_bucket_reduction: bool {
+            divergence_section = "D",
+            divergence_row_ref = "lossless_large_tree_bucket_reduction (large-image tree bucket cap)",
+        },
+
         /// Whether the gaborish 5x5 inverse uses the libjxl-bit-exact
         /// `Symmetric5` kernel instead of the shipping SIMD kernel.
         ///
@@ -2167,6 +2188,18 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "ac_meta tree kind (libjxl kFalconACMeta/kACMeta/kLearn per-effort vs fixed subtree; W45-SPEC-1)",
         raw: __CUSTOM_DIVERGENCE_AC_META_LIBJXL_TREE,
+    },
+    DivergenceEntry {
+        gate_name: "lossless_tree_self_repair",
+        section: "D",
+        row_ref: "lossless_tree_self_repair (cost-based randomized re-gather)",
+        raw: __CUSTOM_DIVERGENCE_LOSSLESS_TREE_SELF_REPAIR,
+    },
+    DivergenceEntry {
+        gate_name: "lossless_large_tree_bucket_reduction",
+        section: "D",
+        row_ref: "lossless_large_tree_bucket_reduction (large-image tree bucket cap)",
+        raw: __CUSTOM_DIVERGENCE_LOSSLESS_LARGE_TREE_BUCKET_REDUCTION,
     },
     // Section D — extras Global-stream coding site (W45-RECON part 21)
     DivergenceEntry {

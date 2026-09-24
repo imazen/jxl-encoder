@@ -814,6 +814,9 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ### RESOLVED 2026-09-24: explicit CLI strategy conflicted with lossless test contract
 
+Historical rejection is superseded by the approved lossless strategy wiring
+below: explicit strategy is now consumed, rather than ignored.
+
 `0784632b` removed the clap conflict and documented `--strategy` as ignored
 with `--lossless`, while the existing CLI regression required rejection.
 The owner chose rejection on September 24. Explicit combinations now fail
@@ -1710,8 +1713,8 @@ cover the planar and lossless-float surfaces, which had none.
 **(3) FIXED 2026-09-09 with owner approval**: `LosslessConfig::with_limits` was
 added and the lossless encoder now inherits the config's limits (it hardcoded
 `limits: None`), so `encode_planar_int` is constrainable. `LosslessConfig::
-with_strategy` landed alongside it -- byte-inert on the lossless path today, and
-pinned as such, but it is the axis every lossless divergence needs.
+with_strategy` landed alongside it, initially byte-inert. The September 24
+strategy wiring now consumes it for self-repair and large-image buckets.
 
 **The call ORDER is now pinned too**, via `with_limits`: an input that is both
 over-budget AND out-of-range discriminates the two orders, because admission
@@ -2786,6 +2789,29 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: lossless strategy wiring
+
+The owner approved replacing the CLI rejection/invariance contract once the
+strategy controls real policies. `LosslessConfig` now resolves the existing
+registry's `lossless_tree_self_repair` and
+`lossless_large_tree_bucket_reduction` gates. Zen presets preserve both;
+Libjxl disables both; Custom selects each independently. The CLI passes the
+strategy to still-image and animation lossless configs. Explicit internal
+parameters retain precedence over the image-size bucket adapter.
+
+The self-repair strategy permission precedes the legacy OnceLock environment
+override, so `JXL_TREE_SELF_REPAIR=1` cannot re-enable a disabled gate.
+The shared modular learner still differs in sampling, predictor selection
+and split cost; this increment is not full lossless v0.12 byte parity.
+Validation: resolver boundaries and all four Custom combinations pass;
+a child process proves the legacy environment cannot bypass the strict gate.
+Sixteen real-image cells (four strategies, e5/e9, 64x64 and 259x133) fully
+decode pixel-exactly through Rust and djxl v0.12, and streaming bytes match.
+CLI tests cover all six spellings in both orders and API byte agreement.
+All 75 lock/drift tests, 1,618 library tests, both RD regressions, workspace
+all-target Clippy and expert lib/test Clippy pass without relocking.
+`just lossless-strategy-check <manifest>` reproduces the focused checks.
+
 ### 2026-09-24: approved explicit WP selection (#24)
 
 `LosslessInternalParams::forced_wp_mode` selects modes 0..=4 in the existing
@@ -3499,12 +3525,10 @@ measurement at equal or better coverage.
   byte-exact; photo wall 1.3×→1.12×), so non-aliased content pays ~0; (b) it is a
   plain `EffortProfile::tree_self_repair` field (`true` in `lossless_reference`,
   `false` in `lossy_reference`), `JXL_TREE_SELF_REPAIR=0/1` a runtime override.
-  **NOT a gate-registry gate** — the modular/lossless path reads NO
-  strategy/`ResolvedImprovements` (lossless output is STRATEGY-INVARIANT;
-  `EncoderStrategy::Libjxl` makes no distinct lossless bitstream — we already
-  beat cjxl lossless, there is no libjxl-lossless parity target), so "off for
-  Libjxl" is vacuous and a per-strategy gate would be non-functional; drift count
-  stays 32. **NO hash-lock regen needed**: every fixture is lossless-e7/e9
+  **Strategy update 2026-09-24:** `lossless_tree_self_repair` is now a
+  shared-registry gate, enabled for Zen presets and disabled for Libjxl.
+  The legacy environment override cannot re-enable a disabled gate.
+  Historical measurements below describe the original default-on adoption. **NO hash-lock regen needed**: every fixture is lossless-e7/e9
   (stride-2, no fire), lossy (field OFF), or below the 256-node floor → 53/53
   byte-identical; 5/5 Libjxl byte-lock (LossyConfig) untouched. Validated (release,
   default features, no env): 5336 e5 288293→211098 (−26.8 %, djxl AE=0 pixel-exact),

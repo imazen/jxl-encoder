@@ -49,6 +49,11 @@ sectioned-harness-check manifest="Cargo.toml":
 sectioned-harness-build manifest="Cargo.toml" profile="dev":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo build --profile "{{profile}}" --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases
 
+# Lossless strategy resolution, exact decoded pixels and CLI/API agreement.
+lossless-strategy-check manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert --lib lossless_strategy -- --nocapture
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder-cli --bin cjxl-rs --test strategy_flag
+
 # All five WP modes: captured wire headers and real single/multi-group pixels.
 forced-wp-check manifest="Cargo.toml" features="__expert":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features "{{features}}" --lib forced_wp_tests -- --test-threads=1

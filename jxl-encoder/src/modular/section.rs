@@ -1414,6 +1414,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             && riged_override.is_none()
             && super::encode::tree_self_repair_should_try(
                 profile.tree_self_repair,
+                profile.tree_self_repair_allowed,
                 seed_stride,
                 tree.len(),
             ) {

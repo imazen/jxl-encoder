@@ -111,7 +111,8 @@ use std::path::PathBuf;
 /// W45-RECON part 14 added `quant_weights_libjxl` Section C gate → 52.
 /// W45-RECON part 15 added `dct_pass_order_libjxl` + `epf_sharpness_pre_gab_libjxl` Section C gates → 54.
 /// W45-RECON part 21 added `extras_global_stream_libjxl` Section D gate → 55.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 55;
+// Lossless strategy: self-repair and large-image bucket reduction → 57.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 57;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -222,6 +223,14 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
     //   "epf_dynamic_sharpness") — these are mentioned 5+ times each
     //   in the table.
     if out.is_empty() {
+        for gate in [
+            "lossless_tree_self_repair",
+            "lossless_large_tree_bucket_reduction",
+        ] {
+            if row_ref.contains(gate) {
+                out.push(gate.to_string());
+            }
+        }
         // Heuristic anchors. Each one is a substring expected to appear
         // verbatim (case-sensitive) somewhere in the table. Multiple
         // candidates per row_ref are tried — the test passes if ANY of

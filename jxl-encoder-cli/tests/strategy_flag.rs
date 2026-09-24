@@ -15,8 +15,7 @@
 //!   2. `--strategy libjxl` produces a different bitstream than
 //!      `--strategy zenjxl` on a real-photo fixture, because the Section
 //!      B/D divergences flip OFF under `Libjxl`.
-//!   3. `--lossless` + `--strategy` is a clap-level error (mutually
-//!      exclusive — strategy is a lossy concept).
+//!   3. Lossless accepts every named strategy and matches the API.
 //!
 //! Until Chunk G ships, `--strategy libjxl` flips only the Section B/D
 //! divergences; the Section A effort-gate consultation lands in Chunk G.
@@ -175,7 +174,7 @@ fn strategy_libjxl_differs_from_zenjxl() {
             "Note: --strategy libjxl produced byte-identical output to zenjxl on the \
              cropped frymire fixture (size {}). This is acceptable when no Section B \
              gate fires on this content. The CLI wiring is still verified by the \
-             zenjxl-vs-unset hash-lock and the lossless-conflict test.",
+             zenjxl-vs-unset hash-lock and the lossless strategy test.",
             zenjxl.len()
         );
     } else {
@@ -190,49 +189,48 @@ fn strategy_libjxl_differs_from_zenjxl() {
 }
 
 #[test]
-fn strategy_with_lossless_is_an_error() {
-    // Clap-level mutual-exclusion gate. Strategy is a lossy concept;
-    // --lossless + --strategy is rejected before encode starts.
-    let png = write_cropped_fixture("strategy_lossless_conflict", 64);
-    let out_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/tests-tmp/strategy_flag");
-    std::fs::create_dir_all(&out_dir).expect("create_dir_all");
-    let out_path = out_dir.join("conflict.jxl");
-    let bin = env!("CARGO_BIN_EXE_cjxl-rs");
-    let preserved = b"existing caller output";
-    std::fs::write(&out_path, preserved).unwrap();
-    for variant in [
-        "libjxl",
-        "libjxl-exact",
-        "libjxl-strict",
-        "lean-faster",
-        "zenjxl",
-        "aggressive",
-    ] {
-        for flags in [
-            vec!["--lossless", "--strategy", variant],
-            vec!["--strategy", variant, "--lossless"],
+fn strategy_with_lossless_matches_api() {
+    use jxl_encoder::api::{EncoderStrategy, LosslessConfig, PixelLayout};
+    for size in [64, 259] {
+        let png = write_cropped_fixture(&format!("strategy_lossless_{size}"), size);
+        let rgb = image::open(&png).unwrap().to_rgb8();
+        for (variant, strategy) in [
+            ("libjxl", EncoderStrategy::Libjxl),
+            ("libjxl-exact", EncoderStrategy::Libjxl),
+            ("libjxl-strict", EncoderStrategy::Libjxl),
+            ("lean-faster", EncoderStrategy::LeanFaster),
+            ("zenjxl", EncoderStrategy::Zenjxl),
+            ("aggressive", EncoderStrategy::Aggressive),
         ] {
-            let output = Command::new(bin)
-                .args([png.to_str().unwrap(), out_path.to_str().unwrap(), "--quiet"])
-                .args(flags)
-                .output()
-                .expect("spawn cjxl-rs");
-            assert_eq!(
-                output.status.code(),
-                Some(2),
-                "--lossless + --strategy {variant} must be a clap-level error"
-            );
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(
-                stderr.contains("--lossless") && stderr.contains("--strategy"),
-                "expected clap conflict diagnostic, got stderr:\n{stderr}"
-            );
-            assert_eq!(std::fs::read(&out_path).unwrap(), preserved);
+            let expected = LosslessConfig::new()
+                .with_effort(5)
+                .with_threads(1)
+                .with_strategy(strategy)
+                .encode(rgb.as_raw(), size, size, PixelLayout::Rgb8)
+                .unwrap();
+            for (order, flags) in [
+                vec!["--lossless", "--strategy", variant, "--threads", "1"],
+                vec!["--strategy", variant, "--lossless", "--threads", "1"],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let got = run_cjxl(&png, &format!("lossless-{size}-{variant}-{order}"), &flags);
+                assert_eq!(got, expected, "{variant} argument order {order}");
+            }
         }
+        let unset = run_cjxl(
+            &png,
+            &format!("lossless-{size}-unset"),
+            &["--lossless", "--threads", "1"],
+        );
+        let zen = run_cjxl(
+            &png,
+            &format!("lossless-{size}-zen"),
+            &["--lossless", "--threads", "1", "--strategy", "zenjxl"],
+        );
+        assert_eq!(unset, zen);
     }
-    // The implicit strategy default must not conflict with ordinary lossless use.
-    let _ = run_cjxl(&png, "lossless_without_explicit_strategy", &["--lossless"]);
 }
 
 #[test]

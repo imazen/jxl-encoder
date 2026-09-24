@@ -81,6 +81,16 @@ fn apply_strategy_to_lossy(
         StrategyArg::Aggressive => cfg.with_strategy(EncoderStrategy::Aggressive),
     }
 }
+fn lossless_strategy(strategy: StrategyArg) -> jxl_encoder::api::EncoderStrategy {
+    use jxl_encoder::api::EncoderStrategy;
+    match strategy {
+        StrategyArg::Zenjxl => EncoderStrategy::Zenjxl,
+        StrategyArg::Libjxl | StrategyArg::LibjxlExact => EncoderStrategy::Libjxl,
+        StrategyArg::LeanFaster => EncoderStrategy::LeanFaster,
+        StrategyArg::Aggressive => EncoderStrategy::Aggressive,
+    }
+}
+
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
@@ -119,19 +129,11 @@ struct Args {
     #[arg(long)]
     lossless: bool,
 
-    /// Encoder strategy bundle (lossy only). One of `libjxl`,
-    /// `lean-faster`, `zenjxl`, `aggressive`. Default `zenjxl`
-    /// (production-shipping behaviour). Sets the high-level
-    /// per-divergence policy stack documented in
-    /// `docs/COMPATIBILITY_MODES.md` §4.1. `libjxl` is strict
-    /// libjxl-parity (every W44-* improvement off, Section A
-    /// effort-gate flips on, Section D KNOWN-BUG re-enabled —
-    /// bytes may be larger than `zenjxl`, that IS the point).
-    /// `Custom` is API-only — drive it from Rust via
-    /// `LossyConfig::with_strategy(EncoderStrategy::Custom(...))`
-    /// (W44-131 Chunk E). Explicit `--strategy` conflicts with `--lossless`;
-    /// lossless has its own knobs: --force-rct, --tree-learning, effort.
-    #[arg(long, value_enum, default_value_t = StrategyArg::default(), conflicts_with = "lossless")]
+    /// Encoder strategy bundle (default zenjxl). Libjxl selects reference
+    /// behavior; lossless currently disables Zen tree self-repair and the
+    /// large-image tree-bucket reduction, without promising full byte parity.
+    /// Custom gate combinations are available through the Rust API.
+    #[arg(long, value_enum, default_value_t = StrategyArg::default())]
     strategy: StrategyArg,
 
     /// Distance (alternative to quality, 0 = lossless, 1 = visually lossless)
@@ -965,6 +967,7 @@ fn main() {
                 );
             }
             let cfg = LosslessConfig::new()
+                .with_strategy(lossless_strategy(args.strategy))
                 .with_effort(args.effort)
                 .with_threads(args.threads);
             let encoded = match cfg.encode_jpeg_transcode(&jpeg_bytes) {
@@ -1211,6 +1214,7 @@ fn main() {
                 } else {
                     {
                         let mut lcfg = LosslessConfig::new()
+                            .with_strategy(lossless_strategy(args.strategy))
                             .with_effort(args.effort)
                             .with_threads(args.threads);
                         if args.no_ans {
@@ -1850,6 +1854,7 @@ fn main() {
     } else {
         // Lossless modular path (or lossy RGBA/gray which falls through to modular)
         let mut cfg = LosslessConfig::new()
+            .with_strategy(lossless_strategy(args.strategy))
             .with_effort(args.effort)
             .with_threads(args.threads);
         if args.no_ans {
@@ -2793,6 +2798,28 @@ fn read_apng(path: &PathBuf) -> Result<Option<ApngResult>, Box<dyn std::error::E
         num_loops,
         frames,
     }))
+}
+
+#[cfg(test)]
+mod lossless_strategy_tests {
+    use super::*;
+
+    #[test]
+    fn every_cli_strategy_resolves_lossless_policies() {
+        for (arg, enabled) in [
+            (StrategyArg::Zenjxl, true),
+            (StrategyArg::LeanFaster, true),
+            (StrategyArg::Aggressive, true),
+            (StrategyArg::Libjxl, false),
+            (StrategyArg::LibjxlExact, false),
+        ] {
+            let p = LosslessConfig::new()
+                .with_strategy(lossless_strategy(arg))
+                .resolved_profile();
+            assert_eq!(p.tree_self_repair_allowed, enabled);
+            assert_eq!(p.lossless_large_tree_bucket_reduction, enabled);
+        }
+    }
 }
 
 #[cfg(test)]
