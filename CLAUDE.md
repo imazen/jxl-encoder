@@ -2781,6 +2781,10 @@ all existing sample/byte assertions are unchanged. Injecting a decoder that
 passes the version check but exits 37 makes all three JBRD roundtrip tests
 fail, including the two formerly false-positive cases; the intentional failure
 log is `~/tmp/jxl-backlog/jpeg-legacy-failure-injection.log`.
+The full JPEG-enabled integration suite also passes: 556 tests, 181 existing
+ignores, using `just jpeg-enabled-check complete` with explicit reference
+verification and persisted conformance artifacts. Fixture/CI cleanup landed
+in `be819e91`; no decoder failure was converted into a skip.
 
 
 ### 2026-09-24: W45-RECON cleanup validation
