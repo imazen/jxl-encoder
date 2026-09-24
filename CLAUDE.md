@@ -1070,6 +1070,34 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-24: W45-RECON cleanup coverage findings (behavior unchanged)
+
+[PROVEN by source inspection at `f4bfa242`] The requested e8+ palette-cost
+fallback does not exist: `extras_global_stream_eligible` admits effort >= 4,
+and `build_global_stream_image` applies ChannelCompact without EstimateCost.
+The e8+ branch consumes it. Do not describe this as a private-writer fallback
+or complete e8+ parity. Adding either a revert or a fallback changes output
+and was excluded from this zero-behavior-change cleanup.
+
+[PROVEN wiring mismatch; output impact not reproduced] Preparation checks
+one **DC** group and extra-channel dimensions, but not AC-group/pass count.
+Shared-stream emission occurs only under `num_groups == 1 &&
+num_dc_groups == 1 && num_passes == 1`. Progressive single-group frames and
+multi-group frames with small downshifted extras can therefore prepare a
+global subtree/token stream while the other emission branch writes an empty
+modular global section. This needs a separate behavior-fix investigation;
+no decode-failure or pixel-corruption claim is established here.
+
+The cleanup preserves both predicates. The single extras gate remains in
+`gate_registry.rs`, consumed through `api.rs` and `EffortProfile`;
+`ac_meta_libjxl_tree` remains a structural dependency because it selects
+the merged exact tree at e8+. Removing that check changes custom gate
+combinations. No third strategy or probe encoding route was introduced.
+The two tree-prefix wrappers already share one implementation. Meta channels
+retain the paired `u32::MAX` shift sentinel; sample collection's hshift test
+is unchanged. All nine EPF passthrough sites retain exactly
+`is == 0.0 || is < K_MIN_SIGMA` (eight SIMD sites, one VarDCT step-0 site).
+
 ### 2026-09-10: the d=1 effort ladder is poorly calibrated -- e4 is free, e7 is dominated by e5
 
 [MEASURED] 10 stratified images, 512^2, lossy d=1.0, min of 3 reps
@@ -2576,6 +2604,13 @@ and divergence drift requires `__internals`. Do not use
 `binary_id(strategy_libjxl_byte_lock)` on this checkout.
 Part 22.1 passes 63 normal hash locks, 5 strict byte-lock tests, all 7
 drift tests and 1,615 library tests (29 existing ignores).
+Part 22.2 shares extras preparation between the fixed and learned DC
+branches and releases strict stream images/tree after residual collection,
+before entropy construction. This is an allocation-lifetime change; no wall
+or peak-memory improvement is claimed without measurement. The part-21
+perf harness and artifacts remain unchanged. Part 22.2 passes all 75
+lock/drift tests, 1,615 library tests and the full 527-test expert/internal
+integration suite. Clippy retains exactly the 26 baseline diagnostics.
 Baseline workspace all-target Clippy at `f4bfa242` fails on 26 existing
 warnings with Rust 1.98; the captured log is
 `~/tmp/jxl-cleanup-2026-09-24/baseline-clippy.log`. No lint allowances or

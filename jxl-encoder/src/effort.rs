@@ -1033,9 +1033,9 @@ pub struct EffortProfile {
     /// per-effort predefined-tree policy instead of our fixed 11-leaf
     /// subtree: `kFalconACMeta` (single `Predictor::Left` leaf) at
     /// effort ≤ 3 and on < 1024-pixel streams at effort 4-7, `kACMeta`
-    /// (27-node) otherwise at effort 4-7. Effort ≥ 8 uses `kLearn`
-    /// upstream, which is not yet ported — strict parity stays
-    /// approximate there (`enc_modular.cc:1749-1763`).
+    /// (27-node) otherwise at effort 4-7. Effort ≥ 8 learns and merges
+    /// per-stream trees through `modular::ma_libjxl`, including eligible
+    /// GlobalData extras (`enc_modular.cc:1749-1763`).
     ///
     /// Default `false` keeps the shared Zenjxl subtree — measured a
     /// deliberate fork (structured contexts repay their ~50-token tree
@@ -1051,10 +1051,12 @@ pub struct EffortProfile {
     /// emits a private `use_global_tree=0` extra sub-bitstream with a
     /// lossy quantizer instead.
     ///
-    /// Coverage: single-DC-group frames whose extra channels all fit
-    /// `group_dim`; the ChannelCompact unconditional-apply regime
-    /// (`speed_tier <= kThunder`, effort <= 7). Other cases keep the
-    /// legacy writer. See `docs/LIBJXL_DIVERGENCES.md` section D.
+    /// Preparation covers effort >= 4, one DC group and extra channels
+    /// fitting `group_dim`, with `ac_meta_libjxl_tree` also enabled.
+    /// Other cases keep the private writer as an exact-path fallback.
+    /// Known gaps: e8+ has no EstimateCost revert; shared-stream emission
+    /// only handles one group/one pass. See `docs/LIBJXL_DIVERGENCES.md`
+    /// section D and CLAUDE.md's cleanup coverage findings.
     pub extras_global_stream_libjxl: bool,
 
     /// Run the libjxl-bit-exact gaborish 5x5 inverse

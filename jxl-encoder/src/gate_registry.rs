@@ -1633,7 +1633,10 @@ jxl_encoder_macros::strategy_def! {
         /// `maybe_do_transform` EstimateCost revert gate is not ported
         /// (the ChannelCompact applies unconditionally — correct unless
         /// libjxl would revert it); multi-DC-group frames and channels
-        /// exceeding `group_dim` keep the legacy writer.
+        /// exceeding `group_dim` keep the private writer as an exact-path
+        /// fallback. Preparation also requires `ac_meta_libjxl_tree`.
+        /// Shared-stream emission is limited to one group/one pass;
+        /// preparation currently has no matching pass/group guard.
         extras_global_stream_libjxl: bool {
             divergence_section = "D",
             divergence_row_ref = "extra channel coding site (libjxl GlobalData stream 0 lossless + ChannelCompact + shared tree/code vs private sub-bitstream + lossy quantizer; W45-RECON part 21)",

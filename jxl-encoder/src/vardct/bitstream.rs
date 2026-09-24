@@ -1103,10 +1103,17 @@ struct CropRegion {
 /// (`enc_palette.cc:192-278`): `num_c = 1`, `nb_deltas = 0`,
 /// `predictor = Predictor::Zero`.
 pub(crate) struct GlobalStreamTransform {
-    /// `begin_c` channel index in the post-transform channel list.
+    /// `begin_c` channel index when this transform is applied.
     pub begin_c: usize,
     /// `nb_colors` palette length (meta-channel width).
     pub nb_colors: usize,
+}
+
+/// Prepared stream 0 shared by the fixed-DC and learned-DC exact paths.
+struct PreparedGlobalStream {
+    image: crate::modular::channel::ModularImage,
+    transforms: Vec<GlobalStreamTransform>,
+    options: crate::modular::ma_libjxl::LibjxlModularOptions,
 }
 
 impl VarDctEncoder {
@@ -3103,7 +3110,7 @@ impl VarDctEncoder {
             // Strict `EncoderStrategy::Libjxl` at effort >= 8
             // (`speed_tier < kSquirrel`): libjxl learns ONE adaptive MA
             // tree per non-empty stream chunk — VarDCTDC streams with
-            // `Predictor::Best` (e8) / `Variable` (e9+) + kDefault, and
+            // `Predictor::Weighted` + kWPOnly, and
             // ACMetadata streams with `Predictor::Gradient` + kNoWP —
             // then merges them under stream-id (property 1) splits via
             // `ModularFrameEncoder::ComputeTree` + `MergeTrees`
@@ -3112,7 +3119,7 @@ impl VarDctEncoder {
             // AC-metadata tokens.
             //
             // Stream layout (`ModularStreamId`, dec_modular.h):
-            //   [0]                       GlobalData   (empty for VarDCT)
+            //   [0]                       GlobalData   (eligible extras)
             //   [1, 1+ndg)                VarDCTDC(g)
             //   [1+ndg, 1+2·ndg)          ModularDC(g) (empty)
             //   [1+2·ndg, 1+3·ndg)        ACMetadata(g)
@@ -3135,7 +3142,7 @@ impl VarDctEncoder {
                     has_alpha: false,
                 })
                 .collect();
-            let mut stream_options = vec![ac_meta_options.clone(); num_streams];
+            let mut stream_options = vec![ac_meta_options; num_streams];
             for g in 0..num_dc_groups {
                 stream_options[1 + g] = dc_options.clone();
                 stream_images[1 + g] = build_vardct_dc_stream_image(
@@ -3157,35 +3164,19 @@ impl VarDctEncoder {
                 )?;
             }
 
-            // Strict Global stream 0 (extras): single-DC-group extras
-            // whose channels all fit `group_dim` stay in stream 0
-            // (`enc_modular.cc:1057-1066,1094-1098`), take
-            // `cparams_.options` verbatim for learning options
-            // (`enc_modular.cc:675`), and join the merged tree as the
-            // `[0, VarDCTDC)` chunk. `MaybePalette`/cost-gated
-            // transforms at effort >= 8 are NOT ported — the strict
-            // fixtures carry extras only at effort <= 7, where
-            // `maybe_do_transform` is unconditional
-            // (`speed_tier >= kSquirrel`); anything else keeps the
-            // legacy extras writer.
-            let global_transforms_e8: Option<Vec<GlobalStreamTransform>> =
-                if self.extras_global_stream_eligible(extras, width, height, num_dc_groups) {
-                    let (gimg, gtransforms) = Self::build_global_stream_image(
-                        extras,
-                        width,
-                        height,
-                        self.budget.as_ref(),
-                    )?;
-                    stream_options[0] = crate::modular::ma_libjxl::global_stream_options(
-                        10 - self.effort as i32,
-                        num_streams,
-                        GROUP_DIM,
-                    );
-                    stream_images[0] = gimg;
-                    Some(gtransforms)
-                } else {
-                    None
-                };
+            // Stream 0 uses the same preparation as the fixed-DC exact
+            // path below, but joins this learned tree directly. The e8+
+            // EstimateCost revert is absent; see the coverage helper.
+            let global_transforms = match self.prepare_global_stream(
+                extras, width, height, num_dc_groups, num_groups,
+            )? {
+                Some(global) => {
+                    stream_options[0] = global.options;
+                    stream_images[0] = global.image;
+                    Some(global.transforms)
+                }
+                None => None,
+            };
 
             // `tree_splits_` (`enc_modular.cc:661-673`): six chunk
             // boundaries over the stream-id space; `compute_vardct_tree`
@@ -3268,7 +3259,7 @@ impl VarDctEncoder {
             // Tokenize stream 0 against the merged tree — leaf context
             // ids are already the merged-BFS numbering, so no remap is
             // needed (unlike the effort < 8 path below).
-            global_stream_state = match global_transforms_e8 {
+            global_stream_state = match global_transforms {
                 Some(gtransforms) => {
                     let (imgs, mtree) = merged_dc_state.as_ref().expect("just set");
                     let toks = self.tokenize_global_stream(&imgs[0], mtree)?;
@@ -3470,7 +3461,7 @@ impl VarDctEncoder {
             merged_dc_state = None;
             global_stream_state = None;
         } else {
-            // kWPFixedDC tree at effort <= 3.
+            // kWPFixedDC tree below the variable-tree trial threshold.
             // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
             // Matches libjxl's `PredefinedTree(kWPFixedDC)` at
             // `speed_tier == SpeedTier::kFalcon` (effort == 3).
@@ -3486,48 +3477,32 @@ impl VarDctEncoder {
             // Effort <= 3 gives stream 0 a `kWPFixedDC`/`kGradientFixedDC`
             // predefined tree instead (`enc_modular.cc:676-680`) — not
             // ported; the legacy extras writer stays there.
-            let global_built = if self.extras_global_stream_eligible(
-                extras,
-                width,
-                height,
-                num_dc_groups,
-            ) {
-                let (gimg, gtransforms) = Self::build_global_stream_image(
-                    extras,
-                    width,
-                    height,
-                    self.budget.as_ref(),
-                )?;
-                let num_streams = self.vardct_num_streams(num_dc_groups, num_groups);
-                let gopts = crate::modular::ma_libjxl::global_stream_options(
-                    10 - self.effort as i32,
-                    num_streams,
-                    GROUP_DIM,
-                );
-                let gtree = crate::modular::ma_libjxl::learn_tree(
-                    std::slice::from_ref(&gimg),
-                    std::slice::from_ref(&gopts),
-                    0,
-                    1,
-                )?;
-                Some((gimg, gtree, gtransforms))
-            } else {
-                None
+            let global_built = match self.prepare_global_stream(
+                extras, width, height, num_dc_groups, num_groups,
+            )? {
+                Some(global) => {
+                    let gtree = crate::modular::ma_libjxl::learn_tree(
+                        std::slice::from_ref(&global.image),
+                        std::slice::from_ref(&global.options),
+                        0,
+                        1,
+                    )?;
+                    Some((global.image, gtree, global.transforms))
+                }
+                None => None,
             };
 
             let (wrapped_tokens, num_ctx, dc_remap, ctx_map, global_ctx_map) =
                 match global_built.as_ref() {
                     Some((_, gtree, _)) => {
-                        let (t, n, r, m, g) =
-                            super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix_and_global(
-                                &wp_dc_tree,
-                                wp_dc_num_contexts,
-                                num_dc_groups,
-                                ac_meta_kind,
-                                self.profile.ma_root_split_2ndg,
-                                gtree,
-                            );
-                        (t, n, r, m, g)
+                        super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix_and_global(
+                            &wp_dc_tree,
+                            wp_dc_num_contexts,
+                            num_dc_groups,
+                            ac_meta_kind,
+                            self.profile.ma_root_split_2ndg,
+                            gtree,
+                        )
                     }
                     None => {
                         let (t, n, r, m) =
@@ -3822,6 +3797,11 @@ impl VarDctEncoder {
 
                 crate::error::Result::Ok((dc_tokens, ac_meta_tokens, ac_group_tokens))
             })?;
+
+        // Strict stream images and their merged tree are only needed to
+        // collect residuals. Entropy construction/emission consume the owned
+        // tokens, so do not retain this scratch through those phases.
+        drop(merged_dc_state);
 
         // ── Aggregate per-DC-group results into whole-image vectors ──
         //
@@ -4518,6 +4498,8 @@ impl VarDctEncoder {
                         &mut dc_global,
                     )?;
                 } else {
+                    // Normal writer, also used as the exact path's
+                    // fallback when no shared global stream was prepared.
                     // Chunk-2 alpha squeeze opt-in (W14-4 follow-on):
                     // route a single alpha extra through the responsive=1
                     // squeeze pipeline instead of the raw-pixel quantizer.
@@ -4976,15 +4958,46 @@ impl VarDctEncoder {
         Ok(())
     }
 
-    /// Whether the strict libjxl GlobalData stream-0 path carries this
-    /// frame's extras. libjxl routes every extra channel into stream 0
-    /// when its coded dimensions fit one group and the frame has a
-    /// single DC group (`InitStreamInfo`, `enc_modular.cc:1057-1066,
-    /// 1094-1098`); larger/multi-group frames copy channels into the
-    /// group streams instead, which this port does not cover. Effort
-    /// <= 3 gives stream 0 a predefined tree (`enc_modular.cc:676-680`)
-    /// that is likewise not ported — both cases keep the legacy
-    /// writer, so the zen/exact split stays exactly two paths.
+    /// Shared preparation for the exact path's fixed/learned DC trees.
+    /// Unsupported cases retain the private extras writer as a fallback
+    /// within the exact path; normal strategies always use that writer.
+    fn prepare_global_stream(
+        &self,
+        extras: &[super::extras::VardctExtra<'_>],
+        image_width: usize,
+        image_height: usize,
+        num_dc_groups: usize,
+        num_groups: usize,
+    ) -> Result<Option<PreparedGlobalStream>> {
+        if !self.extras_global_stream_eligible(extras, image_width, image_height, num_dc_groups) {
+            return Ok(None);
+        }
+        let (image, transforms) = Self::build_global_stream_image(
+            extras, image_width, image_height, self.budget.as_ref(),
+        )?;
+        let options = crate::modular::ma_libjxl::global_stream_options(
+            10 - self.effort as i32,
+            self.vardct_num_streams(num_dc_groups, num_groups),
+            GROUP_DIM,
+        );
+        Ok(Some(PreparedGlobalStream {
+            image,
+            transforms,
+            options,
+        }))
+    }
+
+    /// Current exact-path preparation coverage: effort >= 4, one DC group,
+    /// and nonempty extras whose coded dimensions fit GROUP_DIM. Effort <= 3,
+    /// multiple DC groups and oversized extras retain the private writer.
+    ///
+    /// The AC-metadata gate is a dependency: it selects the merged exact
+    /// tree at e8+. Removing it would change custom gate combinations.
+    ///
+    /// Known coverage gaps (left unchanged by cleanup): e8+ applies
+    /// ChannelCompact without libjxl's EstimateCost revert, and emission
+    /// consumes this prepared stream only for one group and one pass.
+    /// See CLAUDE.md's W45-RECON cleanup coverage findings.
     fn extras_global_stream_eligible(
         &self,
         extras: &[super::extras::VardctExtra<'_>],
@@ -5055,9 +5068,10 @@ impl VarDctEncoder {
     /// insertion order (`channel.insert(begin())` per success), so the
     /// last-transformed channel's meta channel sits at index 0.
     ///
-    /// Returns the post-transform [`ModularImage`] plus the transform
-    /// descriptors in apply order; `begin_c` is the index channel's
-    /// position in the returned image's channel list.
+    /// Returns the post-transform [`crate::modular::channel::ModularImage`]
+    /// plus transform descriptors in apply order. Each `begin_c` names
+    /// the channel at that transform's application, before later palettes
+    /// prepend more meta channels.
     fn build_global_stream_image(
         extras: &[super::extras::VardctExtra<'_>],
         image_width: usize,
