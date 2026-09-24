@@ -13,15 +13,27 @@ set -euo pipefail
 DIR="${CODEC_CORPUS_DIR:?set CODEC_CORPUS_DIR}"
 BASE="https://codec-corpus.r2.imazen.org/imazen-26-unprocessed"
 
-fetch() { # <sha256> <rel-path-under-imazen-26>
+fetch() { # <sha256> <rel-path-under-imazen-26> [url]
   local sha="$1" rel="$2" dst="$DIR/imazen-26/$2"
   if [ -f "$dst" ] && echo "$sha  $dst" | sha256sum -c --quiet - 2>/dev/null; then
     return 0
   fi
   mkdir -p "$(dirname "$dst")"
-  curl -sfL "$BASE/$rel" -o "$dst"
+  curl -sfL "${3:-$BASE/$rel}" -o "$dst"
   echo "$sha  $dst" | sha256sum -c --quiet -
 }
+
+# Optional pinned manifest: sha256, relative corpus path, source URL.
+# The no-argument nightly invocation retains its existing five gate files.
+if [ "$#" -eq 1 ]; then
+  while IFS=$'\t' read -r sha rel url; do
+    [ "$sha" = "sha256" ] && continue
+    [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "Invalid manifest hash: $sha" >&2; exit 1; }
+    fetch "$sha" "$rel" "$url"
+    echo "verified $rel"
+  done < "$1"
+  exit 0
+fi
 
 fetch ff4cd87728467925a9ec9013d9b71b6fc5458acee2692ce3087fc7d3b20b1373 \
   "5300-noaa-hurricane-documents/5308_noaa_nhc-al022024-beryl_p01_2550x3300.png"

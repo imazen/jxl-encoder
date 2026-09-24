@@ -12,7 +12,10 @@
 // derive the feature set and the expected outcome, so it works on any corpus.
 // Committed fixtures under tests/fixtures/jbrd/ always run; point
 // JBRD_CONFORMANCE_CORPUS at a directory to additionally sweep a larger set
-// (e.g. the /mnt/v conformance corpus). Multi-marker (chunked) ICC is covered
+// (e.g. the /mnt/v conformance corpus). Set JBRD_CONFORMANCE_ARTIFACTS to
+// persist content-addressed JXLs, reconstructed JPEGs and hash records. Set
+// JBRD_CONFORMANCE_REFERENCE=1 alongside it to require pinned djxl reconstruction
+// too (the caller supplies DJXL_PATH). Multi-marker (chunked) ICC is covered
 // hermetically by meta_a_iccsynth.jpg — a synthetic >64 KB ICC that is
 // mostly-zero, so it's 70 KB on disk but a ~0.8 KB git object (the only
 // committed fixture over 30 KB on disk; tiny in the repo). A realistic
@@ -159,7 +162,7 @@ fn panic_msg(e: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-fn run_one(bytes: &[u8]) -> Outcome {
+fn run_one(bytes: &[u8], artifact_dir: Option<&Path>, reference: Option<&str>) -> Outcome {
     use std::panic::{AssertUnwindSafe, catch_unwind};
     let enc = catch_unwind(AssertUnwindSafe(|| {
         jxl_encoder::LosslessConfig::new().encode_jpeg_transcode(bytes)
@@ -169,7 +172,64 @@ fn run_one(bytes: &[u8]) -> Outcome {
         Ok(Err(_)) => return Outcome::Rejected,
         Ok(Ok(jxl)) => jxl,
     };
-    match catch_unwind(AssertUnwindSafe(|| zenjxl_decoder::reconstruct_jpeg(&jxl))) {
+    use sha2::{Digest, Sha256};
+    let sha256 = |data: &[u8]| -> String {
+        Sha256::digest(data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let artifact_keys = artifact_dir.map(|dir| {
+        let source_sha = sha256(bytes);
+        let encoded_sha = sha256(&jxl);
+        std::fs::write(dir.join(format!("{encoded_sha}.jxl")), &jxl).unwrap();
+        (source_sha, encoded_sha)
+    });
+    let result = catch_unwind(AssertUnwindSafe(|| zenjxl_decoder::reconstruct_jpeg(&jxl)));
+    let mut reference_error = None;
+    if let (Some(dir), Some((source_sha, encoded_sha))) = (artifact_dir, artifact_keys) {
+        let reconstructed_sha = if let Ok(Ok(Some(recon))) = &result {
+            let sha = sha256(recon);
+            std::fs::write(dir.join(format!("{sha}.jpg")), recon).unwrap();
+            sha
+        } else {
+            "-".to_owned()
+        };
+        let reference_sha = if let Some(djxl) = reference {
+            let jpeg_path = dir.join(format!("{encoded_sha}.reference.jpg"));
+            let output = std::process::Command::new(djxl)
+                .arg(dir.join(format!("{encoded_sha}.jxl")))
+                .arg(&jpeg_path)
+                .arg("--reconstruct_jpeg")
+                .arg("--num_threads=1")
+                .output()
+                .expect("run reference JPEG reconstruction");
+            std::fs::write(dir.join(format!("{encoded_sha}.djxl.log")), &output.stderr).unwrap();
+            if output.status.success() {
+                let reference_bytes = std::fs::read(jpeg_path).unwrap();
+                if reference_bytes != bytes {
+                    reference_error = Some("djxl reconstruction differs from source".to_owned());
+                }
+                sha256(&reference_bytes)
+            } else {
+                reference_error = Some(format!(
+                    "djxl reconstruction failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+                "-".to_owned()
+            }
+        } else {
+            "-".to_owned()
+        };
+        std::fs::write(
+            dir.join(format!("{source_sha}.tsv")),
+            format!("source_sha256\tjxl_sha256\treconstructed_sha256\treference_sha256\n{source_sha}\t{encoded_sha}\t{reconstructed_sha}\t{reference_sha}\n"),
+        ).unwrap();
+    }
+    if let Some(error) = reference_error {
+        return Outcome::ReconError(error);
+    }
+    match result {
         Err(p) => Outcome::DecodePanic(panic_msg(p)),
         Ok(Ok(Some(recon))) if recon == bytes => Outcome::RoundTripped,
         Ok(Ok(Some(recon))) => Outcome::Corrupted {
@@ -203,17 +263,24 @@ fn verdict_ok(expect: Expect, outcome: &Outcome) -> bool {
 // ───────────────────────────── corpus driver ─────────────────────────────
 
 fn collect_jpegs(dir: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("cannot read fixture dir {}: {e}", dir.display()))
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s.eq_ignore_ascii_case("jpg") || s.eq_ignore_ascii_case("jpeg"))
-        })
-        .collect();
-    v.sort();
-    v
+    {
+        let entry = entry.expect("read corpus directory entry");
+        let path = entry.path();
+        if entry.file_type().unwrap().is_dir() {
+            files.extend(collect_jpegs(&path));
+        } else if path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("jpg") || s.eq_ignore_ascii_case("jpeg"))
+        {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
 }
 
 #[test]
@@ -221,13 +288,25 @@ fn jbrd_roundtrip_conformance() {
     let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/jbrd");
     let mut files = collect_jpegs(&fixture_dir);
     if let Ok(extra) = std::env::var("JBRD_CONFORMANCE_CORPUS") {
-        files.extend(collect_jpegs(Path::new(&extra)));
+        let extra_files = collect_jpegs(Path::new(&extra));
+        assert!(!extra_files.is_empty(), "no JPEGs in requested corpus {extra}");
+        files.extend(extra_files);
     }
     assert!(
         !files.is_empty(),
         "no JPEG fixtures found in {}",
         fixture_dir.display()
     );
+
+    let artifact_dir = std::env::var_os("JBRD_CONFORMANCE_ARTIFACTS").map(PathBuf::from);
+    if let Some(dir) = &artifact_dir {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+
+    let reference = std::env::var_os("JBRD_CONFORMANCE_REFERENCE").map(|_| {
+        assert!(artifact_dir.is_some(), "reference verification requires JBRD_CONFORMANCE_ARTIFACTS");
+        jxl_encoder::test_helpers::djxl_path()
+    });
 
     // Silence the default panic printer while we deliberately catch encoder /
     // decoder panics per fixture; they are reported in the table instead.
@@ -249,7 +328,8 @@ fn jbrd_roundtrip_conformance() {
             continue;
         };
         let expect = classify(&feats);
-        let outcome = run_one(&bytes);
+        eprintln!("JBRD checking {}", path.display());
+        let outcome = run_one(&bytes, artifact_dir.as_deref(), reference.as_deref());
         let ok = verdict_ok(expect, &outcome);
         let known = known_failure(&name, &feats);
 

@@ -1128,8 +1128,12 @@ marker values on baseline/progressive fixtures with interior restarts and real
 64×32/259×133 crops with one complete restart interval. jxl-rs renders the
 same pixels, djxl v0.12 renders every stream and reconstructs every JPEG byte.
 The sibling zenjxl-decoder writer still needs the matching standalone-marker
-case; its stale-marker working state requires ownership clarification before
-editing. The 21 camera originals from #120 have not yet been rerun.
+case. Read-only GitHub comparison proves the stale-marker change `940d2c51`
+is already an ancestor of remote main `814994a2`; it is preserved committed
+history, not uncommitted work. The 21 camera originals from #120 now all reproduce exactly two missing
+bytes with the corrected encoder and decoder `940d2c51`; their input, encoded
+and reconstructed hashes are in `benchmarks/jpeg_restart_before_2026-09-24.tsv`.
+The corresponding `.meta` names retained artifacts and source provenance.
 The existing 53-fixture reconstruction gate passes (47 exact, six clean
 unsupported refusals), as do 1,650 JPEG-enabled library tests, 1,618 default
 library tests and all 75 lock/drift tests. JPEG-library Clippy retains the

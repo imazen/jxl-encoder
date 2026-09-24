@@ -452,3 +452,15 @@ jpeg-restart-check label:
     nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --lib entropy_scan_preserves_terminal_restart_markers > "$HOME/tmp/jxl-backlog/jpeg120-parser-{{label}}.log" 2>&1
     nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_terminal_restart_markers_roundtrip -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg120-render-{{label}}.log" 2>&1
     rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg120-"*"-{{label}}.log"
+
+# Camera originals from tests/fixtures/jpeg_restart_corpus.tsv plus local fixtures.
+jpeg-restart-corpus-check label corpus:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export DJXL_PATH="$PWD/.ci-libjxl/tools/djxl" JBRD_CONFORMANCE_REFERENCE=1
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export JBRD_CONFORMANCE_CORPUS="{{corpus}}"
+    export JBRD_CONFORMANCE_ARTIFACTS="$HOME/tmp/jxl-backlog/jpeg120-{{label}}-artifacts"
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg120-corpus-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg120-corpus-{{label}}.log"
