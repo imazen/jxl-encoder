@@ -812,6 +812,20 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-09-24: explicit CLI strategy conflicted with lossless test contract
+
+`0784632b` removed the clap conflict and documented `--strategy` as ignored
+with `--lossless`, while the existing CLI regression required rejection.
+The owner chose rejection on September 24. Explicit combinations now fail
+before encoding with clap exit code 2; the implicit default still permits
+ordinary `--lossless`. The strengthened existing test covers all six strategy
+spellings in both argument orders and preserves a pre-existing output file.
+All four strategy tests pass. The full locked workspace all-target test run,
+workspace all-target Clippy and scoped format check also pass against the
+CI-pinned sibling closure. No library encoding policy changed. Before/after
+logs: `~/tmp/jxl-backlog/encoder-ci-pins-workspace.log` and
+`~/tmp/jxl-backlog/cli-lossless-strategy-fix.log`.
+
 ### RESOLVED 2026-09-24: JPEG CfL chose the first tied maximum
 
 [PROVEN] `jpeg_cfl_search` chose the first maximal histogram bucket;
@@ -1180,18 +1194,6 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
-
-### 2026-09-24: CLI lossless strategy contract disagrees with its test
-
-[PROVEN] `jxl-encoder-cli/tests/strategy_flag.rs::strategy_with_lossless_is_an_error`
-requires a clap conflict for explicit `--lossless --strategy libjxl`.
-`0784632b` removed that conflict and documents acceptance with the strategy
-ignored; the lossless CLI branch does not consume it. The unchanged test
-fails in the pinned-source workspace run, after the encoder's 508 integration
-tests pass. This is a pre-existing contract disagreement, not a dependency
-resolution failure. Owner choice is pending; neither the assertion nor CLI
-behavior has been changed. Log:
-`~/tmp/jxl-backlog/encoder-ci-pins-workspace.log`.
 
 ### 2026-09-24: ISO JPEG gain-map container integration (#122)
 
@@ -2854,8 +2856,8 @@ changed. Logs: `~/tmp/jxl-exact-cleanup/approved-format-2026-09-24/` and
 The corrected CI dependency closure also passes default all-target Clippy,
 75 lock/drift checks and 1,618 library tests (29 existing ignores).
 The all-target workspace run passes 1,638 feature-unified encoder library
-tests and 508 integration tests, then stops on the pre-existing CLI lossless
-strategy contract disagreement recorded above. Logs:
+tests and 508 integration tests, then initially stopped on the CLI lossless
+strategy contract disagreement, now resolved with owner approval (see Resolved Bugs). Logs:
 `~/tmp/jxl-exact-cleanup/ci-pins-fixed-2026-09-24/` and
 `~/tmp/jxl-backlog/encoder-ci-pins-workspace.log`.
 Both real-image RD regression tests also pass with unchanged expectations

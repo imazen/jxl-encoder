@@ -199,26 +199,40 @@ fn strategy_with_lossless_is_an_error() {
     std::fs::create_dir_all(&out_dir).expect("create_dir_all");
     let out_path = out_dir.join("conflict.jxl");
     let bin = env!("CARGO_BIN_EXE_cjxl-rs");
-    let output = Command::new(bin)
-        .args([
-            png.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-            "--quiet",
-            "--lossless",
-            "--strategy",
-            "libjxl",
-        ])
-        .output()
-        .expect("spawn cjxl-rs");
-    assert!(
-        !output.status.success(),
-        "--lossless + --strategy must be a clap-level error, got success"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("--lossless") && stderr.contains("--strategy"),
-        "expected clap conflict diagnostic, got stderr:\n{stderr}"
-    );
+    let preserved = b"existing caller output";
+    std::fs::write(&out_path, preserved).unwrap();
+    for variant in [
+        "libjxl",
+        "libjxl-exact",
+        "libjxl-strict",
+        "lean-faster",
+        "zenjxl",
+        "aggressive",
+    ] {
+        for flags in [
+            vec!["--lossless", "--strategy", variant],
+            vec!["--strategy", variant, "--lossless"],
+        ] {
+            let output = Command::new(bin)
+                .args([png.to_str().unwrap(), out_path.to_str().unwrap(), "--quiet"])
+                .args(flags)
+                .output()
+                .expect("spawn cjxl-rs");
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "--lossless + --strategy {variant} must be a clap-level error"
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("--lossless") && stderr.contains("--strategy"),
+                "expected clap conflict diagnostic, got stderr:\n{stderr}"
+            );
+            assert_eq!(std::fs::read(&out_path).unwrap(), preserved);
+        }
+    }
+    // The implicit strategy default must not conflict with ordinary lossless use.
+    let _ = run_cjxl(&png, "lossless_without_explicit_strategy", &["--lossless"]);
 }
 
 #[test]

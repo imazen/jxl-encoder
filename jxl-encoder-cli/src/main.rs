@@ -129,10 +129,9 @@ struct Args {
     /// bytes may be larger than `zenjxl`, that IS the point).
     /// `Custom` is API-only — drive it from Rust via
     /// `LossyConfig::with_strategy(EncoderStrategy::Custom(...))`
-    /// (W44-131 Chunk E). Accepted but ignored on the `--lossless`
-    /// path — strategy bundles are lossy-scoped (lossless parity has
-    /// its own knobs: --force-rct, --tree-learning, effort).
-    #[arg(long, value_enum, default_value_t = StrategyArg::default())]
+    /// (W44-131 Chunk E). Explicit `--strategy` conflicts with `--lossless`;
+    /// lossless has its own knobs: --force-rct, --tree-learning, effort.
+    #[arg(long, value_enum, default_value_t = StrategyArg::default(), conflicts_with = "lossless")]
     strategy: StrategyArg,
 
     /// Distance (alternative to quality, 0 = lossless, 1 = visually lossless)
