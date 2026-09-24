@@ -62,6 +62,20 @@ class OracleCli(unittest.TestCase):
         self.assertNotEqual(self.run_probe().returncode, 0)
         self.assertEqual(rows_path.read_bytes(), original)
 
+    def test_forced_wp_cells_are_distinct_and_recorded(self):
+        result = self.run_probe("--wp-modes", "0,4")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with (self.root / "rows.tsv").open() as file:
+            rows = list(csv.DictReader(file, delimiter="\t"))
+        self.assertEqual(len(rows), 32)
+        self.assertEqual({int(row["cell_id"]) for row in rows}, set(range(32)))
+        self.assertEqual({row["forced_wp_mode"] for row in rows}, {"0", "4"})
+        metadata = json.loads((self.root / "rows.artifacts/_MANIFEST.json").read_text())
+        self.assertEqual(metadata["wp_modes"], [0, 4])
+        for row in rows:
+            path = self.root / "rows.artifacts" / (row["encoded_sha256"] + ".jxl")
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), row["encoded_sha256"])
+
     def test_changed_source_fails_without_encode_rows(self):
         self.write_manifest("0" * 64)
         result = self.run_probe()

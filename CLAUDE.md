@@ -2786,6 +2786,32 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: approved explicit WP selection (#24)
+
+`LosslessInternalParams::forced_wp_mode` selects modes 0..=4 in the existing
+learned lossless paths. It takes precedence over WP search length; unset
+preserves the existing defaults. Values 5 and 255 are rejected by sparse and
+resolved validators and by both one-shot and streaming input admission.
+Global/squeezed trees and sectioned metadata/probe/group trees all consume the
+selection. Fixed-tree encodes do not use it. No new strategy or model is added.
+
+`modular::forced_wp_tests::every_mode_reaches_wire_and_both_decoders` observes
+actual production WP header bits against five frozen values, then fully decodes
+real frymire crops through the primary Rust decoder and djxl v0.12. All 60
+cells pass: 5 modes x 2 sizes (64x64, 259x133) x squeeze on/off x sectioned
+Off/On/Hybrid. The matrix passes both with and without parallel support.
+The header observer exists only in native expert library tests and does not
+change encoding choices. `just forced-wp-check <manifest> [features]` reproduces.
+
+The oracle harness accepts `--wp-modes search,0,1,2,3,4` (default `search`),
+records the choice per cell and in provenance, and uses schema v3. Its six CLI
+controls include 32 forced-mode cells with verified persisted artifacts.
+These controls expose candidate choices; they do not qualify a trained picker.
+Validation also passes all 75 lock/drift checks, 1,618 default library tests,
+both real-image RD regression tests and workspace all-target Clippy. Expert
+lib/test Clippy reports only three existing constant-chunk warnings in
+`tests/it/empty_modular_section_roundtrip.rs`; the new library tests are clean.
+
 ### 2026-09-24: lossless picker oracle harness recovery (#24, partial)
 
 `lossless_pareto_calibrate` is registered with
@@ -2827,9 +2853,9 @@ The pinned `zenpicker-train/src/pareto_dataset.rs::build_picker_dataset_with`
 uses quality reach and encoded bytes, and does not read `encode_ms` or a time
 budget. A size-only bake cannot establish #24's wall target. Do not call the
 recovered harness a direct input to a time-budgeted trainer or silently replace
-that objective. A proposed `forced_wp_mode: Option<u8>` (validated 0..=4,
-unset byte-inert) and `ForcedWpModeOutOfRange` error are awaiting approval;
-no new API or sibling trainer change has been applied.
+that objective. The owner approved `forced_wp_mode: Option<u8>` and
+`ForcedWpModeOutOfRange` on September 24. No sibling trainer change has been
+applied.
 
 
 

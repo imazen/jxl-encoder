@@ -49,3 +49,6 @@ pub(crate) mod tree_learn_split;
 pub(crate) use channel::Channel;
 pub(crate) use predictor::Predictor;
 pub use rct::RctType;
+
+#[cfg(all(test, feature = "__expert", feature = "std"))]
+mod forced_wp_tests;

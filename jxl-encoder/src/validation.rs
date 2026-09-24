@@ -115,6 +115,9 @@ pub enum ValidationError {
         value: u8,
         valid: RangeInclusive<u8>,
     },
+    /// An explicitly selected weighted-predictor mode is outside 0..=4.
+    #[error("forced_wp_mode {value} out of valid range 0..=4")]
+    ForcedWpModeOutOfRange { value: u8 },
     /// `tree_max_buckets` is zero — the histogram quantizer needs at least
     /// one bucket per property.
     #[error("tree_max_buckets must be > 0, got 0")]
@@ -258,6 +261,11 @@ pub(crate) fn validate_lossless_profile_overrides(
             value: profile.wp_num_param_sets,
             valid: WP_NUM_PARAM_SETS_RANGE,
         });
+    }
+    if let Some(value) = profile.forced_wp_mode
+        && value > 4
+    {
+        return Err(ValidationError::ForcedWpModeOutOfRange { value });
     }
     if profile.tree_max_buckets == 0 {
         return Err(ValidationError::TreeMaxBucketsZero);
@@ -458,6 +466,11 @@ impl crate::effort::LosslessInternalParams {
                 value: v,
                 valid: WP_NUM_PARAM_SETS_RANGE,
             });
+        }
+        if let Some(value) = self.forced_wp_mode
+            && value > 4
+        {
+            return Err(ValidationError::ForcedWpModeOutOfRange { value });
         }
         if let Some(0) = self.tree_max_buckets {
             return Err(ValidationError::TreeMaxBucketsZero);

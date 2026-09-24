@@ -1247,6 +1247,8 @@ pub struct EffortProfile {
     /// wants e6-quality bytes with WP-fitted parameters), or off at e9 for
     /// faster sweeps.
     pub wp_num_param_sets: u8,
+    /// Explicit lossless learned-tree WP mode; None keeps the effort search.
+    pub forced_wp_mode: Option<u8>,
 
     // ─── Tree learning parameters ────────────────────────────────────────
     // Read by `modular/tree_learn.rs::TreeLearningParams::from_profile`.
@@ -1895,6 +1897,7 @@ impl EffortProfile {
             forced_rct: None,
 
             // ── WP parameter search ──
+            forced_wp_mode: None,
             wp_num_param_sets: match effort {
                 0..=7 => 0,
                 8 => 2,
@@ -2083,6 +2086,7 @@ impl EffortProfile {
             forced_rct: None,
 
             // ── WP parameter search ──
+            forced_wp_mode: None,
             wp_num_param_sets: match effort {
                 0..=7 => 0,
                 8 => 2,
@@ -3566,6 +3570,13 @@ pub struct LosslessInternalParams {
     /// Effort interaction: 0 at e<8, 2 at e8, 5 at e9+.
     pub wp_num_param_sets: Option<u8>,
 
+    /// Select weighted-predictor mode 0..=4 without searching.
+    /// `None` preserves effort-derived search. Takes precedence over
+    /// [`Self::wp_num_param_sets`] for learned modular trees, including
+    /// squeeze and sectioned variants. Fixed-tree encodes do not use it.
+    /// Out-of-range values are rejected by validation before encoding.
+    pub forced_wp_mode: Option<u8>,
+
     /// Maximum quantization buckets per property when building the
     /// histogram for tree splits.
     /// Effort interaction: 32 at e<=4, 48 at e5, 64 at e6, 96 at e7,
@@ -3801,6 +3812,7 @@ impl LosslessInternalParams {
             nb_rcts_to_try,
             forced_rct,
             wp_num_param_sets,
+            forced_wp_mode,
             tree_max_buckets,
             tree_num_properties,
             tree_threshold_base,
@@ -3821,6 +3833,9 @@ impl LosslessInternalParams {
         }
         if forced_rct.is_some() {
             profile.forced_rct = forced_rct;
+        }
+        if forced_wp_mode.is_some() {
+            profile.forced_wp_mode = forced_wp_mode;
         }
         if let Some(v) = wp_num_param_sets {
             profile.wp_num_param_sets = v;

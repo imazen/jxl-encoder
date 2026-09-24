@@ -2493,7 +2493,11 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     // Step 0: WP parameters.
     // For lossy modular with Zero predictor, WP is unused but we still need
     // valid params for the gather phase (which computes WP for all predictors).
-    let wp_params = if !is_lossy && profile.wp_num_param_sets > 0 {
+    let wp_params = if let Some(mode) = profile.forced_wp_mode
+        && !is_lossy
+    {
+        super::predictor::WeightedPredictorParams::for_mode(mode)
+    } else if !is_lossy && profile.wp_num_param_sets > 0 {
         super::predictor::find_best_wp_params(&work_image.channels, profile.wp_num_param_sets)
     } else {
         super::predictor::WeightedPredictorParams::default()
@@ -2993,7 +2997,9 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     // Step 2b: Find best WP parameters (effort-dependent search)
     // For squeeze, WP is only used as a property (property 15) for tree splitting,
     // not as a predictor (libjxl forces Predictor::Zero for squeeze residuals).
-    let wp_params = if profile.wp_num_param_sets > 0 {
+    let wp_params = if let Some(mode) = profile.forced_wp_mode {
+        super::predictor::WeightedPredictorParams::for_mode(mode)
+    } else if profile.wp_num_param_sets > 0 {
         super::predictor::find_best_wp_params(&transformed.channels, profile.wp_num_param_sets)
     } else {
         super::predictor::WeightedPredictorParams::default()

@@ -469,6 +469,25 @@ on `photo_512x512` at e5.)
 
 ## E. Per-API behavior divergences (opt-in)
 
+### September 24: explicit lossless WP mode (#24)
+
+`LosslessInternalParams::forced_wp_mode` (`__expert`) selects mode 0..=4
+without the effort-derived WP search. `None` preserves existing output;
+`Some(mode)` overrides `wp_num_param_sets` in learned modular trees, including
+squeeze, global/shared trees and sectioned local/metadata trees. Fixed-tree
+paths do not consume it. Validation rejects out-of-range values before encode.
+libjxl v0.12 searches the mode set according to effort; explicit selection is
+an opt-in caller choice, not a new strategy or a named-preset default change.
+The sectioned predictor probe uses the same selected parameters as its learners.
+No strategy-registry gate or gate-count change: this is an expert lossless
+parameter, alongside the existing forced RCT override.
+
+`modular::forced_wp_tests` captures the production writer's WP header bits
+and compares them to five frozen wire values. Real 64x64 and 259x133 cells
+cover all five modes, squeeze on/off and SectionedTrees Off/On/Hybrid; each
+fully decodes pixel-exactly in the primary Rust decoder and djxl v0.12.
+
+
 ### Registered September 8: native 1/2/3 complete-encode targeting
 
 Extend the existing RD example with `--native-fit <ladder-artifact-root>` and

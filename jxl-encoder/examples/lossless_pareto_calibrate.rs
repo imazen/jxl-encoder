@@ -4,7 +4,7 @@
 //! The picker is going to *replace* the bundled-effort axis, so the oracle
 //! must expose each underlying knob independently — not the bundled effort.
 //!
-//! Cells (categorical, 16):
+//! Base cells (categorical, 16), repeated for each requested WP mode:
 //!   - lz77_method ∈ {None, Rle, Greedy, Optimal}    (4)
 //!   - use_squeeze ∈ {false, true}                   (2)
 //!   - use_patches ∈ {false, true}                   (2)
@@ -18,7 +18,7 @@
 //!
 //! Per-cell sample plan: 25 random scalar tuples (with deterministic RNG
 //! seed = hash(image_sha, size, cell_id) so reruns produce identical data).
-//! 16 cells × 25 samples = 400 configs per (image, size).
+//! 16 cells × 25 samples = 400 sampled configs per (image, size, WP mode).
 //!
 //! Plus 16 anchor configs holding (mid-scalar) per cell to give the picker
 //! a stable reference point per cell.
@@ -35,7 +35,7 @@
 //!       --output benchmarks/lossless_pareto_<DATE>.tsv \
 //!       --features-output benchmarks/lossless_pareto_features_<DATE>.tsv \
 //!       [--samples-per-cell N] [--max-images N] [--sizes 64,256,1024,native]
-//!       [--features-only] [--smoke]
+//!       [--features-only] [--smoke] [--wp-modes search,0,1,2,3,4]
 //!
 //! Outputs are new files only. Encoded bytes are retained by SHA256 in
 //! `<output>.artifacts`; its `_MANIFEST.json` records the build and input plan.
@@ -85,6 +85,7 @@ struct CellSpec {
     lz77_method: Option<Lz77Method>,
     squeeze: bool,
     patches: bool,
+    forced_wp_mode: Option<u8>,
 }
 
 fn enumerate_cells() -> Vec<CellSpec> {
@@ -99,6 +100,7 @@ fn enumerate_cells() -> Vec<CellSpec> {
                     lz77_method: lz_method,
                     squeeze,
                     patches,
+                    forced_wp_mode: None,
                 });
                 id += 1;
             }
@@ -168,6 +170,7 @@ struct Args {
     threads: usize,
     features_only: bool,
     smoke: bool,
+    wp_modes: Vec<Option<u8>>,
 }
 
 fn parse_args() -> Args {
@@ -180,6 +183,7 @@ fn parse_args() -> Args {
     let mut threads = 1;
     let mut features_only = false;
     let mut smoke = false;
+    let mut wp_modes = vec![None];
     let date = chrono_today();
     let mut output = PathBuf::from(format!("benchmarks/lossless_pareto_{date}.tsv"));
     let mut features_output =
@@ -205,6 +209,25 @@ fn parse_args() -> Args {
             "--features-output" => features_output = PathBuf::from(it.next().unwrap()),
             "--max-images" => max_images = it.next().unwrap().parse().expect("max-images uint"),
             "--threads" => threads = it.next().unwrap().parse().expect("threads uint"),
+            "--wp-modes" => {
+                wp_modes = it
+                    .next()
+                    .expect("--wp-modes needs a list")
+                    .split(',')
+                    .map(|v| {
+                        if v == "search" {
+                            None
+                        } else {
+                            let mode: u8 = v.parse().expect("WP mode must be search or 0..=4");
+                            assert!(mode <= 4, "WP mode must be 0..=4");
+                            Some(mode)
+                        }
+                    })
+                    .collect();
+                for (i, mode) in wp_modes.iter().enumerate() {
+                    assert!(!wp_modes[..i].contains(mode), "duplicate WP mode");
+                }
+            }
             "--features-only" => features_only = true,
             "--smoke" => {
                 smoke = true;
@@ -232,6 +255,7 @@ fn parse_args() -> Args {
         threads,
         features_only,
         smoke,
+        wp_modes,
     }
 }
 
@@ -334,6 +358,7 @@ fn build_encoder(rc: &RowConfig) -> LosslessConfig {
     let mut params = LosslessInternalParams::default();
     params.nb_rcts_to_try = Some(rc.nb_rcts_to_try);
     params.wp_num_param_sets = Some(rc.wp_num_param_sets);
+    params.forced_wp_mode = rc.cell.forced_wp_mode;
     params.tree_max_buckets = Some(rc.tree_max_buckets);
     params.tree_num_properties = Some(rc.tree_num_properties);
     params.tree_sample_fraction = Some(rc.tree_sample_fraction);
@@ -456,10 +481,17 @@ fn main() {
     let n_images = entries.len().min(args.max_images);
     let entries: Vec<ManifestEntry> = entries.into_iter().take(n_images).collect();
     assert!(!entries.is_empty(), "manifest/filter selected no images");
-    let cells = enumerate_cells();
+    let mut cells = Vec::new();
+    for mode in &args.wp_modes {
+        for mut cell in enumerate_cells() {
+            cell.cell_id = cells.len() as u8;
+            cell.forced_wp_mode = *mode;
+            cells.push(cell);
+        }
+    }
     let cols = feature_columns();
     let metadata = serde_json::json!({
-        "schema": "lossless-picker-oracle-v2",
+        "schema": "lossless-picker-oracle-v3",
         "build_commit": build_commit,
         "binary_sha256": sha256_hex(&std::fs::read(std::env::current_exe().unwrap()).unwrap()),
         "manifest": args.manifest,
@@ -470,6 +502,7 @@ fn main() {
         "samples_per_cell": args.samples_per_cell,
         "worker_threads": args.threads,
         "encoder_threads": 1,
+        "wp_modes": args.wp_modes,
         "features_only": args.features_only,
         "features": cols.iter().map(|c| c.name()).collect::<Vec<_>>(),
         "pixel_input": "PNG converted to packed RGB8; native or Lanczos3 downsample",
@@ -541,7 +574,7 @@ fn main() {
             let mut g = f.lock().unwrap();
             writeln!(
                 g,
-                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tcell_id\tlz77_method\tsqueeze\tpatches\tnb_rcts_to_try\twp_num_param_sets\ttree_max_buckets\ttree_num_properties\ttree_sample_fraction\tsample_idx\tbytes\tencode_ms\tencoded_sha256"
+                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tcell_id\tlz77_method\tsqueeze\tpatches\tnb_rcts_to_try\twp_num_param_sets\ttree_max_buckets\ttree_num_properties\ttree_sample_fraction\tsample_idx\tbytes\tencode_ms\tencoded_sha256\tforced_wp_mode"
             )
             .expect("complete output operation");
         }
@@ -650,13 +683,14 @@ fn main() {
                         let mut f = main_file.lock().unwrap();
                         writeln!(
                             f,
-                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}\t{}",
+                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}\t{}\t{}",
                             entry.sha256, entry.split, entry.content_class, size_class,
                             w, h, rc.cell.cell_id, rc.cell.lz77_label,
                             rc.cell.squeeze as u8, rc.cell.patches as u8,
                             rc.nb_rcts_to_try, rc.wp_num_param_sets, rc.tree_max_buckets,
                             rc.tree_num_properties, rc.tree_sample_fraction, rc.sample_idx,
                             encoded.len(), encode_ms, encoded_sha256,
+                            rc.cell.forced_wp_mode.map(|m| m.to_string()).unwrap_or_default(),
                         ).expect("write encoded row");
 
                     }

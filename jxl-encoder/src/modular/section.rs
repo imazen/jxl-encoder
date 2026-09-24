@@ -533,7 +533,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         .flat_map(|img| img.channels.iter())
         .collect();
     let wp_params = crate::profile_time!("modular/wp_params_search", {
-        if profile.wp_num_param_sets > 0 {
+        if let Some(mode) = profile.forced_wp_mode {
+            WeightedPredictorParams::for_mode(mode)
+        } else if profile.wp_num_param_sets > 0 {
             // Collect channel references for cost estimation
             let channels_for_wp: Vec<super::channel::Channel> =
                 all_channels.iter().map(|c| (*c).clone()).collect();
@@ -1911,7 +1913,10 @@ pub(crate) fn write_local_trees_lf_global(
     };
     use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
 
-    let wp_params = WeightedPredictorParams::default();
+    let wp_params = profile
+        .forced_wp_mode
+        .map(WeightedPredictorParams::for_mode)
+        .unwrap_or_default();
     let meta_pixels: usize = meta_image
         .map(|m| m.channels.iter().map(|c| c.width() * c.height()).sum())
         .unwrap_or(0);
@@ -2082,7 +2087,10 @@ pub(crate) fn sectioned_probe_predictors(
         TreeLearningParams, TreeSamples, compute_best_tree, gather_samples_strided,
         max_ref_channels, sectioned_predictors_from_tree,
     };
-    let wp_params = WeightedPredictorParams::default();
+    let wp_params = profile
+        .forced_wp_mode
+        .map(WeightedPredictorParams::for_mode)
+        .unwrap_or_default();
     let num_refs = images.iter().map(max_ref_channels).max().unwrap_or(0);
     // Sample EVERY group, thinly, rather than every Nth group densely.
     //
@@ -2345,10 +2353,12 @@ pub fn write_group_modular_section_local_tree(
         max_ref_channels,
     };
 
-    // v1 keeps the default WP parameter set (no per-group search): the
-    // params used for learning are the params written in this group's
-    // header, so encode and decode agree by construction.
-    let wp_params = WeightedPredictorParams::default();
+    // No per-group search: use the explicit mode or the historical default.
+    // Learning, residual collection and this group's header share the params.
+    let wp_params = profile
+        .forced_wp_mode
+        .map(WeightedPredictorParams::for_mode)
+        .unwrap_or_default();
     let total_pixels: usize = group_image
         .channels
         .iter()
