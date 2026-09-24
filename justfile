@@ -18,27 +18,27 @@ api-doc-check:
 
 # Byte-preserving strict/Zen cleanup checks. These are modules in the `it`
 # binary, so nextest selects test names rather than nonexistent binary IDs.
-libjxl-exact-cleanup-check label:
+libjxl-exact-cleanup-check label manifest="Cargo.toml":
     #!/usr/bin/env bash
     set -euo pipefail
     export CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl"
     export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
-    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target"
     log_dir="$HOME/tmp/jxl-exact-cleanup/{{label}}"
     mkdir -p "$log_dir"
-    nice -n 19 cargo nextest run --locked -p jxl-encoder --features __expert,__internals --test it --test-threads 4 -E 'test(strategy_libjxl_byte_lock) | test(hash_lock_features) | test(divergence_table_drift)' > "$log_dir/locks-and-drift.log" 2>&1
+    nice -n 19 cargo nextest run --manifest-path "{{manifest}}" --locked -p jxl-encoder --features __expert,__internals --test it --test-threads 4 -E 'test(strategy_libjxl_byte_lock) | test(hash_lock_features) | test(divergence_table_drift)' > "$log_dir/locks-and-drift.log" 2>&1
     rg 'Summary' "$log_dir/locks-and-drift.log"
-    nice -n 19 cargo test --locked -p jxl-encoder --lib -j 4 -- --test-threads=4 > "$log_dir/lib.log" 2>&1
+    nice -n 19 cargo test --manifest-path "{{manifest}}" --locked -p jxl-encoder --lib -j 4 -- --test-threads=4 > "$log_dir/lib.log" 2>&1
     rg 'test result:' "$log_dir/lib.log"
 
-libjxl-exact-cleanup-lint label:
+libjxl-exact-cleanup-lint label manifest="Cargo.toml":
     #!/usr/bin/env bash
     set -euo pipefail
-    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target"
     log_dir="$HOME/tmp/jxl-exact-cleanup/{{label}}"
     mkdir -p "$log_dir"
     echo "Clippy log: $log_dir/clippy.log"
-    nice -n 19 cargo clippy --workspace --all-targets --locked -- -D warnings > "$log_dir/clippy.log" 2>&1
+    nice -n 19 cargo clippy --manifest-path "{{manifest}}" --workspace --all-targets --locked -- -D warnings > "$log_dir/clippy.log" 2>&1
 
 # Persist real-input LZ77 harness smoke outputs and verify every recorded hash.
 lz77-artifact-check label:

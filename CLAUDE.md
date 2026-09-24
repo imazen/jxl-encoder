@@ -1181,6 +1181,18 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-24: CLI lossless strategy contract disagrees with its test
+
+[PROVEN] `jxl-encoder-cli/tests/strategy_flag.rs::strategy_with_lossless_is_an_error`
+requires a clap conflict for explicit `--lossless --strategy libjxl`.
+`0784632b` removed that conflict and documents acceptance with the strategy
+ignored; the lossless CLI branch does not consume it. The unchanged test
+fails in the pinned-source workspace run, after the encoder's 508 integration
+tests pass. This is a pre-existing contract disagreement, not a dependency
+resolution failure. Owner choice is pending; neither the assertion nor CLI
+behavior has been changed. Log:
+`~/tmp/jxl-backlog/encoder-ci-pins-workspace.log`.
+
 ### 2026-09-24: ISO JPEG gain-map container integration (#122)
 
 [PROVEN] The original 259x133 pixel-parity failure was caused by JPEG CfL
@@ -1389,12 +1401,14 @@ restore has to be the LAST step before committing. My first attempt at this fix
 was silently undone by the `cargo build` I ran to verify it -- `jj diff` then
 showed zero changes and the "fix" would have been an empty commit.
 
-Practical rule for this repo: after any cargo invocation, and immediately before
-`jj describe`/push, re-run
-`git -C <primary> show <last-green>:Cargo.lock > Cargo.lock` (or otherwise
-restore the pinned lock) and CHECK
-`grep -o "zenforks-cubecl?rev=[0-9a-f]\{8\}" Cargo.lock` shows `90842401`,
-not `92e4a157`.
+September 24 recurrence: `e31488a8` again contains the local `92e4a157`
+resolution, and a fresh CI source export refuses `--locked`. Regenerate the
+lock against `.github/sibling-revisions.tsv` using the clean-source exporter,
+then validate with that export's manifest. Do not blindly restore an old lock
+after changing pins: the matching Zensim refinement revision also requires
+its pinned `zenresize` and `zenblend` dependencies. The corrected closure
+uses CubeCL `90842401`; Cargo against unrelated local sibling state can
+reintroduce the drift. Both cleanup recipes now accept the exported manifest.
 
 **Related process note:** the run for the fix itself came back `cancelled`
 because the next push superseded it. Per the existing cancellation warning in
@@ -1936,6 +1950,15 @@ trace files also match. This proves preservation on that matrix, not new
 model RD qualification. Reproduction uses `zensim_config_byte_identity`
 and `scripts/zensim-loop-eff/byte_identity_matrix.sh`, with `TMPDIR=$HOME/tmp`
 and four Rayon threads. The old binary and both output sets are retained.
+
+September 24 recurrence: encoder `c1ab16c9` consumes `refinement_gain` and
+`unsupported_refinement_feature_ids`, but the CI pin remained `f99b91eb`,
+which lacks both methods. Pin `e246d954`, the committed source accompanying
+the September 15 complete-refinement work. The exported pinned closure passes
+optional workspace all-target Clippy and both Zensim smoke tests under
+`--locked`. This repairs build consistency; it does not qualify a model or
+establish RD improvement. Log:
+`~/tmp/jxl-backlog/encoder-zensim-refinement-pinned-fixed-ci-lane.log`.
 
 ### RESOLVED 2026-09-08: CPU Butteraugli comparison scratch evaded memory admission (#106)
 
@@ -2804,6 +2827,15 @@ The 75 lock/drift and 1,618 library checks remain unchanged. Formatting still
 fails on 58 hunks across 20 files; the owner has been shown a separate patch
 because the original cleanup forbids broad formatting. No format gate was
 weakened. Logs: `~/tmp/jxl-exact-cleanup/score-pfm-2026-09-24/`.
+The corrected CI dependency closure also passes default all-target Clippy,
+75 lock/drift checks and 1,618 library tests (29 existing ignores).
+The all-target workspace run passes 1,638 feature-unified encoder library
+tests and 508 integration tests, then stops on the pre-existing CLI lossless
+strategy contract disagreement recorded above. Logs:
+`~/tmp/jxl-exact-cleanup/ci-pins-fixed-2026-09-24/` and
+`~/tmp/jxl-backlog/encoder-ci-pins-workspace.log`.
+Both real-image RD regression tests also pass with unchanged expectations
+against this closure (`~/tmp/jxl-backlog/encoder-ci-pins-rd.log`).
 
 ### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
 
