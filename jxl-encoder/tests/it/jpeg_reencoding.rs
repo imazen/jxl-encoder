@@ -1200,7 +1200,7 @@ fn jpeg_exif_orientation_preserves_display_and_reconstruction() {
                 let encoded = jxl_encoder::LosslessConfig::new()
                     .encode_jpeg_transcode(&original)
                     .unwrap();
-                let rebuilt = zenjxl_decoder::reconstruct_jpeg(&encoded).unwrap().unwrap();
+                let rebuilt = zensim_decoder::reconstruct_jpeg(&encoded).unwrap().unwrap();
                 assert_eq!(
                     rebuilt, original,
                     "orientation {orientation}: original JPEG bytes"
@@ -1312,6 +1312,11 @@ fn jpeg_terminal_restart_markers_roundtrip() {
                 decode_jxl_rs(&encoded),
                 base_pixels,
                 "{label}: decoded pixels"
+            );
+            assert_eq!(
+                zensim_decoder::reconstruct_jpeg(&encoded).unwrap().unwrap(),
+                original,
+                "{label}: Rust JPEG reconstruction"
             );
             let input = dir.join(format!("{label}-{marker:x}.jxl"));
             std::fs::write(&input, &encoded).unwrap();

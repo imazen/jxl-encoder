@@ -185,7 +185,7 @@ fn run_one(bytes: &[u8], artifact_dir: Option<&Path>, reference: Option<&str>) -
         std::fs::write(dir.join(format!("{encoded_sha}.jxl")), &jxl).unwrap();
         (source_sha, encoded_sha)
     });
-    let result = catch_unwind(AssertUnwindSafe(|| zenjxl_decoder::reconstruct_jpeg(&jxl)));
+    let result = catch_unwind(AssertUnwindSafe(|| zensim_decoder::reconstruct_jpeg(&jxl)));
     let mut reference_error = None;
     if let (Some(dir), Some((source_sha, encoded_sha))) = (artifact_dir, artifact_keys) {
         let reconstructed_sha = if let Ok(Ok(Some(recon))) = &result {

@@ -812,6 +812,41 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-09-24: JPEG terminal restart markers (#120)
+
+[PROVEN] The encoder scanner discarded terminal RSTn markers after the final
+MCU. `entropy_scan_preserves_terminal_restart_markers` fails before `1a40b8f3`
+(position 8 instead of 6). A pending restart suffix now remains available to
+`marker_order`; actual entropy bytes, including stuffed `FF 00`, discard the
+pending suffix so interior restarts remain in the scan.
+
+The matching zenjxl-decoder writer fix `b0fb20db` emits standalone RST0–RST7
+from JBRD in their original order, matching libjxl v0.12. Its all-eight-marker
+unit regression fails before the fix. The encoder's 32-case regression covers
+all eight terminal values on baseline/progressive fixtures with interior
+restarts and real 64×32/259×133 crops. Rust and libjxl reconstruct every JPEG
+byte; jxl-rs renders unchanged pixels and djxl fully renders every case.
+
+All 21 camera originals named by #120 now reconstruct byte-exact in both
+Rust and libjxl, with JXL hashes unchanged from the pre-decoder-fix run. The
+74-file gate reports 68 exact reconstructions and six clean unsupported-input
+refusals. Input/encoded/reconstruction hashes and retained artifact locations:
+`benchmarks/jpeg_restart_{before,after}_2026-09-24.{tsv,meta}`. Fetch the pinned
+originals using `scripts/hunt/fetch_imazen26_gate_files.sh` with
+`jxl-encoder/tests/fixtures/jpeg_restart_corpus.tsv`; run
+`just jpeg-restart-corpus-check <label> <corpus-directory>`.
+
+Dependency trap: the original gate uses published zenjxl-decoder **0.3.10**,
+not the local 0.4 sibling: its `0.3.8` requirement excludes that path patch.
+The earlier baseline metadata incorrectly named the local revision. The JBRD
+oracles now use the existing `zensim-decoder` 0.4 path alias with `jpeg` enabled;
+0.3 compatibility tests and the optional rate-control dependency stay unchanged.
+CI's sibling pin is `b6948915`. No decoder release is required for validation.
+All 63 normal hash locks, five strict byte-lock tests, seven drift checks and
+1,618 default library tests pass unchanged. JPEG-library Clippy retains its
+40 baseline diagnostics; no lint allowance or expectation changed.
+
+
 ### RESOLVED 2026-09-24: strict AC metadata EPF context order (W45-RECON part 23.1)
 
 [PROVEN] `collect_ac_metadata_tokens_region` numbered the `kACMeta` EPF
@@ -1113,33 +1148,6 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
-
-### 2026-09-24: JPEG terminal restart markers (#120)
-
-[PROVEN] The marker scanner discarded all RSTn markers, including a terminal
-run after the final MCU. The new `entropy_scan_preserves_terminal_restart_markers`
-regression fails before the correction (position 8 instead of 6). The scanner
-now retains a pending restart suffix, discarding that pending suffix only when
-actual entropy bytes follow it (including stuffed `FF 00`). This leaves terminal
-RSTn for the existing `marker_order` serialization, matching libjxl's reader.
-
-`jpeg_terminal_restart_markers_roundtrip` passes 32 cases: all eight terminal
-marker values on baseline/progressive fixtures with interior restarts and real
-64×32/259×133 crops with one complete restart interval. jxl-rs renders the
-same pixels, djxl v0.12 renders every stream and reconstructs every JPEG byte.
-The sibling zenjxl-decoder writer still needs the matching standalone-marker
-case. Read-only GitHub comparison proves the stale-marker change `940d2c51`
-is already an ancestor of remote main `814994a2`; it is preserved committed
-history, not uncommitted work. The 21 camera originals from #120 now all reproduce exactly two missing
-bytes with the corrected encoder and decoder `940d2c51`; their input, encoded
-and reconstructed hashes are in `benchmarks/jpeg_restart_before_2026-09-24.tsv`.
-The corresponding `.meta` names retained artifacts and source provenance.
-The existing 53-fixture reconstruction gate passes (47 exact, six clean
-unsupported refusals), as do 1,650 JPEG-enabled library tests, 1,618 default
-library tests and all 75 lock/drift tests. JPEG-library Clippy retains the
-same 40 diagnostics as the parent; no allowance or expectation changed.
-
-
 
 ### 2026-09-24: JPEG feature build regression after strict tree refactoring
 
