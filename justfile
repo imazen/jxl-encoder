@@ -464,3 +464,13 @@ jpeg-restart-corpus-check label corpus:
     mkdir -p "$HOME/tmp/jxl-backlog"
     nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg120-corpus-{{label}}.log" 2>&1
     rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg120-corpus-{{label}}.log"
+
+# JPEG CfL reference rendering and reconstruction across 64-pixel tile boundaries.
+jpeg-cfl-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_cfl_reference_ -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg-cfl-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg-cfl-{{label}}.log"

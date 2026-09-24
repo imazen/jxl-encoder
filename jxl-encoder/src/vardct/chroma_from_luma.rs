@@ -165,7 +165,8 @@ pub fn jpeg_cfl_search(
                 }
             }
 
-            let mut best_i: i32 = 0;
+            let mut best_begin: i32 = 0;
+            let mut best_end: i32 = 0;
             let mut best_sum: i32 = 0;
             let mut offset_sum: i32 = 0;
             let mut running: i32 = 0;
@@ -176,13 +177,19 @@ pub fn jpeg_cfl_search(
                 running += dz;
                 if running > best_sum {
                     best_sum = running;
-                    best_i = i as i32;
+                    best_begin = i as i32;
+                }
+                if running == best_sum {
+                    best_end = i as i32;
                 }
                 if i as i32 == K_OFFSET {
                     offset_sum = running;
                 }
             }
             if best_sum > offset_sum + 1 {
+                // libjxl FindAvgIndexOfSumMaximum rounds the midpoint of the
+                // first and last tied maxima upward, even across separate peaks.
+                let best_i = (best_begin + best_end + 1) >> 1;
                 out[ty * xsize_tiles + tx] = (best_i - K_OFFSET) as i8;
             }
         }
@@ -971,6 +978,44 @@ pub fn refine_cfl_map(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn jpeg_cfl_maximum_ties_match_libjxl_midpoint() {
+        let quant = [1 << CFL_FIXED_POINT_PRECISION; 64];
+        for c in [0, 2] {
+            // With equal quantizers, Y=10/C=1 votes for buckets 132..=139.
+            // Their rounded midpoint is 136 (factor 9), not the first bucket.
+            for (y, chroma, count, expected) in [
+                (10, 1, 2, 9),
+                (-10, 1, 2, -8),
+                (10, 2, 2, 17),
+                (10, 1, 1, 0), // The improvement must exceed one coefficient.
+                (10, 0, 2, 0), // No improvement over the zero factor.
+            ] {
+                let mut luma = vec![vec![[0; 64]]];
+                let mut color = luma.clone();
+                for i in 1..=count {
+                    luma[0][0][i] = y;
+                    color[0][0][i] = chroma;
+                }
+                assert_eq!(jpeg_cfl_search(c, 1, 1, &luma, &color, &quant), [expected]);
+            }
+            let mut luma = vec![vec![[0; 64]]];
+            let mut color = luma.clone();
+            for i in 1..=4 {
+                luma[0][0][i] = 10;
+                color[0][0][i] = if i <= 2 { 1 } else { 3 };
+            }
+            // Equal disjoint peaks at 132..=139 and 149..=156: the reference
+            // still averages the endpoints, even though bucket 144 is between them.
+            assert_eq!(jpeg_cfl_search(c, 1, 1, &luma, &color, &quant), [17]);
+            luma[0][0][5] = 10;
+            color[0][0][5] = 3;
+            // A later, higher peak replaces both endpoints: midpoint 153.
+            assert_eq!(jpeg_cfl_search(c, 1, 1, &luma, &color, &quant), [26]);
+        }
+    }
 
     #[test]
     fn test_ytox_ratio() {

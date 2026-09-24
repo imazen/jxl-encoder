@@ -812,6 +812,38 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-09-24: JPEG CfL chose the first tied maximum
+
+[PROVEN] `jpeg_cfl_search` chose the first maximal histogram bucket;
+libjxl v0.12 `enc_frame.cc::FindAvgIndexOfSumMaximum` instead rounds the
+midpoint of the first and last maximal buckets upward, including disjoint
+peaks. This changes the signaled correlation and normal rendered pixels,
+although JPEG reconstruction can still be exact because it restores rounded
+integer coefficients. The correction retains the original improvement gate.
+
+`jpeg_cfl_reference_pixels_match_at_color_tile_boundaries` fails before the
+change on the 259x133 frymire crop, e3, sample 49753 (row 64): 1.0015571 versus
+1.0013798. Afterward all four cells (64x32/259x133, e3/e7) match the reference
+bitwise through jxl-rs and exactly in djxl PNG output. Both decoders reconstruct
+the original JPEG byte-for-byte. `jpeg_cfl_maximum_ties_match_libjxl_midpoint`
+covers signed, flat, disjoint and later-higher peaks and the unchanged gate.
+This is JPEG-only; there is no new strategy or gate. Reproduce with
+`just jpeg-cfl-check <label>`; logs live under `~/tmp/jxl-backlog/jpeg-cfl-*`.
+
+Validation: all 75 normal/strict/drift checks and 1,618 default library tests
+pass unchanged (29 existing library ignores). The broad `jpeg_` integration
+filter reports 17 passes, one existing ignore and 27 missing-input failures:
+legacy tests require `CODEC_CORPUS_DIR` and pre-generated
+`~/tmp/jpeg-reencoding/test*.jpg` files that are absent on this Mac. No test
+is skipped or relaxed to hide this configuration gap.
+The self-contained 53-fixture conformance gate passes (47 exact reconstructions,
+six expected clean rejections), as do both real-image RD regressions. Strict
+workspace Clippy retains the 40 baseline encoder errors and reports two
+pre-existing `chunks_exact_to_as_chunks` SIMD-test errors. The JPEG library/test
+lint pass without `-D warnings` reports no diagnostics in the changed CfL code
+or new reference test; no lint allowance was added.
+
+
 ### RESOLVED 2026-09-24: JPEG terminal restart markers (#120)
 
 [PROVEN] The encoder scanner discarded terminal RSTn markers after the final

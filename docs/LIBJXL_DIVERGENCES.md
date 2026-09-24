@@ -2022,6 +2022,18 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-09-24: JPEG CfL maximum tie selection
+
+`vardct/chroma_from_luma.rs::jpeg_cfl_search` now uses libjxl v0.12's rounded
+midpoint of the first and last maximal histogram buckets, including separated
+peaks (`enc_frame.cc::FindAvgIndexOfSumMaximum`). The previous first-maximum
+choice changed normal rendered pixels despite exact JPEG reconstruction.
+The `best_sum > offset_sum + 1` acceptance rule is unchanged. This correction
+applies to the existing JPEG transcode path independently of encoder strategy;
+no gate registry entry is added. Real-image single/multi-group reference
+coverage: `jpeg_cfl_reference_pixels_match_at_color_tile_boundaries`.
+
+
 ### 2026-09-24: JPEG EXIF orientation (#119)
 
  `jpeg/encode.rs::exif_orientation`

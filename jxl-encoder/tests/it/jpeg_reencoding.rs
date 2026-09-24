@@ -5,7 +5,7 @@ use jxl_encoder::jpeg::encode_jbrd;
 use jxl_encoder::jpeg::{encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, read_jpeg};
 
 /// Decode JXL data (bare codestream) with jxl-rs, returning (width, height, f32 RGB pixels).
-fn decode_jxl_rs(data: &[u8]) -> (usize, usize, Vec<f32>) {
+pub(super) fn decode_jxl_rs(data: &[u8]) -> (usize, usize, Vec<f32>) {
     use jxl::api::{
         JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
         JxlPixelFormat, ProcessingResult, states,
