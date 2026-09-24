@@ -2885,10 +2885,12 @@ This is oracle collection infrastructure, not a trained or qualified picker.
 The retained 16 cells vary LZ77/squeeze/patches; scalar knobs vary search
 budgets. That original v2 grid did not force RCT IDs, WP modes or palette choices as #24's
 proposed picker requires. No model, policy threshold or default changes.
-Next compare actual e7/e9 baselines and oracle candidates on content-stratified
-held-out inputs before training; use dense size coverage for a learned model.
-Single-worker timing is the default; concurrent-worker timing is not isolated
-latency. No compression or runtime improvement is claimed from the smoke cells.
+Owner decision on September 24: defer picker tuning and oracle qualification
+until the fleetwide encode run. That run must compare measured e7/e9 baselines
+and oracle candidates on content-stratified held-out inputs, with dense size
+coverage before fitting a learned model. Single-worker timing is the default;
+concurrent-worker timing is not isolated latency. No compression or runtime
+improvement is claimed from the smoke cells.
 
 Source audit of the next step: `forced_rct` and
 `with_modular_palette_colors(Some(0))` already cover RCT selection and palette
@@ -2899,8 +2901,20 @@ uses quality reach and encoded bytes, and does not read `encode_ms` or a time
 budget. A size-only bake cannot establish #24's wall target. Do not call the
 recovered harness a direct input to a time-budgeted trainer or silently replace
 that objective. The owner approved `forced_wp_mode: Option<u8>` and
-`ForcedWpModeOutOfRange` on September 24. No sibling trainer change has been
-applied.
+`ForcedWpModeOutOfRange` on September 24.
+
+The approved sibling trainer extension is now on `zenanalyze/main`:
+`01088356` adds `build_picker_dataset_with_time_budget` through the same loader
+and winner selector; `6bbcacb1` adds paired CLI/recipe time columns and records
+the constrained objective in training/export/evaluation manifests. Candidates
+must meet quality and measured encode time <= a consistent per-rendition budget.
+Bytes and scalar labels follow the same eligible winner; invalid timings or an
+image/target with no eligible candidate fail. Existing builders stay unchanged.
+All 27 standalone trainer tests, scoped formatting and all-target Clippy pass.
+The oracle TSV still needs a training view with measured e7 baselines, feature/
+selection overhead charged against the <=1.5x budget, and an e7 fallback.
+No model has been fitted, qualified or adopted. Tuning waits for the owner’s
+fleetwide encode run; no fleet launch is part of this infrastructure change.
 
 
 
