@@ -393,3 +393,14 @@ rd-monotonicity corpus='~/work/zen/imazen-26-png-v3/png-v3' args='':
       --example rd_monotonicity_gate -j 4 -- \
       {{corpus}} benchmarks/rd_monotonicity_2026-09-09.tsv --images 4 --size 512 \
       --efforts 3,5,7,9 {{args}}
+
+# Fully render progressive small/global and large/group alpha through both decoders.
+progressive-extras-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl"
+    export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features __expert --test it progressive_extras_preserve_alpha_in_both_decoders -- --nocapture > "$HOME/tmp/jxl-backlog/progressive-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/progressive-{{label}}.log"

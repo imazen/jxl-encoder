@@ -350,3 +350,51 @@ fn multigroup_patches_ref_frame_roundtrips_when_global_section_is_empty() {
     assert_eq!(ox_h, h);
     assert_eq!(decode_djxl(&bytes).dimensions(), (w, h));
 }
+
+/// Small extra channels belong in LfGlobal even when progressive passes give
+/// the frame a sectioned TOC. Larger alpha planes stay in the HF groups.
+#[cfg(feature = "__expert")]
+#[test]
+fn progressive_extras_preserve_alpha_in_both_decoders() {
+    use jxl_encoder::ProgressiveMode;
+    use jxl_encoder::api::EncoderStrategy;
+
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .expect("decode real screenshot fixture")
+        .to_rgba8();
+    for (w, h) in [(64, 32), (259, 133)] {
+        let mut pixels = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        for (x, y, pixel) in pixels.enumerate_pixels_mut() {
+            pixel[3] = if (x / 8 + y / 8) % 3 == 0 { 64 } else { 255 };
+        }
+        for strategy in [EncoderStrategy::Libjxl, EncoderStrategy::Zenjxl] {
+            for effort in [3, 4, 8] {
+                for mode in [
+                    ProgressiveMode::QuantizedAcFullAc,
+                    ProgressiveMode::DcVlfLfAc,
+                ] {
+                    let bytes = LossyConfig::new(1.0)
+                        .with_strategy(strategy.clone())
+                        .with_effort(effort)
+                        .with_progressive(mode)
+                        .encode(pixels.as_raw(), w, h, PixelLayout::Rgba8)
+                        .expect("encode progressive RGBA");
+                    eprintln!("progressive extras {w}x{h} e{effort} {mode:?} {strategy:?}");
+                    let (dw, dh, extras, decoded) = decode_jxl_rs_rgba8(&bytes);
+                    assert_eq!((dw, dh, extras), (w, h, 1));
+                    let reference = decode_djxl(&bytes);
+                    assert_eq!(reference.dimensions(), (w, h));
+                    for ((src, actual), reference) in pixels
+                        .as_raw()
+                        .chunks_exact(4)
+                        .zip(decoded.chunks_exact(4))
+                        .zip(reference.as_raw().chunks_exact(4))
+                    {
+                        assert_eq!(src[3], actual[3], "jxl-rs alpha");
+                        assert_eq!(src[3], reference[3], "djxl alpha");
+                    }
+                }
+            }
+        }
+    }
+}

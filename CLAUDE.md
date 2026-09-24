@@ -1079,16 +1079,20 @@ The e8+ branch consumes it. Do not describe this as a private-writer fallback
 or complete e8+ parity. Adding either a revert or a fallback changes output
 and was excluded from this zero-behavior-change cleanup.
 
-[PROVEN wiring mismatch; output impact not reproduced] Preparation checks
-one **DC** group and extra-channel dimensions, but not AC-group/pass count.
-Shared-stream emission occurs only under `num_groups == 1 &&
-num_dc_groups == 1 && num_passes == 1`. Progressive single-group frames and
-multi-group frames with small downshifted extras can therefore prepare a
-global subtree/token stream while the other emission branch writes an empty
-modular global section. This needs a separate behavior-fix investigation;
-no decode-failure or pixel-corruption claim is established here.
+[RESOLVED 2026-09-24, W45-RECON part 23] Small progressive RGBA
+frames prepared a global extra-channel stream but emitted an empty global
+section. The real frymire 64x32/e4/two-pass regression fails before the fix
+with jxl-rs `SectionTooShort`. LfGlobal assembly now serves both TOC layouts;
+globally coded extras are excluded from HF-group writes. The regression
+`progressive_extras_preserve_alpha_in_both_decoders` fully decodes single-
+and multi-group crops in jxl-rs and djxl and checks every alpha sample.
+Validation: 24 real-image cells pass, alongside unchanged 63 normal locks,
+5 strict byte-lock tests, 7 drift tests, 1,615 library tests and both RD
+regression tests. Clippy retains the same 26 baseline diagnostics.
+The earlier multi-group/downshifted-extras concern is currently unreachable
+through the lossy API, which explicitly rejects `dim_shift > 0`.
 
-The cleanup preserves both predicates. The single extras gate remains in
+The cleanup preserved both predicates; part 23 fixes the emission mismatch. The single extras gate remains in
 `gate_registry.rs`, consumed through `api.rs` and `EffortProfile`;
 `ac_meta_libjxl_tree` remains a structural dependency because it selects
 the merged exact tree at e8+. Removing that check changes custom gate

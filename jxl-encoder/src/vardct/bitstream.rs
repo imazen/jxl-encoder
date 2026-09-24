@@ -4445,93 +4445,109 @@ impl VarDctEncoder {
         }
         let w44_200_frame_header_end_bits = writer.bits_written();
 
+        // A shared strict stream already owns its extras. Otherwise build
+        // the optional squeeze transform once and use its partition below.
+        let squeeze_pipeline = if !extras.is_empty() && global_stream_state.is_none() {
+            self.maybe_build_alpha_squeeze_pipeline(extras, width, height)?
+        } else {
+            None
+        };
+        let squeeze_partition = squeeze_pipeline.as_ref().map(|p| p.partition(GROUP_DIM));
+        let extras_in_global = num_groups == 1 || global_stream_state.is_some();
+        let mut dc_global = BitWriter::with_capacity(4096);
+        self.write_dc_global(
+            params,
+            num_dc_groups,
+            &dc_built_code,
+            noise_params,
+            dc_lz77_params.as_ref(),
+            &block_ctx_map,
+            learned_tree_tokens.as_deref(),
+            patches,
+            splines,
+            dc_quant_custom,
+            &mut dc_global,
+        )?;
+
+        // Channel placement is independent of the TOC layout: a small
+        // image still carries extras in LfGlobal when AC is progressive.
+        if !extras.is_empty() {
+            if let Some((global_tokens, global_transforms)) = global_stream_state.as_ref() {
+                // Strict libjxl `EncodeStream(ModularGlobal)`
+                // (`enc_modular.cc:1337-1385`): GroupHeader with
+                // `use_global_tree = true`, all-default WP header,
+                // and the image's transform descriptors (the
+                // ChannelCompact `kPalette`s from
+                // `build_global_stream_image`), then the stream's
+                // tokens under the shared modular code.
+                dc_global.write(1, 1)?; // use_global_tree = true
+                dc_global.write(1, 1)?; // wp_header all_default
+                crate::modular::encode::write_num_transforms(
+                    &mut dc_global,
+                    global_transforms.len() as u32,
+                )?;
+                for t in global_transforms {
+                    crate::modular::encode::write_palette_transform(
+                        &mut dc_global,
+                        t.begin_c,
+                        1,
+                        t.nb_colors,
+                        0,
+                        0,
+                    )?;
+                }
+                dc_built_code.write_tokens(
+                    global_tokens,
+                    dc_lz77_params.as_ref(),
+                    &mut dc_global,
+                )?;
+            } else if num_groups == 1 {
+                // Normal writer, also used as the exact path's
+                // fallback when no shared global stream was prepared.
+                // Chunk-2 alpha squeeze opt-in (W14-4 follow-on):
+                // route a single alpha extra through the responsive=1
+                // squeeze pipeline instead of the raw-pixel quantizer.
+                // Engaged when `with_alpha_squeeze(true)` AND
+                // `alpha_distance > 0` AND the only extra is alpha.
+                // Multi-extra (alpha + depth, alpha + spot, …) and
+                // non-alpha-as-only-extra cases fall through to the
+                // existing raw-pixel writer until chunk-2.b lands.
+                if let Some(pipeline) = squeeze_pipeline.as_ref() {
+                    Self::write_modular_extras_alpha_squeezed(pipeline, &mut dc_global)?;
+                } else {
+                    // Compute per-channel lossy quantizers (libjxl parity).
+                    // Alpha-typed extras read `alpha_distance`; others stay
+                    // at `q == 1` (lossless) until per-channel `ec_distance`
+                    // is wired through the public API. All-1 vector keeps
+                    // the lossless bit-identical path, so the default
+                    // `alpha_distance = None` is byte-for-byte identical
+                    // regardless of how many non-alpha extras follow.
+                    let quantizers = self.compute_extras_pixel_quantizers(extras);
+                    Self::write_modular_extras_global_with_quant(
+                        extras,
+                        width,
+                        height,
+                        &quantizers,
+                        &mut dc_global,
+                    )?;
+                }
+            } else if let (Some(pipeline), Some(partition)) =
+                (squeeze_pipeline.as_ref(), squeeze_partition.as_ref())
+            {
+                Self::write_modular_extras_alpha_squeezed_global(
+                    pipeline,
+                    partition,
+                    &mut dc_global,
+                )?;
+            } else {
+                Self::write_modular_empty_global(&mut dc_global)?;
+            }
+        }
+
         let num_blocks = xsize_blocks * ysize_blocks;
         // Single combined section: only when 1 group AND 1 pass (non-progressive)
         if num_groups == 1 && num_dc_groups == 1 && num_passes == 1 {
             // Single-group: combine sections at the bit level
-            let mut dc_global = BitWriter::with_capacity(4096);
-            self.write_dc_global(
-                params,
-                num_dc_groups,
-                &dc_built_code,
-                noise_params,
-                dc_lz77_params.as_ref(),
-                &block_ctx_map,
-                learned_tree_tokens.as_deref(),
-                patches,
-                splines,
-                dc_quant_custom,
-                &mut dc_global,
-            )?;
-
-            // Single-group extras (alpha + any others): all data goes
-            // in the modular global sub-bitstream within the DC global
-            // section, after the VarDCT DC entropy code.
-            if !extras.is_empty() {
-                if let Some((global_tokens, global_transforms)) = global_stream_state.as_ref() {
-                    // Strict libjxl `EncodeStream(ModularGlobal)`
-                    // (`enc_modular.cc:1337-1385`): GroupHeader with
-                    // `use_global_tree = true`, all-default WP header,
-                    // and the image's transform descriptors (the
-                    // ChannelCompact `kPalette`s from
-                    // `build_global_stream_image`), then the stream's
-                    // tokens under the shared modular code.
-                    dc_global.write(1, 1)?; // use_global_tree = true
-                    dc_global.write(1, 1)?; // wp_header all_default
-                    crate::modular::encode::write_num_transforms(
-                        &mut dc_global,
-                        global_transforms.len() as u32,
-                    )?;
-                    for t in global_transforms {
-                        crate::modular::encode::write_palette_transform(
-                            &mut dc_global,
-                            t.begin_c,
-                            1,
-                            t.nb_colors,
-                            0,
-                            0,
-                        )?;
-                    }
-                    dc_built_code.write_tokens(
-                        global_tokens,
-                        dc_lz77_params.as_ref(),
-                        &mut dc_global,
-                    )?;
-                } else {
-                    // Normal writer, also used as the exact path's
-                    // fallback when no shared global stream was prepared.
-                    // Chunk-2 alpha squeeze opt-in (W14-4 follow-on):
-                    // route a single alpha extra through the responsive=1
-                    // squeeze pipeline instead of the raw-pixel quantizer.
-                    // Engaged when `with_alpha_squeeze(true)` AND
-                    // `alpha_distance > 0` AND the only extra is alpha.
-                    // Multi-extra (alpha + depth, alpha + spot, …) and
-                    // non-alpha-as-only-extra cases fall through to the
-                    // existing raw-pixel writer until chunk-2.b lands.
-                    let squeeze_pipeline =
-                        self.maybe_build_alpha_squeeze_pipeline(extras, width, height)?;
-                    if let Some(pipeline) = squeeze_pipeline {
-                        Self::write_modular_extras_alpha_squeezed(&pipeline, &mut dc_global)?;
-                    } else {
-                        // Compute per-channel lossy quantizers (libjxl parity).
-                        // Alpha-typed extras read `alpha_distance`; others stay
-                        // at `q == 1` (lossless) until per-channel `ec_distance`
-                        // is wired through the public API. All-1 vector keeps
-                        // the lossless bit-identical path, so the default
-                        // `alpha_distance = None` is byte-for-byte identical
-                        // regardless of how many non-alpha extras follow.
-                        let quantizers = self.compute_extras_pixel_quantizers(extras);
-                        Self::write_modular_extras_global_with_quant(
-                            extras,
-                            width,
-                            height,
-                            &quantizers,
-                            &mut dc_global,
-                        )?;
-                    }
-                }
-            }
-
             let mut dc_group = BitWriter::with_capacity(num_blocks * 10);
             self.write_dc_group_from_tokens(
                 0,
@@ -4623,58 +4639,7 @@ impl VarDctEncoder {
             // Multi-group: byte-aligned sections
             let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
 
-            // DC Global
-            let mut dc_global = BitWriter::with_capacity(4096);
-            self.write_dc_global(
-                params,
-                num_dc_groups,
-                &dc_built_code,
-                noise_params,
-                dc_lz77_params.as_ref(),
-                &block_ctx_map,
-                learned_tree_tokens.as_deref(),
-                patches,
-                splines,
-                dc_quant_custom,
-                &mut dc_global,
-            )?;
-            // Multi-group extras: write empty modular global sub-bitstream.
-            // Extra channels are NOT meta_or_small for >256px images,
-            // so no per-channel data belongs in the global section.
-            // The decoder still reads the GroupHeader + tree for the
-            // global section.
-            //
-            // Chunk-2.b alpha-squeeze opt-in: when the squeeze pipeline
-            // is engaged for a multi-group image, the LfGlobal section
-            // emits the `kSqueeze` transform descriptor + the
-            // sub-channels that fit fully under `GROUP_DIM`; per-DC-
-            // group sections later emit their LF sub-channels
-            // (min_shift ≥ 3, cropped to DC_GROUP_DIM regions);
-            // per-HF-group sections later emit their HF sub-channels
-            // (min_shift < 3, cropped to GROUP_DIM regions). Mirrors
-            // the libjxl-parity decoder partition in
-            // `dec_modular.cc:331-373`.
-            let squeeze_pipeline_mg = if !extras.is_empty() {
-                self.maybe_build_alpha_squeeze_pipeline(extras, width, height)?
-            } else {
-                None
-            };
-            let squeeze_partition_mg = squeeze_pipeline_mg
-                .as_ref()
-                .map(|p| p.partition(super::common::GROUP_DIM));
-            if !extras.is_empty() {
-                if let (Some(pipeline), Some(partition)) =
-                    (squeeze_pipeline_mg.as_ref(), squeeze_partition_mg.as_ref())
-                {
-                    Self::write_modular_extras_alpha_squeezed_global(
-                        pipeline,
-                        partition,
-                        &mut dc_global,
-                    )?;
-                } else {
-                    Self::write_modular_empty_global(&mut dc_global)?;
-                }
-            }
+            // LfGlobal was assembled above for both TOC layouts.
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
@@ -4694,11 +4659,13 @@ impl VarDctEncoder {
             // dc_global / ac_global slots get accumulated into
             // `global_group_codes[]` rather than written inline.
             let modular_dc_extras =
-                match (squeeze_pipeline_mg.as_ref(), squeeze_partition_mg.as_ref()) {
+                match (squeeze_pipeline.as_ref(), squeeze_partition.as_ref()) {
                     (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
                     _ => None,
                 };
 
+            // Global channels must not be emitted again in the HF groups.
+            let group_extras = if extras_in_global { &[][..] } else { extras };
             // Per-channel lossy quantizers (libjxl parity, all-`1`
             // vector keeps the lossless byte-identical path). Computed
             // once for the whole frame so all HF groups carry the same
@@ -4706,7 +4673,7 @@ impl VarDctEncoder {
             // Mixed extras: alpha gets `alpha_distance`-derived `q`,
             // every other type stays at `q == 1` until per-channel
             // `ec_distance` is wired through the public API.
-            let extras_quantizers: alloc::vec::Vec<u32> = if extras.is_empty() {
+            let extras_quantizers: alloc::vec::Vec<u32> = if group_extras.is_empty() {
                 alloc::vec::Vec::new()
             } else {
                 self.compute_extras_pixel_quantizers(extras)
@@ -4716,7 +4683,7 @@ impl VarDctEncoder {
             // to its GROUP_DIM region instead of the raw-pixel extras
             // writer. None = unchanged byte-identical no-squeeze path.
             let modular_hf_extras =
-                match (squeeze_pipeline_mg.as_ref(), squeeze_partition_mg.as_ref()) {
+                match (squeeze_pipeline.as_ref(), squeeze_partition.as_ref()) {
                     (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
                     _ => None,
                 };
@@ -4746,7 +4713,7 @@ impl VarDctEncoder {
                         &ac_section_tokens_per_pass,
                         &ac_built_codes,
                         &ac_lz77_params_per_pass,
-                        extras,
+                        group_extras,
                         &extras_quantizers,
                         modular_hf_extras,
                         width,
@@ -4994,9 +4961,8 @@ impl VarDctEncoder {
     /// The AC-metadata gate is a dependency: it selects the merged exact
     /// tree at e8+. Removing it would change custom gate combinations.
     ///
-    /// Known coverage gaps (left unchanged by cleanup): e8+ applies
-    /// ChannelCompact without libjxl's EstimateCost revert, and emission
-    /// consumes this prepared stream only for one group and one pass.
+    /// Known coverage gap: e8+ applies ChannelCompact without libjxl's
+    /// EstimateCost revert. Both TOC layouts consume the prepared stream.
     /// See CLAUDE.md's W45-RECON cleanup coverage findings.
     fn extras_global_stream_eligible(
         &self,
