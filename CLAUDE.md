@@ -2761,6 +2761,20 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: #110 LZ77 comparison evidence
+
+The old `scripts/lz77_hash_ab_join.py` called equal byte counts
+"byte-identical" and intersected cell keys, silently dropping missing cells.
+Its legacy TSVs have no hashes, so they establish size equality only.
+The analyzer now distinguishes size matches from SHA256 identity and refuses
+duplicate or unpaired cells. `examples/lz77_hash_ab.rs` retains each encoded
+file by SHA256, records its path and source SHA256, and keys sources by relative
+path rather than basename. `--verify-artifacts` checks the recorded bytes on disk.
+Six analyzer regressions include same-size/different-byte data and artifact
+corruption. `just lz77-artifact-check <label>` checks eight real frymire cells
+at 64 and 259 pixels, covering lossless u8/u16/f32 and lossy u16. This verifies
+the measurement records, not a new matcher or a performance improvement.
+
 ### 2026-09-24: legacy JPEG regression fixture provisioning
 
 The 27 missing-input failures reported during the CfL validation were setup

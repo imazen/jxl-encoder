@@ -40,6 +40,24 @@ libjxl-exact-cleanup-lint label:
     echo "Clippy log: $log_dir/clippy.log"
     nice -n 19 cargo clippy --workspace --all-targets --locked -- -D warnings > "$log_dir/clippy.log" 2>&1
 
+# Persist real-input LZ77 harness smoke outputs and verify every recorded hash.
+lz77-artifact-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    root="$HOME/tmp/jxl-backlog/{{label}}"
+    mkdir -p "$root/input"
+    cp jxl-encoder/tests/images/frymire-srgb.png "$root/input/"
+    jj log --no-graph -r @ -T 'commit_id ++ "\n"' > "$root/build.meta"
+    shasum -a 256 jxl-encoder/examples/lz77_hash_ab.rs scripts/lz77_hash_ab_join.py >> "$root/build.meta"
+    nice -n 19 python3 scripts/test_lz77_hash_ab_join.py > "$root/analyzer-tests.log" 2>&1
+    nice -n 19 cargo build --locked -p jxl-encoder --release --example lz77_hash_ab -j 4 > "$root/build.log" 2>&1
+    for size in 64 259; do
+        nice -n 19 target/release/examples/lz77_hash_ab "$root/input" "$root/$size.tsv" --images 1 --size "$size" --efforts 8 > "$root/$size.log" 2>&1
+        nice -n 19 python3 scripts/lz77_hash_ab_join.py "$root/$size.tsv" "$root/$size.tsv" --verify-artifacts > "$root/$size-verification.log" 2>&1
+        cat "$root/$size-verification.log"
+    done
+
 # Run RD regression test (encodes 6 images at d=0.25, d=0.5, d=1.0)
 rd-regression:
     cargo test -p jxl-encoder --test it clic2025::test_rd_regression -- --ignored --nocapture
