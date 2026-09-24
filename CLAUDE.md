@@ -2761,6 +2761,23 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: permanent pixel-loss dump regression
+
+The old `w45_loss_vs_dumped_inputs` test returned successfully without its
+local mask dump and only printed losses when the files existed. The three
+8×8 mask regions and nine error blocks are now frozen as f32 bit patterns in
+`jxl-encoder-simd/src/pixel_loss_fixtures.rs`, with original-file SHA256s.
+`pixel_domain_loss_frozen_blocks_match_eighth_power_sum` asserts each channel
+against a separately accumulated f64 sum of the f32 eighth-power terms, across
+packed/padded mask strides and every dispatch permutation available on the host.
+NaN padding makes out-of-region reads fail. Power, offset and stride mutations
+all fail the assertions. This checks the numerical kernel, not image quality
+or complete reference-encoder parity. Production arithmetic is unchanged.
+The SIMD suite passes 194/194; encoder lock/drift checks pass 75/75 and library
+tests pass 1,618 with 29 existing ignores. Logs:
+`~/tmp/jxl-backlog/pixel-loss-{fixtures,simd-suite,mutation-*}.log` and
+`~/tmp/jxl-exact-cleanup/pixel-loss-fixtures-2026-09-24/`.
+
 ### 2026-09-24: encoder lint repair for the exact bookmark
 
 The CI push filter currently excludes `libjxl-exact`; manual dispatch returned
