@@ -1070,6 +1070,18 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-24: JPEG feature build regression after strict tree refactoring
+
+[PROVEN] `cargo test --features jpeg-reencoding` at `0ca49f00` fails
+before tests run: `write_jpeg_transcode_context_tree` lost its entropy-builder
+import and JPEG's WP-tree caller omitted the new `libjxl_root_split` argument.
+The compile repair qualifies the existing builder and passes `false`, keeping
+the historical JPEG root split. The earlier issue #121 duplicate `limits`
+declarations are already absent on this branch; these are separate failures.
+The minimal `std,jpeg-reencoding` check passes, and the JBRD gate reconstructs
+47 fixtures exactly while cleanly rejecting six unsupported fixtures. CI now
+checks that feature combination and the reconstruction gate on Linux.
+
 ### 2026-09-24: W45-RECON cleanup coverage findings (behavior unchanged)
 
 [PROVEN by source inspection at `f4bfa242`] The requested e8+ palette-cost

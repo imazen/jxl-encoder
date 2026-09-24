@@ -658,7 +658,7 @@ pub fn write_jpeg_transcode_context_tree(
 
     // libjxl default `HistogramParams` → `uint_method = kBest` for the
     // tree code (`enc_ans_params.h`).
-    let code = build_entropy_code_from_token_groups(
+    let code = crate::entropy_coding::encode::build_entropy_code_from_token_groups(
         &[&tokens],
         NUM_TREE_CONTEXTS,
         false,

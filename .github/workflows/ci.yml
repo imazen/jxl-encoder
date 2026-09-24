@@ -57,6 +57,14 @@ jobs:
       - name: Run tests
         run: cargo test --locked --workspace --release
 
+      - name: Check minimal JPEG transcode feature combination
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo check --locked -p jxl-encoder --no-default-features --features std,jpeg-reencoding
+
+      - name: Test JPEG reconstruction contract
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance
+
       # Belt-and-suspenders: ensure the no_std + alloc path keeps
       # compiling. `jxl-encoder-simd` is `#![no_std]` unconditionally
       # and depends on `libm` for `f32` math (closes #38). Without

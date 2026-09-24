@@ -540,6 +540,7 @@ fn encode_jpeg_to_jxl_inner(
                 wp_num_ctx,
                 num_dc_groups,
                 crate::vardct::dc_tree_learn::AcMetaTreeKind::Ours,
+                false, // Preserve the JPEG path's historical root split.
             );
         Some((wp_tree, wrapped, total_ctx, dc_remap, ac_map))
     } else {
