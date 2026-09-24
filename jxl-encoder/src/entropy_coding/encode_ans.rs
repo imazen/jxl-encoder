@@ -386,7 +386,7 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
     };
     let track_value_freqs = data.track_value_freqs;
 
-    let allowed_cache = super::ans::AllowedCountsCache::new();
+    let allowed_cache = super::ans::AllowedCountsCache::shared();
     let ans_histograms: Vec<ANSEncodingHistogram> =
         crate::parallel::parallel_map(num_histograms, |h| {
             let mut counts: Vec<u32> = Vec::new();
@@ -424,7 +424,7 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
             ANSEncodingHistogram::from_histogram_cached(
                 &histo,
                 ans_strategy,
-                &allowed_cache,
+                allowed_cache,
                 libjxl_params,
             )
             .expect("ANS histogram normalization failed")
@@ -648,7 +648,7 @@ pub(crate) fn optimize_uint_configs_fast_from_freqs(
 
     let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
     let mut counts_buf: Vec<u32> = Vec::new();
-    let allowed_cache = super::ans::AllowedCountsCache::new();
+    let allowed_cache = super::ans::AllowedCountsCache::shared();
     let mut histo = crate::entropy_coding::histogram::Histogram::new();
 
     let dbg = std::env::var_os("__JXL_UINTCFG_PROBE").is_some();
@@ -709,7 +709,7 @@ pub(crate) fn optimize_uint_configs_fast_from_freqs(
             let population_cost = ANSEncodingHistogram::from_histogram_cached(
                 &histo,
                 ANSHistogramStrategy::Fast,
-                &allowed_cache,
+                allowed_cache,
                 libjxl_costs,
             )
             .map(|e| e.cost)
@@ -835,7 +835,7 @@ fn optimize_uint_configs_with_candidates(
 
     let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
     let mut counts_buf: Vec<u32> = Vec::new();
-    let allowed_cache = super::ans::AllowedCountsCache::new();
+    let allowed_cache = super::ans::AllowedCountsCache::shared();
     let mut histo = crate::entropy_coding::histogram::Histogram::new();
 
     let dbg = std::env::var_os("__JXL_UINTCFG_PROBE").is_some();
@@ -887,7 +887,7 @@ fn optimize_uint_configs_with_candidates(
             let population_cost = ANSEncodingHistogram::from_histogram_cached(
                 &histo,
                 ANSHistogramStrategy::Fast,
-                &allowed_cache,
+                allowed_cache,
                 libjxl_costs,
             )
             .map(|e| e.cost)
@@ -1573,13 +1573,13 @@ fn estimate_ctxmap_cost_libjxl(
     } else {
         cost += 3;
         let las = if lz77_params.is_some() { 8 } else { 7 };
-        let allowed = super::ans::AllowedCountsCache::new();
+        let allowed = super::ans::AllowedCountsCache::shared();
         for h in &clustered {
             cost += uint_cfg_bits(las);
             if let Ok(aeh) = super::ans::ANSEncodingHistogram::from_histogram_cached(
                 h,
                 ANSHistogramStrategy::Precise,
-                &allowed,
+                allowed,
                 true,
             ) {
                 cost += aeh.cost.ceil() as usize;
@@ -1651,7 +1651,7 @@ fn build_ctxmap_ans_candidate(
     use super::ans::{ANSEncodingHistogram, AllowedCountsCache, AnsDistribution};
     use super::histogram::Histogram as EnhancedHistogram;
     let new_config = HybridUintConfig::new(2, 0, 1);
-    let allowed_cache = AllowedCountsCache::new();
+    let allowed_cache = AllowedCountsCache::shared();
     let mut new_histograms = Vec::with_capacity(code.histograms.len());
     let mut new_distributions = Vec::with_capacity(code.distributions.len());
 
@@ -1688,7 +1688,7 @@ fn build_ctxmap_ans_candidate(
         let ans_hist = ANSEncodingHistogram::from_histogram_cached(
             &histo,
             ANSHistogramStrategy::Precise,
-            &allowed_cache,
+            allowed_cache,
             libjxl_log_alpha,
         )?;
         new_histograms.push(ans_hist);

@@ -2786,6 +2786,35 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: shared ANS normalization tables
+
+`AllowedCountsCache::new` constructs only input-independent allowed-count
+and fixed-point logarithm tables. Production histogram builders, uint-config
+trials and strict cluster-cost queries now borrow one immutable `OnceBox`.
+The public constructor, normalization arithmetic and strict/legacy cost flag
+are unchanged. Initialization may race; `OnceBox` retains one result and drops
+losing allocations. The retained data has fixed size and contains no pixels.
+
+The initial validation passes all 75 lock/drift checks, 1,618 library tests
+(29 existing ignores), default workspace all-target Clippy and the no-default-
+features build. The latter emits 30 warnings. The sectioned harness
+also reconstructs exact real-image pixels in both decoders at 64×64 and
+259×133; its six driver tests cover failures and alternating binary order.
+Both real-image RD regression tests pass unchanged. The interleaved bar has
+19/19 repeated binary pairs byte-identical. Timing does not establish a broad
+speedup: e9/t8's initial 1.027× paired median becomes 1.002× in seven follow-up
+pairs, with substantial variation. The e7 1.3× target remains unmet at t1/t8.
+[Measurements and scope](benchmarks/ans_tables_shared_2026-09-24.md).
+Logs: `~/tmp/jxl-exact-cleanup/shared-ans-2026-09-24/` and
+`~/tmp/jxl-backlog/shared-ans-*`.
+
+Source-history finding, kept separate from this allocation change:
+`0784632b` changed the normal kBest uint-config candidate cost from its earlier
+Shannon/header estimate to normalized ANS cost. The part-18 `libjxl_costs=false`
+branch preserves the pre-part-18 normalizer, not the pre-part-3 estimator.
+No estimator is reverted here. Attributing the September sectioned wall/byte
+change to that earlier cost change needs its own controlled comparison.
+
 ### 2026-09-24: sectioned performance harness evidence repair
 
 `scripts/sectioned_k_bar_cell.sh` previously used unpinned `cjxl`, ran all

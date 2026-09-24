@@ -1,0 +1,12 @@
+# sectioned_k_bar_cell.sh commit=87e2ffbddd7a1a55273c73d4067e81a6fe6eef2a host=mac date=2026-09-24T21:13:44Z reps=3
+# img=/Users/lilith/tmp/t3gate/bar_photo_3840x2160.png sha256=0e72993af2f43ba978b5f2cbb3e630dc4c537ea615de4fd9c3aa5734c67821c9 cjxl=/Users/lilith/work/zen/jxl-encoder/.ci-libjxl/tools/cjxl probe_sha256=483ff1da9a154915281d02f994d81426c6b4cfd182c4a7b1d05d0e107b34c475 artifacts=/Users/lilith/tmp/jxl-backlog/sectioned-bar-refresh-2026-09-24.artifacts
+cjxl v0.12.0 a7a9c78 [_NEON_] {AppleClang 21.0.0.21000101}
+Copyright (c) the JPEG XL Project
+# baseline_source=e4fa0ba091b64446eb48455d42f5ff560df3fae5 (recorded 87e2ffbd was an empty child)
+# reproduction=just sectioned-bar ~/tmp/jxl-backlog/sectioned-bar-refresh-2026-09-24.tsv ~/tmp/t3gate/bar_photo_3840x2160.png 3
+# build_reproduction=just sectioned-harness-build /Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml release
+# build_features=default,std,parallel,profile-phases; target-cpu=native NOT used
+# timing_scope=cjxl process wall; Rust warm encode wall (excludes PNG IO/artifact persistence)
+# verification=36/36 artifact SHA256s match; all repeats and t1/t8 agree per configuration
+# logs=/Users/lilith/tmp/jxl-backlog/sectioned-bar-refresh-2026-09-24.logs
+# scope=one real 3840x2160 photo; not a corpus or calibration sweep; no memory measurement

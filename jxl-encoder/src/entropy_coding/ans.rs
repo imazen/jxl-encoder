@@ -217,6 +217,14 @@ impl AllowedCountsCache {
         }
     }
 
+    /// Reuse the input-independent tables across encodes and histogram trials.
+    /// The retained table set has fixed size; it contains no image data.
+    pub(crate) fn shared() -> &'static Self {
+        static CACHE: once_cell::race::OnceBox<AllowedCountsCache> =
+            once_cell::race::OnceBox::new();
+        CACHE.get_or_init(|| alloc::boxed::Box::new(Self::new()))
+    }
+
     /// Get the allowed counts table for a given shift (0..ANS_LOG_TAB_SIZE-1).
     #[inline]
     fn table(&self, shift: u32) -> &AllowedShiftTable {
@@ -881,8 +889,8 @@ impl ANSEncodingHistogram {
         histo: &super::histogram::Histogram,
         strategy: ANSHistogramStrategy,
     ) -> Result<Self> {
-        let cache = AllowedCountsCache::new();
-        Self::from_histogram_cached(histo, strategy, &cache, false)
+        let cache = AllowedCountsCache::shared();
+        Self::from_histogram_cached(histo, strategy, cache, false)
     }
 
     /// Create from a Histogram using precomputed allowed counts tables.

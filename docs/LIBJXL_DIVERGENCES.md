@@ -1842,6 +1842,11 @@ strict flags (`libjxl_costs` plumbing through
    The uint-config optimizers take the flag too
    (`optimize_uint_configs_{fast,best,libjxl_best}_from_freqs`).
 
+   Allocation cleanup (2026-09-24): normalization callers share one immutable
+   `AllowedCountsCache` through `OnceBox`. Both strict and legacy tables are
+   retained; this changes neither cost formulas nor the `libjxl_costs` split.
+   The public constructor remains available. No strategy or gate was added.
+
 **Result**: `noise_512 e8 d4` is now **byte-identical to cjxl v0.12**
 (115451 B, 0 byte diffs — all 20 AC distributions, every small code and
 the ctx-map inner codes match the instrumented reference exactly).

@@ -1,0 +1,15 @@
+# sectioned_k_bar_cell.sh commit=9575070937bd22fa5a5431d4b49b4d5358557bd7 host=mac date=2026-09-24T21:32:07Z reps=3
+# img=/Users/lilith/tmp/t3gate/bar_photo_3840x2160.png sha256=0e72993af2f43ba978b5f2cbb3e630dc4c537ea615de4fd9c3aa5734c67821c9 cjxl=/Users/lilith/work/zen/jxl-encoder/.ci-libjxl/tools/cjxl probe_sha256=d2a1698ad8ed974ba2bc453772e1ef94348bbfc8468519b479f7e0210aabc896 artifacts=/Users/lilith/tmp/jxl-backlog/sectioned-cache-ab-2026-09-24.artifacts
+# baseline_probe=/Users/lilith/tmp/jxl-backlog/sectioned-bar-before-shared-tables sha256=483ff1da9a154915281d02f994d81426c6b4cfd182c4a7b1d05d0e107b34c475
+cjxl v0.12.0 a7a9c78 [_NEON_] {AppleClang 21.0.0.21000101}
+Copyright (c) the JPEG XL Project
+# baseline_source=e4fa0ba091b64446eb48455d42f5ff560df3fae5
+# candidate_source=9575070937bd22fa5a5431d4b49b4d5358557bd7 (same three entropy source files as the landed change)
+# timing_scope=Rust warm encode wall; cjxl process wall; no target-cpu=native
+# artifacts_and_full_logs=/Users/lilith/tmp/jxl-backlog/sectioned-cache-ab-2026-09-24.{artifacts,logs}
+# hostname=mac
+# repetitions=3 effort/thread_grid=7 9 / 1 8
+# reproduction=just sectioned-bar <fresh-out.tsv> ~/tmp/t3gate/bar_photo_3840x2160.png 3 ~/tmp/jxl-backlog/sectioned-bar-before-shared-tables
+# source_sha256=257e1978d9fc80064531c88bd114232cc5a1d73d9520f0f8489eb38b6985ca38 jxl-encoder/src/entropy_coding/ans.rs
+# source_sha256=3e6b9221cc733478f14e399f5c085eb6ac87ac592742c636a832a27c6047c239 jxl-encoder/src/entropy_coding/cluster.rs
+# source_sha256=f9a5f37888173212c74c2909f3b7b829b95c26e1fddd7bb43c2800bbf5f3e9a3 jxl-encoder/src/entropy_coding/encode_ans.rs

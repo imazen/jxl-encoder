@@ -46,8 +46,12 @@ sectioned-harness-check manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases -- -D warnings
 
-sectioned-harness-build manifest="Cargo.toml":
-    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo build --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases
+sectioned-harness-build manifest="Cargo.toml" profile="dev":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo build --profile "{{profile}}" --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases
+
+# Reproduce the sectioned wall bar, optionally interleaving a baseline binary.
+sectioned-bar out image reps="3" baseline="" efforts="7 9" threads="1 8":
+    TMPDIR="$HOME/tmp" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" SECTIONED_K_BASELINE_PROBE="{{baseline}}" nice -n 19 bash scripts/sectioned_k_bar_cell.sh "{{out}}" "{{image}}" "{{reps}}" "{{efforts}}" "{{threads}}"
 
 # Persist real-input LZ77 harness smoke outputs and verify every recorded hash.
 lz77-artifact-check label:

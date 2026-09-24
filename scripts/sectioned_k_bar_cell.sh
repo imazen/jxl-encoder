@@ -17,13 +17,27 @@
 # up to 15 % on this cell), t=1 cells are stable to ~2 %. Every repetition
 # is retained; calculate summary statistics from the TSV.
 #
-# Usage: sectioned_k_bar_cell.sh <out.tsv> <bar_crop.png> [reps]
+# Set SECTIONED_K_BASELINE_PROBE for an interleaved binary A/B of the default
+# policy instead of the within-binary k8/default comparison.
+# Usage: sectioned_k_bar_cell.sh <out.tsv> <bar_crop.png> [reps] [efforts] [threads]
 set -euo pipefail
 OUT="${1:?usage: sectioned_k_bar_cell.sh <out.tsv> <bar.png> [reps]}"
 IMG="${2:?bar crop png}"
 REPS="${3:-5}"
+EFFORTS="${4:-7 9}"
+THREADS="${5:-1 8}"
+[[ "$EFFORTS" =~ ^[1-9][0-9\ ]*$ && "$THREADS" =~ ^[1-9][0-9\ ]*$ ]] || {
+  echo "efforts and threads must be space-separated positive integers" >&2; exit 2;
+}
+for value in $EFFORTS $THREADS; do
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "invalid grid value: $value" >&2; exit 2; }
+done
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROBE="${SECTIONED_K_PROBE:-$ROOT/target/release/examples/sectioned_k_corpus}"
+BASE_PROBE="${SECTIONED_K_BASELINE_PROBE:-}"
+if [ -n "$BASE_PROBE" ]; then
+  [ -x "$BASE_PROBE" ] || { echo "baseline probe is not executable: $BASE_PROBE" >&2; exit 2; }
+fi
 [ -x "$PROBE" ] || { echo "build sectioned_k_corpus with std,parallel,profile-phases" >&2; exit 2; }
 [[ "$REPS" =~ ^[1-9][0-9]*$ ]] || { echo "reps must be positive" >&2; exit 2; }
 [ ! -e "$OUT" ] || { echo "refusing to overwrite $OUT" >&2; exit 2; }
@@ -43,6 +57,10 @@ mkdir -p "$LOG_DIR"
   printf '# img=%s sha256=%s cjxl=%s probe_sha256=%s artifacts=%s\n' "$IMG" \
     "$(shasum -a 256 "$IMG" | cut -d' ' -f1)" "$CJXL" \
     "$(shasum -a 256 "$PROBE" | cut -d' ' -f1)" "$ARTIFACT_DIR"
+  if [ -n "$BASE_PROBE" ]; then
+    printf '# baseline_probe=%s sha256=%s\n' "$BASE_PROBE" "$(shasum -a 256 "$BASE_PROBE" | cut -d' ' -f1)"
+  fi
+  printf '# efforts=%s threads=%s\n' "$EFFORTS" "$THREADS"
   cat "$LOG_DIR/cjxl-version.log"
 } > "${OUT}.meta"
 printf 'encoder\teffort\tthreads\tarm\trep\tbytes\twall_ms\tencoded_sha256\n' > "$OUT"
@@ -66,25 +84,45 @@ reference_cell() {
     "$(awk -v s="$seconds" 'BEGIN{printf "%.1f", s*1000}')" "$sha" >> "$OUT"
 }
 
-ours_cell() {
-  local log="$LOG_DIR/ours-e${E}-t${T}-r${r}.log"
-  local arms=(k8 default)
-  if (( r % 2 == 0 )); then arms=(default k8); fi
-  nice -n 19 "$PROBE" phases "$IMG" "$E" "$T" "${arms[@]}" > "$log" 2>&1
-  awk -v e="$E" -v t="$T" -v r="$r" '
+probe_cell() {
+  local binary="$1" encoder="$2"
+  shift 2
+  local arms=("$@")
+  local log="$LOG_DIR/${encoder}-e${E}-t${T}-r${r}.log"
+  nice -n 19 "$binary" phases "$IMG" "$E" "$T" "${arms[@]}" > "$log" 2>&1
+  awk -v enc="$encoder" -v expected="${arms[*]}" -v e="$E" -v t="$T" -v r="$r" '
     /^== / {a=$2; sub(":$", "", a); bytes[a]=$3; wall[a]=$5}
     /^artifact / {
       a=$2
       if (!(a in bytes) || bytes[a] <= 0 || length($3) != 64) exit 1
-      printf "ours\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e,t,a,r,bytes[a],wall[a],$3
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", enc,e,t,a,r,bytes[a],wall[a],$3
       seen[a]++
     }
-    END {if(seen["k8"] != 1 || seen["default"] != 1) exit 1}
+    END {
+      n=split(expected, arms, " ")
+      for(i=1;i<=n;i++) if(seen[arms[i]] != 1) exit 1
+    }
   ' "$log" >> "$OUT"
 }
 
-for E in 7 9; do
-  for T in 1 8; do
+ours_cell() {
+  if [ -n "$BASE_PROBE" ]; then
+    if (( r % 2 == 1 )); then
+      probe_cell "$BASE_PROBE" baseline default
+      probe_cell "$PROBE" ours default
+    else
+      probe_cell "$PROBE" ours default
+      probe_cell "$BASE_PROBE" baseline default
+    fi
+  else
+    local arms=(k8 default)
+    if (( r % 2 == 0 )); then arms=(default k8); fi
+    probe_cell "$PROBE" ours "${arms[@]}"
+  fi
+}
+
+for E in $EFFORTS; do
+  for T in $THREADS; do
     for ((r=1; r<=REPS; r++)); do
       # Alternate the reference/process order and the in-process arm order.
       if (( r % 2 == 1 )); then reference_cell; ours_cell

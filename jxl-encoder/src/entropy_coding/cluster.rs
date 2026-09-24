@@ -478,11 +478,11 @@ fn compute_cross_coding_cost(data: &Histogram, tree: &Histogram, alphabet_size: 
 /// table build fails.
 #[cfg(feature = "std")]
 fn accurate_ans_cost(h: &Histogram) -> Option<f32> {
-    let cache = super::ans::AllowedCountsCache::new();
+    let cache = super::ans::AllowedCountsCache::shared();
     super::ans::ANSEncodingHistogram::from_histogram_cached(
         h,
         super::ans::ANSHistogramStrategy::Fast,
-        &cache,
+        cache,
         true,
     )
     .ok()
