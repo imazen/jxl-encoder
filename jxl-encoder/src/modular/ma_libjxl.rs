@@ -705,8 +705,8 @@ impl TreeSamples {
             let v = pixel - predictions[pred as usize];
             self.residuals[i].push(residual_token(v));
         }
-        for i in 0..self.num_static_props {
-            let q = self.quantize_static_property(i, properties[i]);
+        for (i, &property) in properties[..self.num_static_props].iter().enumerate() {
+            let q = self.quantize_static_property(i, property);
             self.static_props[i].push(q);
         }
         for (i, &prop) in self
@@ -1332,8 +1332,8 @@ fn find_best_split(
         for pred in 0..num_predictors {
             let mut extra_bits = 0usize;
             let rtokens = tree_samples.rtokens(pred);
-            for i in begin..end {
-                let rt = rtokens[i];
+            for (offset, &rt) in rtokens[begin..end].iter().enumerate() {
+                let i = begin + offset;
                 let count = tree_samples.count(i);
                 let eb = rt.nbits as usize * count;
                 counts[pred * max_symbols + rt.tok as usize] += count as i32;
@@ -1400,8 +1400,8 @@ fn find_best_split(
                 let rtokens = tree_samples.rtokens(pred);
                 // CollectExtraBitsIncrease
                 if prop < tree_samples.num_static_props {
-                    for i2 in begin..end {
-                        let rt = rtokens[i2];
+                    for (offset, &rt) in rtokens[begin..end].iter().enumerate() {
+                        let i2 = begin + offset;
                         let cnt = tree_samples.count(i2);
                         let p = tree_samples.property(true, prop, i2);
                         let sym = rt.tok as usize;
@@ -1411,8 +1411,8 @@ fn find_best_split(
                     }
                 } else {
                     let prop_idx = prop - tree_samples.num_static_props;
-                    for i2 in begin..end {
-                        let rt = rtokens[i2];
+                    for (offset, &rt) in rtokens[begin..end].iter().enumerate() {
+                        let i2 = begin + offset;
                         let cnt = tree_samples.count(i2);
                         let p = tree_samples.property(false, prop_idx, i2);
                         let sym = rt.tok as usize;

@@ -1150,12 +1150,12 @@ pub(crate) fn write_context_map_nonsimple(
     // always take the ANS(+LZ77) form chosen between raw and MTF tokens.
     // In strict mode emit that form unconditionally; otherwise keep the
     // legacy shoot-out so non-strict output is unchanged.
-    if libjxl_log_alpha {
-        if let Some(buf) = ans_lz77_scratch {
-            let bits_to_copy = buf.bits_written();
-            let bytes = buf.finish_with_padding();
-            return copy_bits(&bytes, bits_to_copy, writer);
-        }
+    if libjxl_log_alpha
+        && let Some(buf) = ans_lz77_scratch
+    {
+        let bits_to_copy = buf.bits_written();
+        let bytes = buf.finish_with_padding();
+        return copy_bits(&bytes, bits_to_copy, writer);
     }
 
     // Strategy 1: legacy Huffman+MTF, write to scratch and measure cost.
@@ -1519,7 +1519,7 @@ fn estimate_ctxmap_cost_libjxl(
         let mut bits = ceil_log2_nonzero(las + 1); // split_exponent = 2
         if 2 != las {
             bits += ceil_log2_nonzero(3); // msb = 0
-            bits += ceil_log2_nonzero(2 - 0 + 1); // lsb = 1
+            bits += ceil_log2_nonzero(3); // lsb = 1
         }
         bits
     };

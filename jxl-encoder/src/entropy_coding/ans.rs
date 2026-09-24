@@ -846,6 +846,7 @@ pub struct ANSEncodingHistogram {
     /// - 0: flat distribution
     /// - 1: small code (only when `num_symbols <= 2`) OR shift=0 general
     /// - 2-13: shift value + 1 (general code)
+    ///
     /// libjxl shares this numbering: `method_ = min(shift, 11) + 1`, so
     /// method 1 is shift-0 general whenever `num_symbols > 2`.
     pub method: u32,
@@ -1587,9 +1588,9 @@ impl ANSEncodingHistogram {
         // scan lands on omit_pos regardless of its actual count. Symbols before
         // omit_pos get +1 so omit stays strictly first-maximal.
         let mut omit_width = 10u32;
-        for i in 0..self.alphabet_size {
+        for (i, &logcount) in logcounts[..self.alphabet_size].iter().enumerate() {
             if i != self.omit_pos && self.counts[i] > 0 {
-                omit_width = omit_width.max(logcounts[i] + (i < self.omit_pos) as u32);
+                omit_width = omit_width.max(logcount + (i < self.omit_pos) as u32);
             }
         }
         logcounts[self.omit_pos] = omit_width;

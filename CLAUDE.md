@@ -2761,6 +2761,16 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: encoder lint repair for the exact bookmark
+
+The CI push filter currently excludes `libjxl-exact`; manual dispatch returned
+HTTP 422 despite the branch's local workflow containing `workflow_dispatch`.
+The entropy/MA lint cleanup preserves indexed ranges, iteration order and
+short-circuit behavior. Its 75 lock/drift checks and 1,618 library tests pass
+(29 existing ignores); workspace all-target Clippy still reports the separate
+VarDCT, argument-count and test-helper diagnostics. No allowance or expected
+hash was changed. Logs: `~/tmp/jxl-exact-cleanup/lint-entropy-2026-09-24/`.
+
 ### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
 
 The post-v0.12 bucket matcher was implemented and screened at capacities
