@@ -1209,7 +1209,8 @@ and both real-image RD regressions pass unchanged. Strict workspace Clippy
 retains the baseline library diagnostics; warning-mode JPEG library/test
 Clippy finishes with no diagnostics in the new gain-map code or bundle helper.
 The newly enabled HDR test exposed a constant-chunk iteration lint; that test
-now uses fixed arrays with unchanged input values and assertions.
+now uses fixed arrays with unchanged input values and assertions. All 12 HDR
+unit tests pass; the `46dca8bd` commit message mistakenly says 16.
 
 ### 2026-09-24: JPEG feature build regression after strict tree refactoring
 
