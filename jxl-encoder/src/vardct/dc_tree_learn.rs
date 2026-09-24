@@ -2238,6 +2238,80 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     Vec<u32>,
     [u32; NUM_AC_META_CLASSES as usize],
 ) {
+    let (tokens, num_ctx, dc_remap, ac_meta_map, _) =
+        tree_tokens_with_ac_metadata_prefix_impl(
+            dc_tree,
+            learned_num_contexts,
+            num_dc_groups,
+            ac_meta_kind,
+            libjxl_root_split,
+            None,
+        );
+    (tokens, num_ctx, dc_remap, ac_meta_map)
+}
+
+/// [`tree_tokens_with_ac_metadata_prefix`] with a Global-stream subtree
+/// spliced in, mirroring libjxl `ComputeTree` + `MergeTrees` for the
+/// `[0, VarDCTDC)` Global chunk (`enc_modular.cc:656-668,1166-1220`).
+///
+/// `global_tree` is the learned `JxlTree` for stream 0 (`kLearn` at
+/// effort ≥ 4). The merged root becomes
+/// `prop1 > 0 → {ACMeta | DC subtree}`, `prop1 <= 0 → global subtree`,
+/// matching libjxl's `useful_splits = [0, 1, 1+2·ndg, num_streams]`
+/// merge (single-DC-group layout).
+///
+/// The last return element maps each `global_tree` leaf index to its
+/// merged-BFS context id (non-leaf entries are `u32::MAX`); the caller
+/// uses it to patch `context_id`s on the standalone global `Tree` it
+/// tokenizes stream 0 against.
+#[allow(clippy::too_many_arguments)]
+pub fn tree_tokens_with_ac_metadata_prefix_and_global(
+    dc_tree: &DcTree,
+    learned_num_contexts: u32,
+    num_dc_groups: usize,
+    ac_meta_kind: AcMetaTreeKind,
+    libjxl_root_split: bool,
+    global_tree: &crate::modular::ma_libjxl::JxlTree,
+) -> (
+    Vec<(u32, u32)>,
+    u32,
+    Vec<u32>,
+    [u32; NUM_AC_META_CLASSES as usize],
+    Vec<u32>,
+) {
+    let (tokens, num_ctx, dc_remap, ac_meta_map, global_ctx_map) =
+        tree_tokens_with_ac_metadata_prefix_impl(
+            dc_tree,
+            learned_num_contexts,
+            num_dc_groups,
+            ac_meta_kind,
+            libjxl_root_split,
+            Some(global_tree),
+        );
+    (
+        tokens,
+        num_ctx,
+        dc_remap,
+        ac_meta_map,
+        global_ctx_map.expect("global_ctx_map present when global_tree is"),
+    )
+}
+
+#[allow(clippy::type_complexity)]
+fn tree_tokens_with_ac_metadata_prefix_impl(
+    dc_tree: &DcTree,
+    learned_num_contexts: u32,
+    num_dc_groups: usize,
+    ac_meta_kind: AcMetaTreeKind,
+    libjxl_root_split: bool,
+    global_tree: Option<&crate::modular::ma_libjxl::JxlTree>,
+) -> (
+    Vec<(u32, u32)>,
+    u32,
+    Vec<u32>,
+    [u32; NUM_AC_META_CLASSES as usize],
+    Option<Vec<u32>>,
+) {
     use super::common::pack_signed;
     use alloc::collections::VecDeque;
 
@@ -2248,12 +2322,15 @@ pub fn tree_tokens_with_ac_metadata_prefix(
         AcMetaAll,   // single-leaf tree — every AC-meta class lands here
         Dummy,       // padding chain leaf (no tokens, wasted context)
         Dc(u32),     // original DC context from learned tree
+        Global(u32), // Global-stream leaf — index into `global_tree`
     }
 
     struct FlatNode {
         property: i32,
         splitval: i32,
         predictor: u32,
+        predictor_offset: i64,
+        multiplier: u32,
         left: usize,
         right: usize,
         leaf_type: LeafType,
@@ -2268,6 +2345,8 @@ pub fn tree_tokens_with_ac_metadata_prefix(
                 property: prop,
                 splitval: split,
                 predictor: 0,
+                predictor_offset: 0,
+                multiplier: 1,
                 left: l,
                 right: r,
                 leaf_type: LeafType::Dummy,
@@ -2281,6 +2360,8 @@ pub fn tree_tokens_with_ac_metadata_prefix(
             property: -1,
             splitval: 0,
             predictor: pred,
+            predictor_offset: 0,
+            multiplier: 1,
             left: 0,
             right: 0,
             leaf_type: lt,
@@ -2372,6 +2453,33 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     }
     let dc_root_idx = dc_start;
 
+    // ─── Build Global-stream subtree (strict libjxl extras path) ───
+    //
+    // `global_tree` uses the libjxl `JxlNode` convention
+    // (`lchild` = `>` side, `rchild` = `<=` side) — the same convention
+    // the flat builder uses (`left`/`right` = `>`/`<=`), so child
+    // indices map directly. Leaf `predictor_offset`/`multiplier`
+    // survive into the emitted leaf tokens.
+    let global_root_idx = global_tree.map(|gtree| {
+        let base = flat.len();
+        for (j, node) in gtree.iter().enumerate() {
+            if node.property < 0 {
+                let idx = mk_leaf(&mut flat, node.predictor as u32, LeafType::Global(j as u32));
+                flat[idx].predictor_offset = node.predictor_offset;
+                flat[idx].multiplier = node.multiplier;
+            } else {
+                mk_internal(
+                    &mut flat,
+                    node.property,
+                    node.splitval,
+                    base + node.lchild as usize, // JxlNode lchild = `>` side
+                    base + node.rchild as usize, // JxlNode rchild = `<=` side
+                );
+            }
+        }
+        base
+    });
+
     // ─── Build merged root ───
     //
     // No padding chain needed: we use a full context remap (dc_ctx_remap) that
@@ -2401,7 +2509,15 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     } else {
         num_dc_groups as i32
     };
-    let root = mk_internal(&mut flat, 1, root_splitval, ac_root, dc_root_idx);
+    let root = if let Some(global_root) = global_root_idx {
+        // With a Global stream in the merge, `useful_splits` starts at 0
+        // and `MergeTrees` wraps the ACMeta|DC split under a
+        // `prop1 > 0` outer split; stream 0 lands on the `<=` side.
+        let inner = mk_internal(&mut flat, 1, root_splitval, ac_root, dc_root_idx);
+        mk_internal(&mut flat, 1, 0, inner, global_root)
+    } else {
+        mk_internal(&mut flat, 1, root_splitval, ac_root, dc_root_idx)
+    };
 
     // ─── BFS to generate token stream and track context ID mapping ───
     //
@@ -2417,6 +2533,8 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     // AcMetaTreeKind::AcMeta, and a 0 would collide with a real context.
     let mut ac_meta_ctx_map = [u32::MAX; NUM_AC_META_CLASSES as usize];
     let mut dc_ctx_map = Vec::new();
+    let mut global_ctx_map =
+        global_tree.map(|gtree| alloc::vec![u32::MAX; gtree.len()]);
 
     // Emit root token
     let rn = &flat[root];
@@ -2428,12 +2546,21 @@ pub fn tree_tokens_with_ac_metadata_prefix(
         for child_idx in [flat[idx].left, flat[idx].right] {
             let cn = &flat[child_idx];
             if cn.property < 0 {
-                // Leaf: emit 5 tokens (property marker, predictor, offset, multiplier, unused)
+                // Leaf: emit 5 tokens — property marker, predictor,
+                // packed offset, multiplier (log + low bits). Mirrors
+                // libjxl `TokenizeTree` (`enc_ma.cc`): offset is
+                // PackSigned; the multiplier serializes as
+                // `Num0BitsBelowLS1Bit` + remaining low bits.
                 tokens.push((1, 0)); // property = -1 → encoded as 0
                 tokens.push((2, cn.predictor));
-                tokens.push((3, 0)); // offset
-                tokens.push((4, 0)); // multiplier
-                tokens.push((5, 0)); // unused
+                tokens.push((3, pack_signed(cn.predictor_offset as i32)));
+                // `Num0BitsBelowLS1Bit_Nonzero` = ctz for nonzero
+                // multipliers; multiplier is always >= 1 on valid
+                // leaves (learned trees never emit 0) — clamp so a
+                // corrupt 0 can't shift by 32.
+                let mul_log = cn.multiplier.trailing_zeros().min(31);
+                tokens.push((4, mul_log));
+                tokens.push((5, (cn.multiplier >> mul_log).saturating_sub(1)));
                 match cn.leaf_type {
                     LeafType::AcMeta(orig) => {
                         ac_meta_ctx_map[orig as usize] = leaf_ctx;
@@ -2443,6 +2570,10 @@ pub fn tree_tokens_with_ac_metadata_prefix(
                     }
                     LeafType::Dc(orig) => {
                         dc_ctx_map.push((orig, leaf_ctx));
+                    }
+                    LeafType::Global(j) => {
+                        global_ctx_map.as_mut().expect("global leaf without map")
+                            [j as usize] = leaf_ctx;
                     }
                     LeafType::Dummy => {}
                 }
@@ -2465,7 +2596,13 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     }
     let total_contexts = leaf_ctx;
 
-    (tokens, total_contexts, dc_ctx_remap, ac_meta_ctx_map)
+    (
+        tokens,
+        total_contexts,
+        dc_ctx_remap,
+        ac_meta_ctx_map,
+        global_ctx_map,
+    )
 }
 
 /// Build a context tree with AC metadata contexts only (no DC).

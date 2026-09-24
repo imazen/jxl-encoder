@@ -1105,6 +1105,18 @@ struct CropRegion {
     group_dim: usize,
 }
 
+/// A `kPalette` transform descriptor for the strict Global modular
+/// stream — libjxl `Transform{TransformId::kPalette}` as produced by
+/// the ChannelCompact special case of `FwdPaletteIteration`
+/// (`enc_palette.cc:192-278`): `num_c = 1`, `nb_deltas = 0`,
+/// `predictor = Predictor::Zero`.
+pub(crate) struct GlobalStreamTransform {
+    /// `begin_c` channel index in the post-transform channel list.
+    pub begin_c: usize,
+    /// `nb_colors` palette length (meta-channel width).
+    pub nb_colors: usize,
+}
+
 impl VarDctEncoder {
     /// Build a `FileHeader` for VarDCT encoding from current encoder settings.
     ///
@@ -3069,6 +3081,18 @@ impl VarDctEncoder {
             Vec<crate::modular::channel::ModularImage>,
             crate::modular::tree::Tree,
         )>;
+        // Strict-Libjxl Global stream (stream 0). When a single-DC-group
+        // frame carries extra channels whose coded size fits the group
+        // dimension, libjxl keeps them in the GlobalData stream —
+        // lossless (cjxl never sets `ec_distance`), palette-compacted by
+        // `try_palettes`' ChannelCompact (`enc_modular.cc:395-438`),
+        // learned under `kLearn` at effort 4-7 — and folds their tokens
+        // into the shared modular tree + entropy code ahead of VarDCTDC
+        // (`enc_frame.cc:1379-1384`). `Some` ⇒ (stream-0 tokens,
+        // transform descriptors); the tokens are the first group in the
+        // shared code's histogram input and are emitted as the
+        // `EncodeStream(ModularGlobal)` tail of LfGlobal.
+        let global_stream_state: Option<(Vec<Token>, Vec<GlobalStreamTransform>)>;
 
         if self.use_lf_frame {
             // AC-metadata-only tree (no DC contexts needed)
@@ -3080,6 +3104,7 @@ impl VarDctEncoder {
             wp_dc_state = None;
             learned_dc_state = None;
             merged_dc_state = None;
+            global_stream_state = None;
         } else if self.profile.ac_meta_libjxl_tree
             && self.effort >= DC_TREE_VARIABLE_TRIAL_MIN_EFFORT
         {
@@ -3144,6 +3169,42 @@ impl VarDctEncoder {
                     sharpness_map,
                 )?;
             }
+
+            // Strict Global stream 0 (extras): single-DC-group extras
+            // whose channels all fit `group_dim` stay in stream 0
+            // (`enc_modular.cc:1057-1066,1094-1098`), take
+            // `cparams_.options` verbatim for learning options
+            // (`enc_modular.cc:675`), and join the merged tree as the
+            // `[0, VarDCTDC)` chunk. `MaybePalette`/cost-gated
+            // transforms at effort >= 8 are NOT ported — the strict
+            // fixtures carry extras only at effort <= 7, where
+            // `maybe_do_transform` is unconditional
+            // (`speed_tier >= kSquirrel`); anything else keeps the
+            // legacy extras writer.
+            let global_transforms_e8: Option<Vec<GlobalStreamTransform>> =
+                if self.profile.extras_global_stream_libjxl
+                    && !extras.is_empty()
+                    && num_dc_groups == 1
+                    && extras.iter().all(|ec| {
+                        ec.channel_width(width) <= GROUP_DIM
+                            && (height >> ec.info.dim_shift) <= GROUP_DIM
+                    }) {
+                    let (gimg, gtransforms) = Self::build_global_stream_image(
+                        extras,
+                        width,
+                        height,
+                        self.budget.as_ref(),
+                    )?;
+                    stream_options[0] = crate::modular::ma_libjxl::global_stream_options(
+                        10 - self.effort as i32,
+                        num_streams,
+                        GROUP_DIM,
+                    );
+                    stream_images[0] = gimg;
+                    Some(gtransforms)
+                } else {
+                    None
+                };
 
             // `tree_splits_` (`enc_modular.cc:661-673`): six chunk
             // boundaries over the stream-id space; `compute_vardct_tree`
@@ -3223,6 +3284,26 @@ impl VarDctEncoder {
             wp_dc_state = None;
             learned_dc_state = None;
             merged_dc_state = Some((stream_images, tree));
+            // Tokenize stream 0 against the merged tree — leaf context
+            // ids are already the merged-BFS numbering, so no remap is
+            // needed (unlike the effort < 8 path below).
+            global_stream_state = match global_transforms_e8 {
+                Some(gtransforms) => {
+                    let (imgs, mtree) = merged_dc_state.as_ref().expect("just set");
+                    let toks =
+                        crate::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+                            &imgs[0],
+                            mtree,
+                            0,
+                            0,
+                            &crate::modular::predictor::WeightedPredictorParams::default(),
+                            self.budget.as_ref(),
+                            crate::modular::tree_learn::WpCacheMode::Off,
+                        )?;
+                    Some((toks, gtransforms))
+                }
+                None => None,
+            };
         } else if self.effort >= DC_TREE_VARIABLE_TRIAL_MIN_EFFORT
             || std::env::var_os("JXL_W44_171_FORCE_TRIAL_ALL_EFFORTS").is_some()
         {
@@ -3415,6 +3496,7 @@ impl VarDctEncoder {
                 learned_dc_state = None;
             }
             merged_dc_state = None;
+            global_stream_state = None;
         } else {
             // kWPFixedDC tree at effort <= 3.
             // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
@@ -3424,14 +3506,78 @@ impl VarDctEncoder {
             let (wp_dc_tree, wp_dc_num_contexts) =
                 super::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
 
-            let (wrapped_tokens, num_ctx, dc_remap, ctx_map) =
-                super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
-                    &wp_dc_tree,
-                    wp_dc_num_contexts,
-                    num_dc_groups,
-                    ac_meta_kind,
-                    self.profile.ma_root_split_2ndg,
+            // Strict libjxl Global stream (stream 0) at effort 4-7: cjxl
+            // packs single-group extras (lossless, ChannelCompacted)
+            // into stream 0 and learns a `kLearn` subtree for the Global
+            // chunk, merged under prop-1 stream-id splits ahead of
+            // ACMetadata/VarDCTDC (`enc_modular.cc:675-684,1186-1227`).
+            // Effort <= 3 gives stream 0 a `kWPFixedDC`/`kGradientFixedDC`
+            // predefined tree instead (`enc_modular.cc:676-680`) — not
+            // ported; the legacy extras writer stays there.
+            let strict_global = self.profile.extras_global_stream_libjxl
+                && self.profile.ac_meta_libjxl_tree
+                && self.effort >= 4
+                && num_dc_groups == 1
+                && !extras.is_empty()
+                && extras.iter().all(|ec| {
+                    ec.channel_width(width) <= GROUP_DIM
+                        && (height >> ec.info.dim_shift) <= GROUP_DIM
+                });
+            let global_built = if strict_global {
+                let (gimg, gtransforms) = Self::build_global_stream_image(
+                    extras,
+                    width,
+                    height,
+                    self.budget.as_ref(),
+                )?;
+                let num_passes_l =
+                    ProgressivePassConfig::from_mode(self.progressive).num_passes as usize;
+                let num_streams = 1
+                    + 3 * num_dc_groups
+                    + crate::modular::ma_libjxl::NUM_QUANT_TABLES
+                    + num_groups * num_passes_l;
+                let gopts = crate::modular::ma_libjxl::global_stream_options(
+                    10 - self.effort as i32,
+                    num_streams,
+                    GROUP_DIM,
                 );
+                let gtree = crate::modular::ma_libjxl::learn_tree(
+                    std::slice::from_ref(&gimg),
+                    std::slice::from_ref(&gopts),
+                    0,
+                    1,
+                )?;
+                Some((gimg, gtree, gtransforms))
+            } else {
+                None
+            };
+
+            let (wrapped_tokens, num_ctx, dc_remap, ctx_map, global_ctx_map) =
+                match global_built.as_ref() {
+                    Some((_, gtree, _)) => {
+                        let (t, n, r, m, g) =
+                            super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix_and_global(
+                                &wp_dc_tree,
+                                wp_dc_num_contexts,
+                                num_dc_groups,
+                                ac_meta_kind,
+                                self.profile.ma_root_split_2ndg,
+                                gtree,
+                            );
+                        (t, n, r, m, g)
+                    }
+                    None => {
+                        let (t, n, r, m) =
+                            super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                                &wp_dc_tree,
+                                wp_dc_num_contexts,
+                                num_dc_groups,
+                                ac_meta_kind,
+                                self.profile.ma_root_split_2ndg,
+                            );
+                        (t, n, r, m, Vec::new())
+                    }
+                };
 
             learned_tree_tokens = Some(wrapped_tokens);
             total_contexts = num_ctx;
@@ -3446,6 +3592,34 @@ impl VarDctEncoder {
             wp_dc_state = Some((wp_dc_tree, dc_remap));
             learned_dc_state = None;
             merged_dc_state = None;
+
+            // Tokenize stream 0 against a standalone conversion of the
+            // learned global subtree, with leaf `context_id`s patched
+            // to the merged-BFS numbering (`global_ctx_map` is indexed
+            // by `JxlTree` node index; `to_property_tree` preserves
+            // indices 1:1).
+            global_stream_state = match global_built {
+                Some((gimg, gtree, gtransforms)) => {
+                    let mut prop_tree = crate::modular::ma_libjxl::to_property_tree(&gtree);
+                    for (i, n) in prop_tree.iter_mut().enumerate() {
+                        if n.property < 0 {
+                            n.context_id = global_ctx_map[i];
+                        }
+                    }
+                    let toks =
+                        crate::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+                            &gimg,
+                            &prop_tree,
+                            0,
+                            0,
+                            &crate::modular::predictor::WeightedPredictorParams::default(),
+                            self.budget.as_ref(),
+                            crate::modular::tree_learn::WpCacheMode::Off,
+                        )?;
+                    Some((toks, gtransforms))
+                }
+                None => None,
+            };
         }
 
         let _t_tok_dc_setup = _t0.elapsed().as_secs_f64() * 1000.0;
@@ -3988,10 +4162,16 @@ impl VarDctEncoder {
         // the sequential build_codes phase.
         let base_ac_num_contexts = block_ctx_map.num_ac_contexts();
         let build_dc = || -> BuiltEntropyCode {
-            let dc_groups: Vec<&[Token]> = dc_tokens_per_group
-                .iter()
-                .chain(ac_metadata_tokens_per_group.iter())
-                .map(|v| v.as_slice())
+            // libjxl `ComputeTokens` concatenates per-stream token lists
+            // in stream-id order for the shared code's histograms —
+            // Global(0) first, then VarDCTDC, then ACMetadata
+            // (`enc_modular.cc:1275-1291`).
+            let dc_groups: Vec<&[Token]> = global_stream_state
+                .as_ref()
+                .map(|(t, _)| t.as_slice())
+                .into_iter()
+                .chain(dc_tokens_per_group.iter().map(|v| v.as_slice()))
+                .chain(ac_metadata_tokens_per_group.iter().map(|v| v.as_slice()))
                 .collect();
             // libjxl enc_ans.cc auto choice: prefix codes for tiny or
             // fully-deterministic streams (see
@@ -4354,34 +4534,65 @@ impl VarDctEncoder {
             // in the modular global sub-bitstream within the DC global
             // section, after the VarDCT DC entropy code.
             if !extras.is_empty() {
-                // Chunk-2 alpha squeeze opt-in (W14-4 follow-on):
-                // route a single alpha extra through the responsive=1
-                // squeeze pipeline instead of the raw-pixel quantizer.
-                // Engaged when `with_alpha_squeeze(true)` AND
-                // `alpha_distance > 0` AND the only extra is alpha.
-                // Multi-extra (alpha + depth, alpha + spot, …) and
-                // non-alpha-as-only-extra cases fall through to the
-                // existing raw-pixel writer until chunk-2.b lands.
-                let squeeze_pipeline =
-                    self.maybe_build_alpha_squeeze_pipeline(extras, width, height)?;
-                if let Some(pipeline) = squeeze_pipeline {
-                    Self::write_modular_extras_alpha_squeezed(&pipeline, &mut dc_global)?;
-                } else {
-                    // Compute per-channel lossy quantizers (libjxl parity).
-                    // Alpha-typed extras read `alpha_distance`; others stay
-                    // at `q == 1` (lossless) until per-channel `ec_distance`
-                    // is wired through the public API. All-1 vector keeps
-                    // the lossless bit-identical path, so the default
-                    // `alpha_distance = None` is byte-for-byte identical
-                    // regardless of how many non-alpha extras follow.
-                    let quantizers = self.compute_extras_pixel_quantizers(extras);
-                    Self::write_modular_extras_global_with_quant(
-                        extras,
-                        width,
-                        height,
-                        &quantizers,
+                if let Some((global_tokens, global_transforms)) = global_stream_state.as_ref() {
+                    // Strict libjxl `EncodeStream(ModularGlobal)`
+                    // (`enc_modular.cc:1337-1385`): GroupHeader with
+                    // `use_global_tree = true`, all-default WP header,
+                    // and the image's transform descriptors (the
+                    // ChannelCompact `kPalette`s from
+                    // `build_global_stream_image`), then the stream's
+                    // tokens under the shared modular code.
+                    dc_global.write(1, 1)?; // use_global_tree = true
+                    dc_global.write(1, 1)?; // wp_header all_default
+                    crate::modular::encode::write_num_transforms(
+                        &mut dc_global,
+                        global_transforms.len() as u32,
+                    )?;
+                    for t in global_transforms {
+                        crate::modular::encode::write_palette_transform(
+                            &mut dc_global,
+                            t.begin_c,
+                            1,
+                            t.nb_colors,
+                            0,
+                            0,
+                        )?;
+                    }
+                    dc_built_code.write_tokens(
+                        global_tokens,
+                        dc_lz77_params.as_ref(),
                         &mut dc_global,
                     )?;
+                } else {
+                    // Chunk-2 alpha squeeze opt-in (W14-4 follow-on):
+                    // route a single alpha extra through the responsive=1
+                    // squeeze pipeline instead of the raw-pixel quantizer.
+                    // Engaged when `with_alpha_squeeze(true)` AND
+                    // `alpha_distance > 0` AND the only extra is alpha.
+                    // Multi-extra (alpha + depth, alpha + spot, …) and
+                    // non-alpha-as-only-extra cases fall through to the
+                    // existing raw-pixel writer until chunk-2.b lands.
+                    let squeeze_pipeline =
+                        self.maybe_build_alpha_squeeze_pipeline(extras, width, height)?;
+                    if let Some(pipeline) = squeeze_pipeline {
+                        Self::write_modular_extras_alpha_squeezed(&pipeline, &mut dc_global)?;
+                    } else {
+                        // Compute per-channel lossy quantizers (libjxl parity).
+                        // Alpha-typed extras read `alpha_distance`; others stay
+                        // at `q == 1` (lossless) until per-channel `ec_distance`
+                        // is wired through the public API. All-1 vector keeps
+                        // the lossless bit-identical path, so the default
+                        // `alpha_distance = None` is byte-for-byte identical
+                        // regardless of how many non-alpha extras follow.
+                        let quantizers = self.compute_extras_pixel_quantizers(extras);
+                        Self::write_modular_extras_global_with_quant(
+                            extras,
+                            width,
+                            height,
+                            &quantizers,
+                            &mut dc_global,
+                        )?;
+                    }
                 }
             }
 
@@ -4811,15 +5022,177 @@ impl VarDctEncoder {
         Ok(())
     }
 
-    /// Write DC group section from pre-collected tokens (two-pass mode).
-    /// Write the modular global sub-bitstream for extras (alpha + others)
-    /// in single-group VarDCT frames.
+    /// Build the Global modular stream image for a single-group VarDCT
+    /// frame's extra channels — the libjxl `ModularFrameEncoder::Init`
+    /// global path (`enc_modular.cc:740-895`) reduced to what a VarDCT
+    /// extras-only Global stream can contain: `do_color == false` and
+    /// `cparams_.ec_distance` is `0` for every extra channel
+    /// (`cjxl_main.cc` never sets it), so extras are coded losslessly
+    /// (`modular_lossy == false`), which means:
+    ///   - no lossy quantization and no `responsive` squeeze, and
+    ///   - `ch.total_maxval <= max_nb_colors` in `try_palettes`
+    ///     (`enc_modular.cc:401-406`) reduces `maybe_do_transform` to
+    ///     the ChannelCompact gate `min(nb_pixels/16, 95% of range)
+    ///     >= distinct_count` with `channel_colors_percent = 95`.
     ///
-    /// For single-group images (≤256×256) every extra channel is
-    /// "meta_or_small" and travels together in the LfGlobal section,
-    /// in one sub-bitstream:
-    ///   GroupHeader → (use_global_tree=0 → local tree) →
-    ///   entropy code → channel-0 pixels → channel-1 pixels → …
+    /// Each successful transform sorts the channel's distinct values
+    /// into a meta channel (w = `nb_colors`, h = 1, `hshift = vshift =
+    /// -1`) inserted at the front of the channel list and replaces the
+    /// original channel with 0-based palette indices
+    /// (`enc_palette.cc:240-278`). Meta channels accumulate in reverse
+    /// insertion order (`channel.insert(begin())` per success), so the
+    /// last-transformed channel's meta channel sits at index 0.
+    ///
+    /// Returns the post-transform [`ModularImage`] plus the transform
+    /// descriptors in apply order; `begin_c` is the index channel's
+    /// position in the returned image's channel list.
+    fn build_global_stream_image(
+        extras: &[super::extras::VardctExtra<'_>],
+        image_width: usize,
+        image_height: usize,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> Result<(
+        crate::modular::channel::ModularImage,
+        alloc::vec::Vec<GlobalStreamTransform>,
+    )> {
+        use crate::modular::channel::{Channel, ModularImage};
+
+        // Materialize each extra as an i32 channel at its own
+        // resolution (`InitStreamInfo` per-channel dimensions).
+        let mut channels: Vec<Channel> = Vec::with_capacity(extras.len());
+        let mut bit_depth = 0u32;
+        for ec in extras {
+            let w = ec.channel_width(image_width);
+            let h = image_height >> ec.info.dim_shift;
+            let mut data = crate::budget::vec_with_capacity_fallible(
+                budget.is_some_and(|b| b.is_fallible()),
+                w * h,
+            )?;
+            for y in 0..h {
+                for x in 0..w {
+                    data.push(ec.data.sample(y * w + x));
+                }
+            }
+            channels.push(Channel::from_vec(data, w, h)?);
+            bit_depth = bit_depth.max(ec.info.bit_depth.bits_per_sample);
+        }
+
+        // `nb_pixels` is channel[0]'s pre-transform area
+        // (`enc_modular.cc:423`).
+        let nb_pixels = channels
+            .first()
+            .map(|c| c.width() * c.height())
+            .unwrap_or(0);
+
+        let mut metas: Vec<Channel> = Vec::new();
+        let mut coded: Vec<Channel> = Vec::with_capacity(channels.len());
+        let mut transforms: Vec<GlobalStreamTransform> = Vec::new();
+        for (i, ch) in channels.into_iter().enumerate() {
+            // ChannelCompact gate (`enc_modular.cc:420-426`): the
+            // distinct-count cap is `min(nb_pixels/16, 95% of range)`.
+            let (mut mn, mut mx) = (0i32, 0i32);
+            let mut have_pixel = false;
+            for y in 0..ch.height() {
+                for x in 0..ch.width() {
+                    let v = ch.get(x, y);
+                    if !have_pixel {
+                        mn = v;
+                        mx = v;
+                        have_pixel = true;
+                    } else {
+                        mn = mn.min(v);
+                        mx = mx.max(v);
+                    }
+                }
+            }
+            let range = if have_pixel {
+                (mx as i64 - mn as i64 + 1) as usize
+            } else {
+                0
+            };
+            // `enc_modular.cc:419-422`: `nb_colors = min(nb_pixels/16,
+            // channel_colors_percent/100. * colors)` with
+            // `channel_colors_percent = 95.f`; both factors truncate via
+            // `static_cast<int>`. `FwdPaletteIteration` rejects
+            // `nb_colors < 2` on the lossless single-channel path
+            // (`enc_palette.cc:182-184`), so a cap below 2 disables the
+            // transform entirely — a constant channel (range 1) never
+            // compacts.
+            let cap = (nb_pixels / 16).min((0.95 * range as f64) as usize);
+
+            // `FwdPaletteIteration` (`enc_palette.cc:196-237`) collects
+            // the distinct values into a `std::set` and bails the moment
+            // the count exceeds the cap — so an ordered set with early
+            // exit is exactly equivalent.
+            let mut colors: Option<Vec<i32>> = None;
+            if cap >= 2 {
+                let mut set = std::collections::BTreeSet::new();
+                let mut over = false;
+                'scan: for y in 0..ch.height() {
+                    for v in ch.row(y) {
+                        set.insert(*v);
+                        if set.len() > cap {
+                            over = true;
+                            break 'scan;
+                        }
+                    }
+                }
+                if !over {
+                    colors = Some(set.into_iter().collect());
+                }
+            }
+            match colors {
+                Some(pal) => {
+                    // `begin_c` is the transformed channel's index in
+                    // the channel list at apply time — data index plus
+                    // the metas already inserted in front
+                    // (`enc_modular.cc:414`).
+                    let begin_c = i + metas.len();
+                    // Meta channel inserted at position 0
+                    // (`enc_palette.cc:240-241`). libjxl marks metas
+                    // with `hshift = vshift = -1`; the u32::MAX sentinel
+                    // replicates both downstream behaviours it feeds —
+                    // `PrecomputeReferences` never matches a meta to a
+                    // real channel, and `CollectPixelSamples` exempts
+                    // `i < nb_meta_channels` from the `max_chan_size`
+                    // early break.
+                    let mut meta = Channel::from_vec(pal.clone(), pal.len(), 1)?;
+                    meta.hshift = u32::MAX;
+                    meta.vshift = u32::MAX;
+                    metas.push(meta);
+                    // Indices via `inv_color_lookup` are already sorted
+                    // — binary search reproduces them exactly.
+                    let idx_data: Vec<i32> = ch
+                        .data()
+                        .iter()
+                        .map(|&v| pal.partition_point(|&p| p < v) as i32)
+                        .collect();
+                    coded.push(Channel::from_vec(idx_data, ch.width(), ch.height())?);
+                    transforms.push(GlobalStreamTransform {
+                        begin_c,
+                        nb_colors: pal.len(),
+                    });
+                }
+                None => coded.push(ch),
+            }
+        }
+
+        // Meta channels sit at the front in reverse insertion order.
+        metas.reverse();
+        let mut all = metas;
+        all.extend(coded);
+
+        Ok((
+            ModularImage {
+                channels: all,
+                bit_depth: bit_depth.max(1),
+                is_grayscale: true,
+                has_alpha: false,
+            },
+            transforms,
+        ))
+    }
+
     /// Write the single-group extras sub-bitstream into the DC global
     /// section. Applies the lossy alpha integer pixel quantizer `q`
     /// when `q > 1`; `q == 1` preserves the lossless path bit-for-bit.

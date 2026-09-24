@@ -307,6 +307,10 @@ jxl_encoder_macros::strategy_def! {
             // kTortoise=1..kLightning=9 so it is effort >= 4).
             dc_encode_libjxl_parity = true,
             ac_meta_libjxl_tree = true,
+            // Strict parity: single-group extras coded losslessly in the
+            // GlobalData stream (stream 0) under the shared tree+code
+            // with ChannelCompact palettes, not a private sub-bitstream.
+            extras_global_stream_libjxl = true,
             // Strict parity: mirror borders + row-grouped accumulation
             // + f32 weight chain — libjxl `Symmetric5` bit-exact.
             gaborish_libjxl_parity = true,
@@ -456,6 +460,7 @@ jxl_encoder_macros::strategy_def! {
             // effort <= 7, plain round) — not a libjxl mirror.
             dc_encode_libjxl_parity = false,
             ac_meta_libjxl_tree = false,
+            extras_global_stream_libjxl = false,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
@@ -599,6 +604,7 @@ jxl_encoder_macros::strategy_def! {
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
             ac_meta_libjxl_tree = false,
+            extras_global_stream_libjxl = false,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
@@ -700,6 +706,7 @@ jxl_encoder_macros::strategy_def! {
             // mirror (see Section D row).
             dc_encode_libjxl_parity = false,
             ac_meta_libjxl_tree = false,
+            extras_global_stream_libjxl = false,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
             coeff_orders_libjxl_parity = false,
@@ -1606,6 +1613,32 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "ac_meta tree kind (libjxl kFalconACMeta/kACMeta/kLearn per-effort vs fixed subtree; W45-SPEC-1)",
         },
 
+        /// Single-group extra-channel coding site. Under
+        /// [`crate::api::EncoderStrategy::Libjxl`], extras whose channels
+        /// all fit `group_dim` in a single-DC-group frame are coded
+        /// losslessly in the GlobalData stream (stream 0):
+        /// `try_palettes`' ChannelCompact `kPalette` (unconditional at
+        /// `speed_tier >= kSquirrel`, i.e. effort <= 7), a `kLearn`
+        /// subtree merged into the shared MA tree, tokens folded into
+        /// the shared DC/AC-meta entropy code ahead of VarDCTDC, and a
+        /// `use_global_tree` GroupHeader emitted in LfGlobal
+        /// (`enc_modular.cc` Init/ComputeTree/EncodeStream,
+        /// `enc_frame.cc:1379-1384`). Zenjxl writes a private
+        /// use_global_tree=0 sub-bitstream with its own tree + code and
+        /// a lossy pixel quantizer — smaller on multi-colour alpha and
+        /// required for the alpha-squeeze pipeline. Section D.
+        ///
+        /// Coverage notes: effort <= 3 (stream-0 kWPFixedDC /
+        /// kGradientFixedDC) is NOT ported; at effort >= 8 the
+        /// `maybe_do_transform` EstimateCost revert gate is not ported
+        /// (the ChannelCompact applies unconditionally — correct unless
+        /// libjxl would revert it); multi-DC-group frames and channels
+        /// exceeding `group_dim` keep the legacy writer.
+        extras_global_stream_libjxl: bool {
+            divergence_section = "D",
+            divergence_row_ref = "extra channel coding site (libjxl GlobalData stream 0 lossless + ChannelCompact + shared tree/code vs private sub-bitstream + lossy quantizer; W45-RECON part 21)",
+        },
+
         /// Whether the gaborish 5x5 inverse uses the libjxl-bit-exact
         /// `Symmetric5` kernel instead of the shipping SIMD kernel.
         ///
@@ -2129,6 +2162,13 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "ac_meta tree kind (libjxl kFalconACMeta/kACMeta/kLearn per-effort vs fixed subtree; W45-SPEC-1)",
         raw: __CUSTOM_DIVERGENCE_AC_META_LIBJXL_TREE,
+    },
+    // Section D — extras Global-stream coding site (W45-RECON part 21)
+    DivergenceEntry {
+        gate_name: "extras_global_stream_libjxl",
+        section: "D",
+        row_ref: "extra channel coding site (libjxl GlobalData stream 0 lossless + ChannelCompact + shared tree/code vs private sub-bitstream + lossy quantizer; W45-RECON part 21)",
+        raw: __CUSTOM_DIVERGENCE_EXTRAS_GLOBAL_STREAM_LIBJXL,
     },
     // Section D — gaborish 5x5 kernel parity (2026-09-17)
     DivergenceEntry {

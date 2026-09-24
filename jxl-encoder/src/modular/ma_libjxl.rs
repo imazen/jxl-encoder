@@ -105,6 +105,41 @@ pub(crate) struct LibjxlModularOptions {
     pub max_chan_size: usize,
 }
 
+/// `cparams_.options` resolution shared by every VarDCT modular stream:
+/// the non-squeeze `splitting_heuristics_properties` order (with the
+/// "few groups → no group property" deletion) and the per-tier
+/// `max_property_values`/`nb_mul` knobs (`enc_modular.cc:438-560`).
+///
+/// `tier` is libjxl's `SpeedTier` (`10 - effort`). `nb_mul` scales the
+/// 0.5 `nb_repeats` base (`enc_modular.cc:555-559`).
+fn tier_splitting_props(tier: i32, num_streams: usize) -> (Vec<u32>, usize, f32) {
+    const K_TORTOISE: i32 = 1;
+    const K_KITTEN: i32 = 2;
+    const K_SQUIRREL: i32 = 3;
+    // Non-squeeze prop order (`responsive == 0` — `ModularPartIsLossless()`
+    // is true for VarDCT so `responsive` resolves to 0).
+    let prop_order: Vec<u32> = vec![0, 1, 15, 9, 10, 11, 12, 13, 14, 2, 3, 4, 5, 6, 7, 8];
+    // "if few groups, don't use group as a property" — `num_streams < 30
+    // && tier > kTortoise && cparams_orig.ModularPartIsLossless()`.
+    let mut prop_order = prop_order;
+    if num_streams < 30 && tier > K_TORTOISE {
+        prop_order.remove(1);
+    }
+    // `max_properties` is 0 by default → no reference-channel properties.
+    match tier {
+        // kGlacier / kTortoise
+        t if t <= K_TORTOISE => (prop_order.clone(), 256usize, 1.3f32),
+        K_KITTEN => (prop_order[..10].to_vec(), 128usize, 1.1f32),
+        K_SQUIRREL => (prop_order[..7].to_vec(), 96usize, 1.0f32),
+        // kWombat
+        4 => (prop_order[..5].to_vec(), 64usize, 0.7f32),
+        // kHare
+        5 => (prop_order[..4].to_vec(), 48usize, 0.5f32),
+        // kCheetah and faster
+        _ => (prop_order[..3].to_vec(), 32usize, 0.3f32),
+    }
+}
+
 /// Build the resolved per-tier `ModularOptions` for a VarDCT frame,
 /// mirroring `ModularFrameEncoder::Init` + `AddVarDCTDC`/`AddACMetadata`
 /// overrides (`enc_modular.cc`).
@@ -120,31 +155,7 @@ pub(crate) fn vardct_stream_options(
     tier: i32,
     num_streams: usize,
 ) -> (LibjxlModularOptions, LibjxlModularOptions) {
-    const K_TORTOISE: i32 = 1;
-    const K_KITTEN: i32 = 2;
-    const K_SQUIRREL: i32 = 3;
-    // Non-squeeze prop order (`responsive == 0` — `ModularPartIsLossless()`
-    // is true for VarDCT so `responsive` resolves to 0).
-    let prop_order: Vec<u32> = vec![0, 1, 15, 9, 10, 11, 12, 13, 14, 2, 3, 4, 5, 6, 7, 8];
-    // "if few groups, don't use group as a property" — `num_streams < 30
-    // && tier > kTortoise && cparams_orig.ModularPartIsLossless()`.
-    let mut prop_order = prop_order;
-    if num_streams < 30 && tier > K_TORTOISE {
-        prop_order.remove(1);
-    }
-    // `max_properties` is 0 by default → no reference-channel properties.
-    let (properties, max_property_values, nb_mul) = match tier {
-        // kGlacier / kTortoise
-        t if t <= K_TORTOISE => (prop_order.clone(), 256usize, 1.3f32),
-        K_KITTEN => (prop_order[..10].to_vec(), 128usize, 1.1f32),
-        K_SQUIRREL => (prop_order[..7].to_vec(), 96usize, 1.0f32),
-        // kWombat
-        4 => (prop_order[..5].to_vec(), 64usize, 0.7f32),
-        // kHare
-        5 => (prop_order[..4].to_vec(), 48usize, 0.5f32),
-        // kCheetah and faster
-        _ => (prop_order[..3].to_vec(), 32usize, 0.3f32),
-    };
+    let (properties, max_property_values, nb_mul) = tier_splitting_props(tier, num_streams);
     let nb_repeats = (0.5f32 * nb_mul).min(1.0);
     // `75 + 14*tier + 10*decoding_speed_tier` (decoding_speed_tier = 0).
     let node_threshold = (75 + 14 * tier) as f32;
@@ -181,6 +192,34 @@ pub(crate) fn vardct_stream_options(
         max_chan_size: 0xFF_FFFF,
     };
     (dc, ac_meta)
+}
+
+/// `stream_options_[0]` — the GlobalData stream takes `cparams_.options`
+/// verbatim (`enc_modular.cc:675`), i.e. the state after the VarDCT
+/// `modular_mode == false` overrides above it: predictor resolved to
+/// `Predictor::Gradient` for lossy non-responsive VarDCT
+/// (`enc_modular.cc:634-636`), `fast_decode_multiplier = 1.0`
+/// (`enc_modular.cc:659`), and `max_chan_size = frame_dim_.group_dim`
+/// (`enc_modular.cc:669`). `tree_kind` stays `kLearn` — the
+/// `kWPFixedDC`/`kGradientFixedDC` overrides only fire at effort 3/2
+/// (`enc_modular.cc:676-680`), outside the learned-tree range this
+/// resolves for.
+pub(crate) fn global_stream_options(
+    tier: i32,
+    num_streams: usize,
+    group_dim: usize,
+) -> LibjxlModularOptions {
+    let (properties, max_property_values, nb_mul) = tier_splitting_props(tier, num_streams);
+    LibjxlModularOptions {
+        predictor: StreamPredictor::Single(Predictor::Gradient),
+        wp_tree_mode: WpTreeMode::Default,
+        properties,
+        nb_repeats: (0.5f32 * nb_mul).min(1.0),
+        max_property_values,
+        node_threshold: (75 + 14 * tier) as f32,
+        fast_decode_multiplier: 1.0,
+        max_chan_size: group_dim,
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -878,7 +917,13 @@ fn collect_pixel_samples(
     let mut total_pixels = 0usize;
     let mut channel_ids: Vec<usize> = Vec::new();
     for (i, ch) in image.channels.iter().enumerate() {
-        if ch.width() > options.max_chan_size || ch.height() > options.max_chan_size {
+        // libjxl gates the early break on `i >= nb_meta_channels`
+        // (`enc_ma.cc` CollectPixelSamples): meta channels are exempt.
+        // Our `ModularImage` marks metas with `hshift == u32::MAX`
+        // (libjxl's `-1` sentinel) instead of carrying a count.
+        if ch.hshift != u32::MAX
+            && (ch.width() > options.max_chan_size || ch.height() > options.max_chan_size)
+        {
             break;
         }
         if ch.width() <= 1 || ch.height() == 0 {
@@ -1044,15 +1089,15 @@ fn gather_tree_data(
 #[derive(Clone, Copy)]
 pub(crate) struct JxlNode {
     /// -1 = leaf.
-    property: i32,
-    splitval: i32,
+    pub(crate) property: i32,
+    pub(crate) splitval: i32,
     /// `> splitval` side.
-    lchild: u32,
+    pub(crate) lchild: u32,
     /// `<= splitval` side.
-    rchild: u32,
-    predictor: Predictor,
-    predictor_offset: i64,
-    multiplier: u32,
+    pub(crate) rchild: u32,
+    pub(crate) predictor: Predictor,
+    pub(crate) predictor_offset: i64,
+    pub(crate) multiplier: u32,
 }
 
 impl JxlNode {

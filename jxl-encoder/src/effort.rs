@@ -1043,6 +1043,20 @@ pub struct EffortProfile {
     /// size at fast efforts). See `docs/LIBJXL_DIVERGENCES.md`.
     pub ac_meta_libjxl_tree: bool,
 
+    /// Code small extra channels losslessly in the GlobalData modular
+    /// stream (stream 0) under the shared merged tree + shared entropy
+    /// code, with ChannelCompact palette compaction — libjxl's
+    /// `PrepareStreamParams`/`FwdPaletteIteration`/`EncodeStream`
+    /// single-group path (`enc_modular.cc:397+`). Our default writer
+    /// emits a private `use_global_tree=0` extra sub-bitstream with a
+    /// lossy quantizer instead.
+    ///
+    /// Coverage: single-DC-group frames whose extra channels all fit
+    /// `group_dim`; the ChannelCompact unconditional-apply regime
+    /// (`speed_tier <= kThunder`, effort <= 7). Other cases keep the
+    /// legacy writer. See `docs/LIBJXL_DIVERGENCES.md` section D.
+    pub extras_global_stream_libjxl: bool,
+
     /// Run the libjxl-bit-exact gaborish 5x5 inverse
     /// (`jxl_simd::gaborish_5x5_channel_libjxl`) instead of the shipping
     /// SIMD kernel. The parity variant reproduces `convolve_symmetric5.cc`
@@ -1840,6 +1854,7 @@ impl EffortProfile {
             // from Phase 7 are kept (quality-neutral with the flag off).
             use_libjxl_wp_dc_quant: false,
             ac_meta_libjxl_tree: false,
+            extras_global_stream_libjxl: false,
             gaborish_libjxl_kernel: false,
             entropy_codes_libjxl_parity: false,
             coeff_orders_libjxl_parity: false,
@@ -2028,6 +2043,7 @@ impl EffortProfile {
             // DC quantization at all, so the QuantizeWP shape is N/A.
             use_libjxl_wp_dc_quant: false,
             ac_meta_libjxl_tree: false,
+            extras_global_stream_libjxl: false,
             gaborish_libjxl_kernel: false,
             entropy_codes_libjxl_parity: false,
             coeff_orders_libjxl_parity: false,
@@ -2896,6 +2912,21 @@ impl EffortProfile {
     ) {
         if resolved.ac_meta_libjxl_tree {
             self.ac_meta_libjxl_tree = true;
+        }
+    }
+
+    /// Apply the extras Global-stream libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::extras_global_stream_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables the lossless GlobalData-stream coding site for small
+    /// extra channels (see [`Self::extras_global_stream_libjxl`]).
+    pub(crate) fn apply_extras_global_stream_libjxl_parity(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.extras_global_stream_libjxl {
+            self.extras_global_stream_libjxl = true;
         }
     }
 

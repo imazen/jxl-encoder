@@ -3197,6 +3197,12 @@ impl LossyConfig {
             // kLearn-at-e8+ policy) in place of our fixed subtree.
             // NO-OP on every other strategy.
             p.apply_ac_meta_tree_libjxl_parity(&resolved);
+            // Extras Global-stream parity: under
+            // `EncoderStrategy::Libjxl` codes small extra channels
+            // losslessly in stream 0 (GlobalData) under the shared
+            // merged tree + shared entropy code with ChannelCompact
+            // palette compaction. NO-OP on every other strategy.
+            p.apply_extras_global_stream_libjxl_parity(&resolved);
             // Gaborish kernel parity: under
             // `EncoderStrategy::Libjxl` runs the `Symmetric5`-bit-exact
             // variant (mirror borders, row-grouped accumulation, f32
