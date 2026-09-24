@@ -2761,6 +2761,28 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: legacy JPEG regression fixture provisioning
+
+The 27 missing-input failures reported during the CfL validation were setup
+failures. `jpeg_fixture_setup` now obtains imageflow and jpeg-conformance via
+codec-corpus and generates the named real-image subsampling fixtures through
+libjpeg-turbo `cjpeg`. It checks dimensions, sampling and component count,
+preserves pre-existing differing fixture files, and reports every generated
+file. `just jpeg-legacy-check <label>` provisions before testing; CI follows
+the same caller-controlled order. No missing-corpus runtime skip was added.
+
+All 31 `jpeg_reencoding` tests pass with zero ignores. The old roof-photo
+ignore was stale: full jxl-rs rendering and exact djxl reconstruction both
+pass. The two early JBRD tests now fail when djxl exits unsuccessfully; their
+old branches only logged the error and returned success. Subsampling
+reconstruction checks now also fully render through jxl-rs. Logs and generated
+inputs: `~/tmp/jxl-backlog/jpeg-legacy-strict/`. Ordinary encoder bytes and
+all existing sample/byte assertions are unchanged. Injecting a decoder that
+passes the version check but exits 37 makes all three JBRD roundtrip tests
+fail, including the two formerly false-positive cases; the intentional failure
+log is `~/tmp/jxl-backlog/jpeg-legacy-failure-injection.log`.
+
+
 ### 2026-09-24: W45-RECON cleanup validation
 
 Part 22.1 shares Global/DC/AC modular option defaults and retains the

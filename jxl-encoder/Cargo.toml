@@ -3342,3 +3342,8 @@ path = "examples/qm_dump.rs"
 [[example]]
 name = "w45_p21_perf_ab"
 path = "examples/w45_p21_perf_ab.rs"
+
+[[example]]
+name = "jpeg_fixture_setup"
+path = "examples/jpeg_fixture_setup.rs"
+required-features = ["std", "jpeg-reencoding"]

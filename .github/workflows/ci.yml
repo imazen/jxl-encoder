@@ -65,12 +65,20 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance
 
-      - name: Test JPEG orientation and reconstruction
+      - name: Provision legacy JPEG reconstruction fixtures
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_exif_orientation_preserves_display_and_reconstruction
-      - name: JPEG terminal restart marker reconstruction
+        shell: bash
+        run: |
+          sudo apt-get install -y libjpeg-turbo-progs
+          mkdir -p "$HOME/tmp/jpeg-legacy"
+          export JXL_ENCODER_OUTPUT_DIR="$HOME/tmp/jpeg-legacy/encoder"
+          cargo run --locked -p jxl-encoder --features jpeg-reencoding --example jpeg_fixture_setup -- "$HOME/tmp/jpeg-legacy/corpus-root"
+          echo "JXL_ENCODER_OUTPUT_DIR=$JXL_ENCODER_OUTPUT_DIR" >> "$GITHUB_ENV"
+          echo "CODEC_CORPUS_DIR=$(cat "$HOME/tmp/jpeg-legacy/corpus-root")" >> "$GITHUB_ENV"
+
+      - name: JPEG reconstruction, orientation, subsampling and restart markers
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_terminal_restart_markers_roundtrip
+        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_reencoding:: -- --test-threads=1
 
       - name: JPEG gain-map metadata, pixels and reconstruction
         if: matrix.os == 'ubuntu-latest'

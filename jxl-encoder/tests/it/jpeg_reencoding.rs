@@ -535,10 +535,7 @@ fn test_jbrd_roundtrip_small() {
             panic!("JPEG reconstruction not byte-exact!");
         }
     } else {
-        let exit_code = djxl.status.code().unwrap_or(-1);
-        eprintln!("djxl --reconstruct_jpeg failed (exit code {exit_code})");
-        eprintln!("This is expected initially — JBRD serialization may need debugging.");
-        // Don't panic here yet — we'll fix JBRD errors iteratively
+        panic!("djxl --reconstruct_jpeg failed: {stderr}");
     }
 }
 
@@ -604,19 +601,15 @@ fn test_jbrd_roundtrip_landscape() {
             panic!("JPEG reconstruction not byte-exact!");
         }
     } else {
-        let exit_code = djxl.status.code().unwrap_or(-1);
-        eprintln!("djxl --reconstruct_jpeg failed (exit code {exit_code})");
+        panic!("djxl --reconstruct_jpeg failed: {stderr}");
     }
 }
 
 /// Test JBRD roundtrip on larger, real-world JPEGs.
-/// Note: JBRD serialization is proven correct via hybrid testing (libjxl CS + our JBRD = byte-exact).
-/// These tests fail due to pre-existing VarDCT codestream issues with certain images.
+/// Verify full jxl-rs rendering and exact djxl JPEG reconstruction.
 #[test]
-#[ignore = "VarDCT codestream issue for roof_test (not JBRD)"]
 fn test_jbrd_roundtrip_large_photos() {
-    // Only 4:4:4 baseline JPEGs with mult-of-8 dims
-    // (our VarDCT encoder doesn't handle chroma subsampling or non-mult-of-8 yet)
+    // This fixture covers a large 4:4:4 photo; the tests below cover subsampling.
     let test_images = [
         &format!(
             "{}/imageflow/test_inputs/roof_test_800x600.jpg",
@@ -635,6 +628,8 @@ fn test_jbrd_roundtrip_large_photos() {
             .unwrap_or_else(|e| panic!("failed to parse {basename}: {e}"));
         let jxl_bytes = encode_jpeg_to_jxl_container(&jpeg)
             .unwrap_or_else(|e| panic!("failed to encode {basename}: {e}"));
+        let (width, height, _) = decode_jxl_rs(&jxl_bytes);
+        assert_eq!((width, height), (jpeg.width as usize, jpeg.height as usize));
 
         eprintln!(
             "{basename}: {}x{} JPEG ({} bytes) -> {} bytes JXL ({:.1}% of original)",
@@ -754,6 +749,9 @@ fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
 
     let jxl_bytes = encode_jpeg_to_jxl_container(&jpeg)
         .unwrap_or_else(|e| panic!("{label}: failed to encode: {e}"));
+
+    let (width, height, _) = decode_jxl_rs(&jxl_bytes);
+    assert_eq!((width, height), (jpeg.width as usize, jpeg.height as usize));
 
     let compression = jxl_bytes.len() as f64 / jpeg_data.len() as f64 * 100.0;
     eprintln!(

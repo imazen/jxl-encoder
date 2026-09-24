@@ -495,3 +495,30 @@ jpeg-gainmap-corpus-check label corpus:
     mkdir -p "$HOME/tmp/jxl-backlog"
     nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding,corpus-tests --test it iso_gain_map_camera_corpus -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log" 2>&1
     rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log"
+
+# Provision every legacy JPEG fixture through codec-corpus and libjpeg-turbo.
+jpeg-legacy-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    root="$HOME/tmp/jxl-backlog/jpeg-legacy-{{label}}"
+    mkdir -p "$root"
+    export JXL_ENCODER_OUTPUT_DIR="$root/encoder"
+    nice -n 19 cargo run --locked -p jxl-encoder --features jpeg-reencoding --example jpeg_fixture_setup -- "$root/corpus-root" > "$root/setup.log" 2>&1
+    export CODEC_CORPUS_DIR="$(cat "$root/corpus-root")"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_reencoding:: -- --nocapture --test-threads=1 > "$root/tests.log" 2>&1
+    rg 'test result:' "$root/tests.log"
+
+jpeg-enabled-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just jpeg-legacy-check "{{label}}"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    root="$HOME/tmp/jxl-backlog/jpeg-legacy-{{label}}"
+    export JXL_ENCODER_OUTPUT_DIR="$root/encoder"
+    export CODEC_CORPUS_DIR="$(cat "$root/corpus-root")"
+    export JBRD_CONFORMANCE_REFERENCE=1 JBRD_CONFORMANCE_ARTIFACTS="$root/conformance"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it -- --test-threads=4 > "$root/full-integration.log" 2>&1
+    rg 'test result:' "$root/full-integration.log"
