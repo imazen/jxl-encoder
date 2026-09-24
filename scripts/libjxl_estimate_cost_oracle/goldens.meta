@@ -1,0 +1,7 @@
+date: 2026-09-24
+host: mac
+platform: macOS-27.0-arm64-arm-64bit-Mach-O
+reference_commit: a7a9c787341cf703dede03c2009fa460cae5e5df
+reference_library_sha256: 1a36c577ef9b0f1b5b79f035f0bfedcaa2c0bd98c82b9d21bebe2a1083b1ad7d
+command: just libjxl-estimate-cost-oracle; nice -n 19 python3 scripts/libjxl_estimate_cost_oracle/generate.py "$HOME/tmp/jxl-backlog/estimate-cost-ref"
+cases: 96

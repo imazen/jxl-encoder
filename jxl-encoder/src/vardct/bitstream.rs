@@ -3166,7 +3166,7 @@ impl VarDctEncoder {
 
             // Stream 0 uses the same preparation as the fixed-DC exact
             // path below, but joins this learned tree directly. The e8+
-            // EstimateCost revert is absent; see the coverage helper.
+            // palette cost check runs during the shared preparation.
             let global_transforms = match self.prepare_global_stream(
                 extras, width, height, num_dc_groups, num_groups,
             )? {
@@ -4940,7 +4940,7 @@ impl VarDctEncoder {
             return Ok(None);
         }
         let (image, transforms) = Self::build_global_stream_image(
-            extras, image_width, image_height, self.budget.as_ref(),
+            extras, image_width, image_height, self.effort, self.budget.as_ref(),
         )?;
         let options = crate::modular::ma_libjxl::global_stream_options(
             10 - self.effort as i32,
@@ -4961,9 +4961,8 @@ impl VarDctEncoder {
     /// The AC-metadata gate is a dependency: it selects the merged exact
     /// tree at e8+. Removing it would change custom gate combinations.
     ///
-    /// Known coverage gap: e8+ applies ChannelCompact without libjxl's
-    /// EstimateCost revert. Both TOC layouts consume the prepared stream.
-    /// See CLAUDE.md's W45-RECON cleanup coverage findings.
+    /// At e8+, ChannelCompact candidates also pass libjxl's EstimateCost
+    /// comparison. Both TOC layouts consume the prepared stream.
     fn extras_global_stream_eligible(
         &self,
         extras: &[super::extras::VardctExtra<'_>],
@@ -5024,7 +5023,9 @@ impl VarDctEncoder {
     ///   - `ch.total_maxval <= max_nb_colors` in `try_palettes`
     ///     (`enc_modular.cc:401-406`) reduces `maybe_do_transform` to
     ///     the ChannelCompact gate `min(nb_pixels/16, 95% of range)
-    ///     >= distinct_count` with `channel_colors_percent = 95`.
+    ///     >= distinct_count` with `channel_colors_percent = 95`;
+    ///   - effort >= 8 additionally reverts candidates whose whole-image
+    ///     EstimateCost exceeds the original image's cost.
     ///
     /// Each successful transform sorts the channel's distinct values
     /// into a meta channel (w = `nb_colors`, h = 1, `hshift = vshift =
@@ -5042,6 +5043,7 @@ impl VarDctEncoder {
         extras: &[super::extras::VardctExtra<'_>],
         image_width: usize,
         image_height: usize,
+        effort: u8,
         budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     ) -> Result<(
         crate::modular::channel::ModularImage,
@@ -5076,10 +5078,15 @@ impl VarDctEncoder {
             .map(|c| c.width() * c.height())
             .unwrap_or(0);
 
+        // libjxl compares every ChannelCompact candidate with the original
+        // whole-image cost, not with the cost after the preceding palette.
+        let cost_before = (effort >= 8).then(|| {
+            crate::modular::ma_libjxl::estimate_global_image_cost(&channels)
+        });
         let mut metas: Vec<Channel> = Vec::new();
-        let mut coded: Vec<Channel> = Vec::with_capacity(channels.len());
         let mut transforms: Vec<GlobalStreamTransform> = Vec::new();
-        for (i, mut ch) in channels.into_iter().enumerate() {
+        for i in 0..channels.len() {
+            let ch = &mut channels[i];
             // ChannelCompact gate (`enc_modular.cc:420-426`): the
             // distinct-count cap is `min(nb_pixels/16, 95% of range)`.
             let (mut mn, mut mx) = (0i32, 0i32);
@@ -5133,46 +5140,53 @@ impl VarDctEncoder {
                     colors = Some(set.into_iter().collect());
                 }
             }
-            match colors {
-                Some(pal) => {
-                    // `begin_c` is the transformed channel's index in
-                    // the channel list at apply time — data index plus
-                    // the metas already inserted in front
-                    // (`enc_modular.cc:414`).
-                    let begin_c = i + metas.len();
-                    // Indices via `inv_color_lookup` are already sorted.
-                    // Replace owned samples in place: the original values
-                    // are no longer needed after building the palette.
-                    for v in ch.data_mut() {
-                        *v = pal.partition_point(|&p| p < *v) as i32;
-                    }
-                    let nb_colors = pal.len();
-                    // Meta channel inserted at position 0
-                    // (`enc_palette.cc:240-241`). libjxl marks metas
-                    // with `hshift = vshift = -1`; the u32::MAX sentinel
-                    // replicates both downstream behaviours it feeds —
-                    // `PrecomputeReferences` never matches a meta to a
-                    // real channel, and `CollectPixelSamples` exempts
-                    // `i < nb_meta_channels` from the `max_chan_size`
-                    // early break.
-                    let mut meta = Channel::from_vec(pal, nb_colors, 1)?;
-                    meta.hshift = u32::MAX;
-                    meta.vshift = u32::MAX;
-                    metas.push(meta);
-                    coded.push(ch);
-                    transforms.push(GlobalStreamTransform {
-                        begin_c,
-                        nb_colors,
-                    });
+            if let Some(pal) = colors {
+                // `begin_c` is the transformed channel's index in
+                // the channel list at apply time — data index plus
+                // the metas already inserted in front
+                // (`enc_modular.cc:414`).
+                let begin_c = i + metas.len();
+                // Indices via `inv_color_lookup` are already sorted.
+                // Replace owned samples in place; the palette also lets
+                // us restore the original values if EstimateCost rejects it.
+                for v in ch.data_mut() {
+                    *v = pal.partition_point(|&p| p < *v) as i32;
                 }
-                None => coded.push(ch),
+                let nb_colors = pal.len();
+                // Meta channel inserted at position 0
+                // (`enc_palette.cc:240-241`). libjxl marks metas
+                // with `hshift = vshift = -1`; the u32::MAX sentinel
+                // replicates both downstream behaviours it feeds —
+                // `PrecomputeReferences` never matches a meta to a
+                // real channel, and `CollectPixelSamples` exempts
+                // `i < nb_meta_channels` from the `max_chan_size`
+                // early break.
+                let mut meta = Channel::from_vec(pal, nb_colors, 1)?;
+                meta.hshift = u32::MAX;
+                meta.vshift = u32::MAX;
+                if let Some(cost_before) = cost_before {
+                    let cost_after = crate::modular::ma_libjxl::estimate_global_image_cost(
+                        core::iter::once(&meta).chain(metas.iter().rev()).chain(channels.iter()),
+                    );
+                    if cost_after > cost_before {
+                        for v in channels[i].data_mut() {
+                            *v = meta.get(*v as usize, 0);
+                        }
+                        continue;
+                    }
+                }
+                metas.push(meta);
+                transforms.push(GlobalStreamTransform {
+                    begin_c,
+                    nb_colors,
+                });
             }
         }
 
         // Meta channels sit at the front in reverse insertion order.
         metas.reverse();
         let mut all = metas;
-        all.extend(coded);
+        all.extend(channels);
 
         Ok((
             ModularImage {
@@ -6347,5 +6361,73 @@ impl VarDctEncoder {
         writer: &mut BitWriter,
     ) -> Result<()> {
         code.write_header(writer)
+    }
+}
+
+#[cfg(test)]
+mod global_palette_cost_tests {
+    use super::*;
+    use crate::vardct::extras::{VardctExtra, VardctExtraBuf};
+
+    #[test]
+    fn strict_palette_cost_reverts_and_keeps_candidates() {
+        let (w, h) = (64, 32);
+        let mut reject: Vec<u8> = (0..h)
+            .flat_map(|y| (0..w).map(move |x| ((x + y) % 15) as u8))
+            .collect();
+        reject[w * h - 1] = 255;
+        let keep: Vec<u8> = (0..w * h)
+            .map(|i| if i & 1 == 0 { 0 } else { 255 })
+            .collect();
+        let info = ExtraChannelInfo::alpha();
+        let extra = |data| VardctExtra {
+            info: &info,
+            data: VardctExtraBuf::U8(data),
+        };
+        for effort in [7, 8, 9] {
+            let (image, transforms) =
+                VarDctEncoder::build_global_stream_image(&[extra(&reject)], w, h, effort, None)
+                    .unwrap();
+            assert_eq!(transforms.len(), usize::from(effort == 7));
+            if effort >= 8 {
+                assert_eq!(
+                    image.channels[0].data(),
+                    reject.iter().map(|&v| i32::from(v)).collect::<Vec<_>>()
+                );
+            }
+            let (image, transforms) =
+                VarDctEncoder::build_global_stream_image(&[extra(&keep)], w, h, effort, None)
+                    .unwrap();
+            assert_eq!(transforms.len(), 1);
+            assert_eq!(image.channels[0].data(), &[0, 255]);
+            for (i, &v) in image.channels[1].data().iter().enumerate() {
+                assert_eq!(image.channels[0].get(v as usize, 0), i32::from(keep[i]));
+            }
+        }
+        // The second palette saves enough that the third is retained against
+        // the ORIGINAL whole-image cost, even though it loses on its own.
+        let (image, transforms) = VarDctEncoder::build_global_stream_image(
+            &[extra(&reject), extra(&keep), extra(&reject)],
+            w,
+            h,
+            8,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            transforms.iter().map(|t| t.begin_c).collect::<Vec<_>>(),
+            [1, 3]
+        );
+        for i in 0..w * h {
+            assert_eq!(image.channels[2].data()[i], i32::from(reject[i]));
+            assert_eq!(
+                image.channels[1].get(image.channels[3].data()[i] as usize, 0),
+                i32::from(keep[i])
+            );
+            assert_eq!(
+                image.channels[0].get(image.channels[4].data()[i] as usize, 0),
+                i32::from(reject[i])
+            );
+        }
     }
 }

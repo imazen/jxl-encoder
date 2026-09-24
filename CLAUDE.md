@@ -1129,12 +1129,21 @@ checks that feature combination and the reconstruction gate on Linux.
 
 ### 2026-09-24: W45-RECON cleanup coverage findings (behavior unchanged)
 
-[PROVEN by source inspection at `f4bfa242`] The requested e8+ palette-cost
-fallback does not exist: `extras_global_stream_eligible` admits effort >= 4,
-and `build_global_stream_image` applies ChannelCompact without EstimateCost.
-The e8+ branch consumes it. Do not describe this as a private-writer fallback
-or complete e8+ parity. Adding either a revert or a fallback changes output
-and was excluded from this zero-behavior-change cleanup.
+[RESOLVED 2026-09-24, W45-RECON part 24] At `f4bfa242`, e8+
+ChannelCompact applied unconditionally. It now compares the candidate image,
+including palette metadata and earlier accepted transforms, with the original
+whole-image EstimateCost. Rejection restores samples in place inside the same
+Global stream; it is not a private-writer fallback. The strict estimator uses
+the reference's HybridUint conversion, separate integer/fractional entropy
+sums and the strict learner's canonical AVX2 reduction order. All 96 integer
+costs match an oracle calling unmodified libjxl v0.12 on this ARM64 host.
+`scripts/libjxl_estimate_cost_oracle/` carries the generator and goldens.
+`strict_palette_cost_reverts_and_keeps_candidates` pins both decisions and the
+original-baseline rule across multiple extra channels. No normal strategy,
+EPF dispatch, gate default or public API changes. Six real RGB-plus-alpha
+cells (64×32/259×133, efforts 7–9) preserve every alpha value through
+jxl-rs and djxl v0.12. Validation passes 75 lock/drift checks, 1,618 library
+tests and both real-image RD regressions. Clippy diagnostics match the parent.
 
 [RESOLVED 2026-09-24, W45-RECON part 23] Small progressive RGBA
 frames prepared a global extra-channel stream but emitted an empty global

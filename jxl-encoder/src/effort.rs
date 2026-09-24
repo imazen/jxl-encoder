@@ -1054,9 +1054,9 @@ pub struct EffortProfile {
     /// Preparation covers effort >= 4, one DC group and extra channels
     /// fitting `group_dim`, with `ac_meta_libjxl_tree` also enabled.
     /// Other cases keep the private writer as an exact-path fallback.
-    /// Known gaps: e8+ has no EstimateCost revert; shared-stream emission
-    /// only handles one group/one pass. See `docs/LIBJXL_DIVERGENCES.md`
-    /// section D and CLAUDE.md's cleanup coverage findings.
+    /// Effort >= 8 also compares ChannelCompact candidates with the original
+    /// whole-image EstimateCost. Both TOC layouts emit the shared stream,
+    /// including progressive frames. See `docs/LIBJXL_DIVERGENCES.md` section D.
     pub extras_global_stream_libjxl: bool,
 
     /// Run the libjxl-bit-exact gaborish 5x5 inverse

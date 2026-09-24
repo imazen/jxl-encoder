@@ -288,6 +288,77 @@ fn fast_log2f(x: f32) -> f32 {
     yp / yq + exp_val
 }
 
+/// `enc_modular_simd.cc::EstimateCost` for strict Global-stream palettes.
+/// Includes every channel, including palette metadata. Keep the integer and
+/// fractional entropy sums separate, and round only once after all channels.
+/// Histogram reduction uses the strict learner's canonical AVX2 lane order.
+pub(crate) fn estimate_global_image_cost<'a>(channels: impl IntoIterator<Item = &'a Channel>) -> f32 {
+    const CUTOFFS: [u32; 17] = [
+        0, 1, 3, 5, 7, 11, 15, 23, 31, 47, 63, 95, 127, 191, 255, 392, 500,
+    ];
+    let mut integer_cost = 0u64;
+    let mut fractional_cost = 0.0f32;
+    let mut extra_bits = 0u64;
+    let mut histograms = [[0u32; 128]; 17];
+    for ch in channels {
+        for y in 0..ch.height() {
+            let row = ch.row(y);
+            let prev = if y == 0 { row } else { ch.row(y - 1) };
+            for x in 0..ch.width() {
+                let left = if x != 0 {
+                    row[x - 1]
+                } else if y != 0 {
+                    prev[x]
+                } else {
+                    0
+                };
+                let top = if y != 0 { prev[x] } else { left };
+                let top_left = if x != 0 && y != 0 { prev[x - 1] } else { left };
+                let spread = left
+                    .max(top)
+                    .max(top_left)
+                    .abs_diff(left.min(top).min(top_left));
+                let ctx = CUTOFFS.partition_point(|&v| v <= spread) - 1;
+                let prediction = super::predictor::clamped_gradient(top, left, top_left);
+                let packed = pack_signed(row[x].wrapping_sub(prediction));
+                // Match the SIMD HybridUint(4,2,0) conversion, including the
+                // right shift that avoids rounding large integers upward.
+                let (token, nbits) = if packed < 16 {
+                    (packed, 0)
+                } else {
+                    let large = packed > (1 << 22) - 1;
+                    let fixed = if large { packed >> 10 } else { packed };
+                    let bits = (fixed as f32).to_bits();
+                    let nbits = (bits >> 23) - 129 + if large { 10 } else { 0 };
+                    (8 + 4 * nbits + ((bits >> 21) & 3), nbits)
+                };
+                histograms[ctx][token as usize] += 1;
+                extra_bits += u64::from(nbits);
+            }
+        }
+        for histogram in &mut histograms {
+            let total: u32 = histogram.iter().sum();
+            if total != 0 {
+                let total_f = total as f32;
+                let inv_total = 1.0 / total_f;
+                let mut lanes = [0.0f32; 8];
+                for (i, &count) in histogram.iter().enumerate() {
+                    if count != 0 && count != total {
+                        lanes[i & 7] += 0.0 - count as f32 * fast_log2f(count as f32 * inv_total);
+                    }
+                }
+                let cost = ((lanes[0] + lanes[4]) + (lanes[3] + lanes[7]))
+                    + ((lanes[1] + lanes[5]) + (lanes[2] + lanes[6]));
+                let whole = cost as u64;
+                integer_cost += whole;
+                fractional_cost += cost - whole as f32;
+            }
+            histogram.fill(0);
+        }
+    }
+    (extra_bits + integer_cost + fractional_cost as u64) as f32
+}
+
 /// `EstimateBits` — exact AVX2-order port.
 ///
 /// `counts` must be padded to a multiple of 8 (`Padded`). The integer
@@ -1775,4 +1846,62 @@ pub(crate) fn compute_vardct_tree(
         &mut merged,
     );
     Ok(Some(to_property_tree(&merged)))
+}
+
+#[cfg(test)]
+mod global_cost_tests {
+    use super::*;
+
+    #[test]
+    fn global_palette_cost_matches_libjxl_v012() {
+        for line in include_str!("../../../scripts/libjxl_estimate_cost_oracle/goldens.tsv").lines()
+        {
+            if line.starts_with('#') {
+                continue;
+            }
+            let (name, expected) = line.split_once('\t').unwrap();
+            let params: Vec<usize> = name.split(':').map(|v| v.parse().unwrap()).collect();
+            let (w, h, mode, compact) = (params[0], params[1], params[2], params[3]);
+            let mut state = 0x12345678u32;
+            let mut data = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    state = state.wrapping_mul(1103515245).wrapping_add(12345);
+                    let r = state >> 16;
+                    data.push(match mode {
+                        0 => (r & 255) as i32,
+                        1 => ((r & 1) * 255) as i32,
+                        2 => (((x + y) % 16) * 17) as i32,
+                        3 => {
+                            if x == w - 1 && y == h - 1 {
+                                255
+                            } else {
+                                ((x + y) % 15) as i32
+                            }
+                        }
+                        4 => ((r & 255) * 257) as i32 - 32768,
+                        5 => state as i32,
+                        _ => unreachable!(),
+                    });
+                }
+            }
+            let mut channels = Vec::new();
+            if compact != 0 {
+                let mut palette = data.clone();
+                palette.sort_unstable();
+                palette.dedup();
+                for value in &mut data {
+                    *value = palette.binary_search(value).unwrap() as i32;
+                }
+                channels.push(Channel::from_vec(palette.clone(), palette.len(), 1).unwrap());
+            }
+            channels.push(Channel::from_vec(data, w, h).unwrap());
+            channels.push(Channel::from_vec(vec![17, 0, 65535], 3, 1).unwrap());
+            assert_eq!(
+                estimate_global_image_cost(&channels),
+                expected.parse::<f32>().unwrap(),
+                "{name}"
+            );
+        }
+    }
 }

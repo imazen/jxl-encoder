@@ -425,3 +425,19 @@ libjxl-acmeta-check label:
     nice -n 19 cargo test --locked -p jxl-encoder --lib ac_meta_epf_token_contexts_match_serialized_tree > "$HOME/tmp/jxl-backlog/acmeta-unit-{{label}}.log" 2>&1
     nice -n 19 cargo test --locked -p jxl-encoder --features __expert --test it strict_ac_metadata_contexts_render_in_both_decoders -- --nocapture > "$HOME/tmp/jxl-backlog/acmeta-render-{{label}}.log" 2>&1
     rg 'test result:' "$HOME/tmp/jxl-backlog/acmeta-"*"-{{label}}.log"
+
+# Compile the differential cost oracle against the pinned, unmodified libjxl.
+libjxl-estimate-cost-oracle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 c++ -std=c++17 -O2 -DNDEBUG -I.ci-libjxl/source -I.ci-libjxl/source/third_party/highway -I.ci-libjxl/source/lib/include -I.ci-libjxl/build/lib/include scripts/libjxl_estimate_cost_oracle/ref.cc .ci-libjxl/build/lib/libjxl.a .ci-libjxl/build/lib/libjxl_cms.a .ci-libjxl/build/third_party/highway/libhwy.a .ci-libjxl/build/third_party/brotli/libbrotlidec.a .ci-libjxl/build/third_party/brotli/libbrotlienc.a .ci-libjxl/build/third_party/brotli/libbrotlicommon.a -o "$HOME/tmp/jxl-backlog/estimate-cost-ref" > "$HOME/tmp/jxl-backlog/estimate-cost-build.log" 2>&1
+
+libjxl-extras-cost-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features __expert --test it strict_palette_cost_revert_preserves_alpha_in_both_decoders -- --nocapture > "$HOME/tmp/jxl-backlog/part-24-roundtrip-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/part-24-roundtrip-{{label}}.log"

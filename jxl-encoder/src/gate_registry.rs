@@ -1632,10 +1632,9 @@ jxl_encoder_macros::strategy_def! {
         /// required for the alpha-squeeze pipeline. Section D.
         ///
         /// Coverage notes: effort <= 3 (stream-0 kWPFixedDC /
-        /// kGradientFixedDC) is NOT ported; at effort >= 8 the
-        /// `maybe_do_transform` EstimateCost revert gate is not ported
-        /// (the ChannelCompact applies unconditionally — correct unless
-        /// libjxl would revert it); multi-DC-group frames and channels
+        /// kGradientFixedDC) is NOT ported. Effort >= 8 reverts ChannelCompact
+        /// candidates when whole-image EstimateCost exceeds the original cost.
+        /// Multi-DC-group frames and channels
         /// exceeding `group_dim` keep the private writer as an exact-path
         /// fallback. Preparation also requires `ac_meta_libjxl_tree`.
         /// Shared-stream emission serves both combined and sectioned TOCs,
