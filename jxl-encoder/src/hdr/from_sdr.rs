@@ -459,7 +459,7 @@ mod tests {
         // gainmap kernel still produces a valid bundle, but this is
         // closer to a real Ultra HDR pair.
         let mut hdr = vec![0u8; (w * h * 4) as usize];
-        for (i, p) in hdr.chunks_exact_mut(4).enumerate() {
+        for (i, p) in hdr.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let bright = 128u8.saturating_add((i % 64) as u8);
             p[0] = bright;
             p[1] = bright;
