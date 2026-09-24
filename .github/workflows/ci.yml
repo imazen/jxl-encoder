@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, libjxl-exact, "feat/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -78,15 +78,18 @@ jobs:
 
       - name: JPEG reconstruction, orientation, subsampling and restart markers
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_reencoding:: -- --test-threads=1
+        run: >-
+          cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_reencoding:: -- --test-threads=1
 
       - name: JPEG gain-map metadata, pixels and reconstruction
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_gainmap::
+        run: >-
+          cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_gainmap::
 
       - name: JPEG CfL reference pixels at color tile boundaries
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_cfl_reference::
+        run: >-
+          cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_cfl_reference::
 
       # Belt-and-suspenders: ensure the no_std + alloc path keeps
       # compiling. `jxl-encoder-simd` is `#![no_std]` unconditionally

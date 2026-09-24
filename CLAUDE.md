@@ -2826,8 +2826,12 @@ tests pass 1,618 with 29 existing ignores. Logs:
 
 ### 2026-09-24: encoder lint repair for the exact bookmark
 
-The CI push filter currently excludes `libjxl-exact`; manual dispatch returned
-HTTP 422 despite the branch's local workflow containing `workflow_dispatch`.
+The push filter excluded `libjxl-exact`, and manual dispatch returned HTTP 422.
+Run 36058898611 then confirmed workflow rejection before any jobs: three plain
+YAML `run` scalars ended test filters with `::`, which YAML treats as a mapping
+separator. Folded scalars preserve the commands and parse successfully. The
+push filter now includes `libjxl-exact`. This fixes workflow admission;
+platform CI results must still be checked separately.
 The entropy/MA lint cleanup preserves indexed ranges, iteration order and
 short-circuit behavior. Its 75 lock/drift checks and 1,618 library tests pass
 (29 existing ignores); workspace all-target Clippy still reports the separate
