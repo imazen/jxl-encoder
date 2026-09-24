@@ -126,18 +126,20 @@ fn tier_splitting_props(tier: i32, num_streams: usize) -> (Vec<u32>, usize, f32)
         prop_order.remove(1);
     }
     // `max_properties` is 0 by default → no reference-channel properties.
-    match tier {
+    let (num_properties, max_property_values, nb_mul) = match tier {
         // kGlacier / kTortoise
-        t if t <= K_TORTOISE => (prop_order.clone(), 256usize, 1.3f32),
-        K_KITTEN => (prop_order[..10].to_vec(), 128usize, 1.1f32),
-        K_SQUIRREL => (prop_order[..7].to_vec(), 96usize, 1.0f32),
+        t if t <= K_TORTOISE => (prop_order.len(), 256usize, 1.3f32),
+        K_KITTEN => (10, 128usize, 1.1f32),
+        K_SQUIRREL => (7, 96usize, 1.0f32),
         // kWombat
-        4 => (prop_order[..5].to_vec(), 64usize, 0.7f32),
+        4 => (5, 64usize, 0.7f32),
         // kHare
-        5 => (prop_order[..4].to_vec(), 48usize, 0.5f32),
+        5 => (4, 48usize, 0.5f32),
         // kCheetah and faster
-        _ => (prop_order[..3].to_vec(), 32usize, 0.3f32),
-    }
+        _ => (3, 32usize, 0.3f32),
+    };
+    prop_order.truncate(num_properties);
+    (prop_order, max_property_values, nb_mul)
 }
 
 /// Build the resolved per-tier `ModularOptions` for a VarDCT frame,
@@ -155,10 +157,10 @@ pub(crate) fn vardct_stream_options(
     tier: i32,
     num_streams: usize,
 ) -> (LibjxlModularOptions, LibjxlModularOptions) {
-    let (properties, max_property_values, nb_mul) = tier_splitting_props(tier, num_streams);
-    let nb_repeats = (0.5f32 * nb_mul).min(1.0);
-    // `75 + 14*tier + 10*decoding_speed_tier` (decoding_speed_tier = 0).
-    let node_threshold = (75 + 14 * tier) as f32;
+    // Start from the same cparams options as GlobalData, then apply only
+    // AddVarDCTDC/AddACMetadata's stream-specific overrides.
+    let mut ac_meta = global_stream_options(tier, num_streams, 0xFF_FFFF);
+    ac_meta.wp_tree_mode = WpTreeMode::NoWp;
 
     // AddVarDCTDC (`enc_modular.cc:1587-1605`): the unconditional
     // assignment is `predictor = Weighted`, `wp_tree_mode = kWPOnly`.
@@ -171,25 +173,7 @@ pub(crate) fn vardct_stream_options(
     let dc = LibjxlModularOptions {
         predictor: StreamPredictor::Single(Predictor::Weighted),
         wp_tree_mode: WpTreeMode::WpOnly,
-        properties: properties.clone(),
-        nb_repeats,
-        max_property_values,
-        node_threshold,
-        fast_decode_multiplier: 1.0,
-        max_chan_size: 0xFF_FFFF,
-    };
-    let ac_meta = LibjxlModularOptions {
-        // Global predictor resolution for lossy non-responsive VarDCT is
-        // `Predictor::Gradient` (`enc_modular.cc:639-641`); AddACMetadata
-        // keeps it and sets `kNoWP`.
-        predictor: StreamPredictor::Single(Predictor::Gradient),
-        wp_tree_mode: WpTreeMode::NoWp,
-        properties,
-        nb_repeats,
-        max_property_values,
-        node_threshold,
-        fast_decode_multiplier: 1.0,
-        max_chan_size: 0xFF_FFFF,
+        ..ac_meta.clone()
     };
     (dc, ac_meta)
 }

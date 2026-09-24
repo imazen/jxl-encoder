@@ -1995,6 +1995,14 @@ frames, and channels exceeding `group_dim`. `e5_d1` also stays
 divergent (+11 B) but the decoded alpha is bit-exact — the residual
 is upstream VarDCT decisions (RGB planes), a different class.
 
+**Cleanup part 22.1 (2026-09-24):** GlobalData, DC and ACMetadata now
+share one modular-options constructor, retaining each stream's predictor,
+WP mode and channel-size override. Tier property selection truncates its
+owned vector instead of allocating a copy. No gate, option value, sampling
+order or tree algorithm changes. `just libjxl-exact-cleanup-check <label>`
+runs strict/normal byte locks, drift checks and library tests with pinned
+reference tools; the drift module requires `__internals`.
+
 ---
 
 ## G. RESOLVED divergences (historical)

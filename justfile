@@ -16,6 +16,30 @@ api-doc:
 api-doc-check:
     ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
 
+# Byte-preserving strict/Zen cleanup checks. These are modules in the `it`
+# binary, so nextest selects test names rather than nonexistent binary IDs.
+libjxl-exact-cleanup-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl"
+    export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4
+    log_dir="$HOME/tmp/jxl-exact-cleanup/{{label}}"
+    mkdir -p "$log_dir"
+    nice -n 19 cargo nextest run --locked -p jxl-encoder --features __expert,__internals --test it --test-threads 4 -E 'test(strategy_libjxl_byte_lock) | test(hash_lock_features) | test(divergence_table_drift)' > "$log_dir/locks-and-drift.log" 2>&1
+    rg 'Summary' "$log_dir/locks-and-drift.log"
+    nice -n 19 cargo test --locked -p jxl-encoder --lib -j 4 -- --test-threads=4 > "$log_dir/lib.log" 2>&1
+    rg 'test result:' "$log_dir/lib.log"
+
+libjxl-exact-cleanup-lint label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4
+    log_dir="$HOME/tmp/jxl-exact-cleanup/{{label}}"
+    mkdir -p "$log_dir"
+    echo "Clippy log: $log_dir/clippy.log"
+    nice -n 19 cargo clippy --workspace --all-targets --locked -- -D warnings > "$log_dir/clippy.log" 2>&1
+
 # Run RD regression test (encodes 6 images at d=0.25, d=0.5, d=1.0)
 rd-regression:
     cargo test -p jxl-encoder --test it clic2025::test_rd_regression -- --ignored --nocapture

@@ -2566,6 +2566,21 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: W45-RECON cleanup validation
+
+Part 22.1 shares Global/DC/AC modular option defaults and retains the
+stream-specific overrides. Tier property selection reuses its owned vector.
+`just libjxl-exact-cleanup-check <label>` preserves full logs under
+`~/tmp/jxl-exact-cleanup/<label>/`; locks are modules in the `it` binary,
+and divergence drift requires `__internals`. Do not use
+`binary_id(strategy_libjxl_byte_lock)` on this checkout.
+Part 22.1 passes 63 normal hash locks, 5 strict byte-lock tests, all 7
+drift tests and 1,615 library tests (29 existing ignores).
+Baseline workspace all-target Clippy at `f4bfa242` fails on 26 existing
+warnings with Rust 1.98; the captured log is
+`~/tmp/jxl-cleanup-2026-09-24/baseline-clippy.log`. No lint allowances or
+expectations were changed by this cleanup.
+
 Dated investigation narratives live in [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 (chronological archive — full mechanisms, per-cell tables, acceptance gates,
 verbatim DO-NOT lists). This section keeps only (a) the distilled binding
