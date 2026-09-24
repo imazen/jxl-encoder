@@ -386,9 +386,11 @@ fn progressive_extras_preserve_alpha_in_both_decoders() {
                     assert_eq!(reference.dimensions(), (w, h));
                     for ((src, actual), reference) in pixels
                         .as_raw()
-                        .chunks_exact(4)
-                        .zip(decoded.chunks_exact(4))
-                        .zip(reference.as_raw().chunks_exact(4))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(decoded.as_chunks::<4>().0.iter())
+                        .zip(reference.as_raw().as_chunks::<4>().0.iter())
                     {
                         assert_eq!(src[3], actual[3], "jxl-rs alpha");
                         assert_eq!(src[3], reference[3], "djxl alpha");
