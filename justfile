@@ -404,3 +404,13 @@ progressive-extras-check label:
     mkdir -p "$HOME/tmp/jxl-backlog"
     nice -n 19 cargo test --locked -p jxl-encoder --features __expert --test it progressive_extras_preserve_alpha_in_both_decoders -- --nocapture > "$HOME/tmp/jxl-backlog/progressive-{{label}}.log" 2>&1
     rg 'test result:' "$HOME/tmp/jxl-backlog/progressive-{{label}}.log"
+
+jpeg-orientation-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl"
+    export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_exif_orientation_preserves_display_and_reconstruction -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg-orientation-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg-orientation-{{label}}.log"

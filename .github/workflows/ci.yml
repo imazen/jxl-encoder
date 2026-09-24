@@ -65,6 +65,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance
 
+      - name: Test JPEG orientation and reconstruction
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_exif_orientation_preserves_display_and_reconstruction
+
       # Belt-and-suspenders: ensure the no_std + alloc path keeps
       # compiling. `jxl-encoder-simd` is `#![no_std]` unconditionally
       # and depends on `libm` for `f32` math (closes #38). Without

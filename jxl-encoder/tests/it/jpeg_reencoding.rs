@@ -1135,3 +1135,109 @@ fn test_transcode_pixel_cap_configurable_via_with_limits() {
         "codestream path did not honour the configured cap: {err_cs}"
     );
 }
+
+/// JPEG EXIF remains byte-exact in jbrd, while the JXL header tells readers
+/// how to display the coefficient image. Exercise all eight TIFF orientations.
+#[test]
+fn jpeg_exif_orientation_preserves_display_and_reconstruction() {
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .unwrap()
+        .to_rgb8();
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/jpeg-orientation-validation");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (w, h) in [(64, 32), (259, 133)] {
+        let crop = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode_image(&image::DynamicImage::ImageRgb8(crop))
+            .unwrap();
+        let base = jxl_encoder::LosslessConfig::new()
+            .encode_jpeg_transcode(&jpeg)
+            .unwrap();
+        let (bw, bh, base_pixels) = decode_jxl_rs(&base);
+        assert_eq!((bw, bh), (w as usize, h as usize));
+        let decode_reference = |bytes: &[u8]| {
+            let input = dir.join(format!("{w}x{h}.jxl"));
+            let output = dir.join(format!("{w}x{h}.png"));
+            std::fs::write(&input, bytes).unwrap();
+            let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                .arg(input)
+                .arg(&output)
+                .arg("--num_threads=1")
+                // Eight-bit djxl output dithers at display coordinates. Sixteen-bit
+                // output permits exact pixel-permutation checks without dithering.
+                .arg("--bits_per_sample=16")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            image::open(output).unwrap().to_rgb16()
+        };
+        let base_reference = decode_reference(&base);
+        for big_endian in [false, true] {
+            for orientation in 1u16..=8 {
+                let mut tiff = if big_endian {
+                    b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01".to_vec()
+                } else {
+                    b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0".to_vec()
+                };
+                tiff.extend(if big_endian {
+                    orientation.to_be_bytes()
+                } else {
+                    orientation.to_le_bytes()
+                });
+                tiff.extend([0; 6]); // inline SHORT padding + next IFD offset
+                let mut original = jpeg[..2].to_vec();
+                original.extend([0xff, 0xe1]);
+                original.extend(((tiff.len() + 8) as u16).to_be_bytes());
+                original.extend(b"Exif\0\0");
+                original.extend(tiff);
+                original.extend_from_slice(&jpeg[2..]);
+                let encoded = jxl_encoder::LosslessConfig::new()
+                    .encode_jpeg_transcode(&original)
+                    .unwrap();
+                let rebuilt = zenjxl_decoder::reconstruct_jpeg(&encoded).unwrap().unwrap();
+                assert_eq!(
+                    rebuilt, original,
+                    "orientation {orientation}: original JPEG bytes"
+                );
+                let (dw, dh, actual) = decode_jxl_rs(&encoded);
+                let (ew, eh) = if orientation >= 5 { (bh, bw) } else { (bw, bh) };
+                assert_eq!((dw, dh), (ew, eh), "orientation {orientation}");
+                let reference = decode_reference(&encoded);
+                assert_eq!(reference.dimensions(), (ew as u32, eh as u32));
+                for y in 0..bh {
+                    for x in 0..bw {
+                        let (ox, oy) = match orientation {
+                            1 => (x, y),
+                            2 => (bw - 1 - x, y),
+                            3 => (bw - 1 - x, bh - 1 - y),
+                            4 => (x, bh - 1 - y),
+                            5 => (y, x),
+                            6 => (bh - 1 - y, x),
+                            7 => (bh - 1 - y, bw - 1 - x),
+                            8 => (y, bw - 1 - x),
+                            _ => unreachable!(),
+                        };
+                        for c in 0..3 {
+                            assert_eq!(
+                                actual[(oy * ew + ox) * 3 + c].to_bits(),
+                                base_pixels[(y * bw + x) * 3 + c].to_bits(),
+                                "jxl-rs orientation {orientation}, ({x}, {y}, {c})"
+                            );
+                        }
+                        assert_eq!(
+                            reference.get_pixel(ox as u32, oy as u32),
+                            base_reference.get_pixel(x as u32, y as u32),
+                            "djxl orientation {orientation}, ({x}, {y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

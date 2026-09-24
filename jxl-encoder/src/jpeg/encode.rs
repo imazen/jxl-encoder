@@ -1212,6 +1212,9 @@ fn encode_jpeg_to_jxl_inner(
 
     // File header (write() includes the signature)
     let mut file_header = build_jpeg_file_header(width, height, is_gray);
+    if let Some(exif) = super::jbrd::exif_payload(jpeg) {
+        file_header.metadata.orientation = exif_orientation(exif).unwrap_or_default();
+    }
     if icc_profile.is_some() {
         file_header.metadata.color_encoding.want_icc = true;
     }
@@ -1704,6 +1707,63 @@ fn build_dc_dequant(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> Result<[f32; 3]
     Ok(dc_dequant)
 }
 
+/// Read TIFF IFD0's inline SHORT orientation, as libjxl's `InterpretExif`
+/// does. Invalid or absent metadata leaves the default orientation unchanged.
+/// No EXIF bytes are rewritten: jbrd must reproduce the original JPEG.
+fn exif_orientation(exif: &[u8]) -> Option<crate::headers::file_header::Orientation> {
+    use crate::headers::file_header::Orientation;
+
+    let big_endian = match exif.get(..4)? {
+        b"MM\0\x2a" => true,
+        b"II\x2a\0" => false,
+        _ => return None,
+    };
+    let u16_at = |offset: usize| -> Option<u16> {
+        let bytes = exif.get(offset..offset.checked_add(2)?)?.try_into().ok()?;
+        Some(if big_endian {
+            u16::from_be_bytes(bytes)
+        } else {
+            u16::from_le_bytes(bytes)
+        })
+    };
+    let u32_at = |offset: usize| -> Option<u32> {
+        let bytes = exif.get(offset..offset.checked_add(4)?)?.try_into().ok()?;
+        Some(if big_endian {
+            u32::from_be_bytes(bytes)
+        } else {
+            u32::from_le_bytes(bytes)
+        })
+    };
+    let ifd = u32_at(4)? as usize;
+    if ifd < 8 {
+        return None;
+    }
+    let count = usize::from(u16_at(ifd)?);
+    let mut entry = ifd.checked_add(2)?;
+    for _ in 0..count {
+        // Require the complete entry, including the inline value field.
+        exif.get(entry..entry.checked_add(12)?)?;
+        if u16_at(entry)? == 0x0112 {
+            if u16_at(entry + 2)? != 3 || u32_at(entry + 4)? != 1 {
+                return None;
+            }
+            return Some(match u16_at(entry + 8)? {
+                1 => Orientation::Identity,
+                2 => Orientation::FlipHorizontal,
+                3 => Orientation::Rotate180,
+                4 => Orientation::FlipVertical,
+                5 => Orientation::Transpose,
+                6 => Orientation::Rotate90CW,
+                7 => Orientation::AntiTranspose,
+                8 => Orientation::Rotate90CCW,
+                _ => return None,
+            });
+        }
+        entry = entry.checked_add(12)?;
+    }
+    None
+}
+
 /// Build the JXL file header for JPEG reencoding.
 fn build_jpeg_file_header(width: usize, height: usize, is_gray: bool) -> FileHeader {
     let color_encoding = if is_gray {
@@ -2016,6 +2076,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exif_orientation_rejects_malformed_ifd_entries() {
+        let valid = b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0";
+        assert_eq!(
+            exif_orientation(valid),
+            Some(crate::headers::file_header::Orientation::Rotate90CW)
+        );
+        for len in 0..22 {
+            assert_eq!(exif_orientation(&valid[..len]), None, "truncation {len}");
+        }
+        for (offset, replacement) in [(0, 0), (4, 0), (10, 0), (12, 4), (14, 2), (18, 0), (18, 9)] {
+            let mut invalid = valid.to_vec();
+            invalid[offset] = replacement;
+            assert_eq!(exif_orientation(&invalid), None, "field {offset}");
+        }
+        let mut invalid = valid.to_vec();
+        invalid[4..8].fill(255);
+        assert_eq!(exif_orientation(&invalid), None, "out-of-range IFD offset");
+        let mut after_other_tag = valid.to_vec();
+        after_other_tag[8] = 2;
+        after_other_tag.splice(10..10, [0; 12]);
+        assert_eq!(exif_orientation(&after_other_tag), exif_orientation(valid));
+    }
+
+    #[test]
     fn test_f16_conversion() {
         // 1.0 = 0x3C00 in f16
         assert_eq!(f32_to_f16_bits(1.0).unwrap(), 0x3C00);
@@ -2135,10 +2219,8 @@ mod tests {
 
     #[test]
     fn test_encode_420_jpeg() {
-        let path =
-            crate::test_helpers::output_dir_for("jpeg-reencoding", "").join("test128_420.jpg");
-        let data = std::fs::read(&path).expect("failed to read test JPEG");
-        let jpeg = super::super::parse::read_jpeg(&data, None, None).expect("failed to parse JPEG");
+        let data = include_bytes!("../../tests/fixtures/jbrd/base_a_420.jpg");
+        let jpeg = super::super::parse::read_jpeg(data, None, None).expect("failed to parse JPEG");
 
         // Verify it's actually 4:2:0
         assert_eq!(jpeg.components[0].h_samp_factor, 2);

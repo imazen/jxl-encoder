@@ -814,6 +814,28 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 See [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md) for full chronological bug narrative.
 
+### RESOLVED 2026-09-24: JPEG transcoding discarded display orientation (#119)
+
+The JPEG path now reads the first classified EXIF APP1's TIFF IFD0 orientation
+into the JXL image metadata. Both TIFF byte orders and all eight orientations
+are supported; malformed or absent tags retain Identity. The original EXIF
+payload remains unchanged for byte-exact JPEG reconstruction. The regression
+failed before the fix on orientation 2 (unflipped pixels).
+`jpeg_exif_orientation_preserves_display_and_reconstruction` verifies 32
+real-image cases (64x32 and multi-group 259x133, both TIFF byte orders, all
+eight orientations): full jxl-rs and djxl v0.12 rendering matches an independent
+pixel permutation exactly, and zenjxl-decoder reconstructs every original JPEG
+byte-for-byte. djxl's 8-bit output dithers at display coordinates; use its
+16-bit output for exact orientation permutation checks. Malformed IFD entries
+and truncated metadata have a separate unit test. No public API changed.
+Validation: 1,646 JPEG-enabled library tests, 75 lock/drift tests and 1,615
+ordinary library tests pass. The 53-fixture reconstruction gate still reports
+47 exact rebuilds and six clean unsupported refusals. The pre-existing 4:2:0
+unit test now reads the committed `base_a_420.jpg` fixture instead of requiring
+an absent generated output; all assertions remain. JPEG-feature library Clippy
+reports 40 existing diagnostics outside the changed code; its full log is
+`~/tmp/jxl-backlog/jpeg-orientation-clippy.log`.
+
 ### RESOLVED 2026-09-10: forward XYB emitted DIFFERENT BYTES on a host that cannot summon a vector token
 
 [PROVEN] `jxl-encoder-simd`'s `forward_xyb_impl` was generated from one body for

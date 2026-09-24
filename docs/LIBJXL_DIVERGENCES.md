@@ -2021,6 +2021,16 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-09-24: JPEG EXIF orientation (#119)
+
+ `jpeg/encode.rs::exif_orientation`
+now propagates TIFF IFD0's inline SHORT orientation to ImageMetadata, matching
+libjxl v0.12's `InterpretExif`. Original APP1 bytes remain intact for JPEG
+reconstruction. Both byte orders and all eight orientations are covered on
+single- and multi-group real-image crops through jxl-rs and djxl; malformed
+metadata retains Identity. This applies to JPEG transcoding independently of
+strategy and does not change ordinary pixel encoding.
+
 ### 2026-09-08: streaming content-policy omission
 
 `LossyEncoder::finish_inner` now calls the one-shot request pipeline over
