@@ -1359,6 +1359,7 @@ fn encode_jpeg_to_jxl_inner(
 /// - `jbrd` box: JPEG Bitstream Reconstruction Data
 /// - `Exif` box: EXIF metadata (if present in JPEG)
 /// - `xml ` box: XMP metadata (if present in JPEG)
+/// - `jhgm` box: ISO 21496-1 gain map (if present as a secondary JPEG)
 ///
 /// A decoder with JPEG reconstruction support (e.g., djxl --reconstruct_jpeg)
 /// can produce a byte-exact copy of the original JPEG from this container.
@@ -1375,7 +1376,7 @@ pub fn encode_jpeg_to_jxl_container(jpeg: &JpegData) -> Result<Vec<u8>> {
 /// codestream side. Container wrapping (JBRD / Exif / XMP boxes) is
 /// effort-independent.
 pub fn encode_jpeg_to_jxl_container_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    encode_jpeg_to_jxl_container_with_effort_stop(jpeg, effort, None, None)
+    encode_jpeg_to_jxl_container_with_effort_stop(jpeg, effort, None, None, None)
 }
 
 /// Like [`encode_jpeg_to_jxl_container_with_effort`], but polls `stop` and
@@ -1389,6 +1390,7 @@ pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
     effort: u8,
     stop: Option<&dyn Stop>,
     budget: Option<&Arc<MemoryBudget>>,
+    max_pixels: Option<u64>,
 ) -> Result<Vec<u8>> {
     let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget)?;
     let jbrd = encode_jbrd(jpeg)?;
@@ -1401,13 +1403,14 @@ pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
     let cs_part1 = &codestream[..file_header_size];
     let cs_part2 = &codestream[file_header_size..];
 
-    Ok(wrap_in_container_jxlp(
+    let container = wrap_in_container_jxlp(
         cs_part1,
         cs_part2,
         &jbrd,
         exif.as_deref(),
         xmp.as_deref(),
-    ))
+    );
+    super::gainmap::append(jpeg, container, effort, stop, budget, max_pixels)
 }
 
 /// Map JPEG coefficients into JXL quant_dc / quant_ac / nzeros arrays.

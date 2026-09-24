@@ -1181,6 +1181,34 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-24: ISO JPEG gain-map container integration (#122)
+
+[PROVEN] The original 259x133 pixel-parity failure was caused by JPEG CfL
+maximum-tie selection, corrected separately in `d6bbdda2` (see Resolved Bugs).
+Both 64x32 and 259x133 real frymire crops now expose the secondary JPEG as a
+`jhgm` codestream, preserve its exact ISO 21496-1 rational metadata, match
+cjxl v0.12's rendered gain-map pixels, and reconstruct the complete original
+JPEG through Rust and djxl. The primary codestream's pixels are unchanged.
+
+The private tail scanner recognizes secondary images by their own ISO APP2
+metadata. Version-only signals and unrelated trailers stay opaque; malformed,
+duplicate, truncated, or multiple identified gain maps fail explicitly. The
+same caller pixel limit, memory budget, cancellation and effort reach the
+secondary transcode. Reserved bundle serialization avoids a payload copy;
+no public API or new encoding strategy is introduced. XMP-only gain maps
+remain opaque JBRD tail data; this increment targets the ISO-tagged camera
+originals in #122. The 33-file SHA-bound corpus gate is
+`just jpeg-gainmap-corpus-check <label> <corpus>`. All 33 originals pass at
+effort 3 with exact gain-map pixel equality against cjxl/djxl v0.12, full
+jxl-rs rendering, unchanged primary pixels and byte-exact JPEG reconstruction
+through both Rust and djxl. Results: `benchmarks/jpeg_gainmap_2026-09-24.tsv`;
+private originals and artifacts remain outside git under `~/tmp/jxl-backlog/`.
+The JPEG-enabled library suite passes 1,665 tests (31 existing ignores).
+All 75 normal/strict lock and divergence checks, 1,618 default library tests,
+and both real-image RD regressions pass unchanged. Strict workspace Clippy
+retains the baseline diagnostics; warning-mode JPEG library/test Clippy
+finishes with no diagnostics in the new gain-map code or bundle helper.
+
 ### 2026-09-24: JPEG feature build regression after strict tree refactoring
 
 [PROVEN] `cargo test --features jpeg-reencoding` at `0ca49f00` fails

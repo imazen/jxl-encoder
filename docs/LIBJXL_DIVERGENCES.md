@@ -2022,7 +2022,7 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
-### 2026-09-24: JPEG CfL maximum tie selection
+### 2026-09-24: JPEG CfL maximum tie selection (`d6bbdda2`)
 
 `vardct/chroma_from_luma.rs::jpeg_cfl_search` now uses libjxl v0.12's rounded
 midpoint of the first and last maximal histogram buckets, including separated

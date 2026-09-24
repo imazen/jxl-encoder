@@ -474,3 +474,24 @@ jpeg-cfl-check label:
     mkdir -p "$HOME/tmp/jxl-backlog"
     nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_cfl_reference_ -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg-cfl-{{label}}.log" 2>&1
     rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg-cfl-{{label}}.log"
+
+# ISO gain-map container, exact JPEG reconstruction, and independent pixel checks.
+jpeg-gainmap-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it iso_gain_map_ -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log"
+
+jpeg-gainmap-corpus-check label corpus:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export JPEG_GAINMAP_CORPUS="{{corpus}}"
+    export JPEG_GAINMAP_ARTIFACTS="$HOME/tmp/jxl-backlog/jpeg122-{{label}}-artifacts"
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding,corpus-tests --test it iso_gain_map_camera_corpus -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log"

@@ -10,6 +10,7 @@
 
 mod data;
 mod encode;
+mod gainmap;
 mod jbrd;
 mod lossy;
 mod parse;

@@ -161,6 +161,18 @@ impl GainMapBundle {
     pub fn serialize(&self) -> Result<Vec<u8>, EncodeError> {
         let total = self.serialized_size()?;
         let mut out = Vec::with_capacity(total);
+        self.serialize_into_reserved(&mut out)?;
+        Ok(out)
+    }
+
+    /// Append to caller-reserved storage without growing the output allocation.
+    pub(crate) fn serialize_into_reserved(&self, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+        let total = self.serialized_size()?;
+        if total > out.capacity() - out.len() {
+            return Err(invalid("gain-map output capacity is insufficient".into()));
+        }
+        let start = out.len();
+        let color_encoding_bytes = self.color_encoding_bytes()?;
 
         // 1. jhgm_version (1 byte)
         out.push(self.jhgm_version);
@@ -173,7 +185,6 @@ impl GainMapBundle {
         out.extend_from_slice(&self.iso21496_metadata);
 
         // 4. color_encoding_size (1 byte) + color_encoding bytes
-        let color_encoding_bytes = self.color_encoding_bytes()?;
         out.push(color_encoding_bytes.len() as u8);
         out.extend_from_slice(&color_encoding_bytes);
 
@@ -186,12 +197,12 @@ impl GainMapBundle {
         out.extend_from_slice(&self.gain_map_codestream);
 
         debug_assert_eq!(
-            out.len(),
+            out.len() - start,
             total,
             "serialized_size {total} != actual {}",
-            out.len()
+            out.len() - start
         );
-        Ok(out)
+        Ok(())
     }
 
     /// Produce the byte-aligned encoding of `self.color_encoding`, or
@@ -230,6 +241,23 @@ pub fn append_gain_map_bundle(
 mod tests {
     use super::*;
     use crate::headers::color_encoding::ColorEncoding;
+
+    #[test]
+    fn reserved_serializer_preserves_prefix_and_refuses_short_storage() {
+        let bundle = GainMapBundle::new(vec![1, 2, 3], vec![0xff, 0x0a]);
+        let expected = bundle.serialize().unwrap();
+        let mut out = Vec::with_capacity(expected.len() + 3);
+        out.extend_from_slice(b"box");
+        let capacity = out.capacity();
+        bundle.serialize_into_reserved(&mut out).unwrap();
+        assert_eq!(&out[..3], b"box");
+        assert_eq!(&out[3..], expected);
+        assert_eq!(out.capacity(), capacity);
+        let mut short = vec![42];
+        let before = short.clone();
+        assert!(bundle.serialize_into_reserved(&mut short).is_err());
+        assert_eq!(short, before);
+    }
 
     #[test]
     fn empty_bundle_layout_matches_libjxl_shape() {

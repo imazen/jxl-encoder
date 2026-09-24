@@ -59,6 +59,7 @@ mod high_bit_depth_int;
 mod idct_parity;
 mod jbrd_roundtrip_conformance;
 mod jpeg_cfl_reference;
+mod jpeg_gainmap;
 mod jpeg_public_api;
 mod jpeg_reencoding;
 mod jpeg_transcode_roundtrip;

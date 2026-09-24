@@ -1879,6 +1879,11 @@ impl LosslessConfig {
     /// photographic content; gains depend on the source quantization
     /// quality and chroma subsampling shape.
     ///
+    /// An ISO 21496-1 gain-map JPEG in the source tail is also transcoded
+    /// into a `jhgm` box, preserving its exact ISO metadata. The original
+    /// tail remains in JBRD for byte-exact reconstruction, so the gain map
+    /// is stored twice. XMP-only gain maps remain in the original tail.
+    ///
     /// Requires the `jpeg-reencoding` cargo feature.
     ///
     /// # Errors
@@ -1925,6 +1930,7 @@ impl LosslessConfig {
             self.effort,
             None,
             Some(&budget),
+            max_pixels,
         )
         .map_err(|e| at(EncodeError::from(e)))
     }
@@ -1990,6 +1996,7 @@ impl LosslessConfig {
             self.effort,
             Some(stop),
             Some(&budget),
+            max_pixels,
         )
         .map_err(|e| at(EncodeError::from(e)))
     }
