@@ -2011,6 +2011,9 @@ Strict stream images/tree are released after residual collection; subsequent
 phases use owned tokens. Gate metadata/defaults, tree algorithms and the nine
 EPF passthrough predicates are unchanged. The existing tree-prefix wrappers
 already share their implementation and remain separate convenience entries.
+Part 22.3 replaces extra-channel samples with palette indices in place,
+removing the second pixel-vector allocation without changing the sorted
+lookup, descriptors, metadata or compact/non-compact decisions.
 
 ---
 

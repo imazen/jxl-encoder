@@ -2611,6 +2611,10 @@ or peak-memory improvement is claimed without measurement. The part-21
 perf harness and artifacts remain unchanged. Part 22.2 passes all 75
 lock/drift tests, 1,615 library tests and the full 527-test expert/internal
 integration suite. Clippy retains exactly the 26 baseline diagnostics.
+Part 22.3 reuses each owned extra-channel sample buffer for palette indices;
+the sorted lookup, transform order and channel metadata are unchanged. It
+passes the same 75 lock/drift and 1,615 library tests; both real-image RD
+regression tests pass with unchanged thresholds.
 Baseline workspace all-target Clippy at `f4bfa242` fails on 26 existing
 warnings with Rust 1.98; the captured log is
 `~/tmp/jxl-cleanup-2026-09-24/baseline-clippy.log`. No lint allowances or

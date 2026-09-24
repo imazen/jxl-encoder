@@ -5113,7 +5113,7 @@ impl VarDctEncoder {
         let mut metas: Vec<Channel> = Vec::new();
         let mut coded: Vec<Channel> = Vec::with_capacity(channels.len());
         let mut transforms: Vec<GlobalStreamTransform> = Vec::new();
-        for (i, ch) in channels.into_iter().enumerate() {
+        for (i, mut ch) in channels.into_iter().enumerate() {
             // ChannelCompact gate (`enc_modular.cc:420-426`): the
             // distinct-count cap is `min(nb_pixels/16, 95% of range)`.
             let (mut mn, mut mx) = (0i32, 0i32);
@@ -5174,13 +5174,12 @@ impl VarDctEncoder {
                     // the metas already inserted in front
                     // (`enc_modular.cc:414`).
                     let begin_c = i + metas.len();
-                    // Indices via `inv_color_lookup` are already sorted
-                    // — binary search reproduces them exactly.
-                    let idx_data: Vec<i32> = ch
-                        .data()
-                        .iter()
-                        .map(|&v| pal.partition_point(|&p| p < v) as i32)
-                        .collect();
+                    // Indices via `inv_color_lookup` are already sorted.
+                    // Replace owned samples in place: the original values
+                    // are no longer needed after building the palette.
+                    for v in ch.data_mut() {
+                        *v = pal.partition_point(|&p| p < *v) as i32;
+                    }
                     let nb_colors = pal.len();
                     // Meta channel inserted at position 0
                     // (`enc_palette.cc:240-241`). libjxl marks metas
@@ -5194,7 +5193,7 @@ impl VarDctEncoder {
                     meta.hshift = u32::MAX;
                     meta.vshift = u32::MAX;
                     metas.push(meta);
-                    coded.push(Channel::from_vec(idx_data, ch.width(), ch.height())?);
+                    coded.push(ch);
                     transforms.push(GlobalStreamTransform {
                         begin_c,
                         nb_colors,
