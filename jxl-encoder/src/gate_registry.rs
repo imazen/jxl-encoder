@@ -195,10 +195,15 @@ jxl_encoder_macros::strategy_def! {
             buttloop_qf_seed = ButtloopQfSeedPolicy::Off,
             adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::Off,
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::LegacyUniform4,
-            // Perf dispatches: leave at Default (Auto). Libjxl is
-            // byte-identical on `Auto` for libjxl-shaped inputs; the
-            // dispatch enums are perf-only supersets of libjxl behaviour.
-            epf_dispatch = EpfDispatch::Auto,
+            // Perf dispatches: leave at Default (Auto) — EXCEPT epf,
+            // where `Auto`'s W36-2 mask1x1 smooth-skip emits uniform
+            // default-4 maps on smooth inputs while libjxl always runs
+            // `ComputeARHeuristics` at effort >= 6 (kWombat). W45-RECON
+            // part 20: caught live on gradient_rgb_32x32 e7 — cjxl ships
+            // a real {0,7} map where Auto wrote 4s. `AlwaysSelect`
+            // restores unconditional search; the other dispatch enums
+            // stay perf-only supersets of libjxl behaviour.
+            epf_dispatch = EpfDispatch::AlwaysSelect,
             pixel_loss_dispatch = PixelLossDispatch::AlwaysOn,
             single_pass_entropy_dispatch = SinglePassEntropyDispatch::AlwaysTwoPass,
             patches_dispatch = PatchesDispatch::Auto,

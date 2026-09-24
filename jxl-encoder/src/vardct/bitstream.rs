@@ -501,6 +501,14 @@ fn build_ac_metadata_stream_image(
         }
     }
 
+    // W45-RECON part 20 probe: ACMetadata image contents.
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_P20_ACMETA").is_some() {
+        eprintln!(
+            "[P20ACMETA] ch0={ch0:?} ch1={ch1:?} ch2={ch2:?} ch3={ch3:?}"
+        );
+    }
+
     Ok(crate::modular::channel::ModularImage {
         channels: vec![
             crate::modular::channel::Channel::from_vec(ch0, cfl_w, cfl_h)?,

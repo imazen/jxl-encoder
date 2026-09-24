@@ -6291,6 +6291,19 @@ impl VarDctEncoder {
                 params.extra_dc_precision,
             );
         }
+        // W45-RECON part 20 probe: dump post-WP quant_dc.
+        if std::env::var_os("JXL_P20_DUMP_POSTWP").is_some() {
+            let q = &transform_out.quant_dc;
+            for c in 0..3 {
+                for y in 0..ysize_blocks {
+                    let mut row = String::new();
+                    for x in 0..xsize_blocks {
+                        row.push_str(&format!("{} ", q[c][y][x]));
+                    }
+                    eprintln!("[P20WP] c={c} y={y} {row}");
+                }
+            }
+        }
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let _t_sharp = std::time::Instant::now();
         let quant_dc = &transform_out.quant_dc;
@@ -6706,6 +6719,15 @@ impl VarDctEncoder {
                 &ac_huffman,
                 &mut ac_group_writer,
             )?;
+            if std::env::var_os("JXL_P20_SECTIONS").is_some() {
+                eprintln!(
+                    "[P20SEC] dc_global={} dc_group={} ac_global={} ac_group={} bits",
+                    dc_global.bits_written(),
+                    dc_group.bits_written(),
+                    ac_global.bits_written(),
+                    ac_group_writer.bits_written()
+                );
+            }
 
             #[cfg(feature = "debug-tokens")]
             {

@@ -258,8 +258,17 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // ({0,0,0} here) like cjxl. cjxl v0.12 reference: 171 B —
         // the residual is upstream token content, not entropy coding
         // (both sides pick identical configs).
-        size: 167,
-        hash: 0x2fd47470c333e99f,
+        // W45-RECON part 20 (2026-09-24): 167 → 171 (+4 B), hash
+        // drift — `epf_dispatch` now `AlwaysSelect` under strict
+        // (cjxl runs `ComputeARHeuristics` at effort ≥ 6; the Zenjxl
+        // Auto smooth-skip emitted uniform 4s) and the EPF kernels
+        // now honour libjxl `kMinSigma` (-3.9052): stored `1/sigma`
+        // below the gate passes through unfiltered, so sharpness 0–2
+        // all reconstruct identically here (cjxl's error images are
+        // bitwise-equal too). Now **byte-identical to cjxl v0.12**
+        // (171 B).
+        size: 171,
+        hash: 0xde2865119ee7fb36,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
@@ -280,8 +289,12 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift — tree-stream `uint_method` kFast under
         // `extra_dc_precision` (see _d1 note). cjxl v0.12: 121 B —
         // residual is upstream token content.
-        size: 119,
-        hash: 0xd6abf6ce07dc2af3,
+        // W45-RECON part 20 (2026-09-24): 119 → 121 (+2 B), hash
+        // drift — `epf_dispatch` `AlwaysSelect` + EPF `kMinSigma`
+        // gate (see _d1 note). Now **byte-identical to cjxl v0.12**
+        // (121 B).
+        size: 121,
+        hash: 0x540fb242c6fc0d7c,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",

@@ -322,6 +322,33 @@ fn test_dc_from_dct_32x32_dc_only() {
 }
 
 #[test]
+fn test_dc_from_dct_32x32_lj_matches_legacy() {
+    // W45-RECON part 20: the strict `ReinterpretingIDCT` port must
+    // produce mathematically identical output to the legacy path
+    // (same transform, different float op order → ~ulp deltas only).
+    let mut input = [0.0f32; 1024];
+    for y in 0..32 {
+        for x in 0..32 {
+            input[y * 32 + x] = (x as f32 * 0.7 + y as f32 * 1.3)
+                + ((x * 31 + y * 17) % 11) as f32 * 0.05;
+        }
+    }
+    let mut output = [0.0f32; 1024];
+    dct_32x32(&input, &mut output);
+    let legacy = dc_from_dct_32x32(&output);
+    let lj = dc_from_dct_32x32_lj(&output);
+    for i in 0..16 {
+        assert!(
+            (legacy[i] - lj[i]).abs() < 1e-3 * legacy[i].abs().max(1.0),
+            "dc[{}]: legacy={} lj={}",
+            i,
+            legacy[i],
+            lj[i]
+        );
+    }
+}
+
+#[test]
 fn test_dct_32x32_no_final_transpose() {
     // Verify no final transpose: input with only row 0 non-zero
     let mut input = [0.0f32; 1024];

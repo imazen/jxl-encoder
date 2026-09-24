@@ -1888,6 +1888,51 @@ residuals from upstream token-content differences (the picks
 themselves match — verified candidate-by-candidate), not entropy
 coding. Normal 63/63 hash locks unaffected (strict-only path).
 
+### W45-RECON part 20 (2026-09-24): EPF `kMinSigma` gate + strict `epf_dispatch` — three gradient cells **byte-identical to cjxl**
+
+The remaining `gradient_rgb_32x32 e7 d1` residual (−4 B, 228/3072
+decoded-pixel bytes off by ≤2) traced to the AC-metadata EPF sharpness
+map, not the DCT32x32 DC extraction originally suspected (a strict
+lane-order `dc_from_dct_32x32_lj` port now exists under
+`dct_pass_order_libjxl` — it matches libjxl's `ReinterpretingIDCT`
+bit-for-bit but the shipped DC tokens were already correct; post-WP DC
+planes and all quantized AC coefficients compared identical).
+
+Two stacked divergences in the EPF sharpness path:
+
+1. **`epf_dispatch`**: strict Libjxl inherited `EpfDispatch::Auto`,
+   whose mask-mean smooth-skip emitted uniform `4`s on this smooth
+   gradient. cjxl runs `ComputeARHeuristics` unconditionally at
+   effort ≥ 6 (`enc_heuristics.cc:905-910`) and emitted a non-uniform
+   map `0 0 7 0 / 7 0 7 0 / …`. Strict now uses `AlwaysSelect`
+   (`gate_registry.rs`); the Auto skip remains a Zenjxl-only
+   optimisation.
+
+2. **`kMinSigma` passthrough gate missing**: libjxl disables an EPF
+   block entirely when its stored `1/sigma` falls below
+   `kMinSigma = -3.9052429` (`stage_epf.cc:120/261/452`), and
+   `ComputeSigma` clamps `sigma` to at most `-1e-4`
+   (`epf.cc:77`) so sharpness-0's zero LUT entry lands at
+   `inv_sigma = -10000` — passthrough, not "disabled weight = full
+   blur". With `raw_quant = 9`, `scale ≈ 0.078` sharpness values 0–3
+   all land below the gate, which is why cjxl's per-candidate error
+   images for sharpness 0 and 2 are **bitwise identical** while ours
+   differed (we filtered at `inv_sigma = -6.26`). All EPF kernel
+   passthrough checks (`jxl-encoder-simd` scalar/AVX2/NEON step1/step2
+   sites plus `vardct/epf.rs::epf_step0_strip`) now apply
+   `is < K_MIN_SIGMA` alongside the legacy `is == 0.0`, and
+   `compute_inv_sigma_map` applies libjxl's `-1e-4` sigma clamp.
+
+**Result**: `gradient_rgb_32x32 e7 d1` is **byte-identical to cjxl
+v0.12** (171 B, djxl decode-identical). `e7 d4` (121 B) and
+`gradient_rgb_64x64 e7 d12` (123 B) are likewise byte-identical. The
+`gradient_rgba_64x32 e7 d2` cell moved to 224 B vs cjxl's 226 B — a
+−2 B residual in the modular extra-channel/alpha stream (separate
+divergence class, not EPF). Normal 68/68 hash locks unaffected — the
+new gate only alters blocks that previously filtered at
+`inv_sigma < -3.9`, which normal-mode sharpness maps (default 4) do
+not produce on these fixtures.
+
 ---
 
 ## G. RESOLVED divergences (historical)

@@ -19,6 +19,7 @@ use super::common::*;
 use super::dct::{
     dc_from_dct_4x4_full, dc_from_dct_4x8_full, dc_from_dct_8x4_full, dc_from_dct_8x16,
     dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_16x32, dc_from_dct_32x16, dc_from_dct_32x32,
+    dc_from_dct_32x32_lj,
     dc_from_dct_32x64, dc_from_dct_64x32, dc_from_dct_64x64, dct_4x4_full, dct_4x4_full_lj,
     dct_4x8_full, dct_4x8_full_lj, dct_8x4_full, dct_8x4_full_lj, dct_8x8, dct_8x16, dct_8x16_lj,
     dct_16x8, dct_16x8_lj, dct_16x16, dct_16x16_lj, dct_16x32, dct_16x32_lj, dct_32x16,
@@ -586,7 +587,14 @@ impl VarDctEncoder {
                             }
                         }
                         RAW_STRATEGY_DCT32X32 => {
-                            let dcs = dc_from_dct_32x32(as_array_ref::<1024>(&dct_coeffs[1], 0));
+                            // W45-RECON part 20: strict parity uses the
+                            // libjxl SIMD-lane-order `ReinterpretingIDCT`
+                            // port (dct_pass_order_libjxl).
+                            let dcs = if strict_dct_order {
+                                dc_from_dct_32x32_lj(as_array_ref::<1024>(&dct_coeffs[1], 0))
+                            } else {
+                                dc_from_dct_32x32(as_array_ref::<1024>(&dct_coeffs[1], 0))
+                            };
                             #[cfg(feature = "debug-dc")]
                             eprintln!(
                                 "DCT32x32 block (by={}, bx={}): dcs[0..4]=[{:.4}, {:.4}, {:.4}, {:.4}], LLF=[{:.6}, {:.6}, {:.6}, {:.6}]",
@@ -1146,7 +1154,14 @@ impl VarDctEncoder {
                             }
                         }
                         RAW_STRATEGY_DCT32X32 => {
-                            let dcs = dc_from_dct_32x32(as_array_ref::<1024>(&dct_coeffs[c], 0));
+                            // W45-RECON part 20: strict parity uses the
+                            // libjxl SIMD-lane-order `ReinterpretingIDCT`
+                            // port (dct_pass_order_libjxl).
+                            let dcs = if strict_dct_order {
+                                dc_from_dct_32x32_lj(as_array_ref::<1024>(&dct_coeffs[c], 0))
+                            } else {
+                                dc_from_dct_32x32(as_array_ref::<1024>(&dct_coeffs[c], 0))
+                            };
                             for iy in 0..4 {
                                 for ix in 0..4 {
                                     float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =

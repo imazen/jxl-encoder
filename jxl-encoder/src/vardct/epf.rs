@@ -128,10 +128,14 @@ pub(crate) fn compute_inv_sigma_map(
             for iy in 0..ac_strategy.covered_blocks_y(bx, by) {
                 for ix in 0..ac_strategy.covered_blocks_x(bx, by) {
                     let idx = (by + iy) * xsize_blocks + bx + ix;
-                    let sigma = sigma_quant * EPF_SHARP_LUT[sharpness_map[idx].min(7) as usize];
-                    if sigma.abs() > 1e-10 {
-                        inv_sigma[idx] = 1.0 / sigma;
-                    }
+                    // libjxl epf.cc::ComputeSigma clamps sigma to at most
+                    // -1e-4 so a zero sharpness LUT entry (sigma = 0) yields
+                    // inv_sigma = -10000 (no smoothing), not a disabled
+                    // weight function.
+                    let sigma =
+                        (sigma_quant * EPF_SHARP_LUT[sharpness_map[idx].min(7) as usize])
+                            .min(-1e-4);
+                    inv_sigma[idx] = 1.0 / sigma;
                 }
             }
         }
@@ -292,7 +296,7 @@ pub(crate) fn epf_step0_strip(
 
             let oidx = row * width + px;
 
-            if is == 0.0 {
+            if is == 0.0 || is < jxl_simd::K_MIN_SIGMA {
                 // No filtering — copy from padded to unpadded output
                 let padded_idx = (py + pad) * in_stride + (px + pad);
                 out_x[oidx] = padded_planes[0][padded_idx];
@@ -1122,7 +1126,6 @@ pub(crate) fn compute_epf_sharpness(
             ysize_blocks,
             ac_strategy,
         );
-
         apply_epf_with_scratch(
             &mut recon,
             &inv_sigma,
@@ -1198,6 +1201,14 @@ pub(crate) fn compute_epf_sharpness(
             _ => 0,
         })
         .collect();
+
+    // W45-RECON part 20 probe: per-candidate block-error maps.
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_P20_EPF_ERR").is_some() {
+        for (ci, m) in error_maps.iter().enumerate() {
+            eprintln!("[P20EPF] cand {} (val {}): {:?}", ci, candidates[ci], m);
+        }
+    }
 
     // Pass 1: Greedy selection with neighbor preference
     const K_FAVOR_NO_SMOOTHING: f32 = 0.99;
