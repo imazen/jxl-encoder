@@ -2819,6 +2819,19 @@ held-out inputs before training; use dense size coverage for a learned model.
 Single-worker timing is the default; concurrent-worker timing is not isolated
 latency. No compression or runtime improvement is claimed from the smoke cells.
 
+Source audit of the next step: `forced_rct` and
+`with_modular_palette_colors(Some(0))` already cover RCT selection and palette
+refusal. `wp_num_param_sets` only searches a prefix of WP modes; forcing modes
+1–4 needs a new explicit expert control, which requires owner API approval.
+The pinned `zenpicker-train/src/pareto_dataset.rs::build_picker_dataset_with`
+uses quality reach and encoded bytes, and does not read `encode_ms` or a time
+budget. A size-only bake cannot establish #24's wall target. Do not call the
+recovered harness a direct input to a time-budgeted trainer or silently replace
+that objective. A proposed `forced_wp_mode: Option<u8>` (validated 0..=4,
+unset byte-inert) and `ForcedWpModeOutOfRange` error are awaiting approval;
+no new API or sibling trainer change has been applied.
+
+
 
 ### 2026-09-24: shared ANS normalization tables
 
