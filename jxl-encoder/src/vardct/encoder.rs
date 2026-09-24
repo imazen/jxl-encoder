@@ -4817,8 +4817,7 @@ impl VarDctEncoder {
                 &mut xyb_x,
                 &mut xyb_y,
                 &mut xyb_b,
-                padded_width,
-                padded_height,
+                (padded_width, padded_height),
                 self.enable_adaptive_gaborish,
                 self.profile.gaborish_libjxl_kernel,
                 self.budget.as_ref(),
@@ -6294,11 +6293,11 @@ impl VarDctEncoder {
         // W45-RECON part 20 probe: dump post-WP quant_dc.
         if std::env::var_os("JXL_P20_DUMP_POSTWP").is_some() {
             let q = &transform_out.quant_dc;
-            for c in 0..3 {
-                for y in 0..ysize_blocks {
+            for (c, channel) in q.iter().enumerate() {
+                for (y, samples) in channel[..ysize_blocks].iter().enumerate() {
                     let mut row = String::new();
-                    for x in 0..xsize_blocks {
-                        row.push_str(&format!("{} ", q[c][y][x]));
+                    for sample in &samples[..xsize_blocks] {
+                        row.push_str(&format!("{} ", sample));
                     }
                     eprintln!("[P20WP] c={c} y={y} {row}");
                 }
@@ -6444,8 +6443,8 @@ impl VarDctEncoder {
             // AC metadata: ch0/ch1 = ytox/ytob per 8x8-block color tile;
             // ch2 = 2-row plane (acs libjxl-ordinal codes, qf-1) over
             // first-blocks; ch3 = epf sharpness grid.
-            let tiles_x = (xsize_blocks + 7) / 8;
-            let tiles_y = (ysize_blocks + 7) / 8;
+            let tiles_x = xsize_blocks.div_ceil(8);
+            let tiles_y = ysize_blocks.div_ceil(8);
             let mut ytox = Vec::with_capacity(tiles_x * tiles_y);
             let mut ytob = Vec::with_capacity(tiles_x * tiles_y);
             for ty in 0..tiles_y {
@@ -7299,8 +7298,7 @@ impl VarDctEncoder {
                     &mut x,
                     &mut y,
                     &mut b,
-                    padded_width,
-                    precomputed.padded_height,
+                    (padded_width, precomputed.padded_height),
                     self.enable_adaptive_gaborish,
                     self.profile.gaborish_libjxl_kernel,
                     self.budget.as_ref(),

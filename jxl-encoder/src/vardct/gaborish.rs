@@ -331,7 +331,7 @@ pub fn gaborish_inverse(
     height: usize,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<()> {
-    gaborish_inverse_maybe_adaptive(xyb_x, xyb_y, xyb_b, width, height, false, false, budget)
+    gaborish_inverse_maybe_adaptive(xyb_x, xyb_y, xyb_b, (width, height), false, false, budget)
 }
 
 /// Apply gaborish inverse to all three XYB channels with optional per-tile
@@ -360,8 +360,7 @@ pub fn gaborish_inverse_maybe_adaptive(
     xyb_x: &mut [f32],
     xyb_y: &mut [f32],
     xyb_b: &mut [f32],
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
     adaptive: bool,
     libjxl_kernel: bool,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
@@ -805,7 +804,13 @@ mod tests {
             .map(|i| ((i % 7) as f32) * 0.05)
             .collect();
         gaborish_inverse_maybe_adaptive(
-            &mut x, &mut y, &mut b, width, height, /* adaptive */ true, false, None,
+            &mut x,
+            &mut y,
+            &mut b,
+            (width, height),
+            /* adaptive */ true,
+            false,
+            None,
         )
         .expect("adaptive gaborish should succeed");
         // Values should remain finite.
@@ -851,7 +856,7 @@ mod tests {
 
         // Whole-image gaborish (the chunk-3 path).
         gaborish_inverse_maybe_adaptive(
-            &mut wx, &mut wy, &mut wb, w, h, /* adaptive */ false, false, None,
+            &mut wx, &mut wy, &mut wb, (w, h), /* adaptive */ false, false, None,
         )
         .expect("whole-image gaborish should succeed");
 
@@ -950,7 +955,7 @@ mod tests {
         let mut rb = src_b.clone();
 
         gaborish_inverse_maybe_adaptive(
-            &mut wx, &mut wy, &mut wb, w, h, /* adaptive */ false,
+            &mut wx, &mut wy, &mut wb, (w, h), /* adaptive */ false,
             /* libjxl_kernel */ true, None,
         )
         .expect("whole-image libjxl gaborish should succeed");

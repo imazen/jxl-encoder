@@ -348,12 +348,12 @@ pub fn count_zero_coefficients_libjxl_sampled(
                         cnt.resize(size, 0);
                     }
                     let src = &flat[c];
-                    for k in 0..size {
+                    for (k, count) in cnt[..size].iter_mut().enumerate() {
                         // libjxl reads flat[ac_offset + k] — can run past
                         // the group array only if sizes mismatch anchor
                         // layout; clamp defensively (libjxl would UB).
                         if src.get(ac_offset + k).copied().unwrap_or(0) == 0 {
-                            cnt[k] += 1;
+                            *count += 1;
                         }
                     }
                     // Ensure LLFs sort first (idempotent -1 marks).
@@ -1215,12 +1215,12 @@ pub fn build_and_write_coeff_orders(
     // Diagnostic: raw permutation-token dump for libjxl `EncodeCoeffOrders`
     // parity work. `JXL_CO_DUMP=<file>` writes "ctx value" lines.
     #[cfg(feature = "std")]
-    if let Ok(path) = std::env::var("JXL_CO_DUMP") {
-        if let Ok(mut f) = std::fs::File::create(path) {
-            use std::io::Write as _;
-            for t in tokens {
-                let _ = writeln!(f, "{} {}", t.context(), t.value);
-            }
+    if let Ok(path) = std::env::var("JXL_CO_DUMP")
+        && let Ok(mut f) = std::fs::File::create(path)
+    {
+        use std::io::Write as _;
+        for t in tokens {
+            let _ = writeln!(f, "{} {}", t.context(), t.value);
         }
     }
 
@@ -1252,18 +1252,18 @@ pub fn build_and_write_coeff_orders(
         None => (tokens, None),
     };
     #[cfg(feature = "std")]
-    if let Ok(path) = std::env::var("JXL_CO_LZ_DUMP") {
-        if let Ok(mut f) = std::fs::File::create(path) {
-            use std::io::Write as _;
-            for t in lz_tokens {
-                let _ = writeln!(
-                    f,
-                    "{} {} {}",
-                    t.is_lz77_length() as u8,
-                    t.context(),
-                    t.value
-                );
-            }
+    if let Ok(path) = std::env::var("JXL_CO_LZ_DUMP")
+        && let Ok(mut f) = std::fs::File::create(path)
+    {
+        use std::io::Write as _;
+        for t in lz_tokens {
+            let _ = writeln!(
+                f,
+                "{} {} {}",
+                t.is_lz77_length() as u8,
+                t.context(),
+                t.value
+            );
         }
     }
     let lz_header_bits = writer.bits_written();

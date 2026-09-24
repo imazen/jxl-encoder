@@ -932,7 +932,7 @@ impl VarDctEncoder {
                             let qm = if strict_qm { w } else { 1.0 / w };
                             ob.push_str(&alloc::format!(" {}:{:.9}", k, qm));
                         }
-                        eprint!("{ob}\n");
+                        eprintln!("{ob}");
                         let mut tb = String::from("THR");
                         for (i, &t) in thresholds_y.iter().enumerate() {
                             tb.push_str(&alloc::format!(" {}:{:.9}", i, t));
@@ -1341,7 +1341,7 @@ impl VarDctEncoder {
                             let qm = if strict_qm { w } else { 1.0 / w };
                             ob.push_str(&alloc::format!(" {}:{:.9}", k, qm));
                         }
-                        eprint!("{ob}\n");
+                        eprintln!("{ob}");
                         let mut tb = String::from("THR");
                         for (i, &t) in thresholds_xb.iter().enumerate() {
                             tb.push_str(&alloc::format!(" {}:{:.9}", i, t));
@@ -1490,17 +1490,17 @@ impl VarDctEncoder {
                     rec.extend_from_slice(&qac_quant_i32.to_le_bytes());
                     let stride = cx * BLOCK_DIM;
                     let mut flat = alloc::vec![0f32; size];
-                    for c in 0..3 {
-                        flat[..size].copy_from_slice(&dct_coeffs[c][..size]);
+                    for channel in dct_coeffs.iter() {
+                        flat[..size].copy_from_slice(&channel[..size]);
                         for v in &flat[..size] {
                             rec.extend_from_slice(&v.to_le_bytes());
                         }
                     }
                     let mut qflat = alloc::vec![0i32; size];
-                    for c in 0..3 {
+                    for channel in quant_ac.iter() {
                         if covered_blocks == 1 {
                             qflat[..size].copy_from_slice(
-                                &quant_ac[c][(by - yoff) * width + (bx - xoff)][..size],
+                                &channel[(by - yoff) * width + (bx - xoff)][..size],
                             );
                         } else {
                             for coef_slot_y in 0..cy {
@@ -1512,7 +1512,7 @@ impl VarDctEncoder {
                                         } else {
                                             (coef_slot_y, coef_slot_x)
                                         };
-                                        let row = &quant_ac[c]
+                                        let row = &channel
                                             [(by - yoff + phys_row_off) * width
                                                 + (bx - xoff + phys_col_off)];
                                         for pos_x in 0..BLOCK_DIM {

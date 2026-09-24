@@ -2775,6 +2775,12 @@ The next cleanup groups resolved ANS build choices in an internal
 The same 75 checks and 1,618 library tests pass. Its all-target lint run clears
 the ANS argument-count and test repeat diagnostics; VarDCT and SIMD test
 failures remain. Logs: `~/tmp/jxl-exact-cleanup/lint-ans-options-2026-09-24/`.
+The VarDCT continuation pairs dimensions at two internal helper boundaries
+and retains every dispatch flag, arithmetic expression and diagnostic order.
+All 75 lock/drift checks and 1,618 library tests pass again. Workspace all-target
+Clippy now reaches only the two pre-existing `pixel_loss.rs` dump-reader
+errors. Logs: `~/tmp/jxl-exact-cleanup/lint-vardct-fixed-2026-09-24/` (tests)
+and `lint-vardct-2026-09-24/` (lint).
 
 ### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
 

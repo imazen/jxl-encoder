@@ -52,10 +52,10 @@ pub(crate) fn dequant_dc_grid(
         vec![0.0f32; xsize_blocks * ysize_blocks],
         vec![0.0f32; xsize_blocks * ysize_blocks],
     ];
-    for by in 0..ysize_blocks {
-        for bx in 0..xsize_blocks {
+    for (by, row) in quant_dc[0][..ysize_blocks].iter().enumerate() {
+        for (bx, &dc_x) in row[..xsize_blocks].iter().enumerate() {
             let i = by * xsize_blocks + bx;
-            out[0][i] = quant_dc[0][by][bx] as f32 / inv_factor[0];
+            out[0][i] = dc_x as f32 / inv_factor[0];
             out[1][i] = quant_dc[1][by][bx] as f32 / inv_factor[1];
             out[2][i] =
                 (quant_dc[2][by][bx] as f32 + quant_dc[1][by][bx] as f32 * 0.5) / inv_factor[2];
