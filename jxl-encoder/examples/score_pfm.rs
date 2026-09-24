@@ -64,10 +64,9 @@ fn read_f32_planar(path: &str) -> (usize, usize, Vec<RGB<f32>>) {
     let mut img = vec![RGB::new(0.0f32, 0.0, 0.0); n];
     let mut off = 12;
     for ch in 0..3 {
-        for i in 0..n {
+        for p in &mut img {
             let v = f32::from_le_bytes([d[off], d[off + 1], d[off + 2], d[off + 3]]);
             off += 4;
-            let p = &mut img[i];
             match ch {
                 0 => p.r = v,
                 1 => p.g = v,

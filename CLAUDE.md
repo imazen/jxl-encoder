@@ -2798,6 +2798,12 @@ All 75 lock/drift checks and 1,618 library tests pass again. Workspace all-targe
 Clippy now reaches only the two pre-existing `pixel_loss.rs` dump-reader
 errors. Logs: `~/tmp/jxl-exact-cleanup/lint-vardct-fixed-2026-09-24/` (tests)
 and `lint-vardct-2026-09-24/` (lint).
+After the SIMD probe repair and the planar scoring example's iterator cleanup,
+`cargo clippy --locked --workspace --all-targets -- -D warnings` passes locally.
+The 75 lock/drift and 1,618 library checks remain unchanged. Formatting still
+fails on 58 hunks across 20 files; the owner has been shown a separate patch
+because the original cleanup forbids broad formatting. No format gate was
+weakened. Logs: `~/tmp/jxl-exact-cleanup/score-pfm-2026-09-24/`.
 
 ### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
 
