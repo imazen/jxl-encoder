@@ -2784,6 +2784,27 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: sectioned performance harness evidence repair
+
+`scripts/sectioned_k_bar_cell.sh` previously used unpinned `cjxl`, ran all
+reference repetitions before the Rust arms, discarded Rust stderr and could
+stat an old output after reference failure. It now resolves through the shared
+v0.12 guard, alternates reference/Rust order and Rust arm order, retains complete
+logs, refuses existing result files and stops on failed commands. The existing
+comparison still labels reference **process wall** versus Rust **encode wall**;
+those are different timing scopes and must not be presented as equal scopes.
+
+`sectioned_k_corpus` now requires `ARTIFACT_DIR` for encoding modes and retains
+both warmup and measured outputs by SHA256 outside the timed region. Sweep TSVs
+include `encoded_sha256`; phase logs carry both hashes. Three driver regression
+tests cover failed reference/probe processes and preserved prior results.
+The persisted-output regression reconstructs exact real-image pixels through
+zenjxl-decoder (jxl-rs lineage) and djxl at 64×64 and 259×133. The small driver
+smoke produces all 24 expected rows with matching artifact hashes. This is
+harness validation, not a new wall-bar measurement or predictor-policy change.
+Reproduce with `just sectioned-harness-check <pinned-manifest>`; logs and smoke
+artifacts live under `~/tmp/jxl-backlog/sectioned-harness-*`.
+
 ### 2026-09-24: permanent pixel-loss dump regression
 
 The old `w45_loss_vs_dumped_inputs` test returned successfully without its

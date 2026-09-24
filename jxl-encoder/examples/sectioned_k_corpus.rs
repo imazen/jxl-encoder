@@ -40,7 +40,8 @@
 //!
 //! ```
 //!
-//! All modes write TSV with a `#` provenance header.
+//! Encoding modes require `ARTIFACT_DIR` and retain every output by SHA256.
+//! `reference-tools` resolves cjxl through the shared v0.12 version guard.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -446,9 +447,13 @@ fn read_manifest(path: &str) -> Vec<Rendition> {
     out
 }
 
-fn encode_once(rgb: &[u8], w: u32, h: u32, effort: u8, threads: usize) -> (usize, f64) {
+fn encode_once(rgb: &[u8], w: u32, h: u32, effort: u8, threads: usize) -> (Vec<u8>, f64) {
     use jxl_encoder::api::SectionedTrees;
     use jxl_encoder::{LosslessConfig, PixelLayout};
+    assert!(
+        threads <= 1 || cfg!(feature = "parallel"),
+        "threads > 1 requires parallel"
+    );
     let t0 = std::time::Instant::now();
     let enc = LosslessConfig::new()
         .with_effort(effort)
@@ -457,7 +462,31 @@ fn encode_once(rgb: &[u8], w: u32, h: u32, effort: u8, threads: usize) -> (usize
         .encode_request(w, h, PixelLayout::Rgb8)
         .encode(rgb)
         .expect("encode");
-    (enc.len(), t0.elapsed().as_secs_f64() * 1000.0)
+    let wall = t0.elapsed().as_secs_f64() * 1000.0;
+    (enc, wall)
+}
+
+fn artifact_dir() -> PathBuf {
+    let dir = PathBuf::from(std::env::var_os("ARTIFACT_DIR").expect("set ARTIFACT_DIR"));
+    std::fs::create_dir_all(&dir).expect("create artifact directory");
+    dir
+}
+
+fn persist_encode(dir: &Path, encoded: &[u8]) -> String {
+    let sha: String = Sha256::digest(encoded)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let path = dir.join(format!("{sha}.jxl"));
+    if path.exists() {
+        assert_eq!(
+            std::fs::read(&path).expect("read existing artifact"),
+            encoded
+        );
+    } else {
+        std::fs::write(&path, encoded).expect("persist encoded artifact");
+    }
+    sha
 }
 
 fn apply_arm(arm: &str) {
@@ -492,6 +521,7 @@ fn apply_arm(arm: &str) {
 }
 
 fn mode_sweep(args: &[String]) {
+    let artifacts = artifact_dir();
     let manifest = &args[0];
     let out_path = &args[1];
     let effort: u8 = args[2].parse().expect("effort");
@@ -503,7 +533,7 @@ fn mode_sweep(args: &[String]) {
         .unwrap();
     writeln!(
         f,
-        "rendition\torigin\tcluster\tsplit\tkind\tw\th\teffort\tthreads\tarm\tbytes\twall_ms"
+        "rendition\torigin\tcluster\tsplit\tkind\tw\th\teffort\tthreads\tarm\tbytes\twall_ms\tencoded_sha256"
     )
     .unwrap();
     for (i, r) in rows.iter().enumerate() {
@@ -513,10 +543,11 @@ fn mode_sweep(args: &[String]) {
         drop(img);
         for arm in &arms {
             apply_arm(arm);
-            let (bytes, wall) = encode_once(&rgb, w, h, effort, threads);
+            let (encoded, wall) = encode_once(&rgb, w, h, effort, threads);
+            let sha = persist_encode(&artifacts, &encoded);
             writeln!(
                 f,
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{}",
                 r.name,
                 r.origin,
                 r.cluster,
@@ -527,8 +558,9 @@ fn mode_sweep(args: &[String]) {
                 effort,
                 threads,
                 arm,
-                bytes,
-                wall
+                encoded.len(),
+                wall,
+                sha
             )
             .unwrap();
         }
@@ -539,9 +571,13 @@ fn mode_sweep(args: &[String]) {
 }
 
 /// `phases <img.png> <effort> <threads> <arm>...` — per-phase wall split for
-/// one image under each arm. Requires the `profile-phases` feature; without
-/// it the snapshot is empty and the mode says so instead of printing zeros.
+/// one image under each arm. Refuses a build without `profile-phases`.
 fn mode_phases(args: &[String]) {
+    if !cfg!(feature = "profile-phases") {
+        eprintln!("phases requires profile-phases");
+        std::process::exit(2);
+    }
+    let artifacts = artifact_dir();
     let path = &args[0];
     let effort: u8 = args[1].parse().expect("effort");
     let threads: usize = args[2].parse().expect("threads");
@@ -552,11 +588,16 @@ fn mode_phases(args: &[String]) {
     for arm in &args[3..] {
         apply_arm(arm);
         // Warm the arm once so the reported split is not the first-touch run.
-        let _ = encode_once(&rgb, w, h, effort, threads);
+        let (warm, _) = encode_once(&rgb, w, h, effort, threads);
+        let warm_sha = persist_encode(&artifacts, &warm);
+        drop(warm);
         jxl_encoder::__test_exports::profile_phases::reset();
-        let (bytes, wall) = encode_once(&rgb, w, h, effort, threads);
+        let (encoded, wall) = encode_once(&rgb, w, h, effort, threads);
         let snap = jxl_encoder::__test_exports::profile_phases::take_snapshot();
+        let sha = persist_encode(&artifacts, &encoded);
+        let bytes = encoded.len();
         println!("== {arm}: {bytes} bytes, {wall:.1} ms total");
+        println!("artifact {arm} {sha} warmup {warm_sha}");
         if snap.is_empty() {
             println!("   (no phase data — build with --features profile-phases)");
         }
@@ -597,6 +638,10 @@ fn mode_croptl(args: &[String]) {
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
+    if a.get(1).is_some_and(|mode| mode == "reference-tools") {
+        println!("{}", jxl_encoder::test_helpers::cjxl_path());
+        return;
+    }
     if a.len() < 3 {
         eprintln!(
             "usage:\n  \
@@ -616,6 +661,61 @@ fn main() {
         other => {
             eprintln!("unknown mode {other:?}");
             std::process::exit(2);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persisted_real_encodes_are_exact_in_both_decoders() {
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .unwrap();
+        let dir = PathBuf::from(home)
+            .join("tmp")
+            .join(format!("sectioned-artifacts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = image::open(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/images/frymire-srgb.png"
+        ))
+        .unwrap();
+        for (w, h) in [(64, 64), (259, 133)] {
+            let rgb = source.crop_imm(0, 0, w, h).to_rgb8();
+            let (encoded, _) = encode_once(rgb.as_raw(), w, h, 7, 1);
+            let sha = persist_encode(&dir, &encoded);
+            assert_eq!(persist_encode(&dir, &encoded), sha);
+            let path = dir.join(format!("{sha}.jxl"));
+            let persisted = std::fs::read(&path).unwrap();
+            assert_eq!(persisted, encoded);
+            let decoded = zenjxl_decoder::decode(&persisted).unwrap();
+            assert_eq!(
+                (decoded.width, decoded.height, decoded.channels),
+                (w as usize, h as usize, 4)
+            );
+            let pixels: Vec<_> = decoded
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .collect();
+            assert_eq!(pixels, *rgb.as_raw());
+            let png = dir.join(format!("{sha}.png"));
+            let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                .arg(&path)
+                .arg(&png)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(image::open(png).unwrap().to_rgb8(), rgb);
         }
     }
 }

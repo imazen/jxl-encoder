@@ -40,6 +40,15 @@ libjxl-exact-cleanup-lint label manifest="Cargo.toml":
     echo "Clippy log: $log_dir/clippy.log"
     nice -n 19 cargo clippy --manifest-path "{{manifest}}" --workspace --all-targets --locked -- -D warnings > "$log_dir/clippy.log" 2>&1
 
+# Verify sectioned benchmark failure handling and persisted lossless samples.
+sectioned-harness-check manifest="Cargo.toml":
+    python3 -m unittest discover -s scripts -p test_sectioned_k_bar_cell.py
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases -- -D warnings
+
+sectioned-harness-build manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo build --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases
+
 # Persist real-input LZ77 harness smoke outputs and verify every recorded hash.
 lz77-artifact-check label:
     #!/usr/bin/env bash
