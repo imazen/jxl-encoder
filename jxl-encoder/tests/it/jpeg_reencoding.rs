@@ -1241,3 +1241,115 @@ fn jpeg_exif_orientation_preserves_display_and_reconstruction() {
         }
     }
 }
+
+/// Standalone restart markers after a completed scan are part of the original
+/// JPEG byte stream, including when the last interval contains exactly its MCU
+/// quota. Interior restart markers must remain in the entropy scan.
+#[test]
+fn jpeg_terminal_restart_markers_roundtrip() {
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .unwrap()
+        .to_rgb8();
+    let mut cases = Vec::new();
+    for (w, h) in [(64, 32), (259, 133)] {
+        let crop = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode_image(&image::DynamicImage::ImageRgb8(crop))
+            .unwrap();
+        let parsed = read_jpeg(&jpeg, None, None).unwrap();
+        let max_h = parsed
+            .components
+            .iter()
+            .map(|c| c.h_samp_factor)
+            .max()
+            .unwrap();
+        let max_v = parsed
+            .components
+            .iter()
+            .map(|c| c.v_samp_factor)
+            .max()
+            .unwrap();
+        let mcus = w.div_ceil(8 * max_h) * h.div_ceil(8 * max_v);
+        let interval = u16::try_from(mcus).unwrap();
+        // One complete restart interval, with no interior restart marker.
+        let mut with_dri = jpeg[..2].to_vec();
+        with_dri.extend([0xff, 0xdd, 0, 4]);
+        with_dri.extend(interval.to_be_bytes());
+        with_dri.extend_from_slice(&jpeg[2..]);
+        cases.push((format!("real-{w}x{h}"), with_dri));
+    }
+    // These committed fixtures also have ordinary interior restart markers.
+    cases.push((
+        "baseline-interior".into(),
+        include_bytes!("../fixtures/jbrd/base_a_rstblk_420.jpg").to_vec(),
+    ));
+    cases.push((
+        "progressive-interior".into(),
+        include_bytes!("../fixtures/jbrd/prog_a_rst_444.jpg").to_vec(),
+    ));
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/jpeg-restart-validation");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (label, jpeg) in cases {
+        assert!(jpeg.ends_with(&[0xff, 0xd9]));
+        let base = jxl_encoder::LosslessConfig::new()
+            .encode_jpeg_transcode(&jpeg)
+            .unwrap();
+        let base_pixels = decode_jxl_rs(&base);
+        for marker in 0xd0..=0xd7 {
+            let mut original = jpeg[..jpeg.len() - 2].to_vec();
+            original.extend([0xff, marker, 0xff, 0xd9]);
+            let parsed = read_jpeg(&original, None, None).unwrap();
+            assert!(
+                parsed.marker_order.ends_with(&[marker, 0xd9]),
+                "{label}: marker_order"
+            );
+            let encoded = jxl_encoder::LosslessConfig::new()
+                .encode_jpeg_transcode(&original)
+                .unwrap();
+            assert_eq!(
+                decode_jxl_rs(&encoded),
+                base_pixels,
+                "{label}: decoded pixels"
+            );
+            let input = dir.join(format!("{label}-{marker:x}.jxl"));
+            std::fs::write(&input, &encoded).unwrap();
+            let reconstructed = dir.join(format!("{label}-{marker:x}.jpg"));
+            let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                .arg(&input)
+                .arg(&reconstructed)
+                .arg("--reconstruct_jpeg")
+                .arg("--num_threads=1")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                std::fs::read(reconstructed).unwrap(),
+                original,
+                "{label}: djxl JPEG reconstruction"
+            );
+            let rendered = dir.join(format!("{label}-{marker:x}.png"));
+            let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                .arg(&input)
+                .arg(&rendered)
+                .arg("--num_threads=1")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let pixels = image::open(rendered).unwrap();
+            assert_eq!(
+                (pixels.width() as usize, pixels.height() as usize),
+                (base_pixels.0, base_pixels.1)
+            );
+        }
+    }
+}

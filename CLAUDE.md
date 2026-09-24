@@ -1114,6 +1114,28 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-24: JPEG terminal restart markers (#120)
+
+[PROVEN] The marker scanner discarded all RSTn markers, including a terminal
+run after the final MCU. The new `entropy_scan_preserves_terminal_restart_markers`
+regression fails before the correction (position 8 instead of 6). The scanner
+now retains a pending restart suffix, discarding that pending suffix only when
+actual entropy bytes follow it (including stuffed `FF 00`). This leaves terminal
+RSTn for the existing `marker_order` serialization, matching libjxl's reader.
+
+`jpeg_terminal_restart_markers_roundtrip` passes 32 cases: all eight terminal
+marker values on baseline/progressive fixtures with interior restarts and real
+64×32/259×133 crops with one complete restart interval. jxl-rs renders the
+same pixels, djxl v0.12 renders every stream and reconstructs every JPEG byte.
+The sibling zenjxl-decoder writer still needs the matching standalone-marker
+case; its stale-marker working state requires ownership clarification before
+editing. The 21 camera originals from #120 have not yet been rerun.
+The existing 53-fixture reconstruction gate passes (47 exact, six clean
+unsupported refusals), as do 1,650 JPEG-enabled library tests, 1,618 default
+library tests and all 75 lock/drift tests. JPEG-library Clippy retains the
+same 40 diagnostics as the parent; no allowance or expectation changed.
+
+
 
 ### 2026-09-24: JPEG feature build regression after strict tree refactoring
 

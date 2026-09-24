@@ -598,29 +598,38 @@ fn parse_sos_header(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
     Ok(())
 }
 
-/// Skip entropy-coded data segment (find next real marker).
+/// Skip entropy-coded data, leaving terminal restart markers for marker_order.
+/// Restart markers followed by entropy bytes stay inside the scan. A trailing
+/// run has no more MCU data and must be reconstructed as standalone markers
+/// (libjxl's MCU-counted reader leaves these for its top-level marker loop).
 fn skip_entropy_data(data: &[u8], pos: &mut usize) {
+    let mut terminal_restart = None;
     while *pos < data.len() {
         if data[*pos] == 0xFF {
             if *pos + 1 >= data.len() {
                 *pos = data.len();
-                return;
+                break;
             }
             let next = data[*pos + 1];
             if next == 0x00 {
-                // Byte stuffing
+                // A stuffed 0xFF is entropy data, including after a restart.
+                terminal_restart = None;
                 *pos += 2;
                 continue;
             }
             if (0xD0..=0xD7).contains(&next) {
-                // RST marker
+                terminal_restart.get_or_insert(*pos);
                 *pos += 2;
                 continue;
             }
-            // Real marker - stop before it (the main loop will read it)
-            return;
+            // The main loop reads this marker and any terminal RSTn before it.
+            break;
         }
+        terminal_restart = None;
         *pos += 1;
+    }
+    if let Some(start) = terminal_restart {
+        *pos = start;
     }
 }
 
@@ -853,6 +862,31 @@ fn classify_components(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entropy_scan_preserves_terminal_restart_markers() {
+        for marker in 0xd0..=0xd7 {
+            // An interior restart still belongs to the entropy scan. The
+            // terminal run belongs to marker_order, before EOI or next SOS.
+            for next in [0xd9, 0xda] {
+                let data = [0x12, 0xff, 0xd0, 0x34, 0xff, 0x00, 0xff, marker, 0xff, next];
+                let mut pos = 0;
+                skip_entropy_data(&data, &mut pos);
+                assert_eq!(pos, 6, "restart {marker:#x}, following marker {next:#x}");
+            }
+        }
+        for (data, expected) in [
+            (&[0x12, 0xff, 0xd0, 0x34, 0xff, 0xd9][..], 4),
+            (&[0x12, 0xff, 0xd0, 0xff, 0x00, 0xff, 0xd9][..], 5),
+            (&[0x12, 0xff, 0xd0, 0xff, 0xd1, 0xff, 0xd9][..], 1),
+            (&[0x12, 0xff, 0xd0][..], 1),
+            (&[0x12, 0xff][..], 2),
+        ] {
+            let mut pos = 0;
+            skip_entropy_data(data, &mut pos);
+            assert_eq!(pos, expected, "{data:x?}");
+        }
+    }
 
     #[test]
     fn test_zigzag_roundtrip() {

@@ -68,6 +68,9 @@ jobs:
       - name: Test JPEG orientation and reconstruction
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_exif_orientation_preserves_display_and_reconstruction
+      - name: JPEG terminal restart marker reconstruction
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_terminal_restart_markers_roundtrip
 
       # Belt-and-suspenders: ensure the no_std + alloc path keeps
       # compiling. `jxl-encoder-simd` is `#![no_std]` unconditionally

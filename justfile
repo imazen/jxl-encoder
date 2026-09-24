@@ -441,3 +441,14 @@ libjxl-extras-cost-check label:
     mkdir -p "$HOME/tmp/jxl-backlog"
     nice -n 19 cargo test --locked -p jxl-encoder --features __expert --test it strict_palette_cost_revert_preserves_alpha_in_both_decoders -- --nocapture > "$HOME/tmp/jxl-backlog/part-24-roundtrip-{{label}}.log" 2>&1
     rg 'test result:' "$HOME/tmp/jxl-backlog/part-24-roundtrip-{{label}}.log"
+
+# JPEG restart markers after the final MCU must survive JBRD reconstruction.
+jpeg-restart-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --lib entropy_scan_preserves_terminal_restart_markers > "$HOME/tmp/jxl-backlog/jpeg120-parser-{{label}}.log" 2>&1
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_terminal_restart_markers_roundtrip -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg120-render-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg120-"*"-{{label}}.log"
