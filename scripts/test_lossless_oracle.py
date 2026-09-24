@@ -76,6 +76,33 @@ class OracleCli(unittest.TestCase):
             path = self.root / "rows.artifacts" / (row["encoded_sha256"] + ".jxl")
             self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), row["encoded_sha256"])
 
+    def test_rct_palette_grid_retains_ids_above_255(self):
+        result = self.run_probe("--wp-modes", "0,4", "--rct-ids", "0,6,13,19,41",
+                                "--palette-modes", "auto,off")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with (self.root / "rows.tsv").open() as file:
+            rows = list(csv.DictReader(file, delimiter="\t"))
+        self.assertEqual(len(rows), 320)
+        self.assertEqual({int(row["cell_id"]) for row in rows}, set(range(320)))
+        self.assertEqual({row["forced_rct"] for row in rows}, {"0", "6", "13", "19", "41"})
+        self.assertEqual({row["allow_palette"] for row in rows}, {"0", "1"})
+        metadata = json.loads((self.root / "rows.artifacts/_MANIFEST.json").read_text())
+        self.assertEqual(metadata["schema"], "lossless-picker-oracle-v4")
+        self.assertEqual(metadata["rct_ids"], [0, 6, 13, 19, 41])
+        self.assertEqual(metadata["palette_modes"], [True, False])
+        for row in rows:
+            path = self.root / "rows.artifacts" / (row["encoded_sha256"] + ".jxl")
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), row["encoded_sha256"])
+
+    def test_invalid_and_duplicate_modes_fail_before_outputs(self):
+        for args in [("--rct-ids", "42"), ("--rct-ids", "6,6"),
+                     ("--wp-modes", "5"), ("--wp-modes", "0,0"),
+                     ("--palette-modes", "on"), ("--palette-modes", "off,off")]:
+            with self.subTest(args=args):
+                result = self.run_probe(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / "rows.tsv").exists())
+
     def test_changed_source_fails_without_encode_rows(self):
         self.write_manifest("0" * 64)
         result = self.run_probe()

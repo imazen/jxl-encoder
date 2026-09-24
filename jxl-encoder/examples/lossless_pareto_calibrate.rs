@@ -4,7 +4,7 @@
 //! The picker is going to *replace* the bundled-effort axis, so the oracle
 //! must expose each underlying knob independently — not the bundled effort.
 //!
-//! Base cells (categorical, 16), repeated for each requested WP mode:
+//! Base cells (categorical, 16), repeated for each requested WP/RCT/palette combination:
 //!   - lz77_method ∈ {None, Rle, Greedy, Optimal}    (4)
 //!   - use_squeeze ∈ {false, true}                   (2)
 //!   - use_patches ∈ {false, true}                   (2)
@@ -36,6 +36,7 @@
 //!       --features-output benchmarks/lossless_pareto_features_<DATE>.tsv \
 //!       [--samples-per-cell N] [--max-images N] [--sizes 64,256,1024,native]
 //!       [--features-only] [--smoke] [--wp-modes search,0,1,2,3,4]
+//!       [--rct-ids search,0,6,41] [--palette-modes auto,off]
 //!
 //! Outputs are new files only. Encoded bytes are retained by SHA256 in
 //! `<output>.artifacts`; its `_MANIFEST.json` records the build and input plan.
@@ -80,17 +81,19 @@ const LZ77_AXES: &[(u8, &str, Option<Lz77Method>)] = &[
 
 #[derive(Clone, Copy, Debug)]
 struct CellSpec {
-    cell_id: u8,
+    cell_id: u16,
     lz77_label: &'static str,
     lz77_method: Option<Lz77Method>,
     squeeze: bool,
     patches: bool,
     forced_wp_mode: Option<u8>,
+    forced_rct: Option<u8>,
+    allow_palette: bool,
 }
 
 fn enumerate_cells() -> Vec<CellSpec> {
     let mut out = Vec::new();
-    let mut id = 0u8;
+    let mut id = 0u16;
     for &(_lz_id, lz_label, lz_method) in LZ77_AXES {
         for &squeeze in &[false, true] {
             for &patches in &[false, true] {
@@ -101,6 +104,8 @@ fn enumerate_cells() -> Vec<CellSpec> {
                     squeeze,
                     patches,
                     forced_wp_mode: None,
+                    forced_rct: None,
+                    allow_palette: true,
                 });
                 id += 1;
             }
@@ -136,13 +141,18 @@ fn anchor_scalars() -> (u8, u8, u16, u8, f32) {
 fn sample_scalars(
     image_sha: &str,
     size_class: &str,
-    cell_id: u8,
+    cell_id: u16,
     sample_idx: u32,
 ) -> (u8, u8, u16, u8, f32) {
     let mut hasher = DefaultHasher::new();
     image_sha.hash(&mut hasher);
     size_class.hash(&mut hasher);
-    cell_id.hash(&mut hasher);
+    // Keep the historical scalar samples for all prior cell IDs.
+    if let Ok(id) = u8::try_from(cell_id) {
+        id.hash(&mut hasher);
+    } else {
+        cell_id.hash(&mut hasher);
+    }
     sample_idx.hash(&mut hasher);
     let seed = hasher.finish();
     let mut r = fastrand::Rng::with_seed(seed);
@@ -171,6 +181,8 @@ struct Args {
     features_only: bool,
     smoke: bool,
     wp_modes: Vec<Option<u8>>,
+    rct_ids: Vec<Option<u8>>,
+    palette_modes: Vec<bool>,
 }
 
 fn parse_args() -> Args {
@@ -184,6 +196,8 @@ fn parse_args() -> Args {
     let mut features_only = false;
     let mut smoke = false;
     let mut wp_modes = vec![None];
+    let mut rct_ids = vec![None];
+    let mut palette_modes = vec![true];
     let date = chrono_today();
     let mut output = PathBuf::from(format!("benchmarks/lossless_pareto_{date}.tsv"));
     let mut features_output =
@@ -210,22 +224,24 @@ fn parse_args() -> Args {
             "--max-images" => max_images = it.next().unwrap().parse().expect("max-images uint"),
             "--threads" => threads = it.next().unwrap().parse().expect("threads uint"),
             "--wp-modes" => {
-                wp_modes = it
+                wp_modes = parse_mode_list(&it.next().expect("--wp-modes needs a list"), 4)
+            }
+            "--rct-ids" => {
+                rct_ids = parse_mode_list(&it.next().expect("--rct-ids needs a list"), 41)
+            }
+            "--palette-modes" => {
+                palette_modes = it
                     .next()
-                    .expect("--wp-modes needs a list")
+                    .expect("--palette-modes needs a list")
                     .split(',')
-                    .map(|v| {
-                        if v == "search" {
-                            None
-                        } else {
-                            let mode: u8 = v.parse().expect("WP mode must be search or 0..=4");
-                            assert!(mode <= 4, "WP mode must be 0..=4");
-                            Some(mode)
-                        }
+                    .map(|v| match v {
+                        "auto" => true,
+                        "off" => false,
+                        _ => panic!("palette mode must be auto or off"),
                     })
                     .collect();
-                for (i, mode) in wp_modes.iter().enumerate() {
-                    assert!(!wp_modes[..i].contains(mode), "duplicate WP mode");
+                for (i, mode) in palette_modes.iter().enumerate() {
+                    assert!(!palette_modes[..i].contains(mode), "duplicate palette mode");
                 }
             }
             "--features-only" => features_only = true,
@@ -256,7 +272,50 @@ fn parse_args() -> Args {
         features_only,
         smoke,
         wp_modes,
+        rct_ids,
+        palette_modes,
     }
+}
+
+fn parse_mode_list(value: &str, max: u8) -> Vec<Option<u8>> {
+    let values: Vec<_> = value
+        .split(',')
+        .map(|v| {
+            if v == "search" {
+                None
+            } else {
+                let mode: u8 = v.parse().expect("mode must be search or an integer");
+                assert!(mode <= max, "mode must be 0..={max}");
+                Some(mode)
+            }
+        })
+        .collect();
+    for (i, mode) in values.iter().enumerate() {
+        assert!(!values[..i].contains(mode), "duplicate mode");
+    }
+    values
+}
+
+fn candidate_cells(
+    wp_modes: &[Option<u8>],
+    rct_ids: &[Option<u8>],
+    palette_modes: &[bool],
+) -> Vec<CellSpec> {
+    let mut cells = Vec::new();
+    for &mode in wp_modes {
+        for &rct in rct_ids {
+            for &palette in palette_modes {
+                for mut cell in enumerate_cells() {
+                    cell.cell_id = u16::try_from(cells.len()).expect("too many candidate cells");
+                    cell.forced_wp_mode = mode;
+                    cell.forced_rct = rct;
+                    cell.allow_palette = palette;
+                    cells.push(cell);
+                }
+            }
+        }
+    }
+    cells
 }
 
 fn chrono_today() -> String {
@@ -359,6 +418,7 @@ fn build_encoder(rc: &RowConfig) -> LosslessConfig {
     params.nb_rcts_to_try = Some(rc.nb_rcts_to_try);
     params.wp_num_param_sets = Some(rc.wp_num_param_sets);
     params.forced_wp_mode = rc.cell.forced_wp_mode;
+    params.forced_rct = rc.cell.forced_rct.map(jxl_encoder::RctType);
     params.tree_max_buckets = Some(rc.tree_max_buckets);
     params.tree_num_properties = Some(rc.tree_num_properties);
     params.tree_sample_fraction = Some(rc.tree_sample_fraction);
@@ -376,6 +436,12 @@ fn build_encoder(rc: &RowConfig) -> LosslessConfig {
         .with_patches(rc.cell.patches)
         .with_threads(1);
 
+    if !rc.cell.allow_palette {
+        cfg = cfg
+            .with_modular_palette_colors(Some(0))
+            .with_modular_channel_colors_global_percent(Some(0.0))
+            .with_modular_channel_colors_group_percent(Some(0.0));
+    }
     if let Some(m) = rc.cell.lz77_method {
         cfg = cfg.with_lz77(true).with_lz77_method(m);
     } else {
@@ -481,17 +547,10 @@ fn main() {
     let n_images = entries.len().min(args.max_images);
     let entries: Vec<ManifestEntry> = entries.into_iter().take(n_images).collect();
     assert!(!entries.is_empty(), "manifest/filter selected no images");
-    let mut cells = Vec::new();
-    for mode in &args.wp_modes {
-        for mut cell in enumerate_cells() {
-            cell.cell_id = cells.len() as u8;
-            cell.forced_wp_mode = *mode;
-            cells.push(cell);
-        }
-    }
+    let cells = candidate_cells(&args.wp_modes, &args.rct_ids, &args.palette_modes);
     let cols = feature_columns();
     let metadata = serde_json::json!({
-        "schema": "lossless-picker-oracle-v3",
+        "schema": "lossless-picker-oracle-v4",
         "build_commit": build_commit,
         "binary_sha256": sha256_hex(&std::fs::read(std::env::current_exe().unwrap()).unwrap()),
         "manifest": args.manifest,
@@ -503,6 +562,8 @@ fn main() {
         "worker_threads": args.threads,
         "encoder_threads": 1,
         "wp_modes": args.wp_modes,
+        "rct_ids": args.rct_ids,
+        "palette_modes": args.palette_modes,
         "features_only": args.features_only,
         "features": cols.iter().map(|c| c.name()).collect::<Vec<_>>(),
         "pixel_input": "PNG converted to packed RGB8; native or Lanczos3 downsample",
@@ -574,7 +635,7 @@ fn main() {
             let mut g = f.lock().unwrap();
             writeln!(
                 g,
-                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tcell_id\tlz77_method\tsqueeze\tpatches\tnb_rcts_to_try\twp_num_param_sets\ttree_max_buckets\ttree_num_properties\ttree_sample_fraction\tsample_idx\tbytes\tencode_ms\tencoded_sha256\tforced_wp_mode"
+                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tcell_id\tlz77_method\tsqueeze\tpatches\tnb_rcts_to_try\twp_num_param_sets\ttree_max_buckets\ttree_num_properties\ttree_sample_fraction\tsample_idx\tbytes\tencode_ms\tencoded_sha256\tforced_wp_mode\tforced_rct\tallow_palette"
             )
             .expect("complete output operation");
         }
@@ -683,7 +744,7 @@ fn main() {
                         let mut f = main_file.lock().unwrap();
                         writeln!(
                             f,
-                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}\t{}\t{}",
+                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}",
                             entry.sha256, entry.split, entry.content_class, size_class,
                             w, h, rc.cell.cell_id, rc.cell.lz77_label,
                             rc.cell.squeeze as u8, rc.cell.patches as u8,
@@ -691,6 +752,8 @@ fn main() {
                             rc.tree_num_properties, rc.tree_sample_fraction, rc.sample_idx,
                             encoded.len(), encode_ms, encoded_sha256,
                             rc.cell.forced_wp_mode.map(|m| m.to_string()).unwrap_or_default(),
+                            rc.cell.forced_rct.map(|m| m.to_string()).unwrap_or_default(),
+                            rc.cell.allow_palette as u8,
                         ).expect("write encoded row");
 
                     }
@@ -741,46 +804,94 @@ mod tests {
         for (w, h) in [(64, 64), (259, 133)] {
             let rgb = source.crop_imm(0, 0, w, h).to_rgb8();
             let (r, wp, buckets, props, fraction) = anchor_scalars();
-            let rc = RowConfig {
-                cell: enumerate_cells()[0],
+            let mut cells = vec![enumerate_cells()[0]];
+            cells.extend(
+                candidate_cells(
+                    &[Some(0), Some(4)],
+                    &[Some(0), Some(6), Some(41)],
+                    &[true, false],
+                )
+                .into_iter()
+                .filter(|cell| cell.lz77_label == "none" && !cell.patches && !cell.squeeze),
+            );
+            for cell in cells {
+                let rc = RowConfig {
+                    cell,
+                    nb_rcts_to_try: r,
+                    wp_num_param_sets: wp,
+                    tree_max_buckets: buckets,
+                    tree_num_properties: props,
+                    tree_sample_fraction: fraction,
+                    sample_idx: 0,
+                };
+                let (encoded, _) = encode_one(rgb.as_raw(), w, h, &rc).unwrap();
+                let sha = persist_encode(&dir, &encoded).unwrap();
+                assert_eq!(persist_encode(&dir, &encoded).unwrap(), sha);
+                let path = dir.join(format!("{sha}.jxl"));
+                let persisted = std::fs::read(&path).unwrap();
+                assert_eq!(persisted, encoded);
+                let decoded = zenjxl_decoder::decode(&persisted).unwrap();
+                assert_eq!(
+                    (decoded.width, decoded.height, decoded.channels),
+                    (w as usize, h as usize, 4)
+                );
+                let pixels: Vec<_> = decoded
+                    .data
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .flat_map(|p| [p[0], p[1], p[2]])
+                    .collect();
+                assert_eq!(pixels, *rgb.as_raw());
+                let png = dir.join(format!("{sha}.png"));
+                let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                    .arg(&path)
+                    .arg(&png)
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(image::open(png).unwrap().to_rgb8(), rgb);
+            }
+        }
+    }
+
+    #[test]
+    fn candidate_ids_and_controls_do_not_alias() {
+        let rcts: Vec<_> = core::iter::once(None).chain((0..=41).map(Some)).collect();
+        let modes: Vec<_> = core::iter::once(None).chain((0..=4).map(Some)).collect();
+        let cells = candidate_cells(&modes, &rcts, &[true, false]);
+        assert_eq!(cells.len(), 16 * 6 * 43 * 2);
+        let (r, wp, buckets, props, fraction) = anchor_scalars();
+        for (id, cell) in cells.into_iter().enumerate() {
+            assert_eq!(cell.cell_id as usize, id);
+            let cfg = build_encoder(&RowConfig {
+                cell,
                 nb_rcts_to_try: r,
                 wp_num_param_sets: wp,
                 tree_max_buckets: buckets,
                 tree_num_properties: props,
                 tree_sample_fraction: fraction,
                 sample_idx: 0,
-            };
-            let (encoded, _) = encode_one(rgb.as_raw(), w, h, &rc).unwrap();
-            let sha = persist_encode(&dir, &encoded).unwrap();
-            assert_eq!(persist_encode(&dir, &encoded).unwrap(), sha);
-            let path = dir.join(format!("{sha}.jxl"));
-            let persisted = std::fs::read(&path).unwrap();
-            assert_eq!(persisted, encoded);
-            let decoded = zenjxl_decoder::decode(&persisted).unwrap();
+            });
+            let profile = cfg.resolved_profile();
+            assert_eq!(profile.forced_wp_mode, cell.forced_wp_mode);
+            assert_eq!(profile.forced_rct.map(|rct| rct.0), cell.forced_rct);
             assert_eq!(
-                (decoded.width, decoded.height, decoded.channels),
-                (w as usize, h as usize, 4)
+                cfg.modular_palette_colors(),
+                if cell.allow_palette { None } else { Some(0) }
             );
-            let pixels: Vec<_> = decoded
-                .data
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .flat_map(|p| [p[0], p[1], p[2]])
-                .collect();
-            assert_eq!(pixels, *rgb.as_raw());
-            let png = dir.join(format!("{sha}.png"));
-            let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
-                .arg(&path)
-                .arg(&png)
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
+            assert_eq!(
+                cfg.modular_channel_colors_global_percent(),
+                if cell.allow_palette { None } else { Some(0.0) }
             );
-            assert_eq!(image::open(png).unwrap().to_rgb8(), rgb);
+            assert_eq!(
+                cfg.modular_channel_colors_group_percent(),
+                if cell.allow_palette { None } else { Some(0.0) }
+            );
         }
     }
 

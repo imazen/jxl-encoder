@@ -2812,6 +2812,25 @@ All 75 lock/drift tests, 1,618 library tests, both RD regressions, workspace
 all-target Clippy and expert lib/test Clippy pass without relocking.
 `just lossless-strategy-check <manifest>` reproduces the focused checks.
 
+### 2026-09-24: lossless oracle RCT/palette candidate axes (#24)
+
+The existing oracle now accepts `--rct-ids search,0..41` (an explicit comma
+list, not range syntax) and `--palette-modes auto,off`, alongside WP modes.
+`auto` permits the existing palette decision; it does not force a transform.
+`off` disables multichannel palettes and global/group ChannelCompact through
+existing setters. Defaults retain the original 16 cells and scalar seeds.
+Schema v4 records RCT/palette choices in each row and the artifact manifest;
+u16 cell IDs cover all 8,256 combinations without wrapping at 256.
+
+Three example tests pass, including all resolved categorical controls and
+26 real single/multi-group encodes reconstructed exactly by Rust and djxl.
+Eight CLI controls pass, including 320 distinct cell IDs, artifact hashes and
+invalid/duplicate-mode refusal. Exact-example Clippy passes. This supplies
+candidate controls, not an oracle-benefit result or a trained picker.
+All 75 lock/drift checks, 1,618 library tests and workspace all-target
+Clippy also pass unchanged. The pending trainer extension needs explicit
+sibling/public-API approval; no trainer or model was changed here.
+
 ### 2026-09-24: approved explicit WP selection (#24)
 
 `LosslessInternalParams::forced_wp_mode` selects modes 0..=4 in the existing
@@ -2864,7 +2883,7 @@ Clippy and workspace all-target Clippy pass against the pinned sibling closure.
 
 This is oracle collection infrastructure, not a trained or qualified picker.
 The retained 16 cells vary LZ77/squeeze/patches; scalar knobs vary search
-budgets. They do not force RCT IDs, WP modes or palette choices as #24's
+budgets. That original v2 grid did not force RCT IDs, WP modes or palette choices as #24's
 proposed picker requires. No model, policy threshold or default changes.
 Next compare actual e7/e9 baselines and oracle candidates on content-stratified
 held-out inputs before training; use dense size coverage for a learned model.
