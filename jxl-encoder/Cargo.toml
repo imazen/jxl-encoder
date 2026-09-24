@@ -1400,12 +1400,18 @@ required-features = ["__expert"]
 # (you must temporarily add a [[example]] block + path = "examples/smart_fanout_sweep.rs"
 # matching the pattern below, then revert before pushing).
 
-# Picker oracle calibration harnesses (lossless_pareto_calibrate /
-# lossy_pareto_calibrate / rct_per_image_sweep) live under examples/ but
+# Lossless oracle recovery uses the same analyzer dependency as learned admission.
+[[example]]
+name = "lossless_pareto_calibrate"
+path = "examples/lossless_pareto_calibrate.rs"
+required-features = ["__expert", "parallel", "learned-admission"]
+
+# The remaining picker oracle harnesses (lossy_pareto_calibrate /
+# rct_per_image_sweep) live under examples/ but
 # are NOT registered as cargo examples — they depend on a sibling-repo
 # `zenanalyze` path that isn't present on CI. Run them locally with:
 #   cargo run --release --manifest-path jxl-encoder/Cargo.toml \
-#       --example lossless_pareto_calibrate --features __expert
+#       --example lossy_pareto_calibrate --features __expert
 # after editing this file to add a [[example]] entry plus the path dep
 # (see git history pre-2026-05-02 for the previous wiring).
 #

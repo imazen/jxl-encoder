@@ -2786,6 +2786,40 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: lossless picker oracle harness recovery (#24, partial)
+
+`lossless_pareto_calibrate` is registered with
+`__expert,parallel,learned-admission`. It retains every successful JXL by
+SHA256, records that key in each result row, verifies source-file hashes,
+and refuses existing output files. Input/encode/write failures now fail the
+process instead of skipping inputs, dropping encodes or ignoring writes.
+The artifact `_MANIFEST.json` binds source commit, binary and input-manifest
+hashes, feature columns and run configuration. Custom size keys include the
+requested size; the old shared `custom` key could collide when joining rows.
+Integer feature values retain their integer spelling rather than coercing
+through f32. Outputs use schema `lossless-picker-oracle-v2`.
+
+Reproduce with `just lossless-oracle-build <pinned-manifest>`,
+`just lossless-oracle-check <pinned-manifest>` and
+`just lossless-oracle-cli-check <binary>`. The build recipe sets
+`JXL_BENCH_COMMIT`; a binary built without it refuses a sweep. Two Rust tests
+cover preserved corrupt artifacts and pixel-exact real-image reconstruction
+in the Rust decoder and djxl v0.12 at 64x64 and 259x133. Five CLI tests cover
+all 16 anchor cells' artifact hashes/lengths, provenance, overwrite refusal,
+missing/changed sources, empty selection and distinct custom-size keys.
+All 75 lock/drift tests, 1,618 library tests (29 existing ignores), exact-example
+Clippy and workspace all-target Clippy pass against the pinned sibling closure.
+
+This is oracle collection infrastructure, not a trained or qualified picker.
+The retained 16 cells vary LZ77/squeeze/patches; scalar knobs vary search
+budgets. They do not force RCT IDs, WP modes or palette choices as #24's
+proposed picker requires. No model, policy threshold or default changes.
+Next compare actual e7/e9 baselines and oracle candidates on content-stratified
+held-out inputs before training; use dense size coverage for a learned model.
+Single-worker timing is the default; concurrent-worker timing is not isolated
+latency. No compression or runtime improvement is claimed from the smoke cells.
+
+
 ### 2026-09-24: shared ANS normalization tables
 
 `AllowedCountsCache::new` constructs only input-independent allowed-count
