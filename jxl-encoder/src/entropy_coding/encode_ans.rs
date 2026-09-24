@@ -537,13 +537,24 @@ pub fn build_entropy_code_ans_from_token_groups(
     build_entropy_code_ans_from_token_groups_with_strategy(
         groups,
         num_contexts,
-        enhanced_clustering,
-        optimize_uint_configs,
         lz77,
-        total_pixel_hint,
-        ANSHistogramStrategy::Precise,
-        false,
+        AnsBuildOptions {
+            enhanced_clustering,
+            optimize_uint_configs,
+            total_pixel_hint,
+            ans_strategy: ANSHistogramStrategy::Precise,
+            libjxl_params: false,
+        },
     )
+}
+
+/// Coding choices for an ANS build, resolved by the caller's existing profile.
+pub(crate) struct AnsBuildOptions {
+    pub enhanced_clustering: bool,
+    pub optimize_uint_configs: bool,
+    pub total_pixel_hint: Option<usize>,
+    pub ans_strategy: ANSHistogramStrategy,
+    pub libjxl_params: bool,
 }
 
 /// Like [`build_entropy_code_ans_from_token_groups`] but lets the caller pick
@@ -555,13 +566,16 @@ pub fn build_entropy_code_ans_from_token_groups(
 pub fn build_entropy_code_ans_from_token_groups_with_strategy(
     groups: &[&[Token]],
     num_contexts: usize,
-    enhanced_clustering: bool,
-    optimize_uint_configs: bool,
     lz77: Option<&Lz77Params>,
-    total_pixel_hint: Option<usize>,
-    ans_strategy: ANSHistogramStrategy,
-    libjxl_params: bool,
+    options: AnsBuildOptions,
 ) -> OwnedAnsEntropyCode {
+    let AnsBuildOptions {
+        enhanced_clustering,
+        optimize_uint_configs,
+        total_pixel_hint,
+        ans_strategy,
+        libjxl_params,
+    } = options;
     // Phase A: Accumulate per-context histograms and value frequencies.
     // Per-group accumulators are independent and merge associatively;
     // run a parallel map-reduce over the groups.
@@ -1620,12 +1634,14 @@ fn build_ctxmap_ans_candidate(
     let mut code = build_entropy_code_ans_from_token_groups_with_strategy(
         &[final_tokens],
         post_lz77_num_contexts,
-        /*enhanced_clustering=*/ false,
-        /*optimize_uint_configs=*/ false,
         lz77_params.as_ref(),
-        /*total_pixel_hint=*/ None,
-        ANSHistogramStrategy::Precise,
-        /*libjxl_params=*/ libjxl_log_alpha,
+        AnsBuildOptions {
+            enhanced_clustering: false,
+            optimize_uint_configs: false,
+            total_pixel_hint: None,
+            ans_strategy: ANSHistogramStrategy::Precise,
+            libjxl_params: libjxl_log_alpha,
+        },
     );
 
     // Override the HybridUint config with libjxl's kContextMap = (2, 0, 1).
@@ -2784,12 +2800,14 @@ mod libjxl_log_alpha_tests {
         let code = build_entropy_code_ans_from_token_groups_with_strategy(
             &[&toks],
             1,
-            /*enhanced_clustering=*/ false,
-            /*optimize_uint_configs=*/ false,
             None,
-            None,
-            ANSHistogramStrategy::Precise,
-            /*libjxl_params=*/ true,
+            AnsBuildOptions {
+                enhanced_clustering: false,
+                optimize_uint_configs: false,
+                total_pixel_hint: None,
+                ans_strategy: ANSHistogramStrategy::Precise,
+                libjxl_params: true,
+            },
         );
         assert_eq!(code.log_alpha_size, 7);
         assert!(code.libjxl_log_alpha);
@@ -2804,12 +2822,14 @@ mod libjxl_log_alpha_tests {
         let code = build_entropy_code_ans_from_token_groups_with_strategy(
             &[&toks],
             1,
-            /*enhanced_clustering=*/ false,
-            /*optimize_uint_configs=*/ true,
             None,
-            None,
-            ANSHistogramStrategy::Precise,
-            /*libjxl_params=*/ true,
+            AnsBuildOptions {
+                enhanced_clustering: false,
+                optimize_uint_configs: true,
+                total_pixel_hint: None,
+                ans_strategy: ANSHistogramStrategy::Precise,
+                libjxl_params: true,
+            },
         );
         assert_eq!(code.log_alpha_size, 5);
     }
@@ -2822,12 +2842,14 @@ mod libjxl_log_alpha_tests {
         let code = build_entropy_code_ans_from_token_groups_with_strategy(
             &[&toks],
             1,
-            false,
-            false,
             None,
-            None,
-            ANSHistogramStrategy::Precise,
-            false,
+            AnsBuildOptions {
+                enhanced_clustering: false,
+                optimize_uint_configs: false,
+                total_pixel_hint: None,
+                ans_strategy: ANSHistogramStrategy::Precise,
+                libjxl_params: false,
+            },
         );
         assert_eq!(code.log_alpha_size, ANS_LOG_ALPHA_SIZE);
         assert!(!code.libjxl_log_alpha);
@@ -2849,7 +2871,7 @@ mod libjxl_log_alpha_tests {
         // the same asymmetry that made cjxl pick raw on the noise_512 map.
         let mut map = Vec::new();
         for i in 0..5u32 {
-            map.extend(std::iter::repeat((i + 1) as u8).take(300));
+            map.extend(std::iter::repeat_n((i + 1) as u8, 300));
             for j in 0..20u32 {
                 map.push((100 + (i * 20 + j) % 100) as u8);
             }

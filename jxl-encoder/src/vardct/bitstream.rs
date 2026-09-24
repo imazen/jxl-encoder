@@ -4158,12 +4158,14 @@ impl VarDctEncoder {
                     crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
                         &dc_groups,
                         dc_num_contexts,
-                        dc_enhanced_clustering,
-                        dc_optimize_uint,
                         dc_lz77_params.as_ref(),
-                        None,
-                        self.profile.ans_histogram_strategy_vardct,
-                        self.profile.entropy_codes_libjxl_parity,
+                        crate::entropy_coding::encode::AnsBuildOptions {
+                            enhanced_clustering: dc_enhanced_clustering,
+                            optimize_uint_configs: dc_optimize_uint,
+                            total_pixel_hint: None,
+                            ans_strategy: self.profile.ans_histogram_strategy_vardct,
+                            libjxl_params: self.profile.entropy_codes_libjxl_parity,
+                        },
                     ),
                 )
             } else {
@@ -4222,12 +4224,14 @@ impl VarDctEncoder {
                         crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
                             &ac_groups,
                             ac_num_contexts,
-                            self.profile.enhanced_clustering_vardct,
-                            self.profile.optimize_uint_configs_vardct,
                             ac_lz77_params_per_pass[pass].as_ref(),
-                            None,
-                            self.profile.ans_histogram_strategy_vardct,
-                            self.profile.entropy_codes_libjxl_parity,
+                            crate::entropy_coding::encode::AnsBuildOptions {
+                                enhanced_clustering: self.profile.enhanced_clustering_vardct,
+                                optimize_uint_configs: self.profile.optimize_uint_configs_vardct,
+                                total_pixel_hint: None,
+                                ans_strategy: self.profile.ans_histogram_strategy_vardct,
+                                libjxl_params: self.profile.entropy_codes_libjxl_parity,
+                            },
                         ),
                     )
                 } else {

@@ -843,12 +843,14 @@ fn write_tree_code_libjxl(
         let code = build_entropy_code_ans_from_token_groups_with_strategy(
             &[lz_tokens],
             num_contexts,
-            best,
-            optimize_uint,
             lz77_params.as_ref(),
-            None,
-            params.ans_strategy,
-            true,
+            crate::entropy_coding::encode::AnsBuildOptions {
+                enhanced_clustering: best,
+                optimize_uint_configs: optimize_uint,
+                total_pixel_hint: None,
+                ans_strategy: params.ans_strategy,
+                libjxl_params: true,
+            },
         );
         write_entropy_code_ans(&code, writer)?;
         write_tokens_ans(lz_tokens, &code, lz77_params.as_ref(), writer)?;

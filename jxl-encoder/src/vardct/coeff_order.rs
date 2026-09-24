@@ -1276,12 +1276,14 @@ pub fn build_and_write_coeff_orders(
             crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
                 &[lz_tokens],
                 num_ctx,
-                /*enhanced_clustering=*/ true,
-                /*optimize_uint_configs=*/ true,
                 lz_params,
-                /*total_pixel_hint=*/ None,
-                crate::entropy_coding::ans::ANSHistogramStrategy::Precise,
-                /*libjxl_params=*/ true,
+                crate::entropy_coding::encode::AnsBuildOptions {
+                    enhanced_clustering: true,
+                    optimize_uint_configs: true,
+                    total_pixel_hint: None,
+                    ans_strategy: crate::entropy_coding::ans::ANSHistogramStrategy::Precise,
+                    libjxl_params: true,
+                },
             )
         } else {
             build_entropy_code_ans_with_options(
