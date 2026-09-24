@@ -812,6 +812,28 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-09-24: strict AC metadata EPF context order (W45-RECON part 23.1)
+
+[PROVEN] `collect_ac_metadata_tokens_region` numbered the `kACMeta` EPF
+classes as `11 + 2*(north>3) + (west>3)`, opposite the serialized tree's
+leaf order (both high = 11, neither high = 14). A 259×133 frymire RGB crop
+at Libjxl efforts 6 and 7 fails full decoding; jxl-rs, jxl-oxide and djxl
+v0.12 reject the e7 stream. The same failure with sparse alpha reproduces
+on parent `a07cf1ae`, independently of the pending palette-cost change.
+The correction uses `14 - 2*(north>3) - (west>3)` within the existing gate.
+`ac_meta_epf_token_contexts_match_serialized_tree` independently walks the
+emitted tree table across 256 sharpness patterns, including all four leaves
+and row/column edges; it fails on the old mapping at the first zero pixel.
+Validation: `just libjxl-acmeta-check fixed` passes the tree test and 28
+real-image cells (64×32/259×133, efforts 3–9, Libjxl/Zenjxl), fully rendered
+by jxl-rs, djxl v0.12 and jxl-oxide. All 75 byte-lock/drift checks and 1,616
+library tests and both real-image RD regressions pass; existing byte
+expectations are unchanged. Workspace Clippy remains blocked by 26 existing
+library diagnostics plus three existing test diagnostics in
+`pixel_loss.rs` and `encode_ans.rs`; none are in the changed code.
+
+
+
 See [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md) for full chronological bug narrative.
 
 ### RESOLVED 2026-09-24: JPEG transcoding discarded display orientation (#119)
@@ -1091,6 +1113,7 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
+
 
 ### 2026-09-24: JPEG feature build regression after strict tree refactoring
 

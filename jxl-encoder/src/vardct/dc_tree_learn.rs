@@ -3512,3 +3512,60 @@ fn test_wrapped_tree_root_splitval() {
         tree_tokens_with_ac_metadata_prefix(&tree, 1, 4, AcMetaTreeKind::Ours, true);
     assert_eq!(tokens[1], (0, pack_signed(8)));
 }
+
+#[test]
+fn ac_meta_epf_token_contexts_match_serialized_tree() {
+    use super::ac_strategy::AcStrategyMap;
+    use super::chroma_from_luma::CflMap;
+    use super::dc_coding::collect_ac_metadata_tokens_region;
+
+    let strategies = AcStrategyMap::new_dct8(2, 2);
+    let cfl = CflMap::zeros(1, 1);
+    let mut reached = [false; 4];
+    for pattern in 0..256 {
+        let sharpness: [u8; 4] = core::array::from_fn(|i| [0, 3, 4, 7][(pattern >> (2 * i)) & 3]);
+        let tokens = collect_ac_metadata_tokens_region(
+            2,
+            2,
+            &[1; 4],
+            2,
+            0,
+            0,
+            &cfl,
+            &strategies,
+            Some(&sharpness),
+            AcMetaTreeKind::AcMeta,
+        );
+        for (i, token) in tokens[tokens.len() - 4..].iter().enumerate() {
+            let x = i % 2;
+            let y = i / 2;
+            let west = if x > 0 {
+                sharpness[i - 1]
+            } else if y > 0 {
+                sharpness[i - 2]
+            } else {
+                0
+            };
+            let north = if y > 0 { sharpness[i - 2] } else { west };
+            // Walk the exact table used to serialize the decoder's tree,
+            // independently of the tokenizer's arithmetic class mapping.
+            let mut node = 0;
+            while AC_META_TREE_SPEC[node].0 >= 0 {
+                let (property, split, left, right) = AC_META_TREE_SPEC[node];
+                let value = match property {
+                    0 => 3,
+                    6 => i32::from(north),
+                    7 => i32::from(west),
+                    _ => panic!("unexpected EPF property {property}"),
+                };
+                node = if value > split { left } else { right };
+            }
+            let (predictor, class) = ac_meta_leaf_pred_class(node);
+            assert_eq!(predictor, 0);
+            reached[(class - 11) as usize] = true;
+            assert_eq!(token.context(), class, "pattern {sharpness:?}, pixel {i}");
+            assert_eq!(token.value, pack_signed(i32::from(sharpness[i])));
+        }
+    }
+    assert!(reached.into_iter().all(|v| v));
+}

@@ -1603,6 +1603,9 @@ jxl_encoder_macros::strategy_def! {
         /// `Best`/`Variable` + `kDefault`, AC-meta `Gradient` + `kNoWP`)
         /// merged under stream-id property-1 splits — libjxl
         /// `ComputeTree`/`MergeTrees` parity.
+        /// The predefined EPF leaves enumerate both neighbors >3 first
+        /// (class 11) and neither last (class 14); W45-RECON part 23.1
+        /// pins tokenizer class numbering to the serialized tree.
         ///
         /// Zenjxl keeps its fixed subtree — the structured contexts
         /// repay their tree header on complex content while the

@@ -893,7 +893,9 @@ pub fn collect_ac_metadata_tokens_region(
                     tokens.push(Token::new(0, pack_signed(sharpness - w)));
                 }
                 AcMetaTreeKind::AcMeta => {
-                    // kACMeta EPF quad-split: ctx = 11 + 2·(top>3) + (left>3).
+                    // kACMeta EPF quad-split: ctx = 14 - 2·(top>3) - (left>3).
+                    // The serialized tree lists the > branches first: both
+                    // neighbors above 3 select class 11, neither selects 14.
                     // Property edges follow the decoder's predictor state:
                     // at x=0 the "left" property is the north value; on row 0
                     // the "top" property is the west value.
@@ -911,7 +913,7 @@ pub fn collect_ac_metadata_tokens_region(
                     } else {
                         0
                     };
-                    let ctx = 11 + 2 * u32::from(n > 3) + u32::from(w > 3);
+                    let ctx = 14 - 2 * u32::from(n > 3) - u32::from(w > 3);
                     tokens.push(Token::new(ctx, pack_signed(sharpness)));
                 }
                 AcMetaTreeKind::Ours => {

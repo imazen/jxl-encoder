@@ -398,3 +398,30 @@ fn progressive_extras_preserve_alpha_in_both_decoders() {
         }
     }
 }
+
+#[test]
+#[cfg(feature = "__expert")]
+fn strict_ac_metadata_contexts_render_in_both_decoders() {
+    use jxl_encoder::api::EncoderStrategy;
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .unwrap()
+        .to_rgb8();
+    for (w, h) in [(64, 32), (259, 133)] {
+        let pixels = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        for strategy in [EncoderStrategy::Libjxl, EncoderStrategy::Zenjxl] {
+            for effort in [3, 4, 5, 6, 7, 8, 9] {
+                eprintln!("AC metadata {w}x{h} {strategy:?} e{effort}");
+                let bytes = LossyConfig::new(1.0)
+                    .with_strategy(strategy.clone())
+                    .with_effort(effort)
+                    .encode(pixels.as_raw(), w, h, PixelLayout::Rgb8)
+                    .unwrap();
+                let (dw, dh, extras, decoded) = decode_jxl_rs_rgba8(&bytes);
+                assert_eq!((dw, dh, extras), (w, h, 0));
+                assert_eq!(decoded.len(), (w * h * 4) as usize);
+                assert_eq!(decode_djxl(&bytes).dimensions(), (w, h));
+                assert_eq!(decode_jxl_oxide(&bytes, false), (w, h));
+            }
+        }
+    }
+}
