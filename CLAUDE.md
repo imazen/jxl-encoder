@@ -2761,6 +2761,27 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
+
+The post-v0.12 bucket matcher was implemented and screened at capacities
+1/3/7/15/31. All five grow a real terminal screenshot's 256×256 lossless-float
+cell from 22,072 to 29,702 bytes, while some other float cells improve.
+All 24 float outputs from the six arms reconstruct exact source bits in both
+jxl-rs and djxl v0.12. Another sixteen float outputs at 64×64 and multi-group
+259×259 also reconstruct exactly. The three-entry candidate passes 1,621
+library tests, but moves the existing e8 tiled RGB lock from 72,849 to 73,177
+bytes; the other 74 lock/drift checks pass. No lock was changed.
+
+This rejects unconditional adoption, not every possible future selection
+policy. The broader default-calibration grid was not run after this failure;
+the block-ordered timing is not a performance verdict. The prototype changes
+the shared Greedy dispatcher, which also serves strict VarDCT tree coding and
+ICC, so it is not shipping-ready lossless-only wiring. Preserve the current
+matcher in production. Candidate code, exact corpus hashes, artifacts and
+reproduction are recorded in
+[the rejection screen](benchmarks/lz77_bucket_screen_2026-09-24.md) and
+`abandoned/issue110-bucket-default`.
+
 ### 2026-09-24: #110 LZ77 comparison evidence
 
 The old `scripts/lz77_hash_ab_join.py` called equal byte counts

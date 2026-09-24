@@ -21,6 +21,8 @@ use crate::bit_writer::BitWriter;
 use crate::budget::{MemoryBudget, vec_with_capacity_fallible};
 use crate::error::Result;
 
+mod bucket;
+
 /// Maximum window size for LZ77 matching (1MB, matches libjxl).
 const WINDOW_SIZE: usize = 1 << 20;
 
@@ -1372,9 +1374,8 @@ pub enum Lz77Method {
     /// Fast but limited compression on photographic content.
     #[default]
     Rle,
-    /// Full backward references with hash chains (greedy matching).
-    /// Finds matches at arbitrary distances within a sliding window.
-    /// 1-3% better compression on photos, slower.
+    /// Candidate bucketed greedy matcher; archived, not a shipping default.
+    /// Uses longest matches and distance-symbol tie breaking.
     Greedy,
     /// Optimal backward references via Viterbi DP (from libjxl ApplyLZ77_Optimal).
     /// Considers all viable matches at each position and finds the minimum-cost
@@ -1385,11 +1386,10 @@ pub enum Lz77Method {
 /// Apply LZ77 compression using the specified method.
 ///
 /// - `Lz77Method::Rle`: RLE-only (fast, limited compression)
-/// - `Lz77Method::Greedy`: Hash chain backward references (slower, better compression)
+/// - `Lz77Method::Greedy`: Archived bucket-matcher candidate (post-v0.12)
 /// - `Lz77Method::Optimal`: Viterbi DP optimal parse (slowest, best compression)
 ///
-/// For photographic content, `Greedy` typically provides 1-3% additional compression
-/// over RLE-only. `Optimal` finds the minimum-cost parse via dynamic programming.
+/// `Optimal` finds the minimum-cost parse via dynamic programming.
 ///
 /// Returns `Ok(Some((transformed_tokens, params)))` if LZ77 is beneficial,
 /// `Ok(None)` if the savings are insufficient, or `Err` if a (potentially
@@ -1418,12 +1418,13 @@ pub fn apply_lz77(
         // the streams that would have been accepted, which is exactly the cost
         // an early-out has to avoid paying.
         Lz77Method::Greedy if skip_greedy() => Ok(None),
-        Lz77Method::Greedy => Ok(apply_lz77_backref(
+        Lz77Method::Greedy => bucket::apply::<3>(
             tokens,
             num_contexts,
             force_huffman,
             distance_multiplier,
-        )),
+            budget,
+        ),
         Lz77Method::Optimal => apply_lz77_optimal(
             tokens,
             num_contexts,

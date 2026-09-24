@@ -58,6 +58,30 @@ lz77-artifact-check label:
         cat "$root/$size-verification.log"
     done
 
+# Candidate archive only: verify retained float-screen files with both decoders.
+lz77-bucket-decode-check root arms:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl"
+    export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
+    export LZ77_BUCKET_SCREEN_ROOT="{{root}}" LZ77_BUCKET_SCREEN_ARMS="{{arms}}"
+    nice -n 19 cargo test --locked -p jxl-encoder --features corpus-tests --lib entropy_coding::lz77::bucket -j 4 > "{{root}}/decoder-verification.log" 2>&1
+    rg 'test result:' "{{root}}/decoder-verification.log"
+
+lz77-bucket-shape-check root base:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    for size in 64 259; do
+        dir="{{root}}/$size"
+        mkdir -p "$dir/input"
+        cp "{{root}}"/input/*.png "$dir/input/"
+        nice -n 19 "{{base}}" "$dir/input" "$dir/chain.tsv" --images 4 --size "$size" --efforts 8 --lossy 0 > "$dir/chain.log" 2>&1
+        nice -n 19 target/release/examples/lz77_hash_ab "$dir/input" "$dir/bucket.tsv" --images 4 --size "$size" --efforts 8 --lossy 0 --arm bucket3 > "$dir/bucket.log" 2>&1
+        just lz77-bucket-decode-check "$dir" chain,bucket
+    done
+
 # Run RD regression test (encodes 6 images at d=0.25, d=0.5, d=1.0)
 rd-regression:
     cargo test -p jxl-encoder --test it clic2025::test_rd_regression -- --ignored --nocapture

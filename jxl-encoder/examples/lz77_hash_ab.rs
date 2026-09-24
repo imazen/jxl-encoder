@@ -85,11 +85,14 @@ fn main() {
         .collect();
     let do_lossy = arg("--lossy", "1") == "1";
 
-    let arm = if std::env::var("JXL_LZ77_MURMUR_HASH").as_deref() == Ok("1") {
+    let default_arm = if std::env::var("JXL_LZ77_MURMUR_HASH").as_deref() == Ok("1") {
         "murmur"
     } else {
         "fold"
     };
+
+    let arm = arg("--arm", default_arm);
+    assert!(!arm.contains(['\t', '\n', '\r']), "invalid TSV arm");
 
     let mut out = std::fs::File::create(&out_path).unwrap();
     writeln!(out, "arm\timage\tpath_kind\tdepth\teffort\tbytes\tms\tsize\tsource_sha256\tencoded_sha256\tartifact").unwrap();
