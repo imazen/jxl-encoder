@@ -2844,10 +2844,13 @@ errors. Logs: `~/tmp/jxl-exact-cleanup/lint-vardct-fixed-2026-09-24/` (tests)
 and `lint-vardct-2026-09-24/` (lint).
 After the SIMD probe repair and the planar scoring example's iterator cleanup,
 `cargo clippy --locked --workspace --all-targets -- -D warnings` passes locally.
-The 75 lock/drift and 1,618 library checks remain unchanged. Formatting still
-fails on 58 hunks across 20 files; the owner has been shown a separate patch
-because the original cleanup forbids broad formatting. No format gate was
-weakened. Logs: `~/tmp/jxl-exact-cleanup/score-pfm-2026-09-24/`.
+The 75 lock/drift and 1,618 library checks remain unchanged. Formatting initially
+failed on 58 hunks across 20 files. The owner approved the separate formatting
+patch on September 24; every resulting file exactly matches rustfmt applied to
+its parent version. The workspace format check, all 75 lock/drift checks and
+1,618 library tests pass after applying it. No format gate or expected hash was
+changed. Logs: `~/tmp/jxl-exact-cleanup/approved-format-2026-09-24/` and
+`~/tmp/jxl-backlog/encoder-format-approved-proof.json`.
 The corrected CI dependency closure also passes default all-target Clippy,
 75 lock/drift checks and 1,618 library tests (29 existing ignores).
 The all-target workspace run passes 1,638 feature-unified encoder library

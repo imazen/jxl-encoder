@@ -25,17 +25,15 @@ use super::common::{
     ceil_log2_nonzero, uninit_buf,
 };
 use super::dct::{
-    dct_4x4_full, dct_4x4_full_lj, dct_4x8_full, dct_4x8_full_lj, dct_8x4_full,
-    dct_8x4_full_lj, dct_8x8, dct_8x16, dct_8x16_lj, dct_16x8, dct_16x8_lj, dct_16x16,
-    dct_16x16_lj, dct_16x32, dct_16x32_lj, dct_32x16, dct_32x16_lj, dct_32x32,
-    dct_32x32_lj, dct_32x64, dct_32x64_lj, dct_64x32, dct_64x32_lj, dct_64x64,
-    dct_64x64_lj, dct2x2_transform, idct_4x4_full, idct_4x4_full_lj, idct_4x8_full,
-    idct_4x8_full_lj, idct_8x4_full, idct_8x4_full_lj, idct_8x8, idct_8x16,
-    idct_16x8, idct_16x16, idct_16x16_lj, idct_16x32,
-    idct_16x32_lj, idct_32x16, idct_32x16_lj, idct_32x32, idct_32x32_lj, idct_32x64,
-    idct_32x64_lj, idct_64x32, idct_64x32_lj, idct_64x64, idct_64x64_lj,
-    identity_transform,
-    inverse_dct2x2_transform, inverse_identity_transform,
+    dct_4x4_full, dct_4x4_full_lj, dct_4x8_full, dct_4x8_full_lj, dct_8x4_full, dct_8x4_full_lj,
+    dct_8x8, dct_8x16, dct_8x16_lj, dct_16x8, dct_16x8_lj, dct_16x16, dct_16x16_lj, dct_16x32,
+    dct_16x32_lj, dct_32x16, dct_32x16_lj, dct_32x32, dct_32x32_lj, dct_32x64, dct_32x64_lj,
+    dct_64x32, dct_64x32_lj, dct_64x64, dct_64x64_lj, dct2x2_transform, idct_4x4_full,
+    idct_4x4_full_lj, idct_4x8_full, idct_4x8_full_lj, idct_8x4_full, idct_8x4_full_lj, idct_8x8,
+    idct_8x16, idct_16x8, idct_16x16, idct_16x16_lj, idct_16x32, idct_16x32_lj, idct_32x16,
+    idct_32x16_lj, idct_32x32, idct_32x32_lj, idct_32x64, idct_32x64_lj, idct_64x32, idct_64x32_lj,
+    idct_64x64, idct_64x64_lj, identity_transform, inverse_dct2x2_transform,
+    inverse_identity_transform,
 };
 use super::quant::{dequant_weights, dequant_weights_full, quant_weights, quant_weights_full};
 use crate::effort::EffortProfile;

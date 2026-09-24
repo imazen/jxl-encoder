@@ -19,12 +19,11 @@ use super::common::*;
 use super::dct::{
     dc_from_dct_4x4_full, dc_from_dct_4x8_full, dc_from_dct_8x4_full, dc_from_dct_8x16,
     dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_16x32, dc_from_dct_32x16, dc_from_dct_32x32,
-    dc_from_dct_32x32_lj,
-    dc_from_dct_32x64, dc_from_dct_64x32, dc_from_dct_64x64, dct_4x4_full, dct_4x4_full_lj,
-    dct_4x8_full, dct_4x8_full_lj, dct_8x4_full, dct_8x4_full_lj, dct_8x8, dct_8x16, dct_8x16_lj,
-    dct_16x8, dct_16x8_lj, dct_16x16, dct_16x16_lj, dct_16x32, dct_16x32_lj, dct_32x16,
-    dct_32x16_lj, dct_32x32, dct_32x32_lj, dct_32x64, dct_32x64_lj, dct_64x32, dct_64x32_lj,
-    dct_64x64, dct_64x64_lj, dct2x2_transform, identity_transform,
+    dc_from_dct_32x32_lj, dc_from_dct_32x64, dc_from_dct_64x32, dc_from_dct_64x64, dct_4x4_full,
+    dct_4x4_full_lj, dct_4x8_full, dct_4x8_full_lj, dct_8x4_full, dct_8x4_full_lj, dct_8x8,
+    dct_8x16, dct_8x16_lj, dct_16x8, dct_16x8_lj, dct_16x16, dct_16x16_lj, dct_16x32, dct_16x32_lj,
+    dct_32x16, dct_32x16_lj, dct_32x32, dct_32x32_lj, dct_32x64, dct_32x64_lj, dct_64x32,
+    dct_64x32_lj, dct_64x64, dct_64x64_lj, dct2x2_transform, identity_transform,
 };
 use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
@@ -749,12 +748,12 @@ impl VarDctEncoder {
                 // JXL_QAC_DUMP record (dct_coeffs[1] is overwritten by
                 // the roundtrip dequantization in Step 4).
                 #[cfg(feature = "std")]
-                let qac_pre_y: alloc::vec::Vec<f32> =
-                    if std::env::var_os("JXL_QAC_DUMP").is_some() {
-                        dct_coeffs[1][..size].to_vec()
-                    } else {
-                        alloc::vec::Vec::new()
-                    };
+                let qac_pre_y: alloc::vec::Vec<f32> = if std::env::var_os("JXL_QAC_DUMP").is_some()
+                {
+                    dct_coeffs[1][..size].to_vec()
+                } else {
+                    alloc::vec::Vec::new()
+                };
 
                 // W45-RECON: dump pre-quantization coefficient buffer
                 // (post-DCT, post-DC-extraction, pre-CfL on X/B) for the
@@ -1512,13 +1511,11 @@ impl VarDctEncoder {
                                         } else {
                                             (coef_slot_y, coef_slot_x)
                                         };
-                                        let row = &channel
-                                            [(by - yoff + phys_row_off) * width
-                                                + (bx - xoff + phys_col_off)];
+                                        let row = &channel[(by - yoff + phys_row_off) * width
+                                            + (bx - xoff + phys_col_off)];
                                         for pos_x in 0..BLOCK_DIM {
                                             let x = coef_slot_x * BLOCK_DIM + pos_x;
-                                            qflat[y * stride + x] =
-                                                row[pos_y * BLOCK_DIM + pos_x];
+                                            qflat[y * stride + x] = row[pos_y * BLOCK_DIM + pos_x];
                                         }
                                     }
                                 }

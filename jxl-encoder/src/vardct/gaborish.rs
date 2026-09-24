@@ -856,7 +856,13 @@ mod tests {
 
         // Whole-image gaborish (the chunk-3 path).
         gaborish_inverse_maybe_adaptive(
-            &mut wx, &mut wy, &mut wb, (w, h), /* adaptive */ false, false, None,
+            &mut wx,
+            &mut wy,
+            &mut wb,
+            (w, h),
+            /* adaptive */ false,
+            false,
+            None,
         )
         .expect("whole-image gaborish should succeed");
 
@@ -955,8 +961,13 @@ mod tests {
         let mut rb = src_b.clone();
 
         gaborish_inverse_maybe_adaptive(
-            &mut wx, &mut wy, &mut wb, (w, h), /* adaptive */ false,
-            /* libjxl_kernel */ true, None,
+            &mut wx,
+            &mut wy,
+            &mut wb,
+            (w, h),
+            /* adaptive */ false,
+            /* libjxl_kernel */ true,
+            None,
         )
         .expect("whole-image libjxl gaborish should succeed");
 

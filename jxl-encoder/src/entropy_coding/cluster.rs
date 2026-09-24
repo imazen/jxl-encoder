@@ -756,8 +756,7 @@ pub fn cluster_histograms(
     let mut result = fast_cluster_histograms(input, max_histograms)?;
 
     #[cfg(feature = "std")]
-    let small_dump =
-        input.len() < 10 && std::env::var_os("JXL_ANS_DIST_DUMP").is_some();
+    let small_dump = input.len() < 10 && std::env::var_os("JXL_ANS_DIST_DUMP").is_some();
     #[cfg(feature = "std")]
     if small_dump {
         eprintln!(
@@ -783,7 +782,10 @@ pub fn cluster_histograms(
 
     #[cfg(feature = "std")]
     if small_dump {
-        eprintln!("[CLUSTER-FINAL-OURS] nhist={} assign=", result.histograms.len());
+        eprintln!(
+            "[CLUSTER-FINAL-OURS] nhist={} assign=",
+            result.histograms.len()
+        );
         eprint!("  ");
         for c in 0..input.len() {
             eprint!("{},", result.symbols[c]);

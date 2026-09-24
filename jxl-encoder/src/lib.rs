@@ -407,7 +407,6 @@ pub mod __internals {
     pub use crate::vardct::epf::epf_step0_strip_free;
     // W45-RECON part 14: strict libjxl-parity quant matrices
     // (`InvDequantMatrix`/`DequantMatrix`) for differential dumps.
-    pub use crate::vardct::quant::{dequant_matrix_lj, inv_dequant_matrix_lj};
     /// W44-20 per-stage detection counters from
     /// [`crate::vardct::patches::find_text_like_patches_with_min_peak`].
     /// Populated unconditionally; read via [`take_last_patches_detect_stats`].
@@ -417,6 +416,7 @@ pub mod __internals {
     /// Calibration / instrumentation hook only — see
     /// [`crate::vardct::patches`] doc-comment.
     pub use crate::vardct::patches::{LastPatchesStats, take_last_patches_stats};
+    pub use crate::vardct::quant::{dequant_matrix_lj, inv_dequant_matrix_lj};
     pub use crate::vardct::quantize::adjust_quant_block_ac_free;
 
     // ── Lossless patches calibration wrappers (RFC#45 lossless backport) ──

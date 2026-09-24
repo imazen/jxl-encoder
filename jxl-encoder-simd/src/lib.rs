@@ -264,7 +264,7 @@ pub use entropy::{
     EntropyCoeffResult, entropy_estimate_coeffs, estimate_bits_scalar_f64, estimate_bits_u32,
     fast_log2f, fast_pow2f, fast_powf, shannon_entropy_bits,
 };
-pub use epf::{epf_step1, epf_step2, pad_plane, K_MIN_SIGMA};
+pub use epf::{K_MIN_SIGMA, epf_step1, epf_step2, pad_plane};
 pub use fused_dct8::fused_dct8_entropy;
 pub use gab::gab_smooth_channel;
 pub use gaborish5x5::{gaborish_5x5_channel, gaborish_5x5_channel_libjxl};

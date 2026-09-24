@@ -132,9 +132,8 @@ pub(crate) fn compute_inv_sigma_map(
                     // -1e-4 so a zero sharpness LUT entry (sigma = 0) yields
                     // inv_sigma = -10000 (no smoothing), not a disabled
                     // weight function.
-                    let sigma =
-                        (sigma_quant * EPF_SHARP_LUT[sharpness_map[idx].min(7) as usize])
-                            .min(-1e-4);
+                    let sigma = (sigma_quant * EPF_SHARP_LUT[sharpness_map[idx].min(7) as usize])
+                        .min(-1e-4);
                     inv_sigma[idx] = 1.0 / sigma;
                 }
             }
@@ -1174,10 +1173,12 @@ pub(crate) fn compute_epf_sharpness(
                 .unwrap(),
         );
         for c in 0..3 {
-            f.write_all(bytemuck::cast_slice(&base_recon[c][..])).unwrap();
+            f.write_all(bytemuck::cast_slice(&base_recon[c][..]))
+                .unwrap();
         }
         for c in 0..3 {
-            f.write_all(bytemuck::cast_slice(&original_xyb[c][..])).unwrap();
+            f.write_all(bytemuck::cast_slice(&original_xyb[c][..]))
+                .unwrap();
         }
     }
 

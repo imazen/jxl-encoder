@@ -2238,15 +2238,14 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     Vec<u32>,
     [u32; NUM_AC_META_CLASSES as usize],
 ) {
-    let (tokens, num_ctx, dc_remap, ac_meta_map, _) =
-        tree_tokens_with_ac_metadata_prefix_impl(
-            dc_tree,
-            learned_num_contexts,
-            num_dc_groups,
-            ac_meta_kind,
-            libjxl_root_split,
-            None,
-        );
+    let (tokens, num_ctx, dc_remap, ac_meta_map, _) = tree_tokens_with_ac_metadata_prefix_impl(
+        dc_tree,
+        learned_num_contexts,
+        num_dc_groups,
+        ac_meta_kind,
+        libjxl_root_split,
+        None,
+    );
     (tokens, num_ctx, dc_remap, ac_meta_map)
 }
 
@@ -2533,8 +2532,7 @@ fn tree_tokens_with_ac_metadata_prefix_impl(
     // AcMetaTreeKind::AcMeta, and a 0 would collide with a real context.
     let mut ac_meta_ctx_map = [u32::MAX; NUM_AC_META_CLASSES as usize];
     let mut dc_ctx_map = Vec::new();
-    let mut global_ctx_map =
-        global_tree.map(|gtree| alloc::vec![u32::MAX; gtree.len()]);
+    let mut global_ctx_map = global_tree.map(|gtree| alloc::vec![u32::MAX; gtree.len()]);
 
     // Emit root token
     let rn = &flat[root];
@@ -2572,8 +2570,8 @@ fn tree_tokens_with_ac_metadata_prefix_impl(
                         dc_ctx_map.push((orig, leaf_ctx));
                     }
                     LeafType::Global(j) => {
-                        global_ctx_map.as_mut().expect("global leaf without map")
-                            [j as usize] = leaf_ctx;
+                        global_ctx_map.as_mut().expect("global leaf without map")[j as usize] =
+                            leaf_ctx;
                     }
                     LeafType::Dummy => {}
                 }

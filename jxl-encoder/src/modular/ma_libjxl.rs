@@ -292,7 +292,9 @@ fn fast_log2f(x: f32) -> f32 {
 /// Includes every channel, including palette metadata. Keep the integer and
 /// fractional entropy sums separate, and round only once after all channels.
 /// Histogram reduction uses the strict learner's canonical AVX2 lane order.
-pub(crate) fn estimate_global_image_cost<'a>(channels: impl IntoIterator<Item = &'a Channel>) -> f32 {
+pub(crate) fn estimate_global_image_cost<'a>(
+    channels: impl IntoIterator<Item = &'a Channel>,
+) -> f32 {
     const CUTOFFS: [u32; 17] = [
         0, 1, 3, 5, 7, 11, 15, 23, 31, 47, 63, 95, 127, 191, 255, 392, 500,
     ];

@@ -3915,12 +3915,11 @@ impl VarDctEncoder {
         // reconstructions against this pre-patches / pre-GaborishInverse
         // original; the shipped path uses the post-gaborish DCT-input
         // planes instead (~6.5x inflated block errors).
-        let epf_orig_opsin: Option<[Vec<f32>; 3]> =
-            if self.profile.epf_sharpness_pre_gab_libjxl {
-                Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
-            } else {
-                None
-            };
+        let epf_orig_opsin: Option<[Vec<f32>; 3]> = if self.profile.epf_sharpness_pre_gab_libjxl {
+            Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
+        } else {
+            None
+        };
 
         // The linear buffer's only readers past this point are the
         // perceptual refinement loops. When none can run (every effort
@@ -6382,9 +6381,7 @@ impl VarDctEncoder {
                         } else {
                             Some(super::epf::compute_epf_sharpness(
                                 match &epf_orig_opsin {
-                                    Some([x, y, b]) => {
-                                        [x.as_slice(), y.as_slice(), b.as_slice()]
-                                    }
+                                    Some([x, y, b]) => [x.as_slice(), y.as_slice(), b.as_slice()],
                                     None => [xyb_x_ref, xyb_y_ref, xyb_b_ref],
                                 },
                                 quant_dc,
@@ -7517,9 +7514,7 @@ impl VarDctEncoder {
                                         &precomputed.xyb_y[..],
                                         &precomputed.xyb_b[..],
                                     ],
-                                    (false, _) => {
-                                        [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct]
-                                    }
+                                    (false, _) => [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct],
                                 },
                                 quant_dc,
                                 quant_ac,

@@ -39,7 +39,12 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32, PixelLayout)> {
         )),
         other => {
             let rgb = other.to_rgb8();
-            Some((rgb.as_raw().clone(), rgb.width(), rgb.height(), PixelLayout::Rgb8))
+            Some((
+                rgb.as_raw().clone(),
+                rgb.width(),
+                rgb.height(),
+                PixelLayout::Rgb8,
+            ))
         }
     }
 }

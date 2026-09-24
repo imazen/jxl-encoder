@@ -1403,13 +1403,8 @@ pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
     let cs_part1 = &codestream[..file_header_size];
     let cs_part2 = &codestream[file_header_size..];
 
-    let container = wrap_in_container_jxlp(
-        cs_part1,
-        cs_part2,
-        &jbrd,
-        exif.as_deref(),
-        xmp.as_deref(),
-    );
+    let container =
+        wrap_in_container_jxlp(cs_part1, cs_part2, &jbrd, exif.as_deref(), xmp.as_deref());
     super::gainmap::append(jpeg, container, effort, stop, budget, max_pixels)
 }
 

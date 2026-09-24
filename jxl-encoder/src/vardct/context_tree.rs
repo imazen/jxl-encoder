@@ -819,8 +819,7 @@ fn write_tree_code_libjxl(
     let use_prefix = lz_tokens.len() < 100
         || all_singleton_contexts(lz_tokens, num_contexts, lz77_params.as_ref());
     if use_prefix {
-        let (clustering, uint_method) =
-            tree_prefix_code_params(effort, params.extra_dc_precision);
+        let (clustering, uint_method) = tree_prefix_code_params(effort, params.extra_dc_precision);
         let code =
             crate::entropy_coding::encode::build_entropy_code_from_token_groups_with_clustering(
                 &[lz_tokens],

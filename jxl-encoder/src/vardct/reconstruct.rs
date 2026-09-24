@@ -538,24 +538,18 @@ fn reconstruct_xyb_impl(
                     dq_y[0] = 0.0;
                     dq_b[0] = 0.0;
                     for i in 1..64 {
-                        let dy = super::quantize::adjust_quant_bias_lj(
-                            quant_ac[1][by][bx][i],
-                            1,
-                        ) * (weights_y[i] * scaled[1]);
+                        let dy = super::quantize::adjust_quant_bias_lj(quant_ac[1][by][bx][i], 1)
+                            * (weights_y[i] * scaled[1]);
                         dq_y[i] = dy;
                         dq_x[i] = x_factor.mul_add(
                             dy,
-                            super::quantize::adjust_quant_bias_lj(
-                                quant_ac[0][by][bx][i],
-                                0,
-                            ) * (weights_x[i] * scaled[0]),
+                            super::quantize::adjust_quant_bias_lj(quant_ac[0][by][bx][i], 0)
+                                * (weights_x[i] * scaled[0]),
                         );
                         dq_b[i] = b_factor.mul_add(
                             dy,
-                            super::quantize::adjust_quant_bias_lj(
-                                quant_ac[2][by][bx][i],
-                                2,
-                            ) * (weights_b[i] * scaled[2]),
+                            super::quantize::adjust_quant_bias_lj(quant_ac[2][by][bx][i], 2)
+                                * (weights_b[i] * scaled[2]),
                         );
                     }
                 } else {
@@ -670,9 +664,8 @@ fn reconstruct_xyb_impl(
                 let inv_qac_qm = 1.0 / (qac * qm_mul);
                 // libjxl DequantBlock: scaled_dequant =
                 // (inv_global_scale/quant) * dm_mul
-                let scaled = (params.inv_scale
-                    / quant_field[by * xsize_blocks + bx] as f32)
-                    * dm_mul;
+                let scaled =
+                    (params.inv_scale / quant_field[by * xsize_blocks + bx] as f32) * dm_mul;
                 for coef_slot_y in 0..cy {
                     for pos_y in 0..BLOCK_DIM {
                         let y = coef_slot_y * BLOCK_DIM + pos_y;
@@ -699,9 +692,7 @@ fn reconstruct_xyb_impl(
                                         super::quantize::adjust_quant_bias_lj(q_int, c)
                                             * (w_row[x] * scaled)
                                     } else {
-                                        adjust_quant_bias(q_int, c)
-                                            * w_row[x]
-                                            * inv_qac_qm
+                                        adjust_quant_bias(q_int, c) * w_row[x] * inv_qac_qm
                                     };
                                 }
                             }
@@ -1192,12 +1183,7 @@ fn restore_llf_from_dc(
 }
 
 /// Apply IDCT for a given strategy, producing pixel-domain output.
-fn idct_for_strategy(
-    raw_strategy: u8,
-    coeffs: &[f32],
-    output: &mut [f32],
-    strict_dct_order: bool,
-) {
+fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32], strict_dct_order: bool) {
     match raw_strategy {
         RAW_STRATEGY_DCT8 => {
             let mut input = [0.0f32; 64];

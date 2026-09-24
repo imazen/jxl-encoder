@@ -289,7 +289,10 @@ fn jbrd_roundtrip_conformance() {
     let mut files = collect_jpegs(&fixture_dir);
     if let Ok(extra) = std::env::var("JBRD_CONFORMANCE_CORPUS") {
         let extra_files = collect_jpegs(Path::new(&extra));
-        assert!(!extra_files.is_empty(), "no JPEGs in requested corpus {extra}");
+        assert!(
+            !extra_files.is_empty(),
+            "no JPEGs in requested corpus {extra}"
+        );
         files.extend(extra_files);
     }
     assert!(
@@ -304,7 +307,10 @@ fn jbrd_roundtrip_conformance() {
     }
 
     let reference = std::env::var_os("JBRD_CONFORMANCE_REFERENCE").map(|_| {
-        assert!(artifact_dir.is_some(), "reference verification requires JBRD_CONFORMANCE_ARTIFACTS");
+        assert!(
+            artifact_dir.is_some(),
+            "reference verification requires JBRD_CONFORMANCE_ARTIFACTS"
+        );
         jxl_encoder::test_helpers::djxl_path()
     });
 

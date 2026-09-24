@@ -1037,7 +1037,11 @@ fn generate_dct4x4_lj() -> Vec<f32> {
     let w4x4 = get_quant_weights_lj(
         4,
         4,
-        &[&DCT4_BAND_PARAMS[0], &DCT4_BAND_PARAMS[1], &DCT4_BAND_PARAMS[2]],
+        &[
+            &DCT4_BAND_PARAMS[0],
+            &DCT4_BAND_PARAMS[1],
+            &DCT4_BAND_PARAMS[2],
+        ],
         4,
     );
     let mut weights = vec![0.0f32; 192];
@@ -1141,7 +1145,11 @@ fn generate_afv_lj() -> Vec<f32> {
     let weights4x4 = get_quant_weights_lj(
         4,
         4,
-        &[&DCT4_BAND_PARAMS[0], &DCT4_BAND_PARAMS[1], &DCT4_BAND_PARAMS[2]],
+        &[
+            &DCT4_BAND_PARAMS[0],
+            &DCT4_BAND_PARAMS[1],
+            &DCT4_BAND_PARAMS[2],
+        ],
         4,
     );
     const LO: f32 = 0.8517778890324296;
@@ -1210,12 +1218,10 @@ static LJ_INV_DCT32X64: OnceBox<Vec<f32>> = OnceBox::new();
 /// `inv_table[c][y * 8*xs + x]` for y < ys, x < xs after computing
 /// `table = 1/inv`, so the DC/LLF positions never quantize but still
 /// dequantize with finite weights.
-const LJ_LLF_XS: [usize; NUM_VALID_STRATEGIES] = [
-    1, 2, 2, 2, 4, 1, 1, 1, 1, 1, 4, 4, 1, 1, 1, 1, 8, 8, 8,
-];
-const LJ_LLF_YS: [usize; NUM_VALID_STRATEGIES] = [
-    1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 8, 4, 4,
-];
+const LJ_LLF_XS: [usize; NUM_VALID_STRATEGIES] =
+    [1, 2, 2, 2, 4, 1, 1, 1, 1, 1, 4, 4, 1, 1, 1, 1, 8, 8, 8];
+const LJ_LLF_YS: [usize; NUM_VALID_STRATEGIES] =
+    [1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 8, 4, 4];
 
 /// Generated libjxl `weights` for a strategy (pre-LLF-zeroing) — the raw
 /// `GetQuantWeights`/`ComputeQuantTable` output used for both tables.

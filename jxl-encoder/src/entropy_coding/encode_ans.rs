@@ -269,13 +269,8 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
     } else {
         EntropyType::Ans
     };
-    let result = enhanced_cluster(
-        cluster_type,
-        entropy_type,
-        &data.histograms,
-        max_histograms,
-    )
-    .expect("ANS clustering failed");
+    let result = enhanced_cluster(cluster_type, entropy_type, &data.histograms, max_histograms)
+        .expect("ANS clustering failed");
 
     let context_map: Vec<u8> = result.symbols.iter().map(|&s| s as u8).collect();
     debug_assert_eq!(context_map.len(), num_contexts);
@@ -909,8 +904,13 @@ fn optimize_uint_configs_with_candidates(
             if dbg {
                 eprintln!(
                     "    cfg({},{},{}): pop={:.1} extra={} sig={:.1} total={:.1}",
-                    cfg.split_exponent, cfg.msb_in_token, cfg.lsb_in_token,
-                    population_cost, extra_bits_total, signaling_cost, cost
+                    cfg.split_exponent,
+                    cfg.msb_in_token,
+                    cfg.lsb_in_token,
+                    population_cost,
+                    extra_bits_total,
+                    signaling_cost,
+                    cost
                 );
             }
 
@@ -1164,9 +1164,7 @@ pub(crate) fn write_context_map_nonsimple(
     // always take the ANS(+LZ77) form chosen between raw and MTF tokens.
     // In strict mode emit that form unconditionally; otherwise keep the
     // legacy shoot-out so non-strict output is unchanged.
-    if libjxl_log_alpha
-        && let Some(buf) = ans_lz77_scratch
-    {
+    if libjxl_log_alpha && let Some(buf) = ans_lz77_scratch {
         let bits_to_copy = buf.bits_written();
         let bytes = buf.finish_with_padding();
         return copy_bits(&bytes, bits_to_copy, writer);
@@ -1398,7 +1396,9 @@ pub(crate) fn build_ctxmap_libjxl(context_map: &[u8]) -> Result<(BitWriter, usiz
 
     let try_lz77 = |tokens: &[Token]| {
         if lz77_allowed_outer {
-            apply_lz77_rle(tokens, /*num_contexts=*/ 1, /*force_huffman=*/ false, 0)
+            apply_lz77_rle(
+                tokens, /*num_contexts=*/ 1, /*force_huffman=*/ false, 0,
+            )
         } else {
             None
         }
@@ -1826,18 +1826,13 @@ fn build_ctxmap_ans_candidate(
             if len > 1 {
                 create_huffman_tree(counts, len, 15, &mut depths);
                 convert_bit_depths_to_symbols(&depths, &mut bits);
-                write_prefix_code(
-                    &PrefixCode { depths, bits },
-                    &mut scratch,
-                )?;
+                write_prefix_code(&PrefixCode { depths, bits }, &mut scratch)?;
             }
             // Token emission depths: a singleton code emits ZERO depth bits
             // in libjxl (`encoding_info` stays zero-initialised when the
             // tree write early-returns), while `create_huffman_tree` marks
             // the lone symbol depth 1.
-            if len <= 1
-                || super::encode_huffman::has_single_used_symbol(&depths[..len])
-            {
+            if len <= 1 || super::encode_huffman::has_single_used_symbol(&depths[..len]) {
                 depths = [0u8; ALPHABET_SIZE];
             }
             emit_depths.push(depths.to_vec());
@@ -1861,14 +1856,8 @@ fn build_ctxmap_ans_candidate(
                 let (t, rest_bits, n) = new_config.encode(token.value);
                 (t, rest_bits, n)
             };
-            let depth = emit_depths[cm_idx]
-                .get(sym as usize)
-                .copied()
-                .unwrap_or(0) as usize;
-            let bits = emit_bits[cm_idx]
-                .get(sym as usize)
-                .copied()
-                .unwrap_or(0) as u64;
+            let depth = emit_depths[cm_idx].get(sym as usize).copied().unwrap_or(0) as usize;
+            let bits = emit_bits[cm_idx].get(sym as usize).copied().unwrap_or(0) as u64;
             scratch.write(depth + xnbits as usize, bits | ((xbits as u64) << depth))?;
         }
 

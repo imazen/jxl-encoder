@@ -2000,12 +2000,11 @@ impl VarDctEncoder {
         // `LossyFrameHeuristics` (enc_frame.cc "Save pre-Gaborish
         // opsin"), consumed by `compute_epf_sharpness` below. Mirrors
         // the still-image path in vardct/encoder.rs.
-        let epf_orig_opsin: Option<[Vec<f32>; 3]> =
-            if self.profile.epf_sharpness_pre_gab_libjxl {
-                Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
-            } else {
-                None
-            };
+        let epf_orig_opsin: Option<[Vec<f32>; 3]> = if self.profile.epf_sharpness_pre_gab_libjxl {
+            Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
+        } else {
+            None
+        };
 
         // Noise parameters. Four sources, in priority order — mirrors the
         // still-image entry point at `vardct/encoder.rs:677-737` (libjxl
@@ -2704,9 +2703,7 @@ impl VarDctEncoder {
                         } else {
                             Some(super::epf::compute_epf_sharpness(
                                 match &epf_orig_opsin {
-                                    Some([x, y, b]) => {
-                                        [x.as_slice(), y.as_slice(), b.as_slice()]
-                                    }
+                                    Some([x, y, b]) => [x.as_slice(), y.as_slice(), b.as_slice()],
                                     None => [&xyb_x, &xyb_y, &xyb_b],
                                 },
                                 &transform_out.quant_dc,
@@ -3165,7 +3162,11 @@ impl VarDctEncoder {
             // path below, but joins this learned tree directly. The e8+
             // palette cost check runs during the shared preparation.
             let global_transforms = match self.prepare_global_stream(
-                extras, width, height, num_dc_groups, num_groups,
+                extras,
+                width,
+                height,
+                num_dc_groups,
+                num_groups,
             )? {
                 Some(global) => {
                     stream_options[0] = global.options;
@@ -3475,7 +3476,11 @@ impl VarDctEncoder {
             // predefined tree instead (`enc_modular.cc:676-680`) — not
             // ported; the legacy extras writer stays there.
             let global_built = match self.prepare_global_stream(
-                extras, width, height, num_dc_groups, num_groups,
+                extras,
+                width,
+                height,
+                num_dc_groups,
+                num_groups,
             )? {
                 Some(global) => {
                     let gtree = crate::modular::ma_libjxl::learn_tree(
@@ -3489,30 +3494,30 @@ impl VarDctEncoder {
                 None => None,
             };
 
-            let (wrapped_tokens, num_ctx, dc_remap, ctx_map, global_ctx_map) =
-                match global_built.as_ref() {
-                    Some((_, gtree, _)) => {
-                        super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix_and_global(
-                            &wp_dc_tree,
-                            wp_dc_num_contexts,
-                            num_dc_groups,
-                            ac_meta_kind,
-                            self.profile.ma_root_split_2ndg,
-                            gtree,
-                        )
-                    }
-                    None => {
-                        let (t, n, r, m) =
-                            super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
-                                &wp_dc_tree,
-                                wp_dc_num_contexts,
-                                num_dc_groups,
-                                ac_meta_kind,
-                                self.profile.ma_root_split_2ndg,
-                            );
-                        (t, n, r, m, Vec::new())
-                    }
-                };
+            let (wrapped_tokens, num_ctx, dc_remap, ctx_map, global_ctx_map) = match global_built
+                .as_ref()
+            {
+                Some((_, gtree, _)) => {
+                    super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix_and_global(
+                        &wp_dc_tree,
+                        wp_dc_num_contexts,
+                        num_dc_groups,
+                        ac_meta_kind,
+                        self.profile.ma_root_split_2ndg,
+                        gtree,
+                    )
+                }
+                None => {
+                    let (t, n, r, m) = super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                        &wp_dc_tree,
+                        wp_dc_num_contexts,
+                        num_dc_groups,
+                        ac_meta_kind,
+                        self.profile.ma_root_split_2ndg,
+                    );
+                    (t, n, r, m, Vec::new())
+                }
+            };
 
             learned_tree_tokens = Some(wrapped_tokens);
             total_contexts = num_ctx;
@@ -4659,11 +4664,10 @@ impl VarDctEncoder {
             // output / level-3 streaming output) — at that point the
             // dc_global / ac_global slots get accumulated into
             // `global_group_codes[]` rather than written inline.
-            let modular_dc_extras =
-                match (squeeze_pipeline.as_ref(), squeeze_partition.as_ref()) {
-                    (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
-                    _ => None,
-                };
+            let modular_dc_extras = match (squeeze_pipeline.as_ref(), squeeze_partition.as_ref()) {
+                (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
+                _ => None,
+            };
 
             // Global channels must not be emitted again in the HF groups.
             let group_extras = if extras_in_global { &[][..] } else { extras };
@@ -4683,11 +4687,10 @@ impl VarDctEncoder {
             // active, each HF group emits the squeeze HF band cropped
             // to its GROUP_DIM region instead of the raw-pixel extras
             // writer. None = unchanged byte-identical no-squeeze path.
-            let modular_hf_extras =
-                match (squeeze_pipeline.as_ref(), squeeze_partition.as_ref()) {
-                    (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
-                    _ => None,
-                };
+            let modular_hf_extras = match (squeeze_pipeline.as_ref(), squeeze_partition.as_ref()) {
+                (Some(pipeline), Some(partition)) => Some((pipeline, partition)),
+                _ => None,
+            };
 
             // Per-DC-group encode — parallelizable across DC groups
             // (matches the prior shape, just now bundling DC + this
@@ -4941,7 +4944,11 @@ impl VarDctEncoder {
             return Ok(None);
         }
         let (image, transforms) = Self::build_global_stream_image(
-            extras, image_width, image_height, self.effort, self.budget.as_ref(),
+            extras,
+            image_width,
+            image_height,
+            self.effort,
+            self.budget.as_ref(),
         )?;
         let options = crate::modular::ma_libjxl::global_stream_options(
             10 - self.effort as i32,
@@ -4986,8 +4993,7 @@ impl VarDctEncoder {
     /// `1 + 3·ndg + NUM_QUANT_TABLES + num_groups·passes`
     /// (dec_modular.h).
     fn vardct_num_streams(&self, num_dc_groups: usize, num_groups: usize) -> usize {
-        let num_passes_l =
-            ProgressivePassConfig::from_mode(self.progressive).num_passes as usize;
+        let num_passes_l = ProgressivePassConfig::from_mode(self.progressive).num_passes as usize;
         1 + 3 * num_dc_groups
             + crate::modular::ma_libjxl::NUM_QUANT_TABLES
             + num_groups * num_passes_l
@@ -5081,9 +5087,8 @@ impl VarDctEncoder {
 
         // libjxl compares every ChannelCompact candidate with the original
         // whole-image cost, not with the cost after the preceding palette.
-        let cost_before = (effort >= 8).then(|| {
-            crate::modular::ma_libjxl::estimate_global_image_cost(&channels)
-        });
+        let cost_before =
+            (effort >= 8).then(|| crate::modular::ma_libjxl::estimate_global_image_cost(&channels));
         let mut metas: Vec<Channel> = Vec::new();
         let mut transforms: Vec<GlobalStreamTransform> = Vec::new();
         for i in 0..channels.len() {
@@ -5167,7 +5172,9 @@ impl VarDctEncoder {
                 meta.vshift = u32::MAX;
                 if let Some(cost_before) = cost_before {
                     let cost_after = crate::modular::ma_libjxl::estimate_global_image_cost(
-                        core::iter::once(&meta).chain(metas.iter().rev()).chain(channels.iter()),
+                        core::iter::once(&meta)
+                            .chain(metas.iter().rev())
+                            .chain(channels.iter()),
                     );
                     if cost_after > cost_before {
                         for v in channels[i].data_mut() {
@@ -5177,10 +5184,7 @@ impl VarDctEncoder {
                     }
                 }
                 metas.push(meta);
-                transforms.push(GlobalStreamTransform {
-                    begin_c,
-                    nb_colors,
-                });
+                transforms.push(GlobalStreamTransform { begin_c, nb_colors });
             }
         }
 

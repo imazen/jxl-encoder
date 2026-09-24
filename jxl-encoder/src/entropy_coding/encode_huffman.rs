@@ -730,8 +730,7 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
             // two histogram-build ESTIMATES, not the serialized size
             // (`enc_context_map.cc`: `simple_cost < ans_cost &&
             // simple_cost < mtf_cost`).
-            let (buf, ans_cost, mtf_cost) =
-                super::encode_ans::build_ctxmap_libjxl(context_map)?;
+            let (buf, ans_cost, mtf_cost) = super::encode_ans::build_ctxmap_libjxl(context_map)?;
             (buf, simple_cost < ans_cost && simple_cost < mtf_cost)
         } else {
             let mut scratch = BitWriter::with_capacity(context_map.len());

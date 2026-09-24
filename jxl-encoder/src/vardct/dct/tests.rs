@@ -329,8 +329,8 @@ fn test_dc_from_dct_32x32_lj_matches_legacy() {
     let mut input = [0.0f32; 1024];
     for y in 0..32 {
         for x in 0..32 {
-            input[y * 32 + x] = (x as f32 * 0.7 + y as f32 * 1.3)
-                + ((x * 31 + y * 17) % 11) as f32 * 0.05;
+            input[y * 32 + x] =
+                (x as f32 * 0.7 + y as f32 * 1.3) + ((x * 31 + y * 17) % 11) as f32 * 0.05;
         }
     }
     let mut output = [0.0f32; 1024];
@@ -1241,7 +1241,10 @@ fn test_dct_4x8_full_lj_roundtrip() {
         .zip(output.iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
-    assert!(max_err < 1e-3, "dct_4x8_full_lj roundtrip max error {max_err}");
+    assert!(
+        max_err < 1e-3,
+        "dct_4x8_full_lj roundtrip max error {max_err}"
+    );
 }
 
 #[test]
@@ -1256,7 +1259,10 @@ fn test_dct_8x4_full_lj_roundtrip() {
         .zip(output.iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
-    assert!(max_err < 1e-3, "dct_8x4_full_lj roundtrip max error {max_err}");
+    assert!(
+        max_err < 1e-3,
+        "dct_8x4_full_lj roundtrip max error {max_err}"
+    );
 }
 
 #[test]
@@ -1271,5 +1277,8 @@ fn test_dct_4x4_full_lj_roundtrip() {
         .zip(output.iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
-    assert!(max_err < 1e-3, "dct_4x4_full_lj roundtrip max error {max_err}");
+    assert!(
+        max_err < 1e-3,
+        "dct_4x4_full_lj roundtrip max error {max_err}"
+    );
 }
