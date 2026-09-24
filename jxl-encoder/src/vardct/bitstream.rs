@@ -501,14 +501,6 @@ fn build_ac_metadata_stream_image(
         }
     }
 
-    // W45-RECON part 20 probe: ACMetadata image contents.
-    #[cfg(feature = "std")]
-    if std::env::var_os("JXL_P20_ACMETA").is_some() {
-        eprintln!(
-            "[P20ACMETA] ch0={ch0:?} ch1={ch1:?} ch2={ch2:?} ch3={ch3:?}"
-        );
-    }
-
     Ok(crate::modular::channel::ModularImage {
         channels: vec![
             crate::modular::channel::Channel::from_vec(ch0, cfl_w, cfl_h)?,
@@ -3129,12 +3121,7 @@ impl VarDctEncoder {
             //                              coefficients are ANS-coded, not
             //                              modular)
             // `num_streams = ModularStreamId::Num(frame_dim, passes)`.
-            let num_passes_l =
-                ProgressivePassConfig::from_mode(self.progressive).num_passes as usize;
-            let num_streams = 1
-                + 3 * num_dc_groups
-                + crate::modular::ma_libjxl::NUM_QUANT_TABLES
-                + num_groups * num_passes_l;
+            let num_streams = self.vardct_num_streams(num_dc_groups, num_groups);
             let (dc_options, ac_meta_options) = crate::modular::ma_libjxl::vardct_stream_options(
                 10 - self.effort as i32,
                 num_streams,
@@ -3182,13 +3169,7 @@ impl VarDctEncoder {
             // (`speed_tier >= kSquirrel`); anything else keeps the
             // legacy extras writer.
             let global_transforms_e8: Option<Vec<GlobalStreamTransform>> =
-                if self.profile.extras_global_stream_libjxl
-                    && !extras.is_empty()
-                    && num_dc_groups == 1
-                    && extras.iter().all(|ec| {
-                        ec.channel_width(width) <= GROUP_DIM
-                            && (height >> ec.info.dim_shift) <= GROUP_DIM
-                    }) {
+                if self.extras_global_stream_eligible(extras, width, height, num_dc_groups) {
                     let (gimg, gtransforms) = Self::build_global_stream_image(
                         extras,
                         width,
@@ -3290,16 +3271,7 @@ impl VarDctEncoder {
             global_stream_state = match global_transforms_e8 {
                 Some(gtransforms) => {
                     let (imgs, mtree) = merged_dc_state.as_ref().expect("just set");
-                    let toks =
-                        crate::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
-                            &imgs[0],
-                            mtree,
-                            0,
-                            0,
-                            &crate::modular::predictor::WeightedPredictorParams::default(),
-                            self.budget.as_ref(),
-                            crate::modular::tree_learn::WpCacheMode::Off,
-                        )?;
+                    let toks = self.tokenize_global_stream(&imgs[0], mtree)?;
                     Some((toks, gtransforms))
                 }
                 None => None,
@@ -3514,28 +3486,19 @@ impl VarDctEncoder {
             // Effort <= 3 gives stream 0 a `kWPFixedDC`/`kGradientFixedDC`
             // predefined tree instead (`enc_modular.cc:676-680`) — not
             // ported; the legacy extras writer stays there.
-            let strict_global = self.profile.extras_global_stream_libjxl
-                && self.profile.ac_meta_libjxl_tree
-                && self.effort >= 4
-                && num_dc_groups == 1
-                && !extras.is_empty()
-                && extras.iter().all(|ec| {
-                    ec.channel_width(width) <= GROUP_DIM
-                        && (height >> ec.info.dim_shift) <= GROUP_DIM
-                });
-            let global_built = if strict_global {
+            let global_built = if self.extras_global_stream_eligible(
+                extras,
+                width,
+                height,
+                num_dc_groups,
+            ) {
                 let (gimg, gtransforms) = Self::build_global_stream_image(
                     extras,
                     width,
                     height,
                     self.budget.as_ref(),
                 )?;
-                let num_passes_l =
-                    ProgressivePassConfig::from_mode(self.progressive).num_passes as usize;
-                let num_streams = 1
-                    + 3 * num_dc_groups
-                    + crate::modular::ma_libjxl::NUM_QUANT_TABLES
-                    + num_groups * num_passes_l;
+                let num_streams = self.vardct_num_streams(num_dc_groups, num_groups);
                 let gopts = crate::modular::ma_libjxl::global_stream_options(
                     10 - self.effort as i32,
                     num_streams,
@@ -3606,16 +3569,7 @@ impl VarDctEncoder {
                             n.context_id = global_ctx_map[i];
                         }
                     }
-                    let toks =
-                        crate::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
-                            &gimg,
-                            &prop_tree,
-                            0,
-                            0,
-                            &crate::modular::predictor::WeightedPredictorParams::default(),
-                            self.budget.as_ref(),
-                            crate::modular::tree_learn::WpCacheMode::Off,
-                        )?;
+                    let toks = self.tokenize_global_stream(&gimg, &prop_tree)?;
                     Some((toks, gtransforms))
                 }
                 None => None,
@@ -5022,6 +4976,64 @@ impl VarDctEncoder {
         Ok(())
     }
 
+    /// Whether the strict libjxl GlobalData stream-0 path carries this
+    /// frame's extras. libjxl routes every extra channel into stream 0
+    /// when its coded dimensions fit one group and the frame has a
+    /// single DC group (`InitStreamInfo`, `enc_modular.cc:1057-1066,
+    /// 1094-1098`); larger/multi-group frames copy channels into the
+    /// group streams instead, which this port does not cover. Effort
+    /// <= 3 gives stream 0 a predefined tree (`enc_modular.cc:676-680`)
+    /// that is likewise not ported — both cases keep the legacy
+    /// writer, so the zen/exact split stays exactly two paths.
+    fn extras_global_stream_eligible(
+        &self,
+        extras: &[super::extras::VardctExtra<'_>],
+        image_width: usize,
+        image_height: usize,
+        num_dc_groups: usize,
+    ) -> bool {
+        self.profile.extras_global_stream_libjxl
+            && self.profile.ac_meta_libjxl_tree
+            && self.effort >= 4
+            && num_dc_groups == 1
+            && !extras.is_empty()
+            && extras.iter().all(|ec| {
+                ec.channel_width(image_width) <= GROUP_DIM
+                    && (image_height >> ec.info.dim_shift) <= GROUP_DIM
+            })
+    }
+
+    /// `ModularStreamId::Num(frame_dim, passes)` for this frame —
+    /// `1 + 3·ndg + NUM_QUANT_TABLES + num_groups·passes`
+    /// (dec_modular.h).
+    fn vardct_num_streams(&self, num_dc_groups: usize, num_groups: usize) -> usize {
+        let num_passes_l =
+            ProgressivePassConfig::from_mode(self.progressive).num_passes as usize;
+        1 + 3 * num_dc_groups
+            + crate::modular::ma_libjxl::NUM_QUANT_TABLES
+            + num_groups * num_passes_l
+    }
+
+    /// Tokenize the Global stream image against a property tree —
+    /// default WP params, no offset/budget-WP (libjxl tokenizes
+    /// stream 0 with `GroupHeader`'s default WP state,
+    /// `enc_modular.cc:1337-1385`).
+    fn tokenize_global_stream(
+        &self,
+        image: &crate::modular::channel::ModularImage,
+        tree: &crate::modular::tree::Tree,
+    ) -> Result<Vec<Token>> {
+        crate::modular::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+            image,
+            tree,
+            0,
+            0,
+            &crate::modular::predictor::WeightedPredictorParams::default(),
+            self.budget.as_ref(),
+            crate::modular::tree_learn::WpCacheMode::Off,
+        )
+    }
+
     /// Build the Global modular stream image for a single-group VarDCT
     /// frame's extra channels — the libjxl `ModularFrameEncoder::Init`
     /// global path (`enc_modular.cc:740-895`) reduced to what a VarDCT
@@ -5148,6 +5160,14 @@ impl VarDctEncoder {
                     // the metas already inserted in front
                     // (`enc_modular.cc:414`).
                     let begin_c = i + metas.len();
+                    // Indices via `inv_color_lookup` are already sorted
+                    // — binary search reproduces them exactly.
+                    let idx_data: Vec<i32> = ch
+                        .data()
+                        .iter()
+                        .map(|&v| pal.partition_point(|&p| p < v) as i32)
+                        .collect();
+                    let nb_colors = pal.len();
                     // Meta channel inserted at position 0
                     // (`enc_palette.cc:240-241`). libjxl marks metas
                     // with `hshift = vshift = -1`; the u32::MAX sentinel
@@ -5156,21 +5176,14 @@ impl VarDctEncoder {
                     // real channel, and `CollectPixelSamples` exempts
                     // `i < nb_meta_channels` from the `max_chan_size`
                     // early break.
-                    let mut meta = Channel::from_vec(pal.clone(), pal.len(), 1)?;
+                    let mut meta = Channel::from_vec(pal, nb_colors, 1)?;
                     meta.hshift = u32::MAX;
                     meta.vshift = u32::MAX;
                     metas.push(meta);
-                    // Indices via `inv_color_lookup` are already sorted
-                    // — binary search reproduces them exactly.
-                    let idx_data: Vec<i32> = ch
-                        .data()
-                        .iter()
-                        .map(|&v| pal.partition_point(|&p| p < v) as i32)
-                        .collect();
                     coded.push(Channel::from_vec(idx_data, ch.width(), ch.height())?);
                     transforms.push(GlobalStreamTransform {
                         begin_c,
-                        nb_colors: pal.len(),
+                        nb_colors,
                     });
                 }
                 None => coded.push(ch),

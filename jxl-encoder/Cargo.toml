@@ -3340,3 +3340,6 @@ path = "examples/enc_file.rs"
 [[example]]
 name = "qm_dump"
 path = "examples/qm_dump.rs"
+[[example]]
+name = "w45_p21_perf_ab"
+path = "examples/w45_p21_perf_ab.rs"
