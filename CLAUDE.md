@@ -2789,6 +2789,26 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: pre-publication changed-path matrix
+
+`tests/prepublish_matrix.rs` exercises 1,080 lossless and 1,080 lossy
+RGBA cells: nine dimensions (including one-pixel axes, 255/256/257,
+259x133 and 2049x9), eight pathological patterns, a CID22 photograph and
+frymire graphics. Twelve configurations per path cover strict/Zen,
+effort boundaries, Huffman/ANS, forced WP modes, sectioned/squeeze and
+progressive settings. This is a selected interaction matrix, not the full
+Cartesian product. Automatic resampling is explicitly disabled so exact
+alpha is the contract; resampling has separate tests.
+
+All 2,160 streams fully decode through the primary Rust decoder and pinned
+djxl v0.12. Both reproduce exact lossless RGBA and exact lossy alpha.
+Strided and packed encodes agree; lossless streaming is byte-identical.
+`just prepublish-matrix <photo> <artifacts> <pinned-manifest>` retains
+streams, reference PNGs, diagnostics and per-cell hashes. Missing inputs
+fail. The first run used CID22 validation 3156482; logs and outputs are at
+`~/tmp/jxl-prepublish-2026-09-24/`. This does not measure lossy color quality,
+wide samples, GPU execution, or every public setting combination.
+
 ### 2026-09-24: lossless strategy wiring
 
 The owner approved replacing the CLI rejection/invariance contract once the
