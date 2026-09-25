@@ -2789,6 +2789,27 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: pre-publication API and release gates
+
+[Current audit](docs/RELEASE_0.4.0.md#september-24-pre-publication-audit)
+records the tested source, exact coverage and unresolved release gates.
+Workspace all-targets/doctests/Clippy, 580 expert/JPEG/HDR integration tests,
+nine feature compile configurations, both real-image RD gates, all five
+resource tests and explicit djxl odd-size streaming resampling pass against
+the CI-pinned source closure. Missing corpus invocations failed; the correct
+resource corpus root on this Mac is `~/Library/Caches/codec-corpus/v1`.
+
+Independent rustdoc semver comparison confirms the approved Custom gate
+fields break exhaustive struct literals. Its other warning concerns shifted
+ValidationError discriminants; an actual numeric-cast probe fails E0605
+because the enum contains data. Committed API inventories are stale; ARM
+regeneration must not replace the x86 SIMD inventory. The attempted
+cross-target inventory produced an implausible public/internal split and
+was not accepted. Snapshot expectations are unchanged. Direct registry
+validation still fails on unpublished `butteraugli ^0.9.4`; passing the
+pinned source build does not qualify package publication. Full logs and
+proposed snapshot diff: `~/tmp/jxl-prepublish-2026-09-24/`.
+
 ### 2026-09-24: pre-publication changed-path matrix
 
 `tests/prepublish_matrix.rs` exercises 1,080 lossless and 1,080 lossy
@@ -2800,8 +2821,9 @@ progressive settings. This is a selected interaction matrix, not the full
 Cartesian product. Automatic resampling is explicitly disabled so exact
 alpha is the contract; resampling has separate tests.
 
-All 2,160 streams fully decode through the primary Rust decoder and pinned
-djxl v0.12. Both reproduce exact lossless RGBA and exact lossy alpha.
+Both the default-plus-parallel and minimal std/expert builds pass the entire
+matrix: 4,320 streams fully decode through the primary Rust decoder and pinned
+djxl v0.12. All 1,080 lossless pairs across builds are byte-identical. Both reproduce exact lossless RGBA and exact lossy alpha.
 Strided and packed encodes agree; lossless streaming is byte-identical.
 `just prepublish-matrix <photo> <artifacts> <pinned-manifest>` retains
 streams, reference PNGs, diagnostics and per-cell hashes. Missing inputs

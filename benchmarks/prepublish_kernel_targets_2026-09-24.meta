@@ -1,0 +1,8 @@
+{
+  "source_commit": "7a9a5a8cf02ce01392b641f14e59e095fe7f871f",
+  "encoder_source": "cfd6ef0a",
+  "command": "just production-workspace-tests /Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml",
+  "host": "mac aarch64",
+  "scope": "Existing SIMD benchmark target executed by required workspace all-target test command. Not an encoder revision A/B; noisy kernel measurements are not release performance evidence.",
+  "log": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/workspace-all-targets.log"
+}

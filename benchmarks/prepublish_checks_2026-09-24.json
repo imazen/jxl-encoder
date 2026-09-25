@@ -1,0 +1,418 @@
+{
+  "production_source": "cfd6ef0a",
+  "audit_test_commit": "7a9a5a8cf02ce01392b641f14e59e095fe7f871f",
+  "host": "macOS aarch64",
+  "source_closure": "CI-pinned export at /Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder",
+  "reference": "libjxl 0.12.0 a7a9c78",
+  "coverage": "Selected changed-path interactions; not exhaustive settings, GPU runtime, normative standards or deployment qualification",
+  "feature_checks": [
+    {
+      "features": "",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    },
+    {
+      "features": "std",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "std",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    },
+    {
+      "features": "std,parallel",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "std,parallel",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    },
+    {
+      "features": "std,__expert",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "std,__expert",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    },
+    {
+      "features": "std,jpeg-reencoding",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "std,jpeg-reencoding",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    },
+    {
+      "features": "std,hdr-gainmap",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "std,hdr-gainmap",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    },
+    {
+      "features": "std,parallel,__expert,__internals,jpeg-reencoding",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "std,parallel,__expert,__internals,jpeg-reencoding",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    },
+    {
+      "features": "std,parallel,__expert,butteraugli-loop,ssim2-loop",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "std,parallel,__expert,butteraugli-loop,ssim2-loop",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    },
+    {
+      "features": "std,parallel,zensim-loop",
+      "exit": 0,
+      "command": [
+        "just",
+        "prepublish-feature-check",
+        "std,parallel,zensim-loop",
+        "/Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml"
+      ]
+    }
+  ],
+  "logs": [
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/matrix.log",
+      "sha256": "f4fd28fdb4edbbb60257e9f30edef962e09208af2c96bf157fbfa75428d91052",
+      "bytes": 58370,
+      "summaries": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 69.18s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/matrix-minimal.log",
+      "sha256": "2762596241e690b6a7ff41e48b16ed18c0404353ece5babfe14466ad9292613c",
+      "bytes": 61894,
+      "summaries": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 62.96s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/float-extremes.log",
+      "sha256": "d4032d1aadb2dda465611208a0fb7a8a017387dfada5aa8f2bbfd83e1484c01c",
+      "bytes": 4520,
+      "summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 705 filtered out; finished in 1.04s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/workspace-all-targets.log",
+      "sha256": "9a036e904ea113178b3849fd9ce35f31f8044fbd3f0ec04b9b6535fbcaadb1c8",
+      "bytes": 246262,
+      "summaries": [
+        "test result: ok. 1638 passed; 0 failed; 29 ignored; 0 measured; 0 filtered out; finished in 6.79s",
+        "test result: ok. 8 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 14.71s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+        "test result: ok. 508 passed; 0 failed; 181 ignored; 0 measured; 0 filtered out; finished in 44.95s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.96s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.36s",
+        "test result: ok. 194 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/expert-jpeg-integration.log",
+      "sha256": "dbb5ce4b8685cb2cad83c9f160b5e81676e4b39eb594c5df825ee6d0bc9710d8",
+      "bytes": 59099,
+      "summaries": [
+        "test result: ok. 580 passed; 0 failed; 182 ignored; 0 measured; 0 filtered out; finished in 44.63s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/workspace-doc.log",
+      "sha256": "5dafb167b019aa52ca460c871c03724d6bd377d17c9edf34c446a369461b8db0",
+      "bytes": 4404,
+      "summaries": [
+        "test result: ok. 7 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/workspace-clippy.log",
+      "sha256": "1966d34fd22c30b30aa5c9ac10904bf836326e38ed36cfc08668fc30a832c284",
+      "bytes": 4441,
+      "summaries": []
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/rd-regression.log",
+      "sha256": "792f67a14f3f2812d86b0dae948a31d5d30c0f6a92d88dc65e5a9cacde8b31d1",
+      "bytes": 6359,
+      "summaries": [
+        "=== Summary ===",
+        "=== Summary ===",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 686 filtered out; finished in 4.31s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/production-resources-correct-corpus.log",
+      "sha256": "3c4b031a6d3404d2a671937630a7bac62cb42d525204595bc72cc524ff8a04c5",
+      "bytes": 2991,
+      "summaries": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.60s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/resampling-reference.log",
+      "sha256": "fb426b4777560b47bb7bf8a147e3e2705b97b84dfc2c0fe71e6572b2cac4d9e4",
+      "bytes": 2273,
+      "summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 687 filtered out; finished in 0.04s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/perf-decode-current.log",
+      "sha256": "d48ed1352a9f5fa47aba9cd78815e900c098ef09c1c07c70223e9a6e796c7a10",
+      "bytes": 20914,
+      "summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.77s"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/semver-api.log",
+      "sha256": "3811b225c1ac8ae7482c8230ec564a589b5c8c2091a8e0e38506500e14626764",
+      "bytes": 2210,
+      "summaries": [
+        "     Checked [   0.025s] 223 checks: 221 pass, 2 fail, 0 warn, 30 skip",
+        "     Summary semver requires new major version: 2 major and 0 minor checks failed"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/semver-published.log",
+      "sha256": "c36961e308d42f01b56dde99af513a36c50b7965426746bb6860213e4f89e9b5",
+      "bytes": 47124,
+      "summaries": [
+        "     Checked [   0.025s] 196 checks: 187 pass, 9 fail, 0 warn, 57 skip",
+        "  enum jxl_encoder::error::Error, previously in file /Users/lilith/tmp/jxl-encoder-0.3.1-baseline/src/error.rs:18",
+        "     Summary semver requires new major version: 9 major and 0 minor checks failed"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/semver-default.log",
+      "sha256": "46cc5b7fb73c98031f8377098a467a6669fab20b5c90301cf50c774cb82e3597",
+      "bytes": 1272,
+      "summaries": [
+        "error: running 'cargo update' on crate 'jxl-encoder' failed with output:",
+        "error: failed to select a version for the requirement `butteraugli = \"^0.9.4\"`",
+        "error: failed to update dependencies for crate jxl-encoder v0.4.0",
+        "note: the following command can be used to reproduce the compilation error:",
+        "error: aborting due to failure to run 'cargo update' for crate jxl-encoder v0.4.0"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/api-snapshots.log",
+      "sha256": "fdf9b7139be0948f1bf418feb4dcc7e62c65647a2dc48bd3b2cd0114a215a5a0",
+      "bytes": 309530,
+      "summaries": [
+        "warning: public documentation for `with_fallible_alloc` links to private item `crate::error::Error::OutOfMemory`",
+        "207 |     ///   [`crate::EncodeError`] / [`crate::error::Error::OutOfMemory`] instead of",
+        "warning: public documentation for `Ssim2FeatureDisabled` links to private item `crate::error::Error::NotImplemented`",
+        "195 |     /// surfaced through [`crate::error::Error::NotImplemented`] \u2014",
+        "warning: public documentation for `with_fallible_alloc` links to private item `crate::error::Error::OutOfMemory`",
+        "207 |     ///   [`crate::EncodeError`] / [`crate::error::Error::OutOfMemory`] instead of",
+        "warning: public documentation for `Ssim2FeatureDisabled` links to private item `crate::error::Error::NotImplemented`",
+        "195 |     /// surfaced through [`crate::error::Error::NotImplemented`] \u2014",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.29s",
+        "error: test failed, to rerun pass `--test public_api_doc`"
+      ]
+    },
+    {
+      "path": "/Users/lilith/tmp/jxl-prepublish-2026-09-24/validation-error-cast.log",
+      "sha256": "9274b6067c32679c0caf5039c2661fa43c72dbbc85556c6d6275df7e0cd6ea80",
+      "bytes": 649,
+      "summaries": [
+        "error: aborting due to 1 previous error"
+      ]
+    }
+  ]
+}

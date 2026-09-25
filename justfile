@@ -17,8 +17,12 @@ api-doc-check:
     ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
 
 # Explicit release matrix: natural input, pathological patterns, retained outputs.
-prepublish-matrix photo artifacts manifest="Cargo.toml" features="__expert,corpus-tests,parallel":
-    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_AUDIT_PHOTO="{{photo}}" JXL_AUDIT_ARTIFACTS="{{artifacts}}" nice -n 19 cargo test --manifest-path "{{manifest}}" --locked -p jxl-encoder --features "{{features}}" --test prepublish_matrix -- --test-threads=1 --nocapture
+prepublish-matrix photo artifacts manifest="Cargo.toml" features="__expert,corpus-tests,parallel" *cargo_args:
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_AUDIT_PHOTO="{{photo}}" JXL_AUDIT_ARTIFACTS="{{artifacts}}" nice -n 19 cargo test --manifest-path "{{manifest}}" --locked -p jxl-encoder --features "{{features}}" {{cargo_args}} --test prepublish_matrix -- --test-threads=1 --nocapture
+
+# A selected compile permutation; callers record each feature list and exit status.
+prepublish-feature-check features manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo check --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib --no-default-features --features "{{features}}"
 
 # Validate retained benchmark bitstreams outside the timed process.
 prepublish-perf-roundtrip tables manifest="Cargo.toml" side="both":
@@ -404,8 +408,8 @@ fuzz-build:
 fuzz-seed manifest output:
     TMPDIR="$HOME/tmp" nice -n 19 uv run --with pillow python scripts/seed_encoder_fuzz.py {{manifest}} {{output}} --build-commit "$(jj log --no-graph -r @ -T commit_id)"
 
-production-resources:
-    TMPDIR="$HOME/tmp" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" CARGO_BUILD_JOBS=4 nice -n 19 cargo test -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
+production-resources manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_TARGET_DIR="{{justfile_directory()}}/target" RAYON_NUM_THREADS=4 DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" CARGO_BUILD_JOBS=4 nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
 
 # Local release checks preserve the package error as a release blocker.
 release-semver *args:
