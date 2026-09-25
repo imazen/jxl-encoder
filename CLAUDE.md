@@ -2809,6 +2809,18 @@ fail. The first run used CID22 validation 3156482; logs and outputs are at
 `~/tmp/jxl-prepublish-2026-09-24/`. This does not measure lossy color quality,
 wide samples, GPU execution, or every public setting combination.
 
+### 2026-09-24: forced WP float-extreme validation
+
+`lossless_float::forced_wp_float_extremes_match_rust_and_libjxl` passes
+40 cells: f16/f32, 31x17 and 259x17, Zen/Libjxl and all five forced WP
+modes at e7. Both jxl-rs and djxl v0.12 reproduce every finite sample's
+bits, including signed zero, subnormals and the largest finite values.
+The reference check reads PFM samples with their declared endianness and
+bottom-up row order; it does not merely check decoder acceptance.
+`just prepublish-float <pinned-manifest>` reproduces the check and retains
+the streams, PFM output and reference diagnostics under `~/tmp/`.
+This selected grid excludes NaN/infinity payloads and other effort levels.
+
 ### 2026-09-24: lossless strategy wiring
 
 The owner approved replacing the CLI rejection/invariance contract once the

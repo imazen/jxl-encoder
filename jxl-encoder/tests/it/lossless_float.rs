@@ -20,6 +20,111 @@
 
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
 
+/// Forced WP controls must preserve signed zero, subnormals and extreme finite
+/// samples on the float path, not just ordinary 8-bit photographs.
+#[cfg(feature = "__expert")]
+#[test]
+fn forced_wp_float_extremes_match_rust_and_libjxl() {
+    use jxl_encoder::api::EncoderStrategy;
+    use std::io::{BufRead, Read};
+    let dir = std::path::PathBuf::from(std::env::var_os("HOME").unwrap())
+        .join("tmp")
+        .join(format!("prepublish-float-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (w, h) in [(31, 17), (259, 17)] {
+        for half in [false, true] {
+            let (layout, raw, values) = if half {
+                let bits = f16_bits(w * h * 3);
+                (
+                    PixelLayout::RgbLinearF16,
+                    bits.iter()
+                        .flat_map(|b| b.to_ne_bytes())
+                        .collect::<Vec<_>>(),
+                    bits.into_iter().map(f16_bits_to_f32).collect::<Vec<_>>(),
+                )
+            } else {
+                let values = f32_values(w * h * 3);
+                (
+                    PixelLayout::RgbLinearF32,
+                    values
+                        .iter()
+                        .flat_map(|v| v.to_ne_bytes())
+                        .collect::<Vec<_>>(),
+                    values,
+                )
+            };
+            for strict in [false, true] {
+                for mode in 0..5 {
+                    let mut params = jxl_encoder::LosslessInternalParams::default();
+                    params.forced_wp_mode = Some(mode);
+                    let cfg = LosslessConfig::new()
+                        .with_effort(7)
+                        .with_threads(1)
+                        .with_tree_learning(true)
+                        .with_internal_params(params)
+                        .with_strategy(if strict {
+                            EncoderStrategy::Libjxl
+                        } else {
+                            EncoderStrategy::Zenjxl
+                        });
+                    let label = format!("{w}x{h}-half{half}-strict{strict}-wp{mode}");
+                    eprintln!("FLOAT-AUDIT {label}");
+                    let encoded = cfg.encode(&raw, w as u32, h as u32, layout).unwrap();
+                    let jxl = dir.join(format!("{label}.jxl"));
+                    std::fs::write(&jxl, &encoded).unwrap();
+                    let (dw, dh, rust) = decode_jxlrs_planar(&encoded, 3);
+                    assert_eq!((dw, dh), (w, h));
+                    assert_eq!(rust.len(), values.len());
+                    for (i, (a, b)) in rust.iter().zip(&values).enumerate() {
+                        assert_eq!(a.to_bits(), b.to_bits(), "{label}: Rust sample {i}");
+                    }
+                    let pfm = dir.join(format!("{label}.pfm"));
+                    let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                        .arg(jxl)
+                        .arg(&pfm)
+                        .arg("--num_threads=1")
+                        .output()
+                        .unwrap();
+                    std::fs::write(dir.join(format!("{label}.log")), &output.stderr).unwrap();
+                    assert!(
+                        output.status.success(),
+                        "{label}: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    let mut reader = std::io::BufReader::new(std::fs::File::open(pfm).unwrap());
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    assert_eq!(line.trim(), "PF");
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    assert_eq!(line.trim(), format!("{w} {h}"));
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    let scale: f32 = line.trim().parse().unwrap();
+                    assert_eq!(scale.abs(), 1.0);
+                    let mut bytes = Vec::new();
+                    reader.read_to_end(&mut bytes).unwrap();
+                    assert_eq!(bytes.len(), values.len() * 4);
+                    for (i, b) in bytes.as_chunks::<4>().0.iter().enumerate() {
+                        let value = if scale < 0.0 {
+                            f32::from_le_bytes(*b)
+                        } else {
+                            f32::from_be_bytes(*b)
+                        };
+                        let y = h - 1 - i / (w * 3);
+                        let x = i % (w * 3);
+                        assert_eq!(
+                            value.to_bits(),
+                            values[y * w * 3 + x].to_bits(),
+                            "{label}: libjxl sample {i}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Exercise the awkward values on purpose: zero and negative zero, subnormals
 /// at both scales, the smallest normal, an exact power of two, and a value
 /// with a full mantissa. Deliberately no NaN/infinity — the reference's
