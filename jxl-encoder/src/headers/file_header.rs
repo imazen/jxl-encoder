@@ -14,9 +14,8 @@ use super::extra_channels::ExtraChannelInfo;
 /// Orientation of the image.
 ///
 /// The full 8-value JXL spec table (ISO/IEC 18181-1 ImageMetadata
-/// orientation). The encoder currently only ever writes
-/// [`Orientation::Identity`]; the other variants document the wire
-/// values and are kept for that purpose (#76).
+/// orientation). JPEG transcoding preserves the first EXIF APP1
+/// orientation; ordinary pixel encodes default to [`Orientation::Identity`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 #[allow(dead_code)]

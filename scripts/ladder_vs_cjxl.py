@@ -38,6 +38,9 @@ def main():
                    choices=['libjxl', 'ours'],
                    help="flag dialect for the --cjxl arm; use 'ours' to A/B two "
                         "cjxl-rs builds against each other")
+    p.add_argument('--ours-flags', default='',
+                   help="extra args appended to every --ours invocation, e.g. "
+                        "'--strategy libjxl' to measure parity mode")
     p.add_argument('images', nargs='+')
     a = p.parse_args()
     # A wrong --ours/--cjxl path used to produce a header-only TSV, one FAILED
@@ -52,6 +55,7 @@ def main():
     efforts = [int(x) for x in a.efforts.split(',')]
     dists = [float(x) for x in a.distances.split(',')]
     threads = [int(x) for x in a.threads.split(',')]
+    ours_extra = a.ours_flags.split() if a.ours_flags else []
 
     tmp = tempfile.mkdtemp(prefix='ladder', dir=os.path.expanduser('~/tmp'))
     o_out, c_out = os.path.join(tmp, 'o.jxl'), os.path.join(tmp, 'c.jxl')
@@ -61,7 +65,8 @@ def main():
                             ('--cjxl', a.cjxl,
                              ['--threads', '1'] if a.cjxl_flags == 'ours'
                              else ['--num_threads=1'])):
-        ms, _ = run([exe, probe, o_out, '-e', '3', '-d', '1.0'] + thr, o_out)
+        ms, _ = run([exe, probe, o_out, '-e', '3', '-d', '1.0'] + thr +
+                    (ours_extra if label == '--ours' else []), o_out)
         if ms is None:
             sys.exit(f'{label}: {exe} failed to encode {probe} — check the path, '
                      f'the flag dialect (--cjxl-flags) and the input.')
@@ -82,7 +87,7 @@ def main():
                                 if arm == 'o':
                                     cmd = ['nice', '-n', '19', a.ours, img, o_out,
                                            '-e', str(e), '-d', str(d),
-                                           '--threads', str(t)]
+                                           '--threads', str(t)] + ours_extra
                                     ms, b = run(cmd, o_out)
                                     if ms is None:
                                         continue

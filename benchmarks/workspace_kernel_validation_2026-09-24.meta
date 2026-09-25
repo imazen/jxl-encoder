@@ -1,0 +1,10 @@
+{
+  "date": "2026-09-24",
+  "source_parent_commit": "a826fe7b043defee1c5d044ec6adda1705876cd5",
+  "source_changes": "CLI strategy/lossless conflict and its test only; SIMD source unchanged from parent",
+  "command": "just production-workspace-tests /Users/lilith/tmp/jxl-ci-lint-pinned-2026-09-24/siblings/jxl-encoder/Cargo.toml",
+  "host": "mac",
+  "machine": "arm64",
+  "artifact_sha256": "00eb03c23dba43dd98951409fe399a009efea49ca45dee5e1bcfcac5a1230f81",
+  "purpose": "Incidental kernel-tier benchmark executed by cargo test --workspace --all-targets. Not a before/after experiment; no performance-change conclusion."
+}

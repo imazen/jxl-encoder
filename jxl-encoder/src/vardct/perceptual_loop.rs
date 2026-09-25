@@ -1523,6 +1523,9 @@ impl VarDctEncoder {
                 xsize_blocks,
                 ysize_blocks,
                 budget,
+                self.resolved_improvements.dc_adaptive_smoothing,
+                self.profile.quant_weights_libjxl,
+                self.profile.dct_pass_order_libjxl,
             )?
         } else {
             // Legacy / fallback path: uniform sharpness=4 seed.
@@ -2108,6 +2111,39 @@ impl VarDctEncoder {
                 &mut *transform_out,
             );
 
+            // W45-RECON (2026-09-22): feed the post-QuantizeWP DC values
+            // into the per-iter reconstruction. libjxl's `RoundtripImage`
+            // decodes the *shipped* DC stream — `AddVarDCTDC` writes the
+            // WP-snapped ints to `stream_images_` and `DequantDC`
+            // (enc_modular.cc:1797) dequantizes THOSE into
+            // `shared.dc_storage`. Our `reconstruct_xyb` reads
+            // `transform_out.quant_dc` directly, so without this pass the
+            // loop measures a pre-WP DC the decoder never produces —
+            // systematically optimistic scores (~5% on photo_512, and
+            // the flat64 internal-vs-decode gap 0.021-vs-0.456). Gated
+            // on `use_libjxl_wp_dc_quant` so each mode's recon matches
+            // the stream it actually ships (normal mode ships pre-WP).
+            // The next iter's `transform_and_quantize_into` overwrites
+            // `quant_dc` with fresh round() values, so re-applying WP
+            // per iter is safe — and the post-loop transform pass
+            // produces a fresh pre-WP grid that the existing post-loop
+            // `requantize_dc_group_wp` call handles once.
+            // Env kill-switch `JXL_LOOP_WP_OFF=1` for A/B bisection only.
+            if self.profile.use_libjxl_wp_dc_quant && std::env::var_os("JXL_LOOP_WP_OFF").is_none()
+            {
+                super::quantize_wp::requantize_dc_group_wp(
+                    &mut transform_out.quant_dc,
+                    &transform_out.float_dc,
+                    xsize_blocks,
+                    0,
+                    0,
+                    xsize_blocks,
+                    ysize_blocks,
+                    current_params.scale_dc,
+                    current_params.extra_dc_precision,
+                );
+            }
+
             // W44-118 Mode D: per-iter sharpness recompute. Replaces
             // the W44-117 one-shot seed (which froze sharpness from
             // iter-0 quantization, drifting from the post-buttloop
@@ -2139,6 +2175,9 @@ impl VarDctEncoder {
                     xsize_blocks,
                     ysize_blocks,
                     self.budget.as_ref(),
+                    self.resolved_improvements.dc_adaptive_smoothing,
+                    self.profile.quant_weights_libjxl,
+                    self.profile.dct_pass_order_libjxl,
                 )
             {
                 // Overwrite sharpness with the per-iter computed map.
@@ -2155,6 +2194,9 @@ impl VarDctEncoder {
                 ac_strategy,
                 xsize_blocks,
                 ysize_blocks,
+                self.resolved_improvements.dc_adaptive_smoothing,
+                self.profile.quant_weights_libjxl,
+                self.profile.dct_pass_order_libjxl,
             );
 
             // W44-116: per-step XYB capture (FINAL iter only). The hook is
@@ -2278,6 +2320,56 @@ impl VarDctEncoder {
                 recon_b,
                 padded_pixels,
             );
+
+            // W45-RECON per-iter probe (2026-09-22): dump recon stats for
+            // EVERY iter when JXL_RECON_ALL_ITERS=1 — the iter-1 score
+            // split vs cjxl (ours 0.199 vs 0.028 on a flat fixture) needs
+            // per-iter recon content, not just the final-iter capture.
+            #[cfg(feature = "__internal_recon_hook")]
+            if recon_hook::all_iters_enabled() {
+                let n = recon_g.len() as f64;
+                let sum: f64 = recon_g.iter().map(|&v| v as f64).sum();
+                let min = recon_g.iter().copied().fold(f32::INFINITY, f32::min);
+                let max = recon_g.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let uniq: std::collections::BTreeSet<u32> =
+                    recon_g.iter().map(|&v| v.to_bits()).collect();
+                let dc0 = transform_out.quant_dc[1]
+                    .first()
+                    .and_then(|r| r.first())
+                    .copied()
+                    .unwrap_or(-1);
+                let dc_min = transform_out.quant_dc[1]
+                    .iter()
+                    .flat_map(|r| r.iter())
+                    .min()
+                    .copied()
+                    .unwrap_or(-1);
+                let dc_max = transform_out.quant_dc[1]
+                    .iter()
+                    .flat_map(|r| r.iter())
+                    .max()
+                    .copied()
+                    .unwrap_or(-1);
+                let fdc0 = transform_out.float_dc[1]
+                    .first()
+                    .copied()
+                    .unwrap_or(f32::NAN);
+                let fdc_min = transform_out.float_dc[1]
+                    .iter()
+                    .copied()
+                    .fold(f32::INFINITY, f32::min);
+                let fdc_max = transform_out.float_dc[1]
+                    .iter()
+                    .copied()
+                    .fold(f32::NEG_INFINITY, f32::max);
+                eprintln!(
+                    "recon/iter {iter}/{iters}: g mean={:.6} min={:.6} max={:.6} uniq={} dcY[0]={dc0} dcY=[{dc_min}..{dc_max}] fdcY[0]={fdc0:.4} fdcY=[{fdc_min:.4}..{fdc_max:.4}]",
+                    sum / n,
+                    min,
+                    max,
+                    uniq.len()
+                );
+            }
 
             // Debug hook (Layer-1 invariant for the quality-drift investigation):
             // capture the buttloop's INTERNAL reconstruction at the FINAL iter,
@@ -2430,6 +2522,17 @@ impl VarDctEncoder {
             // compare-only last iteration is included.
             last_score = iter_score;
 
+            // W45-RECON: pair the per-iter score with the recon/iter dump.
+            #[cfg(feature = "__internal_recon_hook")]
+            if recon_hook::all_iters_enabled() {
+                eprintln!(
+                    "score/iter {iter}/{iters}: score={iter_score:.6} gs={} qdc={} edp={}",
+                    current_params.global_scale,
+                    current_params.quant_dc,
+                    current_params.extra_dc_precision,
+                );
+            }
+
             // Step 6: Compute per-block tile distance (16th-power norm,
             // matching libjxl TileDistMap).
             //
@@ -2533,6 +2636,168 @@ impl VarDctEncoder {
                 target_distance,
                 tile_dist,
             );
+
+            // W45-RECON (2026-09-23): AQDBG-style per-iter artifact dump,
+            // mirroring the JXL_AQDBG_DUMP hook in the instrumented libjxl
+            // v0.12.0 worktree (enc_adaptive_quantization.cc). Writes
+            // iter<n>_{quant_field.f32,rawqf.u8,acstrat.u8,diffmap.f32,
+            // tiledist.f32,recon.f32} — each with a small header (2×i32 dims;
+            // recon adds a third i32 = 3 channels, planar, visible region) —
+            // plus an `AQDBG iter=...` stderr line matching the cjxl format
+            // field-for-field. Diagnostic only; env-gated, zero cost unset.
+            #[cfg(feature = "__internal_recon_hook")]
+            if let Some(dump_dir) = std::env::var_os("JXL_AQDBG_DUMP") {
+                use std::io::Write as _;
+                let dir = std::path::PathBuf::from(dump_dir);
+                let write_buf = |name: String, v: &[u8]| {
+                    let _ = std::fs::File::create(dir.join(name)).map(|mut f| f.write_all(v));
+                };
+                let write_f32 = |name: String, w: usize, h: usize, data: &[f32]| {
+                    let mut v = alloc::vec::Vec::with_capacity(8 + data.len() * 4);
+                    v.extend_from_slice(&(w as i32).to_le_bytes());
+                    v.extend_from_slice(&(h as i32).to_le_bytes());
+                    for &x in data {
+                        v.extend_from_slice(&x.to_le_bytes());
+                    }
+                    write_buf(name, &v);
+                };
+                write_f32(
+                    alloc::format!("iter{iter}_quant_field.f32"),
+                    xsize_blocks,
+                    ysize_blocks,
+                    quant_field_float,
+                );
+                write_f32(
+                    alloc::format!("iter{iter}_diffmap.f32"),
+                    width,
+                    height,
+                    &diffmap_vec,
+                );
+                write_f32(
+                    alloc::format!("iter{iter}_tiledist.f32"),
+                    xsize_blocks,
+                    ysize_blocks,
+                    tile_dist,
+                );
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(8 + quant_field.len());
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(quant_field);
+                    write_buf(alloc::format!("iter{iter}_rawqf.u8"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(8 + num_blocks);
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    for by in 0..ysize_blocks {
+                        for bx in 0..xsize_blocks {
+                            v.push(ac_strategy.raw_strategy(bx, by));
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_acstrat.u8"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 3 * width * height * 4);
+                    v.extend_from_slice(&(width as i32).to_le_bytes());
+                    v.extend_from_slice(&(height as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for plane in [&*recon_r, &*recon_g, &*recon_b] {
+                        for y in 0..height {
+                            for x in 0..width {
+                                v.extend_from_slice(&plane[y * padded_width + x].to_le_bytes());
+                            }
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_recon.f32"), &v);
+                }
+                // Extended probes for encoded-content divergence analysis:
+                // XYB input planes (padded), quantized DC ints, float DC,
+                // quantized AC coefficient cells, CfL tile maps.
+                {
+                    let np = padded_width * padded_height;
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 3 * np * 4);
+                    v.extend_from_slice(&(padded_width as i32).to_le_bytes());
+                    v.extend_from_slice(&(padded_height as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for plane in [xyb_x, xyb_y, xyb_b] {
+                        for &x in &plane[..np] {
+                            v.extend_from_slice(&x.to_le_bytes());
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_xyb.f32"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 3 * num_blocks * 4);
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for ch in &transform_out.quant_dc {
+                        for row in ch {
+                            for &x in row {
+                                v.extend_from_slice(&x.to_le_bytes());
+                            }
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_quant_dc.i32"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 3 * num_blocks * 4);
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for ch in &transform_out.float_dc {
+                        for &x in ch {
+                            v.extend_from_slice(&x.to_le_bytes());
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_dcfloat.f32"), &v);
+                }
+                {
+                    let mut v =
+                        alloc::vec::Vec::with_capacity(12 + 3 * num_blocks * DCT_BLOCK_SIZE * 4);
+                    v.extend_from_slice(&(xsize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&(ysize_blocks as i32).to_le_bytes());
+                    v.extend_from_slice(&3i32.to_le_bytes());
+                    for ch in &transform_out.quant_ac {
+                        for row in ch {
+                            for cell in row {
+                                for &x in cell {
+                                    v.extend_from_slice(&x.to_le_bytes());
+                                }
+                            }
+                        }
+                    }
+                    write_buf(alloc::format!("iter{iter}_quant_ac.i32"), &v);
+                }
+                {
+                    let mut v = alloc::vec::Vec::with_capacity(12 + 2 * cfl_map.ytox.len());
+                    v.extend_from_slice(&(cfl_map.xsize_tiles as i32).to_le_bytes());
+                    v.extend_from_slice(&(cfl_map.ysize_tiles as i32).to_le_bytes());
+                    v.extend_from_slice(&2i32.to_le_bytes());
+                    for &x in &cfl_map.ytox {
+                        v.push(x as u8);
+                    }
+                    for &x in &cfl_map.ytob {
+                        v.push(x as u8);
+                    }
+                    write_buf(alloc::format!("iter{iter}_cmap.i8"), &v);
+                }
+                let mut sorted = quant_field_float.to_vec();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+                let qf_mean: f64 = quant_field_float.iter().map(|&v| v as f64).sum::<f64>()
+                    / quant_field_float.len() as f64;
+                eprintln!(
+                    "AQDBG iter={iter} score={iter_score:.6} gs={} qdc={} \
+                     qf_min={:.5} qf_med={:.5} qf_max={:.5} qf_mean={:.5}",
+                    current_params.global_scale,
+                    current_params.quant_dc,
+                    sorted[0],
+                    sorted[sorted.len() / 2],
+                    sorted[sorted.len() - 1],
+                    qf_mean,
+                );
+            }
 
             // Log per-iteration summary
             {
@@ -2934,6 +3199,9 @@ impl VarDctEncoder {
                             ac_strategy,
                             xsize_blocks,
                             ysize_blocks,
+                            self.resolved_improvements.dc_adaptive_smoothing,
+                            self.profile.quant_weights_libjxl,
+                            self.profile.dct_pass_order_libjxl,
                         );
 
                         if self.enable_gaborish {
@@ -3207,6 +3475,13 @@ pub mod recon_hook {
     /// every final iteration; cheap relaxed load.
     pub fn capture_enabled() -> bool {
         CAPTURE_ENABLED.load(Ordering::Relaxed)
+    }
+
+    /// W45-RECON (2026-09-22): per-iter recon-stats dump gate.
+    /// `JXL_RECON_ALL_ITERS=1` env var; defaults off. Env is read once per
+    /// buttloop iter — fine for diagnostics.
+    pub fn all_iters_enabled() -> bool {
+        std::env::var_os("JXL_RECON_ALL_ITERS").is_some()
     }
 
     /// Store the recon from the buttloop's final iteration. Overwrites any

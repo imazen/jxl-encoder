@@ -626,3 +626,119 @@ pub fn idct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
 pub fn idct_4x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
     jxl_simd::idct_4x4_full(input, output);
 }
+
+// =============================================================================
+// libjxl pass-order inverse variants (W45-RECON part 15)
+//
+// Mirror of the forward `*_lj` wrappers. libjxl `ComputeScaledIDCT<R, C>`
+// universally runs the horizontal-frequency (C-direction) inverse first —
+// undoing the forward's second pass — then the vertical (R) inverse.
+//
+// `idct_16x8`/`idct_8x16` already run that order on their natural-layout
+// inputs (with the caller's pre-transpose for DCT16X8), so only the shapes
+// whose kernels run the vertical inverse first need wrappers: the square
+// kernels (`idct_16x16`/`idct_32x32`/`idct_64x64`) and the large
+// rectangular kernels (`idct_32x16`/`idct_16x32`/`idct_64x32`/`idct_32x64`),
+// plus the `_full` sub-block inverses. Each wrap calls the
+// transposed-shape sibling — whose own first pass then touches the
+// horizontal-frequency axis — and transposes the pixel output. Square
+// shapes wrap as transpose-in → kernel → transpose-out.
+// =============================================================================
+
+/// libjxl-order `ComputeScaledIDCT<16, 16>`: transpose-in → kernel →
+/// transpose-out.
+#[inline]
+pub fn idct_16x16_lj(input: &[f32; 256], output: &mut [f32; 256]) {
+    let mut t = [0.0f32; 256];
+    crate::vardct::common::transpose_block::<16, 16>(input, &mut t);
+    let mut u = [0.0f32; 256];
+    idct_16x16(&t, &mut u);
+    crate::vardct::common::transpose_block::<16, 16>(&u, output);
+}
+
+/// libjxl-order `ComputeScaledIDCT<32, 32>`: transpose-in → kernel →
+/// transpose-out.
+#[inline]
+pub fn idct_32x32_lj(input: &[f32; 1024], output: &mut [f32; 1024]) {
+    let mut t = [0.0f32; 1024];
+    crate::vardct::common::transpose_block::<32, 32>(input, &mut t);
+    let mut u = [0.0f32; 1024];
+    idct_32x32(&t, &mut u);
+    crate::vardct::common::transpose_block::<32, 32>(&u, output);
+}
+
+/// libjxl-order `ComputeScaledIDCT<32, 16>`: `idct_16x32` on the 16×32
+/// coefficient layout, then transpose the pixel output to 32×16.
+#[inline]
+pub fn idct_32x16_lj(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut u = [0.0f32; 512];
+    idct_16x32(input, &mut u);
+    crate::vardct::common::transpose_block::<16, 32>(&u, output);
+}
+
+/// libjxl-order `ComputeScaledIDCT<16, 32>`: `idct_32x16` on the 16×32
+/// coefficient layout, then transpose the pixel output to 16×32.
+#[inline]
+pub fn idct_16x32_lj(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut u = [0.0f32; 512];
+    idct_32x16(input, &mut u);
+    crate::vardct::common::transpose_block::<32, 16>(&u, output);
+}
+
+/// libjxl-order `ComputeScaledIDCT<64, 64>`: transpose-in → kernel →
+/// transpose-out.
+#[inline]
+pub fn idct_64x64_lj(input: &[f32], output: &mut [f32]) {
+    let mut t = [0.0f32; 4096];
+    crate::vardct::common::transpose_block::<64, 64>(&input[..4096], &mut t);
+    let mut u = [0.0f32; 4096];
+    idct_64x64(&t, &mut u);
+    crate::vardct::common::transpose_block::<64, 64>(&u, &mut output[..4096]);
+}
+
+/// libjxl-order `ComputeScaledIDCT<64, 32>`: `idct_32x64` on the 32×64
+/// coefficient layout, then transpose the pixel output to 64×32.
+#[inline]
+pub fn idct_64x32_lj(input: &[f32], output: &mut [f32]) {
+    let mut u = [0.0f32; 2048];
+    idct_32x64(input, &mut u);
+    crate::vardct::common::transpose_block::<32, 64>(&u, &mut output[..2048]);
+}
+
+/// libjxl-order `ComputeScaledIDCT<32, 64>`: `idct_64x32` on the 32×64
+/// coefficient layout, then transpose the pixel output to 32×64.
+#[inline]
+pub fn idct_32x64_lj(input: &[f32], output: &mut [f32]) {
+    let mut u = [0.0f32; 2048];
+    idct_64x32(input, &mut u);
+    crate::vardct::common::transpose_block::<64, 32>(&u, &mut output[..2048]);
+}
+
+/// libjxl-order inverse DCT4X8: `idct_8x4_full` then transpose the 8×8
+/// pixel output.
+#[inline]
+pub fn idct_4x8_full_lj(input: &[f32; 64], output: &mut [f32; 64]) {
+    let mut u = [0.0f32; 64];
+    idct_8x4_full(input, &mut u);
+    crate::vardct::common::transpose_block::<8, 8>(&u, output);
+}
+
+/// libjxl-order inverse DCT8X4: `idct_4x8_full` then transpose the 8×8
+/// pixel output.
+#[inline]
+pub fn idct_8x4_full_lj(input: &[f32; 64], output: &mut [f32; 64]) {
+    let mut u = [0.0f32; 64];
+    idct_4x8_full(input, &mut u);
+    crate::vardct::common::transpose_block::<8, 8>(&u, output);
+}
+
+/// libjxl-order inverse DCT4X4: transpose-in → `idct_4x4_full` →
+/// transpose-out.
+#[inline]
+pub fn idct_4x4_full_lj(input: &[f32; 64], output: &mut [f32; 64]) {
+    let mut t = [0.0f32; 64];
+    crate::vardct::common::transpose_block::<8, 8>(input, &mut t);
+    let mut u = [0.0f32; 64];
+    idct_4x4_full(&t, &mut u);
+    crate::vardct::common::transpose_block::<8, 8>(&u, output);
+}

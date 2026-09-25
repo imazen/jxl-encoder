@@ -27,6 +27,91 @@ use super::frame::DistanceParams;
 use super::quant::{INV_DC_QUANT, quant_weights};
 use super::quantize::adjust_quant_bias;
 
+/// Dequantize `quant_dc` into the post-CfL float DC grid
+/// (`shared.dc_storage` equivalent — libjxl `DequantDC`,
+/// compressed_dc.cc:201). Row-major flat `[c][by * xsize_blocks + bx]`.
+///
+/// Channel B applies the DC CfL term `(stored_b + stored_y * 0.5) /
+/// inv_factor` — `0.5` = `kYToBRatio · INV_DC_QUANT[B] / INV_DC_QUANT[Y]`
+/// = `1.0 · 256/512`, matching the decoder's `MulAdd(in_y, cfl_fac_b,
+/// in_b)` in scaled units (verified W45-RECON 2026-09-22).
+pub(crate) fn dequant_dc_grid(
+    quant_dc: &[Vec<Vec<i32>>; 3],
+    params: &DistanceParams,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+) -> [Vec<f32>; 3] {
+    let dc_mul = (1u32 << params.extra_dc_precision) as f32;
+    let inv_factor = [
+        INV_DC_QUANT[0] * params.scale_dc * dc_mul,
+        INV_DC_QUANT[1] * params.scale_dc * dc_mul,
+        INV_DC_QUANT[2] * params.scale_dc * dc_mul,
+    ];
+    let mut out = [
+        vec![0.0f32; xsize_blocks * ysize_blocks],
+        vec![0.0f32; xsize_blocks * ysize_blocks],
+        vec![0.0f32; xsize_blocks * ysize_blocks],
+    ];
+    for (by, row) in quant_dc[0][..ysize_blocks].iter().enumerate() {
+        for (bx, &dc_x) in row[..xsize_blocks].iter().enumerate() {
+            let i = by * xsize_blocks + bx;
+            out[0][i] = dc_x as f32 / inv_factor[0];
+            out[1][i] = quant_dc[1][by][bx] as f32 / inv_factor[1];
+            out[2][i] =
+                (quant_dc[2][by][bx] as f32 + quant_dc[1][by][bx] as f32 * 0.5) / inv_factor[2];
+        }
+    }
+    out
+}
+
+/// libjxl `AdaptiveDCSmoothing` port (compressed_dc.cc:92-197,
+/// `ComputePixel`). 3×3 weighted smooth of the dequantized DC grid,
+/// gap-gated per pixel: `sm = w0·mc + w1·(4 sides) + w2·(4 corners)`,
+/// `gap = max(0.5, max_c |mc−sm| / dc_factor[c])`,
+/// `out = mc + (sm − mc) · max(0, 3 − 4·gap)`. Borders (first/last row
+/// and column) pass through unchanged, matching libjxl's loop bounds.
+///
+/// `dc_factors[c]` is libjxl `MulDC()[c]` = the dequant step per
+/// *base-precision* DC unit (`1 / (INV_DC_QUANT[c] · scale_dc)` — no
+/// `extra_dc_precision` divisor; libjxl passes `MulDC()` bare, dec.cc
+/// via `dec_modular.cc`/`enc_cache.cc`).
+pub(crate) fn adaptive_dc_smooth(
+    dc: &mut [Vec<f32>; 3],
+    xsize: usize,
+    ysize: usize,
+    dc_factors: &[f32; 3],
+) {
+    const W1: f32 = 0.20345139757231578;
+    const W2: f32 = 0.0334829185968739;
+    const W0: f32 = 1.0 - 4.0 * (W1 + W2);
+    if ysize <= 2 || xsize <= 2 {
+        return;
+    }
+    let mut smoothed = dc.clone();
+    for y in 1..ysize - 1 {
+        for x in 1..xsize - 1 {
+            let mut gap = 0.5f32;
+            let mut mc = [0.0f32; 3];
+            let mut sm = [0.0f32; 3];
+            for (c, ch) in dc.iter().enumerate() {
+                let i = y * xsize + x;
+                let center = ch[i];
+                let side = ch[i - 1] + ch[i + 1] + ch[i - xsize] + ch[i + xsize];
+                let corner =
+                    ch[i - xsize - 1] + ch[i - xsize + 1] + ch[i + xsize - 1] + ch[i + xsize + 1];
+                mc[c] = center;
+                sm[c] = center * W0 + side * W1 + corner * W2;
+                gap = gap.max((center - sm[c]).abs() / dc_factors[c]);
+            }
+            let factor = (3.0 - 4.0 * gap).max(0.0);
+            for c in 0..3 {
+                smoothed[c][y * xsize + x] = mc[c] + (sm[c] - mc[c]) * factor;
+            }
+        }
+    }
+    *dc = smoothed;
+}
+
 /// Reconstruct XYB pixel planes from quantized coefficients.
 ///
 /// This simulates the decoder's output BEFORE gaborish smooth and EPF.
@@ -41,6 +126,12 @@ use super::quantize::adjust_quant_bias;
 /// * `ac_strategy` - Per-block AC strategy map
 /// * `xsize_blocks` - Image width in 8x8 blocks
 /// * `ysize_blocks` - Image height in 8x8 blocks
+/// * `dc_smoothing` - When true, model the decoder's
+///   `AdaptiveDCSmoothing` pass on the dequantized DC grid (libjxl
+///   `RoundtripImage` applies it because the frame header clears
+///   `kSkipAdaptiveDCSmoothing`). Strict-libjxl parity only — the
+///   shipped stream is identical either way; this changes only what
+///   the internal metric measures.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn reconstruct_xyb(
     quant_dc: &[Vec<Vec<i32>>; 3],
@@ -51,6 +142,15 @@ pub(crate) fn reconstruct_xyb(
     ac_strategy: &AcStrategyMap,
     xsize_blocks: usize,
     ysize_blocks: usize,
+    dc_smoothing: bool,
+    // W45-RECON part 14: strict `DequantBlock` parity — `DequantMatrix`
+    // (1/qm f32 tables), `AdjustQuantBias` with the NEON
+    // `ApproximateReciprocal`, `inv_global_scale/quant * dm_mul`
+    // scaling, and fused `MulAdd` CfL (libjxl `dec_group.cc`).
+    strict_qm: bool,
+    // W45-RECON part 15: strict `ComputeScaledIDCT` pass order
+    // (horizontal-frequency inverse first) via the `*_lj` wrappers.
+    strict_dct_order: bool,
 ) -> [Vec<f32>; 3] {
     // 7b.1a (#74): band-parallel reconstruction. Bands of
     // TILE_DIM_IN_BLOCKS (8) block rows = 64 px — transforms are
@@ -72,6 +172,27 @@ pub(crate) fn reconstruct_xyb(
     let band_blocks = 8usize; // = ac_strategy TILE_DIM_IN_BLOCKS (64 px tiles)
     let band_px_len = band_blocks * BLOCK_DIM * padded_width;
 
+    // Decoder-faithful DC grid (strict libjxl parity): dequantize once,
+    // then apply `AdaptiveDCSmoothing` — the gap gate needs the full
+    // 3×3 neighborhood, so the grid must be computed before banding.
+    let dc_grid = if dc_smoothing {
+        let mut grid = dequant_dc_grid(quant_dc, params, xsize_blocks, ysize_blocks);
+        // libjxl passes `quantizer.MulDC()` bare — the step per
+        // *base-precision* DC unit (no `1 << extra_dc_precision`
+        // divisor). At e8+ (edp=1) the gap is therefore measured in
+        // units 2× coarser than the stored ints.
+        let dc_factors = [
+            1.0 / (INV_DC_QUANT[0] * params.scale_dc),
+            1.0 / (INV_DC_QUANT[1] * params.scale_dc),
+            1.0 / (INV_DC_QUANT[2] * params.scale_dc),
+        ];
+        adaptive_dc_smooth(&mut grid, xsize_blocks, ysize_blocks, &dc_factors);
+        Some(grid)
+    } else {
+        None
+    };
+    let dc_grid = dc_grid.as_ref();
+
     let run_band = |band_idx: usize, band: &mut [&mut [f32]; 3]| {
         let by_start = band_idx * band_blocks;
         let by_end = (by_start + band_blocks).min(ysize_blocks);
@@ -83,6 +204,7 @@ pub(crate) fn reconstruct_xyb(
                     token,
                     quant_dc,
                     quant_ac,
+                    dc_grid,
                     params,
                     quant_field,
                     cfl_map,
@@ -91,6 +213,8 @@ pub(crate) fn reconstruct_xyb(
                     by_start,
                     by_end,
                     band,
+                    strict_qm,
+                    strict_dct_order,
                 );
             }
         }
@@ -102,6 +226,7 @@ pub(crate) fn reconstruct_xyb(
                     token,
                     quant_dc,
                     quant_ac,
+                    dc_grid,
                     params,
                     quant_field,
                     cfl_map,
@@ -110,6 +235,8 @@ pub(crate) fn reconstruct_xyb(
                     by_start,
                     by_end,
                     band,
+                    strict_qm,
+                    strict_dct_order,
                 );
             }
         }
@@ -121,6 +248,7 @@ pub(crate) fn reconstruct_xyb(
                     token,
                     quant_dc,
                     quant_ac,
+                    dc_grid,
                     params,
                     quant_field,
                     cfl_map,
@@ -129,12 +257,15 @@ pub(crate) fn reconstruct_xyb(
                     by_start,
                     by_end,
                     band,
+                    strict_qm,
+                    strict_dct_order,
                 );
             }
         }
         reconstruct_xyb_impl(
             quant_dc,
             quant_ac,
+            dc_grid,
             params,
             quant_field,
             cfl_map,
@@ -143,6 +274,8 @@ pub(crate) fn reconstruct_xyb(
             by_start,
             by_end,
             band,
+            strict_qm,
+            strict_dct_order,
         )
     };
 
@@ -186,6 +319,7 @@ fn reconstruct_xyb_avx2(
     _token: jxl_simd::X64V3Token,
     quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+    dc_grid: Option<&[Vec<f32>; 3]>,
     params: &DistanceParams,
     quant_field: &[u8],
     cfl_map: &CflMap,
@@ -194,10 +328,13 @@ fn reconstruct_xyb_avx2(
     by_start: usize,
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
+    strict_qm: bool,
+    strict_dct_order: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
         quant_ac,
+        dc_grid,
         params,
         quant_field,
         cfl_map,
@@ -206,6 +343,8 @@ fn reconstruct_xyb_avx2(
         by_start,
         by_end,
         planes,
+        strict_qm,
+        strict_dct_order,
     )
 }
 
@@ -216,6 +355,7 @@ fn reconstruct_xyb_neon(
     _token: jxl_simd::NeonToken,
     quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+    dc_grid: Option<&[Vec<f32>; 3]>,
     params: &DistanceParams,
     quant_field: &[u8],
     cfl_map: &CflMap,
@@ -224,10 +364,13 @@ fn reconstruct_xyb_neon(
     by_start: usize,
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
+    strict_qm: bool,
+    strict_dct_order: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
         quant_ac,
+        dc_grid,
         params,
         quant_field,
         cfl_map,
@@ -236,6 +379,8 @@ fn reconstruct_xyb_neon(
         by_start,
         by_end,
         planes,
+        strict_qm,
+        strict_dct_order,
     )
 }
 
@@ -246,6 +391,7 @@ fn reconstruct_xyb_wasm128(
     _token: jxl_simd::Wasm128Token,
     quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+    dc_grid: Option<&[Vec<f32>; 3]>,
     params: &DistanceParams,
     quant_field: &[u8],
     cfl_map: &CflMap,
@@ -254,10 +400,13 @@ fn reconstruct_xyb_wasm128(
     by_start: usize,
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
+    strict_qm: bool,
+    strict_dct_order: bool,
 ) {
     reconstruct_xyb_impl(
         quant_dc,
         quant_ac,
+        dc_grid,
         params,
         quant_field,
         cfl_map,
@@ -266,6 +415,8 @@ fn reconstruct_xyb_wasm128(
         by_start,
         by_end,
         planes,
+        strict_qm,
+        strict_dct_order,
     )
 }
 
@@ -274,6 +425,7 @@ fn reconstruct_xyb_wasm128(
 fn reconstruct_xyb_impl(
     quant_dc: &[Vec<Vec<i32>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+    dc_grid: Option<&[Vec<f32>; 3]>,
     params: &DistanceParams,
     quant_field: &[u8],
     cfl_map: &CflMap,
@@ -282,6 +434,8 @@ fn reconstruct_xyb_impl(
     by_start: usize,
     by_end: usize,
     planes: &mut [&mut [f32]; 3],
+    strict_qm: bool,
+    strict_dct_order: bool,
 ) {
     // 7b.1a (#74): band variant. `planes` are BAND slices covering pixel
     // rows `by_start*8 .. by_end*8`; all writes are band-relative
@@ -294,6 +448,10 @@ fn reconstruct_xyb_impl(
 
     let x_qm_mul = jxl_simd::fast_powf(1.25, params.x_qm_scale as f32 - 2.0);
     let b_qm_mul = jxl_simd::fast_powf(1.25, params.b_qm_scale as f32 - 2.0);
+    // libjxl dec_cache.h: dm multipliers via `std::pow(1/1.25f, scale-2)`
+    // — a true powf, not the `FastPowf` polynomial.
+    let x_dm_mul = (1.0f32 / 1.25f32).powf(params.x_qm_scale as f32 - 2.0);
+    let b_dm_mul = (1.0f32 / 1.25f32).powf(params.b_qm_scale as f32 - 2.0);
 
     // Pre-allocate scratch buffers to avoid per-block heap allocations.
     // Max block size is 4096 (DCT64x64 = 64x64 coefficients).
@@ -340,33 +498,78 @@ fn reconstruct_xyb_impl(
 
             // DCT8 fast path: SIMD dequant + CfL + IDCT in one optimized pass
             if raw_strategy == RAW_STRATEGY_DCT8 {
-                let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
-                let qac_qm = [qac * x_qm_mul, qac, qac * b_qm_mul];
-                let weights_x: &[f32; 64] =
-                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 0), 0);
-                let weights_y: &[f32; 64] =
-                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 1), 0);
-                let weights_b: &[f32; 64] =
-                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 2), 0);
+                let weights_x: &[f32; 64] = if strict_qm {
+                    as_array_ref(
+                        super::quant::dequant_matrix_lj(RAW_STRATEGY_DCT8 as usize, 0),
+                        0,
+                    )
+                } else {
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 0), 0)
+                };
+                let weights_y: &[f32; 64] = if strict_qm {
+                    as_array_ref(
+                        super::quant::dequant_matrix_lj(RAW_STRATEGY_DCT8 as usize, 1),
+                        0,
+                    )
+                } else {
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 1), 0)
+                };
+                let weights_b: &[f32; 64] = if strict_qm {
+                    as_array_ref(
+                        super::quant::dequant_matrix_lj(RAW_STRATEGY_DCT8 as usize, 2),
+                        0,
+                    )
+                } else {
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 2), 0)
+                };
 
                 let mut dq_x = uninit_buf::<64>();
                 let mut dq_y = uninit_buf::<64>();
                 let mut dq_b = uninit_buf::<64>();
 
-                jxl_simd::dequant_block_dct8(
-                    &quant_ac[0][by][bx],
-                    &quant_ac[1][by][bx],
-                    &quant_ac[2][by][bx],
-                    weights_x,
-                    weights_y,
-                    weights_b,
-                    qac_qm,
-                    x_factor,
-                    b_factor,
-                    &mut dq_x,
-                    &mut dq_y,
-                    &mut dq_b,
-                );
+                if strict_qm {
+                    // libjxl DequantBlock (dec_group.cc): scaled_dequant =
+                    // inv_global_scale/quant * dm_mul; dq = bias*(mat*scaled);
+                    // CfL via MulAdd.
+                    let quant = quant_field[by * xsize_blocks + bx] as f32;
+                    let s = params.inv_scale / quant;
+                    let scaled = [s * x_dm_mul, s, s * b_dm_mul];
+                    dq_x[0] = 0.0;
+                    dq_y[0] = 0.0;
+                    dq_b[0] = 0.0;
+                    for i in 1..64 {
+                        let dy = super::quantize::adjust_quant_bias_lj(quant_ac[1][by][bx][i], 1)
+                            * (weights_y[i] * scaled[1]);
+                        dq_y[i] = dy;
+                        dq_x[i] = x_factor.mul_add(
+                            dy,
+                            super::quantize::adjust_quant_bias_lj(quant_ac[0][by][bx][i], 0)
+                                * (weights_x[i] * scaled[0]),
+                        );
+                        dq_b[i] = b_factor.mul_add(
+                            dy,
+                            super::quantize::adjust_quant_bias_lj(quant_ac[2][by][bx][i], 2)
+                                * (weights_b[i] * scaled[2]),
+                        );
+                    }
+                } else {
+                    let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
+                    let qac_qm = [qac * x_qm_mul, qac, qac * b_qm_mul];
+                    jxl_simd::dequant_block_dct8(
+                        &quant_ac[0][by][bx],
+                        &quant_ac[1][by][bx],
+                        &quant_ac[2][by][bx],
+                        weights_x,
+                        weights_y,
+                        weights_b,
+                        qac_qm,
+                        x_factor,
+                        b_factor,
+                        &mut dq_x,
+                        &mut dq_y,
+                        &mut dq_b,
+                    );
+                }
 
                 // Restore LLF (DC) for each channel
                 // DC CfL uses dc_cfl_factor (0.5 for B channel, 0 for X/Y) —
@@ -374,26 +577,34 @@ fn reconstruct_xyb_impl(
                 // which is already applied by the SIMD kernel for AC positions.
                 // DC is NOT subject to tile-level CfL (the generic path skips LLF
                 // positions in the CfL loop).
-                let dc_cfl_factor_b: f32 = 0.5;
-                // W44-AUDIT-8 Phase 5: symmetric inverse — multiply
-                // inv_factor by `dc_mul = 1 << extra_dc_precision` so the
-                // encoder-side reconstruction matches the decoder
-                // (`mul = 1.0 / dc_mul` applied to stored quant_dc).
-                let dc_mul = (1u32 << params.extra_dc_precision) as f32;
-                let inv_factor = [
-                    INV_DC_QUANT[0] * params.scale_dc * dc_mul,
-                    INV_DC_QUANT[1] * params.scale_dc * dc_mul,
-                    INV_DC_QUANT[2] * params.scale_dc * dc_mul,
-                ];
-                let dc_stored = [
-                    quant_dc[0][by][bx] as f32,
-                    quant_dc[1][by][bx] as f32,
-                    quant_dc[2][by][bx] as f32,
-                ];
-
-                dq_y[0] = dc_stored[1] / inv_factor[1];
-                dq_x[0] = dc_stored[0] / inv_factor[0];
-                dq_b[0] = (dc_stored[2] + dc_stored[1] * dc_cfl_factor_b) / inv_factor[2];
+                if let Some(g) = dc_grid {
+                    // Decoder-faithful path: post-CfL, post-
+                    // `AdaptiveDCSmoothing` dequantized DC (strict parity).
+                    let di = by * xsize_blocks + bx;
+                    dq_y[0] = g[1][di];
+                    dq_x[0] = g[0][di];
+                    dq_b[0] = g[2][di];
+                } else {
+                    let dc_cfl_factor_b: f32 = 0.5;
+                    // W44-AUDIT-8 Phase 5: symmetric inverse — multiply
+                    // inv_factor by `dc_mul = 1 << extra_dc_precision` so
+                    // the encoder-side reconstruction matches the decoder
+                    // (`mul = 1.0 / dc_mul` applied to stored quant_dc).
+                    let dc_mul = (1u32 << params.extra_dc_precision) as f32;
+                    let inv_factor = [
+                        INV_DC_QUANT[0] * params.scale_dc * dc_mul,
+                        INV_DC_QUANT[1] * params.scale_dc * dc_mul,
+                        INV_DC_QUANT[2] * params.scale_dc * dc_mul,
+                    ];
+                    let dc_stored = [
+                        quant_dc[0][by][bx] as f32,
+                        quant_dc[1][by][bx] as f32,
+                        quant_dc[2][by][bx] as f32,
+                    ];
+                    dq_y[0] = dc_stored[1] / inv_factor[1];
+                    dq_x[0] = dc_stored[0] / inv_factor[0];
+                    dq_b[0] = (dc_stored[2] + dc_stored[1] * dc_cfl_factor_b) / inv_factor[2];
+                }
 
                 // IDCT + write to output planes
                 let pixel_x = bx * BLOCK_DIM;
@@ -429,6 +640,11 @@ fn reconstruct_xyb_impl(
             }
 
             for c in 0..3usize {
+                let dm_mul = match c {
+                    0 => x_dm_mul,
+                    2 => b_dm_mul,
+                    _ => 1.0,
+                };
                 let qm_mul = match c {
                     0 => x_qm_mul,
                     2 => b_qm_mul,
@@ -437,11 +653,19 @@ fn reconstruct_xyb_impl(
 
                 // Dequantize AC coefficients
                 let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
-                let weights = quant_weights(raw_strategy as usize, c);
+                let weights = if strict_qm {
+                    super::quant::dequant_matrix_lj(raw_strategy as usize, c)
+                } else {
+                    quant_weights(raw_strategy as usize, c)
+                };
 
                 // Nested loops eliminate per-element integer divisions.
                 // Pre-slice weights and dequant rows to eliminate inner bounds checks.
                 let inv_qac_qm = 1.0 / (qac * qm_mul);
+                // libjxl DequantBlock: scaled_dequant =
+                // (inv_global_scale/quant) * dm_mul
+                let scaled =
+                    (params.inv_scale / quant_field[by * xsize_blocks + bx] as f32) * dm_mul;
                 for coef_slot_y in 0..cy {
                     for pos_y in 0..BLOCK_DIM {
                         let y = coef_slot_y * BLOCK_DIM + pos_y;
@@ -464,8 +688,12 @@ fn reconstruct_xyb_impl(
                                 let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
                                 let q_int = row[pos_in_8x8];
                                 if q_int != 0 {
-                                    let biased = adjust_quant_bias(q_int, c);
-                                    dq_row[x] = biased * w_row[x] * inv_qac_qm;
+                                    dq_row[x] = if strict_qm {
+                                        super::quantize::adjust_quant_bias_lj(q_int, c)
+                                            * (w_row[x] * scaled)
+                                    } else {
+                                        adjust_quant_bias(q_int, c) * w_row[x] * inv_qac_qm
+                                    };
                                 }
                             }
                         }
@@ -485,6 +713,7 @@ fn reconstruct_xyb_impl(
                     cx,
                     cy,
                     block_width,
+                    dc_grid,
                 );
             }
 
@@ -501,8 +730,14 @@ fn reconstruct_xyb_impl(
                     let xr = &mut dq_x[0][row_off..row_off + block_width];
                     let br = &mut dq_b[0][row_off..row_off + block_width];
                     for x in x_start..block_width {
-                        xr[x] += x_factor * yr[x];
-                        br[x] += b_factor * yr[x];
+                        if strict_qm {
+                            // libjxl DequantLane: fused MulAdd.
+                            xr[x] = x_factor.mul_add(yr[x], xr[x]);
+                            br[x] = b_factor.mul_add(yr[x], br[x]);
+                        } else {
+                            xr[x] += x_factor * yr[x];
+                            br[x] += b_factor * yr[x];
+                        }
                     }
                 }
             }
@@ -532,7 +767,12 @@ fn reconstruct_xyb_impl(
                 } else {
                     &dequant_scratch[c][..size]
                 };
-                idct_for_strategy(raw_strategy, idct_input, &mut idct_scratch[..size]);
+                idct_for_strategy(
+                    raw_strategy,
+                    idct_input,
+                    &mut idct_scratch[..size],
+                    strict_dct_order,
+                );
 
                 // Write pixels to output plane using physical coverage dimensions
                 let pixel_x = bx * BLOCK_DIM;
@@ -569,14 +809,21 @@ fn restore_llf_from_dc(
     _cx: usize,
     _cy: usize,
     _block_width: usize,
+    dc_grid: Option<&[Vec<f32>; 3]>,
 ) {
     let dc_cfl_factor: f32 = if channel == 2 { 0.5 } else { 0.0 };
     // W44-AUDIT-8 Phase 5: symmetric inverse — see other reconstruct.rs sites.
     let dc_mul = (1u32 << params.extra_dc_precision) as f32;
     let inv_factor = INV_DC_QUANT[channel] * params.scale_dc * dc_mul;
+    let xsize_blocks = quant_dc_ch[0].len();
 
-    // Helper: dequantize a DC value with CfL correction
+    // Helper: dequantize a DC value with CfL correction. When `dc_grid`
+    // is present (strict libjxl parity) it already holds post-CfL,
+    // post-`AdaptiveDCSmoothing` values.
     let dequant_dc = |iy: usize, ix: usize| -> f32 {
+        if let Some(g) = dc_grid {
+            return g[channel][(by + iy) * xsize_blocks + bx + ix];
+        }
         let stored = quant_dc_ch[by + iy][bx + ix] as f32;
         let y_stored = quant_dc_y[by + iy][bx + ix] as f32;
         (stored + y_stored * dc_cfl_factor) / inv_factor
@@ -936,7 +1183,7 @@ fn restore_llf_from_dc(
 }
 
 /// Apply IDCT for a given strategy, producing pixel-domain output.
-fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
+fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32], strict_dct_order: bool) {
     match raw_strategy {
         RAW_STRATEGY_DCT8 => {
             let mut input = [0.0f32; 64];
@@ -944,6 +1191,18 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
             let mut tmp = [0.0f32; 64];
             idct_8x8(&input, &mut tmp);
             output[..64].copy_from_slice(&tmp);
+        }
+        RAW_STRATEGY_DCT4X4 if strict_dct_order => {
+            // libjxl ComputeScaledIDCT<4,4> pass order: transpose-in →
+            // idct_4x4_full (DC combine undo + sub-block IDCTs) →
+            // transpose-out.
+            idct_4x4_full_lj(as_array_ref(coeffs, 0), as_array_mut(output, 0));
+        }
+        RAW_STRATEGY_DCT4X8 if strict_dct_order => {
+            idct_4x8_full_lj(as_array_ref(coeffs, 0), as_array_mut(output, 0));
+        }
+        RAW_STRATEGY_DCT8X4 if strict_dct_order => {
+            idct_8x4_full_lj(as_array_ref(coeffs, 0), as_array_mut(output, 0));
         }
         RAW_STRATEGY_DCT4X4 => {
             // Inverse of dct_4x4_full: undo DC combining, de-interleave, apply idct_4x4
@@ -1070,39 +1329,67 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
             let mut input = [0.0f32; 256];
             input.copy_from_slice(&coeffs[..256]);
             let mut tmp = [0.0f32; 256];
-            idct_16x16(&input, &mut tmp);
+            if strict_dct_order {
+                idct_16x16_lj(&input, &mut tmp);
+            } else {
+                idct_16x16(&input, &mut tmp);
+            }
             output[..256].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X32 => {
             let mut input = [0.0f32; 1024];
             input.copy_from_slice(&coeffs[..1024]);
             let mut tmp = [0.0f32; 1024];
-            idct_32x32(&input, &mut tmp);
+            if strict_dct_order {
+                idct_32x32_lj(&input, &mut tmp);
+            } else {
+                idct_32x32(&input, &mut tmp);
+            }
             output[..1024].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X16 => {
             let mut input = [0.0f32; 512];
             input.copy_from_slice(&coeffs[..512]);
             let mut tmp = [0.0f32; 512];
-            idct_32x16(&input, &mut tmp);
+            if strict_dct_order {
+                idct_32x16_lj(&input, &mut tmp);
+            } else {
+                idct_32x16(&input, &mut tmp);
+            }
             output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X32 => {
             let mut input = [0.0f32; 512];
             input.copy_from_slice(&coeffs[..512]);
             let mut tmp = [0.0f32; 512];
-            idct_16x32(&input, &mut tmp);
+            if strict_dct_order {
+                idct_16x32_lj(&input, &mut tmp);
+            } else {
+                idct_16x32(&input, &mut tmp);
+            }
             output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT64X64 => {
             // DCT64 uses stack arrays via the output parameter
-            idct_64x64(&coeffs[..4096], &mut output[..4096]);
+            if strict_dct_order {
+                idct_64x64_lj(&coeffs[..4096], &mut output[..4096]);
+            } else {
+                idct_64x64(&coeffs[..4096], &mut output[..4096]);
+            }
         }
         RAW_STRATEGY_DCT64X32 => {
-            idct_64x32(&coeffs[..2048], &mut output[..2048]);
+            if strict_dct_order {
+                idct_64x32_lj(&coeffs[..2048], &mut output[..2048]);
+            } else {
+                idct_64x32(&coeffs[..2048], &mut output[..2048]);
+            }
         }
         RAW_STRATEGY_DCT32X64 => {
-            idct_32x64(&coeffs[..2048], &mut output[..2048]);
+            if strict_dct_order {
+                idct_32x64_lj(&coeffs[..2048], &mut output[..2048]);
+            } else {
+                idct_32x64(&coeffs[..2048], &mut output[..2048]);
+            }
         }
         RAW_STRATEGY_IDENTITY => {
             let mut tmp = [0.0f32; 64];
@@ -1278,7 +1565,7 @@ mod tests {
             let mut coefficients = [0.0; 64];
             coefficients[slot] = 1.0;
             let mut pixels = [0.0; 64];
-            idct_for_strategy(RAW_STRATEGY_DCT4X4, &coefficients, &mut pixels);
+            idct_for_strategy(RAW_STRATEGY_DCT4X4, &coefficients, &mut pixels, false);
             for y in 0..8 {
                 for x in 0..8 {
                     assert_eq!(

@@ -3908,6 +3908,19 @@ impl VarDctEncoder {
         // forward_xyb is finite-output-for-finite-input.
         validate_xyb_planes(self.non_finite_action, &mut xyb_x, &mut xyb_y, &mut xyb_b)?;
 
+        // Strict Libjxl only: snapshot the opsin planes here — the
+        // equivalent of libjxl's `orig_opsin` copy before
+        // `LossyFrameHeuristics` (enc_frame.cc "Save pre-Gaborish
+        // opsin"). `compute_epf_sharpness` compares candidate
+        // reconstructions against this pre-patches / pre-GaborishInverse
+        // original; the shipped path uses the post-gaborish DCT-input
+        // planes instead (~6.5x inflated block errors).
+        let epf_orig_opsin: Option<[Vec<f32>; 3]> = if self.profile.epf_sharpness_pre_gab_libjxl {
+            Some([xyb_x.clone(), xyb_y.clone(), xyb_b.clone()])
+        } else {
+            None
+        };
+
         // The linear buffer's only readers past this point are the
         // perceptual refinement loops. When none can run (every effort
         // below the loop band), free an owned buffer NOW - it otherwise
@@ -4356,19 +4369,52 @@ impl VarDctEncoder {
         );
         let mask1x1_for_pre_scale: Option<Vec<f32>> =
             if self.ac_strategy_enabled && self.pixel_domain_loss && !pld_force_off_for_pre_scale {
-                Some(super::adaptive_quant::compute_mask1x1_with_budget(
-                    &xyb_y,
-                    padded_width,
-                    padded_height,
-                    self.budget.as_ref(),
-                )?)
+                // W45-RECON part 5: strict parity routes mask1x1 through
+                // the libjxl-exact path (exact `ln_1p` + mirror-border
+                // `Symmetric5`); all other strategies keep the calibrated
+                // fast_log2f + clamp kernel byte-identically.
+                Some(if self.profile.gaborish_libjxl_kernel {
+                    super::adaptive_quant::compute_mask1x1_libjxl_exact(
+                        &xyb_y,
+                        padded_width,
+                        padded_height,
+                        self.budget.as_ref(),
+                    )?
+                } else {
+                    super::adaptive_quant::compute_mask1x1_with_budget(
+                        &xyb_y,
+                        padded_width,
+                        padded_height,
+                        self.budget.as_ref(),
+                    )?
+                })
             } else {
                 None
             };
-        let mask1x1_median_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
-            .as_deref()
-            .map(|m| median_mask1x1(m, padded_width, width, height, self.budget.as_ref()))
-            .transpose()?;
+        // The median/p25 discriminators feed only three consumers, all
+        // gated: the W44-109 qf pre-scale (`adaptive_quant_qf_seed != Off`
+        // — `resolved_adaptive_quant_qf_seed_scale_with_policy` early-returns
+        // on `Off` before reading them), the W44-168 env diagnostic path
+        // (`adaptive_buttloop_iters`), and the W44-169 narrow production
+        // dispatch (`adaptive_buttloop_iters_narrow`). When all three gates
+        // are off — `EncoderStrategy::Libjxl` sets them all off — the
+        // values are dead: skip the two full-image `select_nth_unstable`
+        // passes (each a `width*height` f32 copy + nth-element, ~10 ms at
+        // 2048²). Over-inclusive on purpose: any new consumer of either
+        // stat must extend this predicate.
+        let pre_scale_stats_consumed = !matches!(
+            self.resolved_improvements.adaptive_quant_qf_seed,
+            crate::api::AdaptiveQuantQfSeedPolicy::Off
+        ) || self.resolved_improvements.adaptive_buttloop_iters
+            || self.resolved_improvements.adaptive_buttloop_iters_narrow;
+        let mask1x1_median_for_pre_scale: Option<f32> = if pre_scale_stats_consumed {
+            mask1x1_for_pre_scale
+                .as_deref()
+                .map(|m| median_mask1x1(m, padded_width, width, height, self.budget.as_ref()))
+                .transpose()?
+        } else {
+            None
+        };
         #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
         if std::env::var_os("JXL_WP_DISPATCH_DUMP_MASK").is_some() {
             eprintln!(
@@ -4391,10 +4437,16 @@ impl VarDctEncoder {
         // mask is already in scope). `edge_density` comes from
         // `self.zenanalyze_proxies` (already on the encoder for 8-bit
         // sRGB layouts).
-        let mask1x1_p25_for_pre_scale: Option<f32> = mask1x1_for_pre_scale
-            .as_deref()
-            .map(|m| percentile_mask1x1(m, padded_width, width, height, 0.25, self.budget.as_ref()))
-            .transpose()?;
+        let mask1x1_p25_for_pre_scale: Option<f32> = if pre_scale_stats_consumed {
+            mask1x1_for_pre_scale
+                .as_deref()
+                .map(|m| {
+                    percentile_mask1x1(m, padded_width, width, height, 0.25, self.budget.as_ref())
+                })
+                .transpose()?
+        } else {
+            None
+        };
         #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
         if std::env::var_os("JXL_WP_DISPATCH_DUMP_MASK").is_some() {
             eprintln!(
@@ -4734,6 +4786,25 @@ impl VarDctEncoder {
 
         let _ms_quant_field = _t_quant_field.elapsed().as_secs_f64() * 1000.0;
         let _t_gaborish = crate::clock::Instant::now();
+        // W45-RECON diagnostic: dump the pre-gaborish XYB planes (input to
+        // InitialQuantField / mask1x1), mirroring the cjxl `pregab_xyb_*`
+        // dump. Env-gated, zero cost when unset.
+        #[cfg(feature = "__internal_recon_hook")]
+        if let Some(dump_dir) = std::env::var_os("JXL_AQDBG_DUMP") {
+            use std::io::Write as _;
+            let dir = std::path::PathBuf::from(dump_dir);
+            for (c, plane) in [&*xyb_x, &*xyb_y, &*xyb_b].iter().enumerate() {
+                let mut v = alloc::vec::Vec::with_capacity(8 + plane.len() * 4);
+                v.extend_from_slice(&(padded_width as i32).to_le_bytes());
+                v.extend_from_slice(&(padded_height as i32).to_le_bytes());
+                for &x in plane.iter() {
+                    v.extend_from_slice(&x.to_le_bytes());
+                }
+                let _ = std::fs::File::create(dir.join(alloc::format!("pregab_xyb_{c}.f32")))
+                    .map(|mut f| f.write_all(&v));
+            }
+        }
+
         // Apply gaborish inverse (5x5 sharpening) AFTER quant field and mask1x1
         // but BEFORE CfL and AC strategy. This matches libjxl enc_heuristics.cc:
         //   line 1124: InitialQuantField (pre-gaborish)
@@ -4745,9 +4816,9 @@ impl VarDctEncoder {
                 &mut xyb_x,
                 &mut xyb_y,
                 &mut xyb_b,
-                padded_width,
-                padded_height,
+                (padded_width, padded_height),
                 self.enable_adaptive_gaborish,
+                self.profile.gaborish_libjxl_kernel,
                 self.budget.as_ref(),
             )?;
         }
@@ -4813,7 +4884,14 @@ impl VarDctEncoder {
         let pass1_use_newton = self.profile.cfl_newton
             && (cfl_newton_libjxl_parity_effective
                 || self.profile.cfl_newton_libjxl_math_with_ls_warm_start);
-        let mut cfl_map = if self.cfl_enabled {
+        // CfL pass-1 presence gate: `cfl_enabled` is the feature switch;
+        // `profile.cfl_pass1` is the effort gate — false only under
+        // `EncoderStrategy::Libjxl` below e7 (libjxl runs pass-1 at
+        // `speed_tier <= kSquirrel` and emits the zero-initialized cmap
+        // below that). At e5/6 under Libjxl pass-2 (`refine_cfl_map`)
+        // refills every tile anyway, so skipping pass-1 there is
+        // byte-identical as well as parity-faithful.
+        let mut cfl_map = if self.cfl_enabled && self.profile.cfl_pass1 {
             compute_cfl_map(
                 &xyb_x,
                 &xyb_y,
@@ -5522,6 +5600,37 @@ impl VarDctEncoder {
             &cfl_map
         };
 
+        // W45-RECON: AQDBG-style dump of the AC-search inputs (initial
+        // quant field, masking, mask1x1), mirroring the JXL_AQDBG_DUMP
+        // hook added to libjxl's DefaultHeuristics (enc_heuristics.cc).
+        // `quant_field_float` here is the PRE-AdjustQuantField initial
+        // field — same as libjxl's `initial_quant_field` consumed by
+        // acs_heuristics.Init. Diagnostic only; env-gated.
+        #[cfg(feature = "__internal_recon_hook")]
+        if let Some(dump_dir) = std::env::var_os("JXL_AQDBG_DUMP") {
+            use std::io::Write as _;
+            let dir = std::path::PathBuf::from(dump_dir);
+            let write_f32 = |name: &str, w: usize, h: usize, data: &[f32]| {
+                let mut v = alloc::vec::Vec::with_capacity(8 + data.len() * 4);
+                v.extend_from_slice(&(w as i32).to_le_bytes());
+                v.extend_from_slice(&(h as i32).to_le_bytes());
+                for &x in data {
+                    v.extend_from_slice(&x.to_le_bytes());
+                }
+                let _ = std::fs::File::create(dir.join(name)).map(|mut f| f.write_all(&v));
+            };
+            write_f32(
+                "acs_quant_field.f32",
+                xsize_blocks,
+                ysize_blocks,
+                &quant_field_float,
+            );
+            write_f32("acs_masking.f32", xsize_blocks, ysize_blocks, &masking);
+            if let Some(m) = mask1x1.as_deref() {
+                write_f32("acs_mask1x1.f32", padded_width, padded_height, m);
+            }
+        }
+
         #[allow(unused_mut)]
         let mut ac_strategy = if let Some(forced) = self.force_strategy {
             // Force a specific strategy for all blocks that fit
@@ -5711,6 +5820,9 @@ impl VarDctEncoder {
                 // #74 task #10: keep-best Pass-2 guard (ON for Zenjxl /
                 // Aggressive at e>=7, OFF on Libjxl for byte parity).
                 self.profile.cfl_keep_best,
+                // W45-RECON part 15: libjxl `ComputeScaledDCT` pass
+                // order for the per-strategy coefficient evaluation.
+                self.profile.dct_pass_order_libjxl,
             );
         }
 
@@ -6151,13 +6263,17 @@ impl VarDctEncoder {
         )?;
 
         // W44-AUDIT-8 Phase 6: apply libjxl QuantizeWP shape to DC
-        // values when the gate fires (effort ≤ 7 by default; libjxl
-        // `nl_dc = speed_tier < kFalcon` parity). Post-pass over the
+        // values when the gate fires (`nl_dc = speed_tier < kFalcon` =
+        // effort ≥ 4 under strict parity). Post-pass over the
         // already-computed `float_dc` + `quant_dc` from the transform
-        // pipeline. At effort ≥ 8 this is a no-op (the buttloop owns
-        // DC refinement and libjxl drops to plain `std::round`).
+        // pipeline. NOTE: this is NOT disabled at effort ≥ 8 — libjxl
+        // runs `QuantizeWP` unconditionally under `nl_dc`
+        // (`enc_modular.cc:1645` `else if (nl_dc)` has no further tier
+        // gate); the earlier "e8+ no-op" comment was wrong. The buttloop
+        // refines the *scale*, QuantizeWP rewrites the *values* so the
+        // shipped stream is self-consistent under WP prediction.
         // Env hook `JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP=1` force-enables
-        // for the Phase 6 bisect bench + diagnostic A/B at any effort.
+        // for the Phase 6 bisect bench + diagnostic A/B at low effort.
         let phase6_env_on = std::env::var_os("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP").is_some()
             && self.profile.effort <= 7;
         if self.profile.use_libjxl_wp_dc_quant || phase6_env_on {
@@ -6172,6 +6288,19 @@ impl VarDctEncoder {
                 params.scale_dc,
                 params.extra_dc_precision,
             );
+        }
+        // W45-RECON part 20 probe: dump post-WP quant_dc.
+        if std::env::var_os("JXL_P20_DUMP_POSTWP").is_some() {
+            let q = &transform_out.quant_dc;
+            for (c, channel) in q.iter().enumerate() {
+                for (y, samples) in channel[..ysize_blocks].iter().enumerate() {
+                    let mut row = String::new();
+                    for sample in &samples[..xsize_blocks] {
+                        row.push_str(&format!("{} ", sample));
+                    }
+                    eprintln!("[P20WP] c={c} y={y} {row}");
+                }
+            }
         }
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let _t_sharp = crate::clock::Instant::now();
@@ -6251,7 +6380,10 @@ impl VarDctEncoder {
                             ))
                         } else {
                             Some(super::epf::compute_epf_sharpness(
-                                [xyb_x_ref, xyb_y_ref, xyb_b_ref],
+                                match &epf_orig_opsin {
+                                    Some([x, y, b]) => [x.as_slice(), y.as_slice(), b.as_slice()],
+                                    None => [xyb_x_ref, xyb_y_ref, xyb_b_ref],
+                                },
                                 quant_dc,
                                 quant_ac,
                                 &quant_field,
@@ -6263,6 +6395,9 @@ impl VarDctEncoder {
                                 xsize_blocks,
                                 ysize_blocks,
                                 self.budget.as_ref(),
+                                self.resolved_improvements.dc_adaptive_smoothing,
+                                self.profile.quant_weights_libjxl,
+                                self.profile.dct_pass_order_libjxl,
                             )?)
                         }
                     }
@@ -6270,6 +6405,73 @@ impl VarDctEncoder {
             } else {
                 None
             };
+
+        // W45-RECON part 10 diagnostic: dump the shipped DC plane + AC
+        // metadata value grids for byte-level diffing against
+        // instrumented cjxl (`JXL_SYMDUMP` there emits identically-named
+        // files). Channel order follows libjxl `AddVarDCTDC`
+        // (`c < 2 ? c ^ 1 : c`): ch0 = Y (our index 1), ch1 = X
+        // (index 0), ch2 = B (index 2).
+        if let Ok(sym_dir) = std::env::var("JXL_SYMDUMP") {
+            let dump_i32 = |name: &str, w: usize, h: usize, vals: &[i32]| {
+                let path = format!("{sym_dir}/{name}.i32");
+                if let Ok(mut f) = std::fs::File::create(&path) {
+                    use std::io::Write;
+                    let _ = f.write_all(&(w as i32).to_le_bytes());
+                    let _ = f.write_all(&(h as i32).to_le_bytes());
+                    let mut buf = Vec::with_capacity(vals.len() * 4);
+                    for v in vals {
+                        buf.extend_from_slice(&v.to_le_bytes());
+                    }
+                    let _ = f.write_all(&buf);
+                }
+            };
+            let dc_planes: &[Vec<Vec<i32>>; 3] = &transform_out.quant_dc;
+            for (our_c, cjxl_ch) in [(1usize, 0usize), (0usize, 1usize), (2usize, 2usize)] {
+                let plane = &dc_planes[our_c];
+                let flat: Vec<i32> = plane.iter().flatten().copied().collect();
+                dump_i32(
+                    &format!("dc_ch{cjxl_ch}"),
+                    xsize_blocks,
+                    ysize_blocks,
+                    &flat,
+                );
+            }
+            // AC metadata: ch0/ch1 = ytox/ytob per 8x8-block color tile;
+            // ch2 = 2-row plane (acs libjxl-ordinal codes, qf-1) over
+            // first-blocks; ch3 = epf sharpness grid.
+            let tiles_x = xsize_blocks.div_ceil(8);
+            let tiles_y = ysize_blocks.div_ceil(8);
+            let mut ytox = Vec::with_capacity(tiles_x * tiles_y);
+            let mut ytob = Vec::with_capacity(tiles_x * tiles_y);
+            for ty in 0..tiles_y {
+                for tx in 0..tiles_x {
+                    ytox.push(cfl_map.ytox_at(tx, ty) as i32);
+                    ytob.push(cfl_map.ytob_at(tx, ty) as i32);
+                }
+            }
+            dump_i32("acmeta_g0_ch0", tiles_x, tiles_y, &ytox);
+            dump_i32("acmeta_g0_ch1", tiles_x, tiles_y, &ytob);
+            let mut acs_row = Vec::new();
+            let mut qf_row = Vec::new();
+            for by in 0..ysize_blocks {
+                for bx in 0..xsize_blocks {
+                    if !ac_strategy.is_first(bx, by) {
+                        continue;
+                    }
+                    acs_row.push(ac_strategy.strategy_code(bx, by) as i32);
+                    qf_row.push(quant_field[by * xsize_blocks + bx] as i32 - 1);
+                }
+            }
+            let num = acs_row.len();
+            let mut ch2 = acs_row;
+            ch2.extend_from_slice(&qf_row);
+            dump_i32("acmeta_g0_ch2", num, 2, &ch2);
+            if let Some(sm) = sharpness_map.as_deref() {
+                let epf: Vec<i32> = sm.iter().map(|&v| v as i32).collect();
+                dump_i32("acmeta_g0_ch3", xsize_blocks, ysize_blocks, &epf);
+            }
+        }
 
         // Free the XYB source — no longer needed after EPF sharpness
         // computation. At 4K (6720×4480), this frees ~339 MB
@@ -6513,6 +6715,15 @@ impl VarDctEncoder {
                 &ac_huffman,
                 &mut ac_group_writer,
             )?;
+            if std::env::var_os("JXL_P20_SECTIONS").is_some() {
+                eprintln!(
+                    "[P20SEC] dc_global={} dc_group={} ac_global={} ac_group={} bits",
+                    dc_global.bits_written(),
+                    dc_group.bits_written(),
+                    ac_global.bits_written(),
+                    ac_group_writer.bits_written()
+                );
+            }
 
             #[cfg(feature = "debug-tokens")]
             {
@@ -7084,9 +7295,9 @@ impl VarDctEncoder {
                     &mut x,
                     &mut y,
                     &mut b,
-                    padded_width,
-                    precomputed.padded_height,
+                    (padded_width, precomputed.padded_height),
                     self.enable_adaptive_gaborish,
+                    self.profile.gaborish_libjxl_kernel,
                     self.budget.as_ref(),
                 )?;
                 Some([x, y, b])
@@ -7142,30 +7353,31 @@ impl VarDctEncoder {
         let patched_pass1_use_newton = self.profile.cfl_newton
             && (patched_cfl_newton_libjxl_parity_effective
                 || self.profile.cfl_newton_libjxl_math_with_ls_warm_start);
-        let cfl_map_patched: Option<CflMap> = if patched_xyb.is_some() && self.cfl_enabled {
-            Some(compute_cfl_map(
-                xyb_x_for_dct,
-                xyb_y_for_dct,
-                xyb_b_for_dct,
-                padded_width,
-                precomputed.padded_height,
-                xsize_blocks,
-                ysize_blocks,
-                patched_pass1_use_newton,
-                self.profile.cfl_newton_eps,
-                self.profile.cfl_newton_max_iters,
-                // W44-195 / W44-AUDIT-5 Phase 3: composed effective parity
-                // flag — Phase 3 forces libjxl_parity ON for screenshot-
-                // class images even on Zenjxl/Aggressive. Ignored when LS
-                // is used.
-                patched_cfl_newton_libjxl_parity_effective,
-                // W44-AUDIT-5 Phase 2 (Mode C): same propagation as the
-                // main Pass-1 site above.
-                self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
-            ))
-        } else {
-            None
-        };
+        let cfl_map_patched: Option<CflMap> =
+            if patched_xyb.is_some() && self.cfl_enabled && self.profile.cfl_pass1 {
+                Some(compute_cfl_map(
+                    xyb_x_for_dct,
+                    xyb_y_for_dct,
+                    xyb_b_for_dct,
+                    padded_width,
+                    precomputed.padded_height,
+                    xsize_blocks,
+                    ysize_blocks,
+                    patched_pass1_use_newton,
+                    self.profile.cfl_newton_eps,
+                    self.profile.cfl_newton_max_iters,
+                    // W44-195 / W44-AUDIT-5 Phase 3: composed effective parity
+                    // flag — Phase 3 forces libjxl_parity ON for screenshot-
+                    // class images even on Zenjxl/Aggressive. Ignored when LS
+                    // is used.
+                    patched_cfl_newton_libjxl_parity_effective,
+                    // W44-AUDIT-5 Phase 2 (Mode C): same propagation as the
+                    // main Pass-1 site above.
+                    self.profile.cfl_newton_libjxl_math_with_ls_warm_start,
+                ))
+            } else {
+                None
+            };
         let cfl_map_for_encode: &CflMap = cfl_map_patched.as_ref().unwrap_or(&precomputed.cfl_map);
         let _ms_cfl = _t_cfl.elapsed().as_secs_f64() * 1000.0;
 
@@ -7281,7 +7493,29 @@ impl VarDctEncoder {
                             ))
                         } else {
                             Some(super::epf::compute_epf_sharpness(
-                                [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct],
+                                // Strict: prefer `xyb_pre_gaborish` —
+                                // the pre-GaborishInverse snapshot is
+                                // the closest available equivalent of
+                                // libjxl's `orig_opsin` on this path
+                                // (still post-patches for case-1
+                                // callers; libjxl snapshots before
+                                // patch subtraction). Falls back to the
+                                // entry planes when no snapshot was
+                                // supplied.
+                                match (
+                                    self.profile.epf_sharpness_pre_gab_libjxl,
+                                    &precomputed.xyb_pre_gaborish,
+                                ) {
+                                    (true, Some([x, y, b])) => {
+                                        [x.as_slice(), y.as_slice(), b.as_slice()]
+                                    }
+                                    (true, None) => [
+                                        &precomputed.xyb_x[..],
+                                        &precomputed.xyb_y[..],
+                                        &precomputed.xyb_b[..],
+                                    ],
+                                    (false, _) => [xyb_x_for_dct, xyb_y_for_dct, xyb_b_for_dct],
+                                },
                                 quant_dc,
                                 quant_ac,
                                 &quant_field,
@@ -7293,6 +7527,9 @@ impl VarDctEncoder {
                                 xsize_blocks,
                                 ysize_blocks,
                                 self.budget.as_ref(),
+                                self.resolved_improvements.dc_adaptive_smoothing,
+                                self.profile.quant_weights_libjxl,
+                                self.profile.dct_pass_order_libjxl,
                             )?)
                         }
                     }
@@ -8370,7 +8607,7 @@ mod tests {
         // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
         // -0.30/cell budget). Hash = pre-WP quantization + the kept
         // prefix-auto/singleton + static-sharpness changes.
-        const EXPECTED_HASH: u64 = 0x52c1ed32d4456952;
+        const EXPECTED_HASH: u64 = 0x4d14e8995a9cedf3;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8415,7 +8652,7 @@ mod tests {
         // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
         // -0.30/cell budget). Hash = pre-WP quantization + the kept
         // prefix-auto/singleton + static-sharpness changes.
-        const EXPECTED_HASH: u64 = 0x960e78c4971b42e3;
+        const EXPECTED_HASH: u64 = 0x27ca0cf2d966a459;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8482,7 +8719,7 @@ mod tests {
         // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
         // -0.30/cell budget). Hash = pre-WP quantization + the kept
         // prefix-auto/singleton + static-sharpness changes.
-        const EXPECTED_HASH: u64 = 0x06d5672f27096037;
+        const EXPECTED_HASH: u64 = 0x101ae1dc176dcb07;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -8534,7 +8771,7 @@ mod tests {
         // zenjxl gate: -0.37..-0.85 SSIM2 on 4 photo cells, beyond the
         // -0.30/cell budget). Hash = pre-WP quantization + the kept
         // prefix-auto/singleton + static-sharpness changes.
-        const EXPECTED_HASH: u64 = 0x7afbca80d3d7cc13;
+        const EXPECTED_HASH: u64 = 0x6c9bad457286a84c;
         assert_eq!(
             hash,
             EXPECTED_HASH,

@@ -97,6 +97,13 @@ pub enum EntropyType {
     /// Huffman prefix codes (used by libjxl-tiny, simpler header format).
     #[default]
     Huffman,
+    /// ANS pair-merge with the real `ANSEncodingHistogram::ComputeBest`
+    /// population cost on every merge decision — unconditional, unlike
+    /// [`EntropyType::Ans`] which only uses the accurate cost when the
+    /// JPEG transcode guard or `JXL_ACCURATE_ANS_COST` is set. Selected by
+    /// strict libjxl-parity callers (`libjxl_params`), matching libjxl's
+    /// `ClusterHistograms` which always merges on `ANSPopulationCost`.
+    AnsAccurate,
     /// ANS (Asymmetric Numeral Systems) - used by full libjxl, larger alphabet support.
     Ans,
 }
@@ -466,11 +473,27 @@ fn compute_cross_coding_cost(data: &Histogram, tree: &Histogram, alphabet_size: 
     cost
 }
 
+/// Real libjxl `Histogram::ANSPopulationCost` —
+/// `ANSEncodingHistogram::ComputeBest(histo, kFast).Cost()`. `None` when the
+/// table build fails.
+#[cfg(feature = "std")]
+fn accurate_ans_cost(h: &Histogram) -> Option<f32> {
+    let cache = super::ans::AllowedCountsCache::shared();
+    super::ans::ANSEncodingHistogram::from_histogram_cached(
+        h,
+        super::ans::ANSHistogramStrategy::Fast,
+        cache,
+        true,
+    )
+    .ok()
+    .map(|enc| enc.cost)
+}
+
 /// Estimate ANS population cost (header + data bits).
 ///
 /// This is a simplified version of libjxl's `Histogram::ANSPopulationCost()`.
 /// ANS uses a frequency table with log-scale precision, supporting larger alphabets.
-fn ans_population_cost(h: &Histogram) -> f32 {
+fn ans_population_cost(h: &Histogram, accurate: bool) -> f32 {
     if h.total_count == 0 {
         return 0.0;
     }
@@ -502,18 +525,15 @@ fn ans_population_cost(h: &Histogram) -> f32 {
     // VarDCT e<=8 uses kFast (no pair-merge) so this fn isn't reached there.
     // `JXL_ACCURATE_ANS_COST=1` forces it on globally (for VarDCT/modular A/B).
     #[cfg(feature = "std")]
-    let accurate =
-        accurate_ans_cost_enabled() || std::env::var_os("JXL_ACCURATE_ANS_COST").is_some();
-    #[cfg(not(feature = "std"))]
-    let accurate = accurate_ans_cost_enabled();
-    if accurate
-        && let Ok(enc) = super::ans::ANSEncodingHistogram::from_histogram(
-            h,
-            super::ans::ANSHistogramStrategy::Fast,
-        )
     {
-        return enc.cost;
+        let accurate = accurate
+            || accurate_ans_cost_enabled()
+            || std::env::var_os("JXL_ACCURATE_ANS_COST").is_some();
+        if accurate && let Some(cost) = accurate_ans_cost(h) {
+            return cost;
+        }
     }
+    let _ = accurate;
 
     // Data cost (entropy)
     let data_cost = h.cached_entropy();
@@ -530,7 +550,8 @@ fn ans_population_cost(h: &Histogram) -> f32 {
 fn population_cost(h: &Histogram, entropy_type: EntropyType) -> f32 {
     match entropy_type {
         EntropyType::Huffman => huffman_population_cost(h),
-        EntropyType::Ans => ans_population_cost(h),
+        EntropyType::Ans => ans_population_cost(h, false),
+        EntropyType::AnsAccurate => ans_population_cost(h, true),
     }
 }
 
@@ -734,9 +755,42 @@ pub fn cluster_histograms(
     // Fast clustering
     let mut result = fast_cluster_histograms(input, max_histograms)?;
 
+    #[cfg(feature = "std")]
+    let small_dump = input.len() < 10 && std::env::var_os("JXL_ANS_DIST_DUMP").is_some();
+    #[cfg(feature = "std")]
+    if small_dump {
+        eprintln!(
+            "[CLUSTER-OURS] nin={} seeds={}",
+            input.len(),
+            result.histograms.len()
+        );
+        for (c, h) in input.iter().enumerate() {
+            eprint!("  in[{}]:", c);
+            for (i, &cnt) in h.counts.iter().enumerate() {
+                if cnt > 0 {
+                    eprint!(" {}:{}", i, cnt);
+                }
+            }
+            eprintln!(" -> {}", result.symbols[c]);
+        }
+    }
+
     // Pair merge refinement for Best quality
     if clustering_type == ClusteringType::Best && !result.histograms.is_empty() {
         refine_clusters_by_merging(&mut result.histograms, &mut result.symbols, entropy_type)?;
+    }
+
+    #[cfg(feature = "std")]
+    if small_dump {
+        eprintln!(
+            "[CLUSTER-FINAL-OURS] nhist={} assign=",
+            result.histograms.len()
+        );
+        eprint!("  ");
+        for c in 0..input.len() {
+            eprint!("{},", result.symbols[c]);
+        }
+        eprintln!();
     }
 
     // Reindex for canonical form
@@ -1058,7 +1112,7 @@ mod tests {
         let h = make_histogram(&counts);
 
         let huffman_cost = huffman_population_cost(&h);
-        let ans_cost = ans_population_cost(&h);
+        let ans_cost = ans_population_cost(&h, true);
 
         // Both should be positive
         assert!(huffman_cost > 0.0);

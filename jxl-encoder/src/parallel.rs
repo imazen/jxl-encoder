@@ -48,6 +48,39 @@ where
     (0..n).map(f).collect()
 }
 
+/// Like [`parallel_map`], but `f` also receives a `&mut` scratch value built
+/// by `init`. Scratch is created once per rayon worker (via `map_init`) rather
+/// than once per item, so hot loops can reuse heap buffers instead of
+/// allocating inside the closure.
+///
+/// `init` may be invoked more than once per worker — treat the scratch as
+/// reusable storage, not per-worker identity. `f` must not rely on scratch
+/// contents persisting meaningfully across items beyond capacity reuse (the
+/// values it contains after an item are whatever the previous item left).
+#[cfg(feature = "parallel")]
+pub fn parallel_map_with_scratch<T, S, I, F>(n: usize, init: I, f: F) -> Vec<T>
+where
+    T: Send,
+    S: Send,
+    I: Fn() -> S + Send + Sync,
+    F: Fn(&mut S, usize) -> T + Send + Sync,
+{
+    use rayon::prelude::*;
+    (0..n).into_par_iter().map_init(init, f).collect()
+}
+
+/// Sequential fallback for [`parallel_map_with_scratch`]: one scratch value
+/// reused across all items.
+#[cfg(not(feature = "parallel"))]
+pub fn parallel_map_with_scratch<T, S, I, F>(n: usize, init: I, f: F) -> Vec<T>
+where
+    I: Fn() -> S,
+    F: Fn(&mut S, usize) -> T,
+{
+    let mut scratch = init();
+    (0..n).map(|i| f(&mut scratch, i)).collect()
+}
+
 /// Map `f` over `0..n`, collecting results in index order. Falls back to
 /// serial execution when `n < min_parallel_n`, even with `parallel` enabled.
 ///

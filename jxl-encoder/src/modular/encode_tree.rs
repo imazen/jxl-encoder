@@ -735,6 +735,8 @@ pub(super) fn write_wp_header(
     writer: &mut BitWriter,
     params: &super::predictor::WeightedPredictorParams,
 ) -> Result<()> {
+    #[cfg(all(test, feature = "__expert", feature = "std"))]
+    let header_start = writer.bits_written();
     if params.is_default() {
         // all_default = 1 (no additional fields)
         writer.write(1, 1)?;
@@ -753,6 +755,8 @@ pub(super) fn write_wp_header(
         writer.write(4, params.w2 as u64)?;
         writer.write(4, params.w3 as u64)?;
     }
+    #[cfg(all(test, feature = "__expert", feature = "std"))]
+    super::forced_wp_tests::record_header(writer, header_start);
     Ok(())
 }
 

@@ -381,3 +381,85 @@ pub fn dc_from_dct_16x16(coeffs: &[f32; 256]) -> [f32; 4] {
 
     [out00, out01, out10, out11]
 }
+
+// =============================================================================
+// libjxl pass-order variants (W45-RECON part 15)
+//
+// libjxl `ComputeScaledDCT<R, C>` runs `DCT1D<ROWS, COLS>` — the storage-row
+// (R) direction — first, then `DCT1D<COLS, ROWS>`. The kernels above run the
+// storage-column (C) direction first: mathematically equivalent, but a
+// different f32 evaluation order whose ~1-ulp diffs can flip quantization
+// boundaries.
+//
+// For a rectangular R×C input the libjxl order is reproduced exactly by
+// transposing the input and calling the C×R sibling: that kernel's
+// horizontal-first pass then touches the R direction first, and its output
+// convention (natural for its R<C input / transposed for R>C) lands in the
+// same coefficient array layout this shape uses — `out[a*C..]` holds
+// `F(horiz=a, vert=*)` for R>=C and `F(vert=a, horiz=*)` for R<C either way.
+// Square shapes wrap as transpose-in → kernel → transpose-out. The `_full`
+// 8×8-slot transforms follow the same rule because the sibling's sub-block
+// iteration and DC combining map identically onto the transposed input.
+// =============================================================================
+
+/// libjxl-order `ComputeScaledDCT<16, 8>`: vertical-16 first via
+/// `dct_8x16` on the transposed input.
+#[inline]
+pub fn dct_16x8_lj(input: &[f32; 128], output: &mut [f32; 128]) {
+    let mut t = [0.0f32; 128];
+    crate::vardct::common::transpose_block::<16, 8>(input, &mut t);
+    dct_8x16(&t, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<8, 16>`: vertical-8 first via
+/// `dct_16x8` on the transposed input.
+#[inline]
+pub fn dct_8x16_lj(input: &[f32; 128], output: &mut [f32; 128]) {
+    let mut t = [0.0f32; 128];
+    crate::vardct::common::transpose_block::<8, 16>(input, &mut t);
+    dct_16x8(&t, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<16, 16>`: transpose-in → kernel →
+/// transpose-out.
+#[inline]
+pub fn dct_16x16_lj(input: &[f32; 256], output: &mut [f32; 256]) {
+    let mut t = [0.0f32; 256];
+    crate::vardct::common::transpose_block::<16, 16>(input, &mut t);
+    let mut u = [0.0f32; 256];
+    dct_16x16(&t, &mut u);
+    crate::vardct::common::transpose_block::<16, 16>(&u, output);
+}
+
+/// libjxl-order DCT4X8: `dct_8x4_full` on the transposed 8×8 input.
+/// Its column-half split then iterates the two 4×8 sub-blocks with the
+/// 4-point (storage-row) direction first, matching
+/// `ComputeScaledDCT<4, 8>`; the `(x + iy*2) * 8 + ix` scatter and the
+/// DC combine land on identical positions.
+#[inline]
+pub fn dct_4x8_full_lj(input: &[f32; 64], output: &mut [f32; 64]) {
+    let mut t = [0.0f32; 64];
+    crate::vardct::common::transpose_block::<8, 8>(input, &mut t);
+    dct_8x4_full(&t, output);
+}
+
+/// libjxl-order DCT8X4: `dct_4x8_full` on the transposed 8×8 input.
+#[inline]
+pub fn dct_8x4_full_lj(input: &[f32; 64], output: &mut [f32; 64]) {
+    let mut t = [0.0f32; 64];
+    crate::vardct::common::transpose_block::<8, 8>(input, &mut t);
+    dct_4x8_full(&t, output);
+}
+
+/// libjxl-order DCT4X4: transpose-in → `dct_4x4_full` → transpose-out.
+/// The sub-block grid and per-sub-block coefficient interleave are both
+/// transposed by the outer pair, matching four `ComputeScaledDCT<4, 4>`
+/// calls on the untransposed quadrants.
+#[inline]
+pub fn dct_4x4_full_lj(input: &[f32; 64], output: &mut [f32; 64]) {
+    let mut t = [0.0f32; 64];
+    crate::vardct::common::transpose_block::<8, 8>(input, &mut t);
+    let mut u = [0.0f32; 64];
+    dct_4x4_full(&t, &mut u);
+    crate::vardct::common::transpose_block::<8, 8>(&u, output);
+}

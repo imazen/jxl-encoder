@@ -1760,6 +1760,9 @@ impl VarDctEncoder {
                 ac_strategy,
                 xsize_blocks,
                 ysize_blocks,
+                self.resolved_improvements.dc_adaptive_smoothing,
+                self.profile.quant_weights_libjxl,
+                self.profile.dct_pass_order_libjxl,
             );
 
             if self.enable_gaborish {

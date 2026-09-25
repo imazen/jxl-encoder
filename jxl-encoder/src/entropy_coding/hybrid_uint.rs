@@ -25,7 +25,7 @@ pub struct HybridUintConfig {
 
 impl HybridUintConfig {
     /// Creates a new HybridUint configuration.
-    pub fn new(split_exponent: u32, msb_in_token: u32, lsb_in_token: u32) -> Self {
+    pub const fn new(split_exponent: u32, msb_in_token: u32, lsb_in_token: u32) -> Self {
         Self {
             split_exponent,
             split: 1 << split_exponent,

@@ -1,0 +1,9 @@
+Encoder production code: 1a40b8f39e87cd8fa8326818d6946fd72cd7748c (test harness a6a9a116 plus current decoder binding)
+Decoder: b6948915e2d4e74dfb86b06bc42a997353c1fed6, writer fix b0fb20db9bab9e9acf67256b8e33974cd4015e70
+Reference: .ci-libjxl/tools/djxl v0.12.0 a7a9c78
+Command: just jpeg-restart-corpus-check after-decoder "$HOME/tmp/jxl-backlog/jpeg120-corpus/imazen-26"
+Sources: jxl-encoder/tests/fixtures/jpeg_restart_corpus.tsv (21 SHA256-pinned camera originals)
+Artifacts: /Users/lilith/tmp/jxl-backlog/jpeg120-after-decoder-artifacts/
+Log: /Users/lilith/tmp/jxl-backlog/jpeg120-corpus-after-decoder.log
+Result: 21/21 camera originals exact in Rust and libjxl; all encoded SHA256s unchanged from before-decoder run. Full gate: 68 byte-exact, six clean unsupported refusals, zero failures.
+No remote artifact mirror was created.

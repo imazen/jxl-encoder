@@ -57,12 +57,72 @@ fn compute_weights(mul: f64) -> (f32, f32, f32, f32, f32, f32) {
     )
 }
 
+/// libjxl-exact weight chain (`enc_gaborish.cc:30-48`).
+///
+/// The shipping [`compute_weights`] keeps `normalize` and `normalize_mul`
+/// in f64 and rounds each product to f32 at the end. libjxl instead:
+/// computes `mul * 4 * (kG[0]+kG[1]+kG[2]+kG[4]+2*kG[3])` entirely in
+/// f32 (`mul` and the `static const float kGaborish` table are f32),
+/// adds `1.0` in double, casts `normalize` to f32 immediately, then
+/// multiplies `mul * normalize` AND `normalize_mul * kGaborish[i]` in
+/// f32. Same formula, different rounding — reproduced here for the
+/// strict-Libjxl kernel. The constants below are f32 literals (the same
+/// decimal text as `K_GABORISH`) so they round identically to libjxl's
+/// `static const float` table — casting the f64 `K_GABORISH` entries
+/// could double-round.
+#[allow(clippy::excessive_precision)]
+fn compute_weights_libjxl(mul: f32) -> (f32, f32, f32, f32, f32, f32) {
+    const KG: [f32; 5] = [
+        -0.09495815671340026,   // [0] r
+        -0.041031725066768575,  // [1] d
+        0.013710004822696948,   // [2] R
+        0.006510206083837737,   // [3] L
+        -0.0014789063378272242, // [4] D
+    ];
+    // f32 product chain, then `1.0 +` promotes to double — exactly the
+    // C++ evaluation order of `1.0 + mul[i] * 4 * (...)`.
+    let product = mul * 4.0 * (KG[0] + KG[1] + KG[2] + KG[4] + 2.0 * KG[3]);
+    let sum = 1.0f64 + product as f64;
+    let sum = if sum < 1e-5 { 1e-5 } else { sum };
+    let normalize = (1.0 / sum) as f32;
+    let normalize_mul = mul * normalize;
+
+    (
+        normalize,             // center
+        normalize_mul * KG[0], // r
+        normalize_mul * KG[1], // d
+        normalize_mul * KG[2], // R
+        normalize_mul * KG[3], // L
+        normalize_mul * KG[4], // D
+    )
+}
+
 /// Apply the gaborish inverse (5x5 sharpening) to one channel in-place.
 ///
 /// Uses a scratch buffer to avoid reading already-modified values.
 /// Boundary handling: clamp coordinates to [0, dim-1] (edge replication).
 /// Dispatches to SIMD-accelerated implementation via jxl_simd.
-fn apply_channel(data: &mut [f32], scratch: &mut [f32], width: usize, height: usize, mul: f64) {
+///
+/// `libjxl_kernel` selects the strict-parity variant
+/// (`jxl_simd::gaborish_5x5_channel_libjxl`): libjxl `Symmetric5` mirror
+/// borders + row-grouped accumulation + f32 weight chain. Scalar — the
+/// strict path trades wall-time for byte-parity; it also bypasses the
+/// strip-parallel arm, which is a zen perf dispatch.
+fn apply_channel(
+    data: &mut [f32],
+    scratch: &mut [f32],
+    width: usize,
+    height: usize,
+    mul: f64,
+    libjxl_kernel: bool,
+) {
+    if libjxl_kernel {
+        let (wc, wr, wd, w_big_r, wl, w_big_d) = compute_weights_libjxl(mul as f32);
+        jxl_simd::gaborish_5x5_channel_libjxl(
+            data, scratch, width, height, wc, wr, wd, w_big_r, wl, w_big_d,
+        );
+        return;
+    }
     let (wc, wr, wd, w_big_r, wl, w_big_d) = compute_weights(mul);
     // Strip-parallel dispatch: bit-identical to the whole-image call (see
     // `adaptive_quant::gaborish_5x5_strip_parallel` — 2-row halo covers the
@@ -227,7 +287,14 @@ fn apply_channel_adaptive(data: &mut [f32], scratch: &mut [f32], width: usize, h
                 }
             }
 
-            apply_channel(&mut tile_in, &mut tile_scratch, pad_tile_w, pad_tile_h, mul);
+            apply_channel(
+                &mut tile_in,
+                &mut tile_scratch,
+                pad_tile_w,
+                pad_tile_h,
+                mul,
+                false,
+            );
 
             // Copy the interior `tw x th` of the filtered tile back to `data`.
             for iy in 0..th {
@@ -264,7 +331,7 @@ pub fn gaborish_inverse(
     height: usize,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<()> {
-    gaborish_inverse_maybe_adaptive(xyb_x, xyb_y, xyb_b, width, height, false, budget)
+    gaborish_inverse_maybe_adaptive(xyb_x, xyb_y, xyb_b, (width, height), false, false, budget)
 }
 
 /// Apply gaborish inverse to all three XYB channels with optional per-tile
@@ -293,11 +360,15 @@ pub fn gaborish_inverse_maybe_adaptive(
     xyb_x: &mut [f32],
     xyb_y: &mut [f32],
     xyb_b: &mut [f32],
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
     adaptive: bool,
+    libjxl_kernel: bool,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<()> {
+    // The strict-Libjxl kernel and the zen adaptive path are mutually
+    // exclusive (parity means fixed mul=1.0 everywhere).
+    debug_assert!(!(adaptive && libjxl_kernel));
+    let adaptive = adaptive && !libjxl_kernel;
     // mul=1.0 for all channels, matching libjxl enc_heuristics.cc line 1137-1140.
     //
     // Channels are independent: apply_channel mutates its own input slice using
@@ -327,21 +398,21 @@ pub fn gaborish_inverse_maybe_adaptive(
                 rayon::join(
                     || {
                         let mut scratch = jxl_simd::vec_f32_dirty(n);
-                        apply_channel(xyb_x, &mut scratch, width, height, 1.0);
+                        apply_channel(xyb_x, &mut scratch, width, height, 1.0, libjxl_kernel);
                     },
                     || {
                         let mut scratch = jxl_simd::vec_f32_dirty(n);
                         if adaptive {
                             apply_channel_adaptive(xyb_y, &mut scratch, width, height);
                         } else {
-                            apply_channel(xyb_y, &mut scratch, width, height, 1.0);
+                            apply_channel(xyb_y, &mut scratch, width, height, 1.0, libjxl_kernel);
                         }
                     },
                 )
             },
             || {
                 let mut scratch = jxl_simd::vec_f32_dirty(n);
-                apply_channel(xyb_b, &mut scratch, width, height, 1.0);
+                apply_channel(xyb_b, &mut scratch, width, height, 1.0, libjxl_kernel);
             },
         );
     }
@@ -354,13 +425,13 @@ pub fn gaborish_inverse_maybe_adaptive(
             (n as u64).saturating_mul(4 * (1 + extra)),
         )?;
         let mut scratch = jxl_simd::vec_f32_dirty(n);
-        apply_channel(xyb_x, &mut scratch, width, height, 1.0);
+        apply_channel(xyb_x, &mut scratch, width, height, 1.0, libjxl_kernel);
         if adaptive {
             apply_channel_adaptive(xyb_y, &mut scratch, width, height);
         } else {
-            apply_channel(xyb_y, &mut scratch, width, height, 1.0);
+            apply_channel(xyb_y, &mut scratch, width, height, 1.0, libjxl_kernel);
         }
-        apply_channel(xyb_b, &mut scratch, width, height, 1.0);
+        apply_channel(xyb_b, &mut scratch, width, height, 1.0, libjxl_kernel);
     }
     Ok(())
 }
@@ -419,6 +490,7 @@ pub(crate) fn gaborish_inverse_for_region(
     region_w: usize,
     region_h: usize,
     adaptive: bool,
+    libjxl_kernel: bool,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<()> {
     debug_assert!(region_x0 + region_w <= padded_width);
@@ -447,18 +519,33 @@ pub(crate) fn gaborish_inverse_for_region(
     let max_y = padded_height - 1;
 
     // Helper: copy a region+border from a global plane into a padded
-    // scratch buffer, edge-replicating at image boundaries.
+    // scratch buffer, edge-replicating at image boundaries — or, under
+    // `libjxl_kernel`, mirror-filling to match `image_ops.h::Mirror`
+    // (`-1 → 0`, `-2 → 1`) so the parity kernel's reads reproduce the
+    // whole-image `Symmetric5` border semantics.
+    let mirror = |x: isize, size: usize| -> usize {
+        let size = size as isize;
+        let mut x = x;
+        while !(0..size).contains(&x) {
+            x = if x < 0 { -x - 1 } else { 2 * size - 1 - x };
+        }
+        x as usize
+    };
     let load_padded = |plane: &[f32], dst: &mut [f32]| {
         for py in 0..pad_h {
-            let src_y = {
-                let signed = region_y0 as isize + py as isize - PAD as isize;
-                signed.clamp(0, max_y as isize) as usize
+            let signed_y = region_y0 as isize + py as isize - PAD as isize;
+            let src_y = if libjxl_kernel {
+                mirror(signed_y, padded_height)
+            } else {
+                signed_y.clamp(0, max_y as isize) as usize
             };
             let row = src_y * padded_width;
             for px in 0..pad_w {
-                let src_x = {
-                    let signed = region_x0 as isize + px as isize - PAD as isize;
-                    signed.clamp(0, max_x as isize) as usize
+                let signed_x = region_x0 as isize + px as isize - PAD as isize;
+                let src_x = if libjxl_kernel {
+                    mirror(signed_x, padded_width)
+                } else {
+                    signed_x.clamp(0, max_x as isize) as usize
                 };
                 dst[py * pad_w + px] = plane[row + src_x];
             }
@@ -492,14 +579,16 @@ pub(crate) fn gaborish_inverse_for_region(
     // buffer's edges matches what the whole-image kernel would have
     // done at the image edges (when this region sits on the boundary)
     // or is overwritten by the valid neighbour data we just loaded
-    // (when this region is interior).
-    apply_channel(&mut pad_x, &mut scratch, pad_w, pad_h, 1.0);
+    // (when this region is interior). Under `libjxl_kernel` the pad is
+    // mirror-filled instead, and any residual pad-edge wrap inside the
+    // parity kernel only affects discarded border outputs.
+    apply_channel(&mut pad_x, &mut scratch, pad_w, pad_h, 1.0, libjxl_kernel);
     if adaptive {
         apply_channel_adaptive(&mut pad_y, &mut scratch, pad_w, pad_h);
     } else {
-        apply_channel(&mut pad_y, &mut scratch, pad_w, pad_h, 1.0);
+        apply_channel(&mut pad_y, &mut scratch, pad_w, pad_h, 1.0, libjxl_kernel);
     }
-    apply_channel(&mut pad_b, &mut scratch, pad_w, pad_h, 1.0);
+    apply_channel(&mut pad_b, &mut scratch, pad_w, pad_h, 1.0, libjxl_kernel);
 
     store_inner(&pad_x, dst_x);
     store_inner(&pad_y, dst_y);
@@ -538,7 +627,7 @@ mod tests {
         let value = 0.5f32;
         let mut data = vec![value; width * height];
         let mut scratch = vec![0.0f32; width * height];
-        apply_channel(&mut data, &mut scratch, width, height, 1.0);
+        apply_channel(&mut data, &mut scratch, width, height, 1.0, false);
 
         for (i, &v) in data.iter().enumerate() {
             assert!(
@@ -563,7 +652,7 @@ mod tests {
         let original_center = data[4 * width + 4];
 
         let mut scratch = vec![0.0f32; width * height];
-        apply_channel(&mut data, &mut scratch, width, height, 1.0);
+        apply_channel(&mut data, &mut scratch, width, height, 1.0, false);
 
         // Center should still be the brightest (sharpening increases it relative to neighbors)
         let new_center = data[4 * width + 4];
@@ -676,7 +765,7 @@ mod tests {
         let original = fixed.clone();
 
         let mut scratch_a = alloc::vec![0.0f32; width * height];
-        apply_channel(&mut fixed, &mut scratch_a, width, height, 1.0);
+        apply_channel(&mut fixed, &mut scratch_a, width, height, 1.0, false);
         let mut scratch_b = alloc::vec![0.0f32; width * height];
         apply_channel_adaptive(&mut adapt, &mut scratch_b, width, height);
 
@@ -715,7 +804,13 @@ mod tests {
             .map(|i| ((i % 7) as f32) * 0.05)
             .collect();
         gaborish_inverse_maybe_adaptive(
-            &mut x, &mut y, &mut b, width, height, /* adaptive */ true, None,
+            &mut x,
+            &mut y,
+            &mut b,
+            (width, height),
+            /* adaptive */ true,
+            false,
+            None,
         )
         .expect("adaptive gaborish should succeed");
         // Values should remain finite.
@@ -761,7 +856,13 @@ mod tests {
 
         // Whole-image gaborish (the chunk-3 path).
         gaborish_inverse_maybe_adaptive(
-            &mut wx, &mut wy, &mut wb, w, h, /* adaptive */ false, None,
+            &mut wx,
+            &mut wy,
+            &mut wb,
+            (w, h),
+            /* adaptive */ false,
+            false,
+            None,
         )
         .expect("whole-image gaborish should succeed");
 
@@ -779,7 +880,7 @@ mod tests {
                 let rw = tile.min(w - x0);
                 gaborish_inverse_for_region(
                     &src_x, &src_y, &src_b, &mut rx, &mut ry, &mut rb, w, h, x0, y0, rw, rh,
-                    /* adaptive */ false, None,
+                    /* adaptive */ false, false, None,
                 )
                 .expect("per-region gaborish should succeed");
                 x0 += tile;
@@ -841,6 +942,62 @@ mod tests {
                 c,
                 max_ulp
             );
+        }
+    }
+
+    #[test]
+    fn test_per_region_libjxl_kernel_matches_whole_image_bitexact() {
+        // Same tiling exercise as the zen-path test above, but under
+        // `libjxl_kernel`. Both arms are the scalar Symmetric5
+        // transcription with identical Mirror borders, so per-region
+        // tiling must be BIT-IDENTICAL to the whole-image run — any
+        // drift means the pad mirror-fill is wrong.
+        let w = 96;
+        let h = 64;
+        let (mut wx, mut wy, mut wb) = make_xyb_for_gab(w, h, 4242);
+        let (src_x, src_y, src_b) = (wx.clone(), wy.clone(), wb.clone());
+        let mut rx = src_x.clone();
+        let mut ry = src_y.clone();
+        let mut rb = src_b.clone();
+
+        gaborish_inverse_maybe_adaptive(
+            &mut wx,
+            &mut wy,
+            &mut wb,
+            (w, h),
+            /* adaptive */ false,
+            /* libjxl_kernel */ true,
+            None,
+        )
+        .expect("whole-image libjxl gaborish should succeed");
+
+        let tile = 32;
+        let mut y0 = 0;
+        while y0 < h {
+            let rh = tile.min(h - y0);
+            let mut x0 = 0;
+            while x0 < w {
+                let rw = tile.min(w - x0);
+                gaborish_inverse_for_region(
+                    &src_x, &src_y, &src_b, &mut rx, &mut ry, &mut rb, w, h, x0, y0, rw, rh,
+                    /* adaptive */ false, /* libjxl_kernel */ true, None,
+                )
+                .expect("per-region libjxl gaborish should succeed");
+                x0 += tile;
+            }
+            y0 += tile;
+        }
+
+        for (c, (whole, region)) in [(&wx, &rx), (&wy, &ry), (&wb, &rb)].into_iter().enumerate() {
+            for (i, (&w_v, &r_v)) in whole.iter().zip(region.iter()).enumerate() {
+                assert_eq!(
+                    w_v.to_bits(),
+                    r_v.to_bits(),
+                    "libjxl gaborish ch {c} drift at idx {i} ({},{}): whole={w_v} region={r_v}",
+                    i % w,
+                    i / w,
+                );
+            }
         }
     }
 }

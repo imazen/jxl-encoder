@@ -2638,8 +2638,11 @@ fn test_resolve_libjxl_field_values() {
         "Libjxl strategy must set cfl_pass2_ls_at_low_effort = true (W44-197)"
     );
 
-    // Perf dispatches: at Default (orthogonal to libjxl byte parity)
-    assert_eq!(resolved.epf_dispatch, EpfDispatch::default());
+    // Perf dispatches: at Default (orthogonal to libjxl byte parity),
+    // except epf — W45-RECON part 20: `Auto`'s smooth-skip emits
+    // uniform-4 sharpness maps where cjxl always runs the per-block
+    // search at effort >= 6, so strict resolves `AlwaysSelect`.
+    assert_eq!(resolved.epf_dispatch, EpfDispatch::AlwaysSelect);
     assert_eq!(resolved.pixel_loss_dispatch, PixelLossDispatch::default());
     assert_eq!(
         resolved.single_pass_entropy_dispatch,

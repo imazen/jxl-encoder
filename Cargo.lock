@@ -5028,6 +5028,7 @@ dependencies = [
  "aligned-vec",
  "array-init",
  "atomic_refcell",
+ "brotli",
  "bytemuck",
  "byteorder",
  "enough",

@@ -34,8 +34,11 @@
 //!
 //! ## Coverage
 //!
-//! 11 cells span the matrix of (effort × distance × content × layout), the
+//! 13 cells span the matrix of (effort × distance × content × layout), the
 //! last of which reaches the auto-resample path at d >= 10:
+//! - 2 strict low-effort cells: e1 gradient + e2 noise (covers the
+//!   `entropy_codes_libjxl_parity` gate — dynamic codes at e1/e2 and
+//!   the DC stream's per-stream ANS rule, added 2026-09-17)
 //! - 5 synthetic gradient cells: e3/e5/e7 × d=1.0/d=4.0/d=0.5 (covers the
 //!   Section A `cfl_two_pass` / `try_dct64` / `epf_dynamic_sharpness`
 //!   effort-gate flips)
@@ -153,9 +156,36 @@ struct ByteLockCell {
     generator: fn() -> Vec<u8>,
 }
 
-/// 10-cell coverage matrix. SEE module doc for the rationale per cluster.
+/// 13-cell coverage matrix. SEE module doc for the rationale per cluster.
 fn byte_lock_cells() -> Vec<ByteLockCell> {
     vec![
+        // Cluster A0: effort <= 2 strict cells (2026-09-17,
+        // `entropy_codes_libjxl_parity`). These two pin the gate that
+        // makes strict effort 1-2 encode at all — before it landed the
+        // static-Huffman single-pass path panicked under the 15-context
+        // block map (token context 3824 > table size 1980), and after
+        // it landed the DC/AC-meta stream's ANS-vs-prefix choice
+        // decouples from `use_ans` (libjxl `ForModular` rule). The
+        // gradient cell exercises the <100-token/all-singleton prefix
+        // arm; the noise cell exercises the multi-histogram ANS arm.
+        ByteLockCell {
+            name: "gradient_rgb_32x32_e1_d1",
+            width: 32,
+            height: 32,
+            layout: PixelLayout::Rgb8,
+            distance: 1.0,
+            effort: 1,
+            generator: gradient_rgb_32x32,
+        },
+        ByteLockCell {
+            name: "noise_rgb_48x48_e2_d1",
+            width: 48,
+            height: 48,
+            layout: PixelLayout::Rgb8,
+            distance: 1.0,
+            effort: 2,
+            generator: noise_rgb_48x48,
+        },
         // Cluster A: gradient × effort sweep at d=1.0 (Section A gates fire)
         ByteLockCell {
             name: "gradient_rgb_32x32_e3_d1",

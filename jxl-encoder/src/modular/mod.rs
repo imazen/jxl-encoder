@@ -24,6 +24,9 @@ pub(crate) mod frame;
 pub(crate) mod fuzz_safety;
 pub(crate) mod inline_add_sample;
 pub(crate) mod inline_dedup_table;
+// Strict `EncoderStrategy::Libjxl` adaptive MA-tree learner — a line-level
+// port of libjxl `enc_ma.cc`/`enc_encoding.cc` used only by the strict path.
+pub(crate) mod ma_libjxl;
 pub(crate) mod palette;
 pub(crate) mod predictor;
 pub(crate) mod predictor_prune;
@@ -46,3 +49,6 @@ pub(crate) mod tree_learn_split;
 pub(crate) use channel::Channel;
 pub(crate) use predictor::Predictor;
 pub use rct::RctType;
+
+#[cfg(all(test, feature = "__expert", feature = "std"))]
+mod forced_wp_tests;

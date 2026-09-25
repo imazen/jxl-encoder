@@ -38,7 +38,20 @@ impl<'a> BitReader<'a> {
 
     pub fn peek(&mut self, n: usize) -> u64 {
         let old_pos = self.bit_pos;
-        let val = self.read(n).unwrap_or(0);
+        let mut val = 0u64;
+        // Zero-fill past the end of data: JXL bitstreams are zero-padded to a
+        // byte boundary, and prefix-code lookahead may legally extend past
+        // the final bit. A whole-read failure collapsing to 0 would decode
+        // TABLE[0]'s symbol instead of the real one.
+        for i in 0..n {
+            let byte_idx = self.bit_pos / 8;
+            if byte_idx >= self.data.len() {
+                break;
+            }
+            let bit = (self.data[byte_idx] >> (self.bit_pos % 8)) & 1;
+            val |= (bit as u64) << i;
+            self.bit_pos += 1;
+        }
         self.bit_pos = old_pos;
         val
     }

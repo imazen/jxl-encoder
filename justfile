@@ -16,6 +16,102 @@ api-doc:
 api-doc-check:
     ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
 
+# Explicit release matrix: natural input, pathological patterns, retained outputs.
+prepublish-matrix photo artifacts manifest="Cargo.toml" features="__expert,corpus-tests,parallel" *cargo_args:
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_AUDIT_PHOTO="{{photo}}" JXL_AUDIT_ARTIFACTS="{{artifacts}}" nice -n 19 cargo test --manifest-path "{{manifest}}" --locked -p jxl-encoder --features "{{features}}" {{cargo_args}} --test prepublish_matrix -- --test-threads=1 --nocapture
+
+# A selected compile permutation; callers record each feature list and exit status.
+prepublish-feature-check features manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo check --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib --no-default-features --features "{{features}}"
+
+# Validate retained benchmark bitstreams outside the timed process.
+prepublish-perf-roundtrip tables manifest="Cargo.toml" side="both":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_AUDIT_PERF_TSVS="{{tables}}" JXL_AUDIT_PERF_SIDE="{{side}}" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features corpus-tests --test prepublish_perf_roundtrip -- --nocapture
+
+prepublish-float manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert --test it forced_wp_float_extremes_match_rust_and_libjxl -- --nocapture
+
+prepublish-perf base ours out *args:
+    TMPDIR="$HOME/tmp" nice -n 19 python3 scripts/bench_lossless_ab.py --base "{{base}}" --ours "{{ours}}" --out "{{out}}" {{args}}
+
+prepublish-perf-driver-check:
+    nice -n 19 python3 -m unittest discover -s scripts -p test_bench_lossless_ab.py
+
+# Byte-preserving strict/Zen cleanup checks. These are modules in the `it`
+# binary, so nextest selects test names rather than nonexistent binary IDs.
+libjxl-exact-cleanup-check label manifest="Cargo.toml":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl"
+    export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target"
+    log_dir="$HOME/tmp/jxl-exact-cleanup/{{label}}"
+    mkdir -p "$log_dir"
+    nice -n 19 cargo nextest run --manifest-path "{{manifest}}" --locked -p jxl-encoder --features __expert,__internals --test it --test-threads 4 -E 'test(strategy_libjxl_byte_lock) | test(hash_lock_features) | test(divergence_table_drift)' > "$log_dir/locks-and-drift.log" 2>&1
+    rg 'Summary' "$log_dir/locks-and-drift.log"
+    nice -n 19 cargo test --manifest-path "{{manifest}}" --locked -p jxl-encoder --lib -j 4 -- --test-threads=4 > "$log_dir/lib.log" 2>&1
+    rg 'test result:' "$log_dir/lib.log"
+
+libjxl-exact-cleanup-lint label manifest="Cargo.toml":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target"
+    log_dir="$HOME/tmp/jxl-exact-cleanup/{{label}}"
+    mkdir -p "$log_dir"
+    echo "Clippy log: $log_dir/clippy.log"
+    nice -n 19 cargo clippy --manifest-path "{{manifest}}" --workspace --all-targets --locked -- -D warnings > "$log_dir/clippy.log" 2>&1
+
+# Verify sectioned benchmark failure handling and persisted lossless samples.
+sectioned-harness-check manifest="Cargo.toml":
+    python3 -m unittest discover -s scripts -p test_sectioned_k_bar_cell.py
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases -- -D warnings
+
+sectioned-harness-build manifest="Cargo.toml" profile="dev":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo build --profile "{{profile}}" --locked --manifest-path "{{manifest}}" -p jxl-encoder --example sectioned_k_corpus --features std,parallel,profile-phases
+
+# Lossless strategy resolution, exact decoded pixels and CLI/API agreement.
+lossless-strategy-check manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert --lib lossless_strategy -- --nocapture
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder-cli --bin cjxl-rs --test strategy_flag
+
+# All five WP modes: captured wire headers and real single/multi-group pixels.
+forced-wp-check manifest="Cargo.toml" features="__expert":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features "{{features}}" --lib forced_wp_tests -- --test-threads=1
+
+# The oracle records a source commit and retains every encoded candidate.
+lossless-oracle-build manifest="Cargo.toml" profile="dev":
+    JXL_BENCH_COMMIT="$(jj log --no-graph -r @ -T 'commit_id')" TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo build --profile "{{profile}}" --locked --manifest-path "{{manifest}}" -p jxl-encoder --example lossless_pareto_calibrate --features __expert,parallel,learned-admission
+
+lossless-oracle-check manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --example lossless_pareto_calibrate --features __expert,parallel,learned-admission
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --example lossless_pareto_calibrate --features __expert,parallel,learned-admission -- -D warnings
+
+lossless-oracle-cli-check binary="target/debug/examples/lossless_pareto_calibrate":
+    LOSSLESS_ORACLE_PROBE="{{binary}}" nice -n 19 python3 -m unittest discover -s scripts -p test_lossless_oracle.py
+
+# Reproduce the sectioned wall bar, optionally interleaving a baseline binary.
+sectioned-bar out image reps="3" baseline="" efforts="7 9" threads="1 8":
+    TMPDIR="$HOME/tmp" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" SECTIONED_K_BASELINE_PROBE="{{baseline}}" nice -n 19 bash scripts/sectioned_k_bar_cell.sh "{{out}}" "{{image}}" "{{reps}}" "{{efforts}}" "{{threads}}"
+
+# Persist real-input LZ77 harness smoke outputs and verify every recorded hash.
+lz77-artifact-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    root="$HOME/tmp/jxl-backlog/{{label}}"
+    mkdir -p "$root/input"
+    cp jxl-encoder/tests/images/frymire-srgb.png "$root/input/"
+    jj log --no-graph -r @ -T 'commit_id ++ "\n"' > "$root/build.meta"
+    shasum -a 256 jxl-encoder/examples/lz77_hash_ab.rs scripts/lz77_hash_ab_join.py >> "$root/build.meta"
+    nice -n 19 python3 scripts/test_lz77_hash_ab_join.py > "$root/analyzer-tests.log" 2>&1
+    nice -n 19 cargo build --locked -p jxl-encoder --release --example lz77_hash_ab -j 4 > "$root/build.log" 2>&1
+    for size in 64 259; do
+        nice -n 19 target/release/examples/lz77_hash_ab "$root/input" "$root/$size.tsv" --images 1 --size "$size" --efforts 8 > "$root/$size.log" 2>&1
+        nice -n 19 python3 scripts/lz77_hash_ab_join.py "$root/$size.tsv" "$root/$size.tsv" --verify-artifacts > "$root/$size-verification.log" 2>&1
+        cat "$root/$size-verification.log"
+    done
+
 # Run RD regression test (encodes 6 images at d=0.25, d=0.5, d=1.0)
 rd-regression:
     cargo test -p jxl-encoder --test it clic2025::test_rd_regression -- --ignored --nocapture
@@ -312,8 +408,8 @@ fuzz-build:
 fuzz-seed manifest output:
     TMPDIR="$HOME/tmp" nice -n 19 uv run --with pillow python scripts/seed_encoder_fuzz.py {{manifest}} {{output}} --build-commit "$(jj log --no-graph -r @ -T commit_id)"
 
-production-resources:
-    TMPDIR="$HOME/tmp" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" CARGO_BUILD_JOBS=4 nice -n 19 cargo test -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
+production-resources manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_TARGET_DIR="{{justfile_directory()}}/target" RAYON_NUM_THREADS=4 DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" CARGO_BUILD_JOBS=4 nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
 
 # Local release checks preserve the package error as a release blocker.
 release-semver *args:
@@ -369,3 +465,132 @@ rd-monotonicity corpus='~/work/zen/imazen-26-png-v3/png-v3' args='':
       --example rd_monotonicity_gate -j 4 -- \
       {{corpus}} benchmarks/rd_monotonicity_2026-09-09.tsv --images 4 --size 512 \
       --efforts 3,5,7,9 {{args}}
+
+# Fully render progressive small/global and large/group alpha through both decoders.
+progressive-extras-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl"
+    export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features __expert --test it progressive_extras_preserve_alpha_in_both_decoders -- --nocapture > "$HOME/tmp/jxl-backlog/progressive-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/progressive-{{label}}.log"
+
+jpeg-orientation-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl"
+    export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_exif_orientation_preserves_display_and_reconstruction -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg-orientation-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg-orientation-{{label}}.log"
+
+# Strict AC-metadata contexts must match the tree consumed by all decoders.
+libjxl-acmeta-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --lib ac_meta_epf_token_contexts_match_serialized_tree > "$HOME/tmp/jxl-backlog/acmeta-unit-{{label}}.log" 2>&1
+    nice -n 19 cargo test --locked -p jxl-encoder --features __expert --test it strict_ac_metadata_contexts_render_in_both_decoders -- --nocapture > "$HOME/tmp/jxl-backlog/acmeta-render-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/acmeta-"*"-{{label}}.log"
+
+# Compile the differential cost oracle against the pinned, unmodified libjxl.
+libjxl-estimate-cost-oracle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 c++ -std=c++17 -O2 -DNDEBUG -I.ci-libjxl/source -I.ci-libjxl/source/third_party/highway -I.ci-libjxl/source/lib/include -I.ci-libjxl/build/lib/include scripts/libjxl_estimate_cost_oracle/ref.cc .ci-libjxl/build/lib/libjxl.a .ci-libjxl/build/lib/libjxl_cms.a .ci-libjxl/build/third_party/highway/libhwy.a .ci-libjxl/build/third_party/brotli/libbrotlidec.a .ci-libjxl/build/third_party/brotli/libbrotlienc.a .ci-libjxl/build/third_party/brotli/libbrotlicommon.a -o "$HOME/tmp/jxl-backlog/estimate-cost-ref" > "$HOME/tmp/jxl-backlog/estimate-cost-build.log" 2>&1
+
+libjxl-extras-cost-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features __expert --test it strict_palette_cost_revert_preserves_alpha_in_both_decoders -- --nocapture > "$HOME/tmp/jxl-backlog/part-24-roundtrip-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/part-24-roundtrip-{{label}}.log"
+
+# JPEG restart markers after the final MCU must survive JBRD reconstruction.
+jpeg-restart-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --lib entropy_scan_preserves_terminal_restart_markers > "$HOME/tmp/jxl-backlog/jpeg120-parser-{{label}}.log" 2>&1
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_terminal_restart_markers_roundtrip -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg120-render-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg120-"*"-{{label}}.log"
+
+# Camera originals from tests/fixtures/jpeg_restart_corpus.tsv plus local fixtures.
+jpeg-restart-corpus-check label corpus:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export DJXL_PATH="$PWD/.ci-libjxl/tools/djxl" JBRD_CONFORMANCE_REFERENCE=1
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export JBRD_CONFORMANCE_CORPUS="{{corpus}}"
+    export JBRD_CONFORMANCE_ARTIFACTS="$HOME/tmp/jxl-backlog/jpeg120-{{label}}-artifacts"
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg120-corpus-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg120-corpus-{{label}}.log"
+
+# JPEG CfL reference rendering and reconstruction across 64-pixel tile boundaries.
+jpeg-cfl-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_cfl_reference_ -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg-cfl-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg-cfl-{{label}}.log"
+
+# ISO gain-map container, exact JPEG reconstruction, and independent pixel checks.
+jpeg-gainmap-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it iso_gain_map_ -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log"
+
+jpeg-gainmap-corpus-check label corpus:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export JPEG_GAINMAP_CORPUS="{{corpus}}"
+    export JPEG_GAINMAP_ARTIFACTS="$HOME/tmp/jxl-backlog/jpeg122-{{label}}-artifacts"
+    mkdir -p "$HOME/tmp/jxl-backlog"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding,corpus-tests --test it iso_gain_map_camera_corpus -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log" 2>&1
+    rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg122-{{label}}.log"
+
+# Provision every legacy JPEG fixture through codec-corpus and libjpeg-turbo.
+jpeg-legacy-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    root="$HOME/tmp/jxl-backlog/jpeg-legacy-{{label}}"
+    mkdir -p "$root"
+    export JXL_ENCODER_OUTPUT_DIR="$root/encoder"
+    nice -n 19 cargo run --locked -p jxl-encoder --features jpeg-reencoding --example jpeg_fixture_setup -- "$root/corpus-root" > "$root/setup.log" 2>&1
+    export CODEC_CORPUS_DIR="$(cat "$root/corpus-root")"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_reencoding:: -- --nocapture --test-threads=1 > "$root/tests.log" 2>&1
+    rg 'test result:' "$root/tests.log"
+
+jpeg-enabled-check label:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just jpeg-legacy-check "{{label}}"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4
+    export CJXL_PATH="$PWD/.ci-libjxl/tools/cjxl" DJXL_PATH="$PWD/.ci-libjxl/tools/djxl"
+    root="$HOME/tmp/jxl-backlog/jpeg-legacy-{{label}}"
+    export JXL_ENCODER_OUTPUT_DIR="$root/encoder"
+    export CODEC_CORPUS_DIR="$(cat "$root/corpus-root")"
+    export JBRD_CONFORMANCE_REFERENCE=1 JBRD_CONFORMANCE_ARTIFACTS="$root/conformance"
+    nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it -- --test-threads=4 > "$root/full-integration.log" 2>&1
+    rg 'test result:' "$root/full-integration.log"

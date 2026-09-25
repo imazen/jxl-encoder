@@ -195,10 +195,15 @@ jxl_encoder_macros::strategy_def! {
             buttloop_qf_seed = ButtloopQfSeedPolicy::Off,
             adaptive_quant_qf_seed = AdaptiveQuantQfSeedPolicy::Off,
             buttloop_epf_sharpness_seed = EpfSharpnessSeed::LegacyUniform4,
-            // Perf dispatches: leave at Default (Auto). Libjxl is
-            // byte-identical on `Auto` for libjxl-shaped inputs; the
-            // dispatch enums are perf-only supersets of libjxl behaviour.
-            epf_dispatch = EpfDispatch::Auto,
+            // Perf dispatches: leave at Default (Auto) — EXCEPT epf,
+            // where `Auto`'s W36-2 mask1x1 smooth-skip emits uniform
+            // default-4 maps on smooth inputs while libjxl always runs
+            // `ComputeARHeuristics` at effort >= 6 (kWombat). W45-RECON
+            // part 20: caught live on gradient_rgb_32x32 e7 — cjxl ships
+            // a real {0,7} map where Auto wrote 4s. `AlwaysSelect`
+            // restores unconditional search; the other dispatch enums
+            // stay perf-only supersets of libjxl behaviour.
+            epf_dispatch = EpfDispatch::AlwaysSelect,
             pixel_loss_dispatch = PixelLossDispatch::AlwaysOn,
             single_pass_entropy_dispatch = SinglePassEntropyDispatch::AlwaysTwoPass,
             patches_dispatch = PatchesDispatch::Auto,
@@ -206,6 +211,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_two_pass_min_effort = EffortGate::Libjxl,
             try_dct64_min_effort = EffortGate::Libjxl,
             epf_dynamic_sharpness_min_effort = EffortGate::Libjxl,
+            cfl_pass1_min_effort = EffortGate::Libjxl,
             // Section D KNOWN-BUG: deliberately re-enable to match libjxl
             block_ctx_map_15_cluster = true,
             header_all_default_fast_paths = true,
@@ -264,17 +270,79 @@ jxl_encoder_macros::strategy_def! {
             // XYB cube root: libjxl `CubeRootAndAdd`, bit-exact with the
             // reference. Byte parity is the whole point of this strategy.
             xyb_cbrt_libjxl_parity = true,
-            // W44-AUDIT-9 / SA-G Fix C: force cmap=zeros during AC
-            // strategy SEARCH (only — the emitted bitstream cmap stays
-            // Newton-derived). Mirrors libjxl `enc_ac_strategy.cc`
-            // `speed_tier > kSquirrel` behaviour where the search-side
-            // CfL contribution is suppressed because the cost model was
-            // tuned against zero-decorrelated entropy estimates at
-            // higher speed tiers. On Libjxl strategy: ON by default —
-            // the SA-G report (`7d383785`) measured this brings
-            // clic_22ea12 e9 d=4 partial first-blocks 2,241 → 2,495
-            // (vs cjxl 2,499 = +0.16% parity) and bytes -0.6%.
-            cfl_zero_for_search = true,
+            // W45-RECON part 5b: OFF under strict parity. In libjxl
+            // v0.12 the AC search consumes the *pass-1* CfL map
+            // (`enc_heuristics.cc` `process_tile`: pass-1 `ComputeTile`
+            // at `speed_tier <= kSquirrel` → `acs_heuristics.ProcessRect`
+            // reads `cmap` directly). Zeros reach the search only below
+            // e7 where pass-1 is skipped — which `profile.cfl_pass1`
+            // already reproduces (`CflMap::zeros`). The previous `true`
+            // (SA-G Fix C, `7d383785`) papered over the pre-shared-gate
+            // SIMD Newton bug by feeding zeros instead of *wrong*
+            // values; with pass-1 now bit-exact, zeroing diverges from
+            // cjxl at e7+.
+            cfl_zero_for_search = false,
+            // W45-RECON part 6: strict `kChannelMul` parity — installs
+            // `{8.2^8, 1, 1.03^8}` in place of the historical X-entry
+            // mis-port (8.2219^8, +2.16% X-loss inflation).
+            ac_channel_loss_mul_libjxl = true,
+            // W45-RECON part 7: strict `AdjustQuantBlockAC`
+            // max-aggregation — max over per-channel adjusted quants
+            // only (seed 0), so the F-heuristic's downward
+            // `*quant - activity` reduction applies.
+            aqba_max_quant_libjxl = true,
+            // W45-RECON part 8: strict `MergeTrees` root splitval —
+            // `2·num_dc_groups` (ACMetadata chunk start - 1), matching
+            // libjxl's emitted `prop=1 val=2` at ndg=1.
+            ma_tree_root_splitval_libjxl = true,
+            // Strict parity: 0-based (raw_quant - 1) QF histogram bins
+            // in FindBestBlockEntropyModel — shipped qf_thresholds and
+            // ctx_map clustering match cjxl.
+            block_ctx_map_qf_zero_based_libjxl = true,
+            // Strict parity: mirror libjxl's `nl_dc` cluster —
+            // `extra_dc_precision = 1` at effort >= 4 and the
+            // QuantizeWP DC shape alongside it. Corrects the
+            // W44-AUDIT-8 inversion (the audit read `speed_tier <
+            // kFalcon` as effort <= 7; the tier ordering is
+            // kTortoise=1..kLightning=9 so it is effort >= 4).
+            dc_encode_libjxl_parity = true,
+            ac_meta_libjxl_tree = true,
+            // Strict parity: single-group extras coded losslessly in the
+            // GlobalData stream (stream 0) under the shared tree+code
+            // with ChannelCompact palettes, not a private sub-bitstream.
+            extras_global_stream_libjxl = true,
+            lossless_tree_self_repair = false,
+            lossless_large_tree_bucket_reduction = false,
+            // Strict parity: mirror borders + row-grouped accumulation
+            // + f32 weight chain — libjxl `Symmetric5` bit-exact.
+            gaborish_libjxl_parity = true,
+            // Strict parity: always dynamic (two-pass) entropy codes,
+            // and the DC/AC-meta modular stream picks ANS vs prefix per
+            // libjxl's `ForModular` rule instead of gating on the
+            // VarDCT `use_ans` effort flag.
+            entropy_codes_libjxl_parity = true,
+            // Strict parity: libjxl `ComputeUsedOrders`/`ComputeCoeffOrder`
+            // — DCT8 order at every effort, bucket-0-only at effort <= 3,
+            // xorshift 50% block subsample at effort <= 7, and
+            // unconditional `is_nondefault` admission.
+            coeff_orders_libjxl_parity = true,
+            // W45-RECON part 10: strict sRGB EOTF — libjxl's
+            // `TF_SRGB().DisplayFromEncoded` rational-polynomial
+            // approximation (and `u8 * (1/255)` normalization), NOT the
+            // exact piecewise `x^2.4` EOTF the default LUT encodes.
+            srgb_eotf_libjxl_parity = true,
+            rendering_intent_libjxl_parity = true,
+            // W45-RECON part 14: strict f32 quant-matrix generation
+            // (libjxl `GetQuantWeights` + FastPowf chain) and
+            // multiply-order parity in QuantizeBlockAC /
+            // AdjustQuantBlockAC / the Y writeback.
+            quant_weights_libjxl = true,
+            // W45-RECON part 15: strict `ComputeScaledDCT` pass order —
+            // `DCT1D<ROWS, COLS>` (storage-row direction) first — via
+            // transpose-wraps / transposed-shape sibling calls on all
+            // multi-pass forward and inverse transforms.
+            dct_pass_order_libjxl = true,
+            epf_sharpness_pre_gab_libjxl = true,
         },
 
         /// LeanFaster — drops the heavy per-image content gates
@@ -308,6 +376,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_two_pass_min_effort = EffortGate::Ours,
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
+            cfl_pass1_min_effort = EffortGate::Ours,
             // Section D: NOT re-enabled on LeanFaster (only on Libjxl).
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
@@ -369,6 +438,38 @@ jxl_encoder_macros::strategy_def! {
             // behaviour at the search side regresses Zenjxl-class cost
             // model assumptions).
             cfl_zero_for_search = false,
+            // W45-RECON part 6: LeanFaster keeps the historical
+            // X-entry mis-port — the W44-29..W44-172 cost-model
+            // calibration is tuned against it.
+            ac_channel_loss_mul_libjxl = false,
+            // W45-RECON part 7: LeanFaster keeps the
+            // seed-with-field aggregation (downward quant
+            // adjustments stay clamped) — production baseline.
+            aqba_max_quant_libjxl = false,
+            // W45-RECON part 8: LeanFaster keeps the historical
+            // num_dc_groups root splitval — shipped bitstream.
+            ma_tree_root_splitval_libjxl = false,
+            // 1-based QF histogram bins — shipped bitstream.
+            block_ctx_map_qf_zero_based_libjxl = false,
+            // f64-generated reciprocal tables + division form —
+            // production baseline.
+            quant_weights_libjxl = false,
+            // storage-column-first DCT pass order — production
+            // baseline.
+            dct_pass_order_libjxl = false,
+            epf_sharpness_pre_gab_libjxl = false,
+            // DC encode stays on the Zenjxl schedule (2x precision at
+            // effort <= 7, plain round) — not a libjxl mirror.
+            dc_encode_libjxl_parity = false,
+            ac_meta_libjxl_tree = false,
+            extras_global_stream_libjxl = false,
+            lossless_tree_self_repair = true,
+            lossless_large_tree_bucket_reduction = true,
+            gaborish_libjxl_parity = false,
+            entropy_codes_libjxl_parity = false,
+            coeff_orders_libjxl_parity = false,
+            srgb_eotf_libjxl_parity = false,
+            rendering_intent_libjxl_parity = false,
         },
 
         /// Zenjxl — production-shipping bundle. Every field matches
@@ -399,6 +500,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_two_pass_min_effort = EffortGate::Ours,
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
+            cfl_pass1_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
             // #101: libjxl's d>=10 auto-resample regime switch — parity-only.
@@ -481,6 +583,39 @@ jxl_encoder_macros::strategy_def! {
             // Default-flip discussion deferred to a follow-on chunk
             // after wider-corpus measurement on the Zenjxl path.
             cfl_zero_for_search = false,
+            // W45-RECON part 6: Zenjxl keeps the historical X-entry
+            // mis-port — the W44-29..W44-172 cost-model calibration
+            // is tuned against it (same opt-in-only rationale as
+            // `cfl_zero_for_search` above).
+            ac_channel_loss_mul_libjxl = false,
+            // W45-RECON part 7: Zenjxl keeps the seed-with-field
+            // aggregation (downward quant adjustments stay clamped)
+            // — production baseline.
+            aqba_max_quant_libjxl = false,
+            // W45-RECON part 8: Zenjxl keeps the historical
+            // num_dc_groups root splitval — shipped bitstream.
+            ma_tree_root_splitval_libjxl = false,
+            // 1-based QF histogram bins — shipped bitstream.
+            block_ctx_map_qf_zero_based_libjxl = false,
+            // f64-generated reciprocal tables + division form —
+            // production baseline.
+            quant_weights_libjxl = false,
+            // storage-column-first DCT pass order — production
+            // baseline.
+            dct_pass_order_libjxl = false,
+            epf_sharpness_pre_gab_libjxl = false,
+            // DC encode stays on the Zenjxl schedule — not a libjxl
+            // mirror (see Section D row).
+            dc_encode_libjxl_parity = false,
+            ac_meta_libjxl_tree = false,
+            extras_global_stream_libjxl = false,
+            lossless_tree_self_repair = true,
+            lossless_large_tree_bucket_reduction = true,
+            gaborish_libjxl_parity = false,
+            entropy_codes_libjxl_parity = false,
+            coeff_orders_libjxl_parity = false,
+            srgb_eotf_libjxl_parity = false,
+            rendering_intent_libjxl_parity = false,
         },
 
         /// Aggressive — currently equivalent to `Zenjxl` after
@@ -506,6 +641,7 @@ jxl_encoder_macros::strategy_def! {
             cfl_two_pass_min_effort = EffortGate::Ours,
             try_dct64_min_effort = EffortGate::Ours,
             epf_dynamic_sharpness_min_effort = EffortGate::Ours,
+            cfl_pass1_min_effort = EffortGate::Ours,
             block_ctx_map_15_cluster = false,
             header_all_default_fast_paths = false,
             // #101: libjxl's d>=10 auto-resample regime switch — parity-only.
@@ -553,6 +689,37 @@ jxl_encoder_macros::strategy_def! {
             // the standing pattern. See Zenjxl preset for the OPT-IN
             // rationale.
             cfl_zero_for_search = false,
+            // W45-RECON part 6: Aggressive mirrors Zenjxl per the
+            // standing pattern — keeps the historical X-entry
+            // mis-port the calibration is tuned against.
+            ac_channel_loss_mul_libjxl = false,
+            // W45-RECON part 7: Aggressive mirrors Zenjxl — keeps
+            // the seed-with-field aggregation.
+            aqba_max_quant_libjxl = false,
+            // W45-RECON part 8: Aggressive mirrors Zenjxl — keeps
+            // the num_dc_groups root splitval.
+            ma_tree_root_splitval_libjxl = false,
+            // 1-based QF histogram bins — shipped bitstream.
+            block_ctx_map_qf_zero_based_libjxl = false,
+            // f64-generated reciprocal tables + division form —
+            // production baseline.
+            quant_weights_libjxl = false,
+            // storage-column-first DCT pass order — production
+            // baseline.
+            dct_pass_order_libjxl = false,
+            epf_sharpness_pre_gab_libjxl = false,
+            // DC encode stays on the Zenjxl schedule — not a libjxl
+            // mirror (see Section D row).
+            dc_encode_libjxl_parity = false,
+            ac_meta_libjxl_tree = false,
+            extras_global_stream_libjxl = false,
+            lossless_tree_self_repair = true,
+            lossless_large_tree_bucket_reduction = true,
+            gaborish_libjxl_parity = false,
+            entropy_codes_libjxl_parity = false,
+            coeff_orders_libjxl_parity = false,
+            srgb_eotf_libjxl_parity = false,
+            rendering_intent_libjxl_parity = false,
         },
     }
 
@@ -663,7 +830,15 @@ jxl_encoder_macros::strategy_def! {
         /// `epf_dynamic_sharpness` effort gate. Section A.
         epf_dynamic_sharpness_min_effort: EffortGate {
             divergence_section = "A",
-            divergence_row_ref = "epf_dynamic_sharpness effort gate (ours >=6, libjxl none)",
+            divergence_row_ref = "epf_dynamic_sharpness effort gate (ours >=6, libjxl >=6)",
+        },
+
+        /// CfL pass-1 effort gate — we compute the pass-1 map at every
+        /// effort; libjxl only at `speed_tier <= kSquirrel` ≡ e7+
+        /// (`enc_heuristics.cc:1170`). Section A.
+        cfl_pass1_min_effort: EffortGate {
+            divergence_section = "A",
+            divergence_row_ref = "cfl_pass1 effort gate (ours none, libjxl >=7)",
         },
 
         // ── Section D KNOWN-BUG re-enables (Libjxl-only) ─────────────
@@ -1064,6 +1239,219 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "W44-AUDIT-9 / SA-G Fix C — force cmap=zeros during AC strategy SEARCH (libjxl speed_tier > kSquirrel parity)",
         },
 
+        /// **W45-RECON part 6**: AC-search pixel-domain
+        /// channel-loss-multiplier libjxl parity. The historical
+        /// [`crate::vardct::ac_strategy::CHANNEL_MUL`] X entry is a
+        /// mis-port — `20882706.4655936` ≈ `8.2219^8` instead of
+        /// libjxl `kChannelMul`'s `pow(8.2, 8.0)` =
+        /// `20441408.586549744` (+2.16% on the dominant X-channel
+        /// loss term → ~+0.25% systematic `loss_scalar` inflation on
+        /// every pixel-domain candidate evaluation, measured against
+        /// instrumented cjxl v0.12 `EstimateEntropy` dumps where all
+        /// other scalar inputs match exactly).
+        ///
+        /// When `true`,
+        /// [`crate::effort::EffortProfile::apply_ac_loss_channel_mul_libjxl`]
+        /// installs [`crate::vardct::ac_strategy::CHANNEL_MUL_LIBJXL`]
+        /// into [`crate::effort::EntropyMulTable::channel_loss_mul`],
+        /// which `estimate_entropy_with_mask` threads into the
+        /// `masku^8` channel accumulation.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict `kChannelMul` parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves
+        ///   the W44-29..W44-172 cost-model calibration baseline
+        ///   (the historical multiplier is part of that baseline).
+        ///
+        /// Section C.
+        ac_channel_loss_mul_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 6 — AC-search pixel-domain kChannelMul X-entry mis-port (8.2219^8 vs 8.2^8, +2.16% X-loss inflation)",
+        },
+
+        /// **W45-RECON part 7**: `AdjustQuantBlockAC` max-aggregation
+        /// parity. libjxl `QuantizeRoundtripYBlockAC` seeds
+        /// `max_quant = 0` and takes `max` over the three per-channel
+        /// adjusted quants, so the activity-based (F-heuristic)
+        /// downward adjustments apply. The Rust port seeded
+        /// `max_quant = quant_int` (the raw field value), clamping
+        /// every downward adjustment away — the encoded quant can
+        /// only go finer, never coarser. Measured on `noise_512` e8:
+        /// 3207/4096 cells shipped `rawqf = cjxl+1`, ~25% of AC
+        /// coefficients quantized |ours| > |cjxl| (systematic, all
+        /// three channels), iter-0 recon scored 1.52 vs cjxl 1.99
+        /// (finer-than-intended) → weaker diffmap-driven field steps
+        /// → `global_scale` stall (3481 vs 3990) → non-monotonic
+        /// trajectory.
+        ///
+        /// When `true`,
+        /// [`crate::effort::EffortProfile::aqba_max_over_channels`]
+        /// makes `vardct/transform.rs` seed the aggregation at `0`
+        /// exactly like `enc_group.cc`.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — the
+        ///   always-finer aggregation is part of the production
+        ///   calibration baseline.
+        ///
+        /// Section C.
+        aqba_max_quant_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 7 — AdjustQuantBlockAC max-aggregation seeded with field quant (downward F-heuristic adjustments dropped; quant can only go finer)",
+        },
+
+        /// **W45-RECON part 8**: merged MA-tree root `splitval` parity.
+        /// libjxl `MergeTrees` (`enc_modular.cc:110-138`) builds the
+        /// stream-id root as `splitval = useful_splits[mid] - 1`. With
+        /// default quant matrices the useful chunks are VarDCTDC and
+        /// ACMetadata, so the root emits
+        /// `prop=1 val = (1 + 2·num_dc_groups) - 1 = 2·num_dc_groups`.
+        /// The Rust port emitted `val = num_dc_groups`. Routing is
+        /// identical (DC stream ids 1..ndg and AC-meta ids
+        /// 1+2·ndg..3·ndg land on the same side of either threshold);
+        /// only the emitted tree token differs — measured +2 B on
+        /// `webshot_128`-class fixtures at e5-e7 (verified against
+        /// instrumented cjxl v0.12 `MERGEDTREE` dump: `val=2` at
+        /// ndg=1).
+        ///
+        /// When `true`,
+        /// [`crate::effort::EffortProfile::ma_root_split_2ndg`] makes
+        /// `vardct/dc_tree_learn.rs::tree_tokens_with_ac_metadata_prefix`
+        /// emit `splitval = 2·num_dc_groups` exactly like `MergeTrees`.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — the emitted
+        ///   token value is part of the shipped bitstream.
+        ///
+        /// Section C.
+        ma_tree_root_splitval_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 8 — merged MA-tree root splitval emitted num_dc_groups instead of 2·num_dc_groups (MergeTrees useful_splits[mid]-1)",
+        },
+
+        /// **W45-RECON part 9**: bin the block-context-map QF histogram
+        /// on `raw_quant - 1` (0-based) exactly like libjxl
+        /// `FindBestBlockEntropyModel`'s `qf = qf_row[x] - 1`
+        /// (`enc_heuristics.cc:97-103`). Our histogram historically used
+        /// the 1-based raw field directly, shifting every bin by +1 and
+        /// emitting `qf_thresholds` values +1 vs cjxl (measured:
+        /// photoish_1024 e7 d1 emits `qft=7` vs cjxl `qft=6`), with
+        /// boundary blocks segmented one bin off — different ctx_map
+        /// clustering and AC-context bytes. The encoder-side
+        /// `block_context_dc` lookup (`qf > t` on the 1-based field)
+        /// already maps to the decoder's `t <= raw_quant-1` convention,
+        /// so only the histogram binning changes.
+        ///
+        /// [`crate::effort::EffortProfile::bcm_qf_zero_based`] switches
+        /// `vardct/ac_context.rs::compute_block_ctx_map` to 0-based bins.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   shipped threshold values and ctx_map.
+        ///
+        /// Section C.
+        block_ctx_map_qf_zero_based_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 9 — block_ctx_map QF histogram binned on raw_quant (1-based) instead of raw_quant-1 (enc_heuristics.cc FindBestBlockEntropyModel)",
+        },
+
+        // ── Section C Zenjxl-only divergence: f64-generated reciprocal
+        // quant tables + division-form AC quantize vs libjxl's f32
+        // `GetQuantWeights` chain and direct `qm` multiplies ──────────
+        /// **W45-RECON part 14**: generate the strict-path quant
+        /// matrices in f32 exactly as libjxl `DequantMatrices` does
+        /// (f32 band chain, f32 `rcpcol`/`rcprow`, fused multiply-add +
+        /// sqrt, and the `FastLog2f`/`FastPow2f` polynomial
+        /// `FastPowf`/`InterpolateVec` path instead of precise `powf`),
+        /// keep the raw `InvDequantMatrix` orientation for
+        /// `AdjustQuantBlockAC`/`QuantizeBlockAC`, and mirror libjxl's
+        /// multiply groupings: `block_in * ((qm * qac) * qm_multiplier)`
+        /// in the adjust pass, `(qm * (qac * qm_multiplier)) * in` in
+        /// the quantize pass, and `inv_global_scale / quant` in the Y
+        /// round-trip writeback. The shipped Zenjxl tables interpolate
+        /// in f64 with precise `powf`, store `1/dequant` reciprocals,
+        /// and quantize via `coeff / weight` — all of which produce
+        /// 1-ulp `val` differences that flip quantize boundaries and
+        /// `max_quant` integer decisions (measured: 8 blocks on
+        /// noise_512 e8, +26 B residual).
+        ///
+        /// [`crate::effort::EffortProfile::quant_weights_libjxl`]
+        /// switches `vardct/transform.rs` to the `_lj` matrix accessors
+        /// and the libjxl-order quantize/adjust/writeback arithmetic.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   shipped f64 tables and division-form arithmetic.
+        ///
+        /// Section C.
+        quant_weights_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 14 — quant matrices generated in f64 with precise powf then reciprocated, and AC quantize via coeff/weight division, vs libjxl f32 GetQuantWeights+FastPowf tables and direct qm multiply-order (quant_weights.cc, enc_group.cc)",
+        },
+
+        /// **W45-RECON part 15**: multi-pass DCT pass order —
+        /// `ComputeScaledDCT<R, C>` runs `DCT1D<ROWS, COLS>` (the
+        /// storage-row direction) first in libjxl (`dct-inl.h`), while
+        /// the production kernels run the storage-column direction
+        /// first. Mathematically identical, but the different f32
+        /// evaluation order produces ~1-ulp coefficient diffs that
+        /// flip quantization boundaries at moderate distances
+        /// (noise_512 e8 d4: one DCT32x32 coefficient at the quant
+        /// boundary, propagated through CfL).
+        ///
+        /// [`crate::effort::EffortProfile::dct_pass_order_libjxl`]
+        /// routes multi-pass forward transforms in
+        /// `vardct/transform.rs::apply_dct`, the CfL pass-2 evaluation
+        /// in `chroma_from_luma.rs::refine_cfl_map`, the strategy
+        /// search in `ac_strategy.rs::estimate_entropy_full_impl`, and
+        /// the inverse transforms in
+        /// `reconstruct.rs::idct_for_strategy` to the `dct/*_lj`
+        /// transpose-wrap / transposed-sibling variants.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   shipped storage-column-first order.
+        ///
+        /// Section C.
+        dct_pass_order_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 15 — multi-pass forward/inverse DCTs transform the storage-column direction first, vs libjxl ComputeScaledDCT/ComputeScaledIDCT DCT1D<ROWS,COLS> storage-row-first pass order (dct-inl.h)",
+        },
+
+        /// **W45-RECON part 15 (EPF)**: `ComputeARHeuristics` compares
+        /// each sharpness candidate's reconstruction against
+        /// `orig_opsin`, which libjxl snapshots *before*
+        /// `LossyFrameHeuristics` — i.e. pre-patches and pre
+        /// `GaborishInverse` (`enc_frame.cc` "Save pre-Gaborish opsin").
+        /// The production code passes the post-`gaborish_inverse`
+        /// (DCT-input) planes to `compute_epf_sharpness`, inflating the
+        /// block-error magnitudes ~6.5x and shifting marginal
+        /// sharpness selections.
+        ///
+        /// [`crate::effort::EffortProfile::epf_sharpness_pre_gab_libjxl`]
+        /// snapshots the XYB planes right after
+        /// `convert_to_xyb_padded` (the `orig_opsin` equivalent) and
+        /// feeds those to `compute_epf_sharpness` in
+        /// `vardct/encoder.rs` and `vardct/bitstream.rs`. The
+        /// precomputed path uses `precomputed.xyb_*` (the entry
+        /// planes) directly.
+        ///
+        /// **Strategy defaults**:
+        /// - Libjxl: `true` — strict parity.
+        /// - Zenjxl / Aggressive / LeanFaster: `false` — preserves the
+        ///   shipped post-gaborish original for the EPF error metric.
+        ///
+        /// Section C.
+        epf_sharpness_pre_gab_libjxl: bool {
+            divergence_section = "C",
+            divergence_row_ref = "W45-RECON part 15 — EPF sharpness block errors computed against post-GaborishInverse (DCT-input) XYB, vs libjxl orig_opsin snapshotted before LossyFrameHeuristics/GaborishInverse (enc_frame.cc, enc_heuristics.cc ComputeARHeuristics)",
+        },
+
         // ── Section D Zenjxl tightening of W44-82 cost-benefit gate ──
         /// **W44-201**: skip buckets 3 (DCT32x32) and 6 (DCT32x16/DCT16x32)
         /// when admitting custom coefficient orders via the W44-82
@@ -1177,6 +1565,204 @@ jxl_encoder_macros::strategy_def! {
         coeff_orders_disable_medium_buckets: bool {
             divergence_section = "D",
             divergence_row_ref = "W44-205 coeff_orders skip buckets 2+4 (Zenjxl extension of W44-201)",
+        },
+
+        /// DC encode `nl_dc` cluster: `extra_dc_precision` effort gate
+        /// + `QuantizeWP` DC shaping, mirroring libjxl
+        /// `enc_cache.cc:232` (`nl_dc = speed_tier < kFalcon` ⇒
+        /// effort >= 4) + `enc_modular.cc:1587-1674` (nl_dc ⇒
+        /// `extra_dc_precision = 1` and the WP-predicted/deadzoned
+        /// `QuantizeWP` quantizer).
+        ///
+        /// The W44-AUDIT-8 audit misread the `SpeedTier` ordering
+        /// (`kTortoise = 1` .. `kLightning = 9`; `speed_tier = 10 -
+        /// effort`) as "effort <= 7", so the shared profile emits the
+        /// inverted schedule: `extra_dc_precision = 1` at effort 1-7
+        /// where libjxl wants it only at effort >= 4, and `0` at
+        /// effort >= 8 where libjxl keeps `1`. Verified against cjxl
+        /// v0.12.0 output (`jxl-inspect dc-coeffs`): `extra_precision`
+        /// is 0 at e1-e3 and 1 at e4-e10.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`]:
+        /// on it, `extra_dc_precision` becomes `effort >= 4` and
+        /// `use_libjxl_wp_dc_quant` becomes `effort >= 4` (the nl_dc
+        /// branch fires exactly when libjxl's does). Zenjxl keeps its
+        /// own DC schedule — the W44-AUDIT-8 claim of unconditional
+        /// cjxl parity was wrong, but the current shape is now part of
+        /// the Zenjxl quality/byte calibration and flips need their
+        /// own re-validation. Section D.
+        dc_encode_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "extra_dc_precision + QuantizeWP nl_dc gate (libjxl effort >= 4; W44-AUDIT-8 inversion)",
+        },
+
+        /// Whether the AC-metadata modular stream's MA tree follows
+        /// libjxl's per-effort predefined-tree policy instead of our
+        /// fixed 11-leaf subtree.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`]:
+        /// the AC-metadata stream emits `kFalconACMeta` (single
+        /// `Predictor::Left` leaf) at effort <= 3 and on < 1024-pixel
+        /// streams at effort 4-7, `kACMeta` (27-node) otherwise at
+        /// effort 4-7 — mirroring `AddACMetadata`'s `tree_kind`
+        /// selection (`enc_modular.cc:1749-1763`). Effort >= 8 takes
+        /// `kLearn` via `modular/ma_libjxl.rs` (2026-09-18): one global
+        /// MA tree learned over per-stream-chunk samples (VarDCT DC
+        /// `Best`/`Variable` + `kDefault`, AC-meta `Gradient` + `kNoWP`)
+        /// merged under stream-id property-1 splits — libjxl
+        /// `ComputeTree`/`MergeTrees` parity.
+        /// The predefined EPF leaves enumerate both neighbors >3 first
+        /// (class 11) and neither last (class 14); W45-RECON part 23.1
+        /// pins tokenizer class numbering to the serialized tree.
+        ///
+        /// Zenjxl keeps its fixed subtree — the structured contexts
+        /// repay their tree header on complex content while the
+        /// single-leaf policy optimises header size on small/flat
+        /// inputs (content-dependent → Tier-1 fork). Section D.
+        ac_meta_libjxl_tree: bool {
+            divergence_section = "D",
+            divergence_row_ref = "ac_meta tree kind (libjxl kFalconACMeta/kACMeta/kLearn per-effort vs fixed subtree; W45-SPEC-1)",
+        },
+
+        /// Single-group extra-channel coding site. Under
+        /// [`crate::api::EncoderStrategy::Libjxl`], extras whose channels
+        /// all fit `group_dim` in a single-DC-group frame are coded
+        /// losslessly in the GlobalData stream (stream 0):
+        /// `try_palettes`' ChannelCompact `kPalette` (unconditional at
+        /// `speed_tier >= kSquirrel`, i.e. effort <= 7), a `kLearn`
+        /// subtree merged into the shared MA tree, tokens folded into
+        /// the shared DC/AC-meta entropy code ahead of VarDCTDC, and a
+        /// `use_global_tree` GroupHeader emitted in LfGlobal
+        /// (`enc_modular.cc` Init/ComputeTree/EncodeStream,
+        /// `enc_frame.cc:1379-1384`). Zenjxl writes a private
+        /// use_global_tree=0 sub-bitstream with its own tree + code and
+        /// a lossy pixel quantizer — smaller on multi-colour alpha and
+        /// required for the alpha-squeeze pipeline. Section D.
+        ///
+        /// Coverage notes: effort <= 3 (stream-0 kWPFixedDC /
+        /// kGradientFixedDC) is NOT ported. Effort >= 8 reverts ChannelCompact
+        /// candidates when whole-image EstimateCost exceeds the original cost.
+        /// Multi-DC-group frames and channels
+        /// exceeding `group_dim` keep the private writer as an exact-path
+        /// fallback. Preparation also requires `ac_meta_libjxl_tree`.
+        /// Shared-stream emission serves both combined and sectioned TOCs,
+        /// including progressive frames.
+        extras_global_stream_libjxl: bool {
+            divergence_section = "D",
+            divergence_row_ref = "extra channel coding site (libjxl GlobalData stream 0 lossless + ChannelCompact + shared tree/code vs private sub-bitstream + lossy quantizer; W45-RECON part 21)",
+        },
+
+        /// Permit lossless fixed-stride tree self-repair. A disabled gate
+        /// also blocks the legacy JXL_TREE_SELF_REPAIR environment override.
+        lossless_tree_self_repair: bool {
+            divergence_section = "D",
+            divergence_row_ref = "lossless_tree_self_repair (cost-based randomized re-gather)",
+        },
+        /// Reduce lossless tree buckets to 192 at effort >= 9 and
+        /// pixels >= 4,000,000, unless internal parameters were supplied.
+        lossless_large_tree_bucket_reduction: bool {
+            divergence_section = "D",
+            divergence_row_ref = "lossless_large_tree_bucket_reduction (large-image tree bucket cap)",
+        },
+
+        /// Whether the gaborish 5x5 inverse uses the libjxl-bit-exact
+        /// `Symmetric5` kernel instead of the shipping SIMD kernel.
+        ///
+        /// `true` only under [`crate::api::EncoderStrategy::Libjxl`]:
+        /// reproduces `convolve_symmetric5.cc` exactly — `Mirror`
+        /// border wrap (`-2 → 1` vs our clamp `-2 → 0`), per-row
+        /// horizontal 1x5 weighted sums combined as `sum0 + sum1`
+        /// (vs our distance-class sums + FMA chain), and the f32
+        /// `normalize` / `normalize_mul` weight chain (vs our f64
+        /// chain rounded per-weight).
+        ///
+        /// Zenjxl keeps its kernel — the differences are parity-only
+        /// (border ring + ULP-scale rounding), not a quality axis;
+        /// carrying a second convolution in the shared path is not
+        /// justified for default output. Section D.
+        gaborish_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "gaborish 5x5 kernel (libjxl Symmetric5 mirror borders + row-grouped accumulation vs distance-class FMA; W45-SPEC-2)",
+        },
+        /// Always-dynamic entropy codes + per-stream ANS rule. Under
+        /// `EncoderStrategy::Libjxl` forces `optimize_codes = true`
+        /// (libjxl has no static-Huffman path — it builds fast dynamic
+        /// codes at every effort) and makes the DC/AC-metadata modular
+        /// stream pick ANS vs prefix by libjxl's `ForModular`
+        /// `use_prefix_code` rule (ANS unless <100 tokens or
+        /// all-singleton) instead of gating on the VarDCT `use_ans`
+        /// effort flag. The AC stream's own ANS choice is unchanged —
+        /// libjxl's `HistogramParams(tier)` kFastest clustering at
+        /// effort <= 2 maps exactly onto our `use_ans = effort >= 3`
+        /// schedule. `false` (default) keeps the shipping Zenjxl
+        /// single-pass/static-Huffman path at effort 1-2.
+        ///
+        /// Also carries the `ForModular` LZ77 method table
+        /// (2026-09-18): under this gate the DC/AC-meta modular stream
+        /// applies `Greedy` (libjxl `kLZ77`) at effort 8 and `Optimal`
+        /// (`kOptimal`) at effort >= 9, while the AC token stream takes
+        /// `kNone` at effort <= 8 and `kRLE` at effort >= 9
+        /// (`enc_frame.cc:1290`). Zenjxl keeps one profile method on
+        /// both streams.
+        entropy_codes_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "entropy code construction (libjxl always dynamic + per-stream ANS-vs-prefix ForModular rule vs single-pass static Huffman at e1-e2; W45-SPEC-3)",
+        },
+        /// libjxl `ComputeUsedOrders`/`ComputeCoeffOrder` parity. Under
+        /// `EncoderStrategy::Libjxl`: (a) the DCT8 coefficient order is
+        /// computed at every effort (libjxl early-returns `{1,1}` at
+        /// tier >= kFalcon, i.e. effort <= 3 — it does NOT wait for
+        /// `custom_orders` at effort >= 4); (b) at effort <= 3 only the
+        /// DCT8 bucket may be customized; (c) at effort <= 7 with only
+        /// DCT8 customized, block zero-counts are gathered over the
+        /// ~50% deterministic xorshift128+ subsample libjxl uses
+        /// (`enc_coeff_order.cc:80-98`); (d) admission is libjxl's
+        /// unconditional `is_nondefault` rule with no cost-benefit
+        /// gate. `false` (default) keeps the Zenjxl schedule —
+        /// `custom_orders = effort >= 4`, full-count statistics, and
+        /// the W44-82/W44-201/W44-205 admission gates, which are
+        /// calibrated wins on the shipping path.
+        coeff_orders_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "coefficient order selection (libjxl ComputeUsedOrders/ComputeCoeffOrder: DCT8 order at all efforts, 50% xorshift block subsample at effort<=7, is_nondefault-only admission vs Zenjxl effort>=4 + full counts + W44-82 cost-benefit gate; W45-SPEC-4)",
+        },
+
+        /// sRGB EOTF parity: libjxl `TF_SRGB().DisplayFromEncoded`
+        /// (`cms/transfer_functions-inl.h:218`) is a degree-4/4
+        /// Chebyshev rational approximation (~5e-7 max error) evaluated
+        /// via Horner FMA + true division, with `x*(1/12.92)` below
+        /// 0.04045 — NOT the exact piecewise `x^2.4` formula the
+        /// `SRGB_U8_TO_LINEAR` LUT encodes. The u8→f32 step is
+        /// `v * (1.0f/255)` (multiply, `extras/packed_image.h:76`), not
+        /// exact division. Both feed every downstream float, so this is
+        /// the earliest measurable divergence in the strict pipeline
+        /// (W45-RECON part 10).
+        ///
+        /// Section D.
+        srgb_eotf_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "sRGB→linear EOTF (libjxl TF_SRGB DisplayFromEncoded rational polynomial + v*(1/255) u8 normalization vs exact x^2.4 LUT; W45-RECON part 10)",
+        },
+
+        /// W45-RECON part 13 (2026-09-23): emit `rendering_intent =
+        /// Perceptual` in the colour-encoding bundle instead of the spec
+        /// default `Relative`.
+        ///
+        /// cjxl's PNM/PNG-less input path leaves `PackedPixelFile.
+        /// color_encoding` zero-initialised (`= {}` in
+        /// `packed_image.h:223`) and `ApplyColorHints`'s fallback fills
+        /// only colour_space/white_point/primaries/transfer_function
+        /// (`color_hints.cc:70-76`) — `rendering_intent` stays
+        /// `JXL_RENDERING_INTENT_PERCEPTUAL` (0). The non-default field
+        /// then forces `ImageMetadata.all_default = false` and the
+        /// ~3-byte-longer long-form metadata bundle. Note the
+        /// asymmetry: a PNG input DOES get `kRelative` via
+        /// `extras/dec/apng.cc`, so this is a PNM-path quirk, not a
+        /// universal libjxl value — but it is the strict-parity
+        /// reference for every PPM-sourced fixture in this tree.
+        rendering_intent_libjxl_parity: bool {
+            divergence_section = "D",
+            divergence_row_ref = "ColorEncoding.rendering_intent (cjxl PNM-path zero-init → Perceptual vs spec default Relative; also forces all_default=false long-form bundle; W45-RECON part 13)",
         },
     }
 }
@@ -1378,8 +1964,14 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
     DivergenceEntry {
         gate_name: "epf_dynamic_sharpness_min_effort",
         section: "A",
-        row_ref: "epf_dynamic_sharpness effort gate (ours >=6, libjxl none)",
+        row_ref: "epf_dynamic_sharpness effort gate (ours >=6, libjxl >=6)",
         raw: __CUSTOM_DIVERGENCE_EPF_DYNAMIC_SHARPNESS_MIN_EFFORT,
+    },
+    DivergenceEntry {
+        gate_name: "cfl_pass1_min_effort",
+        section: "A",
+        row_ref: "cfl_pass1 effort gate (ours none, libjxl >=7)",
+        raw: __CUSTOM_DIVERGENCE_CFL_PASS1_MIN_EFFORT,
     },
     // Section D — KNOWN-BUG re-enables (Libjxl-only)
     DivergenceEntry {
@@ -1509,6 +2101,54 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         row_ref: "W44-AUDIT-9 / SA-G Fix C — force cmap=zeros during AC strategy SEARCH (libjxl speed_tier > kSquirrel parity)",
         raw: __CUSTOM_DIVERGENCE_CFL_ZERO_FOR_SEARCH,
     },
+    // Section C — W45-RECON part 6 AC-search kChannelMul parity
+    DivergenceEntry {
+        gate_name: "ac_channel_loss_mul_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 6 — AC-search pixel-domain kChannelMul X-entry mis-port (8.2219^8 vs 8.2^8, +2.16% X-loss inflation)",
+        raw: __CUSTOM_DIVERGENCE_AC_CHANNEL_LOSS_MUL_LIBJXL,
+    },
+    // Section C — W45-RECON part 7 AdjustQuantBlockAC max-aggregation
+    DivergenceEntry {
+        gate_name: "aqba_max_quant_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 7 — AdjustQuantBlockAC max-aggregation seeded with field quant (downward F-heuristic adjustments dropped; quant can only go finer)",
+        raw: __CUSTOM_DIVERGENCE_AQBA_MAX_QUANT_LIBJXL,
+    },
+    // Section C — W45-RECON part 8 merged MA-tree root splitval
+    DivergenceEntry {
+        gate_name: "ma_tree_root_splitval_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 8 — merged MA-tree root splitval emitted num_dc_groups instead of 2·num_dc_groups (MergeTrees useful_splits[mid]-1)",
+        raw: __CUSTOM_DIVERGENCE_MA_TREE_ROOT_SPLITVAL_LIBJXL,
+    },
+    // Section C — W45-RECON part 9 block_ctx_map QF histogram base
+    DivergenceEntry {
+        gate_name: "block_ctx_map_qf_zero_based_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 9 — block_ctx_map QF histogram binned on raw_quant (1-based) instead of raw_quant-1 (enc_heuristics.cc FindBestBlockEntropyModel)",
+        raw: __CUSTOM_DIVERGENCE_BLOCK_CTX_MAP_QF_ZERO_BASED_LIBJXL,
+    },
+    // Section C — W45-RECON part 14 f32 quant-matrix generation +
+    // multiply-order parity
+    DivergenceEntry {
+        gate_name: "quant_weights_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 14 — quant matrices generated in f64 with precise powf then reciprocated, and AC quantize via coeff/weight division, vs libjxl f32 GetQuantWeights+FastPowf tables and direct qm multiply-order (quant_weights.cc, enc_group.cc)",
+        raw: __CUSTOM_DIVERGENCE_QUANT_WEIGHTS_LIBJXL,
+    },
+    DivergenceEntry {
+        gate_name: "dct_pass_order_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 15 — multi-pass forward/inverse DCTs transform the storage-column direction first, vs libjxl ComputeScaledDCT/ComputeScaledIDCT DCT1D<ROWS,COLS> storage-row-first pass order (dct-inl.h)",
+        raw: __CUSTOM_DIVERGENCE_DCT_PASS_ORDER_LIBJXL,
+    },
+    DivergenceEntry {
+        gate_name: "epf_sharpness_pre_gab_libjxl",
+        section: "C",
+        row_ref: "W45-RECON part 15 — EPF sharpness block errors computed against post-GaborishInverse (DCT-input) XYB, vs libjxl orig_opsin snapshotted before LossyFrameHeuristics/GaborishInverse (enc_frame.cc, enc_heuristics.cc ComputeARHeuristics)",
+        raw: __CUSTOM_DIVERGENCE_EPF_SHARPNESS_PRE_GAB_LIBJXL,
+    },
     // Section D — W44-201 Zenjxl tightening of W44-82 cost-benefit gate
     DivergenceEntry {
         gate_name: "coeff_orders_disable_large_buckets",
@@ -1529,12 +2169,79 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         row_ref: "W44-205 coeff_orders skip buckets 2+4 (Zenjxl extension of W44-201)",
         raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_DISABLE_MEDIUM_BUCKETS,
     },
+    DivergenceEntry {
+        gate_name: "dc_encode_libjxl_parity",
+        section: "D",
+        row_ref: "extra_dc_precision + QuantizeWP nl_dc gate (libjxl effort >= 4; W44-AUDIT-8 inversion)",
+        raw: __CUSTOM_DIVERGENCE_DC_ENCODE_LIBJXL_PARITY,
+    },
     // Section A — #101 auto-resample regime switch (measured OFF for zen strategies)
     DivergenceEntry {
         gate_name: "auto_resample_libjxl_rule",
         section: "A",
         row_ref: "#101 auto-resample regime switch (libjxl d>=10 -> 2x + d*0.25+0.25): Libjxl on, Zenjxl/Aggressive/LeanFaster off",
         raw: __CUSTOM_DIVERGENCE_AUTO_RESAMPLE_LIBJXL_RULE,
+    },
+    // Section D — AC-metadata predefined-tree policy (2026-09-17)
+    DivergenceEntry {
+        gate_name: "ac_meta_libjxl_tree",
+        section: "D",
+        row_ref: "ac_meta tree kind (libjxl kFalconACMeta/kACMeta/kLearn per-effort vs fixed subtree; W45-SPEC-1)",
+        raw: __CUSTOM_DIVERGENCE_AC_META_LIBJXL_TREE,
+    },
+    DivergenceEntry {
+        gate_name: "lossless_tree_self_repair",
+        section: "D",
+        row_ref: "lossless_tree_self_repair (cost-based randomized re-gather)",
+        raw: __CUSTOM_DIVERGENCE_LOSSLESS_TREE_SELF_REPAIR,
+    },
+    DivergenceEntry {
+        gate_name: "lossless_large_tree_bucket_reduction",
+        section: "D",
+        row_ref: "lossless_large_tree_bucket_reduction (large-image tree bucket cap)",
+        raw: __CUSTOM_DIVERGENCE_LOSSLESS_LARGE_TREE_BUCKET_REDUCTION,
+    },
+    // Section D — extras Global-stream coding site (W45-RECON part 21)
+    DivergenceEntry {
+        gate_name: "extras_global_stream_libjxl",
+        section: "D",
+        row_ref: "extra channel coding site (libjxl GlobalData stream 0 lossless + ChannelCompact + shared tree/code vs private sub-bitstream + lossy quantizer; W45-RECON part 21)",
+        raw: __CUSTOM_DIVERGENCE_EXTRAS_GLOBAL_STREAM_LIBJXL,
+    },
+    // Section D — gaborish 5x5 kernel parity (2026-09-17)
+    DivergenceEntry {
+        gate_name: "gaborish_libjxl_parity",
+        section: "D",
+        row_ref: "gaborish 5x5 kernel (libjxl Symmetric5 mirror borders + row-grouped accumulation vs distance-class FMA; W45-SPEC-2)",
+        raw: __CUSTOM_DIVERGENCE_GABORISH_LIBJXL_PARITY,
+    },
+    // Section D — entropy code construction parity (2026-09-17)
+    DivergenceEntry {
+        gate_name: "entropy_codes_libjxl_parity",
+        section: "D",
+        row_ref: "entropy code construction (libjxl always dynamic + per-stream ANS-vs-prefix ForModular rule vs single-pass static Huffman at e1-e2; W45-SPEC-3)",
+        raw: __CUSTOM_DIVERGENCE_ENTROPY_CODES_LIBJXL_PARITY,
+    },
+    // Section D — coefficient-order selection parity (2026-09-17)
+    DivergenceEntry {
+        gate_name: "coeff_orders_libjxl_parity",
+        section: "D",
+        row_ref: "coefficient order selection (libjxl ComputeUsedOrders/ComputeCoeffOrder: DCT8 order at all efforts, 50% xorshift block subsample at effort<=7, is_nondefault-only admission vs Zenjxl effort>=4 + full counts + W44-82 cost-benefit gate; W45-SPEC-4)",
+        raw: __CUSTOM_DIVERGENCE_COEFF_ORDERS_LIBJXL_PARITY,
+    },
+    // Section D — sRGB EOTF parity (W45-RECON part 10)
+    DivergenceEntry {
+        gate_name: "srgb_eotf_libjxl_parity",
+        section: "D",
+        row_ref: "sRGB→linear EOTF (libjxl TF_SRGB DisplayFromEncoded rational polynomial + v*(1/255) u8 normalization vs exact x^2.4 LUT; W45-RECON part 10)",
+        raw: __CUSTOM_DIVERGENCE_SRGB_EOTF_LIBJXL_PARITY,
+    },
+    // Section D — rendering intent parity (W45-RECON part 13)
+    DivergenceEntry {
+        gate_name: "rendering_intent_libjxl_parity",
+        section: "D",
+        row_ref: "ColorEncoding.rendering_intent (cjxl PNM-path zero-init → Perceptual vs spec default Relative; also forces all_default=false long-form bundle; W45-RECON part 13)",
+        raw: __CUSTOM_DIVERGENCE_RENDERING_INTENT_LIBJXL_PARITY,
     },
 ];
 
@@ -1596,6 +2303,7 @@ mod tests {
         assert_eq!(d.cfl_two_pass_min_effort, EffortGate::Ours);
         assert_eq!(d.try_dct64_min_effort, EffortGate::Ours);
         assert_eq!(d.epf_dynamic_sharpness_min_effort, EffortGate::Ours);
+        assert_eq!(d.cfl_pass1_min_effort, EffortGate::Ours);
         // Section D
         assert!(!d.block_ctx_map_15_cluster);
         // Smart-Zenjxl
@@ -1648,6 +2356,7 @@ mod tests {
             l.epf_dynamic_sharpness_min_effort,
             z.epf_dynamic_sharpness_min_effort
         );
+        assert_ne!(l.cfl_pass1_min_effort, z.cfl_pass1_min_effort);
         assert_ne!(l.block_ctx_map_15_cluster, z.block_ctx_map_15_cluster);
         assert_ne!(l.content_class_auto_classify, z.content_class_auto_classify);
         assert_ne!(l.cfl_newton_libjxl_parity, z.cfl_newton_libjxl_parity);
@@ -1663,10 +2372,11 @@ mod tests {
             z.cfl_newton_libjxl_math_with_ls_warm_start
         );
         assert!(!l.cfl_newton_libjxl_math_with_ls_warm_start);
-        // W44-AUDIT-9 / SA-G Fix C: Libjxl flips this ON (libjxl-parity);
-        // Zenjxl keeps it OFF (cost-model calibration concern).
-        assert_ne!(l.cfl_zero_for_search, z.cfl_zero_for_search);
-        assert!(l.cfl_zero_for_search);
+        // W45-RECON part 5b: OFF on every strategy — in v0.12 the search
+        // consumes the real pass-1 cmap at e7+; zeros only appear below
+        // e7 via pass-1 skip (`profile.cfl_pass1`), which needs no gate.
+        assert_eq!(l.cfl_zero_for_search, z.cfl_zero_for_search);
+        assert!(!l.cfl_zero_for_search);
         assert!(!z.cfl_zero_for_search);
     }
 

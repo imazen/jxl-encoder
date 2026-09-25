@@ -4,7 +4,7 @@
 //! The picker is going to *replace* the bundled-effort axis, so the oracle
 //! must expose each underlying knob independently — not the bundled effort.
 //!
-//! Cells (categorical, 16):
+//! Base cells (categorical, 16), repeated for each requested WP/RCT/palette combination:
 //!   - lz77_method ∈ {None, Rle, Greedy, Optimal}    (4)
 //!   - use_squeeze ∈ {false, true}                   (2)
 //!   - use_patches ∈ {false, true}                   (2)
@@ -18,28 +18,35 @@
 //!
 //! Per-cell sample plan: 25 random scalar tuples (with deterministic RNG
 //! seed = hash(image_sha, size, cell_id) so reruns produce identical data).
-//! 16 cells × 25 samples = 400 configs per (image, size).
+//! 16 cells × 25 samples = 400 sampled configs per (image, size, WP mode).
 //!
 //! Plus 16 anchor configs holding (mid-scalar) per cell to give the picker
 //! a stable reference point per cell.
 //!
 //! Per row: bytes + encode_ms + all knob values, joined to per-(image,size)
-//! features TSV. Pareto extraction + scalar regression labels happen at
-//! training time per zenanalyze#43 (time_budgeted objective).
+//! features TSV. This tool collects oracle candidates; it does not train or
+//! qualify a picker or establish a time-budgeted training objective.
 //!
 //! Usage:
 //!   cargo run --release -p jxl-encoder \
-//!     --features 'std parallel' \
+//!     --features '__expert parallel learned-admission' \
 //!     --example lossless_pareto_calibrate -- \
 //!       --manifest /home/lilith/work/codec-corpus/picker-train/manifest_v1_100.tsv \
 //!       --output benchmarks/lossless_pareto_<DATE>.tsv \
 //!       --features-output benchmarks/lossless_pareto_features_<DATE>.tsv \
 //!       [--samples-per-cell N] [--max-images N] [--sizes 64,256,1024,native]
-//!       [--features-only] [--smoke]
+//!       [--features-only] [--smoke] [--wp-modes search,0,1,2,3,4]
+//!       [--rct-ids search,0,6,41] [--palette-modes auto,off]
+//!
+//! Outputs are new files only. Encoded bytes are retained by SHA256 in
+//! `<output>.artifacts`; its `_MANIFEST.json` records the build and input plan.
+//! Build with `JXL_BENCH_COMMIT` set to the full source commit. Worker count
+//! defaults to one; timings with concurrent workers are not isolated latency.
 
 use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::api::{LosslessConfig, Lz77Method, PixelLayout};
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
@@ -55,11 +62,8 @@ use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
 
 const NB_RCTS_GRID: &[u8] = &[0, 4, 7, 9, 19];
 const WP_PARAM_GRID: &[u8] = &[0, 2, 5];
-// 192 + 256 dropped per >10s rule: 256 catastrophic (avg 661s @ small),
-// 192 borderline (medium 4.7s, large 3.9s with n=9 — biased toward easy
-// units; native CLIC photos extrapolate to 10-20s at 192 buckets).
-// Picker can recommend up to 128 — well-covered range matching libjxl's
-// e8 default (kKitten=128).
+// Retain the historical candidate grid. This harness does not qualify a
+// bucket limit or extrapolate runtime to unsampled sizes.
 const TREE_MAX_BUCKETS_GRID: &[u16] = &[16, 32, 48, 64, 96, 128];
 const TREE_NUM_PROPS_GRID: &[u8] = &[3, 5, 7, 10, 13, 16];
 const TREE_SAMPLE_FRACTION_GRID: &[f32] = &[0.10, 0.20, 0.35, 0.50, 0.65];
@@ -77,16 +81,19 @@ const LZ77_AXES: &[(u8, &str, Option<Lz77Method>)] = &[
 
 #[derive(Clone, Copy, Debug)]
 struct CellSpec {
-    cell_id: u8,
+    cell_id: u16,
     lz77_label: &'static str,
     lz77_method: Option<Lz77Method>,
     squeeze: bool,
     patches: bool,
+    forced_wp_mode: Option<u8>,
+    forced_rct: Option<u8>,
+    allow_palette: bool,
 }
 
 fn enumerate_cells() -> Vec<CellSpec> {
     let mut out = Vec::new();
-    let mut id = 0u8;
+    let mut id = 0u16;
     for &(_lz_id, lz_label, lz_method) in LZ77_AXES {
         for &squeeze in &[false, true] {
             for &patches in &[false, true] {
@@ -96,6 +103,9 @@ fn enumerate_cells() -> Vec<CellSpec> {
                     lz77_method: lz_method,
                     squeeze,
                     patches,
+                    forced_wp_mode: None,
+                    forced_rct: None,
+                    allow_palette: true,
                 });
                 id += 1;
             }
@@ -131,13 +141,18 @@ fn anchor_scalars() -> (u8, u8, u16, u8, f32) {
 fn sample_scalars(
     image_sha: &str,
     size_class: &str,
-    cell_id: u8,
+    cell_id: u16,
     sample_idx: u32,
 ) -> (u8, u8, u16, u8, f32) {
     let mut hasher = DefaultHasher::new();
     image_sha.hash(&mut hasher);
     size_class.hash(&mut hasher);
-    cell_id.hash(&mut hasher);
+    // Keep the historical scalar samples for all prior cell IDs.
+    if let Ok(id) = u8::try_from(cell_id) {
+        id.hash(&mut hasher);
+    } else {
+        cell_id.hash(&mut hasher);
+    }
     sample_idx.hash(&mut hasher);
     let seed = hasher.finish();
     let mut r = fastrand::Rng::with_seed(seed);
@@ -165,6 +180,9 @@ struct Args {
     threads: usize,
     features_only: bool,
     smoke: bool,
+    wp_modes: Vec<Option<u8>>,
+    rct_ids: Vec<Option<u8>>,
+    palette_modes: Vec<bool>,
 }
 
 fn parse_args() -> Args {
@@ -174,9 +192,12 @@ fn parse_args() -> Args {
     let mut sizes: Vec<u32> = Vec::new();
     let mut samples_per_cell = 25u32;
     let mut max_images = usize::MAX;
-    let mut threads = 0;
+    let mut threads = 1;
     let mut features_only = false;
     let mut smoke = false;
+    let mut wp_modes = vec![None];
+    let mut rct_ids = vec![None];
+    let mut palette_modes = vec![true];
     let date = chrono_today();
     let mut output = PathBuf::from(format!("benchmarks/lossless_pareto_{date}.tsv"));
     let mut features_output =
@@ -202,6 +223,27 @@ fn parse_args() -> Args {
             "--features-output" => features_output = PathBuf::from(it.next().unwrap()),
             "--max-images" => max_images = it.next().unwrap().parse().expect("max-images uint"),
             "--threads" => threads = it.next().unwrap().parse().expect("threads uint"),
+            "--wp-modes" => {
+                wp_modes = parse_mode_list(&it.next().expect("--wp-modes needs a list"), 4)
+            }
+            "--rct-ids" => {
+                rct_ids = parse_mode_list(&it.next().expect("--rct-ids needs a list"), 41)
+            }
+            "--palette-modes" => {
+                palette_modes = it
+                    .next()
+                    .expect("--palette-modes needs a list")
+                    .split(',')
+                    .map(|v| match v {
+                        "auto" => true,
+                        "off" => false,
+                        _ => panic!("palette mode must be auto or off"),
+                    })
+                    .collect();
+                for (i, mode) in palette_modes.iter().enumerate() {
+                    assert!(!palette_modes[..i].contains(mode), "duplicate palette mode");
+                }
+            }
             "--features-only" => features_only = true,
             "--smoke" => {
                 smoke = true;
@@ -217,6 +259,7 @@ fn parse_args() -> Args {
     if sizes.is_empty() {
         sizes = vec![64, 256, 1024, 0];
     }
+    assert!(threads > 0, "--threads must be positive");
     Args {
         manifest,
         split,
@@ -228,7 +271,51 @@ fn parse_args() -> Args {
         threads,
         features_only,
         smoke,
+        wp_modes,
+        rct_ids,
+        palette_modes,
     }
+}
+
+fn parse_mode_list(value: &str, max: u8) -> Vec<Option<u8>> {
+    let values: Vec<_> = value
+        .split(',')
+        .map(|v| {
+            if v == "search" {
+                None
+            } else {
+                let mode: u8 = v.parse().expect("mode must be search or an integer");
+                assert!(mode <= max, "mode must be 0..={max}");
+                Some(mode)
+            }
+        })
+        .collect();
+    for (i, mode) in values.iter().enumerate() {
+        assert!(!values[..i].contains(mode), "duplicate mode");
+    }
+    values
+}
+
+fn candidate_cells(
+    wp_modes: &[Option<u8>],
+    rct_ids: &[Option<u8>],
+    palette_modes: &[bool],
+) -> Vec<CellSpec> {
+    let mut cells = Vec::new();
+    for &mode in wp_modes {
+        for &rct in rct_ids {
+            for &palette in palette_modes {
+                for mut cell in enumerate_cells() {
+                    cell.cell_id = u16::try_from(cells.len()).expect("too many candidate cells");
+                    cell.forced_wp_mode = mode;
+                    cell.forced_rct = rct;
+                    cell.allow_palette = palette;
+                    cells.push(cell);
+                }
+            }
+        }
+    }
+    cells
 }
 
 fn chrono_today() -> String {
@@ -271,11 +358,16 @@ fn load_manifest(path: &std::path::Path, split_filter: &str) -> Vec<ManifestEntr
         }
         let cols: Vec<&str> = line.split('\t').collect();
         if cols.len() < 6 {
-            continue;
+            panic!("manifest line {} has fewer than six columns", i + 1);
         }
         if !split_filter.is_empty() && cols[1] != split_filter {
             continue;
         }
+        assert!(
+            cols[0].len() == 64 && cols[0].bytes().all(|b| b.is_ascii_hexdigit()),
+            "manifest line {} needs a source-file SHA256",
+            i + 1
+        );
         out.push(ManifestEntry {
             sha256: cols[0].to_string(),
             split: cols[1].to_string(),
@@ -290,10 +382,10 @@ fn load_manifest(path: &std::path::Path, split_filter: &str) -> Vec<ManifestEntr
 // Image IO
 // ---------------------------------------------------------------------
 
-fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
-    let img = image::open(path).ok()?;
+fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
+    let img = image::open(path).unwrap_or_else(|err| panic!("load {}: {err}", path.display()));
     let rgb = img.to_rgb8();
-    Some((rgb.as_raw().clone(), rgb.width(), rgb.height()))
+    (rgb.as_raw().clone(), rgb.width(), rgb.height())
 }
 
 fn resize_to(rgb: &[u8], w: u32, h: u32, target_max: u32) -> (Vec<u8>, u32, u32) {
@@ -322,16 +414,16 @@ fn resize_to(rgb: &[u8], w: u32, h: u32, target_max: u32) -> (Vec<u8>, u32, u32)
 /// per-knob public setters because they're not part of the internal-param
 /// surface.
 fn build_encoder(rc: &RowConfig) -> LosslessConfig {
-    let params = LosslessInternalParams {
-        nb_rcts_to_try: Some(rc.nb_rcts_to_try),
-        wp_num_param_sets: Some(rc.wp_num_param_sets),
-        tree_max_buckets: Some(rc.tree_max_buckets),
-        tree_num_properties: Some(rc.tree_num_properties),
-        tree_sample_fraction: Some(rc.tree_sample_fraction),
-        // Use fraction-based sampling (clear the fixed cap).
-        tree_max_samples_fixed: Some(0),
-        ..Default::default()
-    };
+    let mut params = LosslessInternalParams::default();
+    params.nb_rcts_to_try = Some(rc.nb_rcts_to_try);
+    params.wp_num_param_sets = Some(rc.wp_num_param_sets);
+    params.forced_wp_mode = rc.cell.forced_wp_mode;
+    params.forced_rct = rc.cell.forced_rct.map(jxl_encoder::RctType);
+    params.tree_max_buckets = Some(rc.tree_max_buckets);
+    params.tree_num_properties = Some(rc.tree_num_properties);
+    params.tree_sample_fraction = Some(rc.tree_sample_fraction);
+    // Use fraction-based sampling (clear the fixed cap).
+    params.tree_max_samples_fixed = Some(0);
 
     // Build the LosslessConfig: apply the effort first so the
     // internal-params builder snapshots the right effort-derived defaults
@@ -344,6 +436,12 @@ fn build_encoder(rc: &RowConfig) -> LosslessConfig {
         .with_patches(rc.cell.patches)
         .with_threads(1);
 
+    if !rc.cell.allow_palette {
+        cfg = cfg
+            .with_modular_palette_colors(Some(0))
+            .with_modular_channel_colors_global_percent(Some(0.0))
+            .with_modular_channel_colors_group_percent(Some(0.0));
+    }
     if let Some(m) = rc.cell.lz77_method {
         cfg = cfg.with_lz77(true).with_lz77_method(m);
     } else {
@@ -352,15 +450,46 @@ fn build_encoder(rc: &RowConfig) -> LosslessConfig {
     cfg
 }
 
-fn encode_one(rgb: &[u8], w: u32, h: u32, rc: &RowConfig) -> Option<(usize, f64)> {
+fn encode_one(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    rc: &RowConfig,
+) -> Result<(Vec<u8>, f64), jxl_encoder::At<jxl_encoder::EncodeError>> {
     let cfg = build_encoder(rc);
     let start = Instant::now();
-    let bytes = match cfg.encode(rgb, w, h, PixelLayout::Rgb8) {
-        Ok(b) => b,
-        Err(_) => return None,
-    };
+    let bytes = cfg.encode(rgb, w, h, PixelLayout::Rgb8)?;
     let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
-    Some((bytes.len(), encode_ms))
+    Ok((bytes, encode_ms))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn persist_encode(dir: &std::path::Path, encoded: &[u8]) -> std::io::Result<String> {
+    // Worker threads may produce identical outputs. Keep verification and creation
+    // in one critical section; persistence is outside the encode timer.
+    static WRITER: Mutex<()> = Mutex::new(());
+    let _guard = WRITER.lock().unwrap();
+    let sha = sha256_hex(encoded);
+    let path = dir.join(format!("{sha}.jxl"));
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => file.write_all(encoded)?,
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::read(&path)? != encoded {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("existing artifact differs: {}", path.display()),
+                ));
+            }
+        }
+        Err(err) => return Err(err),
+    }
+    Ok(sha)
 }
 
 // ---------------------------------------------------------------------
@@ -375,12 +504,11 @@ fn feature_value_str(
     analysis: &zenanalyze::feature::AnalysisResults,
     f: AnalysisFeature,
 ) -> String {
-    if let Some(v) = analysis.get_f32(f) {
-        format!("{v:.6}")
-    } else if let Some(v) = analysis.get(f) {
+    if let Some(v) = analysis.get(f) {
         match v {
             zenanalyze::feature::FeatureValue::F32(x) => format!("{x:.6}"),
             zenanalyze::feature::FeatureValue::U32(x) => format!("{x}"),
+            zenanalyze::feature::FeatureValue::U64(x) => format!("{x}"),
             zenanalyze::feature::FeatureValue::Bool(b) => format!("{}", b as u8),
             _ => String::new(),
         }
@@ -395,17 +523,66 @@ fn feature_value_str(
 
 fn main() {
     let args = parse_args();
+    let Some(build_commit) = option_env!("JXL_BENCH_COMMIT") else {
+        eprintln!("build with JXL_BENCH_COMMIT=<full source commit>");
+        std::process::exit(2);
+    };
+    assert!(
+        build_commit.len() == 40 && build_commit.bytes().all(|b| b.is_ascii_hexdigit()),
+        "JXL_BENCH_COMMIT must be a full commit hash"
+    );
+    let artifacts = args.output.with_extension("artifacts");
+    if !args.features_only {
+        std::fs::create_dir_all(&artifacts).expect("create artifact directory");
+    }
+
     if args.threads > 0 {
         rayon::ThreadPoolBuilder::new()
             .num_threads(args.threads)
             .build_global()
-            .ok();
+            .expect("build worker pool");
     }
 
     let entries = load_manifest(&args.manifest, &args.split);
     let n_images = entries.len().min(args.max_images);
     let entries: Vec<ManifestEntry> = entries.into_iter().take(n_images).collect();
-    let cells = enumerate_cells();
+    assert!(!entries.is_empty(), "manifest/filter selected no images");
+    let cells = candidate_cells(&args.wp_modes, &args.rct_ids, &args.palette_modes);
+    let cols = feature_columns();
+    let metadata = serde_json::json!({
+        "schema": "lossless-picker-oracle-v4",
+        "build_commit": build_commit,
+        "binary_sha256": sha256_hex(&std::fs::read(std::env::current_exe().unwrap()).unwrap()),
+        "manifest": args.manifest,
+        "manifest_sha256": sha256_hex(&std::fs::read(&args.manifest).unwrap()),
+        "split": args.split,
+        "sizes": args.sizes,
+        "images": entries.len(),
+        "samples_per_cell": args.samples_per_cell,
+        "worker_threads": args.threads,
+        "encoder_threads": 1,
+        "wp_modes": args.wp_modes,
+        "rct_ids": args.rct_ids,
+        "palette_modes": args.palette_modes,
+        "features_only": args.features_only,
+        "features": cols.iter().map(|c| c.name()).collect::<Vec<_>>(),
+        "pixel_input": "PNG converted to packed RGB8; native or Lanczos3 downsample",
+        "date": chrono_today(),
+    });
+    let metadata_path = if args.features_only {
+        args.features_output.with_extension("meta.json")
+    } else {
+        artifacts.join("_MANIFEST.json")
+    };
+    if let Some(parent) = metadata_path.parent() {
+        std::fs::create_dir_all(parent).expect("create metadata parent");
+    }
+    let metadata_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(metadata_path)
+        .expect("create new provenance file");
+    serde_json::to_writer_pretty(metadata_file, &metadata).expect("write provenance");
 
     // Each (image, size, cell) generates 1 anchor + samples_per_cell random rows.
     let rows_per_image_size = (cells.len() as u32) * (1 + args.samples_per_cell);
@@ -442,15 +619,15 @@ fn main() {
     );
 
     if let Some(parent) = args.output.parent() {
-        std::fs::create_dir_all(parent).ok();
+        std::fs::create_dir_all(parent).expect("complete output operation");
     }
     let main_file: Option<Mutex<std::fs::File>> = if args.features_only {
         None
     } else {
         let is_new = !args.output.exists();
         let f = OpenOptions::new()
-            .create(true)
-            .append(true)
+            .write(true)
+            .create_new(true)
             .open(&args.output)
             .expect("open output");
         let f = Mutex::new(f);
@@ -458,35 +635,34 @@ fn main() {
             let mut g = f.lock().unwrap();
             writeln!(
                 g,
-                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tcell_id\tlz77_method\tsqueeze\tpatches\tnb_rcts_to_try\twp_num_param_sets\ttree_max_buckets\ttree_num_properties\ttree_sample_fraction\tsample_idx\tbytes\tencode_ms"
+                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tcell_id\tlz77_method\tsqueeze\tpatches\tnb_rcts_to_try\twp_num_param_sets\ttree_max_buckets\ttree_num_properties\ttree_sample_fraction\tsample_idx\tbytes\tencode_ms\tencoded_sha256\tforced_wp_mode\tforced_rct\tallow_palette"
             )
-            .ok();
+            .expect("complete output operation");
         }
         Some(f)
     };
 
     if let Some(parent) = args.features_output.parent() {
-        std::fs::create_dir_all(parent).ok();
+        std::fs::create_dir_all(parent).expect("complete output operation");
     }
     let feat_is_new = !args.features_output.exists();
     let feat_file = OpenOptions::new()
-        .create(true)
-        .append(true)
+        .write(true)
+        .create_new(true)
         .open(&args.features_output)
         .expect("open features output");
     let feat_file = Mutex::new(feat_file);
-    let cols = feature_columns();
     if feat_is_new {
         let mut f = feat_file.lock().unwrap();
         write!(
             f,
             "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight"
         )
-        .ok();
+        .expect("complete output operation");
         for c in &cols {
-            write!(f, "\tfeat_{}", c.name()).ok();
+            write!(f, "\tfeat_{}", c.name()).expect("complete output operation");
         }
-        writeln!(f).ok();
+        writeln!(f).expect("complete output operation");
     }
 
     let query = AnalysisQuery::new(FeatureSet::SUPPORTED);
@@ -494,21 +670,13 @@ fn main() {
     let unit_count = entries.len() * args.sizes.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
 
-    // Outer parallelism on entries (not (entry, size) pairs) so each
-    // image's PNG decodes once instead of once per size. Features are
-    // computed by resizing directly from the native buffer for each
-    // size (same pixels as the original per-pair version — no
-    // cascading approximation). Saves the 4× redundant PNG decode and
-    // shrinks features-only wall-clock by ~50%; encode-dominated full
-    // sweeps see a smaller relative gain since encoding dwarfs IO.
+    // Decode each source once; resize every size directly from the native pixels.
     entries.par_iter().for_each(|entry| {
-        let (rgb_native, w_native, h_native) = match load_png(&entry.path) {
-            Some(t) => t,
-            None => {
-                eprintln!("  skip (load failed): {}", entry.path.display());
-                return;
-            }
-        };
+        let source = std::fs::read(&entry.path).expect("read source for hash verification");
+        assert_eq!(sha256_hex(&source), entry.sha256.to_ascii_lowercase(),
+            "source-file hash mismatch: {}", entry.path.display());
+        drop(source);
+        let (rgb_native, w_native, h_native) = load_png(&entry.path);
 
         for &target_size in &args.sizes {
             // Resize from native every time — bit-exact same as the
@@ -518,11 +686,11 @@ fn main() {
                 resize_to(&rgb_native, w_native, h_native, target_size);
             let rgb = rgb_owned.as_slice();
             let size_class = match target_size {
-                64 => "tiny",
-                256 => "small",
-                1024 => "medium",
-                0 => "large",
-                _ => "custom",
+                64 => "tiny".to_owned(),
+                256 => "small".to_owned(),
+                1024 => "medium".to_owned(),
+                0 => "large".to_owned(),
+                other => format!("max{other}"),
             };
 
             let analysis = analyze_features_rgb8(rgb, w, h, &query);
@@ -533,12 +701,12 @@ fn main() {
                     "{}\t{}\t{}\t{}\t{}\t{}",
                     entry.sha256, entry.split, entry.content_class, size_class, w, h
                 )
-                .ok();
+                .expect("complete output operation");
                 for c in &cols {
-                    write!(f, "\t{}", feature_value_str(&analysis, *c)).ok();
+                    write!(f, "\t{}", feature_value_str(&analysis, *c)).expect("complete output operation");
                 }
-                writeln!(f).ok();
-                f.flush().ok();
+                writeln!(f).expect("complete output operation");
+                f.flush().expect("complete output operation");
             }
 
             if let Some(main_file) = main_file.as_ref() {
@@ -556,7 +724,7 @@ fn main() {
                         sample_idx: 0,
                     });
                     for s in 1..=args.samples_per_cell {
-                        let (r, wpr, b, p, f) = sample_scalars(&entry.sha256, size_class, cell.cell_id, s);
+                        let (r, wpr, b, p, f) = sample_scalars(&entry.sha256, &size_class, cell.cell_id, s);
                         row_cfgs.push(RowConfig {
                             cell: *cell,
                             nb_rcts_to_try: r,
@@ -569,65 +737,33 @@ fn main() {
                     }
 
                     for rc in &row_cfgs {
-                        let row = encode_one(rgb, w, h, rc);
+                        let (encoded, encode_ms) = encode_one(rgb, w, h, rc).unwrap_or_else(|err| {
+                            panic!("encode {} cell {} sample {}: {err}", entry.path.display(), rc.cell.cell_id, rc.sample_idx)
+                        });
+                        let encoded_sha256 = persist_encode(&artifacts, &encoded).expect("persist encoded artifact");
                         let mut f = main_file.lock().unwrap();
-                        match row {
-                            Some((bytes, encode_ms)) => {
-                                writeln!(
-                                    f,
-                                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}",
-                                    entry.sha256,
-                                    entry.split,
-                                    entry.content_class,
-                                    size_class,
-                                    w,
-                                    h,
-                                    rc.cell.cell_id,
-                                    rc.cell.lz77_label,
-                                    rc.cell.squeeze as u8,
-                                    rc.cell.patches as u8,
-                                    rc.nb_rcts_to_try,
-                                    rc.wp_num_param_sets,
-                                    rc.tree_max_buckets,
-                                    rc.tree_num_properties,
-                                    rc.tree_sample_fraction,
-                                    rc.sample_idx,
-                                    bytes,
-                                    encode_ms,
-                                )
-                                .ok();
-                            }
-                            None => {
-                                writeln!(
-                                    f,
-                                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t\t",
-                                    entry.sha256,
-                                    entry.split,
-                                    entry.content_class,
-                                    size_class,
-                                    w,
-                                    h,
-                                    rc.cell.cell_id,
-                                    rc.cell.lz77_label,
-                                    rc.cell.squeeze as u8,
-                                    rc.cell.patches as u8,
-                                    rc.nb_rcts_to_try,
-                                    rc.wp_num_param_sets,
-                                    rc.tree_max_buckets,
-                                    rc.tree_num_properties,
-                                    rc.tree_sample_fraction,
-                                    rc.sample_idx,
-                                )
-                                .ok();
-                            }
-                        }
+                        writeln!(
+                            f,
+                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}",
+                            entry.sha256, entry.split, entry.content_class, size_class,
+                            w, h, rc.cell.cell_id, rc.cell.lz77_label,
+                            rc.cell.squeeze as u8, rc.cell.patches as u8,
+                            rc.nb_rcts_to_try, rc.wp_num_param_sets, rc.tree_max_buckets,
+                            rc.tree_num_properties, rc.tree_sample_fraction, rc.sample_idx,
+                            encoded.len(), encode_ms, encoded_sha256,
+                            rc.cell.forced_wp_mode.map(|m| m.to_string()).unwrap_or_default(),
+                            rc.cell.forced_rct.map(|m| m.to_string()).unwrap_or_default(),
+                            rc.cell.allow_palette as u8,
+                        ).expect("write encoded row");
+
                     }
-                    main_file.lock().unwrap().flush().ok();
+                    main_file.lock().unwrap().flush().expect("complete output operation");
+                    eprintln!("  persisted {} size {} cell {}", entry.sha256, target_size, cell.cell_id);
                 }
             }
 
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if n % 4 == 0 || n == unit_count {
+            if n.is_multiple_of(4) || n == unit_count {
                 let dt = started.elapsed().as_secs_f64();
                 let rate = n as f64 / dt;
                 let eta = (unit_count - n) as f64 / rate;
@@ -645,4 +781,141 @@ fn main() {
         started.elapsed().as_secs_f64() / 3600.0,
         if args.smoke { " [smoke]" } else { "" },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persisted_real_encodes_are_exact_in_both_decoders() {
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .unwrap();
+        let dir = PathBuf::from(home)
+            .join("tmp")
+            .join(format!("lossless-oracle-artifacts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = image::open(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/images/frymire-srgb.png"
+        ))
+        .unwrap();
+        for (w, h) in [(64, 64), (259, 133)] {
+            let rgb = source.crop_imm(0, 0, w, h).to_rgb8();
+            let (r, wp, buckets, props, fraction) = anchor_scalars();
+            let mut cells = vec![enumerate_cells()[0]];
+            cells.extend(
+                candidate_cells(
+                    &[Some(0), Some(4)],
+                    &[Some(0), Some(6), Some(41)],
+                    &[true, false],
+                )
+                .into_iter()
+                .filter(|cell| cell.lz77_label == "none" && !cell.patches && !cell.squeeze),
+            );
+            for cell in cells {
+                let rc = RowConfig {
+                    cell,
+                    nb_rcts_to_try: r,
+                    wp_num_param_sets: wp,
+                    tree_max_buckets: buckets,
+                    tree_num_properties: props,
+                    tree_sample_fraction: fraction,
+                    sample_idx: 0,
+                };
+                let (encoded, _) = encode_one(rgb.as_raw(), w, h, &rc).unwrap();
+                let sha = persist_encode(&dir, &encoded).unwrap();
+                assert_eq!(persist_encode(&dir, &encoded).unwrap(), sha);
+                let path = dir.join(format!("{sha}.jxl"));
+                let persisted = std::fs::read(&path).unwrap();
+                assert_eq!(persisted, encoded);
+                let decoded = zenjxl_decoder::decode(&persisted).unwrap();
+                assert_eq!(
+                    (decoded.width, decoded.height, decoded.channels),
+                    (w as usize, h as usize, 4)
+                );
+                let pixels: Vec<_> = decoded
+                    .data
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .flat_map(|p| [p[0], p[1], p[2]])
+                    .collect();
+                assert_eq!(pixels, *rgb.as_raw());
+                let png = dir.join(format!("{sha}.png"));
+                let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                    .arg(&path)
+                    .arg(&png)
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(image::open(png).unwrap().to_rgb8(), rgb);
+            }
+        }
+    }
+
+    #[test]
+    fn candidate_ids_and_controls_do_not_alias() {
+        let rcts: Vec<_> = core::iter::once(None).chain((0..=41).map(Some)).collect();
+        let modes: Vec<_> = core::iter::once(None).chain((0..=4).map(Some)).collect();
+        let cells = candidate_cells(&modes, &rcts, &[true, false]);
+        assert_eq!(cells.len(), 16 * 6 * 43 * 2);
+        let (r, wp, buckets, props, fraction) = anchor_scalars();
+        for (id, cell) in cells.into_iter().enumerate() {
+            assert_eq!(cell.cell_id as usize, id);
+            let cfg = build_encoder(&RowConfig {
+                cell,
+                nb_rcts_to_try: r,
+                wp_num_param_sets: wp,
+                tree_max_buckets: buckets,
+                tree_num_properties: props,
+                tree_sample_fraction: fraction,
+                sample_idx: 0,
+            });
+            let profile = cfg.resolved_profile();
+            assert_eq!(profile.forced_wp_mode, cell.forced_wp_mode);
+            assert_eq!(profile.forced_rct.map(|rct| rct.0), cell.forced_rct);
+            assert_eq!(
+                cfg.modular_palette_colors(),
+                if cell.allow_palette { None } else { Some(0) }
+            );
+            assert_eq!(
+                cfg.modular_channel_colors_global_percent(),
+                if cell.allow_palette { None } else { Some(0.0) }
+            );
+            assert_eq!(
+                cfg.modular_channel_colors_group_percent(),
+                if cell.allow_palette { None } else { Some(0.0) }
+            );
+        }
+    }
+
+    #[test]
+    fn artifact_errors_are_reported_without_overwriting() {
+        let dir = PathBuf::from(
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .unwrap(),
+        )
+        .join("tmp")
+        .join(format!("lossless-oracle-refusals-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bytes = b"artifact refusal control";
+        let sha = sha256_hex(bytes);
+        let path = dir.join(format!("{sha}.jxl"));
+        std::fs::write(&path, b"existing content").unwrap();
+        assert_eq!(
+            persist_encode(&dir, bytes).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing content");
+        assert!(persist_encode(&path, bytes).is_err());
+        // An IO error must not poison the shared writer or prevent later output.
+        assert!(persist_encode(&dir, b"next output").is_ok());
+    }
 }

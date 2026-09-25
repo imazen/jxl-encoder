@@ -1,0 +1,17 @@
+W45-RECON part-20/21 perf A/B (2026-09-24, macOS arm64, with_threads(1), min-of-5).
+
+Baseline: dc15c5d2 (pre part-20, part-19 tip).
+Current:  c4e6f60c + part-22 cleanup refactor (byte-identical output).
+
+Harness: jxl-encoder/examples/w45_p21_perf_ab.rs (same source on both
+builds; copied into the baseline jj workspace).
+Cells target the touched paths: EPF kernels + epf_dispatch (photo /
+screenshot / gradients at e5-e7) and the extras GlobalData stream-0
+port (RGBA synthetics, strict only).
+
+Result: zen strategy wall times flat everywhere (within ~2% noise —
+the shared kMinSigma check is free). exact +5-10% at e7 (up to +27%
+on the 2 ms grad64 cell) — almost entirely part-20's epf_dispatch
+AlwaysSelect sharpness search, which libjxl runs unconditionally at
+effort >= 6 (parity-required work, not a regression). The extras
+global-stream port itself costs ~0.2 ms per encode.

@@ -61,7 +61,11 @@ use alloc::vec::Vec;
 /// default (`intensity_target = 255` ⇒ `intensity_mul = 1.0`); HDR
 /// intensity targets downsample in a slightly-rescaled domain (bounded,
 /// encoder-side only).
-fn to_opsin_planes(rgb_interleaved: &[f32], n: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+fn to_opsin_planes(
+    rgb_interleaved: &[f32],
+    n: usize,
+    cbrt: jxl_simd::XybCubeRoot,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let _phase = crate::profile_phases::PhaseGuard::new("resample.to_opsin_planes");
     debug_assert_eq!(rgb_interleaved.len(), n * 3);
     let mut plane_r = alloc::vec![0.0_f32; n];
@@ -75,24 +79,18 @@ fn to_opsin_planes(rgb_interleaved: &[f32], n: usize) -> (Vec<f32>, Vec<f32>, Ve
     let mut xyb_x = alloc::vec![0.0_f32; n];
     let mut xyb_y = alloc::vec![0.0_f32; n];
     let mut xyb_b = alloc::vec![0.0_f32; n];
-    // Pinned to the libjxl cube root, deliberately, and NOT threaded from the
-    // encoder's `xyb_cbrt_libjxl_parity` gate. Two reasons: under
-    // `EncoderStrategy::Libjxl` this is exactly the parity-correct choice
-    // (libjxl downsamples ITS opsin image), and in zen mode resampling is off
-    // by default (user directive 2026-09-06) so the path is opt-in only. It is
-    // also the most accurate of the fast variants (5 ULP), which is what a
-    // filter round-trip wants. Threading a selector here would put it through
-    // five internal wrappers and the `__internals` resample API for a path that
-    // does not ship on by default.
+    // Pinned to a libjxl-accurate cube root, deliberately — the fast
+    // `MidP`/`LowP` variants are ULP-divergent across arches and this
+    // conversion feeds the encoder directly. The selector distinguishes
+    // the two accurate variants: `XybCubeRoot::Libjxl` (fused
+    // `MulAdd(r2, x, -cbrtf(bias))`, matching libjxl `CubeRootAndAdd`)
+    // is threaded from the encoder's `xyb_cbrt_libjxl_parity` gate —
+    // under `EncoderStrategy::Libjxl` this is exactly the parity-correct
+    // choice since libjxl downsamples ITS opsin image. Everything else
+    // gets `LibjxlUnfused`, the historical two-rounding Newton cbrt that
+    // shipped in the normal-mode resampling byte locks.
     jxl_simd::forward_xyb_scalar(
-        jxl_simd::XybCubeRoot::Libjxl,
-        &plane_r,
-        &plane_g,
-        &plane_b,
-        &mut xyb_x,
-        &mut xyb_y,
-        &mut xyb_b,
-        n,
+        cbrt, &plane_r, &plane_g, &plane_b, &mut xyb_x, &mut xyb_y, &mut xyb_b, n,
     );
     (xyb_x, xyb_y, xyb_b)
 }
@@ -188,6 +186,7 @@ pub fn box_downsample_rgb(
     width: usize,
     height: usize,
     factor: u32,
+    cbrt: jxl_simd::XybCubeRoot,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<(Vec<f32>, u32, u32)> {
     debug_assert!(matches!(factor, 1 | 2 | 4 | 8), "factor must be 1/2/4/8");
@@ -201,7 +200,7 @@ pub fn box_downsample_rgb(
     let n = width * height;
     let n_out = out_w * out_h;
 
-    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n);
+    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n, cbrt);
     let mut down_x = alloc::vec![0.0_f32; n_out];
     let mut down_y = alloc::vec![0.0_f32; n_out];
     let mut down_b = alloc::vec![0.0_f32; n_out];
@@ -583,6 +582,7 @@ pub fn sharper_downsample_2x_rgb(
     rgb_interleaved: &[f32],
     width: usize,
     height: usize,
+    cbrt: jxl_simd::XybCubeRoot,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<(Vec<f32>, u32, u32)> {
     debug_assert_eq!(rgb_interleaved.len(), width * height * 3);
@@ -591,7 +591,7 @@ pub fn sharper_downsample_2x_rgb(
     let n = width * height;
     let n_out = out_w * out_h;
 
-    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n);
+    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n, cbrt);
     let mut down_x = alloc::vec![0.0_f32; n_out];
     let mut down_y = alloc::vec![0.0_f32; n_out];
     let mut down_b = alloc::vec![0.0_f32; n_out];
@@ -1136,6 +1136,7 @@ pub fn iterative_downsample_2x_rgb(
     rgb_interleaved: &[f32],
     width: usize,
     height: usize,
+    cbrt: jxl_simd::XybCubeRoot,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> crate::error::Result<(Vec<f32>, u32, u32)> {
     debug_assert_eq!(rgb_interleaved.len(), width * height * 3);
@@ -1144,7 +1145,7 @@ pub fn iterative_downsample_2x_rgb(
     let n = width * height;
     let n_out = out_w * out_h;
 
-    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n);
+    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n, cbrt);
 
     // Iterative refinement per opsin plane (the decoder-upsampler's
     // actual input domain).
@@ -1225,7 +1226,11 @@ pub fn resample_roundtrip_2x_rgb(
     let n = width * height;
     let n_out = out_w * out_h;
 
-    let (xyb_x, xyb_y, xyb_b) = to_opsin_planes(rgb_interleaved, n);
+    // Floor-study primitive, not the encode path — pinned to the
+    // historical unfused variant so floor measurements stay comparable
+    // across the part-10 cbrt change.
+    let (xyb_x, xyb_y, xyb_b) =
+        to_opsin_planes(rgb_interleaved, n, jxl_simd::XybCubeRoot::LibjxlUnfused);
     let mut up_planes: [Vec<f32>; 3] = [
         alloc::vec![0.0_f32; n],
         alloc::vec![0.0_f32; n],
@@ -1305,7 +1310,8 @@ mod tests {
     #[test]
     fn test_factor_1_is_clone() {
         let rgb = vec![0.5_f32, 0.25, 0.75, 0.1, 0.2, 0.3]; // 2 px
-        let (out, w, h) = box_downsample_rgb(&rgb, 2, 1, 1, None).unwrap();
+        let (out, w, h) =
+            box_downsample_rgb(&rgb, 2, 1, 1, jxl_simd::XybCubeRoot::LibjxlUnfused, None).unwrap();
         assert_eq!(out, rgb);
         assert_eq!(w, 2);
         assert_eq!(h, 1);
@@ -1397,7 +1403,9 @@ mod tests {
                 .cycle()
                 .take(w * h * 3)
                 .collect();
-            let (out, ow, oh) = box_downsample_rgb(&rgb, w, h, f, None).unwrap();
+            let (out, ow, oh) =
+                box_downsample_rgb(&rgb, w, h, f, jxl_simd::XybCubeRoot::LibjxlUnfused, None)
+                    .unwrap();
             assert_eq!(ow as usize, w.div_ceil(f as usize));
             assert_eq!(oh as usize, h.div_ceil(f as usize));
             assert_eq!(out.len(), (ow * oh) as usize * 3);
@@ -1424,7 +1432,8 @@ mod tests {
             0.05, 0.9, 0.05, // saturated green
             0.9, 0.9, 0.05, // yellow
         ];
-        let (out, w, h) = box_downsample_rgb(&rgb, 2, 2, 2, None).unwrap();
+        let (out, w, h) =
+            box_downsample_rgb(&rgb, 2, 2, 2, jxl_simd::XybCubeRoot::LibjxlUnfused, None).unwrap();
         assert_eq!((w, h), (1, 1));
 
         // (a) The linear-RGB mean of the four pixels.
@@ -1445,7 +1454,7 @@ mod tests {
         );
 
         // (b) It equals convert → per-plane box → invert, exactly.
-        let (x, y, b) = to_opsin_planes(&rgb, 4);
+        let (x, y, b) = to_opsin_planes(&rgb, 4, jxl_simd::XybCubeRoot::LibjxlUnfused);
         let mut dx = [0.0_f32; 1];
         let mut dy = [0.0_f32; 1];
         let mut db = [0.0_f32; 1];
@@ -1480,12 +1489,16 @@ mod tests {
     fn test_sharper_2x_dimensions() {
         // 64×64 → 32×32; 65×64 → 33×32 (div_ceil).
         let rgb = vec![0.5_f32; 64 * 64 * 3];
-        let (out, w, h) = sharper_downsample_2x_rgb(&rgb, 64, 64, None).unwrap();
+        let (out, w, h) =
+            sharper_downsample_2x_rgb(&rgb, 64, 64, jxl_simd::XybCubeRoot::LibjxlUnfused, None)
+                .unwrap();
         assert_eq!(w, 32);
         assert_eq!(h, 32);
         assert_eq!(out.len(), 32 * 32 * 3);
         let rgb = vec![0.5_f32; 65 * 64 * 3];
-        let (_, w, h) = sharper_downsample_2x_rgb(&rgb, 65, 64, None).unwrap();
+        let (_, w, h) =
+            sharper_downsample_2x_rgb(&rgb, 65, 64, jxl_simd::XybCubeRoot::LibjxlUnfused, None)
+                .unwrap();
         assert_eq!(w, 33);
         assert_eq!(h, 32);
     }
@@ -1495,7 +1508,9 @@ mod tests {
         // Uniform input → kernel sum × value. The kernel sums to ~1.0
         // by construction; confirm output is approximately the input.
         let rgb = vec![0.5_f32; 32 * 32 * 3];
-        let (out, w, h) = sharper_downsample_2x_rgb(&rgb, 32, 32, None).unwrap();
+        let (out, w, h) =
+            sharper_downsample_2x_rgb(&rgb, 32, 32, jxl_simd::XybCubeRoot::LibjxlUnfused, None)
+                .unwrap();
         assert_eq!(w, 16);
         assert_eq!(h, 16);
         for &v in &out {
@@ -1512,7 +1527,9 @@ mod tests {
         // background away from the spike, output stays in the dark range.
         let mut rgb = vec![0.0_f32; 16 * 16 * 3];
         rgb[((8 * 16) + 8) * 3] = 1.0; // R-channel spike at (8,8)
-        let (out, _, _) = sharper_downsample_2x_rgb(&rgb, 16, 16, None).unwrap();
+        let (out, _, _) =
+            sharper_downsample_2x_rgb(&rgb, 16, 16, jxl_simd::XybCubeRoot::LibjxlUnfused, None)
+                .unwrap();
         // Far-corner output (0,0) sees no spike in its 2×2 input window
         // (covers input (0..2, 0..2)) — must be clamped to ~0.
         assert!(
@@ -1538,13 +1555,15 @@ mod tests {
                 rgb[i + 2] = 1.0 - (y as f32) / (h as f32);
             }
         }
-        let (out, ow, oh) = sharper_downsample_2x_rgb(&rgb, w, h, None).unwrap();
+        let (out, ow, oh) =
+            sharper_downsample_2x_rgb(&rgb, w, h, jxl_simd::XybCubeRoot::LibjxlUnfused, None)
+                .unwrap();
         assert_eq!((ow as usize, oh as usize), (8, 8));
 
         // Exactly convert → per-opsin-plane sharper → invert.
         let n = w * h;
         let n_out = (ow * oh) as usize;
-        let (x, y, b) = to_opsin_planes(&rgb, n);
+        let (x, y, b) = to_opsin_planes(&rgb, n, jxl_simd::XybCubeRoot::LibjxlUnfused);
         let mut dx = vec![0.0_f32; n_out];
         let mut dy = vec![0.0_f32; n_out];
         let mut db = vec![0.0_f32; n_out];
@@ -1624,7 +1643,7 @@ mod tests {
             }
             (a, b, c)
         };
-        let (ox, oy, ob) = to_opsin_planes(&rgb, n);
+        let (ox, oy, ob) = to_opsin_planes(&rgb, n, jxl_simd::XybCubeRoot::LibjxlUnfused);
         let mut worst = 0.0_f32;
         let mut worst_desc = alloc::string::String::new();
         for (name, ours, theirs) in [("X", &ox, &gx), ("Y", &oy, &gy), ("B", &ob, &gb)] {
@@ -1666,7 +1685,7 @@ mod tests {
             // opsin cube root and its inverse are most sensitive.
             *v = (state >> 8) as f32 * (1.0 / 16_777_216.0);
         }
-        let (x, y, b) = to_opsin_planes(&rgb, n);
+        let (x, y, b) = to_opsin_planes(&rgb, n, jxl_simd::XybCubeRoot::LibjxlUnfused);
         let back = from_opsin_planes(&x, &y, &b, n, None).expect("inverse opsin");
         let mut worst = 0.0_f32;
         let mut worst_at = (0usize, 0.0_f32, 0.0_f32);
@@ -1911,7 +1930,9 @@ mod tests {
         // correction rounds see zero residual), even/odd dims both work.
         for (w, h) in [(64usize, 64usize), (65, 64), (33, 47)] {
             let rgb = vec![0.5_f32; w * h * 3];
-            let (out, ow, oh) = iterative_downsample_2x_rgb(&rgb, w, h, None).unwrap();
+            let (out, ow, oh) =
+                iterative_downsample_2x_rgb(&rgb, w, h, jxl_simd::XybCubeRoot::LibjxlUnfused, None)
+                    .unwrap();
             assert_eq!(ow as usize, w.div_ceil(2));
             assert_eq!(oh as usize, h.div_ceil(2));
             assert_eq!(out.len(), (ow * oh * 3) as usize);

@@ -7,6 +7,128 @@ owner publishes. Supersedes the per-item claims in
 `RELEASE_DEP_AUDIT.md` (2026-06) where they conflict; the numbers here
 are from executed probes on 2026-08-29 (see "Evidence").
 
+## September 24 pre-publication audit
+
+**The tested source passes the local correctness gates below. Publication is
+still blocked by registry resolution and API inventory review.** Nothing was
+published or tagged. Production source is `cfd6ef0a`; audit tests and retained
+performance evidence landed through `7a9a5a8c` on `libjxl-exact`. Builds use the
+CI-pinned sibling export, `--locked`, four workers and `nice -n 19` on this
+ARM64 Mac. A source export is not evidence that registry consumers can build.
+
+### Correctness and settings coverage
+
+- **4,320 selected RGBA cells pass full Rust and djxl v0.12 decoding**:
+  2,160 with default features plus parallel, and the same matrix with
+  `--no-default-features --features std,__expert,corpus-tests`. Each run
+  includes 1,080 lossless and 1,080 lossy cells. Nine dimensions include
+  one-pixel axes, 255/256/257 boundaries, 259x133 and 2049x9. Eight
+  pathological patterns cover transparent/opaque extremes, saturated
+  checkerboards, isolated impulses, ramps, noise, periodic stripes and
+  alpha spikes; two sources supply natural photograph and real graphics.
+  Twelve configurations per path exercise effort boundaries, Zen/Libjxl,
+  ANS/Huffman, sectioned/squeeze, forced WP 0–4 and progressive modes.
+  Lossless pixels and lossy alpha are exact; packed/strided encodes agree,
+  as do lossless streaming encodes. All 1,080 lossless cells are also
+  byte-identical across the two builds. This is a selected interaction
+  matrix, not exhaustive configuration coverage. Auto-resampling is off
+  in this matrix to preserve its exact-alpha contract.
+- **40 float-extreme cells pass bit-exact roundtrips in both decoders**:
+  f16/f32, 31x17 and 259x17, Zen/Libjxl, forced WP 0–4 at e7. Signed zero,
+  subnormals and finite extrema are included; NaN/infinity are excluded.
+- Workspace all-target tests pass: 1,638 encoder unit tests, 508 default
+  integration tests, 194 SIMD tests, CLI/macros/tuning-runner targets and
+  examples. Existing ignored tests remain ignored. The separately enabled
+  expert/internal/parallel/JPEG/HDR integration suite passes 580 tests,
+  including 63 normal locks, five strict byte locks and seven drift checks.
+- Workspace doctests and all-target Clippy with `-D warnings` pass. Nine
+  selected compile configurations pass, covering no_std, std, parallel,
+  expert, JPEG, HDR gain-map, Butteraugli/SSIM2 and Zensim. Compile success
+  does not qualify GPU execution or all feature combinations.
+- Both real-image RD regression tests pass unchanged. All five resource
+  tests pass, covering cancellation, concurrent limits/canonicalization
+  and streaming layout/color/dispatch. The explicitly selected ignored
+  djxl odd-size streaming resampling regression also passes. Initial
+  resource invocations with a missing/wrong corpus root failed loudly;
+  the successful run uses `~/Library/Caches/codec-corpus/v1`.
+
+Reproduction: `just prepublish-matrix`, `prepublish-float`,
+`prepublish-feature-check`, `production-workspace-tests`,
+`production-clippy` and `production-resources` accept the pinned manifest.
+Full logs, streams and decoder outputs are retained under
+`~/tmp/jxl-prepublish-2026-09-24/`; the machine-readable
+[check record](../benchmarks/prepublish_checks_2026-09-24.json) names them.
+These checks add no production encoding changes or relaxed expectations.
+
+### Performance and baseline validity
+
+The [lossless](../benchmarks/prepublish_lossless_2026-09-24.tsv),
+[Zen d1](../benchmarks/prepublish_lossy-zen-d1_2026-09-24.tsv) and
+[strict d4](../benchmarks/prepublish_lossy-exact-d4_2026-09-24.tsv)
+A/Bs compare `f4bfa242` with `cfd6ef0a`, both against the same current pinned
+sibling closure. Each has 48 cells: two natural sources, sizes
+64/256/1024/2048, efforts 3/7/9, threads 1/4, five interleaved repetitions.
+Process wall includes CLI image IO; tiny cells contain millisecond fixed
+cost. Companion `.meta` files record commands and source/binary hashes.
+
+| Mode | Median of cell deltas | Range of cell deltas |
+|---|---:|---:|
+| Lossless | -0.07% | -7.11% to +2.30% |
+| Zen d1 | -1.215% | -10.81% to +1.78% |
+| Strict d4 | -6.215% | -38.86% to +2.19% |
+
+The largest observed slowdown is 2.30% on this grid; this is not a
+fleetwide regression-free claim. No tuning constants were derived from it.
+All 96 lossless/Zen cells retain exact bytes. Ten strict e7 cells change
+bytes, and the identity harness correctly fails that arm. All five distinct
+changed **baseline** streams fail djxl decoding; one also reproduces
+`AnsChecksumMismatch` in Rust. The current counterparts decode successfully,
+consistent with the intervening strict EPF metadata-context correction.
+The [baseline failure record](../benchmarks/prepublish_baseline_decode_2026-09-24.tsv)
+is retained rather than treating a byte change as an unexplained regression.
+All 76 distinct current source/stream pairs (covering all 144 cells) fully
+render through both decoders, with exact lossless pixels.
+
+### API findings and remaining release gates
+
+Fresh rustdoc comparisons against `f4bfa242`, with expert/JPEG/HDR features,
+run 223 semver checks: 221 pass, two fail, 30 skip. One failure is the
+owner-approved addition of `CustomEncoderImprovements` fields
+`lossless_tree_self_repair` and `lossless_large_tree_bucket_reduction`:
+exhaustive downstream struct literals must add them. The other flags shifted
+`ValidationError` discriminants after the approved forced-WP variant. A
+compiler probe rejects the lint's advertised `as isize` use with E0605
+because this enum has data-carrying variants; that particular numeric-cast
+break mechanism does not apply. This is not a blanket clean-semver verdict.
+Both source revisions are unreleased 0.4.0; no additional version bump was
+made. Against reconstructed published 0.3.1, explicitly forcing the minor
+check repeats the existing nine breaking-check categories (187 pass,
+nine fail, 57 skip), supporting the already planned 0.4 release.
+
+`ZEN_API_DOC=check` still fails stale committed inventories. Native ARM
+regeneration changes the encoder supported inventory from 1,256 to 1,302
+item lines; these include older additions as well as this batch. The SIMD
+inventory is architecture-sensitive, so replacing x86 entries with ARM
+entries is not an API-removal finding. A cross-target regeneration also
+produced an implausible public/internal split and was not accepted. Proposed
+native changes are retained in `api-snapshots.patch`, not applied to the
+committed expectations. Review and a valid x86 SIMD refresh remain required.
+Existing rustdoc link warnings also need review before publication.
+
+Direct consumer-style semver validation still fails registry resolution on
+`butteraugli ^0.9.4`; live registry search returns 0.9.3. The macros crate is
+still unpublished, SIMD is at 0.3.0 and zenanalyze at 0.1.0. No package
+verification passed. The dependency ordering and optional-dependency
+publication decisions below remain release gates. README approval and a
+fully green release-commit CI run are also required. This audit does not
+substitute for the licensed normative standards audit (#111); deployment
+rollout (#108) and fleetwide picker tuning remain deferred by the owner.
+
+Dev was fetched and advanced with jj to the pushed audit head `7a9a5a8c`.
+Twelve named bookmarks were preserved, with no named local-only bookmark.
+Its divergent `main` remains separate; this is a `libjxl-exact` landing,
+not a main merge. Later documentation commits must be synchronized too.
+
 ## September 8 validation in progress
 
 CI sibling sources are pinned in

@@ -342,6 +342,11 @@ pub(crate) fn extract_icc(jpeg: &JpegData) -> Option<Vec<u8>> {
 ///
 /// Returns the raw EXIF data (after the "Exif\0\0" header), or None.
 pub(crate) fn extract_exif(jpeg: &JpegData) -> Option<Vec<u8>> {
+    exif_payload(jpeg).map(<[u8]>::to_vec)
+}
+
+/// Borrow the first classified Exif APP1 payload without its JPEG prefix.
+pub(crate) fn exif_payload(jpeg: &JpegData) -> Option<&[u8]> {
     // APP data format: [marker_byte, len_hi, len_lo, payload...]
     // EXIF payload starts with "Exif\0\0" (6 bytes)
     const EXIF_HEADER: &[u8] = b"Exif\0\0";
@@ -353,7 +358,7 @@ pub(crate) fn extract_exif(jpeg: &JpegData) -> Option<Vec<u8>> {
             if data.len() > header_start + EXIF_HEADER.len()
                 && &data[header_start..header_start + EXIF_HEADER.len()] == EXIF_HEADER
             {
-                return Some(data[header_start + EXIF_HEADER.len()..].to_vec());
+                return Some(&data[header_start + EXIF_HEADER.len()..]);
             }
         }
     }

@@ -322,6 +322,33 @@ fn test_dc_from_dct_32x32_dc_only() {
 }
 
 #[test]
+fn test_dc_from_dct_32x32_lj_matches_legacy() {
+    // W45-RECON part 20: the strict `ReinterpretingIDCT` port must
+    // produce mathematically identical output to the legacy path
+    // (same transform, different float op order → ~ulp deltas only).
+    let mut input = [0.0f32; 1024];
+    for y in 0..32 {
+        for x in 0..32 {
+            input[y * 32 + x] =
+                (x as f32 * 0.7 + y as f32 * 1.3) + ((x * 31 + y * 17) % 11) as f32 * 0.05;
+        }
+    }
+    let mut output = [0.0f32; 1024];
+    dct_32x32(&input, &mut output);
+    let legacy = dc_from_dct_32x32(&output);
+    let lj = dc_from_dct_32x32_lj(&output);
+    for i in 0..16 {
+        assert!(
+            (legacy[i] - lj[i]).abs() < 1e-3 * legacy[i].abs().max(1.0),
+            "dc[{}]: legacy={} lj={}",
+            i,
+            legacy[i],
+            lj[i]
+        );
+    }
+}
+
+#[test]
 fn test_dct_32x32_no_final_transpose() {
     // Verify no final transpose: input with only row 0 non-zero
     let mut input = [0.0f32; 1024];
@@ -1046,5 +1073,212 @@ fn test_idct_4x4_full_roundtrip() {
         max_err < 1e-4,
         "idct_4x4_full roundtrip max error {} too large",
         max_err
+    );
+}
+
+// ─── libjxl pass-order (`*_lj`) wrapper roundtrips ───────────────
+//
+// Each `dct_*_lj` wrapper must invert under its `idct_*_lj` sibling:
+// the wrappers only change the floating-point pass order (transposed
+// input/output through the sibling kernel), not the transform's
+// mathematical content. A layout bug in either wrapper breaks the
+// roundtrip by far more than f32 noise.
+
+#[test]
+fn test_dct_16x8_lj_roundtrip() {
+    let input: [f32; 128] = core::array::from_fn(|i| (i as f32 * 0.6 + 0.3).sin() * 20.0);
+    let mut coeffs = [0.0f32; 128];
+    dct_16x8_lj(&input, &mut coeffs);
+    // Strict path feeds the post-swap 8×16 coeffs through the
+    // natural-layout pre-transpose + idct_16x8 (already libjxl order).
+    let mut natural = [0.0f32; 128];
+    crate::vardct::common::transpose_block::<8, 16>(&coeffs, &mut natural);
+    let mut output = [0.0f32; 128];
+    idct_16x8(&natural, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-3, "dct_16x8_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_8x16_lj_roundtrip() {
+    let input: [f32; 128] = core::array::from_fn(|i| (i as f32 * 0.6 + 0.3).cos() * 20.0);
+    let mut coeffs = [0.0f32; 128];
+    dct_8x16_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 128];
+    idct_8x16(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-3, "dct_8x16_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_16x16_lj_roundtrip() {
+    let input: [f32; 256] = core::array::from_fn(|i| (i as f32 * 0.7 + 3.14).sin() * 15.0);
+    let mut coeffs = [0.0f32; 256];
+    dct_16x16_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 256];
+    idct_16x16_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-3, "dct_16x16_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_32x32_lj_roundtrip() {
+    let input: [f32; 1024] = core::array::from_fn(|i| (i as f32 * 0.31 + 0.7).sin() * 10.0);
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 1024];
+    idct_32x32_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-2, "dct_32x32_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_32x16_lj_roundtrip() {
+    let input: [f32; 512] = core::array::from_fn(|i| (i as f32 * 0.43 + 1.1).sin() * 10.0);
+    let mut coeffs = [0.0f32; 512];
+    dct_32x16_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 512];
+    idct_32x16_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-2, "dct_32x16_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_16x32_lj_roundtrip() {
+    let input: [f32; 512] = core::array::from_fn(|i| (i as f32 * 0.43 + 1.1).cos() * 10.0);
+    let mut coeffs = [0.0f32; 512];
+    dct_16x32_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 512];
+    idct_16x32_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-2, "dct_16x32_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_64x64_lj_roundtrip() {
+    let input: Vec<f32> = (0..4096)
+        .map(|i| (i as f32 * 0.17 + 0.9).sin() * 5.0)
+        .collect();
+    let mut coeffs = [0.0f32; 4096];
+    dct_64x64_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 4096];
+    idct_64x64_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-1, "dct_64x64_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_64x32_lj_roundtrip() {
+    let input: Vec<f32> = (0..2048)
+        .map(|i| (i as f32 * 0.23 + 0.4).sin() * 8.0)
+        .collect();
+    let mut coeffs = [0.0f32; 2048];
+    dct_64x32_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 2048];
+    idct_64x32_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-1, "dct_64x32_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_32x64_lj_roundtrip() {
+    let input: Vec<f32> = (0..2048)
+        .map(|i| (i as f32 * 0.23 + 0.4).cos() * 8.0)
+        .collect();
+    let mut coeffs = [0.0f32; 2048];
+    dct_32x64_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 2048];
+    idct_32x64_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(max_err < 1e-1, "dct_32x64_lj roundtrip max error {max_err}");
+}
+
+#[test]
+fn test_dct_4x8_full_lj_roundtrip() {
+    let input: [f32; 64] = core::array::from_fn(|i| (i as f32 * 0.9 + 0.2).sin() * 25.0);
+    let mut coeffs = [0.0f32; 64];
+    dct_4x8_full_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 64];
+    idct_4x8_full_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_err < 1e-3,
+        "dct_4x8_full_lj roundtrip max error {max_err}"
+    );
+}
+
+#[test]
+fn test_dct_8x4_full_lj_roundtrip() {
+    let input: [f32; 64] = core::array::from_fn(|i| (i as f32 * 0.9 + 0.2).cos() * 25.0);
+    let mut coeffs = [0.0f32; 64];
+    dct_8x4_full_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 64];
+    idct_8x4_full_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_err < 1e-3,
+        "dct_8x4_full_lj roundtrip max error {max_err}"
+    );
+}
+
+#[test]
+fn test_dct_4x4_full_lj_roundtrip() {
+    let input: [f32; 64] = core::array::from_fn(|i| (i as f32 * 0.5 + 1.0).sin() * 40.0);
+    let mut coeffs = [0.0f32; 64];
+    dct_4x4_full_lj(&input, &mut coeffs);
+    let mut output = [0.0f32; 64];
+    idct_4x4_full_lj(&coeffs, &mut output);
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_err < 1e-3,
+        "dct_4x4_full_lj roundtrip max error {max_err}"
     );
 }

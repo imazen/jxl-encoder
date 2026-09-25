@@ -1,0 +1,19 @@
+purpose=early byte-regression rejection screen; not a timing or default-calibration study
+baseline_commit=3ad5d9bb04d33f9bf9fd35c8741814c0d0d64a3b
+candidate_archive=abandoned/issue110-bucket-default
+reference_design=https://github.com/libjxl/libjxl/commit/e8ff09762481785938d8e4e01333ed3917571161
+candidate_capacities=1,3,7,15,31 (separate builds; archived dispatcher selects 3)
+source_sampling=4 named real sources, center crop 256, lossless effort 8, u8/widened-u16/derived-f32
+repeats=1; block-ordered; no wall-time verdict
+build=nice -n 19 cargo build --locked -p jxl-encoder --release --example lz77_hash_ab -j 4
+encode=nice -n 19 <binary> <input-dir> <out.tsv> --images 4 --size 256 --efforts 8 --lossy 0
+runtime=TMPDIR=$HOME/tmp CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4; default Cargo features
+reference_tools=.ci-libjxl/tools/cjxl,.ci-libjxl/tools/djxl; v0.12.0 a7a9c78
+artifact_root=/Users/lilith/tmp/jxl-backlog/lz77-bucket-screen
+float_validation=bit-exact source samples in jxl-rs and djxl PFM (endian and row order honored)
+host=macOS-27.0-arm64-arm-64bit-Mach-O
+baseline_binary_sha256=9aff555bf2ce0ee855247757cc2dd8c349030c03519411bd4689ac7fd027fe5b
+shape_validation=same four sources at 64x64 and 259x259; chain versus bucket3; all 16 float outputs exact in both decoders
+shape_command=just lz77-bucket-shape-check /Users/lilith/tmp/jxl-backlog/lz77-bucket-screen /Users/lilith/tmp/jxl-backlog/lz77-hash-chain-baseline
+candidate_locks=74/75 pass; lossless_mg_rgb_512x512_tiled_e8 grows 72849 to 73177; no relock
+candidate_commit=deac9c61e897 (archive; not on libjxl-exact)

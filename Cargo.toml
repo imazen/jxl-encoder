@@ -82,12 +82,9 @@ jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "083
 # every nightly-CI run 2026-07-08..13.
 # Required for the `jpeg-reencoding` feature to build.
 zenjpeg = { path = "../zenjpeg/zenjpeg" }
-# zenjxl-decoder (our pure-Rust JXL decoder) is a DEV-dependency used only by
-# the JBRD round-trip conformance gate (`tests/jbrd_roundtrip_conformance.rs`):
-# transcode a JPEG -> JXL with jxl-encoder, reconstruct the original JPEG bytes
-# with zenjxl-decoder, and assert byte-exact. Path-patched to the local sibling
-# so the gate exercises the in-tree decoder, not a published snapshot. Not a
-# normal dependency — published jxl-encoder does not depend on it.
+# Current 0.4 decoder source. The JBRD oracle explicitly uses this sibling
+# through the zensim-decoder dev alias; 0.3 compatibility requirements below
+# still resolve the published decoder because their version range excludes 0.4.
 zenjxl-decoder = { path = "../zenjxl-decoder/zenjxl-decoder" }
 # Pin the approved pre-allocation accounting API while 0.9.4 is unreleased.
 # A git revision also prevents unrelated local sibling WIP changing the build.

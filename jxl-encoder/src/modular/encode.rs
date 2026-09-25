@@ -2140,10 +2140,8 @@ const TREE_SELF_REPAIR_ALIASING_RATIO: f64 = 1.05;
 /// `JXL_TREE_SELF_REPAIR=1` forces it ON, `=0` forces it OFF (paired-bench
 /// A/B), anything else / unset → `None` (keep the profile default). Mirrors the
 /// `parse_bool_zero_or_one` shape used by the lossy gate-registry env hooks.
-/// Read here directly rather than through the gate registry because the
-/// self-repair is a lossless-only feature and the lossless `EffortProfile` is
-/// strategy-invariant — it never flows through `ResolvedImprovements` /
-/// `apply_env_var_fallbacks`.
+/// The strategy permission is checked before this legacy override so a
+/// disabled registry gate cannot be re-enabled by the environment.
 #[cfg(feature = "std")]
 fn tree_self_repair_env_override() -> Option<bool> {
     use std::sync::OnceLock;
@@ -2171,10 +2169,12 @@ fn tree_self_repair_env_override() -> Option<bool> {
 /// paths use identical thresholds.
 pub(crate) fn tree_self_repair_should_try(
     profile_enabled: bool,
+    strategy_allowed: bool,
     stride: usize,
     tree_a_nodes: usize,
 ) -> bool {
-    tree_self_repair_env_override().unwrap_or(profile_enabled)
+    strategy_allowed
+        && tree_self_repair_env_override().unwrap_or(profile_enabled)
         && stride >= TREE_SELF_REPAIR_MIN_STRIDE
         && tree_a_nodes >= TREE_SELF_REPAIR_MIN_NODES
 }
@@ -2493,7 +2493,11 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     // Step 0: WP parameters.
     // For lossy modular with Zero predictor, WP is unused but we still need
     // valid params for the gather phase (which computes WP for all predictors).
-    let wp_params = if !is_lossy && profile.wp_num_param_sets > 0 {
+    let wp_params = if let Some(mode) = profile.forced_wp_mode
+        && !is_lossy
+    {
+        super::predictor::WeightedPredictorParams::for_mode(mode)
+    } else if !is_lossy && profile.wp_num_param_sets > 0 {
         super::predictor::find_best_wp_params(&work_image.channels, profile.wp_num_param_sets)
     } else {
         super::predictor::WeightedPredictorParams::default()
@@ -2993,7 +2997,9 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     // Step 2b: Find best WP parameters (effort-dependent search)
     // For squeeze, WP is only used as a property (property 15) for tree splitting,
     // not as a predictor (libjxl forces Predictor::Zero for squeeze residuals).
-    let wp_params = if profile.wp_num_param_sets > 0 {
+    let wp_params = if let Some(mode) = profile.forced_wp_mode {
+        super::predictor::WeightedPredictorParams::for_mode(mode)
+    } else if profile.wp_num_param_sets > 0 {
         super::predictor::find_best_wp_params(&transformed.channels, profile.wp_num_param_sets)
     } else {
         super::predictor::WeightedPredictorParams::default()

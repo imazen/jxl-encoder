@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, libjxl-exact, "feat/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -56,6 +56,40 @@ jobs:
 
       - name: Run tests
         run: cargo test --locked --workspace --release
+
+      - name: Check minimal JPEG transcode feature combination
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo check --locked -p jxl-encoder --no-default-features --features std,jpeg-reencoding
+
+      - name: Test JPEG reconstruction contract
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance
+
+      - name: Provision legacy JPEG reconstruction fixtures
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get install -y libjpeg-turbo-progs
+          mkdir -p "$HOME/tmp/jpeg-legacy"
+          export JXL_ENCODER_OUTPUT_DIR="$HOME/tmp/jpeg-legacy/encoder"
+          cargo run --locked -p jxl-encoder --features jpeg-reencoding --example jpeg_fixture_setup -- "$HOME/tmp/jpeg-legacy/corpus-root"
+          echo "JXL_ENCODER_OUTPUT_DIR=$JXL_ENCODER_OUTPUT_DIR" >> "$GITHUB_ENV"
+          echo "CODEC_CORPUS_DIR=$(cat "$HOME/tmp/jpeg-legacy/corpus-root")" >> "$GITHUB_ENV"
+
+      - name: JPEG reconstruction, orientation, subsampling and restart markers
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_reencoding:: -- --test-threads=1
+
+      - name: JPEG gain-map metadata, pixels and reconstruction
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_gainmap::
+
+      - name: JPEG CfL reference pixels at color tile boundaries
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_cfl_reference::
 
       # Belt-and-suspenders: ensure the no_std + alloc path keeps
       # compiling. `jxl-encoder-simd` is `#![no_std]` unconditionally
@@ -277,6 +311,8 @@ jobs:
           prefix-key: v1-rust
       - name: Test (__expert __internals)
         run: cargo test --locked -p jxl-encoder --features "__expert __internals" --release --lib --test it
+      - name: Test lossless oracle artifact roundtrips
+        run: cargo test --locked -p jxl-encoder --features "__expert,parallel,learned-admission" --release --example lossless_pareto_calibrate
 
   clippy:
     name: Clippy (${{ matrix.name }})

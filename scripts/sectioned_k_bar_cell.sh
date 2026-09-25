@@ -14,47 +14,120 @@
 # process-wall ratio flatters us. Both are in the output.
 #
 # Repeats matter: t=8 cells vary run to run with worker scheduling (measured
-# up to 15 % on this cell), t=1 cells are stable to ~2 %. MIN over repeats is
-# reported alongside the median.
+# up to 15 % on this cell), t=1 cells are stable to ~2 %. Every repetition
+# is retained; calculate summary statistics from the TSV.
 #
-# Usage: sectioned_k_bar_cell.sh <out.tsv> <bar_crop.png> [reps]
-set -uo pipefail
+# Set SECTIONED_K_BASELINE_PROBE for an interleaved binary A/B of the default
+# policy instead of the within-binary k8/default comparison.
+# Usage: sectioned_k_bar_cell.sh <out.tsv> <bar_crop.png> [reps] [efforts] [threads]
+set -euo pipefail
 OUT="${1:?usage: sectioned_k_bar_cell.sh <out.tsv> <bar.png> [reps]}"
 IMG="${2:?bar crop png}"
 REPS="${3:-5}"
+EFFORTS="${4:-7 9}"
+THREADS="${5:-1 8}"
+[[ "$EFFORTS" =~ ^[1-9][0-9\ ]*$ && "$THREADS" =~ ^[1-9][0-9\ ]*$ ]] || {
+  echo "efforts and threads must be space-separated positive integers" >&2; exit 2;
+}
+for value in $EFFORTS $THREADS; do
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "invalid grid value: $value" >&2; exit 2; }
+done
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PROBE="$ROOT/target/release/examples/sectioned_k_corpus"
-[ -x "$PROBE" ] || { echo "build first: cargo build --release -p jxl-encoder --example sectioned_k_corpus --features 'std parallel profile-phases'" >&2; exit 2; }
-
+PROBE="${SECTIONED_K_PROBE:-$ROOT/target/release/examples/sectioned_k_corpus}"
+BASE_PROBE="${SECTIONED_K_BASELINE_PROBE:-}"
+if [ -n "$BASE_PROBE" ]; then
+  [ -x "$BASE_PROBE" ] || { echo "baseline probe is not executable: $BASE_PROBE" >&2; exit 2; }
+fi
+[ -x "$PROBE" ] || { echo "build sectioned_k_corpus with std,parallel,profile-phases" >&2; exit 2; }
+[[ "$REPS" =~ ^[1-9][0-9]*$ ]] || { echo "reps must be positive" >&2; exit 2; }
+[ ! -e "$OUT" ] || { echo "refusing to overwrite $OUT" >&2; exit 2; }
+mkdir -p "$(dirname "$OUT")"
+# The Rust helper checks the version and refuses packaged v0.11 tools.
+CJXL=$("$PROBE" reference-tools)
+ARTIFACT_DIR="${ARTIFACT_DIR:-${OUT%.tsv}.artifacts}"
+export ARTIFACT_DIR
+mkdir -p "$ARTIFACT_DIR"
+LOG_DIR="${OUT%.tsv}.logs"
+mkdir -p "$LOG_DIR"
+"$CJXL" --version > "$LOG_DIR/cjxl-version.log" 2>&1
 {
-  printf '# sectioned_k_bar_cell.sh  commit=%s  host=%s  date=%s  reps=%s\n' \
-    "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
-    "$(hostname)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REPS"
-  printf '# img=%s sha256=%s cjxl=%s\n' "$IMG" \
-    "$(shasum -a 256 "$IMG" | cut -d' ' -f1)" "$(cjxl --version 2>&1 | head -1)"
-  printf 'encoder\teffort\tthreads\tarm\trep\tbytes\twall_ms\n'
-} > "$OUT"
+  printf '# sectioned_k_bar_cell.sh commit=%s host=%s date=%s reps=%s\n' \
+    "$(jj -R "$ROOT" log --no-graph -r @ -T commit_id)" "$(hostname)" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REPS"
+  printf '# img=%s sha256=%s cjxl=%s probe_sha256=%s artifacts=%s\n' "$IMG" \
+    "$(shasum -a 256 "$IMG" | cut -d' ' -f1)" "$CJXL" \
+    "$(shasum -a 256 "$PROBE" | cut -d' ' -f1)" "$ARTIFACT_DIR"
+  if [ -n "$BASE_PROBE" ]; then
+    printf '# baseline_probe=%s sha256=%s\n' "$BASE_PROBE" "$(shasum -a 256 "$BASE_PROBE" | cut -d' ' -f1)"
+  fi
+  printf '# efforts=%s threads=%s\n' "$EFFORTS" "$THREADS"
+  cat "$LOG_DIR/cjxl-version.log"
+} > "${OUT}.meta"
+printf 'encoder\teffort\tthreads\tarm\trep\tbytes\twall_ms\tencoded_sha256\n' > "$OUT"
 
-for E in 7 9; do
-  for T in 1 8; do
-    # cjxl: --num_threads=0 is single-threaded in v0.12
-    CT=$T; [ "$T" = "1" ] && CT=0
-    for r in $(seq 1 "$REPS"); do
-      S=$( { /usr/bin/time -p nice -n 19 cjxl -d 0 -e "$E" --num_threads="$CT" \
-             "$IMG" "$HOME/tmp/t3gate/_bar.jxl" ; } 2>&1 | awk '/^real/{print $2}' )
-      B=$(stat -f%z "$HOME/tmp/t3gate/_bar.jxl" 2>/dev/null || echo 0)
-      printf 'cjxl\t%s\t%s\tprocess\t%s\t%s\t%s\n' "$E" "$T" "$r" "$B" \
-        "$(awk -v s="$S" 'BEGIN{printf "%.1f", s*1000}')" >> "$OUT"
-    done
-    # INTERLEAVED: both arms inside one process per rep, alternating, so a
-    # thermal or scheduler drift over the run biases both arms equally. Five
-    # reps of arm A followed by five of arm B does NOT do that — measured on
-    # this cell at t=8, where the block-ordered form put the two arms on
-    # opposite sides of a drift and inverted the sign of the difference.
-    for r in $(seq 1 "$REPS"); do
-      nice -n 19 "$PROBE" phases "$IMG" "$E" "$T" k8 default 2>/dev/null \
-        | awk -v e="$E" -v t="$T" -v r="$r" \
-            '/^== /{gsub(",","",$3); a=$2; sub(":","",a); printf "ours\t%s\t%s\t%s\t%s\t%s\t%s\n", e,t,a,r,$3,$5}' >> "$OUT"
+reference_cell() {
+  local cell="e${E}-t${T}-r${r}"
+  local output="$ARTIFACT_DIR/cjxl-${cell}.jxl"
+  local ct="$T"
+  [ "$T" != 1 ] || ct=0
+  # Unique output names plus set -e prevent a failed encode from reusing bytes.
+  [ ! -e "$output" ] || { echo "artifact already exists: $output" >&2; exit 2; }
+  /usr/bin/time -p nice -n 19 "$CJXL" -d 0 -e "$E" --num_threads="$ct" \
+    "$IMG" "$output" > "$LOG_DIR/cjxl-${cell}.log" 2>&1
+  local seconds bytes sha
+  seconds=$(awk '/^real / {s=$2; n++} END {if(n != 1) exit 1; print s}' "$LOG_DIR/cjxl-${cell}.log")
+  bytes=$(wc -c < "$output" | tr -d ' ')
+  [ "$bytes" -gt 0 ]
+  sha=$(shasum -a 256 "$output" | cut -d' ' -f1)
+  cp "$output" "$ARTIFACT_DIR/$sha.jxl"
+  printf 'cjxl\t%s\t%s\tprocess\t%s\t%s\t%s\t%s\n' "$E" "$T" "$r" "$bytes" \
+    "$(awk -v s="$seconds" 'BEGIN{printf "%.1f", s*1000}')" "$sha" >> "$OUT"
+}
+
+probe_cell() {
+  local binary="$1" encoder="$2"
+  shift 2
+  local arms=("$@")
+  local log="$LOG_DIR/${encoder}-e${E}-t${T}-r${r}.log"
+  nice -n 19 "$binary" phases "$IMG" "$E" "$T" "${arms[@]}" > "$log" 2>&1
+  awk -v enc="$encoder" -v expected="${arms[*]}" -v e="$E" -v t="$T" -v r="$r" '
+    /^== / {a=$2; sub(":$", "", a); bytes[a]=$3; wall[a]=$5}
+    /^artifact / {
+      a=$2
+      if (!(a in bytes) || bytes[a] <= 0 || length($3) != 64) exit 1
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", enc,e,t,a,r,bytes[a],wall[a],$3
+      seen[a]++
+    }
+    END {
+      n=split(expected, arms, " ")
+      for(i=1;i<=n;i++) if(seen[arms[i]] != 1) exit 1
+    }
+  ' "$log" >> "$OUT"
+}
+
+ours_cell() {
+  if [ -n "$BASE_PROBE" ]; then
+    if (( r % 2 == 1 )); then
+      probe_cell "$BASE_PROBE" baseline default
+      probe_cell "$PROBE" ours default
+    else
+      probe_cell "$PROBE" ours default
+      probe_cell "$BASE_PROBE" baseline default
+    fi
+  else
+    local arms=(k8 default)
+    if (( r % 2 == 0 )); then arms=(default k8); fi
+    probe_cell "$PROBE" ours "${arms[@]}"
+  fi
+}
+
+for E in $EFFORTS; do
+  for T in $THREADS; do
+    for ((r=1; r<=REPS; r++)); do
+      # Alternate the reference/process order and the in-process arm order.
+      if (( r % 2 == 1 )); then reference_cell; ours_cell
+      else ours_cell; reference_cell; fi
+      echo "completed e$E t$T repeat $r/$REPS" | tee -a "$LOG_DIR/progress.log"
     done
   done
 done

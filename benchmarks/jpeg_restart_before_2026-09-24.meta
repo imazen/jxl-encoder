@@ -1,0 +1,10 @@
+Encoder commit: 1a40b8f39e87cd8fa8326818d6946fd72cd7748c
+Decoder: published zenjxl-decoder 0.3.10 (Cargo.lock registry dependency; the 0.3.8 requirement does not select the sibling 0.4.0 patch)
+Host: mac, macOS-27.0-arm64-arm-64bit-Mach-O
+Command: just jpeg-restart-corpus-check before-decoder "$HOME/tmp/jxl-backlog/jpeg120-corpus/imazen-26"
+Reference reconstruction: not enabled in this before run (added to recipe afterward).
+Sources: jxl-encoder/tests/fixtures/jpeg_restart_corpus.tsv (all 21 SHA256 verified)
+Artifacts: /Users/lilith/tmp/jxl-backlog/jpeg120-before-decoder-artifacts/
+Log: /Users/lilith/tmp/jxl-backlog/jpeg120-corpus-before-decoder.log
+Result: 21 camera failures, each exactly two bytes short; existing 53 fixtures retain 47 exact and six clean refusals.
+No remote artifact mirror was created.

@@ -453,6 +453,7 @@ pub fn compute_block_ctx_map(
     xsize_blocks: usize,
     ysize_blocks: usize,
     block_ctx_map_15_cluster: bool,
+    bcm_qf_zero_based: bool,
 ) -> BlockCtxMap {
     let tot = xsize_blocks * ysize_blocks;
 
@@ -498,8 +499,14 @@ pub fn compute_block_ctx_map(
 
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
-            let qf = quant_field[by * xsize_blocks + bx] as usize;
-            // libjxl uses qf_row[x] - 1 but our quant_field is already 0-based raw_quant
+            // W45-RECON part 9: libjxl bins `qf = qf_row[x] - 1` (the raw
+            // field is 1-based). `bcm_qf_zero_based` reproduces that;
+            // the historical shipped path bins the raw field directly.
+            let qf = if bcm_qf_zero_based {
+                (quant_field[by * xsize_blocks + bx] as usize).saturating_sub(1)
+            } else {
+                quant_field[by * xsize_blocks + bx] as usize
+            };
             let strategy_code = ac_strategy.strategy_code(bx, by);
             let ord = STRATEGY_TO_BUCKET[strategy_code as usize] as usize;
             qf_counts[qf] += 1;
@@ -549,6 +556,15 @@ pub fn compute_block_ctx_map(
         for ord in 0..NUM_ORDER_BUCKETS {
             counts[ord * num_qf_segs + qft_pos] += qf_ord_counts[ord][j as usize];
         }
+    }
+
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+    if std::env::var_os("JXL_BCM_DUMP").is_some() {
+        eprint!("precounts:");
+        for &v in &counts {
+            eprint!(" {}", v);
+        }
+        eprintln!();
     }
 
     // Clustering: repeatedly merge the lowest-count pair.
@@ -606,6 +622,22 @@ pub fn compute_block_ctx_map(
     }
 
     let num_ctxs = *ctx_map.iter().max().unwrap_or(&0) as usize + 1;
+
+    // W45-RECON part 9: env-gated dump of the computed block ctx map
+    // (qf_thresholds + ctx_map + num_ctxs) for parity diffing vs the
+    // instrumented cjxl `BCM` dump in `FindBestBlockEntropyModel`.
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+    if std::env::var_os("JXL_BCM_DUMP").is_some() {
+        eprint!("BCM tot={} numctxs={} qft=", tot, num_ctxs);
+        for &t in &qf_thresholds {
+            eprint!("{} ", t);
+        }
+        eprint!("\nctxmap:");
+        for &v in &ctx_map {
+            eprint!(" {}", v);
+        }
+        eprintln!();
+    }
 
     BlockCtxMap {
         dc_thresholds: [vec![], vec![], vec![]],
@@ -1061,6 +1093,7 @@ mod tests {
             xsize_blocks,
             ysize_blocks,
             /*block_ctx_map_15_cluster=*/ false,
+            /*bcm_qf_zero_based=*/ false,
         );
         assert_eq!(zenjxl.num_ctxs, NUM_BLOCK_CTXS);
 
@@ -1071,7 +1104,44 @@ mod tests {
             xsize_blocks,
             ysize_blocks,
             /*block_ctx_map_15_cluster=*/ true,
+            /*bcm_qf_zero_based=*/ true,
         );
         assert_eq!(libjxl.num_ctxs, NUM_BLOCK_CTXS_LIBJXL_DEFAULT);
+    }
+
+    /// W45-RECON part 9: `bcm_qf_zero_based` bins the QF histogram on
+    /// `raw_quant - 1` exactly like libjxl `FindBestBlockEntropyModel`
+    /// (`qf_row[x] - 1`). With a uniform field the median-cut threshold
+    /// lands on that value's bin: 0-based bins emit `field - 1`, the
+    /// historical path emits `field`.
+    #[test]
+    fn test_compute_block_ctx_map_qf_zero_based_bins() {
+        // 128×64 blocks = 8192 ≥ 1024·d (ctx model fires) and ≥
+        // 8192·d (qf split fires → num_qf_segments = 2).
+        let xsize_blocks = 128;
+        let ysize_blocks = 64;
+        let quant_field = vec![7u8; xsize_blocks * ysize_blocks];
+        let ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+
+        let legacy = compute_block_ctx_map(
+            &quant_field,
+            &ac_strategy,
+            1.0,
+            xsize_blocks,
+            ysize_blocks,
+            true,
+            false,
+        );
+        let strict = compute_block_ctx_map(
+            &quant_field,
+            &ac_strategy,
+            1.0,
+            xsize_blocks,
+            ysize_blocks,
+            true,
+            true,
+        );
+        assert_eq!(legacy.qf_thresholds, vec![7]);
+        assert_eq!(strict.qf_thresholds, vec![6]);
     }
 }

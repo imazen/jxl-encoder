@@ -5,7 +5,7 @@ use jxl_encoder::jpeg::encode_jbrd;
 use jxl_encoder::jpeg::{encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, read_jpeg};
 
 /// Decode JXL data (bare codestream) with jxl-rs, returning (width, height, f32 RGB pixels).
-fn decode_jxl_rs(data: &[u8]) -> (usize, usize, Vec<f32>) {
+pub(super) fn decode_jxl_rs(data: &[u8]) -> (usize, usize, Vec<f32>) {
     use jxl::api::{
         JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
         JxlPixelFormat, ProcessingResult, states,
@@ -535,10 +535,7 @@ fn test_jbrd_roundtrip_small() {
             panic!("JPEG reconstruction not byte-exact!");
         }
     } else {
-        let exit_code = djxl.status.code().unwrap_or(-1);
-        eprintln!("djxl --reconstruct_jpeg failed (exit code {exit_code})");
-        eprintln!("This is expected initially — JBRD serialization may need debugging.");
-        // Don't panic here yet — we'll fix JBRD errors iteratively
+        panic!("djxl --reconstruct_jpeg failed: {stderr}");
     }
 }
 
@@ -604,19 +601,15 @@ fn test_jbrd_roundtrip_landscape() {
             panic!("JPEG reconstruction not byte-exact!");
         }
     } else {
-        let exit_code = djxl.status.code().unwrap_or(-1);
-        eprintln!("djxl --reconstruct_jpeg failed (exit code {exit_code})");
+        panic!("djxl --reconstruct_jpeg failed: {stderr}");
     }
 }
 
 /// Test JBRD roundtrip on larger, real-world JPEGs.
-/// Note: JBRD serialization is proven correct via hybrid testing (libjxl CS + our JBRD = byte-exact).
-/// These tests fail due to pre-existing VarDCT codestream issues with certain images.
+/// Verify full jxl-rs rendering and exact djxl JPEG reconstruction.
 #[test]
-#[ignore = "VarDCT codestream issue for roof_test (not JBRD)"]
 fn test_jbrd_roundtrip_large_photos() {
-    // Only 4:4:4 baseline JPEGs with mult-of-8 dims
-    // (our VarDCT encoder doesn't handle chroma subsampling or non-mult-of-8 yet)
+    // This fixture covers a large 4:4:4 photo; the tests below cover subsampling.
     let test_images = [
         &format!(
             "{}/imageflow/test_inputs/roof_test_800x600.jpg",
@@ -635,6 +628,8 @@ fn test_jbrd_roundtrip_large_photos() {
             .unwrap_or_else(|e| panic!("failed to parse {basename}: {e}"));
         let jxl_bytes = encode_jpeg_to_jxl_container(&jpeg)
             .unwrap_or_else(|e| panic!("failed to encode {basename}: {e}"));
+        let (width, height, _) = decode_jxl_rs(&jxl_bytes);
+        assert_eq!((width, height), (jpeg.width as usize, jpeg.height as usize));
 
         eprintln!(
             "{basename}: {}x{} JPEG ({} bytes) -> {} bytes JXL ({:.1}% of original)",
@@ -754,6 +749,9 @@ fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
 
     let jxl_bytes = encode_jpeg_to_jxl_container(&jpeg)
         .unwrap_or_else(|e| panic!("{label}: failed to encode: {e}"));
+
+    let (width, height, _) = decode_jxl_rs(&jxl_bytes);
+    assert_eq!((width, height), (jpeg.width as usize, jpeg.height as usize));
 
     let compression = jxl_bytes.len() as f64 / jpeg_data.len() as f64 * 100.0;
     eprintln!(
@@ -1134,4 +1132,227 @@ fn test_transcode_pixel_cap_configurable_via_with_limits() {
         format!("{err_cs}").contains("transcode pixel cap"),
         "codestream path did not honour the configured cap: {err_cs}"
     );
+}
+
+/// JPEG EXIF remains byte-exact in jbrd, while the JXL header tells readers
+/// how to display the coefficient image. Exercise all eight TIFF orientations.
+#[test]
+fn jpeg_exif_orientation_preserves_display_and_reconstruction() {
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .unwrap()
+        .to_rgb8();
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/jpeg-orientation-validation");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (w, h) in [(64, 32), (259, 133)] {
+        let crop = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode_image(&image::DynamicImage::ImageRgb8(crop))
+            .unwrap();
+        let base = jxl_encoder::LosslessConfig::new()
+            .encode_jpeg_transcode(&jpeg)
+            .unwrap();
+        let (bw, bh, base_pixels) = decode_jxl_rs(&base);
+        assert_eq!((bw, bh), (w as usize, h as usize));
+        let decode_reference = |bytes: &[u8]| {
+            let input = dir.join(format!("{w}x{h}.jxl"));
+            let output = dir.join(format!("{w}x{h}.png"));
+            std::fs::write(&input, bytes).unwrap();
+            let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                .arg(input)
+                .arg(&output)
+                .arg("--num_threads=1")
+                // Eight-bit djxl output dithers at display coordinates. Sixteen-bit
+                // output permits exact pixel-permutation checks without dithering.
+                .arg("--bits_per_sample=16")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            image::open(output).unwrap().to_rgb16()
+        };
+        let base_reference = decode_reference(&base);
+        for big_endian in [false, true] {
+            for orientation in 1u16..=8 {
+                let mut tiff = if big_endian {
+                    b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01".to_vec()
+                } else {
+                    b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0".to_vec()
+                };
+                tiff.extend(if big_endian {
+                    orientation.to_be_bytes()
+                } else {
+                    orientation.to_le_bytes()
+                });
+                tiff.extend([0; 6]); // inline SHORT padding + next IFD offset
+                let mut original = jpeg[..2].to_vec();
+                original.extend([0xff, 0xe1]);
+                original.extend(((tiff.len() + 8) as u16).to_be_bytes());
+                original.extend(b"Exif\0\0");
+                original.extend(tiff);
+                original.extend_from_slice(&jpeg[2..]);
+                let encoded = jxl_encoder::LosslessConfig::new()
+                    .encode_jpeg_transcode(&original)
+                    .unwrap();
+                let rebuilt = zensim_decoder::reconstruct_jpeg(&encoded).unwrap().unwrap();
+                assert_eq!(
+                    rebuilt, original,
+                    "orientation {orientation}: original JPEG bytes"
+                );
+                let (dw, dh, actual) = decode_jxl_rs(&encoded);
+                let (ew, eh) = if orientation >= 5 { (bh, bw) } else { (bw, bh) };
+                assert_eq!((dw, dh), (ew, eh), "orientation {orientation}");
+                let reference = decode_reference(&encoded);
+                assert_eq!(reference.dimensions(), (ew as u32, eh as u32));
+                for y in 0..bh {
+                    for x in 0..bw {
+                        let (ox, oy) = match orientation {
+                            1 => (x, y),
+                            2 => (bw - 1 - x, y),
+                            3 => (bw - 1 - x, bh - 1 - y),
+                            4 => (x, bh - 1 - y),
+                            5 => (y, x),
+                            6 => (bh - 1 - y, x),
+                            7 => (bh - 1 - y, bw - 1 - x),
+                            8 => (y, bw - 1 - x),
+                            _ => unreachable!(),
+                        };
+                        for c in 0..3 {
+                            assert_eq!(
+                                actual[(oy * ew + ox) * 3 + c].to_bits(),
+                                base_pixels[(y * bw + x) * 3 + c].to_bits(),
+                                "jxl-rs orientation {orientation}, ({x}, {y}, {c})"
+                            );
+                        }
+                        assert_eq!(
+                            reference.get_pixel(ox as u32, oy as u32),
+                            base_reference.get_pixel(x as u32, y as u32),
+                            "djxl orientation {orientation}, ({x}, {y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Standalone restart markers after a completed scan are part of the original
+/// JPEG byte stream, including when the last interval contains exactly its MCU
+/// quota. Interior restart markers must remain in the entropy scan.
+#[test]
+fn jpeg_terminal_restart_markers_roundtrip() {
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .unwrap()
+        .to_rgb8();
+    let mut cases = Vec::new();
+    for (w, h) in [(64, 32), (259, 133)] {
+        let crop = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode_image(&image::DynamicImage::ImageRgb8(crop))
+            .unwrap();
+        let parsed = read_jpeg(&jpeg, None, None).unwrap();
+        let max_h = parsed
+            .components
+            .iter()
+            .map(|c| c.h_samp_factor)
+            .max()
+            .unwrap();
+        let max_v = parsed
+            .components
+            .iter()
+            .map(|c| c.v_samp_factor)
+            .max()
+            .unwrap();
+        let mcus = w.div_ceil(8 * max_h) * h.div_ceil(8 * max_v);
+        let interval = u16::try_from(mcus).unwrap();
+        // One complete restart interval, with no interior restart marker.
+        let mut with_dri = jpeg[..2].to_vec();
+        with_dri.extend([0xff, 0xdd, 0, 4]);
+        with_dri.extend(interval.to_be_bytes());
+        with_dri.extend_from_slice(&jpeg[2..]);
+        cases.push((format!("real-{w}x{h}"), with_dri));
+    }
+    // These committed fixtures also have ordinary interior restart markers.
+    cases.push((
+        "baseline-interior".into(),
+        include_bytes!("../fixtures/jbrd/base_a_rstblk_420.jpg").to_vec(),
+    ));
+    cases.push((
+        "progressive-interior".into(),
+        include_bytes!("../fixtures/jbrd/prog_a_rst_444.jpg").to_vec(),
+    ));
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/jpeg-restart-validation");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (label, jpeg) in cases {
+        assert!(jpeg.ends_with(&[0xff, 0xd9]));
+        let base = jxl_encoder::LosslessConfig::new()
+            .encode_jpeg_transcode(&jpeg)
+            .unwrap();
+        let base_pixels = decode_jxl_rs(&base);
+        for marker in 0xd0..=0xd7 {
+            let mut original = jpeg[..jpeg.len() - 2].to_vec();
+            original.extend([0xff, marker, 0xff, 0xd9]);
+            let parsed = read_jpeg(&original, None, None).unwrap();
+            assert!(
+                parsed.marker_order.ends_with(&[marker, 0xd9]),
+                "{label}: marker_order"
+            );
+            let encoded = jxl_encoder::LosslessConfig::new()
+                .encode_jpeg_transcode(&original)
+                .unwrap();
+            assert_eq!(
+                decode_jxl_rs(&encoded),
+                base_pixels,
+                "{label}: decoded pixels"
+            );
+            assert_eq!(
+                zensim_decoder::reconstruct_jpeg(&encoded).unwrap().unwrap(),
+                original,
+                "{label}: Rust JPEG reconstruction"
+            );
+            let input = dir.join(format!("{label}-{marker:x}.jxl"));
+            std::fs::write(&input, &encoded).unwrap();
+            let reconstructed = dir.join(format!("{label}-{marker:x}.jpg"));
+            let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                .arg(&input)
+                .arg(&reconstructed)
+                .arg("--reconstruct_jpeg")
+                .arg("--num_threads=1")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                std::fs::read(reconstructed).unwrap(),
+                original,
+                "{label}: djxl JPEG reconstruction"
+            );
+            let rendered = dir.join(format!("{label}-{marker:x}.png"));
+            let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                .arg(&input)
+                .arg(&rendered)
+                .arg("--num_threads=1")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let pixels = image::open(rendered).unwrap();
+            assert_eq!(
+                (pixels.width() as usize, pixels.height() as usize),
+                (base_pixels.0, base_pixels.1)
+            );
+        }
+    }
 }

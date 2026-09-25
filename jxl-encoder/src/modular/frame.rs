@@ -2369,7 +2369,9 @@ impl FrameEncoder {
         let stride = compute_gather_stride_from_profile(total_pixels, &self.options.profile);
 
         // Find best WP parameters (effort-dependent search)
-        let wp_params = if self.options.profile.wp_num_param_sets > 0 {
+        let wp_params = if let Some(mode) = self.options.profile.forced_wp_mode {
+            super::predictor::WeightedPredictorParams::for_mode(mode)
+        } else if self.options.profile.wp_num_param_sets > 0 {
             super::predictor::find_best_wp_params(
                 &squeezed.channels,
                 self.options.profile.wp_num_param_sets,

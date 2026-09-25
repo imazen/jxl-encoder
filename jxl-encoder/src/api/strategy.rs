@@ -424,7 +424,10 @@ pub enum SinglePassEntropyDispatch {
 /// ship today. Equivalent to leaving every `with_*_hint` setter at its
 /// current default value.
 ///
-/// Set via `LossyConfig::with_strategy` (added in Chunk B). Individual
+/// Set via [`crate::LossyConfig::with_strategy`] or
+/// [`crate::LosslessConfig::with_strategy`]. Lossless currently gates tree
+/// self-repair and the large-image bucket reduction; full lossless byte parity
+/// with libjxl v0.12 is not established. Individual
 /// `LossyConfig::with_*_hint` setters called AFTER `with_strategy`
 /// override the matching field on the resolved
 /// [`EncoderImprovementsCustom`]; this mirrors the
@@ -459,7 +462,7 @@ pub enum SinglePassEntropyDispatch {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum EncoderStrategy {
     /// **Strict libjxl-parity mode — all-divergence bundle.** See enum
-    /// doc-comment.
+    /// doc-comment. Lossless coverage is limited to the two policies above.
     Libjxl,
     /// **LeanFaster.** Skips heavy per-image content gates and the
     /// EPF/buttloop corrections. Keeps the at-parity algorithm fixes
@@ -696,8 +699,9 @@ pub enum EffortGate {
     #[default]
     Ours,
     /// Use the libjxl threshold (Section A "libjxl" column). For
-    /// `cfl_two_pass` this is `>= 5`; for `try_dct64` and
-    /// `epf_dynamic_sharpness` this is no effort gate at all.
+    /// `cfl_two_pass` this is `>= 5`; for `epf_dynamic_sharpness` and
+    /// `cfl_pass1` it is `>= 6` / `>= 7` respectively; for `try_dct64`
+    /// there is no effort gate at all.
     Libjxl,
     /// Disable the effort gate entirely (always run / never run
     /// depending on the consuming site's semantics).
@@ -718,7 +722,8 @@ impl EffortGate {
     /// |---|---|---|
     /// | `cfl_two_pass` | `7` (we) | `5` (libjxl `speed_tier <= kHare`) |
     /// | `try_dct64` | `7` (we) | `0` (libjxl has no effort gate; uses `decoding_speed_tier`) |
-    /// | `epf_dynamic_sharpness` | `6` (we) | `0` (libjxl has no effort gate) |
+    /// | `epf_dynamic_sharpness` | `6` (we) | `6` (libjxl `speed_tier <= kWombat`, `enc_heuristics.cc:905`) |
+    /// | `cfl_pass1` | `0` (we run it at every effort) | `7` (libjxl `speed_tier <= kSquirrel`, `enc_heuristics.cc:1170`) |
     ///
     /// Semantics:
     /// - [`Ours`](EffortGate::Ours) → `effort >= ours_min_effort`

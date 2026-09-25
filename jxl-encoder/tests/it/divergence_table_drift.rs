@@ -95,7 +95,24 @@ use std::path::PathBuf;
 /// T4 (2026-08-31) added `dc_adaptive_smoothing` Section D gate → 36.
 /// T4 (2026-08-31) added `x_qm_scale_from_original_distance` Section D gate → 37.
 // #103 changes four preset defaults; no gate was added or removed.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 39;
+/// 2026-09-17 added `cfl_pass1_min_effort` Section A gate → 40.
+/// 2026-09-17 added `dc_encode_libjxl_parity` Section D gate → 41.
+/// 2026-09-17 added `ac_meta_libjxl_tree` Section D gate → 42.
+/// 2026-09-17 added `gaborish_libjxl_parity` Section D gate → 43.
+/// 2026-09-17 added `entropy_codes_libjxl_parity` Section D gate → 44.
+/// 2026-09-17 added `coeff_orders_libjxl_parity` Section D gate → 45
+/// (count was left at 44 — pre-existing drift caught 2026-10-12).
+/// W45-RECON part 6 added `ac_channel_loss_mul_libjxl` Section C gate → 46.
+/// W45-RECON part 7 added `aqba_max_quant_libjxl` Section C gate → 47.
+/// W45-RECON part 8 added `ma_tree_root_splitval_libjxl` Section C gate → 48.
+/// W45-RECON part 9 added `block_ctx_map_qf_zero_based_libjxl` Section C gate → 49.
+/// W45-RECON part 10 added `srgb_eotf_libjxl_parity` Section D gate → 50.
+/// W45-RECON part 13 added `rendering_intent_libjxl_parity` Section D gate → 51.
+/// W45-RECON part 14 added `quant_weights_libjxl` Section C gate → 52.
+/// W45-RECON part 15 added `dct_pass_order_libjxl` + `epf_sharpness_pre_gab_libjxl` Section C gates → 54.
+/// W45-RECON part 21 added `extras_global_stream_libjxl` Section D gate → 55.
+// Lossless strategy: self-repair and large-image bucket reduction → 57.
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 57;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -206,6 +223,14 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
     //   "epf_dynamic_sharpness") — these are mentioned 5+ times each
     //   in the table.
     if out.is_empty() {
+        for gate in [
+            "lossless_tree_self_repair",
+            "lossless_large_tree_bucket_reduction",
+        ] {
+            if row_ref.contains(gate) {
+                out.push(gate.to_string());
+            }
+        }
         // Heuristic anchors. Each one is a substring expected to appear
         // verbatim (case-sensitive) somewhere in the table. Multiple
         // candidates per row_ref are tried — the test passes if ANY of
@@ -225,6 +250,11 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         }
         if row_ref.contains("epf_dynamic_sharpness") {
             out.push("epf_dynamic_sharpness".to_string());
+        }
+        // 2026-09-17: `cfl_pass1_min_effort` Section A gate — no W-code;
+        // the table row carries the identifier verbatim.
+        if row_ref.contains("cfl_pass1") {
+            out.push("cfl_pass1".to_string());
         }
         // W44-AUDIT-9 / SA-G Fix C: the row_ref carries an `AUDIT-N`
         // suffix which the W-code parser doesn't recognise (digits-only
@@ -260,6 +290,89 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
         }
         if row_ref.contains("x_qm_scale") {
             out.push("x_qm_scale".to_string());
+        }
+        // 2026-09-17: `dc_encode_libjxl_parity` Section D gate — no
+        // W-code; the table row carries the bitstream field verbatim.
+        if row_ref.contains("extra_dc_precision") {
+            out.push("extra_dc_precision".to_string());
+        }
+        // 2026-09-17: `ac_meta_libjxl_tree` Section D gate — "W45-SPEC-1"
+        // is not a W-code; the table row carries the libjxl tree-kind
+        // name verbatim.
+        if row_ref.contains("kFalconACMeta") {
+            out.push("kFalconACMeta".to_string());
+        }
+        // 2026-09-17: `gaborish_libjxl_parity` Section D gate —
+        // "W45-SPEC-2" is not a W-code; the table row carries the
+        // libjxl kernel name verbatim.
+        if row_ref.contains("Symmetric5") {
+            out.push("Symmetric5".to_string());
+        }
+        // W45-RECON part 6: `ac_channel_loss_mul_libjxl` Section C gate —
+        // "W45-RECON" is not a W-code (digits-only grammar); the table
+        // row carries the libjxl constant name verbatim.
+        if row_ref.contains("kChannelMul") {
+            out.push("kChannelMul".to_string());
+        }
+        // 2026-09-17: `entropy_codes_libjxl_parity` Section D gate —
+        // "W45-SPEC-3" is not a W-code; the table row carries the
+        // libjxl params name verbatim.
+        if row_ref.contains("ForModular") {
+            out.push("ForModular".to_string());
+        }
+        // W45-RECON part 7: `aqba_max_quant_libjxl` Section C gate —
+        // "W45-RECON" is not a W-code; the table row carries the
+        // libjxl function name verbatim.
+        if row_ref.contains("AdjustQuantBlockAC") {
+            out.push("AdjustQuantBlockAC".to_string());
+        }
+        // W45-RECON part 8: `ma_tree_root_splitval_libjxl` Section C
+        // gate — same convention; the table row carries the libjxl
+        // function name verbatim.
+        if row_ref.contains("MergeTrees") {
+            out.push("MergeTrees".to_string());
+        }
+        // W45-RECON part 9: `block_ctx_map_qf_zero_based_libjxl`
+        // Section C gate — same convention; the table row carries the
+        // libjxl function name verbatim.
+        if row_ref.contains("FindBestBlockEntropyModel") {
+            out.push("FindBestBlockEntropyModel".to_string());
+        }
+        // W45-RECON part 10: `srgb_eotf_libjxl_parity` Section D gate —
+        // same convention; the table row carries the libjxl function
+        // name verbatim.
+        if row_ref.contains("DisplayFromEncoded") {
+            out.push("DisplayFromEncoded".to_string());
+        }
+        // W45-RECON part 13: `rendering_intent_libjxl_parity` Section D
+        // gate — same convention; the table row carries the bitstream
+        // field name verbatim.
+        if row_ref.contains("rendering_intent") {
+            out.push("rendering_intent".to_string());
+        }
+        // W45-RECON part 21: `extras_global_stream_libjxl` Section D
+        // gate — same convention; the table row + part-21 narrative
+        // carry the libjxl stream name verbatim.
+        if row_ref.contains("GlobalData") {
+            out.push("GlobalData".to_string());
+        }
+        // W45-RECON part 14: `quant_weights_libjxl` Section C gate —
+        // same convention; the table row carries the libjxl function
+        // name verbatim.
+        if row_ref.contains("GetQuantWeights") {
+            out.push("GetQuantWeights".to_string());
+        }
+        // W45-RECON part 15: `dct_pass_order_libjxl` Section C gate —
+        // same convention; the table row carries the libjxl function
+        // name verbatim.
+        if row_ref.contains("ComputeScaledDCT") {
+            out.push("ComputeScaledDCT".to_string());
+        }
+        // W45-RECON part 15: `epf_sharpness_pre_gab_libjxl` Section C
+        // gate — same convention; the table row carries the libjxl
+        // buffer name verbatim.
+        if row_ref.contains("orig_opsin") {
+            out.push("orig_opsin".to_string());
         }
     }
     out

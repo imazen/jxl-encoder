@@ -25,11 +25,15 @@ use super::common::{
     ceil_log2_nonzero, uninit_buf,
 };
 use super::dct::{
-    dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
-    dct_32x16, dct_32x32, dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, idct_4x4_full,
-    idct_4x8_full, idct_8x4_full, idct_8x8, idct_8x16, idct_16x8, idct_16x16, idct_16x32,
-    idct_32x16, idct_32x32, idct_32x64, idct_64x32, idct_64x64, identity_transform,
-    inverse_dct2x2_transform, inverse_identity_transform,
+    dct_4x4_full, dct_4x4_full_lj, dct_4x8_full, dct_4x8_full_lj, dct_8x4_full, dct_8x4_full_lj,
+    dct_8x8, dct_8x16, dct_8x16_lj, dct_16x8, dct_16x8_lj, dct_16x16, dct_16x16_lj, dct_16x32,
+    dct_16x32_lj, dct_32x16, dct_32x16_lj, dct_32x32, dct_32x32_lj, dct_32x64, dct_32x64_lj,
+    dct_64x32, dct_64x32_lj, dct_64x64, dct_64x64_lj, dct2x2_transform, idct_4x4_full,
+    idct_4x4_full_lj, idct_4x8_full, idct_4x8_full_lj, idct_8x4_full, idct_8x4_full_lj, idct_8x8,
+    idct_8x16, idct_16x8, idct_16x16, idct_16x16_lj, idct_16x32, idct_16x32_lj, idct_32x16,
+    idct_32x16_lj, idct_32x32, idct_32x32_lj, idct_32x64, idct_32x64_lj, idct_64x32, idct_64x32_lj,
+    idct_64x64, idct_64x64_lj, identity_transform, inverse_dct2x2_transform,
+    inverse_identity_transform,
 };
 use super::quant::{dequant_weights, dequant_weights_full, quant_weights, quant_weights_full};
 use crate::effort::EffortProfile;
@@ -143,6 +147,12 @@ pub(super) struct EntropyEstScratch {
     /// Block position (bx, by) for which `pixels_8x8` is valid.
     /// Set to `(usize::MAX, usize::MAX)` to invalidate.
     pub pixels_8x8_pos: (usize, usize),
+    /// W45-RECON part 15: when `true` (strict
+    /// `EncoderStrategy::Libjxl`), candidate DCT/IDCT evaluation uses
+    /// the `dct/*_lj` libjxl `ComputeScaledDCT` pass-order wrappers.
+    /// Assigned explicitly on every pool acquisition — never rely on
+    /// the `new()` default for pooled instances.
+    pub strict_dct_order: bool,
 }
 
 impl EntropyEstScratch {
@@ -155,6 +165,7 @@ impl EntropyEstScratch {
             entropy_estimate: [0.0; 64],
             pixels_8x8: [[0.0; 64]; 3],
             pixels_8x8_pos: (usize::MAX, usize::MAX),
+            strict_dct_order: false,
         }
     }
 }
@@ -742,11 +753,30 @@ pub(crate) const MASK_CHANNEL_OFFSET: [f32; 3] = [12.0, 0.0, 4.0];
 
 /// Channel multipliers for pixel-domain loss (8th power).
 /// From libjxl enc_ac_strategy.cc:479
-/// Pre-computed: 8.2^8 ≈ 2.088e7, 1.0^8 = 1.0, 1.03^8 ≈ 1.267
+/// Pre-computed: 8.2^8 ≈ 2.044e7, 1.0^8 = 1.0, 1.03^8 ≈ 1.267
+///
+/// W45-RECON part 6: the X entry below is the historical **mis-port**
+/// — `20882706.4655936` corresponds to `8.2219^8`, not `8.2^8`
+/// (= `20441408.586549744`, a +2.16% inflation on the dominant
+/// X-channel loss term → ~+0.25% on `loss_scalar` after the 8th
+/// root). Kept as the [`EntropyMulTable::channel_loss_mul`] default
+/// so Zenjxl / Aggressive / LeanFaster stay byte-identical; the
+/// strict `EncoderStrategy::Libjxl` profile swaps in
+/// [`CHANNEL_MUL_LIBJXL`] via
+/// [`EffortProfile::apply_ac_loss_channel_mul_libjxl`].
 pub(crate) const CHANNEL_MUL: [f64; 3] = [
-    20882706.4655936, // X channel: 8.2^8
+    20882706.4655936, // X channel: historical value (see note above)
     1.0,              // Y channel: 1.0^8
     1.26677008064,    // B channel: 1.03^8
+];
+
+/// libjxl `enc_ac_strategy.cc` `kChannelMul` —
+/// `{pow(8.2, 8.0), 1.0, pow(1.03, 8.0)}`. Used by the strict
+/// `EncoderStrategy::Libjxl` profile only (W45-RECON part 6).
+pub(crate) const CHANNEL_MUL_LIBJXL: [f64; 3] = [
+    20441408.586549744, // X channel: 8.2^8
+    1.0,                // Y channel: 1.0^8
+    1.2667700813876164, // B channel: 1.03^8
 ];
 
 /// Distance scaling exponents from libjxl enc_ac_strategy.cc:1115-1120
@@ -933,6 +963,7 @@ pub(super) fn estimate_entropy_with_mask(
         mask1x1_stride,
         entropy_mul,
         scaled_constants,
+        entropy_mul_table.channel_loss_mul,
         scratch,
     )
 }
@@ -973,6 +1004,7 @@ pub(super) fn estimate_entropy_full(
     mask1x1_stride: usize,
     entropy_mul: f32,
     scaled_constants: (f32, f32, f32),
+    channel_loss_mul: [f64; 3],
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     estimate_entropy_full_impl(
@@ -991,6 +1023,7 @@ pub(super) fn estimate_entropy_full(
         mask1x1_stride,
         entropy_mul,
         scaled_constants,
+        channel_loss_mul,
         scratch,
     )
 }
@@ -1019,6 +1052,7 @@ fn estimate_entropy_full_impl(
     mask1x1_stride: usize,
     entropy_mul: f32,
     scaled_constants: (f32, f32, f32),
+    channel_loss_mul: [f64; 3],
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     let cx = COVERED_X[raw_strategy as usize];
@@ -1109,7 +1143,57 @@ fn estimate_entropy_full_impl(
                 let nbits = ceil_log2_nonzero(num_nzeros + 1) as usize + 1;
                 entropy += k_zeros_mul * (ceil_log2_nonzero(nbits + 17) + nbits as u32) as f32;
 
-                apply_idct_for_strategy(RAW_STRATEGY_DCT8, error_coeffs, pixel_error_buf);
+                // W45-RECON diagnostic: stage-level loss bisection vs libjxl's
+                // JXL_AC_LOSS_DUMP. error_coeffs ↔ libjxl `mem` (matrix*diff),
+                // pixel_error_buf ↔ post-TransformToPixels `block`.
+                #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+                {
+                    use std::io::Write;
+                    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> =
+                        std::sync::OnceLock::new();
+                    let dir =
+                        DIR.get_or_init(|| std::env::var_os("JXL_AC_LOSS_DUMP").map(Into::into));
+                    if let Some(d) = dir {
+                        let nb = 1u64.to_le_bytes();
+                        let mut v = Vec::with_capacity(8 + 256);
+                        v.extend_from_slice(&nb);
+                        for &x in error_coeffs.iter() {
+                            v.extend_from_slice(&x.to_le_bytes());
+                        }
+                        let _ = std::fs::File::create(d.join(alloc::format!(
+                            "st00_x{}_y{}_c{c}.bin",
+                            bx * BLOCK_DIM,
+                            by * BLOCK_DIM
+                        )))
+                        .map(|mut f| f.write_all(&v));
+                    }
+                }
+                apply_idct_for_strategy(
+                    RAW_STRATEGY_DCT8,
+                    error_coeffs,
+                    pixel_error_buf,
+                    scratch.strict_dct_order,
+                );
+                #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+                {
+                    use std::io::Write;
+                    static DIR2: std::sync::OnceLock<Option<std::path::PathBuf>> =
+                        std::sync::OnceLock::new();
+                    let dir =
+                        DIR2.get_or_init(|| std::env::var_os("JXL_AC_LOSS_DUMP").map(Into::into));
+                    if let Some(d) = dir {
+                        let mut v = Vec::with_capacity(256);
+                        for &x in pixel_error_buf.iter() {
+                            v.extend_from_slice(&x.to_le_bytes());
+                        }
+                        let _ = std::fs::File::create(d.join(alloc::format!(
+                            "st00_x{}_y{}_c{c}_pix.bin",
+                            bx * BLOCK_DIM,
+                            by * BLOCK_DIM
+                        )))
+                        .map(|mut f| f.write_all(&v));
+                    }
+                }
                 let mask_offset = MASK_CHANNEL_OFFSET[c];
                 let mut channel_loss = jxl_simd::pixel_domain_loss(
                     pixel_error_buf,
@@ -1120,7 +1204,7 @@ fn estimate_entropy_full_impl(
                     BLOCK_DIM,
                     BLOCK_DIM,
                 );
-                channel_loss *= CHANNEL_MUL[c];
+                channel_loss *= channel_loss_mul[c];
                 total_pixel_loss += channel_loss;
             };
 
@@ -1178,19 +1262,35 @@ fn estimate_entropy_full_impl(
 
     for (c, xyb_c) in xyb.iter().enumerate() {
         let offset = c * size;
+        // W45-RECON part 15: under strict libjxl parity the multi-pass
+        // transforms run the `*_lj` storage-row-first wrappers
+        // (libjxl `ComputeScaledDCT` `DCT1D<ROWS, COLS>` order).
+        let lj = scratch.strict_dct_order;
         match raw_strategy {
             // Single-block strategies: use cached pixels_8x8
             RAW_STRATEGY_DCT8 => {
                 dct_8x8(&scratch.pixels_8x8[c], as_array_mut(block, offset));
             }
             RAW_STRATEGY_DCT4X8 => {
-                dct_4x8_full(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                if lj {
+                    dct_4x8_full_lj(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                } else {
+                    dct_4x8_full(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_DCT8X4 => {
-                dct_8x4_full(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                if lj {
+                    dct_8x4_full_lj(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                } else {
+                    dct_8x4_full(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_DCT4X4 => {
-                dct_4x4_full(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                if lj {
+                    dct_4x4_full_lj(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                } else {
+                    dct_4x4_full(&scratch.pixels_8x8[c], as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_IDENTITY => {
                 identity_transform(&scratch.pixels_8x8[c], as_array_mut(block, offset));
@@ -1210,47 +1310,83 @@ fn estimate_entropy_full_impl(
             RAW_STRATEGY_DCT16X8 => {
                 let mut input = uninit_buf::<128>();
                 extract_block_8x16(xyb_c, stride, bx, by, &mut input);
-                dct_16x8(&input, as_array_mut(block, offset));
+                if lj {
+                    dct_16x8_lj(&input, as_array_mut(block, offset));
+                } else {
+                    dct_16x8(&input, as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_DCT8X16 => {
                 let mut input = uninit_buf::<128>();
                 extract_block_16x8(xyb_c, stride, bx, by, &mut input);
-                dct_8x16(&input, as_array_mut(block, offset));
+                if lj {
+                    dct_8x16_lj(&input, as_array_mut(block, offset));
+                } else {
+                    dct_8x16(&input, as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_DCT16X16 => {
                 let mut input = uninit_buf::<256>();
                 extract_block_16x16(xyb_c, stride, bx, by, &mut input);
-                dct_16x16(&input, as_array_mut(block, offset));
+                if lj {
+                    dct_16x16_lj(&input, as_array_mut(block, offset));
+                } else {
+                    dct_16x16(&input, as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_DCT32X32 => {
                 let mut input = uninit_buf::<1024>();
                 extract_block_32x32(xyb_c, stride, bx, by, &mut input);
-                dct_32x32(&input, as_array_mut(block, offset));
+                if lj {
+                    dct_32x32_lj(&input, as_array_mut(block, offset));
+                } else {
+                    dct_32x32(&input, as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_DCT32X16 => {
                 let mut input = uninit_buf::<512>();
                 extract_block_32x16(xyb_c, stride, bx, by, &mut input);
-                dct_32x16(&input, as_array_mut(block, offset));
+                if lj {
+                    dct_32x16_lj(&input, as_array_mut(block, offset));
+                } else {
+                    dct_32x16(&input, as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_DCT16X32 => {
                 let mut input = uninit_buf::<512>();
                 extract_block_16x32(xyb_c, stride, bx, by, &mut input);
-                dct_16x32(&input, as_array_mut(block, offset));
+                if lj {
+                    dct_16x32_lj(&input, as_array_mut(block, offset));
+                } else {
+                    dct_16x32(&input, as_array_mut(block, offset));
+                }
             }
             RAW_STRATEGY_DCT64X64 => {
                 let mut input = uninit_buf::<4096>();
                 extract_block_64x64(xyb_c, stride, bx, by, &mut input);
-                dct_64x64(&input, &mut block[offset..offset + 4096]);
+                if lj {
+                    dct_64x64_lj(&input, &mut block[offset..offset + 4096]);
+                } else {
+                    dct_64x64(&input, &mut block[offset..offset + 4096]);
+                }
             }
             RAW_STRATEGY_DCT64X32 => {
                 let mut input = uninit_buf::<2048>();
                 extract_block_64x32(xyb_c, stride, bx, by, &mut input);
-                dct_64x32(&input, &mut block[offset..offset + 2048]);
+                if lj {
+                    dct_64x32_lj(&input, &mut block[offset..offset + 2048]);
+                } else {
+                    dct_64x32(&input, &mut block[offset..offset + 2048]);
+                }
             }
             RAW_STRATEGY_DCT32X64 => {
                 let mut input = uninit_buf::<2048>();
                 extract_block_32x64(xyb_c, stride, bx, by, &mut input);
-                dct_32x64(&input, &mut block[offset..offset + 2048]);
+                if lj {
+                    dct_32x64_lj(&input, &mut block[offset..offset + 2048]);
+                } else {
+                    dct_32x64(&input, &mut block[offset..offset + 2048]);
+                }
             }
             _ => unreachable!(),
         }
@@ -1536,7 +1672,12 @@ fn estimate_entropy_full_impl(
 
             // Apply IDCT to error coefficients to get pixel-domain error
             let pixel_error_buf = &mut scratch.pixel_error[..size];
-            apply_idct_for_strategy(raw_strategy, error_coeffs, pixel_error_buf);
+            apply_idct_for_strategy(
+                raw_strategy,
+                error_coeffs,
+                pixel_error_buf,
+                scratch.strict_dct_order,
+            );
             let pixel_error = &*pixel_error_buf;
 
             // Compute 8th power norm with per-pixel masking via SIMD kernel.
@@ -1557,7 +1698,7 @@ fn estimate_entropy_full_impl(
             );
 
             // Apply channel multiplier
-            channel_loss *= CHANNEL_MUL[c];
+            channel_loss *= channel_loss_mul[c];
 
             // W44-59: per-channel pixel loss
             if afv_coeff_target {
@@ -1970,20 +2111,43 @@ fn dump_afv_aggregate(raw_strategy: u8, x: usize, y: usize, c: usize, name: &str
 
 /// Apply inverse DCT to error coefficients based on strategy.
 /// Writes pixel-domain error in row-major layout into `output`.
+///
+/// `strict_dct_order` selects the libjxl `ComputeScaledIDCT` pass-order
+/// (`*_lj`) variants for the shapes whose kernels otherwise run the
+/// vertical-frequency inverse first. `idct_16x8`/`idct_8x16` already run
+/// the horizontal-frequency inverse first (with the DCT16X8 pre-transpose),
+/// so they are used directly in both modes.
 #[inline(always)]
-pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], output: &mut [f32]) {
+pub(super) fn apply_idct_for_strategy(
+    raw_strategy: u8,
+    error_coeffs: &[f32],
+    output: &mut [f32],
+    strict_dct_order: bool,
+) {
     match raw_strategy {
         RAW_STRATEGY_DCT8 => {
             idct_8x8(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
         }
         RAW_STRATEGY_DCT4X8 => {
-            idct_4x8_full(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            if strict_dct_order {
+                idct_4x8_full_lj(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            } else {
+                idct_4x8_full(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            }
         }
         RAW_STRATEGY_DCT8X4 => {
-            idct_8x4_full(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            if strict_dct_order {
+                idct_8x4_full_lj(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            } else {
+                idct_8x4_full(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            }
         }
         RAW_STRATEGY_DCT4X4 => {
-            idct_4x4_full(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            if strict_dct_order {
+                idct_4x4_full_lj(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            } else {
+                idct_4x4_full(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            }
         }
         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
             let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
@@ -2009,25 +2173,53 @@ pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], ou
             idct_8x16(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
         }
         RAW_STRATEGY_DCT16X16 => {
-            idct_16x16(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            if strict_dct_order {
+                idct_16x16_lj(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            } else {
+                idct_16x16(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            }
         }
         RAW_STRATEGY_DCT32X32 => {
-            idct_32x32(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            if strict_dct_order {
+                idct_32x32_lj(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            } else {
+                idct_32x32(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            }
         }
         RAW_STRATEGY_DCT32X16 => {
-            idct_32x16(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            if strict_dct_order {
+                idct_32x16_lj(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            } else {
+                idct_32x16(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            }
         }
         RAW_STRATEGY_DCT16X32 => {
-            idct_16x32(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            if strict_dct_order {
+                idct_16x32_lj(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            } else {
+                idct_16x32(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
+            }
         }
         RAW_STRATEGY_DCT64X64 => {
-            idct_64x64(&error_coeffs[..4096], &mut output[..4096]);
+            if strict_dct_order {
+                idct_64x64_lj(&error_coeffs[..4096], &mut output[..4096]);
+            } else {
+                idct_64x64(&error_coeffs[..4096], &mut output[..4096]);
+            }
         }
         RAW_STRATEGY_DCT64X32 => {
-            idct_64x32(&error_coeffs[..2048], &mut output[..2048]);
+            if strict_dct_order {
+                idct_64x32_lj(&error_coeffs[..2048], &mut output[..2048]);
+            } else {
+                idct_64x32(&error_coeffs[..2048], &mut output[..2048]);
+            }
         }
         RAW_STRATEGY_DCT32X64 => {
-            idct_32x64(&error_coeffs[..2048], &mut output[..2048]);
+            if strict_dct_order {
+                idct_32x64_lj(&error_coeffs[..2048], &mut output[..2048]);
+            } else {
+                idct_32x64(&error_coeffs[..2048], &mut output[..2048]);
+            }
         }
         RAW_STRATEGY_IDENTITY => {
             inverse_identity_transform(as_array_ref(error_coeffs, 0), as_array_mut(output, 0));
@@ -2762,6 +2954,9 @@ pub(crate) fn compute_ac_strategy_for_tiles(
             pool.pop().unwrap_or_else(EntropyEstScratch::new)
         };
         scratch.pixels_8x8_pos = (usize::MAX, usize::MAX);
+        // W45-RECON part 15: explicit per-acquisition assignment —
+        // pooled instances carry the previous encode's value.
+        scratch.strict_dct_order = profile.dct_pass_order_libjxl;
 
         process_tile(
             &xyb,
@@ -3049,6 +3244,7 @@ mod tests {
             0,
             1.0, // entropy_mul = 1.0 for coefficient-domain (caller applies mul8x8)
             COEFF_DOMAIN_CONSTANTS,
+            CHANNEL_MUL,
             &mut scratch,
         );
 
@@ -3069,6 +3265,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8, &EntropyMulTable::reference()), // Normalized entropy_mul for DCT8 = 1.0
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
 
@@ -3141,6 +3338,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8, &EntropyMulTable::reference()),
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
         eprintln!("DCT8 pixel-domain entropy: {}", ent_dct8);
@@ -3163,6 +3361,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8, &EntropyMulTable::reference()),
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
         eprintln!("DCT16x8 pixel-domain entropy: {}", ent_dct16x8);
@@ -3185,6 +3384,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8, &EntropyMulTable::reference()),
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
         eprintln!("DCT8x16 pixel-domain entropy: {}", ent_dct8x16);
@@ -3207,6 +3407,7 @@ mod tests {
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X16, &EntropyMulTable::reference()),
             pixel_constants,
+            CHANNEL_MUL,
             &mut scratch,
         );
         eprintln!("DCT16x16 pixel-domain entropy: {}", ent_dct16x16);

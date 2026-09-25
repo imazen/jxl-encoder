@@ -468,6 +468,129 @@ pub fn gaborish_5x5_impl_scalar(
 }
 
 // ============================================================================
+// libjxl `Symmetric5` parity variant (strict-Libjxl strategy only)
+// ============================================================================
+//
+// Bit-exact port of libjxl `convolve_symmetric5.cc`. The shipping kernel
+// above diverges from the reference in three ways, all reproduced here:
+//
+// 1. **Border semantics** — libjxl wraps out-of-range coordinates with
+//    `Mirror` (`x<0 → -x-1`, `x>=size → 2*size-1-x`, image_ops.h), i.e.
+//    edge-pixel-ONCE reflection: read `-2` → `1`, `size` → `size-1`.
+//    Ours clamps (edge replication): `-2` → `0`. Differing reads are
+//    confined to the 2-pixel border ring.
+// 2. **Accumulation order** — libjxl evaluates each of the five kernel
+//    rows as a horizontal 1×5 weighted sum
+//    `wx2*(in_m2+in_p2) + (wx1*(in_m1+in_p1) + wx0*in_00)`
+//    (convolve_symmetric5.cc:66-69 — explicit `Mul`/`Add`, no FMA), then
+//    combines `sum0 = WS(0) + WS(-2) + WS(-1)`, `sum1 = WS(+2) + WS(+1)`,
+//    `out = sum0 + sum1`. Ours sums each distance class left-to-right
+//    and FMA-chains the classes — different rounding on every pixel.
+// 3. **Row weights** — libjxl's row triples are `(c, r, R)` on row 0,
+//    `(R, L, D)` on rows ±2, `(r, d, L)` on rows ±1 (the `w0/w1/w4/w5/w8`
+//    fields of `WeightsSymmetric5`). Passing our per-distance weights
+//    through this mapping gives identical coverage.
+//
+// The libjxl `Symmetric5Row` driver splits each row into a scalar border
+// (first `Lanes` + trailing pixels) and a vector interior, but both paths
+// compute the same function — the split is purely an implementation
+// detail. A single scalar loop reproduces it exactly.
+
+/// Mirror-wrap a coordinate into `[0, size)` (libjxl `image_ops.h::Mirror`):
+/// the mirror sits *outside* the edge pixel, so `-1 → 0`, `-2 → 1`,
+/// `size → size-1`, `size+1 → size-2`. The kernel radius is 2, so at most
+/// one reflection ever applies.
+#[inline(always)]
+fn mirror_coord(x: isize, size: usize) -> usize {
+    debug_assert!(size != 0);
+    let size = size as isize;
+    let mut x = x;
+    while !(0..size).contains(&x) {
+        x = if x < 0 { -x - 1 } else { 2 * size - 1 - x };
+    }
+    x as usize
+}
+
+/// libjxl `WeightedSumBorder` — one horizontal 1×5 weighted sum at
+/// `(ix, iy)` with weights `[wx2 wx1 wx0 wx1 wx2]` and mirror wrap on
+/// both axes:
+/// `wx2*(in_m2+in_p2) + (wx1*(in_m1+in_p1) + wx0*in_00)`.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn weighted_sum_border(
+    input: &[f32],
+    ix: isize,
+    iy: isize,
+    width: usize,
+    height: usize,
+    wx0: f32,
+    wx1: f32,
+    wx2: f32,
+) -> f32 {
+    let row = mirror_coord(iy, height) * width;
+    let in_m2 = input[row + mirror_coord(ix - 2, width)];
+    let in_p2 = input[row + mirror_coord(ix + 2, width)];
+    let in_m1 = input[row + mirror_coord(ix - 1, width)];
+    let in_p1 = input[row + mirror_coord(ix + 1, width)];
+    let in_00 = input[row + ix as usize];
+    let sum_2 = wx2 * (in_m2 + in_p2);
+    let sum_1 = wx1 * (in_m1 + in_p1);
+    let sum_0 = wx0 * in_00;
+    sum_2 + (sum_1 + sum_0)
+}
+
+/// libjxl-bit-exact 5×5 gaborish inverse on one channel.
+///
+/// `data` is modified in place; `scratch` (≥ `width * height`) holds the
+/// input copy. Same weight semantics as [`gaborish_5x5_channel`] —
+/// `(wc, wr, wd, w_big_r, wl, w_big_d)` — but computed libjxl-style by
+/// the caller (f32 `normalize` / `normalize_mul` chain, see
+/// `vardct/gaborish.rs::compute_weights_libjxl`).
+///
+/// Scalar-only: the strict-Libjxl strategy trades wall-time for
+/// byte-parity here; a SIMD port must preserve the exact accumulation
+/// order above (no FMA fusion).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn gaborish_5x5_channel_libjxl(
+    data: &mut [f32],
+    scratch: &mut [f32],
+    width: usize,
+    height: usize,
+    wc: f32,
+    wr: f32,
+    wd: f32,
+    w_big_r: f32,
+    wl: f32,
+    w_big_d: f32,
+) {
+    let n = width * height;
+    debug_assert!(data.len() >= n);
+    debug_assert!(scratch.len() >= n);
+
+    scratch[..n].copy_from_slice(&data[..n]);
+    let input = &scratch[..n];
+
+    for y in 0..height {
+        let iy = y as isize;
+        for x in 0..width {
+            let ix = x as isize;
+            // Row triples (wx0, wx1, wx2) per libjxl Symmetric5Border:
+            //   row  0 : (c, r, R)   — center, orth-1, orth-2
+            //   rows ±2: (R, L, D)   — orth-2, knight, corner
+            //   rows ±1: (r, d, L)   — orth-1, diagonal, knight
+            let mut sum0 = weighted_sum_border(input, ix, iy, width, height, wc, wr, w_big_r);
+            sum0 += weighted_sum_border(input, ix, iy - 2, width, height, w_big_r, wl, w_big_d);
+            let mut sum1 =
+                weighted_sum_border(input, ix, iy + 2, width, height, w_big_r, wl, w_big_d);
+            sum0 += weighted_sum_border(input, ix, iy - 1, width, height, wr, wd, wl);
+            sum1 += weighted_sum_border(input, ix, iy + 1, width, height, wr, wd, wl);
+            data[y * width + x] = sum0 + sum1;
+        }
+    }
+}
+
+// ============================================================================
 // Backwards-compat suffixed re-exports
 // ============================================================================
 //
@@ -659,6 +782,77 @@ mod tests {
             max_abs = max_abs.max(diff);
         }
         assert!(max_abs < 1e-4, "non-mul-of-8 max_abs = {max_abs}");
+    }
+
+    /// Bit-exact golden for `gaborish_5x5_channel_libjxl` (strict-Libjxl
+    /// parity kernel). Expected values were produced by the verified
+    /// scalar transcription of libjxl `convolve_symmetric5.cc`
+    /// `Symmetric5Border`/`Symmetric5Interior` — mirror borders, the
+    /// `wx2*(m2+p2) + (wx1*(m1+p1) + wx0*c)` row grouping, and the
+    /// `sum0 + sum1` row accumulation order are all load-bearing; any
+    /// "optimization" that changes rounding (FMA fusion, reordered
+    /// accumulation, different border fill) must fail this test.
+    ///
+    /// Weights are the libjxl `mul = 1.0` values from
+    /// `enc_gaborish.cc::GaborishInverse` (f32 chain, 2026-09-17).
+    #[test]
+    fn test_gaborish_5x5_libjxl_golden() {
+        const W: usize = 8;
+        const H: usize = 6;
+        let mut data = vec![0.0f32; W * H];
+        for y in 0..H {
+            for x in 0..W {
+                data[y * W + x] = ((x * 7 + y * 13 + x * y) % 97) as f32 / 97.0 - 0.3;
+            }
+        }
+        // mul=1.0 libjxl weights (enc_gaborish.cc, f32 chain):
+        // normalize = 1/(1+4*(kG0+kG1+kG2+kG4+2*kG3)) ≈ 1.7951821.
+        let (wc, wr, wd, w_big_r, wl, w_big_d) = (
+            1.795_182_1_f32,
+            -0.170_467_18,
+            -0.073_659_42,
+            0.024_611_956,
+            0.011_687_005,
+            -0.002_654_906_4,
+        );
+        let mut scratch = vec![0.0f32; W * H];
+        gaborish_5x5_channel_libjxl(
+            &mut data,
+            &mut scratch,
+            W,
+            H,
+            wc,
+            wr,
+            wd,
+            w_big_r,
+            wl,
+            w_big_d,
+        );
+
+        #[rustfmt::skip]
+        const EXPECTED: [f32; W * H] = [
+            -0.33458868, -0.24873106, -0.18139957, -0.11094986,
+            -0.040500242, 0.02994942, 0.09728098, 0.18313858,
+            -0.1739439, -0.073853396, 0.0055684447, 0.08848265,
+            0.17405173, 0.24527884, 0.30008882, 0.3884922,
+            -0.047396444, 0.064784355, 0.15360822, 0.24904658,
+            0.3184561, 0.4602871, 0.7078911, 0.8963862,
+            0.0849089, 0.21220908, 0.2992153, 0.366009,
+            0.50646234, 0.9531444, -0.6696852, -0.3862596,
+            0.21145628, 0.3391598, 0.5092274, 0.7434328,
+            1.0771476, -0.54044515, -0.09141564, 0.094367445,
+            0.3721011, 0.4867707, 0.8510828, -0.65723765,
+            -0.22305709, 0.00023879576, 0.15778476, 0.28803408,
+        ];
+        for (i, (&got, &want)) in data.iter().zip(EXPECTED.iter()).enumerate() {
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "pixel {i} (x={}, y={}): {got:?} != {want:?}",
+                i % W,
+                i / W,
+            );
+        }
     }
 }
 

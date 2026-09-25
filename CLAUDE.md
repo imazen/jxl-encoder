@@ -812,7 +812,135 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-09-24: explicit CLI strategy conflicted with lossless test contract
+
+Historical rejection is superseded by the approved lossless strategy wiring
+below: explicit strategy is now consumed, rather than ignored.
+
+`0784632b` removed the clap conflict and documented `--strategy` as ignored
+with `--lossless`, while the existing CLI regression required rejection.
+The owner chose rejection on September 24. Explicit combinations now fail
+before encoding with clap exit code 2; the implicit default still permits
+ordinary `--lossless`. The strengthened existing test covers all six strategy
+spellings in both argument orders and preserves a pre-existing output file.
+All four strategy tests pass. The full locked workspace all-target test run,
+workspace all-target Clippy and scoped format check also pass against the
+CI-pinned sibling closure. No library encoding policy changed. Before/after
+logs: `~/tmp/jxl-backlog/encoder-ci-pins-workspace.log` and
+`~/tmp/jxl-backlog/cli-lossless-strategy-fix.log`.
+
+### RESOLVED 2026-09-24: JPEG CfL chose the first tied maximum
+
+[PROVEN] `jpeg_cfl_search` chose the first maximal histogram bucket;
+libjxl v0.12 `enc_frame.cc::FindAvgIndexOfSumMaximum` instead rounds the
+midpoint of the first and last maximal buckets upward, including disjoint
+peaks. This changes the signaled correlation and normal rendered pixels,
+although JPEG reconstruction can still be exact because it restores rounded
+integer coefficients. The correction retains the original improvement gate.
+
+`jpeg_cfl_reference_pixels_match_at_color_tile_boundaries` fails before the
+change on the 259x133 frymire crop, e3, sample 49753 (row 64): 1.0015571 versus
+1.0013798. Afterward all four cells (64x32/259x133, e3/e7) match the reference
+bitwise through jxl-rs and exactly in djxl PNG output. Both decoders reconstruct
+the original JPEG byte-for-byte. `jpeg_cfl_maximum_ties_match_libjxl_midpoint`
+covers signed, flat, disjoint and later-higher peaks and the unchanged gate.
+This is JPEG-only; there is no new strategy or gate. Reproduce with
+`just jpeg-cfl-check <label>`; logs live under `~/tmp/jxl-backlog/jpeg-cfl-*`.
+
+Validation: all 75 normal/strict/drift checks and 1,618 default library tests
+pass unchanged (29 existing library ignores). The broad `jpeg_` integration
+filter reports 17 passes, one existing ignore and 27 missing-input failures:
+legacy tests require `CODEC_CORPUS_DIR` and pre-generated
+`~/tmp/jpeg-reencoding/test*.jpg` files that are absent on this Mac. No test
+is skipped or relaxed to hide this configuration gap.
+The self-contained 53-fixture conformance gate passes (47 exact reconstructions,
+six expected clean rejections), as do both real-image RD regressions. Strict
+workspace Clippy retains the 40 baseline encoder errors and reports two
+pre-existing `chunks_exact_to_as_chunks` SIMD-test errors. The JPEG library/test
+lint pass without `-D warnings` reports no diagnostics in the changed CfL code
+or new reference test; no lint allowance was added.
+
+
+### RESOLVED 2026-09-24: JPEG terminal restart markers (#120)
+
+[PROVEN] The encoder scanner discarded terminal RSTn markers after the final
+MCU. `entropy_scan_preserves_terminal_restart_markers` fails before `1a40b8f3`
+(position 8 instead of 6). A pending restart suffix now remains available to
+`marker_order`; actual entropy bytes, including stuffed `FF 00`, discard the
+pending suffix so interior restarts remain in the scan.
+
+The matching zenjxl-decoder writer fix `b0fb20db` emits standalone RST0–RST7
+from JBRD in their original order, matching libjxl v0.12. Its all-eight-marker
+unit regression fails before the fix. The encoder's 32-case regression covers
+all eight terminal values on baseline/progressive fixtures with interior
+restarts and real 64×32/259×133 crops. Rust and libjxl reconstruct every JPEG
+byte; jxl-rs renders unchanged pixels and djxl fully renders every case.
+
+All 21 camera originals named by #120 now reconstruct byte-exact in both
+Rust and libjxl, with JXL hashes unchanged from the pre-decoder-fix run. The
+74-file gate reports 68 exact reconstructions and six clean unsupported-input
+refusals. Input/encoded/reconstruction hashes and retained artifact locations:
+`benchmarks/jpeg_restart_{before,after}_2026-09-24.{tsv,meta}`. Fetch the pinned
+originals using `scripts/hunt/fetch_imazen26_gate_files.sh` with
+`jxl-encoder/tests/fixtures/jpeg_restart_corpus.tsv`; run
+`just jpeg-restart-corpus-check <label> <corpus-directory>`.
+
+Dependency trap: the original gate uses published zenjxl-decoder **0.3.10**,
+not the local 0.4 sibling: its `0.3.8` requirement excludes that path patch.
+The earlier baseline metadata incorrectly named the local revision. The JBRD
+oracles now use the existing `zensim-decoder` 0.4 path alias with `jpeg` enabled;
+0.3 compatibility tests and the optional rate-control dependency stay unchanged.
+CI's sibling pin is `b6948915`. No decoder release is required for validation.
+All 63 normal hash locks, five strict byte-lock tests, seven drift checks and
+1,618 default library tests pass unchanged. JPEG-library Clippy retains its
+40 baseline diagnostics; no lint allowance or expectation changed.
+
+
+### RESOLVED 2026-09-24: strict AC metadata EPF context order (W45-RECON part 23.1)
+
+[PROVEN] `collect_ac_metadata_tokens_region` numbered the `kACMeta` EPF
+classes as `11 + 2*(north>3) + (west>3)`, opposite the serialized tree's
+leaf order (both high = 11, neither high = 14). A 259×133 frymire RGB crop
+at Libjxl efforts 6 and 7 fails full decoding; jxl-rs, jxl-oxide and djxl
+v0.12 reject the e7 stream. The same failure with sparse alpha reproduces
+on parent `a07cf1ae`, independently of the pending palette-cost change.
+The correction uses `14 - 2*(north>3) - (west>3)` within the existing gate.
+`ac_meta_epf_token_contexts_match_serialized_tree` independently walks the
+emitted tree table across 256 sharpness patterns, including all four leaves
+and row/column edges; it fails on the old mapping at the first zero pixel.
+Validation: `just libjxl-acmeta-check fixed` passes the tree test and 28
+real-image cells (64×32/259×133, efforts 3–9, Libjxl/Zenjxl), fully rendered
+by jxl-rs, djxl v0.12 and jxl-oxide. All 75 byte-lock/drift checks and 1,616
+library tests and both real-image RD regressions pass; existing byte
+expectations are unchanged. Workspace Clippy remains blocked by 26 existing
+library diagnostics plus three existing test diagnostics in
+`pixel_loss.rs` and `encode_ans.rs`; none are in the changed code.
+
+
+
 See [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md) for full chronological bug narrative.
+
+### RESOLVED 2026-09-24: JPEG transcoding discarded display orientation (#119)
+
+The JPEG path now reads the first classified EXIF APP1's TIFF IFD0 orientation
+into the JXL image metadata. Both TIFF byte orders and all eight orientations
+are supported; malformed or absent tags retain Identity. The original EXIF
+payload remains unchanged for byte-exact JPEG reconstruction. The regression
+failed before the fix on orientation 2 (unflipped pixels).
+`jpeg_exif_orientation_preserves_display_and_reconstruction` verifies 32
+real-image cases (64x32 and multi-group 259x133, both TIFF byte orders, all
+eight orientations): full jxl-rs and djxl v0.12 rendering matches an independent
+pixel permutation exactly, and zenjxl-decoder reconstructs every original JPEG
+byte-for-byte. djxl's 8-bit output dithers at display coordinates; use its
+16-bit output for exact orientation permutation checks. Malformed IFD entries
+and truncated metadata have a separate unit test. No public API changed.
+Validation: 1,646 JPEG-enabled library tests, 75 lock/drift tests and 1,615
+ordinary library tests pass. The 53-fixture reconstruction gate still reports
+47 exact rebuilds and six clean unsupported refusals. The pre-existing 4:2:0
+unit test now reads the committed `base_a_420.jpg` fixture instead of requiring
+an absent generated output; all assertions remain. JPEG-feature library Clippy
+reports 40 existing diagnostics outside the changed code; its full log is
+`~/tmp/jxl-backlog/jpeg-orientation-clippy.log`.
 
 ### RESOLVED 2026-09-10: forward XYB emitted DIFFERENT BYTES on a host that cannot summon a vector token
 
@@ -1070,6 +1198,90 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-24: ISO JPEG gain-map container integration (#122)
+
+[PROVEN] The original 259x133 pixel-parity failure was caused by JPEG CfL
+maximum-tie selection, corrected separately in `d6bbdda2` (see Resolved Bugs).
+Both 64x32 and 259x133 real frymire crops now expose the secondary JPEG as a
+`jhgm` codestream, preserve its exact ISO 21496-1 rational metadata, match
+cjxl v0.12's rendered gain-map pixels, and reconstruct the complete original
+JPEG through Rust and djxl. The primary codestream's pixels are unchanged.
+
+The private tail scanner recognizes secondary images by their own ISO APP2
+metadata. Version-only signals and unrelated trailers stay opaque; malformed,
+duplicate, truncated, or multiple identified gain maps fail explicitly. The
+same caller pixel limit, memory budget, cancellation and effort reach the
+secondary transcode. Reserved bundle serialization avoids a payload copy;
+no public API or new encoding strategy is introduced. XMP-only gain maps
+remain opaque JBRD tail data; this increment targets the ISO-tagged camera
+originals in #122. The 33-file SHA-bound corpus gate is
+`just jpeg-gainmap-corpus-check <label> <corpus>`. All 33 originals pass at
+effort 3 with exact gain-map pixel equality against cjxl/djxl v0.12, full
+jxl-rs rendering, unchanged primary pixels and byte-exact JPEG reconstruction
+through both Rust and djxl. Results: `benchmarks/jpeg_gainmap_2026-09-24.tsv`;
+private originals and artifacts remain outside git under `~/tmp/jxl-backlog/`.
+The JPEG-enabled library suite passes 1,665 tests (31 existing ignores).
+All 75 normal/strict lock and divergence checks, 1,618 default library tests,
+and both real-image RD regressions pass unchanged. Strict workspace Clippy
+retains the baseline library diagnostics; warning-mode JPEG library/test
+Clippy finishes with no diagnostics in the new gain-map code or bundle helper.
+The newly enabled HDR test exposed a constant-chunk iteration lint; that test
+now uses fixed arrays with unchanged input values and assertions. All 12 HDR
+unit tests pass; the `46dca8bd` commit message mistakenly says 16.
+
+### 2026-09-24: JPEG feature build regression after strict tree refactoring
+
+[PROVEN] `cargo test --features jpeg-reencoding` at `0ca49f00` fails
+before tests run: `write_jpeg_transcode_context_tree` lost its entropy-builder
+import and JPEG's WP-tree caller omitted the new `libjxl_root_split` argument.
+The compile repair qualifies the existing builder and passes `false`, keeping
+the historical JPEG root split. The earlier issue #121 duplicate `limits`
+declarations are already absent on this branch; these are separate failures.
+The minimal `std,jpeg-reencoding` check passes, and the JBRD gate reconstructs
+47 fixtures exactly while cleanly rejecting six unsupported fixtures. CI now
+checks that feature combination and the reconstruction gate on Linux.
+
+### 2026-09-24: W45-RECON cleanup coverage findings (behavior unchanged)
+
+[RESOLVED 2026-09-24, W45-RECON part 24] At `f4bfa242`, e8+
+ChannelCompact applied unconditionally. It now compares the candidate image,
+including palette metadata and earlier accepted transforms, with the original
+whole-image EstimateCost. Rejection restores samples in place inside the same
+Global stream; it is not a private-writer fallback. The strict estimator uses
+the reference's HybridUint conversion, separate integer/fractional entropy
+sums and the strict learner's canonical AVX2 reduction order. All 96 integer
+costs match an oracle calling unmodified libjxl v0.12 on this ARM64 host.
+`scripts/libjxl_estimate_cost_oracle/` carries the generator and goldens.
+`strict_palette_cost_reverts_and_keeps_candidates` pins both decisions and the
+original-baseline rule across multiple extra channels. No normal strategy,
+EPF dispatch, gate default or public API changes. Six real RGB-plus-alpha
+cells (64×32/259×133, efforts 7–9) preserve every alpha value through
+jxl-rs and djxl v0.12. Validation passes 75 lock/drift checks, 1,618 library
+tests and both real-image RD regressions. Clippy diagnostics match the parent.
+
+[RESOLVED 2026-09-24, W45-RECON part 23] Small progressive RGBA
+frames prepared a global extra-channel stream but emitted an empty global
+section. The real frymire 64x32/e4/two-pass regression fails before the fix
+with jxl-rs `SectionTooShort`. LfGlobal assembly now serves both TOC layouts;
+globally coded extras are excluded from HF-group writes. The regression
+`progressive_extras_preserve_alpha_in_both_decoders` fully decodes single-
+and multi-group crops in jxl-rs and djxl and checks every alpha sample.
+Validation: 24 real-image cells pass, alongside unchanged 63 normal locks,
+5 strict byte-lock tests, 7 drift tests, 1,615 library tests and both RD
+regression tests. Clippy retains the same 26 baseline diagnostics.
+The earlier multi-group/downshifted-extras concern is currently unreachable
+through the lossy API, which explicitly rejects `dim_shift > 0`.
+
+The cleanup preserved both predicates; part 23 fixes the emission mismatch. The single extras gate remains in
+`gate_registry.rs`, consumed through `api.rs` and `EffortProfile`;
+`ac_meta_libjxl_tree` remains a structural dependency because it selects
+the merged exact tree at e8+. Removing that check changes custom gate
+combinations. No third strategy or probe encoding route was introduced.
+The two tree-prefix wrappers already share one implementation. Meta channels
+retain the paired `u32::MAX` shift sentinel; sample collection's hshift test
+is unchanged. All nine EPF passthrough sites retain exactly
+`is == 0.0 || is < K_MIN_SIGMA` (eight SIMD sites, one VarDCT step-0 site).
+
 ### 2026-09-10: the d=1 effort ladder is poorly calibrated -- e4 is free, e7 is dominated by e5
 
 [MEASURED] 10 stratified images, 512^2, lossy d=1.0, min of 3 reps
@@ -1194,12 +1406,14 @@ restore has to be the LAST step before committing. My first attempt at this fix
 was silently undone by the `cargo build` I ran to verify it -- `jj diff` then
 showed zero changes and the "fix" would have been an empty commit.
 
-Practical rule for this repo: after any cargo invocation, and immediately before
-`jj describe`/push, re-run
-`git -C <primary> show <last-green>:Cargo.lock > Cargo.lock` (or otherwise
-restore the pinned lock) and CHECK
-`grep -o "zenforks-cubecl?rev=[0-9a-f]\{8\}" Cargo.lock` shows `90842401`,
-not `92e4a157`.
+September 24 recurrence: `e31488a8` again contains the local `92e4a157`
+resolution, and a fresh CI source export refuses `--locked`. Regenerate the
+lock against `.github/sibling-revisions.tsv` using the clean-source exporter,
+then validate with that export's manifest. Do not blindly restore an old lock
+after changing pins: the matching Zensim refinement revision also requires
+its pinned `zenresize` and `zenblend` dependencies. The corrected closure
+uses CubeCL `90842401`; Cargo against unrelated local sibling state can
+reintroduce the drift. Both cleanup recipes now accept the exported manifest.
 
 **Related process note:** the run for the fix itself came back `cancelled`
 because the next push superseded it. Per the existing cancellation warning in
@@ -1499,8 +1713,8 @@ cover the planar and lossless-float surfaces, which had none.
 **(3) FIXED 2026-09-09 with owner approval**: `LosslessConfig::with_limits` was
 added and the lossless encoder now inherits the config's limits (it hardcoded
 `limits: None`), so `encode_planar_int` is constrainable. `LosslessConfig::
-with_strategy` landed alongside it -- byte-inert on the lossless path today, and
-pinned as such, but it is the axis every lossless divergence needs.
+with_strategy` landed alongside it, initially byte-inert. The September 24
+strategy wiring now consumes it for self-repair and large-image buckets.
 
 **The call ORDER is now pinned too**, via `with_limits`: an input that is both
 over-budget AND out-of-range discriminates the two orders, because admission
@@ -1741,6 +1955,15 @@ trace files also match. This proves preservation on that matrix, not new
 model RD qualification. Reproduction uses `zensim_config_byte_identity`
 and `scripts/zensim-loop-eff/byte_identity_matrix.sh`, with `TMPDIR=$HOME/tmp`
 and four Rayon threads. The old binary and both output sets are retained.
+
+September 24 recurrence: encoder `c1ab16c9` consumes `refinement_gain` and
+`unsupported_refinement_feature_ids`, but the CI pin remained `f99b91eb`,
+which lacks both methods. Pin `e246d954`, the committed source accompanying
+the September 15 complete-refinement work. The exported pinned closure passes
+optional workspace all-target Clippy and both Zensim smoke tests under
+`--locked`. This repairs build consistency; it does not qualify a model or
+establish RD improvement. Log:
+`~/tmp/jxl-backlog/encoder-zensim-refinement-pinned-fixed-ci-lane.log`.
 
 ### RESOLVED 2026-09-08: CPU Butteraugli comparison scratch evaded memory admission (#106)
 
@@ -2566,6 +2789,419 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-24: pre-publication API and release gates
+
+[Current audit](docs/RELEASE_0.4.0.md#september-24-pre-publication-audit)
+records the tested source, exact coverage and unresolved release gates.
+Workspace all-targets/doctests/Clippy, 580 expert/JPEG/HDR integration tests,
+nine feature compile configurations, both real-image RD gates, all five
+resource tests and explicit djxl odd-size streaming resampling pass against
+the CI-pinned source closure. Missing corpus invocations failed; the correct
+resource corpus root on this Mac is `~/Library/Caches/codec-corpus/v1`.
+
+Independent rustdoc semver comparison confirms the approved Custom gate
+fields break exhaustive struct literals. Its other warning concerns shifted
+ValidationError discriminants; an actual numeric-cast probe fails E0605
+because the enum contains data. Committed API inventories are stale; ARM
+regeneration must not replace the x86 SIMD inventory. The attempted
+cross-target inventory produced an implausible public/internal split and
+was not accepted. Snapshot expectations are unchanged. Direct registry
+validation still fails on unpublished `butteraugli ^0.9.4`; passing the
+pinned source build does not qualify package publication. Full logs and
+proposed snapshot diff: `~/tmp/jxl-prepublish-2026-09-24/`.
+
+### 2026-09-24: pre-publication changed-path matrix
+
+`tests/prepublish_matrix.rs` exercises 1,080 lossless and 1,080 lossy
+RGBA cells: nine dimensions (including one-pixel axes, 255/256/257,
+259x133 and 2049x9), eight pathological patterns, a CID22 photograph and
+frymire graphics. Twelve configurations per path cover strict/Zen,
+effort boundaries, Huffman/ANS, forced WP modes, sectioned/squeeze and
+progressive settings. This is a selected interaction matrix, not the full
+Cartesian product. Automatic resampling is explicitly disabled so exact
+alpha is the contract; resampling has separate tests.
+
+Both the default-plus-parallel and minimal std/expert builds pass the entire
+matrix: 4,320 streams fully decode through the primary Rust decoder and pinned
+djxl v0.12. All 1,080 lossless pairs across builds are byte-identical. Both reproduce exact lossless RGBA and exact lossy alpha.
+Strided and packed encodes agree; lossless streaming is byte-identical.
+`just prepublish-matrix <photo> <artifacts> <pinned-manifest>` retains
+streams, reference PNGs, diagnostics and per-cell hashes. Missing inputs
+fail. The first run used CID22 validation 3156482; logs and outputs are at
+`~/tmp/jxl-prepublish-2026-09-24/`. This does not measure lossy color quality,
+wide samples, GPU execution, or every public setting combination.
+
+### 2026-09-24: pre-publication process-wall and retained-stream audit
+
+Five interleaved repetitions compare `f4bfa242` with `cfd6ef0a` on this
+ARM64 Mac, using the same current CI-pinned dependency closure in both
+builds. Two natural sources (photo/document), four sizes (64/256/1024/2048),
+efforts 3/7/9 and threads 1/4 produce 48 cells each for lossless, Zen d1
+and strict d4. These are process-wall measurements including image IO,
+not a fleetwide quality or performance qualification. No native-CPU flags.
+Per-cell medians range -7.11%..+2.30% lossless, -10.81%..+1.78% Zen,
+and -38.86%..+2.19% strict. Tiny cells include millisecond process overhead.
+The dated `benchmarks/prepublish_*.tsv` and companion `.meta` files preserve
+all cells, source hashes, binary hashes and commands.
+
+All 96 lossless/Zen cells are byte-identical. Ten strict e7 cells change
+bytes; the identity harness correctly returns failure for that arm. The
+old 1024 photo stream fails Rust decoding with `AnsChecksumMismatch`;
+djxl rejects all five distinct changed baseline streams. Current output
+succeeds. All 76 distinct current source/stream pairs fully
+decode in the primary Rust decoder and djxl v0.12, with exact lossless
+pixels. `just prepublish-perf-roundtrip <newline-separated-tables>
+<pinned-manifest> ours_sha256` validates current outputs independently;
+the default `both` checks both revisions and does not forgive old failures.
+The grayscale source requires expanding the decoder's gray+alpha output
+before comparison, preserving each sample. No image-format assumption is
+substituted for a pixel check.
+
+Build trap: a shared Cargo target's final CLI path retained the baseline
+executable when the current export reported fresh. Identical binary hashes
+caught this before accepting timings. That partial run is retained as
+`*.invalid-same-binary`; accepted current timings use an isolated target
+and distinct binary hashes. Never infer binary identity from Cargo's
+freshness message when switching source exports.
+
+### 2026-09-24: forced WP float-extreme validation
+
+`lossless_float::forced_wp_float_extremes_match_rust_and_libjxl` passes
+40 cells: f16/f32, 31x17 and 259x17, Zen/Libjxl and all five forced WP
+modes at e7. Both jxl-rs and djxl v0.12 reproduce every finite sample's
+bits, including signed zero, subnormals and the largest finite values.
+The reference check reads PFM samples with their declared endianness and
+bottom-up row order; it does not merely check decoder acceptance.
+`just prepublish-float <pinned-manifest>` reproduces the check and retains
+the streams, PFM output and reference diagnostics under `~/tmp/`.
+This selected grid excludes NaN/infinity payloads and other effort levels.
+
+### 2026-09-24: lossless strategy wiring
+
+The owner approved replacing the CLI rejection/invariance contract once the
+strategy controls real policies. `LosslessConfig` now resolves the existing
+registry's `lossless_tree_self_repair` and
+`lossless_large_tree_bucket_reduction` gates. Zen presets preserve both;
+Libjxl disables both; Custom selects each independently. The CLI passes the
+strategy to still-image and animation lossless configs. Explicit internal
+parameters retain precedence over the image-size bucket adapter.
+
+The self-repair strategy permission precedes the legacy OnceLock environment
+override, so `JXL_TREE_SELF_REPAIR=1` cannot re-enable a disabled gate.
+The shared modular learner still differs in sampling, predictor selection
+and split cost; this increment is not full lossless v0.12 byte parity.
+Validation: resolver boundaries and all four Custom combinations pass;
+a child process proves the legacy environment cannot bypass the strict gate.
+Sixteen real-image cells (four strategies, e5/e9, 64x64 and 259x133) fully
+decode pixel-exactly through Rust and djxl v0.12, and streaming bytes match.
+CLI tests cover all six spellings in both orders and API byte agreement.
+All 75 lock/drift tests, 1,618 library tests, both RD regressions, workspace
+all-target Clippy and expert lib/test Clippy pass without relocking.
+`just lossless-strategy-check <manifest>` reproduces the focused checks.
+
+### 2026-09-24: lossless oracle RCT/palette candidate axes (#24)
+
+The existing oracle now accepts `--rct-ids search,0..41` (an explicit comma
+list, not range syntax) and `--palette-modes auto,off`, alongside WP modes.
+`auto` permits the existing palette decision; it does not force a transform.
+`off` disables multichannel palettes and global/group ChannelCompact through
+existing setters. Defaults retain the original 16 cells and scalar seeds.
+Schema v4 records RCT/palette choices in each row and the artifact manifest;
+u16 cell IDs cover all 8,256 combinations without wrapping at 256.
+
+Three example tests pass, including all resolved categorical controls and
+26 real single/multi-group encodes reconstructed exactly by Rust and djxl.
+Eight CLI controls pass, including 320 distinct cell IDs, artifact hashes and
+invalid/duplicate-mode refusal. Exact-example Clippy passes. This supplies
+candidate controls, not an oracle-benefit result or a trained picker.
+All 75 lock/drift checks, 1,618 library tests and workspace all-target
+Clippy also pass unchanged. The pending trainer extension needs explicit
+sibling/public-API approval; no trainer or model was changed here.
+
+### 2026-09-24: approved explicit WP selection (#24)
+
+`LosslessInternalParams::forced_wp_mode` selects modes 0..=4 in the existing
+learned lossless paths. It takes precedence over WP search length; unset
+preserves the existing defaults. Values 5 and 255 are rejected by sparse and
+resolved validators and by both one-shot and streaming input admission.
+Global/squeezed trees and sectioned metadata/probe/group trees all consume the
+selection. Fixed-tree encodes do not use it. No new strategy or model is added.
+
+`modular::forced_wp_tests::every_mode_reaches_wire_and_both_decoders` observes
+actual production WP header bits against five frozen values, then fully decodes
+real frymire crops through the primary Rust decoder and djxl v0.12. All 60
+cells pass: 5 modes x 2 sizes (64x64, 259x133) x squeeze on/off x sectioned
+Off/On/Hybrid. The matrix passes both with and without parallel support.
+The header observer exists only in native expert library tests and does not
+change encoding choices. `just forced-wp-check <manifest> [features]` reproduces.
+
+The oracle harness accepts `--wp-modes search,0,1,2,3,4` (default `search`),
+records the choice per cell and in provenance, and uses schema v3. Its six CLI
+controls include 32 forced-mode cells with verified persisted artifacts.
+These controls expose candidate choices; they do not qualify a trained picker.
+Validation also passes all 75 lock/drift checks, 1,618 default library tests,
+both real-image RD regression tests and workspace all-target Clippy. Expert
+lib/test Clippy reports only three existing constant-chunk warnings in
+`tests/it/empty_modular_section_roundtrip.rs`; the new library tests are clean.
+
+### 2026-09-24: lossless picker oracle harness recovery (#24, partial)
+
+`lossless_pareto_calibrate` is registered with
+`__expert,parallel,learned-admission`. It retains every successful JXL by
+SHA256, records that key in each result row, verifies source-file hashes,
+and refuses existing output files. Input/encode/write failures now fail the
+process instead of skipping inputs, dropping encodes or ignoring writes.
+The artifact `_MANIFEST.json` binds source commit, binary and input-manifest
+hashes, feature columns and run configuration. Custom size keys include the
+requested size; the old shared `custom` key could collide when joining rows.
+Integer feature values retain their integer spelling rather than coercing
+through f32. Outputs use schema `lossless-picker-oracle-v2`.
+
+Reproduce with `just lossless-oracle-build <pinned-manifest>`,
+`just lossless-oracle-check <pinned-manifest>` and
+`just lossless-oracle-cli-check <binary>`. The build recipe sets
+`JXL_BENCH_COMMIT`; a binary built without it refuses a sweep. Two Rust tests
+cover preserved corrupt artifacts and pixel-exact real-image reconstruction
+in the Rust decoder and djxl v0.12 at 64x64 and 259x133. Five CLI tests cover
+all 16 anchor cells' artifact hashes/lengths, provenance, overwrite refusal,
+missing/changed sources, empty selection and distinct custom-size keys.
+All 75 lock/drift tests, 1,618 library tests (29 existing ignores), exact-example
+Clippy and workspace all-target Clippy pass against the pinned sibling closure.
+
+This is oracle collection infrastructure, not a trained or qualified picker.
+The retained 16 cells vary LZ77/squeeze/patches; scalar knobs vary search
+budgets. That original v2 grid did not force RCT IDs, WP modes or palette choices as #24's
+proposed picker requires. No model, policy threshold or default changes.
+Owner decision on September 24: defer picker tuning and oracle qualification
+until the fleetwide encode run. That run must compare measured e7/e9 baselines
+and oracle candidates on content-stratified held-out inputs, with dense size
+coverage before fitting a learned model. Single-worker timing is the default;
+concurrent-worker timing is not isolated latency. No compression or runtime
+improvement is claimed from the smoke cells.
+
+Source audit of the next step: `forced_rct` and
+`with_modular_palette_colors(Some(0))` already cover RCT selection and palette
+refusal. `wp_num_param_sets` only searches a prefix of WP modes; forcing modes
+1–4 needs a new explicit expert control, which requires owner API approval.
+The pinned `zenpicker-train/src/pareto_dataset.rs::build_picker_dataset_with`
+uses quality reach and encoded bytes, and does not read `encode_ms` or a time
+budget. A size-only bake cannot establish #24's wall target. Do not call the
+recovered harness a direct input to a time-budgeted trainer or silently replace
+that objective. The owner approved `forced_wp_mode: Option<u8>` and
+`ForcedWpModeOutOfRange` on September 24.
+
+The approved sibling trainer extension is now on `zenanalyze/main`:
+`01088356` adds `build_picker_dataset_with_time_budget` through the same loader
+and winner selector; `6bbcacb1` adds paired CLI/recipe time columns and records
+the constrained objective in training/export/evaluation manifests. Candidates
+must meet quality and measured encode time <= a consistent per-rendition budget.
+Bytes and scalar labels follow the same eligible winner; invalid timings or an
+image/target with no eligible candidate fail. Existing builders stay unchanged.
+All 27 standalone trainer tests, scoped formatting and all-target Clippy pass.
+The oracle TSV still needs a training view with measured e7 baselines, feature/
+selection overhead charged against the <=1.5x budget, and an e7 fallback.
+No model has been fitted, qualified or adopted. Tuning waits for the owner’s
+fleetwide encode run; no fleet launch is part of this infrastructure change.
+
+
+
+### 2026-09-24: shared ANS normalization tables
+
+`AllowedCountsCache::new` constructs only input-independent allowed-count
+and fixed-point logarithm tables. Production histogram builders, uint-config
+trials and strict cluster-cost queries now borrow one immutable `OnceBox`.
+The public constructor, normalization arithmetic and strict/legacy cost flag
+are unchanged. Initialization may race; `OnceBox` retains one result and drops
+losing allocations. The retained data has fixed size and contains no pixels.
+
+The initial validation passes all 75 lock/drift checks, 1,618 library tests
+(29 existing ignores), default workspace all-target Clippy and the no-default-
+features build. The latter emits 30 warnings. The sectioned harness
+also reconstructs exact real-image pixels in both decoders at 64×64 and
+259×133; its six driver tests cover failures and alternating binary order.
+Both real-image RD regression tests pass unchanged. The interleaved bar has
+19/19 repeated binary pairs byte-identical. Timing does not establish a broad
+speedup: e9/t8's initial 1.027× paired median becomes 1.002× in seven follow-up
+pairs, with substantial variation. The e7 1.3× target remains unmet at t1/t8.
+[Measurements and scope](benchmarks/ans_tables_shared_2026-09-24.md).
+Logs: `~/tmp/jxl-exact-cleanup/shared-ans-2026-09-24/` and
+`~/tmp/jxl-backlog/shared-ans-*`.
+
+Source-history finding, kept separate from this allocation change:
+`0784632b` changed the normal kBest uint-config candidate cost from its earlier
+Shannon/header estimate to normalized ANS cost. The part-18 `libjxl_costs=false`
+branch preserves the pre-part-18 normalizer, not the pre-part-3 estimator.
+No estimator is reverted here. Attributing the September sectioned wall/byte
+change to that earlier cost change needs its own controlled comparison.
+
+### 2026-09-24: sectioned performance harness evidence repair
+
+`scripts/sectioned_k_bar_cell.sh` previously used unpinned `cjxl`, ran all
+reference repetitions before the Rust arms, discarded Rust stderr and could
+stat an old output after reference failure. It now resolves through the shared
+v0.12 guard, alternates reference/Rust order and Rust arm order, retains complete
+logs, refuses existing result files and stops on failed commands. The existing
+comparison still labels reference **process wall** versus Rust **encode wall**;
+those are different timing scopes and must not be presented as equal scopes.
+
+`sectioned_k_corpus` now requires `ARTIFACT_DIR` for encoding modes and retains
+both warmup and measured outputs by SHA256 outside the timed region. Sweep TSVs
+include `encoded_sha256`; phase logs carry both hashes. Three driver regression
+tests cover failed reference/probe processes and preserved prior results.
+The persisted-output regression reconstructs exact real-image pixels through
+zenjxl-decoder (jxl-rs lineage) and djxl at 64×64 and 259×133. The small driver
+smoke produces all 24 expected rows with matching artifact hashes. This is
+harness validation, not a new wall-bar measurement or predictor-policy change.
+Reproduce with `just sectioned-harness-check <pinned-manifest>`; logs and smoke
+artifacts live under `~/tmp/jxl-backlog/sectioned-harness-*`.
+
+### 2026-09-24: permanent pixel-loss dump regression
+
+The old `w45_loss_vs_dumped_inputs` test returned successfully without its
+local mask dump and only printed losses when the files existed. The three
+8×8 mask regions and nine error blocks are now frozen as f32 bit patterns in
+`jxl-encoder-simd/src/pixel_loss_fixtures.rs`, with original-file SHA256s.
+`pixel_domain_loss_frozen_blocks_match_eighth_power_sum` asserts each channel
+against a separately accumulated f64 sum of the f32 eighth-power terms, across
+packed/padded mask strides and every dispatch permutation available on the host.
+NaN padding makes out-of-region reads fail. Power, offset and stride mutations
+all fail the assertions. This checks the numerical kernel, not image quality
+or complete reference-encoder parity. Production arithmetic is unchanged.
+The SIMD suite passes 194/194; encoder lock/drift checks pass 75/75 and library
+tests pass 1,618 with 29 existing ignores. Logs:
+`~/tmp/jxl-backlog/pixel-loss-{fixtures,simd-suite,mutation-*}.log` and
+`~/tmp/jxl-exact-cleanup/pixel-loss-fixtures-2026-09-24/`.
+
+### 2026-09-24: encoder lint repair for the exact bookmark
+
+The push filter excluded `libjxl-exact`, and manual dispatch returned HTTP 422.
+Run 36058898611 then confirmed workflow rejection before any jobs: three plain
+YAML `run` scalars ended test filters with `::`, which YAML treats as a mapping
+separator. Folded scalars preserve the commands and parse successfully. The
+push filter now includes `libjxl-exact`. This fixes workflow admission;
+platform CI results must still be checked separately.
+The entropy/MA lint cleanup preserves indexed ranges, iteration order and
+short-circuit behavior. Its 75 lock/drift checks and 1,618 library tests pass
+(29 existing ignores); workspace all-target Clippy still reports the separate
+VarDCT, argument-count and test-helper diagnostics. No allowance or expected
+hash was changed. Logs: `~/tmp/jxl-exact-cleanup/lint-entropy-2026-09-24/`.
+The next cleanup groups resolved ANS build choices in an internal
+`AnsBuildOptions` value at all nine callers; it adds no public API or strategy.
+The same 75 checks and 1,618 library tests pass. Its all-target lint run clears
+the ANS argument-count and test repeat diagnostics; VarDCT and SIMD test
+failures remain. Logs: `~/tmp/jxl-exact-cleanup/lint-ans-options-2026-09-24/`.
+The VarDCT continuation pairs dimensions at two internal helper boundaries
+and retains every dispatch flag, arithmetic expression and diagnostic order.
+All 75 lock/drift checks and 1,618 library tests pass again. Workspace all-target
+Clippy now reaches only the two pre-existing `pixel_loss.rs` dump-reader
+errors. Logs: `~/tmp/jxl-exact-cleanup/lint-vardct-fixed-2026-09-24/` (tests)
+and `lint-vardct-2026-09-24/` (lint).
+After the SIMD probe repair and the planar scoring example's iterator cleanup,
+`cargo clippy --locked --workspace --all-targets -- -D warnings` passes locally.
+The 75 lock/drift and 1,618 library checks remain unchanged. Formatting initially
+failed on 58 hunks across 20 files. The owner approved the separate formatting
+patch on September 24; every resulting file exactly matches rustfmt applied to
+its parent version. The workspace format check, all 75 lock/drift checks and
+1,618 library tests pass after applying it. No format gate or expected hash was
+changed. Logs: `~/tmp/jxl-exact-cleanup/approved-format-2026-09-24/` and
+`~/tmp/jxl-backlog/encoder-format-approved-proof.json`.
+The corrected CI dependency closure also passes default all-target Clippy,
+75 lock/drift checks and 1,618 library tests (29 existing ignores).
+The all-target workspace run passes 1,638 feature-unified encoder library
+tests and 508 integration tests, then initially stopped on the CLI lossless
+strategy contract disagreement, now resolved with owner approval (see Resolved Bugs). Logs:
+`~/tmp/jxl-exact-cleanup/ci-pins-fixed-2026-09-24/` and
+`~/tmp/jxl-backlog/encoder-ci-pins-workspace.log`.
+Both real-image RD regression tests also pass with unchanged expectations
+against this closure (`~/tmp/jxl-backlog/encoder-ci-pins-rd.log`).
+
+### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
+
+The post-v0.12 bucket matcher was implemented and screened at capacities
+1/3/7/15/31. All five grow a real terminal screenshot's 256×256 lossless-float
+cell from 22,072 to 29,702 bytes, while some other float cells improve.
+All 24 float outputs from the six arms reconstruct exact source bits in both
+jxl-rs and djxl v0.12. Another sixteen float outputs at 64×64 and multi-group
+259×259 also reconstruct exactly. The three-entry candidate passes 1,621
+library tests, but moves the existing e8 tiled RGB lock from 72,849 to 73,177
+bytes; the other 74 lock/drift checks pass. No lock was changed.
+
+This rejects unconditional adoption, not every possible future selection
+policy. The broader default-calibration grid was not run after this failure;
+the block-ordered timing is not a performance verdict. The prototype changes
+the shared Greedy dispatcher, which also serves strict VarDCT tree coding and
+ICC, so it is not shipping-ready lossless-only wiring. Preserve the current
+matcher in production. Candidate code, exact corpus hashes, artifacts and
+reproduction are recorded in
+[the rejection screen](benchmarks/lz77_bucket_screen_2026-09-24.md) and
+`abandoned/issue110-bucket-default`.
+
+### 2026-09-24: #110 LZ77 comparison evidence
+
+The old `scripts/lz77_hash_ab_join.py` called equal byte counts
+"byte-identical" and intersected cell keys, silently dropping missing cells.
+Its legacy TSVs have no hashes, so they establish size equality only.
+The analyzer now distinguishes size matches from SHA256 identity and refuses
+duplicate or unpaired cells. `examples/lz77_hash_ab.rs` retains each encoded
+file by SHA256, records its path and source SHA256, and keys sources by relative
+path rather than basename. `--verify-artifacts` checks the recorded bytes on disk.
+Six analyzer regressions include same-size/different-byte data and artifact
+corruption. `just lz77-artifact-check <label>` checks eight real frymire cells
+at 64 and 259 pixels, covering lossless u8/u16/f32 and lossy u16. This verifies
+the measurement records, not a new matcher or a performance improvement.
+
+### 2026-09-24: legacy JPEG regression fixture provisioning
+
+The 27 missing-input failures reported during the CfL validation were setup
+failures. `jpeg_fixture_setup` now obtains imageflow and jpeg-conformance via
+codec-corpus and generates the named real-image subsampling fixtures through
+libjpeg-turbo `cjpeg`. It checks dimensions, sampling and component count,
+preserves pre-existing differing fixture files, and reports every generated
+file. `just jpeg-legacy-check <label>` provisions before testing; CI follows
+the same caller-controlled order. No missing-corpus runtime skip was added.
+
+All 31 `jpeg_reencoding` tests pass with zero ignores. The old roof-photo
+ignore was stale: full jxl-rs rendering and exact djxl reconstruction both
+pass. The two early JBRD tests now fail when djxl exits unsuccessfully; their
+old branches only logged the error and returned success. Subsampling
+reconstruction checks now also fully render through jxl-rs. Logs and generated
+inputs: `~/tmp/jxl-backlog/jpeg-legacy-strict/`. Ordinary encoder bytes and
+all existing sample/byte assertions are unchanged. Injecting a decoder that
+passes the version check but exits 37 makes all three JBRD roundtrip tests
+fail, including the two formerly false-positive cases; the intentional failure
+log is `~/tmp/jxl-backlog/jpeg-legacy-failure-injection.log`.
+The full JPEG-enabled integration suite also passes: 556 tests, 181 existing
+ignores, using `just jpeg-enabled-check complete` with explicit reference
+verification and persisted conformance artifacts. Fixture/CI cleanup landed
+in `be819e91`; no decoder failure was converted into a skip.
+
+
+### 2026-09-24: W45-RECON cleanup validation
+
+Part 22.1 shares Global/DC/AC modular option defaults and retains the
+stream-specific overrides. Tier property selection reuses its owned vector.
+`just libjxl-exact-cleanup-check <label>` preserves full logs under
+`~/tmp/jxl-exact-cleanup/<label>/`; locks are modules in the `it` binary,
+and divergence drift requires `__internals`. Do not use
+`binary_id(strategy_libjxl_byte_lock)` on this checkout.
+Part 22.1 passes 63 normal hash locks, 5 strict byte-lock tests, all 7
+drift tests and 1,615 library tests (29 existing ignores).
+Part 22.2 shares extras preparation between the fixed and learned DC
+branches and releases strict stream images/tree after residual collection,
+before entropy construction. This is an allocation-lifetime change; no wall
+or peak-memory improvement is claimed without measurement. The part-21
+perf harness and artifacts remain unchanged. Part 22.2 passes all 75
+lock/drift tests, 1,615 library tests and the full 527-test expert/internal
+integration suite. Clippy retains exactly the 26 baseline diagnostics.
+Part 22.3 reuses each owned extra-channel sample buffer for palette indices;
+the sorted lookup, transform order and channel metadata are unchanged. It
+passes the same 75 lock/drift and 1,615 library tests; both real-image RD
+regression tests pass with unchanged thresholds.
+Baseline workspace all-target Clippy at `f4bfa242` fails on 26 existing
+warnings with Rust 1.98; the captured log is
+`~/tmp/jxl-cleanup-2026-09-24/baseline-clippy.log`. No lint allowances or
+expectations were changed by this cleanup.
+
 Dated investigation narratives live in [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 (chronological archive — full mechanisms, per-cell tables, acceptance gates,
 verbatim DO-NOT lists). This section keeps only (a) the distilled binding
@@ -3009,12 +3645,10 @@ measurement at equal or better coverage.
   byte-exact; photo wall 1.3×→1.12×), so non-aliased content pays ~0; (b) it is a
   plain `EffortProfile::tree_self_repair` field (`true` in `lossless_reference`,
   `false` in `lossy_reference`), `JXL_TREE_SELF_REPAIR=0/1` a runtime override.
-  **NOT a gate-registry gate** — the modular/lossless path reads NO
-  strategy/`ResolvedImprovements` (lossless output is STRATEGY-INVARIANT;
-  `EncoderStrategy::Libjxl` makes no distinct lossless bitstream — we already
-  beat cjxl lossless, there is no libjxl-lossless parity target), so "off for
-  Libjxl" is vacuous and a per-strategy gate would be non-functional; drift count
-  stays 32. **NO hash-lock regen needed**: every fixture is lossless-e7/e9
+  **Strategy update 2026-09-24:** `lossless_tree_self_repair` is now a
+  shared-registry gate, enabled for Zen presets and disabled for Libjxl.
+  The legacy environment override cannot re-enable a disabled gate.
+  Historical measurements below describe the original default-on adoption. **NO hash-lock regen needed**: every fixture is lossless-e7/e9
   (stride-2, no fire), lossy (field OFF), or below the 256-node floor → 53/53
   byte-identical; 5/5 Libjxl byte-lock (LossyConfig) untouched. Validated (release,
   default features, no env): 5336 e5 288293→211098 (−26.8 %, djxl AE=0 pixel-exact),

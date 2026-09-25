@@ -5,21 +5,14 @@ against libjxl (shallow clone at `~/work/jxl-efforts/libjxl`, commit
 d089091a, 2026-08-11). Started 2026-08-15 for the memory/wall/RD parity
 goal. Update whenever either side's algorithm or measured numbers move.
 
-> **SCOPE NOTE (T4, 2026-08-31) — read this before planning work off this
-> file.** Everything below is the **lossless** modular path.
-> `EncoderStrategy::Libjxl` does **not** reach it: `EncoderStrategy` is a
-> `LossyConfig` field, `LosslessConfig` has neither the field nor a
-> `with_strategy` setter, and the strategy is consulted only from
-> `LossyConfig::effective_profile_for_image_with_smoothness`. So the
-> predictor-count, sampling, property-quantisation and dedup gaps in this
-> file **cannot be A/B-ed through the mimic strategy** — reaching them
-> needs a strategy axis on `LosslessConfig` first. The byte-parity
-> instrument (`scripts/jxl_bitstream_diff.py`, see
-> [`LIBJXL_DIVERGENCES.md`](LIBJXL_DIVERGENCES.md) §D-harness) measures
-> the **lossy VarDCT** path, and its standing lives there, not here.
-> Measured aside from that work: on lossless the two encoders' *headers*
-> are already byte-identical, and our payload is 20 % smaller (93 488 vs
-> 117 447 B on `photo_512x512` at e5, cjxl v0.12.0).
+> **Scope update, 2026-09-24.** `LosslessConfig::with_strategy` now resolves
+> the shared registry's tree self-repair and large-image tree-bucket policies.
+> Zen presets retain them; Libjxl disables both. This does not replace the
+> modular learner or close the sampling/predictor/split-cost gaps below, and
+> does not promise lossless byte parity. The byte-parity instrument
+> ([`LIBJXL_DIVERGENCES.md`](LIBJXL_DIVERGENCES.md) §D-harness) still measures
+> VarDCT. Historical measurements below are not a fresh v0.12 audit.
+
 Measured numbers: 3840x2160 mosaics, t=1, macOS M4 Pro
 (benchmarks/jxl_probe_prune_2026-08-15.md + jxl_dedup_refine_2026-08-15.md).
 
@@ -40,7 +33,7 @@ Measured numbers: 3840x2160 mosaics, t=1, macOS M4 Pro
   enc_modular.cc:561-597); WP/property state updates every pixel.
 - ours: fixed-stride subsample, e7 stride 2 = 0.50, e9 similar. DENSITY
   AT PARITY; the mechanism differs (their Bernoulli cannot alias; our
-  fixed stride can — mitigated by the default-on cost-based self-repair,
+  fixed stride can — mitigated in Zen strategies by cost-based self-repair,
   #24, which libjxl does not need).
 - their threshold pre-pass (CollectPixelSamples, enc_ma.cc:967-1029):
   geometric-skip 10% of final density (5% of pixels at e7) feeding

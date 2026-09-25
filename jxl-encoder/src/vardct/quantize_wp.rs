@@ -42,12 +42,18 @@
 //! ## Gate
 //!
 //! Active when [`crate::effort::EffortProfile::use_libjxl_wp_dc_quant`]
-//! is `true` (effort ≤ 7 by default, matching the existing Phase 5
-//! `extra_dc_precision = 1` gate — both gates fire under libjxl's
-//! `nl_dc = speed_tier < kFalcon` condition).
+//! is `true` (effort ≥ 4 under strict parity, matching libjxl's
+//! `nl_dc = speed_tier < kFalcon` condition — the same condition that
+//! sets `extra_dc_precision = 1`).
 //!
-//! At effort ≥ 8 the butteraugli quantization loop owns DC refinement
-//! and libjxl drops both gates; we mirror that.
+//! Corrected 2026-09-22: this pass also runs at effort ≥ 8. libjxl's
+//! `else if (nl_dc)` arm in `AddVarDCTDC` has no further speed-tier
+//! gate — the butteraugli loop refines `global_scale`/`quant_dc`
+//! *scales*, then `QuantizeWP` rewrites the DC *values* so the shipped
+//! modular stream is self-consistent under the Weighted predictor the
+//! DC stream uses (`kWPOnly` learned tree at e8+, `kWPFixedDC` at
+//! `tier ≥ kSquirrel`). An earlier comment claiming "e8+ no-op" was
+//! wrong; the call site was already correct.
 
 extern crate alloc;
 use alloc::vec::Vec;

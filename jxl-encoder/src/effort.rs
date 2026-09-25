@@ -78,6 +78,20 @@ pub struct EntropyMulTable {
     /// DCT64x64.
     /// Reference: 2.25 (libjxl `enc_ac_strategy.cc`).
     pub dct64x64: f32,
+
+    /// Per-channel pixel-domain loss multipliers applied inside the
+    /// `mask1x1` (pixel-domain) branch of `estimate_entropy_full`
+    /// (libjxl `enc_ac_strategy.cc` `kChannelMul`, applied after the
+    /// `masku^8` accumulation, before the channel sum).
+    ///
+    /// Default = the historical [`crate::vardct::ac_strategy::CHANNEL_MUL`]
+    /// whose X entry is a mis-port (`8.2219^8`, +2.16% — W45-RECON
+    /// part 6). [`Self::reference`] and every derived variant keep it
+    /// so Zenjxl / Aggressive / LeanFaster stay byte-identical; the
+    /// strict `EncoderStrategy::Libjxl` profile swaps in
+    /// [`crate::vardct::ac_strategy::CHANNEL_MUL_LIBJXL`] via
+    /// [`EffortProfile::apply_ac_loss_channel_mul_libjxl`].
+    pub channel_loss_mul: [f64; 3],
 }
 
 impl EntropyMulTable {
@@ -96,6 +110,7 @@ impl EntropyMulTable {
             dct32x32: 1.48,
             dct64x32: 2.25,
             dct64x64: 2.25,
+            channel_loss_mul: crate::vardct::ac_strategy::CHANNEL_MUL,
         }
     }
 
@@ -667,6 +682,16 @@ pub struct EffortProfile {
     pub epf_dynamic_sharpness: bool,
     /// Recompute CfL map after initial quantization for better estimates (effort >= 7 in libjxl).
     pub cfl_two_pass: bool,
+    /// Run the CfL pass-1 map computation at all. Ours runs it
+    /// unconditionally; libjxl only runs pass-1 at `speed_tier <=
+    /// kSquirrel` (effort >= 7, `enc_heuristics.cc:1170`). Below e7
+    /// libjxl emits the zero-initialized `ColorCorrelationMap`
+    /// (`chroma_from_luma.cc:52-56`); at e5/6 pass-2 (`refine_cfl_map`)
+    /// still runs and fills every tile. `false` makes the encoder emit
+    /// `CflMap::zeros` instead of computing pass-1 — used only under
+    /// `EncoderStrategy::Libjxl` via
+    /// [`crate::api::EffortGate::Libjxl`] on `cfl_pass1_min_effort`.
+    pub cfl_pass1: bool,
     /// **Keep-best CfL Pass-2 guard** (#74, task #10). When `true`, the Pass-2
     /// CfL refit ([`crate::vardct::chroma_from_luma::refine_cfl_map`]) keeps the
     /// Pass-1 multiplier for any tile where it codes chroma AC more cheaply than
@@ -854,6 +879,80 @@ pub struct EffortProfile {
     pub use_adaptive_quant: bool,
     /// Enable per-block AdjustQuantBlockAC (effort >= 5 in libjxl).
     pub adjust_quant_ac: bool,
+    /// libjxl `AdjustQuantBlockAC` max-aggregation parity.
+    ///
+    /// When `true`, the per-block quant aggregation in
+    /// `vardct/transform.rs` takes `max` over the three per-channel
+    /// adjusted quants only (seed `0`) — matching
+    /// `enc_group.cc`'s `int max_quant = 0;` — so the F-heuristic's
+    /// `*quant - activity` downward adjustment can land. When `false`
+    /// (all non-Libjxl strategies), the aggregation seeds with the
+    /// raw field quant, so the encoded quant can only go finer.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::aqba_max_quant_libjxl`].
+    pub aqba_max_over_channels: bool,
+    /// When `true` (strict `EncoderStrategy::Libjxl` only), the VarDCT
+    /// quantize/adjust/writeback path uses libjxl's f32-generated
+    /// `InvDequantMatrix`/`DequantMatrix` tables
+    /// (`quant::inv_dequant_matrix_lj` / `dequant_matrix_lj`) and libjxl's
+    /// multiply order — `val = (qm * (qac*mul)) * in` in
+    /// `QuantizeBlockAC`, `in * ((qm*qac)*mul)` in `AdjustQuantBlockAC`,
+    /// `inv_qac = inv_global_scale/quant` in the Y writeback — instead of
+    /// the f64-generated reciprocal tables and division form. When
+    /// `false` (all non-Libjxl strategies) the production tables and
+    /// `coeffs / w * qac_qm` arithmetic are kept.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::quant_weights_libjxl`].
+    pub quant_weights_libjxl: bool,
+    /// When `true` (strict `EncoderStrategy::Libjxl` only),
+    /// multi-pass forward/inverse DCTs run the `dct/*_lj` wrappers that
+    /// reproduce libjxl `ComputeScaledDCT<R, C>`'s pass order —
+    /// `DCT1D<ROWS, COLS>` (storage-row direction) first, then the
+    /// column direction — via transpose-wraps / transposed-shape
+    /// sibling calls (`vardct/dct/forward.rs`, `forward_large.rs`,
+    /// `inverse.rs`). The production kernels transform the
+    /// storage-column direction first: mathematically identical but a
+    /// different f32 evaluation order (~1-ulp diffs that flip
+    /// quantization boundaries at moderate distances).
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::dct_pass_order_libjxl`].
+    pub dct_pass_order_libjxl: bool,
+    /// When `true` (strict `EncoderStrategy::Libjxl` only),
+    /// `vardct/epf.rs::compute_epf_sharpness` evaluates candidate block
+    /// errors against the XYB planes snapshotted *before* patch
+    /// subtraction and `gaborish_inverse` — matching libjxl
+    /// `orig_opsin` ("Save pre-Gaborish opsin", `enc_frame.cc`). When
+    /// `false`, the shipped post-gaborish (DCT-input) planes are used,
+    /// which inflates `ComputeBlockL2Distance` magnitudes ~6.5x.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::epf_sharpness_pre_gab_libjxl`].
+    pub epf_sharpness_pre_gab_libjxl: bool,
+    /// When `true` (strict `EncoderStrategy::Libjxl` only),
+    /// `vardct/dc_tree_learn.rs::tree_tokens_with_ac_metadata_prefix`
+    /// emits the merged MA-tree root as `prop=1 splitval =
+    /// 2·num_dc_groups` — matching libjxl `MergeTrees`
+    /// (`enc_modular.cc:110-138`), where the root split value is
+    /// `useful_splits[mid] - 1` and the ACMetadata chunk starts at
+    /// stream id `1 + 2·num_dc_groups`. When `false` (all non-Libjxl
+    /// strategies), the root emits `splitval = num_dc_groups` — the
+    /// historical shipped value. Routing is identical either way;
+    /// only the emitted tree token differs.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::ma_tree_root_splitval_libjxl`].
+    pub ma_root_split_2ndg: bool,
+    /// W45-RECON part 9: bin the block-context-map QF histogram on
+    /// `raw_quant - 1` (0-based) exactly like libjxl
+    /// `FindBestBlockEntropyModel`'s `qf = qf_row[x] - 1`
+    /// (`enc_heuristics.cc:97-103`). When `false`, the histogram bins on
+    /// the 1-based raw field (historical shipped behaviour) — every bin
+    /// shifts +1, emitted `qf_thresholds` land +1 vs cjxl, and boundary
+    /// blocks segment one bin off (different ctx_map clustering). The
+    /// `block_context_dc` lookup already uses the decoder-equivalent
+    /// `qf > t` convention on the 1-based field, so only the histogram
+    /// binning changes under this flag.
+    /// Set only via
+    /// [`crate::api::ResolvedImprovements::block_ctx_map_qf_zero_based_libjxl`].
+    pub bcm_qf_zero_based: bool,
     /// Numerator for the effort-fixed q parameter used in global_scale computation.
     /// libjxl: 0.39 at effort >= 5, 0.79 at effort < 5.
     /// global_scale = 65536 * (initial_q_numerator / distance) / 5.0
@@ -884,21 +983,23 @@ pub struct EffortProfile {
     /// (jxl-rs `frame/modular/mod.rs:1135`, zenjxl-decoder mirror).
     ///
     /// libjxl `enc_cache.cc:232-234`: `nl_dc = (speed_tier < kFalcon)`
-    /// → TRUE at effort ≤ 7 → `enc_modular.cc:1580` sets
-    /// `extra_dc_precision = 1` and `mul = 2`. At effort ≥ 8 the
-    /// butteraugli loop owns DC quantisation refinement and libjxl drops
-    /// back to `extra_dc_precision = 0` (1× precision).
+    /// → `enc_modular.cc:1587` sets `extra_dc_precision = 1` and
+    /// `mul = 2`. **The W44-AUDIT-8 audit inverted the `SpeedTier`
+    /// ordering**: the enum is `kTortoise = 1 .. kLightning = 9` with
+    /// `speed_tier = 10 - effort` (`lib/jxl/common.h:42`,
+    /// `lib/jxl/encode.cc:1680`), so `speed_tier < kFalcon` is
+    /// **effort ≥ 4**, not effort ≤ 7 — libjxl emits 2× DC precision
+    /// at e4-e10 and 1× at e1-e3 (verified vs cjxl v0.12.0 via
+    /// `jxl-inspect dc-coeffs`, 2026-09-17).
     ///
-    /// We mirror that gate **on every strategy** (Libjxl + Zenjxl +
-    /// Aggressive + LeanFaster) because the W44-AUDIT-8 Phase 4 DC dump
-    /// confirmed cjxl emits the 2× DC precision unconditionally at
-    /// effort ≤ 7. The bitstream `extra_dc_precision` field is part of
-    /// the strict cjxl byte-parity invariant on Libjxl strategy.
+    /// The shared Zenjxl schedule below keeps the Phase 5 shape
+    /// (`1` at effort ≤ 7, `0` at effort ≥ 8) — now a deliberate zen
+    /// divergence, not a parity claim. `EncoderStrategy::Libjxl` gets
+    /// the true gate via [`Self::apply_dc_encode_libjxl_parity`]
+    /// (rewrites this field to `effort >= 4`).
     ///
     /// Default `0` keeps every direct field literal (test fixtures,
     /// `lossy_minimum_init()`, etc.) at the pre-Phase-5 baseline.
-    /// [`Self::lossy_reference`] / [`Self::lossy_experimental`] set
-    /// `1` at effort ≤ 7, `0` at effort ≥ 8.
     pub extra_dc_precision: u8,
 
     /// **W44-AUDIT-8 Phase 6**: when `true`, applies libjxl's
@@ -911,8 +1012,9 @@ pub struct EffortProfile {
     ///
     /// Mirrors libjxl `enc_modular.cc::QuantizeWP` (lines 1542-1559),
     /// active in the `nl_dc` branch (lines 1640-1674). The libjxl
-    /// `nl_dc = speed_tier < kFalcon` condition fires at effort ≤ 7
-    /// (paired with `extra_dc_precision = 1` from Phase 5).
+    /// `nl_dc = speed_tier < kFalcon` condition fires at **effort ≥ 4**
+    /// (same SpeedTier inversion correction as `extra_dc_precision`
+    /// above; W44-AUDIT-8 recorded it as ≤ 7).
     ///
     /// Applies to every strategy (Libjxl + Zenjxl + Aggressive +
     /// LeanFaster) because cjxl emits this gate unconditionally at
@@ -926,6 +1028,100 @@ pub struct EffortProfile {
     /// `false` at effort ≥ 8 (mirroring the existing
     /// `extra_dc_precision` gate).
     pub use_libjxl_wp_dc_quant: bool,
+
+    /// Emit the AC-metadata modular stream's MA tree using libjxl's
+    /// per-effort predefined-tree policy instead of our fixed 11-leaf
+    /// subtree: `kFalconACMeta` (single `Predictor::Left` leaf) at
+    /// effort ≤ 3 and on < 1024-pixel streams at effort 4-7, `kACMeta`
+    /// (27-node) otherwise at effort 4-7. Effort ≥ 8 learns and merges
+    /// per-stream trees through `modular::ma_libjxl`, including eligible
+    /// GlobalData extras (`enc_modular.cc:1749-1763`).
+    ///
+    /// Default `false` keeps the shared Zenjxl subtree — measured a
+    /// deliberate fork (structured contexts repay their ~50-token tree
+    /// header on complex content while libjxl optimises for header
+    /// size at fast efforts). See `docs/LIBJXL_DIVERGENCES.md`.
+    pub ac_meta_libjxl_tree: bool,
+
+    /// Code small extra channels losslessly in the GlobalData modular
+    /// stream (stream 0) under the shared merged tree + shared entropy
+    /// code, with ChannelCompact palette compaction — libjxl's
+    /// `PrepareStreamParams`/`FwdPaletteIteration`/`EncodeStream`
+    /// single-group path (`enc_modular.cc:397+`). Our default writer
+    /// emits a private `use_global_tree=0` extra sub-bitstream with a
+    /// lossy quantizer instead.
+    ///
+    /// Preparation covers effort >= 4, one DC group and extra channels
+    /// fitting `group_dim`, with `ac_meta_libjxl_tree` also enabled.
+    /// Other cases keep the private writer as an exact-path fallback.
+    /// Effort >= 8 also compares ChannelCompact candidates with the original
+    /// whole-image EstimateCost. Both TOC layouts emit the shared stream,
+    /// including progressive frames. See `docs/LIBJXL_DIVERGENCES.md` section D.
+    pub extras_global_stream_libjxl: bool,
+
+    /// Run the libjxl-bit-exact gaborish 5x5 inverse
+    /// (`jxl_simd::gaborish_5x5_channel_libjxl`) instead of the shipping
+    /// SIMD kernel. The parity variant reproduces `convolve_symmetric5.cc`
+    /// exactly: `Mirror` border wrap (`-2 → 1` vs our clamp `-2 → 0`),
+    /// per-row horizontal 1x5 weighted sums accumulated as
+    /// `sum0 + sum1` (vs our distance-class sums + FMA chain), and the
+    /// f32 `normalize`/`normalize_mul` weight chain (vs our f64 chain
+    /// rounded per-weight).
+    ///
+    /// Default `false` keeps the zen kernel — measured neutral-to-better
+    /// (the libjxl row-grouped accumulation is not a quality knob; the
+    /// border and rounding differences are parity-only). Strict
+    /// `EncoderStrategy::Libjxl` sets this via
+    /// [`crate::api::ResolvedImprovements::gaborish_libjxl_parity`].
+    pub gaborish_libjxl_kernel: bool,
+
+    /// libjxl entropy-code construction parity (strict
+    /// `EncoderStrategy::Libjxl`). Two coupled effects:
+    ///
+    /// 1. Always-dynamic entropy codes: the apply fn forces
+    ///    `optimize_codes = true` so even effort 1-2 builds fast dynamic
+    ///    codes — libjxl has no static-Huffman path
+    ///    (`enc_ans.cc::BuildAndEncodeHistograms` runs at every speed
+    ///    tier). The zen single-pass static-Huffman path additionally
+    ///    *breaks* under strict because its AC table is sized for the
+    ///    4-context map while strict's `block_ctx_map_15_cluster` emits
+    ///    block contexts up to 14.
+    ///
+    /// 2. Per-stream ANS-vs-prefix rule: the DC/AC-metadata modular
+    ///    token stream chooses ANS unless the stream is tiny (<100
+    ///    tokens) or fully deterministic, matching libjxl's
+    ///    `HistogramParams::ForModular` `use_prefix_code` rule — rather
+    ///    than gating on the VarDCT `use_ans` effort flag (`effort >=
+    ///    3`). libjxl never effort-gates the modular stream's ANS
+    ///    choice; only the AC stream's `HistogramParams(tier)`
+    ///    kFastest-clustering rule is effort-gated (effort <= 2 →
+    ///    prefix, which our `use_ans` schedule already matches).
+    ///
+    /// Default `false` preserves the shipping Zenjxl behaviour
+    /// byte-identically. Set via
+    /// [`crate::api::ResolvedImprovements::entropy_codes_libjxl_parity`].
+    pub entropy_codes_libjxl_parity: bool,
+
+    /// libjxl coefficient-order parity
+    /// (`ComputeUsedOrders`/`ComputeCoeffOrder`). Set only under
+    /// [`crate::api::EncoderStrategy::Libjxl`]:
+    ///
+    /// 1. The DCT8 coefficient order is computed at every effort
+    ///    (libjxl `ComputeUsedOrders` early-returns `{1,1}` at
+    ///    tier >= kFalcon, i.e. effort <= 3 — it does not wait for the
+    ///    `custom_orders = effort >= 4` schedule).
+    /// 2. At effort <= 3 only the DCT8 bucket may emit a custom order.
+    /// 3. At effort <= 7 with only DCT8 customized, block zero-counts
+    ///    come from libjxl's ~50% deterministic xorshift128+ subsample
+    ///    (`enc_coeff_order.cc:80-98`), not the full map.
+    /// 4. Admission is libjxl's unconditional `is_nondefault` rule —
+    ///    the W44-82/W44-201/W44-205 cost-benefit/bucket gates are
+    ///    bypassed.
+    ///
+    /// Default `false` preserves the shipping Zenjxl behaviour
+    /// byte-identically. Set via
+    /// [`crate::api::ResolvedImprovements::coeff_orders_libjxl_parity`].
+    pub coeff_orders_libjxl_parity: bool,
 
     // ─── Cost model constants ────────────────────────────────────────────
     // All five `k_*` constants below feed `vardct/ac_strategy_search.rs`
@@ -1051,6 +1247,8 @@ pub struct EffortProfile {
     /// wants e6-quality bytes with WP-fitted parameters), or off at e9 for
     /// faster sweeps.
     pub wp_num_param_sets: u8,
+    /// Explicit lossless learned-tree WP mode; None keeps the effort search.
+    pub forced_wp_mode: Option<u8>,
 
     // ─── Tree learning parameters ────────────────────────────────────────
     // Read by `modular/tree_learn.rs::TreeLearningParams::from_profile`.
@@ -1276,11 +1474,13 @@ pub struct EffortProfile {
     /// the self-repair only fires on the large-stride lossless tree-lift, so
     /// lossy stays byte-identical). Overridable at runtime via
     /// `JXL_TREE_SELF_REPAIR=0/1`. Read by
-    /// `modular/encode.rs::tree_self_repair_should_try`. Strategy-invariant:
-    /// the lossless `EffortProfile` does not flow through
-    /// `ResolvedImprovements`, so this is a plain profile field, not a
-    /// per-strategy gate-registry gate.
+    /// `modular/encode.rs::tree_self_repair_should_try`. Lossless strategy
+    /// resolution can disable this policy, including its environment override.
     pub tree_self_repair: bool,
+    /// Strategy permission checked before the legacy self-repair env override.
+    pub tree_self_repair_allowed: bool,
+    /// Lossless strategy permission for the large-image bucket adapter.
+    pub lossless_large_tree_bucket_reduction: bool,
 
     /// Number of butteraugli quantization-loop seeds to run in parallel,
     /// then pick the smallest-bytes result among those that meet the
@@ -1400,19 +1600,32 @@ impl EffortProfile {
             error_diffusion: false, // libjxl accepts param but never uses it
             patches: effort >= 7,
             tree_learning: effort >= 7,
-            // libjxl does NOT use LZ77 for VarDCT DC or AC at effort < 9.
-            // DC: ForModular() → lz77_method = kNone (modular_mode=false).
-            // AC: HistogramParams(kSquirrel, num_ctx) → lz77_method = kNone
-            //     (enc_frame.cc overrides since tier > kTortoise).
-            // Only kTortoise (effort 9+) enables LZ77 for VarDCT streams.
+            // libjxl's per-stream LZ77 schedule for VarDCT (v0.12,
+            // enc_ans.cc `HistogramParams::ForModular` + the AC-stream
+            // override at enc_frame.cc:1290):
+            //   * DC/AC-meta modular stream: kNone at effort <= 7
+            //     (`modular_mode=false` takes the `kNone` arm), kLZ77
+            //     (greedy hash-chain) at effort 8 (kKitten), kOptimal
+            //     at effort >= 9 (<= kTortoise).
+            //   * AC coefficient stream: kNone at effort <= 8
+            //     (tier > kTortoise), the kRLE struct default at
+            //     effort >= 9.
+            // Zenjxl keeps LZ77 off at effort <= 8 on both streams —
+            // a deliberate speed/size tradeoff. The strict
+            // `entropy_codes_libjxl_parity` gate reproduces libjxl's
+            // exact per-stream table in `vardct/bitstream.rs`.
             lz77: effort >= 9,
             // **Lz77Method::Optimal at e9+ is deliberate** (issue #29).
-            // libjxl uses Lz77Method::Rle for ALL VarDCT encodes regardless
-            // of tier; we use Optimal because v07 RD analysis shows ~5×
-            // size regression on synthetic gradients with RLE
-            // (498B → 2,417B on 1024×1024 gradients), bit-identical
-            // quality, while photographic content (~98% of inputs) is
-            // byte-identical RLE-vs-Optimal.
+            // libjxl uses kOptimal for the DC modular stream but kRLE
+            // for the AC token stream at e9+; we use Optimal on both
+            // because v07 RD analysis shows ~5× size regression on
+            // synthetic gradients with RLE (498B → 2,417B on
+            // 1024×1024 gradients), bit-identical quality, while
+            // photographic content (~98% of inputs) is byte-identical
+            // RLE-vs-Optimal. Under `EncoderStrategy::Libjxl` the
+            // per-stream split in `vardct/bitstream.rs` emits libjxl's
+            // exact methods (DC Optimal, AC Rle at e9+; DC Greedy at
+            // e8).
             //
             // Caveat: Optimal trips a latent bug in jxl-rs's VarDCT AC
             // decoder path (libjxl/jxl-rs#765, our tracker #29). Affected
@@ -1518,6 +1731,12 @@ impl EffortProfile {
             // activation at e7, not by CFL Pass-2. Gate retained at
             // effort >= 7. Do NOT re-investigate widening this gate.
             cfl_two_pass: effort >= 7,
+            // Ours computes the pass-1 CfL map unconditionally (better
+            // compression at every effort). libjxl only runs pass-1 at
+            // `speed_tier <= kSquirrel` (effort >= 7) — the
+            // `cfl_pass1_min_effort` strategy gate flips this off below
+            // e7 under `EncoderStrategy::Libjxl`.
+            cfl_pass1: true,
             // #74 task #10: keep-best Pass-2 CfL guard, same effort gate as
             // cfl_two_pass (only runs when Pass-2 does). ANDed with the
             // strategy-level `resolved.cfl_keep_best` in
@@ -1527,6 +1746,8 @@ impl EffortProfile {
             // large-stride lossless tree-lift (e5/e6). OFF for lossy keeps every
             // lossy path byte-identical (lossy byte-lock + hash-locks unchanged).
             tree_self_repair: false,
+            tree_self_repair_allowed: true,
+            lossless_large_tree_bucket_reduction: true,
             cfl_newton: effort >= 7,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
@@ -1567,14 +1788,32 @@ impl EffortProfile {
             // ── Quantization ──
             use_adaptive_quant: effort >= 5,
             adjust_quant_ac: effort >= 5,
+            // W45-RECON part 7: historical seed-with-field
+            // aggregation (downward AQBA adjustments clamped);
+            // `apply_aqba_max_quant_libjxl` flips for Libjxl only.
+            aqba_max_over_channels: false,
+            // `apply_quant_weights_libjxl` flips for Libjxl only.
+            quant_weights_libjxl: false,
+            // `apply_dct_pass_order_libjxl` flips for Libjxl only.
+            dct_pass_order_libjxl: false,
+            epf_sharpness_pre_gab_libjxl: false,
+            // `apply_ma_tree_root_splitval_libjxl` flips for Libjxl only.
+            ma_root_split_2ndg: false,
+            bcm_qf_zero_based: false,
             initial_q_numerator: if effort >= 5 { 0.39 } else { 0.79 },
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
-            // W44-AUDIT-8 Phase 5: mirror libjxl `nl_dc = speed_tier <
-            // kFalcon` (effort ≤ 7 → 2× DC precision; effort ≥ 8 → 1×,
-            // butteraugli loop owns DC refinement). Applies to every
-            // strategy because cjxl emits this gate unconditionally;
-            // the bitstream field is part of strict cjxl byte-parity.
+            // W44-AUDIT-8 Phase 5: zen DC-precision schedule — a
+            // deliberate fork, NOT the libjxl gate (the audit inverted
+            // `SpeedTier` ordering; the true `nl_dc` gate is
+            // effort >= 4). Tier-0 A/B (2026-09-17, corpus
+            // e1-e3 x d{1,3} + e8-e9): at matched SSIM2 the zen
+            // schedule wins ~3-5% bytes on high-colour content, loses
+            // ~4-6% on flat — a wash that favours keeping finer DC at
+            // e<=7 under the project's ~10%-bytes-per-SSIM2 exchange
+            // rate; at e8+ the libjxl arm (+precision, no WP) was
+            // mixed-to-worse. `EncoderStrategy::Libjxl` rewrites this
+            // to the true gate via `apply_dc_encode_libjxl_parity`.
             extra_dc_precision: if effort >= 8 { 0 } else { 1 },
             // W44-AUDIT-8 Phase 7 (DEFAULT at effort ≤ 7): mirror
             // libjxl `QuantizeWP` shape (WP-relative residual + 0.62
@@ -1622,6 +1861,11 @@ impl EffortProfile {
             // sharpness-map/static-writer + animation requantize fixes
             // from Phase 7 are kept (quality-neutral with the flag off).
             use_libjxl_wp_dc_quant: false,
+            ac_meta_libjxl_tree: false,
+            extras_global_stream_libjxl: false,
+            gaborish_libjxl_kernel: false,
+            entropy_codes_libjxl_parity: false,
+            coeff_orders_libjxl_parity: false,
 
             // ── Cost model constants (from libjxl) ──
             k_favor_2x2: -0.4,
@@ -1657,6 +1901,7 @@ impl EffortProfile {
             forced_rct: None,
 
             // ── WP parameter search ──
+            forced_wp_mode: None,
             wp_num_param_sets: match effort {
                 0..=7 => 0,
                 8 => 2,
@@ -1752,6 +1997,7 @@ impl EffortProfile {
             ans_histogram_strategy_vardct: ANSHistogramStrategy::Precise, // N/A for lossless
             epf_dynamic_sharpness: false,
             cfl_two_pass: false,
+            cfl_pass1: false,
             // N/A for lossless (no VarDCT CfL); keep shape parity, moot since
             // `cfl_two_pass: false` means refine_cfl_map never runs.
             cfl_keep_best: false,
@@ -1762,6 +2008,8 @@ impl EffortProfile {
             // content skips the second pass via the ratio pre-filter ⇒
             // byte-identical). Overridable via `JXL_TREE_SELF_REPAIR=0`.
             tree_self_repair: true,
+            tree_self_repair_allowed: true,
+            lossless_large_tree_bucket_reduction: true,
             cfl_newton: false,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
             cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
@@ -1789,6 +2037,12 @@ impl EffortProfile {
             // ── Quantization (N/A for lossless) ──
             use_adaptive_quant: false,
             adjust_quant_ac: false,
+            aqba_max_over_channels: false,
+            quant_weights_libjxl: false,
+            dct_pass_order_libjxl: false,
+            epf_sharpness_pre_gab_libjxl: false,
+            ma_root_split_2ndg: false,
+            bcm_qf_zero_based: false,
             initial_q_numerator: 0.39,
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
@@ -1799,6 +2053,11 @@ impl EffortProfile {
             // W44-AUDIT-8 Phase 6: lossless path doesn't run the VarDCT
             // DC quantization at all, so the QuantizeWP shape is N/A.
             use_libjxl_wp_dc_quant: false,
+            ac_meta_libjxl_tree: false,
+            extras_global_stream_libjxl: false,
+            gaborish_libjxl_kernel: false,
+            entropy_codes_libjxl_parity: false,
+            coeff_orders_libjxl_parity: false,
 
             // ── Cost model constants (used for tree learning cost estimates) ──
             k_favor_2x2: -0.4,
@@ -1833,6 +2092,7 @@ impl EffortProfile {
             forced_rct: None,
 
             // ── WP parameter search ──
+            forced_wp_mode: None,
             wp_num_param_sets: match effort {
                 0..=7 => 0,
                 8 => 2,
@@ -2251,8 +2511,9 @@ impl EffortProfile {
     /// Pixel-count + effort gate for the `tree_max_buckets` dispatch
     /// (audit item #3, conditional-value catalog
     /// `rejected_optimizations_conditional_value_2026-05-17.md`).
-    /// Always-on (NOT opt-in) — bytes change at large+e9 only, where
-    /// the dispatch saves wall-clock at near-zero byte cost.
+    /// Enabled by Zen lossless strategies; Libjxl skips this adapter.
+    /// Bytes change at large+e9 only, where the measured dispatch trades
+    /// a small size increase for reduced encoding time.
     ///
     /// When `pixels >= LARGE_IMAGE_PIXEL_THRESHOLD` (4 MP) AND
     /// `effort >= 9`, drops `tree_max_buckets` from the effort default
@@ -2466,7 +2727,16 @@ impl EffortProfile {
     /// - `cfl_two_pass`: `(7, 5)`
     /// - `try_dct64`: `(7, 0)` — libjxl has no effort gate
     ///   (`enc_ac_strategy.cc:948` uses `decoding_speed_tier < 4`)
-    /// - `epf_dynamic_sharpness`: `(6, 0)` — libjxl has no effort gate
+    /// - `epf_dynamic_sharpness`: `(6, 6)` — libjxl gates the
+    ///   ComputeARHeuristics sharpness search at `speed_tier <=
+    ///   kWombat` ≡ effort >= 6 (`enc_heuristics.cc:905`), filling
+    ///   uniform 4 below that. The earlier "no effort gate" claim in
+    ///   `docs/LIBJXL_DIVERGENCES.md` was wrong (the same doc's
+    ///   W44-AUDIT-8 SA-C row has the correct gate); corrected 2026-09-17.
+    /// - `cfl_pass1`: `(0, 7)` — we compute the pass-1 CfL map at every
+    ///   effort; libjxl only at `speed_tier <= kSquirrel` ≡ effort >= 7
+    ///   (`enc_heuristics.cc:1170`), emitting the zero-initialized cmap
+    ///   below that (`chroma_from_luma.cc:52-56`).
     ///
     /// **Important — `EffortGate::Ours` is a NO-OP**: when the resolved
     /// field equals the default [`crate::api::EffortGate::Ours`], the
@@ -2501,11 +2771,22 @@ impl EffortProfile {
                 .try_dct64_min_effort
                 .evaluate(effort, /*ours=*/ 7, /*libjxl=*/ 0);
         }
-        // epf_dynamic_sharpness: we e6+, libjxl has no effort gate
+        // epf_dynamic_sharpness: we e6+, libjxl e6+ (kWombat — see above)
         if !matches!(resolved.epf_dynamic_sharpness_min_effort, EffortGate::Ours) {
             self.epf_dynamic_sharpness = resolved
                 .epf_dynamic_sharpness_min_effort
-                .evaluate(effort, /*ours=*/ 6, /*libjxl=*/ 0);
+                .evaluate(effort, /*ours=*/ 6, /*libjxl=*/ 6);
+        }
+        // cfl_pass1: we run it at every effort, libjxl e7+ (kSquirrel).
+        // When the resolved gate flips it off the encoder emits
+        // `CflMap::zeros`, matching libjxl's never-computed cmap; pass-2
+        // (`refine_cfl_map`, e5+ under Libjxl) refills every tile at
+        // e5/6, so skipping pass-1 there is byte-identical as well as
+        // parity-faithful at e1-e4.
+        if !matches!(resolved.cfl_pass1_min_effort, EffortGate::Ours) {
+            self.cfl_pass1 = resolved
+                .cfl_pass1_min_effort
+                .evaluate(effort, /*ours=*/ 0, /*libjxl=*/ 7);
         }
     }
 
@@ -2594,6 +2875,243 @@ impl EffortProfile {
         // the effort gate on Zenjxl and clears it on Libjxl. (`LossyInternal
         // Params::cfl_keep_best` still overrides afterwards for expert A/B.)
         self.cfl_keep_best = self.cfl_keep_best && resolved.cfl_keep_best.unwrap_or(true);
+    }
+
+    /// Apply the DC-encode `nl_dc` libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::dc_encode_libjxl_parity`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// rewrites [`Self::extra_dc_precision`] and
+    /// [`Self::use_libjxl_wp_dc_quant`] to libjxl's actual v0.12.0
+    /// schedule: `nl_dc = speed_tier < kFalcon` where
+    /// `speed_tier = 10 - effort` and `kTortoise = 1 .. kLightning = 9`
+    /// (`lib/jxl/common.h:42`, `lib/jxl/encode.cc:1680`), i.e.
+    /// **effort >= 4** — not "effort <= 7" as the W44-AUDIT-8 audit
+    /// misread. At `nl_dc` libjxl sets `extra_dc_precision = 1` and
+    /// quantizes DC through `QuantizeWP` (`enc_modular.cc:1587-1674`);
+    /// at effort 1-3 it emits `extra_dc_precision = 0` and plain
+    /// `std::round`.
+    ///
+    /// Verified against cjxl v0.12.0 bitstreams via
+    /// `jxl-inspect dc-coeffs` (2026-09-17): `extra_precision` is 0 at
+    /// e1-e3, 1 at e4-e10.
+    ///
+    /// Called from
+    /// [`crate::api::LossyConfig::effective_profile_for_image_with_smoothness`]
+    /// alongside `apply_section_a_effort_gates`. Default (`false`)
+    /// preserves the shared Zenjxl DC schedule byte-identically.
+    pub(crate) fn apply_dc_encode_libjxl_parity(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.dc_encode_libjxl_parity {
+            let nl_dc = self.effort >= 4;
+            self.extra_dc_precision = u8::from(nl_dc);
+            self.use_libjxl_wp_dc_quant = nl_dc;
+        }
+    }
+
+    /// Apply the AC-metadata MA-tree libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::ac_meta_libjxl_tree`] is
+    /// `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables libjxl's per-effort predefined-tree policy for the
+    /// AC-metadata modular stream (see [`Self::ac_meta_libjxl_tree`]).
+    /// The per-effort kind selection happens in
+    /// `vardct/bitstream.rs` where the merged LfGlobal tree is built.
+    pub(crate) fn apply_ac_meta_tree_libjxl_parity(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.ac_meta_libjxl_tree {
+            self.ac_meta_libjxl_tree = true;
+        }
+    }
+
+    /// Apply the extras Global-stream libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::extras_global_stream_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables the lossless GlobalData-stream coding site for small
+    /// extra channels (see [`Self::extras_global_stream_libjxl`]).
+    pub(crate) fn apply_extras_global_stream_libjxl_parity(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.extras_global_stream_libjxl {
+            self.extras_global_stream_libjxl = true;
+        }
+    }
+
+    /// Apply the gaborish libjxl-parity kernel flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::gaborish_libjxl_parity`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables the `Symmetric5`-bit-exact gaborish kernel (see
+    /// [`Self::gaborish_libjxl_kernel`]).
+    pub(crate) fn apply_gaborish_libjxl_parity(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.gaborish_libjxl_parity {
+            self.gaborish_libjxl_kernel = true;
+        }
+    }
+
+    /// Apply the AC-search channel-loss-multiplier libjxl-parity flip
+    /// (W45-RECON part 6).
+    ///
+    /// When [`crate::api::ResolvedImprovements::ac_channel_loss_mul_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// installs libjxl's true `kChannelMul` (`{8.2^8, 1, 1.03^8}`) into
+    /// [`EntropyMulTable::channel_loss_mul`]. The historical default's
+    /// X entry is `20882706.4655936` ≈ `8.2219^8` — a +2.16%
+    /// over-weight on the dominant X-channel loss term that biases
+    /// `loss_scalar` by ~+0.25% on every pixel-domain candidate
+    /// evaluation. NO-OP on every other strategy: `false` preserves
+    /// the byte-identical W44-29..W44-172 calibration baseline.
+    pub(crate) fn apply_ac_loss_channel_mul_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.ac_channel_loss_mul_libjxl {
+            self.entropy_mul_table.channel_loss_mul =
+                crate::vardct::ac_strategy::CHANNEL_MUL_LIBJXL;
+        }
+    }
+
+    /// Apply the `AdjustQuantBlockAC` max-aggregation libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::aqba_max_quant_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::aqba_max_over_channels`] — the `enc_group.cc`
+    /// `int max_quant = 0;` aggregation that lets downward per-channel
+    /// quant adjustments land (see field docstring).
+    pub(crate) fn apply_aqba_max_quant_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.aqba_max_quant_libjxl {
+            self.aqba_max_over_channels = true;
+        }
+    }
+
+    /// Apply the f32 quant-matrix + multiply-order libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::quant_weights_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::quant_weights_libjxl`] — the strict
+    /// `InvDequantMatrix`/`DequantMatrix` tables and libjxl multiply
+    /// order in `QuantizeBlockAC`/`AdjustQuantBlockAC`/the Y writeback
+    /// (see field docstring).
+    pub(crate) fn apply_quant_weights_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.quant_weights_libjxl {
+            self.quant_weights_libjxl = true;
+        }
+    }
+
+    /// Apply the libjxl `ComputeScaledDCT` pass-order parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::dct_pass_order_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::dct_pass_order_libjxl`] — the storage-row-first
+    /// `DCT1D<ROWS, COLS>` pass order for multi-pass forward/inverse
+    /// transforms (see field docstring).
+    pub(crate) fn apply_dct_pass_order_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.dct_pass_order_libjxl {
+            self.dct_pass_order_libjxl = true;
+        }
+    }
+
+    /// Apply the EPF pre-gaborish-original libjxl-parity flip.
+    ///
+    /// When
+    /// [`crate::api::ResolvedImprovements::epf_sharpness_pre_gab_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::epf_sharpness_pre_gab_libjxl`] — snapshot the
+    /// `orig_opsin`-equivalent planes for the sharpness block-error
+    /// metric (see field docstring).
+    pub(crate) fn apply_epf_sharpness_pre_gab_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.epf_sharpness_pre_gab_libjxl {
+            self.epf_sharpness_pre_gab_libjxl = true;
+        }
+    }
+
+    /// Apply the merged-MA-tree root splitval libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::ma_tree_root_splitval_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::ma_root_split_2ndg`] — the `MergeTrees`
+    /// `useful_splits[mid] - 1` root split value (see field docstring).
+    pub(crate) fn apply_ma_tree_root_splitval_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.ma_tree_root_splitval_libjxl {
+            self.ma_root_split_2ndg = true;
+        }
+    }
+
+    /// Apply the block-ctx-map QF zero-based-histogram libjxl-parity
+    /// flip.
+    ///
+    /// When
+    /// [`crate::api::ResolvedImprovements::block_ctx_map_qf_zero_based_libjxl`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables [`Self::bcm_qf_zero_based`] — `FindBestBlockEntropyModel`'s
+    /// `qf_row[x] - 1` histogram bins (see field docstring).
+    pub(crate) fn apply_block_ctx_map_qf_zero_based_libjxl(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.block_ctx_map_qf_zero_based_libjxl {
+            self.bcm_qf_zero_based = true;
+        }
+    }
+
+    /// Apply the entropy-code-construction libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::entropy_codes_libjxl_parity`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// forces `optimize_codes = true` (libjxl builds dynamic codes at
+    /// every effort — the static-Huffman path is a zen-only
+    /// optimisation) and enables the per-stream ANS-vs-prefix rule on
+    /// the DC/AC-metadata modular stream (see
+    /// [`Self::entropy_codes_libjxl_parity`], consumed in
+    /// `vardct/bitstream.rs`).
+    pub(crate) fn apply_entropy_codes_libjxl_parity(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.entropy_codes_libjxl_parity {
+            self.entropy_codes_libjxl_parity = true;
+            self.optimize_codes = true;
+        }
+    }
+
+    /// Apply the coefficient-order libjxl-parity flip.
+    ///
+    /// When [`crate::api::ResolvedImprovements::coeff_orders_libjxl_parity`]
+    /// is `true` (set only by [`crate::api::EncoderStrategy::Libjxl`]),
+    /// enables the libjxl `ComputeUsedOrders`/`ComputeCoeffOrder` rules —
+    /// see [`Self::coeff_orders_libjxl_parity`], consumed in
+    /// `vardct/bitstream.rs` + `vardct/coeff_order.rs`.
+    pub(crate) fn apply_coeff_orders_libjxl_parity(
+        &mut self,
+        resolved: &crate::api::ResolvedImprovements,
+    ) {
+        if resolved.coeff_orders_libjxl_parity {
+            self.coeff_orders_libjxl_parity = true;
+        }
     }
 
     /// Content-class-aware per-image adapter (RFC #45 pick #4 chunk 1).
@@ -3059,6 +3577,13 @@ pub struct LosslessInternalParams {
     /// Effort interaction: 0 at e<8, 2 at e8, 5 at e9+.
     pub wp_num_param_sets: Option<u8>,
 
+    /// Select weighted-predictor mode 0..=4 without searching.
+    /// `None` preserves effort-derived search. Takes precedence over
+    /// [`Self::wp_num_param_sets`] for learned modular trees, including
+    /// squeeze and sectioned variants. Fixed-tree encodes do not use it.
+    /// Out-of-range values are rejected by validation before encoding.
+    pub forced_wp_mode: Option<u8>,
+
     /// Maximum quantization buckets per property when building the
     /// histogram for tree splits.
     /// Effort interaction: 32 at e<=4, 48 at e5, 64 at e6, 96 at e7,
@@ -3294,6 +3819,7 @@ impl LosslessInternalParams {
             nb_rcts_to_try,
             forced_rct,
             wp_num_param_sets,
+            forced_wp_mode,
             tree_max_buckets,
             tree_num_properties,
             tree_threshold_base,
@@ -3314,6 +3840,9 @@ impl LosslessInternalParams {
         }
         if forced_rct.is_some() {
             profile.forced_rct = forced_rct;
+        }
+        if forced_wp_mode.is_some() {
+            profile.forced_wp_mode = forced_wp_mode;
         }
         if let Some(v) = wp_num_param_sets {
             profile.wp_num_param_sets = v;
@@ -4867,19 +5396,24 @@ mod tests {
 
     #[test]
     fn test_apply_section_a_effort_gates_libjxl_widens() {
-        // At e5: Ours gates all 3 to FALSE; Libjxl widens:
+        // At e5 under Ours: cfl_two_pass/try_dct64/epf_dynamic_sharpness
+        // are FALSE, cfl_pass1 is TRUE (we run it at every effort).
+        // Under Libjxl:
         //  - cfl_two_pass: libjxl >= 5 → true at e5
         //  - try_dct64: libjxl no effort gate → true at e5
-        //  - epf_dynamic_sharpness: libjxl no effort gate → true at e5
+        //  - epf_dynamic_sharpness: libjxl >= 6 (kWombat) → FALSE at e5
+        //  - cfl_pass1: libjxl >= 7 (kSquirrel) → FALSE at e5
         let mut p = EffortProfile::lossy(5, EncoderMode::Reference);
         assert!(!p.cfl_two_pass); // ours: e5 < 7
         assert!(!p.try_dct64); // ours: e5 < 7
         assert!(!p.epf_dynamic_sharpness); // ours: e5 < 6
+        assert!(p.cfl_pass1); // ours: runs at every effort
 
         let libjxl = crate::api::ResolvedImprovements {
             cfl_two_pass_min_effort: crate::api::EffortGate::Libjxl,
             try_dct64_min_effort: crate::api::EffortGate::Libjxl,
             epf_dynamic_sharpness_min_effort: crate::api::EffortGate::Libjxl,
+            cfl_pass1_min_effort: crate::api::EffortGate::Libjxl,
             ..Default::default()
         };
         p.apply_section_a_effort_gates(&libjxl);
@@ -4889,9 +5423,35 @@ mod tests {
             "Libjxl: try_dct64 fires at e5 (no effort gate)"
         );
         assert!(
-            p.epf_dynamic_sharpness,
-            "Libjxl: epf_dynamic_sharpness fires at e5 (no effort gate)"
+            !p.epf_dynamic_sharpness,
+            "Libjxl: epf_dynamic_sharpness skips at e5 (libjxl gate e>=6, kWombat)"
         );
+        assert!(
+            !p.cfl_pass1,
+            "Libjxl: cfl_pass1 skips at e5 (libjxl gate e>=7, kSquirrel)"
+        );
+    }
+
+    /// `cfl_pass1` threshold sweep under `EffortGate::Libjxl`: pass-1
+    /// runs at e7+ only (libjxl `speed_tier <= kSquirrel`,
+    /// `enc_heuristics.cc:1170`); `Ours` keeps it on at every effort.
+    #[test]
+    fn test_cfl_pass1_libjxl_threshold() {
+        let libjxl = crate::api::ResolvedImprovements {
+            cfl_pass1_min_effort: crate::api::EffortGate::Libjxl,
+            ..Default::default()
+        };
+        for effort in [1u8, 3, 5, 6] {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            assert!(p.cfl_pass1, "Ours: cfl_pass1 on at e{effort}");
+            p.apply_section_a_effort_gates(&libjxl);
+            assert!(!p.cfl_pass1, "Libjxl: cfl_pass1 off at e{effort}");
+        }
+        for effort in [7u8, 9] {
+            let mut p = EffortProfile::lossy(effort, EncoderMode::Reference);
+            p.apply_section_a_effort_gates(&libjxl);
+            assert!(p.cfl_pass1, "Libjxl: cfl_pass1 on at e{effort}");
+        }
     }
 
     #[test]

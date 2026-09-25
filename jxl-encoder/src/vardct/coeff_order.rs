@@ -13,11 +13,10 @@
 
 use super::ac_group::ac_strategy_info;
 use super::ac_strategy::AcStrategyMap;
-use super::common::{DCT_BLOCK_SIZE, ceil_log2_nonzero, floor_log2_nonzero};
+use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, ceil_log2_nonzero, floor_log2_nonzero};
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::encode::{
-    build_entropy_code_ans_with_options, build_entropy_code_with_options, write_entropy_code_ans,
-    write_tokens, write_tokens_ans,
+    UintConfigMethod, build_entropy_code_ans_with_options, write_entropy_code_ans, write_tokens_ans,
 };
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
@@ -173,7 +172,208 @@ pub fn compute_lehmer_code(permutation: &[u32]) -> Vec<u32> {
     code
 }
 
-/// Count zero coefficients per position for each (bucket, channel) combination.
+/// Shared per-bucket count-grid initialization for
+/// [`count_zero_coefficients`] and
+/// [`count_zero_coefficients_libjxl_sampled`].
+fn init_order_buckets(fallible: bool) -> Result<Vec<Vec<Vec<i64>>>> {
+    let mut counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS)
+        .map(|_| vec![Vec::new(); 3])
+        .collect();
+    // Pre-allocate for buckets we use (sized to each strategy's coeff count).
+    for ch in &mut counts[0] {
+        *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 64)?;
+    }
+    for ch in &mut counts[2] {
+        *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 256)?;
+    }
+    for ch in &mut counts[3] {
+        *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 1024)?;
+    }
+    for ch in &mut counts[4] {
+        *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 128)?;
+    }
+    for ch in &mut counts[5] {
+        *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 256)?;
+    }
+    for ch in &mut counts[6] {
+        *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 512)?;
+    }
+    for ch in &mut counts[7] {
+        *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 4096)?;
+    }
+    for ch in &mut counts[8] {
+        *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 2048)?;
+    }
+    Ok(counts)
+}
+
+/// libjxl `ComputeCoeffOrder` subsampled counting
+/// (`enc_coeff_order.cc:74-145` in v0.12). When
+/// `speed >= SpeedTier::kSquirrel` (effort <= 7) and
+/// `current_used_orders == 1` (only the DCT8 bucket is customized —
+/// always true at effort <= 3 where `ComputeUsedOrders` early-returns
+/// `{1,1}`), libjxl counts zeros over a deterministic ~50%
+/// xorshift128+ subsample of strategy anchors.
+///
+/// Two subtleties are replicated exactly:
+///
+/// 1. The RNG is consumed once per anchor block in group-major order
+///    (32x32-block groups scanned row-major, anchors row-major within
+///    the clipped group rect), with fixed seeds
+///    `{0x94D049BB133111EB, 0xBF58476D1CE4E5B9}` and threshold
+///    `(u64::MAX >> 32) * 0.5`.
+/// 2. `ac_offset` — the read cursor into the group's coefficient array —
+///    advances ONLY on sampled anchors (`ac_offset += size` sits after
+///    the `use_sample` early-continue). The n-th sampled anchor therefore
+///    reads the coefficients of the n-th anchor *in group scan order*,
+///    not its own; for uniform-DCT8 groups this counts exactly the first
+///    N anchors' coefficient blocks, where N is the RNG-decided sample
+///    count.
+///
+/// Returns `None` when the subsample does not apply (effort > 7, or a
+/// customizable non-DCT8 bucket is present at effort > 3); the caller
+/// then falls back to full counting.
+pub fn count_zero_coefficients_libjxl_sampled(
+    quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+    ac_strategy: &AcStrategyMap,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    effort: u8,
+) -> Option<Vec<Vec<Vec<i64>>>> {
+    // speed_tier = 10 - effort; speed >= kSquirrel(3) <=> effort <= 7.
+    if effort > 7 {
+        return None;
+    }
+    // current_used_orders == ComputeUsedOrders' ret_customize: forced to
+    // 1 at effort <= 3 (tier >= kFalcon); otherwise the OR of (1 << ord)
+    // over strategy buckets ord <= 6 present in the map.
+    if effort > 3 {
+        let mut ret_customize = 0u32;
+        for by in 0..ysize_blocks {
+            for bx in 0..xsize_blocks {
+                if !ac_strategy.is_first(bx, by) {
+                    continue;
+                }
+                let ord = strategy_bucket(ac_strategy.strategy_code(bx, by)) as u32;
+                if ord <= 6 {
+                    ret_customize |= 1 << ord;
+                }
+            }
+        }
+        if ret_customize != 1 {
+            return None;
+        }
+    }
+
+    // threshold = (u64::MAX >> 32) * 0.5 truncated = 2147483647.
+    const THRESHOLD: u64 = 2_147_483_647;
+    let mut s = [0x94D0_49BB_1331_11EBu64, 0xBF58_476D_1CE4_E5B9u64];
+    let mut use_sample = || {
+        let s1 = s[0];
+        let s0 = s[1];
+        let bits = s1.wrapping_add(s0);
+        s[0] = s0;
+        let s1 = s1 ^ (s1 << 23);
+        s[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5);
+        (bits >> 32) <= THRESHOLD
+    };
+
+    const GROUP_DIM_BLOCKS: usize = 32;
+    let xsize_groups = xsize_blocks.div_ceil(GROUP_DIM_BLOCKS);
+    let ysize_groups = ysize_blocks.div_ceil(GROUP_DIM_BLOCKS);
+    let mut counts = init_order_buckets(false).ok()?;
+
+    for gy in 0..ysize_groups {
+        for gx in 0..xsize_groups {
+            let x0 = gx * GROUP_DIM_BLOCKS;
+            let y0 = gy * GROUP_DIM_BLOCKS;
+            let xs = (xsize_blocks - x0).min(GROUP_DIM_BLOCKS);
+            let ys = (ysize_blocks - y0).min(GROUP_DIM_BLOCKS);
+
+            // Anchor list in group scan order + per-channel flat
+            // coefficient array (libjxl's ac_image layout: anchors'
+            // coefficients concatenated in virtual-raster order).
+            let mut anchors: Vec<(usize, usize)> = Vec::new(); // (bucket, size)
+            let mut flat: [Vec<i32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+            for by in 0..ys {
+                for bx in 0..xs {
+                    let x = x0 + bx;
+                    let y = y0 + by;
+                    if !ac_strategy.is_first(x, y) {
+                        continue;
+                    }
+                    let raw = ac_strategy.raw_strategy(x, y);
+                    let bucket = strategy_bucket(ac_strategy.strategy_code(x, y)) as usize;
+                    let cov_x = super::ac_strategy::COVERED_X[raw as usize];
+                    let cov_y = super::ac_strategy::COVERED_Y[raw as usize];
+                    let size = cov_x * cov_y * DCT_BLOCK_SIZE;
+                    anchors.push((bucket, size));
+                    for c in 0..3 {
+                        let f = &mut flat[c];
+                        if cov_x * cov_y == 1 {
+                            f.extend_from_slice(&quant_ac[c][y][x]);
+                        } else {
+                            // Virtual-raster layout matching the
+                            // tokenize path's full_block assembly
+                            // (CoefficientLayout cy,cx swap).
+                            let (cx, cy) = if cov_y > cov_x {
+                                (cov_y, cov_x)
+                            } else {
+                                (cov_x, cov_y)
+                            };
+                            let transpose = cov_y > cov_x;
+                            for vy in 0..cy * 8 {
+                                for vx in 0..cx * 8 {
+                                    let (pr, pc) = if transpose {
+                                        (vx / 8, vy / 8)
+                                    } else {
+                                        (vy / 8, vx / 8)
+                                    };
+                                    f.push(quant_ac[c][y + pr][x + pc][(vy % 8) * 8 + (vx % 8)]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut ac_offset = 0usize;
+            for &(bucket, size) in &anchors {
+                if !use_sample() {
+                    continue;
+                }
+                for c in 0..3 {
+                    let cnt = &mut counts[bucket][c];
+                    if cnt.len() < size {
+                        cnt.resize(size, 0);
+                    }
+                    let src = &flat[c];
+                    for (k, count) in cnt[..size].iter_mut().enumerate() {
+                        // libjxl reads flat[ac_offset + k] — can run past
+                        // the group array only if sizes mismatch anchor
+                        // layout; clamp defensively (libjxl would UB).
+                        if src.get(ac_offset + k).copied().unwrap_or(0) == 0 {
+                            *count += 1;
+                        }
+                    }
+                    // Ensure LLFs sort first (idempotent -1 marks).
+                    let (bcx, bcy) = bucket_to_cx_cy(bucket);
+                    let (lcx, lcy) = if bcx >= bcy { (bcx, bcy) } else { (bcy, bcx) };
+                    for iy in 0..lcy {
+                        for ix in 0..lcx {
+                            cnt[iy * lcx * 8 + ix] = -1;
+                        }
+                    }
+                }
+                ac_offset += size;
+            }
+        }
+    }
+    Some(counts)
+}
+
+/// Count zero coefficients per position for each (bucket, channel)
+/// combination.
 ///
 /// Returns a map: `zero_counts[bucket][channel][position] = count`.
 /// LLF positions get count = -1 to ensure they sort first.
@@ -196,42 +396,11 @@ pub fn count_zero_coefficients(
     ysize_blocks: usize,
     fallible: bool,
 ) -> Result<Vec<Vec<Vec<i64>>>> {
-    fn init_buckets(fallible: bool) -> Result<Vec<Vec<Vec<i64>>>> {
-        let mut counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS)
-            .map(|_| vec![Vec::new(); 3])
-            .collect();
-        // Pre-allocate for buckets we use (sized to each strategy's coeff count).
-        for ch in &mut counts[0] {
-            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 64)?;
-        }
-        for ch in &mut counts[2] {
-            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 256)?;
-        }
-        for ch in &mut counts[3] {
-            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 1024)?;
-        }
-        for ch in &mut counts[4] {
-            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 128)?;
-        }
-        for ch in &mut counts[5] {
-            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 256)?;
-        }
-        for ch in &mut counts[6] {
-            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 512)?;
-        }
-        for ch in &mut counts[7] {
-            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 4096)?;
-        }
-        for ch in &mut counts[8] {
-            *ch = crate::budget::vec_i64_zeroed_fallible(fallible, 2048)?;
-        }
-        Ok(counts)
-    }
     // Accumulate zeros for a horizontal band of rows into a freshly
     // allocated counts grid. Each band's grid is independent so the
     // bands can run in parallel and merge associatively at the end.
     let accumulate_band = |y0: usize, y1: usize| -> Result<Vec<Vec<Vec<i64>>>> {
-        let mut counts = init_buckets(fallible)?;
+        let mut counts = init_order_buckets(fallible)?;
         for by in y0..y1 {
             for bx in 0..xsize_blocks {
                 if !ac_strategy.is_first(bx, by) {
@@ -258,19 +427,33 @@ pub fn count_zero_coefficients(
                             }
                         }
                     } else {
+                        // Multi-block anchors count in virtual-raster
+                        // index space — the same layout the tokenize
+                        // path's `full_block` assembly and the emitted
+                        // coefficient order use (CoefficientLayout
+                        // cy,cx swap → cx >= cy, index y*(cx*8)+x).
                         let covered_x_local = super::ac_strategy::COVERED_X[raw_strategy as usize];
                         let covered_y_local = super::ac_strategy::COVERED_Y[raw_strategy as usize];
-                        let mut base_idx = 0;
-                        for slot_dy in 0..covered_y_local {
-                            for slot_dx in 0..covered_x_local {
-                                let block = &quant_ac[c][by + slot_dy][bx + slot_dx];
-                                let cnt_slice = &mut cnt[base_idx..base_idx + DCT_BLOCK_SIZE];
-                                for k in 0..DCT_BLOCK_SIZE {
-                                    if block[k] == 0 {
-                                        cnt_slice[k] += 1;
-                                    }
+                        let (vcx, vcy) = if covered_y_local > covered_x_local {
+                            (covered_y_local, covered_x_local)
+                        } else {
+                            (covered_x_local, covered_y_local)
+                        };
+                        let transpose = covered_y_local > covered_x_local;
+                        let stride = vcx * BLOCK_DIM;
+                        for vy in 0..vcy * BLOCK_DIM {
+                            for vx in 0..vcx * BLOCK_DIM {
+                                let (pr, pc) = if transpose {
+                                    (vx / BLOCK_DIM, vy / BLOCK_DIM)
+                                } else {
+                                    (vy / BLOCK_DIM, vx / BLOCK_DIM)
+                                };
+                                if quant_ac[c][by + pr][bx + pc]
+                                    [(vy % BLOCK_DIM) * BLOCK_DIM + (vx % BLOCK_DIM)]
+                                    == 0
+                                {
+                                    cnt[vy * stride + vx] += 1;
                                 }
-                                base_idx += DCT_BLOCK_SIZE;
                             }
                         }
                     }
@@ -320,7 +503,7 @@ pub fn count_zero_coefficients(
             crate::parallel::parallel_map_result(bands.len(), |i| {
                 accumulate_band(bands[i].0, bands[i].1)
             })?;
-        let mut counts = init_buckets(fallible)?;
+        let mut counts = init_order_buckets(fallible)?;
         for band in per_band {
             merge_into(&mut counts, band, fallible)?;
         }
@@ -331,13 +514,13 @@ pub fn count_zero_coefficients(
     // Done once per bucket after all blocks are processed, instead of per-block.
     for (bucket, bucket_counts) in counts.iter_mut().enumerate().take(NUM_ORDER_BUCKETS) {
         let size = match bucket {
-            0 => 64,   // DCT8
-            2 => 256,  // DCT16x16
-            3 => 1024, // DCT32x32
-            4 => 128,  // DCT8x16/DCT16x8
-            6 => 512,  // DCT32x16/DCT16x32
-            7 => 4096, // DCT64x64
-            8 => 2048, // DCT64x32/DCT32x64
+            0 | 1 => 64, // DCT8 / bucket-1 (IDENTITY, DCT2X2, DCT4X4, AFV…)
+            2 => 256,    // DCT16x16
+            3 => 1024,   // DCT32x32
+            4 => 128,    // DCT8x16/DCT16x8
+            6 => 512,    // DCT32x16/DCT16x32
+            7 => 4096,   // DCT64x64
+            8 => 2048,   // DCT64x32/DCT32x64
             _ => continue,
         };
         if bucket_counts[0].len() < size {
@@ -461,6 +644,16 @@ pub fn compute_custom_orders_with_options(
         // libjxl's ComputeUsedOrders (enc_coeff_order.cc:53-58) skips buckets > 6.
         // Buckets 7+ (DCT64x64, DCT64x32/DCT32x64) are never customized.
         if bucket > 6 {
+            continue;
+        }
+
+        // Bucket 1 (IDENTITY/DCT2X2/DCT4X4/DCT4X8/DCT8X4/AFV0-3) is only
+        // reachable under libjxl-parity admission: the Zenjxl cost-benefit
+        // gate below is not calibrated for bucket-1 stats (flat noise
+        // content admits orders that cost more than they save — e.g.
+        // +226 B on mg_rgb_f16 noise e7), while strict parity must emit
+        // whatever `is_nondefault` produces.
+        if bucket == 1 && !unconditional_emit {
             continue;
         }
 
@@ -745,6 +938,9 @@ fn expected_trailing_zeros(order: &[u32], zero_rates: &[f64], llf: usize, size: 
 fn bucket_to_cx_cy(bucket: usize) -> (usize, usize) {
     match bucket {
         0 => (1, 1), // DCT8: 1x1 blocks
+        // libjxl kStrategyOrder bucket 1: IDENTITY/DCT2X2/DCT4X4/DCT4X8/
+        // DCT8X4/AFV0-3 — all 1x1-block strategies sharing the 8x8 zigzag.
+        1 => (1, 1),
         2 => (2, 2), // DCT16x16: 2x2 blocks
         3 => (4, 4), // DCT32x32: 4x4 blocks
         4 => (2, 1), // DCT8x16/DCT16x8: 2x1 blocks (after CoefficientLayout)
@@ -978,6 +1174,30 @@ pub fn compute_center_first_ac_permutation(
     order
 }
 
+/// libjxl `use_prefix_code` rule applied to the permutation token stream
+/// (`enc_ans.cc` `initialize_global_state`): with default
+/// `HistogramParams` (as `EncodeCoeffOrders` uses), the stream is
+/// prefix-coded when it has < 100 tokens or every context is
+/// deterministic (single distinct symbol — `ShannonEntropy < 1e-5`).
+pub fn perm_stream_prefers_prefix(tokens: &[Token]) -> bool {
+    if tokens.len() < 100 {
+        return true;
+    }
+    let mut first_seen = [u32::MAX; NUM_PERMUTATION_CONTEXTS];
+    tokens.iter().all(|t| {
+        let c = t.context() as usize;
+        if c >= NUM_PERMUTATION_CONTEXTS {
+            return false;
+        }
+        if first_seen[c] == u32::MAX {
+            first_seen[c] = t.value;
+            true
+        } else {
+            first_seen[c] == t.value
+        }
+    })
+}
+
 /// Build entropy code and write coefficient orders to the bitstream.
 ///
 /// This writes the permutation entropy code header followed by all the
@@ -986,30 +1206,127 @@ pub fn build_and_write_coeff_orders(
     tokens: &[Token],
     use_ans: bool,
     writer: &mut BitWriter,
+    libjxl_parity: bool,
 ) -> Result<()> {
     if tokens.is_empty() {
         return Ok(());
     }
 
-    // LZ77 flag: no LZ77 for permutation data
-    writer.write(1, 0)?;
+    // Diagnostic: raw permutation-token dump for libjxl `EncodeCoeffOrders`
+    // parity work. `JXL_CO_DUMP=<file>` writes "ctx value" lines.
+    #[cfg(feature = "std")]
+    if let Ok(path) = std::env::var("JXL_CO_DUMP")
+        && let Ok(mut f) = std::fs::File::create(path)
+    {
+        use std::io::Write as _;
+        for t in tokens {
+            let _ = writeln!(f, "{} {}", t.context(), t.value);
+        }
+    }
 
-    if use_ans {
-        let code = build_entropy_code_ans_with_options(
+    // libjxl `EncodeCoeffOrders` builds the stream under default
+    // `HistogramParams` (`enc_ans_params.h`): `kBest` clustering, `kBest`
+    // uint, `kRLE` LZ77, `kPrecise` ANS. Strict-parity callers therefore
+    // attempt the RLE pass; historical callers keep `lz77 disabled`.
+    let lz77 = if libjxl_parity {
+        crate::entropy_coding::lz77::apply_lz77_rle(
             tokens,
             NUM_PERMUTATION_CONTEXTS,
-            false, // no enhanced clustering for permutation
-            true,  // optimize uint configs
-            None,  // no LZ77 for permutation data
-            None,  // no pixel hint for permutation data
-        );
-        write_entropy_code_ans(&code, writer)?;
-        write_tokens_ans(tokens, &code, None, writer)?;
+            /*force_huffman=*/ false,
+            /*distance_multiplier=*/ 0,
+        )
     } else {
-        let code = build_entropy_code_with_options(tokens, NUM_PERMUTATION_CONTEXTS, false, None);
-        let ec = code.as_entropy_code();
-        crate::entropy_coding::encode::write_entropy_code(&ec, writer)?;
-        write_tokens(tokens, &ec, None, writer)?;
+        None
+    };
+    #[cfg(feature = "std")]
+    if std::env::var("JXL_CO_DUMP").is_ok() {
+        eprintln!(
+            "[CO-OURS] use_ans={} lz77={} n_tokens={}",
+            use_ans,
+            lz77.is_some(),
+            tokens.len()
+        );
+    }
+    let (lz_tokens, lz_params) = match &lz77 {
+        Some((t, p)) => (t.as_slice(), Some(p)),
+        None => (tokens, None),
+    };
+    #[cfg(feature = "std")]
+    if let Ok(path) = std::env::var("JXL_CO_LZ_DUMP")
+        && let Ok(mut f) = std::fs::File::create(path)
+    {
+        use std::io::Write as _;
+        for t in lz_tokens {
+            let _ = writeln!(
+                f,
+                "{} {} {}",
+                t.is_lz77_length() as u8,
+                t.context(),
+                t.value
+            );
+        }
+    }
+    let lz_header_bits = writer.bits_written();
+    crate::entropy_coding::lz77::write_lz77_header(lz_params, writer)?;
+    let pre_code_bits = writer.bits_written();
+
+    if use_ans {
+        let code = if libjxl_parity {
+            let num_ctx = NUM_PERMUTATION_CONTEXTS + lz77.is_some() as usize;
+            crate::entropy_coding::encode::build_entropy_code_ans_from_token_groups_with_strategy(
+                &[lz_tokens],
+                num_ctx,
+                lz_params,
+                crate::entropy_coding::encode::AnsBuildOptions {
+                    enhanced_clustering: true,
+                    optimize_uint_configs: true,
+                    total_pixel_hint: None,
+                    ans_strategy: crate::entropy_coding::ans::ANSHistogramStrategy::Precise,
+                    libjxl_params: true,
+                },
+            )
+        } else {
+            build_entropy_code_ans_with_options(
+                tokens,
+                NUM_PERMUTATION_CONTEXTS,
+                false, // no enhanced clustering for permutation
+                true,  // optimize uint configs
+                None,  // no LZ77 for permutation data
+                None,  // no pixel hint for permutation data
+            )
+        };
+        write_entropy_code_ans(&code, writer)?;
+        #[cfg(feature = "std")]
+        if std::env::var("JXL_CO_DUMP").is_ok() {
+            eprintln!(
+                "[CO-OURS] lz_header={} header_bits={} n_histos={}",
+                pre_code_bits - lz_header_bits,
+                writer.bits_written() - pre_code_bits,
+                code.histograms.len()
+            );
+        }
+        let pre_tok = writer.bits_written();
+        write_tokens_ans(lz_tokens, &code, lz_params, writer)?;
+        #[cfg(feature = "std")]
+        if std::env::var("JXL_CO_DUMP").is_ok() {
+            eprintln!("[CO-OURS] token_bits={}", writer.bits_written() - pre_tok);
+        }
+    } else {
+        // libjxl builds the permutation code under default `HistogramParams`
+        // → `uint_method = kBest` (`enc_ans_params.h`), so prefix streams get
+        // per-histogram HybridUint optimization too.
+        let mut code = crate::entropy_coding::encode::build_entropy_code_with_uint_method(
+            lz_tokens,
+            NUM_PERMUTATION_CONTEXTS + lz77.is_some() as usize,
+            false,
+            lz_params,
+            UintConfigMethod::Best,
+        );
+        code.libjxl_log_alpha = libjxl_parity;
+        // Owned path: an optimized wide-direct config can exceed the
+        // fixed ALPHABET_SIZE=64 `PrefixCode` alphabet.
+        code.write_header(writer)?;
+        code.write_tokens_owned(lz_tokens, lz_params, writer)?;
     }
 
     Ok(())

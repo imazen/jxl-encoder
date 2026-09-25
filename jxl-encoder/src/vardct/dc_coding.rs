@@ -12,6 +12,7 @@
 use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
 use super::common::pack_signed;
+use super::dc_tree_learn::AcMetaTreeKind;
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
@@ -730,6 +731,7 @@ pub fn collect_ac_metadata_tokens_region(
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
     sharpness_map: Option<&[u8]>,
+    ac_meta_kind: AcMetaTreeKind,
 ) -> Vec<Token> {
     let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
     let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
@@ -745,7 +747,10 @@ pub fn collect_ac_metadata_tokens_region(
     let global_tile_x0 = start_bx / TILES_IN_BLOCKS;
     let global_tile_y0 = start_by / TILES_IN_BLOCKS;
 
+    let falcon = matches!(ac_meta_kind, AcMetaTreeKind::Falcon);
+
     // YtoX and YtoB tokens with gradient prediction
+    // (Predictor::Left residuals under kFalconACMeta)
     for c in 0..2 {
         let ctx_id = (2 - c) as u32;
         for y in 0..cfl_ysize {
@@ -757,7 +762,9 @@ pub fn collect_ac_metadata_tokens_region(
                 } else {
                     cfl_map.ytob_at(global_tx, global_ty) as i32
                 };
-                // Gradient prediction from neighbors in the CfL map
+                // Gradient prediction from neighbors in the CfL map.
+                // `left` also encodes the Predictor::Left edge rule
+                // (x=0 → north value, y=0 → 0).
                 let left = if x > 0 {
                     if c == 0 {
                         cfl_map.ytox_at(global_tx - 1, global_ty) as i64
@@ -773,6 +780,10 @@ pub fn collect_ac_metadata_tokens_region(
                 } else {
                     0i64
                 };
+                if falcon {
+                    tokens.push(Token::new(0, pack_signed(actual - left as i32)));
+                    continue;
+                }
                 let top = if y > 0 {
                     if c == 0 {
                         cfl_map.ytox_at(global_tx, global_ty - 1) as i64
@@ -808,16 +819,21 @@ pub fn collect_ac_metadata_tokens_region(
                 continue;
             }
             let cur = ac_strategy.strategy_code(abs_bx, abs_by) as i32;
-            let ctx_id = if left_acs > 11 {
-                7
-            } else if left_acs > 5 {
-                8
-            } else if left_acs > 3 {
-                9
+            if falcon {
+                // Predictor::Left: residual against the previous ACS value.
+                tokens.push(Token::new(0, pack_signed(cur - left_acs)));
             } else {
-                10
-            };
-            tokens.push(Token::new(ctx_id, pack_signed(cur)));
+                let ctx_id = if left_acs > 11 {
+                    7
+                } else if left_acs > 5 {
+                    8
+                } else if left_acs > 3 {
+                    9
+                } else {
+                    10
+                };
+                tokens.push(Token::new(ctx_id, pack_signed(cur)));
+            }
             left_acs = cur;
         }
     }
@@ -835,7 +851,9 @@ pub fn collect_ac_metadata_tokens_region(
             let block_idx = abs_by * full_xsize_blocks + abs_bx;
             let cur = (quant_field[block_idx] as i32) - 1;
             let residual = cur - left_qf;
-            let ctx_id = if left_qf > 11 {
+            let ctx_id = if falcon {
+                0
+            } else if left_qf > 11 {
                 3
             } else if left_qf > 5 {
                 4
@@ -850,16 +868,58 @@ pub fn collect_ac_metadata_tokens_region(
     }
 
     // EPF tokens - per-block sharpness values
+    let sharp_at = |abs_bx: usize, abs_by: usize| -> i32 {
+        if let Some(sm) = sharpness_map {
+            sm[abs_by * full_xsize_blocks + abs_bx] as i32
+        } else {
+            4 // default EPF sharpness
+        }
+    };
     for by_local in 0..region_ysize_blocks {
         for bx_local in 0..region_xsize_blocks {
             let abs_by = start_by + by_local;
             let abs_bx = start_bx + bx_local;
-            let sharpness = if let Some(sm) = sharpness_map {
-                sm[abs_by * full_xsize_blocks + abs_bx] as i32
-            } else {
-                4 // default EPF sharpness
-            };
-            tokens.push(Token::new(0, pack_signed(sharpness)));
+            let sharpness = sharp_at(abs_bx, abs_by);
+            match ac_meta_kind {
+                AcMetaTreeKind::Falcon => {
+                    // Predictor::Left residual (x=0 → north, y=0 → 0).
+                    let w = if bx_local > 0 {
+                        sharp_at(abs_bx - 1, abs_by)
+                    } else if by_local > 0 {
+                        sharp_at(start_bx, abs_by - 1)
+                    } else {
+                        0
+                    };
+                    tokens.push(Token::new(0, pack_signed(sharpness - w)));
+                }
+                AcMetaTreeKind::AcMeta => {
+                    // kACMeta EPF quad-split: ctx = 14 - 2·(top>3) - (left>3).
+                    // The serialized tree lists the > branches first: both
+                    // neighbors above 3 select class 11, neither selects 14.
+                    // Property edges follow the decoder's predictor state:
+                    // at x=0 the "left" property is the north value; on row 0
+                    // the "top" property is the west value.
+                    let w = if bx_local > 0 {
+                        sharp_at(abs_bx - 1, abs_by)
+                    } else if by_local > 0 {
+                        sharp_at(start_bx, abs_by - 1)
+                    } else {
+                        0
+                    };
+                    let n = if by_local > 0 {
+                        sharp_at(abs_bx, abs_by - 1)
+                    } else if bx_local > 0 {
+                        sharp_at(abs_bx - 1, start_by)
+                    } else {
+                        0
+                    };
+                    let ctx = 14 - 2 * u32::from(n > 3) - u32::from(w > 3);
+                    tokens.push(Token::new(ctx, pack_signed(sharpness)));
+                }
+                AcMetaTreeKind::Ours => {
+                    tokens.push(Token::new(0, pack_signed(sharpness)));
+                }
+            }
         }
     }
 

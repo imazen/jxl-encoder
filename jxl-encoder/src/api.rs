@@ -345,12 +345,6 @@ pub enum SectionedTrees {
 pub struct LosslessConfig {
     effort: u8,
     /// Which divergence bundle this encode uses. See [`Self::with_strategy`].
-    ///
-    /// The lossless path does not consume this yet, so it is byte-inert today:
-    /// every strategy produces the output it always did. It exists because the
-    /// axis has to be reachable before any lossless divergence can be gated on
-    /// it, and its absence is what has kept the whole of
-    /// `docs/LIBJXL_PARITY_TRACKING.md` un-A/B-able.
     strategy: EncoderStrategy,
     /// Caller-supplied resource limits. See [`Self::with_limits`].
     ///
@@ -358,6 +352,13 @@ pub struct LosslessConfig {
     /// [`EncodeRequest::with_limits`], so entry points that bypass
     /// `EncodeRequest` — notably [`Self::encode_planar_int`] — could only ever
     /// run on defaults.
+    ///
+    /// With the `jpeg-reencoding` feature the untrusted JPEG-transcode path
+    /// ([`Self::encode_jpeg_transcode`] /
+    /// [`Self::encode_jpeg_transcode_codestream`]) also consults this field:
+    /// the transcode parser reads [`Limits::max_pixels`] as the pre-flight
+    /// SOF pixel cap (default [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] =
+    /// 120 MP when `None`).
     limits: Option<Limits>,
     /// Sectioned local-tree mode selection. See [`SectionedTrees`].
     sectioned_trees: SectionedTrees,
@@ -521,16 +522,6 @@ pub struct LosslessConfig {
     /// bytes are identical regardless of `buffering`. See
     /// [`Self::with_buffering`].
     buffering: Buffering,
-    /// Resource [`Limits`] consulted by the untrusted JPEG-transcode path
-    /// ([`Self::encode_jpeg_transcode`] /
-    /// [`Self::encode_jpeg_transcode_codestream`]). Currently the transcode
-    /// parser reads [`Limits::max_pixels`] as the pre-flight SOF pixel cap
-    /// (default [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] = 120 MP when
-    /// `None`). Set via [`Self::with_limits`]. (The pixel / [`EncodeRequest`]
-    /// lossless path takes its limits from [`EncodeRequest::with_limits`]
-    /// instead.)
-    #[cfg(feature = "jpeg-reencoding")]
-    limits: Option<Limits>,
 }
 
 impl Default for LosslessConfig {
@@ -542,22 +533,11 @@ impl Default for LosslessConfig {
 impl LosslessConfig {
     /// Select the divergence bundle for this lossless encode.
     ///
-    /// **Byte-inert today, and deliberately so.** No lossless gate reads this
-    /// yet, so every strategy currently produces identical output — adding the
-    /// axis is a prerequisite, not a behaviour change. The point is that
-    /// `EncoderStrategy` was a `LossyConfig`-only field, which meant no
-    /// lossless divergence could be expressed at all: `EncoderStrategy::Libjxl`
-    /// makes no distinct lossless bitstream today, and every row of
-    /// `docs/LIBJXL_PARITY_TRACKING.md` stayed un-A/B-able for want of this
-    /// setter.
-    ///
-    /// The first intended consumer is the LZ77 acceptance threshold
-    /// (`total_symbols * 0.2 + 16`), which is a measured rate/time dial —
-    /// halving it buys 2.9 % smaller output for 37 % more wall, doubling it
-    /// saves ~5 % wall for +0.29 % bytes. That constant is libjxl parity
-    /// (`enc_lz77.cc:165`), so it can only become effort-dependent for zen mode
-    /// if `Libjxl` can be pinned to the parity value — which needs this axis.
-    /// See [`docs/RFC_RD_MONOTONICITY.md`](../../docs/RFC_RD_MONOTONICITY.md) §5.
+    /// Zen strategies retain cost-based tree self-repair and the large-image
+    /// tree-bucket reduction. [`EncoderStrategy::Libjxl`] disables both;
+    /// [`EncoderStrategy::Custom`] controls them individually through the shared
+    /// registry. Other modular divergences remain: this does not promise
+    /// byte-exact lossless output matching libjxl v0.12.
     pub fn with_strategy(mut self, strategy: EncoderStrategy) -> Self {
         self.strategy = strategy;
         self
@@ -636,8 +616,6 @@ impl LosslessConfig {
             modular_group_size_shift: None,
             auto_delta_frames: false,
             buffering: Buffering::Auto,
-            #[cfg(feature = "jpeg-reencoding")]
-            limits: None,
         }
     }
 
@@ -816,6 +794,10 @@ impl LosslessConfig {
 
     pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
         let mut p = crate::effort::EffortProfile::lossless(self.effort, self.mode);
+        let resolved = self.strategy.resolve(&StrategyOverrides::default());
+        p.tree_self_repair_allowed = resolved.lossless_tree_self_repair;
+        p.tree_self_repair &= resolved.lossless_tree_self_repair;
+        p.lossless_large_tree_bucket_reduction = resolved.lossless_large_tree_bucket_reduction;
         // Sweep/picker internal-param overrides (issue #80): applied
         // lazily against the CURRENT effort.
         #[cfg(feature = "__expert")]
@@ -1061,14 +1043,14 @@ impl LosslessConfig {
         if let Some(true) = self.small_image_fallback_override {
             p.adapt_small_image_fallback(pixels);
         }
-        // Always-on tree_max_buckets dispatch (audit item #3): drops
+        // Zen tree_max_buckets dispatch (audit item #3): drops
         // bucket cap from 256 → 192 at large+e9 cells only. Hash-locks
         // shift at those cells (+0.09% bytes) in exchange for ~12% wall-
         // clock. All other (size, effort) cells stay byte-identical.
-        // Skipped only if the caller has supplied an explicit override
+        // Skipped when the strategy disables it or the caller supplies an override
         // via `with_internal_params` (profile_override), to avoid
         // silently re-overriding a sweep harness's pinned value.
-        if !self.has_internal_overrides() {
+        if p.lossless_large_tree_bucket_reduction && !self.has_internal_overrides() {
             p.adapt_tree_max_buckets_for_image(pixels);
         }
         // Opt-in smart-fanout re-tuning.
@@ -1868,38 +1850,6 @@ impl LosslessConfig {
     // future investigation. Other `LosslessConfig` settings (mode, patches,
     // lossy_palette, etc.) do not affect the transcode path.
 
-    /// Attach resource [`Limits`] consulted by the JPEG-transcode path
-    /// ([`Self::encode_jpeg_transcode`] /
-    /// [`Self::encode_jpeg_transcode_codestream`]).
-    ///
-    /// The transcode parser reads [`Limits::max_pixels`] as the pre-flight
-    /// `width × height` cap applied to the untrusted SOF dimensions before
-    /// any coefficient buffer is allocated. When unset (or no `Limits` is
-    /// attached), the secure default
-    /// [`Limits::DEFAULT_MAX_JPEG_TRANSCODE_PIXELS`] (120 MP) applies; a
-    /// trusted batch caller can raise it (or pass
-    /// [`Limits::with_max_pixels`]`(u64::MAX)` to opt out), and a
-    /// hostile-input proxy can tighten it.
-    ///
-    /// Only the `max_pixels` field is consulted today; the rest of the
-    /// transcode-path [`Limits`] wiring (a full `MemoryBudget`) is tracked in
-    /// issue #77.
-    ///
-    /// Requires the `jpeg-reencoding` cargo feature.
-    #[cfg(feature = "jpeg-reencoding")]
-    pub fn with_limits(mut self, limits: &Limits) -> Self {
-        self.limits = Some(limits.clone());
-        self
-    }
-
-    /// The [`Limits`] attached via [`Self::with_limits`], if any.
-    ///
-    /// Requires the `jpeg-reencoding` cargo feature.
-    #[cfg(feature = "jpeg-reencoding")]
-    pub fn limits(&self) -> Option<&Limits> {
-        self.limits.as_ref()
-    }
-
     /// Losslessly transcode a JPEG file into JXL with JBRD container for
     /// byte-exact JPEG reconstruction.
     ///
@@ -1915,6 +1865,11 @@ impl LosslessConfig {
     /// JBRD box). Typical ratio: ~80% of the original JPEG bytes for
     /// photographic content; gains depend on the source quantization
     /// quality and chroma subsampling shape.
+    ///
+    /// An ISO 21496-1 gain-map JPEG in the source tail is also transcoded
+    /// into a `jhgm` box, preserving its exact ISO metadata. The original
+    /// tail remains in JBRD for byte-exact reconstruction, so the gain map
+    /// is stored twice. XMP-only gain maps remain in the original tail.
     ///
     /// Requires the `jpeg-reencoding` cargo feature.
     ///
@@ -1962,6 +1917,7 @@ impl LosslessConfig {
             self.effort,
             None,
             Some(&budget),
+            max_pixels,
         )
         .map_err(|e| at(EncodeError::from(e)))
     }
@@ -2027,6 +1983,7 @@ impl LosslessConfig {
             self.effort,
             Some(stop),
             Some(&budget),
+            max_pixels,
         )
         .map_err(|e| at(EncodeError::from(e)))
     }
@@ -3220,6 +3177,76 @@ impl LossyConfig {
             // ALSO flipped to libjxl-parity, which `EncoderStrategy::Libjxl`
             // does. Default (`false`) preserves byte-identical hash-locks.
             p.apply_section_c_cfl_newton_libjxl_parity(&resolved);
+            // DC-encode `nl_dc` parity: under
+            // `EncoderStrategy::Libjxl` rewrites `extra_dc_precision`
+            // + `use_libjxl_wp_dc_quant` to libjxl's actual effort >= 4
+            // schedule (the W44-AUDIT-8 "effort <= 7" reading of
+            // `speed_tier < kFalcon` was inverted). NO-OP on every
+            // other strategy — `dc_encode_libjxl_parity` resolves
+            // `false` there, preserving byte-identical output.
+            p.apply_dc_encode_libjxl_parity(&resolved);
+            // AC-metadata MA-tree parity: under
+            // `EncoderStrategy::Libjxl` selects libjxl's per-effort
+            // predefined AC-meta tree (kFalconACMeta / kACMeta /
+            // kLearn-at-e8+ policy) in place of our fixed subtree.
+            // NO-OP on every other strategy.
+            p.apply_ac_meta_tree_libjxl_parity(&resolved);
+            // Extras Global-stream parity: under
+            // `EncoderStrategy::Libjxl` codes small extra channels
+            // losslessly in stream 0 (GlobalData) under the shared
+            // merged tree + shared entropy code with ChannelCompact
+            // palette compaction. NO-OP on every other strategy.
+            p.apply_extras_global_stream_libjxl_parity(&resolved);
+            // Gaborish kernel parity: under
+            // `EncoderStrategy::Libjxl` runs the `Symmetric5`-bit-exact
+            // variant (mirror borders, row-grouped accumulation, f32
+            // weight chain) in place of the zen distance-class kernel.
+            // NO-OP on every other strategy.
+            p.apply_gaborish_libjxl_parity(&resolved);
+            // Entropy-code-construction parity: under
+            // `EncoderStrategy::Libjxl` forces `optimize_codes = true`
+            // (libjxl has no static-Huffman path — it builds fast
+            // dynamic codes at every effort) and decouples the
+            // DC/AC-metadata stream's ANS-vs-prefix choice from the
+            // VarDCT `use_ans` effort flag (libjxl `ForModular` rule:
+            // ANS unless <100 tokens or all-singleton). NO-OP on every
+            // other strategy.
+            p.apply_entropy_codes_libjxl_parity(&resolved);
+            // libjxl ComputeUsedOrders/ComputeCoeffOrder parity: DCT8
+            // order at every effort, bucket-0-only at effort <= 3,
+            // xorshift 50% block subsample at effort <= 7, unconditional
+            // is_nondefault admission. NO-OP on every other strategy.
+            p.apply_coeff_orders_libjxl_parity(&resolved);
+            // W45-RECON part 6: AC-search `kChannelMul` parity —
+            // installs libjxl's true `{8.2^8, 1, 1.03^8}` pixel-domain
+            // loss multipliers (the historical X entry is an
+            // 8.2219^8 mis-port, +2.16% X-loss inflation). NO-OP on
+            // every other strategy.
+            p.apply_ac_loss_channel_mul_libjxl(&resolved);
+            // W45-RECON part 7: `AdjustQuantBlockAC` max-aggregation
+            // parity — max over per-channel adjusted quants only
+            // (seed 0), so downward F-heuristic adjustments land.
+            // NO-OP on every other strategy.
+            p.apply_aqba_max_quant_libjxl(&resolved);
+            // W45-RECON part 8: merged MA-tree root splitval parity —
+            // `prop=1 val=2·num_dc_groups` per libjxl `MergeTrees`.
+            // NO-OP on every other strategy.
+            p.apply_ma_tree_root_splitval_libjxl(&resolved);
+            // W45-RECON part 9: block_ctx_map QF histogram parity —
+            // 0-based `raw_quant - 1` bins per libjxl
+            // `FindBestBlockEntropyModel`. NO-OP on every other strategy.
+            p.apply_block_ctx_map_qf_zero_based_libjxl(&resolved);
+            // W45-RECON part 14: f32 quant-matrix generation +
+            // multiply-order parity — `GetQuantWeights`/`FastPowf`
+            // chain, `InvDequantMatrix` orientation, and libjxl
+            // groupings in adjust/quantize/writeback. NO-OP on every
+            // other strategy.
+            p.apply_quant_weights_libjxl(&resolved);
+            // W45-RECON part 15: libjxl `ComputeScaledDCT` pass order —
+            // `DCT1D<ROWS, COLS>` storage-row-first via `dct/*_lj`
+            // wrappers. NO-OP on every other strategy.
+            p.apply_dct_pass_order_libjxl(&resolved);
+            p.apply_epf_sharpness_pre_gab_libjxl(&resolved);
         }
         p
     }
@@ -7395,6 +7422,27 @@ impl<'a> EncodeRequest<'a> {
         }
         #[cfg(feature = "__env_var_diagnostics")]
         let _t_conv = crate::clock::Instant::now();
+        // Strict parity (W45-RECON part 10): under `srgb_eotf_libjxl_parity`
+        // the sRGB u8→linear conversion goes through libjxl's rational-
+        // polynomial `TF_SRGB().DisplayFromEncoded` + `v*(1/255)`
+        // normalization instead of the exact `x^2.4` LUT. Covers the u8
+        // layouts; u16/f32 inputs remain on the exact path (documented
+        // divergence — cjxl takes a different ingest branch there too).
+        let srgb_eotf_libjxl = cfg.resolve_improvements().srgb_eotf_libjxl_parity;
+        let srgb_u8 = |px: &[u8], ch: usize| -> Vec<f32> {
+            if srgb_eotf_libjxl {
+                srgb_u8_to_linear_f32_libjxl(px, ch)
+            } else {
+                srgb_u8_to_linear_f32(px, ch)
+            }
+        };
+        let gray_u8 = |px: &[u8], st: usize| -> Vec<f32> {
+            if srgb_eotf_libjxl {
+                gray_u8_to_linear_f32_rgb_libjxl(px, st)
+            } else {
+                gray_u8_to_linear_f32_rgb(px, st)
+            }
+        };
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
@@ -7406,7 +7454,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_u8_to_linear_f32(pixels, 3)
                 } else {
-                    srgb_u8_to_linear_f32(pixels, 3)
+                    srgb_u8(pixels, 3)
                 };
                 (linear, None, false)
             }
@@ -7421,7 +7469,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_u8_to_linear_f32(&rgb, 3)
                 } else {
-                    srgb_u8_to_linear_f32(&rgb, 3)
+                    srgb_u8(&rgb, 3)
                 };
                 (linear, None, false)
             }
@@ -7435,7 +7483,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_u8_to_linear_f32(pixels, 4)
                 } else {
-                    srgb_u8_to_linear_f32(pixels, 4)
+                    srgb_u8(pixels, 4)
                 };
                 let alpha = extract_alpha(pixels, 4, 3);
                 (rgb, Some(alpha), false)
@@ -7451,7 +7499,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_u8_to_linear_f32(&swapped, 4)
                 } else {
-                    srgb_u8_to_linear_f32(&swapped, 4)
+                    srgb_u8(&swapped, 4)
                 };
                 let alpha = extract_alpha(pixels, 4, 3);
                 (rgb, Some(alpha), false)
@@ -7466,7 +7514,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_gray_u8_to_linear_f32_rgb(pixels, 1)
                 } else {
-                    gray_u8_to_linear_f32_rgb(pixels, 1)
+                    gray_u8(pixels, 1)
                 };
                 (rgb, None, false)
             }
@@ -7480,7 +7528,7 @@ impl<'a> EncodeRequest<'a> {
                 } else if source_is_bt709 {
                     bt709_gray_u8_to_linear_f32_rgb(pixels, 2)
                 } else {
-                    gray_u8_to_linear_f32_rgb(pixels, 2)
+                    gray_u8(pixels, 2)
                 };
                 let alpha = extract_alpha(pixels, 2, 1);
                 (rgb, Some(alpha), false)
@@ -7788,11 +7836,60 @@ impl<'a> EncodeRequest<'a> {
         // the identical full-image pass again ~60 lines later — 2 x
         // ~78 ms at 4K e5. The band is the union of both consumers'
         // gates (class band eff 5-6 is a subset of the proxies band).
-        let shared_proxies = if cfg.effort() >= 5 || cfg.effective_distance() >= 2.0 {
-            compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout)
-        } else {
-            None
+        //
+        // 2026-09-17: also skip when NO resolved gate that can read the
+        // proxies is enabled — under `EncoderStrategy::Libjxl` every
+        // consumer (W44-91/96/98/124 sub-discriminators via
+        // `high_d_photo_entropy_mul`, the screenshot lifts,
+        // `adaptive_quant_qf_seed`, `buttloop_qf_seed`, the W44-117
+        // EPF seed, the Smart-Zenjxl admits/excludes and
+        // `learned_subband_exclude`) is off, so the full-image sweep
+        // (~26 ms at 2048², ~4.5 % of an e5 encode) was computed and
+        // discarded. The list is deliberately OVER-inclusive: any
+        // plausibly-consuming policy keeps the sweep. If a future
+        // consumer reads `enc.zenanalyze_proxies` under a flag missing
+        // here, add it — skipping while a consumer is live is a byte
+        // change.
+        let ri_for_proxies = cfg.resolve_improvements();
+        let proxies_consumed = {
+            use crate::api::{
+                AdaptiveQuantQfSeedPolicy, ButtloopQfSeedPolicy, EpfSharpnessSeed,
+                HighDPhotoEntropyMulPolicy, ScreenshotEntropyMulPolicy,
+            };
+            let ri = &ri_for_proxies;
+            class_consumed
+                || !matches!(
+                    ri.high_d_photo_entropy_mul,
+                    HighDPhotoEntropyMulPolicy::Disabled
+                )
+                || !matches!(
+                    ri.screenshot_entropy_mul,
+                    ScreenshotEntropyMulPolicy::Disabled
+                )
+                || !matches!(ri.adaptive_quant_qf_seed, AdaptiveQuantQfSeedPolicy::Off)
+                || !matches!(ri.buttloop_qf_seed, ButtloopQfSeedPolicy::Off)
+                || !matches!(
+                    ri.buttloop_epf_sharpness_seed,
+                    EpfSharpnessSeed::LegacyUniform4
+                )
+                || ri.content_class_auto_classify
+                || ri.photo_epf_seed_admit
+                || ri.photo_variant_z_admit
+                || ri.find_best_32_per_m3_lift
+                || ri.adaptive_buttloop_iters
+                || ri.adaptive_buttloop_iters_narrow
+                || ri.terminal_class_exclude
+                || ri.high_colour_class_exclude
+                || ri.textured_low_colour_exclude
+                || ri.learned_subband_exclude
+                || ri.cfl_pass1_screenshot_x0_start
         };
+        let shared_proxies =
+            if proxies_consumed && (cfg.effort() >= 5 || cfg.effective_distance() >= 2.0) {
+                compute_w44_91_zenanalyze_proxies(pixels, w, h, self.layout)
+            } else {
+                None
+            };
         // W44-231: learned sub-band lift admission (confident-BAD model,
         // vardct::learned_admission). Only consulted by the d < 3.5
         // qf-seed band, so compute inside the same band as the proxies
@@ -8270,6 +8367,17 @@ impl<'a> EncodeRequest<'a> {
         // downsample and wants the encoder to honour the input dims;
         // skip the internal downsample but keep the upsampling factor
         // in the bitstream.
+        // Strict parity (W45-RECON part 10): the opsin round-trip inside
+        // the downsamplers uses libjxl's fused `CubeRootAndAdd`
+        // (`XybCubeRoot::Libjxl`) under `xyb_cbrt_libjxl_parity` — libjxl
+        // downsamples ITS opsin image, produced by that exact cbrt — and
+        // the historical unfused variant everywhere else so normal-mode
+        // resampling byte locks hold.
+        let resample_cbrt = if cfg.resolve_improvements().xyb_cbrt_libjxl_parity {
+            jxl_simd::XybCubeRoot::Libjxl
+        } else {
+            jxl_simd::XybCubeRoot::LibjxlUnfused
+        };
         let (encode_rgb, encode_alpha, encode_w, encode_h) =
             if effective_resampling > 1 && !cfg.already_downsampled {
                 let (down_rgb, dw, dh) = if effective_resampling == 2 && cfg.effort >= 10 {
@@ -8277,6 +8385,7 @@ impl<'a> EncodeRequest<'a> {
                         &linear_rgb,
                         w,
                         h,
+                        resample_cbrt,
                         Some(budget),
                     )?
                 } else if effective_resampling == 2 {
@@ -8284,6 +8393,7 @@ impl<'a> EncodeRequest<'a> {
                         &linear_rgb,
                         w,
                         h,
+                        resample_cbrt,
                         Some(budget),
                     )?
                 } else {
@@ -8292,6 +8402,7 @@ impl<'a> EncodeRequest<'a> {
                         w,
                         h,
                         effective_resampling,
+                        resample_cbrt,
                         Some(budget),
                     )?
                 };
@@ -10404,6 +10515,8 @@ use ingest::*;
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+#[cfg(all(test, feature = "std"))]
+mod lossless_strategy_tests;
 #[cfg(test)]
 mod tests;
 
@@ -10542,33 +10655,5 @@ mod planar_admission_tests_95 {
             .with_limits(&loose)
             .encode_planar_int(512, 512, &planes, 31, false, false)
             .expect("a 4 GiB cap must admit the same encode");
-    }
-
-    /// `with_strategy` is byte-inert on the lossless path today. Pinned so the
-    /// first gate that consumes it has to move this test deliberately rather
-    /// than silently changing every lossless encode.
-    #[test]
-    fn lossless_strategy_axis_is_byte_inert_for_now() {
-        let src: Vec<u8> = (0..64 * 64 * 3).map(|i| (i % 251) as u8).collect();
-        let base = LosslessConfig::new()
-            .with_effort(5)
-            .encode(&src, 64, 64, PixelLayout::Rgb8)
-            .unwrap();
-        for s in [
-            EncoderStrategy::Libjxl,
-            EncoderStrategy::Zenjxl,
-            EncoderStrategy::LeanFaster,
-            EncoderStrategy::Aggressive,
-        ] {
-            let got = LosslessConfig::new()
-                .with_effort(5)
-                .with_strategy(s.clone())
-                .encode(&src, 64, 64, PixelLayout::Rgb8)
-                .unwrap();
-            assert_eq!(
-                got, base,
-                "{s:?}: lossless output must be strategy-invariant until a gate consumes the axis"
-            );
-        }
     }
 }

@@ -722,7 +722,7 @@ fn write_toc_inner(
         );
         writer.write(1, 1)?; // permuted = 1
         let tokens = crate::vardct::coeff_order::tokenize_permutation(perm, 0, perm.len());
-        crate::vardct::coeff_order::build_and_write_coeff_orders(&tokens, use_ans, writer)?;
+        crate::vardct::coeff_order::build_and_write_coeff_orders(&tokens, use_ans, writer, false)?;
     } else {
         writer.write(1, 0)?; // no permutation
     }

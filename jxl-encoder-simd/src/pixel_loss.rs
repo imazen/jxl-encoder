@@ -7,26 +7,13 @@
 //! Computes the 8th-power-norm of masked pixel errors:
 //!   channel_loss = sum_over_pixels( ((mask[px] + offset) * error[px])^8 )
 //!
-//! Inner multiply is in f32; the squaring is done in f64 for precision:
-//!   m2 = (masked * masked) as f64
-//!   m4 = m2 * m2
-//!   m8 = m4 * m4
+//! The mask multiply, three squarings and accumulation all use f32, matching
+//! libjxl's `EstimateEntropy`. Eight virtual lanes and a fixed reduction tree
+//! keep the accumulation order the same across dispatch tiers. Only the final
+//! result is promoted to f64 for the caller's channel weighting.
 //!
-//! **magetypes-consolidated** (W43-2 chunk-5): one `#[magetypes(...)]` body
-//! generates every per-arch SIMD variant. The body operates on `f32x8` +
-//! `f64x4` generics; on backends without native 256-bit registers (NEON,
-//! WASM128, scalar) magetypes polyfills both to 2× narrower ops.
-//!
-//! The pre-consolidation crate had three nearly-identical hand-written
-//! bodies (AVX2 / NEON / WASM128) plus a scalar fallback. The consolidated
-//! path collapses them to one source of truth.
-//!
-//! **AVX-512 (`v4`) note:** magetypes 0.9.23 does not implement
-//! `F64x4Backend` for `X64V4Token` / `X64V4xToken` — the natural f64 width
-//! on AVX-512 is `f64x8` (one 512-bit register). Selecting `v4` here
-//! would force a polyfill that doesn't exist. The `v3` AVX2 path is the
-//! ceiling on x86_64; revisit when magetypes gains a v4 f64x4 polyfill
-//! or rewrite around `f64x8` if a future kernel needs 8-wide f64.
+//! One `#[magetypes(...)]` body generates the AVX-512, AVX2, NEON, WASM128 and
+//! scalar variants. It operates on f32x8; narrower backends use paired vectors.
 
 use archmage::prelude::*;
 
@@ -34,8 +21,8 @@ use archmage::prelude::*;
 ///
 /// For each pixel: channel_loss += ((mask_val + mask_offset) * error_val)^8
 ///
-/// The inner multiply is in f32; then squared three times — first squaring
-/// promotes to f64 for precision, matching libjxl's `EstimateEntropy`.
+/// The mask multiply, three squarings and accumulation stay in f32, matching
+/// libjxl's `EstimateEntropy`. The reduced result is returned as f64.
 ///
 /// `pixel_error`: error values, row-major, `block_width * block_height` elements
 /// `mask`: full mask1x1 buffer (stride = `mask_stride`)
@@ -64,11 +51,6 @@ pub fn pixel_domain_loss(
     // Dispatch through incant! — picks the best magetypes-generated variant
     // at runtime. Falls through to _scalar on platforms without a SIMD token.
     //
-    // Explicit tier list omits `v4` (AVX-512) because magetypes 0.9.23 has
-    // no `F64x4Backend` for `X64V4Token`; the kernel uses `f64x4` so the
-    // ceiling on x86_64 is `v3` (AVX2). Listing tiers explicitly also
-    // silences the v0.9.9 `incant!` deprecation warning about implicit
-    // `scalar`.
     incant!(
         pixel_domain_loss_impl(
             pixel_error,
@@ -134,31 +116,9 @@ pub fn pixel_domain_loss_scalar(
 // magetypes-consolidated SIMD implementation
 // ============================================================================
 //
-// Single body, one source of truth. The `#[magetypes(...)]` macro generates
-// one `#[arcane]`-wrapped variant per listed tier:
-//   - `pixel_domain_loss_impl_v3`      (x86_64 AVX2, native 256-bit
-//                                       f32x8 + f64x4)
-//   - `pixel_domain_loss_impl_neon`    (aarch64, 2× f32x4 polyfill of
-//                                       f32x8 and 2× f64x2 polyfill of
-//                                       f64x4)
-//   - `pixel_domain_loss_impl_wasm128` (wasm32, same polyfill shape as
-//                                       NEON)
-//   - `pixel_domain_loss_impl_scalar`  (portable scalar fallback)
-//
-// `define(f32x8, f64x4)` injects type aliases substituted per tier. The
-// body promotes f32→f64 via the array round-trip `f32x8::to_array()` →
-// `[f64; 4]` literals → `f64x4::from_array(...)`; on AVX2 LLVM fuses
-// the store-load into a single `vcvtps2pd` pair (matching the previous
-// hand-written intrinsic path bit-for-bit) and on smaller backends it
-// lowers to whatever the f64x2 polyfill expects.
-//
-// Accumulator structure (`acc_lo` / `acc_hi`) preserves the per-half
-// accumulation grouping of the pre-consolidation AVX2 body — lanes 0-3
-// sum into `acc_lo`, lanes 4-7 into `acc_hi`, then `reduce_add()`
-// on each followed by a final `+`. The 8th-power computation order
-// (m2 = masked·masked, m4 = m2·m2, m8 = m4·m4) is the manual
-// `x²·x²·x²` chain, **not** a single `powi(8)` — preserving libjxl's
-// rounding behaviour exactly.
+// One body uses f32x8 on each tier. The lane accumulation and final combine
+// tree preserve the same operation order regardless of native vector width.
+// The eighth power uses three squarings, not powi(8), to retain f32 rounding.
 
 /// Canonical arch-stable pixel-domain loss (2026-08-18): PURE f32 like
 /// libjxl `EstimateEntropy` (enc_ac_strategy.cc masku loop — masku*err,
@@ -367,10 +327,8 @@ mod expanded_coverage {
     use super::*;
     use crate::test_helpers::*;
 
-    /// Sweep block dimensions (width must be multiple of 8) + edge-value
-    /// inputs.  The kernel computes loss = sum((mask+offset)^2 * err^2)^8
-    /// summed; FMA association makes bit-exactness impossible but small
-    /// relative tolerance catches structural bugs.
+    /// Compare scalar and dispatched loss across block dimensions (width must
+    /// be a multiple of 8), varied input values and padded mask strides.
     #[test]
     fn pixel_domain_loss_scalar_vs_dispatch_block_sizes() {
         let cases: &[(usize, usize)] = &[
@@ -447,5 +405,52 @@ mod expanded_coverage {
             let act_loss = pixel_domain_loss(&pixel_error, &mask, 0, bw, 0.5, bw, bh);
             assert_eq!(act_loss, 0.0, "perm={perm}");
         });
+    }
+
+    include!("pixel_loss_fixtures.rs");
+
+    /// The old dump probe printed these three real-input blocks without any
+    /// assertions and silently passed on machines without the local dumps.
+    /// Compare every channel against an independent sum of the f32 terms,
+    /// accumulating that oracle in f64 to avoid copying the kernel's lane tree.
+    #[test]
+    fn pixel_domain_loss_frozen_blocks_match_eighth_power_sum() {
+        for (block, fixture) in PIXEL_LOSS_FIXTURES.iter().enumerate() {
+            let mask_values = fixture.mask_bits.map(f32::from_bits);
+            for (channel, offset) in [12.0, 0.0, 4.0].into_iter().enumerate() {
+                let errors = fixture.error_bits[channel].map(f32::from_bits);
+                let expected: f64 = errors
+                    .iter()
+                    .zip(mask_values)
+                    .map(|(&error, mask)| {
+                        let weighted = (mask + offset) * error;
+                        let squared = weighted * weighted;
+                        let fourth = squared * squared;
+                        (fourth * fourth) as f64
+                    })
+                    .sum();
+                assert!(expected.is_finite() && expected > 0.0);
+                // Each lane sums eight nonnegative terms, followed by three
+                // pairwise reductions. Bound their f32 rounding against the
+                // f64 oracle; this is a numerical unit check, not an RD claim.
+                let tolerance = expected * (16.0 * f32::EPSILON as f64);
+                for stride in [8, 13] {
+                    let base = 2 * stride + usize::from(stride > 8);
+                    let mut mask = alloc::vec![f32::NAN; base + 8 * stride];
+                    for y in 0..8 {
+                        mask[base + y * stride..base + y * stride + 8]
+                            .copy_from_slice(&mask_values[y * 8..y * 8 + 8]);
+                    }
+                    run_dispatch_parity(|perm| {
+                        let actual = pixel_domain_loss(&errors, &mask, base, stride, offset, 8, 8);
+                        assert!(
+                            (actual - expected).abs() <= tolerance,
+                            "block={block} channel={channel} stride={stride} perm={perm}: \
+                             expected={expected} actual={actual} tolerance={tolerance}"
+                        );
+                    });
+                }
+            }
+        }
     }
 }

@@ -26,6 +26,7 @@ debug-tokens = ["jxl_encoder/debug-tokens"]
 investigate-adjust-quant-block-ac = ["jxl_encoder/investigate-adjust-quant-block-ac"]
 debug-ac-strategy = ["jxl_encoder/debug-ac-strategy"]
 debug-rect = ["jxl_encoder/debug-rect"]
+debug-dc = ["jxl_encoder/debug-dc"]
 # Enable iterative rate control for improved distance targeting
 rate-control = ["jxl_encoder/rate-control"]
 # Enable butteraugli quantization loop for per-block quality refinement

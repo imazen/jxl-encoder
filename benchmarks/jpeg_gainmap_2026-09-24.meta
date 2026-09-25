@@ -1,0 +1,13 @@
+Command: just jpeg-gainmap-corpus-check camera33-v2 "$HOME/tmp/jxl-backlog/jpeg122-corpus"
+Source parent: d6bbdda25e6783f2a7ee8255c5fab6377669539a (ISO gain-map integration in the accompanying commit)
+Platform: macOS aarch64
+Effort: 3; CARGO_BUILD_JOBS=4; RAYON_NUM_THREADS=4; nice -n 19
+Reference: libjxl v0.12.0 a7a9c78, .ci-libjxl/tools/cjxl and djxl
+Inputs: 33 SHA256-bound originals in jxl-encoder/tests/fixtures/jpeg_gainmap_corpus.tsv
+Original backup: lilith:/mnt/v/output/codec-corpus/lilith-photos-backup-2026-06-09/
+Local input: ~/tmp/jxl-backlog/jpeg122-corpus/
+Artifacts: ~/tmp/jxl-backlog/jpeg122-camera33-v2-artifacts/
+Log: ~/tmp/jxl-backlog/jpeg122-camera33-v2.log
+Checks per image: exact ISO rational bytes; bundle codestream equals standalone secondary transcode; full jxl-rs rendering of base and gain map; base equals bare-primary pixels; djxl gain-map RGB16 equals cjxl JPEG-transcode reference; Rust and djxl JPEG reconstruction equals original bytes.
+Result: 33/33 pass. XMP-only maps are outside this increment. HDR display composition is not tested here.
+Originals contain pre-rewrite camera metadata and stay private; only identifiers, byte counts and hashes are committed.

@@ -16,10 +16,14 @@ Usage:
 
 Cell spec: name:image_glob:effort:threads (threads passed via --threads).
 Each binary invocation is prefixed nice -n19. One unmeasured warmup run
-per side per cell primes the page cache.
+per side per cell primes the page cache. Timed pairs alternate starting arm.
+Optional --lossy-distance and --strategy select the corresponding CLI mode.
+The default remains lossless with the CLI's default strategy.
+Streams, full command logs and individual timings persist next to the TSV in
+<stem>.artifacts; binary hashes and arguments are in <out>.meta.json.
 
 Pass --decode-verify /path/to/djxl to additionally decode each cell's
-output and pixel-compare against the source (requires PIL; fails loud if
+output and pixel-compare against the source (requires OpenCV; fails loud if
 missing). Byte-equality alone passes when BOTH sides emit the same broken
 bitstream — issue #68 hid behind exactly that for a full day of A/B runs.
 One decode per cell suffices: per-side determinism and base==ours byte
@@ -29,6 +33,7 @@ identity are already asserted, so one valid output proves all of them.
 import argparse
 import glob
 import hashlib
+import json
 import os
 import statistics
 import subprocess
@@ -37,20 +42,20 @@ import time
 from pathlib import Path
 
 
-def run_once(binary, image, effort, threads, out_path):
+def run_once(binary, image, effort, threads, out_path, distance=None, strategy=None):
+    command = ["nice", "-n19", str(binary), str(image), str(out_path),
+               "-e", str(effort), "--threads", str(threads)]
+    command += ["--lossless"] if distance is None else ["-d", str(distance)]
+    if strategy is not None:
+        command += ["--strategy", strategy]
     t0 = time.monotonic()
-    subprocess.run(
-        [
-            "nice", "-n19", str(binary), str(image), str(out_path),
-            "--lossless", "-e", str(effort), "--threads", str(threads),
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    with open(str(out_path) + ".log", "wb") as log:
+        subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
     wall = time.monotonic() - t0
     data = Path(out_path).read_bytes()
-    return wall, len(data), hashlib.sha256(data).hexdigest()
+    sha = hashlib.sha256(data).hexdigest()
+    Path(out_path).with_name(sha + ".jxl").write_bytes(data)
+    return wall, len(data), sha
 
 
 def main():
@@ -59,12 +64,27 @@ def main():
     ap.add_argument("--ours", required=True)
     ap.add_argument("--iters", type=int, default=6)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--lossy-distance", type=float,
+                    help="measure lossy encoding at this distance instead of lossless")
+    ap.add_argument("--strategy", choices=["zenjxl", "libjxl", "aggressive", "lean-faster"])
     ap.add_argument("--cell", action="append", required=True,
                     help="name:image_glob:effort:threads")
     ap.add_argument("--decode-verify", metavar="DJXL",
                     help="decode each cell's output with this djxl binary and "
-                         "pixel-compare against the source (requires PIL)")
+                         "pixel-compare against the source (requires OpenCV)")
     args = ap.parse_args()
+    if args.iters < 1:
+        ap.error("--iters must be positive")
+    if args.decode_verify and args.lossy_distance is not None:
+        ap.error("--decode-verify checks exact pixels and requires lossless mode")
+    artifacts = Path(args.out).resolve().with_suffix(".artifacts")
+    artifacts.mkdir(parents=True, exist_ok=False)
+    Path(str(args.out) + ".meta.json").write_text(json.dumps({
+        "command": sys.argv, "host": os.uname().nodename,
+        "base_sha256": hashlib.sha256(Path(args.base).read_bytes()).hexdigest(),
+        "ours_sha256": hashlib.sha256(Path(args.ours).read_bytes()).hexdigest(),
+        "timing_scope": "process wall including image IO", "artifacts": str(artifacts),
+    }, indent=2) + "\n")
 
     if args.decode_verify:
         import cv2  # noqa: F401 — hard dep when verification requested; no silent skip
@@ -81,28 +101,39 @@ def main():
             sys.exit(f"cell {name}: pattern {pattern} matched {len(matches)} files")
         image = matches[0]
 
-        tmp = f"/tmp/ab_{name}_{os.getpid()}.jxl"
+        tmp = artifacts / f"{name}.jxl"
         # warmup (unmeasured) once per side
-        run_once(args.base, image, effort, threads, tmp)
-        run_once(args.ours, image, effort, threads, tmp)
+        run_once(args.base, image, effort, threads, artifacts / f"{name}-warm-base.jxl",
+                 args.lossy_distance, args.strategy)
+        run_once(args.ours, image, effort, threads, artifacts / f"{name}-warm-ours.jxl",
+                 args.lossy_distance, args.strategy)
 
         walls = {"base": [], "ours": []}
         shas = {"base": set(), "ours": set()}
         bytes_ = {}
-        for _ in range(args.iters):
-            for side, binary in (("base", args.base), ("ours", args.ours)):
-                w, n, sha = run_once(binary, image, effort, threads, tmp)
+        for rep in range(args.iters):
+            arms = [("base", args.base), ("ours", args.ours)]
+            if rep % 2:
+                arms.reverse()
+            for side, binary in arms:
+                tmp = artifacts / f"{name}-{rep}-{side}.jxl"
+                w, n, sha = run_once(binary, image, effort, threads, tmp,
+                                     args.lossy_distance, args.strategy)
                 walls[side].append(w)
                 shas[side].add(sha)
                 bytes_[side] = n
+                with open(artifacts / "samples.jsonl", "a") as samples:
+                    samples.write(json.dumps({"cell": name, "rep": rep, "side": side,
+                                              "wall_s": w, "bytes": n, "sha256": sha}) + "\n")
 
         roundtrip = None  # not requested
         if args.decode_verify:
-            dec = f"/tmp/ab_{name}_{os.getpid()}_dec.png"
-            r = subprocess.run(
-                ["nice", "-n19", args.decode_verify, tmp, dec],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            dec = artifacts / f"{name}-decoded.png"
+            with open(artifacts / f"{name}-decode.log", "wb") as log:
+                r = subprocess.run(
+                    ["nice", "-n19", args.decode_verify, tmp, dec],
+                    stdout=log, stderr=subprocess.STDOUT,
+                )
             if r.returncode != 0:
                 roundtrip = "DECODE-FAIL"
             else:
@@ -111,15 +142,13 @@ def main():
                 # 'RGB'), which made earlier verify runs 8-bit-weak —
                 # never use PIL for pixel-exact gates on >8-bit content.
                 import cv2
-                src_px = cv2.imread(image, cv2.IMREAD_UNCHANGED)
-                dec_px = cv2.imread(dec, cv2.IMREAD_UNCHANGED)
+                src_px = cv2.imread(str(image), cv2.IMREAD_UNCHANGED)
+                dec_px = cv2.imread(str(dec), cv2.IMREAD_UNCHANGED)
                 roundtrip = ("pixel-exact"
                              if src_px is not None and dec_px is not None
                              and src_px.shape == dec_px.shape
                              and bool((src_px == dec_px).all())
                              else "PIXEL-DIFF")
-                os.unlink(dec)
-        os.unlink(tmp)
 
         det_base = len(shas["base"]) == 1
         det_ours = len(shas["ours"]) == 1
@@ -129,11 +158,15 @@ def main():
         delta = (mo - mb) / mb * 100.0
         rows.append({
             "cell": name, "image": image, "effort": effort, "threads": threads,
+            "source_sha256": hashlib.sha256(Path(image).read_bytes()).hexdigest(),
             "wall_base_median_s": f"{mb:.3f}", "wall_ours_median_s": f"{mo:.3f}",
             "delta_pct": f"{delta:+.2f}",
             "base_min_max": f"{min(walls['base']):.3f}/{max(walls['base']):.3f}",
             "ours_min_max": f"{min(walls['ours']):.3f}/{max(walls['ours']):.3f}",
             "bytes": bytes_["ours"],
+            "base_bytes": bytes_["base"],
+            "base_sha256": ",".join(sorted(shas["base"])),
+            "ours_sha256": ",".join(sorted(shas["ours"])),
             "bytes_identical": identical, "deterministic": det_base and det_ours,
             "roundtrip": roundtrip if roundtrip is not None else "unchecked",
         })
@@ -141,15 +174,19 @@ def main():
         if roundtrip not in (None, "pixel-exact"):
             flag = roundtrip + "!"
         print(f"{flag} {name:24s} e{effort} {threads}T  base {mb:.3f}s  ours {mo:.3f}s  {delta:+.2f}%",
-              file=sys.stderr)
+              file=sys.stderr, flush=True)
 
-    with open(args.out, "w") as f:
-        cols = list(rows[0].keys())
-        f.write("\t".join(cols) + "\n")
-        for r in rows:
-            f.write("\t".join(str(r[c]) for c in cols) + "\n")
+        # Preserve completed rows even if a later encode fails.
+        with open(args.out, "w") as f:
+            cols = list(rows[0].keys())
+            f.write("\t".join(cols) + "\n")
+            for r in rows:
+                f.write("\t".join(str(r[c]) for c in cols) + "\n")
+
     if not all(r["bytes_identical"] for r in rows):
         sys.exit("FAIL: bytes differ on at least one cell")
+    if not all(r["deterministic"] for r in rows):
+        sys.exit("FAIL: a binary produced different bytes across repetitions")
     if args.decode_verify and not all(r["roundtrip"] == "pixel-exact" for r in rows):
         sys.exit("FAIL: decode-verify failed on at least one cell")
     verified = " + decode-verified pixel-exact" if args.decode_verify else ""

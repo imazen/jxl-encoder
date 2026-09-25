@@ -1,0 +1,47 @@
+# zenbench results (complete)
+# git: unknown
+# 2026-09-24T21:09:30Z
+#
+# Re-read this file instead of re-running the benchmark.
+# Formats:  cargo bench -- --format=llm|csv|md|json
+# Env var:  ZENBENCH_FORMAT=llm cargo bench
+# Disable:  ZENBENCH_NO_SAVE=1 cargo bench
+#
+# Fields: group | benchmark | vs_base comparison | min mean median mad | throughput | n cv rounds calls
+#
+group=dct_8x8 benchmark=neon  |  vs_base=baseline  |  min=14.6ns mean=36.2ns median=38.7ns mad=3.7ns  |  n=30 cv=22.0% rounds=30 calls=15151 mean_ci=[33.3ns 38.8ns] cold=375.0ns
+group=dct_8x8 benchmark=scalar  |  vs_base_pct=+368.24 ci=[+344.03% +389.68%] significant=true effect=6.57 p=0.0000  |  min=66.9ns mean=169.5ns median=178.2ns mad=25.4ns  |  n=30 cv=22.8% rounds=30 calls=15151 mean_ci=[155.3ns 182.1ns] cold=125.0ns
+group=dct_16x16 benchmark=neon  |  vs_base=baseline  |  min=185.4ns mean=410.3ns median=441.7ns mad=56.0ns  |  n=30 cv=20.5% rounds=30 calls=3289 mean_ci=[379.2ns 438.0ns] cold=500.0ns
+group=dct_16x16 benchmark=scalar  |  vs_base_pct=+90.13 ci=[+85.62% +94.12%] significant=true effect=4.18 p=0.0000  |  min=362.8ns mean=780.3ns median=834.6ns mad=77.2ns  |  n=30 cv=19.3% rounds=30 calls=3289 mean_ci=[724.7ns 829.0ns] cold=292.0ns
+group=quantize_dct8 benchmark=neon  |  vs_base=baseline  |  min=10.2ns mean=21.0ns median=17.2ns mad=2.4ns  |  n=200 cv=28.5% rounds=200 calls=90909 mean_ci=[20.2ns 21.8ns] cold=41.0ns
+group=quantize_dct8 benchmark=scalar  |  vs_base_pct=+61.87 ci=[+54.74% +69.07%] significant=true effect=1.86 p=0.0000  |  min=10.9ns mean=34.0ns median=35.6ns mad=4.5ns  |  n=200 cv=23.2% rounds=200 calls=90909 mean_ci=[32.9ns 35.1ns] cold=42.0ns
+group=compute_mask1x1/512x512 benchmark=neon  |  vs_base=baseline  |  min=191.18µs mean=330.81µs median=332.77µs mad=105.68µs  |  throughput=2.95 GiB/s  |  n=30 cv=25.0% rounds=30 calls=6 mean_ci=[301.49µs 359.94µs] cold=168.21µs
+group=compute_mask1x1/512x512 benchmark=scalar  |  vs_base_pct=+324.73 ci=[+298.05% +350.82%] significant=true effect=4.55 p=0.0000  |  min=871.64µs mean=1.41ms median=1.57ms mad=282.68µs  |  throughput=711.72 MiB/s  |  n=30 cv=23.0% rounds=30 calls=6 mean_ci=[1.29ms 1.52ms] cold=726.88µs
+group=idct_8x8 benchmark=neon  |  vs_base=baseline  |  min=16.6ns mean=38.4ns median=38.1ns mad=2.9ns  |  n=30 cv=26.1% rounds=30 calls=17241 mean_ci=[34.9ns 42.0ns] cold=41.0ns
+group=idct_8x8 benchmark=scalar  |  vs_base_pct=+347.37 ci=[+336.75% +358.72%] significant=true effect=14.03 p=0.0000  |  min=71.0ns mean=171.0ns median=173.5ns mad=16.2ns  |  n=30 cv=26.3% rounds=30 calls=17241 mean_ci=[155.0ns 186.9ns] cold=83.0ns
+group=gab_smooth/512x512 benchmark=neon  |  vs_base=baseline  |  min=147.87µs mean=249.47µs median=264.89µs mad=47.21µs  |  throughput=3.91 GiB/s  |  n=30 cv=21.4% rounds=30 calls=11 mean_ci=[230.54µs 268.17µs] cold=123.00µs
+group=gab_smooth/512x512 benchmark=scalar  |  vs_base_pct=+253.38 ci=[+238.78% +266.80%] significant=true effect=6.54 p=0.0000  |  min=510.06µs mean=881.17µs median=946.83µs mad=88.11µs  |  throughput=1.11 GiB/s  |  n=30 cv=18.2% rounds=30 calls=11 mean_ci=[822.22µs 934.68µs] cold=423.58µs
+group=is_finite_plane/1MP benchmark=neon  |  vs_base=baseline  |  min=188.53µs mean=239.41µs median=230.51µs mad=42.59µs  |  throughput=16.32 GiB/s  |  n=30 cv=12.4% rounds=30 calls=18 mean_ci=[229.03µs 250.04µs] cold=172.46µs
+group=is_finite_plane/1MP benchmark=scalar  |  vs_base_pct=+208.78 ci=[+200.57% +217.24%] significant=true effect=10.82 p=0.0000  |  min=575.68µs mean=738.15µs median=747.09µs mad=62.72µs  |  throughput=5.29 GiB/s  |  n=30 cv=8.9% rounds=30 calls=18 mean_ci=[714.68µs 760.31µs] cold=274.29µs
+group=shannon_entropy_legacy_reference/4096 benchmark=neon  |  vs_base=baseline  |  min=1.71µs mean=3.98µs median=4.31µs mad=282.7ns  |  n=40 cv=23.5% rounds=40 calls=199 mean_ci=[3.68µs 4.25µs] cold=1.54µs
+group=shannon_entropy_legacy_reference/4096 benchmark=legacy_scalar_formula  |  vs_base_pct=+248.57 ci=[+233.85% +261.78%] significant=true effect=6.24 p=0.0000  |  min=5.52µs mean=13.82µs median=15.15µs mad=1.76µs  |  n=40 cv=26.4% rounds=40 calls=199 mean_ci=[12.66µs 14.86µs] cold=5.17µs
+group=shannon_entropy_dispatch/4096 benchmark=neon  |  vs_base=baseline  |  min=1.83µs mean=4.18µs median=4.30µs mad=311.0ns  |  n=30 cv=20.0% rounds=30 calls=250 mean_ci=[3.87µs 4.46µs] cold=1.54µs
+group=shannon_entropy_dispatch/4096 benchmark=scalar  |  vs_base_pct=+141.05 ci=[+136.38% +145.38%] significant=true effect=9.30 p=0.0000  |  min=4.75µs mean=10.08µs median=10.54µs mad=703.4ns  |  n=30 cv=19.1% rounds=30 calls=250 mean_ci=[9.36µs 10.71µs] cold=4.08µs
+group=dct_16x8 benchmark=neon  |  vs_base=baseline  |  min=105.6ns mean=359.3ns median=349.7ns mad=31.3ns  |  n=100 cv=34.2% rounds=100 calls=6493 mean_ci=[336.1ns 383.6ns] cold=583.0ns
+group=dct_16x8 benchmark=scalar  |  vs_base_pct=+26.52 ci=[+25.23% +27.85%] significant=true effect=0.92 p=0.0000  |  min=145.4ns mean=451.0ns median=435.5ns mad=32.2ns  |  n=100 cv=31.1% rounds=100 calls=6493 mean_ci=[425.0ns 478.8ns] cold=166.0ns
+group=dct_8x16 benchmark=neon  |  vs_base=baseline  |  min=160.6ns mean=349.1ns median=374.9ns mad=52.1ns  |  n=30 cv=20.9% rounds=30 calls=6289 mean_ci=[322.5ns 373.9ns] cold=625.0ns
+group=dct_8x16 benchmark=scalar  |  vs_base_pct=+17.03 ci=[+15.77% +18.34%] significant=true effect=0.81 p=0.0000  |  min=194.5ns mean=406.2ns median=427.9ns mad=51.1ns  |  n=30 cv=17.9% rounds=30 calls=6289 mean_ci=[379.4ns 430.4ns] cold=166.0ns
+group=idct_16x16 benchmark=neon  |  vs_base=baseline  |  min=470.9ns mean=1.38µs median=1.37µs mad=103.2ns  |  n=200 cv=20.6% rounds=200 calls=1745 mean_ci=[1.34µs 1.42µs] cold=959.0ns
+group=idct_16x16 benchmark=scalar  |  vs_base_pct=+7.60 ci=[+6.31% +8.92%] significant=true effect=0.48 p=0.0000  |  min=597.4ns mean=1.48µs median=1.46µs mad=94.4ns  |  n=200 cv=17.0% rounds=200 calls=1745 mean_ci=[1.45µs 1.52µs] cold=584.0ns
+group=sanitize_finite/1MP benchmark=neon  |  vs_base=baseline  |  min=172.92µs mean=306.35µs median=302.50µs mad=31.76µs  |  throughput=12.75 GiB/s  |  n=80 cv=16.4% rounds=80 calls=17 mean_ci=[295.30µs 317.37µs] cold=177.79µs
+group=sanitize_finite/1MP benchmark=scalar  |  vs_base_pct=+51.89 ci=[+48.20% +55.66%] significant=true effect=2.88 p=0.0000  |  min=270.85µs mean=474.81µs median=479.56µs mad=50.90µs  |  throughput=8.23 GiB/s  |  n=80 cv=14.9% rounds=80 calls=17 mean_ci=[459.45µs 490.04µs] cold=282.71µs
+group=epf_step1/512x512 benchmark=neon  |  vs_base=baseline  |  min=4.13ms mean=5.64ms median=5.66ms mad=942.55µs  |  throughput=531.81 MiB/s  |  n=30 cv=13.1% rounds=30 calls=1 mean_ci=[5.38ms 5.90ms] cold=3.38ms
+group=epf_step1/512x512 benchmark=scalar  |  vs_base_pct=+102.40 ci=[+96.11% +108.81%] significant=true effect=6.19 p=0.0000  |  min=8.19ms mean=11.42ms median=11.53ms mad=840.33µs  |  throughput=262.76 MiB/s  |  n=30 cv=9.6% rounds=30 calls=1 mean_ci=[11.02ms 11.78ms] cold=6.98ms
+group=idct_8x16 benchmark=neon  |  vs_base=baseline  |  min=147.0ns mean=360.3ns median=382.2ns mad=49.1ns  |  n=30 cv=20.9% rounds=30 calls=2551 mean_ci=[332.2ns 385.6ns] cold=708.0ns
+group=idct_8x16 benchmark=scalar  |  vs_base_pct=+160.72 ci=[+150.21% +171.89%] significant=true effect=5.36 p=0.0000  |  min=516.4ns mean=939.3ns median=945.2ns mad=95.2ns  |  n=30 cv=14.1% rounds=30 calls=2551 mean_ci=[890.4ns 983.7ns] cold=459.0ns
+group=idct_16x8 benchmark=neon  |  vs_base=baseline  |  min=125.8ns mean=298.6ns median=324.0ns mad=50.7ns  |  n=30 cv=23.2% rounds=30 calls=2617 mean_ci=[273.1ns 322.5ns] cold=416.0ns
+group=idct_16x8 benchmark=scalar  |  vs_base_pct=+198.19 ci=[+183.19% +213.53%] significant=true effect=5.23 p=0.0000  |  min=492.3ns mean=890.5ns median=879.4ns mad=149.3ns  |  n=30 cv=16.2% rounds=30 calls=2617 mean_ci=[838.4ns 940.2ns] cold=416.0ns
+group=epf_step2/512x512 benchmark=neon  |  vs_base=baseline  |  min=338.27µs mean=921.60µs median=837.45µs mad=131.87µs  |  throughput=3.18 GiB/s  |  n=40 cv=35.2% rounds=40 calls=3 mean_ci=[826.42µs 1.02ms] cold=339.92µs
+group=epf_step2/512x512 benchmark=scalar  |  vs_base_pct=+265.64 ci=[+250.58% +281.43%] significant=true effect=5.28 p=0.0000  |  min=1.35ms mean=3.46ms median=3.30ms mad=562.06µs  |  throughput=865.91 MiB/s  |  n=40 cv=28.9% rounds=40 calls=3 mean_ci=[3.16ms 3.78ms] cold=1.38ms
+group=dequant_dct8 benchmark=neon  |  vs_base=baseline  |  min=50.9ns mean=104.3ns median=94.1ns mad=11.4ns  |  n=120 cv=20.8% rounds=120 calls=17857 mean_ci=[100.5ns 108.3ns] cold=167.0ns
+group=dequant_dct8 benchmark=scalar  |  vs_base_pct=+18.88 ci=[+17.63% +20.07%] significant=true effect=0.96 p=0.0000  |  min=52.6ns mean=125.1ns median=116.3ns mad=11.3ns  |  n=120 cv=20.2% rounds=120 calls=17857 mean_ci=[120.8ns 130.0ns] cold=83.0ns

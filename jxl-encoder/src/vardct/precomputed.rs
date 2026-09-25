@@ -1257,6 +1257,7 @@ fn fill_dc_group_state_dispatch(
                         region_w,
                         region_h,
                         enable_adaptive_gaborish,
+                        profile.gaborish_libjxl_kernel,
                         budget,
                     )?;
                 }
@@ -1279,12 +1280,25 @@ fn fill_dc_group_state_dispatch(
         )?;
 
         let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
-            Some(super::adaptive_quant::compute_mask1x1_with_budget(
-                &global.xyb_y,
-                padded_width,
-                padded_height,
-                budget,
-            )?)
+            // W45-RECON part 5: strict parity routes mask1x1 through the
+            // libjxl-exact path (exact `ln_1p` + mirror-border
+            // `Symmetric5`); all other strategies keep the calibrated
+            // fast_log2f + clamp kernel byte-identically.
+            Some(if profile.gaborish_libjxl_kernel {
+                super::adaptive_quant::compute_mask1x1_libjxl_exact(
+                    &global.xyb_y,
+                    padded_width,
+                    padded_height,
+                    budget,
+                )?
+            } else {
+                super::adaptive_quant::compute_mask1x1_with_budget(
+                    &global.xyb_y,
+                    padded_width,
+                    padded_height,
+                    budget,
+                )?
+            })
         } else {
             None
         };
@@ -1294,9 +1308,9 @@ fn fill_dc_group_state_dispatch(
                 &mut global.xyb_x,
                 &mut global.xyb_y,
                 &mut global.xyb_b,
-                padded_width,
-                padded_height,
+                (padded_width, padded_height),
                 enable_adaptive_gaborish,
+                profile.gaborish_libjxl_kernel,
                 budget,
             )?;
         }
@@ -1498,7 +1512,7 @@ pub(crate) fn compute_dc_group(
     // byte-identical to the corresponding slice of the whole-image
     // `compute_cfl_map`. Dep #4 (CfL tile alignment) resolved by
     // construction.
-    let (cfl_region_ytox, cfl_region_ytob) = if cfl_enabled {
+    let (cfl_region_ytox, cfl_region_ytob) = if cfl_enabled && profile.cfl_pass1 {
         super::chroma_from_luma::compute_cfl_map_for_tiles(
             &global.xyb_x,
             &global.xyb_y,

@@ -1,0 +1,12 @@
+# T4 libjxl mimic byte-parity sweep
+date_utc: 2026-09-17T12:33:49Z
+host: Linux 7.0.0-31-generic x86_64 / dev
+git_commit: 1d13c66a
+cjxl_path: /home/lilith/tmp/libjxl-v012-build/tools/cjxl
+cjxl_version: cjxl v0.12.0 4279d48 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+ours_path: target/release/cjxl-rs
+ours_version: cjxl-rs 0.4.0
+efforts: 3 5 7
+distances: 0.5 1.0 4.0
+note: ours always runs --strategy libjxl (the mimic); zen mode is a
+note: different bundle and is NOT what this sweep measures.

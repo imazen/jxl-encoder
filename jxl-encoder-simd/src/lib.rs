@@ -264,17 +264,20 @@ pub use entropy::{
     EntropyCoeffResult, entropy_estimate_coeffs, estimate_bits_scalar_f64, estimate_bits_u32,
     fast_log2f, fast_pow2f, fast_powf, shannon_entropy_bits,
 };
-pub use epf::{epf_step1, epf_step2, pad_plane};
+pub use epf::{K_MIN_SIGMA, epf_step1, epf_step2, pad_plane};
 pub use fused_dct8::fused_dct8_entropy;
 pub use gab::gab_smooth_channel;
-pub use gaborish5x5::gaborish_5x5_channel;
+pub use gaborish5x5::{gaborish_5x5_channel, gaborish_5x5_channel_libjxl};
 pub use idct16::{idct_8x16, idct_16x8, idct_16x16};
 pub use idct32::{idct_16x32, idct_32x16, idct_32x32};
 pub use idct64::{idct_32x64, idct_64x32, idct_64x64};
 pub use mask1x1::compute_mask1x1;
 pub use noise::denoise_channel;
 pub use pixel_loss::pixel_domain_loss;
-pub use quantize::{quantize_block_dct8, quantize_block_large};
+pub use quantize::{
+    quantize_block_dct8, quantize_block_dct8_libjxl, quantize_block_large,
+    quantize_block_large_libjxl,
+};
 pub use sanitize::{is_finite_plane, sanitize_finite};
 pub use special8x8::{
     dct2x2_from_pixels, dct2x2_from_pixels_scalar, dct2x2_to_pixels, dct2x2_to_pixels_scalar,

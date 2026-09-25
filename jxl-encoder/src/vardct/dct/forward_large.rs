@@ -452,3 +452,143 @@ pub fn dc_from_dct_32x64(coeffs: &[f32]) -> [f32; 32] {
 
     result
 }
+
+// =============================================================================
+// libjxl pass-order variants (W45-RECON part 15)
+//
+// Same construction as `forward.rs`'s `*_lj` wrappers: libjxl
+// `ComputeScaledDCT<R, C>` transforms the storage-row direction first.
+// Rectangular shapes call the transposed-shape sibling on the transposed
+// input (which yields the identical output layout); square shapes wrap as
+// transpose-in → kernel → transpose-out.
+// =============================================================================
+
+/// libjxl `IDCT1DImpl<4>` on one SIMD lane group (dct-inl.h:219-232).
+///
+/// `ForwardEvenOdd` de-interleaves `(f0, f1, f2, f3)` to
+/// `(f0, f2 | f1, f3)`, `IDCT1DImpl<2>` runs on the even half,
+/// `BTranspose<2>` then `IDCT1DImpl<2>` on the odd half, and
+/// `MultiplyAndAdd<4>` emits `MulAdd`/`NegMulAdd` fused ops — single
+/// rounding, so `f32::mul_add` is required for bit parity.
+#[inline(always)]
+fn idct1d_4_lj_lane(f0: f32, f1: f32, f2: f32, f3: f32) -> [f32; 4] {
+    let te0 = f0 + f2;
+    let te1 = f0 - f2;
+    // BTranspose<2>: coeff[1] += coeff[0], then coeff[0] *= sqrt2.
+    let t3 = f3 + f1;
+    let t2 = f1 * SQRT2;
+    let to0 = t2 + t3;
+    let to1 = t2 - t3;
+    // MultiplyAndAdd<4>: out[i] = MulAdd(mul[i], odd[i], even[i]),
+    // out[3-i] = NegMulAdd(mul[i], odd[i], even[i]).
+    [
+        WC_MULTIPLIERS_4[0].mul_add(to0, te0),
+        WC_MULTIPLIERS_4[1].mul_add(to1, te1),
+        (-WC_MULTIPLIERS_4[1]).mul_add(to1, te1),
+        (-WC_MULTIPLIERS_4[0]).mul_add(to0, te0),
+    ]
+}
+
+/// Strict libjxl-parity `dc_from_dct_32x32` (W45-RECON part 20).
+///
+/// Ports `ReinterpretingIDCT<32, 32, 4, 4, 4, 4>` +
+/// `ComputeScaledIDCT<4, 4>` in libjxl's SIMD-lane evaluation order:
+/// the ROWS >= COLS branch transforms down each *column* of the scaled
+/// LLF block (columns are the SIMD lanes), transposes, then transforms
+/// down each column of the transpose — i.e. each *row* of the
+/// first-pass intermediate is written into an output *column*.
+///
+/// Mathematically identical to [`dc_from_dct_32x32`] but a different
+/// float operation order (~1-ulp differences that flip DC quantization
+/// boundary cases upstream of `QuantizeWP`). Strict-only; verified
+/// bit-exact against the instrumented v0.12 reference.
+pub fn dc_from_dct_32x32_lj(coeffs: &[f32; 1024]) -> [f32; 16] {
+    // libjxl `ReinterpretingIDCT`: `block = in * S(y) * S(x)` — no
+    // scale compensation, because `IDCT1DImpl` is unscaled (the `*16`
+    // in `dc_from_dct_32x32` cancels our `idct1d_4`'s 1/16 gain).
+    let mut block = [0.0f32; 16];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            block[iy * 4 + ix] = coeffs[iy * 32 + ix]
+                * DCT_RESAMPLE_SCALE_32_TO_4[iy]
+                * DCT_RESAMPLE_SCALE_32_TO_4[ix];
+        }
+    }
+
+    // Pass 1: `IDCT1D<4, 4>` down each column of `block` (SIMD lanes).
+    let mut s1 = [0.0f32; 16];
+    for l in 0..4 {
+        let r = idct1d_4_lj_lane(block[l], block[4 + l], block[8 + l], block[12 + l]);
+        for (k, v) in r.iter().enumerate() {
+            s1[k * 4 + l] = *v;
+        }
+    }
+    // Transpose is implicit: pass 2 transforms each *row* of `s1` and
+    // writes the result down an output *column*.
+    let mut out = [0.0f32; 16];
+    for l in 0..4 {
+        let r = idct1d_4_lj_lane(s1[l * 4], s1[l * 4 + 1], s1[l * 4 + 2], s1[l * 4 + 3]);
+        for (k, v) in r.iter().enumerate() {
+            out[k * 4 + l] = *v;
+        }
+    }
+    out
+}
+
+/// libjxl-order `ComputeScaledDCT<32, 32>`: transpose-in → kernel →
+/// transpose-out.
+#[inline]
+pub fn dct_32x32_lj(input: &[f32; 1024], output: &mut [f32; 1024]) {
+    let mut t = [0.0f32; 1024];
+    crate::vardct::common::transpose_block::<32, 32>(input, &mut t);
+    let mut u = [0.0f32; 1024];
+    dct_32x32(&t, &mut u);
+    crate::vardct::common::transpose_block::<32, 32>(&u, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<32, 16>`: vertical-32 first via
+/// `dct_16x32` on the transposed input.
+#[inline]
+pub fn dct_32x16_lj(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut t = [0.0f32; 512];
+    crate::vardct::common::transpose_block::<32, 16>(input, &mut t);
+    dct_16x32(&t, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<16, 32>`: vertical-16 first via
+/// `dct_32x16` on the transposed input.
+#[inline]
+pub fn dct_16x32_lj(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut t = [0.0f32; 512];
+    crate::vardct::common::transpose_block::<16, 32>(input, &mut t);
+    dct_32x16(&t, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<64, 64>`: transpose-in → kernel →
+/// transpose-out.
+#[inline]
+pub fn dct_64x64_lj(input: &[f32], output: &mut [f32]) {
+    let mut t = [0.0f32; 4096];
+    crate::vardct::common::transpose_block::<64, 64>(&input[..4096], &mut t);
+    let mut u = [0.0f32; 4096];
+    dct_64x64(&t, &mut u);
+    crate::vardct::common::transpose_block::<64, 64>(&u, &mut output[..4096]);
+}
+
+/// libjxl-order `ComputeScaledDCT<64, 32>`: vertical-64 first via
+/// `dct_32x64` on the transposed input.
+#[inline]
+pub fn dct_64x32_lj(input: &[f32], output: &mut [f32]) {
+    let mut t = [0.0f32; 2048];
+    crate::vardct::common::transpose_block::<64, 32>(&input[..2048], &mut t);
+    dct_32x64(&t, output);
+}
+
+/// libjxl-order `ComputeScaledDCT<32, 64>`: vertical-32 first via
+/// `dct_64x32` on the transposed input.
+#[inline]
+pub fn dct_32x64_lj(input: &[f32], output: &mut [f32]) {
+    let mut t = [0.0f32; 2048];
+    crate::vardct::common::transpose_block::<32, 64>(&input[..2048], &mut t);
+    dct_64x32(&t, output);
+}

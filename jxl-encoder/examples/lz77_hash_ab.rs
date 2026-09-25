@@ -16,12 +16,21 @@
 //! lossless e8 (Greedy) and e9+ (Optimal); lossy e9+ (Optimal).
 //!
 //! Usage: lz77_hash_ab <corpus-dir> <out.tsv> [--images N] [--size N]
+//! Encoded files are retained in <out>.artifacts (or --artifacts DIR).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use jxl_encoder::api::{LosslessConfig, LossyConfig, PixelLayout};
+use sha2::{Digest, Sha256};
+
+fn sha256_hex(data: &[u8]) -> String {
+    Sha256::digest(data)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 fn arg(name: &str, default: &str) -> String {
     let a: Vec<String> = std::env::args().collect();
@@ -63,6 +72,11 @@ fn main() {
     let a: Vec<String> = std::env::args().collect();
     let corpus = PathBuf::from(&a[1]);
     let out_path = PathBuf::from(&a[2]);
+    let artifacts = PathBuf::from(arg(
+        "--artifacts",
+        &out_path.with_extension("artifacts").to_string_lossy(),
+    ));
+    std::fs::create_dir_all(&artifacts).expect("create artifact directory");
     let max_images: usize = arg("--images", "6").parse().unwrap();
     let n: u32 = arg("--size", "512").parse().unwrap();
     let efforts: Vec<u8> = arg("--efforts", "8,9")
@@ -71,14 +85,17 @@ fn main() {
         .collect();
     let do_lossy = arg("--lossy", "1") == "1";
 
-    let arm = if std::env::var("JXL_LZ77_MURMUR_HASH").as_deref() == Ok("1") {
+    let default_arm = if std::env::var("JXL_LZ77_MURMUR_HASH").as_deref() == Ok("1") {
         "murmur"
     } else {
         "fold"
     };
 
+    let arm = arg("--arm", default_arm);
+    assert!(!arm.contains(['\t', '\n', '\r']), "invalid TSV arm");
+
     let mut out = std::fs::File::create(&out_path).unwrap();
-    writeln!(out, "arm\timage\tpath_kind\tdepth\teffort\tbytes\tms").unwrap();
+    writeln!(out, "arm\timage\tpath_kind\tdepth\teffort\tbytes\tms\tsize\tsource_sha256\tencoded_sha256\tartifact").unwrap();
 
     let mut picked = 0usize;
     for f in walk(&corpus) {
@@ -123,7 +140,13 @@ fn main() {
             continue;
         };
         picked += 1;
-        let name = f.file_name().unwrap().to_string_lossy().to_string();
+        let name = f
+            .strip_prefix(&corpus)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(!name.contains(['\t', '\n', '\r']), "invalid TSV image path");
+        let source_sha256 = sha256_hex(&std::fs::read(&f).unwrap());
 
         // Three token-width regimes on identical content.
         let b16: Vec<u8> = c16.iter().flat_map(|v| v.to_ne_bytes()).collect();
@@ -133,12 +156,31 @@ fn main() {
             .flat_map(|v| (*v as f32 / 65535.0).to_ne_bytes())
             .collect();
 
-        let mut row = |kind: &str, depth: &str, effort: u8, bytes: usize, ms: f64| {
+        let mut row = |kind: &str, depth: &str, effort: u8, data: &[u8], ms: f64| {
+            let encoded_sha256 = sha256_hex(data);
+            let artifact = artifacts.join(format!("{encoded_sha256}.jxl"));
+            if artifact.exists() {
+                assert_eq!(
+                    std::fs::read(&artifact).unwrap(),
+                    data,
+                    "artifact hash collision"
+                );
+            } else {
+                std::fs::write(&artifact, data).expect("persist encoded artifact");
+            }
+            let artifact = artifact.canonicalize().unwrap();
+            let artifact = artifact.to_string_lossy();
+            assert!(
+                !artifact.contains(['\t', '\n', '\r']),
+                "invalid TSV artifact path"
+            );
+            let bytes = data.len();
             writeln!(
                 out,
-                "{arm}\t{name}\t{kind}\t{depth}\t{effort}\t{bytes}\t{ms:.1}"
+                "{arm}\t{name}\t{kind}\t{depth}\t{effort}\t{bytes}\t{ms:.1}\t{n}\t{source_sha256}\t{encoded_sha256}\t{artifact}"
             )
             .unwrap();
+            out.flush().unwrap();
         };
 
         for &e in &efforts {
@@ -157,7 +199,7 @@ fn main() {
                     "lossless",
                     depth,
                     e,
-                    d.len(),
+                    &d,
                     t.elapsed().as_micros() as f64 / 1000.0,
                 );
             }
@@ -178,12 +220,13 @@ fn main() {
             "lossy",
             "u16",
             9,
-            d.len(),
+            &d,
             t.elapsed().as_micros() as f64 / 1000.0,
         );
 
         out.flush().unwrap();
         eprintln!("{arm}: {name} done ({picked}/{max_images})");
     }
+    assert!(picked > 0, "no images large enough for requested crop");
     println!("{arm} -> {}", out_path.display());
 }

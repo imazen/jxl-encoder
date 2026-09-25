@@ -424,6 +424,22 @@ pub(crate) fn compute_mask1x1_with_budget(
         mask1x1
     };
 
+    // W45-RECON diagnostic: dump the raw (pre-blur) mask1x1 so the
+    // formula-vs-blur divergence can be bisected against libjxl's
+    // `acs_mask1x1_raw.f32` dump. Env-gated, zero cost when unset.
+    #[cfg(all(feature = "std", feature = "__env_var_diagnostics"))]
+    if let Some(dir) = std::env::var_os("JXL_AQDBG_DUMP") {
+        use std::io::Write as _;
+        let mut v = alloc::vec::Vec::with_capacity(8 + mask1x1.len() * 4);
+        v.extend_from_slice(&(width as i32).to_le_bytes());
+        v.extend_from_slice(&(height as i32).to_le_bytes());
+        for &x in &mask1x1 {
+            v.extend_from_slice(&x.to_le_bytes());
+        }
+        let _ = std::fs::File::create(std::path::PathBuf::from(dir).join("acs_mask1x1_raw.f32"))
+            .map(|mut f| f.write_all(&v));
+    }
+
     // Apply Symmetric5 blur using SIMD gaborish kernel with mask1x1 weights.
     // The gaborish_5x5_channel kernel has the same 5x5 weight pattern:
     //   D  L  R  L  D
@@ -466,6 +482,115 @@ pub(crate) fn compute_mask1x1_with_budget(
         );
     }
 
+    Ok(mask1x1)
+}
+
+/// W45-RECON part 5: libjxl-exact `mask1x1` for strict parity.
+///
+/// Selected by `profile.gaborish_libjxl_kernel` (the libjxl `Symmetric5`
+/// bit-exactness flag — the mask1x1 blur *is* libjxl `Symmetric5`, so the
+/// same gate covers it). Two deliberate divergences from
+/// [`compute_mask1x1_with_budget`], both measured against instrumented
+/// cjxl v0.12 dumps (`acs_mask1x1_raw.f32` / `acs_mask1x1.f32`):
+///
+///   1. The raw per-pixel mask uses exact `f32::ln_1p` (libjxl
+///      `std::log1p`, enc_adaptive_quantization.cc `scalar_pixel1x1`)
+///      instead of the `fast_log2f` rational approximation — the
+///      approximation produced a uniform ~1e-4 relative error on every
+///      pixel.
+///   2. The blur uses mirror borders + libjxl's row-grouped
+///      `Symmetric5` accumulation via
+///      `jxl_simd::gaborish_5x5_channel_libjxl` (the shipping kernel
+///      clamps borders: `-2 → 0` vs libjxl `Mirror(-2) → 1`, a ~5%
+///      relative error on the 2-pixel border ring).
+///
+/// `mask1x1` feeds the AC-strategy search's pixel-domain loss; on
+/// near-tied cost decisions (noise-class content) even the interior
+/// ~1e-4 error flips strategy choices. Scalar and non-parallel — perf
+/// is irrelevant on the strict path.
+pub(crate) fn compute_mask1x1_libjxl_exact(
+    xyb_y: &[f32],
+    width: usize,
+    height: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<f32>> {
+    let n = width
+        .checked_mul(height)
+        .ok_or(crate::error::Error::DimensionOverflow {
+            width,
+            height,
+            channels: 1,
+        })?;
+    crate::budget::MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 2))?;
+
+    // Raw mask: libjxl `scalar_pixel1x1`
+    // (enc_adaptive_quantization.cc:501-526). Neighbour indices clamp at
+    // image edges (y1 = y>0 ? y-1 : y, etc.) — libjxl clamps here too.
+    const MATCH_GAMMA_OFFSET: f32 = 0.019;
+    // RatioOfDerivativesOfCubicRootToSimpleGamma constants (invert=false
+    // → den/num); same values as jxl-encoder-simd::mask1x1.
+    const SG_MUL: f32 = 226.77216153508914;
+    const SG_MUL2: f32 = 1.0 / 73.377132366608819;
+    const K_INV_LOG2E: f32 = core::f32::consts::LN_2;
+    const SG_RET_MUL: f32 = SG_MUL2 * 18.6580932135 * K_INV_LOG2E;
+    const SG_V_OFFSET: f32 = 7.7825991679894591;
+    const EPSILON: f32 = 1e-2;
+    const K_NUM_MUL: f32 = SG_RET_MUL * 3.0 * SG_MUL;
+    const K_V_OFFSET: f32 = SG_V_OFFSET * K_INV_LOG2E + EPSILON;
+    const K_DEN_MUL: f32 = K_INV_LOG2E * SG_MUL;
+
+    let mut mask1x1 = vec![0.0_f32; n];
+    for y in 0..height {
+        let y1 = if y > 0 { y - 1 } else { y };
+        let y2 = if y + 1 < height { y + 1 } else { y };
+        let (r, r1, r2) = (y * width, y1 * width, y2 * width);
+        for x in 0..width {
+            let x1 = if x > 0 { x - 1 } else { x };
+            let x2 = if x + 1 < width { x + 1 } else { x };
+            // libjxl operand order: row_in2 + row_in1 + row_in[x1] + row_in[x2]
+            let base = 0.25f32 * (xyb_y[r2 + x] + xyb_y[r1 + x] + xyb_y[r + x1] + xyb_y[r + x2]);
+            let pv = xyb_y[r + x];
+            let v = (pv + MATCH_GAMMA_OFFSET).max(0.0);
+            let v2 = v * v;
+            // libjxl MulAdd semantics: num = fma(kNumMul, v2, eps),
+            // den = fma(kDenMul * v, v2, kVOffset).
+            let num = K_NUM_MUL.mul_add(v2, EPSILON);
+            let den = (K_DEN_MUL * v).mul_add(v2, K_V_OFFSET);
+            let gammac = den / num;
+            let diff = (gammac * (pv - base)).abs();
+            mask1x1[r + x] = 1.0 / (diff.ln_1p() + 0.01);
+        }
+    }
+
+    // Blur1x1Masking: normalize computed in double (libjxl `double sum`,
+    // with the inner `4 * (...)` term evaluated in float and promoted).
+    let inner4: f32 = 4.0
+        * (0.364_911_248f32
+            + 0.05f32
+            + 0.168_888_802_1f32
+            + 0.306_563_504f32
+            + 2.0 * 0.221_069_183f32);
+    let sum = 1.0f64 + inner4 as f64;
+    let normalize = (1.0 / sum) as f32;
+    let wc = normalize;
+    let wr = normalize * 0.364_911_248f32;
+    let wd = normalize * 0.05f32;
+    let w_big_r = normalize * 0.168_888_802_1f32;
+    let wl = normalize * 0.221_069_183f32;
+    let w_big_d = normalize * 0.306_563_504f32;
+    let mut scratch = vec![0.0_f32; n];
+    jxl_simd::gaborish_5x5_channel_libjxl(
+        &mut mask1x1,
+        &mut scratch,
+        width,
+        height,
+        wc,
+        wr,
+        wd,
+        w_big_r,
+        wl,
+        w_big_d,
+    );
     Ok(mask1x1)
 }
 

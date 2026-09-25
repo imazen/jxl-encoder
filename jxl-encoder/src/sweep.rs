@@ -111,6 +111,9 @@ impl EffortProfile {
             self.cfl_zero_for_search,
             self.use_adaptive_quant,
             self.adjust_quant_ac,
+            self.aqba_max_over_channels,
+            self.ma_root_split_2ndg,
+            self.bcm_qf_zero_based,
             self.use_libjxl_wp_dc_quant,
             self.patch_ref_tree_learning,
             self.use_streaming_dedup,
@@ -199,6 +202,10 @@ impl EffortProfile {
         ]
         .map(f32::to_bits)
         .hash(&mut h);
+        // W45-RECON part 6: `channel_loss_mul` ([f64; 3]) — hash by bit
+        // pattern so tables differing only in the loss multipliers
+        // don't collide in sweep dedup.
+        e.channel_loss_mul.map(f64::to_bits).hash(&mut h);
 
         // Enums via discriminant / inner tag.
         core::mem::discriminant(&self.lz77_method).hash(&mut h);

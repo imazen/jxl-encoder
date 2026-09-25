@@ -68,7 +68,10 @@ pub(crate) mod sweep;
 #[cfg(feature = "hdr-gainmap")]
 pub mod hdr;
 pub(crate) mod heuristics;
-pub(crate) mod profile_phases;
+// `pub` (not pub(crate)) so the `cjxl-rs --features profile-phases`
+// phase snapshot in jxl-encoder-cli can reach `take_snapshot`.
+#[doc(hidden)]
+pub mod profile_phases;
 // W44-192: side-by-side prototype proving the `strategy_def!` proc-macro
 // generates code equivalent to the hand-written gate plumbing in `api.rs`.
 // Phase 1 of the W44-190 RFC. W44-193 migrated the production
@@ -403,6 +406,8 @@ pub mod __internals {
     // can't be `pub use`d directly.
     pub use crate::vardct::ac_strategy::compute_scaled_constants_free;
     pub use crate::vardct::epf::epf_step0_strip_free;
+    // W45-RECON part 14: strict libjxl-parity quant matrices
+    // (`InvDequantMatrix`/`DequantMatrix`) for differential dumps.
     /// W44-20 per-stage detection counters from
     /// [`crate::vardct::patches::find_text_like_patches_with_min_peak`].
     /// Populated unconditionally; read via [`take_last_patches_detect_stats`].
@@ -412,6 +417,7 @@ pub mod __internals {
     /// Calibration / instrumentation hook only — see
     /// [`crate::vardct::patches`] doc-comment.
     pub use crate::vardct::patches::{LastPatchesStats, take_last_patches_stats};
+    pub use crate::vardct::quant::{dequant_matrix_lj, inv_dequant_matrix_lj};
     pub use crate::vardct::quantize::adjust_quant_block_ac_free;
 
     // ── Lossless patches calibration wrappers (RFC#45 lossless backport) ──

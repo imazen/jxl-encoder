@@ -17,6 +17,12 @@
 /// Channel importance weights for SAD computation (from libjxl epf.h).
 const EPF_CHANNEL_SCALE: [f32; 3] = [40.0, 5.0, 3.5];
 
+/// libjxl `kMinSigma` (epf.h): stored `1/sigma` values below this threshold
+/// disable filtering entirely — the stage copies input to output unchanged.
+/// libjxl's `ComputeSigma` clamps sigma to at most -1e-4, so a zero sharpness
+/// LUT entry produces `1/sigma = -10000`, which is far below this gate.
+pub const K_MIN_SIGMA: f32 = -3.905_242_9;
+
 #[cfg(target_arch = "x86_64")]
 use crate::load_f32x8;
 #[cfg(target_arch = "x86_64")]
@@ -228,7 +234,7 @@ pub fn epf_step2_scalar(
             // Input pixel in padded buffer
             let pidx = (py + pad) * in_stride + (px + pad);
 
-            if is == 0.0 {
+            if is == 0.0 || is < K_MIN_SIGMA {
                 out_x[oidx] = in_x[pidx];
                 out_y[oidx] = in_y[pidx];
                 out_b[oidx] = in_b[pidx];
@@ -349,7 +355,7 @@ pub fn epf_step2_avx2(
             let sigma_idx = by * xsize_blocks + bx;
             let is = inv_sigma[sigma_idx];
 
-            if is == 0.0 {
+            if is == 0.0 || is < K_MIN_SIGMA {
                 orow_x[x..x + 8].copy_from_slice(&slice_from(in_x, r0 + x)[..8]);
                 orow_y[x..x + 8].copy_from_slice(&slice_from(in_y, r0 + x)[..8]);
                 orow_b[x..x + 8].copy_from_slice(&slice_from(in_b, r0 + x)[..8]);
@@ -611,7 +617,7 @@ pub fn epf_step1_scalar(
             let ipy = py + pad;
             let pidx = ipy * in_stride + ipx;
 
-            if is == 0.0 {
+            if is == 0.0 || is < K_MIN_SIGMA {
                 out_x[oidx] = in_x[pidx];
                 out_y[oidx] = in_y[pidx];
                 out_b[oidx] = in_b[pidx];
@@ -850,7 +856,7 @@ pub fn epf_step1_avx2(
             let sigma_idx = by * xsize_blocks + bx;
             let is = inv_sigma[sigma_idx];
 
-            if is == 0.0 {
+            if is == 0.0 || is < K_MIN_SIGMA {
                 orow_x[x..x + 8].copy_from_slice(&slice_from(in_x, r_0 + x)[..8]);
                 orow_y[x..x + 8].copy_from_slice(&slice_from(in_y, r_0 + x)[..8]);
                 orow_b[x..x + 8].copy_from_slice(&slice_from(in_b, r_0 + x)[..8]);
@@ -1023,7 +1029,7 @@ pub fn epf_step2_neon(
             let sigma_idx = by * xsize_blocks + bx;
             let is = inv_sigma[sigma_idx];
 
-            if is == 0.0 {
+            if is == 0.0 || is < K_MIN_SIGMA {
                 orow_x[x..x + 8].copy_from_slice(&in_x[r0 + x..r0 + x + 8]);
                 orow_y[x..x + 8].copy_from_slice(&in_y[r0 + x..r0 + x + 8]);
                 orow_b[x..x + 8].copy_from_slice(&in_b[r0 + x..r0 + x + 8]);
@@ -1296,7 +1302,7 @@ pub fn epf_step1_neon(
             let sigma_idx = by * xsize_blocks + bx;
             let is = inv_sigma[sigma_idx];
 
-            if is == 0.0 {
+            if is == 0.0 || is < K_MIN_SIGMA {
                 orow_x[x..x + 8].copy_from_slice(&in_x[r_0 + x..r_0 + x + 8]);
                 orow_y[x..x + 8].copy_from_slice(&in_y[r_0 + x..r_0 + x + 8]);
                 orow_b[x..x + 8].copy_from_slice(&in_b[r_0 + x..r_0 + x + 8]);
@@ -1480,7 +1486,7 @@ pub fn epf_step2_wasm128(
             let sigma_idx = by * xsize_blocks + bx;
             let is = inv_sigma[sigma_idx];
 
-            if is == 0.0 {
+            if is == 0.0 || is < K_MIN_SIGMA {
                 orow_x[x..x + 8].copy_from_slice(&in_x[r0 + x..r0 + x + 8]);
                 orow_y[x..x + 8].copy_from_slice(&in_y[r0 + x..r0 + x + 8]);
                 orow_b[x..x + 8].copy_from_slice(&in_b[r0 + x..r0 + x + 8]);
@@ -1753,7 +1759,7 @@ pub fn epf_step1_wasm128(
             let sigma_idx = by * xsize_blocks + bx;
             let is = inv_sigma[sigma_idx];
 
-            if is == 0.0 {
+            if is == 0.0 || is < K_MIN_SIGMA {
                 orow_x[x..x + 8].copy_from_slice(&in_x[r_0 + x..r_0 + x + 8]);
                 orow_y[x..x + 8].copy_from_slice(&in_y[r_0 + x..r_0 + x + 8]);
                 orow_b[x..x + 8].copy_from_slice(&in_b[r_0 + x..r_0 + x + 8]);

@@ -688,10 +688,13 @@ fn epf_dispatch_always_default_changes_bytes_on_textured() {
         .with_strategy(EncoderStrategy::Custom(Box::new(cust)))
         .encode(&buf, w, h, PixelLayout::Rgb8)
         .expect("encode AlwaysDefault");
+    // Byte-compare, not length-compare: entropy-code improvements can make
+    // the two outputs coincidentally equal in size while still differing
+    // in content (observed 2026-09-17: both 668 B, different bytes).
     assert_ne!(
-        bytes_select.len(),
-        bytes_default.len(),
-        "AlwaysDefault should produce a different byte length on textured \
+        bytes_select,
+        bytes_default,
+        "AlwaysDefault should produce different bytes on textured \
          input than AlwaysSelect (select={}, default={})",
         bytes_select.len(),
         bytes_default.len()

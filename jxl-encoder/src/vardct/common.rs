@@ -115,6 +115,24 @@ pub fn as_array_mut<const N: usize>(slice: &mut [f32], offset: usize) -> &mut [f
     (&mut slice[offset..offset + N]).try_into().unwrap()
 }
 
+/// Transpose an `R × C` row-major block into a `C × R` row-major buffer.
+///
+/// W45-RECON part 15: backing primitive for the `*_lj` transform
+/// wrappers. libjxl's `ComputeScaledDCT<R, C>` runs `DCT1D<ROWS, COLS>`
+/// (the storage-row direction) first; our kernels run the
+/// storage-column direction first. Wrapping a call in transposes swaps
+/// the effective pass order while preserving the storage convention.
+#[inline(always)]
+pub fn transpose_block<const R: usize, const C: usize>(input: &[f32], output: &mut [f32]) {
+    debug_assert_eq!(input.len(), R * C);
+    debug_assert_eq!(output.len(), R * C);
+    for c in 0..C {
+        for r in 0..R {
+            output[c * R + r] = input[r * C + c];
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

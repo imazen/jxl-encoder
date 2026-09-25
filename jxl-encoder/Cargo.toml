@@ -245,7 +245,7 @@ zensim-loop = ["butteraugli-loop", "dep:zensim", "dep:zenpredict", "dep:serde", 
 zensim-loop-gpu = ["butteraugli-loop", "dep:zensim-gpu", "dep:cubecl"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
 convenience = ["dep:imgref", "dep:rgb"]
-jpeg-reencoding = ["dep:zenjpeg", "dep:brotli", "brotli-metadata"]
+jpeg-reencoding = ["dep:zenjpeg", "dep:brotli", "brotli-metadata", "hdr-gainmap"]
 # Brotli-compressed metadata boxes (`brob`) for EXIF/XMP. Wraps each
 # metadata blob in a brob box that decompresses to the original
 # Exif/xml/jumb box, typically 2-4× smaller for XML / binary metadata.
@@ -440,13 +440,12 @@ sha2 = "0.11.0"
 # (see workspace Cargo.toml); use the registry coordinate here so both refer
 # to the same canonical source.
 zenjpeg = { version = "0.9.0", default-features = false, features = ["parallel"] }
-# zenjxl-decoder: pure-Rust JXL decoder used as the byte-exact reconstruction
-# oracle in the JBRD round-trip conformance gate. The `jpeg` feature enables
-# `take_jpeg_reconstruction()`. Path-patched via workspace `[patch.crates-io]`.
+# Released decoder compatibility oracle for existing round-trip tests.
+# Its 0.3 requirement deliberately does not select the sibling's 0.4 patch.
 zenjxl-decoder = { version = "0.3.8", features = ["jpeg"] }
-# Canonical delivered RGB8 for the zensim experiment. Keep the older JBRD
-# oracle above distinct; this aliases the same 0.4 decoder used by zenjxl.
-zensim-decoder = { package = "zenjxl-decoder", path = "../../zenjxl-decoder/zenjxl-decoder" }
+# Current decoder for canonical delivered RGB8 and JPEG reconstruction.
+# The jpeg feature includes the standalone restart writer fix (#120).
+zensim-decoder = { package = "zenjxl-decoder", path = "../../zenjxl-decoder/zenjxl-decoder", features = ["jpeg"] }
 # Microbench harness for the chunk-1 SplitTreeSamples primitive (issue #40).
 # zenbench is the workspace-standard benchmarking tool — interleaved sampling
 # and paired statistics give cleaner signal than criterion's isolated rounds.
@@ -833,6 +832,47 @@ required-features = ["ssim2-loop"]
 name = "score_jxl_files"
 path = "examples/score_jxl_files.rs"
 required-features = ["butteraugli-loop"]
+
+# Score a PFM/f32 recon dump vs a source PNG with the loop's butteraugli
+# params (W45-RECON iter-0 cross-encoder comparison).
+[[example]]
+name = "score_pfm"
+path = "examples/score_pfm.rs"
+required-features = ["butteraugli-loop"]
+
+# strict-libjxl buttloop debug: internal recon vs shipped decode.
+[[example]]
+name = "dbg_flat_recon"
+path = "examples/dbg_flat_recon.rs"
+required-features = ["__internal_recon_hook", "butteraugli-loop"]
+
+# W45-RECON part 9: regenerate the photoish 1024^2 hash-lock fixture as PPM
+# for cross-encoder BCM/used_orders parity diffing.
+[[example]]
+name = "gen_photoish_1024"
+path = "examples/gen_photoish_1024.rs"
+
+# W45-RECON part 10: minimal per-section TOC dump for parity diffing.
+[[example]]
+name = "toc_dump"
+path = "examples/toc_dump.rs"
+required-features = ["__env_var_diagnostics"]
+
+# W45-RECON part 11: image/frame header field dump for parity diffing.
+[[example]]
+name = "hdr_dump"
+path = "examples/hdr_dump.rs"
+required-features = ["__env_var_diagnostics"]
+
+# W45-RECON part 11: decode probe — drives JXL_CODING_DUMP entropy-header dumps.
+[[example]]
+name = "dec_probe"
+path = "examples/dec_probe.rs"
+
+# W45-RECON part 13: pixel-level decode compare between two .jxl files.
+[[example]]
+name = "dec_cmp"
+path = "examples/dec_cmp.rs"
 
 # W44-35 acceptance check: 1418519 cells + screenshot regressions +
 # F-D residual cells. Does not need zenanalyze (uses default API).
@@ -1360,12 +1400,18 @@ required-features = ["__expert"]
 # (you must temporarily add a [[example]] block + path = "examples/smart_fanout_sweep.rs"
 # matching the pattern below, then revert before pushing).
 
-# Picker oracle calibration harnesses (lossless_pareto_calibrate /
-# lossy_pareto_calibrate / rct_per_image_sweep) live under examples/ but
+# Lossless oracle recovery uses the same analyzer dependency as learned admission.
+[[example]]
+name = "lossless_pareto_calibrate"
+path = "examples/lossless_pareto_calibrate.rs"
+required-features = ["__expert", "parallel", "learned-admission"]
+
+# The remaining picker oracle harnesses (lossy_pareto_calibrate /
+# rct_per_image_sweep) live under examples/ but
 # are NOT registered as cargo examples — they depend on a sibling-repo
 # `zenanalyze` path that isn't present on CI. Run them locally with:
 #   cargo run --release --manifest-path jxl-encoder/Cargo.toml \
-#       --example lossless_pareto_calibrate --features __expert
+#       --example lossy_pareto_calibrate --features __expert
 # after editing this file to add a [[example]] entry plus the path dep
 # (see git history pre-2026-05-02 for the previous wiring).
 #
@@ -3293,3 +3339,17 @@ path = "examples/effort_loop_profile.rs"
 [[example]]
 name = "xyb_cbrt_headroom"
 path = "examples/xyb_cbrt_headroom.rs"
+[[example]]
+name = "enc_file"
+path = "examples/enc_file.rs"
+[[example]]
+name = "qm_dump"
+path = "examples/qm_dump.rs"
+[[example]]
+name = "w45_p21_perf_ab"
+path = "examples/w45_p21_perf_ab.rs"
+
+[[example]]
+name = "jpeg_fixture_setup"
+path = "examples/jpeg_fixture_setup.rs"
+required-features = ["std", "jpeg-reencoding"]

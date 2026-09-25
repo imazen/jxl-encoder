@@ -350,3 +350,124 @@ fn multigroup_patches_ref_frame_roundtrips_when_global_section_is_empty() {
     assert_eq!(ox_h, h);
     assert_eq!(decode_djxl(&bytes).dimensions(), (w, h));
 }
+
+/// Small extra channels belong in LfGlobal even when progressive passes give
+/// the frame a sectioned TOC. Larger alpha planes stay in the HF groups.
+#[cfg(feature = "__expert")]
+#[test]
+fn progressive_extras_preserve_alpha_in_both_decoders() {
+    use jxl_encoder::ProgressiveMode;
+    use jxl_encoder::api::EncoderStrategy;
+
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .expect("decode real screenshot fixture")
+        .to_rgba8();
+    for (w, h) in [(64, 32), (259, 133)] {
+        let mut pixels = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        for (x, y, pixel) in pixels.enumerate_pixels_mut() {
+            pixel[3] = if (x / 8 + y / 8) % 3 == 0 { 64 } else { 255 };
+        }
+        for strategy in [EncoderStrategy::Libjxl, EncoderStrategy::Zenjxl] {
+            for effort in [3, 4, 8] {
+                for mode in [
+                    ProgressiveMode::QuantizedAcFullAc,
+                    ProgressiveMode::DcVlfLfAc,
+                ] {
+                    let bytes = LossyConfig::new(1.0)
+                        .with_strategy(strategy.clone())
+                        .with_effort(effort)
+                        .with_progressive(mode)
+                        .encode(pixels.as_raw(), w, h, PixelLayout::Rgba8)
+                        .expect("encode progressive RGBA");
+                    eprintln!("progressive extras {w}x{h} e{effort} {mode:?} {strategy:?}");
+                    let (dw, dh, extras, decoded) = decode_jxl_rs_rgba8(&bytes);
+                    assert_eq!((dw, dh, extras), (w, h, 1));
+                    let reference = decode_djxl(&bytes);
+                    assert_eq!(reference.dimensions(), (w, h));
+                    for ((src, actual), reference) in pixels
+                        .as_raw()
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(decoded.as_chunks::<4>().0.iter())
+                        .zip(reference.as_raw().as_chunks::<4>().0.iter())
+                    {
+                        assert_eq!(src[3], actual[3], "jxl-rs alpha");
+                        assert_eq!(src[3], reference[3], "djxl alpha");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "__expert")]
+fn strict_ac_metadata_contexts_render_in_both_decoders() {
+    use jxl_encoder::api::EncoderStrategy;
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .unwrap()
+        .to_rgb8();
+    for (w, h) in [(64, 32), (259, 133)] {
+        let pixels = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        for strategy in [EncoderStrategy::Libjxl, EncoderStrategy::Zenjxl] {
+            for effort in [3, 4, 5, 6, 7, 8, 9] {
+                eprintln!("AC metadata {w}x{h} {strategy:?} e{effort}");
+                let bytes = LossyConfig::new(1.0)
+                    .with_strategy(strategy.clone())
+                    .with_effort(effort)
+                    .encode(pixels.as_raw(), w, h, PixelLayout::Rgb8)
+                    .unwrap();
+                let (dw, dh, extras, decoded) = decode_jxl_rs_rgba8(&bytes);
+                assert_eq!((dw, dh, extras), (w, h, 0));
+                assert_eq!(decoded.len(), (w * h * 4) as usize);
+                assert_eq!(decode_djxl(&bytes).dimensions(), (w, h));
+                assert_eq!(decode_jxl_oxide(&bytes, false), (w, h));
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "__expert")]
+fn strict_palette_cost_revert_preserves_alpha_in_both_decoders() {
+    use jxl_encoder::api::EncoderStrategy;
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .unwrap()
+        .to_rgba8();
+    // The small cell rejects compaction; the multi-group cell exercises the
+    // existing private-writer fallback. RGB pixels come from real content.
+    for (w, h) in [(64, 32), (259, 133)] {
+        let mut pixels = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+        for (x, y, pixel) in pixels.enumerate_pixels_mut() {
+            pixel[3] = if x == w - 1 && y == h - 1 {
+                255
+            } else {
+                ((x + y) % 15) as u8
+            };
+        }
+        for effort in [7, 8, 9] {
+            eprintln!("strict palette revert {w}x{h} e{effort}");
+            let bytes = LossyConfig::new(1.0)
+                .with_strategy(EncoderStrategy::Libjxl)
+                .with_effort(effort)
+                .encode(pixels.as_raw(), w, h, PixelLayout::Rgba8)
+                .unwrap();
+            let reference = decode_djxl(&bytes);
+            let (dw, dh, extras, decoded) = decode_jxl_rs_rgba8(&bytes);
+            assert_eq!((dw, dh, extras), (w, h, 1));
+            assert_eq!(reference.dimensions(), (w, h));
+            for ((src, actual), reference) in pixels
+                .as_raw()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(decoded.as_chunks::<4>().0.iter())
+                .zip(reference.as_raw().as_chunks::<4>().0.iter())
+            {
+                assert_eq!(src[3], actual[3], "jxl-rs alpha e{effort}");
+                assert_eq!(src[3], reference[3], "djxl alpha e{effort}");
+            }
+        }
+    }
+}
