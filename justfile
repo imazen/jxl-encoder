@@ -20,6 +20,12 @@ api-doc-check:
 prepublish-matrix photo artifacts manifest="Cargo.toml" features="__expert,corpus-tests,parallel":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_AUDIT_PHOTO="{{photo}}" JXL_AUDIT_ARTIFACTS="{{artifacts}}" nice -n 19 cargo test --manifest-path "{{manifest}}" --locked -p jxl-encoder --features "{{features}}" --test prepublish_matrix -- --test-threads=1 --nocapture
 
+prepublish-perf base ours out *args:
+    TMPDIR="$HOME/tmp" nice -n 19 python3 scripts/bench_lossless_ab.py --base "{{base}}" --ours "{{ours}}" --out "{{out}}" {{args}}
+
+prepublish-perf-driver-check:
+    python3 -m unittest discover -s scripts -p test_bench_lossless_ab.py
+
 # Byte-preserving strict/Zen cleanup checks. These are modules in the `it`
 # binary, so nextest selects test names rather than nonexistent binary IDs.
 libjxl-exact-cleanup-check label manifest="Cargo.toml":
