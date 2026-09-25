@@ -2809,6 +2809,39 @@ fail. The first run used CID22 validation 3156482; logs and outputs are at
 `~/tmp/jxl-prepublish-2026-09-24/`. This does not measure lossy color quality,
 wide samples, GPU execution, or every public setting combination.
 
+### 2026-09-24: pre-publication process-wall and retained-stream audit
+
+Five interleaved repetitions compare `f4bfa242` with `cfd6ef0a` on this
+ARM64 Mac, using the same current CI-pinned dependency closure in both
+builds. Two natural sources (photo/document), four sizes (64/256/1024/2048),
+efforts 3/7/9 and threads 1/4 produce 48 cells each for lossless, Zen d1
+and strict d4. These are process-wall measurements including image IO,
+not a fleetwide quality or performance qualification. No native-CPU flags.
+Per-cell medians range -7.11%..+2.30% lossless, -10.81%..+1.78% Zen,
+and -38.86%..+2.19% strict. Tiny cells include millisecond process overhead.
+The dated `benchmarks/prepublish_*.tsv` and companion `.meta` files preserve
+all cells, source hashes, binary hashes and commands.
+
+All 96 lossless/Zen cells are byte-identical. Ten strict e7 cells change
+bytes; the identity harness correctly returns failure for that arm. The
+old 1024 photo stream fails Rust decoding with `AnsChecksumMismatch`;
+djxl rejects all five distinct changed baseline streams. Current output
+succeeds. All 76 distinct current source/stream pairs fully
+decode in the primary Rust decoder and djxl v0.12, with exact lossless
+pixels. `just prepublish-perf-roundtrip <newline-separated-tables>
+<pinned-manifest> ours_sha256` validates current outputs independently;
+the default `both` checks both revisions and does not forgive old failures.
+The grayscale source requires expanding the decoder's gray+alpha output
+before comparison, preserving each sample. No image-format assumption is
+substituted for a pixel check.
+
+Build trap: a shared Cargo target's final CLI path retained the baseline
+executable when the current export reported fresh. Identical binary hashes
+caught this before accepting timings. That partial run is retained as
+`*.invalid-same-binary`; accepted current timings use an isolated target
+and distinct binary hashes. Never infer binary identity from Cargo's
+freshness message when switching source exports.
+
 ### 2026-09-24: forced WP float-extreme validation
 
 `lossless_float::forced_wp_float_extremes_match_rust_and_libjxl` passes
