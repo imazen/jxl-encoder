@@ -1,0 +1,62 @@
+{
+  "args": [
+    "target/release/examples/rd_monotonicity_gate",
+    "/Users/lilith/work/zen/imazen-26-png-v3/png-v3/2400-unsplash-textures/2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png",
+    "/Users/lilith/tmp/jxl-triage-2026-09-26/texture.tsv",
+    "--images",
+    "1",
+    "--size",
+    "512",
+    "--efforts",
+    "5",
+    "--distances",
+    "12,15",
+    "--baseline",
+    "/dev/null"
+  ],
+  "binary_sha256": "733d17d361780bf806ab0033db6f6da8bc2b331a19629fb5cc160eb19c201b6e",
+  "build_commit": "964176e243848dc204c0bb2197c7229b3099468b",
+  "cargo_lock_sha256": "a243f4c6ab73aec8f19902e8cc54f699711b0108a050217ca7d422a83c21ee40",
+  "harness_sha256": "73c4c9fa306748ec0337013fd186b66504a41bbc9550cbf89b048d03be716024",
+  "schema": "rd-monotonicity-evidence-v1",
+  "timing": "diagnostic only; Rust encode wall versus cjxl process wall",
+  "encoder_commit": "f738479d070999f57a4169b34f4756e890e9320a",
+  "hostname": "mac",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "artifact_root": "/Users/lilith/tmp/jxl-triage-2026-09-26",
+  "source_closure": "/Users/lilith/tmp/jxl-triage-2026-09-26/clean",
+  "commands": [
+    [
+      "target/release/examples/rd_monotonicity_gate",
+      "/Users/lilith/work/zen/imazen-26-png-v3/png-v3/2400-unsplash-textures/2400_textures_flower-stem-blob_by-anca-gabriela-zosin-bmonybmqxha-unsplash_4000x5350.sdr.png",
+      "/Users/lilith/tmp/jxl-triage-2026-09-26/texture.tsv",
+      "--images",
+      "1",
+      "--size",
+      "512",
+      "--efforts",
+      "5",
+      "--distances",
+      "12,15",
+      "--baseline",
+      "/dev/null"
+    ],
+    [
+      "target/release/examples/rd_monotonicity_gate",
+      "/Users/lilith/work/zen/imazen-26-png-v3/png-v3/5000-national-park-service-brochures/grayscale/5058_nps_shen-bigmeadows-roadtrail_gray_p02_2550x3300.sdr.png",
+      "/Users/lilith/tmp/jxl-triage-2026-09-26/document.tsv",
+      "--images",
+      "1",
+      "--size",
+      "1024",
+      "--efforts",
+      "8",
+      "--distances",
+      "2.25,2.5,3,3.25",
+      "--baseline",
+      "/dev/null"
+    ]
+  ],
+  "reference_version": "libjxl v0.12.0",
+  "scope": "six current cells; no encoder production changes; no performance verdict"
+}

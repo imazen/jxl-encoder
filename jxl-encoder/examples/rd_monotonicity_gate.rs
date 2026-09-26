@@ -7,22 +7,11 @@
 //! form a staircase, so a model can learn from a curve that is not
 //! self-contradictory.
 //!
-//! **The contract, stated precisely.** Two separate claims, because they have
-//! different truth values:
-//!
-//! 1. WITHIN a reference-filter regime, both bytes and delivered SSIM2 must be
-//!    non-increasing as the requested distance coarsens. Violations are bugs.
-//! 2. ACROSS a regime boundary, neither is promised. libjxl v0.12 itself is not
-//!    byte-monotone there (measured: d=0.5 -> 0.6 goes 71,368 -> 94,002 B on
-//!    imazen-26 7026), because Gaborish is gated at d > 0.5 and the EPF
-//!    thresholds step at 0.7 / 1.5 / 4.0. Crossings are therefore recorded
-//!    with their magnitudes as DECLARED discontinuities, not silently
-//!    tolerated and not failed.
-//!
-//! **Time is a first-class assertion, not a footnote.** Per effort, our wall
-//! must not regress against a committed baseline, and the ratio against cjxl
-//! v0.12 at the same effort and distance is tracked alongside it. An RD win
-//! bought with unbounded time is not a win.
+//! Corroborated IQA inversions fail across every filter regime; byte inversions
+//! are advisory. Known inversions remain visible without failing the run.
+//! Missing inputs, failed encodes/decodes and non-finite scores fail the run.
+//! Timings are diagnostics only: Rust encode wall and cjxl process wall have
+//! different scopes, and the historical aggregate baseline is not grid-bound.
 //!
 //! Oracle choice: SSIMULACRA2 via `fast-ssim2` (PINNED at 0.7.1 -- 0.8.2 moves
 //! every score, see CLAUDE.md), fed sRGB u8 on both sides because
@@ -30,12 +19,20 @@
 //!
 //! Usage:
 //!   rd_monotonicity_gate <corpus-dir> <out.tsv> [--images N] [--size N]
-//!       [--efforts 3,5,7,9] [--baseline <tsv>] [--update-baseline]
+//!       [--efforts 3,5,7,9] [--distances 1,2] [--baseline <tsv>]
+//!       [--update-baseline]
+//! A single PNG may replace the corpus directory. Outputs must be new;
+//! bitstreams, decoder logs, source crops and diffmaps live in <out.tsv>.artifacts.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
+
+#[path = "distance_targeting_probe/decode.rs"]
+mod decode;
+#[path = "rd_monotonicity_gate/evidence.rs"]
+mod evidence;
 
 use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
 use imgref::Img;
@@ -43,7 +40,7 @@ use jxl_encoder::api::{LossyConfig, PixelLayout};
 use rgb::RGB;
 
 /// Distances at which libjxl (and we) change reference filters, so byte and
-/// quality monotonicity are not promised ACROSS them. Read from source:
+/// boundary crossings are labelled separately. IQA is still checked. Source:
 /// Gaborish is enabled only above 0.5; EPF thresholds step at 0.7/1.5/4.0.
 const FILTER_BOUNDARIES: &[f32] = &[0.5, 0.7, 1.5, 4.0];
 
@@ -81,7 +78,8 @@ fn violation_key(image: &str, effort: u8, lo: f32, hi: f32) -> String {
 /// `image<TAB>eNN<TAB>lo_distance<TAB>hi_distance`; `#` comments allowed.
 fn load_known(path: &str) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
-    if let Ok(text) = std::fs::read_to_string(path) {
+    {
+        let text = std::fs::read_to_string(path).expect("read known violations");
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -98,14 +96,16 @@ fn regime(d: f32) -> usize {
 }
 
 fn walk(d: &Path) -> Vec<PathBuf> {
+    if d.is_file() {
+        return vec![d.to_path_buf()];
+    }
     let mut v = Vec::new();
-    let mut st = vec![d.to_path_buf()];
-    while let Some(p) = st.pop() {
-        if let Ok(rd) = std::fs::read_dir(&p) {
-            for e in rd.flatten() {
-                let q = e.path();
-                if q.is_dir() { st.push(q) } else { v.push(q) }
-            }
+    for entry in std::fs::read_dir(d).expect("read corpus directory") {
+        let path = entry.expect("read corpus entry").path();
+        if path.is_dir() {
+            v.extend(walk(&path));
+        } else {
+            v.push(path);
         }
     }
     v.sort();
@@ -127,6 +127,10 @@ struct Cell {
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
+    assert!(
+        a.len() >= 3,
+        "usage: rd_monotonicity_gate <corpus-or-png> <new-output.tsv>"
+    );
     let corpus = PathBuf::from(&a[1]);
     let out_path = PathBuf::from(&a[2]);
     let max_images: usize = arg("--images", "4").parse().unwrap();
@@ -140,10 +144,40 @@ fn main() {
         "benchmarks/rd_monotonicity_baseline_2026-09-09.tsv",
     );
     let update_baseline = flag("--update-baseline");
+    assert!(max_images > 0 && n >= 8, "need images > 0 and size >= 8");
+    assert!(
+        !efforts.is_empty() && efforts.iter().all(|e| (1..=12).contains(e)),
+        "invalid efforts"
+    );
+    let unique: std::collections::HashSet<_> = efforts.iter().collect();
+    assert_eq!(unique.len(), efforts.len(), "duplicate efforts");
+    let distances: Vec<f32> = arg(
+        "--distances",
+        &DISTANCES
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+    )
+    .split(',')
+    .map(|v| v.parse().expect("distance"))
+    .collect();
+    assert!(
+        distances.len() >= 2
+            && distances.iter().all(|d| d.is_finite() && *d > 0.0)
+            && distances.windows(2).all(|p| p[0] < p[1]),
+        "distances must be finite, positive and strictly increasing"
+    );
+    let evidence = evidence::Evidence::new(&out_path, &a);
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&out_path)
+        .expect("new TSV output");
+    writeln!(out, "image\teffort\tdistance\tregime\tbytes\tssim2\tbfly\tms\tcjxl_bytes\tcjxl_ssim2\tcjxl_ms\tsource_sha256\tencoded_sha256\tcjxl_sha256\tdiffmap_sha256").unwrap();
 
     let cjxl = jxl_encoder::test_helpers::cjxl_path();
-    let tmp = std::env::var("HOME").unwrap() + "/tmp/rdmono";
-    std::fs::create_dir_all(&tmp).unwrap();
+    let djxl = jxl_encoder::test_helpers::djxl_path();
 
     // Stratify round-robin so one content class cannot dominate the verdict.
     let mut by_class: std::collections::BTreeMap<String, Vec<PathBuf>> = Default::default();
@@ -177,13 +211,24 @@ fn main() {
         idx += 1;
     }
 
+    assert!(!picks.is_empty(), "no PNG inputs selected");
+    let mut names = std::collections::HashSet::new();
+    for path in &picks {
+        assert!(
+            names.insert(path.file_name().unwrap()),
+            "duplicate input basename: {}",
+            path.display()
+        );
+    }
     let mut cells: Vec<Cell> = Vec::new();
     for path in &picks {
-        let Ok(img) = image::open(path) else { continue };
+        let img = image::open(path).unwrap_or_else(|e| panic!("input {}: {e}", path.display()));
         let rgb = img.to_rgb8();
-        if rgb.width() < n || rgb.height() < n {
-            continue;
-        }
+        assert!(
+            rgb.width() >= n && rgb.height() >= n,
+            "input {} is smaller than requested crop {n}",
+            path.display()
+        );
         let (x0, y0) = ((rgb.width() - n) / 2, (rgb.height() - n) / 2);
         let crop = image::imageops::crop_imm(&rgb, x0, y0, n, n).to_image();
         let src: Vec<u8> = crop.as_raw().clone();
@@ -204,11 +249,12 @@ fn main() {
 
         // Fresh PNG for cjxl: written from raw RGB8, so it carries no ICC and
         // cannot reintroduce the metadata mismatch that has burned two sessions.
-        let png = PathBuf::from(format!("{tmp}/src.png"));
+        let source_hash = evidence::sha256(&std::fs::read(path).expect("source bytes"));
+        let png = evidence.dir.join(format!("{source_hash}-{n}.source.png"));
         crop.save(&png).unwrap();
 
         for &e in &efforts {
-            for &d in DISTANCES {
+            for &d in &distances {
                 let t = Instant::now();
                 let enc = LossyConfig::new(d)
                     .with_effort(e)
@@ -216,9 +262,13 @@ fn main() {
                     .encode(&src)
                     .expect("encode");
                 let ms = t.elapsed().as_secs_f64() * 1000.0;
+                let encoded_hash = evidence.retain(&enc, "jxl");
+                evidence.verify(&enc, &encoded_hash, n, &djxl);
                 let ssim2 = score(&enc, &src, n);
 
-                let cj = PathBuf::from(format!("{tmp}/cj.jxl"));
+                let cj = evidence
+                    .dir
+                    .join(format!("{source_hash}-e{e}-d{d}.reference.jxl"));
                 let t = Instant::now();
                 let st = Command::new(&cjxl)
                     .args([
@@ -233,12 +283,30 @@ fn main() {
                     .output()
                     .expect("cjxl");
                 let cjxl_ms = t.elapsed().as_secs_f64() * 1000.0;
-                let (cjxl_bytes, cjxl_ssim2) = if st.status.success() {
-                    let b = std::fs::read(&cj).unwrap_or_default();
-                    (b.len(), score(&b, &src, n))
-                } else {
-                    (0, 0.0)
-                };
+                std::fs::write(
+                    cj.with_extension("log"),
+                    [&st.stdout[..], &st.stderr[..]].concat(),
+                )
+                .unwrap();
+                assert!(
+                    st.status.success(),
+                    "cjxl failed: {}",
+                    String::from_utf8_lossy(&st.stderr)
+                );
+                let reference = std::fs::read(&cj).expect("reference output");
+                assert!(!reference.is_empty(), "empty reference output");
+                let reference_hash = evidence.retain(&reference, "jxl");
+                evidence.verify(&reference, &reference_hash, n, &djxl);
+                let cjxl_bytes = reference.len();
+                let cjxl_ssim2 = score(&reference, &src, n);
+                let (bfly, diffmap_hash) = bfly_of(&enc, &orig_lin, &evidence);
+                assert!(
+                    ssim2.is_finite() && bfly.is_finite() && cjxl_ssim2.is_finite(),
+                    "non-finite score: {name} e{e} d{d}"
+                );
+                writeln!(out, "{name}\t{e}\t{d}\t{}\t{}\t{ssim2:.4}\t{bfly:.5}\t{ms:.2}\t{cjxl_bytes}\t{cjxl_ssim2:.4}\t{cjxl_ms:.2}\t{source_hash}\t{encoded_hash}\t{reference_hash}\t{diffmap_hash}", regime(d), enc.len()).unwrap();
+                out.flush().unwrap();
+                eprintln!("{name} e{e} d{d}: retained and decoded both streams");
 
                 cells.push(Cell {
                     image: name.clone(),
@@ -246,7 +314,7 @@ fn main() {
                     distance: d,
                     bytes: enc.len(),
                     ssim2,
-                    bfly: bfly_of(&enc, &orig_lin),
+                    bfly,
                     ms,
                     cjxl_bytes,
                     cjxl_ssim2,
@@ -257,30 +325,6 @@ fn main() {
         }
     }
 
-    let mut out = std::fs::File::create(&out_path).unwrap();
-    writeln!(
-        out,
-        "image\teffort\tdistance\tregime\tbytes\tssim2\tbfly\tms\tcjxl_bytes\tcjxl_ssim2\tcjxl_ms"
-    )
-    .unwrap();
-    for c in &cells {
-        writeln!(
-            out,
-            "{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.5}\t{:.2}\t{}\t{:.4}\t{:.2}",
-            c.image,
-            c.effort,
-            c.distance,
-            regime(c.distance),
-            c.bytes,
-            c.ssim2,
-            c.bfly,
-            c.ms,
-            c.cjxl_bytes,
-            c.cjxl_ssim2,
-            c.cjxl_ms
-        )
-        .unwrap();
-    }
     println!("wrote {} cells to {}", cells.len(), out_path.display());
 
     let known_path = arg("--known", "benchmarks/rd_monotonicity_known_violations.tsv");
@@ -307,11 +351,11 @@ fn main() {
     println!("\n{time_report}");
 
     if advisory.is_empty() {
-        println!("BYTES (advisory, great-to-have): no inversion");
+        println!("ADVISORIES (bytes or single-metric inversions): no inversion");
     } else {
         let boundary = advisory.iter().filter(|v| v.contains("[boundary]")).count();
         println!(
-            "BYTES (advisory, great-to-have): {} inversions ({boundary} at filter boundaries, \
+            "ADVISORIES (bytes or single-metric inversions): {} inversions ({boundary} at filter boundaries, \
              where libjxl is not monotone either)",
             advisory.len()
         );
@@ -358,32 +402,40 @@ fn main() {
 /// 93.0, 91.3, 92.3, ...) while butteraugli over the same cells is smooth and
 /// monotone (0.316 -> 0.613). Flagging those as violations would make the gate
 /// cry wolf on exactly the high-quality cells that matter most.
-fn bfly_of(encoded: &[u8], orig_linear: &Img<Vec<RGB<f32>>>) -> f64 {
-    let Ok(mut img) = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(encoded)) else {
-        return f64::NAN;
-    };
+fn bfly_of(
+    encoded: &[u8],
+    orig_linear: &Img<Vec<RGB<f32>>>,
+    evidence: &evidence::Evidence,
+) -> (f64, String) {
+    let mut img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(encoded))
+        .expect("oxide header");
     img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
         jxl_oxide::RenderingIntent::Relative,
     ));
-    let Ok(render) = img.render_frame(0) else {
-        return f64::NAN;
-    };
+    let render = img.render_frame(0).expect("oxide pixels");
     let fb = render.image_all_channels();
     let (buf, ch) = (fb.buf(), fb.channels());
-    if ch < 3 {
-        return f64::NAN;
-    }
+    assert!(ch >= 3);
+    assert_eq!(
+        (fb.width(), fb.height()),
+        (orig_linear.width(), orig_linear.height())
+    );
+    assert!(buf.iter().all(|v| v.is_finite()));
     let px: Vec<RGB<f32>> = (0..fb.width() * fb.height())
         .map(|i| RGB::new(buf[i * ch], buf[i * ch + 1], buf[i * ch + 2]))
         .collect();
     let dist: Img<Vec<RGB<f32>>> = Img::new(px, fb.width(), fb.height());
-    butteraugli_linear(
+    let metric = butteraugli_linear(
         orig_linear.as_ref(),
         dist.as_ref(),
-        &ButteraugliParams::default(),
+        &ButteraugliParams::default().with_compute_diffmap(true),
     )
-    .map(|r| r.score)
-    .unwrap_or(f64::NAN)
+    .expect("butteraugli");
+    (
+        metric.score,
+        evidence.metric(&metric, fb.width(), fb.height()),
+    )
 }
 
 /// Delivered SSIMULACRA2 of an encoded stream against the source.
@@ -407,7 +459,11 @@ fn score(encoded: &[u8], src: &[u8], n: u32) -> f64 {
     let fb = render.image_all_channels();
     let buf = fb.buf();
     let px = (n * n) as usize;
-    if fb.channels() < 3 || buf.len() < px * fb.channels() {
+    if fb.channels() < 3
+        || buf.len() < px * fb.channels()
+        || (fb.width(), fb.height()) != (n as usize, n as usize)
+        || !buf.iter().all(|v| v.is_finite())
+    {
         return f64::NAN;
     }
     let ch = fb.channels();
@@ -461,10 +517,29 @@ fn check_staircase(
         by.entry((c.image.clone(), c.effort)).or_default().push(c);
     }
     let mut fatal = Vec::new();
+    if cells.is_empty() {
+        fatal.push("no measured cells".into());
+    }
+    for c in cells {
+        if !c.ssim2.is_finite()
+            || !c.bfly.is_finite()
+            || !c.cjxl_ssim2.is_finite()
+            || c.bytes == 0
+            || c.cjxl_bytes == 0
+        {
+            fatal.push(format!(
+                "invalid measurement: {} e{} d{}",
+                c.image, c.effort, c.distance
+            ));
+        }
+    }
     let mut advisory = Vec::new();
     let mut known_hits = Vec::new();
     for ((img, e), mut ladder) in by {
-        ladder.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        ladder.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        if ladder.len() < 2 || ladder.windows(2).any(|p| p[0].distance >= p[1].distance) {
+            fatal.push(format!("incomplete or duplicate ladder: {img} e{e}"));
+        }
         for w in ladder.windows(2) {
             let (lo, hi) = (w[0], w[1]);
             let crossing = regime(lo.distance) != regime(hi.distance);
@@ -545,8 +620,8 @@ fn check_staircase(
     (fatal, advisory, known_hits)
 }
 
-/// Per-effort wall: must not regress against the committed baseline, and the
-/// ratio against cjxl at the same cells is tracked next to it.
+/// Diagnostic only: timings have different scopes and the old baseline is
+/// not bound to a source/configuration grid. This does not enforce a time gate.
 fn check_time(cells: &[Cell], baseline: &Path, update: bool) -> String {
     use std::collections::BTreeMap;
     let mut ours: BTreeMap<u8, f64> = BTreeMap::new();
@@ -574,7 +649,9 @@ fn check_time(cells: &[Cell], baseline: &Path, update: bool) -> String {
             }
         }
     }
-    let mut s = String::from("TIME per effort (total ms over the grid):\n");
+    let mut s = String::from(
+        "TIME (diagnostic only; Rust encode vs cjxl process, historical baseline may use another grid):\n",
+    );
     s.push_str(&format!(
         "  {:>2}  {:>11}  {:>11}  {:>10}  {:>12}\n",
         "e", "ours", "cjxl", "ours/cjxl", "vs baseline"
@@ -591,4 +668,67 @@ fn check_time(cells: &[Cell], baseline: &Path, update: bool) -> String {
         ));
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cell(distance: f32) -> Cell {
+        Cell {
+            image: "fixture.png".into(),
+            effort: 5,
+            distance,
+            bytes: 100,
+            ssim2: 80.0,
+            bfly: distance as f64,
+            ms: 1.0,
+            cjxl_bytes: 100,
+            cjxl_ssim2: 80.0,
+            cjxl_ms: 1.0,
+        }
+    }
+
+    #[test]
+    fn empty_run_cannot_pass() {
+        assert!(!check_staircase(&[], &Default::default()).0.is_empty());
+    }
+
+    #[test]
+    fn invalid_scores_cannot_pass_or_be_allowlisted() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for field in 0..3 {
+                let mut cells = [cell(1.0), cell(2.0)];
+                match field {
+                    0 => cells[1].ssim2 = value,
+                    1 => cells[1].bfly = value,
+                    _ => cells[1].cjxl_ssim2 = value,
+                }
+                let known = [violation_key("fixture.png", 5, 1.0, 2.0)].into();
+                assert!(
+                    !check_staircase(&cells, &known).0.is_empty(),
+                    "field {field}, value {value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn incomplete_or_duplicate_ladder_cannot_pass() {
+        for cells in [vec![cell(1.0)], vec![cell(1.0), cell(1.0)]] {
+            assert!(!check_staircase(&cells, &Default::default()).0.is_empty());
+        }
+    }
+
+    #[test]
+    fn corroborated_inversion_keeps_existing_thresholds() {
+        let mut cells = [cell(1.0), cell(2.0)];
+        cells[1].ssim2 = 81.0;
+        cells[1].bfly = 0.9;
+        assert_eq!(check_staircase(&cells, &Default::default()).0.len(), 1);
+        let known = [violation_key("fixture.png", 5, 1.0, 2.0)].into();
+        assert_eq!(check_staircase(&cells, &known).2.len(), 1);
+        cells[1].bfly = 2.0;
+        assert!(check_staircase(&cells, &Default::default()).0.is_empty());
+    }
 }

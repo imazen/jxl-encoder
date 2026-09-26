@@ -1198,6 +1198,21 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-09-26: RD gate evidence repair and #114 reproduction
+
+The distance gate previously passed empty runs, incomplete/duplicate ladders
+and non-finite scores. Three regression tests fail before the repair; the
+corrected gate also refuses skipped inputs and failed reference/decoder work,
+retains streams/source crops/diffmaps and preserves existing outputs. Both
+streams fully render through jxl-rs and djxl before scoring is accepted.
+Thresholds and the known-violation allowlist are unchanged.
+[Current six-cell evidence](benchmarks/rd_known_2026-09-26.md): two historical
+comparisons exceed both thresholds; the document d3→3.25 comparison still
+inverts both metrics but falls below the 2% Butteraugli tolerance. Do not call
+it fixed. Historical source hashes are absent, so identical input bytes across
+dates are not established. Time ratios remain diagnostics with unequal scopes.
+
+
 ### 2026-09-24: ISO JPEG gain-map container integration (#122)
 
 [PROVEN] The original 259x133 pixel-parity failure was caused by JPEG CfL

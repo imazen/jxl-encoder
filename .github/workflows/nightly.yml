@@ -155,11 +155,25 @@ jobs:
         # of this step failed, panicking in the v0.12 version guard.
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
+          JXL_PROBE_BUILD_COMMIT: ${{ github.sha }}
         run: |
           cargo run --locked --release -p jxl-encoder \
             --example rd_monotonicity_gate -- \
             "${CODEC_CORPUS_DIR}" "${RUNNER_TEMP}/rd_monotonicity.tsv" \
             --images 6 --size 512 --efforts 5,8 --baseline /dev/null
+          RD_MONOTONICITY_PROBE=target/release/examples/rd_monotonicity_gate \
+            python3 -m unittest discover -s scripts -p test_rd_monotonicity_gate.py
+
+      - name: Preserve distance gate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rd-distance-evidence
+          path: |
+            ${{ runner.temp }}/rd_monotonicity.tsv
+            ${{ runner.temp }}/rd_monotonicity.tsv.artifacts/
+            ~/tmp/rd-gate-test-*/
+          if-no-files-found: error
 
       # Effort axis: effort N may not be Pareto-dominated by N-1.
       - name: RD effort-envelope gate

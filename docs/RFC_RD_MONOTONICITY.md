@@ -21,9 +21,9 @@ produced a lateral RD move. They need different mechanisms:
   inversions. Measured: lossless float e3 and e5 are **byte-identical on 26/26
   (image, size) pairs** from 64² to 4096² (e5 spends e5 time for e3 bytes), and
   e9 at 4096² costs 198 s for 1.4 % fewer bytes than e7.
-- **Distance monotonicity** — at fixed effort, coarsening the requested distance
-  must not increase bytes, and delivered IQA must track the request. This is
-  #103.
+- **Distance monotonicity** — at fixed effort, delivered IQA should not improve
+  when the requested distance coarsens. Byte inversions are advisory under the
+  owner decision below. This is tracked in #114 and overlaps #103.
 
 ## 2. What is promised — owner decision, 2026-09-09
 
@@ -66,20 +66,36 @@ contract.
 
 ## 3. Design D — the staircase gate (shipped)
 
-`examples/rd_monotonicity_gate.rs`. Per (image, effort) it sweeps a
-low-end-dense distance ladder (19 points, 0.4 … 15) and records bytes, delivered
-SSIM2, and wall, alongside cjxl v0.12 at the same effort and distance. It then
-asserts the within-regime staircase and exits non-zero on violation.
+`jxl-encoder/examples/rd_monotonicity_gate.rs` uses 22 default distances
+from 0.4 to 15. A hard inversion requires SSIM2 to rise by more than 0.30
+and Butteraugli to fall by more than 2%, including at filter boundaries.
+Known entries remain reported but do not fail the run. Byte changes and
+single-metric inversions are advisory. Neither tolerance changed in the
+September 26 harness repair.
 
-Oracle: SSIMULACRA2 via `fast-ssim2`, **pinned at 0.7.1** — 0.8.2 moves every
-score (0 of 84 cells bit-identical), so a bump would silently rebase this gate.
-Both sides are fed **sRGB u8**, because `compute_ssimulacra2` linearises
-internally; requesting linear output here would double-linearise, which is the
-documented way to get garbage scores out of this crate.
+SSIMULACRA2 uses the pinned `fast-ssim2 0.7.1` on sRGB u8; Butteraugli uses
+linear RGB. Failed inputs/encodes/decodes, non-finite scores and empty or
+incomplete ladders cannot establish a passing result. Both output streams
+fully decode through jxl-rs and djxl v0.12 before their metrics are accepted.
 
-**Time is a first-class assertion.** Per effort the gate reports total wall
-against a committed baseline (`benchmarks/rd_monotonicity_baseline_2026-09-09.tsv`)
-and the ratio against cjxl. An RD win bought with unbounded time is not a win.
+Run `just rd-monotonicity <corpus-or-png> <new-output.tsv> [manifest] [args]`.
+The output must be new. Its `.artifacts` directory retains source crops,
+encoded streams, reference logs, Butteraugli diffmaps and p-norms. TSV rows
+bind source/encoded/diffmap SHA256s; the manifest records binary/source-build
+provenance. `--distances` accepts a strictly increasing list for focused
+reproductions. `just rd-monotonicity-check [manifest]` tests grading and lints;
+`just rd-monotonicity-driver-check [binary]` tests failures and retained
+single/multi-group real-image artifacts.
+
+**Time is diagnostic, not an enforced assertion.** The existing reporter
+compares Rust encode wall with cjxl process wall, and its historical totals
+are not bound to the current image/configuration grid. They cannot establish
+performance acceptance. Use the separate process-wall performance harness.
+
+The [September 26 reproduction](../benchmarks/rd_known_2026-09-26.md) checks
+all three historical comparisons. Two exceed both tolerances; the third
+still inverts both metrics but falls below the Butteraugli tolerance.
+No known entry is removed and no encoder policy is changed.
 
 ### Validation — it catches the known bug
 

@@ -453,18 +453,17 @@ release-semver-json current baseline *args:
 resource-verify baseline inputs output commit:
     nice -n 19 python3 scripts/verify_resource_cells.py "{{baseline}}" "{{inputs}}" "{{output}}" --build-commit "{{commit}}"
 
-# Design D (docs/RFC_RD_MONOTONICITY.md): the Pareto-staircase invariant with
-# SSIMULACRA2 as the oracle. Asserts that WITHIN a reference-filter regime both
-# bytes and delivered SSIM2 are non-increasing as distance coarsens, records
-# filter-boundary crossings as declared discontinuities, and checks per-effort
-# wall against the committed baseline plus the ratio vs cjxl v0.12.
-rd-monotonicity corpus='~/work/zen/imazen-26-png-v3/png-v3' args='':
-    CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" \
-    DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" \
-    TMPDIR="{{env_var('HOME')}}/tmp" nice -n 19 cargo run -p jxl-encoder --release \
-      --example rd_monotonicity_gate -j 4 -- \
-      {{corpus}} benchmarks/rd_monotonicity_2026-09-09.tsv --images 4 --size 512 \
-      --efforts 3,5,7,9 {{args}}
+# Corroborated IQA inversions fail; bytes and unequal-scope timings are advisory.
+# A new output path prevents accidentally replacing historical measurements.
+rd-monotonicity corpus out manifest="Cargo.toml" *args:
+    JXL_PROBE_BUILD_COMMIT="$(jj log --no-graph -r @ -T 'commit_id')" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo run --locked --manifest-path "{{manifest}}" -p jxl-encoder --release --example rd_monotonicity_gate -- "{{corpus}}" "{{out}}" {{args}}
+
+rd-monotonicity-check manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --example rd_monotonicity_gate
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --example rd_monotonicity_gate -- -D warnings
+
+rd-monotonicity-driver-check binary="target/release/examples/rd_monotonicity_gate":
+    RD_MONOTONICITY_PROBE="{{binary}}" CJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/cjxl" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" RAYON_NUM_THREADS=4 nice -n 19 python3 -m unittest discover -s scripts -p test_rd_monotonicity_gate.py
 
 # Fully render progressive small/global and large/group alpha through both decoders.
 progressive-extras-check label:
