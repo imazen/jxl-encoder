@@ -2819,6 +2819,12 @@ wide integers. Exact source-bit recovery through both decoders is still an
 open #95 acceptance criterion; these changes do not prove it or add input
 layouts. Reproduce with `just wide-integer-check <pinned-manifest>`.
 
+Sharing the decoder helper initially exposed its probe-only sRGB conversion
+as dead code when `__internal_recon_hook` was enabled. The conversion now
+lives beside its sole caller, with its body unchanged. `just triage-hook-lint
+<pinned-manifest>` checks both probes and the integration target together
+under that feature and passes with warnings denied.
+
 
 ### 2026-09-24: pre-publication API and release gates
 

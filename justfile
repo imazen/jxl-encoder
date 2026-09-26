@@ -33,6 +33,9 @@ wide-integer-check manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_ENCODER_OUTPUT_DIR="$HOME/tmp/jxl-wide-integer" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --test it high_bit_depth_int -- --test-threads=1
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib planar_admission_tests_95
 
+triage-hook-lint manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internal_recon_hook --test it --example rd_monotonicity_gate --example distance_targeting_probe -- -D warnings
+
 prepublish-float manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert --test it forced_wp_float_extremes_match_rust_and_libjxl -- --nocapture
 

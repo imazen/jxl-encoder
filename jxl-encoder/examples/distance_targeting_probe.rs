@@ -50,6 +50,19 @@ use sha2::{Digest, Sha256};
 #[path = "distance_targeting_probe/decode.rs"]
 mod decode;
 
+/// The decoder extends sRGB symmetrically outside the display gamut.
+/// Match jxl-rs color/tf.rs: transform the magnitude, then restore its sign.
+#[cfg(feature = "__internal_recon_hook")]
+fn srgb_to_linear(value: f32) -> f32 {
+    let magnitude = value.abs();
+    let linear = if magnitude <= 0.04045 {
+        magnitude / 12.92
+    } else {
+        ((magnitude + 0.055) / 1.055).powf(2.4)
+    };
+    linear.copysign(value)
+}
+
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
 use jxl_encoder::api::{
@@ -387,7 +400,7 @@ fn main() {
                     .0
                     .iter()
                     .map(|p| {
-                        let convert = decode::srgb_to_linear;
+                        let convert = srgb_to_linear;
                         RGB::new(convert(p[0]), convert(p[1]), convert(p[2]))
                     })
                     .collect();
