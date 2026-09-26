@@ -28,6 +28,11 @@ prepublish-feature-check features manifest="Cargo.toml":
 prepublish-perf-roundtrip tables manifest="Cargo.toml" side="both":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_AUDIT_PERF_TSVS="{{tables}}" JXL_AUDIT_PERF_SIDE="{{side}}" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features corpus-tests --test prepublish_perf_roundtrip -- --nocapture
 
+# Wide integer bounds, primary/reference decode and admission ordering.
+wide-integer-check manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_ENCODER_OUTPUT_DIR="$HOME/tmp/jxl-wide-integer" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --test it high_bit_depth_int -- --test-threads=1
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib planar_admission_tests_95
+
 prepublish-float manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert --test it forced_wp_float_extremes_match_rust_and_libjxl -- --nocapture
 

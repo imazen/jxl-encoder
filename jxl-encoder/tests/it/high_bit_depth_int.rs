@@ -3,29 +3,24 @@
 
 //! Integer input above 16 bits (imazen/jxl-encoder#95).
 //!
-//! `PixelLayout` tops out at 16-bit, which is a limit of the input plumbing,
+//! Integer `PixelLayout` forms top out at 16-bit, which is a limit of the input plumbing,
 //! not of the codec: modular stores `i32` samples and codes them through a
 //! 32-bit token path. `LosslessConfig::encode_planar_int` is the route for the
-//! imagery that needs more — DEM/terrain rasters, instrument counts, 24/32-bit
-//! depth maps, masters that must round-trip as exact integers.
+//! imagery that needs more — DEM/terrain rasters, instrument counts and
+//! depth maps. The public surface accepts depths through 31 bits.
 //!
-//! **What "valid" rests on here, stated precisely.** The official text
-//! (ISO/IEC 18181-1) has NOT been consulted — it is paywalled. Every claim in
-//! this file traces to implementations: libjxl's `CheckValidBitdepth`
-//! (`encode.cc:632`) caps its public API at 24 with a comment saying the spec
-//! allows 31, its encoder refuses 32-bit integer modular outright
-//! (`enc_modular.cc:744`), and jxl-oxide's parser rejects `> 31`.
-//!
-//! That makes the evidence weakest exactly where this file claims the most.
-//! libjxl is ISO/IEC 18181-4 (the reference software), so agreement with it is
-//! strong — but it cannot encode 25..=31-bit integers at all, so its decoder
-//! path there is comparatively unexercised. The 18181-3 conformance suite
-//! (github.com/libjxl/conformance) is decoder-only and its vectors stop at
-//! 16-bit integer / 32-bit float, so **no conformance coverage exists for this
-//! range anywhere**. Treat 25..=31 as "two independent decoders accept it and
-//! the low bits demonstrably reach the stream", not as "certified".
+//! Validation here is implementation-based, not a normative standards audit.
+//! The public input accepts unsigned depths through 31 bits and rejects 32.
+//! jxl-rs 0.4.3 exposes u8/u16/f16/f32 output, so these f32 comparisons do not
+//! prove recovery of every source integer bit at the widest depths. djxl fully
+//! renders the selected round-trip cells; the low-bit tests separately check
+//! encoder sensitivity.
+//! Exact raw-integer recovery through both decoders remains an open #95 gate.
 
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
+
+#[path = "../../examples/distance_targeting_probe/decode.rs"]
+mod primary_decode;
 
 /// Values that exercise the full width: 0, the maximum, powers of two either
 /// side of the 16-bit boundary, and a spread that is not byte-aligned.
@@ -50,8 +45,7 @@ fn samples(n: usize, bits: u32) -> Vec<u32> {
     out
 }
 
-/// Smooth ramp — what real high-bit-depth rasters look like, and what the
-/// predictor is actually meant to handle.
+/// A deterministic ramp for predictor and sample-width coverage.
 fn ramp(w: usize, h: usize, bits: u32) -> Vec<u32> {
     let max = (1u32 << bits) - 1;
     (0..w * h)
@@ -114,7 +108,8 @@ fn decode_jxlrs_gray(data: &[u8]) -> (usize, usize, Vec<f32>) {
     (width, height, flat)
 }
 
-fn djxl_accepts(data: &[u8], name: &str) {
+fn both_decoders_accept(data: &[u8], name: &str, width: usize, height: usize) {
+    primary_decode::verify_jxl_rs(data, width, height);
     let dir = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "high_bit_depth_int");
     let path = dir.join(format!("{name}.jxl"));
     std::fs::write(&path, data).expect("write");
@@ -131,73 +126,65 @@ fn djxl_accepts(data: &[u8], name: &str) {
     );
 }
 
-/// Every width from 17 to 31 must encode, signal its real depth, be accepted by
-/// djxl, and round-trip **exactly** — checked against the decoder's normalised
-/// f32 output by re-deriving `sample / (2^bits - 1)`.
+/// Every width from 17 to 31 must encode, declare level 10, fully render in
+/// both decoders and match source values within the existing f32-output bound.
+/// This is not a proof of exact source-bit recovery.
 #[test]
-fn every_width_17_to_31_round_trips_exactly() {
-    const W: usize = 40;
-    const H: usize = 30;
-    for bits in 17..=31u32 {
-        let vals = {
-            let mut v = samples(24, bits);
-            v.extend(ramp(W * H - 24, 1, bits));
-            v
-        };
-        assert_eq!(vals.len(), W * H);
-        let data = LosslessConfig::new()
-            .encode_planar_int(W as u32, H as u32, &[&vals], bits, true, false)
-            .unwrap_or_else(|e| panic!("{bits}-bit encode failed: {e:?}"));
+fn every_width_17_to_31_decodes_within_f32_output_precision() {
+    for (w, h) in [(40usize, 30usize), (259, 17)] {
+        for bits in 17..=31u32 {
+            let vals = {
+                let mut v = samples(24, bits);
+                v.extend(ramp(w * h - 24, 1, bits));
+                v
+            };
+            assert_eq!(vals.len(), w * h);
+            let data = LosslessConfig::new()
+                .encode_planar_int(w as u32, h as u32, &[&vals], bits, true, false)
+                .unwrap_or_else(|e| panic!("{bits}-bit encode failed: {e:?}"));
 
-        // >12-bit integer needs 32-bit modular buffers, hence level 10.
-        let i = data
-            .windows(4)
-            .position(|w| w == b"jxll")
-            .unwrap_or_else(|| panic!("{bits}-bit: expected a jxll box"));
-        assert_eq!(data[i + 4], 10, "{bits}-bit must be level 10");
+            // >12-bit integer needs 32-bit modular buffers, hence level 10.
+            let i = data
+                .windows(4)
+                .position(|w| w == b"jxll")
+                .unwrap_or_else(|| panic!("{bits}-bit: expected a jxll box"));
+            assert_eq!(data[i + 4], 10, "{bits}-bit must be level 10");
 
-        djxl_accepts(&data, &format!("gray_{bits}bit"));
+            both_decoders_accept(&data, &format!("gray_{bits}bit_{w}x{h}"), w, h);
 
-        let (dw, dh, decoded) = decode_jxlrs_gray(&data);
-        assert_eq!((dw, dh), (W, H), "{bits}-bit dimensions");
-        // How exact can this check be? The decoder hands back **f32**. That is
-        // a property of the OUTPUT FORMAT, not of the codestream — modular
-        // stores these samples verbatim and codes them losslessly — but it does
-        // bound what this test can prove: above ~16-bit, adjacent values stop
-        // being separable after the decoder's normalise-to-[0,1] step. djxl
-        // accepting the stream (above) is the structural check; proving
-        // exactness at 24+ bits would need an integer-output decode path this
-        // suite does not have, and is the honest gap here.
-        let maxi = (1u64 << bits) - 1;
-        let max = maxi as f32;
-        // Exact through 16 bits, one f32 ULP scaled to the range beyond.
-        //
-        // 24 was tried first, on the reasoning that f32's mantissa is 24 bits —
-        // and it fails at exactly 24: `max - 1` normalises to a ratio whose
-        // nearest f32 is 1.0, so it comes back as `max`. The mantissa bounds
-        // what f32 can REPRESENT, not what survives a divide-then-multiply at
-        // the top of the range. 16 is where the margin is large enough that the
-        // round trip is unconditionally exact.
-        let tol: i64 = if bits <= 16 {
-            0
-        } else {
-            (maxi as f64 * f64::from(f32::EPSILON)).ceil() as i64
-        };
-        for (i, (got, &want)) in decoded.iter().zip(&vals).enumerate() {
-            let recovered = (got * max).round() as i64;
-            let diff = (recovered - i64::from(want)).abs();
+            let (dw, dh, decoded) = decode_jxlrs_gray(&data);
+            assert_eq!((dw, dh), (w, h), "{bits}-bit dimensions");
+            assert_eq!(decoded.len(), vals.len(), "{bits}-bit sample count");
             assert!(
-                diff <= tol,
-                "{bits}-bit sample {i}: decoded {got} -> {recovered}, want {want} \
-                 (tolerance {tol}; 0 means exact recovery was required)"
+                decoded.iter().all(|v| v.is_finite()),
+                "{bits}-bit non-finite output"
             );
+            // The decoder returns normalized f32 samples. These checks retain
+            // the existing error bound; they cannot establish exact raw-integer
+            // recovery at widths whose low bits are lost in float conversion.
+            let maxi = (1u64 << bits) - 1;
+            let max = maxi as f32;
+            // Existing bound: one f32 epsilon scaled to the declared range.
+            let tol: i64 = if bits <= 16 {
+                0
+            } else {
+                (maxi as f64 * f64::from(f32::EPSILON)).ceil() as i64
+            };
+            for (i, (got, &want)) in decoded.iter().zip(&vals).enumerate() {
+                let recovered = (got * max).round() as i64;
+                let diff = (recovered - i64::from(want)).abs();
+                assert!(
+                    diff <= tol,
+                    "{bits}-bit sample {i}: decoded {got} -> {recovered}, want {want} \
+                 (tolerance {tol}; 0 means exact recovery was required)"
+                );
+            }
         }
     }
 }
 
-/// RGB and RGBA at 24-bit — the libjxl parity ceiling — plus a multi-group
-/// shape, since the group boundary is where the modular path has historically
-/// broken.
+/// RGB and RGBA at 24-bit, fully rendered by the primary and reference
+/// decoders at single- and multi-group sizes.
 #[test]
 fn rgb_and_rgba_24bit_including_multigroup() {
     for (w, h, name) in [(32usize, 24usize, "small"), (300, 260, "multigroup")] {
@@ -211,19 +198,17 @@ fn rgb_and_rgba_24bit_including_multigroup() {
         let rgb = LosslessConfig::new()
             .encode_planar_int(w as u32, h as u32, &[&r, &g, &b], 24, false, false)
             .expect("24-bit RGB encode");
-        djxl_accepts(&rgb, &format!("rgb24_{name}"));
+        both_decoders_accept(&rgb, &format!("rgb24_{name}"), w, h);
 
         let rgba = LosslessConfig::new()
             .encode_planar_int(w as u32, h as u32, &[&r, &g, &b, &a], 24, false, true)
             .expect("24-bit RGBA encode");
-        djxl_accepts(&rgba, &format!("rgba24_{name}"));
+        both_decoders_accept(&rgba, &format!("rgba24_{name}"), w, h);
     }
 }
 
-/// The 30- and 31-bit cells are the ones where the RCT budget bites: an RCT's
-/// channel sums need a spare bit the sample does not leave, so it must be
-/// refused — the same rule libjxl applies. If it were not, the stream would not
-/// decode, so djxl accepting these IS the assertion.
+/// RGB decode coverage near the RCT bit-depth budget boundary. Successful
+/// rendering does not establish exact source-integer recovery.
 #[test]
 fn rct_budget_holds_at_30_and_31_bits() {
     const W: usize = 64;
@@ -241,7 +226,7 @@ fn rct_budget_holds_at_30_and_31_bits() {
         let data = LosslessConfig::new()
             .encode_planar_int(W as u32, H as u32, &[&r, &g, &b], bits, false, false)
             .unwrap_or_else(|e| panic!("{bits}-bit RGB encode failed: {e:?}"));
-        djxl_accepts(&data, &format!("rgb_{bits}bit"));
+        both_decoders_accept(&data, &format!("rgb_{bits}bit"), W, H);
     }
 }
 
@@ -315,7 +300,7 @@ fn planar_path_signals_the_same_depth_as_the_layout_path_at_16_bit() {
             .unwrap_or_else(|| panic!("{name}: expected jxll"));
         assert_eq!(data[i + 4], 10, "{name} must be level 10 at 16-bit");
     }
-    djxl_accepts(&planar, "planar_16bit");
+    both_decoders_accept(&planar, "planar_16bit", W, H);
 }
 
 /// The low bits above 16 must actually reach the codestream.

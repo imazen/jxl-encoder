@@ -2804,6 +2804,22 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-09-26: #95 wide-integer validation scope
+
+The 17–31-bit grayscale regression now covers 40x30 and multi-group 259x17,
+with the existing float-output tolerance unchanged and explicit finite/sample-
+count checks. Its name now says `decodes_within_f32_output_precision` rather
+than claiming exact recovery. The RGB/RGBA and RCT-budget tests now fully render
+through jxl-rs as well as djxl. All seven wide-integer tests and all three
+admission tests pass against the pinned closure. The selected decoder checks
+cover 38 streams; the encoder-sensitivity tests remain separate.
+
+The pinned jxl-rs 0.4.3 public `JxlDataFormat` exposes U8/U16/F16/F32, not raw
+wide integers. Exact source-bit recovery through both decoders is still an
+open #95 acceptance criterion; these changes do not prove it or add input
+layouts. Reproduce with `just wide-integer-check <pinned-manifest>`.
+
+
 ### 2026-09-24: pre-publication API and release gates
 
 [Current audit](docs/RELEASE_0.4.0.md#september-24-pre-publication-audit)
