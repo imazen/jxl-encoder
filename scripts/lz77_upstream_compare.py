@@ -96,7 +96,7 @@ def main():
     columns = ["arm", "revision", "image", "size", "group_size_shift", "num_groups", "effort", "bytes",
                "source_sha256", "input_sha256", "encoded_sha256", "jxl", "raw", "djxl_exact"]
     with (root / "results.tsv").open("x") as f:
-        writer = csv.DictWriter(f, fieldnames=columns, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=columns, delimiter="\t", lineterminator="\n")
         writer.writeheader()
         for image, expected_sha in sorted(source_hashes.items()):
             source = screen / "input" / image

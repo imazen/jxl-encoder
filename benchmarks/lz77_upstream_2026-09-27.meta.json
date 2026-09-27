@@ -184,7 +184,7 @@
   "comparison_log_sha256": "43b7935d29411bb8534c4aa4126b829b8e3d4670f2d0d3f1b96145eb622257f5",
   "scripts": {
     "scripts/lz77_upstream_build.py": "3172c5d58f32790d0c09553ef624455340eecbf1bb9960ae318ec5e34f55f726",
-    "scripts/lz77_upstream_compare.py": "92d04fac9d6b823ec2aa35a390237628e8720b578fdb98186f2b6241ad29164b"
+    "scripts/lz77_upstream_compare.py": "af20b41d3fba4a0a05533ef1bb0e121369160239a17d9124b4a43748c948f7fb"
   },
   "rust_verifier_sha256": "8024794d029a87a9cf03efb86cdb57371bbd919c8680b5d5e175f35933cc789c",
   "storage_recovery": "Failed broad Cargo build: disk full. 464 compiler intermediates preserved and all SHA256 verified at dev:~/tmp/jxl110-preservation-2026-09-27/mac-incremental.tar.gz. Verifier linked directly against existing compiled dependencies.",
