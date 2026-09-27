@@ -1,0 +1,16 @@
+{
+  "runtime_ab": {
+    "baseline_commit": "55e4769bf440e5f8126ff31367158902492782b2",
+    "candidate_commit": "618b52d4928807e087d73fb3084264ceb5f15f30",
+    "baseline_binary_sha256": "b24d41ed2ee151b9b00e64aec67ac8578c153641d76a37d4f2ee77f236a5fe37",
+    "candidate_binary_sha256": "59c035c2be4eab596f0ca2d44aa65dad2cd0af39df2becc7f47fd0f84d8eb28c",
+    "baseline_note": "55e4769b sibling workspace + examples/lz77_keep_best_profile.rs copied in + Cargo.toml entry",
+    "build": "cargo build --release --locked -p jxl-encoder --features parallel --example lz77_keep_best_profile",
+    "repeats": 4,
+    "timing_scope": "whole example process wall incl. PNG decode; paired alternating order; rep 0 warmup; min-of-reps",
+    "identity": "sha256 of encoded .jxl compared per cell; all 57 cells MATCH",
+    "host": "Darwin mac 27.0.0 Darwin Kernel Version 27.0.0: Tue Aug 11 21:05:48 PDT 2026; root:xnu-13432.1.9~1/RELEASE_ARM64_T6041 arm64",
+    "harness": "~/tmp/kb-measure/measure.py",
+    "instruction_counts": "callgrind pairs from cloud x86 session (transcript): terminal-512-u8-e9 armed 4.779->4.426 GIr; not reproducible on this aarch64 host (no valgrind)"
+  }
+}
