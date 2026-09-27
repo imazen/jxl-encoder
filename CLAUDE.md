@@ -1743,10 +1743,14 @@ merely that it errors would have passed either way.
 [PROVEN] Instrumenting the matcher (`JXL_LZ77_STATS=1`) shows the greedy pass is
 computed in full and then **discarded**: `apply_lz77_backref` returns `None`
 unless `bit_decrease > total_symbols * 0.2 + 16`, and that test **fails on 86.7 % of
-streams** measured across the full content grid (1200 greedy streams, 40 images,
-all 21 imazen-26 strata -- `benchmarks/lz77_acceptance_grid_2026-09-09.tsv`).
-An earlier 8-image sample put this at 98.5 % line-art / 92.7 % photo; the wider
-grid is the number to quote. It finds matches at ~87 % of
+streams** in the recorded 1200 greedy calls from 40 general photographs
+(imazen-26 IDs 1000..1039 -- `benchmarks/lz77_acceptance_grid_2026-09-09.tsv`).
+The original claim of all 21 strata was false: the retained encode table names
+only those photographs, and all 1200 rows match its retained log. See
+[the September 27 audit](benchmarks/issue103_110_audit_2026-09-27.md).
+An earlier 8-image sample put this at 98.5 % line-art / 92.7 % photo;
+none establishes a content-stratified population rejection rate. The earlier
+instrumentation found matches at ~87 % of
 positions and emits hundreds of match tokens, all thrown away.
 
 **The distribution is strongly BIMODAL, and that is the useful part.** Of 1200
@@ -3153,6 +3157,14 @@ Both real-image RD regression tests also pass with unchanged expectations
 against this closure (`~/tmp/jxl-backlog/encoder-ci-pins-rd.log`).
 
 ### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
+
+September 27 re-audit: all 72 screen artifacts still match their recorded
+sizes and hashes. The separate September 9 rejection-rate grid was falsely
+labeled all-strata; its 40 inputs were general photographs 1000..1039 only.
+The opt-in keep-best comparator also omits the LZ77 header and does not recheck
+the Optimal path's final stream; production clustering context differs from
+its isolated comparison. These are source-verified limitations, not a new
+compression measurement. [Audit and next experiments](benchmarks/issue103_110_audit_2026-09-27.md).
 
 The post-v0.12 bucket matcher was implemented and screened at capacities
 1/3/7/15/31. All five grow a real terminal screenshot's 256×256 lossless-float

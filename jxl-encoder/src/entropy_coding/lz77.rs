@@ -394,11 +394,11 @@ fn max_chain_length_override() -> u32 {
 /// (`total_symbols * 0.2 + 16`). Default 1.0 = shipped, which is libjxl parity
 /// (`enc_lz77.cc:165`, `:634`).
 ///
-/// DIAGNOSTIC: this CHANGES OUTPUT when it changes a verdict. It exists to
-/// answer "does the threshold cost runtime?" -- the measured answer is that it
-/// moves wall only through the early-out (a higher bar makes rejection provable
-/// sooner), and that on the measured corpus no verdict moves between 0.5x and
-/// 2x because nothing sits in that band.
+/// DIAGNOSTIC: this changes output when it changes an acceptance verdict,
+/// including whether Optimal proceeds beyond its greedy precursor. It also
+/// changes when the greedy early-out can prove rejection. A rejection-rate
+/// distribution from one content class does not establish either effect on
+/// other inputs; see benchmarks/issue103_110_audit_2026-09-27.md.
 fn accept_scale() -> f32 {
     static S: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *S.get_or_init(|| {
@@ -416,11 +416,14 @@ fn accept_scale() -> f32 {
 /// The threshold is a proxy, and CLAUDE.md records that the proxy is weak in
 /// exactly this regime: only the <=96-histogram-CLUSTERED ANS cost reproduces
 /// the real gap, while the ideal per-context entropy saw 1.7 % of a measured
-/// 27 % effect. So this builds both candidate streams for real — histogram plus
-/// tokens, through the same writers production uses — and keeps whichever is
-/// actually smaller.
+/// 27 % effect. This builds both candidates' histograms and tokens through
+/// production writers and compares their isolated payload sizes.
 ///
-/// Returns `true` when the LZ77 stream genuinely codes smaller.
+/// This compares isolated ANS payloads, not complete production streams: the
+/// LZ77 header is omitted and production's pixel hint/grouping may differ.
+/// The Optimal caller subsequently changes the token stream without repeating
+/// this comparison. This experiment therefore provides no whole-output size
+/// guarantee; see benchmarks/issue103_110_audit_2026-09-27.md.
 ///
 /// **Cost is the whole question.** This is two full entropy builds and two full
 /// token writes per stream, so it is opt-in and must be judged per effort — the
@@ -455,8 +458,8 @@ fn lz77_beats_plain_on_real_cost(
         coded_bits(lz77_tokens, num_contexts + 1, Some(params)),
     ) {
         (Some(a), Some(b)) => b < a,
-        // If either candidate cannot be built, fall back to the estimator's
-        // verdict rather than silently dropping LZ77.
+        // This experimental fallback accepts the candidate; the caller only
+        // requires positive estimated saving, not the ordinary threshold.
         _ => true,
     }
 }

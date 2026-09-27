@@ -1,0 +1,27 @@
+{
+  "audit_source_commit": "f647070b6db1a83dd60c6e5caaf556a8f323b8cf",
+  "date": "2026-09-27",
+  "historical_run_source_commit": "3324b5c428f9d8d0a6aa7aef3e9a046396732a95",
+  "retained_inputs": {
+    "acc_grid.tsv": {
+      "path": "/Users/lilith/tmp/acc_grid.tsv",
+      "bytes": 40189,
+      "sha256": "8954d18f9a869250620b441c3ddfb7793a85919c70a05ab07a07014d55ebfb41"
+    },
+    "acc_grid.log": {
+      "path": "/Users/lilith/tmp/acc_grid.log",
+      "bytes": 255349,
+      "sha256": "397b504afcbe2bcdcbc7dd74191414228a9ed5bbd8cf6710bd73907c8e0adf2d"
+    }
+  },
+  "checks": {
+    "committed_greedy_rows_match_log_in_order": 1200,
+    "accepted_greedy_rows": 160,
+    "below_0_01_threshold_ratio": 877,
+    "source_images": 40,
+    "encode_rows": 280,
+    "bucket_artifacts_verified": 72,
+    "unlifted_result_manifest_files_verified": 39
+  },
+  "logs": "/Users/lilith/tmp/jxl-103-110-2026-09-27"
+}
