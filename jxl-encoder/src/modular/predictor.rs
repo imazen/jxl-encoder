@@ -799,7 +799,19 @@ pub fn unpack_signed(value: u32) -> i32 {
 /// Runs the weighted predictor over every pixel, computes residuals, and
 /// estimates Shannon entropy + HybridUint extra bits as a cost proxy.
 /// Matching libjxl's EstimateWPCost (enc_modular.cc:238-287).
+#[allow(dead_code)] // public wrapper retained for API stability
 pub fn estimate_wp_cost(channels: &[super::Channel], params: &WeightedPredictorParams) -> f64 {
+    estimate_wp_cost_stop(channels, params, None)
+        .expect("stop-less estimate_wp_cost cannot be Cancelled")
+}
+
+/// [`estimate_wp_cost`] with cancellation polling (one check per row).
+/// No-op / byte-identical under `None`.
+pub(crate) fn estimate_wp_cost_stop(
+    channels: &[super::Channel],
+    params: &WeightedPredictorParams,
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<f64> {
     // Use 256-bin histogram for entropy estimation
     const NUM_BINS: usize = 256;
     let mut histogram = [0u32; NUM_BINS];
@@ -816,6 +828,7 @@ pub fn estimate_wp_cost(channels: &[super::Channel], params: &WeightedPredictorP
         let mut wp_state = WeightedPredictorState::new(params, width);
 
         for y in 0..height {
+            crate::error::check_stop(stop)?;
             for x in 0..width {
                 let pixel = channel.get(x, y);
                 let neighbors = Neighbors::gather(channel, x, y);
@@ -842,7 +855,7 @@ pub fn estimate_wp_cost(channels: &[super::Channel], params: &WeightedPredictorP
     }
 
     if total_samples == 0 {
-        return 0.0;
+        return Ok(0.0);
     }
 
     // Estimate Shannon entropy from histogram
@@ -856,7 +869,7 @@ pub fn estimate_wp_cost(channels: &[super::Channel], params: &WeightedPredictorP
     }
 
     // Total cost = entropy bits + extra bits for large values
-    entropy * total_f + total_extra_bits as f64
+    Ok(entropy * total_f + total_extra_bits as f64)
 }
 
 /// Find the best WP parameter set by trying `num_sets` modes (0..num_sets).
@@ -872,8 +885,19 @@ pub fn estimate_wp_cost(channels: &[super::Channel], params: &WeightedPredictorP
 /// at higher efforts on photo content. Deterministic: on tie cost we keep the
 /// lowest mode index, matching the prior `<` (strict) sequential tie-break.
 pub fn find_best_wp_params(channels: &[super::Channel], num_sets: u8) -> WeightedPredictorParams {
+    find_best_wp_params_stop(channels, num_sets, None)
+        .expect("stop-less find_best_wp_params cannot be Cancelled")
+}
+
+/// [`find_best_wp_params`] with cancellation polling. No-op /
+/// byte-identical under `None`.
+pub(crate) fn find_best_wp_params_stop(
+    channels: &[super::Channel],
+    num_sets: u8,
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<WeightedPredictorParams> {
     if num_sets <= 1 {
-        return WeightedPredictorParams::default();
+        return Ok(WeightedPredictorParams::default());
     }
 
     let max_mode = num_sets.min(5);
@@ -883,8 +907,9 @@ pub fn find_best_wp_params(channels: &[super::Channel], num_sets: u8) -> Weighte
     // state, safe to fan out.
     let costs: Vec<f64> = crate::parallel::parallel_map(max_mode as usize, |mode_i| {
         let params = WeightedPredictorParams::for_mode(mode_i as u8);
-        estimate_wp_cost(channels, &params)
+        estimate_wp_cost_stop(channels, &params, stop).unwrap_or(0.0)
     });
+    crate::error::check_stop(stop)?;
 
     // Pick the lowest-cost mode; on tie, keep the lowest index. Use a manual
     // scan with `<` to preserve the same tie-break as the previous serial
@@ -898,7 +923,7 @@ pub fn find_best_wp_params(channels: &[super::Channel], num_sets: u8) -> Weighte
         }
     }
 
-    WeightedPredictorParams::for_mode(best_mode)
+    Ok(WeightedPredictorParams::for_mode(best_mode))
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@ use super::predictor::pack_signed;
 use super::rct::RctType;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::encode::{
-    OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans,
+    OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans, write_tokens_ans_stop,
 };
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 use crate::entropy_coding::token::Token as AnsToken;
@@ -420,6 +420,7 @@ pub fn write_global_modular_section_with_tree(
         &super::palette::ModularKnobs::default(),
         hf_stream_id_base,
         budget,
+        None,
     )
 }
 
@@ -436,6 +437,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     meta_image: Option<&ModularImage>,
     hf_stream_id_base: u32,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant_knobs(
         images,
@@ -449,6 +451,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         &super::palette::ModularKnobs::default(),
         hf_stream_id_base,
         budget,
+        stop,
     )
 }
 
@@ -469,6 +472,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
     knobs: &super::palette::ModularKnobs,
     hf_stream_id_base: u32,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         images,
@@ -484,6 +488,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         budget,
         None,
         None,
+        stop,
     )
 }
 
@@ -510,6 +515,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     hybrid_local_trees: Option<&mut alloc::vec::Vec<Option<super::tree::Tree>>>,
     keep_best_layout: Option<(&[GroupTransforms], usize)>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
@@ -518,14 +524,15 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     use super::tree::count_contexts;
     use super::tree_learn::{
         MULTI_SEED_EARLY_OUT_PROBE_SEEDS, TreeLearningParams, TreeSamples,
-        collect_residuals_with_tree, compute_best_tree, compute_gather_stride_from_profile,
+        compute_best_tree_with_budget, compute_gather_stride_from_profile,
         derive_seeded_max_property_values, derive_seeded_params,
         derive_seeded_properties_truncation, derive_seeded_sample_fraction, derive_seeded_stride,
-        estimate_token_cost, gather_samples_strided, gather_samples_strided_with_dedup_backend,
-        gather_samples_strided_with_offset, max_ref_channels, multi_seed_early_out_after_probe,
-        stride_for_seeded_sample_fraction, tree_prune_predictors_env,
+        estimate_token_cost_stop, gather_samples_strided_with_budget,
+        gather_samples_strided_with_dedup_backend, gather_samples_strided_with_offset_stop,
+        max_ref_channels, multi_seed_early_out_after_probe, stride_for_seeded_sample_fraction,
+        tree_prune_predictors_env,
     };
-    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options_stop;
     use crate::entropy_coding::encode::write_entropy_code_ans;
     use crate::entropy_coding::lz77::write_lz77_header;
 
@@ -542,7 +549,11 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             // Collect channel references for cost estimation
             let channels_for_wp: Vec<super::channel::Channel> =
                 all_channels.iter().map(|c| (*c).clone()).collect();
-            super::predictor::find_best_wp_params(&channels_for_wp, profile.wp_num_param_sets)
+            super::predictor::find_best_wp_params_stop(
+                &channels_for_wp,
+                profile.wp_num_param_sets,
+                stop,
+            )?
         } else {
             WeightedPredictorParams::default()
         }
@@ -696,14 +707,16 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 let probe_stride = stride.saturating_mul(PROBE_PIXEL_STRIDE_MULT);
                 let mut gi = 0usize;
                 while gi < images.len() {
-                    gather_samples_strided(
+                    gather_samples_strided_with_budget(
                         &mut probe,
                         &images[gi],
                         gi as u32 + per_group_id_offset,
                         0,
                         probe_stride,
                         &wp_params,
-                    );
+                        None,
+                        stop,
+                    )?;
                     gi += probe_group_stride;
                 }
                 let probe_pixels: usize = images
@@ -748,7 +761,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                         let tparams = TreeLearningParams::from_profile(profile)
                             .with_ref_properties(num_refs, profile.effort);
                         bucketize_plan = Some(alloc::sync::Arc::new(
-                            super::tree_learn::thresholds_from_samples(&probe, &tparams),
+                            super::tree_learn::thresholds_from_samples(&probe, &tparams, stop)?,
                         ));
                     }
                     Some(super::tree_learn::GatherBucketizeMode::Exact) if !enable_gather_dedup => {
@@ -769,14 +782,16 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                                 &wp_params,
                                 &tparams,
                                 num_refs,
-                            ),
+                                stop,
+                            )?,
                         ));
                         #[cfg(feature = "std")]
                         super::tree_learn::walk_debug_dump("exact");
                     }
                     _ => {}
                 }
-                let probe_tree = compute_best_tree(&mut probe, &probe_params);
+                let probe_tree =
+                    compute_best_tree_with_budget(&mut probe, &probe_params, None, stop)?;
                 Some(super::tree_learn::predictors_used_by_tree(&probe_tree))
             } else {
                 const GLOBAL_PROBE_STRIDE_MULT: usize = 16;
@@ -793,7 +808,10 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     let gather_for_seed = |seed: u64,
                            seed_stride: usize,
                            randomize: bool|
-     -> (TreeSamples, Option<super::tree_learn::PreQuantizedProps>) {
+     -> crate::error::Result<(
+        TreeSamples,
+        Option<super::tree_learn::PreQuantizedProps>,
+    )> {
         let start_offset = if seed_stride > 1 {
             (seed as usize) % seed_stride
         } else {
@@ -889,7 +907,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                     // Gather-time dedup only honors the canonical seed-0 path.
                     // Higher seeds skip dedup — the post-sort arbiter still
                     // collapses bucket-equivalent rows downstream.
-                    let _ = gather_samples_strided_with_dedup_backend(
+                    gather_samples_strided_with_dedup_backend(
                         target,
                         meta,
                         0,
@@ -900,11 +918,21 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                         true,
                         enable_phase3,
                         &dedup_properties,
-                    );
+                        stop,
+                    )?;
                 } else if start_offset == 0 {
-                    gather_samples_strided(target, meta, 0, 0, seed_stride, &wp_params);
+                    gather_samples_strided_with_budget(
+                        target,
+                        meta,
+                        0,
+                        0,
+                        seed_stride,
+                        &wp_params,
+                        None,
+                        stop,
+                    )?;
                 } else {
-                    gather_samples_strided_with_offset(
+                    gather_samples_strided_with_offset_stop(
                         target,
                         meta,
                         0,
@@ -912,7 +940,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                         seed_stride,
                         start_offset,
                         &wp_params,
-                    );
+                        stop,
+                    )?;
                 }
             }
             if let (Some(m), Some(plan)) = (meta_local, bucketize.as_deref()) {
@@ -967,7 +996,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         while wave_start < images.len() {
             let wave_len = wave.min(images.len() - wave_start);
             let hybrid_learn_this_gather = hybrid_learn_enabled && seed == 0 && !randomize;
-            let wave_samples: Vec<(TreeSamples, Option<super::tree::Tree>)> =
+            let wave_samples: Vec<crate::error::Result<(TreeSamples, Option<super::tree::Tree>)>> =
                 crate::parallel::parallel_map(wave_len, |i| {
                     let group_idx = wave_start + i;
                     // Same per-seed predictor order as the meta init above
@@ -982,7 +1011,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                     local.set_active_props(active_mask.clone());
                     local.randomize_gather = randomize;
                     if enable_gather_dedup && seed == 0 {
-                        let _ = gather_samples_strided_with_dedup_backend(
+                        gather_samples_strided_with_dedup_backend(
                             &mut local,
                             &images[group_idx],
                             group_idx as u32 + per_group_id_offset,
@@ -993,18 +1022,21 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                             true,
                             enable_phase3,
                             &dedup_properties,
-                        );
+                            stop,
+                        )?;
                     } else if start_offset == 0 {
-                        gather_samples_strided(
+                        gather_samples_strided_with_budget(
                             &mut local,
                             &images[group_idx],
                             group_idx as u32 + per_group_id_offset,
                             0,
                             seed_stride,
                             &wp_params,
-                        );
+                            None,
+                            stop,
+                        )?;
                     } else {
-                        gather_samples_strided_with_offset(
+                        gather_samples_strided_with_offset_stop(
                             &mut local,
                             &images[group_idx],
                             group_idx as u32 + per_group_id_offset,
@@ -1012,7 +1044,8 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                             seed_stride,
                             start_offset,
                             &wp_params,
-                        );
+                            stop,
+                        )?;
                     }
                     // Hybrid: learn this group's local tree from a CLONE of the
                     // just-gathered samples (compute_best_tree consumes them);
@@ -1052,15 +1085,18 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                         if let Some(k) = tree_prune_predictors_env() {
                             dup.prune_to_top_predictors(k);
                         }
-                        Some(compute_best_tree(&mut dup, &params))
+                        Some(compute_best_tree_with_budget(
+                            &mut dup, &params, None, stop,
+                        )?)
                     } else {
                         None
                     };
-                    (local, local_tree)
+                    Ok((local, local_tree))
                 });
             // No per-wave reserve: `reserve_exact_total` above already sized
             // every column past the final count, so these appends never grow.
-            for (i, (local, ltree)) in wave_samples.into_iter().enumerate() {
+            for (i, item) in wave_samples.into_iter().enumerate() {
+                let (local, ltree) = item?;
                 if let Some(t) = ltree {
                     hybrid_slot.borrow_mut()[wave_start + i] = Some(t);
                 }
@@ -1085,7 +1121,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 bucket_indices: acc_buckets,
             }
         });
-        (samples, pre_pq)
+        Ok((samples, pre_pq))
     };
 
     // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance), chunk 3
@@ -1203,22 +1239,30 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     // returning the concatenated token stream, the meta prefix length, and
     // per-group ranges into it. Shared by the normal per-seed scoring and the
     // task-#14 self-repair (which collects a second, de-aliased candidate).
-    let collect_for_tree = |tree: &Tree| -> (
+    let collect_for_tree = |tree: &Tree| -> Result<(
         Vec<crate::entropy_coding::token::Token>,
         usize,
         Vec<core::ops::Range<usize>>,
-    ) {
+    )> {
         let per_group_tokens: Vec<Vec<crate::entropy_coding::token::Token>> =
-            crate::parallel::parallel_map(images.len(), |group_idx| {
-                collect_residuals_with_tree(
+            crate::parallel::parallel_map_result(images.len(), |group_idx| {
+                super::tree_learn::collect_residuals_with_tree_offset_with_budget(
                     &images[group_idx],
                     tree,
                     group_idx as u32 + per_group_id_offset,
+                    0,
                     &wp_params,
+                    None,
+                    stop,
                 )
-            });
-        let meta_tokens_opt =
-            meta_image.map(|meta| collect_residuals_with_tree(meta, tree, 0, &wp_params));
+            })?;
+        let meta_tokens_opt = meta_image
+            .map(|meta| {
+                super::tree_learn::collect_residuals_with_tree_offset_with_budget(
+                    meta, tree, 0, 0, &wp_params, None, stop,
+                )
+            })
+            .transpose()?;
         let nb_meta_tokens = meta_tokens_opt.as_ref().map(|t| t.len()).unwrap_or(0);
         let total_len: usize =
             nb_meta_tokens + per_group_tokens.iter().map(|t| t.len()).sum::<usize>();
@@ -1232,7 +1276,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             all_tokens.extend(tokens);
             group_ranges.push(start..all_tokens.len());
         }
-        (all_tokens, nb_meta_tokens, group_ranges)
+        Ok((all_tokens, nb_meta_tokens, group_ranges))
     };
 
     // Real ANS-coded cost (histogram tables + coded tokens) of a candidate's
@@ -1254,24 +1298,26 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         // it. LZ77 is off on the e5/e6 tree-lift path this repair fires on, so
         // this build is BYTE-IDENTICAL to the Step-4 build for the same tree —
         // the winning candidate's code is cached and reused there (perf).
-        let code = build_entropy_code_ans_with_options(
+        let code = build_entropy_code_ans_with_options_stop(
             tokens,
             num_contexts.max(1),
             true, // enhanced clustering (pair-merge refinement)
             true, // optimize uint configs
             None, // LZ77 off on the tree-lift path
             Some(total_pixels),
+            stop,
         );
         if tokens.is_empty() {
             return Ok((0, code));
         }
         let mut w = BitWriter::new();
         write_entropy_code_ans(&code, &mut w)?;
-        write_tokens_ans(tokens, &code, None, &mut w)?;
+        write_tokens_ans_stop(tokens, &code, None, &mut w, stop)?;
         Ok((w.bits_written(), code))
     };
 
     for seed in 0..(seeds as u64) {
+        crate::error::check_stop(stop)?;
         // Chunk 4: per-seed sample-fraction override takes precedence
         // over chunk-3's stride perturbation. Seed 0 returns None → fall
         // through to the chunk-3 path. Higher seeds with Some(frac) map
@@ -1332,7 +1378,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             riged.clone()
         } else {
             let (mut samples, pre_pq) = crate::profile_time!("modular/gather_samples", {
-                gather_for_seed(seed, seed_stride, false)
+                gather_for_seed(seed, seed_stride, false)?
             });
             #[cfg(feature = "std")]
             super::tree_learn::walk_debug_dump("gather");
@@ -1341,10 +1387,13 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             let _ll_t_gather_done = crate::clock::Instant::now();
             let t = crate::profile_time!("modular/compute_best_tree", {
                 match pre_pq {
-                    Some(pq) => {
-                        super::tree_learn::compute_best_tree_prequantized(&mut samples, &params, pq)
-                    }
-                    None => compute_best_tree(&mut samples, &params),
+                    Some(pq) => super::tree_learn::compute_best_tree_prequantized(
+                        &mut samples,
+                        &params,
+                        pq,
+                        stop,
+                    )?,
+                    None => compute_best_tree_with_budget(&mut samples, &params, None, stop)?,
                 }
             });
             #[cfg(feature = "__env_var_diagnostics")]
@@ -1390,7 +1439,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         let _ll_t_collect0 = crate::clock::Instant::now();
         let (all_tokens, nb_meta_tokens, group_ranges) =
             crate::profile_time!("modular/collect_residuals_global", {
-                collect_for_tree(&tree)
+                collect_for_tree(&tree)?
             });
         #[cfg(feature = "__env_var_diagnostics")]
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
@@ -1428,7 +1477,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             // for the fixed-stride tree and only pay for the de-aliased
             // re-gather when the ratio flags aliasing. Non-aliased content
             // (photos, flat docs; ratio ≈ 1.0) skips the second pass entirely.
-            let ideal_a = estimate_token_cost(&all_tokens);
+            let ideal_a = estimate_token_cost_stop(&all_tokens, stop)?;
             let (cost_a_bits, code_a) = real_ans_cost(&all_tokens, &tree)?;
             let cost_a = cost_a_bits as f64;
             if !super::encode::tree_self_repair_ratio_flags_aliasing(cost_a, ideal_a) {
@@ -1446,19 +1495,20 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 cached_winner_code = Some(code_a);
                 (all_tokens, nb_meta_tokens, group_ranges, tree)
             } else {
-                let (mut samples_r, pre_pq_r) = gather_for_seed(seed, seed_stride, true);
+                let (mut samples_r, pre_pq_r) = gather_for_seed(seed, seed_stride, true)?;
                 let params_r = build_params(&samples_r);
                 let tree_r = match pre_pq_r {
                     Some(pq) => super::tree_learn::compute_best_tree_prequantized(
                         &mut samples_r,
                         &params_r,
                         pq,
-                    ),
-                    None => compute_best_tree(&mut samples_r, &params_r),
+                        stop,
+                    )?,
+                    None => compute_best_tree_with_budget(&mut samples_r, &params_r, None, stop)?,
                 };
                 let (tokens_r, meta_r, ranges_r) =
                     crate::profile_time!("modular/collect_residuals_global", {
-                        collect_for_tree(&tree_r)
+                        collect_for_tree(&tree_r)?
                     });
                 let (cost_r_bits, code_r) = real_ans_cost(&tokens_r, &tree_r)?;
                 let cost_r = cost_r_bits as f64;
@@ -1500,7 +1550,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             best = Some((all_tokens, nb_meta_tokens, group_ranges, tree, 0.0));
             break;
         }
-        let cost = estimate_token_cost(&all_tokens);
+        let cost = estimate_token_cost_stop(&all_tokens, stop)?;
         crate::trace::debug_eprintln!(
             "MULTI_SEED_TREE_PICK seed={}/{} cost={:.0} bits ({} tokens, {} nodes)",
             seed,
@@ -1585,6 +1635,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             total_pixels,
             method: lz77_method,
             budget,
+            stop,
         }
         .select(|candidate| {
             let mut global = writer.clone();
@@ -1635,22 +1686,33 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     let lz77_applied = if use_lz77 {
         #[cfg(feature = "__env_var_diagnostics")]
         let _ll_t_lz = crate::clock::Instant::now();
-        use crate::entropy_coding::lz77::{Lz77Params, apply_lz77};
+        use crate::entropy_coding::lz77::Lz77Params;
         let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Result<Vec<AnsToken>> {
             if tokens.is_empty() {
                 return Ok(Vec::new());
             }
             Ok(
-                match apply_lz77(
+                match crate::entropy_coding::lz77::apply_lz77_stop(
                     tokens,
                     num_contexts,
                     false,
                     lz77_method,
                     dist_multiplier,
                     budget,
+                    stop,
                 )? {
                     Some((lz77_tokens, _)) => lz77_tokens,
-                    None => tokens.to_vec(),
+                    None => {
+                        // Rejected transforms copy the raw stream back — a
+                        // ~12M-token clone is tens of ms unpolled, so chunk
+                        // it with a cancellation check per 1M tokens.
+                        let mut v = Vec::with_capacity(tokens.len());
+                        for chunk in tokens.chunks(1 << 20) {
+                            crate::error::check_stop(stop)?;
+                            v.extend_from_slice(chunk);
+                        }
+                        v
+                    }
                 },
             )
         };
@@ -1681,6 +1743,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             let start = transformed.len();
             transformed.extend(toks);
             transformed_ranges.push(start..transformed.len());
+            crate::error::check_stop(stop)?;
         }
         // Header params come from the same (num_contexts, force_huffman)
         #[cfg(feature = "__env_var_diagnostics")]
@@ -1692,7 +1755,15 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         }
         // construction apply_lz77 uses internally, so min_symbol/min_length
         // agree across all sections (same contract as the squeeze path).
-        if transformed.iter().any(|t| t.is_lz77_length()) {
+        let mut any_lz77 = false;
+        for chunk in transformed.chunks(1 << 20) {
+            crate::error::check_stop(stop)?;
+            if chunk.iter().any(|t| t.is_lz77_length()) {
+                any_lz77 = true;
+                break;
+            }
+        }
+        if any_lz77 {
             let mut params = Lz77Params::new(num_contexts, false);
             params.enabled = true;
             Some((transformed, transformed_nb_meta, transformed_ranges, params))
@@ -1710,6 +1781,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     // the transform materialized a reference, raw otherwise. The state's
     // group_tokens carries exactly this pair, so per-group section writes
     // can emit their slice directly (no re-collect, no LZ77 re-apply).
+    crate::error::check_stop(stop)?;
     let (all_tokens, nb_meta_tokens, group_ranges, lz77_params) = match lz77_applied {
         Some((tokens, nb_meta, ranges, params)) => (tokens, nb_meta, ranges, Some(params)),
         None => (all_tokens, nb_meta_tokens, group_ranges, None),
@@ -1731,16 +1803,18 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     // `!use_lz77` guard is a belt-and-braces assertion of that invariant.
     #[cfg(feature = "__env_var_diagnostics")]
     let _ll_t_ans0 = crate::clock::Instant::now();
+    crate::error::check_stop(stop)?;
     let code = crate::profile_time!("modular/build_ans_code", {
         match cached_winner_code.take() {
             Some(cached) if !use_lz77 => cached,
-            _ => build_entropy_code_ans_with_options(
+            _ => build_entropy_code_ans_with_options_stop(
                 &all_tokens,
                 ans_num_contexts,
                 true, // enhanced clustering (pair-merge refinement)
                 true, // optimize uint configs
                 lz77_params.as_ref(),
                 Some(total_pixels),
+                stop,
             ),
         }
     });
@@ -1807,7 +1881,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     // `num_chans == 0` / `is_empty` early-returns), so the extra 4 bytes are simply
     // padding to them. See `imazen/jxl-oxide@fd4e2c3` for the matching decoder fix.
     let meta_token_slice = &all_tokens[..nb_meta_tokens];
-    write_tokens_ans(meta_token_slice, &code, lz77_params.as_ref(), writer)?;
+    write_tokens_ans_stop(meta_token_slice, &code, lz77_params.as_ref(), writer, stop)?;
 
     let _total_lf_global_bits = writer.bits_written() - bits_before;
     crate::trace::debug_eprintln!(
@@ -1965,19 +2039,20 @@ pub(crate) fn write_local_trees_lf_global(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<()> {
     use super::encode::{write_tree, write_wp_header};
     use super::predictor::WeightedPredictorParams;
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, WpCache, WpCacheMode,
-        collect_residuals_with_tree_offset_with_budget_wp, compute_best_tree,
+        collect_residuals_with_tree_offset_with_budget_wp, compute_best_tree_with_budget,
         gather_samples_strided_filling_wp_cache, max_ref_channels,
     };
     use crate::entropy_coding::encode::{
-        build_entropy_code_ans_with_options, write_entropy_code_ans,
+        build_entropy_code_ans_with_options_stop, write_entropy_code_ans,
     };
-    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+    use crate::entropy_coding::lz77::write_lz77_header;
 
     let wp_params = profile
         .forced_wp_mode
@@ -2002,12 +2077,13 @@ pub(crate) fn write_local_trees_lf_global(
                 1,
                 &wp_params,
                 &mut wp_cache,
-            );
+                stop,
+            )?;
             let params = TreeLearningParams::from_profile(profile)
                 .with_ref_properties(num_refs, profile.effort)
                 .with_total_pixels(meta_pixels)
                 .with_pixel_fraction(1.0);
-            let tree = compute_best_tree(&mut samples, &params);
+            let tree = compute_best_tree_with_budget(&mut samples, &params, None, stop)?;
             drop(samples);
             let tokens = collect_residuals_with_tree_offset_with_budget_wp(
                 meta,
@@ -2017,17 +2093,19 @@ pub(crate) fn write_local_trees_lf_global(
                 &wp_params,
                 budget,
                 WpCacheMode::Read(&wp_cache),
+                stop,
             )?;
             let num_contexts = count_contexts(&tree) as usize;
             let dist_multiplier = meta.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
             let (tokens, lz77_params) = if use_lz77 {
-                match apply_lz77(
+                match crate::entropy_coding::lz77::apply_lz77_stop(
                     &tokens,
                     num_contexts,
                     false,
                     lz77_method,
                     dist_multiplier,
                     budget,
+                    stop,
                 )? {
                     Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
                     None => (tokens, None),
@@ -2055,13 +2133,14 @@ pub(crate) fn write_local_trees_lf_global(
         let seed_tokens = alloc::vec![crate::entropy_coding::token::Token::new(0, 0)];
         build_entropy_code_ans(&seed_tokens, 1)
     } else {
-        build_entropy_code_ans_with_options(
+        build_entropy_code_ans_with_options_stop(
             &tokens,
             ans_num_contexts,
             true,
             true,
             lz77_params.as_ref(),
             Some(meta_pixels),
+            stop,
         )
     };
 
@@ -2082,7 +2161,7 @@ pub(crate) fn write_local_trees_lf_global(
     // stream's 32-bit final state that keeps every decoder's
     // begin()/final-state check happy (same rationale as the global-tree
     // writer's zero-meta case).
-    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
+    write_tokens_ans_stop(&tokens, &code, lz77_params.as_ref(), writer, stop)?;
     writer.zero_pad_to_byte();
     Ok(())
 }
@@ -2147,11 +2226,12 @@ pub(crate) fn sectioned_probe_predictors(
     profile: &crate::effort::EffortProfile,
     per_group_id_offset: u32,
     stride: usize,
-) -> Option<alloc::vec::Vec<super::predictor::Predictor>> {
+    stop: Option<&dyn enough::Stop>,
+) -> Result<Option<alloc::vec::Vec<super::predictor::Predictor>>> {
     use super::predictor::WeightedPredictorParams;
     use super::tree_learn::{
-        TreeLearningParams, TreeSamples, compute_best_tree, gather_samples_strided,
-        max_ref_channels, sectioned_predictors_from_tree,
+        TreeLearningParams, TreeSamples, compute_best_tree_with_budget,
+        gather_samples_strided_with_budget, max_ref_channels, sectioned_predictors_from_tree,
     };
     let wp_params = profile
         .forced_wp_mode
@@ -2203,20 +2283,22 @@ pub(crate) fn sectioned_probe_predictors(
         .step_by(probe_group_stride.max(1))
         .collect();
     let locals: alloc::vec::Vec<TreeSamples> =
-        crate::parallel::parallel_map(probe_indices.len(), |i| {
+        crate::parallel::parallel_map_result(probe_indices.len(), |i| {
             let gi = probe_indices[i];
             let mut local = TreeSamples::new_with_ref_channels(num_refs);
             local.set_active_props(active_mask.clone());
-            gather_samples_strided(
+            gather_samples_strided_with_budget(
                 &mut local,
                 &images[gi],
                 gi as u32 + per_group_id_offset,
                 0,
                 probe_stride,
                 &wp_params,
-            );
-            local
-        });
+                None,
+                stop,
+            )?;
+            Ok(local)
+        })?;
     for local in locals {
         probe.append_from(local);
     }
@@ -2247,20 +2329,20 @@ pub(crate) fn sectioned_probe_predictors(
     // `SECTIONED_PROBE_MIN_LEAVES` or the trust gate would reject every
     // probe by construction.
     probe_params.max_nodes = probe_params.max_nodes.min(sectioned_probe_max_nodes());
-    let probe_tree = compute_best_tree(&mut probe, &probe_params);
+    let probe_tree = compute_best_tree_with_budget(&mut probe, &probe_params, None, stop)?;
     let leaves = probe_tree.iter().filter(|n| n.property < 0).count();
     if leaves < sectioned_probe_min_leaves() {
         #[cfg(feature = "std")]
         if std::env::var_os("JXL_PROBE_COSTS").is_some() {
             eprintln!("[sectioned-probe] leaves={leaves} UNTRUSTED -> fixed-K fallback");
         }
-        return None;
+        return Ok(None);
     }
-    Some(sectioned_predictors_from_tree(
+    Ok(Some(sectioned_predictors_from_tree(
         &probe_tree,
         sectioned_probe_coverage_pct(),
         SECTIONED_PRUNE_PREDICTORS_K,
-    ))
+    )))
 }
 
 /// Cumulative static leaf-mass coverage the SECTIONED probe selector keeps
@@ -2412,9 +2494,40 @@ pub fn write_group_modular_section_local_tree(
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
+    write_group_modular_section_local_tree_stop(
+        group_image,
+        stream_id,
+        profile,
+        use_lz77,
+        lz77_method,
+        rct_type,
+        gather_stride,
+        predictors,
+        writer,
+        budget,
+        None,
+    )
+}
+
+/// [`write_group_modular_section_local_tree`] with cancellation polling.
+/// No-op / byte-identical under `None`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_group_modular_section_local_tree_stop(
+    group_image: &ModularImage,
+    stream_id: u32,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    rct_type: Option<RctType>,
+    gather_stride: Option<usize>,
+    predictors: Option<&[super::predictor::Predictor]>,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
     use super::predictor::WeightedPredictorParams;
     use super::tree_learn::{
-        TreeLearningParams, TreeSamples, WpCache, WpCacheMode, compute_best_tree,
+        TreeLearningParams, TreeSamples, WpCache, WpCacheMode, compute_best_tree_with_budget,
         compute_gather_stride_from_profile, gather_samples_strided_filling_wp_cache,
         max_ref_channels,
     };
@@ -2465,8 +2578,9 @@ pub fn write_group_modular_section_local_tree(
             stride,
             &wp_params,
             &mut wp_cache,
+            stop,
         )
-    });
+    })?;
     let pixel_fraction = if total_pixels > 0 {
         samples.total_gathered_weight() as f64 / total_pixels as f64
     } else {
@@ -2495,11 +2609,11 @@ pub fn write_group_modular_section_local_tree(
         });
     }
     let tree = crate::profile_time!("sectioned/learn", {
-        compute_best_tree(&mut samples, &params)
-    });
+        compute_best_tree_with_budget(&mut samples, &params, None, stop)
+    })?;
     drop(samples);
 
-    write_group_modular_section_local_tree_with_tree(
+    write_group_modular_section_local_tree_with_tree_stop(
         group_image,
         stream_id,
         use_lz77,
@@ -2511,6 +2625,7 @@ pub fn write_group_modular_section_local_tree(
         budget,
         WpCacheMode::Read(&wp_cache),
         profile.lz77_keep_best,
+        stop,
     )
 }
 
@@ -2534,12 +2649,45 @@ pub fn write_group_modular_section_local_tree_with_tree(
     wp_cache: super::tree_learn::WpCacheMode<'_>,
     keep_best: bool,
 ) -> Result<()> {
+    write_group_modular_section_local_tree_with_tree_stop(
+        group_image,
+        stream_id,
+        use_lz77,
+        lz77_method,
+        rct_type,
+        tree,
+        wp_params,
+        writer,
+        budget,
+        wp_cache,
+        keep_best,
+        None,
+    )
+}
+
+/// [`write_group_modular_section_local_tree_with_tree`] with cancellation
+/// polling. No-op / byte-identical under `None`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_group_modular_section_local_tree_with_tree_stop(
+    group_image: &ModularImage,
+    stream_id: u32,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    rct_type: Option<RctType>,
+    tree: &super::tree::Tree,
+    wp_params: &super::predictor::WeightedPredictorParams,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    wp_cache: super::tree_learn::WpCacheMode<'_>,
+    keep_best: bool,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
     use super::encode::{write_num_transforms, write_tree, write_wp_header};
     use super::tree::count_contexts;
     use super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp;
-    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options_stop;
     use crate::entropy_coding::encode::write_entropy_code_ans;
-    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+    use crate::entropy_coding::lz77::write_lz77_header;
 
     let total_pixels: usize = group_image
         .channels
@@ -2556,6 +2704,7 @@ pub fn write_group_modular_section_local_tree_with_tree(
             wp_params,
             budget,
             wp_cache,
+            stop,
         )
     })?;
     let num_contexts = count_contexts(tree) as usize;
@@ -2591,7 +2740,7 @@ pub fn write_group_modular_section_local_tree_with_tree(
             } else {
                 write_ans_modular_header(writer, code)?;
             }
-            write_tokens_ans(tokens, code, lz77_params, writer)?;
+            write_tokens_ans_stop(tokens, code, lz77_params, writer, stop)?;
         });
         // Sections are byte-delimited by the TOC; pad to the byte boundary like
         // every other section writer does before the caller's `finish()`.
@@ -2607,6 +2756,7 @@ pub fn write_group_modular_section_local_tree_with_tree(
             total_pixels,
             method: lz77_method,
             budget,
+            stop,
         }
         .select(|candidate| {
             let mut scratch = writer.clone();
@@ -2628,13 +2778,14 @@ pub fn write_group_modular_section_local_tree_with_tree(
 
     let (tokens, lz77_params) = if use_lz77 {
         match crate::profile_time!("sectioned/lz77", {
-            apply_lz77(
+            crate::entropy_coding::lz77::apply_lz77_stop(
                 &tokens,
                 num_contexts,
                 false,
                 lz77_method,
                 dist_multiplier,
                 budget,
+                stop,
             )
         })? {
             Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
@@ -2649,13 +2800,14 @@ pub fn write_group_modular_section_local_tree_with_tree(
         num_contexts
     };
     let code = crate::profile_time!("sectioned/ans_build", {
-        build_entropy_code_ans_with_options(
+        build_entropy_code_ans_with_options_stop(
             &tokens,
             ans_num_contexts,
             true,
             true,
             lz77_params.as_ref(),
             Some(total_pixels),
+            stop,
         )
     });
 
@@ -2722,6 +2874,33 @@ pub fn write_group_modular_section_idx(
     wp_cache: super::tree_learn::WpCacheMode<'_>,
     pre_collected: Option<&[crate::entropy_coding::token::Token]>,
 ) -> Result<()> {
+    write_group_modular_section_idx_stop(
+        group_image,
+        state,
+        group_idx,
+        transforms,
+        writer,
+        budget,
+        wp_cache,
+        pre_collected,
+        None,
+    )
+}
+
+/// [`write_group_modular_section_idx`] with cancellation polling.
+/// No-op / byte-identical under `None`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_group_modular_section_idx_stop(
+    group_image: &ModularImage,
+    state: &GlobalModularState,
+    group_idx: u32,
+    transforms: &GroupTransforms,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    wp_cache: super::tree_learn::WpCacheMode<'_>,
+    pre_collected: Option<&[crate::entropy_coding::token::Token]>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
     crate::trace::debug_eprintln!(
         "GROUP_MODULAR [bit {}]: Starting group section ({}x{}, compact={}, rct={:?})",
         writer.bits_written(),
@@ -2773,7 +2952,7 @@ pub fn write_group_modular_section_idx(
             // Collect residuals for this group and encode with ANS
             let residuals = collect_group_residuals_with_predictor(group_image, *predictor_id);
             let tokens: Vec<AnsToken> = residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
-            write_tokens_ans(&tokens, code, None, writer)?;
+            write_tokens_ans_stop(&tokens, code, None, writer, stop)?;
         }
         GlobalModularState::AnsWithTree {
             code,
@@ -2812,6 +2991,7 @@ pub fn write_group_modular_section_idx(
                     wp_params,
                     None,
                     super::tree_learn::WpCacheMode::Off,
+                    stop,
                 )?;
                 if fresh.len() != slice.len() {
                     eprintln!(
@@ -2860,6 +3040,7 @@ pub fn write_group_modular_section_idx(
                             wp_params,
                             None,
                             wp_cache,
+                            stop,
                         )?
                     });
                     match lz77 {
@@ -2872,13 +3053,14 @@ pub fn write_group_modular_section_idx(
                                 .unwrap_or(0)
                                 as i32;
                             let num_contexts = super::tree::count_contexts(tree) as usize;
-                            let transformed = match crate::entropy_coding::lz77::apply_lz77(
+                            let transformed = match crate::entropy_coding::lz77::apply_lz77_stop(
                                 &tokens,
                                 num_contexts,
                                 false,
                                 *method,
                                 dist_multiplier,
                                 budget,
+                                stop,
                             )? {
                                 Some((lz77_tokens, _)) => lz77_tokens,
                                 None => tokens,
@@ -2890,7 +3072,7 @@ pub fn write_group_modular_section_idx(
                 }
             };
             crate::profile_time!("modular/write_tokens_per_group", {
-                write_tokens_ans(&tokens, code, lz77_params, writer)?;
+                write_tokens_ans_stop(&tokens, code, lz77_params, writer, stop)?;
             });
         }
     }

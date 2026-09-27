@@ -5,10 +5,8 @@
 //! Frame encoder - assembles complete JXL frames.
 
 use super::channel::{Channel, ModularImage};
-use super::encode::{
-    build_histogram_from_residuals, select_best_rct_at, write_group_modular_section_idx,
-};
-use super::palette::{CHANNEL_COLORS_PERCENT, analyze_channel_compact};
+use super::encode::{build_histogram_from_residuals, select_best_rct_at};
+use super::palette::CHANNEL_COLORS_PERCENT;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::lz77::Lz77Method;
 use crate::error::Result;
@@ -516,13 +514,14 @@ impl FrameEncoder {
                     &self.options.modular_knobs,
                 )?;
             } else if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
-                super::encode::write_modular_stream_with_squeeze_and_tree(
+                super::encode::write_modular_stream_with_squeeze_and_tree_stop(
                     image,
                     &mut section_writer,
                     &self.options.profile,
                     self.options.enable_lz77,
                     self.options.lz77_method,
                     self.budget.as_ref(),
+                    stop,
                 )?;
             } else if has_squeeze {
                 super::encode::write_modular_stream_with_squeeze(
@@ -649,13 +648,14 @@ impl FrameEncoder {
                 )?;
             } else if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
                 // Combined squeeze + tree learning: best compression
-                super::encode::write_modular_stream_with_squeeze_and_tree(
+                super::encode::write_modular_stream_with_squeeze_and_tree_stop(
                     image,
                     &mut section_writer,
                     &self.options.profile,
                     self.options.enable_lz77,
                     self.options.lz77_method,
                     self.budget.as_ref(),
+                    stop,
                 )?;
             } else if has_squeeze {
                 // Squeeze without tree learning (lower effort levels)
@@ -837,7 +837,8 @@ impl FrameEncoder {
                     if nc < 2 {
                         None
                     } else {
-                        let analysis = super::palette::analyze_palette(image, 0, nc, max_colors);
+                        let analysis =
+                            super::palette::analyze_palette_stop(image, 0, nc, max_colors, stop);
                         if analysis.use_palette {
                             Some((nc, analysis))
                         } else {
@@ -850,58 +851,61 @@ impl FrameEncoder {
             None
         };
 
-        let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> = if try_compact
-            && full_palette.is_none()
-        {
-            // For multi-group, compact overhead is higher (meta-channels in global section,
-            // tree quality dilution across many groups). Require density <= 50%
-            // (i.e. range >= 2x unique), which means >= 1 bit/pixel entropy savings.
-            // Below this threshold, savings are eaten by per-group overhead.
-            //
-            // Honour `--modular_channel_colors_group_percent` override
-            // when set, otherwise keep the historical
-            // `CHANNEL_COLORS_PERCENT` default (95.0). libjxl's
-            // `enc_params.h:channel_colors_percent` defaults to 80.0 for
-            // the per-group pass; we ship the global 95.0 here for
-            // bitstream stability with the existing hash-locks and let
-            // callers dial down via the CLI override.
-            let group_percent = self
-                .options
-                .modular_knobs
-                .channel_colors_group_percent
-                .unwrap_or(CHANNEL_COLORS_PERCENT);
-            (0..num_color_channels)
-                .filter_map(|ch_idx| {
-                    let analysis = analyze_channel_compact(&image.channels[ch_idx], group_percent)?;
-                    // Reject if unique values use >50% of the range (< 1 bit/pixel savings)
-                    let ch = &image.channels[ch_idx];
-                    let mut min_v = i32::MAX;
-                    let mut max_v = i32::MIN;
-                    for y in 0..ch.height() {
-                        for x in 0..ch.width() {
-                            let v = ch.get(x, y);
-                            min_v = min_v.min(v);
-                            max_v = max_v.max(v);
+        let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> =
+            if try_compact && full_palette.is_none() {
+                // For multi-group, compact overhead is higher (meta-channels in global section,
+                // tree quality dilution across many groups). Require density <= 50%
+                // (i.e. range >= 2x unique), which means >= 1 bit/pixel entropy savings.
+                // Below this threshold, savings are eaten by per-group overhead.
+                //
+                // Honour `--modular_channel_colors_group_percent` override
+                // when set, otherwise keep the historical
+                // `CHANNEL_COLORS_PERCENT` default (95.0). libjxl's
+                // `enc_params.h:channel_colors_percent` defaults to 80.0 for
+                // the per-group pass; we ship the global 95.0 here for
+                // bitstream stability with the existing hash-locks and let
+                // callers dial down via the CLI override.
+                let group_percent = self
+                    .options
+                    .modular_knobs
+                    .channel_colors_group_percent
+                    .unwrap_or(CHANNEL_COLORS_PERCENT);
+                (0..num_color_channels)
+                    .filter_map(|ch_idx| {
+                        let analysis = super::palette::analyze_channel_compact_stop(
+                            &image.channels[ch_idx],
+                            group_percent,
+                            stop,
+                        )?;
+                        // Reject if unique values use >50% of the range (< 1 bit/pixel savings)
+                        let ch = &image.channels[ch_idx];
+                        let mut min_v = i32::MAX;
+                        let mut max_v = i32::MIN;
+                        for y in 0..ch.height() {
+                            for x in 0..ch.width() {
+                                let v = ch.get(x, y);
+                                min_v = min_v.min(v);
+                                max_v = max_v.max(v);
+                            }
                         }
-                    }
-                    let range = (max_v as i64 - min_v as i64 + 1).max(1) as f64;
-                    let density = analysis.num_colors as f64 / range;
-                    crate::trace::debug_eprintln!(
-                        "COMPACT_FILTER: ch={} unique={} range={:.0} density={:.3}",
-                        ch_idx,
-                        analysis.num_colors,
-                        range,
-                        density
-                    );
-                    if density > 0.5 {
-                        return None;
-                    }
-                    Some((ch_idx, analysis))
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                        let range = (max_v as i64 - min_v as i64 + 1).max(1) as f64;
+                        let density = analysis.num_colors as f64 / range;
+                        crate::trace::debug_eprintln!(
+                            "COMPACT_FILTER: ch={} unique={} range={:.0} density={:.3}",
+                            ch_idx,
+                            analysis.num_colors,
+                            range,
+                            density
+                        );
+                        if density > 0.5 {
+                            return None;
+                        }
+                        Some((ch_idx, analysis))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
         let (meta_image, source_image_owned, compact_info, rct_type);
         let full_palette_info: Option<(usize, usize, usize)>;
@@ -939,6 +943,7 @@ impl FrameEncoder {
             let mut nb_meta = 0usize;
 
             for (orig_idx, ch) in image.channels.iter().enumerate() {
+                crate::error::check_stop(stop)?;
                 if let Some((_, analysis)) =
                     compact_analyses.iter().find(|(idx, _)| *idx == orig_idx)
                 {
@@ -952,6 +957,9 @@ impl FrameEncoder {
                     // Create index channel (same dimensions as original)
                     let mut idx_ch = Channel::new(ch.width(), ch.height())?;
                     for y in 0..ch.height() {
+                        if y & 0x1F == 0 {
+                            crate::error::check_stop(stop)?;
+                        }
                         for x in 0..ch.width() {
                             let val = ch.get(x, y);
                             let index = analysis.color_to_index[&vec![val]];
@@ -996,6 +1004,7 @@ impl FrameEncoder {
                     0,
                     self.options.profile.nb_rcts_to_try,
                     self.options.profile.forced_rct,
+                    stop,
                 );
                 rct_type = Some(selected_rct);
                 work = transformed;
@@ -1015,6 +1024,7 @@ impl FrameEncoder {
                         image,
                         self.options.profile.nb_rcts_to_try,
                         self.options.profile.forced_rct,
+                        stop,
                     );
                     rct_type = Some(selected_rct);
                     source_image_owned = rct_image;
@@ -1031,6 +1041,7 @@ impl FrameEncoder {
         // caller handed us ownership, free it here — otherwise the original
         // full-image i32 copy (94.9 MiB at 4K) sits under the whole
         // tree-learning peak with no remaining reader.
+        crate::error::check_stop(stop)?;
         drop(image_src);
 
         let global_transforms = super::section::GlobalTransforms {
@@ -1045,6 +1056,7 @@ impl FrameEncoder {
         let group_transforms: Vec<super::section::GroupTransforms> =
             vec![super::section::GroupTransforms::none(); num_groups];
         for group_idx in 0..num_groups {
+            crate::error::check_stop(stop)?;
             let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
             let group_image = source_image_owned.extract_region(x_start, y_start, x_end, y_end)?;
             group_images.push(group_image);
@@ -1143,6 +1155,7 @@ impl FrameEncoder {
                 self.options.enable_lz77,
                 self.options.lz77_method,
                 self.budget.as_ref(),
+                stop,
             )?;
             None
         } else if self.options.dc_quant_custom.is_some() {
@@ -1167,6 +1180,7 @@ impl FrameEncoder {
                     &self.options.modular_knobs,
                     super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
                     self.budget.as_ref(),
+                    stop,
                 )?,
             )
         } else if self.options.use_tree_learning && self.options.use_ans {
@@ -1195,6 +1209,7 @@ impl FrameEncoder {
                     },
                     (tree_mode != TreeMode::Hybrid)
                         .then_some((&group_transforms[..], num_lf_groups)),
+                    stop,
                 )?,
             )
         } else {
@@ -1335,7 +1350,8 @@ impl FrameEncoder {
                                 &self.options.profile,
                                 per_group_id_offset,
                                 stride,
-                            )
+                                stop,
+                            )?
                         })
                     }
                     _ => None,
@@ -1420,7 +1436,7 @@ impl FrameEncoder {
                     }
                     _ => None,
                 };
-                write_group_modular_section_idx(
+                super::section::write_group_modular_section_idx_stop(
                     group_image,
                     global_state,
                     group_idx as u32 + per_group_id_offset,
@@ -1433,6 +1449,7 @@ impl FrameEncoder {
                         super::tree_learn::WpCacheMode::Off
                     },
                     pre_collected,
+                    stop,
                 )?;
 
                 // Hybrid: also write this group as a self-contained local-tree
@@ -1561,7 +1578,7 @@ impl FrameEncoder {
         };
         use super::encode_transforms::write_palette_transform;
         use super::predictor::pack_signed;
-        use crate::entropy_coding::encode::{build_entropy_code_ans, write_tokens_ans};
+        use crate::entropy_coding::encode::{build_entropy_code_ans, write_tokens_ans_stop};
         use crate::entropy_coding::hybrid_uint::HybridUintConfig;
         use crate::entropy_coding::token::Token as AnsToken;
 
@@ -1765,7 +1782,7 @@ impl FrameEncoder {
                     EntropyState::Ans { code } => {
                         let tokens: Vec<AnsToken> =
                             residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
-                        write_tokens_ans(&tokens, code, None, writer)?;
+                        write_tokens_ans_stop(&tokens, code, None, writer, stop)?;
                     }
                 }
                 Ok(())
@@ -1876,9 +1893,9 @@ impl FrameEncoder {
             write_tree_histogram_for_predictor,
         };
         use super::predictor::pack_signed;
-        use super::rct::{RctType, forward_rct};
-        use super::squeeze::{apply_squeeze, default_squeeze_params};
-        use crate::entropy_coding::encode::{build_entropy_code_ans, write_tokens_ans};
+        use super::rct::RctType;
+        use super::squeeze::default_squeeze_params;
+        use crate::entropy_coding::encode::{build_entropy_code_ans, write_tokens_ans_stop};
         use crate::entropy_coding::hybrid_uint::HybridUintConfig;
         use crate::entropy_coding::token::Token as AnsToken;
 
@@ -1904,9 +1921,9 @@ impl FrameEncoder {
         let has_rct =
             squeezed.channels.len() >= 3 && squeezed.bit_depth < super::encode::RCT_BUDGET_LIMIT;
         if has_rct {
-            forward_rct(&mut squeezed.channels, 0, RctType::YCOCG)?;
+            super::rct::forward_rct_stop(&mut squeezed.channels, 0, RctType::YCOCG, stop)?;
         }
-        apply_squeeze(&mut squeezed, &squeeze_params)?;
+        super::squeeze::apply_squeeze_stop(&mut squeezed, &squeeze_params, stop)?;
 
         #[cfg(test)]
         {
@@ -2144,7 +2161,7 @@ impl FrameEncoder {
                     EntropyState::Ans { code } => {
                         let tokens: Vec<AnsToken> =
                             residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
-                        write_tokens_ans(&tokens, code, None, writer)?;
+                        write_tokens_ans_stop(&tokens, code, None, writer, stop)?;
                     }
                 }
                 Ok(())
@@ -2301,16 +2318,16 @@ impl FrameEncoder {
             s.check().map_err(|_| crate::error::Error::Cancelled)?;
         }
         use super::encode::{write_rct_transform, write_squeeze_transform, write_tree};
-        use super::rct::{RctType, forward_rct};
-        use super::squeeze::{apply_squeeze, default_squeeze_params};
+        use super::rct::RctType;
+        use super::squeeze::default_squeeze_params;
         use super::tree::count_contexts;
         use super::tree_learn::{
             GatherDedupTable, TreeLearningParams, TreeSamples,
             collect_residuals_with_tree_with_budget, compute_best_tree_with_budget,
             compute_gather_stride_from_profile, gather_samples_strided_with_budget_inner,
         };
-        use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
-        use crate::entropy_coding::encode::{write_entropy_code_ans, write_tokens_ans};
+        use crate::entropy_coding::encode::build_entropy_code_ans_with_options_stop;
+        use crate::entropy_coding::encode::{write_entropy_code_ans, write_tokens_ans_stop};
         use crate::entropy_coding::token::Token as AnsToken;
 
         let num_groups = self.num_groups();
@@ -2323,9 +2340,9 @@ impl FrameEncoder {
         let mut squeezed = image.clone();
         let has_rct = squeezed.channels.len() >= 3;
         if has_rct {
-            forward_rct(&mut squeezed.channels, 0, RctType::YCOCG)?;
+            super::rct::forward_rct_stop(&mut squeezed.channels, 0, RctType::YCOCG, stop)?;
         }
-        apply_squeeze(&mut squeezed, &squeeze_params)?;
+        super::squeeze::apply_squeeze_stop(&mut squeezed, &squeeze_params, stop)?;
 
         crate::trace::debug_eprintln!(
             "SQUEEZE_TREE_MULTI: {} steps, {} → {} channels, image {}x{}",
@@ -2436,6 +2453,7 @@ impl FrameEncoder {
             &wp_params,
             self.budget.as_ref(),
             shared_dedup_table.as_mut(),
+            stop,
         )?;
 
         // 3b: LfGroup channels — crop to each LfGroup rect
@@ -2510,6 +2528,7 @@ impl FrameEncoder {
                 &wp_params,
                 self.budget.as_ref(),
                 shared_dedup_table.as_mut(),
+                stop,
             )?;
         }
 
@@ -2548,6 +2567,7 @@ impl FrameEncoder {
                 &wp_params,
                 self.budget.as_ref(),
                 shared_dedup_table.as_mut(),
+                stop,
             )?;
         }
 
@@ -2562,7 +2582,8 @@ impl FrameEncoder {
         let tree_params = TreeLearningParams::from_profile(&self.options.profile)
             .with_pixel_fraction(pixel_fraction)
             .with_total_pixels(total_pixels);
-        let tree = compute_best_tree_with_budget(&mut samples, &tree_params, self.budget.as_ref())?;
+        let tree =
+            compute_best_tree_with_budget(&mut samples, &tree_params, self.budget.as_ref(), stop)?;
         let num_contexts = count_contexts(&tree) as usize;
 
         crate::trace::debug_eprintln!(
@@ -2581,6 +2602,7 @@ impl FrameEncoder {
             0,
             &wp_params,
             self.budget.as_ref(),
+            stop,
         )?;
 
         // LfGroup section tokens
@@ -2602,6 +2624,7 @@ impl FrameEncoder {
                 (stream_id_lf_base + lg) as u32,
                 &wp_params,
                 self.budget.as_ref(),
+                stop,
             )?;
             lf_group_tokens.push(tokens);
         }
@@ -2625,6 +2648,7 @@ impl FrameEncoder {
                 (stream_id_hf_base + g) as u32,
                 &wp_params,
                 self.budget.as_ref(),
+                stop,
             )?;
             pass_group_tokens.push(tokens);
         }
@@ -2670,7 +2694,13 @@ impl FrameEncoder {
             }
 
             // Write global channel tokens
-            write_tokens_ans(global_tokens, code, lz77_params, &mut lf_global_writer)?;
+            write_tokens_ans_stop(
+                global_tokens,
+                code,
+                lz77_params,
+                &mut lf_global_writer,
+                stop,
+            )?;
 
             lf_global_writer.zero_pad_to_byte();
             let lf_global_data = lf_global_writer.finish();
@@ -2697,7 +2727,7 @@ impl FrameEncoder {
                 super::encode::write_wp_header(&mut lg_writer, &wp_params)?;
                 lg_writer.write(2, 0)?; // nb_transforms = 0
 
-                write_tokens_ans(lg_tokens, code, lz77_params, &mut lg_writer)?;
+                write_tokens_ans_stop(lg_tokens, code, lz77_params, &mut lg_writer, stop)?;
 
                 lg_writer.zero_pad_to_byte();
                 let data = lg_writer.finish();
@@ -2734,7 +2764,7 @@ impl FrameEncoder {
                     super::encode::write_wp_header(&mut pg_writer, &wp_params)?;
                     pg_writer.write(2, 0)?; // nb_transforms = 0
 
-                    write_tokens_ans(pg_tokens, code, lz77_params, &mut pg_writer)?;
+                    write_tokens_ans_stop(pg_tokens, code, lz77_params, &mut pg_writer, stop)?;
 
                     pg_writer.zero_pad_to_byte();
                     let data = pg_writer.finish();
@@ -2794,6 +2824,7 @@ impl FrameEncoder {
                 total_pixels,
                 method: self.options.lz77_method,
                 budget: self.budget.as_ref(),
+                stop,
             }
             .select(|candidate| {
                 let sections = write_candidate(candidate)?;
@@ -2810,7 +2841,7 @@ impl FrameEncoder {
         let use_lz77 = self.options.enable_lz77;
         let lz77_method = self.options.lz77_method;
         let lz77_params = if use_lz77 {
-            use crate::entropy_coding::lz77::apply_lz77;
+            use crate::entropy_coding::lz77::apply_lz77_stop;
 
             let budget = self.budget.as_ref();
             let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Result<Vec<AnsToken>> {
@@ -2818,13 +2849,14 @@ impl FrameEncoder {
                     return Ok(tokens.to_vec());
                 }
                 Ok(
-                    match apply_lz77(
+                    match apply_lz77_stop(
                         tokens,
                         num_contexts,
                         false,
                         lz77_method,
                         dist_multiplier,
                         budget,
+                        stop,
                     )? {
                         Some((lz77_tokens, _)) => lz77_tokens,
                         None => tokens.to_vec(),
@@ -2894,13 +2926,14 @@ impl FrameEncoder {
         for pg_tokens in &pass_group_tokens {
             all_tokens.extend(pg_tokens);
         }
-        let code = build_entropy_code_ans_with_options(
+        let code = build_entropy_code_ans_with_options_stop(
             &all_tokens,
             ans_num_contexts,
             true, // enhanced clustering (pair-merge refinement)
             true, // optimize uint configs
             lz77_params.as_ref(),
             Some(total_pixels),
+            stop,
         );
 
         let lf_views: Vec<_> = lf_group_tokens.iter().map(Vec::as_slice).collect();
@@ -2927,6 +2960,7 @@ impl FrameEncoder {
         &self,
         image: &ModularImage,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
         let num_groups = self.num_groups();
 
@@ -2960,6 +2994,7 @@ impl FrameEncoder {
                     true, // palette detection ok
                     &self.options.modular_knobs,
                     self.budget.as_ref(),
+                    stop,
                 )?;
             } else if self.options.use_tree_learning && self.options.use_ans {
                 super::encode::write_modular_stream_with_tree_knobs(

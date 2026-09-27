@@ -198,14 +198,14 @@ fn test_pq_u16_to_linear_f32_uses_pq_eotf() {
     // 16-bit PQ value 65535 should give linear ≈1.0.
     let pixels_u16: Vec<u16> = vec![65535, 65535, 65535];
     let bytes: &[u8] = bytemuck::cast_slice(&pixels_u16);
-    let linear = pq_u16_to_linear_f32(bytes, 3, 65535.0);
+    let linear = pq_u16_to_linear_f32(bytes, 3, 65535.0, None);
     for v in &linear {
         assert!((v - 1.0).abs() < 1e-3, "PQ(1.0) should be ≈1.0; got {v}");
     }
     // 16-bit PQ value 0 should give 0.
     let pixels0: Vec<u16> = vec![0, 0, 0];
     let bytes0: &[u8] = bytemuck::cast_slice(&pixels0);
-    let linear0 = pq_u16_to_linear_f32(bytes0, 3, 65535.0);
+    let linear0 = pq_u16_to_linear_f32(bytes0, 3, 65535.0, None);
     for v in &linear0 {
         assert!(v.abs() < 1e-6, "PQ(0) should be 0; got {v}");
     }

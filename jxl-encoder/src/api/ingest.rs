@@ -57,7 +57,11 @@ pub(crate) fn srgb_to_linear(c: u8) -> f32 {
     SRGB_U8_TO_LINEAR[c as usize]
 }
 
-pub(crate) fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+pub(crate) fn srgb_u8_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let num_pixels = data.len() / channels;
     let mut out = vec![0.0f32; num_pixels * 3];
     let lut = &SRGB_U8_TO_LINEAR;
@@ -72,6 +76,12 @@ pub(crate) fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
             out.par_chunks_mut(3 * STRIP_PX)
                 .zip(data.par_chunks(channels * STRIP_PX))
                 .for_each(|(o, d)| {
+                    // Per-strip check: a fired stop leaves this strip's
+                    // pixels zeroed; encode_lossy propagates the error
+                    // before the buffer is consumed.
+                    if stop.is_some_and(|st| st.check().is_err()) {
+                        return;
+                    }
                     for (px, rgb) in d.chunks_exact(channels).zip(o.as_chunks_mut::<3>().0) {
                         rgb[0] = lut[px[0] as usize];
                         rgb[1] = lut[px[1] as usize];
@@ -82,7 +92,14 @@ pub(crate) fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
         }
     }
     // zip chunks to eliminate output bounds checks; u8 index into [f32; 256] is always in bounds
-    for (px, rgb) in data.chunks_exact(channels).zip(out.as_chunks_mut::<3>().0) {
+    for (i, (px, rgb)) in data
+        .chunks_exact(channels)
+        .zip(out.as_chunks_mut::<3>().0)
+        .enumerate()
+    {
+        if i & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+            return out;
+        }
         rgb[0] = lut[px[0] as usize];
         rgb[1] = lut[px[1] as usize];
         rgb[2] = lut[px[2] as usize];
@@ -146,14 +163,25 @@ fn srgb_u8_to_linear_libjxl(c: u8) -> f32 {
 /// `ResolvedImprovements::srgb_eotf_libjxl_parity`. Builds the 256-entry
 /// table per call — the encoder calls this once per frame, so a stack table
 /// is cheaper than a shared `OnceLock`.
-pub(crate) fn srgb_u8_to_linear_f32_libjxl(data: &[u8], channels: usize) -> Vec<f32> {
+pub(crate) fn srgb_u8_to_linear_f32_libjxl(
+    data: &[u8],
+    channels: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let num_pixels = data.len() / channels;
     let mut lut = [0.0f32; 256];
     for (i, e) in lut.iter_mut().enumerate() {
         *e = srgb_u8_to_linear_libjxl(i as u8);
     }
     let mut out = vec![0.0f32; num_pixels * 3];
-    for (px, rgb) in data.chunks_exact(channels).zip(out.as_chunks_mut::<3>().0) {
+    for (i, (px, rgb)) in data
+        .chunks_exact(channels)
+        .zip(out.as_chunks_mut::<3>().0)
+        .enumerate()
+    {
+        if i & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+            return out;
+        }
         rgb[0] = lut[px[0] as usize];
         rgb[1] = lut[px[1] as usize];
         rgb[2] = lut[px[2] as usize];
@@ -162,8 +190,19 @@ pub(crate) fn srgb_u8_to_linear_f32_libjxl(data: &[u8], channels: usize) -> Vec<
 }
 
 /// `gray_u8_to_linear_f32_rgb` variant under `srgb_eotf_libjxl_parity`.
-pub(crate) fn gray_u8_to_linear_f32_rgb_libjxl(data: &[u8], stride: usize) -> Vec<f32> {
+pub(crate) fn gray_u8_to_linear_f32_rgb_libjxl(
+    data: &[u8],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = srgb_u8_to_linear_libjxl(px[0]);
             [v, v, v]
@@ -230,9 +269,20 @@ pub(crate) fn apply_hlg_forward_ootf(rgb: &mut [f32], luminances: [f32; 3], gamm
     }
 }
 
-pub(crate) fn pq_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+pub(crate) fn pq_u8_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| pq_to_linear_f(i as f32 / 255.0));
     data.chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 lut[px[0] as usize],
@@ -244,9 +294,20 @@ pub(crate) fn pq_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 }
 
 /// HLG u8 → linear f32 RGB. 256-entry LUT.
-pub(crate) fn hlg_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+pub(crate) fn hlg_u8_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| hlg_to_linear_f(i as f32 / 255.0));
     data.chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 lut[px[0] as usize],
@@ -258,9 +319,20 @@ pub(crate) fn hlg_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 }
 
 /// BT.709 u8 → linear f32 RGB. 256-entry LUT.
-pub(crate) fn bt709_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+pub(crate) fn bt709_u8_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| bt709_to_linear_f(i as f32 / 255.0));
     data.chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 lut[px[0] as usize],
@@ -278,10 +350,22 @@ pub(crate) fn bt709_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 /// `intensity_target = 10_000` (libjxl `SetIntensityTarget` parity —
 /// issue #73); with any other intensity_target the decoder
 /// misinterprets the scale. Closes PQ portion of #17.
-pub(crate) fn pq_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
+pub(crate) fn pq_u16_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 pq_to_linear_f(px[0] as f32 / u16_max),
@@ -294,10 +378,22 @@ pub(crate) fn pq_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -
 
 /// BT.709 u16 → linear f32. Same shape as `pq_u16_to_linear_f32`.
 /// Closes BT.709 portion of #17.
-pub(crate) fn bt709_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
+pub(crate) fn bt709_u16_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 bt709_to_linear_f(px[0] as f32 / u16_max),
@@ -310,10 +406,22 @@ pub(crate) fn bt709_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32
 
 /// HLG u16 → linear scene-light f32. Same shape as
 /// `pq_u16_to_linear_f32`. Closes HLG portion of #17.
-pub(crate) fn hlg_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
+pub(crate) fn hlg_u16_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 hlg_to_linear_f(px[0] as f32 / u16_max),
@@ -330,10 +438,22 @@ pub(crate) fn hlg_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) 
 /// full 16-bit input (the default), or `(1 << bits) - 1` for narrower
 /// precision (e.g., 1023 for 10-bit, 4095 for 12-bit, 16383 for 14-bit).
 /// See `EncodeRequest::with_bits_per_sample`.
-pub(crate) fn srgb_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
+pub(crate) fn srgb_u16_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 srgb_to_linear_f(px[0] as f32 / u16_max),
@@ -430,12 +550,24 @@ pub(crate) fn hlg_to_linear_f(c: f32) -> f32 {
 }
 
 /// Gamma u8 → linear f32 RGB. `linear = (encoded/255)^(1/gamma)`
-pub(crate) fn gamma_u8_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32> {
+pub(crate) fn gamma_u8_to_linear_f32(
+    data: &[u8],
+    channels: usize,
+    gamma: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     // Build 256-entry LUT for u8 values (avoids per-pixel powf)
     let inv_gamma = 1.0 / gamma;
     let lut: [f32; 256] =
         core::array::from_fn(|i| jxl_simd::fast_powf(i as f32 / 255.0, inv_gamma));
     data.chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 lut[px[0] as usize],
@@ -452,11 +584,19 @@ pub(crate) fn gamma_u16_to_linear_f32(
     channels: usize,
     gamma: f32,
     u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
 ) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(channels)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 jxl_simd::fast_powf(px[0] as f32 / u16_max, inv_gamma),
@@ -489,11 +629,18 @@ pub(crate) fn gamma_u16_to_linear_f32(
 /// pipeline so the K plane round-trips losslessly — the CMY→RGB
 /// transform here is purely for perceptual quantisation of the
 /// colour content.
-pub(crate) fn cmyk_u8_to_linear_f32_rgb(cmy: &[u8], k: &[u8]) -> Vec<f32> {
+pub(crate) fn cmyk_u8_to_linear_f32_rgb(
+    cmy: &[u8],
+    k: &[u8],
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     debug_assert_eq!(cmy.len(), k.len() * 3);
     let inv = 1.0f32 / 255.0;
     let mut out = Vec::with_capacity(k.len() * 3);
-    for (px, &kv) in cmy.as_chunks::<3>().0.iter().zip(k.iter()) {
+    for (i, (px, &kv)) in cmy.as_chunks::<3>().0.iter().zip(k.iter()).enumerate() {
+        if i & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+            return out;
+        }
         let one_minus_k = 1.0 - (kv as f32) * inv;
         out.push((1.0 - (px[0] as f32) * inv) * one_minus_k);
         out.push((1.0 - (px[1] as f32) * inv) * one_minus_k);
@@ -505,12 +652,20 @@ pub(crate) fn cmyk_u8_to_linear_f32_rgb(cmy: &[u8], k: &[u8]) -> Vec<f32> {
 /// CMY u16 + K u16 → linear-light f32 RGB. Same 1-CMY × (1-K) model
 /// as the 8-bit variant; `u16_max` is the bit-depth normaliser (e.g.
 /// `65535.0` for full-precision 16-bit input).
-pub(crate) fn cmyk_u16_to_linear_f32_rgb(cmy: &[u8], k: &[u16], u16_max: f32) -> Vec<f32> {
+pub(crate) fn cmyk_u16_to_linear_f32_rgb(
+    cmy: &[u8],
+    k: &[u16],
+    u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let cmy_u16: &[u16] = &cast_pixel_lanes(cmy);
     debug_assert_eq!(cmy_u16.len(), k.len() * 3);
     let inv = 1.0f32 / u16_max;
     let mut out = Vec::with_capacity(k.len() * 3);
-    for (px, &kv) in cmy_u16.as_chunks::<3>().0.iter().zip(k.iter()) {
+    for (i, (px, &kv)) in cmy_u16.as_chunks::<3>().0.iter().zip(k.iter()).enumerate() {
+        if i & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+            return out;
+        }
         let one_minus_k = 1.0 - (kv as f32) * inv;
         out.push((1.0 - (px[0] as f32) * inv) * one_minus_k);
         out.push((1.0 - (px[1] as f32) * inv) * one_minus_k);
@@ -520,11 +675,23 @@ pub(crate) fn cmyk_u16_to_linear_f32_rgb(cmy: &[u8], k: &[u16], u16_max: f32) ->
 }
 
 /// Gamma u8 grayscale → linear f32 RGB (gray→R=G=B). `linear = (encoded/255)^(1/gamma)`
-pub(crate) fn gamma_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize, gamma: f32) -> Vec<f32> {
+pub(crate) fn gamma_gray_u8_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    gamma: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
     let lut: [f32; 256] =
         core::array::from_fn(|i| jxl_simd::fast_powf(i as f32 / 255.0, inv_gamma));
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = lut[px[0] as usize];
             [v, v, v]
@@ -538,11 +705,19 @@ pub(crate) fn gamma_gray_u16_to_linear_f32_rgb(
     stride: usize,
     gamma: f32,
     u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
 ) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = jxl_simd::fast_powf(px[0] as f32 / u16_max, inv_gamma);
             [v, v, v]
@@ -560,10 +735,18 @@ pub(crate) fn extract_alpha_u16(
     stride: usize,
     alpha_offset: usize,
     u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
 ) -> Vec<u8> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .map(|px| ((px[alpha_offset] as f32 / u16_max).clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
         .collect()
 }
@@ -604,29 +787,72 @@ pub(crate) fn compute_w44_91_zenanalyze_proxies(
 }
 
 /// Swap B and R channels in-place equivalent: BGR(A) → RGB(A).
-pub(crate) fn bgr_to_rgb(data: &[u8], stride: usize) -> Vec<u8> {
+pub(crate) fn bgr_to_rgb(data: &[u8], stride: usize, stop: Option<&dyn enough::Stop>) -> Vec<u8> {
     let mut out = data.to_vec();
-    for chunk in out.chunks_mut(stride) {
+    for (i, chunk) in out.chunks_mut(stride).enumerate() {
+        if i & 0x3_FFFF == 0 {
+            crate::error::check_stop(stop).ok();
+            if stop.is_some_and(|st| st.check().is_err()) {
+                return out;
+            }
+        }
         chunk.swap(0, 2);
     }
     out
 }
 
 /// Extract a single channel from interleaved pixel data.
-pub(crate) fn extract_alpha(data: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8> {
-    data.chunks(stride).map(|px| px[alpha_offset]).collect()
+pub(crate) fn extract_alpha(
+    data: &[u8],
+    stride: usize,
+    alpha_offset: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<u8> {
+    data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
+        .map(|px| px[alpha_offset])
+        .collect()
 }
 
 /// Extract alpha from interleaved f32 pixel data, converting to u8 (0..255).
-pub(crate) fn extract_alpha_f32(data: &[f32], stride: usize, alpha_offset: usize) -> Vec<u8> {
+pub(crate) fn extract_alpha_f32(
+    data: &[f32],
+    stride: usize,
+    alpha_offset: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<u8> {
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .map(|px| (px[alpha_offset].clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
         .collect()
 }
 
 /// Expand 8-bit sRGB grayscale to linear f32 RGB (gray→R=G=B).
-pub(crate) fn gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+pub(crate) fn gray_u8_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = srgb_to_linear(px[0]);
             [v, v, v]
@@ -635,10 +861,22 @@ pub(crate) fn gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> 
 }
 
 /// Expand 16-bit sRGB grayscale to linear f32 RGB (gray→R=G=B).
-pub(crate) fn gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
+pub(crate) fn gray_u16_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = srgb_to_linear_f(px[0] as f32 / u16_max);
             [v, v, v]
@@ -649,9 +887,20 @@ pub(crate) fn gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f3
 /// Expand u8 grayscale to linear f32 RGB via the PQ EOTF. Uses a
 /// 256-entry LUT to avoid per-pixel powf, mirroring the PQ u8 RGB
 /// helper. Closes Gray PQ portion of #17.
-pub(crate) fn pq_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+pub(crate) fn pq_gray_u8_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| pq_to_linear_f(i as f32 / 255.0));
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = lut[px[0] as usize];
             [v, v, v]
@@ -660,10 +909,22 @@ pub(crate) fn pq_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f3
 }
 
 /// Expand u16 grayscale to linear f32 RGB via the PQ EOTF.
-pub(crate) fn pq_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
+pub(crate) fn pq_gray_u16_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = pq_to_linear_f(px[0] as f32 / u16_max);
             [v, v, v]
@@ -672,9 +933,20 @@ pub(crate) fn pq_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max:
 }
 
 /// Expand u8 grayscale to linear f32 RGB via the HLG inverse OETF.
-pub(crate) fn hlg_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+pub(crate) fn hlg_gray_u8_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| hlg_to_linear_f(i as f32 / 255.0));
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = lut[px[0] as usize];
             [v, v, v]
@@ -683,10 +955,22 @@ pub(crate) fn hlg_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f
 }
 
 /// Expand u16 grayscale to linear f32 RGB via the HLG inverse OETF.
-pub(crate) fn hlg_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
+pub(crate) fn hlg_gray_u16_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = hlg_to_linear_f(px[0] as f32 / u16_max);
             [v, v, v]
@@ -695,9 +979,20 @@ pub(crate) fn hlg_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max
 }
 
 /// Expand u8 grayscale to linear f32 RGB via the BT.709 inverse OETF.
-pub(crate) fn bt709_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+pub(crate) fn bt709_gray_u8_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| bt709_to_linear_f(i as f32 / 255.0));
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = lut[px[0] as usize];
             [v, v, v]
@@ -710,10 +1005,18 @@ pub(crate) fn bt709_gray_u16_to_linear_f32_rgb(
     data: &[u8],
     stride: usize,
     u16_max: f32,
+    stop: Option<&dyn enough::Stop>,
 ) -> Vec<f32> {
     let pixels: &[u16] = &cast_pixel_lanes(data);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = bt709_to_linear_f(px[0] as f32 / u16_max);
             [v, v, v]
@@ -729,8 +1032,19 @@ pub(crate) fn bt709_gray_u16_to_linear_f32_rgb(
 /// A3 chunk 1b (issue #46). No LUT — input is already float, so the
 /// per-pixel `powf` cost is unavoidable. Use the u8/u16 helpers for
 /// quantized input.
-pub(crate) fn pq_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
+pub(crate) fn pq_f32_to_linear_f32_rgb(
+    data: &[f32],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 pq_to_linear_f(px[0]),
@@ -743,8 +1057,19 @@ pub(crate) fn pq_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> 
 
 /// HLG-encoded f32 → linear (scene-light) f32 RGB. See
 /// [`pq_f32_to_linear_f32_rgb`] for shape. A3 chunk 1b (issue #46).
-pub(crate) fn hlg_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
+pub(crate) fn hlg_f32_to_linear_f32_rgb(
+    data: &[f32],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 hlg_to_linear_f(px[0]),
@@ -757,8 +1082,19 @@ pub(crate) fn hlg_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32>
 
 /// BT.709-encoded f32 → linear f32 RGB. See
 /// [`pq_f32_to_linear_f32_rgb`] for shape. A3 chunk 1b (issue #46).
-pub(crate) fn bt709_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
+pub(crate) fn bt709_f32_to_linear_f32_rgb(
+    data: &[f32],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 bt709_to_linear_f(px[0]),
@@ -770,8 +1106,19 @@ pub(crate) fn bt709_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f3
 }
 
 /// Expand linear f32 grayscale to linear f32 RGB (gray→R=G=B).
-pub(crate) fn gray_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
+pub(crate) fn gray_f32_to_linear_f32_rgb(
+    data: &[f32],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     data.chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = px[0];
             [v, v, v]
@@ -786,11 +1133,22 @@ pub(crate) fn gray_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32
 /// Convert interleaved linear f16 RGB(A) bytes (`stride` channels per
 /// pixel) to interleaved linear f32 RGB (stride 3, alpha dropped).
 /// `bytes` must contain exactly `n_pixels * stride * 2` u16-bytes.
-pub(crate) fn f16_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
+pub(crate) fn f16_to_linear_f32_rgb(
+    bytes: &[u8],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     use crate::f16::f16_bits_to_f32;
     let pixels: &[u16] = &cast_pixel_lanes(bytes);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             [
                 f16_bits_to_f32(px[0]),
@@ -803,11 +1161,22 @@ pub(crate) fn f16_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
 
 /// Expand interleaved linear f16 grayscale (`stride=1` for gray-only,
 /// `stride=2` for gray+alpha) to interleaved linear f32 RGB.
-pub(crate) fn f16_gray_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
+pub(crate) fn f16_gray_to_linear_f32_rgb(
+    bytes: &[u8],
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<f32> {
     use crate::f16::f16_bits_to_f32;
     let pixels: &[u16] = &cast_pixel_lanes(bytes);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .flat_map(|px| {
             let v = f16_bits_to_f32(px[0]);
             [v, v, v]
@@ -1053,11 +1422,23 @@ pub(crate) fn unpremultiply_alpha_inplace(linear_rgb_interleaved: &mut [f32], al
 /// Extract alpha from interleaved f16 pixel data, converting to u8
 /// (0..255). Mirrors `extract_alpha_f32` but reads u16 bytes via f16
 /// conversion before clamping.
-pub(crate) fn extract_alpha_f16(bytes: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8> {
+pub(crate) fn extract_alpha_f16(
+    bytes: &[u8],
+    stride: usize,
+    alpha_offset: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<u8> {
     use crate::f16::f16_bits_to_f32;
     let pixels: &[u16] = &cast_pixel_lanes(bytes);
     pixels
         .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px)
+        })
         .map(|px| (f16_bits_to_f32(px[alpha_offset]).clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
         .collect()
 }

@@ -1347,8 +1347,10 @@ impl TreeSamples {
     /// energy proxies — use Lloyd-Max iterative clustering for bucket
     /// boundaries instead of sort-quantile picks. See
     /// [`lloyd_max_thresholds`].
+    #[allow(dead_code)] // public wrapper retained for API stability
     fn pre_quantize(&mut self, params: &TreeLearningParams) -> PreQuantizedProps {
-        self.pre_quantize_retaining(params, &[])
+        self.pre_quantize_retaining(params, &[], None)
+            .expect("stop-less pre_quantize cannot be cancelled")
     }
 
     /// [`Self::pre_quantize`] that RETAINS the raw columns named in
@@ -1363,7 +1365,8 @@ impl TreeSamples {
         &mut self,
         params: &TreeLearningParams,
         retain_raw: &[usize],
-    ) -> PreQuantizedProps {
+        stop: Option<&dyn enough::Stop>,
+    ) -> crate::error::Result<PreQuantizedProps> {
         let max_buckets = params.max_property_values;
         let n = self.num_samples;
         let total_props = self.total_num_properties();
@@ -1400,9 +1403,15 @@ impl TreeSamples {
         let mut per_prop: Vec<(Vec<i32>, Vec<u8>)> = Vec::with_capacity(params.properties.len());
         let mut wave_start = 0usize;
         while wave_start < params.properties.len() {
+            crate::error::check_stop(stop)?;
             let wave_end = (wave_start + PRE_QUANTIZE_WAVE).min(params.properties.len());
             let wave: Vec<(Vec<i32>, Vec<u8>)> =
                 crate::parallel::parallel_map(wave_end - wave_start, |k| {
+                    // Early bail on a fired stop token; the caller re-polls
+                    // and propagates `Error::Cancelled` after the wave.
+                    if crate::error::check_stop(stop).is_err() {
+                        return (Vec::new(), Vec::new());
+                    }
                     let i = wave_start + k;
                     let prop_idx = params.properties[i];
                     // Width-generic: an i16 column is quantized without
@@ -1413,12 +1422,14 @@ impl TreeSamples {
                             prop_idx,
                             max_buckets,
                             params.lloyd_max_buckets,
+                            stop,
                         ),
                         PropColumn::I32(v) => quantize_prop_column(
                             &v[..n],
                             prop_idx,
                             max_buckets,
                             params.lloyd_max_buckets,
+                            stop,
                         ),
                     }
                 });
@@ -1444,10 +1455,10 @@ impl TreeSamples {
             bucket_indices[prop_idx] = bi;
         }
 
-        PreQuantizedProps {
+        Ok(PreQuantizedProps {
             threshold_sets,
             bucket_indices,
-        }
+        })
     }
 }
 
@@ -1500,7 +1511,8 @@ impl TreeSamples {
 pub(crate) fn thresholds_from_samples(
     probe: &TreeSamples,
     params: &TreeLearningParams,
-) -> GatherBucketizePlan {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<GatherBucketizePlan> {
     let n = probe.num_samples;
     let mut sets = vec![Vec::new(); probe.total_num_properties()];
     let mut keep_raw = vec![false; probe.total_num_properties()];
@@ -1515,6 +1527,7 @@ pub(crate) fn thresholds_from_samples(
                     prop_idx,
                     params.max_property_values,
                     params.lloyd_max_buckets,
+                    stop,
                 )
                 .0
             }
@@ -1524,6 +1537,7 @@ pub(crate) fn thresholds_from_samples(
                     prop_idx,
                     params.max_property_values,
                     params.lloyd_max_buckets,
+                    stop,
                 )
                 .0
             }
@@ -1538,12 +1552,13 @@ pub(crate) fn thresholds_from_samples(
         // quantized from the full population at learn time). Smooth
         // (budget-filling) distributions bucketize safely.
         keep_raw[prop_idx] = ts.len() + 1 < params.max_property_values;
+        crate::error::check_stop(stop)?;
         sets[prop_idx] = ts;
     }
-    GatherBucketizePlan {
+    Ok(GatherBucketizePlan {
         threshold_sets: sets,
         keep_raw,
-    }
+    })
 }
 
 /// Probe-derived plan for gather-time bucketization: per-property
@@ -1570,6 +1585,7 @@ pub(crate) struct GatherBucketizePlan {
 /// Excluded (fall back to raw gather): Lloyd-Max properties when the
 /// expert flag is on (Lloyd reads raw values, not distincts), and the
 /// gather-dedup expert path (thresholds there run over post-dedup rows).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn exact_bucketize_plan(
     meta_image: Option<&super::channel::ModularImage>,
     images: &[super::channel::ModularImage],
@@ -1578,7 +1594,8 @@ pub(crate) fn exact_bucketize_plan(
     wp_params: &super::predictor::WeightedPredictorParams,
     params: &TreeLearningParams,
     num_ref_channels: usize,
-) -> GatherBucketizePlan {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<GatherBucketizePlan> {
     let total_props = NUM_PROPERTIES + 4 * num_ref_channels;
     let mut active = vec![false; total_props];
     let mut needs_ref = false;
@@ -1597,7 +1614,8 @@ pub(crate) fn exact_bucketize_plan(
         .collect();
     let walk_image = |image: &super::channel::ModularImage,
                       group_id: u32,
-                      collectors: &mut [DistinctPropertyValues]| {
+                      collectors: &mut [DistinctPropertyValues]|
+     -> crate::error::Result<()> {
         for (ch_idx, channel) in image.channels.iter().enumerate() {
             let width = channel.width();
             let height = channel.height();
@@ -1612,6 +1630,7 @@ pub(crate) fn exact_bucketize_plan(
             let mut wp_state = WeightedPredictorState::new(wp_params, width);
             let mut subsample_counter: usize = 0;
             for y in 0..height {
+                crate::error::check_stop(stop)?;
                 let mut prev_gradient: i32 = 0;
                 for x in 0..width {
                     let pixel = channel.get(x, y);
@@ -1699,9 +1718,10 @@ pub(crate) fn exact_bucketize_plan(
                 }
             }
         }
+        Ok(())
     };
     if let Some(meta) = meta_image {
-        walk_image(meta, 0, &mut collectors);
+        walk_image(meta, 0, &mut collectors)?;
     }
     // Per-image collectors walk in PARALLEL (each image owns its own
     // collector set; the walk only reads the image) and merge in image
@@ -1709,15 +1729,17 @@ pub(crate) fn exact_bucketize_plan(
     // merged thresholds are identical to the sequential walk's. This was
     // a full sequential per-pixel WP re-walk per group image (~a second
     // gather) and a measured slice of the e9 gather+prequant wall.
-    let per_image: Vec<Vec<DistinctPropertyValues>> =
+    let per_image: Vec<crate::error::Result<Vec<DistinctPropertyValues>>> =
         crate::parallel::parallel_map(images.len(), |gi| {
             let mut local: Vec<DistinctPropertyValues> = (0..total_props)
                 .map(|_| DistinctPropertyValues::default())
                 .collect();
-            walk_image(&images[gi], gi as u32 + per_group_id_offset, &mut local);
-            local
+            walk_image(&images[gi], gi as u32 + per_group_id_offset, &mut local).map(|()| local)
         });
-    for local in &per_image {
+    for local in per_image
+        .into_iter()
+        .collect::<crate::error::Result<Vec<_>>>()?
+    {
         for (main, l) in collectors.iter_mut().zip(local.iter()) {
             main.merge(l);
         }
@@ -1736,10 +1758,10 @@ pub(crate) fn exact_bucketize_plan(
             .thresholds(params.max_property_values)
             .unwrap_or_default();
     }
-    GatherBucketizePlan {
+    Ok(GatherBucketizePlan {
         threshold_sets: sets,
         keep_raw,
-    }
+    })
 }
 
 /// Bucketize one raw property column against a threshold set — the same
@@ -1869,13 +1891,19 @@ fn quantize_prop_column<T: PropScalar>(
     prop_idx: usize,
     max_buckets: usize,
     lloyd_max_buckets: bool,
+    stop: Option<&dyn enough::Stop>,
 ) -> (Vec<i32>, Vec<u8>) {
     let n = props.len();
 
     // Find min/max across ALL samples
     let mut min_val = i32::MAX;
     let mut max_val = i32::MIN;
-    for &v in props {
+    for (i, &v) in props.iter().enumerate() {
+        // Cooperative cancellation: O(n) scans below — strided poll keeps a
+        // single property's quantize under the latency bound.
+        if i & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+            return (Vec::new(), Vec::new());
+        }
         let v = v.to_i32();
         if v < min_val {
             min_val = v;
@@ -1904,13 +1932,16 @@ fn quantize_prop_column<T: PropScalar>(
     // signed gradient differences ~symmetric around zero), so
     // Lloyd-Max would only add cost without compression payoff.
     if lloyd_max_buckets && (prop_idx == 4 || prop_idx == 5 || prop_idx == 15) {
-        let ts = lloyd_max_thresholds(props, min_val, max_val, max_buckets);
+        let ts = lloyd_max_thresholds(props, min_val, max_val, max_buckets, stop);
         if ts.is_empty() {
             return (Vec::new(), vec![0u8; n]);
         }
         let num_thresholds = ts.len();
         let mut bi = vec![0u8; n];
-        for (bi_val, &v) in bi.iter_mut().zip(props.iter()) {
+        for (i, (bi_val, &v)) in bi.iter_mut().zip(props.iter()).enumerate() {
+            if i & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                return (Vec::new(), Vec::new());
+            }
             let bucket = match ts.binary_search(&v.to_i32()) {
                 Ok(pos) => pos,
                 Err(pos) => pos,
@@ -1927,7 +1958,10 @@ fn quantize_prop_column<T: PropScalar>(
     if range <= (max_buckets * 4) as i64 {
         let range_usize = range as usize;
         let mut present = vec![false; range_usize];
-        for &v in props {
+        for (i, &v) in props.iter().enumerate() {
+            if i & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                return (Vec::new(), Vec::new());
+            }
             present[(v.to_i32() - min_val) as usize] = true;
         }
         let unique_vals: Vec<i32> = present
@@ -1956,7 +1990,10 @@ fn quantize_prop_column<T: PropScalar>(
         // `distinct_value_collector_matches_full_column_thresholds`
         // and by the real-data assertion below.
         let mut collector = DistinctPropertyValues::default();
-        for &v in props {
+        for (i, &v) in props.iter().enumerate() {
+            if i & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                return (Vec::new(), Vec::new());
+            }
             collector.push(v.to_i32());
         }
         let sample_vals = collector.into_sorted_distinct();
@@ -1979,7 +2016,10 @@ fn quantize_prop_column<T: PropScalar>(
     #[cfg(debug_assertions)]
     {
         let mut collector = DistinctPropertyValues::default();
-        for &v in props {
+        for (i, &v) in props.iter().enumerate() {
+            if i & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                return (Vec::new(), Vec::new());
+            }
             collector.push(v.to_i32());
         }
         let streamed = collector.thresholds(max_buckets);
@@ -1991,7 +2031,7 @@ fn quantize_prop_column<T: PropScalar>(
         );
     }
 
-    let bi = bucketize_with_thresholds(props, &ts);
+    let bi = bucketize_with_thresholds_stop(props, &ts, stop);
     (ts, bi)
 }
 
@@ -2000,13 +2040,18 @@ fn lloyd_max_thresholds<T: PropScalar>(
     min_val: i32,
     max_val: i32,
     max_buckets: usize,
+    stop: Option<&dyn enough::Stop>,
 ) -> Vec<i32> {
     // Build empirical histogram. Range fits in (max_val - min_val + 1)
     // buckets; for the energy properties this is typically <= 4096 entries
     // (8-bit |N| / |W|) or <= 2*wp_max_error range (~512 entries).
     let range = (max_val as i64 - min_val as i64 + 1) as usize;
     let mut hist = vec![0u32; range];
-    for &v in samples {
+    for (i, &v) in samples.iter().enumerate() {
+        // Cooperative cancellation: O(n) histogram build.
+        if i & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+            return Vec::new();
+        }
         hist[(v.to_i32() - min_val) as usize] += 1;
     }
 
@@ -2304,6 +2349,7 @@ pub fn gather_samples(samples: &mut TreeSamples, image: &ModularImage, group_id:
 ///
 /// When `stride > 1`, only every `stride`-th pixel in scan order is sampled.
 /// Use `compute_gather_stride_from_profile` to determine the appropriate stride.
+#[allow(dead_code)] // public wrapper retained for API stability
 pub fn gather_samples_strided(
     samples: &mut TreeSamples,
     image: &ModularImage,
@@ -2323,6 +2369,7 @@ pub fn gather_samples_strided(
         stride,
         wp_params,
         None,
+        None,
     )
     .expect("budget-less gather_samples_strided must not return AllocationLimit")
 }
@@ -2336,6 +2383,7 @@ pub fn gather_samples_strided(
 /// updates per-pixel regardless, so prediction quality is unaffected.
 ///
 /// Has no effect when `stride <= 1` (every pixel is sampled).
+#[allow(dead_code)] // public wrapper retained for API stability
 pub fn gather_samples_strided_with_offset(
     samples: &mut TreeSamples,
     image: &ModularImage,
@@ -2356,8 +2404,37 @@ pub fn gather_samples_strided_with_offset(
         None,
         None,
         None,
+        None,
     )
     .expect("budget-less gather_samples_strided_with_offset must not return AllocationLimit")
+}
+
+/// [`gather_samples_strided_with_offset`] with cancellation polling.
+/// No-op / byte-identical under `None`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gather_samples_strided_with_offset_stop(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+    stride: usize,
+    start_offset: usize,
+    wp_params: &WeightedPredictorParams,
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<()> {
+    gather_samples_strided_with_budget_inner_backend(
+        samples,
+        image,
+        group_id,
+        channel_offset,
+        stride,
+        start_offset,
+        wp_params,
+        None,
+        None,
+        None,
+        stop,
+    )
 }
 
 /// `gather_samples_strided` with explicit allocation budget.
@@ -2365,6 +2442,7 @@ pub fn gather_samples_strided_with_offset(
 /// Per-channel `WeightedPredictorState` scratch (`(width + 2) * 2` errors
 /// plus same length × 4 sub-predictor errors) is reserved against the
 /// cap. `budget = None` is zero-overhead.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn gather_samples_strided_with_budget(
     samples: &mut TreeSamples,
     image: &ModularImage,
@@ -2373,6 +2451,7 @@ pub(crate) fn gather_samples_strided_with_budget(
     stride: usize,
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<()> {
     gather_samples_strided_with_budget_inner(
         samples,
@@ -2383,6 +2462,7 @@ pub(crate) fn gather_samples_strided_with_budget(
         wp_params,
         budget,
         None,
+        stop,
     )
 }
 
@@ -2420,6 +2500,7 @@ pub(crate) fn gather_samples_strided_with_dedup(
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     enable_gather_dedup: bool,
     dedup_properties: &[usize],
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<()> {
     gather_samples_strided_with_dedup_backend(
         samples,
@@ -2432,6 +2513,7 @@ pub(crate) fn gather_samples_strided_with_dedup(
         enable_gather_dedup,
         false,
         dedup_properties,
+        stop,
     )
 }
 
@@ -2462,6 +2544,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
     enable_gather_dedup: bool,
     enable_phase3: bool,
     dedup_properties: &[usize],
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<()> {
     if !enable_gather_dedup {
         return gather_samples_strided_with_budget_inner(
@@ -2473,6 +2556,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
             wp_params,
             budget,
             None,
+            stop,
         );
     }
     // Upper-bound estimate of gathered samples for this image: sum of
@@ -2518,6 +2602,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
                 properties: &hashed_props,
             }),
             None,
+            stop,
         )
     } else {
         let mut table = if dedup_properties.is_empty() {
@@ -2536,6 +2621,7 @@ pub(crate) fn gather_samples_strided_with_dedup_backend(
             budget,
             Some(GatherDedupBackend::Phase2(&mut table)),
             None,
+            stop,
         )
     }
 }
@@ -2617,6 +2703,7 @@ pub(crate) fn gather_samples_strided_with_budget_inner(
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     dedup_table: Option<&mut GatherDedupTable>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<()> {
     gather_samples_strided_with_budget_inner_backend(
         samples,
@@ -2629,6 +2716,7 @@ pub(crate) fn gather_samples_strided_with_budget_inner(
         budget,
         dedup_table.map(GatherDedupBackend::Phase2),
         None,
+        stop,
     )
 }
 
@@ -2653,6 +2741,7 @@ fn gather_samples_strided_with_budget_inner_backend(
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     mut dedup_backend: Option<GatherDedupBackend<'_>>,
     mut wp_cache: Option<&mut WpCache>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<()> {
     // Upper-bound gathered-sample count: ceil(w*h / stride) per channel
     // (dedup backends merge some pushes away — over-reserve is fine).
@@ -2695,6 +2784,7 @@ fn gather_samples_strided_with_budget_inner_backend(
                 }
             }),
             wp_cache.as_mut().map(|c| c.channel_fill_mut(ch_idx)),
+            stop,
         )?;
     }
     report_tree_sample_stats(samples, stride, est);
@@ -2706,6 +2796,7 @@ fn gather_samples_strided_with_budget_inner_backend(
 /// over the same image (see [`WpCache`]). Gathered samples are
 /// byte-identical to the plain variant — recording observes the walk, it
 /// never alters it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn gather_samples_strided_filling_wp_cache(
     samples: &mut TreeSamples,
     image: &ModularImage,
@@ -2714,7 +2805,8 @@ pub(crate) fn gather_samples_strided_filling_wp_cache(
     stride: usize,
     wp_params: &WeightedPredictorParams,
     cache: &mut WpCache,
-) {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<()> {
     cache.ensure_channels(image.channels.len());
     gather_samples_strided_with_budget_inner_backend(
         samples,
@@ -2727,8 +2819,8 @@ pub(crate) fn gather_samples_strided_filling_wp_cache(
         None,
         None,
         Some(cache),
+        stop,
     )
-    .expect("budget-less gather_samples_strided_filling_wp_cache must not return AllocationLimit")
 }
 
 /// `JXL_TREE_SAMPLES_STATS=1` — print the gathered `TreeSamples` heap
@@ -2794,10 +2886,21 @@ enum ThresholdStep {
 /// Byte-identical to the loop it replaces, including the `Err(0) => 0` edge
 /// (values below every threshold) and the `.min(num_thresholds)` clamp that
 /// keeps the index inside the bucket alphabet.
-fn bucketize_with_thresholds<T: PropScalar>(values: &[T], ts: &[i32]) -> Vec<u8> {
+///
+/// Early exit
+/// returns the partially-filled vector — callers re-check `stop` and
+/// propagate `Error::Cancelled` before it is consumed.
+fn bucketize_with_thresholds_stop<T: PropScalar>(
+    values: &[T],
+    ts: &[i32],
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<u8> {
     let num_thresholds = ts.len();
     let mut bi = vec![0u8; values.len()];
-    for (bi_val, &v) in bi.iter_mut().zip(values.iter()) {
+    for (i, (bi_val, &v)) in bi.iter_mut().zip(values.iter()).enumerate() {
+        if i & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+            return bi;
+        }
         let bucket = match ts.binary_search(&v.to_i32()) {
             Ok(pos) => pos,
             Err(pos) => {
@@ -3199,6 +3302,7 @@ fn gather_channel_samples(
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     dedup_backend: Option<GatherDedupBackend<'_>>,
     mut wp_cache_ch: Option<(&mut Vec<i64>, &mut Vec<i32>)>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<()> {
     let width = channel.width();
     let height = channel.height();
@@ -3276,6 +3380,9 @@ fn gather_channel_samples(
     debug_assert!(4 * max_refs <= MAX_REF_PROPS);
 
     for y in 0..height {
+        // Cooperative cancellation: one poll per row bounds the gather
+        // phase to roughly a row's work (~tens of µs at photo widths).
+        crate::error::check_stop(stop)?;
         prev_gradient = 0;
         for x in 0..width {
             let pixel = channel.get(x, y);
@@ -4241,7 +4348,8 @@ fn dedup_samples(
     samples: &mut TreeSamples,
     pq: &mut PreQuantizedProps,
     params: &TreeLearningParams,
-) {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<()> {
     if params.skip_dedup {
         // Byte-identical no-op path (see TreeLearningParams::skip_dedup):
         // rows stay unmerged with weight 1 each. Preserve gather-time
@@ -4250,12 +4358,12 @@ fn dedup_samples(
         if samples.sample_counts.len() != n {
             samples.sample_counts = vec![1; n];
         }
-        return;
+        return Ok(());
     }
     if params.use_streaming_dedup {
-        dedup_samples_streaming(samples, pq, params);
+        dedup_samples_streaming(samples, pq, params, stop)
     } else {
-        dedup_samples_packed_sort(samples, pq, params);
+        dedup_samples_packed_sort(samples, pq, params, stop)
     }
 }
 
@@ -4320,9 +4428,14 @@ fn packed_sort_walk_full<const W: usize>(
     properties: &[usize],
     num_pred: usize,
     preexisting_counts: Option<&[u32]>,
-) -> (Vec<u32>, Vec<u32>) {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<(Vec<u32>, Vec<u32>)> {
     let n = samples.num_samples;
     let keys: Vec<[u64; W]> = crate::parallel::parallel_map(n, |sample_idx| {
+        // Poll on a 64K-sample stride inside the parallel key pack.
+        if sample_idx & 0xFFFF == 0 && crate::error::check_stop(stop).is_err() {
+            return [0u64; W];
+        }
         let mut kb = [0u8; DEDUP_KEY_BYTES];
         let mut off = 0;
         for &prop_idx in properties {
@@ -4356,13 +4469,19 @@ fn packed_sort_walk_full<const W: usize>(
         order.sort_unstable_by(|&a, &b| cmp_packed_key_words(&keys[a as usize], &keys[b as usize]));
     }
 
+    crate::error::check_stop(stop)?;
     let mut unique_indices: Vec<u32> = Vec::with_capacity(n);
     let mut counts: Vec<u32> = Vec::with_capacity(n);
     let first = order[0];
     unique_indices.push(first);
     counts.push(preexisting_counts.map(|c| c[first as usize]).unwrap_or(1));
     let mut prev_key_idx = first as usize;
+    let mut walked = 0usize;
     for &curr_idx in &order[1..] {
+        walked += 1;
+        if walked & 0xFFFFF == 0 && crate::error::check_stop(stop).is_err() {
+            return Err(crate::error::Error::Cancelled);
+        }
         let curr = curr_idx as usize;
         let weight = preexisting_counts.map(|c| c[curr]).unwrap_or(1);
         if cmp_packed_key_words(&keys[curr], &keys[prev_key_idx]) == core::cmp::Ordering::Equal {
@@ -4373,7 +4492,7 @@ fn packed_sort_walk_full<const W: usize>(
             prev_key_idx = curr;
         }
     }
-    (unique_indices, counts)
+    Ok((unique_indices, counts))
 }
 
 /// One stable counting-sort level of the dedup partition refinement:
@@ -4387,7 +4506,8 @@ fn refine_scatter_level(
     seg: &[u32],
     temp: &mut [u32],
     byte_of: impl Fn(u32) -> u8 + Sync,
-) -> [u32; 257] {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<[u32; 257]> {
     let m = seg.len();
     debug_assert_eq!(temp.len(), m);
 
@@ -4454,6 +4574,9 @@ fn refine_scatter_level(
                 .collect();
             use rayon::prelude::*;
             tasks.into_par_iter().for_each(|mut t| {
+                if crate::error::check_stop(stop).is_err() {
+                    return;
+                }
                 let mut fill = [0usize; 256];
                 for &i in &seg[t.lo..t.hi] {
                     let b = byte_of(i) as usize;
@@ -4461,24 +4584,31 @@ fn refine_scatter_level(
                     fill[b] += 1;
                 }
             });
-            return cnt;
+            crate::error::check_stop(stop)?;
+            return Ok(cnt);
         }
     }
 
     let mut cnt = [0u32; 257];
-    for &i in seg.iter() {
+    for (k, &i) in seg.iter().enumerate() {
+        if k & 0xFFFFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         cnt[byte_of(i) as usize + 1] += 1;
     }
     for b in 0..256 {
         cnt[b + 1] += cnt[b];
     }
     let mut cur = cnt;
-    for &i in seg.iter() {
+    for (k, &i) in seg.iter().enumerate() {
+        if k & 0xFFFFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         let b = byte_of(i) as usize;
         temp[cur[b] as usize] = i;
         cur[b] += 1;
     }
-    cnt
+    Ok(cnt)
 }
 
 fn packed_sort_walk<const W: usize>(
@@ -4487,7 +4617,8 @@ fn packed_sort_walk<const W: usize>(
     properties: &[usize],
     num_pred: usize,
     preexisting_counts: Option<&[u32]>,
-) -> (Vec<u32>, Vec<u32>) {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<(Vec<u32>, Vec<u32>)> {
     let n = samples.num_samples;
 
     // Key byte `d` for `sample_idx` — exactly the byte the packed-key
@@ -4544,6 +4675,9 @@ fn packed_sort_walk<const W: usize>(
     // screen (2026-08-15, refinement + all-equal shortcut).
     let mut part_counts = vec![0u32; 65537];
     for i in 0..n {
+        if i & 0xFFFFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         let pk = ((key_byte(0, i) as usize) << 8) | key_byte(1, i) as usize;
         part_counts[pk + 1] += 1;
     }
@@ -4554,6 +4688,9 @@ fn packed_sort_walk<const W: usize>(
     let mut cursor = starts.clone();
     let mut part: Vec<u32> = vec![0u32; n];
     for i in 0..n {
+        if i & 0xFFFFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         let pk = ((key_byte(0, i) as usize) << 8) | key_byte(1, i) as usize;
         part[cursor[pk] as usize] = i as u32;
         cursor[pk] += 1;
@@ -4594,6 +4731,7 @@ fn packed_sort_walk<const W: usize>(
             }
             stack.push((s0, s1, 2));
             while let Some((s, e, depth)) = stack.pop() {
+                crate::error::check_stop(stop)?;
                 let m = (e - s) as usize;
                 if m <= cap {
                     parts_final.push((s, e, false));
@@ -4607,8 +4745,12 @@ fn packed_sort_walk<const W: usize>(
                 let seg = &mut part[s as usize..e as usize];
                 temp.clear();
                 temp.resize(m, 0);
-                let cnt =
-                    refine_scatter_level(seg, &mut temp, |i| key_byte(depth as usize, i as usize));
+                let cnt = refine_scatter_level(
+                    seg,
+                    &mut temp,
+                    |i| key_byte(depth as usize, i as usize),
+                    stop,
+                )?;
                 seg.copy_from_slice(&temp);
                 for b in (0..256).rev() {
                     let (cs, ce) = (s + cnt[b], s + cnt[b + 1]);
@@ -4645,6 +4787,9 @@ fn packed_sort_walk<const W: usize>(
 
     let per_chunk_out: Vec<(Vec<u32>, Vec<u32>)> =
         crate::parallel::parallel_map(chunk_bounds.len(), |ci| {
+            if crate::error::check_stop(stop).is_err() {
+                return (Vec::new(), Vec::new());
+            }
             let (pi_lo, pi_hi) = chunk_bounds[ci];
             let chunk_samples: usize = parts_final[pi_lo..pi_hi]
                 .iter()
@@ -4659,6 +4804,10 @@ fn packed_sort_walk<const W: usize>(
             let mut keys: Vec<[u64; W]> = Vec::new();
             let mut loc: Vec<u32> = Vec::new();
             for &(s0, s1, all_equal) in &parts_final[pi_lo..pi_hi] {
+                // Per-partition poll inside the parallel chunk work.
+                if crate::error::check_stop(stop).is_err() {
+                    return (Vec::new(), Vec::new());
+                }
                 let (s0, s1) = (s0 as usize, s1 as usize);
                 let m = s1 - s0;
                 if m == 0 {
@@ -4736,6 +4885,7 @@ fn packed_sort_walk<const W: usize>(
         });
 
     drop(part);
+    crate::error::check_stop(stop)?;
     let total_unique: usize = per_chunk_out.iter().map(|(u, _)| u.len()).sum();
     let mut unique_indices: Vec<u32> = Vec::with_capacity(total_unique);
     let mut counts: Vec<u32> = Vec::with_capacity(total_unique);
@@ -4743,14 +4893,15 @@ fn packed_sort_walk<const W: usize>(
         unique_indices.extend_from_slice(&u);
         counts.extend_from_slice(&c);
     }
-    (unique_indices, counts)
+    Ok((unique_indices, counts))
 }
 
 fn dedup_samples_packed_sort(
     samples: &mut TreeSamples,
     pq: &mut PreQuantizedProps,
     params: &TreeLearningParams,
-) {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<()> {
     let n = samples.num_samples;
     if n <= 1 {
         // Preserve a pre-populated `sample_counts` (Phase 2 gather-time
@@ -4758,7 +4909,7 @@ fn dedup_samples_packed_sort(
         if samples.sample_counts.len() != n {
             samples.sample_counts = vec![1; n];
         }
-        return;
+        return Ok(());
     }
     // If the upstream gather already produced sample_counts (Phase 2 of
     // issue #41), use those as the initial multiplicity instead of the
@@ -4807,27 +4958,28 @@ fn dedup_samples_packed_sort(
     let words = key_len.div_ceil(8).max(1);
     let pc = preexisting_counts.as_deref();
     let props_retained = samples.props.iter().any(|c| !c.is_empty());
+    crate::error::check_stop(stop)?;
     let (unique_indices, counts) = if props_retained {
         match words {
-            1 => packed_sort_walk_full::<1>(samples, pq, properties, num_pred, pc),
-            2 => packed_sort_walk_full::<2>(samples, pq, properties, num_pred, pc),
-            3 => packed_sort_walk_full::<3>(samples, pq, properties, num_pred, pc),
-            4 => packed_sort_walk_full::<4>(samples, pq, properties, num_pred, pc),
-            5 => packed_sort_walk_full::<5>(samples, pq, properties, num_pred, pc),
-            6 => packed_sort_walk_full::<6>(samples, pq, properties, num_pred, pc),
-            7 => packed_sort_walk_full::<7>(samples, pq, properties, num_pred, pc),
-            _ => packed_sort_walk_full::<8>(samples, pq, properties, num_pred, pc),
+            1 => packed_sort_walk_full::<1>(samples, pq, properties, num_pred, pc, stop)?,
+            2 => packed_sort_walk_full::<2>(samples, pq, properties, num_pred, pc, stop)?,
+            3 => packed_sort_walk_full::<3>(samples, pq, properties, num_pred, pc, stop)?,
+            4 => packed_sort_walk_full::<4>(samples, pq, properties, num_pred, pc, stop)?,
+            5 => packed_sort_walk_full::<5>(samples, pq, properties, num_pred, pc, stop)?,
+            6 => packed_sort_walk_full::<6>(samples, pq, properties, num_pred, pc, stop)?,
+            7 => packed_sort_walk_full::<7>(samples, pq, properties, num_pred, pc, stop)?,
+            _ => packed_sort_walk_full::<8>(samples, pq, properties, num_pred, pc, stop)?,
         }
     } else {
         match words {
-            1 => packed_sort_walk::<1>(samples, pq, properties, num_pred, pc),
-            2 => packed_sort_walk::<2>(samples, pq, properties, num_pred, pc),
-            3 => packed_sort_walk::<3>(samples, pq, properties, num_pred, pc),
-            4 => packed_sort_walk::<4>(samples, pq, properties, num_pred, pc),
-            5 => packed_sort_walk::<5>(samples, pq, properties, num_pred, pc),
-            6 => packed_sort_walk::<6>(samples, pq, properties, num_pred, pc),
-            7 => packed_sort_walk::<7>(samples, pq, properties, num_pred, pc),
-            _ => packed_sort_walk::<8>(samples, pq, properties, num_pred, pc),
+            1 => packed_sort_walk::<1>(samples, pq, properties, num_pred, pc, stop)?,
+            2 => packed_sort_walk::<2>(samples, pq, properties, num_pred, pc, stop)?,
+            3 => packed_sort_walk::<3>(samples, pq, properties, num_pred, pc, stop)?,
+            4 => packed_sort_walk::<4>(samples, pq, properties, num_pred, pc, stop)?,
+            5 => packed_sort_walk::<5>(samples, pq, properties, num_pred, pc, stop)?,
+            6 => packed_sort_walk::<6>(samples, pq, properties, num_pred, pc, stop)?,
+            7 => packed_sort_walk::<7>(samples, pq, properties, num_pred, pc, stop)?,
+            _ => packed_sort_walk::<8>(samples, pq, properties, num_pred, pc, stop)?,
         }
     };
     drop(preexisting_counts);
@@ -4854,6 +5006,11 @@ fn dedup_samples_packed_sort(
     while start < num_pred {
         let end = (start + DEDUP_COMPACT_WAVE).min(num_pred);
         let new_per_pred: Vec<Vec<u8>> = crate::parallel::parallel_map(end - start, |k| {
+            // Early-exit to empty column; the wave-boundary `check_stop`
+            // below propagates `Error::Cancelled` before use.
+            if stop.is_some_and(|st| st.check().is_err()) {
+                return Vec::new();
+            }
             let pred = start + k;
             let old_tokens = &samples.residual_tokens[pred];
             unique_indices
@@ -4864,6 +5021,7 @@ fn dedup_samples_packed_sort(
         for (k, new_tokens) in new_per_pred.into_iter().enumerate() {
             samples.residual_tokens[start + k] = new_tokens; // old dropped here
         }
+        crate::error::check_stop(stop)?;
         start = end;
     }
 
@@ -4894,6 +5052,9 @@ fn dedup_samples_packed_sort(
     while start < total_props {
         let end = (start + DEDUP_COMPACT_WAVE).min(total_props);
         let new_props: Vec<PropColumn> = crate::parallel::parallel_map(end - start, |k| {
+            if stop.is_some_and(|st| st.check().is_err()) {
+                return PropColumn::default();
+            }
             let old_props = &samples.props[start + k];
             if old_props.is_empty() {
                 PropColumn::default()
@@ -4906,6 +5067,7 @@ fn dedup_samples_packed_sort(
                 samples.props[start + k] = np; // old column dropped here
             }
         }
+        crate::error::check_stop(stop)?;
         start = end;
     }
 
@@ -4914,6 +5076,9 @@ fn dedup_samples_packed_sort(
     while start < bi_total {
         let end = (start + DEDUP_COMPACT_WAVE).min(bi_total);
         let new_bi: Vec<Vec<u8>> = crate::parallel::parallel_map(end - start, |k| {
+            if stop.is_some_and(|st| st.check().is_err()) {
+                return Vec::new();
+            }
             let old_bi = &pq.bucket_indices[start + k];
             if old_bi.is_empty() {
                 Vec::new()
@@ -4926,11 +5091,13 @@ fn dedup_samples_packed_sort(
                 pq.bucket_indices[start + k] = nb;
             }
         }
+        crate::error::check_stop(stop)?;
         start = end;
     }
 
     samples.num_samples = num_unique;
     samples.sample_counts = counts;
+    Ok(())
 }
 
 /// Opt-in dedup backend: streaming two-hash cuckoo open addressing.
@@ -4959,13 +5126,14 @@ fn dedup_samples_streaming(
     samples: &mut TreeSamples,
     pq: &mut PreQuantizedProps,
     params: &TreeLearningParams,
-) {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<()> {
     let n = samples.num_samples;
     if n <= 1 {
         if samples.sample_counts.len() != n {
             samples.sample_counts = vec![1; n];
         }
-        return;
+        return Ok(());
     }
     // Mirror the sort path: respect any pre-existing sample_counts so
     // gather-time dedup composes cleanly with the streaming backend too.
@@ -5012,6 +5180,9 @@ fn dedup_samples_streaming(
     // Streaming dedup: walk samples in scan order, hash composite key,
     // either bump count or push a new unique entry.
     for sample_idx in 0..n {
+        if sample_idx & 0x3FFFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         let key = pack_sample_key(sample_idx, properties, pq, samples, num_pred);
         let next_idx = unique_indices.len() as u32;
         let weight = preexisting_counts
@@ -5067,6 +5238,7 @@ fn dedup_samples_streaming(
 
     samples.num_samples = num_unique;
     samples.sample_counts = counts;
+    Ok(())
 }
 
 /// Context for a node being considered for splitting.
@@ -5104,7 +5276,7 @@ struct SplitCandidate {
 /// - `params.split_threshold`: minimum bits saved for a split to be accepted
 /// - `params.max_nodes`: maximum tree nodes
 pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams) -> Tree {
-    compute_best_tree_with_budget(samples, params, None)
+    compute_best_tree_with_budget(samples, params, None, None)
         .expect("budget-less compute_best_tree must not return AllocationLimit")
 }
 
@@ -5127,6 +5299,7 @@ pub(crate) fn compute_best_tree_with_budget(
     samples: &mut TreeSamples,
     params: &TreeLearningParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<Tree> {
     let n = samples.num_samples;
     if n == 0 {
@@ -5150,8 +5323,10 @@ pub(crate) fn compute_best_tree_with_budget(
     crate::budget::MemoryBudget::reserve_permanent_opt(budget, total_bytes)?;
 
     // Pre-quantize all properties globally (replaces per-node binary_search)
-    let pq = crate::profile_time!("tree/pre_quantize", { samples.pre_quantize(params) });
-    build_tree_from_prequantized(samples, params, pq, budget)
+    let pq = crate::profile_time!("tree/pre_quantize", {
+        samples.pre_quantize_retaining(params, &[], stop)
+    })?;
+    build_tree_from_prequantized(samples, params, pq, budget, stop)
 }
 
 /// [`compute_best_tree`] for a caller that ALREADY holds bucketized
@@ -5163,7 +5338,8 @@ pub(crate) fn compute_best_tree_prequantized(
     samples: &mut TreeSamples,
     params: &TreeLearningParams,
     mut pq: PreQuantizedProps,
-) -> Tree {
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<Tree> {
     // Keep-raw columns (discrete distributions the probe could not
     // faithfully quantize) arrive raw: pre-quantize them here from the
     // FULL population — exactly what pre_quantize would do — and free
@@ -5182,20 +5358,21 @@ pub(crate) fn compute_best_tree_prequantized(
                 prop_idx,
                 params.max_property_values,
                 params.lloyd_max_buckets,
+                stop,
             ),
             PropColumn::I32(v) => quantize_prop_column(
                 &v[..n],
                 prop_idx,
                 params.max_property_values,
                 params.lloyd_max_buckets,
+                stop,
             ),
         };
         pq.threshold_sets[prop_idx] = ts;
         pq.bucket_indices[prop_idx] = bi;
         samples.props[prop_idx] = PropColumn::default();
     }
-    build_tree_from_prequantized(samples, params, pq, None)
-        .expect("budget-less compute_best_tree_prequantized must not return AllocationLimit")
+    build_tree_from_prequantized(samples, params, pq, None, stop)
 }
 
 /// Shared tail of [`compute_best_tree_with_budget`]: everything after
@@ -5205,6 +5382,7 @@ fn build_tree_from_prequantized(
     params: &TreeLearningParams,
     mut pq: PreQuantizedProps,
     _budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<Tree> {
     #[cfg(feature = "std")]
     if std::env::var_os("JXL_PQ_HASH").is_some() {
@@ -5300,8 +5478,8 @@ fn build_tree_from_prequantized(
     #[cfg(feature = "__env_var_diagnostics")]
     let _bt_t0 = crate::clock::Instant::now();
     crate::profile_time!("tree/dedup_samples", {
-        dedup_samples(samples, &mut pq, params);
-    });
+        dedup_samples(samples, &mut pq, params, stop)
+    })?;
 
     let _pg_setup = crate::profile_phases::PhaseGuard::new("tree/z_setup_hist_layout");
     let n = samples.num_samples; // Update n to unique count
@@ -5327,8 +5505,9 @@ fn build_tree_from_prequantized(
     // Start with root node
     #[cfg(feature = "__env_var_diagnostics")]
     let _bt_t_dedup = crate::clock::Instant::now();
+    crate::error::check_stop(stop)?;
     let root_predictor = crate::profile_time!("tree/find_best_predictor", {
-        find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts)
+        find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts, stop)
     });
     let root_bits = crate::profile_time!("tree/compute_predictor_entropy", {
         compute_predictor_entropy(
@@ -5338,6 +5517,7 @@ fn build_tree_from_prequantized(
             root_predictor,
             histogram_size,
             &mut entropy_counts,
+            stop,
         )
     });
 
@@ -5465,6 +5645,7 @@ fn build_tree_from_prequantized(
                             Some(t) => TensorMode::Capture(&tensor_layout, t),
                             None => TensorMode::Off,
                         },
+                        stop,
                     )
                 },
             );
@@ -5487,6 +5668,7 @@ fn build_tree_from_prequantized(
                             val: bucket_split as u8,
                         },
                         true,
+                        stop,
                     );
 
                     // Per-side base bits at the winning threshold, carried
@@ -5523,6 +5705,7 @@ fn build_tree_from_prequantized(
                             lb,
                             rb,
                             threshold,
+                            stop,
                         ),
                         None => (None, None),
                     };
@@ -5611,6 +5794,7 @@ fn build_tree_from_prequantized(
                                     left_predictor,
                                     lb,
                                     max_parallel_depth,
+                                    stop,
                                 )
                             },
                             || {
@@ -5624,6 +5808,7 @@ fn build_tree_from_prequantized(
                                     right_predictor,
                                     rb,
                                     max_parallel_depth,
+                                    stop,
                                 )
                             },
                         )
@@ -5664,6 +5849,7 @@ fn build_tree_from_prequantized(
                                     fork_depth,
                                     &tensor_layout,
                                     left_tensor,
+                                    stop,
                                 )
                             },
                             || {
@@ -5678,6 +5864,7 @@ fn build_tree_from_prequantized(
                                     fork_depth,
                                     &tensor_layout,
                                     right_tensor,
+                                    stop,
                                 )
                             },
                         )
@@ -5738,6 +5925,9 @@ fn build_tree_from_prequantized(
 
     let _pg_grow = crate::profile_phases::PhaseGuard::new("tree/z_grow_loop");
     while let Some(mut candidate) = stack.pop() {
+        // Cooperative cancellation: one poll per node bounds the grow loop
+        // to a single `find_best_split` sweep (each prop scan also polls).
+        crate::error::check_stop(stop)?;
         if tree.len() + 2 > max_nodes {
             finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             continue;
@@ -5796,6 +5986,7 @@ fn build_tree_from_prequantized(
                             (None, Some(t)) => TensorMode::Capture(&tensor_layout, t),
                             (None, None) => TensorMode::Off,
                         },
+                        stop,
                     )
                 },
             )
@@ -5820,6 +6011,7 @@ fn build_tree_from_prequantized(
                             val: bucket_split as u8,
                         },
                         true,
+                        stop,
                     )
                 });
 
@@ -5875,6 +6067,7 @@ fn build_tree_from_prequantized(
                         left_bits,
                         right_bits,
                         threshold,
+                        stop,
                     ),
                     None => (None, None),
                 };
@@ -6037,6 +6230,7 @@ fn build_subtree_sequential(
     histogram_size: usize,
     seed_predictor: usize,
     seed_base_bits: f64,
+    stop: Option<&dyn enough::Stop>,
 ) -> Tree {
     let n = samples.num_samples;
     let max_buckets = params.max_property_values + 1;
@@ -6062,6 +6256,9 @@ fn build_subtree_sequential(
     });
 
     while let Some(candidate) = stack.pop() {
+        if crate::error::check_stop(stop).is_err() {
+            return tree;
+        }
         if tree.len() + 2 > max_nodes_budget {
             finalize_leaf(&mut tree, &candidate, &samples.candidate_predictors);
             continue;
@@ -6098,6 +6295,7 @@ fn build_subtree_sequential(
                     pq,
                     workspace,
                     TensorMode::Off,
+                    stop,
                 )
             },
         );
@@ -6352,12 +6550,16 @@ fn build_subtree_recursive_parallel(
     seed_predictor: usize,
     seed_base_bits: f64,
     parallel_budget: u32,
+    stop: Option<&dyn enough::Stop>,
 ) -> Tree {
     let n = samples.num_samples;
 
     // Recursion floor: small subtrees go through the simpler iterative
     // sequential path with no further parallel forks.
-    if parallel_budget == 0 || n < params.parallel_recursion_floor {
+    if parallel_budget == 0
+        || n < params.parallel_recursion_floor
+        || crate::error::check_stop(stop).is_err()
+    {
         return build_subtree_sequential(
             &mut samples,
             &mut pq,
@@ -6367,6 +6569,7 @@ fn build_subtree_recursive_parallel(
             histogram_size,
             seed_predictor,
             seed_base_bits,
+            stop,
         );
     }
 
@@ -6415,6 +6618,7 @@ fn build_subtree_recursive_parallel(
                 &pq,
                 workspace,
                 TensorMode::Off,
+                stop,
             )
         },
     ) {
@@ -6507,6 +6711,7 @@ fn build_subtree_recursive_parallel(
                     left_predictor,
                     left_bits,
                     next_parallel_budget,
+                    stop,
                 )
             },
             || {
@@ -6520,6 +6725,7 @@ fn build_subtree_recursive_parallel(
                     right_predictor,
                     right_bits,
                     next_parallel_budget,
+                    stop,
                 )
             },
         )
@@ -6535,6 +6741,7 @@ fn build_subtree_recursive_parallel(
             left_predictor,
             left_bits,
             next_parallel_budget,
+            stop,
         );
         let r = build_subtree_recursive_parallel(
             right_samples,
@@ -6546,6 +6753,7 @@ fn build_subtree_recursive_parallel(
             right_predictor,
             right_bits,
             next_parallel_budget,
+            stop,
         );
         (l, r)
     };
@@ -6843,6 +7051,7 @@ struct PropEvalShared<'a, 'b> {
     base_bits: f64,
     tensor_in: Option<(&'a TensorLayout, &'a NodeTensor)>,
     capture_on: bool,
+    stop: Option<&'a dyn enough::Stop>,
 }
 
 /// Capture-mode aggregates one property evaluation produced, copied into
@@ -6929,6 +7138,7 @@ fn eval_split_prop_borrowed(
         base_bits,
         tensor_in,
         capture_on,
+        stop,
     } = *sh;
     let mut out = PropOutcome {
         prop_pos,
@@ -7061,6 +7271,11 @@ fn eval_split_prop_borrowed(
     best_r_pred[..local_num_thresholds].fill(0);
 
     for pred in 0..num_pred {
+        // Cooperative cancellation: one poll per predictor bounds the
+        // (pred x thresholds x estimate_bits) sweep — see find_best_split.
+        if crate::error::check_stop(stop).is_err() {
+            return out;
+        }
         let mut penalty: f64 = 0.0;
         if pred != parent_predictor && parent_predictor != weighted_idx {
             penalty = change_pred_penalty;
@@ -7327,6 +7542,7 @@ fn find_best_split_borrowed(
     threshold: f64,
     ws: &mut SplitWorkspace,
     tensor_mode: TensorMode<'_>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Option<BestSplit> {
     let count = end - start;
     if count < 2 {
@@ -7440,6 +7656,7 @@ fn find_best_split_borrowed(
         base_bits,
         tensor_in,
         capture_on: capture.is_some(),
+        stop,
     };
 
     #[cfg(feature = "parallel")]
@@ -7527,6 +7744,9 @@ fn find_best_split_borrowed(
                 .map(|(pos, &idx)| (pos, idx))
                 .collect();
             for wave in props.chunks(FBS_PROP_WAVE) {
+                if crate::error::check_stop(stop).is_err() {
+                    return best;
+                }
                 let outcomes: alloc::vec::Vec<PropOutcome> =
                     crate::parallel::parallel_map(wave.len(), |i| {
                         let (prop_pos, prop_idx) = wave[i];
@@ -7556,6 +7776,9 @@ fn find_best_split_borrowed(
         }
     } else {
         for (prop_pos, &prop_idx) in params.properties[..num_props].iter().enumerate() {
+            if crate::error::check_stop(stop).is_err() {
+                return best;
+            }
             let o = eval_split_prop_borrowed(&shared, prop_pos, prop_idx, ws);
             apply_outcome(
                 o,
@@ -7619,6 +7842,7 @@ fn debug_verify_carried_side_bits_borrowed(
             split.left_predictor,
             histogram_size,
             counts_buf,
+            None,
         );
         let rb = compute_predictor_entropy_borrowed(
             samples,
@@ -7627,6 +7851,7 @@ fn debug_verify_carried_side_bits_borrowed(
             split.right_predictor,
             histogram_size,
             counts_buf,
+            None,
         );
         assert_eq!(
             split.left_bits.to_bits(),
@@ -7650,6 +7875,7 @@ fn compute_predictor_entropy_borrowed(
     predictor_idx: usize,
     histogram_size: usize,
     counts_buf: &mut [u32],
+    stop: Option<&dyn enough::Stop>,
 ) -> f64 {
     let tokens = &samples.residual_tokens[predictor_idx][start..end];
     let sample_counts = &samples.sample_counts[start..end];
@@ -7657,7 +7883,12 @@ fn compute_predictor_entropy_borrowed(
     let mut total = 0u32;
     let mut tot_extra: u64 = 0;
 
+    let mut iters = 0usize;
     for (&tok, &count) in tokens.iter().zip(sample_counts.iter()) {
+        iters += 1;
+        if iters & 0xFFFF == 0 && crate::error::check_stop(stop).is_err() {
+            break;
+        }
         let eb = gather_token_ebits(tok);
         let tok = tok as usize;
         if tok < histogram_size {
@@ -7683,12 +7914,16 @@ fn find_best_predictor_borrowed(
     end: usize,
     histogram_size: usize,
     counts_buf: &mut [u32],
+    stop: Option<&dyn enough::Stop>,
 ) -> usize {
     let num_pred = samples.num_predictors();
     let mut best_pred = 0;
     let mut best_bits = f64::MAX;
 
     for pred_idx in 0..num_pred {
+        if crate::error::check_stop(stop).is_err() {
+            return best_pred;
+        }
         let bits = compute_predictor_entropy_borrowed(
             samples,
             start,
@@ -7696,6 +7931,7 @@ fn find_best_predictor_borrowed(
             pred_idx,
             histogram_size,
             counts_buf,
+            stop,
         );
         if bits < best_bits {
             best_bits = bits;
@@ -7986,6 +8222,7 @@ fn build_subtree_sequential_borrowed(
     seed_base_bits: f64,
     tensor_layout: &TensorLayout,
     root_tensor: Option<NodeTensor>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Tree {
     let n = samples.len;
     let max_buckets = params.max_property_values + 1;
@@ -8006,6 +8243,9 @@ fn build_subtree_sequential_borrowed(
     });
 
     while let Some(mut candidate) = stack.pop() {
+        if crate::error::check_stop(stop).is_err() {
+            return tree;
+        }
         if tree.len() + 2 > max_nodes_budget {
             finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
@@ -8052,6 +8292,7 @@ fn build_subtree_sequential_borrowed(
                             (None, Some(t)) => TensorMode::Capture(tensor_layout, t),
                             (None, None) => TensorMode::Off,
                         },
+                        stop,
                     )
                 },
             )
@@ -8119,6 +8360,7 @@ fn build_subtree_sequential_borrowed(
                             lb,
                             rb,
                             threshold,
+                            stop,
                         )
                     }),
                     None => (None, None),
@@ -8172,10 +8414,14 @@ fn build_subtree_recursive_parallel_borrowed(
     parallel_budget: u32,
     tensor_layout: &TensorLayout,
     tensor: Option<NodeTensor>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Tree {
     let n = samples.len;
 
-    if parallel_budget == 0 || n < params.parallel_recursion_floor {
+    if parallel_budget == 0
+        || n < params.parallel_recursion_floor
+        || crate::error::check_stop(stop).is_err()
+    {
         return build_subtree_sequential_borrowed(
             &mut samples,
             params,
@@ -8186,6 +8432,7 @@ fn build_subtree_recursive_parallel_borrowed(
             seed_base_bits,
             tensor_layout,
             tensor,
+            stop,
         );
     }
 
@@ -8240,6 +8487,7 @@ fn build_subtree_recursive_parallel_borrowed(
                         (None, Some(t)) => TensorMode::Capture(tensor_layout, t),
                         (None, None) => TensorMode::Off,
                     },
+                    stop,
                 )
             },
         )
@@ -8312,6 +8560,7 @@ fn build_subtree_recursive_parallel_borrowed(
                 left_bits,
                 right_bits,
                 threshold,
+                stop,
             )
         }),
         None => (None, None),
@@ -8349,6 +8598,7 @@ fn build_subtree_recursive_parallel_borrowed(
                     next_parallel_budget,
                     tensor_layout,
                     left_tensor,
+                    stop,
                 )
             },
             || {
@@ -8363,6 +8613,7 @@ fn build_subtree_recursive_parallel_borrowed(
                     next_parallel_budget,
                     tensor_layout,
                     right_tensor,
+                    stop,
                 )
             },
         )
@@ -8378,6 +8629,7 @@ fn build_subtree_recursive_parallel_borrowed(
             next_parallel_budget,
             tensor_layout,
             left_tensor,
+            stop,
         );
         let r = build_subtree_recursive_parallel_borrowed(
             right_samples,
@@ -8390,6 +8642,7 @@ fn build_subtree_recursive_parallel_borrowed(
             next_parallel_budget,
             tensor_layout,
             right_tensor,
+            stop,
         );
         (l, r)
     };
@@ -8421,32 +8674,46 @@ fn build_subtree_recursive_parallel_borrowed(
 ///
 /// This produces a tree where each leaf's multiplier matches the channel's quantizer,
 /// which is required for the `residual / multiplier` division to be exact.
+#[allow(dead_code)] // public wrapper retained for API stability
 pub fn compute_best_tree_with_multipliers(
     samples: &mut TreeSamples,
     params: &TreeLearningParams,
     multiplier_info: &[super::quantize::ModularMultiplierInfo],
     initial_range: [[u32; 2]; 2],
 ) -> Tree {
+    compute_best_tree_with_multipliers_stop(samples, params, multiplier_info, initial_range, None)
+        .expect("stop-less compute_best_tree_with_multipliers cannot be Cancelled")
+}
+
+/// [`compute_best_tree_with_multipliers`] with cancellation polling.
+/// No-op / byte-identical under `None`.
+pub(crate) fn compute_best_tree_with_multipliers_stop(
+    samples: &mut TreeSamples,
+    params: &TreeLearningParams,
+    multiplier_info: &[super::quantize::ModularMultiplierInfo],
+    initial_range: [[u32; 2]; 2],
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<Tree> {
     use super::quantize::{IntersectionType, box_intersects};
 
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
     let threshold = params.split_threshold * required_cost;
     let n = samples.num_samples;
     if n == 0 {
-        return vec![PropertyDecisionNode {
+        return Ok(vec![PropertyDecisionNode {
             property: -1,
             predictor: Predictor::Zero,
             context_id: 0,
             multiplier: 1,
             ..Default::default()
-        }];
+        }]);
     }
 
     // Retain the static axes' RAW columns: the forced-split scan below
     // reads props[0]/props[1] after pre-quantization (see
     // pre_quantize_retaining — freeing them was a shipped panic).
-    let mut pq = samples.pre_quantize_retaining(params, &[0, 1]);
-    dedup_samples(samples, &mut pq, params);
+    let mut pq = samples.pre_quantize_retaining(params, &[0, 1], stop)?;
+    dedup_samples(samples, &mut pq, params, stop)?;
     let n = samples.num_samples;
 
     let max_nodes = params.max_nodes;
@@ -8463,7 +8730,8 @@ pub fn compute_best_tree_with_multipliers(
     let mut tree: Tree = Vec::new();
     let mut entropy_counts = vec![0u32; histogram_size];
 
-    let root_predictor = find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts);
+    let root_predictor =
+        find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts, None);
     let root_bits = compute_predictor_entropy(
         samples,
         0,
@@ -8471,6 +8739,7 @@ pub fn compute_best_tree_with_multipliers(
         root_predictor,
         histogram_size,
         &mut entropy_counts,
+        None,
     );
 
     struct SplitCandidateWithRange {
@@ -8607,6 +8876,7 @@ pub fn compute_best_tree_with_multipliers(
                     abs_mid,
                     histogram_size,
                     &mut entropy_counts,
+                    None,
                 )
             } else {
                 candidate.best_predictor
@@ -8618,6 +8888,7 @@ pub fn compute_best_tree_with_multipliers(
                     candidate.end,
                     histogram_size,
                     &mut entropy_counts,
+                    None,
                 )
             } else {
                 candidate.best_predictor
@@ -8631,6 +8902,7 @@ pub fn compute_best_tree_with_multipliers(
                     left_predictor,
                     histogram_size,
                     &mut entropy_counts,
+                    None,
                 )
             } else {
                 0.0
@@ -8643,6 +8915,7 @@ pub fn compute_best_tree_with_multipliers(
                     right_predictor,
                     histogram_size,
                     &mut entropy_counts,
+                    None,
                 )
             } else {
                 0.0
@@ -8715,6 +8988,7 @@ pub fn compute_best_tree_with_multipliers(
                     // forced-split structure rarely produces tensor-sized
                     // nodes; out of PERF-HIST-SUB-LOSSLESS scope).
                     TensorMode::Off,
+                    stop,
                 )
             },
         );
@@ -8842,7 +9116,7 @@ pub fn compute_best_tree_with_multipliers(
         multiplier_info.len(),
     );
 
-    tree
+    Ok(tree)
 }
 
 /// Padded histogram size for `count_increase`: power-of-2 stride above the
@@ -9161,6 +9435,7 @@ fn build_node_tensor(
     start: usize,
     end: usize,
     out: &mut NodeTensor,
+    stop: Option<&dyn enough::Stop>,
 ) {
     let count = end - start;
     let num_pred = samples.num_predictors();
@@ -9178,6 +9453,11 @@ fn build_node_tensor(
             let bucket_starts = ws.bucket_starts.as_mut_slice();
             let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
             for (prop_pos, &prop_idx) in params.properties.iter().enumerate() {
+                // Cooperative cancellation: O(props x preds x node-samples)
+                // — a root-scale build can take hundreds of ms.
+                if crate::error::check_stop(stop).is_err() {
+                    return;
+                }
                 let entry = &layout.prop_entries[prop_pos];
                 debug_assert_eq!(entry.prop_idx, prop_idx);
                 let nb = entry.num_buckets;
@@ -9192,6 +9472,9 @@ fn build_node_tensor(
                     let uni = &mut out.unique[entry.bucket_base..entry.bucket_base + nb];
                     let wei = &mut out.weighted[entry.bucket_base..entry.bucket_base + nb];
                     for (offset, &b) in pq_buckets.iter().enumerate() {
+                        if offset & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                            return;
+                        }
                         uni[b as usize] += 1;
                         wei[b as usize] += sample_counts[offset];
                     }
@@ -9202,11 +9485,17 @@ fn build_node_tensor(
                 }
                 bucket_write_pos[..nb].copy_from_slice(&bucket_starts[..nb]);
                 for (offset, &b) in pq_buckets.iter().enumerate() {
+                    if offset & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                        return;
+                    }
                     sorted_by_bucket[bucket_write_pos[b as usize]] = offset as u32;
                     bucket_write_pos[b as usize] += 1;
                 }
 
                 for pred in 0..num_pred {
+                    if crate::error::check_stop(stop).is_err() {
+                        return;
+                    }
                     let tokens = &samples.residual_tokens[pred][start..end];
                     for b in 0..nb {
                         let bs = bucket_starts[b];
@@ -9257,6 +9546,7 @@ fn build_node_tensor_borrowed(
     start: usize,
     end: usize,
     out: &mut NodeTensor,
+    stop: Option<&dyn enough::Stop>,
 ) {
     let count = end - start;
     let num_pred = samples.num_predictors();
@@ -9285,6 +9575,7 @@ fn build_node_tensor_borrowed(
             start,
             end,
             out,
+            stop,
         );
         return;
     }
@@ -9298,6 +9589,9 @@ fn build_node_tensor_borrowed(
             let bucket_starts = ws.bucket_starts.as_mut_slice();
             let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
             for (prop_pos, &prop_idx) in params.properties.iter().enumerate() {
+                if crate::error::check_stop(stop).is_err() {
+                    return;
+                }
                 let entry = &layout.prop_entries[prop_pos];
                 debug_assert_eq!(entry.prop_idx, prop_idx);
                 let nb = entry.num_buckets;
@@ -9310,6 +9604,9 @@ fn build_node_tensor_borrowed(
                     let uni = &mut out.unique[entry.bucket_base..entry.bucket_base + nb];
                     let wei = &mut out.weighted[entry.bucket_base..entry.bucket_base + nb];
                     for (offset, &b) in pq_buckets.iter().enumerate() {
+                        if offset & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                            return;
+                        }
                         uni[b as usize] += 1;
                         wei[b as usize] += sample_counts[offset];
                     }
@@ -9320,11 +9617,17 @@ fn build_node_tensor_borrowed(
                 }
                 bucket_write_pos[..nb].copy_from_slice(&bucket_starts[..nb]);
                 for (offset, &b) in pq_buckets.iter().enumerate() {
+                    if offset & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                        return;
+                    }
                     sorted_by_bucket[bucket_write_pos[b as usize]] = offset as u32;
                     bucket_write_pos[b as usize] += 1;
                 }
 
                 for pred in 0..num_pred {
+                    if crate::error::check_stop(stop).is_err() {
+                        return;
+                    }
                     let tokens = &samples.residual_tokens[pred][start..end];
                     for b in 0..nb {
                         let bs = bucket_starts[b];
@@ -9379,6 +9682,7 @@ fn build_node_tensor_borrowed_parallel(
     start: usize,
     end: usize,
     out: &mut NodeTensor,
+    stop: Option<&dyn enough::Stop>,
 ) {
     let count = end - start;
     let num_pred = samples.num_predictors();
@@ -9425,6 +9729,12 @@ fn build_node_tensor_borrowed_parallel(
     let ws_pool: std::sync::Mutex<Vec<SplitWorkspace>> = std::sync::Mutex::new(Vec::new());
     let work = |(prop_pos, po): &mut (usize, PropOut)| {
         let prop_pos = *prop_pos;
+        // Cooperative cancellation: bailing mid-part leaves that prop's
+        // tensor region partially written, but the caller's next check_stop
+        // propagates before the tensor is consumed.
+        if crate::error::check_stop(stop).is_err() {
+            return;
+        }
         let entry = &layout.prop_entries[prop_pos];
         let prop_idx = entry.prop_idx;
         let nb = entry.num_buckets;
@@ -9453,6 +9763,9 @@ fn build_node_tensor_borrowed_parallel(
         }
 
         for pred in 0..num_pred {
+            if crate::error::check_stop(stop).is_err() {
+                return;
+            }
             let tokens = &samples.residual_tokens[pred][start..end];
             for b in 0..nb {
                 let bs = bucket_starts[b];
@@ -9566,6 +9879,7 @@ fn derive_child_tensors(
     left_bits: f64,
     right_bits: f64,
     threshold: f64,
+    stop: Option<&dyn enough::Stop>,
 ) -> (Option<NodeTensor>, Option<NodeTensor>) {
     let Some((smaller_is_left, s_start, s_end)) = tensor_split_plan(
         layout,
@@ -9589,6 +9903,7 @@ fn derive_child_tensors(
         s_start,
         s_end,
         &mut small,
+        stop,
     );
     let mut large = parent;
     large.subtract_in_place(&small);
@@ -9616,6 +9931,7 @@ fn derive_child_tensors_borrowed(
     left_bits: f64,
     right_bits: f64,
     threshold: f64,
+    stop: Option<&dyn enough::Stop>,
 ) -> (Option<NodeTensor>, Option<NodeTensor>) {
     let Some((smaller_is_left, s_start, s_end)) = tensor_split_plan(
         layout,
@@ -9638,6 +9954,7 @@ fn derive_child_tensors_borrowed(
         s_start,
         s_end,
         &mut small,
+        stop,
     );
     let mut large = parent;
     large.subtract_in_place(&small);
@@ -9933,6 +10250,7 @@ fn find_best_split(
     pq: &PreQuantizedProps,
     ws: &mut SplitWorkspace,
     tensor_mode: TensorMode<'_>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Option<BestSplit> {
     let count = end - start;
     if count < 2 {
@@ -10050,6 +10368,12 @@ fn find_best_split(
     };
 
     for (prop_pos, &prop_idx) in params.properties[..num_props].iter().enumerate() {
+        // Cooperative cancellation: one poll per property sweep. On a fired
+        // token we return the best split found so far; the caller's loop-top
+        // check propagates `Error::Cancelled` before it is consumed.
+        if crate::error::check_stop(stop).is_err() {
+            return best;
+        }
         let num_thresholds = pq.num_thresholds(prop_idx);
         if num_thresholds == 0 {
             continue;
@@ -10135,6 +10459,9 @@ fn find_best_split(
             let mut unique_per_bucket = [0u32; 256];
             bucket_counts[..local_num_buckets].fill(0); // weighted counts for sweep
             for (offset, &b) in pq_buckets.iter().enumerate() {
+                if offset & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                    return best;
+                }
                 let local_b = (b as usize) - bmin;
                 unique_per_bucket[local_b] += 1;
                 bucket_counts[local_b] += sample_counts[offset];
@@ -10148,6 +10475,9 @@ fn find_best_split(
             bucket_write_pos[..local_num_buckets]
                 .copy_from_slice(&bucket_starts[..local_num_buckets]);
             for (offset, &b) in pq_buckets.iter().enumerate() {
+                if offset & 0xF_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+                    return best;
+                }
                 let local_b = (b as usize) - bmin;
                 // Store RELATIVE offset; downstream loops add `start` when
                 // indexing the parent SoA arrays.
@@ -10176,6 +10506,12 @@ fn find_best_split(
         best_r_pred[..local_num_thresholds].fill(0);
 
         for pred in 0..num_pred {
+            // Cooperative cancellation: the (num_pred × thresholds ×
+            // estimate_bits) sweep below is the dominant per-node cost —
+            // poll per predictor so a single split stays <50ms.
+            if crate::error::check_stop(stop).is_err() {
+                return best;
+            }
             // Predictor change penalty: applied when choosing best predictor per side,
             // but NOT included in the final split decision (matching libjxl enc_ma.cc:375-390).
             // This biases predictor selection toward keeping the parent's predictor
@@ -10218,6 +10554,13 @@ fn find_best_split(
                 extra_bits_increase[..local_num_buckets].fill(0);
 
                 for local_bucket in 0..local_num_buckets {
+                    // Cooperative cancellation: this counting-sort pass is
+                    // O(node samples) per (property, predictor) — a root
+                    // node's full sweep can exceed 50ms, so poll every 16
+                    // buckets (~1/16 of a full node scan).
+                    if local_bucket & 0xF == 0 && crate::error::check_stop(stop).is_err() {
+                        return best;
+                    }
                     let bs = bucket_starts[local_bucket];
                     let be = bucket_starts[local_bucket + 1];
                     let ci_base = local_bucket * HISTO_PADDED;
@@ -10316,6 +10659,9 @@ fn find_best_split(
             // Cost computed via estimate_bits (with 1/4096 probability floor),
             // matching libjxl's EstimateBits used for both parent and child costs.
             for local_k in 0..local_num_thresholds {
+                if local_k & 0x3F == 0x3F && crate::error::check_stop(stop).is_err() {
+                    return best;
+                }
                 let bc = bucket_counts[local_k];
                 if bc == 0 {
                     continue;
@@ -10480,6 +10826,7 @@ fn find_best_predictor(
     end: usize,
     histogram_size: usize,
     counts_buf: &mut [u32],
+    stop: Option<&dyn enough::Stop>,
 ) -> usize {
     let num_pred = samples.num_predictors();
     let range = end - start;
@@ -10503,6 +10850,9 @@ fn find_best_predictor(
         let mut best_pred = 0;
         let mut best_bits = f64::MAX;
         for pred_idx in 0..num_pred {
+            if crate::error::check_stop(stop).is_err() {
+                return best_pred;
+            }
             let lb = predictor_extra_bits_lower_bound(
                 &samples.residual_tokens[pred_idx],
                 &GATHER_EBITS_LUT,
@@ -10520,6 +10870,7 @@ fn find_best_predictor(
                 pred_idx,
                 histogram_size,
                 counts_buf,
+                stop,
             );
             if bits < best_bits {
                 best_bits = bits;
@@ -10649,6 +11000,7 @@ fn find_best_predictor(
         seed_idx,
         histogram_size,
         &mut seed_counts,
+        stop,
     );
 
     // Phase 4: dispatch the remaining `num_pred - 1` workers in parallel
@@ -10678,6 +11030,7 @@ fn find_best_predictor(
             pred_idx,
             histogram_size,
             &mut local_counts,
+            stop,
         );
         // Strict-`<` CAS update so future workers can prune. The retry
         // loop terminates when either (a) we successfully install our
@@ -10726,6 +11079,7 @@ fn find_best_predictor(
     end: usize,
     histogram_size: usize,
     counts_buf: &mut [u32],
+    stop: Option<&dyn enough::Stop>,
 ) -> usize {
     let num_pred = samples.num_predictors();
     let mut best_pred = 0;
@@ -10735,6 +11089,9 @@ fn find_best_predictor(
     // sequential branch above for the soundness proof + tie-break rationale.
     // Byte-identical to the unconditional loop.
     for pred_idx in 0..num_pred {
+        if crate::error::check_stop(stop).is_err() {
+            return best_pred;
+        }
         let lb = predictor_extra_bits_lower_bound(
             &samples.residual_tokens[pred_idx],
             &GATHER_EBITS_LUT,
@@ -10745,8 +11102,15 @@ fn find_best_predictor(
         if decide_predictor(lb, best_bits) == PredictorDecision::Skip {
             continue;
         }
-        let bits =
-            compute_predictor_entropy(samples, start, end, pred_idx, histogram_size, counts_buf);
+        let bits = compute_predictor_entropy(
+            samples,
+            start,
+            end,
+            pred_idx,
+            histogram_size,
+            counts_buf,
+            stop,
+        );
         if bits < best_bits {
             best_bits = bits;
             best_pred = pred_idx;
@@ -10793,6 +11157,7 @@ fn debug_verify_carried_side_bits(
             split.left_predictor,
             histogram_size,
             counts_buf,
+            None,
         );
         let rb = compute_predictor_entropy(
             samples,
@@ -10801,6 +11166,7 @@ fn debug_verify_carried_side_bits(
             split.right_predictor,
             histogram_size,
             counts_buf,
+            None,
         );
         assert_eq!(
             split.left_bits.to_bits(),
@@ -10822,6 +11188,7 @@ fn compute_predictor_entropy(
     predictor_idx: usize,
     histogram_size: usize,
     counts_buf: &mut [u32],
+    stop: Option<&dyn enough::Stop>,
 ) -> f64 {
     let tokens = &samples.residual_tokens[predictor_idx][start..end];
     let sample_counts = &samples.sample_counts[start..end];
@@ -10831,8 +11198,15 @@ fn compute_predictor_entropy(
 
     // Zip-iterate: contiguous reads over three parallel slices. Bounds-check
     // elimination via the matched zip; no `[idx]` indexing into the parent
-    // arrays.
+    // arrays. The stop check strides every 64K rows; on a fired token the
+    // loop exits early with a partial sum — callers re-poll and propagate
+    // `Error::Cancelled` before any partial value is observed downstream.
+    let mut iters = 0usize;
     for (&tok, &count) in tokens.iter().zip(sample_counts.iter()) {
+        iters += 1;
+        if iters & 0xFFFF == 0 && crate::error::check_stop(stop).is_err() {
+            break;
+        }
         let eb = gather_token_ebits(tok);
         let tok = tok as usize;
         if tok < histogram_size {
@@ -10875,7 +11249,7 @@ fn partition_node_in_place(
     left_count: usize,
     key: tree_learn_split::PartitionKey,
 ) -> usize {
-    partition_node_in_place_with(samples, pq, start, end, left_count, key, false)
+    partition_node_in_place_with(samples, pq, start, end, left_count, key, false, None)
 }
 
 /// Issue #40 chunk-3c: env-var override `JXL_DISABLE_CHUNK3C=1` forces the
@@ -10914,6 +11288,7 @@ fn partition_node_in_place_with(
     left_count: usize,
     key: tree_learn_split::PartitionKey,
     skip_props_swap: bool,
+    stop: Option<&dyn enough::Stop>,
 ) -> usize {
     debug_assert!(left_count <= end - start);
     let num_samples = samples.num_samples;
@@ -10932,9 +11307,9 @@ fn partition_node_in_place_with(
     let count = end - start;
     let min_side = left_count.min(count - left_count);
     if skip_props_swap && count >= (1 << 16) && min_side * 16 >= count {
-        tree_learn_split::split_tree_samples_stable_gather(&mut view, start, pos, end, key);
+        tree_learn_split::split_tree_samples_stable_gather(&mut view, start, pos, end, key, stop);
     } else {
-        tree_learn_split::split_tree_samples_in_place(&mut view, start, pos, end, key);
+        tree_learn_split::split_tree_samples_in_place(&mut view, start, pos, end, key, stop);
     }
     pos
 }
@@ -11471,6 +11846,7 @@ pub(crate) fn collect_residuals_with_tree_with_budget(
     group_id: u32,
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
     collect_residuals_with_tree_offset_with_budget_wp(
         image,
@@ -11480,6 +11856,7 @@ pub(crate) fn collect_residuals_with_tree_with_budget(
         wp_params,
         budget,
         WpCacheMode::Off,
+        stop,
     )
 }
 
@@ -11508,6 +11885,7 @@ pub fn collect_residuals_with_tree_offset(
         channel_offset,
         wp_params,
         None,
+        None,
     )
     .expect("budget-less collect_residuals_with_tree_offset: no AllocationLimit, no residual overflow on valid input")
 }
@@ -11523,6 +11901,7 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
     channel_offset: u32,
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
     collect_residuals_with_tree_offset_with_budget_wp(
         image,
@@ -11532,6 +11911,7 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget(
         wp_params,
         budget,
         WpCacheMode::Off,
+        stop,
     )
 }
 
@@ -11548,6 +11928,7 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget_wp(
     wp_params: &WeightedPredictorParams,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     mut wp_cache: WpCacheMode<'_>,
+    stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
     use crate::entropy_coding::token::Token as AnsToken;
 
@@ -11654,6 +12035,7 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget_wp(
         let mut leaf_row: Vec<u32> = vec![0; width];
 
         for y in 0..height {
+            crate::error::check_stop(stop)?;
             prev_gradient = 0;
 
             // Pass 1: neighbors + WP + properties, in the legacy
@@ -11928,6 +12310,16 @@ fn traverse_with_props<'a>(tree: &'a Tree, props: &[i32]) -> &'a PropertyDecisio
 /// the eventual ANS bitstream size — accurate to within a few percent
 /// in our measurements on CLIC photos.
 pub fn estimate_token_cost(tokens: &[crate::entropy_coding::token::Token]) -> f64 {
+    estimate_token_cost_stop(tokens, None)
+        .expect("stop-less estimate_token_cost cannot be Cancelled")
+}
+
+/// [`estimate_token_cost`] with cancellation polling: checks once per
+/// 256K-token stride. No-op / byte-identical under `None`.
+pub(crate) fn estimate_token_cost_stop(
+    tokens: &[crate::entropy_coding::token::Token],
+    stop: Option<&dyn enough::Stop>,
+) -> crate::error::Result<f64> {
     use crate::entropy_coding::hybrid_uint::HybridUintConfig;
     const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
         split_exponent: 4,
@@ -11943,7 +12335,7 @@ pub fn estimate_token_cost(tokens: &[crate::entropy_coding::token::Token]) -> f6
     const HEADER_BITS_PER_CONTEXT: f64 = 50.0;
 
     if tokens.is_empty() {
-        return 0.0;
+        return Ok(0.0);
     }
 
     // Per-context histograms keyed by context index.
@@ -11954,7 +12346,10 @@ pub fn estimate_token_cost(tokens: &[crate::entropy_coding::token::Token]) -> f6
     let mut per_context_total: Vec<u32> = Vec::new();
     let mut extra_bits_total: u64 = 0;
 
-    for tok in tokens {
+    for (i, tok) in tokens.iter().enumerate() {
+        if i & 0x3FFFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         let (sym, _bits, nbits) = MODULAR_HYBRID_UINT.encode(tok.value);
         let ctx = tok.context() as usize;
         if ctx >= per_context.len() {
@@ -11979,7 +12374,7 @@ pub fn estimate_token_cost(tokens: &[crate::entropy_coding::token::Token]) -> f6
         }
     }
     bits += nonempty_contexts as f64 * HEADER_BITS_PER_CONTEXT;
-    bits
+    Ok(bits)
 }
 
 /// Per-seed parameter variance for the multi-seed tree-learning loop
@@ -12666,7 +13061,7 @@ mod tests {
         samples.extend(core::iter::repeat_n(10i32, 100));
         samples.extend(core::iter::repeat_n(50i32, 10));
         samples.extend(core::iter::repeat_n(200i32, 2));
-        let ts = lloyd_max_thresholds(&samples, 0, 200, 6);
+        let ts = lloyd_max_thresholds(&samples, 0, 200, 6, None);
         assert!(!ts.is_empty(), "expected non-empty thresholds");
         for w in ts.windows(2) {
             assert!(
@@ -12689,7 +13084,7 @@ mod tests {
     fn test_lloyd_max_thresholds_constant_property() {
         // All samples equal — no actionable buckets.
         let samples = vec![42i32; 1000];
-        let ts = lloyd_max_thresholds(&samples, 42, 42, 8);
+        let ts = lloyd_max_thresholds(&samples, 42, 42, 8, None);
         assert!(
             ts.is_empty(),
             "constant property must produce no thresholds"
@@ -12703,7 +13098,7 @@ mod tests {
         let mut samples: Vec<i32> = Vec::with_capacity(1000);
         samples.extend(core::iter::repeat_n(10i32, 500));
         samples.extend(core::iter::repeat_n(100i32, 500));
-        let ts = lloyd_max_thresholds(&samples, 10, 100, 1);
+        let ts = lloyd_max_thresholds(&samples, 10, 100, 1, None);
         assert_eq!(ts.len(), 1, "k=2 cells → 1 threshold");
         // The optimal Lloyd-Max midpoint is (10 + 100) / 2 = 55; tolerate
         // ±2 input units of clustering noise from the count-weighted init.
@@ -12718,7 +13113,7 @@ mod tests {
     fn test_lloyd_max_thresholds_clamps_to_max_buckets() {
         // 100 distinct values, max_buckets=4 → at most 4 thresholds.
         let samples: Vec<i32> = (0..100).collect();
-        let ts = lloyd_max_thresholds(&samples, 0, 99, 4);
+        let ts = lloyd_max_thresholds(&samples, 0, 99, 4, None);
         assert!(
             ts.len() <= 4,
             "threshold count must be <= max_buckets, got {}",
@@ -12744,7 +13139,7 @@ mod tests {
         }
         let min = 0;
         let max = 255;
-        let ts = lloyd_max_thresholds(&samples, min, max, 8);
+        let ts = lloyd_max_thresholds(&samples, min, max, 8, None);
         assert!(!ts.is_empty());
         let num_buckets = ts.len() + 1;
         let mut bucket_counts = vec![0u64; num_buckets];
@@ -12888,7 +13283,7 @@ mod tests {
         let mut samples_seq = TreeSamples::new();
         gather_samples(&mut samples_seq, &image, 0);
         let mut pq_seq = samples_seq.pre_quantize(&params);
-        dedup_samples(&mut samples_seq, &mut pq_seq, &params);
+        dedup_samples(&mut samples_seq, &mut pq_seq, &params, None).unwrap();
         // Match compute_best_tree_with_budget's threshold computation: it uses
         // params.pixel_fraction (not derived from sample counts). The default
         // for TreeLearningParams::for_effort is 1.0.
@@ -12904,8 +13299,14 @@ mod tests {
             .unwrap_or(0) as usize;
         let histogram_size = max_token + 1;
         let mut entropy_counts = vec![0u32; histogram_size];
-        let root_pred =
-            find_best_predictor(&samples_seq, 0, n, histogram_size, &mut entropy_counts);
+        let root_pred = find_best_predictor(
+            &samples_seq,
+            0,
+            n,
+            histogram_size,
+            &mut entropy_counts,
+            None,
+        );
         let root_bits = compute_predictor_entropy(
             &samples_seq,
             0,
@@ -12913,6 +13314,7 @@ mod tests {
             root_pred,
             histogram_size,
             &mut entropy_counts,
+            None,
         );
         let seq_tree = build_subtree_sequential(
             &mut samples_seq,
@@ -13353,7 +13755,7 @@ mod tests {
         // populates `sample_counts` (required by `swap_rows`).
         let params = TreeLearningParams::for_effort(7);
         let mut pq = samples.pre_quantize(&params);
-        dedup_samples(&mut samples, &mut pq, &params);
+        dedup_samples(&mut samples, &mut pq, &params, None).unwrap();
 
         let n = samples.num_samples;
         // After dedup on a constant-zero image, all 16 pixels merge to a few
@@ -13430,7 +13832,7 @@ mod tests {
             let mut samples = TreeSamples::new();
             gather_samples(&mut samples, &image, 0);
             let mut pq = samples.pre_quantize(params);
-            dedup_samples(&mut samples, &mut pq, params);
+            dedup_samples(&mut samples, &mut pq, params, None).unwrap();
 
             let n = samples.num_samples;
             let num_pred = samples.num_predictors();
@@ -13508,6 +13910,7 @@ mod tests {
             None,
             true,
             &params.properties,
+            None,
         )
         .unwrap();
 
@@ -13576,7 +13979,7 @@ mod tests {
         let mut samples_a = TreeSamples::new();
         gather_samples(&mut samples_a, &image, 0);
         let mut pq_a = samples_a.pre_quantize(&params_sort);
-        dedup_samples(&mut samples_a, &mut pq_a, &params_sort);
+        dedup_samples(&mut samples_a, &mut pq_a, &params_sort, None).unwrap();
         let multiset_a = collect_multiset(&samples_a, &pq_a, &params_sort);
 
         // Path B: gather-time dedup + post-gather sort.
@@ -13593,10 +13996,11 @@ mod tests {
             None,
             true,
             &params_b.properties,
+            None,
         )
         .unwrap();
         let mut pq_b = samples_b.pre_quantize(&params_b);
-        dedup_samples(&mut samples_b, &mut pq_b, &params_b);
+        dedup_samples(&mut samples_b, &mut pq_b, &params_b, None).unwrap();
         let multiset_b = collect_multiset(&samples_b, &pq_b, &params_b);
 
         assert_eq!(
@@ -13651,6 +14055,7 @@ mod tests {
             true,
             false, // enable_phase3
             &params.properties,
+            None,
         )
         .unwrap();
         let p2_total: u32 = samples_p2.sample_counts.iter().sum();
@@ -13677,6 +14082,7 @@ mod tests {
             true,
             true, // enable_phase3
             &params.properties,
+            None,
         )
         .unwrap();
         let p3_total: u32 = samples_p3.sample_counts.iter().sum();
@@ -13704,9 +14110,9 @@ mod tests {
         let mut params_b2 = TreeLearningParams::for_effort(7);
         params_b2.gather_dedup = true;
         let mut pq_p2 = samples_p2.pre_quantize(&params_b2);
-        dedup_samples(&mut samples_p2, &mut pq_p2, &params_b2);
+        dedup_samples(&mut samples_p2, &mut pq_p2, &params_b2, None).unwrap();
         let mut pq_p3 = samples_p3.pre_quantize(&params_b2);
-        dedup_samples(&mut samples_p3, &mut pq_p3, &params_b2);
+        dedup_samples(&mut samples_p3, &mut pq_p3, &params_b2, None).unwrap();
 
         let collect_multiset = |samples: &TreeSamples,
                                 pq: &PreQuantizedProps,
@@ -14384,9 +14790,10 @@ mod tests {
         // The assertion is now the property that actually matters: the wide
         // input is ACCEPTED, and the residual it produces reconstructs the
         // original pixel.
-        let residuals =
-            collect_residuals_with_tree_offset_with_budget(&image, &tree, 0, 0, &wp_params, None)
-                .expect("a residual wider than i32 is legal and must be accepted");
+        let residuals = collect_residuals_with_tree_offset_with_budget(
+            &image, &tree, 0, 0, &wp_params, None, None,
+        )
+        .expect("a residual wider than i32 is legal and must be accepted");
         assert!(
             !residuals.is_empty(),
             "the wide-sample channel must produce residuals"
@@ -14422,9 +14829,10 @@ mod tests {
         }];
         let wp_params = WeightedPredictorParams::default();
 
-        let tokens =
-            collect_residuals_with_tree_offset_with_budget(&image, &tree, 0, 0, &wp_params, None)
-                .expect("valid 8-bit input must not trip the overflow guard");
+        let tokens = collect_residuals_with_tree_offset_with_budget(
+            &image, &tree, 0, 0, &wp_params, None, None,
+        )
+        .expect("valid 8-bit input must not trip the overflow guard");
         assert_eq!(tokens.len(), 4);
     }
 
@@ -14484,7 +14892,7 @@ mod tests {
         let mut samples = TreeSamples::new();
         gather_samples(&mut samples, &image, 0);
         let mut pq = samples.pre_quantize(params);
-        dedup_samples(&mut samples, &mut pq, params);
+        dedup_samples(&mut samples, &mut pq, params, None).unwrap();
         let max_token = samples
             .residual_tokens
             .iter()
@@ -14529,6 +14937,7 @@ mod tests {
                 0,
                 n,
                 &mut parent,
+                None,
             );
 
             for &(num, den) in &[(1usize, 3usize), (1, 2), (7, 8)] {
@@ -14543,6 +14952,7 @@ mod tests {
                     0,
                     mid,
                     &mut left,
+                    None,
                 );
                 let mut right = NodeTensor::zeroed(&layout);
                 build_node_tensor(
@@ -14554,6 +14964,7 @@ mod tests {
                     mid,
                     n,
                     &mut right,
+                    None,
                 );
 
                 // Derived larger (right) = parent − built smaller (left).
@@ -14567,6 +14978,7 @@ mod tests {
                     0,
                     n,
                     &mut derived_right,
+                    None,
                 );
                 derived_right.subtract_in_place(&left);
                 assert_tensors_identical(
@@ -14586,6 +14998,7 @@ mod tests {
                     0,
                     n,
                     &mut derived_left,
+                    None,
                 );
                 derived_left.subtract_in_place(&right);
                 assert_tensors_identical(
@@ -14615,7 +15028,7 @@ mod tests {
             let max_buckets = params.max_property_values + 1;
             let mut entropy_counts = vec![0u32; histogram_size];
             let root_pred =
-                find_best_predictor(&samples, 0, n, histogram_size, &mut entropy_counts);
+                find_best_predictor(&samples, 0, n, histogram_size, &mut entropy_counts, None);
             let root_bits = compute_predictor_entropy(
                 &samples,
                 0,
@@ -14623,6 +15036,7 @@ mod tests {
                 root_pred,
                 histogram_size,
                 &mut entropy_counts,
+                None,
             );
             let required_cost = params.pixel_fraction * 0.9 + 0.1;
             let threshold = params.split_threshold * required_cost;
@@ -14641,6 +15055,7 @@ mod tests {
                 &pq,
                 &mut ws,
                 TensorMode::Capture(&layout, &mut captured),
+                None,
             );
             // Capture completeness is only guaranteed when a split exists —
             // which it must on this noise+gradient input.
@@ -14656,6 +15071,7 @@ mod tests {
                 0,
                 n,
                 &mut built,
+                None,
             );
             assert_tensors_identical(&captured, &built, &format!("seed={seed} capture-vs-build"));
         }
@@ -14688,8 +15104,14 @@ mod tests {
                 let count = end - start;
                 let weighted: u32 = samples.sample_counts[start..end].iter().sum();
                 assert!(weighted >= TENSOR_MIN_CHILD_WEIGHT, "test range too small");
-                let root_pred =
-                    find_best_predictor(&samples, start, end, histogram_size, &mut entropy_counts);
+                let root_pred = find_best_predictor(
+                    &samples,
+                    start,
+                    end,
+                    histogram_size,
+                    &mut entropy_counts,
+                    None,
+                );
                 let base_bits = compute_predictor_entropy(
                     &samples,
                     start,
@@ -14697,6 +15119,7 @@ mod tests {
                     root_pred,
                     histogram_size,
                     &mut entropy_counts,
+                    None,
                 );
 
                 let mut ws = SplitWorkspace::new(count, histogram_size, max_buckets);
@@ -14712,6 +15135,7 @@ mod tests {
                     &pq,
                     &mut ws,
                     TensorMode::Off,
+                    None,
                 );
 
                 let mut tensor = NodeTensor::zeroed(&layout);
@@ -14724,6 +15148,7 @@ mod tests {
                     start,
                     end,
                     &mut tensor,
+                    None,
                 );
                 let mut ws2 = SplitWorkspace::new(count, histogram_size, max_buckets);
                 let split_use = find_best_split(
@@ -14738,6 +15163,7 @@ mod tests {
                     &pq,
                     &mut ws2,
                     TensorMode::Use(&layout, &tensor),
+                    None,
                 );
 
                 match (split_off, split_use) {
@@ -14813,7 +15239,7 @@ mod tests {
         params: &TreeLearningParams,
     ) -> Tree {
         let mut pq = samples.pre_quantize(params);
-        dedup_samples(samples, &mut pq, params);
+        dedup_samples(samples, &mut pq, params, None).unwrap();
         let required_cost = params.pixel_fraction * 0.9 + 0.1;
         let threshold = params.split_threshold * required_cost;
         let n = samples.num_samples;
@@ -14827,7 +15253,8 @@ mod tests {
         let histogram_size = max_token + 1;
         let max_buckets = params.max_property_values + 1;
         let mut entropy_counts = vec![0u32; histogram_size];
-        let root_pred = find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts);
+        let root_pred =
+            find_best_predictor(samples, 0, n, histogram_size, &mut entropy_counts, None);
         let root_bits = compute_predictor_entropy(
             samples,
             0,
@@ -14835,6 +15262,7 @@ mod tests {
             root_pred,
             histogram_size,
             &mut entropy_counts,
+            None,
         );
 
         let mut tree: Tree = Vec::new();
@@ -14868,6 +15296,7 @@ mod tests {
                 &pq,
                 &mut ws,
                 TensorMode::Off,
+                None,
             );
             match best_split {
                 Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -14884,6 +15313,7 @@ mod tests {
                             val: bucket_split as u8,
                         },
                         true,
+                        None,
                     );
                     let lchild_idx = tree.len();
                     let rchild_idx = tree.len() + 1;
@@ -14903,6 +15333,7 @@ mod tests {
                         split.left_predictor,
                         histogram_size,
                         &mut entropy_counts,
+                        None,
                     );
                     let rb = compute_predictor_entropy(
                         samples,
@@ -14911,6 +15342,7 @@ mod tests {
                         split.right_predictor,
                         histogram_size,
                         &mut entropy_counts,
+                        None,
                     );
                     stack.push(SplitCandidate {
                         node_idx: rchild_idx,
@@ -15037,6 +15469,7 @@ mod tests {
             0,
             n,
             &mut owned,
+            None,
         );
 
         let view = BorrowedSamples::from_owned(&mut samples, &mut pq);

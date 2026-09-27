@@ -304,6 +304,7 @@ pub(crate) fn encode_lf_frame(
             Some(lossy_opts),
             false, // no palette for lossy LfFrame
             budget,
+            None,
         )?;
 
         let section_data = section_writer.finish();
@@ -398,6 +399,7 @@ fn encode_lf_frame_multi_group(
         None, // no ChannelCompact meta-channels for LfFrame
         crate::modular::section::modular_hf_stream_id_base(num_lf_groups as u32),
         budget,
+        None,
     )?;
     let lf_global_data = lf_global_writer.finish();
 

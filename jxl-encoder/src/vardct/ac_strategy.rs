@@ -2852,6 +2852,46 @@ pub fn compute_ac_strategy(
     mask1x1_stride: usize,
     profile: &EffortProfile,
 ) -> AcStrategyMap {
+    compute_ac_strategy_stop(
+        xyb_x,
+        xyb_y,
+        xyb_b,
+        stride,
+        buf_height,
+        xsize_blocks,
+        ysize_blocks,
+        distance,
+        quant_field_float,
+        masking,
+        cfl_map,
+        mask1x1,
+        mask1x1_stride,
+        profile,
+        None,
+    )
+}
+
+/// `compute_ac_strategy` with cooperative cancellation. Tiles that have not
+/// run when the token fires keep their DCT8 defaults — the caller propagates
+/// `Error::Cancelled` at its next checkpoint before the map is consumed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_ac_strategy_stop(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    stride: usize,
+    buf_height: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    distance: f32,
+    quant_field_float: &[f32],
+    masking: &[f32],
+    cfl_map: &CflMap,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    profile: &EffortProfile,
+    stop: Option<&dyn enough::Stop>,
+) -> AcStrategyMap {
     // Collect tile coordinates covering the whole image.
     let mut tiles = Vec::new();
     for tile_by in (0..ysize_blocks).step_by(TILE_DIM_IN_BLOCKS) {
@@ -2875,6 +2915,7 @@ pub fn compute_ac_strategy(
         mask1x1_stride,
         profile,
         &tiles,
+        stop,
     )
 }
 
@@ -2911,6 +2952,7 @@ pub(crate) fn compute_ac_strategy_for_tiles(
     mask1x1_stride: usize,
     profile: &EffortProfile,
     tile_list: &[(usize, usize)],
+    stop: Option<&dyn enough::Stop>,
 ) -> AcStrategyMap {
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
 
@@ -2949,6 +2991,12 @@ pub(crate) fn compute_ac_strategy_for_tiles(
             tile_w,
             tile_h,
         );
+        // Cooperative cancellation: per-tile poll. On a fired token the
+        // tile keeps its DCT8 default and the caller propagates
+        // `Error::Cancelled` before the merged map is consumed.
+        if crate::error::check_stop(stop).is_err() {
+            return local_strategy;
+        }
         let mut scratch = {
             let mut pool = scratch_pool.lock().unwrap();
             pool.pop().unwrap_or_else(EntropyEstScratch::new)

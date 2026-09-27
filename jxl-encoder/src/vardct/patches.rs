@@ -3392,7 +3392,7 @@ pub(crate) fn encode_reference_frame_rgb(
     if let Some(b) = budget {
         encoder = encoder.with_budget(alloc::sync::Arc::clone(b));
     }
-    encoder.encode_modular_body(&image, writer)?;
+    encoder.encode_modular_body(&image, writer, None)?;
 
     Ok(())
 }
@@ -3616,7 +3616,7 @@ pub(crate) fn encode_reference_frame(
     if let Some(b) = budget {
         encoder = encoder.with_budget(alloc::sync::Arc::clone(b));
     }
-    encoder.encode_modular_body(&image, writer)?;
+    encoder.encode_modular_body(&image, writer, None)?;
 
     #[cfg(feature = "trace-bitstream")]
     eprintln!(

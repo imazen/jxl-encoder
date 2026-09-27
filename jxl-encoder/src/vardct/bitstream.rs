@@ -539,6 +539,7 @@ fn tokenize_dc_group_libjxl(
         &wp_params,
         budget,
         crate::modular::tree_learn::WpCacheMode::Off,
+        None,
     )?;
     #[cfg(feature = "debug-dc")]
     eprintln!(
@@ -557,6 +558,7 @@ fn tokenize_dc_group_libjxl(
         &wp_params,
         budget,
         crate::modular::tree_learn::WpCacheMode::Off,
+        None,
     )?;
     Ok((dc_tokens, md_tokens))
 }
@@ -995,6 +997,7 @@ pub(crate) fn encode_dc_group(
     )>,
     width: usize,
     height: usize,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<EncodedDcGroup> {
     // 1. DC group (LfGroup) section — identical to the existing
     //    parallel_map_result call site.
@@ -1050,6 +1053,7 @@ pub(crate) fn encode_dc_group(
     for pass in 0..num_passes {
         let is_last_pass = pass == num_passes - 1;
         let pass_sections: Vec<Vec<u8>> = crate::parallel::parallel_map_result(n_hf, |i| {
+            crate::error::check_stop(stop)?;
             let hf_gy = hf_y_start + i / hf_cols;
             let hf_gx = hf_x_start + i % hf_cols;
             let group_idx = hf_gy * xsize_groups + hf_gx;
@@ -1323,7 +1327,9 @@ impl VarDctEncoder {
         splines: Option<&super::splines::SplinesData>,
         dc_quant_custom: Option<[f32; 3]>,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
+        crate::error::check_stop(stop)?;
         #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
 
@@ -2464,6 +2470,7 @@ impl VarDctEncoder {
                 // W45-RECON part 15: libjxl `ComputeScaledDCT` pass
                 // order — same profile value as the still-image path.
                 self.profile.dct_pass_order_libjxl,
+                None,
             );
         }
 
@@ -2641,6 +2648,7 @@ impl VarDctEncoder {
             &mut quant_field,
             &cfl_map,
             &ac_strategy,
+            None,
         )?;
 
         // W44-AUDIT-8 Phase 7: same libjxl nl_dc QuantizeWP shape the
@@ -2782,6 +2790,7 @@ impl VarDctEncoder {
             None, // No splines in animation frames
             None, // No LfFrame in animation frames
             writer,
+            None,
         )?;
 
         Ok(strategy_counts)
@@ -2815,6 +2824,7 @@ impl VarDctEncoder {
         patches: Option<&super::patches::PatchesData>,
         splines: Option<&super::splines::SplinesData>,
         float_dc: Option<&[Vec<f32>; 3]>,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<Vec<u8>> {
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
@@ -2913,6 +2923,7 @@ impl VarDctEncoder {
             splines,
             lf_dc_quant,
             &mut writer,
+            stop,
         )?;
 
         Ok(writer.finish_with_padding())
@@ -2952,6 +2963,7 @@ impl VarDctEncoder {
         splines: Option<&super::splines::SplinesData>,
         dc_quant_custom: Option<[f32; 3]>,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
         #[cfg(feature = "__env_var_diagnostics")]
         let _phase_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
@@ -3681,6 +3693,7 @@ impl VarDctEncoder {
         let dc_budget = self.budget.as_ref();
         let dc_group_results: Vec<DcGroupTokenResult> =
             crate::parallel::parallel_map_result(num_dc_groups, |dc_group_idx| {
+                crate::error::check_stop(stop)?;
                 let dc_gx = dc_group_idx % xsize_dc_groups;
                 let dc_gy = dc_group_idx / xsize_dc_groups;
 
@@ -4473,6 +4486,7 @@ impl VarDctEncoder {
             splines,
             dc_quant_custom,
             &mut dc_global,
+            stop,
         )?;
 
         // Channel placement is independent of the TOC layout: a small
@@ -4700,6 +4714,7 @@ impl VarDctEncoder {
             // read-only.
             let encoded_dc_groups: Vec<EncodedDcGroup> =
                 crate::parallel::parallel_map_result(num_dc_groups, |dc_group_idx| {
+                    crate::error::check_stop(stop)?;
                     encode_dc_group(
                         self,
                         dc_group_idx,
@@ -4722,6 +4737,7 @@ impl VarDctEncoder {
                         modular_hf_extras,
                         width,
                         height,
+                        stop,
                     )
                 })?;
 
@@ -5016,6 +5032,7 @@ impl VarDctEncoder {
             &crate::modular::predictor::WeightedPredictorParams::default(),
             self.budget.as_ref(),
             crate::modular::tree_learn::WpCacheMode::Off,
+            None,
         )
     }
 

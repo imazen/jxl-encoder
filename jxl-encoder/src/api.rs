@@ -6732,11 +6732,11 @@ impl<'a> EncodeRequest<'a> {
         let rgb_pixels;
         let detection_pixels: &[u8] = match self.layout {
             PixelLayout::Bgr8 => {
-                rgb_pixels = bgr_to_rgb(pixels, 3);
+                rgb_pixels = bgr_to_rgb(pixels, 3, self.stop);
                 &rgb_pixels
             }
             PixelLayout::Bgra8 => {
-                rgb_pixels = bgr_to_rgb(pixels, 4);
+                rgb_pixels = bgr_to_rgb(pixels, 4, self.stop);
                 &rgb_pixels
             }
             _ => {
@@ -6824,22 +6824,34 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Rgb8 => {
                 synthesised_black_u8 = None;
                 synthesised_black_u16 = None;
-                ModularImage::from_rgb8_with_budget(pixels, w, h, budget_opt)
+                ModularImage::from_rgb8_with_budget(pixels, w, h, budget_opt, self.stop)
             }
             PixelLayout::Rgba8 => {
                 synthesised_black_u8 = None;
                 synthesised_black_u16 = None;
-                ModularImage::from_rgba8_with_budget(pixels, w, h, budget_opt)
+                ModularImage::from_rgba8_with_budget(pixels, w, h, budget_opt, self.stop)
             }
             PixelLayout::Bgr8 => {
                 synthesised_black_u8 = None;
                 synthesised_black_u16 = None;
-                ModularImage::from_rgb8_with_budget(&bgr_to_rgb(pixels, 3), w, h, budget_opt)
+                ModularImage::from_rgb8_with_budget(
+                    &bgr_to_rgb(pixels, 3, self.stop),
+                    w,
+                    h,
+                    budget_opt,
+                    self.stop,
+                )
             }
             PixelLayout::Bgra8 => {
                 synthesised_black_u8 = None;
                 synthesised_black_u16 = None;
-                ModularImage::from_rgba8_with_budget(&bgr_to_rgb(pixels, 4), w, h, budget_opt)
+                ModularImage::from_rgba8_with_budget(
+                    &bgr_to_rgb(pixels, 4, self.stop),
+                    w,
+                    h,
+                    budget_opt,
+                    self.stop,
+                )
             }
             PixelLayout::Gray8 => {
                 synthesised_black_u8 = None;
@@ -6854,12 +6866,12 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Rgb16 => {
                 synthesised_black_u8 = None;
                 synthesised_black_u16 = None;
-                ModularImage::from_rgb16_native(pixels, w, h)
+                ModularImage::from_rgb16_native_stop(pixels, w, h, self.stop)
             }
             PixelLayout::Rgba16 => {
                 synthesised_black_u8 = None;
                 synthesised_black_u16 = None;
-                ModularImage::from_rgba16_native(pixels, w, h)
+                ModularImage::from_rgba16_native_stop(pixels, w, h, self.stop)
             }
             PixelLayout::Gray16 => {
                 synthesised_black_u8 = None;
@@ -6893,6 +6905,9 @@ impl<'a> EncodeRequest<'a> {
                 let mut cmy = Vec::with_capacity(n * 3);
                 let mut k = Vec::with_capacity(n);
                 for i in 0..n {
+                    if i & 0xF_FFFF == 0 && self.stop.is_some_and(|st| st.check().is_err()) {
+                        break;
+                    }
                     let base = i * 4;
                     cmy.push(pixels[base]);
                     cmy.push(pixels[base + 1]);
@@ -6901,7 +6916,7 @@ impl<'a> EncodeRequest<'a> {
                 }
                 synthesised_black_u8 = Some(k);
                 synthesised_black_u16 = None;
-                ModularImage::from_rgb8_with_budget(&cmy, w, h, budget_opt)
+                ModularImage::from_rgb8_with_budget(&cmy, w, h, budget_opt, self.stop)
             }
             PixelLayout::Cmyk16 => {
                 if self.extra_channels.iter().any(|ec| {
@@ -6932,6 +6947,9 @@ impl<'a> EncodeRequest<'a> {
                 let mut cmy = Vec::with_capacity(n * 3 * 2);
                 let mut k = Vec::with_capacity(n);
                 for i in 0..n {
+                    if i & 0xF_FFFF == 0 && self.stop.is_some_and(|st| st.check().is_err()) {
+                        break;
+                    }
                     let base = i * 8;
                     cmy.extend_from_slice(&pixels[base..base + 6]);
                     let k_lo = pixels[base + 6];
@@ -6940,7 +6958,7 @@ impl<'a> EncodeRequest<'a> {
                 }
                 synthesised_black_u8 = None;
                 synthesised_black_u16 = Some(k);
-                ModularImage::from_rgb16_native(&cmy, w, h)
+                ModularImage::from_rgb16_native_stop(&cmy, w, h, self.stop)
             }
             other if other.lossless_float_bit_depth().is_some() => {
                 // Lossless float (imazen/jxl-encoder#109). Samples are packed
@@ -7441,43 +7459,43 @@ impl<'a> EncodeRequest<'a> {
         let srgb_eotf_libjxl = cfg.resolve_improvements().srgb_eotf_libjxl_parity;
         let srgb_u8 = |px: &[u8], ch: usize| -> Vec<f32> {
             if srgb_eotf_libjxl {
-                srgb_u8_to_linear_f32_libjxl(px, ch)
+                srgb_u8_to_linear_f32_libjxl(px, ch, self.stop)
             } else {
-                srgb_u8_to_linear_f32(px, ch)
+                srgb_u8_to_linear_f32(px, ch, self.stop)
             }
         };
         let gray_u8 = |px: &[u8], st: usize| -> Vec<f32> {
             if srgb_eotf_libjxl {
-                gray_u8_to_linear_f32_rgb_libjxl(px, st)
+                gray_u8_to_linear_f32_rgb_libjxl(px, st, self.stop)
             } else {
-                gray_u8_to_linear_f32_rgb(px, st)
+                gray_u8_to_linear_f32_rgb(px, st, self.stop)
             }
         };
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(pixels, 3, g)
+                    gamma_u8_to_linear_f32(pixels, 3, g, self.stop)
                 } else if source_is_pq {
-                    pq_u8_to_linear_f32(pixels, 3)
+                    pq_u8_to_linear_f32(pixels, 3, self.stop)
                 } else if source_is_hlg {
-                    hlg_u8_to_linear_f32(pixels, 3)
+                    hlg_u8_to_linear_f32(pixels, 3, self.stop)
                 } else if source_is_bt709 {
-                    bt709_u8_to_linear_f32(pixels, 3)
+                    bt709_u8_to_linear_f32(pixels, 3, self.stop)
                 } else {
                     srgb_u8(pixels, 3)
                 };
                 (linear, None, false)
             }
             PixelLayout::Bgr8 => {
-                let rgb = bgr_to_rgb(pixels, 3);
+                let rgb = bgr_to_rgb(pixels, 3, self.stop);
                 let linear = if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(&rgb, 3, g)
+                    gamma_u8_to_linear_f32(&rgb, 3, g, self.stop)
                 } else if source_is_pq {
-                    pq_u8_to_linear_f32(&rgb, 3)
+                    pq_u8_to_linear_f32(&rgb, 3, self.stop)
                 } else if source_is_hlg {
-                    hlg_u8_to_linear_f32(&rgb, 3)
+                    hlg_u8_to_linear_f32(&rgb, 3, self.stop)
                 } else if source_is_bt709 {
-                    bt709_u8_to_linear_f32(&rgb, 3)
+                    bt709_u8_to_linear_f32(&rgb, 3, self.stop)
                 } else {
                     srgb_u8(&rgb, 3)
                 };
@@ -7485,44 +7503,44 @@ impl<'a> EncodeRequest<'a> {
             }
             PixelLayout::Rgba8 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(pixels, 4, g)
+                    gamma_u8_to_linear_f32(pixels, 4, g, self.stop)
                 } else if source_is_pq {
-                    pq_u8_to_linear_f32(pixels, 4)
+                    pq_u8_to_linear_f32(pixels, 4, self.stop)
                 } else if source_is_hlg {
-                    hlg_u8_to_linear_f32(pixels, 4)
+                    hlg_u8_to_linear_f32(pixels, 4, self.stop)
                 } else if source_is_bt709 {
-                    bt709_u8_to_linear_f32(pixels, 4)
+                    bt709_u8_to_linear_f32(pixels, 4, self.stop)
                 } else {
                     srgb_u8(pixels, 4)
                 };
-                let alpha = extract_alpha(pixels, 4, 3);
+                let alpha = extract_alpha(pixels, 4, 3, self.stop);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::Bgra8 => {
-                let swapped = bgr_to_rgb(pixels, 4);
+                let swapped = bgr_to_rgb(pixels, 4, self.stop);
                 let rgb = if let Some(g) = gamma {
-                    gamma_u8_to_linear_f32(&swapped, 4, g)
+                    gamma_u8_to_linear_f32(&swapped, 4, g, self.stop)
                 } else if source_is_pq {
-                    pq_u8_to_linear_f32(&swapped, 4)
+                    pq_u8_to_linear_f32(&swapped, 4, self.stop)
                 } else if source_is_hlg {
-                    hlg_u8_to_linear_f32(&swapped, 4)
+                    hlg_u8_to_linear_f32(&swapped, 4, self.stop)
                 } else if source_is_bt709 {
-                    bt709_u8_to_linear_f32(&swapped, 4)
+                    bt709_u8_to_linear_f32(&swapped, 4, self.stop)
                 } else {
                     srgb_u8(&swapped, 4)
                 };
-                let alpha = extract_alpha(pixels, 4, 3);
+                let alpha = extract_alpha(pixels, 4, 3, self.stop);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::Gray8 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_gray_u8_to_linear_f32_rgb(pixels, 1, g)
+                    gamma_gray_u8_to_linear_f32_rgb(pixels, 1, g, self.stop)
                 } else if source_is_pq {
-                    pq_gray_u8_to_linear_f32_rgb(pixels, 1)
+                    pq_gray_u8_to_linear_f32_rgb(pixels, 1, self.stop)
                 } else if source_is_hlg {
-                    hlg_gray_u8_to_linear_f32_rgb(pixels, 1)
+                    hlg_gray_u8_to_linear_f32_rgb(pixels, 1, self.stop)
                 } else if source_is_bt709 {
-                    bt709_gray_u8_to_linear_f32_rgb(pixels, 1)
+                    bt709_gray_u8_to_linear_f32_rgb(pixels, 1, self.stop)
                 } else {
                     gray_u8(pixels, 1)
                 };
@@ -7530,75 +7548,75 @@ impl<'a> EncodeRequest<'a> {
             }
             PixelLayout::GrayAlpha8 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_gray_u8_to_linear_f32_rgb(pixels, 2, g)
+                    gamma_gray_u8_to_linear_f32_rgb(pixels, 2, g, self.stop)
                 } else if source_is_pq {
-                    pq_gray_u8_to_linear_f32_rgb(pixels, 2)
+                    pq_gray_u8_to_linear_f32_rgb(pixels, 2, self.stop)
                 } else if source_is_hlg {
-                    hlg_gray_u8_to_linear_f32_rgb(pixels, 2)
+                    hlg_gray_u8_to_linear_f32_rgb(pixels, 2, self.stop)
                 } else if source_is_bt709 {
-                    bt709_gray_u8_to_linear_f32_rgb(pixels, 2)
+                    bt709_gray_u8_to_linear_f32_rgb(pixels, 2, self.stop)
                 } else {
                     gray_u8(pixels, 2)
                 };
-                let alpha = extract_alpha(pixels, 2, 1);
+                let alpha = extract_alpha(pixels, 2, 1, self.stop);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::Rgb16 => {
                 let linear = if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 3, g, u16_max)
+                    gamma_u16_to_linear_f32(pixels, 3, g, u16_max, self.stop)
                 } else if source_is_pq {
-                    pq_u16_to_linear_f32(pixels, 3, u16_max)
+                    pq_u16_to_linear_f32(pixels, 3, u16_max, self.stop)
                 } else if source_is_hlg {
-                    hlg_u16_to_linear_f32(pixels, 3, u16_max)
+                    hlg_u16_to_linear_f32(pixels, 3, u16_max, self.stop)
                 } else if source_is_bt709 {
-                    bt709_u16_to_linear_f32(pixels, 3, u16_max)
+                    bt709_u16_to_linear_f32(pixels, 3, u16_max, self.stop)
                 } else {
-                    srgb_u16_to_linear_f32(pixels, 3, u16_max)
+                    srgb_u16_to_linear_f32(pixels, 3, u16_max, self.stop)
                 };
                 (linear, None, true)
             }
             PixelLayout::Rgba16 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 4, g, u16_max)
+                    gamma_u16_to_linear_f32(pixels, 4, g, u16_max, self.stop)
                 } else if source_is_pq {
-                    pq_u16_to_linear_f32(pixels, 4, u16_max)
+                    pq_u16_to_linear_f32(pixels, 4, u16_max, self.stop)
                 } else if source_is_hlg {
-                    hlg_u16_to_linear_f32(pixels, 4, u16_max)
+                    hlg_u16_to_linear_f32(pixels, 4, u16_max, self.stop)
                 } else if source_is_bt709 {
-                    bt709_u16_to_linear_f32(pixels, 4, u16_max)
+                    bt709_u16_to_linear_f32(pixels, 4, u16_max, self.stop)
                 } else {
-                    srgb_u16_to_linear_f32(pixels, 4, u16_max)
+                    srgb_u16_to_linear_f32(pixels, 4, u16_max, self.stop)
                 };
-                let alpha = extract_alpha_u16(pixels, 4, 3, u16_max);
+                let alpha = extract_alpha_u16(pixels, 4, 3, u16_max, self.stop);
                 (rgb, Some(alpha), true)
             }
             PixelLayout::Gray16 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, u16_max)
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, u16_max, self.stop)
                 } else if source_is_pq {
-                    pq_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
+                    pq_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max, self.stop)
                 } else if source_is_hlg {
-                    hlg_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
+                    hlg_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max, self.stop)
                 } else if source_is_bt709 {
-                    bt709_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
+                    bt709_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max, self.stop)
                 } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
+                    gray_u16_to_linear_f32_rgb(pixels, 1, u16_max, self.stop)
                 };
                 (rgb, None, true)
             }
             PixelLayout::GrayAlpha16 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, u16_max)
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, u16_max, self.stop)
                 } else if source_is_pq {
-                    pq_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
+                    pq_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max, self.stop)
                 } else if source_is_hlg {
-                    hlg_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
+                    hlg_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max, self.stop)
                 } else if source_is_bt709 {
-                    bt709_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
+                    bt709_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max, self.stop)
                 } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
+                    gray_u16_to_linear_f32_rgb(pixels, 2, u16_max, self.stop)
                 };
-                let alpha = extract_alpha_u16(pixels, 2, 1, u16_max);
+                let alpha = extract_alpha_u16(pixels, 2, 1, u16_max, self.stop);
                 (rgb, Some(alpha), true)
             }
             PixelLayout::RgbLinearF32 => {
@@ -7611,30 +7629,38 @@ impl<'a> EncodeRequest<'a> {
                     .chunks(4)
                     .flat_map(|px| [px[0], px[1], px[2]])
                     .collect();
-                let alpha = extract_alpha_f32(floats, 4, 3);
+                let alpha = extract_alpha_f32(floats, 4, 3, self.stop);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::GrayLinearF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(pixels);
-                (gray_f32_to_linear_f32_rgb(floats, 1), None, false)
+                (
+                    gray_f32_to_linear_f32_rgb(floats, 1, self.stop),
+                    None,
+                    false,
+                )
             }
             PixelLayout::GrayAlphaLinearF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(pixels);
-                let rgb = gray_f32_to_linear_f32_rgb(floats, 2);
-                let alpha = extract_alpha_f32(floats, 2, 1);
+                let rgb = gray_f32_to_linear_f32_rgb(floats, 2, self.stop);
+                let alpha = extract_alpha_f32(floats, 2, 1, self.stop);
                 (rgb, Some(alpha), false)
             }
             // Closes FLOAT16 portion of #18.
-            PixelLayout::RgbLinearF16 => (f16_to_linear_f32_rgb(pixels, 3), None, false),
+            PixelLayout::RgbLinearF16 => (f16_to_linear_f32_rgb(pixels, 3, self.stop), None, false),
             PixelLayout::RgbaLinearF16 => {
-                let rgb = f16_to_linear_f32_rgb(pixels, 4);
-                let alpha = extract_alpha_f16(pixels, 4, 3);
+                let rgb = f16_to_linear_f32_rgb(pixels, 4, self.stop);
+                let alpha = extract_alpha_f16(pixels, 4, 3, self.stop);
                 (rgb, Some(alpha), false)
             }
-            PixelLayout::GrayLinearF16 => (f16_gray_to_linear_f32_rgb(pixels, 1), None, false),
+            PixelLayout::GrayLinearF16 => (
+                f16_gray_to_linear_f32_rgb(pixels, 1, self.stop),
+                None,
+                false,
+            ),
             PixelLayout::GrayAlphaLinearF16 => {
-                let rgb = f16_gray_to_linear_f32_rgb(pixels, 2);
-                let alpha = extract_alpha_f16(pixels, 2, 1);
+                let rgb = f16_gray_to_linear_f32_rgb(pixels, 2, self.stop);
+                let alpha = extract_alpha_f16(pixels, 2, 1, self.stop);
                 (rgb, Some(alpha), false)
             }
             // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46). The
@@ -7643,32 +7669,36 @@ impl<'a> EncodeRequest<'a> {
             // fire. We still run the f32-domain inverse EOTF here.
             PixelLayout::RgbPqF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(pixels);
-                (pq_f32_to_linear_f32_rgb(floats, 3), None, false)
+                (pq_f32_to_linear_f32_rgb(floats, 3, self.stop), None, false)
             }
             PixelLayout::RgbaPqF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(pixels);
-                let rgb = pq_f32_to_linear_f32_rgb(floats, 4);
-                let alpha = extract_alpha_f32(floats, 4, 3);
+                let rgb = pq_f32_to_linear_f32_rgb(floats, 4, self.stop);
+                let alpha = extract_alpha_f32(floats, 4, 3, self.stop);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::RgbHlgF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(pixels);
-                (hlg_f32_to_linear_f32_rgb(floats, 3), None, false)
+                (hlg_f32_to_linear_f32_rgb(floats, 3, self.stop), None, false)
             }
             PixelLayout::RgbaHlgF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(pixels);
-                let rgb = hlg_f32_to_linear_f32_rgb(floats, 4);
-                let alpha = extract_alpha_f32(floats, 4, 3);
+                let rgb = hlg_f32_to_linear_f32_rgb(floats, 4, self.stop);
+                let alpha = extract_alpha_f32(floats, 4, 3, self.stop);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::RgbBt709F32 => {
                 let floats: &[f32] = &cast_pixel_lanes(pixels);
-                (bt709_f32_to_linear_f32_rgb(floats, 3), None, false)
+                (
+                    bt709_f32_to_linear_f32_rgb(floats, 3, self.stop),
+                    None,
+                    false,
+                )
             }
             PixelLayout::RgbaBt709F32 => {
                 let floats: &[f32] = &cast_pixel_lanes(pixels);
-                let rgb = bt709_f32_to_linear_f32_rgb(floats, 4);
-                let alpha = extract_alpha_f32(floats, 4, 3);
+                let rgb = bt709_f32_to_linear_f32_rgb(floats, 4, self.stop);
+                let alpha = extract_alpha_f32(floats, 4, 3, self.stop);
                 (rgb, Some(alpha), false)
             }
             // Lossy CMYK. The C/M/Y planes are routed through the
@@ -7719,13 +7749,16 @@ impl<'a> EncodeRequest<'a> {
                 let mut cmy = Vec::with_capacity(n * 3);
                 let mut k = Vec::with_capacity(n);
                 for i in 0..n {
+                    if i & 0xF_FFFF == 0 && self.stop.is_some_and(|st| st.check().is_err()) {
+                        break;
+                    }
                     let base = i * 4;
                     cmy.push(pixels[base]);
                     cmy.push(pixels[base + 1]);
                     cmy.push(pixels[base + 2]);
                     k.push(pixels[base + 3]);
                 }
-                let linear = cmyk_u8_to_linear_f32_rgb(&cmy, &k);
+                let linear = cmyk_u8_to_linear_f32_rgb(&cmy, &k, self.stop);
                 synthesised_black_u8 = Some(k);
                 (linear, None, false)
             }
@@ -7748,17 +7781,23 @@ impl<'a> EncodeRequest<'a> {
                 let mut cmy = Vec::with_capacity(n * 3 * 2);
                 let mut k = Vec::with_capacity(n);
                 for i in 0..n {
+                    if i & 0xF_FFFF == 0 && self.stop.is_some_and(|st| st.check().is_err()) {
+                        break;
+                    }
                     let base = i * 8;
                     cmy.extend_from_slice(&pixels[base..base + 6]);
                     let k_lo = pixels[base + 6];
                     let k_hi = pixels[base + 7];
                     k.push(u16::from_ne_bytes([k_lo, k_hi]));
                 }
-                let linear = cmyk_u16_to_linear_f32_rgb(&cmy, &k, u16_max);
+                let linear = cmyk_u16_to_linear_f32_rgb(&cmy, &k, u16_max, self.stop);
                 synthesised_black_u16 = Some(k);
                 (linear, None, true)
             }
         };
+        // Pixel converters early-exit with a partial buffer on stop; the
+        // error propagates here before the truncated data is consumed.
+        crate::error::check_stop(self.stop)?;
         #[cfg(feature = "__env_var_diagnostics")]
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!("encode_lossy: conversion={:?}", _t_conv.elapsed());

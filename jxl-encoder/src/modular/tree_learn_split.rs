@@ -262,6 +262,7 @@ pub fn split_tree_samples_in_place(
     pos: usize,
     end: usize,
     key: PartitionKey,
+    stop: Option<&dyn enough::Stop>,
 ) -> usize {
     debug_assert!(begin <= pos, "begin {} > pos {}", begin, pos);
     debug_assert!(pos <= end, "pos {} > end {}", pos, end);
@@ -269,13 +270,22 @@ pub fn split_tree_samples_in_place(
         end <= samples.len,
         "end {} > samples.len {}",
         end,
-        samples.len
+        samples.len,
     );
 
     let mut begin_pos = begin;
     let mut end_pos = pos;
+    let mut iter = 0usize;
 
     loop {
+        // Cooperative cancellation: the two-pointer swap walk is O(range);
+        // a root-scale partition can run tens of ms, so poll every 256K
+        // iterations. Early exit leaves the range partially partitioned —
+        // callers propagate `Error::Cancelled` before the result is used.
+        iter += 1;
+        if iter & 0x3_FFFF == 0 && crate::error::check_stop(stop).is_err() {
+            return pos;
+        }
         // Walk begin_pos forward past rows already on the correct (left) side.
         while begin_pos < pos && key.matches(samples, begin_pos) {
             begin_pos += 1;
@@ -322,6 +332,7 @@ pub fn split_tree_samples_stable_gather(
     pos: usize,
     end: usize,
     key: PartitionKey,
+    stop: Option<&dyn enough::Stop>,
 ) -> usize {
     debug_assert!(begin <= pos && pos <= end && end <= samples.len);
     debug_assert!(
@@ -365,11 +376,21 @@ pub fn split_tree_samples_stable_gather(
             col[begin..end].copy_from_slice(&col_scratch[..n]);
         };
         for row in samples.residual_tokens.iter_mut() {
+            // Cooperative cancellation: each column pass is O(range); a
+            // ~17-column gather over millions of rows runs >50ms unpolled.
+            // Early exit leaves the partition partially applied — the
+            // caller's next `check_stop` propagates before it is consumed.
+            if crate::error::check_stop(stop).is_err() {
+                return;
+            }
             if !row.is_empty() {
                 gather_u8(row);
             }
         }
         for row in samples.bucket_indices.iter_mut() {
+            if crate::error::check_stop(stop).is_err() {
+                return;
+            }
             if !row.is_empty() {
                 gather_u8(row);
             }
@@ -461,7 +482,7 @@ mod tests {
         key: PartitionKey,
     ) -> usize {
         let mut view = storage.view();
-        split_tree_samples_in_place(&mut view, begin, pos, end, key)
+        split_tree_samples_in_place(&mut view, begin, pos, end, key, None)
     }
 
     #[test]
@@ -783,6 +804,7 @@ mod tests {
                     prop_idx: 0,
                     val: 127,
                 },
+                None,
             )
         };
         assert_eq!(returned, pos);
@@ -846,6 +868,7 @@ mod tests {
                 expected_left_count,
                 n,
                 PartitionKey::Property { prop_idx: 0, val },
+                None,
             )
         };
         assert_eq!(returned, expected_left_count);
@@ -901,6 +924,7 @@ mod tests {
                     prop_idx: 0,
                     val: 0,
                 },
+                None,
             )
         };
         assert_eq!(returned, 8);
@@ -1002,6 +1026,7 @@ mod tests {
             left_count,
             n,
             PartitionKey::Bucket { prop_idx: 0, val },
+            None,
         );
         assert_eq!(pos, left_count);
 
@@ -1044,6 +1069,7 @@ mod tests {
                 prop_idx: 0,
                 val: 3,
             },
+            None,
         );
     }
 }

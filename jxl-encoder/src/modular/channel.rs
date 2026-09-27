@@ -259,7 +259,7 @@ pub struct ModularImage {
 impl ModularImage {
     /// Creates a new modular image from 8-bit RGB data.
     pub fn from_rgb8(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        Self::from_rgb8_with_budget(data, width, height, None)
+        Self::from_rgb8_with_budget(data, width, height, None, None)
     }
 
     /// Build a 3-channel modular image from interleaved RGB8, charging
@@ -269,6 +269,7 @@ impl ModularImage {
         width: usize,
         height: usize,
         budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<Self> {
         let expected = width
             .checked_mul(height)
@@ -286,6 +287,9 @@ impl ModularImage {
         for c in 0..3 {
             let mut channel = Channel::new_with_budget(width, height, budget)?;
             for y in 0..height {
+                if y & 0xF == 0 {
+                    crate::error::check_stop(stop)?;
+                }
                 for x in 0..width {
                     let idx = (y * width + x) * 3 + c;
                     channel.set(x, y, data[idx] as i32);
@@ -304,7 +308,7 @@ impl ModularImage {
 
     /// Creates a new modular image from 8-bit RGBA data.
     pub fn from_rgba8(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        Self::from_rgba8_with_budget(data, width, height, None)
+        Self::from_rgba8_with_budget(data, width, height, None, None)
     }
 
     /// Build a 4-channel modular image from interleaved RGBA8, charging
@@ -314,6 +318,7 @@ impl ModularImage {
         width: usize,
         height: usize,
         budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<Self> {
         let expected = width
             .checked_mul(height)
@@ -331,6 +336,9 @@ impl ModularImage {
         for c in 0..4 {
             let mut channel = Channel::new_with_budget(width, height, budget)?;
             for y in 0..height {
+                if y & 0xF == 0 {
+                    crate::error::check_stop(stop)?;
+                }
                 for x in 0..width {
                     let idx = (y * width + x) * 4 + c;
                     channel.set(x, y, data[idx] as i32);
@@ -510,13 +518,14 @@ impl ModularImage {
     /// (its encoder refuses 32-bit integer modular outright,
     /// `enc_modular.cc:744`), and 25..=31 rests on that comment plus the fact
     /// that two independent decoders accept what we emit there.
-    pub fn from_planar_int(
+    pub(crate) fn from_planar_int_stop(
         planes: &[&[u32]],
         width: usize,
         height: usize,
         bits_per_sample: u32,
         is_grayscale: bool,
         has_alpha: bool,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<Self> {
         if !(1..=31).contains(&bits_per_sample) {
             return Err(Error::InvalidInput(alloc::format!(
@@ -558,6 +567,9 @@ impl ModularImage {
         for plane in planes {
             let mut ch = Channel::new(width, height)?;
             for y in 0..height {
+                if y & 0xF == 0 {
+                    crate::error::check_stop(stop)?;
+                }
                 for x in 0..width {
                     // In range by the check above, so the cast is exact.
                     ch.set(x, y, plane[y * width + x] as i32);
@@ -572,6 +584,25 @@ impl ModularImage {
             is_grayscale,
             has_alpha,
         })
+    }
+
+    pub fn from_planar_int(
+        planes: &[&[u32]],
+        width: usize,
+        height: usize,
+        bits_per_sample: u32,
+        is_grayscale: bool,
+        has_alpha: bool,
+    ) -> Result<Self> {
+        Self::from_planar_int_stop(
+            planes,
+            width,
+            height,
+            bits_per_sample,
+            is_grayscale,
+            has_alpha,
+            None,
+        )
     }
 
     pub fn from_float_native(
@@ -632,7 +663,12 @@ impl ModularImage {
         })
     }
 
-    pub fn from_rgb16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
+    pub(crate) fn from_rgb16_native_stop(
+        data: &[u8],
+        width: usize,
+        height: usize,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<Self> {
         let expected = width
             .checked_mul(height)
             .and_then(|n| n.checked_mul(6))
@@ -649,6 +685,9 @@ impl ModularImage {
         for c in 0..3 {
             let mut channel = Channel::new(width, height)?;
             for y in 0..height {
+                if y & 0xF == 0 {
+                    crate::error::check_stop(stop)?;
+                }
                 for x in 0..width {
                     let idx = (y * width + x) * 3 + c;
                     channel.set(x, y, pixels[idx] as i32);
@@ -664,10 +703,19 @@ impl ModularImage {
         })
     }
 
+    pub fn from_rgb16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        Self::from_rgb16_native_stop(data, width, height, None)
+    }
+
     /// Creates a new modular image from native-endian 16-bit RGBA data.
     ///
     /// Input is 8 bytes per pixel (R, G, B, A as native-endian u16).
-    pub fn from_rgba16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
+    pub(crate) fn from_rgba16_native_stop(
+        data: &[u8],
+        width: usize,
+        height: usize,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<Self> {
         let expected = width
             .checked_mul(height)
             .and_then(|n| n.checked_mul(8))
@@ -684,6 +732,9 @@ impl ModularImage {
         for c in 0..4 {
             let mut channel = Channel::new(width, height)?;
             for y in 0..height {
+                if y & 0xF == 0 {
+                    crate::error::check_stop(stop)?;
+                }
                 for x in 0..width {
                     let idx = (y * width + x) * 4 + c;
                     channel.set(x, y, pixels[idx] as i32);
@@ -697,6 +748,10 @@ impl ModularImage {
             is_grayscale: false,
             has_alpha: true,
         })
+    }
+
+    pub fn from_rgba16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        Self::from_rgba16_native_stop(data, width, height, None)
     }
 
     /// Creates a new modular image from 8-bit grayscale + alpha data (2 bytes per pixel).

@@ -251,14 +251,23 @@ struct SymbolCostEstimator {
 }
 
 impl SymbolCostEstimator {
-    fn new(num_contexts: usize, force_huffman: bool, tokens: &[Token], lz77: &Lz77Params) -> Self {
+    fn new(
+        num_contexts: usize,
+        force_huffman: bool,
+        tokens: &[Token],
+        lz77: &Lz77Params,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Self {
         const ANS_LOG_TAB_SIZE: f32 = 12.0;
 
         // Build per-context histograms from the (possibly LZ77-transformed) tokens.
         let mut counts: Vec<Vec<u32>> = vec![vec![]; num_contexts];
         let mut total_counts = vec![0u32; num_contexts];
 
-        for token in tokens {
+        for (i, token) in tokens.iter().enumerate() {
+            if i & 0x3_FFFF == 0 {
+                crate::error::check_stop(stop).ok();
+            }
             let (tok, _nbits) = if token.is_lz77_length() {
                 let e = Lz77UintCoder::encode(token.value);
                 (e.token + lz77.min_symbol, e.nbits)
@@ -701,23 +710,43 @@ impl HashChain {
 
     /// Find best match at position pos.
     /// Returns (distance_symbol, match_length).
-    fn find_match(&self, pos: usize, max_dist: usize) -> (usize, usize) {
+    fn find_match(
+        &self,
+        pos: usize,
+        max_dist: usize,
+        stop: Option<&dyn enough::Stop>,
+    ) -> (usize, usize) {
         let mut best_dist_symbol = 0usize;
         let mut best_len = 1usize;
 
-        self.find_matches(pos, max_dist, |len, dist_symbol| {
-            if len > best_len || (len == best_len && dist_symbol < best_dist_symbol) {
-                best_len = len;
-                best_dist_symbol = dist_symbol;
-            }
-        });
+        self.find_matches(
+            pos,
+            max_dist,
+            |len, dist_symbol| {
+                if len > best_len || (len == best_len && dist_symbol < best_dist_symbol) {
+                    best_len = len;
+                    best_dist_symbol = dist_symbol;
+                }
+            },
+            stop,
+        );
 
         (best_dist_symbol, best_len)
     }
 
     /// Find all matches at position pos, calling callback for each.
-    fn find_matches<F>(&self, pos: usize, max_dist: usize, mut found_match: F)
-    where
+    ///
+    /// `stop` is polled every 4096 chain steps; on failure the walk breaks
+    /// early (fewer candidate matches — output stays well-formed, and the
+    /// caller's next `check_stop` propagates the error before the encode
+    /// commits).
+    fn find_matches<F>(
+        &self,
+        pos: usize,
+        max_dist: usize,
+        mut found_match: F,
+        stop: Option<&dyn enough::Stop>,
+    ) where
         F: FnMut(usize, usize),
     {
         let wpos = pos & self.window_mask;
@@ -796,6 +825,12 @@ impl HashChain {
             }
 
             chain_length += 1;
+            if chain_length & 0xFFF == 0
+                && let Some(st) = stop
+                && st.check().is_err()
+            {
+                break;
+            }
             if chain_length >= self.max_chain_length {
                 break;
             }
@@ -849,6 +884,28 @@ pub fn apply_lz77_backref(
         force_huffman,
         distance_multiplier,
         !early_out_disabled(),
+        None,
+    )
+}
+
+/// `apply_lz77_backref` with cooperative cancellation. On stop the greedy
+/// pass returns `None` (same as "not beneficial" — the caller encodes the
+/// untransformed stream) and the encode aborts at the caller's next
+/// `check_stop`.
+pub(crate) fn apply_lz77_backref_stop(
+    tokens: &[Token],
+    num_contexts: usize,
+    force_huffman: bool,
+    distance_multiplier: i32,
+    stop: Option<&dyn enough::Stop>,
+) -> Option<(Vec<Token>, Lz77Params)> {
+    apply_lz77_backref_inner(
+        tokens,
+        num_contexts,
+        force_huffman,
+        distance_multiplier,
+        !early_out_disabled(),
+        stop,
     )
 }
 
@@ -860,6 +917,7 @@ fn apply_lz77_backref_inner(
     force_huffman: bool,
     distance_multiplier: i32,
     early_out: bool,
+    stop: Option<&dyn enough::Stop>,
 ) -> Option<(Vec<Token>, Lz77Params)> {
     if tokens.is_empty() {
         return None;
@@ -868,7 +926,7 @@ fn apply_lz77_backref_inner(
     let mut lz77 = Lz77Params::new(num_contexts, force_huffman);
 
     // Build cost estimator from original tokens
-    let sce = SymbolCostEstimator::new(num_contexts, force_huffman, tokens, &lz77);
+    let sce = SymbolCostEstimator::new(num_contexts, force_huffman, tokens, &lz77, stop);
 
     // Compute cumulative bit costs for original stream
     let mut sym_cost = vec![0.0f32; tokens.len() + 1];
@@ -935,6 +993,12 @@ fn apply_lz77_backref_inner(
             }
             return None;
         }
+        if i & 0xFFFF == 0
+            && let Some(st) = stop
+            && st.check().is_err()
+        {
+            return None;
+        }
         out.push(tokens[i]);
 
         if !already_updated {
@@ -942,7 +1006,7 @@ fn apply_lz77_backref_inner(
         }
         already_updated = false;
 
-        let (mut dist_symbol, mut len) = chain.find_match(i, max_distance);
+        let (mut dist_symbol, mut len) = chain.find_match(i, max_distance, stop);
         lz77_stats::bump(&lz77_stats::POSITIONS, 1);
         if len >= min_length {
             lz77_stats::bump(&lz77_stats::FOUND, 1);
@@ -950,7 +1014,7 @@ fn apply_lz77_backref_inner(
             if len < MAX_LAZY_MATCH_LEN && i + 1 < tokens.len() {
                 chain.update(i + 1);
                 already_updated = true;
-                let (dist_symbol2, len2) = chain.find_match(i + 1, max_distance);
+                let (dist_symbol2, len2) = chain.find_match(i + 1, max_distance, stop);
                 if len2 > len {
                     // Use lazy match: emit literal for current position,
                     // then use match starting at next position
@@ -1046,6 +1110,23 @@ pub fn apply_lz77_rle(
     force_huffman: bool,
     distance_multiplier: i32,
 ) -> Option<(Vec<Token>, Lz77Params)> {
+    apply_lz77_rle_stop(
+        tokens,
+        num_contexts,
+        force_huffman,
+        distance_multiplier,
+        None,
+    )
+}
+
+/// `apply_lz77_rle` with cooperative cancellation.
+pub(crate) fn apply_lz77_rle_stop(
+    tokens: &[Token],
+    num_contexts: usize,
+    force_huffman: bool,
+    distance_multiplier: i32,
+    stop: Option<&dyn enough::Stop>,
+) -> Option<(Vec<Token>, Lz77Params)> {
     if tokens.is_empty() {
         return None;
     }
@@ -1061,11 +1142,17 @@ pub fn apply_lz77_rle(
 
     // First pass: build cost estimator from the original tokens (no LZ77 tokens yet).
     // We pass the original tokens to estimate costs, matching libjxl.
-    let sce = SymbolCostEstimator::new(num_contexts, force_huffman, tokens, &lz77);
+    let sce = SymbolCostEstimator::new(num_contexts, force_huffman, tokens, &lz77, stop);
 
     // Compute cumulative bit costs for original stream.
     let mut sym_cost = vec![0.0f32; tokens.len() + 1];
     for (i, token) in tokens.iter().enumerate() {
+        if i & 0xFFFF == 0
+            && let Some(st) = stop
+            && st.check().is_err()
+        {
+            return None;
+        }
         let e = UintCoder::encode(token.value);
         let cost = sce.symbol_cost(token.context() as usize, e.token as usize) + e.nbits as f32;
         sym_cost[i + 1] = sym_cost[i] + cost;
@@ -1077,12 +1164,27 @@ pub fn apply_lz77_rle(
 
     let mut i = 0;
     while i < tokens.len() {
+        if i & 0xFFFF == 0
+            && let Some(st) = stop
+            && st.check().is_err()
+        {
+            return None;
+        }
         // Count consecutive identical values starting from the PREVIOUS token
         // (matching libjxl: "if (i > 0) { ... in[i+num_to_copy].value != in[i-1].value }")
         let mut num_to_copy = 0;
         if i > 0 {
             let prev_value = tokens[i - 1].value;
             while i + num_to_copy < tokens.len() && tokens[i + num_to_copy].value == prev_value {
+                // Cooperative cancellation: a single maximal run can span
+                // millions of tokens.
+                if num_to_copy & 0xFFFF == 0
+                    && num_to_copy > 0
+                    && let Some(st) = stop
+                    && st.check().is_err()
+                {
+                    return None;
+                }
                 num_to_copy += 1;
             }
         }
@@ -1170,6 +1272,24 @@ pub fn apply_lz77_rle_multi_section(
     force_huffman: bool,
     distance_multiplier: i32,
 ) -> Option<(Vec<Vec<Token>>, Lz77Params)> {
+    apply_lz77_rle_multi_section_stop(
+        sections,
+        num_contexts,
+        force_huffman,
+        distance_multiplier,
+        None,
+    )
+}
+
+/// `apply_lz77_rle_multi_section` with cooperative cancellation.
+#[allow(dead_code)] // stop-aware variant kept for callers that hold a token
+pub(crate) fn apply_lz77_rle_multi_section_stop(
+    sections: &[&[Token]],
+    num_contexts: usize,
+    force_huffman: bool,
+    distance_multiplier: i32,
+    stop: Option<&dyn enough::Stop>,
+) -> Option<(Vec<Vec<Token>>, Lz77Params)> {
     if sections.is_empty() {
         return None;
     }
@@ -1191,7 +1311,7 @@ pub fn apply_lz77_rle_multi_section(
     for section in sections {
         concat_tokens.extend_from_slice(section);
     }
-    let sce = SymbolCostEstimator::new(num_contexts, force_huffman, &concat_tokens, &lz77);
+    let sce = SymbolCostEstimator::new(num_contexts, force_huffman, &concat_tokens, &lz77, stop);
 
     let mut output_sections: Vec<Vec<Token>> = Vec::with_capacity(sections.len());
     let mut total_bit_decrease: f32 = 0.0;
@@ -1199,6 +1319,11 @@ pub fn apply_lz77_rle_multi_section(
     let mut sym_cost: Vec<f32> = Vec::new();
 
     for section in sections {
+        if let Some(st) = stop
+            && st.check().is_err()
+        {
+            return None;
+        }
         let tokens = *section;
         total_symbols += tokens.len();
         if tokens.is_empty() {
@@ -1342,31 +1467,57 @@ pub fn apply_lz77(
     distance_multiplier: i32,
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<Option<(Vec<Token>, Lz77Params)>> {
+    apply_lz77_stop(
+        tokens,
+        num_contexts,
+        force_huffman,
+        method,
+        distance_multiplier,
+        budget,
+        None,
+    )
+}
+
+/// `apply_lz77` with cooperative cancellation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_lz77_stop(
+    tokens: &[Token],
+    num_contexts: usize,
+    force_huffman: bool,
+    method: Lz77Method,
+    distance_multiplier: i32,
+    budget: Option<&Arc<MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<Option<(Vec<Token>, Lz77Params)>> {
     match method {
-        Lz77Method::Rle => Ok(apply_lz77_rle(
+        Lz77Method::Rle => Ok(apply_lz77_rle_stop(
             tokens,
             num_contexts,
             force_huffman,
             distance_multiplier,
+            stop,
         )),
         // #110 diagnostic arm: measure the CEILING on any early-out by
         // skipping the greedy pass outright. Not a shipping knob -- it forfeits
         // the streams that would have been accepted, which is exactly the cost
         // an early-out has to avoid paying.
         Lz77Method::Greedy if skip_greedy() => Ok(None),
-        Lz77Method::Greedy => Ok(apply_lz77_backref(
+        Lz77Method::Greedy => Ok(apply_lz77_backref_stop(
             tokens,
             num_contexts,
             force_huffman,
             distance_multiplier,
+            stop,
         )),
-        Lz77Method::Optimal => apply_lz77_optimal(
+        Lz77Method::Optimal => Ok(apply_lz77_optimal_keeping_greedy(
             tokens,
             num_contexts,
             force_huffman,
             distance_multiplier,
             budget,
-        ),
+            stop,
+        )?
+        .0),
     }
 }
 
@@ -1395,6 +1546,7 @@ pub fn apply_lz77_optimal(
         force_huffman,
         distance_multiplier,
         budget,
+        None,
     )?
     .0)
 }
@@ -1403,7 +1555,7 @@ pub fn apply_lz77_optimal(
 pub(crate) type Lz77Parse = Option<(Vec<Token>, Lz77Params)>;
 
 /// [`apply_lz77_optimal`], additionally returning the greedy parse it builds
-/// its cost model from.
+/// its cost model from, with cooperative cancellation.
 ///
 /// The optimal parse always derives its cost model from a greedy parse of the
 /// same input with the same parameters, so the greedy result is a by-product
@@ -1418,6 +1570,7 @@ pub(crate) fn apply_lz77_optimal_keeping_greedy(
     force_huffman: bool,
     distance_multiplier: i32,
     budget: Option<&Arc<MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<(Lz77Parse, Lz77Parse)> {
     if tokens.is_empty() {
         return Ok((None, None));
@@ -1429,8 +1582,13 @@ pub(crate) fn apply_lz77_optimal_keeping_greedy(
 
     // Step 1: Run greedy LZ77 to get a cost estimate.
     // If greedy doesn't help, optimal won't either.
-    let greedy_result =
-        apply_lz77_backref(tokens, num_contexts, force_huffman, distance_multiplier);
+    let greedy_result = apply_lz77_backref_stop(
+        tokens,
+        num_contexts,
+        force_huffman,
+        distance_multiplier,
+        stop,
+    );
     let greedy_tokens = match &greedy_result {
         Some((t, _)) => t,
         None => return Ok((None, None)),
@@ -1440,7 +1598,7 @@ pub(crate) fn apply_lz77_optimal_keeping_greedy(
     lz77.enabled = true;
 
     // Step 2: Build cost estimator from greedy result (num_contexts + 1 for distance ctx).
-    let sce = SymbolCostEstimator::new(num_contexts + 1, force_huffman, greedy_tokens, &lz77);
+    let sce = SymbolCostEstimator::new(num_contexts + 1, force_huffman, greedy_tokens, &lz77, stop);
 
     // Step 3: Compute cumulative symbol costs for the original (non-LZ77) stream.
     let mut sym_cost = vec![0.0f32; tokens.len() + 1];
@@ -1510,6 +1668,9 @@ pub(crate) fn apply_lz77_optimal_keeping_greedy(
     let mut dist_symbols: Vec<u32> = Vec::new();
 
     for i in 0..n {
+        if i & 0xFFFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         chain.update(i);
 
         // Literal cost
@@ -1528,14 +1689,19 @@ pub(crate) fn apply_lz77_optimal_keeping_greedy(
 
         // Collect all matches: for each length, keep the cheapest dist_symbol.
         dist_symbols.clear();
-        chain.find_matches(i, max_distance, |len, dist_symbol| {
-            if dist_symbols.len() <= len {
-                dist_symbols.resize(len + 1, dist_symbol as u32);
-            }
-            if (dist_symbol as u32) < dist_symbols[len] {
-                dist_symbols[len] = dist_symbol as u32;
-            }
-        });
+        chain.find_matches(
+            i,
+            max_distance,
+            |len, dist_symbol| {
+                if dist_symbols.len() <= len {
+                    dist_symbols.resize(len + 1, dist_symbol as u32);
+                }
+                if (dist_symbol as u32) < dist_symbols[len] {
+                    dist_symbols[len] = dist_symbol as u32;
+                }
+            },
+            stop,
+        );
 
         if dist_symbols.len() <= min_length {
             continue;
@@ -2011,7 +2177,7 @@ mod tests {
         }
 
         // At position 4, should find match at position 0 (distance 4)
-        let (dist_symbol, len) = chain.find_match(4, 10);
+        let (dist_symbol, len) = chain.find_match(4, 10, None);
         assert!(len >= 3, "should find match of length >= 3, got {}", len);
         // dist_symbol should encode distance 4 (no special distances with multiplier=0)
         // Special distances: 0 entries since multiplier=0
@@ -2203,8 +2369,8 @@ mod lz77_early_out_tests_110 {
         let mut accepted = 0usize;
         for (idx, toks) in streams().iter().enumerate() {
             for &fh in &[false, true] {
-                let full = apply_lz77_backref_inner(toks, 1, fh, 0, false);
-                let early = apply_lz77_backref_inner(toks, 1, fh, 0, true);
+                let full = apply_lz77_backref_inner(toks, 1, fh, 0, false, None);
+                let early = apply_lz77_backref_inner(toks, 1, fh, 0, true, None);
                 match (&full, &early) {
                     (None, None) => fired += 1,
                     (Some((a, pa)), Some((b, pb))) => {

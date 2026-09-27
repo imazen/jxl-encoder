@@ -142,8 +142,10 @@ pub(crate) fn encode_animation_lossless(
     let sample_image = match layout {
         PixelLayout::Rgb8 => ModularImage::from_rgb8(frames[0].pixels, w, h),
         PixelLayout::Rgba8 => ModularImage::from_rgba8(frames[0].pixels, w, h),
-        PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(frames[0].pixels, 3), w, h),
-        PixelLayout::Bgra8 => ModularImage::from_rgba8(&bgr_to_rgb(frames[0].pixels, 4), w, h),
+        PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(frames[0].pixels, 3, None), w, h),
+        PixelLayout::Bgra8 => {
+            ModularImage::from_rgba8(&bgr_to_rgb(frames[0].pixels, 4, None), w, h)
+        }
         PixelLayout::Gray8 => ModularImage::from_gray8(frames[0].pixels, w, h),
         PixelLayout::GrayAlpha8 => ModularImage::from_grayalpha8(frames[0].pixels, w, h),
         PixelLayout::Rgb16 => ModularImage::from_rgb16_native(frames[0].pixels, w, h),
@@ -276,10 +278,10 @@ pub(crate) fn encode_animation_lossless(
             PixelLayout::Rgb8 => ModularImage::from_rgb8(frame_pixels, frame_w, frame_h),
             PixelLayout::Rgba8 => ModularImage::from_rgba8(frame_pixels, frame_w, frame_h),
             PixelLayout::Bgr8 => {
-                ModularImage::from_rgb8(&bgr_to_rgb(frame_pixels, 3), frame_w, frame_h)
+                ModularImage::from_rgb8(&bgr_to_rgb(frame_pixels, 3, None), frame_w, frame_h)
             }
             PixelLayout::Bgra8 => {
-                ModularImage::from_rgba8(&bgr_to_rgb(frame_pixels, 4), frame_w, frame_h)
+                ModularImage::from_rgba8(&bgr_to_rgb(frame_pixels, 4, None), frame_w, frame_h)
             }
             PixelLayout::Gray8 => ModularImage::from_gray8(frame_pixels, frame_w, frame_h),
             PixelLayout::GrayAlpha8 => {
@@ -551,13 +553,13 @@ fn build_lossless_delta_image(
         PixelLayout::Rgb8 => make_8bit(curr, prev, 3, false, false),
         PixelLayout::Rgba8 => make_8bit(curr, prev, 4, false, true),
         PixelLayout::Bgr8 => {
-            let curr_swap = bgr_to_rgb(curr, 3);
-            let prev_swap = bgr_to_rgb(prev, 3);
+            let curr_swap = bgr_to_rgb(curr, 3, None);
+            let prev_swap = bgr_to_rgb(prev, 3, None);
             make_8bit(&curr_swap, &prev_swap, 3, false, false)
         }
         PixelLayout::Bgra8 => {
-            let curr_swap = bgr_to_rgb(curr, 4);
-            let prev_swap = bgr_to_rgb(prev, 4);
+            let curr_swap = bgr_to_rgb(curr, 4, None);
+            let prev_swap = bgr_to_rgb(prev, 4, None);
             make_8bit(&curr_swap, &prev_swap, 4, false, true)
         }
         PixelLayout::Gray8 => make_8bit(curr, prev, 1, true, false),
@@ -865,35 +867,41 @@ pub(crate) fn encode_animation_lossy(
         };
 
         let (linear_rgb, alpha) = match layout {
-            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(src_pixels, 3), None),
-            PixelLayout::Bgr8 => (srgb_u8_to_linear_f32(&bgr_to_rgb(src_pixels, 3), 3), None),
+            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(src_pixels, 3, None), None),
+            PixelLayout::Bgr8 => (
+                srgb_u8_to_linear_f32(&bgr_to_rgb(src_pixels, 3, None), 3, None),
+                None,
+            ),
             PixelLayout::Rgba8 => {
-                let rgb = srgb_u8_to_linear_f32(src_pixels, 4);
-                let alpha = extract_alpha(src_pixels, 4, 3);
+                let rgb = srgb_u8_to_linear_f32(src_pixels, 4, None);
+                let alpha = extract_alpha(src_pixels, 4, 3, None);
                 (rgb, Some(alpha))
             }
             PixelLayout::Bgra8 => {
-                let swapped = bgr_to_rgb(src_pixels, 4);
-                let rgb = srgb_u8_to_linear_f32(&swapped, 4);
-                let alpha = extract_alpha(src_pixels, 4, 3);
+                let swapped = bgr_to_rgb(src_pixels, 4, None);
+                let rgb = srgb_u8_to_linear_f32(&swapped, 4, None);
+                let alpha = extract_alpha(src_pixels, 4, 3, None);
                 (rgb, Some(alpha))
             }
-            PixelLayout::Gray8 => (gray_u8_to_linear_f32_rgb(src_pixels, 1), None),
+            PixelLayout::Gray8 => (gray_u8_to_linear_f32_rgb(src_pixels, 1, None), None),
             PixelLayout::GrayAlpha8 => {
-                let rgb = gray_u8_to_linear_f32_rgb(src_pixels, 2);
-                let alpha = extract_alpha(src_pixels, 2, 1);
+                let rgb = gray_u8_to_linear_f32_rgb(src_pixels, 2, None);
+                let alpha = extract_alpha(src_pixels, 2, 1, None);
                 (rgb, Some(alpha))
             }
-            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(src_pixels, 3, 65535.0), None),
+            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(src_pixels, 3, 65535.0, None), None),
             PixelLayout::Rgba16 => {
-                let rgb = srgb_u16_to_linear_f32(src_pixels, 4, 65535.0);
-                let alpha = extract_alpha_u16(src_pixels, 4, 3, 65535.0);
+                let rgb = srgb_u16_to_linear_f32(src_pixels, 4, 65535.0, None);
+                let alpha = extract_alpha_u16(src_pixels, 4, 3, 65535.0, None);
                 (rgb, Some(alpha))
             }
-            PixelLayout::Gray16 => (gray_u16_to_linear_f32_rgb(src_pixels, 1, 65535.0), None),
+            PixelLayout::Gray16 => (
+                gray_u16_to_linear_f32_rgb(src_pixels, 1, 65535.0, None),
+                None,
+            ),
             PixelLayout::GrayAlpha16 => {
-                let rgb = gray_u16_to_linear_f32_rgb(src_pixels, 2, 65535.0);
-                let alpha = extract_alpha_u16(src_pixels, 2, 1, 65535.0);
+                let rgb = gray_u16_to_linear_f32_rgb(src_pixels, 2, 65535.0, None);
+                let alpha = extract_alpha_u16(src_pixels, 2, 1, 65535.0, None);
                 (rgb, Some(alpha))
             }
             PixelLayout::RgbLinearF32 => {
@@ -906,60 +914,60 @@ pub(crate) fn encode_animation_lossy(
                     .chunks(4)
                     .flat_map(|px| [px[0], px[1], px[2]])
                     .collect();
-                let alpha = extract_alpha_f32(floats, 4, 3);
+                let alpha = extract_alpha_f32(floats, 4, 3, None);
                 (rgb, Some(alpha))
             }
             PixelLayout::GrayLinearF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (gray_f32_to_linear_f32_rgb(floats, 1), None)
+                (gray_f32_to_linear_f32_rgb(floats, 1, None), None)
             }
             PixelLayout::GrayAlphaLinearF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb = gray_f32_to_linear_f32_rgb(floats, 2);
-                let alpha = extract_alpha_f32(floats, 2, 1);
+                let rgb = gray_f32_to_linear_f32_rgb(floats, 2, None);
+                let alpha = extract_alpha_f32(floats, 2, 1, None);
                 (rgb, Some(alpha))
             }
-            PixelLayout::RgbLinearF16 => (f16_to_linear_f32_rgb(src_pixels, 3), None),
+            PixelLayout::RgbLinearF16 => (f16_to_linear_f32_rgb(src_pixels, 3, None), None),
             PixelLayout::RgbaLinearF16 => {
-                let rgb = f16_to_linear_f32_rgb(src_pixels, 4);
-                let alpha = extract_alpha_f16(src_pixels, 4, 3);
+                let rgb = f16_to_linear_f32_rgb(src_pixels, 4, None);
+                let alpha = extract_alpha_f16(src_pixels, 4, 3, None);
                 (rgb, Some(alpha))
             }
-            PixelLayout::GrayLinearF16 => (f16_gray_to_linear_f32_rgb(src_pixels, 1), None),
+            PixelLayout::GrayLinearF16 => (f16_gray_to_linear_f32_rgb(src_pixels, 1, None), None),
             PixelLayout::GrayAlphaLinearF16 => {
-                let rgb = f16_gray_to_linear_f32_rgb(src_pixels, 2);
-                let alpha = extract_alpha_f16(src_pixels, 2, 1);
+                let rgb = f16_gray_to_linear_f32_rgb(src_pixels, 2, None);
+                let alpha = extract_alpha_f16(src_pixels, 2, 1, None);
                 (rgb, Some(alpha))
             }
             // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46).
             PixelLayout::RgbPqF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (pq_f32_to_linear_f32_rgb(floats, 3), None)
+                (pq_f32_to_linear_f32_rgb(floats, 3, None), None)
             }
             PixelLayout::RgbaPqF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb = pq_f32_to_linear_f32_rgb(floats, 4);
-                let alpha = extract_alpha_f32(floats, 4, 3);
+                let rgb = pq_f32_to_linear_f32_rgb(floats, 4, None);
+                let alpha = extract_alpha_f32(floats, 4, 3, None);
                 (rgb, Some(alpha))
             }
             PixelLayout::RgbHlgF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (hlg_f32_to_linear_f32_rgb(floats, 3), None)
+                (hlg_f32_to_linear_f32_rgb(floats, 3, None), None)
             }
             PixelLayout::RgbaHlgF32 => {
                 let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb = hlg_f32_to_linear_f32_rgb(floats, 4);
-                let alpha = extract_alpha_f32(floats, 4, 3);
+                let rgb = hlg_f32_to_linear_f32_rgb(floats, 4, None);
+                let alpha = extract_alpha_f32(floats, 4, 3, None);
                 (rgb, Some(alpha))
             }
             PixelLayout::RgbBt709F32 => {
                 let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (bt709_f32_to_linear_f32_rgb(floats, 3), None)
+                (bt709_f32_to_linear_f32_rgb(floats, 3, None), None)
             }
             PixelLayout::RgbaBt709F32 => {
                 let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb = bt709_f32_to_linear_f32_rgb(floats, 4);
-                let alpha = extract_alpha_f32(floats, 4, 3);
+                let rgb = bt709_f32_to_linear_f32_rgb(floats, 4, None);
+                let alpha = extract_alpha_f32(floats, 4, 3, None);
                 (rgb, Some(alpha))
             }
             // Animated CMYK (multi-frame lossy) is not yet wired — only

@@ -11,11 +11,11 @@ use crate::{
     budget::MemoryBudget,
     entropy_coding::{
         encode_ans::{
-            OwnedAnsEntropyCode, build_entropy_code_ans_with_options, write_entropy_code_ans,
+            OwnedAnsEntropyCode, build_entropy_code_ans_with_options_stop, write_entropy_code_ans,
             write_tokens_ans,
         },
         lz77::{
-            Lz77Method, Lz77Params, Lz77Parse, apply_lz77, apply_lz77_optimal_keeping_greedy,
+            Lz77Method, Lz77Params, Lz77Parse, apply_lz77_optimal_keeping_greedy, apply_lz77_stop,
             bucket, skip_greedy, write_lz77_header,
         },
         token::Token,
@@ -65,6 +65,7 @@ pub(super) struct Selection<'a> {
     pub total_pixels: usize,
     pub method: Lz77Method,
     pub budget: Option<&'a Arc<MemoryBudget>>,
+    pub stop: Option<&'a dyn enough::Stop>,
 }
 
 /// A candidate's transform stage output: the concatenated token stream with
@@ -87,6 +88,7 @@ impl Selection<'_> {
         let mut ranges = Vec::with_capacity(self.streams.len());
         let mut transformed = false;
         for (index, &(plain, dm)) in self.streams.iter().enumerate() {
+            crate::error::check_stop(self.stop)?;
             let parsed = match parse {
                 Parse::Incumbent if greedy.recording() => {
                     let (optimal, byproduct) = apply_lz77_optimal_keeping_greedy(
@@ -95,26 +97,29 @@ impl Selection<'_> {
                         false,
                         dm,
                         self.budget,
+                        self.stop,
                     )?;
                     greedy.record(byproduct);
                     optimal
                 }
-                Parse::Incumbent => apply_lz77(
+                Parse::Incumbent => apply_lz77_stop(
                     plain,
                     self.num_contexts,
                     false,
                     self.method,
                     dm,
                     self.budget,
+                    self.stop,
                 )?,
                 Parse::Greedy if greedy.replaying() => greedy.take(index),
-                Parse::Greedy => apply_lz77(
+                Parse::Greedy => apply_lz77_stop(
                     plain,
                     self.num_contexts,
                     false,
                     Lz77Method::Greedy,
                     dm,
                     self.budget,
+                    self.stop,
                 )?,
                 Parse::Plain => None,
                 Parse::Bucket => {
@@ -139,13 +144,14 @@ impl Selection<'_> {
             p.enabled = true;
             p
         });
-        let code = build_entropy_code_ans_with_options(
+        let code = build_entropy_code_ans_with_options_stop(
             &parsed.tokens,
             self.num_contexts + usize::from(params.is_some()),
             true,
             true,
             params.as_ref(),
             Some(self.total_pixels),
+            self.stop,
         );
         Candidate {
             tokens: parsed.tokens,
@@ -184,6 +190,7 @@ impl Selection<'_> {
         let mut plain_size = untransformed.then_some(best_size);
         observe("incumbent", best_size);
         for parse in [Parse::Plain, Parse::Greedy, Parse::Bucket] {
+            crate::error::check_stop(self.stop)?;
             if matches!(parse, Parse::Greedy) && self.method != Lz77Method::Optimal {
                 continue;
             }
@@ -356,6 +363,7 @@ mod tests {
             total_pixels: 2048,
             method: Lz77Method::Optimal,
             budget: None,
+            stop: None,
         };
         let incumbent = selection.finish(
             selection
@@ -469,6 +477,7 @@ mod tests {
                         total_pixels: 2048,
                         method,
                         budget: None,
+                        stop: None,
                     };
                     assert_eq!(
                         ladder(&selection, streams.len()),
@@ -485,8 +494,16 @@ mod tests {
     fn the_optimal_parse_hands_over_the_greedy_parse_verbatim() {
         let tokens = repeating_tokens();
         let (optimal, reused) =
-            apply_lz77_optimal_keeping_greedy(&tokens, 3, false, 64, None).unwrap();
-        let direct = apply_lz77(&tokens, 3, false, Lz77Method::Greedy, 64, None).unwrap();
+            apply_lz77_optimal_keeping_greedy(&tokens, 3, false, 64, None, None).unwrap();
+        let direct = crate::entropy_coding::lz77::apply_lz77(
+            &tokens,
+            3,
+            false,
+            Lz77Method::Greedy,
+            64,
+            None,
+        )
+        .unwrap();
         assert!(optimal.is_some(), "frymire tokens must parse");
         let (reused_tokens, reused_params) = reused.expect("the optimal parse keeps its greedy");
         let (direct_tokens, direct_params) = direct.expect("greedy parses the same tokens");
@@ -525,6 +542,7 @@ mod tests {
             total_pixels: 2048,
             method: Lz77Method::Greedy,
             budget: Some(&budget),
+            stop: None,
         };
         assert!(matches!(
             selection.select(|_| panic!("budget refusal must precede measurement")),
