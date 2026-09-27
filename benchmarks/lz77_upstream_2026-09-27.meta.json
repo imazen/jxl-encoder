@@ -1,0 +1,208 @@
+{
+  "host": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "source_base": "55742722f999b94d447c8a34fc53a82223a396f0",
+  "artifact_root": "/Users/lilith/tmp/jxl110-upstream-2026-09-27",
+  "builds": {
+    "parent": {
+      "revision": "196a43d996aa6ed33ebf98812a7c6d43b2b6d01b",
+      "archive_sha256": "e769f131b80f3b1a9994503438b392a53757e7cbfe0d652c9880ca7199bda822",
+      "dependencies": {
+        "brotli": {
+          "revision": "028fb5a23661f123017c060daa546b55cf4bde29",
+          "archive_sha256": "0afe09a53c8bad9861c8dd1fc1284308d54f19d2979ba3541cfdcc9b05fe360f"
+        },
+        "highway": {
+          "revision": "457c891775a7397bdb0376bb1031e6e027af1c48",
+          "archive_sha256": "5124b0501c98d9930dbb065bfa1a5bbbd59ce0f12facb7e1e33aaef01a5f1f1a"
+        },
+        "skcms": {
+          "revision": "96d9171c94b937a1b5f0293de7309ac16311b722",
+          "archive_sha256": "9bb4b5bba0b7c04f6c2bce9ff713d61e23c9a20c4945161ae16290498ad74627"
+        }
+      },
+      "configure": [
+        "cmake",
+        "-S",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/sources/196a43d996aa6ed33ebf98812a7c6d43b2b6d01b",
+        "-B",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_TESTING=OFF",
+        "-DJPEGXL_ENABLE_OPENEXR=OFF",
+        "-DJPEGXL_ENABLE_SJPEG=OFF",
+        "-DJPEGXL_ENABLE_SKCMS=ON",
+        "-DJPEGXL_ENABLE_JNI=OFF",
+        "-DJPEGXL_ENABLE_EXAMPLES=OFF",
+        "-DJPEGXL_ENABLE_BENCHMARK=OFF",
+        "-DJPEGXL_ENABLE_MANPAGES=OFF",
+        "-DJPEGXL_ENABLE_DOXYGEN=OFF",
+        "-DCMAKE_C_COMPILER_LAUNCHER=ccache",
+        "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+      ],
+      "binary": "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/tools/cjxl",
+      "binary_sha256": "820406451fcb95cce664683489e6f721de457665f57593f90fde3486f78dffd3",
+      "library_sha256": {
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl.0.13.0.dylib": "ca628d0eef63324ac4fa53146298c1207f2251ef90ef846fa724c9f2475f0778",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl.0.13.dylib": "ca628d0eef63324ac4fa53146298c1207f2251ef90ef846fa724c9f2475f0778",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl.dylib": "ca628d0eef63324ac4fa53146298c1207f2251ef90ef846fa724c9f2475f0778",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl_cms.0.13.0.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl_cms.0.13.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl_cms.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl_threads.0.13.0.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl_threads.0.13.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/parent-build/lib/libjxl_threads.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c"
+      }
+    },
+    "rewrite": {
+      "revision": "e8ff09762481785938d8e4e01333ed3917571161",
+      "archive_sha256": "858be3816da866a3e0bf27579f36f32ee149b5564ca6eb5207c5ac10c22a8528",
+      "dependencies": {
+        "brotli": {
+          "revision": "028fb5a23661f123017c060daa546b55cf4bde29",
+          "archive_sha256": "0afe09a53c8bad9861c8dd1fc1284308d54f19d2979ba3541cfdcc9b05fe360f"
+        },
+        "highway": {
+          "revision": "457c891775a7397bdb0376bb1031e6e027af1c48",
+          "archive_sha256": "5124b0501c98d9930dbb065bfa1a5bbbd59ce0f12facb7e1e33aaef01a5f1f1a"
+        },
+        "skcms": {
+          "revision": "96d9171c94b937a1b5f0293de7309ac16311b722",
+          "archive_sha256": "9bb4b5bba0b7c04f6c2bce9ff713d61e23c9a20c4945161ae16290498ad74627"
+        }
+      },
+      "configure": [
+        "cmake",
+        "-S",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/sources/e8ff09762481785938d8e4e01333ed3917571161",
+        "-B",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_TESTING=OFF",
+        "-DJPEGXL_ENABLE_OPENEXR=OFF",
+        "-DJPEGXL_ENABLE_SJPEG=OFF",
+        "-DJPEGXL_ENABLE_SKCMS=ON",
+        "-DJPEGXL_ENABLE_JNI=OFF",
+        "-DJPEGXL_ENABLE_EXAMPLES=OFF",
+        "-DJPEGXL_ENABLE_BENCHMARK=OFF",
+        "-DJPEGXL_ENABLE_MANPAGES=OFF",
+        "-DJPEGXL_ENABLE_DOXYGEN=OFF",
+        "-DCMAKE_C_COMPILER_LAUNCHER=ccache",
+        "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+      ],
+      "binary": "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/tools/cjxl",
+      "binary_sha256": "cf25ffe5d489ce54518b1dc79c8c384ea508f59bdc21e164725b691c7b9834e7",
+      "library_sha256": {
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl.0.13.0.dylib": "50511ed9ced56d194f7563371d1e2de284898cea3bcd696125f650df77366e2b",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl.0.13.dylib": "50511ed9ced56d194f7563371d1e2de284898cea3bcd696125f650df77366e2b",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl.dylib": "50511ed9ced56d194f7563371d1e2de284898cea3bcd696125f650df77366e2b",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl_cms.0.13.0.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl_cms.0.13.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl_cms.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl_threads.0.13.0.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl_threads.0.13.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rewrite-build/lib/libjxl_threads.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c"
+      }
+    },
+    "current": {
+      "revision": "b87738951c1254cd8cccaa6d47712ba735da56d8",
+      "archive_sha256": "2c42e84002a3554f24777cef8fb0f995225fed9539c8b872b179125c9af1c24f",
+      "dependencies": {
+        "brotli": {
+          "revision": "028fb5a23661f123017c060daa546b55cf4bde29",
+          "archive_sha256": "0afe09a53c8bad9861c8dd1fc1284308d54f19d2979ba3541cfdcc9b05fe360f"
+        },
+        "highway": {
+          "revision": "457c891775a7397bdb0376bb1031e6e027af1c48",
+          "archive_sha256": "5124b0501c98d9930dbb065bfa1a5bbbd59ce0f12facb7e1e33aaef01a5f1f1a"
+        },
+        "skcms": {
+          "revision": "96d9171c94b937a1b5f0293de7309ac16311b722",
+          "archive_sha256": "9bb4b5bba0b7c04f6c2bce9ff713d61e23c9a20c4945161ae16290498ad74627"
+        }
+      },
+      "configure": [
+        "cmake",
+        "-S",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/sources/b87738951c1254cd8cccaa6d47712ba735da56d8",
+        "-B",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_TESTING=OFF",
+        "-DJPEGXL_ENABLE_OPENEXR=OFF",
+        "-DJPEGXL_ENABLE_SJPEG=OFF",
+        "-DJPEGXL_ENABLE_SKCMS=ON",
+        "-DJPEGXL_ENABLE_JNI=OFF",
+        "-DJPEGXL_ENABLE_EXAMPLES=OFF",
+        "-DJPEGXL_ENABLE_BENCHMARK=OFF",
+        "-DJPEGXL_ENABLE_MANPAGES=OFF",
+        "-DJPEGXL_ENABLE_DOXYGEN=OFF",
+        "-DCMAKE_C_COMPILER_LAUNCHER=ccache",
+        "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+      ],
+      "binary": "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/tools/cjxl",
+      "binary_sha256": "3d297868f648fed88f8d03100b72f2d7df1271183f9ffc7cc08c9d60e47d5d32",
+      "library_sha256": {
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl.0.13.0.dylib": "8141554d2dea270a1ecd57736bf657ef251dd7025cc257cf96a74fa1705a6f54",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl.0.13.dylib": "8141554d2dea270a1ecd57736bf657ef251dd7025cc257cf96a74fa1705a6f54",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl.dylib": "8141554d2dea270a1ecd57736bf657ef251dd7025cc257cf96a74fa1705a6f54",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl_cms.0.13.0.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl_cms.0.13.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl_cms.dylib": "9998a4472fed25cd523c8c06edd42a64642a863dd27c9cf825dc4c65e6fea5f9",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl_threads.0.13.0.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl_threads.0.13.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c",
+        "/Users/lilith/tmp/jxl110-upstream-2026-09-27/current-build/lib/libjxl_threads.dylib": "a74ae33aff13143fe05ba540cf49722f2c26b93e4a18954f653b5fa58192a53c"
+      }
+    }
+  },
+  "results_tsv_sha256": "ef8b66562d8ef13f213d52d69f437d7745f715efea45170bc29f575de59866fd",
+  "retained_source_root": "/Users/lilith/tmp/jxl-backlog/lz77-bucket-screen",
+  "input_rule": "RGB8 center crops, little-endian f32((sample << 8)/65535), explicitly linear sRGB",
+  "sizes": [
+    64,
+    256,
+    259
+  ],
+  "efforts": [
+    8,
+    9
+  ],
+  "threads": 1,
+  "metric": "encoded bytes only; no performance claim",
+  "reference_decoder": {
+    "path": "/Users/lilith/work/zen/jxl-encoder/.ci-libjxl/tools/djxl",
+    "sha256": "d1ccd9fa1291a6bea0c894970a4c36b488e9c1c5859b92c67e49050d46790e17",
+    "version": "v0.12.0 a7a9c78"
+  },
+  "rust_decoder": "jxl 0.4.0; primary decoder; 96/96 exact sample-bit checks pass",
+  "verification_log_sha256": "3453faa943b3981327971bf3d36619f1825f3453ec61ac95bcf9fd60c5993531",
+  "comparison_log_sha256": "43b7935d29411bb8534c4aa4126b829b8e3d4670f2d0d3f1b96145eb622257f5",
+  "scripts": {
+    "scripts/lz77_upstream_build.py": "3172c5d58f32790d0c09553ef624455340eecbf1bb9960ae318ec5e34f55f726",
+    "scripts/lz77_upstream_compare.py": "92d04fac9d6b823ec2aa35a390237628e8720b578fdb98186f2b6241ad29164b"
+  },
+  "rust_verifier_sha256": "8024794d029a87a9cf03efb86cdb57371bbd919c8680b5d5e175f35933cc789c",
+  "storage_recovery": "Failed broad Cargo build: disk full. 464 compiler intermediates preserved and all SHA256 verified at dev:~/tmp/jxl110-preservation-2026-09-27/mac-incremental.tar.gz. Verifier linked directly against existing compiled dependencies.",
+  "cells": 32,
+  "encoded_outputs": 96,
+  "grouping": "auto at 64/256/259 plus explicit shift 1 (256 pixels) at 259; parsed and checked on every retained output",
+  "extra_group_results_sha256": "780446470a87aa71c648a23c0edba6c0025794f94df29fd5fe52418b290f4bd9",
+  "final_rust_logs_sha256": {
+    "/Users/lilith/tmp/jxl110-upstream-2026-09-27/rust-final.log": "3453faa943b3981327971bf3d36619f1825f3453ec61ac95bcf9fd60c5993531",
+    "/Users/lilith/tmp/jxl110-upstream-2026-09-27/group256/rust-final.log": "6012372e981488b725db6aae6e169f5aceed9c4b8e952942faa534d931d9f07e"
+  },
+  "verifier_compile_command": "TMPDIR=$HOME/tmp nice -n 19 rustc --edition=2024 jxl-encoder/examples/lossless_float_parity.rs -L dependency=target/debug/deps --extern jxl=target/debug/deps/libjxl-f01b30b783bab8d3.rlib --extern sha2=target/debug/deps/libsha2-f08cfb908c5d480a.rlib --extern image=target/debug/deps/libimage-d72ab0893770700a.rlib --extern jxl_encoder=target/debug/deps/libjxl_encoder-00454625eb125ad9.rlib -o $HOME/tmp/jxl110-upstream-2026-09-27/float-verify-final",
+  "negative_controls": "changed source sample with updated source hash, incorrect encoded hash, empty manifest: all exit nonzero",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "rust_linked_artifacts": {
+    "target/debug/deps/libjxl-f01b30b783bab8d3.rlib": "a4d62c71c0c88df9720fef822da85cd4adaaeeda0814a34f9c0fc05547d6c591",
+    "target/debug/deps/libsha2-f08cfb908c5d480a.rlib": "20745b25286b6a300d35b56099bf0a26ccd11aa76d3816480298b5dbd2f0723a",
+    "target/debug/deps/libimage-d72ab0893770700a.rlib": "f3d0b854a969c026ea0c0aa8a5e88bf1b2628a8d10a20700cb39c7bbf6987537",
+    "target/debug/deps/libjxl_encoder-00454625eb125ad9.rlib": "adad7a4821c7c9fe34a8b833d030b2228deb9a63c6a1b17c7d83b4dfc8c15192"
+  }
+}

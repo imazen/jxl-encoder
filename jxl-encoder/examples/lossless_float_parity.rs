@@ -28,6 +28,7 @@
 //!   cargo run --release --example lossless_float_parity -- \
 //!       <corpus-dir> <out.tsv> [--sizes 64,256,1024,4096] [--efforts 3,5,7,9]
 //!       [--images N] [--reps N]
+//!   lossless_float_parity --verify-manifest <lz77_upstream_compare results.tsv>
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -131,8 +132,99 @@ fn min_of<F: FnMut() -> u128>(reps: u32, mut f: F) -> f64 {
     (0..reps).map(|_| f()).min().unwrap() as f64 / 1000.0
 }
 
+/// Validate retained external encodes against their exact top-down f32 inputs.
+/// The caller has already run djxl; this is the independent primary Rust check.
+fn verify_manifest(path: &Path) {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+    use sha2::{Digest, Sha256};
+
+    let table = std::fs::read_to_string(path).expect("read manifest");
+    let mut lines = table.lines();
+    let header: Vec<_> = lines.next().expect("manifest header").split('\t').collect();
+    let index = |name| header.iter().position(|&h| h == name).expect("column");
+    let mut count = 0;
+    for line in lines {
+        let row: Vec<_> = line.split('\t').collect();
+        assert_eq!(row.len(), header.len());
+        let data = std::fs::read(row[index("jxl")]).expect("read encoded artifact");
+        let raw = std::fs::read(row[index("raw")]).expect("read source samples");
+        for (bytes, column) in [(&data, "encoded_sha256"), (&raw, "input_sha256")] {
+            let hash: String = Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(hash, row[index(column)]);
+        }
+        let size: usize = row[index("size")].parse().expect("size");
+        assert_eq!(raw.len(), size * size * 12);
+        let mut input = data.as_slice();
+        let init = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+        let ProcessingResult::Complete {
+            result: mut decoder,
+        } = init.process(&mut input).expect("decode header")
+        else {
+            panic!("incomplete header: {}", row[index("jxl")]);
+        };
+        assert_eq!(decoder.basic_info().size, (size, size));
+        decoder.set_pixel_format(JxlPixelFormat {
+            color_type: JxlColorType::Rgb,
+            color_data_format: Some(JxlDataFormat::f32()),
+            extra_channel_format: vec![],
+        });
+        let ProcessingResult::Complete { result: frame } =
+            decoder.process(&mut input).expect("decode frame header")
+        else {
+            panic!("incomplete frame header: {}", row[index("jxl")]);
+        };
+        let mut image = Image::<f32>::new((size * 3, size)).expect("allocate output");
+        let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+            image
+                .get_rect_mut(Rect {
+                    origin: (0, 0),
+                    size: (size * 3, size),
+                })
+                .into_raw(),
+        )];
+        assert!(matches!(
+            frame
+                .process(&mut input, &mut buffers)
+                .expect("decode pixels"),
+            ProcessingResult::Complete { .. }
+        ));
+        drop(buffers);
+        for y in 0..size {
+            for (x, value) in image.row(y).iter().enumerate() {
+                let offset = (y * size * 3 + x) * 4;
+                let expected = u32::from_le_bytes(raw[offset..offset + 4].try_into().unwrap());
+                assert_eq!(
+                    value.to_bits(),
+                    expected,
+                    "{} row {y} sample {x}",
+                    row[index("jxl")]
+                );
+            }
+        }
+        count += 1;
+        println!("Rust exact: {}", row[index("jxl")]);
+    }
+    assert!(count > 0, "empty manifest");
+    println!("Verified {count} retained float encodes in the primary Rust decoder");
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().collect();
+    if a.get(1).map(String::as_str) == Some("--reference-tools") {
+        println!("{}", jxl_encoder::test_helpers::djxl_path());
+        return;
+    }
+    if a.get(1).map(String::as_str) == Some("--verify-manifest") {
+        verify_manifest(Path::new(a.get(2).expect("manifest path")));
+        return;
+    }
     let corpus = PathBuf::from(&a[1]);
     let out_path = PathBuf::from(&a[2]);
     let sizes: Vec<u32> = arg("--sizes", "64,256,1024,4096")

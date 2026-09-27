@@ -8,6 +8,28 @@ fmt:
     cargo fmt -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-macros -p jxl-encoder-simd -p zenjxl-tuning-runner
     cargo test --manifest-path apidoc/Cargo.toml
 
+# Build upstream parent/rewrite/current sources without changing the v0.12 reference.
+lz77-upstream-build root:
+    mkdir -p "{{root}}"
+    TMPDIR="$HOME/tmp" nice -n 19 python3 scripts/lz77_upstream_build.py "{{root}}" --jobs 2 >> "{{root}}/build-driver.log" 2>&1
+
+# Retain each upstream float encode and require exact samples in both decoders.
+lz77-upstream-compare root screen manifest="Cargo.toml":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=2 RAYON_NUM_THREADS=2
+    export CARGO_TARGET_DIR="{{justfile_directory()}}/target"
+    export DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl"
+    nice -n 19 cargo build --locked --manifest-path "{{manifest}}" -p jxl-encoder --example lossless_float_parity >> "{{root}}/rust-verifier-build.log" 2>&1
+    verifier="$CARGO_TARGET_DIR/debug/examples/lossless_float_parity"
+    reference=$("$verifier" --reference-tools)
+    nice -n 19 uv run scripts/lz77_upstream_compare.py "{{root}}" "{{screen}}" "$reference" >> "{{root}}/compare.log" 2>&1
+    nice -n 19 "$verifier" --verify-manifest "{{root}}/results.tsv" >> "{{root}}/rust-verification.log" 2>&1
+    mkdir "{{root}}/group256"
+    cp "{{root}}/builds.json" "{{root}}/group256/builds.json"
+    nice -n 19 uv run scripts/lz77_upstream_compare.py "{{root}}/group256" "{{screen}}" "$reference" --sizes 259 --group-size-shift 1 >> "{{root}}/group256/compare.log" 2>&1
+    nice -n 19 "$verifier" --verify-manifest "{{root}}/group256/results.tsv" >> "{{root}}/group256/rust-verification.log" 2>&1
+
 # Regenerate the public-API surface snapshots only
 api-doc:
     cargo test --manifest-path apidoc/Cargo.toml
