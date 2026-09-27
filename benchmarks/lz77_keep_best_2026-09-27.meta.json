@@ -35,5 +35,6 @@
     "features": "corpus-tests,__expert,__internals",
     "all_140_hashes_match": true,
     "binary_sha256": "27012572b45b57b76dd6349821a16190141232a65d68692e335770662049d971"
-  }
+  },
+  "implementation_commit": "d422bede9037e6c2a7995257c87eeaa1e34f0af9"
 }
