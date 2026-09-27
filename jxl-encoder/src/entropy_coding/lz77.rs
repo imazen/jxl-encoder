@@ -424,7 +424,7 @@ fn early_out_disabled() -> bool {
 }
 
 /// `JXL_LZ77_SKIP_GREEDY=1` — diagnostic only (#110). See the match arm.
-fn skip_greedy() -> bool {
+pub(crate) fn skip_greedy() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("JXL_LZ77_SKIP_GREEDY").as_deref() == Ok("1"))
 }
@@ -1389,8 +1389,38 @@ pub fn apply_lz77_optimal(
     distance_multiplier: i32,
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<Option<(Vec<Token>, Lz77Params)>> {
+    Ok(apply_lz77_optimal_keeping_greedy(
+        tokens,
+        num_contexts,
+        force_huffman,
+        distance_multiplier,
+        budget,
+    )?
+    .0)
+}
+
+/// A parse result: the rewritten tokens and the LZ77 parameters coding them.
+pub(crate) type Lz77Parse = Option<(Vec<Token>, Lz77Params)>;
+
+/// [`apply_lz77_optimal`], additionally returning the greedy parse it builds
+/// its cost model from.
+///
+/// The optimal parse always derives its cost model from a greedy parse of the
+/// same input with the same parameters, so the greedy result is a by-product
+/// rather than extra work. The second element is exactly what
+/// [`apply_lz77_backref`] returns for the same arguments; it is `None` only
+/// when greedy found no benefit, in which case the optimal parse is `None`
+/// too.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_lz77_optimal_keeping_greedy(
+    tokens: &[Token],
+    num_contexts: usize,
+    force_huffman: bool,
+    distance_multiplier: i32,
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<(Lz77Parse, Lz77Parse)> {
     if tokens.is_empty() {
-        return Ok(None);
+        return Ok((None, None));
     }
 
     // Whether the (token-count-sized) DP buffers should be allocated fallibly
@@ -1403,7 +1433,7 @@ pub fn apply_lz77_optimal(
         apply_lz77_backref(tokens, num_contexts, force_huffman, distance_multiplier);
     let greedy_tokens = match &greedy_result {
         Some((t, _)) => t,
-        None => return Ok(None),
+        None => return Ok((None, None)),
     };
 
     let mut lz77 = Lz77Params::new(num_contexts, force_huffman);
@@ -1586,7 +1616,7 @@ pub fn apply_lz77_optimal(
     }
 
     out.reverse();
-    Ok(Some((out, lz77)))
+    Ok((Some((out, lz77)), greedy_result))
 }
 
 /// Try both LZ77 methods and return the one with better compression.

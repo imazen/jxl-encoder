@@ -3299,6 +3299,10 @@ name = "lz77_hash_ab"
 path = "examples/lz77_hash_ab.rs"
 
 [[example]]
+name = "lz77_keep_best_profile"
+path = "examples/lz77_keep_best_profile.rs"
+
+[[example]]
 name = "planar_admission_probe"
 path = "examples/planar_admission_probe.rs"
 
