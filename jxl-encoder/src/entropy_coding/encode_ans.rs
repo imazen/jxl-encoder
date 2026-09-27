@@ -151,18 +151,40 @@ impl AccumulatedAnsData {
 /// Parallel map-reduce: build an accumulator per group on a worker
 /// thread, then merge into one. Falls through to a sequential loop
 /// when the `parallel` feature is disabled or there is only one group.
+/// Accumulate one group's tokens in ~256K-token chunks, polling `stop`
+/// between chunks. Histogram accumulation is commutative, so chunking is
+/// byte-identical to a single `add_tokens` pass. On stop the accumulation
+/// returns early with partial counts — callers propagate the error via
+/// `check_stop` before the code is used.
+fn accumulate_group_chunked(
+    acc: &mut AccumulatedAnsData,
+    tokens: &[Token],
+    lz77: Option<&Lz77Params>,
+    stop: Option<&dyn enough::Stop>,
+) {
+    for chunk in tokens.chunks(1 << 18) {
+        if let Some(st) = stop
+            && st.check().is_err()
+        {
+            return;
+        }
+        acc.add_tokens(chunk, lz77);
+    }
+}
+
 #[cfg(feature = "parallel")]
 fn accumulate_groups_parallel(
     groups: &[&[Token]],
     num_contexts: usize,
     lz77: Option<&Lz77Params>,
     track_value_freqs: bool,
+    stop: Option<&dyn enough::Stop>,
 ) -> AccumulatedAnsData {
     use rayon::prelude::*;
     if groups.len() <= 1 {
         let mut acc = AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
         for group in groups {
-            acc.add_tokens(group, lz77);
+            accumulate_group_chunked(&mut acc, group, lz77, stop);
         }
         return acc;
     }
@@ -171,7 +193,7 @@ fn accumulate_groups_parallel(
         .map(|group| {
             let mut acc =
                 AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
-            acc.add_tokens(group, lz77);
+            accumulate_group_chunked(&mut acc, group, lz77, stop);
             acc
         })
         .reduce(
@@ -190,10 +212,11 @@ fn accumulate_groups_parallel(
     num_contexts: usize,
     lz77: Option<&Lz77Params>,
     track_value_freqs: bool,
+    stop: Option<&dyn enough::Stop>,
 ) -> AccumulatedAnsData {
     let mut acc = AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
     for group in groups {
-        acc.add_tokens(group, lz77);
+        accumulate_group_chunked(&mut acc, group, lz77, stop);
     }
     acc
 }
@@ -502,13 +525,37 @@ pub fn build_entropy_code_ans_with_options(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
-    build_entropy_code_ans_from_token_groups(
+    build_entropy_code_ans_with_options_stop(
+        tokens,
+        num_contexts,
+        enhanced_clustering,
+        optimize_uint_configs,
+        lz77,
+        total_pixel_hint,
+        None,
+    )
+}
+
+/// `build_entropy_code_ans_with_options` with cooperative cancellation.
+/// See [`build_entropy_code_ans_from_token_groups_with_strategy_stop`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_entropy_code_ans_with_options_stop(
+    tokens: &[Token],
+    num_contexts: usize,
+    enhanced_clustering: bool,
+    optimize_uint_configs: bool,
+    lz77: Option<&Lz77Params>,
+    total_pixel_hint: Option<usize>,
+    stop: Option<&dyn enough::Stop>,
+) -> OwnedAnsEntropyCode {
+    build_entropy_code_ans_from_token_groups_stop(
         &[tokens],
         num_contexts,
         enhanced_clustering,
         optimize_uint_configs,
         lz77,
         total_pixel_hint,
+        stop,
     )
 }
 
@@ -521,6 +568,7 @@ pub fn build_entropy_code_ans_with_options(
 /// Internally uses the two-phase accumulate + build approach: collects per-context
 /// histograms and value frequencies in a single pass, then builds codes from the
 /// accumulated data.
+#[allow(dead_code)] // thin-form entry point; internal callers thread `stop`
 pub fn build_entropy_code_ans_from_token_groups(
     groups: &[&[Token]],
     num_contexts: usize,
@@ -529,7 +577,29 @@ pub fn build_entropy_code_ans_from_token_groups(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
-    build_entropy_code_ans_from_token_groups_with_strategy(
+    build_entropy_code_ans_from_token_groups_stop(
+        groups,
+        num_contexts,
+        enhanced_clustering,
+        optimize_uint_configs,
+        lz77,
+        total_pixel_hint,
+        None,
+    )
+}
+
+/// `build_entropy_code_ans_from_token_groups` with cooperative cancellation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_entropy_code_ans_from_token_groups_stop(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    enhanced_clustering: bool,
+    optimize_uint_configs: bool,
+    lz77: Option<&Lz77Params>,
+    total_pixel_hint: Option<usize>,
+    stop: Option<&dyn enough::Stop>,
+) -> OwnedAnsEntropyCode {
+    build_entropy_code_ans_from_token_groups_with_strategy_stop(
         groups,
         num_contexts,
         lz77,
@@ -540,6 +610,7 @@ pub fn build_entropy_code_ans_from_token_groups(
             ans_strategy: ANSHistogramStrategy::Precise,
             libjxl_params: false,
         },
+        stop,
     )
 }
 
@@ -564,6 +635,26 @@ pub fn build_entropy_code_ans_from_token_groups_with_strategy(
     lz77: Option<&Lz77Params>,
     options: AnsBuildOptions,
 ) -> OwnedAnsEntropyCode {
+    build_entropy_code_ans_from_token_groups_with_strategy_stop(
+        groups,
+        num_contexts,
+        lz77,
+        options,
+        None,
+    )
+}
+
+/// `build_entropy_code_ans_from_token_groups_with_strategy` with cooperative
+/// cancellation. The caller polls `check_stop` immediately after this call —
+/// on a fired token the returned code may reflect partial accumulation and
+/// must be discarded (the caller's propagation guarantees it is).
+pub(crate) fn build_entropy_code_ans_from_token_groups_with_strategy_stop(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    lz77: Option<&Lz77Params>,
+    options: AnsBuildOptions,
+    stop: Option<&dyn enough::Stop>,
+) -> OwnedAnsEntropyCode {
     let AnsBuildOptions {
         enhanced_clustering,
         optimize_uint_configs,
@@ -574,7 +665,8 @@ pub fn build_entropy_code_ans_from_token_groups_with_strategy(
     // Phase A: Accumulate per-context histograms and value frequencies.
     // Per-group accumulators are independent and merge associatively;
     // run a parallel map-reduce over the groups.
-    let accumulated = accumulate_groups_parallel(groups, num_contexts, lz77, optimize_uint_configs);
+    let accumulated =
+        accumulate_groups_parallel(groups, num_contexts, lz77, optimize_uint_configs, stop);
 
     // Phase B: Build entropy code from accumulated data.
     let code = build_entropy_code_from_accumulated_ans_with_strategy(
@@ -1989,6 +2081,17 @@ pub fn write_tokens_ans(
     lz77: Option<&Lz77Params>,
     writer: &mut BitWriter,
 ) -> Result<()> {
+    write_tokens_ans_stop(tokens, code, lz77, writer, None)
+}
+
+/// `write_tokens_ans` with cooperative cancellation.
+pub(crate) fn write_tokens_ans_stop(
+    tokens: &[Token],
+    code: &OwnedAnsEntropyCode,
+    lz77: Option<&Lz77Params>,
+    writer: &mut BitWriter,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
     let mut encoder = AnsEncoder::with_capacity(tokens.len());
 
     #[cfg(feature = "debug-tokens")]
@@ -2005,6 +2108,9 @@ pub fn write_tokens_ans(
     // Process tokens in reverse order
     #[allow(clippy::unused_enumerate_index)]
     for (_i, token) in tokens.iter().rev().enumerate() {
+        if _i & 0xFFFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         let ctx = token.context() as usize;
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
         let config = code.uint_configs.get(dist_idx).copied().unwrap_or_default();

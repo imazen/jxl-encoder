@@ -4,9 +4,7 @@
 
 //! Main tiny encoder implementation.
 
-use super::ac_strategy::{
-    AcStrategyMap, adjust_quant_field_float_with_distance, compute_ac_strategy,
-};
+use super::ac_strategy::{AcStrategyMap, adjust_quant_field_float_with_distance};
 use super::adaptive_quant::quantize_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map};
 use super::common::*;
@@ -3901,6 +3899,7 @@ impl VarDctEncoder {
             linear_src.slice(),
         )?;
         let _ms_xyb = _t_xyb.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
 
         // Defense-in-depth XYB scan. Catches downstream-bug non-finite
         // (memory corruption, butteraugli-loop reconstruction polluting
@@ -4206,6 +4205,7 @@ impl VarDctEncoder {
         }
 
         let _ms_patches = _t_patches.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_splines = crate::clock::Instant::now();
         // Build and subtract splines (after patches, before gaborish).
         // Splines are additive overlays: encoder subtracts, decoder adds back.
@@ -4307,6 +4307,7 @@ impl VarDctEncoder {
         };
 
         let _ms_splines = _t_splines.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_quant_field = crate::clock::Instant::now();
         // Compute pixel chromacity stats BEFORE gaborish (matching libjxl pipeline).
         // Gaborish sharpening inflates gradients, producing overly aggressive adjustment.
@@ -4785,6 +4786,7 @@ impl VarDctEncoder {
         };
 
         let _ms_quant_field = _t_quant_field.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_gaborish = crate::clock::Instant::now();
         // W45-RECON diagnostic: dump the pre-gaborish XYB planes (input to
         // InitialQuantField / mask1x1), mirroring the cjxl `pregab_xyb_*`
@@ -4831,6 +4833,7 @@ impl VarDctEncoder {
         // DCT16+ (up to 31% error on gradient content, butteraugli 13-20 vs ~2.5).
 
         let _ms_gaborish = _t_gaborish.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_cfl1 = crate::clock::Instant::now();
         // Compute per-tile chroma-from-luma map on GABORISHED XYB.
         //
@@ -4944,6 +4947,7 @@ impl VarDctEncoder {
         );
 
         let _ms_cfl1 = _t_cfl1.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_acstrat = crate::clock::Instant::now();
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
         // Content-aware `entropy_mul` table dispatch (opt-in). When the
@@ -5638,7 +5642,7 @@ impl VarDctEncoder {
         } else if !self.ac_strategy_enabled {
             AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
         } else {
-            compute_ac_strategy(
+            super::ac_strategy::compute_ac_strategy_stop(
                 &xyb_x,
                 &xyb_y,
                 &xyb_b,
@@ -5653,6 +5657,7 @@ impl VarDctEncoder {
                 mask1x1.as_deref(),
                 padded_width,
                 active_profile_for_search,
+                stop,
             )
         };
 
@@ -5731,6 +5736,7 @@ impl VarDctEncoder {
         }
 
         let _ms_acstrat = _t_acstrat.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_cfl2 = crate::clock::Instant::now();
         // Free masking — no longer needed after AC strategy selection.
         drop(masking);
@@ -5823,10 +5829,12 @@ impl VarDctEncoder {
                 // W45-RECON part 15: libjxl `ComputeScaledDCT` pass
                 // order for the per-strategy coefficient evaluation.
                 self.profile.dct_pass_order_libjxl,
+                stop,
             );
         }
 
         let _ms_cfl2 = _t_cfl2.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_buttloop = crate::clock::Instant::now();
         // Quantization loops: iteratively refine quant_field using perceptual
         // distance feedback. Butteraugli and zensim loops can stack: butteraugli
@@ -6219,6 +6227,7 @@ impl VarDctEncoder {
         // there for ordering rationale.
 
         let _ms_buttloop = _t_buttloop.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_xform = crate::clock::Instant::now();
         // ── Streaming refactor chunk 8b (#11): region-source seam ──
         //
@@ -6260,6 +6269,7 @@ impl VarDctEncoder {
             &mut quant_field,
             &cfl_map,
             &ac_strategy,
+            stop,
         )?;
 
         // W44-AUDIT-8 Phase 6: apply libjxl QuantizeWP shape to DC
@@ -6303,6 +6313,7 @@ impl VarDctEncoder {
             }
         }
         let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_sharp = crate::clock::Instant::now();
         let quant_dc = &transform_out.quant_dc;
         // #94: record whether the finalised DC exceeds i16 so the file header
@@ -6483,6 +6494,7 @@ impl VarDctEncoder {
         drop(mask1x1);
 
         let _ms_sharp = _t_sharp.elapsed().as_secs_f64() * 1000.0;
+        crate::error::check_stop(stop)?;
         let _t_entropy = crate::clock::Instant::now();
 
         // W44-87 single-pass-entropy dispatch — safety predicate +
@@ -6542,8 +6554,10 @@ impl VarDctEncoder {
                 } else {
                     None
                 },
+                stop,
             )?;
             let _ms_entropy = _t_entropy.elapsed().as_secs_f64() * 1000.0;
+            crate::error::check_stop(stop)?;
             let _ms_total = _t_total.elapsed().as_secs_f64() * 1000.0;
             if _phase_dbg {
                 eprintln!(
@@ -6658,6 +6672,7 @@ impl VarDctEncoder {
                 None, // No splines in streaming mode
                 None, // No custom dc_quant in single-pass mode
                 &mut dc_global,
+                stop,
             )?;
 
             // Get borrowed Huffman codes for streaming token writing
@@ -6807,6 +6822,7 @@ impl VarDctEncoder {
                 None, // No splines in streaming mode
                 None, // No custom dc_quant in single-pass mode
                 &mut dc_global,
+                stop,
             )?;
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
@@ -7406,6 +7422,7 @@ impl VarDctEncoder {
             &mut quant_field,
             cfl_map_for_encode,
             &precomputed.ac_strategy,
+            None,
         )?;
 
         // W44-AUDIT-8 Phase 6: apply libjxl QuantizeWP shape to DC
@@ -7566,7 +7583,8 @@ impl VarDctEncoder {
             extras,
             patches_data.as_ref(),
             None, // splines
-            None, // float_dc
+            None, // float_dc,
+            None,
         );
         let _ms_two = _t_two.elapsed().as_secs_f64() * 1000.0;
         if cfg!(feature = "__env_var_diagnostics")
@@ -7765,6 +7783,7 @@ impl VarDctEncoder {
             &precomputed.noise_params,
             None,
             &extras_views,
+            None,
             None,
             None,
             None,

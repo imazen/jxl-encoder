@@ -64,7 +64,7 @@ fn average(x: i32, y: i32) -> i32 {
 ///
 /// Input channel (w, h) → average channel ((w+1)/2, h) + residual channel (w-(w+1)/2, h).
 /// Both output channels inherit vshift and get hshift+1 (matching libjxl MetaSqueeze).
-fn fwd_h_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
+fn fwd_h_squeeze(channel: &Channel, stop: Option<&dyn enough::Stop>) -> Result<(Channel, Channel)> {
     let w = channel.width();
     let h = channel.height();
     let avg_w = w.div_ceil(2);
@@ -82,6 +82,9 @@ fn fwd_h_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
     res.component = channel.component;
 
     for y in 0..h {
+        if y & 0x3F == 0 {
+            crate::error::check_stop(stop)?;
+        }
         for x in 0..res_w {
             let a = channel.get(x * 2, y);
             let b = channel.get(x * 2 + 1, y);
@@ -119,7 +122,7 @@ fn fwd_h_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
 ///
 /// Input channel (w, h) → average channel (w, (h+1)/2) + residual channel (w, h-(h+1)/2).
 /// Both output channels inherit hshift and get vshift+1 (matching libjxl MetaSqueeze).
-fn fwd_v_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
+fn fwd_v_squeeze(channel: &Channel, stop: Option<&dyn enough::Stop>) -> Result<(Channel, Channel)> {
     let w = channel.width();
     let h = channel.height();
     let avg_h = h.div_ceil(2);
@@ -137,6 +140,9 @@ fn fwd_v_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
     res.component = channel.component;
 
     for y in 0..res_h {
+        if y & 0x3F == 0 {
+            crate::error::check_stop(stop)?;
+        }
         for x in 0..w {
             let a = channel.get(x, y * 2);
             let b = channel.get(x, y * 2 + 1);
@@ -259,6 +265,15 @@ pub fn default_squeeze_params(image: &ModularImage) -> Vec<SqueezeParams> {
 /// Modifies the image in-place, replacing channels with average+residual pairs.
 /// Returns the squeeze parameters that were applied (for bitstream serialization).
 pub fn apply_squeeze(image: &mut ModularImage, params: &[SqueezeParams]) -> Result<()> {
+    apply_squeeze_stop(image, params, None)
+}
+
+/// `apply_squeeze` with cooperative cancellation.
+pub(crate) fn apply_squeeze_stop(
+    image: &mut ModularImage,
+    params: &[SqueezeParams],
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
     for param in params {
         let begin_c = param.begin_c as usize;
         let end_c = begin_c + param.num_c as usize - 1;
@@ -273,12 +288,13 @@ pub fn apply_squeeze(image: &mut ModularImage, params: &[SqueezeParams]) -> Resu
         // For in_place, offset = end_c+1 so residuals go right after data channels.
         // For not in_place, offset = original channels.len() so residuals append.
         for c in begin_c..=end_c {
+            crate::error::check_stop(stop)?;
             let rc = offset + c - begin_c;
 
             let (avg, res) = if param.horizontal {
-                fwd_h_squeeze(&image.channels[c])?
+                fwd_h_squeeze(&image.channels[c], stop)?
             } else {
-                fwd_v_squeeze(&image.channels[c])?
+                fwd_v_squeeze(&image.channels[c], stop)?
             };
 
             image.channels[c] = avg;
@@ -492,7 +508,7 @@ mod tests {
     fn test_h_squeeze_even_width() {
         // 4x2 channel → avg 2x2, res 2x2
         let ch = Channel::from_vec(vec![10, 20, 30, 40, 50, 60, 70, 80], 4, 2).unwrap();
-        let (avg, res) = fwd_h_squeeze(&ch).unwrap();
+        let (avg, res) = fwd_h_squeeze(&ch, None).unwrap();
         assert_eq!(avg.width(), 2);
         assert_eq!(avg.height(), 2);
         assert_eq!(res.width(), 2);
@@ -503,7 +519,7 @@ mod tests {
     fn test_h_squeeze_odd_width() {
         // 5x1 → avg 3x1, res 2x1
         let ch = Channel::from_vec(vec![10, 20, 30, 40, 50], 5, 1).unwrap();
-        let (avg, res) = fwd_h_squeeze(&ch).unwrap();
+        let (avg, res) = fwd_h_squeeze(&ch, None).unwrap();
         assert_eq!(avg.width(), 3);
         assert_eq!(res.width(), 2);
         // Last pixel (50) goes to avg[2]
@@ -514,7 +530,7 @@ mod tests {
     fn test_v_squeeze_even_height() {
         // 2x4 → avg 2x2, res 2x2
         let ch = Channel::from_vec(vec![10, 20, 30, 40, 50, 60, 70, 80], 2, 4).unwrap();
-        let (avg, res) = fwd_v_squeeze(&ch).unwrap();
+        let (avg, res) = fwd_v_squeeze(&ch, None).unwrap();
         assert_eq!(avg.width(), 2);
         assert_eq!(avg.height(), 2);
         assert_eq!(res.width(), 2);

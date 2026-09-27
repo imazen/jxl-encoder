@@ -258,6 +258,7 @@ impl VarDctEncoder {
                 cfl_map,
                 ac_strategy,
                 &mut transform_out,
+                None,
             );
 
             // Step 3: Reconstruct XYB → linear RGB

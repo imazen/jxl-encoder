@@ -397,6 +397,17 @@ pub fn analyze_channel_compact(
     channel: &Channel,
     channel_colors_percent: f32,
 ) -> Option<PaletteAnalysis> {
+    analyze_channel_compact_stop(channel, channel_colors_percent, None)
+}
+
+/// `analyze_channel_compact` with cooperative cancellation. On stop the
+/// analysis returns `None` (no compaction — still a valid encode); the
+/// caller's next `check_stop` aborts the encode before output commits.
+pub(crate) fn analyze_channel_compact_stop(
+    channel: &Channel,
+    channel_colors_percent: f32,
+    stop: Option<&dyn enough::Stop>,
+) -> Option<PaletteAnalysis> {
     let width = channel.width();
     let height = channel.height();
     let nb_pixels = width * height;
@@ -405,6 +416,12 @@ pub fn analyze_channel_compact(
     let mut min_val = i32::MAX;
     let mut max_val = i32::MIN;
     for y in 0..height {
+        if y & 0x1F == 0
+            && let Some(st) = stop
+            && st.check().is_err()
+        {
+            return None;
+        }
         for x in 0..width {
             let v = channel.get(x, y);
             min_val = min_val.min(v);
@@ -429,6 +446,12 @@ pub fn analyze_channel_compact(
     // Collect unique values, bail early if too many
     let mut unique_values = alloc::collections::BTreeSet::new();
     for y in 0..height {
+        if y & 0x1F == 0
+            && let Some(st) = stop
+            && st.check().is_err()
+        {
+            return None;
+        }
         for x in 0..width {
             unique_values.insert(channel.get(x, y));
             if unique_values.len() > nb_colors_limit {
@@ -467,6 +490,19 @@ pub fn analyze_palette(
     num_c: usize,
     max_colors: usize,
 ) -> PaletteAnalysis {
+    analyze_palette_stop(image, begin_c, num_c, max_colors, None)
+}
+
+/// `analyze_palette` with cooperative cancellation. On stop the analysis
+/// reports `use_palette: false` (palette skipped — still a valid encode);
+/// the caller's next `check_stop` aborts before output commits.
+pub(crate) fn analyze_palette_stop(
+    image: &ModularImage,
+    begin_c: usize,
+    num_c: usize,
+    max_colors: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> PaletteAnalysis {
     let width = image.width();
     let height = image.height();
 
@@ -483,6 +519,17 @@ pub fn analyze_palette(
     let cap_plus_one = max_colors.saturating_add(1);
 
     'scan: for y in 0..height {
+        if y & 0xF == 0
+            && let Some(st) = stop
+            && st.check().is_err()
+        {
+            return PaletteAnalysis {
+                use_palette: false,
+                num_colors: color_counts.len(),
+                palette: Vec::new(),
+                color_to_index: BTreeMap::new(),
+            };
+        }
         for x in 0..width {
             for (i, c) in (begin_c..begin_c + num_c).enumerate() {
                 color_buf[i] = image.channels[c].get(x, y);

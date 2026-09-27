@@ -1575,6 +1575,7 @@ impl VarDctEncoder {
             quant_field,
             &precomputed.cfl_map,
             &precomputed.ac_strategy,
+            None,
         )
     }
 
@@ -1609,6 +1610,7 @@ impl VarDctEncoder {
         quant_field: &mut [u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<TransformOutput> {
         let padded_width = source.padded_width();
         let (xyb_x, xyb_y, xyb_b) = source.xyb_full();
@@ -1623,6 +1625,7 @@ impl VarDctEncoder {
             quant_field,
             cfl_map,
             ac_strategy,
+            stop,
         )?;
         // W44-112 Layer-1.5 hook: capture the post-production quant_field
         // (after AdjustQuantBlockAC second-application) + the `DistanceParams`
@@ -1663,6 +1666,7 @@ impl VarDctEncoder {
         quant_field: &mut [u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<TransformOutput> {
         let mut out = TransformOutput::new(xsize_blocks, ysize_blocks, self.budget.as_ref())?;
 
@@ -1684,6 +1688,23 @@ impl VarDctEncoder {
         // shipped. The helper `parallel_map_min` was added to `parallel.rs`
         // for future use if a real regression appears.
         let group_results = crate::parallel::parallel_map(num_groups, |group_idx| {
+            // Cooperative cancellation: one poll per AC group. A fired token
+            // returns the zeroed group result; the post-map `check_stop`
+            // propagates `Error::Cancelled` before the scatter consumes it.
+            if crate::error::check_stop(stop).is_err() {
+                let gy = group_idx / xsize_groups;
+                let gx = group_idx % xsize_groups;
+                let start_bx = gx * GROUP_DIM_IN_BLOCKS;
+                let start_by = gy * GROUP_DIM_IN_BLOCKS;
+                let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+                let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+                return GroupTransformResult::new(
+                    start_bx,
+                    start_by,
+                    end_bx - start_bx,
+                    end_by - start_by,
+                );
+            }
             let gy = group_idx / xsize_groups;
             let gx = group_idx % xsize_groups;
             let start_bx = gx * GROUP_DIM_IN_BLOCKS;
@@ -1722,6 +1743,7 @@ impl VarDctEncoder {
             result
         });
 
+        crate::error::check_stop(stop)?;
         for result in group_results {
             for &(idx, val) in &result.quant_adjustments {
                 quant_field[idx] = val;
@@ -1783,6 +1805,7 @@ impl VarDctEncoder {
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
         out: &mut TransformOutput,
+        stop: Option<&dyn enough::Stop>,
     ) {
         let xsize_groups = div_ceil(xsize_blocks, GROUP_DIM_IN_BLOCKS);
         let ysize_groups = div_ceil(ysize_blocks, GROUP_DIM_IN_BLOCKS);
@@ -1796,6 +1819,23 @@ impl VarDctEncoder {
         // deterministic.
         let quant_field_ro: &[u8] = quant_field;
         let group_results = crate::parallel::parallel_map(num_groups, |group_idx| {
+            // Cooperative cancellation: one poll per AC group. A fired token
+            // returns the zeroed group result; the post-map `check_stop`
+            // propagates `Error::Cancelled` before the scatter consumes it.
+            if crate::error::check_stop(stop).is_err() {
+                let gy = group_idx / xsize_groups;
+                let gx = group_idx % xsize_groups;
+                let start_bx = gx * GROUP_DIM_IN_BLOCKS;
+                let start_by = gy * GROUP_DIM_IN_BLOCKS;
+                let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+                let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+                return GroupTransformResult::new(
+                    start_bx,
+                    start_by,
+                    end_bx - start_bx,
+                    end_by - start_by,
+                );
+            }
             let gy = group_idx / xsize_groups;
             let gx = group_idx % xsize_groups;
             let start_bx = gx * GROUP_DIM_IN_BLOCKS;

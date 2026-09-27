@@ -1501,6 +1501,7 @@ impl VarDctEncoder {
                 cfl_map,
                 ac_strategy,
                 &mut transform_out,
+                None,
             );
 
             // Call `compute_epf_sharpness` with the same `original_xyb`
@@ -2109,6 +2110,7 @@ impl VarDctEncoder {
                 cfl_map,
                 ac_strategy,
                 &mut *transform_out,
+                None,
             );
 
             // W45-RECON (2026-09-22): feed the post-QuantizeWP DC values
@@ -3187,6 +3189,7 @@ impl VarDctEncoder {
                             cfl_map,
                             ac_strategy,
                             &mut *transform_out,
+                            None,
                         );
 
                         // Reconstruct XYB with PINNED params.

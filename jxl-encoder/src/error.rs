@@ -105,3 +105,18 @@ pub enum Error {
     #[error("Feature not yet implemented: {0}")]
     NotImplemented(String),
 }
+
+/// Poll a cooperative cancellation token, if one was supplied.
+///
+/// Maps every `StopReason` to [`Error::Cancelled`], matching the
+/// request-boundary convention used by the public `*_with_stop` APIs.
+/// `None` (and an `Unstoppable` token) compiles to a no-op, so callers
+/// may poll inside hot loops without paying on the non-stop path.
+#[track_caller]
+#[inline(always)]
+pub(crate) fn check_stop(stop: Option<&dyn enough::Stop>) -> Result<()> {
+    if let Some(s) = stop {
+        s.check().map_err(|_| Error::Cancelled)?;
+    }
+    Ok(())
+}

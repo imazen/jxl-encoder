@@ -184,7 +184,7 @@ fn partition_in_place(storage: &mut Storage) {
         sample_counts: &mut storage.sample_counts,
         len: storage.n,
     };
-    let _ = split_tree_samples_in_place(&mut view, 0, pos, storage.n, key);
+    let _ = split_tree_samples_in_place(&mut view, 0, pos, storage.n, key, None);
 }
 
 fn bench_for_count<const N: usize>(suite: &mut Suite, label: &str) {

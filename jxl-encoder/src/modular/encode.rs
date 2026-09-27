@@ -607,7 +607,7 @@ pub fn write_modular_stream_with_palette_knobs(
     num_c: usize,
     knobs: &super::palette::ModularKnobs,
 ) -> Result<()> {
-    use super::palette::{analyze_palette, apply_palette};
+    use super::palette::apply_palette;
 
     // Resolve forced predictor. Fall-through paths route via the full
     // resolver (so id 6 keeps WP semantics), but the in-palette
@@ -637,7 +637,8 @@ pub fn write_modular_stream_with_palette_knobs(
             }
         }
     };
-    let analysis = analyze_palette(image, begin_c, num_c, max_colors);
+    let analysis =
+        crate::modular::palette::analyze_palette_stop(image, begin_c, num_c, max_colors, None);
 
     if !analysis.use_palette {
         // Fallback: use RCT if RGB, otherwise simple.
@@ -927,7 +928,7 @@ pub fn write_modular_stream_with_squeeze(
     writer: &mut BitWriter,
     use_ans: bool,
 ) -> Result<()> {
-    use super::squeeze::{apply_squeeze, default_squeeze_params};
+    use super::squeeze::default_squeeze_params;
 
     let params = default_squeeze_params(image);
     if params.is_empty() {
@@ -944,11 +945,11 @@ pub fn write_modular_stream_with_squeeze(
     let has_rct = transformed.channels.len() >= 3;
     if has_rct {
         let rct_type = RctType::YCOCG;
-        forward_rct(&mut transformed.channels, 0, rct_type)?;
+        crate::modular::rct::forward_rct_stop(&mut transformed.channels, 0, rct_type, None)?;
     }
 
     // Apply forward squeeze
-    apply_squeeze(&mut transformed, &params)?;
+    crate::modular::squeeze::apply_squeeze_stop(&mut transformed, &params, None)?;
 
     crate::trace::debug_eprintln!(
         "SQUEEZE: {} steps, {} → {} channels, rct={}",
@@ -1566,6 +1567,7 @@ fn estimate_cost_rct_streaming(
     image: &ModularImage,
     begin_c: usize,
     rct_type: super::rct::RctType,
+    stop: Option<&dyn enough::Stop>,
 ) -> Option<f64> {
     use super::rct::{forward_rct_rows_in_place, permute_indices};
     use crate::entropy_coding::hybrid_uint::HybridUintConfig;
@@ -1621,6 +1623,12 @@ fn estimate_cost_rct_streaming(
         let mut cur = (vec![0i32; w], vec![0i32; w], vec![0i32; w]);
         let mut prev = (vec![0i32; w], vec![0i32; w], vec![0i32; w]);
         for y in 0..h {
+            // Cooperative cancellation: the per-row transform+cost sweep is
+            // O(pixels) per RCT candidate — a single trial at 4K exceeds
+            // the poll-latency bound.
+            if y & 0x1F == 0 && crate::error::check_stop(stop).is_err() {
+                return None;
+            }
             cur.0.copy_from_slice(image.channels[begin_c + idx0].row(y));
             cur.1.copy_from_slice(image.channels[begin_c + idx1].row(y));
             cur.2.copy_from_slice(image.channels[begin_c + idx2].row(y));
@@ -1772,15 +1780,19 @@ fn best_rct_trial_streaming(
     image: &ModularImage,
     begin_c: usize,
     num_to_try: usize,
+    stop: Option<&dyn enough::Stop>,
 ) -> Option<(usize, f64, ModularImage)> {
-    use super::rct::{RctType, forward_rct};
+    use super::rct::{RctType, forward_rct_stop};
     let mut best: Option<(usize, f64)> = None;
     for (i, &cand) in RCT_CANDIDATES.iter().enumerate().take(num_to_try) {
+        if crate::error::check_stop(stop).is_err() {
+            return None;
+        }
         let rct_type = RctType(cand);
         let cost = if rct_type.is_noop() {
             estimate_cost(image)
         } else {
-            match estimate_cost_rct_streaming(image, begin_c, rct_type) {
+            match estimate_cost_rct_streaming(image, begin_c, rct_type, stop) {
                 Some(c) => c,
                 None => continue,
             }
@@ -1795,7 +1807,7 @@ fn best_rct_trial_streaming(
     if !rct_type.is_noop() {
         // Cannot fail: the streaming evaluator validated the same
         // preconditions `forward_rct` checks.
-        forward_rct(&mut transformed.channels, begin_c, rct_type).ok()?;
+        forward_rct_stop(&mut transformed.channels, begin_c, rct_type, stop).ok()?;
     }
     Some((i, cost, transformed))
 }
@@ -1811,12 +1823,13 @@ pub(crate) fn select_best_rct(
     image: &ModularImage,
     nb_rcts_to_try: u8,
     forced_rct: Option<RctType>,
+    stop: Option<&dyn enough::Stop>,
 ) -> (RctType, ModularImage) {
-    use super::rct::{RctType, forward_rct};
+    use super::rct::{RctType, forward_rct, forward_rct_stop};
 
     if let Some(rct_type) = forced_rct {
         let mut transformed = image.clone();
-        forward_rct(&mut transformed.channels, 0, rct_type).ok();
+        forward_rct_stop(&mut transformed.channels, 0, rct_type, stop).ok();
         return (rct_type, transformed);
     }
 
@@ -1826,7 +1839,7 @@ pub(crate) fn select_best_rct(
         // Default to RCT-10 (GBR + Subtract-Green): -1.19% bytes vs YCoCg on a
         // diverse 490-image corpus (see RctType::GBR_SUBGR doc + commit 287d915).
         let mut transformed = image.clone();
-        forward_rct(&mut transformed.channels, 0, RctType::GBR_SUBGR).ok();
+        forward_rct_stop(&mut transformed.channels, 0, RctType::GBR_SUBGR, stop).ok();
         return (RctType::GBR_SUBGR, transformed);
     }
 
@@ -1839,7 +1852,7 @@ pub(crate) fn select_best_rct(
     // Single-worker pools price the candidates WITHOUT cloning (the
     // trial-clone set was the measured lossless t=1 peak — issue #99).
     let winner = if crate::parallel::effective_threads() <= 1 {
-        best_rct_trial_streaming(image, 0, num_to_try)
+        best_rct_trial_streaming(image, 0, num_to_try, stop)
     } else {
         best_rct_trial_waved(num_to_try, |i| {
             let rct_type = RctType(RCT_CANDIDATES[i]);
@@ -1847,7 +1860,7 @@ pub(crate) fn select_best_rct(
                 Some((estimate_cost(image), image.clone()))
             } else {
                 let mut transformed = image.clone();
-                if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
+                if forward_rct_stop(&mut transformed.channels, 0, rct_type, stop).is_ok() {
                     let cost = estimate_cost(&transformed);
                     Some((cost, transformed))
                 } else {
@@ -1897,12 +1910,13 @@ pub(crate) fn select_best_rct_at(
     begin_c: usize,
     nb_rcts_to_try: u8,
     forced_rct: Option<RctType>,
+    stop: Option<&dyn enough::Stop>,
 ) -> (RctType, ModularImage) {
-    use super::rct::{RctType, forward_rct};
+    use super::rct::{RctType, forward_rct_stop};
 
     if let Some(rct_type) = forced_rct {
         let mut transformed = image.clone();
-        forward_rct(&mut transformed.channels, begin_c, rct_type).ok();
+        forward_rct_stop(&mut transformed.channels, begin_c, rct_type, stop).ok();
         return (rct_type, transformed);
     }
 
@@ -1912,7 +1926,7 @@ pub(crate) fn select_best_rct_at(
         // Default to RCT-10 (GBR + Subtract-Green): -1.19% bytes vs YCoCg on a
         // diverse 490-image corpus (see RctType::GBR_SUBGR doc + commit 287d915).
         let mut transformed = image.clone();
-        forward_rct(&mut transformed.channels, begin_c, RctType::GBR_SUBGR).ok();
+        forward_rct_stop(&mut transformed.channels, begin_c, RctType::GBR_SUBGR, stop).ok();
         return (RctType::GBR_SUBGR, transformed);
     }
 
@@ -1923,7 +1937,7 @@ pub(crate) fn select_best_rct_at(
     // deterministic "first wins" tie-break on equal cost. Single-worker
     // pools price the candidates WITHOUT cloning (issue #99).
     let winner = if crate::parallel::effective_threads() <= 1 {
-        best_rct_trial_streaming(image, begin_c, num_to_try)
+        best_rct_trial_streaming(image, begin_c, num_to_try, stop)
     } else {
         best_rct_trial_waved(num_to_try, |i| {
             let rct_type = RctType(RCT_CANDIDATES[i]);
@@ -1992,6 +2006,7 @@ pub(crate) fn select_best_rct_at(
 /// - ANS-encoded residuals (write_tokens_ans)
 /// - byte padding
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)] // public wrapper retained for API stability
 pub fn write_modular_stream_with_tree(
     image: &ModularImage,
     writer: &mut BitWriter,
@@ -2012,6 +2027,7 @@ pub fn write_modular_stream_with_tree(
         None, // no lossy modular options
         true, // enable palette detection
         budget,
+        None,
     )
 }
 
@@ -2045,6 +2061,7 @@ pub fn write_modular_stream_with_tree_knobs(
         true, // enable palette detection
         knobs,
         budget,
+        None,
     )
 }
 
@@ -2085,6 +2102,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     lossy_options: Option<LossyModularOptions>,
     palette: bool,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<()> {
     write_modular_stream_with_tree_dc_quant_knobs(
         image,
@@ -2098,6 +2116,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         palette,
         &super::palette::ModularKnobs::default(),
         budget,
+        stop,
     )
 }
 
@@ -2234,16 +2253,18 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     palette: bool,
     knobs: &super::palette::ModularKnobs,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
-        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
-        gather_samples_strided, gather_samples_strided_with_dedup_backend, max_ref_channels,
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree_with_budget,
+        compute_best_tree_with_budget, compute_best_tree_with_multipliers_stop,
+        compute_gather_stride_from_profile, gather_samples_strided_with_budget,
+        gather_samples_strided_with_dedup_backend, max_ref_channels,
     };
-    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options_stop;
     use crate::entropy_coding::encode::write_entropy_code_ans;
-    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+    use crate::entropy_coding::lz77::write_lz77_header;
 
     let is_lossy = lossy_options.is_some();
 
@@ -2418,6 +2439,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
                 rct_begin_c,
                 profile.nb_rcts_to_try,
                 profile.forced_rct,
+                stop,
             );
             (transformed, Some(selected_rct), None, info)
         } else {
@@ -2426,7 +2448,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     } else if !is_lossy && rct && image.channels.len() >= 3 {
         // RCT only path (no palette, no ChannelCompact)
         let (selected_rct, transformed) =
-            select_best_rct(image, profile.nb_rcts_to_try, profile.forced_rct);
+            select_best_rct(image, profile.nb_rcts_to_try, profile.forced_rct, stop);
         (transformed, Some(selected_rct), None, Vec::new())
     } else {
         (image.clone(), None, None, Vec::new())
@@ -2498,7 +2520,11 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     {
         super::predictor::WeightedPredictorParams::for_mode(mode)
     } else if !is_lossy && profile.wp_num_param_sets > 0 {
-        super::predictor::find_best_wp_params(&work_image.channels, profile.wp_num_param_sets)
+        super::predictor::find_best_wp_params_stop(
+            &work_image.channels,
+            profile.wp_num_param_sets,
+            stop,
+        )?
     } else {
         super::predictor::WeightedPredictorParams::default()
     };
@@ -2531,7 +2557,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         Vec::new()
     };
     if profile.gather_dedup {
-        let _ = gather_samples_strided_with_dedup_backend(
+        gather_samples_strided_with_dedup_backend(
             &mut samples,
             &work_image,
             0,
@@ -2542,9 +2568,19 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
             true,
             profile.gather_dedup_phase3,
             &dedup_properties,
-        );
+            stop,
+        )?;
     } else {
-        gather_samples_strided(&mut samples, &work_image, 0, 0, stride, &wp_params);
+        gather_samples_strided_with_budget(
+            &mut samples,
+            &work_image,
+            0,
+            0,
+            stride,
+            &wp_params,
+            None,
+            stop,
+        )?;
     }
 
     // Step 2: Learn tree with effort-dependent parameters
@@ -2594,7 +2630,13 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         // Lossy: use forced-split tree learning with multiplier info
         let num_channels = work_image.channels.len() as u32;
         let initial_range = [[0, num_channels], [0, 1]];
-        compute_best_tree_with_multipliers(&mut samples, &params, mul_info, initial_range)
+        compute_best_tree_with_multipliers_stop(
+            &mut samples,
+            &params,
+            mul_info,
+            initial_range,
+            stop,
+        )?
     } else if let Some(forced) = force_predictor {
         // Force-predictor override: single-leaf tree, no ID3.
         super::tree::simple_tree(forced)
@@ -2603,7 +2645,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         // tree, no ID3.
         riged
     } else {
-        compute_best_tree(&mut samples, &params)
+        compute_best_tree_with_budget(&mut samples, &params, None, stop)?
     };
     let num_contexts = count_contexts(&tree) as usize;
 
@@ -2623,7 +2665,8 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     );
 
     // Step 3: Collect residuals with learned tree
-    let tokens = collect_residuals_with_tree(&work_image, &tree, 0, &wp_params);
+    let tokens =
+        collect_residuals_with_tree_with_budget(&work_image, &tree, 0, &wp_params, None, stop)?;
 
     let write_candidate = |tokens: &[crate::entropy_coding::token::Token],
                            code: &crate::entropy_coding::encode_ans::OwnedAnsEntropyCode,
@@ -2721,6 +2764,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
             total_pixels,
             method: lz77_method,
             budget,
+            stop,
         }
         .select(|candidate| {
             let mut scratch = writer.clone();
@@ -2749,13 +2793,14 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         .unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
         // LZ77 application
-        match apply_lz77(
+        match crate::entropy_coding::lz77::apply_lz77_stop(
             &tokens,
             num_contexts,
             false,
             lz77_method,
             dist_multiplier,
             budget,
+            stop,
         )? {
             Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
             None => (tokens, None),
@@ -2770,13 +2815,14 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     };
 
     // Step 4: Build multi-context ANS code with enhanced clustering
-    let code = build_entropy_code_ans_with_options(
+    let code = build_entropy_code_ans_with_options_stop(
         &tokens,
         ans_num_contexts,
         true, // enhanced clustering (pair-merge refinement)
         true, // optimize uint configs
         lz77_params.as_ref(),
         Some(total_pixels),
+        stop,
     );
 
     write_candidate(&tokens, &code, lz77_params.as_ref(), writer)
@@ -2811,16 +2857,18 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
     multiplier_info: &[super::quantize::ModularMultiplierInfo],
     _quants: &[i32],
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
 ) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
-        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
-        gather_samples_strided, gather_samples_strided_with_dedup_backend,
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree_with_budget,
+        compute_best_tree_with_budget, compute_best_tree_with_multipliers_stop,
+        compute_gather_stride_from_profile, gather_samples_strided_with_budget,
+        gather_samples_strided_with_dedup_backend,
     };
-    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options_stop;
     use crate::entropy_coding::encode::write_entropy_code_ans;
-    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+    use crate::entropy_coding::lz77::write_lz77_header;
 
     // WP parameters: default (Zero predictor is forced for lossy leaves,
     // but WP params are still needed for the gather phase).
@@ -2840,7 +2888,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
         Vec::new()
     };
     if profile.gather_dedup {
-        let _ = gather_samples_strided_with_dedup_backend(
+        gather_samples_strided_with_dedup_backend(
             &mut samples,
             image,
             0,
@@ -2851,9 +2899,19 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
             true,
             profile.gather_dedup_phase3,
             &dedup_properties,
-        );
+            stop,
+        )?;
     } else {
-        gather_samples_strided(&mut samples, image, 0, 0, stride, &wp_params);
+        gather_samples_strided_with_budget(
+            &mut samples,
+            image,
+            0,
+            0,
+            stride,
+            &wp_params,
+            None,
+            stop,
+        )?;
     }
 
     // Step 2: Learn tree with forced splits for multiplier info.
@@ -2870,9 +2928,15 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
     let tree = if !multiplier_info.is_empty() {
         let num_channels = image.channels.len() as u32;
         let initial_range = [[0, num_channels], [0, 1]];
-        compute_best_tree_with_multipliers(&mut samples, &params, multiplier_info, initial_range)
+        compute_best_tree_with_multipliers_stop(
+            &mut samples,
+            &params,
+            multiplier_info,
+            initial_range,
+            stop,
+        )?
     } else {
-        compute_best_tree(&mut samples, &params)
+        compute_best_tree_with_budget(&mut samples, &params, None, stop)?
     };
     let num_contexts = count_contexts(&tree) as usize;
 
@@ -2885,18 +2949,19 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
     );
 
     // Step 3: Collect residuals with learned tree
-    let tokens = collect_residuals_with_tree(image, &tree, 0, &wp_params);
+    let tokens = collect_residuals_with_tree_with_budget(image, &tree, 0, &wp_params, None, stop)?;
 
     // Step 3b: Optionally apply LZ77 to the token stream
     let dist_multiplier = image.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
-        match apply_lz77(
+        match crate::entropy_coding::lz77::apply_lz77_stop(
             &tokens,
             num_contexts,
             false,
             lz77_method,
             dist_multiplier,
             budget,
+            stop,
         )? {
             Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
             None => (tokens, None),
@@ -2911,13 +2976,14 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
     };
 
     // Step 4: Build multi-context ANS code
-    let code = build_entropy_code_ans_with_options(
+    let code = build_entropy_code_ans_with_options_stop(
         &tokens,
         ans_num_contexts,
         true,
         true, // optimize uint configs
         lz77_params.as_ref(),
         Some(total_pixels),
+        stop,
     );
 
     // Step 5: Write bitstream
@@ -2986,6 +3052,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
 /// - Tree learning adapts prediction and contexts per-channel/per-region
 ///
 /// Pipeline: RCT → squeeze → gather samples → learn tree → collect residuals → ANS
+#[allow(dead_code)] // public wrapper retained for API stability
 pub fn write_modular_stream_with_squeeze_and_tree(
     image: &ModularImage,
     writer: &mut BitWriter,
@@ -2994,29 +3061,55 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
-    use super::rct::{RctType, forward_rct};
-    use super::squeeze::{apply_squeeze, default_squeeze_params};
+    write_modular_stream_with_squeeze_and_tree_stop(
+        image,
+        writer,
+        profile,
+        use_lz77,
+        lz77_method,
+        budget,
+        None,
+    )
+}
+
+/// [`write_modular_stream_with_squeeze_and_tree`] with cancellation polling.
+/// No-op / byte-identical under `None`.
+pub(crate) fn write_modular_stream_with_squeeze_and_tree_stop(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
+    use super::rct::RctType;
+    use super::squeeze::default_squeeze_params;
     use super::tree::count_contexts;
     use super::tree_learn::{
-        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, gather_samples_strided,
-        gather_samples_strided_with_dedup_backend,
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree_with_budget,
+        compute_best_tree_with_budget, compute_gather_stride_from_profile,
+        gather_samples_strided_with_budget, gather_samples_strided_with_dedup_backend,
     };
-    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options_stop;
     use crate::entropy_coding::encode::write_entropy_code_ans;
-    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+    use crate::entropy_coding::lz77::write_lz77_header;
 
     let params = default_squeeze_params(image);
     if params.is_empty() {
         // Image too small for squeeze, fall back to tree learning without squeeze
-        return write_modular_stream_with_tree(
+        return write_modular_stream_with_tree_dc_quant(
             image,
             writer,
             profile,
             image.channels.len() >= 3,
             use_lz77,
             lz77_method,
+            None,
+            None,
+            true,
             budget,
+            stop,
         );
     }
 
@@ -3025,11 +3118,11 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     let has_rct = transformed.channels.len() >= 3;
     if has_rct {
         let rct_type = RctType::YCOCG;
-        forward_rct(&mut transformed.channels, 0, rct_type)?;
+        crate::modular::rct::forward_rct_stop(&mut transformed.channels, 0, rct_type, stop)?;
     }
 
     // Step 2: Apply forward squeeze
-    apply_squeeze(&mut transformed, &params)?;
+    crate::modular::squeeze::apply_squeeze_stop(&mut transformed, &params, stop)?;
 
     crate::trace::debug_eprintln!(
         "SQUEEZE+TREE: {} squeeze steps, {} → {} channels, rct={}",
@@ -3045,7 +3138,11 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     let wp_params = if let Some(mode) = profile.forced_wp_mode {
         super::predictor::WeightedPredictorParams::for_mode(mode)
     } else if profile.wp_num_param_sets > 0 {
-        super::predictor::find_best_wp_params(&transformed.channels, profile.wp_num_param_sets)
+        super::predictor::find_best_wp_params_stop(
+            &transformed.channels,
+            profile.wp_num_param_sets,
+            stop,
+        )?
     } else {
         super::predictor::WeightedPredictorParams::default()
     };
@@ -3068,7 +3165,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         Vec::new()
     };
     if profile.gather_dedup {
-        let _ = gather_samples_strided_with_dedup_backend(
+        gather_samples_strided_with_dedup_backend(
             &mut samples,
             &transformed,
             0,
@@ -3079,9 +3176,19 @@ pub fn write_modular_stream_with_squeeze_and_tree(
             true,
             profile.gather_dedup_phase3,
             &dedup_properties,
-        );
+            stop,
+        )?;
     } else {
-        gather_samples_strided(&mut samples, &transformed, 0, 0, stride, &wp_params);
+        gather_samples_strided_with_budget(
+            &mut samples,
+            &transformed,
+            0,
+            0,
+            stride,
+            &wp_params,
+            None,
+            stop,
+        )?;
     }
 
     // Step 4: Learn tree with effort-dependent parameters
@@ -3095,7 +3202,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     let tree_params = TreeLearningParams::from_profile_squeeze(profile)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
-    let tree = compute_best_tree(&mut samples, &tree_params);
+    let tree = compute_best_tree_with_budget(&mut samples, &tree_params, None, stop)?;
     let num_contexts = count_contexts(&tree) as usize;
 
     crate::trace::debug_eprintln!(
@@ -3108,7 +3215,8 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     );
 
     // Step 5: Collect residuals with learned tree
-    let tokens = collect_residuals_with_tree(&transformed, &tree, 0, &wp_params);
+    let tokens =
+        collect_residuals_with_tree_with_budget(&transformed, &tree, 0, &wp_params, None, stop)?;
 
     let write_candidate = |tokens: &[crate::entropy_coding::token::Token],
                            code: &crate::entropy_coding::encode_ans::OwnedAnsEntropyCode,
@@ -3220,6 +3328,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
             total_pixels,
             method: lz77_method,
             budget,
+            stop,
         }
         .select(|candidate| {
             let mut scratch = writer.clone();
@@ -3247,13 +3356,14 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         .max()
         .unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
-        match apply_lz77(
+        match crate::entropy_coding::lz77::apply_lz77_stop(
             &tokens,
             num_contexts,
             false,
             lz77_method,
             dist_multiplier,
             budget,
+            stop,
         )? {
             Some((lz77_tokens, params)) => {
                 crate::trace::debug_eprintln!(
@@ -3287,13 +3397,14 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     };
 
     // Step 6: Build multi-context ANS code with enhanced clustering
-    let code = build_entropy_code_ans_with_options(
+    let code = build_entropy_code_ans_with_options_stop(
         &tokens,
         ans_num_contexts,
         true, // enhanced clustering (pair-merge refinement)
         true, // optimize uint configs
         lz77_params.as_ref(),
         Some(total_pixels),
+        stop,
     );
 
     write_candidate(&tokens, &code, lz77_params.as_ref(), writer)
@@ -3370,7 +3481,7 @@ mod tests {
                 let mut t = img.clone();
                 forward_rct(&mut t.channels, begin_c, rct_type).unwrap();
                 let materialized = estimate_cost(&t);
-                let streamed = estimate_cost_rct_streaming(img, begin_c, rct_type)
+                let streamed = estimate_cost_rct_streaming(img, begin_c, rct_type, None)
                     .expect("valid trio must stream");
                 assert_eq!(
                     streamed.to_bits(),
@@ -3381,7 +3492,7 @@ mod tests {
         }
         // Validation parity: too few channels -> None, like forward_rct's Err.
         let two = image(vec![prng_channel(8, 8, 1, 16), prng_channel(8, 8, 2, 16)]);
-        assert!(estimate_cost_rct_streaming(&two, 0, RctType(1)).is_none());
+        assert!(estimate_cost_rct_streaming(&two, 0, RctType(1), None).is_none());
     }
 
     #[test]

@@ -70,6 +70,16 @@ impl RctType {
 /// # Returns
 /// Ok(()) if transform was applied, or error if channels don't match.
 pub fn forward_rct(channels: &mut [Channel], begin_c: usize, rct_type: RctType) -> Result<()> {
+    forward_rct_stop(channels, begin_c, rct_type, None)
+}
+
+/// `forward_rct` with cooperative cancellation.
+pub(crate) fn forward_rct_stop(
+    channels: &mut [Channel],
+    begin_c: usize,
+    rct_type: RctType,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
     if rct_type.is_noop() {
         return Ok(());
     }
@@ -101,6 +111,9 @@ pub fn forward_rct(channels: &mut [Channel], begin_c: usize, rct_type: RctType) 
     // Apply transform row by row
     // We need to work around borrow checker by copying data
     for y in 0..h {
+        if y & 0xFF == 0 {
+            crate::error::check_stop(stop)?;
+        }
         // Read from PERMUTED input indices (permutation selects which channel is "first", etc.)
         let row0: Vec<i32> = channels[begin_c + idx0].row(y).to_vec();
         let row1: Vec<i32> = channels[begin_c + idx1].row(y).to_vec();
