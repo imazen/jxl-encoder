@@ -414,10 +414,6 @@ fn accept_scale() -> f32 {
 // this shared matcher (also used by VarDCT and ICC).
 pub(crate) mod bucket;
 
-pub(crate) fn keep_best_enabled() -> bool {
-    std::env::var("JXL_LZ77_KEEP_BEST").as_deref() == Ok("1")
-}
-
 /// `JXL_LZ77_NO_EARLYOUT=1` disables the sound greedy early-out so its wall
 /// saving stays measurable after it ships. It cannot change output: the
 /// early-out only fires when the acceptance test is already unreachable, so

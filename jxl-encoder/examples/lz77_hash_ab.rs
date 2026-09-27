@@ -16,13 +16,21 @@
 //! lossless e8 (Greedy) and e9+ (Optimal); lossy e9+ (Optimal).
 //!
 //! Usage: lz77_hash_ab <corpus-dir> <out.tsv> [--images N] [--size N]
+//! `--keep-best-repeats N` alternates typed keep-best off/on per repetition,
+//! with one unreported warmup pair. `--threads N`, `--depths u8,u16,f32`
+//! and `--mode global|squeeze|local|hybrid` control the measured path.
+//! All encoding timers exclude hashing and file IO. Keep-best pairs assert
+//! non-growing output; this timing harness does not replace decoder tests.
 //! Encoded files are retained in <out>.artifacts (or --artifacts DIR).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use jxl_encoder::api::{LosslessConfig, LossyConfig, PixelLayout};
+use jxl_encoder::api::{
+    EncoderImprovementsCustom, EncoderStrategy, LosslessConfig, LossyConfig, PixelLayout,
+    SectionedTrees,
+};
 use sha2::{Digest, Sha256};
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -83,6 +91,18 @@ fn main() {
         .split(',')
         .map(|x| x.parse().unwrap())
         .collect();
+    let repeats: usize = arg("--keep-best-repeats", "0").parse().unwrap();
+    let threads: usize = arg("--threads", "1").parse().unwrap();
+    let depths = arg("--depths", "u8,u16,f32");
+    assert!(depths.split(',').all(|d| matches!(d, "u8" | "u16" | "f32")));
+    let mode = arg("--mode", "global");
+    let (squeeze, sectioned) = match mode.as_str() {
+        "global" => (false, SectionedTrees::Off),
+        "squeeze" => (true, SectionedTrees::Off),
+        "local" => (false, SectionedTrees::On),
+        "hybrid" => (false, SectionedTrees::Hybrid),
+        _ => panic!("unknown mode {mode}"),
+    };
     let do_lossy = arg("--lossy", "1") == "1";
 
     let default_arm = if std::env::var("JXL_LZ77_MURMUR_HASH").as_deref() == Ok("1") {
@@ -94,7 +114,11 @@ fn main() {
     let arm = arg("--arm", default_arm);
     assert!(!arm.contains(['\t', '\n', '\r']), "invalid TSV arm");
 
-    let mut out = std::fs::File::create(&out_path).unwrap();
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&out_path)
+        .expect("refuse overwriting results");
     writeln!(out, "arm\timage\tpath_kind\tdepth\teffort\tbytes\tms\tsize\tsource_sha256\tencoded_sha256\tartifact").unwrap();
 
     let mut picked = 0usize;
@@ -109,7 +133,7 @@ fn main() {
         if !fs.ends_with(".png") {
             continue;
         }
-        let Ok(img) = image::open(&f) else { continue };
+        let img = image::open(&f).expect("decode source PNG");
         // Accept 8-bit sources too (widened by <<8) so the content grid covers
         // every imazen-26 stratum, not just the four photographic ones that
         // ship 16-bit HDR. For an ACCEPTANCE-RATE measurement what matters is
@@ -156,7 +180,7 @@ fn main() {
             .flat_map(|v| (*v as f32 / 65535.0).to_ne_bytes())
             .collect();
 
-        let mut row = |kind: &str, depth: &str, effort: u8, data: &[u8], ms: f64| {
+        let mut row = |arm: &str, kind: &str, depth: &str, effort: u8, data: &[u8], ms: f64| {
             let encoded_sha256 = sha256_hex(data);
             let artifact = artifacts.join(format!("{encoded_sha256}.jxl"));
             if artifact.exists() {
@@ -177,7 +201,7 @@ fn main() {
             let bytes = data.len();
             writeln!(
                 out,
-                "{arm}\t{name}\t{kind}\t{depth}\t{effort}\t{bytes}\t{ms:.1}\t{n}\t{source_sha256}\t{encoded_sha256}\t{artifact}"
+                "{arm}\t{name}\t{kind}\t{depth}\t{effort}\t{bytes}\t{ms:.3}\t{n}\t{source_sha256}\t{encoded_sha256}\t{artifact}"
             )
             .unwrap();
             out.flush().unwrap();
@@ -189,6 +213,56 @@ fn main() {
                 ("u16", &b16, PixelLayout::Rgb16),
                 ("f32", &bf32, PixelLayout::RgbLinearF32),
             ] {
+                if !depths.split(',').any(|d| d == depth) {
+                    continue;
+                }
+                if repeats > 0 {
+                    for rep in 0..=repeats {
+                        let order = if rep % 2 == 0 {
+                            [false, true]
+                        } else {
+                            [true, false]
+                        };
+                        let mut lengths = [0; 2];
+                        for enabled in order {
+                            let config = LosslessConfig::new()
+                                .with_effort(e)
+                                .with_threads(threads)
+                                .with_squeeze(squeeze)
+                                .with_sectioned_trees(sectioned)
+                                .with_strategy(EncoderStrategy::Custom(Box::new(
+                                    EncoderImprovementsCustom {
+                                        lossless_lz77_keep_best: enabled,
+                                        ..Default::default()
+                                    },
+                                )));
+                            let t = Instant::now();
+                            let data = config.encode_request(n, n, layout).encode(buf).unwrap();
+                            let ms = t.elapsed().as_secs_f64() * 1000.0;
+                            lengths[usize::from(enabled)] = data.len();
+                            // Persist warmup too; caller excludes rep 0 from timing summaries.
+                            row(
+                                &format!("keepbest_{}_r{rep}", if enabled { "on" } else { "off" }),
+                                &format!("lossless-{mode}-t{threads}"),
+                                depth,
+                                e,
+                                &data,
+                                ms,
+                            );
+                        }
+                        assert!(
+                            lengths[1] <= lengths[0],
+                            "{name} {n} e{e} {depth}: {} -> {}",
+                            lengths[0],
+                            lengths[1]
+                        );
+                        eprintln!(
+                            "{name} {n} e{e} {depth} {mode} t{threads} repetition {rep}/{repeats}: {} -> {}",
+                            lengths[0], lengths[1]
+                        );
+                    }
+                    continue;
+                }
                 let t = Instant::now();
                 let d = LosslessConfig::new()
                     .with_effort(e)
@@ -196,6 +270,7 @@ fn main() {
                     .encode(buf)
                     .expect("lossless encode");
                 row(
+                    &arm,
                     "lossless",
                     depth,
                     e,
@@ -217,6 +292,7 @@ fn main() {
             .encode(&b16)
             .expect("lossy encode");
         row(
+            &arm,
             "lossy",
             "u16",
             9,

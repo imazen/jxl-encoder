@@ -635,3 +635,11 @@ lz77-keep-best-check label manifest="Cargo.toml" features="corpus-tests,__expert
     export LZ77_KEEP_BEST_OUTPUT="$root/artifacts"
     nice -n19 cargo test --manifest-path "{{manifest}}" --locked --release -p jxl-encoder --features '{{features}}' --lib production_keep_best_regressions -- --nocapture > "$root/test.log" 2>&1
     rg 'KEEP-BEST|test result:' "$root/test.log"
+
+# Paired encode-only timing; manifest controls content/size/depth/effort/mode/thread axes.
+lz77-keep-best-timing binary manifest output repeats="5":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname '{{output}}')"
+    nice -n19 python3 scripts/lz77_keep_best_timing.py '{{binary}}' '{{manifest}}' '{{output}}' --repeats '{{repeats}}' > '{{output}}.log' 2>&1
+    cat '{{output}}/summary.tsv'

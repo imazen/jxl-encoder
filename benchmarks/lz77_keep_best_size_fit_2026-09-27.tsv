@@ -1,0 +1,17 @@
+source	effort	quantity	alpha	beta_per_megapixel	max_abs_residual	units
+brochure	8	off_ms	18.6398	305.3809	20.9481	ms
+brochure	8	on_ms	21.1928	339.4737	23.5483	ms
+brochure	8	off_bytes	4730.7155	22497.1046	10731.3606	bytes
+brochure	8	on_bytes	4730.7155	22497.1046	10731.3606	bytes
+brochure	9	off_ms	92.2880	580.4324	185.1565	ms
+brochure	9	on_ms	96.3424	632.3663	189.2425	ms
+brochure	9	off_bytes	4638.3990	22405.8607	10414.3532	bytes
+brochure	9	on_bytes	4638.3990	22405.8607	10414.3532	bytes
+nature	8	off_ms	82.9707	2420.4072	108.6214	ms
+nature	8	on_ms	101.6436	2594.8395	141.1381	ms
+nature	8	off_bytes	8108.3449	433813.9133	15543.7971	bytes
+nature	8	on_bytes	8108.3449	433813.9133	15543.7971	bytes
+nature	9	off_ms	287.3183	4422.4009	505.8093	ms
+nature	9	on_ms	326.1884	5023.2776	569.9853	ms
+nature	9	off_bytes	7890.6502	413989.7283	12108.6565	bytes
+nature	9	on_bytes	7890.6502	413989.7283	12108.6565	bytes

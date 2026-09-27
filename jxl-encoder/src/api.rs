@@ -534,9 +534,11 @@ impl LosslessConfig {
     /// Select the divergence bundle for this lossless encode.
     ///
     /// Zen strategies retain cost-based tree self-repair and the large-image
-    /// tree-bucket reduction. [`EncoderStrategy::Libjxl`] disables both;
-    /// [`EncoderStrategy::Custom`] controls them individually through the shared
-    /// registry. Other modular divergences remain: this does not promise
+    /// tree-bucket reduction. Zenjxl and Aggressive also compare lossless LZ77
+    /// candidates by coded size at effort 8+ with Greedy/Optimal;
+    /// LeanFaster avoids that extra work. [`EncoderStrategy::Libjxl`] disables
+    /// all three. [`EncoderStrategy::Custom`] controls them individually through
+    /// the shared registry. Other modular divergences remain: this does not promise
     /// byte-exact lossless output matching libjxl v0.12.
     pub fn with_strategy(mut self, strategy: EncoderStrategy) -> Self {
         self.strategy = strategy;
@@ -796,8 +798,7 @@ impl LosslessConfig {
         let mut p = crate::effort::EffortProfile::lossless(self.effort, self.mode);
         let resolved = self.strategy.resolve(&StrategyOverrides::default());
         p.tree_self_repair_allowed = resolved.lossless_tree_self_repair;
-        p.lz77_keep_best = !matches!(self.strategy, EncoderStrategy::Libjxl)
-            && crate::entropy_coding::lz77::keep_best_enabled();
+        p.lz77_keep_best = resolved.lossless_lz77_keep_best;
         p.tree_self_repair &= resolved.lossless_tree_self_repair;
         p.lossless_large_tree_bucket_reduction = resolved.lossless_large_tree_bucket_reduction;
         // Sweep/picker internal-param overrides (issue #80): applied
@@ -834,10 +835,13 @@ impl LosslessConfig {
         // ordering (cparams.decoding_speed_tier is consulted at each gate
         // site directly, AFTER the speed-tier-derived defaults are set).
         p.apply_faster_decoding(self.faster_decoding);
-        // Keep the experiment on the existing learned-ANS backward-reference
+        // Keep selection on the existing learned-ANS backward-reference
         // surface; explicit RLE/Huffman/LZ77-off choices retain their meaning.
-        p.lz77_keep_best &=
-            p.lz77 && p.use_ans && p.tree_learning && !matches!(p.lz77_method, Lz77Method::Rle);
+        p.lz77_keep_best &= p.effort >= 8
+            && p.lz77
+            && p.use_ans
+            && p.tree_learning
+            && !matches!(p.lz77_method, Lz77Method::Rle);
         p
     }
 

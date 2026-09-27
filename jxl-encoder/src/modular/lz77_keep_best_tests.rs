@@ -33,7 +33,7 @@ fn production_keep_best_regressions() {
         let status = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture"])
             .env("JXL_KEEP_BEST_TEST_ARM", arm)
-            .env("JXL_LZ77_KEEP_BEST", if arm == "on" { "1" } else { "0" })
+            .env("JXL_LZ77_KEEP_BEST", if arm == "on" { "0" } else { "1" }) // obsolete env must not override typed policy
             .stdout(log.try_clone().unwrap())
             .stderr(log)
             .status()
@@ -86,8 +86,21 @@ fn hash(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn arm_strategy(arm: &str) -> EncoderStrategy {
+    match arm {
+        "on" => EncoderStrategy::Zenjxl,
+        "off" => EncoderStrategy::Custom(Box::new(crate::api::EncoderImprovementsCustom {
+            lossless_lz77_keep_best: false,
+            ..Default::default()
+        })),
+        _ => panic!("unknown arm {arm}"),
+    }
+}
+
 fn run_arm(arm: &str) {
-    let enabled = LosslessConfig::new().with_effort(8);
+    let enabled = LosslessConfig::new()
+        .with_effort(8)
+        .with_strategy(arm_strategy(arm));
     assert_eq!(enabled.effective_profile().lz77_keep_best, arm == "on");
     for disabled in [
         enabled.clone().with_lz77(false),
@@ -137,6 +150,7 @@ fn run_arm(arm: &str) {
             for e in [8, 9] {
                 let base = LosslessConfig::new()
                     .with_effort(e)
+                    .with_strategy(arm_strategy(arm))
                     .with_threads(0)
                     .with_sectioned_trees(SectionedTrees::Off);
                 for strict in [false, true] {
@@ -147,7 +161,7 @@ fn run_arm(arm: &str) {
                     let cfg = base.clone().with_strategy(if strict {
                         EncoderStrategy::Libjxl
                     } else {
-                        EncoderStrategy::Zenjxl
+                        arm_strategy(arm)
                     });
                     super::lz77_keep_best::begin_observation();
                     let now = std::time::Instant::now();

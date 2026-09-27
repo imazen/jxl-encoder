@@ -312,6 +312,7 @@ jxl_encoder_macros::strategy_def! {
             // with ChannelCompact palettes, not a private sub-bitstream.
             extras_global_stream_libjxl = true,
             lossless_tree_self_repair = false,
+            lossless_lz77_keep_best = false,
             lossless_large_tree_bucket_reduction = false,
             // Strict parity: mirror borders + row-grouped accumulation
             // + f32 weight chain — libjxl `Symmetric5` bit-exact.
@@ -464,6 +465,7 @@ jxl_encoder_macros::strategy_def! {
             ac_meta_libjxl_tree = false,
             extras_global_stream_libjxl = false,
             lossless_tree_self_repair = true,
+            lossless_lz77_keep_best = false, // LeanFaster avoids candidate encode work.
             lossless_large_tree_bucket_reduction = true,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
@@ -610,6 +612,7 @@ jxl_encoder_macros::strategy_def! {
             ac_meta_libjxl_tree = false,
             extras_global_stream_libjxl = false,
             lossless_tree_self_repair = true,
+            lossless_lz77_keep_best = true,
             lossless_large_tree_bucket_reduction = true,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
@@ -714,6 +717,7 @@ jxl_encoder_macros::strategy_def! {
             ac_meta_libjxl_tree = false,
             extras_global_stream_libjxl = false,
             lossless_tree_self_repair = true,
+            lossless_lz77_keep_best = true,
             lossless_large_tree_bucket_reduction = true,
             gaborish_libjxl_parity = false,
             entropy_codes_libjxl_parity = false,
@@ -1658,6 +1662,14 @@ jxl_encoder_macros::strategy_def! {
             divergence_section = "D",
             divergence_row_ref = "lossless_tree_self_repair (cost-based randomized re-gather)",
         },
+        /// Compare lossless LZ77 candidates by complete production coded size.
+        /// Requires effort >= 8, learned ANS and Greedy/Optimal LZ77.
+        /// RLE, Huffman, LZ77-off and faster-decoding restrictions take precedence.
+        /// This adds candidate construction and entropy coding work per encode.
+        lossless_lz77_keep_best: bool {
+            divergence_section = "D",
+            divergence_row_ref = "#110 production LZ77 keep-best (lossless_lz77_keep_best)",
+        },
         /// Reduce lossless tree buckets to 192 at effort >= 9 and
         /// pixels >= 4,000,000, unless internal parameters were supplied.
         lossless_large_tree_bucket_reduction: bool {
@@ -2194,6 +2206,12 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         section: "D",
         row_ref: "lossless_tree_self_repair (cost-based randomized re-gather)",
         raw: __CUSTOM_DIVERGENCE_LOSSLESS_TREE_SELF_REPAIR,
+    },
+    DivergenceEntry {
+        gate_name: "lossless_lz77_keep_best",
+        section: "D",
+        row_ref: "#110 production LZ77 keep-best (lossless_lz77_keep_best)",
+        raw: __CUSTOM_DIVERGENCE_LOSSLESS_LZ77_KEEP_BEST,
     },
     DivergenceEntry {
         gate_name: "lossless_large_tree_bucket_reduction",

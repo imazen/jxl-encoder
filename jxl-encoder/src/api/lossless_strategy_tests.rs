@@ -172,3 +172,64 @@ fn lossless_strategies_roundtrip_and_stream_identically() {
         }
     }
 }
+
+#[test]
+fn lossless_keep_best_respects_methods_and_explicit_opt_outs() {
+    use crate::entropy_coding::lz77::Lz77Method;
+    for effort in 1..=10 {
+        for strategy in [
+            EncoderStrategy::Zenjxl,
+            EncoderStrategy::Aggressive,
+            EncoderStrategy::LeanFaster,
+            EncoderStrategy::Libjxl,
+        ] {
+            let keep_best = matches!(
+                strategy,
+                EncoderStrategy::Zenjxl | EncoderStrategy::Aggressive
+            );
+            let config = LosslessConfig::new()
+                .with_effort(effort)
+                .with_strategy(strategy);
+            assert_eq!(
+                config.effective_profile().lz77_keep_best,
+                keep_best && effort >= 8
+            );
+            for method in [Lz77Method::Greedy, Lz77Method::Optimal] {
+                let forced = config
+                    .clone()
+                    .with_tree_learning(true)
+                    .with_ans(true)
+                    .with_lz77(true)
+                    .with_lz77_method(method);
+                assert_eq!(
+                    forced.effective_profile().lz77_keep_best,
+                    keep_best && effort >= 8
+                );
+            }
+            for disabled in [
+                config.clone().with_lz77(false),
+                config.clone().with_ans(false),
+                config.clone().with_tree_learning(false),
+                config.clone().with_faster_decoding(1),
+                config.with_lz77_method(Lz77Method::Rle),
+            ] {
+                assert!(!disabled.effective_profile().lz77_keep_best);
+            }
+        }
+        for enabled in [false, true] {
+            let config =
+                LosslessConfig::new()
+                    .with_effort(effort)
+                    .with_strategy(EncoderStrategy::Custom(Box::new(
+                        EncoderImprovementsCustom {
+                            lossless_lz77_keep_best: enabled,
+                            ..Default::default()
+                        },
+                    )));
+            assert_eq!(
+                config.effective_profile().lz77_keep_best,
+                enabled && effort >= 8
+            );
+        }
+    }
+}

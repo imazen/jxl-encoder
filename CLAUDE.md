@@ -3163,7 +3163,11 @@ against this closure (`~/tmp/jxl-backlog/encoder-ci-pins-rd.log`).
 
 ### 2026-09-27: #110 production LZ77 keep-best
 
-`JXL_LZ77_KEEP_BEST=1` now selects at the lossless production coding boundary.
+The typed `lossless_lz77_keep_best` strategy gate selects at the lossless
+production coding boundary. Zenjxl/Aggressive enable it; LeanFaster/Libjxl
+disable it. Custom can choose explicitly. Production no longer reads
+`JXL_LZ77_KEEP_BEST`. The method gate requires learned ANS plus Greedy/Optimal,
+with an explicit effort >= 8 gate; explicit RLE/Huffman/LZ77-off/faster-decoding wins.
 The existing result (including final Optimal tokens), plain, Greedy and the
 three-entry bucket candidate compete using actual ANS settings, LZ77/tree/group
 headers, per-section flushes and TOC costs. Ties retain the incumbent;
@@ -3171,9 +3175,10 @@ serialization errors propagate. Selected tokens and their histogram travel
 together to emission; shared global histograms are measured jointly.
 
 Strict Libjxl, lossy/ICC, explicit RLE, Huffman and LZ77-off remain outside
-this experiment. Squeezed/global/local learned pixel streams participate;
+this policy. Squeezed/global/local learned pixel streams participate;
 Hybrid retains its global baseline and compares improved local alternatives.
-Sectioned meta-only coding is unchanged. No new public API or default change.
+Sectioned meta-only coding is unchanged. The strategy follow-up replaces the
+original environment opt-in; candidate construction and cost arithmetic stay unchanged.
 
 On 256-square derived-f32 crops, frymire falls 60,333 to 54,222 bytes;
 terminal keeps 22,072 bytes, rejecting the 23,018-byte bucket alternative.
@@ -3186,6 +3191,18 @@ one-shot bytes in 48 additional encodes. No pair grows; strict and lossy
 controls retain their hashes. This is selected regression coverage, not a
 full default-adoption corpus or performance qualification.
 [Evidence, scope and reproduction](benchmarks/lz77_keep_best_2026-09-27.md).
+[Paired timing](benchmarks/lz77_keep_best_timing_2026-09-27.md) measures
+96 cells on ARM64: 7 shrink, 89 stay identical. At 64/256 pixels integer
+median overhead is 13.2% e8 / 12.5% e9; derived-f32 is 4.0% / 3.8%.
+The 1–4 MP photo/document global cells add 7.1–13.6% at one thread;
+1024² photo at four threads adds 27.1% e8 / 24.7% e9. Squeeze/local/Hybrid
+259-pixel cells add 9.0–22.4%. This is selected coverage, not broad rate/time
+qualification, and is the reason LeanFaster remains outside the search.
+The typed-policy follow-up passes all 75 unchanged lock/drift checks,
+1,625 default library tests, full workspace tests/doctests, workspace all-target
+Clippy and both real-image RD regressions against the pinned sibling closure.
+The production gate's 140 output hashes match the original opt-in implementation;
+the obsolete environment variable cannot override the typed choice.
 
 ### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
 

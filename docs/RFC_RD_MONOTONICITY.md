@@ -137,13 +137,14 @@ so the gap is specifically the e5–e7 band. Wall is stable against baseline
 
 ## 4. Designs A–C (proposed)
 
-**A — production keep-best is implemented as a lossless opt-in (September 27).**
-`JXL_LZ77_KEEP_BEST=1` compares the incumbent, plain and alternate final parses
+**A — production keep-best is a typed lossless Zen policy (September 27).**
+`lossless_lz77_keep_best` compares the incumbent, plain and alternate final parses
 at their production coding boundary, retaining the winning tokens and code.
 It includes headers, shared histogram context, section padding and TOC costs;
 strict Libjxl and lossy remain unchanged. See [current scope and regression
-evidence](../benchmarks/lz77_keep_best_2026-09-27.md). Default adoption still
-requires per-effort rate/time qualification.
+evidence](../benchmarks/lz77_keep_best_2026-09-27.md). Zenjxl/Aggressive
+enable it at effort >= 8 for learned ANS Greedy/Optimal; LeanFaster/Libjxl
+disable it. Custom can opt out. There is no production environment switch.
 
 **Historical September 10 experiment, superseded by the implementation above.** `JXL_LZ77_KEEP_BEST=1` replaces the estimator's
 `bit_decrease > total_symbols * 0.2 + 16` with an actual coded-size comparison:

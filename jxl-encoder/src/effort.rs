@@ -1479,7 +1479,7 @@ pub struct EffortProfile {
     pub tree_self_repair: bool,
     /// Strategy permission checked before the legacy self-repair env override.
     pub tree_self_repair_allowed: bool,
-    /// Lossless-only experimental production-size LZ77 selection.
+    /// Lossless strategy permission for production-size LZ77 selection.
     pub(crate) lz77_keep_best: bool,
     /// Lossless strategy permission for the large-image bucket adapter.
     pub lossless_large_tree_bucket_reduction: bool,
