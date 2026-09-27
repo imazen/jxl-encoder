@@ -1,0 +1,5 @@
+Source base: b3a4ecc7; changed Rust source hashes in lz77_keep_best_2026-09-27.meta.json.
+Host: macOS ARM64.
+Invocation: nice -n19 cargo test --locked --workspace --all-targets -j4 -- --test-threads=4 (CI-pinned exported manifest, shared repository target directory).
+Scope: incidental kernel_tiers benchmark executed by the all-target test command. No keep-best comparison and no performance claim for this change. Full command stdout/stderr: ~/tmp/jxl-exact-cleanup/keep-best-2026-09-27/workspace.log.
+Committed excerpt trims trailing spaces only; the full original log remains at the path above.

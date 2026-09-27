@@ -1193,6 +1193,8 @@ impl FrameEncoder {
                     } else {
                         None
                     },
+                    (tree_mode != TreeMode::Hybrid)
+                        .then_some((&group_transforms[..], num_lf_groups)),
                 )?,
             )
         } else {
@@ -1457,6 +1459,7 @@ impl FrameEncoder {
                         &mut local_writer,
                         budget,
                         super::tree_learn::WpCacheMode::Read(&wp_cache),
+                        self.options.profile.lz77_keep_best,
                     )?;
                     if local_writer.bits_written().div_ceil(8)
                         < group_writer.bits_written().div_ceil(8)
@@ -2626,6 +2629,180 @@ impl FrameEncoder {
             pass_group_tokens.push(tokens);
         }
 
+        let write_sections = |global_tokens: &[AnsToken],
+                              lf_group_tokens: &[&[AnsToken]],
+                              pass_group_tokens: &[&[AnsToken]],
+                              code: &crate::entropy_coding::encode_ans::OwnedAnsEntropyCode,
+                              lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>|
+         -> Result<Vec<Vec<u8>>> {
+            let ans_num_contexts = num_contexts + usize::from(lz77_params.is_some());
+            // Step 7: Write LfGlobal section
+            let mut lf_global_writer = BitWriter::new();
+
+            // dc_quant.all_default = true
+            lf_global_writer.write(1, 1)?;
+            // has_tree = true
+            lf_global_writer.write(1, 1)?;
+
+            // Write the learned tree
+            write_tree(&mut lf_global_writer, &tree)?;
+
+            // Write LZ77 header + ANS histogram
+            if ans_num_contexts > 1 {
+                crate::entropy_coding::lz77::write_lz77_header(lz77_params, &mut lf_global_writer)?;
+                write_entropy_code_ans(code, &mut lf_global_writer)?;
+            } else {
+                super::section::write_ans_modular_header(&mut lf_global_writer, code)?;
+            }
+
+            // GroupHeader for global modular stream — includes RCT (if RGB) + squeeze transform
+            lf_global_writer.write(1, 1)?; // use_global_tree = true
+            super::encode::write_wp_header(&mut lf_global_writer, &wp_params)?;
+            if has_rct {
+                // nb_transforms = 2: U32 BitsOffset(4,2), offset=0
+                lf_global_writer.write(2, 2)?;
+                lf_global_writer.write(4, 0)?;
+                write_rct_transform(&mut lf_global_writer, 0, RctType::YCOCG)?;
+                write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+            } else {
+                lf_global_writer.write(2, 1)?; // nb_transforms = 1
+                write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+            }
+
+            // Write global channel tokens
+            write_tokens_ans(global_tokens, code, lz77_params, &mut lf_global_writer)?;
+
+            lf_global_writer.zero_pad_to_byte();
+            let lf_global_data = lf_global_writer.finish();
+
+            crate::trace::debug_eprintln!(
+                "SQUEEZE_TREE_MULTI: LfGlobal = {} bytes ({} global channels, {} contexts)",
+                lf_global_data.len(),
+                global_cutoff,
+                num_contexts,
+            );
+
+            // Step 8: Write LfGroup sections
+            let mut lf_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_lf_groups);
+            for lg_tokens in lf_group_tokens {
+                let mut lg_writer = BitWriter::new();
+
+                if lg_tokens.is_empty() {
+                    lf_group_data.push(lg_writer.finish());
+                    continue;
+                }
+
+                // GroupHeader
+                lg_writer.write(1, 1)?; // use_global_tree = true
+                super::encode::write_wp_header(&mut lg_writer, &wp_params)?;
+                lg_writer.write(2, 0)?; // nb_transforms = 0
+
+                write_tokens_ans(lg_tokens, code, lz77_params, &mut lg_writer)?;
+
+                lg_writer.zero_pad_to_byte();
+                let data = lg_writer.finish();
+                crate::trace::debug_eprintln!(
+                    "SQUEEZE_TREE_MULTI: LfGroup = {} bytes ({} tokens)",
+                    data.len(),
+                    lg_tokens.len(),
+                );
+                lf_group_data.push(data);
+            }
+
+            // Step 9: HfGlobal is empty for modular
+            let hf_global_data: Vec<u8> = Vec::new();
+
+            // Coarse cancellation after tree learning, before the per-group
+            // parallel encode (mirrors `encode_modular_multi_group_inner`).
+            // No-op / byte-identical under `None` or an `Unstoppable` token.
+            if let Some(s) = stop {
+                s.check().map_err(|_| crate::error::Error::Cancelled)?;
+            }
+
+            // Step 10: Write PassGroup sections — parallelizable
+            let pass_group_data: Vec<Vec<u8>> =
+                crate::parallel::parallel_map_result(num_groups, |g| {
+                    let pg_tokens = &pass_group_tokens[g];
+                    let mut pg_writer = BitWriter::new();
+
+                    if pg_tokens.is_empty() {
+                        return Ok(pg_writer.finish());
+                    }
+
+                    // GroupHeader
+                    pg_writer.write(1, 1)?; // use_global_tree = true
+                    super::encode::write_wp_header(&mut pg_writer, &wp_params)?;
+                    pg_writer.write(2, 0)?; // nb_transforms = 0
+
+                    write_tokens_ans(pg_tokens, code, lz77_params, &mut pg_writer)?;
+
+                    pg_writer.zero_pad_to_byte();
+                    let data = pg_writer.finish();
+                    crate::trace::debug_eprintln!(
+                        "SQUEEZE_TREE_MULTI: PassGroup = {} bytes ({} tokens)",
+                        data.len(),
+                        pg_tokens.len(),
+                    );
+                    Ok(data)
+                })?;
+
+            let mut sections = vec![lf_global_data];
+            sections.extend(lf_group_data);
+            sections.push(hf_global_data);
+            sections.extend(pass_group_data);
+            Ok(sections)
+        };
+        let emit_sections = |sections: Vec<Vec<u8>>, writer: &mut BitWriter| -> Result<()> {
+            let sizes: Vec<_> = sections.iter().map(Vec::len).collect();
+            self.write_toc_multi(writer, &sizes)?;
+            for section in sections {
+                writer.append_bytes(&section)?;
+            }
+            Ok(())
+        };
+        if self.options.profile.lz77_keep_best && self.options.enable_lz77 {
+            let width =
+                |channels: &[Channel]| channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
+            let mut streams = vec![(
+                &global_tokens[..],
+                width(&squeezed.channels[..global_cutoff]),
+            )];
+            for (tokens, channels) in lf_group_tokens.iter().zip(&lf_group_sub_images) {
+                streams.push((&tokens[..], width(channels)));
+            }
+            for (tokens, channels) in pass_group_tokens.iter().zip(&pass_group_sub_images) {
+                streams.push((&tokens[..], width(channels)));
+            }
+            let write_candidate =
+                |candidate: &super::lz77_keep_best::Candidate| -> Result<Vec<Vec<u8>>> {
+                    let views: Vec<_> = candidate
+                        .ranges
+                        .iter()
+                        .map(|r| &candidate.tokens[r.clone()])
+                        .collect();
+                    write_sections(
+                        views[0],
+                        &views[1..1 + num_lf_groups],
+                        &views[1 + num_lf_groups..],
+                        &candidate.code,
+                        candidate.params.as_ref(),
+                    )
+                };
+            let selected = super::lz77_keep_best::Selection {
+                streams: &streams,
+                num_contexts,
+                total_pixels,
+                method: self.options.lz77_method,
+                budget: self.budget.as_ref(),
+            }
+            .select(|candidate| {
+                let sections = write_candidate(candidate)?;
+                let sizes: Vec<_> = sections.iter().map(Vec::len).collect();
+                Self::coded_sections_size(&sizes)
+            })?;
+            return emit_sections(write_candidate(&selected)?, writer);
+        }
+
         // Step 5b: Optionally apply LZ77 to each section's tokens independently
         // IMPORTANT: dist_multiplier must be computed PER-SECTION from that section's
         // channel widths, because the decoder creates a fresh LZ77 state per section
@@ -2726,156 +2903,18 @@ impl FrameEncoder {
             Some(total_pixels),
         );
 
-        // Step 7: Write LfGlobal section
-        let mut lf_global_writer = BitWriter::new();
-
-        // dc_quant.all_default = true
-        lf_global_writer.write(1, 1)?;
-        // has_tree = true
-        lf_global_writer.write(1, 1)?;
-
-        // Write the learned tree
-        write_tree(&mut lf_global_writer, &tree)?;
-
-        // Write LZ77 header + ANS histogram
-        if ans_num_contexts > 1 {
-            crate::entropy_coding::lz77::write_lz77_header(
+        let lf_views: Vec<_> = lf_group_tokens.iter().map(Vec::as_slice).collect();
+        let pg_views: Vec<_> = pass_group_tokens.iter().map(Vec::as_slice).collect();
+        emit_sections(
+            write_sections(
+                &global_tokens,
+                &lf_views,
+                &pg_views,
+                &code,
                 lz77_params.as_ref(),
-                &mut lf_global_writer,
-            )?;
-            write_entropy_code_ans(&code, &mut lf_global_writer)?;
-        } else {
-            super::section::write_ans_modular_header(&mut lf_global_writer, &code)?;
-        }
-
-        // GroupHeader for global modular stream — includes RCT (if RGB) + squeeze transform
-        lf_global_writer.write(1, 1)?; // use_global_tree = true
-        super::encode::write_wp_header(&mut lf_global_writer, &wp_params)?;
-        if has_rct {
-            // nb_transforms = 2: U32 BitsOffset(4,2), offset=0
-            lf_global_writer.write(2, 2)?;
-            lf_global_writer.write(4, 0)?;
-            write_rct_transform(&mut lf_global_writer, 0, RctType::YCOCG)?;
-            write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
-        } else {
-            lf_global_writer.write(2, 1)?; // nb_transforms = 1
-            write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
-        }
-
-        // Write global channel tokens
-        write_tokens_ans(
-            &global_tokens,
-            &code,
-            lz77_params.as_ref(),
-            &mut lf_global_writer,
-        )?;
-
-        lf_global_writer.zero_pad_to_byte();
-        let lf_global_data = lf_global_writer.finish();
-
-        crate::trace::debug_eprintln!(
-            "SQUEEZE_TREE_MULTI: LfGlobal = {} bytes ({} global channels, {} contexts)",
-            lf_global_data.len(),
-            global_cutoff,
-            num_contexts,
-        );
-
-        // Step 8: Write LfGroup sections
-        let mut lf_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_lf_groups);
-        for lg_tokens in &lf_group_tokens {
-            let mut lg_writer = BitWriter::new();
-
-            if lg_tokens.is_empty() {
-                lf_group_data.push(lg_writer.finish());
-                continue;
-            }
-
-            // GroupHeader
-            lg_writer.write(1, 1)?; // use_global_tree = true
-            super::encode::write_wp_header(&mut lg_writer, &wp_params)?;
-            lg_writer.write(2, 0)?; // nb_transforms = 0
-
-            write_tokens_ans(lg_tokens, &code, lz77_params.as_ref(), &mut lg_writer)?;
-
-            lg_writer.zero_pad_to_byte();
-            let data = lg_writer.finish();
-            crate::trace::debug_eprintln!(
-                "SQUEEZE_TREE_MULTI: LfGroup = {} bytes ({} tokens)",
-                data.len(),
-                lg_tokens.len(),
-            );
-            lf_group_data.push(data);
-        }
-
-        // Step 9: HfGlobal is empty for modular
-        let hf_global_data: Vec<u8> = Vec::new();
-
-        // Coarse cancellation after tree learning, before the per-group
-        // parallel encode (mirrors `encode_modular_multi_group_inner`).
-        // No-op / byte-identical under `None` or an `Unstoppable` token.
-        if let Some(s) = stop {
-            s.check().map_err(|_| crate::error::Error::Cancelled)?;
-        }
-
-        // Step 10: Write PassGroup sections — parallelizable
-        let pass_group_data: Vec<Vec<u8>> =
-            crate::parallel::parallel_map_result(num_groups, |g| {
-                let pg_tokens = &pass_group_tokens[g];
-                let mut pg_writer = BitWriter::new();
-
-                if pg_tokens.is_empty() {
-                    return Ok(pg_writer.finish());
-                }
-
-                // GroupHeader
-                pg_writer.write(1, 1)?; // use_global_tree = true
-                super::encode::write_wp_header(&mut pg_writer, &wp_params)?;
-                pg_writer.write(2, 0)?; // nb_transforms = 0
-
-                write_tokens_ans(pg_tokens, &code, lz77_params.as_ref(), &mut pg_writer)?;
-
-                pg_writer.zero_pad_to_byte();
-                let data = pg_writer.finish();
-                crate::trace::debug_eprintln!(
-                    "SQUEEZE_TREE_MULTI: PassGroup = {} bytes ({} tokens)",
-                    data.len(),
-                    pg_tokens.len(),
-                );
-                Ok(data)
-            })?;
-
-        // Step 11: Assemble TOC and sections
-        let mut section_sizes = Vec::with_capacity(2 + num_lf_groups + num_groups);
-        section_sizes.push(lf_global_data.len());
-        for data in &lf_group_data {
-            section_sizes.push(data.len());
-        }
-        section_sizes.push(hf_global_data.len());
-        for data in &pass_group_data {
-            section_sizes.push(data.len());
-        }
-
-        self.write_toc_multi(writer, &section_sizes)?;
-
-        // Write all section data
-        for byte in lf_global_data {
-            writer.write_u8(byte)?;
-        }
-        for data in lf_group_data {
-            for byte in data {
-                writer.write_u8(byte)?;
-            }
-        }
-        for byte in hf_global_data {
-            writer.write_u8(byte)?;
-        }
-        for data in pass_group_data {
-            for byte in data {
-                writer.write_u8(byte)?;
-            }
-        }
-
-        Ok(())
+            )?,
+            writer,
+        )
     }
 
     /// Encode modular image body (TOC + sections) without writing a frame header.
@@ -2996,7 +3035,7 @@ impl FrameEncoder {
                 _i,
                 size
             );
-            self.write_toc_entry(writer, size as u32)?;
+            Self::write_toc_entry(writer, size as u32)?;
         }
         crate::trace::debug_eprintln!("TOC [bit {}]: After TOC entries", writer.bits_written());
 
@@ -3006,8 +3045,21 @@ impl FrameEncoder {
         Ok(())
     }
 
+    /// Exact variable part of a frame: padded sections and padded TOC entries.
+    /// The frame header/permutation prefix is unchanged across LZ77 candidates.
+    pub(super) fn coded_sections_size(sizes: &[usize]) -> Result<usize> {
+        let mut toc = BitWriter::new();
+        for &size in sizes {
+            let value = u32::try_from(size).map_err(|_| {
+                crate::error::Error::InvalidInput("LZ77 candidate section exceeds u32".into())
+            })?;
+            Self::write_toc_entry(&mut toc, value)?;
+        }
+        Ok(sizes.iter().sum::<usize>() + toc.bits_written().div_ceil(8))
+    }
+
     /// Writes a single TOC entry.
-    fn write_toc_entry(&self, writer: &mut BitWriter, size: u32) -> Result<()> {
+    fn write_toc_entry(writer: &mut BitWriter, size: u32) -> Result<()> {
         // u2S(Bits(10), Bits(14)+1024, Bits(22)+17408, Bits(30)+4211712)
         if size < 1024 {
             writer.write(2, 0)?; // selector 0

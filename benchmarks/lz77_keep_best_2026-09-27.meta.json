@@ -1,0 +1,39 @@
+{
+  "base_commit": "b3a4ecc7d645e78728c7a721077a72d4e110f783",
+  "host": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "artifact_root": "/Users/lilith/tmp/jxl110-keep-best-final/artifacts",
+  "command": "CARGO_TARGET_DIR=\"$PWD/target\" CODEC_CORPUS_DIR=\"$HOME/Library/Caches/codec-corpus/v1\" just lz77-keep-best-check final /Users/lilith/tmp/jxl-triage-2026-09-26/clean/siblings/jxl-encoder/Cargo.toml",
+  "source_sha256": {
+    "jxl-encoder/src/api.rs": "e171e037874f083454ab9d8bf34a3741518c299f7a386d399c37fa80dd816022",
+    "jxl-encoder/src/effort.rs": "196abad1a977659f63c2c81627d78af55fd11ff86b1d8a5c92f02f7118967493",
+    "jxl-encoder/src/entropy_coding/lz77/bucket.rs": "1421be2c00d4e8f54c2f5aac161cae7fd3c524da3af593c3580ccb8872c98e8f",
+    "jxl-encoder/src/entropy_coding/lz77.rs": "2885ac57a67bb603028a025d7abeded7b43663e8cd8ddbcfa12578c10900df3f",
+    "jxl-encoder/src/modular/encode.rs": "9afdecf640369b66868abbf893350f067fc6ffa873467e514e9c39b1b618ea47",
+    "jxl-encoder/src/modular/frame.rs": "ced01faca00e39390167a2747137dfa109b8c6e464a9d8c416efa986570e0edb",
+    "jxl-encoder/src/modular/lz77_keep_best.rs": "8635632d044ecf16b8a8143cd6620bde7d4912c153f25e8b4b9e37aa6d8aa044",
+    "jxl-encoder/src/modular/mod.rs": "d884fe50d876d64f11b3b9b45fcae728e0d8ef21009f27254ede1631df461739",
+    "jxl-encoder/src/modular/section.rs": "c89369a937ac3162eb4d0eee1bf03f27e4de2b72cb6aacf60204a83d59e33b27"
+  },
+  "sibling_pins_sha256": "884ff7914341dd1da685a3d3a6cf8ba624ecd31ec658364cb8cde70c2ebe4e85",
+  "cargo_lock_sha256": "a243f4c6ab73aec8f19902e8cc54f699711b0108a050217ca7d422a83c21ee40",
+  "results_sha256": "107d97cf9bf02a92096d89373132e62cb240c864b76fcd17f35768d92879a6dc",
+  "reference_decoder_sha256": "d1ccd9fa1291a6bea0c894970a4c36b488e9c1c5859b92c67e49050d46790e17",
+  "pairs": 70,
+  "same_sha256": 68,
+  "timing": "No performance conclusion. Two block-ordered test arms, with diagnostic file writes included in the float timing column.",
+  "restored_validation": {
+    "artifact_root": "/Users/lilith/tmp/jxl110-keep-best-restored/artifacts",
+    "environment": {
+      "JXL_TOKEN_REUSE_OFF": "1"
+    },
+    "all_140_hashes_match": true,
+    "test_source_sha256": "95f06a409842047c78013c200851d4237cca7d009be483b9b1f4c6d981ca7a01",
+    "binary_sha256": "6d09baa8fc1cd007d5b5ebf822f44df654821b1516713bb95853ff0747d4cf49"
+  },
+  "serial_validation": {
+    "artifact_root": "/Users/lilith/tmp/jxl110-keep-best-serial/artifacts",
+    "features": "corpus-tests,__expert,__internals",
+    "all_140_hashes_match": true,
+    "binary_sha256": "27012572b45b57b76dd6349821a16190141232a65d68692e335770662049d971"
+  }
+}

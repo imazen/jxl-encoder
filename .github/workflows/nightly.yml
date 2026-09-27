@@ -122,6 +122,15 @@ jobs:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
         run: cargo test --locked --release -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
 
+      - name: Validate lossless LZ77 keep-best selection
+        env:
+          CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
+        run: |
+          export LZ77_KEEP_BEST_OUTPUT="$HOME/tmp/lz77-keep-best-nightly"
+          cargo test --locked --release -p jxl-encoder --lib \
+            --features corpus-tests,__expert,__internals,parallel \
+            production_keep_best_regressions -- --nocapture
+
       - name: Run corpus decoder-roundtrip gates
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus

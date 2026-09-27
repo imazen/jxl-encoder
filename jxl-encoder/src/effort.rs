@@ -1479,6 +1479,8 @@ pub struct EffortProfile {
     pub tree_self_repair: bool,
     /// Strategy permission checked before the legacy self-repair env override.
     pub tree_self_repair_allowed: bool,
+    /// Lossless-only experimental production-size LZ77 selection.
+    pub(crate) lz77_keep_best: bool,
     /// Lossless strategy permission for the large-image bucket adapter.
     pub lossless_large_tree_bucket_reduction: bool,
 
@@ -1747,6 +1749,7 @@ impl EffortProfile {
             // lossy path byte-identical (lossy byte-lock + hash-locks unchanged).
             tree_self_repair: false,
             tree_self_repair_allowed: true,
+            lz77_keep_best: false,
             lossless_large_tree_bucket_reduction: true,
             cfl_newton: effort >= 7,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
@@ -2009,6 +2012,7 @@ impl EffortProfile {
             // byte-identical). Overridable via `JXL_TREE_SELF_REPAIR=0`.
             tree_self_repair: true,
             tree_self_repair_allowed: true,
+            lz77_keep_best: false,
             lossless_large_tree_bucket_reduction: true,
             cfl_newton: false,
             cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,

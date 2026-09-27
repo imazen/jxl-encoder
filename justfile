@@ -623,3 +623,15 @@ jpeg-enabled-check label:
     export JBRD_CONFORMANCE_REFERENCE=1 JBRD_CONFORMANCE_ARTIFACTS="$root/conformance"
     nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it -- --test-threads=4 > "$root/full-integration.log" 2>&1
     rg 'test result:' "$root/full-integration.log"
+
+# Complete lossless coding-unit selection; caller provisions gb82-sc/terminal.png.
+lz77-keep-best-check label manifest="Cargo.toml" features="corpus-tests,__expert,__internals,parallel":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$HOME/tmp/jxl110-keep-best-{{label}}"
+    mkdir -p "$root"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=2 RAYON_NUM_THREADS=2
+    export DJXL_PATH="${DJXL_PATH:-$PWD/.ci-libjxl/tools/djxl}"
+    export LZ77_KEEP_BEST_OUTPUT="$root/artifacts"
+    nice -n19 cargo test --manifest-path "{{manifest}}" --locked --release -p jxl-encoder --features '{{features}}' --lib production_keep_best_regressions -- --nocapture > "$root/test.log" 2>&1
+    rg 'KEEP-BEST|test result:' "$root/test.log"

@@ -1,0 +1,177 @@
+     Running benches/kernel_tiers.rs (target/debug/deps/kernel_tiers-dcb21b95f51414f3)
+[zenbench] calibration: int=0.30ns/iter mem_bw=106.1GiB/s mem_lat=8.3ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.25ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /Users/lilith/tmp/zenbench/zenbench-1790504943-1bd2.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1790504943-1bd2
+═══════════════════════════════════════════════════════════════
+
+  dct_8x8  30 rounds × 14K calls
+               mean ±mad ns  95% CI vs base
+  ├─ neon       39.4 ±7.0ns  [35.9–42.5]ns       [1]
+  ╰─ scalar   177.2 ±28.5ns  [+337.3%–+355.9%]   [2]
+
+  neon    ██████████████ 39.4ns
+  scalar  ██████████████████████████████████████████████████████████████ 177.2ns
+  [1] CV=24%
+  [2] CV=21%
+
+  dct_16x16  50 rounds × 3K calls
+             mean ±mad ns  95% CI vs base
+  ├─ neon     495 ±75ns  [450–539]ns       [1]
+  ╰─ scalar   938 ±98ns  [+82.1%–+89.2%]   [2]
+
+  neon    █████████████████████████████████ 495.3ns
+  scalar  ██████████████████████████████████████████████████████████████ 938.2ns
+  [1] CV=32%
+  [2] CV=33%
+
+  quantize_dct8  130 rounds × 90K calls
+             mean ±mad ns  95% CI vs base
+  ├─ neon     20.1 ±2.4ns  [19.3–20.9]ns     [1]
+  ╰─ scalar   37.4 ±6.2ns  [+77.7%–+94.4%]
+
+  neon    ██████████████████████████████████ 20.1ns
+  scalar  ███████████████████████████████████████████████████████████████ 37.4ns
+  [1] CV=23%
+
+  compute_mask1x1/512x512  30 rounds × 1 calls
+             mean ±mad ms  95% CI vs base        iB/s
+  ├─ neon      2.5 ±0.5ms  [2.3–2.7]ms           400M
+  ╰─ scalar   12.5 ±1.3ms  [+377.0%–+422.1%]    80.0M
+
+  neon    ███████████████████████████████████████████████████████████ 400 MiB/s
+  scalar  ████████████ 80.0 MiB/s
+
+  idct_8x8  30 rounds × 17K calls
+               mean ±mad ns  95% CI vs base
+  ├─ neon       40.0 ±6.2ns  [37.0–42.7]ns       [1]
+  ╰─ scalar   181.0 ±28.1ns  [+334.4%–+371.2%]   [2]
+
+  neon    ██████████████ 40.0ns
+  scalar  ██████████████████████████████████████████████████████████████ 181.0ns
+  [1] CV=20%
+  [2] CV=22%
+
+  gab_smooth/512x512  30 rounds × 11 calls
+                mean ±mad µs  95% CI vs base        iB/s
+  ├─ neon     267.8 ±77.1µs  [244.7–290.7]µs      3.65G [1]
+  ╰─ scalar   923.1 ±97.8µs  [+225.4%–+262.7%]    1.06G [2]
+
+  neon    ███████████████████████████████████████████████████████████ 3.65 GiB/s
+  scalar  █████████████████ 1.06 GiB/s
+  [1] CV=24%
+  [2] CV=20%
+
+  is_finite_plane/1MP  110 rounds × 18 calls
+                mean ±mad µs  95% CI vs base       iB/s
+  ├─ neon     327.4 ±52.4µs  [317.4–337.3]µs     11.9G
+  ╰─ scalar   572.3 ±58.5µs  [+62.4%–+70.3%]     6.83G
+
+  neon    ███████████████████████████████████████████████████████████ 11.9 GiB/s
+  scalar  ██████████████████████████████████ 6.83 GiB/s
+
+  shannon_entropy_legacy_reference/4096  30 rounds × 197 calls
+                             mean ±mad µs  95% CI vs base
+  ├─ neon                     4.3 ±0.6µs  [4.0–4.6]µs         [1]
+  ╰─ legacy_scalar_formula   15.1 ±1.7µs  [+237.9%–+259.9%]   [2]
+
+  neon                   █████████████ 4.34µs
+  legacy_scalar_formula  ██████████████████████████████████████████████ 15.06µs
+  [1] CV=21%
+  [2] CV=23%
+
+  shannon_entropy_dispatch/4096  30 rounds × 249 calls
+             mean ±mad µs  95% CI vs base
+  ├─ neon     4.0 ±1.1µs  [3.6–4.4]µs         [1]
+  ╰─ scalar   9.7 ±2.0µs  [+133.6%–+152.0%]   [2]
+
+  neon    █████████████████████████ 4.00µs
+  scalar  ██████████████████████████████████████████████████████████████ 9.75µs
+  [1] CV=29%
+  [2] CV=27%
+
+  dct_16x8  30 rounds × 6K calls
+             mean ±mad ns  95% CI vs base
+  ├─ neon     351 ±55ns  [321–377]ns       [1]
+  ╰─ scalar   439 ±69ns  [+22.4%–+26.1%]
+
+  neon    ██████████████████████████████████████████████████ 350.6ns
+  scalar  ██████████████████████████████████████████████████████████████ 439.0ns
+  [1] CV=23%
+
+  dct_8x16  160 rounds × 6K calls
+             mean ±mad ns  95% CI vs base
+  ├─ neon     408 ±60ns  [394–422]ns       [1]
+  ╰─ scalar   473 ±62ns  [+14.3%–+16.0%]   [2]
+
+  neon    ██████████████████████████████████████████████████████ 408.1ns
+  scalar  ██████████████████████████████████████████████████████████████ 472.7ns
+  [1] CV=22%
+  [2] CV=23%
+
+  idct_16x16  200 rounds × 1K calls
+             mean ±mad µs  95% CI vs base
+  ├─ neon     1.5 ±0.2µs  [1.4–1.5]µs     [1]
+  ╰─ scalar   1.5 ±0.1µs  [+2.9%–+5.1%]
+
+  neon    ████████████████████████████████████████████████████████████ 1.46µs
+  scalar  ██████████████████████████████████████████████████████████████ 1.52µs
+  [1] CV=21%
+
+  sanitize_finite/1MP  80 rounds × 17 calls
+                mean ±mad µs  95% CI vs base       iB/s
+  ├─ neon     311.9 ±49.3µs  [300.9–322.6]µs     12.5G
+  ╰─ scalar   493.1 ±73.0µs  [+51.4%–+61.6%]     7.92G
+
+  neon    ███████████████████████████████████████████████████████████ 12.5 GiB/s
+  scalar  █████████████████████████████████████ 7.92 GiB/s
+
+  epf_step1/512x512  30 rounds × 1 calls
+             mean ±mad ms  95% CI vs base      iB/s
+  ├─ neon      5.7 ±1.1ms  [5.4–6.0]ms         528M
+  ╰─ scalar   11.4 ±1.4ms  [+94.1%–+108.6%]    262M
+
+  neon    ████████████████████████████████████████████████████████████ 528 MiB/s
+  scalar  ██████████████████████████████ 262 MiB/s
+
+  idct_8x16  30 rounds × 2K calls
+             mean ±mad ns  95% CI vs base
+  ├─ neon      382 ±58ns  [343–418]ns         [1]
+  ╰─ scalar   994 ±124ns  [+145.5%–+160.1%]   [2]
+
+  neon    ████████████████████████ 381.7ns
+  scalar  ██████████████████████████████████████████████████████████████ 993.9ns
+  [1] CV=28%
+  [2] CV=20%
+
+  idct_16x8  30 rounds × 2K calls
+             mean ±mad ns  95% CI vs base
+  ├─ neon     334 ±35ns  [300–366]ns         [1]
+  ╰─ scalar   919 ±44ns  [+154.9%–+164.6%]
+
+  neon    ███████████████████████ 334.3ns
+  scalar  ██████████████████████████████████████████████████████████████ 918.8ns
+  [1] CV=28%
+
+  epf_step2/512x512  30 rounds × 3 calls
+                  mean ±mad µs  95% CI vs base        iB/s
+  ├─ neon      864.2 ±185.3µs  [785.1–944.6]µs      3.39G [1]
+  ╰─ scalar   3371.6 ±481.3µs  [+264.0%–+284.4%]     890M
+
+  neon    ███████████████████████████████████████████████████████████ 3.39 GiB/s
+  scalar  ███████████████ 890 MiB/s
+  [1] CV=26%
+
+  dequant_dct8  100 rounds × 17K calls
+             mean ±mad ns  95% CI vs base
+  ├─ neon     102 ±12ns  [100–104]ns
+  ╰─ scalar   124 ±15ns  [+20.8%–+23.2%]
+
+  neon    ███████████████████████████████████████████████████ 102.1ns
+  scalar  ██████████████████████████████████████████████████████████████ 123.6ns
+
+  total: 149.5s  (1160 noisy rounds)
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

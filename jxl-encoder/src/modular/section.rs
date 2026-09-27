@@ -185,6 +185,7 @@ pub enum GlobalModularState {
         /// existed). ~8 B/pixel, alive through Step 3/4 regardless, so
         /// retaining it through the writes stays under the encode peak.
         group_tokens: Option<GroupTokenStore>,
+        require_stored_tokens: bool,
     },
 }
 
@@ -482,6 +483,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs(
         hf_stream_id_base,
         budget,
         None,
+        None,
     )
 }
 
@@ -507,6 +509,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     hf_stream_id_base: u32,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     hybrid_local_trees: Option<&mut alloc::vec::Vec<Option<super::tree::Tree>>>,
+    keep_best_layout: Option<(&[GroupTransforms], usize)>,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
@@ -1550,6 +1553,67 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         best.expect("seeds >= 1 guarantees at least one candidate");
     let num_contexts = count_contexts(&tree) as usize;
 
+    if profile.lz77_keep_best
+        && use_lz77
+        && let Some((group_transforms, num_lf_groups)) = keep_best_layout
+    {
+        assert_eq!(images.len(), group_transforms.len());
+        let meta_dm = meta_image
+            .map(|m| m.channels.iter().map(|c| c.width()).max().unwrap_or(0))
+            .unwrap_or(0) as i32;
+        let mut streams = vec![(&all_tokens[..nb_meta_tokens], meta_dm)];
+        for (image, range) in images.iter().zip(&group_ranges) {
+            let dm = image.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
+            streams.push((&all_tokens[range.clone()], dm));
+        }
+        let write_global =
+            |candidate: &super::lz77_keep_best::Candidate, out: &mut BitWriter| -> Result<()> {
+                crate::f16::write_lf_quant(out, dc_quant_custom)?;
+                out.write(1, 1)?;
+                write_tree(out, &tree)?;
+                candidate.write_header(out)?;
+                out.write(1, 1)?;
+                write_wp_header(out, &wp_params)?;
+                write_global_transforms_full(out, &transforms)?;
+                candidate.write_stream(0, out)?;
+                out.zero_pad_to_byte();
+                Ok(())
+            };
+        let selected = super::lz77_keep_best::Selection {
+            streams: &streams,
+            num_contexts,
+            total_pixels,
+            method: lz77_method,
+            budget,
+        }
+        .select(|candidate| {
+            let mut global = writer.clone();
+            write_global(candidate, &mut global)?;
+            let mut sizes = vec![global.bits_written().div_ceil(8)];
+            // The normal modular frame writes empty LfGroups and HfGlobal.
+            sizes.resize(2 + num_lf_groups, 0);
+            for (g, transforms) in group_transforms.iter().enumerate() {
+                let mut group = BitWriter::new();
+                write_group_header(&mut group, Some(&wp_params), transforms)?;
+                candidate.write_stream(g + 1, &mut group)?;
+                sizes.push(group.bits_written().div_ceil(8));
+            }
+            super::frame::FrameEncoder::coded_sections_size(&sizes)
+        })?;
+        write_global(&selected, writer)?;
+        return Ok(GlobalModularState::AnsWithTree {
+            code: selected.code,
+            tree,
+            wp_params,
+            lz77: selected.params.map(|p| (lz77_method, p)),
+            require_stored_tokens: true,
+            group_tokens: Some(GroupTokenStore {
+                tokens: selected.tokens,
+                group_ranges: selected.ranges.into_iter().skip(1).collect(),
+            }),
+        });
+    }
+
     // Per-section LZ77 (issue #69 item 1) — mirrors the squeeze multi-group
     // path (frame.rs Step 5b). Every section's token stream is transformed
     // INDEPENDENTLY: the decoder creates a fresh LZ77 state per section with
@@ -1770,6 +1834,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
         tree,
         wp_params,
         lz77: lz77_params.map(|p| (lz77_method, p)),
+        require_stored_tokens: false,
         group_tokens: Some(GroupTokenStore {
             tokens: all_tokens,
             group_ranges,
@@ -2445,6 +2510,7 @@ pub fn write_group_modular_section_local_tree(
         writer,
         budget,
         WpCacheMode::Read(&wp_cache),
+        profile.lz77_keep_best,
     )
 }
 
@@ -2466,6 +2532,7 @@ pub fn write_group_modular_section_local_tree_with_tree(
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     wp_cache: super::tree_learn::WpCacheMode<'_>,
+    keep_best: bool,
 ) -> Result<()> {
     use super::encode::{write_num_transforms, write_tree, write_wp_header};
     use super::tree::count_contexts;
@@ -2500,6 +2567,65 @@ pub fn write_group_modular_section_local_tree_with_tree(
         .map(|c| c.width())
         .max()
         .unwrap_or(0) as i32;
+    let write_candidate = |tokens: &[crate::entropy_coding::token::Token],
+                           code: &crate::entropy_coding::encode_ans::OwnedAnsEntropyCode,
+                           lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
+                           writer: &mut BitWriter|
+     -> Result<()> {
+        let ans_num_contexts = num_contexts + usize::from(lz77_params.is_some());
+        // GroupHeader: local tree, the wp params used above, per-group RCT.
+        writer.write(1, 0)?; // use_global_tree = false
+        write_wp_header(writer, wp_params)?;
+        let num_transforms = u32::from(rct_type.is_some());
+        write_num_transforms(writer, num_transforms)?;
+        if let Some(rct) = rct_type {
+            write_rct_transform(writer, 0, rct)?;
+        }
+
+        // Local tree + its entropy code, exactly the single-group serialization.
+        crate::profile_time!("sectioned/write", {
+            write_tree(writer, tree)?;
+            if ans_num_contexts > 1 {
+                write_lz77_header(lz77_params, writer)?;
+                write_entropy_code_ans(code, writer)?;
+            } else {
+                write_ans_modular_header(writer, code)?;
+            }
+            write_tokens_ans(tokens, code, lz77_params, writer)?;
+        });
+        // Sections are byte-delimited by the TOC; pad to the byte boundary like
+        // every other section writer does before the caller's `finish()`.
+        writer.zero_pad_to_byte();
+        Ok(())
+    };
+
+    if keep_best && use_lz77 {
+        let streams = [(&tokens[..], dist_multiplier)];
+        let selected = super::lz77_keep_best::Selection {
+            streams: &streams,
+            num_contexts,
+            total_pixels,
+            method: lz77_method,
+            budget,
+        }
+        .select(|candidate| {
+            let mut scratch = writer.clone();
+            write_candidate(
+                &candidate.tokens,
+                &candidate.code,
+                candidate.params.as_ref(),
+                &mut scratch,
+            )?;
+            Ok(scratch.bits_written().div_ceil(8))
+        })?;
+        return write_candidate(
+            &selected.tokens,
+            &selected.code,
+            selected.params.as_ref(),
+            writer,
+        );
+    }
+
     let (tokens, lz77_params) = if use_lz77 {
         match crate::profile_time!("sectioned/lz77", {
             apply_lz77(
@@ -2533,30 +2659,7 @@ pub fn write_group_modular_section_local_tree_with_tree(
         )
     });
 
-    // GroupHeader: local tree, the wp params used above, per-group RCT.
-    writer.write(1, 0)?; // use_global_tree = false
-    write_wp_header(writer, wp_params)?;
-    let num_transforms = u32::from(rct_type.is_some());
-    write_num_transforms(writer, num_transforms)?;
-    if let Some(rct) = rct_type {
-        write_rct_transform(writer, 0, rct)?;
-    }
-
-    // Local tree + its entropy code, exactly the single-group serialization.
-    crate::profile_time!("sectioned/write", {
-        write_tree(writer, tree)?;
-        if ans_num_contexts > 1 {
-            write_lz77_header(lz77_params.as_ref(), writer)?;
-            write_entropy_code_ans(&code, writer)?;
-        } else {
-            write_ans_modular_header(writer, &code)?;
-        }
-        write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
-    });
-    // Sections are byte-delimited by the TOC; pad to the byte boundary like
-    // every other section writer does before the caller's `finish()`.
-    writer.zero_pad_to_byte();
-    Ok(())
+    write_candidate(&tokens, &code, lz77_params.as_ref(), writer)
 }
 
 /// Group-section writer with an explicit group index
@@ -2583,6 +2686,31 @@ impl GroupTransforms {
     }
 }
 
+pub(super) fn write_group_header(
+    writer: &mut BitWriter,
+    wp_params: Option<&super::predictor::WeightedPredictorParams>,
+    transforms: &GroupTransforms,
+) -> Result<()> {
+    writer.write(1, 1)?;
+    if let Some(wp) = wp_params {
+        super::encode::write_wp_header(writer, wp)?;
+    } else {
+        writer.write(1, 1)?;
+    }
+    // Per-group transforms: ChannelCompact(s) + optional RCT
+    let num_transforms =
+        transforms.compact_info.len() as u32 + transforms.rct_type.is_some() as u32;
+    super::encode::write_num_transforms(writer, num_transforms)?;
+    for &(begin_c, nb_colors) in &transforms.compact_info {
+        write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
+    }
+    if let Some(rct) = transforms.rct_type {
+        let rct_begin_c = transforms.compact_info.len();
+        write_rct_transform(writer, rct_begin_c, rct)?;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn write_group_modular_section_idx(
     group_image: &ModularImage,
@@ -2603,28 +2731,11 @@ pub fn write_group_modular_section_idx(
         transforms.rct_type,
     );
 
-    // GroupHeader
-    writer.write(1, 1)?; // use_global_tree = true
-    // Write WP params matching the global section's params
-    match state {
-        GlobalModularState::AnsWithTree { wp_params, .. } => {
-            super::encode::write_wp_header(writer, wp_params)?;
-        }
-        _ => {
-            writer.write(1, 1)?; // wp_params.default_wp = true
-        }
-    }
-    // Per-group transforms: ChannelCompact(s) + optional RCT
-    let num_transforms =
-        transforms.compact_info.len() as u32 + transforms.rct_type.is_some() as u32;
-    super::encode::write_num_transforms(writer, num_transforms)?;
-    for &(begin_c, nb_colors) in &transforms.compact_info {
-        write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
-    }
-    if let Some(rct) = transforms.rct_type {
-        let rct_begin_c = transforms.compact_info.len();
-        write_rct_transform(writer, rct_begin_c, rct)?;
-    }
+    let wp_params = match state {
+        GlobalModularState::AnsWithTree { wp_params, .. } => Some(wp_params),
+        _ => None,
+    };
+    write_group_header(writer, wp_params, transforms)?;
 
     match state {
         GlobalModularState::Huffman {
@@ -2670,6 +2781,7 @@ pub fn write_group_modular_section_idx(
             wp_params,
             lz77,
             group_tokens: _,
+            require_stored_tokens,
         } => {
             // Collect residuals using the learned tree (multi-context).
             // Per-group images use 0-based channel indices (matching the decoder,
@@ -2682,11 +2794,12 @@ pub fn write_group_modular_section_idx(
             // skips its WP walk) — reuse skips that walk entirely, so
             // hybrid's Fill request degrades to a fresh collect.
             #[cfg(feature = "std")]
-            let pre_collected = if std::env::var_os("JXL_TOKEN_REUSE_OFF").is_some() {
-                None
-            } else {
-                pre_collected
-            };
+            let pre_collected =
+                if !require_stored_tokens && std::env::var_os("JXL_TOKEN_REUSE_OFF").is_some() {
+                    None
+                } else {
+                    pre_collected
+                };
             #[cfg(feature = "std")]
             if std::env::var_os("JXL_TOKEN_REUSE_VERIFY").is_some()
                 && let Some(slice) = pre_collected
@@ -2725,6 +2838,14 @@ pub fn write_group_modular_section_idx(
             // matching the decoder's fresh per-section LZ77 state);
             // apply_lz77 is deterministic, so the fresh stream equals the
             // histogram-time slice either way.
+            if *require_stored_tokens
+                && (pre_collected.is_none()
+                    || !matches!(wp_cache, super::tree_learn::WpCacheMode::Off))
+            {
+                return Err(crate::error::Error::InvalidInput(
+                    "selected LZ77 stream requires its stored tokens".into(),
+                ));
+            }
             let (tokens, lz77_params) = match (pre_collected, &wp_cache) {
                 (Some(slice), super::tree_learn::WpCacheMode::Off) => {
                     (slice.to_vec(), lz77.as_ref().map(|(_, p)| p))

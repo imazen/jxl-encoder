@@ -1553,6 +1553,11 @@ probe `examples/d3_dip_probe.rs`.
 
 ### 2026-09-10: LZ77 keep-best (design A) -- lossless-only, and the lossy win was SYNTHETIC-ONLY
 
+Historical implementation and measurements below. The September 27 production
+selector supersedes this standalone comparator; its own evidence and coverage
+are in [the current report](benchmarks/lz77_keep_best_2026-09-27.md). These older
+rate/time numbers do not measure the replacement.
+
 [PROVEN] `JXL_LZ77_KEEP_BEST=1` replaces the estimator threshold
 (`bit_decrease > total_symbols*0.2 + 16`) with a real clustered-ANS coded-size
 comparison -- both candidates built and written through production's writers,
@@ -3156,15 +3161,41 @@ strategy contract disagreement, now resolved with owner approval (see Resolved B
 Both real-image RD regression tests also pass with unchanged expectations
 against this closure (`~/tmp/jxl-backlog/encoder-ci-pins-rd.log`).
 
+### 2026-09-27: #110 production LZ77 keep-best
+
+`JXL_LZ77_KEEP_BEST=1` now selects at the lossless production coding boundary.
+The existing result (including final Optimal tokens), plain, Greedy and the
+three-entry bucket candidate compete using actual ANS settings, LZ77/tree/group
+headers, per-section flushes and TOC costs. Ties retain the incumbent;
+serialization errors propagate. Selected tokens and their histogram travel
+together to emission; shared global histograms are measured jointly.
+
+Strict Libjxl, lossy/ICC, explicit RLE, Huffman and LZ77-off remain outside
+this experiment. Squeezed/global/local learned pixel streams participate;
+Hybrid retains its global baseline and compares improved local alternatives.
+Sectioned meta-only coding is unchanged. No new public API or default change.
+
+On 256-square derived-f32 crops, frymire falls 60,333 to 54,222 bytes;
+terminal keeps 22,072 bytes, rejecting the 23,018-byte bucket alternative.
+The archived 29,702-byte terminal result was its estimator falling back to
+plain tokens; it was not the size of the unfiltered bucket parse.
+The 70-pair real-image gate covers u8/u16/f32, e8/e9, 64/256/259 pixels,
+global/squeeze/local/Hybrid and strict/lossy controls. Both decoders fully
+render all 140 outputs with exact lossless samples; float streaming matches
+one-shot bytes in 48 additional encodes. No pair grows; strict and lossy
+controls retain their hashes. This is selected regression coverage, not a
+full default-adoption corpus or performance qualification.
+[Evidence, scope and reproduction](benchmarks/lz77_keep_best_2026-09-27.md).
+
 ### 2026-09-24: #110 bucketed greedy adoption fails the byte screen
 
 September 27 re-audit: all 72 screen artifacts still match their recorded
 sizes and hashes. The separate September 9 rejection-rate grid was falsely
 labeled all-strata; its 40 inputs were general photographs 1000..1039 only.
-The opt-in keep-best comparator also omits the LZ77 header and does not recheck
-the Optimal path's final stream; production clustering context differs from
-its isolated comparison. These are source-verified limitations, not a new
-compression measurement. [Audit and next experiments](benchmarks/issue103_110_audit_2026-09-27.md).
+The then-current opt-in comparator omitted the LZ77 header and did not recheck
+the Optimal path's final stream; production clustering context differed from
+its isolated comparison. The September 27 implementation below replaces it.
+These audit findings were source-verified limitations, not a compression measurement. [Audit and next experiments](benchmarks/issue103_110_audit_2026-09-27.md).
 
 The post-v0.12 bucket matcher was implemented and screened at capacities
 1/3/7/15/31. All five grow a real terminal screenshot's 256×256 lossless-float

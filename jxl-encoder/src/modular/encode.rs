@@ -2625,6 +2625,121 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     // Step 3: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&work_image, &tree, 0, &wp_params);
 
+    let write_candidate = |tokens: &[crate::entropy_coding::token::Token],
+                           code: &crate::entropy_coding::encode_ans::OwnedAnsEntropyCode,
+                           lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
+                           writer: &mut BitWriter|
+     -> Result<()> {
+        let ans_num_contexts = num_contexts + usize::from(lz77_params.is_some());
+        // Step 5: Write bitstream
+        crate::f16::write_lf_quant(writer, dc_quant_custom)?;
+        // has_tree = true
+        writer.write(1, 1)?;
+
+        // Write the learned tree
+        write_tree(writer, &tree)?;
+
+        // Write LZ77 header + ANS data histogram.
+        if ans_num_contexts > 1 {
+            write_lz77_header(lz77_params, writer)?;
+            write_entropy_code_ans(code, writer)?;
+        } else {
+            use super::section::write_ans_modular_header;
+            write_ans_modular_header(writer, code)?;
+        }
+        // GroupHeader
+        writer.write(1, 1)?; // use_global_tree = true
+        write_wp_header(writer, &wp_params)?;
+
+        {
+            let has_palette = palette_result.is_some();
+            let has_rct = rct_type.is_some();
+            let has_squeeze = squeeze_params.is_some();
+            let num_transforms = compact_info.len() as u32
+                + has_palette as u32
+                + has_rct as u32
+                + has_squeeze as u32;
+            write_num_transforms(writer, num_transforms)?;
+
+            // ChannelCompact transforms first (per-channel palette, num_c=1)
+            for &(begin_c, nb_colors) in &compact_info {
+                write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
+            }
+            // Multi-channel palette (if any)
+            if let Some((begin_c, num_c, nb_colors)) = palette_result {
+                write_palette_transform(writer, begin_c, num_c, nb_colors, 0, 0)?;
+            }
+            // RCT (begin_c adjusted for ChannelCompact meta channels)
+            if let Some(rct_type) = rct_type {
+                let rct_begin_c = compact_info.len();
+                write_rct_transform(writer, rct_begin_c, rct_type)?;
+            }
+            if let Some(ref params) = squeeze_params {
+                write_squeeze_transform(writer, params)?;
+            }
+        }
+
+        // Debug: verify ANS encoding correctness (skip when LZ77 active — verify doesn't handle LZ77 tokens)
+        #[cfg(debug_assertions)]
+        if lz77_params.is_none() {
+            let roundtrip_result =
+                crate::entropy_coding::encode::verify_ans_roundtrip(tokens, code);
+            if roundtrip_result.is_err() {
+                debug_rect!(
+                    "ans/verify",
+                    0,
+                    0,
+                    image.width(),
+                    image.height(),
+                    "ROUNDTRIP FAILED for tree learning data (ctx={} histo={} tokens={}): {:?}",
+                    num_contexts,
+                    code.histograms.len(),
+                    tokens.len(),
+                    roundtrip_result
+                );
+            }
+        }
+
+        // Write ANS tokens
+        write_tokens_ans(tokens, code, lz77_params, writer)?;
+
+        writer.zero_pad_to_byte();
+        Ok(())
+    };
+
+    if profile.lz77_keep_best && use_lz77 && !is_lossy {
+        let dm = work_image
+            .channels
+            .iter()
+            .map(|c| c.width())
+            .max()
+            .unwrap_or(0) as i32;
+        let streams = [(&tokens[..], dm)];
+        let selected = super::lz77_keep_best::Selection {
+            streams: &streams,
+            num_contexts,
+            total_pixels,
+            method: lz77_method,
+            budget,
+        }
+        .select(|candidate| {
+            let mut scratch = writer.clone();
+            write_candidate(
+                &candidate.tokens,
+                &candidate.code,
+                candidate.params.as_ref(),
+                &mut scratch,
+            )?;
+            super::frame::FrameEncoder::coded_sections_size(&[scratch.bits_written().div_ceil(8)])
+        })?;
+        return write_candidate(
+            &selected.tokens,
+            &selected.code,
+            selected.params.as_ref(),
+            writer,
+        );
+    }
+
     // Step 3b: Optionally apply LZ77 to the token stream
     let dist_multiplier = work_image
         .channels
@@ -2664,77 +2779,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         Some(total_pixels),
     );
 
-    // Step 5: Write bitstream
-    crate::f16::write_lf_quant(writer, dc_quant_custom)?;
-    // has_tree = true
-    writer.write(1, 1)?;
-
-    // Write the learned tree
-    write_tree(writer, &tree)?;
-
-    // Write LZ77 header + ANS data histogram.
-    if ans_num_contexts > 1 {
-        write_lz77_header(lz77_params.as_ref(), writer)?;
-        write_entropy_code_ans(&code, writer)?;
-    } else {
-        use super::section::write_ans_modular_header;
-        write_ans_modular_header(writer, &code)?;
-    }
-    // GroupHeader
-    writer.write(1, 1)?; // use_global_tree = true
-    write_wp_header(writer, &wp_params)?;
-
-    {
-        let has_palette = palette_result.is_some();
-        let has_rct = rct_type.is_some();
-        let has_squeeze = squeeze_params.is_some();
-        let num_transforms =
-            compact_info.len() as u32 + has_palette as u32 + has_rct as u32 + has_squeeze as u32;
-        write_num_transforms(writer, num_transforms)?;
-
-        // ChannelCompact transforms first (per-channel palette, num_c=1)
-        for &(begin_c, nb_colors) in &compact_info {
-            write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
-        }
-        // Multi-channel palette (if any)
-        if let Some((begin_c, num_c, nb_colors)) = palette_result {
-            write_palette_transform(writer, begin_c, num_c, nb_colors, 0, 0)?;
-        }
-        // RCT (begin_c adjusted for ChannelCompact meta channels)
-        if let Some(rct_type) = rct_type {
-            let rct_begin_c = compact_info.len();
-            write_rct_transform(writer, rct_begin_c, rct_type)?;
-        }
-        if let Some(ref params) = squeeze_params {
-            write_squeeze_transform(writer, params)?;
-        }
-    }
-
-    // Debug: verify ANS encoding correctness (skip when LZ77 active — verify doesn't handle LZ77 tokens)
-    #[cfg(debug_assertions)]
-    if lz77_params.is_none() {
-        let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
-        if roundtrip_result.is_err() {
-            debug_rect!(
-                "ans/verify",
-                0,
-                0,
-                image.width(),
-                image.height(),
-                "ROUNDTRIP FAILED for tree learning data (ctx={} histo={} tokens={}): {:?}",
-                num_contexts,
-                code.histograms.len(),
-                tokens.len(),
-                roundtrip_result
-            );
-        }
-    }
-
-    // Write ANS tokens
-    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
-
-    writer.zero_pad_to_byte();
-    Ok(())
+    write_candidate(&tokens, &code, lz77_params.as_ref(), writer)
 }
 
 /// Write a pre-squeezed, pre-quantized modular stream with tree leaf multipliers.
@@ -3065,6 +3110,135 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     // Step 5: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&transformed, &tree, 0, &wp_params);
 
+    let write_candidate = |tokens: &[crate::entropy_coding::token::Token],
+                           code: &crate::entropy_coding::encode_ans::OwnedAnsEntropyCode,
+                           lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
+                           writer: &mut BitWriter|
+     -> Result<()> {
+        let ans_num_contexts = num_contexts + usize::from(lz77_params.is_some());
+        // Step 7: Write bitstream
+        let _bit0 = writer.bits_written();
+        // dc_quant.all_default = true
+        writer.write(1, 1)?;
+        // has_tree = true
+        writer.write(1, 1)?;
+
+        // Write the learned tree
+        write_tree(writer, &tree)?;
+        let _bit_after_tree = writer.bits_written();
+
+        // Write LZ77 header + ANS data histogram
+        if ans_num_contexts > 1 {
+            write_lz77_header(lz77_params, writer)?;
+            write_entropy_code_ans(code, writer)?;
+        } else {
+            use super::section::write_ans_modular_header;
+            write_ans_modular_header(writer, code)?;
+        }
+        let _bit_after_histo = writer.bits_written();
+
+        // GroupHeader with transforms: RCT (if RGB) + Squeeze
+        writer.write(1, 1)?; // use_global_tree = true
+        write_wp_header(writer, &wp_params)?;
+
+        if has_rct {
+            // num_transforms = 2: U32 BitsOffset(4,2), offset=0
+            writer.write(2, 2)?;
+            writer.write(4, 0)?;
+            write_rct_transform(writer, 0, RctType::YCOCG)?;
+            write_squeeze_transform(writer, &params)?;
+        } else {
+            writer.write(2, 1)?; // num_transforms = 1
+            write_squeeze_transform(writer, &params)?;
+        }
+        let _bit_after_header = writer.bits_written();
+        crate::trace::debug_eprintln!(
+            "SQUEEZE OVERHEAD: tree={} bits ({:.0}B), histograms={} bits ({:.0}B), header={} bits ({:.0}B), total_overhead={:.0}B",
+            _bit_after_tree - _bit0,
+            (_bit_after_tree - _bit0) as f64 / 8.0,
+            _bit_after_histo - _bit_after_tree,
+            (_bit_after_histo - _bit_after_tree) as f64 / 8.0,
+            _bit_after_header - _bit_after_histo,
+            (_bit_after_header - _bit_after_histo) as f64 / 8.0,
+            (_bit_after_header - _bit0) as f64 / 8.0,
+        );
+
+        // Debug: verify ANS encoding correctness (skip when LZ77 active — verify doesn't handle LZ77 tokens)
+        #[cfg(debug_assertions)]
+        if lz77_params.is_none() {
+            let roundtrip_result =
+                crate::entropy_coding::encode::verify_ans_roundtrip(tokens, code);
+            if roundtrip_result.is_err() {
+                debug_rect!(
+                    "ans/verify",
+                    0,
+                    0,
+                    image.width(),
+                    image.height(),
+                    "ROUNDTRIP FAILED for squeeze+tree data (ctx={} histo={} tokens={}): {:?}",
+                    num_contexts,
+                    code.histograms.len(),
+                    tokens.len(),
+                    roundtrip_result
+                );
+            }
+        }
+
+        // Write ANS tokens
+        let _bit_before_data = writer.bits_written();
+        write_tokens_ans(tokens, code, lz77_params, writer)?;
+        let _bit_after_data = writer.bits_written();
+        crate::trace::debug_eprintln!(
+            "SQUEEZE DATA: {} bits ({:.0}B), {} tokens, {} histograms",
+            _bit_after_data - _bit_before_data,
+            (_bit_after_data - _bit_before_data) as f64 / 8.0,
+            tokens.len(),
+            code.histograms.len(),
+        );
+        crate::trace::debug_eprintln!(
+            "SQUEEZE TOTAL: {:.0}B (overhead {:.0}B + data {:.0}B)",
+            (_bit_after_data - _bit0) as f64 / 8.0,
+            (_bit_after_header - _bit0) as f64 / 8.0,
+            (_bit_after_data - _bit_before_data) as f64 / 8.0,
+        );
+
+        writer.zero_pad_to_byte();
+        Ok(())
+    };
+
+    if profile.lz77_keep_best && use_lz77 {
+        let dm = transformed
+            .channels
+            .iter()
+            .map(|c| c.width())
+            .max()
+            .unwrap_or(0) as i32;
+        let streams = [(&tokens[..], dm)];
+        let selected = super::lz77_keep_best::Selection {
+            streams: &streams,
+            num_contexts,
+            total_pixels,
+            method: lz77_method,
+            budget,
+        }
+        .select(|candidate| {
+            let mut scratch = writer.clone();
+            write_candidate(
+                &candidate.tokens,
+                &candidate.code,
+                candidate.params.as_ref(),
+                &mut scratch,
+            )?;
+            super::frame::FrameEncoder::coded_sections_size(&[scratch.bits_written().div_ceil(8)])
+        })?;
+        return write_candidate(
+            &selected.tokens,
+            &selected.code,
+            selected.params.as_ref(),
+            writer,
+        );
+    }
+
     // Step 5b: Optionally apply LZ77 to the token stream
     let dist_multiplier = transformed
         .channels
@@ -3122,93 +3296,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         Some(total_pixels),
     );
 
-    // Step 7: Write bitstream
-    let _bit0 = writer.bits_written();
-    // dc_quant.all_default = true
-    writer.write(1, 1)?;
-    // has_tree = true
-    writer.write(1, 1)?;
-
-    // Write the learned tree
-    write_tree(writer, &tree)?;
-    let _bit_after_tree = writer.bits_written();
-
-    // Write LZ77 header + ANS data histogram
-    if ans_num_contexts > 1 {
-        write_lz77_header(lz77_params.as_ref(), writer)?;
-        write_entropy_code_ans(&code, writer)?;
-    } else {
-        use super::section::write_ans_modular_header;
-        write_ans_modular_header(writer, &code)?;
-    }
-    let _bit_after_histo = writer.bits_written();
-
-    // GroupHeader with transforms: RCT (if RGB) + Squeeze
-    writer.write(1, 1)?; // use_global_tree = true
-    write_wp_header(writer, &wp_params)?;
-
-    if has_rct {
-        // num_transforms = 2: U32 BitsOffset(4,2), offset=0
-        writer.write(2, 2)?;
-        writer.write(4, 0)?;
-        write_rct_transform(writer, 0, RctType::YCOCG)?;
-        write_squeeze_transform(writer, &params)?;
-    } else {
-        writer.write(2, 1)?; // num_transforms = 1
-        write_squeeze_transform(writer, &params)?;
-    }
-    let _bit_after_header = writer.bits_written();
-    crate::trace::debug_eprintln!(
-        "SQUEEZE OVERHEAD: tree={} bits ({:.0}B), histograms={} bits ({:.0}B), header={} bits ({:.0}B), total_overhead={:.0}B",
-        _bit_after_tree - _bit0,
-        (_bit_after_tree - _bit0) as f64 / 8.0,
-        _bit_after_histo - _bit_after_tree,
-        (_bit_after_histo - _bit_after_tree) as f64 / 8.0,
-        _bit_after_header - _bit_after_histo,
-        (_bit_after_header - _bit_after_histo) as f64 / 8.0,
-        (_bit_after_header - _bit0) as f64 / 8.0,
-    );
-
-    // Debug: verify ANS encoding correctness (skip when LZ77 active — verify doesn't handle LZ77 tokens)
-    #[cfg(debug_assertions)]
-    if lz77_params.is_none() {
-        let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
-        if roundtrip_result.is_err() {
-            debug_rect!(
-                "ans/verify",
-                0,
-                0,
-                image.width(),
-                image.height(),
-                "ROUNDTRIP FAILED for squeeze+tree data (ctx={} histo={} tokens={}): {:?}",
-                num_contexts,
-                code.histograms.len(),
-                tokens.len(),
-                roundtrip_result
-            );
-        }
-    }
-
-    // Write ANS tokens
-    let _bit_before_data = writer.bits_written();
-    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
-    let _bit_after_data = writer.bits_written();
-    crate::trace::debug_eprintln!(
-        "SQUEEZE DATA: {} bits ({:.0}B), {} tokens, {} histograms",
-        _bit_after_data - _bit_before_data,
-        (_bit_after_data - _bit_before_data) as f64 / 8.0,
-        tokens.len(),
-        code.histograms.len(),
-    );
-    crate::trace::debug_eprintln!(
-        "SQUEEZE TOTAL: {:.0}B (overhead {:.0}B + data {:.0}B)",
-        (_bit_after_data - _bit0) as f64 / 8.0,
-        (_bit_after_header - _bit0) as f64 / 8.0,
-        (_bit_after_data - _bit_before_data) as f64 / 8.0,
-    );
-
-    writer.zero_pad_to_byte();
-    Ok(())
+    write_candidate(&tokens, &code, lz77_params.as_ref(), writer)
 }
 
 // ===== Multi-group support =====

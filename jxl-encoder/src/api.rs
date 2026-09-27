@@ -796,6 +796,8 @@ impl LosslessConfig {
         let mut p = crate::effort::EffortProfile::lossless(self.effort, self.mode);
         let resolved = self.strategy.resolve(&StrategyOverrides::default());
         p.tree_self_repair_allowed = resolved.lossless_tree_self_repair;
+        p.lz77_keep_best = !matches!(self.strategy, EncoderStrategy::Libjxl)
+            && crate::entropy_coding::lz77::keep_best_enabled();
         p.tree_self_repair &= resolved.lossless_tree_self_repair;
         p.lossless_large_tree_bucket_reduction = resolved.lossless_large_tree_bucket_reduction;
         // Sweep/picker internal-param overrides (issue #80): applied
@@ -832,6 +834,10 @@ impl LosslessConfig {
         // ordering (cparams.decoding_speed_tier is consulted at each gate
         // site directly, AFTER the speed-tier-derived defaults are set).
         p.apply_faster_decoding(self.faster_decoding);
+        // Keep the experiment on the existing learned-ANS backward-reference
+        // surface; explicit RLE/Huffman/LZ77-off choices retain their meaning.
+        p.lz77_keep_best &=
+            p.lz77 && p.use_ans && p.tree_learning && !matches!(p.lz77_method, Lz77Method::Rle);
         p
     }
 
