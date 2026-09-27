@@ -12,5 +12,50 @@
     "host": "Darwin mac 27.0.0 Darwin Kernel Version 27.0.0: Tue Aug 11 21:05:48 PDT 2026; root:xnu-13432.1.9~1/RELEASE_ARM64_T6041 arm64",
     "harness": "~/tmp/kb-measure/measure.py",
     "instruction_counts": "callgrind pairs from cloud x86 session (transcript): terminal-512-u8-e9 armed 4.779->4.426 GIr; not reproducible on this aarch64 host (no valgrind)"
+  },
+  "r7900x": {
+    "host": "Linux r7900x 7.0.0-31-generic x86_64 (Ryzen 9 7900X, 24 threads)",
+    "wall": {
+      "file": "~/tmp/kb-measure/wall.tsv on r7900x",
+      "same_grid": true,
+      "u8_armed_median": 0.9251,
+      "f32_median": 0.9969,
+      "modes_median": 0.9177,
+      "t4_median": 0.9372,
+      "controls_median": 0.9957,
+      "aggregate_armed": {
+        "base_ms": 96383,
+        "cur_ms": 90338,
+        "ratio": 0.9373
+      },
+      "all_57_cells": "MATCH, hashes identical to aarch64 run"
+    },
+    "callgrind": {
+      "valgrind": "3.27.1",
+      "files": "~/tmp/kb-measure/cg/ on r7900x",
+      "cells_Ir": {
+        "terminal512u8e9": {
+          "base_on": 4746192447,
+          "cur_on": 4413698504,
+          "base_off": 4267235698
+        },
+        "terminal512u8e8": {
+          "base_on": 2554015567,
+          "cur_on": 2390382526,
+          "base_off": 2266961597
+        },
+        "frymire256f32e8": {
+          "base_on": 9388635830,
+          "cur_on": 9387081973,
+          "base_off": 8893150038
+        },
+        "nature512u8e9": {
+          "base_on": 33525400545,
+          "cur_on": 30458278708,
+          "base_off": 29880985757
+        }
+      },
+      "note": "corroborates cloud x86 callgrind within ~1% on the same cell"
+    }
   }
 }

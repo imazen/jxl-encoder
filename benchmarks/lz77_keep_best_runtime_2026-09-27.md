@@ -59,6 +59,12 @@ By source: terminal median 0.969, frymire 0.963, nature 0.938. Aggregate
 armed wall across the grid is 113.7 s -> 107.8 s (-5.2 %). All 57 cells
 are byte-identical between the two binaries.
 
+The same grid on the r7900x x86_64 host (`wall_r7900x` column provenance
+in the meta file): u8 armed median 0.925 (range 0.844 - 1.005), f32 median
+0.997, non-global modes 0.918, four threads 0.937, controls 0.996,
+aggregate armed wall 96.4 s -> 90.3 s (-6.3 %). All 57 cells MATCH, with
+hashes identical to the aarch64 results above (per-cell sha columns).
+
 Effort-7 and arm-off cells are no-op controls: keep-best is ineligible at
 e7, and arm-off exercises the same non-selection path in both binaries.
 Both sit at ≈1.00, confirming the deltas above are attributable to the
@@ -73,19 +79,38 @@ Separately, `just lz77-keep-best-check recon-local` passes the complete
 256/e8/f32 bucket win stays 60,333 → 54,222, terminal retains 22,072, and
 all strict/lossy controls are hash-identical.
 
-## Cost accounting
+## Cost accounting — x86 (r7900x, valgrind 3.27.1 callgrind)
 
-On x86 the session's callgrind pair for terminal-512-u8-e9 showed the
-keep-best arm at 4.779 GIr (on) vs 4.299 GIr (off) before the change —
-≈+11 % selection overhead — and 4.426 GIr (on) vs 4.277 GIr (off) after;
-i.e. the armed path lost ~353 M instructions and the residual selection
-overhead fell to ≈+3.5 %. These instruction counts were captured on the
-cloud x86 host before suspension; valgrind/callgrind does not support this
-aarch64 host, so the local evidence is wall-only. A `sample` profile of
-the optimized binary on nature-1024-u8-e9 attributes the remaining encode
-time to the learned-ANS tree machinery (`bucketize_and_strip_props`,
-`exact_bucketize_plan`, `estimate_bits_u32`); keep-best frames are below
-the ≥5-sample leaf threshold on that input.
+Instruction counts on the r7900x x86_64 host, same binaries/pipeline
+(`~/tmp/kb-measure/cg/` there; driver `measure_only.sh`):
+
+| cell | armed base | armed cur | Δ | off |
+|---|---:|---:|---:|---:|
+| terminal-512-u8-e9 | 4,746,192,447 | 4,413,698,504 | −7.0 % | 4,267,235,698 |
+| terminal-512-u8-e8 | 2,554,015,567 | 2,390,382,526 | −6.4 % | 2,266,961,597 |
+| frymire-256-f32-e8 | 9,388,635,830 | 9,387,081,973 | −0.02 % | 8,893,150,038 |
+| nature-512-u8-e9 | 33,525,400,545 | 30,458,278,708 | −9.2 % | 29,880,985,757 |
+
+Selection overhead (armed / off):
+
+- terminal-512-u8-e9: +11.2 % → +3.4 %
+- terminal-512-u8-e8: +12.7 % → +5.4 %
+- frymire-256-f32-e8: +5.6 % → +5.6 % (f32 tokens rarely transform — the
+  untransformed fast path was already skipping nearly everything)
+- nature-512-u8-e9: +12.2 % → +1.9 %
+
+The same-cell armed counts match the (pre-suspension) cloud session's
+own callgrind numbers within ~1 % (its terminal-512-u8-e9: on 4.779 GIr
+before → 4.426 GIr after; off 4.299 → 4.277 GIr), independently confirming
+the reconstruction reproduces the session's optimization. The x86 wall
+sweep (`~/tmp/kb-measure/wall.tsv` on r7900x) is 57/57 byte-identical with
+hashes matching the aarch64 run exactly — output is architecture-stable.
+
+On the aarch64 host a `sample` profile of the optimized binary on
+nature-1024-u8-e9 attributes the remaining encode time to the learned-ANS
+tree machinery (`bucketize_and_strip_props`, `exact_bucketize_plan`,
+`estimate_bits_u32`); keep-best frames are below the ≥5-sample leaf
+threshold on that input.
 
 ## Limits
 
