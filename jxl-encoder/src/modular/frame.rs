@@ -40,24 +40,28 @@ enum TreeMode {
 /// per-image byte variance buys nothing without the wall win). Pin
 /// `with_sectioned_trees(On/Off)` for thread-invariant output.
 fn auto_tree_mode(effort: u8, threads: usize, memory_pressure: bool) -> TreeMode {
-    // e ≥ 10 keeps the max-bytes tier but upgrades to keep-best: the
-    // global tree is still learned (libjxl `ComputeTree` at
-    // `speed_tier < kTortoise`, `enc_frame.cc:1692`/`:1806` — our e10
-    // supersets libjxl e10, issue #45 ladder shift), AND every group
-    // additionally gets a local-tree write; the smaller section wins
-    // per group. Bytes are ≤ the pure-global result by construction
-    // (measured: never worse, up to -3% on screenshots) at the cost of
-    // the extra per-group learn wave — acceptable at the max-quality
-    // tier. Via the public API this arm is unreachable under memory
-    // pressure anyway (the preflight's sectioned estimate band stops at
-    // e9, `heuristics::sectioned_estimate_available`), and an explicit
-    // `SectionedTrees::On`/`Off` still wins — this gate only decides
-    // `Auto`.
-    if effort >= 10 {
-        return TreeMode::Hybrid;
-    }
+    // Under memory pressure always section (cheapest per-group learns).
+    // At e ≥ 10 via the public API this arm is unreachable anyway —
+    // `heuristics::sectioned_estimate_available` stops at e9, so an
+    // over-budget e ≥ 10 encode is rejected by the preflight rather
+    // than silently sectioned.
     if memory_pressure {
         return TreeMode::Sectioned;
+    }
+    // e ≥ 8 upgrades to keep-best (Hybrid): the global tree is still
+    // learned — preserving the libjxl `ComputeTree` force at
+    // `speed_tier < kTortoise` (`enc_frame.cc:1692`/`:1806`; our e10
+    // supersets libjxl e10, issue #45 ladder shift) as the *global
+    // candidate* — AND every group additionally gets a local-tree
+    // write; the smaller section wins per group. Bytes are ≤
+    // pure-global by construction (measured: never worse on 34
+    // image-cells, up to -3.2% on screenshots at e8) while wall at
+    // >= 2 threads is ≈ global's (0.97x at e8, 1.00x at e9 — the
+    // per-group learns are the cheap ones). An explicit
+    // `SectionedTrees::On`/`Off` still wins — this gate only decides
+    // `Auto`.
+    if effort >= 8 {
+        return TreeMode::Hybrid;
     }
     if effort <= 7 && threads > 1 {
         return TreeMode::Sectioned;
@@ -77,30 +81,28 @@ mod tree_mode_tests {
             // single-threaded stays global
             assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Global, "e{e} t1");
         }
-        // e8-e9 stays global regardless of threads
-        for e in [8u8, 9] {
-            assert_eq!(auto_tree_mode(e, 8, false), TreeMode::Global, "e{e} t8");
-            assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Global, "e{e} t1");
-        }
-        // e10+ upgrades to keep-best (Hybrid): global tree + per-group
+        // e8+ upgrades to keep-best (Hybrid): global tree + per-group
         // local writes, smaller section wins — bytes <= global by
         // construction, at any thread count.
-        for e in [10u8, 11, 12, 13] {
+        for e in [8u8, 9, 10, 11, 12, 13] {
             assert_eq!(auto_tree_mode(e, 8, false), TreeMode::Hybrid, "e{e} t8");
             assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Hybrid, "e{e} t1");
         }
-        // memory pressure overrides the thread arm at e <= 9 (the
-        // pre-existing escape)
-        assert_eq!(auto_tree_mode(9, 1, true), TreeMode::Sectioned);
-        assert_eq!(auto_tree_mode(3, 1, true), TreeMode::Sectioned);
-        // …but NOT the e >= 10 keep-best force (the sectioned estimate
-        // band stops at e9 — this arm is unreachable under pressure via
-        // the public API anyway).
-        for e in [10u8, 11, 12, 13] {
+        // memory pressure sections at every effort — it wins over both
+        // the thread arm and the keep-best arm (the cheapest learns
+        // under the cap; the e >= 10 pressure arm is unreachable via
+        // the public API anyway — `sectioned_estimate_available`
+        // stops at e9).
+        for e in [1u8, 3, 9, 11] {
+            assert_eq!(
+                auto_tree_mode(e, 1, true),
+                TreeMode::Sectioned,
+                "e{e} pressure"
+            );
             assert_eq!(
                 auto_tree_mode(e, 8, true),
-                TreeMode::Hybrid,
-                "e{e} pressure: e>=10 Auto still takes the keep-best tier"
+                TreeMode::Sectioned,
+                "e{e} pressure"
             );
         }
     }
