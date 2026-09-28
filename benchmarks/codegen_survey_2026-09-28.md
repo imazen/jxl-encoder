@@ -234,3 +234,52 @@ trees (~150-625 nodes each) — the same architecture as our
 `SectionedTrees::On`. That mode keeps its −50% e9 wall advantage at a
 +5.3% geo byte cost and is now thread-invariant; it remains opt-in
 (`with_sectioned_trees(On)` / `JXL_LOSSLESS_LOCAL_TREES=1`).
+
+## 2026-09-29 PM — adversarial corpus + honest keep-best
+
+Prompted by "seek out counterargument image files": built a 14-image
+adversarial set (`~/tmp/gaps-i265/adv/`) targeting today's decisions —
+1px checkerboards, strips, solid/degenerate, sparse-alpha RGBA, 16-bit,
+dense-range channels, palette-boundary color counts (2..2000), noise.
+
+**Counterargument that hit**: `checker1` e9 hybrid = 515 B vs global
+455 B — hybrid *exceeded* global, breaking the "≤ by construction"
+claim. Two bugs, both fixed (`efdc2904`):
+
+1. Hybrid's global stream never ran the LZ77 keep-best layout trial
+   (`keep_best_layout` was `None` under Hybrid), so its group sections
+   were priced/written against a weaker layout than pure-Global's.
+2. The keep-best arm early-returns before `hybrid_slot` handoff, so
+   `hybrid_trees` stayed empty — **local attempts silently never ran**
+   under keep-best. Fixing both + the stored-token/WpCache interplay
+   made hybrid a true superset: locals now win only where they beat the
+   priced global (wiki g52: 22 B local vs 90 B global).
+
+3. Bonus fix: when every group picks local, the serialized global tree
+   is dead weight — LfGlobal is rewritten in the sectioned style
+   (checker512: hybrid 515 → 455 = Global).
+
+**Post-fix bytes vs Global (e9, 8T)**: all diffs are ≤0 or <0 — real
+wins: wiki −747 B, imac_dark −6.7 KB, imessage −1.1 KB, windows −619 B,
+frymire −824 B, big_mix −3.2 KB, terminal −236 B, gui −52 B,
+1025469 −21 B, graph −21 B. **Zero regressions across 41 images**
+(14 adv + 5 gb82 + 20 K300 + frymire + 1025469). Thread-invariant
+t1/t8 on all adversarial cells; djxl round-trip exact on the
+all-local-rewrite path.
+
+**ChannelCompact cost check** (same commit): per-channel compaction
+candidates now pass the oracle-pinned `estimate_global_image_cost`
+compare at e≥8 — index+meta vs original channel (costs are separable
+per channel, so sequential semantics = independent checks). 0 byte
+changes on all corpus images — pure protection + libjxl parity.
+
+**Also verified**: libjxl's entropy-scaled `nb_colors` cap
+(`cost·0.0005 + px/128 + 128`) differs from our flat 1024 only on
+tiny/low-entropy images (< ~114 Kpx) — evaluated, not worth porting.
+Squeeze: confirmed matching libjxl's default — `responsive=0` for
+lossless (`enc_modular.cc:527`); our `with_squeeze` is opt-in only.
+
+**Policy outcome**: e≥8 → Hybrid now earns its place *honestly* — it
+still costs the wave-learn wall (+5-7% at e9) but the wins are real.
+e≤7 MT stays Sectioned (wall win, byte cost dominated by group-header
+overhead, not fixable by better local trees).
