@@ -5849,9 +5849,12 @@ impl<'a> EncodeRequest<'a> {
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
         crate::error::check_stop(self.stop).map_err(at_from)?;
-        if animation.tps_numerator == 0 || animation.tps_denominator == 0 {
+        if !(1..=1 << 30).contains(&animation.tps_numerator)
+            || !(1..=1024).contains(&animation.tps_denominator)
+        {
             return Err(at!(EncodeError::InvalidInput {
-                message: "animation tick rate must be positive".into()
+                message: "animation clock requires numerator 1..=2^30 and denominator 1..=1024"
+                    .into()
             }));
         }
         if self.row_stride.is_some()

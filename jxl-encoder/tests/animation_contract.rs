@@ -337,3 +337,68 @@ fn lossy_animation_preserves_full_precision_alpha() {
         }
     }
 }
+
+#[test]
+fn animation_clock_rejects_values_that_do_not_fit_the_bitstream_fields() {
+    let pixels = [37u8, 101, 219].repeat(17 * 13);
+    let frames = [AnimationFrame::new(&pixels, u32::MAX)];
+    for (numerator, denominator) in [
+        (0, 1),
+        (1, 0),
+        ((1 << 30) + 1, 1),
+        (u32::MAX, 1),
+        (1, 1025),
+        (1, u32::MAX),
+    ] {
+        let clock = AnimationParams {
+            tps_numerator: numerator,
+            tps_denominator: denominator,
+            ..AnimationParams::default()
+        };
+        for lossy in [false, true] {
+            let result = if lossy {
+                LossyConfig::new(1.0).with_effort(1).encode_animation(
+                    17,
+                    13,
+                    PixelLayout::Rgb8,
+                    &clock,
+                    &frames,
+                )
+            } else {
+                LosslessConfig::new().with_effort(1).encode_animation(
+                    17,
+                    13,
+                    PixelLayout::Rgb8,
+                    &clock,
+                    &frames,
+                )
+            };
+            assert!(
+                result.is_err(),
+                "clock {numerator}/{denominator}, lossy={lossy}"
+            );
+        }
+    }
+    for (numerator, denominator) in [(1, 1024), (1 << 30, 1), (30000, 1001)] {
+        let clock = AnimationParams {
+            tps_numerator: numerator,
+            tps_denominator: denominator,
+            ..AnimationParams::default()
+        };
+        let bytes = LosslessConfig::new()
+            .with_effort(1)
+            .encode_animation(17, 13, PixelLayout::Rgb8, &clock, &frames)
+            .unwrap();
+        let decoder = zensim_decoder::api::JxlDecoder::new(Default::default());
+        let zensim_decoder::api::ProcessingResult::Complete { result: decoder } =
+            decoder.process(&mut bytes.as_slice()).unwrap()
+        else {
+            panic!("incomplete header")
+        };
+        let actual = decoder.basic_info().animation.as_ref().unwrap();
+        assert_eq!(
+            (actual.tps_numerator, actual.tps_denominator),
+            (numerator, denominator)
+        );
+    }
+}
