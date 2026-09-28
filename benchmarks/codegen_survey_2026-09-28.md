@@ -182,3 +182,53 @@ sites; explicit `with_ans(false)` still wins. Bench: codec_wiki e1
   recovers ~2.6% — a wall-vs-bytes tradeoff; libjxl itself doesn't buttloop
   below e8. Residual likely gaborish/ac_strategy absence; left.
 - **gui lossless e3** +2.9% residual: not RCT (all RCT modes identical).
+
+# Appendix C — tree-mode survey + keep-best e10+ (i265, 2026-09-29)
+
+`SectionedTrees::{Off,On,Hybrid}` × e{5,7,8,9} × threads{1,8} on the
+14-image sweep (`~/tmp/gaps-i265/treemode.tsv`, 196 rows) + imazen-26
+K300 (20 classes) at e9 (`~/tmp/gaps-i265/k300.tsv`).
+
+## Landed
+
+- `cf9f6b8b` — thread-invariance fix: dropped the `single_worker` 1T
+  bypass in `tree_learn.rs`. The bypass claimed bitstream equivalence
+  but produced different trees (frymire e9 sectioned: **292,491 B at
+  1T vs 269,064 B at ≥2T** — the sequential engine calls
+  `find_best_split` while fork subtrees call `find_best_split_borrowed`).
+  Output is now identical at every thread count by construction; where
+  it diverged, 1T picks up the *better* tree. 1T wall is image-mixed
+  (frymire +28%, codec_wiki −17%, roughly neutral geomean).
+- `5c0235c6` — `Auto` resolves to **Hybrid (keep-best) at e ≥ 10**:
+  global learn + per-group local writes, smaller section wins per group.
+  Byte-monotone vs global by construction (never worse per group).
+
+## Measured landscape (geomean vs global mode, 14 imgs, 8T)
+
+| effort | sec Δbytes | sec wall | hyb Δbytes | hyb wall |
+|---|---|---|---|---|
+| e5 | −2.2% | 0.61× | −3.9% | 1.29× |
+| e7 | +0.9% | 0.62× | −1.6% | 1.31× |
+| e8 | +1.9% | 0.47× | −0.7% | 0.97× |
+| e9 | +5.3% | 0.46× | −0.1% | 1.00× |
+
+## K300 (imazen-26, 20 classes) e9 — content-gate eval: NEGATIVE
+
+Sectioned loses bytes on **every** image class (geo +4.6%, range
++0.06%..+25.3%); hybrid ≡ global bytes on all 20. The flat-color-block
+discriminator (fcbr, W44-164's screenshot signal) does **not** predict
+where the sectioned byte penalty lands: `7002_plots` fcbr=0.11 → +25%,
+`8012_mobile-screenshots` fcbr=0.86 → +21%, `9259_gen-products`
+fcbr=0.35 → +1.4%. The penalty tracks per-group header overhead, not
+content class → **content-gated tree selection ruled out** for e8/e9;
+Global stays the default there. Per-photo monotonicity of the default
+ladder holds (e7 sec → e8/e9 glo → e10 hyb strictly decreasing; one
+12-byte e7→e8 pre-existing wart on 1025469).
+
+libjxl structure note (from the jxl-inspect `modular` differ, scratch
+forks at `~/tmp/jxl-oxide-fork` + `~/tmp/jxl-inspect`): cjxl on
+70-group screenshots emits a 7-byte empty LfGlobal + per-group local
+trees (~150-625 nodes each) — the same architecture as our
+`SectionedTrees::On`. That mode keeps its −50% e9 wall advantage at a
++5.3% geo byte cost and is now thread-invariant; it remains opt-in
+(`with_sectioned_trees(On)` / `JXL_LOSSLESS_LOCAL_TREES=1`).
