@@ -1557,6 +1557,54 @@ fn estimate_cost(image: &ModularImage) -> f64 {
 /// effort >= 8, matching libjxl's `speed_tier < kSquirrel` condition
 /// (below that the palette applies under the color cap with no cost
 /// check — same as libjxl).
+/// libjxl `maybe_do_transform` for ChannelCompact (enc_modular.cc
+/// :395-438): the per-channel value-compaction transform is kept only
+/// when the estimated residual entropy improves. Costs are separable
+/// per channel under the estimator (it sums channel-wise), so the check
+/// is `cost(ch) vs cost(index) + cost(meta)` — identical to libjxl's
+/// sequential apply/undo per channel. Call sites gate this to
+/// effort >= 8 (libjxl's `speed_tier < kSquirrel` arm).
+pub(crate) fn compact_keep_best_pays(
+    ch: &super::channel::Channel,
+    analysis: &super::palette::PaletteAnalysis,
+) -> bool {
+    use super::channel::Channel;
+    let cost_before = super::ma_libjxl::estimate_global_image_cost([ch].into_iter());
+
+    // Materialize the two channels the transform would emit: the index
+    // channel (w x h palette indices) and the palette meta channel
+    // (num_colors x 1 values).
+    let (w, h) = (ch.width(), ch.height());
+    let mut idx = match Channel::new(w, h) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let v = ch.get(x, y);
+            if let Some(&i) = analysis.color_to_index.get(&alloc::vec![v]) {
+                idx.set(x, y, i);
+            }
+        }
+    }
+    let mut meta = match Channel::new(analysis.num_colors, 1) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    for (i, color) in analysis.palette.iter().enumerate() {
+        meta.set(i, 0, color[0]);
+    }
+    let cost_after =
+        super::ma_libjxl::estimate_global_image_cost([&idx, &meta].into_iter());
+    if std::env::var("JXL_DBG_PALETTE_COST").is_ok() {
+        eprintln!(
+            "COMPACT_COST: before={cost_before:.1} after={cost_after:.1} ratio={:.4}",
+            cost_after / cost_before
+        );
+    }
+    cost_after < cost_before
+}
+
 pub(crate) fn palette_keep_best_pays(
     image: &ModularImage,
     begin_c: usize,
@@ -2378,8 +2426,17 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         let num_color_channels = if image.is_grayscale { 1 } else { 3 };
         (0..num_color_channels.min(image.channels.len()))
             .filter_map(|i| {
-                super::palette::analyze_channel_compact(&image.channels[i], channel_colors_percent)
-                    .map(|a| (i, a))
+                let a = super::palette::analyze_channel_compact(
+                    &image.channels[i],
+                    channel_colors_percent,
+                )?;
+                // libjxl `maybe_do_transform` cost check at e >= 8 —
+                // keep the compaction only when the index + meta
+                // channels estimate cheaper than the original channel.
+                if profile.effort >= 8 && !compact_keep_best_pays(&image.channels[i], &a) {
+                    return None;
+                }
+                Some((i, a))
             })
             .collect()
     } else {

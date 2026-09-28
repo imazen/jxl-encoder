@@ -513,7 +513,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     knobs: &super::palette::ModularKnobs,
     hf_stream_id_base: u32,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
-    hybrid_local_trees: Option<&mut alloc::vec::Vec<Option<super::tree::Tree>>>,
+    mut hybrid_local_trees: Option<&mut alloc::vec::Vec<Option<super::tree::Tree>>>,
     keep_best_layout: Option<(&[GroupTransforms], usize)>,
     stop: Option<&dyn enough::Stop>,
 ) -> Result<GlobalModularState> {
@@ -1652,6 +1652,13 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             super::frame::FrameEncoder::coded_sections_size(&sizes)
         })?;
         write_global(&selected, writer)?;
+        // Hand the wave-learned per-group trees to the hybrid caller here
+        // too — this early return used to skip the `hybrid_slot` handoff
+        // below, leaving Hybrid's `hybrid_trees` empty so every local
+        // attempt silently never ran (Hybrid degraded to plain Global).
+        if let Some(out) = hybrid_local_trees.take() {
+            *out = hybrid_slot.into_inner();
+        }
         return Ok(GlobalModularState::AnsWithTree {
             code: selected.code,
             tree,

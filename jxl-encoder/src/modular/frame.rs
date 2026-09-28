@@ -926,6 +926,18 @@ impl FrameEncoder {
                         if density > 0.5 {
                             return None;
                         }
+                        // libjxl `maybe_do_transform` cost check at
+                        // e >= 8 — keep the compaction only when the
+                        // index + meta channels estimate cheaper than
+                        // the original channel.
+                        if self.options.effort >= 8
+                            && !super::encode::compact_keep_best_pays(
+                                &image.channels[ch_idx],
+                                &analysis,
+                            )
+                        {
+                            return None;
+                        }
                         Some((ch_idx, analysis))
                     })
                     .collect()
@@ -1070,9 +1082,11 @@ impl FrameEncoder {
         crate::error::check_stop(stop)?;
         drop(image_src);
 
+        // `compact_info` cloned — the hybrid "all groups went local"
+        // LfGlobal rewrite below reconstructs the transforms record.
         let global_transforms = super::section::GlobalTransforms {
             full_palette: full_palette_info,
-            compact_info,
+            compact_info: compact_info.clone(),
             rct_type,
         };
 
@@ -1233,8 +1247,12 @@ impl FrameEncoder {
                     } else {
                         None
                     },
-                    (tree_mode != TreeMode::Hybrid)
-                        .then_some((&group_transforms[..], num_lf_groups)),
+                    // keep-best layout runs under Hybrid too — without it
+                    // hybrid's GLOBAL stream skipped the LZ77 layout trial
+                    // that pure-global gets at e>=8, so its global-coded
+                    // group sections came out worse than identical content
+                    // in global mode (checker512 e9: 113 B vs 95 B/group).
+                    Some((&group_transforms[..], num_lf_groups)),
                     stop,
                 )?,
             )
@@ -1273,7 +1291,7 @@ impl FrameEncoder {
                 predictor_id,
             )?)
         };
-        let lf_global_data = lf_global_writer.finish();
+        let mut lf_global_data = lf_global_writer.finish();
 
         crate::trace::debug_eprintln!(
             "MULTI_GROUP: LfGlobal section = {} bytes",
@@ -1333,7 +1351,7 @@ impl FrameEncoder {
         let budget = self.budget.as_ref();
         #[cfg(feature = "__env_var_diagnostics")]
         let _fr_t_groups = crate::clock::Instant::now();
-        let pass_group_data: Vec<Vec<u8>> = if local_trees_mode {
+        let (pass_group_data, all_picked_local): (Vec<Vec<u8>>, bool) = if local_trees_mode {
             // Whole-image-equivalent stride for every per-group gather (see
             // the local writer's stride note).
             let full_pixels: usize = group_images
@@ -1383,7 +1401,7 @@ impl FrameEncoder {
                     _ => None,
                 };
             let sectioned_predictors = sectioned_predictors.as_deref();
-            crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
+            let res = crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
                 let group_idx = flat_idx / num_passes;
                 let group_image = &group_images[group_idx];
                 let mut group_writer = BitWriter::new();
@@ -1409,7 +1427,8 @@ impl FrameEncoder {
                     );
                 }
                 Ok(group_writer.finish())
-            })?
+            })?;
+            (res, false)
         } else {
             let global_state = global_state
                 .as_ref()
@@ -1426,11 +1445,14 @@ impl FrameEncoder {
                 }
                 _ => None,
             };
-            crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
+            let results = crate::parallel::parallel_map_result(
+                num_groups * num_passes,
+                |flat_idx| {
                 let group_idx = flat_idx / num_passes;
                 let group_image = &group_images[group_idx];
 
                 let mut group_writer = BitWriter::new();
+                let mut chose_local = false;
                 // WP-cache fusion (hybrid): when this group also gets a
                 // local-tree rewrite below, the global-section collect
                 // records its WP walk so the rewrite's collect skips the
@@ -1440,18 +1462,23 @@ impl FrameEncoder {
                     _ => None,
                 };
                 let mut wp_cache = super::tree_learn::WpCache::new();
-                // Pre-collected group tokens (byte-identical reuse). The
-                // hybrid path still collects fresh — its local-tree
-                // rewrite needs the WP cache the collect fills. Alignment
-                // guard: the store's ranges were built over the LfGlobal
-                // writer's group images; on paths where those differ from
-                // THIS loop's images (squeeze channel grouping, multiple
-                // passes) the per-group token count no longer equals the
-                // group's pixel count — fall back to a fresh collect
-                // (the pre-guard mismatch indexed out of bounds:
-                // issue68 e9 noise regression tests).
-                let pre_collected = match (&hybrid_entry, token_store) {
-                    (None, Some(store))
+                // Pre-collected group tokens. Under `require_stored_tokens`
+                // (the LZ77 keep-best layout arm) the stored stream IS the
+                // priced layout — the global write must use it even when a
+                // hybrid local attempt follows. The hybrid local write no
+                // longer depends on this collect filling `wp_cache`: when
+                // the global write consumes stored tokens the cache stays
+                // empty and the local write runs its own WP state machine
+                // (`WpCacheMode::Off` below). Alignment guard: the store's
+                // ranges were built over the LfGlobal writer's group
+                // images; on paths where those differ from THIS loop's
+                // images (squeeze channel grouping, multiple passes) the
+                // per-group token count no longer equals the group's pixel
+                // count — fall back to a fresh collect (the pre-guard
+                // mismatch indexed out of bounds: issue68 e9 noise
+                // regression tests).
+                let pre_collected = match token_store {
+                    Some(store)
                         if num_passes == 1 && store.group_ranges.len() == num_groups =>
                     {
                         store
@@ -1462,6 +1489,11 @@ impl FrameEncoder {
                     }
                     _ => None,
                 };
+                // WP-cache Fill only when this group both (a) wants a
+                // hybrid local attempt and (b) is about to walk pixels —
+                // a stored-token write never runs the WP machine, so
+                // nothing would fill.
+                let fills_wp_cache = hybrid_entry.is_some() && pre_collected.is_none();
                 super::section::write_group_modular_section_idx_stop(
                     group_image,
                     global_state,
@@ -1469,7 +1501,7 @@ impl FrameEncoder {
                     &group_transforms[group_idx],
                     &mut group_writer,
                     budget,
-                    if hybrid_entry.is_some() {
+                    if fills_wp_cache {
                         super::tree_learn::WpCacheMode::Fill(&mut wp_cache)
                     } else {
                         super::tree_learn::WpCacheMode::Off
@@ -1501,13 +1533,25 @@ impl FrameEncoder {
                         wp,
                         &mut local_writer,
                         budget,
-                        super::tree_learn::WpCacheMode::Read(&wp_cache),
+                        if fills_wp_cache {
+                            super::tree_learn::WpCacheMode::Read(&wp_cache)
+                        } else {
+                            super::tree_learn::WpCacheMode::Off
+                        },
                         self.options.profile.lz77_keep_best,
                     )?;
+                    if std::env::var_os("JXL_DBG_HYBRID").is_some() {
+                        eprintln!(
+                            "[hybrid] g{group_idx} global={}B local={}B",
+                            group_writer.bits_written().div_ceil(8),
+                            local_writer.bits_written().div_ceil(8)
+                        );
+                    }
                     if local_writer.bits_written().div_ceil(8)
                         < group_writer.bits_written().div_ceil(8)
                     {
                         group_writer = local_writer;
+                        chose_local = true;
                     }
                 }
 
@@ -1523,9 +1567,44 @@ impl FrameEncoder {
                         group_writer.bits_written().div_ceil(8)
                     );
                 }
-                Ok(group_writer.finish())
-            })?
+                Ok((group_writer.finish(), chose_local))
+            })?;
+            let all_picked_local =
+                !results.is_empty() && results.iter().all(|(_, l)| *l);
+            (results.into_iter().map(|(b, _)| b).collect::<Vec<_>>(), all_picked_local)
         };
+
+        // Keep-best completion: when EVERY group chose its local section,
+        // the global tree serialized in LfGlobal is dead weight — swap
+        // LfGlobal for the sectioned-style variant (trivial tree + meta
+        // stream). Patches prepend again to keep frame layout identical.
+        // Measured: checker512 e9 hybrid 515 B -> 455 B, equal to global
+        // (the +60 B leak made hybrid worse than both inputs).
+        if tree_mode == TreeMode::Hybrid && all_picked_local {
+            let mut alt = BitWriter::new();
+            if let Some(pd) = patches {
+                crate::vardct::patches::encode_patches_section(
+                    pd,
+                    self.options.use_ans,
+                    &mut alt,
+                )?;
+            }
+            super::section::write_local_trees_lf_global(
+                &mut alt,
+                super::section::GlobalTransforms {
+                    full_palette: full_palette_info,
+                    compact_info,
+                    rct_type,
+                },
+                meta_image.as_ref(),
+                &self.options.profile,
+                self.options.enable_lz77,
+                self.options.lz77_method,
+                self.budget.as_ref(),
+                stop,
+            )?;
+            lf_global_data = alt.finish();
+        }
 
         // Step 6: Collect all section sizes in correct order and write TOC
         // JXL spec order: LfGlobal, LfGroup[0..num_lf_groups], HfGlobal, PassGroup[0..num_groups*num_passes]
