@@ -1,8 +1,12 @@
 [profile.release]
-debug = true
+# line-tables keeps fn+file:line attribution for callgrind/perf at ~1/3
+# the DWARF cost of full `debug = true` (cold build 26.9s -> 22.5s,
+# binary 153MB -> 56MB). Full debuginfo remains available via
+# CARGO_PROFILE_RELEASE_DEBUG=true for debugger sessions.
+debug = "line-tables-only"
 
 [profile.bench]
-debug = true
+debug = "line-tables-only"
 
 [profile.test]
 opt-level = 3
