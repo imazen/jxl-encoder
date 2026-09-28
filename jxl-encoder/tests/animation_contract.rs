@@ -402,3 +402,57 @@ fn animation_clock_rejects_values_that_do_not_fit_the_bitstream_fields() {
         );
     }
 }
+
+#[test]
+fn repeated_single_pixel_display_frames_have_valid_headers() {
+    for (width, height) in [(1, 1), (17, 13)] {
+        for alpha in [false, true] {
+            let original: Vec<Vec<u8>> = [0u8, 1, 1, 2, 0]
+                .into_iter()
+                .map(|phase| {
+                    let pixel = if alpha {
+                        vec![phase * 60, 17, 211, 255]
+                    } else {
+                        vec![phase * 60, 17, 211]
+                    };
+                    pixel.repeat((width * height) as usize)
+                })
+                .collect();
+            let frames: Vec<_> = original
+                .iter()
+                .zip([1, 2, 3, 1, 7])
+                .map(|(pixels, duration)| AnimationFrame::new(pixels, duration))
+                .collect();
+            let encoded = LosslessConfig::new()
+                .with_effort(1)
+                .encode_animation(
+                    width,
+                    height,
+                    if alpha {
+                        PixelLayout::Rgba8
+                    } else {
+                        PixelLayout::Rgb8
+                    },
+                    &AnimationParams::default(),
+                    &frames,
+                )
+                .unwrap();
+            let decoded = decode_f32(&encoded, 8, alpha);
+            assert_eq!(decoded.len(), original.len());
+            for (actual, expected) in decoded.iter().zip(&original) {
+                for (actual, expected) in actual.iter().zip(expected) {
+                    assert!((actual - f32::from(*expected) / 255.0).abs() < 1e-6);
+                }
+            }
+            if let Ok(dir) = std::env::var("JXL_ANIMATION_ARTIFACTS") {
+                let dir = std::path::Path::new(&dir).join("repeated");
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(
+                    dir.join(format!("repeated-{width}x{height}-alpha{alpha}.jxl")),
+                    encoded,
+                )
+                .unwrap();
+            }
+        }
+    }
+}
