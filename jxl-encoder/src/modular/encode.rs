@@ -1527,7 +1527,7 @@ fn rct_cost_plain_channel(
     rct_cost_entropy_finish(histograms, total_bits);
 }
 
-fn estimate_cost(image: &ModularImage) -> f64 {
+pub(crate) fn estimate_cost(image: &ModularImage) -> f64 {
     use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
     let config = HybridUintConfig::new(4, 2, 0);
@@ -1548,6 +1548,32 @@ fn estimate_cost(image: &ModularImage) -> f64 {
     }
 
     total_bits + extra_bits as f64
+}
+
+/// libjxl `maybe_do_transform` (enc_modular.cc:308-329) for the palette
+/// decision: the color-count analysis is only a *candidate* gate — the
+/// transform is kept solely when the estimated residual entropy of the
+/// palettized image actually improves. Call sites gate this to
+/// effort >= 8, matching libjxl's `speed_tier < kSquirrel` condition
+/// (below that the palette applies under the color cap with no cost
+/// check — same as libjxl).
+pub(crate) fn palette_keep_best_pays(
+    image: &ModularImage,
+    begin_c: usize,
+    num_c: usize,
+    analysis: &super::palette::PaletteAnalysis,
+) -> bool {
+    let cost_before = estimate_cost(image);
+    let mut trial = image.clone();
+    if super::palette::apply_palette(&mut trial, begin_c, num_c, analysis).is_err() {
+        return false;
+    }
+    let cost_after = estimate_cost(&trial);
+    if std::env::var("JXL_DBG_PALETTE_COST").is_ok() {
+        eprintln!("PALETTE_COST: before={cost_before:.1} after={cost_after:.1} ratio={:.4}",
+                  cost_after / cost_before);
+    }
+    cost_after < cost_before
 }
 
 /// [`estimate_cost`] of `image` AS IF `forward_rct(channels, begin_c,
@@ -2304,7 +2330,12 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         if palette && !is_lossy && image.channels.len() >= 2 {
             if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
                 let analysis = super::palette::analyze_palette(image, begin_c, num_c, max_colors);
-                if analysis.use_palette {
+                // Cost check at e >= 8 (libjxl `maybe_do_transform`
+                // fires only at `speed_tier < kSquirrel`).
+                if analysis.use_palette
+                    && (profile.effort < 8
+                        || palette_keep_best_pays(image, begin_c, num_c, &analysis))
+                {
                     Some((begin_c, num_c, analysis))
                 } else {
                     None

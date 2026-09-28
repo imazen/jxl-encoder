@@ -852,7 +852,20 @@ impl FrameEncoder {
                     } else {
                         let analysis =
                             super::palette::analyze_palette_stop(image, 0, nc, max_colors, stop);
-                        if analysis.use_palette {
+                        // Cost-check the candidate (libjxl
+                        // `maybe_do_transform`): the color-count gate
+                        // accepts palettes that lose bytes on
+                        // medium-entropy content.
+                        // Cost check at e >= 8 only — matches libjxl's
+                        // `maybe_do_transform` gate (`speed_tier <
+                        // kSquirrel` ⇔ effort >= 8); below that the
+                        // transform applies unconditionally.
+                        if analysis.use_palette
+                            && (self.options.effort < 8
+                                || super::encode::palette_keep_best_pays(
+                                    image, 0, nc, &analysis,
+                                ))
+                        {
                             Some((nc, analysis))
                         } else {
                             None
