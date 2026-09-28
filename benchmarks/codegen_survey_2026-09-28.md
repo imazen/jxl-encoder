@@ -397,3 +397,24 @@ jxl-encoder/src --lint`. Result: 243 findings, classified:
   edge-pixel calls included) — intended.
 - `token-unwrap` ×2 — false positives (`.expect` on stop-Results in
   fns whose names contain "token"; not SimdToken unwraps).
+
+## 2026-09-29 PM5 — lz77 optimal-greedy DP inner loop (negative)
+
+`apply_lz77_optimal_keeping_greedy` is ~77% of Ir on match-heavy lossy
+inputs (checker1 d1e9: 66.6B Ir total, ~52B inside this fn incl. inlined
+slice/cmp + uint_macros). Probed: hoist `prefix_costs[i].total_cost` +
+`tokens[i].context()`, slice-iterate `prefix_costs[i+min..=end]` to drop
+per-j bounds checks, clamp instead of `target>n` break. Result:
+byte-identical, wall **neutral** (frymire +2.6% / big_mix +2.7% /
+checker1 −0.7% / wiki +1.2% — noise band). The eval loop was already
+near-minimal; remaining Ir is find_matches chain-walk + extension —
+work-bound, not bookkeeping-bound. Further shaving needs
+output-changing pruning (skip relaxations), out of scope for a
+byte-identical pass. Reverted.
+
+Compile-time findings moved to Cargo.toml `19db8934`
+(debug=line-tables-only, −16% cold, binary 153→56MB, callgrind line
+attribution intact). rustc `-Ztime-passes` on jxl-encoder: LLVM_thinlto
+5.1s + LLVM_passes 3.1s ≈ 63% of crate wall — codegen-units=64 tested
+(−2s build, ~1-3% runtime regression, rejected); crate split is the
+only remaining structural lever.
