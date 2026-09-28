@@ -1,0 +1,33 @@
+[package]
+name = "jxl-entropy"
+description = "JPEG XL entropy-coding primitives: bit writer, ANS/Huffman writers, context maps, LZ77 match finding, histogram clustering"
+readme = "README.md"
+documentation = "https://docs.rs/jxl-entropy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+keywords = ["jpeg-xl", "ans", "huffman", "lz77", "entropy-coding"]
+categories = ["multimedia::encoding", "compression"]
+
+[dependencies]
+enough = "0.4.3"
+hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
+thiserror = { version = "2.0", default-features = false }
+once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
+jxl_simd = { package = "jxl-encoder-simd", version = "0.4.0", path = "../jxl-encoder-simd", default-features = false }
+archmage = { version = "0.9.27", default-features = false }
+rayon = { version = "1.10", optional = true }
+
+[features]
+default = ["std"]
+std = ["thiserror/std", "jxl_simd/std"]
+parallel = ["dep:rayon", "std"]
+debug-rect = []
+debug-tokens = []
+trace-bitstream = ["std"]
+jpeg-reencoding = []
+profile-phases = []

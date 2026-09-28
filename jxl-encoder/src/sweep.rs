@@ -28,10 +28,10 @@
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
-use core::hash::{Hash, Hasher};
 
 #[cfg(feature = "__expert")]
 use crate::api::EncoderMode;
+#[allow(unused_imports)] // used under __expert-gated code below
 use crate::effort::EffortProfile;
 #[cfg(feature = "__expert")]
 use crate::effort::{LosslessInternalParams, LossyInternalParams};
@@ -40,185 +40,9 @@ use crate::effort::{LosslessInternalParams, LossyInternalParams};
 /// bytes ourselves (f32 via bit pattern, enums via discriminant) so the
 /// fingerprint is stable and total-order-free — only equality matters for
 /// dedup.
-struct Fnv1a(u64);
-
-impl Fnv1a {
-    fn new() -> Self {
-        Fnv1a(0xcbf2_9ce4_8422_2325)
-    }
-}
-
-impl Hasher for Fnv1a {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 ^= b as u64;
-            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-}
-
-impl EffortProfile {
-    /// Stable content fingerprint over **every** field — `f32` by bit
-    /// pattern, enums by discriminant — for deduping resolved configs in a
-    /// sweep. Two profiles with equal fingerprints encode identically
-    /// (modulo the image); collision probability is negligible for the
-    /// candidate counts a sweep produces.
-    ///
-    /// Requires the `__expert` cargo feature. (The crate-internal
-    /// [`Self::fingerprint_impl`] is always compiled — the e11+
-    /// TectonicPlate schedule dedups with it.)
-    #[cfg(feature = "__expert")]
-    #[must_use]
-    pub fn fingerprint(&self) -> u64 {
-        self.fingerprint_impl()
-    }
-
-    /// Always-compiled body of [`Self::fingerprint`] (see there).
-    #[must_use]
-    pub(crate) fn fingerprint_impl(&self) -> u64 {
-        let mut h = Fnv1a::new();
-
-        // All bool fields (35).
-        [
-            self.use_ans,
-            self.optimize_codes,
-            self.custom_orders,
-            self.gaborish,
-            self.pixel_domain_loss,
-            self.error_diffusion,
-            self.patches,
-            self.tree_learning,
-            self.lz77,
-            self.ac_strategy_enabled,
-            self.try_dct16,
-            self.try_dct32,
-            self.try_dct64,
-            self.try_dct4x8_afv,
-            self.non_aligned_eval,
-            self.chromacity_adjustment,
-            self.enhanced_clustering_vardct,
-            self.optimize_uint_configs_vardct,
-            self.epf_dynamic_sharpness,
-            self.cfl_two_pass,
-            self.cfl_newton,
-            self.cfl_newton_libjxl_parity,
-            self.cfl_newton_libjxl_math_with_ls_warm_start,
-            self.cfl_pass1_screenshot_x0_start,
-            self.cfl_pass2_ls_at_low_effort,
-            self.cfl_zero_for_search,
-            self.use_adaptive_quant,
-            self.adjust_quant_ac,
-            self.aqba_max_over_channels,
-            self.ma_root_split_2ndg,
-            self.bcm_qf_zero_based,
-            self.use_libjxl_wp_dc_quant,
-            self.patch_ref_tree_learning,
-            self.use_streaming_dedup,
-            self.gather_dedup,
-            self.gather_dedup_phase3,
-            self.tree_parallel_small_image_fallback,
-            self.lloyd_max_buckets,
-        ]
-        .hash(&mut h);
-
-        // u8 (8), u16 (1), u32 (3), usize (3).
-        [
-            self.effort,
-            self.fine_grained_step,
-            self.extra_dc_precision,
-            self.nb_rcts_to_try,
-            self.wp_num_param_sets,
-            self.tree_num_properties,
-            self.tree_learn_seeds,
-            self.lossy_search_seeds,
-        ]
-        .hash(&mut h);
-        self.tree_max_buckets.hash(&mut h);
-        [
-            self.butteraugli_iters,
-            self.tree_parallel_max_depth,
-            self.tree_max_samples_fixed,
-        ]
-        .hash(&mut h);
-        [
-            self.cfl_newton_max_iters,
-            self.tree_parallel_floor,
-            self.tree_parallel_root_threshold,
-        ]
-        .hash(&mut h);
-
-        // Every f32 by bit pattern: 10 scalar + 4+4 thresholds + 5×3 cost
-        // tuples (k8x8..k4x4) + 12 entropy_mul_table.
-        let e = &self.entropy_mul_table;
-        [
-            self.cfl_newton_eps,
-            self.initial_q_numerator,
-            self.k_favor_2x2,
-            self.k_avoid_transforms_base,
-            self.k_info_loss_mul_base,
-            self.k_zeros_mul_base,
-            self.k_cost_delta_base,
-            self.k_ac_quant,
-            self.tree_threshold_base,
-            self.tree_sample_fraction,
-            self.fixed_thresholds_y[0],
-            self.fixed_thresholds_y[1],
-            self.fixed_thresholds_y[2],
-            self.fixed_thresholds_y[3],
-            self.adjust_thresholds[0],
-            self.adjust_thresholds[1],
-            self.adjust_thresholds[2],
-            self.adjust_thresholds[3],
-            self.k8x8.0,
-            self.k8x8.1,
-            self.k8x8.2,
-            self.k16x8.0,
-            self.k16x8.1,
-            self.k16x8.2,
-            self.k16x16.0,
-            self.k16x16.1,
-            self.k16x16.2,
-            self.k4x8.0,
-            self.k4x8.1,
-            self.k4x8.2,
-            self.k4x4.0,
-            self.k4x4.1,
-            self.k4x4.2,
-            e.dct8,
-            e.dct4x4,
-            e.dct4x8,
-            e.identity,
-            e.dct2x2,
-            e.afv,
-            e.dct16x8,
-            e.dct16x16,
-            e.dct16x32,
-            e.dct32x32,
-            e.dct64x32,
-            e.dct64x64,
-        ]
-        .map(f32::to_bits)
-        .hash(&mut h);
-        // W45-RECON part 6: `channel_loss_mul` ([f64; 3]) — hash by bit
-        // pattern so tables differing only in the loss multipliers
-        // don't collide in sweep dedup.
-        e.channel_loss_mul.map(f64::to_bits).hash(&mut h);
-
-        // Enums via discriminant / inner tag.
-        core::mem::discriminant(&self.lz77_method).hash(&mut h);
-        core::mem::discriminant(&self.ans_histogram_strategy_vardct).hash(&mut h);
-        core::mem::discriminant(&self.forced_rct).hash(&mut h);
-        if let Some(rct) = &self.forced_rct {
-            // RctType is a `struct RctType(pub u8)` newtype — hash the tag.
-            rct.0.hash(&mut h);
-        }
-
-        h.finish()
-    }
-}
+// `Fnv1a` moved to jxl-modular/src/effort.rs with the EffortProfile impl (crate split).
+// impl Hasher for Fnv1a moved with it.
+// `impl EffortProfile { fingerprint* }` moved to jxl-modular/src/effort.rs (orphan rule after crate split).
 
 #[cfg(feature = "__expert")]
 /// One unique resolved lossy config from a sweep.

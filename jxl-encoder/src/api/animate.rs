@@ -978,6 +978,7 @@ pub(crate) fn encode_animation_lossy(
             PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
                 return Err(at!(EncodeError::UnsupportedPixelLayout(layout)));
             }
+            _ => unreachable!("non-exhaustive PixelLayout variant"),
         };
 
         // Mirror of the still-image lossy pre-passes at api.rs:3776-3807.

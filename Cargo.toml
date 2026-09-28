@@ -4,6 +4,7 @@
 # binary 153MB -> 56MB). Full debuginfo remains available via
 # CARGO_PROFILE_RELEASE_DEBUG=true for debugger sessions.
 debug = "line-tables-only"
+lto = "thin"
 
 [profile.bench]
 debug = "line-tables-only"
@@ -17,6 +18,8 @@ opt-level = 2
 [workspace]
 members = [
     "jxl-encoder",
+    "jxl-entropy",
+    "jxl-encoder-modular",
     "jxl-encoder-cli",
     "jxl-encoder-macros",
     "jxl-encoder-simd",

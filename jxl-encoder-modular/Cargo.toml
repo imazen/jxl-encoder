@@ -1,0 +1,61 @@
+[package]
+name = "jxl-encoder-modular"
+description = "JPEG XL modular-mode (lossless) encoder: channel transforms, MA tree learning, sectioned framing, headers"
+readme = "README.md"
+documentation = "https://docs.rs/jxl-encoder-modular"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+keywords = ["jpeg-xl", "lossless", "modular", "image"]
+categories = ["multimedia::encoding", "multimedia::images"]
+
+[dependencies]
+enough = "0.4.3"
+hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
+thiserror = { version = "2.0", default-features = false }
+once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
+bytemuck = { version = "1.25", features = ["derive"] }
+whereat = { version = "0.1.5" }
+jxl_simd = { package = "jxl-encoder-simd", version = "0.4.0", path = "../jxl-encoder-simd", default-features = false }
+jxl_entropy = { package = "jxl-entropy", version = "0.4.0", path = "../jxl-entropy", default-features = false }
+jxl_encoder_macros = { package = "jxl-encoder-macros", version = "0.4.0", path = "../jxl-encoder-macros" }
+archmage = { version = "0.9.27", default-features = false }
+rayon = { version = "1.10", optional = true }
+butteraugli = { version = "0.9.4", optional = true }
+
+[features]
+default = ["std"]
+std = ["thiserror/std", "jxl_simd/std", "jxl_entropy/std"]
+parallel = ["dep:rayon", "std", "jxl_entropy/parallel"]
+debug-rect = ["jxl_entropy/debug-rect"]
+debug-tokens = ["jxl_entropy/debug-tokens"]
+trace-bitstream = ["jxl_entropy/trace-bitstream"]
+jpeg-reencoding = ["jxl_entropy/jpeg-reencoding"]
+profile-phases = ["jxl_entropy/profile-phases"]
+__expert = []
+_dev = []
+butteraugli-loop = ["dep:butteraugli"]
+ssim2-loop = []
+zensim-loop = []
+parallel-tree-learning = ["parallel"]
+__internals = []
+__pre_quantized = []
+__env_var_diagnostics = []
+corpus-tests = []
+
+[dev-dependencies]
+# Tests inside moved modules do full-encoder round-trips
+# (LosslessConfig::new().encode_*); dev-dep cycles are legal.
+# Path-only on purpose: cargo strips path-only dev-deps at publish time,
+# which avoids a publish-order deadlock (jxl-encoder normally depends on
+# this crate, this crate's tests depend back).
+jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", features = ["std", "parallel", "butteraugli-loop"] }
+jxl-oxide = "0.12.6"
+jxl-image = "0.13.0"
+jxl-oxide-common = "1.0.0"
+jxl-color = "0.11.0"
+image = "0.25"

@@ -57,9 +57,8 @@ pub(crate) mod chroma_from_luma;
 /// docs for the public API.
 #[cfg(feature = "chroma-subsampling")]
 pub mod chroma_subsampling;
-pub(crate) mod cluster;
 pub(crate) mod coeff_order;
-pub(crate) mod common;
+pub(crate) use jxl_modular::common;
 pub(crate) mod context_tree;
 #[cfg(feature = "butteraugli-loop")]
 pub(crate) mod perceptual_backend;
@@ -115,7 +114,6 @@ pub(crate) mod dc_tree_learn;
 // consumers go through the doc-hidden `crate::__gpu` /
 // `crate::__test_exports` seams.
 pub(crate) mod dct;
-pub(crate) mod debug_log;
 #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
 pub(crate) mod zensim_backend;
 #[cfg(any(feature = "zensim-loop", feature = "zensim-loop-gpu"))]
@@ -127,7 +125,7 @@ pub(crate) mod zensim_targets;
 // retained for future tuning even though only the bounds field is
 // consumed today.
 #[allow(dead_code)]
-pub(crate) mod dot_detection;
+pub(crate) use jxl_modular::dot_detection;
 pub(crate) mod encoder;
 pub(crate) mod entropy_code;
 pub(crate) mod epf;
@@ -153,7 +151,7 @@ pub mod hdr_metrics;
 pub(crate) mod hdr_vdp2_lite;
 pub(crate) mod lf_frame;
 pub(crate) mod noise;
-pub(crate) mod patches;
+pub(crate) use jxl_modular::patches;
 #[cfg(any(feature = "rate-control", feature = "__pre_quantized"))]
 pub(crate) mod precomputed;
 #[cfg(feature = "rate-control")]

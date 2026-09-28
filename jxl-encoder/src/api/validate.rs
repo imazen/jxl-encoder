@@ -4,6 +4,18 @@
 //! `EncodeRequest` and the streaming / animation entry points in `api.rs`.
 
 use super::*;
+#[cfg(any(
+    feature = "butteraugli-loop",
+    feature = "ssim2-loop",
+    feature = "zensim-loop"
+))]
+use crate::validation::check_iter;
+use crate::validation::{DISTANCE_MAX, ValidationError, check_effort};
+#[cfg(feature = "__expert")]
+use crate::validation::{
+    FINE_GRAINED_STEP_RANGE, NB_RCTS_RANGE, TREE_NUM_PROPERTIES_RANGE, TREE_SAMPLE_FRACTION_RANGE,
+    WP_NUM_PARAM_SETS_RANGE, validate_lossless_profile_overrides, validate_lossy_profile_overrides,
+};
 
 /// JXL spec maximum dimension (2^30) per axis.
 ///
@@ -285,4 +297,119 @@ pub(crate) fn validate_dims(width: u32, height: u32) -> Result<()> {
         }));
     }
     Ok(())
+}
+
+// ── Public validate() impls ─────────────────────────────────────────────
+
+impl crate::api::LossyConfig {
+    /// Validate that every parameter on this config is within the encoder's
+    /// supported range.
+    ///
+    /// `LossyConfig` setters intentionally accept and clamp out-of-range
+    /// values for backwards-compat — `with_distance(50.0).with_effort(15)`
+    /// returns a config the encoder happily runs (clamped to 25.0 / 10).
+    /// Batch-job callers who want a fail-fast escape can call this method
+    /// before invoking the encoder.
+    ///
+    /// Returns the **first** violation encountered; ordering of the checks
+    /// is an implementation detail.
+    ///
+    /// When `__expert` is enabled and a `profile_override` has been applied
+    /// via [`Self::with_internal_params`], the resolved profile's fields are
+    /// also checked against the same ranges
+    /// [`crate::effort::LossyInternalParams::validate`] would enforce.
+    pub fn validate(&self) -> core::result::Result<(), ValidationError> {
+        let d = self.distance();
+        if !d.is_finite() {
+            return Err(ValidationError::DistanceNotFinite { value: d });
+        }
+        // Lossy distance must be > 0; 0.0 means lossless and is rejected by
+        // `Quality::to_distance` already, but `LossyConfig::new` accepts any
+        // f32. Use an open lower bound by checking explicitly.
+        if d <= 0.0 || d > DISTANCE_MAX {
+            return Err(ValidationError::DistanceOutOfRange {
+                value: d,
+                valid: 0.0..=DISTANCE_MAX,
+            });
+        }
+        check_effort(self.effort())?;
+
+        // force_strategy indexes the raw-strategy coverage tables directly;
+        // an out-of-range code would panic in `AcStrategyMap::force_strategy`
+        // (`COVERED_X[raw]` on a NUM_RAW_STRATEGIES-long table).
+        if let Some(s) = self.force_strategy()
+            && (s as usize) >= crate::vardct::ac_strategy::NUM_RAW_STRATEGIES
+        {
+            return Err(ValidationError::ForceStrategyOutOfRange {
+                value: s,
+                max_exclusive: crate::vardct::ac_strategy::NUM_RAW_STRATEGIES as u8,
+            });
+        }
+
+        // Quality-loop iter counts and exclusivity.
+        #[cfg(feature = "butteraugli-loop")]
+        let bi = self.butteraugli_iters();
+        #[cfg(not(feature = "butteraugli-loop"))]
+        let bi = 0u32;
+        #[cfg(feature = "butteraugli-loop")]
+        check_iter("butteraugli_iters", bi)?;
+
+        #[cfg(feature = "ssim2-loop")]
+        let si = self.ssim2_iters_value();
+        #[cfg(not(feature = "ssim2-loop"))]
+        let si = 0u32;
+        #[cfg(feature = "ssim2-loop")]
+        check_iter("ssim2_iters", si)?;
+
+        #[cfg(feature = "zensim-loop")]
+        let zi = self.zensim_iters_value();
+        #[cfg(not(feature = "zensim-loop"))]
+        let zi = 0u32;
+        #[cfg(feature = "zensim-loop")]
+        check_iter("zensim_iters", zi)?;
+
+        // Mutual exclusivity. The encoder dispatches to a single quality
+        // loop per encode; stacking two is not supported.
+        let active: &[(&'static str, u32)] = &[
+            ("butteraugli_iters", bi),
+            ("ssim2_iters", si),
+            ("zensim_iters", zi),
+        ];
+        let mut first_active: Option<&'static str> = None;
+        for &(name, val) in active {
+            if val > 0 {
+                if let Some(prev) = first_active {
+                    return Err(ValidationError::QualityLoopMutuallyExclusive {
+                        first: prev,
+                        second: name,
+                    });
+                }
+                first_active = Some(name);
+            }
+        }
+
+        // Validate the resolved internal-params profile if one was set.
+        #[cfg(feature = "__expert")]
+        if let Some(profile) = self.overridden_profile() {
+            validate_lossy_profile_overrides(&profile)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl crate::api::LosslessConfig {
+    /// Validate that every parameter on this config is within the encoder's
+    /// supported range.
+    ///
+    /// See [`crate::api::LossyConfig::validate`] for the contract.
+    pub fn validate(&self) -> core::result::Result<(), ValidationError> {
+        check_effort(self.effort())?;
+
+        #[cfg(feature = "__expert")]
+        if let Some(profile) = self.overridden_profile() {
+            validate_lossless_profile_overrides(&profile)?;
+        }
+        Ok(())
+    }
 }

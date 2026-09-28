@@ -463,11 +463,12 @@ fn expand(input: StrategyDefInput) -> TokenStream2 {
         }
     });
 
-    // ── field declarations (Resolved struct: pub(crate) fields) ────
+    // ── field declarations (Resolved struct: pub fields — the struct
+    // lives in jxl-modular and is read cross-crate by jxl-encoder) ────
     let resolved_fields = gates.iter().map(|g| {
         let GateDef { name, ty, .. } = g;
         quote! {
-            pub(crate) #name: #ty,
+            pub #name: #ty,
         }
     });
 
@@ -628,10 +629,12 @@ fn expand(input: StrategyDefInput) -> TokenStream2 {
             }
         }
 
-        // Crate-internal resolved-improvements struct.
+        // Resolved-improvements struct — `pub` (not `pub(crate)`): the
+        // type is generated inside `jxl-modular` (gate_registry) and read
+        // by `jxl-encoder` across the crate boundary.
         #[allow(dead_code)]
         #[derive(Clone, Debug, PartialEq)]
-        pub(crate) struct #resolved_struct {
+        pub struct #resolved_struct {
             #(#resolved_fields)*
         }
 

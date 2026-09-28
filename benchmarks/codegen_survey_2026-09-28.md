@@ -418,3 +418,49 @@ attribution intact). rustc `-Ztime-passes` on jxl-encoder: LLVM_thinlto
 5.1s + LLVM_passes 3.1s ≈ 63% of crate wall — codegen-units=64 tested
 (−2s build, ~1-3% runtime regression, rejected); crate split is the
 only remaining structural lever.
+
+## 2026-09-29 PM6 — crate split for cold-build time (landed in worktree)
+
+Goal was build time, not runtime; worth documenting since it changed
+the module→crate map.
+
+- `jxl-entropy`: bit_writer, budget, error, parallel, debug_log,
+  trace, clock, profile_phases, tiny_cluster + all of entropy_coding/.
+- `jxl-encoder-modular`: modular/, headers/, effort, f16, validation,
+  debug_rect, heuristics, gate_registry, api/strategy.rs,
+  api/pixel_layout.rs, vardct/{common,dot_detection,patches}.rs,
+  plus api_bits.rs (SectionedTrees, cast_pixel_lanes) and consts.rs
+  (CHANNEL_MUL*, JXL_SIGNATURE).
+- `jxl-encoder` keeps api, vardct, color, jpeg, tuning, sweep,
+  container, etc. and re-exports the moved modules so `crate::X`
+  paths are unchanged.
+- Boundary mechanics: `pub(crate)`/`pub(super)` → `pub` inside the
+  leaf crates (internal API, not stable surface); `PixelLayout` keeps
+  `#[non_exhaustive]` (main-side matches gained `_ =>` catch-alls);
+  `Lossy/LosslessInternalParams` dropped `#[non_exhaustive]` (struct
+  literals cross the boundary); `strategy_def!` resolved struct is
+  now `pub`; `MemoryBudget::new/unbounded` ungated from cfg(test);
+  orphan-rule impls (`validate`, `fingerprint`) moved to the type's
+  crate; feature-gated test-only hooks (`forced_wp_tests`,
+  `lz77_keep_best_tests`, `wp_observe`) split into crate-side
+  observer + main-crate test.
+
+Feature plumbing forwarded: std, parallel, parallel-tree-learning,
+butteraugli-loop, ssim2-loop, zensim-loop, jpeg-reencoding,
+trace-bitstream, debug-tokens, debug-rect, __expert, __internals,
+__pre_quantized, __env_var_diagnostics, corpus-tests, _dev.
+
+Verification: 154 jxl-entropy + 455 jxl-encoder-modular + 1022
+jxl-encoder lib tests + 507 `it` + 63 hash locks all green;
+`--no-default-features`, `__expert`, `corpus-tests`,
+`butteraugli-loop`, `jpeg-reencoding` builds all clean; byte-identical
+on the sweep corpus (lossless e9 + d1e9 + d3e7).
+
+Cold build (`cjxl-rs`, `-j8`): **26.9s → 19.6s (−27%)** —
+line-tables-only landed earlier (−16%), crate split −~12% more,
+`lto = "thin"` added to keep cross-crate inlining (restores the
+~+5-7% lossless-e9 regression seen under thin-local codegen).
+Crate walls: jxl-encoder 19.1s→11.3s; jxl-encoder-modular 7.3s,
+jxl-entropy 2.6s run parallel.
+Runtime: byte-identical + parity within noise (frymire/big_mix/wiki
+d1e9 + lossless e9, 2 reps).

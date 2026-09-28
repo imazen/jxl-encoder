@@ -1,0 +1,387 @@
+// Copyright (c) Imazen LLC.
+// Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
+//
+//! Fail-fast validation for public `Config` types.
+//!
+//! Existing encode paths keep clamping out-of-range values (the historical
+//! behaviour callers may rely on). Batch-job callers who would rather see
+//! an error than have their input silently massaged can call
+//! [`crate::api::LossyConfig::validate`] /
+//! [`crate::api::LosslessConfig::validate`] (and, with the `__expert` cargo
+//! feature, [`crate::effort::LossyInternalParams::validate`] /
+//! [`crate::effort::LosslessInternalParams::validate`]) before invoking
+//! the encoder.
+//!
+//! Validation is conservative: ranges either come from libjxl reference
+//! caps (verified against the consuming code path under
+//! `src/vardct/`, `src/modular/`, `src/effort.rs`) or are wide enough to
+//! accept anything the encoder will actually accept without panicking.
+//! Nonsensical-but-safe values (e.g. `tree_max_buckets = u16::MAX`) are
+//! left to the encoder to clamp.
+
+use core::ops::RangeInclusive;
+
+/// Errors produced by `validate()` on the public config types.
+///
+/// `#[non_exhaustive]` so new variants can land additively as we discover
+/// further invariants worth surfacing.
+#[non_exhaustive]
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ValidationError {
+    // ── Lossy / Lossless shared knobs ──────────────────────────────────
+    /// Butteraugli distance is outside the libjxl-supported range.
+    /// libjxl rejects distances `<= 0.0` (for lossy) and clamps the upper
+    /// end to `25.0`. `0.0` is mathematically lossless and is **not**
+    /// accepted on `LossyConfig`; use `LosslessConfig` instead.
+    #[error("distance {value} out of valid range {valid:?}")]
+    DistanceOutOfRange {
+        value: f32,
+        valid: RangeInclusive<f32>,
+    },
+    /// Distance was non-finite (NaN or infinity).
+    #[error("distance must be finite, got {value}")]
+    DistanceNotFinite { value: f32 },
+    /// Effort level outside `1..=13`.
+    /// (`EffortProfile::lossy` / `lossless` clamp internally; this surfaces
+    /// the violation up front instead of silently coercing.)
+    ///
+    /// `1..=9` matches libjxl's kFalcon..=kTortoise ladder; e10 aligns with
+    /// libjxl e10 (kGlacier) as a superset. `11..=13` are our extensions for
+    /// longer search budgets (RFC#45 pick #1, renumbered +1 by the
+    /// 2026-08-29 ladder shift, issue #45); the bitstream remains 100%
+    /// spec-valid.
+    #[error("effort {value} out of valid range {valid:?}")]
+    EffortOutOfRange {
+        value: u8,
+        valid: RangeInclusive<u8>,
+    },
+    /// `LossyConfig::with_force_strategy` was given a raw strategy code
+    /// outside the implemented table. Valid codes are
+    /// `0..NUM_RAW_STRATEGIES` (see [`crate::vardct::ac_strategy`]); larger
+    /// values would index past the per-strategy coverage tables and panic.
+    #[error("force_strategy {value} out of range: valid raw strategy codes are 0..{max_exclusive}")]
+    ForceStrategyOutOfRange { value: u8, max_exclusive: u8 },
+
+    // ── LossyConfig (quality loops) ────────────────────────────────────
+    /// A quality-loop iteration count exceeds the encoder's reasonable cap.
+    /// libjxl uses up to 4 butteraugli iterations at kTortoise; we accept up
+    /// to 16 across all loops to leave headroom for the tuning harness.
+    #[error("{name} iter count {value} out of valid range {valid:?}")]
+    IterCountOutOfRange {
+        name: &'static str,
+        value: u32,
+        valid: RangeInclusive<u32>,
+    },
+    /// Two or more quality loops are simultaneously requested. The lossy
+    /// encoder runs at most one quality loop per encode (butteraugli, ssim2,
+    /// or zensim) — picking which is the caller's choice. Stacking is not a
+    /// supported configuration.
+    #[error("mutually exclusive quality loops: {first} and {second} both have nonzero iter count")]
+    QualityLoopMutuallyExclusive {
+        first: &'static str,
+        second: &'static str,
+    },
+
+    // ── LossyInternalParams numeric ranges ─────────────────────────────
+    /// `fine_grained_step` outside `1..=8`. `0` would cause the AC strategy
+    /// search loop's `step_by(0)` to panic.
+    #[error("fine_grained_step {value} out of valid range {valid:?}")]
+    FineGrainedStepOutOfRange {
+        value: u8,
+        valid: RangeInclusive<u8>,
+    },
+    /// `k_info_loss_mul_base` is non-finite or non-positive. The encoder
+    /// multiplies pixel-domain error terms by this; non-positive values
+    /// invert the cost model.
+    #[error("k_info_loss_mul_base {value} must be finite and > 0.0")]
+    KInfoLossMulBaseInvalid { value: f32 },
+    /// `k_ac_quant` is non-finite or non-positive. Used as the
+    /// quantization-cost constant when materializing the initial quant field;
+    /// non-positive values produce a zero/negative initial quant.
+    #[error("k_ac_quant {value} must be finite and > 0.0")]
+    KAcQuantInvalid { value: f32 },
+
+    // ── LosslessInternalParams numeric ranges ──────────────────────────
+    /// `nb_rcts_to_try` exceeds libjxl's documented kTortoise schedule (19).
+    #[error("nb_rcts_to_try {value} out of valid range {valid:?}")]
+    NbRctsToTryOutOfRange {
+        value: u8,
+        valid: RangeInclusive<u8>,
+    },
+    /// `wp_num_param_sets` exceeds the maximum number of WP modes the
+    /// encoder iterates over (5).
+    #[error("wp_num_param_sets {value} out of valid range {valid:?}")]
+    WpNumParamSetsOutOfRange {
+        value: u8,
+        valid: RangeInclusive<u8>,
+    },
+    /// An explicitly selected weighted-predictor mode is outside 0..=4.
+    #[error("forced_wp_mode {value} out of valid range 0..=4")]
+    ForcedWpModeOutOfRange { value: u8 },
+    /// `tree_max_buckets` is zero — the histogram quantizer needs at least
+    /// one bucket per property.
+    #[error("tree_max_buckets must be > 0, got 0")]
+    TreeMaxBucketsZero,
+    /// `tree_num_properties` exceeds the property-order length (16, the size
+    /// of `PROP_ORDER_NO_SQUEEZE` / `PROP_ORDER_SQUEEZE` in
+    /// `src/modular/tree_learn.rs`).
+    #[error("tree_num_properties {value} out of valid range {valid:?}")]
+    TreeNumPropertiesOutOfRange {
+        value: u8,
+        valid: RangeInclusive<u8>,
+    },
+    /// `tree_threshold_base` is non-finite or negative. libjxl's formula is
+    /// `75 + 14 * speed_tier`; negative thresholds would accept every split.
+    #[error("tree_threshold_base {value} must be finite and >= 0.0")]
+    TreeThresholdBaseInvalid { value: f32 },
+    /// `tree_sample_fraction` is non-finite or outside `0.0..=1.0`. It is a
+    /// pixel-fraction sampler ratio.
+    #[error("tree_sample_fraction {value} out of valid range {valid:?}")]
+    TreeSampleFractionOutOfRange {
+        value: f32,
+        valid: RangeInclusive<f32>,
+    },
+}
+
+// ── Range constants ────────────────────────────────────────────────────
+
+/// libjxl's documented butteraugli distance range.
+/// `cjxl --distance` accepts `[0.0, 25.0]`; we reject `0.0` for lossy and
+/// require lossless instead, so the lossy validator uses an open lower bound.
+pub const DISTANCE_MAX: f32 = 25.0;
+/// Effort range. `1..=9` matches libjxl's kFalcon..=kTortoise ladder; e10
+/// aligns with libjxl e10 (kGlacier) as a superset; `11..=13` are our
+/// extensions for longer search budgets (RFC#45 pick #1, renumbered +1 by
+/// the 2026-08-29 ladder shift, issue #45, so our e10 matches libjxl's).
+/// They produce 100% spec-valid bitstreams — only encoder-side search time
+/// changes.
+pub const EFFORT_RANGE: RangeInclusive<u8> = 1..=13;
+/// Cap on quality-loop iter counts. libjxl's kTortoise butteraugli runs 4
+/// passes (kGlacier keeps that cap); RFC#45 chunk 1 extended to 8 and 16
+/// on the tiers past libjxl, and chunk 2 to 32 on the top tier, keeping a
+/// power-of-two ladder (4 → 8 → 16 → 32) per extended step (e11/e12/e13
+/// post-shift).
+///
+/// 32 leaves room for sweep harnesses without inviting absurd values; the
+/// butteraugli loop has its own per-iteration convergence guards
+/// (`butteraugli_loop.rs`) that early-exit when the score stops improving,
+/// so the cap is a worst-case CPU bound, not a typical iter count.
+///
+/// Always defined (not feature-gated) so the public `api::MAX_QUANT_LOOP_ITERS`
+/// and `Limits::DEFAULT_MAX_QUANT_LOOP_ITERS` re-exports are stable across
+/// feature combinations — callers shouldn't have to enable a perceptual-loop
+/// feature just to read the cap.
+pub const ITER_MAX: u32 = 32;
+#[cfg(feature = "__expert")]
+pub const FINE_GRAINED_STEP_RANGE: RangeInclusive<u8> = 1..=8;
+/// libjxl's kTortoise `nb_rcts_to_try` schedule peaks at 19.
+#[cfg(feature = "__expert")]
+pub const NB_RCTS_RANGE: RangeInclusive<u8> = 0..=19;
+/// `find_best_wp_params` iterates up to 5 modes (`mode 0..5`).
+#[cfg(feature = "__expert")]
+pub const WP_NUM_PARAM_SETS_RANGE: RangeInclusive<u8> = 0..=5;
+/// `PROP_ORDER_NO_SQUEEZE` / `PROP_ORDER_SQUEEZE` are 16 entries; values
+/// above are clamped by `from_profile_impl`. A `debug_assert!` in
+/// `from_profile_impl` fires if a misconfigured sweep harness pushes a
+/// value past the bound; release builds still clamp (as a safety net so
+/// the encoder never panics on out-of-bounds slice access).
+#[cfg(feature = "__expert")]
+pub const TREE_NUM_PROPERTIES_RANGE: RangeInclusive<u8> = 0..=16;
+#[cfg(feature = "__expert")]
+pub const TREE_SAMPLE_FRACTION_RANGE: RangeInclusive<f32> = 0.0..=1.0;
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn check_effort(effort: u8) -> Result<(), ValidationError> {
+    if EFFORT_RANGE.contains(&effort) {
+        Ok(())
+    } else {
+        Err(ValidationError::EffortOutOfRange {
+            value: effort,
+            valid: EFFORT_RANGE,
+        })
+    }
+}
+
+#[cfg(any(
+    feature = "butteraugli-loop",
+    feature = "ssim2-loop",
+    feature = "zensim-loop"
+))]
+#[inline]
+pub fn check_iter(name: &'static str, value: u32) -> Result<(), ValidationError> {
+    let valid = 0..=ITER_MAX;
+    if valid.contains(&value) {
+        Ok(())
+    } else {
+        Err(ValidationError::IterCountOutOfRange { name, value, valid })
+    }
+}
+
+/// Validate the per-knob ranges of a resolved [`crate::effort::EffortProfile`]
+/// for the fields that [`crate::effort::LossyInternalParams`] exposes.
+#[cfg(feature = "__expert")]
+pub fn validate_lossy_profile_overrides(
+    profile: &crate::effort::EffortProfile,
+) -> Result<(), ValidationError> {
+    if !FINE_GRAINED_STEP_RANGE.contains(&profile.fine_grained_step) {
+        return Err(ValidationError::FineGrainedStepOutOfRange {
+            value: profile.fine_grained_step,
+            valid: FINE_GRAINED_STEP_RANGE,
+        });
+    }
+    if !profile.k_info_loss_mul_base.is_finite() || profile.k_info_loss_mul_base <= 0.0 {
+        return Err(ValidationError::KInfoLossMulBaseInvalid {
+            value: profile.k_info_loss_mul_base,
+        });
+    }
+    if !profile.k_ac_quant.is_finite() || profile.k_ac_quant <= 0.0 {
+        return Err(ValidationError::KAcQuantInvalid {
+            value: profile.k_ac_quant,
+        });
+    }
+    Ok(())
+}
+
+/// Validate the per-knob ranges of a resolved [`crate::effort::EffortProfile`]
+/// for the fields that [`crate::effort::LosslessInternalParams`] exposes.
+#[cfg(feature = "__expert")]
+pub fn validate_lossless_profile_overrides(
+    profile: &crate::effort::EffortProfile,
+) -> Result<(), ValidationError> {
+    if !NB_RCTS_RANGE.contains(&profile.nb_rcts_to_try) {
+        return Err(ValidationError::NbRctsToTryOutOfRange {
+            value: profile.nb_rcts_to_try,
+            valid: NB_RCTS_RANGE,
+        });
+    }
+    if !WP_NUM_PARAM_SETS_RANGE.contains(&profile.wp_num_param_sets) {
+        return Err(ValidationError::WpNumParamSetsOutOfRange {
+            value: profile.wp_num_param_sets,
+            valid: WP_NUM_PARAM_SETS_RANGE,
+        });
+    }
+    if let Some(value) = profile.forced_wp_mode
+        && value > 4
+    {
+        return Err(ValidationError::ForcedWpModeOutOfRange { value });
+    }
+    if profile.tree_max_buckets == 0 {
+        return Err(ValidationError::TreeMaxBucketsZero);
+    }
+    if !TREE_NUM_PROPERTIES_RANGE.contains(&profile.tree_num_properties) {
+        return Err(ValidationError::TreeNumPropertiesOutOfRange {
+            value: profile.tree_num_properties,
+            valid: TREE_NUM_PROPERTIES_RANGE,
+        });
+    }
+    if !profile.tree_threshold_base.is_finite() || profile.tree_threshold_base < 0.0 {
+        return Err(ValidationError::TreeThresholdBaseInvalid {
+            value: profile.tree_threshold_base,
+        });
+    }
+    if !profile.tree_sample_fraction.is_finite()
+        || !TREE_SAMPLE_FRACTION_RANGE.contains(&profile.tree_sample_fraction)
+    {
+        return Err(ValidationError::TreeSampleFractionOutOfRange {
+            value: profile.tree_sample_fraction,
+            valid: TREE_SAMPLE_FRACTION_RANGE,
+        });
+    }
+    // tree_max_samples_fixed: any u32 is fine (0 = "use fraction", any other
+    // value is a hard sample cap).
+    Ok(())
+}
+
+#[cfg(feature = "__expert")]
+impl crate::effort::LossyInternalParams {
+    /// Validate every `Some(_)` field against the same ranges
+    /// [`crate::api::LossyConfig::validate`] enforces on the resolved
+    /// profile. Use this to fail fast on a freshly-constructed
+    /// `LossyInternalParams` before passing it to
+    /// [`crate::api::LossyConfig::with_internal_params`].
+    pub fn validate(&self) -> core::result::Result<(), ValidationError> {
+        if let Some(step) = self.fine_grained_step
+            && !FINE_GRAINED_STEP_RANGE.contains(&step)
+        {
+            return Err(ValidationError::FineGrainedStepOutOfRange {
+                value: step,
+                valid: FINE_GRAINED_STEP_RANGE,
+            });
+        }
+        if let Some(v) = self.k_info_loss_mul_base
+            && (!v.is_finite() || v <= 0.0)
+        {
+            return Err(ValidationError::KInfoLossMulBaseInvalid { value: v });
+        }
+        if let Some(v) = self.k_ac_quant
+            && (!v.is_finite() || v <= 0.0)
+        {
+            return Err(ValidationError::KAcQuantInvalid { value: v });
+        }
+        // try_dct16/32/64/4x8_afv, cfl_two_pass, chromacity_adjustment,
+        // patch_ref_tree_learning, non_aligned_eval,
+        // enhanced_clustering_vardct: all bool — well-formed by typing.
+        // entropy_mul_table: well-formed by constructor (well-formed enum
+        // variants only); no field-level checks beyond what the type itself
+        // enforces.
+        Ok(())
+    }
+}
+
+#[cfg(feature = "__expert")]
+impl crate::effort::LosslessInternalParams {
+    /// Validate every `Some(_)` field against the same ranges
+    /// [`crate::api::LosslessConfig::validate`] enforces on the resolved
+    /// profile.
+    pub fn validate(&self) -> core::result::Result<(), ValidationError> {
+        if let Some(v) = self.nb_rcts_to_try
+            && !NB_RCTS_RANGE.contains(&v)
+        {
+            return Err(ValidationError::NbRctsToTryOutOfRange {
+                value: v,
+                valid: NB_RCTS_RANGE,
+            });
+        }
+        if let Some(v) = self.wp_num_param_sets
+            && !WP_NUM_PARAM_SETS_RANGE.contains(&v)
+        {
+            return Err(ValidationError::WpNumParamSetsOutOfRange {
+                value: v,
+                valid: WP_NUM_PARAM_SETS_RANGE,
+            });
+        }
+        if let Some(value) = self.forced_wp_mode
+            && value > 4
+        {
+            return Err(ValidationError::ForcedWpModeOutOfRange { value });
+        }
+        if let Some(0) = self.tree_max_buckets {
+            return Err(ValidationError::TreeMaxBucketsZero);
+        }
+        if let Some(v) = self.tree_num_properties
+            && !TREE_NUM_PROPERTIES_RANGE.contains(&v)
+        {
+            return Err(ValidationError::TreeNumPropertiesOutOfRange {
+                value: v,
+                valid: TREE_NUM_PROPERTIES_RANGE,
+            });
+        }
+        if let Some(v) = self.tree_threshold_base
+            && (!v.is_finite() || v < 0.0)
+        {
+            return Err(ValidationError::TreeThresholdBaseInvalid { value: v });
+        }
+        if let Some(v) = self.tree_sample_fraction
+            && (!v.is_finite() || !TREE_SAMPLE_FRACTION_RANGE.contains(&v))
+        {
+            return Err(ValidationError::TreeSampleFractionOutOfRange {
+                value: v,
+                valid: TREE_SAMPLE_FRACTION_RANGE,
+            });
+        }
+        // tree_max_samples_fixed: any u32 is acceptable.
+        Ok(())
+    }
+}

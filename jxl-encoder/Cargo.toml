@@ -37,6 +37,8 @@ whereat = { version = "0.1.5"}
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
 jxl_simd = { package = "jxl-encoder-simd", version = "0.4.0", path = "../jxl-encoder-simd", default-features = false }
+jxl_entropy = { package = "jxl-entropy", version = "0.4.0", path = "../jxl-entropy", default-features = false }
+jxl_modular = { package = "jxl-encoder-modular", version = "0.4.0", path = "../jxl-encoder-modular", default-features = false }
 # Kept in lockstep with jxl-encoder-simd's magetypes 0.9.27 floor (see that
 # crate's Cargo.toml comment) — archmage and magetypes ship from the same
 # monorepo and are always released together.
@@ -137,11 +139,11 @@ cvvdp-cpu = { package = "cvvdp", version = "0.1.0", path = "../../zenmetrics/cra
 [features]
 # W44-231 learned qf-seed sub-band admission (see vardct/learned_admission.rs)
 learned-admission = ["dep:zenanalyze", "std"]
-std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
+std = ["thiserror/std", "archmage/std", "jxl_simd/std", "jxl_entropy/std", "jxl_modular/std"]
 # Dev-only: archmage/testable_dispatch lets benches/tier_isolation.rs disable
 # the baseline SIMD token (NEON on aarch64) so the scalar arm is real rather
 # than a second measurement of the SIMD path.
-_dev = ["archmage/testable_dispatch"]
+_dev = ["archmage/testable_dispatch", "jxl_modular/_dev"]
 # Ultra HDR gain map encoding: typed `GainMapBundle` serializer that matches
 # libjxl `JxlGainMapBundle` byte-for-byte (jhgm box payload), plus an
 # `HdrFromSdrRequest` end-to-end API that takes an SDR + HDR pair, computes
@@ -150,9 +152,9 @@ _dev = ["archmage/testable_dispatch"]
 # container so capable decoders reconstruct the HDR while standard decoders
 # display the SDR. Requires `std`. Issue #46 (A3 chunks 3+4).
 hdr-gainmap = ["std", "dep:ultrahdr-core"]
-trace-bitstream = []
+trace-bitstream = ["jxl_entropy/trace-bitstream", "jxl_modular/trace-bitstream"]
 # Verbose debug output for token encoding (DC, AC, entropy codes)
-debug-tokens = []
+debug-tokens = ["jxl_entropy/debug-tokens", "jxl_modular/debug-tokens"]
 # W44-27: per-block AdjustQuantBlockAC firing-rate diagnostic.
 # Counts per-heuristic firings (A/B/C/D/E/F) per (strategy, channel) and
 # emits a TSV to `$JXL_AQBA_DIAG_TSV` env var when set, else stderr summary.
@@ -165,12 +167,12 @@ debug-ac-strategy = []
 # decision per encode (used during the windows95 e7 d=2 surprise).
 debug-w44-65 = []
 # Spatial decision logging — writes sidecar CSV with per-rect decisions
-debug-rect = []
+debug-rect = ["jxl_entropy/debug-rect", "jxl_modular/debug-rect"]
 # Iterative rate control for improved distance targeting.
 # Requires zenjxl-decoder for decoding and butteraugli for quality measurement.
 rate-control = ["dep:zenjxl-decoder", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
-butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
+butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb", "jxl_modular/butteraugli-loop"]
 # W44-phase3-B1: GPU butteraugli backend for the buttloop. Implies
 # `butteraugli-loop` (the trait surface lives there). Opt-in only — when
 # enabled the caller still has to set `LossyConfig::with_gpu_butteraugli(true)`
@@ -223,8 +225,8 @@ cvvdp-loop-tighten = ["cvvdp-loop"]
 # PerceptualBackend and is NOT a PerceptualMetric variant): extra quant-field
 # iterations scored with fast-ssim2, driven via
 # `LossyConfig::with_ssim2_iters` / `--ssim2-iters`. Inert unless iters > 0.
-ssim2-loop = ["butteraugli-loop", "dep:fast-ssim2", "dep:imgref"]
-zensim-loop = ["butteraugli-loop", "dep:zensim", "dep:zenpredict", "dep:serde", "dep:serde_json", "dep:sha2"]
+ssim2-loop = ["butteraugli-loop", "dep:fast-ssim2", "dep:imgref", "jxl_modular/ssim2-loop"]
+zensim-loop = ["butteraugli-loop", "dep:zensim", "dep:zenpredict", "dep:serde", "dep:serde_json", "dep:sha2", "jxl_modular/zensim-loop"]
 # zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
 # quantization loop. Implies `butteraugli-loop` (the `PerceptualBackend`
 # trait surface lives there). Opt-in only — when enabled the caller still
@@ -245,13 +247,13 @@ zensim-loop = ["butteraugli-loop", "dep:zensim", "dep:zenpredict", "dep:serde", 
 zensim-loop-gpu = ["butteraugli-loop", "dep:zensim-gpu", "dep:cubecl"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
 convenience = ["dep:imgref", "dep:rgb"]
-jpeg-reencoding = ["dep:zenjpeg", "dep:brotli", "brotli-metadata", "hdr-gainmap"]
+jpeg-reencoding = ["dep:zenjpeg", "dep:brotli", "brotli-metadata", "hdr-gainmap", "jxl_entropy/jpeg-reencoding", "jxl_modular/jpeg-reencoding"]
 # Brotli-compressed metadata boxes (`brob`) for EXIF/XMP. Wraps each
 # metadata blob in a brob box that decompresses to the original
 # Exif/xml/jumb box, typically 2-4× smaller for XML / binary metadata.
 # libjxl default-on (`jpeg_compress_boxes = true`).
 brotli-metadata = ["dep:brotli"]
-parallel = ["std", "dep:rayon"]
+parallel = ["std", "dep:rayon", "jxl_entropy/parallel", "jxl_modular/parallel"]
 # Chroma subsampling (4:2:0 / 4:2:2 / 4:4:0) helpers — RGB→YCbCr conversion
 # and Sharp YUV chroma downsampling via the zenyuv crate. Issue #47 chunk 3.
 # API surface (`ChromaSubsampling` enum + `LossyConfig::with_chroma_subsampling`)
@@ -276,7 +278,7 @@ chroma-subsampling = ["dep:zenyuv"]
 # speedup is ~1.67× — see benchmarks/rayon_tree_learning_scaling_2026-05-16).
 # Default-off because it requires the rayon dependency; opt-in for callers
 # that already enable `parallel`.
-parallel-tree-learning = ["parallel"]
+parallel-tree-learning = ["parallel", "jxl_modular/parallel-tree-learning"]
 # Zenjxl regression-gate test: opt-in nightly CI test that locks the W44-202
 # baseline numbers (per-cell + aggregate bytes/SSIM2/butteraugli/wall-time
 # vs cjxl e7) as an invariant. Lives at `tests/zenjxl_regression_gate.rs`,
@@ -295,7 +297,7 @@ zenjxl-regression-gate = ["butteraugli-loop", "ssim2-loop", "parallel"]
 # enforces mode-correctness (lossy-only knobs cannot be passed to the
 # lossless setter, and vice versa). Not stable; field sets may grow
 # additively between minor versions.
-__expert = []
+__expert = ["jxl_modular/__expert"]
 # Compile-IN the diagnostic dump env hooks (JXL_W44_76_PER_BLOCK_DUMP,
 # JXL_W44_201_COEFFS_*, JXL_W44_181_DUMP_DC, JXL_W44_182_DUMP_CFL,
 # JXL_W44_AUDIT_8_P4_DUMP, JXL_DUMP_POS, JXL_DUMP_COST_INPUTS_PATH,
@@ -309,13 +311,13 @@ __expert = []
 # runtime-override test contract and A/B harnesses rely on them in
 # production builds. Output bytes are identical with the feature on or
 # off when no hook is set (hash-lock-enforced).
-__env_var_diagnostics = []
+__env_var_diagnostics = ["jxl_modular/__env_var_diagnostics"]
 # Re-exports private vardct internals (epf_step0_strip, adjust_quant_block_ac,
 # compute_scaled_constants, ytox_ratio, ytob_ratio, INV_DC_QUANT) under a
 # `pub mod __internals` for downstream parity testing (notably from
 # jxl-encoder-gpu's forks::* tests). Off by default; not part of the
 # stable API surface — items here may move or change at any time.
-__internals = []
+__internals = ["jxl_modular/__internals"]
 # Pre-quantized AC entry point: exposes EncoderPrecomputed::from_parts
 # constructor and lifts the rate-control gate on
 # VarDctEncoder::encode_from_precomputed, transform_and_quantize, and
@@ -325,7 +327,7 @@ __internals = []
 # search / butteraugli refinement work, going straight to bitstream
 # emit. Off by default; not stable; mirrors `__internals` shape — items
 # may move or change at any time.
-__pre_quantized = []
+__pre_quantized = ["jxl_modular/__pre_quantized"]
 # Re-exports the chunk-1 SplitTreeSamples primitive (modular::tree_learn_split)
 # for the in-crate microbench (benches/tree_learn_split_read_pattern.rs).
 # Off by default; not stable; pure re-export with no behavior change. Issue #40.
@@ -346,7 +348,7 @@ __internal_recon_hook = ["butteraugli-loop"]
 # they're marked as #[ignore] so the skip decision is visible at the test
 # attribute level (caller-controlled), not buried inside the test body.
 # CI must enable this feature explicitly when corpus is staged.
-corpus-tests = []
+corpus-tests = ["jxl_modular/corpus-tests"]
 # Per-phase wall-clock instrumentation for diagnosing the lossless e3->e7
 # encode-time cliff (issue #23). Records sample-gather, tree-learn, residual-
 # collect, histogram-cluster, and ANS/LZ77 emit times to a thread-local
@@ -3357,3 +3359,7 @@ path = "examples/w45_p21_perf_ab.rs"
 name = "jpeg_fixture_setup"
 path = "examples/jpeg_fixture_setup.rs"
 required-features = ["std", "jpeg-reencoding"]
+
+[[example]]
+name = "cg_profile"
+path = "examples/cg_profile.rs"

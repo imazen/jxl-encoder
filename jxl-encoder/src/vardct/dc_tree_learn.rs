@@ -1097,7 +1097,8 @@ fn find_best_split_variable_incremental(
     // while cutting ~6 ops per lookup.
     let mut eb_of_tok = vec![0.0f64; s];
     for (tok, e) in eb_of_tok.iter_mut().enumerate().skip(GATHER_SPLIT as usize) {
-        *e = ((tok as u32 - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN)) as f64 + 2.0;
+        *e = ((tok as u32 - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN)) as f64
+            + 2.0;
     }
 
     for (pred_slot, &pred_id) in pred_indices.iter().enumerate() {

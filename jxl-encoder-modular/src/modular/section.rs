@@ -1,0 +1,3092 @@
+// Copyright (c) Imazen LLC and the JPEG XL Project Authors.
+// Algorithms and constants derived from libjxl (BSD-3-Clause).
+// Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
+
+//! Modular section encoding for multi-group images.
+//!
+//! Handles GlobalModularState and section writing for large images that
+//! are split into multiple groups.
+
+use super::channel::ModularImage;
+use super::encode::{
+    predict_pixel_with_id, write_gradient_tree_tokens, write_hybrid_data_histogram,
+    write_palette_transform, write_predictor_tree_tokens, write_rct_transform,
+    write_tree_histogram_for_gradient, write_tree_histogram_for_predictor,
+};
+use super::predictor::pack_signed;
+use super::rct::RctType;
+use crate::bit_writer::BitWriter;
+use crate::entropy_coding::encode::{
+    OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans, write_tokens_ans_stop,
+};
+use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+use crate::entropy_coding::token::Token as AnsToken;
+use crate::error::Result;
+
+/// Default HybridUint config for modular data: split_exponent=4, msb_in_token=2, lsb_in_token=0.
+/// How many groups' `TreeSamples` may be live at once during the tree-learning
+/// gather, before they are merged into the accumulator and dropped.
+///
+/// The gather is embarrassingly parallel across groups, but holding every
+/// group's samples until a single trailing merge doubles the peak: the
+/// per-group vec and the merged accumulator are both resident. Merging in
+/// waves bounds that transient without changing the merged result (waves are
+/// consumed in ascending group order; `append_from` concatenates).
+///
+/// The wave is the live transient: at the 4K/e9 per-group size of ~11.6 MiB,
+/// 64 groups is ~740 MB in flight, 16 is ~185 MB, 8 is ~93 MB. It only needs to
+/// be wide enough to keep the worker pool fed — the useful thread count is the
+/// floor, and anything past a small multiple of it buys throughput nothing
+/// while costing peak linearly.
+///
+/// MEASURED 2026-08-13: 16 was chosen by reasoning ("wide enough to keep the
+/// pool fed") and was wrong. A backtrace captured AT the instant `peak_live` is
+/// set — not from an RSS-polled snapshot, which samples a different moment and
+/// had been misattributing this — puts the lossless peak inside this very
+/// `parallel_map`. Re-swept with that knowledge (3840x2160 lossless,
+/// byte-identical at every setting, alloc count and wall time flat):
+///
+///   wave  e7 peak_live  e9 peak_live
+///     16      1966 MB      1966 MB
+///      8      1873 MB         -
+///      4      1851 MB      1898 MB
+///      2      1851 MB         -
+///      1      1851 MB         -
+///
+/// 4 captures the whole available reduction and flattens below it, so it is the
+/// knee rather than a guess. Wall is unchanged (14.7 s e7 / 84.0 s e9), so the
+/// extra barriers cost nothing measurable — the "keep every worker fed" concern
+/// that motivated 16 was unfounded at this width.
+///
+/// Overridable at runtime via `JXL_TREE_GATHER_WAVE` (sweep knob; unset in
+/// production). The value is observationally invisible — waves are consumed in
+/// ascending group order, so the merged result is identical at every setting.
+const GATHER_MERGE_WAVE_GROUPS: usize = 4;
+
+/// `JXL_TREE_GATHER_WAVE=<n>` overrides [`GATHER_MERGE_WAVE_GROUPS`].
+fn gather_wave_groups() -> usize {
+    use std::sync::OnceLock;
+    static WAVE: OnceLock<usize> = OnceLock::new();
+    *WAVE.get_or_init(|| {
+        std::env::var("JXL_TREE_GATHER_WAVE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(GATHER_MERGE_WAVE_GROUPS)
+    })
+}
+
+const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
+    split_exponent: 4,
+    split: 16, // 1 << 4
+    msb_in_token: 2,
+    lsb_in_token: 0,
+};
+
+// #76: sole remaining caller is the `jpeg-reencoding` path (jpeg/encode.rs).
+#[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
+pub fn collect_all_residuals(image: &ModularImage) -> (Vec<u32>, u32) {
+    collect_all_residuals_with_predictor(image, 5)
+}
+
+/// Knob-aware variant of [`collect_all_residuals`] that honours the
+/// libjxl `--modular_predictor` override. `predictor_id == 5` (Gradient)
+/// matches the legacy hash-locked output. See
+/// [`super::encode::resolve_fixed_predictor`].
+pub fn collect_all_residuals_with_predictor(
+    image: &ModularImage,
+    predictor_id: u8,
+) -> (Vec<u32>, u32) {
+    let mut residuals = Vec::new();
+    let mut max_residual: u32 = 0;
+
+    for channel in &image.channels {
+        let width = channel.width();
+        let height = channel.height();
+
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = channel.get(x, y);
+
+                let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
+                let residual = pixel.wrapping_sub(prediction);
+                let packed = pack_signed(residual);
+
+                residuals.push(packed);
+                max_residual = max_residual.max(packed);
+            }
+        }
+    }
+
+    (residuals, max_residual)
+}
+
+/// Builds a histogram from residuals, encoding through HybridUint {4,2,0}.
+/// Returns (histogram_on_tokens, max_token).
+pub fn build_histogram_from_residuals(residuals: &[u32], _max_residual: u32) -> (Vec<u32>, u32) {
+    let mut max_token: u32 = 0;
+    // First pass: find max token
+    for &r in residuals {
+        let (token, _, _) = MODULAR_HYBRID_UINT.encode(r);
+        max_token = max_token.max(token);
+    }
+    // Second pass: build histogram on tokens
+    let histogram_size = (max_token + 1) as usize;
+    let mut histogram = vec![0u32; histogram_size];
+    for &r in residuals {
+        let (token, _, _) = MODULAR_HYBRID_UINT.encode(r);
+        histogram[token as usize] += 1;
+    }
+    (histogram, max_token)
+}
+
+/// Result of writing the global modular section.
+/// Contains the entropy codes needed to encode pixel data in group sections.
+pub enum GlobalModularState {
+    /// Huffman entropy coding state.
+    Huffman {
+        /// Huffman bit depths for each HybridUint token.
+        depths: Vec<u8>,
+        /// Huffman codes for each HybridUint token.
+        codes: Vec<u16>,
+        /// Fixed predictor id (libjxl `cjxl -P`); `5` (Gradient) is the
+        /// legacy default that hash-locks pin against.
+        predictor_id: u8,
+    },
+    /// ANS entropy coding state (single-context gradient tree).
+    Ans {
+        /// The ANS entropy code (distributions, context map, etc.)
+        code: OwnedAnsEntropyCode,
+        /// Fixed predictor id used for per-group residual collection.
+        /// `5` (Gradient) is the legacy default.
+        predictor_id: u8,
+    },
+    /// ANS entropy coding with learned MA tree (multi-context).
+    AnsWithTree {
+        /// The ANS entropy code (multiple distributions, context map).
+        code: OwnedAnsEntropyCode,
+        /// The learned MA tree for per-pixel predictor/context selection.
+        tree: super::tree::Tree,
+        /// WP parameters used during tree learning and residual collection.
+        wp_params: super::predictor::WeightedPredictorParams,
+        /// Per-section LZ77 (issue #69 item 1). `Some` means the global
+        /// entropy code was built over LZ77-transformed per-section token
+        /// streams, and every per-group section MUST re-apply the same
+        /// `(method, dist_multiplier)` transform at write time — the
+        /// decoder creates a fresh LZ77 state per section with
+        /// `dist_multiplier = max(section channel widths)`. `None` means
+        /// LZ77 is off for this frame (the pre-#69 behaviour).
+        lz77: Option<SectionLz77>,
+        /// The whole-image token stream `collect_for_tree` already
+        /// produced for cost scoring + histogram building, with each
+        /// group's range. Group writes REUSE these instead of
+        /// re-collecting (the collect was 12% of e7 wall — a second
+        /// full WP walk + tree traversal for tokens that already
+        /// existed). ~8 B/pixel, alive through Step 3/4 regardless, so
+        /// retaining it through the writes stays under the encode peak.
+        group_tokens: Option<GroupTokenStore>,
+        require_stored_tokens: bool,
+    },
+}
+
+/// Pre-collected whole-image token stream + per-group ranges carried by
+/// [`GlobalModularState::AnsWithTree`] (see its `group_tokens` doc).
+pub struct GroupTokenStore {
+    pub tokens: Vec<crate::entropy_coding::token::Token>,
+    pub group_ranges: Vec<core::ops::Range<usize>>,
+}
+
+/// Per-section LZ77 configuration carried by
+/// [`GlobalModularState::AnsWithTree`]: the schedule's method plus the
+/// header params the global entropy code was built with.
+pub type SectionLz77 = (
+    crate::entropy_coding::lz77::Lz77Method,
+    crate::entropy_coding::lz77::Lz77Params,
+);
+
+/// CeilLog2Nonzero matching the JXL spec.
+fn ceil_log2_nonzero(x: u32) -> u32 {
+    debug_assert!(x > 0);
+    let floor = 31 - x.leading_zeros();
+    if x.is_power_of_two() {
+        floor
+    } else {
+        floor + 1
+    }
+}
+
+/// Write ANS data histogram header for a single-context modular stream.
+///
+/// For modular with a single-leaf MA tree (num_dist=1), the context map is NOT written.
+/// Layout: lz77.enabled=0 + use_prefix_code=0 + log_alpha_size + HybridUint config + ANS distribution
+pub fn write_ans_modular_header(writer: &mut BitWriter, code: &OwnedAnsEntropyCode) -> Result<()> {
+    assert_eq!(
+        code.histograms.len(),
+        1,
+        "modular ANS header only supports single-distribution (single-leaf tree)"
+    );
+
+    // lz77.enabled = 0
+    writer.write(1, 0)?;
+
+    // NO context map for num_dist=1
+
+    // use_prefix_code = 0 (ANS, not Huffman)
+    writer.write(1, 0)?;
+
+    // log_alpha_size - 5 (2 bits)
+    let las = code.log_alpha_size;
+    #[cfg(feature = "std")]
+    if std::env::var_os("JXL_ENC_CODING_DUMP").is_some() {
+        eprintln!(
+            "[ENC-CODING] num_dist=1 num_clusters=1 prefix=false log_alpha={las} ans hists=1"
+        );
+    }
+    writer.write(2, (las - 5) as u64)?;
+
+    // HybridUint config (per-histogram optimized, or default {4,2,0})
+    let config = code
+        .uint_configs
+        .first()
+        .copied()
+        .unwrap_or(crate::entropy_coding::hybrid_uint::HybridUintConfig::default_config());
+    let se_bits = ceil_log2_nonzero(las as u32 + 1);
+    writer.write(se_bits as usize, config.split_exponent as u64)?;
+    if (config.split_exponent as usize) != las {
+        let msb_bits = ceil_log2_nonzero(config.split_exponent + 1);
+        writer.write(msb_bits as usize, config.msb_in_token as u64)?;
+        let lsb_bits = ceil_log2_nonzero(config.split_exponent - config.msb_in_token + 1);
+        writer.write(lsb_bits as usize, config.lsb_in_token as u64)?;
+    }
+
+    // Write the single ANS distribution
+    code.histograms[0].write(writer)?;
+
+    Ok(())
+}
+
+/// Writes the global modular section (tree + histogram) for multi-group encoding.
+///
+/// This writes:
+/// - dc_quant.all_default = 1
+/// - has_tree = 1
+/// - Tree histogram and tokens (honouring `predictor_id`, libjxl `cjxl -P`;
+///   default `5` (Gradient) keeps the hash-locked output bit-identical)
+/// - Data histogram with HybridUint {4,2,0} (Huffman or ANS)
+///
+/// `all_residuals` are the raw packed residuals from all groups (needed for ANS histogram building).
+/// `histogram` and `max_token` are built from HybridUint-encoded tokens (not raw residuals).
+/// Returns the entropy coding state needed to encode pixel data in group sections.
+pub fn write_global_modular_section_with_predictor(
+    all_residuals: &[u32],
+    histogram: &[u32],
+    max_token: u32,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    transforms: GlobalTransforms,
+    predictor_id: u8,
+) -> Result<GlobalModularState> {
+    crate::trace::debug_eprintln!(
+        "GLOBAL_MODULAR [bit {}]: Starting global section (ans={})",
+        writer.bits_written(),
+        use_ans
+    );
+
+    // dc_quant.all_default = true
+    writer.write(1, 1)?;
+    // has_tree = true
+    writer.write(1, 1)?;
+
+    // Tree histogram + tokens for the requested predictor.
+    let (tree_depths, tree_codes) = if predictor_id == 5 {
+        write_tree_histogram_for_gradient(writer)?
+    } else {
+        write_tree_histogram_for_predictor(writer, predictor_id)?
+    };
+    if predictor_id == 5 {
+        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    } else {
+        write_predictor_tree_tokens(writer, &tree_depths, &tree_codes, predictor_id)?;
+    }
+
+    if use_ans {
+        // Build ANS code from all residuals across all groups
+        let tokens: Vec<AnsToken> = all_residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
+        let code = build_entropy_code_ans(&tokens, 1); // 1 context for single-leaf tree
+
+        // Write ANS data header (distribution + config)
+        write_ans_modular_header(writer, &code)?;
+
+        // Write GlobalModular's ModularHeader
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_params.default_wp = true
+        write_global_transforms_full(writer, &transforms)?;
+
+        // Empty ANS stream terminator for the global modular sub-bitstream.
+        // libjxl writes the same 32-bit initial state via `WriteTokens` even when
+        // the LfGlobal carries no tokens — pre-fix jxl-oxide unconditionally calls
+        // `Decoder::begin()` (which reads 32 bits) before checking buffer dims. djxl
+        // and jxl-rs short-circuit before this read when no channels are decodable in
+        // this section, so the extra 4 bytes are simply padding to them. See
+        // `imazen/jxl-oxide@fd4e2c3` for the matching decoder fix.
+        write_tokens_ans(&[], &code, None, writer)?;
+
+        // Byte-align at end of global section
+        writer.zero_pad_to_byte();
+        crate::trace::debug_eprintln!(
+            "GLOBAL_MODULAR [bit {}]: Global section done (ANS)",
+            writer.bits_written()
+        );
+
+        Ok(GlobalModularState::Ans { code, predictor_id })
+    } else {
+        // Data histogram with HybridUint {4,2,0} + Huffman
+        let (depths, codes) = write_hybrid_data_histogram(writer, histogram, max_token)?;
+
+        // Write GlobalModular's ModularHeader
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_params.default_wp = true
+        write_global_transforms_full(writer, &transforms)?;
+
+        // Byte-align at end of global section
+        writer.zero_pad_to_byte();
+        crate::trace::debug_eprintln!(
+            "GLOBAL_MODULAR [bit {}]: Global section done (Huffman)",
+            writer.bits_written()
+        );
+
+        Ok(GlobalModularState::Huffman {
+            depths,
+            codes,
+            predictor_id,
+        })
+    }
+}
+
+/// Number of quant-table modular streams in the spec stream numbering
+/// (libjxl `DequantMatrices::kNum`; zenjxl-decoder
+/// `quantizer::NUM_QUANT_TABLES`).
+pub const NUM_QUANT_TABLE_STREAMS: u32 = 17;
+
+/// First ModularHF stream id (pass 0, group 0) in the spec's modular
+/// stream numbering — the value decoders feed into tree property 1
+/// (`group_id`) when decoding a pass-group section: stream 0 is
+/// GlobalData, then `num_lf_groups` each of VarDCT-LF / ModularLF /
+/// LFMeta, then the 17 quant-table streams. (#68 second cause: the
+/// encoder used ad-hoc `meta_offset + group_idx` ids for gather/apply,
+/// which desynced every decoder whenever an e9+ tree split on property
+/// 1 — only reachable on multi-group images, since a single group makes
+/// the property constant and unsplittable.)
+pub fn modular_hf_stream_id_base(num_lf_groups: u32) -> u32 {
+    1 + 3 * num_lf_groups + NUM_QUANT_TABLE_STREAMS
+}
+
+/// Writes the global modular section with a learned MA tree for multi-group encoding.
+///
+/// This writes:
+/// - dc_quant (all_default=1, or custom if dc_quant_custom is Some)
+/// - has_tree = 1
+/// - Learned tree (write_tree)
+/// - lz77.enabled = 0
+/// - Multi-context ANS data histogram (write_entropy_code_ans)
+/// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
+#[allow(dead_code)]
+// public wrapper retained for API stability;
+// internal callers route through `write_global_modular_section_with_tree_dc_quant_knobs`
+#[allow(clippy::too_many_arguments)] // mirrors the knobs variant's signature
+pub fn write_global_modular_section_with_tree(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    transforms: GlobalTransforms,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    meta_image: Option<&ModularImage>,
+    hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> Result<GlobalModularState> {
+    write_global_modular_section_with_tree_dc_quant_knobs(
+        images,
+        writer,
+        profile,
+        transforms,
+        use_lz77,
+        lz77_method,
+        None,
+        meta_image,
+        &super::palette::ModularKnobs::default(),
+        hf_stream_id_base,
+        budget,
+        None,
+    )
+}
+
+/// Like [`write_global_modular_section_with_tree`] but with custom dc_quant for LfFrame.
+#[allow(clippy::too_many_arguments)]
+pub fn write_global_modular_section_with_tree_dc_quant(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    transforms: GlobalTransforms,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+    meta_image: Option<&ModularImage>,
+    hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<GlobalModularState> {
+    write_global_modular_section_with_tree_dc_quant_knobs(
+        images,
+        writer,
+        profile,
+        transforms,
+        use_lz77,
+        lz77_method,
+        dc_quant_custom,
+        meta_image,
+        &super::palette::ModularKnobs::default(),
+        hf_stream_id_base,
+        budget,
+        stop,
+    )
+}
+
+/// Knob-aware + LfFrame-aware variant of
+/// [`write_global_modular_section_with_tree`]. See
+/// [`write_global_modular_section_with_tree_dc_quant_knobs`] for the override
+/// semantics.
+#[allow(clippy::too_many_arguments)]
+pub fn write_global_modular_section_with_tree_dc_quant_knobs(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    transforms: GlobalTransforms,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+    meta_image: Option<&ModularImage>,
+    knobs: &super::palette::ModularKnobs,
+    hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<GlobalModularState> {
+    write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
+        images,
+        writer,
+        profile,
+        transforms,
+        use_lz77,
+        lz77_method,
+        dc_quant_custom,
+        meta_image,
+        knobs,
+        hf_stream_id_base,
+        budget,
+        None,
+        None,
+        stop,
+    )
+}
+
+/// [`write_global_modular_section_with_tree_dc_quant_knobs`] plus the hybrid
+/// per-group tree hook (imazen/jxl-encoder#96): when `hybrid_local_trees` is
+/// `Some`, each group's wave-gathered samples are ALSO used to learn a
+/// per-group local tree (on a clone, before they merge into the global
+/// accumulator — the gather is paid once), returned indexed by group. The
+/// caller then writes, per group, whichever of {global-tree section,
+/// local-tree section} is smaller. Only the canonical single-seed,
+/// no-self-repair path learns local trees; otherwise the vec stays None.
+#[allow(clippy::too_many_arguments)]
+pub fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    transforms: GlobalTransforms,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+    meta_image: Option<&ModularImage>,
+    knobs: &super::palette::ModularKnobs,
+    hf_stream_id_base: u32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    mut hybrid_local_trees: Option<&mut alloc::vec::Vec<Option<super::tree::Tree>>>,
+    keep_best_layout: Option<(&[GroupTransforms], usize)>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<GlobalModularState> {
+    use super::encode::write_tree;
+    use super::encode::write_wp_header;
+    use super::predictor::WeightedPredictorParams;
+    use super::tree::Tree;
+    use super::tree::count_contexts;
+    use super::tree_learn::{
+        MULTI_SEED_EARLY_OUT_PROBE_SEEDS, TreeLearningParams, TreeSamples,
+        compute_best_tree_with_budget, compute_gather_stride_from_profile,
+        derive_seeded_max_property_values, derive_seeded_params,
+        derive_seeded_properties_truncation, derive_seeded_sample_fraction, derive_seeded_stride,
+        estimate_token_cost_stop, gather_samples_strided_with_budget,
+        gather_samples_strided_with_dedup_backend, gather_samples_strided_with_offset_stop,
+        max_ref_channels, multi_seed_early_out_after_probe, stride_for_seeded_sample_fraction,
+        tree_prune_predictors_env,
+    };
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options_stop;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::write_lz77_header;
+
+    // Step 0: Find best WP parameters (effort-dependent search)
+    let all_channels: Vec<&super::channel::Channel> = meta_image
+        .into_iter()
+        .chain(images.iter())
+        .flat_map(|img| img.channels.iter())
+        .collect();
+    let wp_params = crate::profile_time!("modular/wp_params_search", {
+        if let Some(mode) = profile.forced_wp_mode {
+            WeightedPredictorParams::for_mode(mode)
+        } else if profile.wp_num_param_sets > 0 {
+            // Collect channel references for cost estimation
+            let channels_for_wp: Vec<super::channel::Channel> =
+                all_channels.iter().map(|c| (*c).clone()).collect();
+            super::predictor::find_best_wp_params_stop(
+                &channels_for_wp,
+                profile.wp_num_param_sets,
+                stop,
+            )?
+        } else {
+            WeightedPredictorParams::default()
+        }
+    });
+
+    // Step 1: Gather samples from all groups (with subsampling for large images)
+    let total_pixels: usize = meta_image
+        .into_iter()
+        .chain(images.iter())
+        .flat_map(|img| img.channels.iter())
+        .map(|ch| ch.width() * ch.height())
+        .sum();
+    let stride = compute_gather_stride_from_profile(total_pixels, profile);
+    // Compute max ref channels across all images for cross-channel prediction
+    let num_refs = {
+        let mut mr = 0;
+        if let Some(meta) = meta_image {
+            mr = mr.max(max_ref_channels(meta));
+        }
+        for img in images.iter() {
+            mr = mr.max(max_ref_channels(img));
+        }
+        mr
+    };
+    // Property-1 (`group_id`) values MUST be the spec stream ids the
+    // decoder evaluates (#68 second cause): pass-group g (single pass)
+    // is `hf_stream_id_base + g`. The meta/global channels use stream 0
+    // (GlobalData). The old ad-hoc `meta_offset + group_idx` numbering
+    // desynced any e9+ tree that split on property 1.
+    let per_group_id_offset = hf_stream_id_base;
+    // Phase 2 of issue #41: when the profile asks for gather-time dedup,
+    // every per-group task gets its own `GatherDedupTable`. Concatenation
+    // via `append_from` joins the per-task sample_counts; the post-gather
+    // sort dedup then collapses cross-task duplicates (and any bucket-
+    // equivalence collisions the raw-value hash missed).
+    //
+    // The dedup hash mirrors `params.properties` (post-y/x skip) so the
+    // merge is provably at-or-below the post-sort merge in
+    // aggressiveness — every gather-time match would also have collapsed
+    // under the bucket-key sort, just possibly with other rows.
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _ll_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _ll_t0 = crate::clock::Instant::now();
+    let enable_gather_dedup = profile.gather_dedup;
+    // Phase 3 of issue #41: switch the gather-time dedup table to
+    // [`InlineDedupTable`]. Only meaningful when `enable_gather_dedup` is
+    // also `true` — the backend wrapper falls back to Phase 2 at
+    // construction time when the inline-key packing budget can't hold
+    // the configured property × predictor count.
+    let enable_phase3 = profile.gather_dedup_phase3;
+    let dedup_properties: Vec<usize> = if enable_gather_dedup {
+        // Borrow the same property list `compute_best_tree` will build
+        // from this profile so the gather hash uses the same slot set.
+        TreeLearningParams::from_profile(profile)
+            .with_ref_properties(num_refs, profile.effort)
+            .properties
+            .clone()
+    } else {
+        Vec::new()
+    };
+
+    // Closure: gather samples for a given seed, with optional per-seed
+    // stride override (RFC#45 chunk 3 + chunk 4). Seed 0 always uses the
+    // canonical `stride` + `start_offset = 0` and the canonical
+    // `CANDIDATE_PREDICTORS` order so seed-0 is byte-identical to the
+    // pre-RFC#45-chunk-2 gather. Higher seeds shift the offset, may use
+    // a perturbed `seed_stride` (different sample density), and pick a
+    // per-seed predictor permutation (chunk-4 evaluation-order variance).
+    // Property-column storage mask for this path: the canonical
+    // `TreeLearningParams::properties` list is the ONLY set of raw property
+    // columns pre-quantize/dedup/tree-build read here (seed perturbations
+    // permute or truncate it, never extend it), so the gather skips storing
+    // the rest — at 4K e7 that is 15-17 of 24 columns, ~400 MiB of the
+    // gather-phase peak. Columns outside the mask stay EMPTY, which every
+    // consumer already skips. See `TreeSamples::active_props`.
+    let active_prop_list: Vec<usize> = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .properties
+        .clone();
+
+    // Hybrid per-group tree learning (see the _hybrid entry doc). The slot
+    // is filled by the wave loop below on the canonical gather only.
+    // Gated to the canonical single-seed path only. Self-repair does NOT
+    // disqualify: per-group candidates come from the seed-0 FIXED gather and
+    // are self-contained sections — if repair later swaps the global tree,
+    // the per-group min() still only ever replaces a group when the local
+    // section is measured smaller.
+    let hybrid_learn_enabled = hybrid_local_trees.is_some() && profile.tree_learn_seeds.max(1) == 1;
+    let hybrid_slot: core::cell::RefCell<alloc::vec::Vec<Option<super::tree::Tree>>> =
+        core::cell::RefCell::new(
+            alloc::vec![None; if hybrid_learn_enabled { images.len() } else { 0 }],
+        );
+
+    // Probe-pruned global gather (JXL_GLOBAL_TREE_PREDICTORS, alg-parity
+    // item — libjxl's default lossless learns its tree over exactly
+    // {Weighted, Gradient}; see `global_tree_predictors_env`). Every
+    // downstream phase shrinks with the predictor count — gather
+    // tokenization, the token/ebit columns (2 B/sample/predictor, the
+    // largest accumulator family), the dedup key width, and the split
+    // search's per-bucket histogram sweeps.
+    //
+    // `auto` selects by PROBE TREE: learn a small capped tree from a
+    // ~1/16 sample (every 4th group, 4x stride) with all 14 candidates,
+    // then keep the predictors its leaves actually use. Root-cost ranking
+    // is REFUTED as the selector (2026-08-15,
+    // benchmarks/jxl_probe_prune_2026-08-15.md): predictor value is
+    // leaf-conditional — screen trees put 64/890 leaves on Zero, whose
+    // root cost is 15.9x worse than Gradient's, and fixed K=4 costs
+    // screens +3.4 % bytes. The probe tree exercises the real contextual
+    // machinery, so its leaf histogram is the honest selector. Numeric K
+    // stays as the blunt A/B dial (root-cost top-K). Gated to the
+    // canonical single-seed path (multi-seed e10/e11 keeps all 14 — its
+    // seeds permute the canonical list). Env unset => full 14,
+    // byte-identical.
+    // DEFAULT: `auto` at effort >= 7 (corpus-validated 2026-08-15 — 18
+    // images / 5 classes: total −0.005%, mean −0.033%, worst +0.16%, for
+    // wall −6..−29% and peak_live −130..−165 MB at 4K; e5/e6 measured
+    // +0.07..0.09% bytes for ~zero win, so they stay full-14). Env
+    // overrides both ways (`off`/`14` disables, `auto`/K forces).
+    let selection = super::tree_learn::global_tree_predictors_env().or({
+        if profile.effort >= 7 {
+            Some(super::tree_learn::GLOBAL_TREE_PREDICTORS_AUTO)
+        } else {
+            None
+        }
+    });
+    let mut bucketize_plan: Option<alloc::sync::Arc<super::tree_learn::GatherBucketizePlan>> = None;
+    let pruned_predictors: Option<alloc::vec::Vec<super::predictor::Predictor>> = match selection {
+        Some(k)
+            if k != super::tree_learn::GLOBAL_TREE_PREDICTORS_OFF
+                && profile.tree_learn_seeds.max(1) == 1 =>
+        {
+            if k == super::tree_learn::GLOBAL_TREE_PREDICTORS_AUTO {
+                // e8+ trees are deep (max_property_values 128-256):
+                // resolve the probe tree denser there or its leaf set
+                // under-represents the tail predictors (screen e9
+                // measured +0.6 % at the e7 probe density).
+                let probe_group_stride: usize = if profile.effort >= 8 { 2 } else { 4 };
+                const PROBE_PIXEL_STRIDE_MULT: usize = 4;
+                let mut probe = TreeSamples::new_with_ref_channels(num_refs);
+                {
+                    let mut m = vec![false; probe.total_num_properties()].into_boxed_slice();
+                    for &pi in &active_prop_list {
+                        if pi < m.len() {
+                            m[pi] = true;
+                        }
+                    }
+                    probe.set_active_props(m);
+                }
+                let probe_stride = stride.saturating_mul(PROBE_PIXEL_STRIDE_MULT);
+                let mut gi = 0usize;
+                while gi < images.len() {
+                    gather_samples_strided_with_budget(
+                        &mut probe,
+                        &images[gi],
+                        gi as u32 + per_group_id_offset,
+                        0,
+                        probe_stride,
+                        &wp_params,
+                        None,
+                        stop,
+                    )?;
+                    gi += probe_group_stride;
+                }
+                let probe_pixels: usize = images
+                    .iter()
+                    .step_by(probe_group_stride)
+                    .flat_map(|img| img.channels.iter())
+                    .map(|c| c.width() * c.height())
+                    .sum();
+                let mut probe_params = TreeLearningParams::from_profile(profile)
+                    .with_ref_properties(num_refs, profile.effort)
+                    .with_total_pixels(probe_pixels.max(1))
+                    .with_pixel_fraction(if probe_pixels > 0 {
+                        probe.total_gathered_weight() as f64 / probe_pixels as f64
+                    } else {
+                        1.0
+                    });
+                // Capped like the hybrid per-group learns: the probe
+                // tree needs coarse structure, not e9 depth.
+                probe_params.max_property_values = probe_params
+                    .max_property_values
+                    .min(if profile.effort >= 8 { 64 } else { 32 });
+                // Gather-time bucketization thresholds (env-gated):
+                // derived from the probe's RAW columns with the MAIN
+                // params (full max_property_values) BEFORE the probe
+                // learn consumes them.
+                // DEFAULT: Exact gather-time bucketization at e>=8 —
+                // byte-identical (verified exact on all 4 mosaic cells)
+                // with the raw-props arena removed from the accumulator:
+                // 4K e9 peak_live photo 965->849 MB, screen 978->786 MB,
+                // wall within +/-4%. e7's raw props are not its peak
+                // (-8 MB for +1-5% wall), so it stays Off by default.
+                // Env overrides: off | probe | exact.
+                let bucketize_mode = super::tree_learn::gather_bucketize_env().or({
+                    if profile.effort >= 8 {
+                        Some(super::tree_learn::GatherBucketizeMode::Exact)
+                    } else {
+                        None
+                    }
+                });
+                match bucketize_mode {
+                    Some(super::tree_learn::GatherBucketizeMode::ProbeThresholds) => {
+                        let tparams = TreeLearningParams::from_profile(profile)
+                            .with_ref_properties(num_refs, profile.effort);
+                        bucketize_plan = Some(alloc::sync::Arc::new(
+                            super::tree_learn::thresholds_from_samples(&probe, &tparams, stop)?,
+                        ));
+                    }
+                    Some(super::tree_learn::GatherBucketizeMode::Exact) if !enable_gather_dedup => {
+                        // Exact mode: distinct-value pre-walk over the SAME
+                        // sampled pixels -> today's exact thresholds ->
+                        // byte-identical output with no raw prop columns in
+                        // the accumulator. (gather-dedup expert path
+                        // excluded: its thresholds run over post-dedup
+                        // rows.)
+                        let tparams = TreeLearningParams::from_profile(profile)
+                            .with_ref_properties(num_refs, profile.effort);
+                        bucketize_plan = Some(alloc::sync::Arc::new(
+                            super::tree_learn::exact_bucketize_plan(
+                                meta_image,
+                                images,
+                                per_group_id_offset,
+                                stride,
+                                &wp_params,
+                                &tparams,
+                                num_refs,
+                                stop,
+                            )?,
+                        ));
+                        #[cfg(feature = "std")]
+                        super::tree_learn::walk_debug_dump("exact");
+                    }
+                    _ => {}
+                }
+                let probe_tree =
+                    compute_best_tree_with_budget(&mut probe, &probe_params, None, stop)?;
+                Some(super::tree_learn::predictors_used_by_tree(&probe_tree))
+            } else {
+                const GLOBAL_PROBE_STRIDE_MULT: usize = 16;
+                Some(super::tree_learn::probe_prune_candidates(
+                    images,
+                    stride.saturating_mul(GLOBAL_PROBE_STRIDE_MULT),
+                    k,
+                ))
+            }
+        }
+        _ => None,
+    };
+
+    let gather_for_seed = |seed: u64,
+                           seed_stride: usize,
+                           randomize: bool|
+     -> crate::error::Result<(
+        TreeSamples,
+        Option<super::tree_learn::PreQuantizedProps>,
+    )> {
+        let start_offset = if seed_stride > 1 {
+            (seed as usize) % seed_stride
+        } else {
+            0
+        };
+        // Gather-time bucketization (JXL_GATHER_BUCKETIZE + auto probe):
+        // the ACCUMULATOR's property columns never materialize — locals
+        // gather raw (transient, wave-bounded), the merge converts each
+        // learned column to u8 buckets against the probe-derived
+        // thresholds. Removes the raw-props arena (570 of 965 MB at 4K
+        // e9) from the accumulator peak.
+        let bucketize = bucketize_plan.clone();
+        // Chunk 4: predictor-order shuffle — seed 0 yields the canonical
+        // `CANDIDATE_PREDICTORS`, higher seeds rotate through 3 alternate
+        // permutations. All TreeSamples merged via `append_from` MUST use
+        // the SAME predictor order (the assert at append_from line 506-510
+        // checks lengths; the SoA columns are predictor-indexed so they
+        // must agree). The probe-pruned list (seed 0 only — the gate above
+        // guarantees single-seed when set) replaces the canonical order.
+        let mut samples = match &pruned_predictors {
+            Some(list) => TreeSamples::new_with_owned_predictors(list.clone(), num_refs),
+            None => TreeSamples::new_with_predictor_order_for_seed(num_refs, seed),
+        };
+        let active_mask: alloc::boxed::Box<[bool]> = {
+            let mut m = vec![false; samples.total_num_properties()].into_boxed_slice();
+            for &p in &active_prop_list {
+                if p < m.len() {
+                    m[p] = true;
+                }
+            }
+            m
+        };
+        if let Some(plan) = bucketize.as_deref() {
+            // Bucketized columns never materialize raw in the accumulator;
+            // keep-raw (discrete) columns stay active and pre-quantize at
+            // learn time from the full population.
+            let mut m = vec![false; samples.total_num_properties()].into_boxed_slice();
+            for &p in &active_prop_list {
+                if p < m.len() && plan.keep_raw.get(p).copied().unwrap_or(false) {
+                    m[p] = true;
+                }
+            }
+            samples.set_active_props(m);
+        } else {
+            samples.set_active_props(active_mask.clone());
+        }
+        let mut acc_buckets: alloc::vec::Vec<alloc::vec::Vec<u8>> = if bucketize.is_some() {
+            vec![Vec::new(); samples.total_num_properties()]
+        } else {
+            Vec::new()
+        };
+        // Convert a raw-gathered local's learned columns to buckets,
+        // strip its raw columns, and append everything else.
+        let convert_strip_append = |samples: &mut TreeSamples,
+                                    acc_buckets: &mut alloc::vec::Vec<alloc::vec::Vec<u8>>,
+                                    plan: &super::tree_learn::GatherBucketizePlan,
+                                    mut local: TreeSamples| {
+            let todo: alloc::vec::Vec<usize> = active_prop_list
+                .iter()
+                .copied()
+                .filter(|&p| !plan.keep_raw.get(p).copied().unwrap_or(false))
+                .collect();
+            // Column-parallel bucketize (see bucketize_and_strip_props);
+            // append order = `todo` order, same as the sequential loop.
+            for (p, block) in local.bucketize_and_strip_props(&todo, &plan.threshold_sets) {
+                acc_buckets[p].extend_from_slice(&block);
+            }
+            samples.append_from(local);
+        };
+        // Self-repair re-gather (task #14): draw de-aliased randomized
+        // samples instead of the fixed stride. `false` on the normal path
+        // ⇒ byte-identical.
+        samples.randomize_gather = randomize;
+        // Meta channels first. Variant selection is unchanged; bucketized
+        // mode targets a transient raw local that converts+appends, the
+        // default targets the accumulator directly (byte-identical path).
+        {
+            let mut meta_local: Option<TreeSamples> = bucketize.as_ref().map(|_| {
+                let mut m = match &pruned_predictors {
+                    Some(list) => TreeSamples::new_with_owned_predictors(list.clone(), num_refs),
+                    None => TreeSamples::new_with_predictor_order_for_seed(num_refs, seed),
+                };
+                m.set_active_props(active_mask.clone());
+                m.randomize_gather = randomize;
+                m
+            });
+            let target: &mut TreeSamples = match meta_local.as_mut() {
+                Some(m) => m,
+                None => &mut samples,
+            };
+            if let Some(meta) = meta_image {
+                if enable_gather_dedup && seed == 0 {
+                    // Gather-time dedup only honors the canonical seed-0 path.
+                    // Higher seeds skip dedup — the post-sort arbiter still
+                    // collapses bucket-equivalent rows downstream.
+                    gather_samples_strided_with_dedup_backend(
+                        target,
+                        meta,
+                        0,
+                        0,
+                        seed_stride,
+                        &wp_params,
+                        None,
+                        true,
+                        enable_phase3,
+                        &dedup_properties,
+                        stop,
+                    )?;
+                } else if start_offset == 0 {
+                    gather_samples_strided_with_budget(
+                        target,
+                        meta,
+                        0,
+                        0,
+                        seed_stride,
+                        &wp_params,
+                        None,
+                        stop,
+                    )?;
+                } else {
+                    gather_samples_strided_with_offset_stop(
+                        target,
+                        meta,
+                        0,
+                        0,
+                        seed_stride,
+                        start_offset,
+                        &wp_params,
+                        stop,
+                    )?;
+                }
+            }
+            if let (Some(m), Some(plan)) = (meta_local, bucketize.as_deref()) {
+                convert_strip_append(&mut samples, &mut acc_buckets, plan, m);
+            }
+        }
+        // Per-group gather — embarrassingly parallel across groups, but run in
+        // WAVES so only `wave` groups' samples are live at once.
+        //
+        // Gathering all groups into one `Vec<TreeSamples>` and merging
+        // afterwards costs a second full copy of every sample: the per-group
+        // vec and the merged accumulator are both alive during the merge. On a
+        // 4K lossless e9 encode that was the encoder's peak — the RSS timeline
+        // spiked to ~5.0 GB in the first 6 s (gather+merge) before settling to
+        // ~2.9 GB for the 70 s of actual tree learning. Merging each wave as it
+        // completes bounds the transient to `wave` groups instead of all of
+        // them, and the steady-state accumulator is unchanged.
+        //
+        // Byte-identical: waves are consumed in ascending group order and
+        // `append_from` is a concatenation, so the merged column order is
+        // exactly what the all-at-once merge produced. Each group's gather is
+        // independent (fresh `local`, `group_idx` passed explicitly, no
+        // cross-group state), so wave boundaries cannot change any sample.
+        //
+        // The wave is sized to keep every worker busy — an over-small wave
+        // would serialize the gather at a barrier per wave.
+        //
+        // The accumulator is sized ONCE here, to an exact upper bound, so no
+        // column ever reallocates as waves are merged in. Growing it per wave
+        // would trade the old single duplicate for repeated 48 MiB-column
+        // reallocations — each holding old+new at once and leaving a hole —
+        // which costs more, and costs it on every allocator.
+        let gather_upper_bound: usize = images
+            .iter()
+            .flat_map(|img| img.channels.iter())
+            .map(|ch| (ch.width() * ch.height()).div_ceil(seed_stride.max(1)))
+            .sum::<usize>()
+            + samples.num_samples;
+        samples.reserve_exact_total(gather_upper_bound);
+        if let Some(plan) = bucketize.as_deref() {
+            // Bucket columns share the accumulator's no-realloc guarantee.
+            for &p in &active_prop_list {
+                if !plan.keep_raw.get(p).copied().unwrap_or(false) {
+                    let cur = acc_buckets[p].len();
+                    acc_buckets[p].reserve_exact(gather_upper_bound.saturating_sub(cur));
+                }
+            }
+        }
+
+        let wave = gather_wave_groups().max(1);
+        let mut wave_start = 0usize;
+        while wave_start < images.len() {
+            let wave_len = wave.min(images.len() - wave_start);
+            let hybrid_learn_this_gather = hybrid_learn_enabled && seed == 0 && !randomize;
+            let wave_samples: Vec<crate::error::Result<(TreeSamples, Option<super::tree::Tree>)>> =
+                crate::parallel::parallel_map(wave_len, |i| {
+                    let group_idx = wave_start + i;
+                    // Same per-seed predictor order as the meta init above
+                    // (or the probe-pruned list when active — columns must
+                    // agree for append_from).
+                    let mut local = match &pruned_predictors {
+                        Some(list) => {
+                            TreeSamples::new_with_owned_predictors(list.clone(), num_refs)
+                        }
+                        None => TreeSamples::new_with_predictor_order_for_seed(num_refs, seed),
+                    };
+                    local.set_active_props(active_mask.clone());
+                    local.randomize_gather = randomize;
+                    if enable_gather_dedup && seed == 0 {
+                        gather_samples_strided_with_dedup_backend(
+                            &mut local,
+                            &images[group_idx],
+                            group_idx as u32 + per_group_id_offset,
+                            0,
+                            seed_stride,
+                            &wp_params,
+                            None,
+                            true,
+                            enable_phase3,
+                            &dedup_properties,
+                            stop,
+                        )?;
+                    } else if start_offset == 0 {
+                        gather_samples_strided_with_budget(
+                            &mut local,
+                            &images[group_idx],
+                            group_idx as u32 + per_group_id_offset,
+                            0,
+                            seed_stride,
+                            &wp_params,
+                            None,
+                            stop,
+                        )?;
+                    } else {
+                        gather_samples_strided_with_offset_stop(
+                            &mut local,
+                            &images[group_idx],
+                            group_idx as u32 + per_group_id_offset,
+                            0,
+                            seed_stride,
+                            start_offset,
+                            &wp_params,
+                            stop,
+                        )?;
+                    }
+                    // Hybrid: learn this group's local tree from a CLONE of the
+                    // just-gathered samples (compute_best_tree consumes them);
+                    // the original merges into the global accumulator untouched.
+                    // The clone + learn ride the same parallel wave, so the extra
+                    // in-flight memory is bounded by the wave width.
+                    let local_tree = if hybrid_learn_this_gather {
+                        let group_pixels: usize = images[group_idx]
+                            .channels
+                            .iter()
+                            .map(|c| c.width() * c.height())
+                            .sum();
+                        let pixel_fraction = if group_pixels > 0 {
+                            local.total_gathered_weight() as f64 / group_pixels as f64
+                        } else {
+                            1.0
+                        };
+                        let mut params = TreeLearningParams::from_profile(profile)
+                            .with_ref_properties(num_refs, profile.effort)
+                            .with_total_pixels(group_pixels)
+                            .with_pixel_fraction(pixel_fraction);
+                        // Per-group CANDIDATES cap the search at e7 strength: a
+                        // 256x256 group's ~24k samples saturate the split search
+                        // long before the e8+ grids pay off, and the per-group
+                        // min() keeps any group where the deep global tree still
+                        // wins. Measured at 4K e9: hybrid wall -34% (photo) /
+                        // -37% (screen) for +0.18% / +0.49% bytes - both cells
+                        // remain smaller than the pure global tree (see
+                        // benchmarks/jxl_hybrid_trees_4k_2026-08-14.md).
+                        if profile.effort > 7 {
+                            params.max_property_values = params.max_property_values.min(32);
+                        }
+                        let mut dup = local.clone();
+                        // #96 next-gen: per-group predictor pruning of the
+                        // learn CLONE only (opt-in env; the global
+                        // accumulator keeps the full candidate set).
+                        if let Some(k) = tree_prune_predictors_env() {
+                            dup.prune_to_top_predictors(k);
+                        }
+                        Some(compute_best_tree_with_budget(
+                            &mut dup, &params, None, stop,
+                        )?)
+                    } else {
+                        None
+                    };
+                    Ok((local, local_tree))
+                });
+            // No per-wave reserve: `reserve_exact_total` above already sized
+            // every column past the final count, so these appends never grow.
+            for (i, item) in wave_samples.into_iter().enumerate() {
+                let (local, ltree) = item?;
+                if let Some(t) = ltree {
+                    hybrid_slot.borrow_mut()[wave_start + i] = Some(t);
+                }
+                match bucketize.as_deref() {
+                    Some(plan) => convert_strip_append(&mut samples, &mut acc_buckets, plan, local),
+                    None => samples.append_from(local),
+                }
+            }
+            wave_start += wave_len;
+        }
+        let pre_pq = bucketize.map(|plan| {
+            // Keep-raw columns get EMPTY sets here — the learn-time
+            // partial pre-quantize fills them from the full population.
+            let mut sets = plan.threshold_sets.clone();
+            for (p, ts) in sets.iter_mut().enumerate() {
+                if plan.keep_raw.get(p).copied().unwrap_or(false) {
+                    ts.clear();
+                }
+            }
+            super::tree_learn::PreQuantizedProps {
+                threshold_sets: sets,
+                bucket_indices: acc_buckets,
+            }
+        });
+        Ok((samples, pre_pq))
+    };
+
+    // Multi-seed dispatch — RFC#45 chunk 2 (start-offset variance), chunk 3
+    // (broader variance: stride / split_threshold / property-order), chunk
+    // 4 (sample-fraction jitter + predictor-evaluation-order shuffle),
+    // chunk 5 (seed-slot split + budget expansion at e11), and chunk 6
+    // (split-bucket-count + properties-slice truncation, e11 budget
+    // doubled again 8 → 16).
+    //
+    // At e ≤ 9 `tree_learn_seeds = 1` (libjxl-equivalent, byte-identical
+    // hash-locks). At e10 we fan out 2 seeded runs; at e11 chunk 6 fans
+    // out 16 (was 8) and pick the tree whose tokens have the lowest
+    // entropy cost.
+    //
+    // Chunk 6 seed-slot layout (relevant when `seeds >= 4`):
+    //   - seeds 0..=3:   chunk-3 perturbations active
+    //                    (split_threshold jitter via [`derive_seeded_params`],
+    //                    property-order rotation, per-seed stride via
+    //                    [`derive_seeded_stride`]). Chunks 4/5/6 helpers
+    //                    are no-ops here.
+    //   - seeds 4..=7:   chunk-4 perturbations active on top of chunk-3
+    //                    ([`derive_seeded_sample_fraction`] takes precedence
+    //                    over [`derive_seeded_stride`] when it returns
+    //                    Some(_); [`derive_seeded_predictor_order`] cycles
+    //                    through 4 permutations of [`CANDIDATE_PREDICTORS`]).
+    //                    Chunk-6 helpers are no-ops here.
+    //   - seeds 8..=11:  chunk-6 split-bucket-count override active
+    //                    ([`derive_seeded_max_property_values`] cycles
+    //                    through Some(64) / Some(128) / Some(192) / None
+    //                    — coarser-than-canonical bucket grids for the
+    //                    `find_best_split` value quantization). Chunk-4
+    //                    helpers held to canonical no-op.
+    //   - seeds 12..=15: chunk-6 properties-slice truncation active
+    //                    ([`derive_seeded_properties_truncation`] cycles
+    //                    through Some(8) / Some(10) / Some(12) / None —
+    //                    a structural-regularization fallback that forces
+    //                    the greedy builder to choose among fewer
+    //                    high-information properties first). Chunk-4 +
+    //                    chunk-6-bucket helpers held to canonical no-op.
+    //   - seed 0 stays the canonical libjxl run for all dimensions.
+    //
+    // The split-per-dimension pattern (chunk-3 → chunk-4 → chunk-5 →
+    // chunk-6) preserves the wins of each prior chunk in dedicated seed
+    // slots, exactly as chunk 5 reserved seeds 0..=3 for chunk-3-only
+    // perturbations after chunk 4's recombined-budget regression.
+    // Tree-learn force-predictor override (libjxl `cjxl -P N` /
+    // `--modular_predictor`). When the caller has asked for a fixed
+    // `0..=13` predictor (excluding `5` Gradient — keeps hash-locks green
+    // — and excluding `14`/`15` meta-modes), bypass ID3 entirely: build a
+    // single-leaf tree with the requested predictor, collect residuals
+    // against it once (no multi-seed search — all seeds would produce
+    // identical output), and skip straight to ANS code building.
+    //
+    // Mirrors libjxl's behaviour where `options.predictor` overrides
+    // what would otherwise be the tree learner's per-leaf choice. The
+    // returned [`GlobalModularState::AnsWithTree`] carries the
+    // single-leaf tree so per-group sections pick up the override via
+    // the same per-pixel residual path used for ID3-learned trees.
+    let force_predictor = super::encode::resolve_tree_learn_force_predictor(knobs);
+
+    // RIGED meta-mode override (libjxl `cjxl -P 14` slot in our wiring —
+    // Sharma 2018 Resolution-Independent Gradient-aware Edge Detection).
+    // Mutually exclusive with `force_predictor` because `from_id(14) →
+    // None` keeps `force_predictor = None` for id 14. When set, the
+    // tree-learn path bypasses ID3 and uses a hand-crafted multi-leaf
+    // tree implementing the RIGED switch rule. Like `force_predictor`,
+    // the per-pixel residual collector + ANS code build path is shared
+    // with the ID3-learned tree, so this is a tree-shape override only.
+    //
+    // bit_depth is taken from the first image (all images in a multi-
+    // group encode share the same bit depth — see `ModularImage`).
+    let riged_bit_depth = images.first().map(|img| img.bit_depth).unwrap_or(8);
+    let riged_override = super::encode::resolve_tree_learn_riged_tree(knobs, riged_bit_depth);
+
+    let seeds = if force_predictor.is_some() || riged_override.is_some() {
+        1
+    } else {
+        profile.tree_learn_seeds.max(1)
+    };
+    /// Winning multi-seed candidate: (all_tokens, nb_meta_tokens,
+    /// per-group token ranges within all_tokens, learned tree, cost).
+    type SeedCandidate = (
+        Vec<crate::entropy_coding::token::Token>,
+        usize,
+        Vec<core::ops::Range<usize>>,
+        Tree,
+        f64,
+    );
+    let mut best: Option<SeedCandidate> = None;
+
+    // Perf (task #14 default-on enabler): when the self-repair runs it already
+    // builds the winning tree's real clustered ANS code (in `real_ans_cost`),
+    // which — LZ77 being off on the e5/e6 tree-lift path — is BYTE-IDENTICAL to
+    // the Step-4 build below. Cache it here and reuse it downstream so the
+    // self-repair costs NO extra entropy build on the common (non-aliased,
+    // KEEP/SKIP) path. Only ever set at seeds==1 (the single tree-lift seed);
+    // stays `None` when the self-repair does not run ⇒ default rebuild.
+    let mut cached_winner_code: Option<OwnedAnsEntropyCode> = None;
+
+    // Per-seed cost log for the chunk-7 early-out decision. Indexed by
+    // completed seed (0..seeds). Populated inside the loop after the
+    // entropy estimate is computed for seed >= 0. Capacity matches the
+    // budget so the Vec never reallocates during the hot loop.
+    let mut seed_costs: Vec<f64> = Vec::with_capacity(seeds.max(1) as usize);
+
+    // Baseline params shared across seeds. derive_seeded_params clones and
+    // mutates per-seed; the with_pixel_fraction call is per-seed because
+    // pixel_fraction depends on the actual gathered weight, which varies
+    // with stride.
+    let base_params = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .with_total_pixels(total_pixels);
+
+    // Collect residuals for a candidate tree across meta + every group,
+    // returning the concatenated token stream, the meta prefix length, and
+    // per-group ranges into it. Shared by the normal per-seed scoring and the
+    // task-#14 self-repair (which collects a second, de-aliased candidate).
+    let collect_for_tree = |tree: &Tree| -> Result<(
+        Vec<crate::entropy_coding::token::Token>,
+        usize,
+        Vec<core::ops::Range<usize>>,
+    )> {
+        let per_group_tokens: Vec<Vec<crate::entropy_coding::token::Token>> =
+            crate::parallel::parallel_map_result(images.len(), |group_idx| {
+                super::tree_learn::collect_residuals_with_tree_offset_with_budget(
+                    &images[group_idx],
+                    tree,
+                    group_idx as u32 + per_group_id_offset,
+                    0,
+                    &wp_params,
+                    None,
+                    stop,
+                )
+            })?;
+        let meta_tokens_opt = meta_image
+            .map(|meta| {
+                super::tree_learn::collect_residuals_with_tree_offset_with_budget(
+                    meta, tree, 0, 0, &wp_params, None, stop,
+                )
+            })
+            .transpose()?;
+        let nb_meta_tokens = meta_tokens_opt.as_ref().map(|t| t.len()).unwrap_or(0);
+        let total_len: usize =
+            nb_meta_tokens + per_group_tokens.iter().map(|t| t.len()).sum::<usize>();
+        let mut all_tokens = Vec::<crate::entropy_coding::token::Token>::with_capacity(total_len);
+        if let Some(meta_tokens) = meta_tokens_opt {
+            all_tokens.extend(meta_tokens);
+        }
+        let mut group_ranges = Vec::with_capacity(images.len());
+        for tokens in per_group_tokens {
+            let start = all_tokens.len();
+            all_tokens.extend(tokens);
+            group_ranges.push(start..all_tokens.len());
+        }
+        Ok((all_tokens, nb_meta_tokens, group_ranges))
+    };
+
+    // Real ANS-coded cost (histogram tables + coded tokens) of a candidate's
+    // residual stream. Unlike `estimate_token_cost`'s per-context *ideal*
+    // entropy, this runs the actual clustering + ANS build, so it captures the
+    // ≤96-histogram clustering penalty that makes a stride-aliased tree code
+    // far worse than its node count or ideal entropy imply (5336 e5: the ideal
+    // estimate sees 1.7 %, the real ANS build sees ~27 %). Used only by the
+    // task-#14 self-repair to pick between the fixed and de-aliased trees.
+    let real_ans_cost = |tokens: &[crate::entropy_coding::token::Token],
+                         tree: &Tree|
+     -> Result<(usize, OwnedAnsEntropyCode)> {
+        let num_contexts = count_contexts(tree) as usize;
+        // Match the real write path's build (section.rs Step 4): enhanced
+        // pair-merge clustering + uint-config optimization. The clustering
+        // (≤ histogram cap) is precisely where a stride-aliased tree's many
+        // thin contexts collapse into shared histograms and code badly —
+        // the simple `build_entropy_code_ans` (near-ideal, uncapped) misses
+        // it. LZ77 is off on the e5/e6 tree-lift path this repair fires on, so
+        // this build is BYTE-IDENTICAL to the Step-4 build for the same tree —
+        // the winning candidate's code is cached and reused there (perf).
+        let code = build_entropy_code_ans_with_options_stop(
+            tokens,
+            num_contexts.max(1),
+            true, // enhanced clustering (pair-merge refinement)
+            true, // optimize uint configs
+            None, // LZ77 off on the tree-lift path
+            Some(total_pixels),
+            stop,
+        );
+        if tokens.is_empty() {
+            return Ok((0, code));
+        }
+        let mut w = BitWriter::new();
+        write_entropy_code_ans(&code, &mut w)?;
+        write_tokens_ans_stop(tokens, &code, None, &mut w, stop)?;
+        Ok((w.bits_written(), code))
+    };
+
+    for seed in 0..(seeds as u64) {
+        crate::error::check_stop(stop)?;
+        // Chunk 4: per-seed sample-fraction override takes precedence
+        // over chunk-3's stride perturbation. Seed 0 returns None → fall
+        // through to the chunk-3 path. Higher seeds with Some(frac) map
+        // an absolute target fraction onto a stride; the override is a
+        // no-op when total_pixels already fits under the 65 K floor.
+        let seed_stride = match derive_seeded_sample_fraction(seed) {
+            Some(frac) => stride_for_seeded_sample_fraction(total_pixels, frac),
+            None => derive_seeded_stride(stride, seed),
+        };
+        // Build seeded params from a gathered sample set. Shared by the base
+        // per-seed tree-learn and the task-#14 self-repair re-gather so both
+        // apply the same per-seed variance (pixel_fraction / bucket / prop caps).
+        let build_params = |samples: &TreeSamples| -> TreeLearningParams {
+            let pixel_fraction = if total_pixels > 0 {
+                samples.total_gathered_weight() as f64 / total_pixels as f64
+            } else {
+                1.0
+            };
+            // Per-seed parameter variance — seed 0 is a no-op clone.
+            let mut params =
+                derive_seeded_params(&base_params, seed).with_pixel_fraction(pixel_fraction);
+            // Dedup ALWAYS runs by default. Skipping it (byte-identical —
+            // see TreeLearningParams::skip_dedup) was hypothesised as a
+            // win on high-unique content and REFUTED 2026-08-16: 4K photo
+            // e7 t=1 ballooned 7.55 -> 11.6 s with the skip — the
+            // packed-key SORT is a cache-layout transform the split
+            // search depends on (key-sorted rows give the accumulate
+            // loops bucket-coherent access), not just row reduction. At
+            // e9 the skip measured a small win (46.3 -> 44.9 s, +150 MB
+            // peak) — an unexplained asymmetry; do not re-add a dispatch
+            // without explaining it (benchmarks/jxl_wall_parity_2026-08-16.md).
+            // JXL_SKIP_DEDUP=1 remains the A/B hatch.
+            params.skip_dedup = super::tree_learn::skip_dedup_env() == Some(true);
+            // Chunk-6 dim A — split-bucket-count override (seeds 8..=11).
+            // Seeds 0..=7 return None → canonical bucket count preserved.
+            if let Some(buckets) = derive_seeded_max_property_values(seed) {
+                params.max_property_values = buckets;
+            }
+            // Chunk-6 dim B — properties-slice truncation (seeds 12..=15).
+            // Seeds 0..=11 return None → canonical slice length preserved.
+            // Clamp to current slice length so a truncation cap longer than
+            // the property Vec is a no-op rather than an invalid index.
+            if let Some(prop_cap) = derive_seeded_properties_truncation(seed) {
+                let cap = prop_cap.min(params.properties.len());
+                params.properties.truncate(cap);
+            }
+            params
+        };
+        // Gather + tree-learn for this seed — skipped entirely when the
+        // force-predictor override is active (the single-leaf tree below
+        // does not consume samples, and gather is the dominant cost at
+        // e7+). The RIGED override (predictor id 14) takes the same
+        // gather-skip shortcut and substitutes a 3-leaf gradient-aware
+        // tree instead of a single-leaf one.
+        let tree = if let Some(forced) = force_predictor {
+            super::tree::simple_tree(forced)
+        } else if let Some(ref riged) = riged_override {
+            riged.clone()
+        } else {
+            let (mut samples, pre_pq) = crate::profile_time!("modular/gather_samples", {
+                gather_for_seed(seed, seed_stride, false)?
+            });
+            #[cfg(feature = "std")]
+            super::tree_learn::walk_debug_dump("gather");
+            let params = build_params(&samples);
+            #[cfg(feature = "__env_var_diagnostics")]
+            let _ll_t_gather_done = crate::clock::Instant::now();
+            let t = crate::profile_time!("modular/compute_best_tree", {
+                match pre_pq {
+                    Some(pq) => super::tree_learn::compute_best_tree_prequantized(
+                        &mut samples,
+                        &params,
+                        pq,
+                        stop,
+                    )?,
+                    None => compute_best_tree_with_budget(&mut samples, &params, None, stop)?,
+                }
+            });
+            #[cfg(feature = "__env_var_diagnostics")]
+            if _ll_dbg {
+                eprintln!(
+                    "lossless: gather+prequant={:.1}ms tree={:.1}ms",
+                    (_ll_t_gather_done - _ll_t0).as_secs_f64() * 1000.0,
+                    _ll_t_gather_done.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            t
+        };
+
+        if force_predictor.is_none() && riged_override.is_none() {
+            crate::trace::debug_eprintln!(
+                "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes (ID3 learned, seed_stride={})",
+                seed,
+                seeds,
+                tree.len(),
+                seed_stride,
+            );
+        } else if riged_override.is_some() {
+            crate::trace::debug_eprintln!(
+                "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes (RIGED predictor-14 override)",
+                seed,
+                seeds,
+                tree.len(),
+            );
+        } else {
+            crate::trace::debug_eprintln!(
+                "GLOBAL_MODULAR_TREE seed={}/{}: {} nodes (force-predictor override)",
+                seed,
+                seeds,
+                tree.len(),
+            );
+        }
+
+        // Collect residuals for this candidate tree. `group_ranges[g]` is
+        // group g's slice of `all_tokens` — kept so the per-section LZ77
+        // transform below can re-slice the winning seed's streams without
+        // holding a second per-group copy.
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _ll_t_collect0 = crate::clock::Instant::now();
+        let (all_tokens, nb_meta_tokens, group_ranges) =
+            crate::profile_time!("modular/collect_residuals_global", {
+                collect_for_tree(&tree)?
+            });
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "lossless-tail: collect={:.1}ms",
+                _ll_t_collect0.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+
+        // Content-agnostic self-repair (task #14, #24): our fixed-stride sample
+        // gather can ALIAS against periodic content (document text-line
+        // spacing), yielding a non-representative sample whose learned tree
+        // codes the real residuals badly (5336 e5: +36.9% vs cjxl). When that
+        // is possible (large stride, non-trivial tree) learn a SECOND tree from
+        // a DE-ALIASED randomized re-gather and keep whichever codes the actual
+        // residuals cheaper (`estimate_token_cost` — the same estimator the
+        // multi-seed picker trusts). Node count does NOT separate aliased docs
+        // from detailed photos (both over-split); only real coded cost does.
+        // Picking the cheaper tree can never regress bytes; on non-aliased
+        // content the two costs sit within the moat so the fixed-stride tree is
+        // kept ⇒ byte-identical. Costs a second tree-learn + collect when it
+        // fires (gated to the base seed path, stride >= 8, non-trivial tree).
+        let (all_tokens, nb_meta_tokens, group_ranges, tree) = if force_predictor.is_none()
+            && riged_override.is_none()
+            && super::encode::tree_self_repair_should_try(
+                profile.tree_self_repair,
+                profile.tree_self_repair_allowed,
+                seed_stride,
+                tree.len(),
+            ) {
+            // Cheap aliasing pre-filter (bounds the wall-time cost): a
+            // stride-aliased tree loses far more to the ≤96-histogram
+            // clustering than a well-sampled one, so its REAL clustered ANS
+            // cost runs well above its IDEAL per-context entropy. Compute both
+            // for the fixed-stride tree and only pay for the de-aliased
+            // re-gather when the ratio flags aliasing. Non-aliased content
+            // (photos, flat docs; ratio ≈ 1.0) skips the second pass entirely.
+            let ideal_a = estimate_token_cost_stop(&all_tokens, stop)?;
+            let (cost_a_bits, code_a) = real_ans_cost(&all_tokens, &tree)?;
+            let cost_a = cost_a_bits as f64;
+            if !super::encode::tree_self_repair_ratio_flags_aliasing(cost_a, ideal_a) {
+                crate::trace::debug_eprintln!(
+                    "SELF_REPAIR seed={} stride={} tree_a={}n clustered={:.0} ideal={:.0} ratio={:.3} -> SKIP (clusters clean, not aliased)",
+                    seed,
+                    seed_stride,
+                    tree.len(),
+                    cost_a,
+                    ideal_a,
+                    cost_a / ideal_a.max(1.0),
+                );
+                // KEEP fixed-stride tree: cache its already-built code for the
+                // Step-4 reuse (this is why the SKIP path costs ~0 extra).
+                cached_winner_code = Some(code_a);
+                (all_tokens, nb_meta_tokens, group_ranges, tree)
+            } else {
+                let (mut samples_r, pre_pq_r) = gather_for_seed(seed, seed_stride, true)?;
+                let params_r = build_params(&samples_r);
+                let tree_r = match pre_pq_r {
+                    Some(pq) => super::tree_learn::compute_best_tree_prequantized(
+                        &mut samples_r,
+                        &params_r,
+                        pq,
+                        stop,
+                    )?,
+                    None => compute_best_tree_with_budget(&mut samples_r, &params_r, None, stop)?,
+                };
+                let (tokens_r, meta_r, ranges_r) =
+                    crate::profile_time!("modular/collect_residuals_global", {
+                        collect_for_tree(&tree_r)?
+                    });
+                let (cost_r_bits, code_r) = real_ans_cost(&tokens_r, &tree_r)?;
+                let cost_r = cost_r_bits as f64;
+                let switch = super::encode::tree_self_repair_keep_by_cost(cost_r, cost_a);
+                crate::trace::debug_eprintln!(
+                    "SELF_REPAIR seed={} stride={} tree_a={}n clustered={:.0} ideal={:.0} ratio={:.3} tree_r={}n clustered_r={:.0} -> {}",
+                    seed,
+                    seed_stride,
+                    tree.len(),
+                    cost_a,
+                    ideal_a,
+                    cost_a / ideal_a.max(1.0),
+                    tree_r.len(),
+                    cost_r,
+                    if switch {
+                        "SWITCH to de-aliased tree"
+                    } else {
+                        "KEEP fixed-stride tree"
+                    },
+                );
+                // Cache the WINNER's already-built code for the Step-4 reuse.
+                if switch {
+                    cached_winner_code = Some(code_r);
+                    (tokens_r, meta_r, ranges_r, tree_r)
+                } else {
+                    cached_winner_code = Some(code_a);
+                    (all_tokens, nb_meta_tokens, group_ranges, tree)
+                }
+            }
+        } else {
+            (all_tokens, nb_meta_tokens, group_ranges, tree)
+        };
+
+        // Score: skip cost estimate entirely when seeds == 1 (the legacy
+        // single-pass path doesn't need to know the cost). For seeds > 1
+        // we compute the entropy cost (with per-context header term,
+        // see `estimate_token_cost`) and keep the cheapest candidate.
+        if seeds == 1 {
+            best = Some((all_tokens, nb_meta_tokens, group_ranges, tree, 0.0));
+            break;
+        }
+        let cost = estimate_token_cost_stop(&all_tokens, stop)?;
+        crate::trace::debug_eprintln!(
+            "MULTI_SEED_TREE_PICK seed={}/{} cost={:.0} bits ({} tokens, {} nodes)",
+            seed,
+            seeds,
+            cost,
+            all_tokens.len(),
+            tree.len(),
+        );
+        seed_costs.push(cost);
+        match best {
+            None => best = Some((all_tokens, nb_meta_tokens, group_ranges, tree, cost)),
+            Some((_, _, _, _, prev_cost)) if cost < prev_cost => {
+                best = Some((all_tokens, nb_meta_tokens, group_ranges, tree, cost));
+            }
+            _ => {}
+        }
+
+        // RFC#45 chunk 7 — Pareto-aware wall-clock early-out.
+        //
+        // After completing the probe seeds (chunk-3 perturbation slot),
+        // check whether the spread of token costs is below the threshold.
+        // Low chunk-3 spread → skip the remaining 12 seeds. This trades a
+        // small bytes regression (~+0.09% on the 5-image chunk-6 bench)
+        // for a large wall-clock speedup (~3.36× at e11). See the helper's
+        // doc comment for the full trade-off table.
+        //
+        // Fires at most once, when the probe window first closes — `break`
+        // exits the loop immediately so the helper isn't reconsulted on
+        // subsequent iterations.
+        let completed = seed_costs.len();
+        if completed == MULTI_SEED_EARLY_OUT_PROBE_SEEDS
+            && completed < seeds as usize
+            && multi_seed_early_out_after_probe(
+                &seed_costs,
+                MULTI_SEED_EARLY_OUT_PROBE_SEEDS,
+                seeds as usize,
+            )
+        {
+            crate::trace::debug_eprintln!(
+                "MULTI_SEED_EARLY_OUT after {}/{} seeds (cost spread converged below {:.3}%)",
+                completed,
+                seeds,
+                super::tree_learn::MULTI_SEED_EARLY_OUT_SPREAD_THRESHOLD * 100.0,
+            );
+            break;
+        }
+    }
+
+    let (all_tokens, nb_meta_tokens, group_ranges, tree, _final_cost) =
+        best.expect("seeds >= 1 guarantees at least one candidate");
+    let num_contexts = count_contexts(&tree) as usize;
+
+    if profile.lz77_keep_best
+        && use_lz77
+        && let Some((group_transforms, num_lf_groups)) = keep_best_layout
+    {
+        assert_eq!(images.len(), group_transforms.len());
+        let meta_dm = meta_image
+            .map(|m| m.channels.iter().map(|c| c.width()).max().unwrap_or(0))
+            .unwrap_or(0) as i32;
+        let mut streams = vec![(&all_tokens[..nb_meta_tokens], meta_dm)];
+        for (image, range) in images.iter().zip(&group_ranges) {
+            let dm = image.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
+            streams.push((&all_tokens[range.clone()], dm));
+        }
+        let write_global =
+            |candidate: &super::lz77_keep_best::Candidate, out: &mut BitWriter| -> Result<()> {
+                crate::f16::write_lf_quant(out, dc_quant_custom)?;
+                out.write(1, 1)?;
+                write_tree(out, &tree)?;
+                candidate.write_header(out)?;
+                out.write(1, 1)?;
+                write_wp_header(out, &wp_params)?;
+                write_global_transforms_full(out, &transforms)?;
+                candidate.write_stream(0, out)?;
+                out.zero_pad_to_byte();
+                Ok(())
+            };
+        let selected = super::lz77_keep_best::Selection {
+            streams: &streams,
+            num_contexts,
+            total_pixels,
+            method: lz77_method,
+            budget,
+            stop,
+        }
+        .select(|candidate| {
+            let mut global = writer.clone();
+            write_global(candidate, &mut global)?;
+            let mut sizes = vec![global.bits_written().div_ceil(8)];
+            // The normal modular frame writes empty LfGroups and HfGlobal.
+            sizes.resize(2 + num_lf_groups, 0);
+            for (g, transforms) in group_transforms.iter().enumerate() {
+                let mut group = BitWriter::new();
+                write_group_header(&mut group, Some(&wp_params), transforms)?;
+                candidate.write_stream(g + 1, &mut group)?;
+                sizes.push(group.bits_written().div_ceil(8));
+            }
+            super::frame::FrameEncoder::coded_sections_size(&sizes)
+        })?;
+        write_global(&selected, writer)?;
+        // Hand the wave-learned per-group trees to the hybrid caller here
+        // too — this early return used to skip the `hybrid_slot` handoff
+        // below, leaving Hybrid's `hybrid_trees` empty so every local
+        // attempt silently never ran (Hybrid degraded to plain Global).
+        if let Some(out) = hybrid_local_trees.take() {
+            *out = hybrid_slot.into_inner();
+        }
+        return Ok(GlobalModularState::AnsWithTree {
+            code: selected.code,
+            tree,
+            wp_params,
+            lz77: selected.params.map(|p| (lz77_method, p)),
+            require_stored_tokens: true,
+            group_tokens: Some(GroupTokenStore {
+                tokens: selected.tokens,
+                group_ranges: selected.ranges.into_iter().skip(1).collect(),
+            }),
+        });
+    }
+
+    // Per-section LZ77 (issue #69 item 1) — mirrors the squeeze multi-group
+    // path (frame.rs Step 5b). Every section's token stream is transformed
+    // INDEPENDENTLY: the decoder creates a fresh LZ77 state per section with
+    // dist_multiplier = max(that section's channel widths). The global ANS
+    // code is then built over the TRANSFORMED streams, so its LZ77 length
+    // context matches exactly what the sections emit — the histogram
+    // mismatch that historically kept LZ77 off this path only existed when
+    // the combined stream was transformed as one unit.
+    //
+    // Two deliberate orderings:
+    // - Seed selection above scores UNTRANSFORMED streams. Transforming
+    //   every candidate would multiply the e9 Optimal parse cost by the
+    //   seed count; "pick tree, then LZ77" is the cheap order.
+    // - Per-group sections re-collect tokens at write time
+    //   (write_group_modular_section_idx) and re-apply this same transform.
+    //   apply_lz77 is deterministic on identical inputs (same tree, same
+    //   group_id, same num_contexts, same dist_multiplier), so the
+    //   histogram-time slices and the write-time streams stay in lockstep.
+    let lz77_applied = if use_lz77 {
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _ll_t_lz = crate::clock::Instant::now();
+        use crate::entropy_coding::lz77::Lz77Params;
+        let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Result<Vec<AnsToken>> {
+            if tokens.is_empty() {
+                return Ok(Vec::new());
+            }
+            Ok(
+                match crate::entropy_coding::lz77::apply_lz77_stop(
+                    tokens,
+                    num_contexts,
+                    false,
+                    lz77_method,
+                    dist_multiplier,
+                    budget,
+                    stop,
+                )? {
+                    Some((lz77_tokens, _)) => lz77_tokens,
+                    None => {
+                        // Rejected transforms copy the raw stream back — a
+                        // ~12M-token clone is tens of ms unpolled, so chunk
+                        // it with a cancellation check per 1M tokens.
+                        let mut v = Vec::with_capacity(tokens.len());
+                        for chunk in tokens.chunks(1 << 20) {
+                            crate::error::check_stop(stop)?;
+                            v.extend_from_slice(chunk);
+                        }
+                        v
+                    }
+                },
+            )
+        };
+        let meta_dm = meta_image
+            .map(|m| m.channels.iter().map(|c| c.width()).max().unwrap_or(0))
+            .unwrap_or(0) as i32;
+        let mut transformed = Vec::with_capacity(all_tokens.len());
+        transformed.extend(try_lz77(&all_tokens[..nb_meta_tokens], meta_dm)?);
+        let transformed_nb_meta = transformed.len();
+        let mut transformed_ranges = Vec::with_capacity(group_ranges.len());
+        // Per-group transforms are independent (apply_lz77 is a pure
+        // function of (tokens, dist_multiplier) — the write-time lockstep
+        // contract above depends on exactly that), so groups fan across
+        // the pool and concatenate in group order: byte-identical to the
+        // sequential loop, which was 5.4 s of the 4K e9 t8 wall.
+        let per_group: Vec<Result<Vec<AnsToken>>> =
+            crate::parallel::parallel_map(group_ranges.len(), |g| {
+                let dm = images[g]
+                    .channels
+                    .iter()
+                    .map(|c| c.width())
+                    .max()
+                    .unwrap_or(0) as i32;
+                try_lz77(&all_tokens[group_ranges[g].clone()], dm)
+            });
+        for one in per_group {
+            let toks = one?;
+            let start = transformed.len();
+            transformed.extend(toks);
+            transformed_ranges.push(start..transformed.len());
+            crate::error::check_stop(stop)?;
+        }
+        // Header params come from the same (num_contexts, force_huffman)
+        #[cfg(feature = "__env_var_diagnostics")]
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "lossless-tail: lz77={:.1}ms",
+                _ll_t_lz.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        // construction apply_lz77 uses internally, so min_symbol/min_length
+        // agree across all sections (same contract as the squeeze path).
+        let mut any_lz77 = false;
+        for chunk in transformed.chunks(1 << 20) {
+            crate::error::check_stop(stop)?;
+            if chunk.iter().any(|t| t.is_lz77_length()) {
+                any_lz77 = true;
+                break;
+            }
+        }
+        if any_lz77 {
+            let mut params = Lz77Params::new(num_contexts, false);
+            params.enabled = true;
+            Some((transformed, transformed_nb_meta, transformed_ranges, params))
+        } else {
+            // No section materialized a reference: without refs the
+            // transform is the identity, so drop it and write the
+            // pre-#69 lz77.enabled=0 layout.
+            None
+        }
+    } else {
+        None
+    };
+    // From here on (all_tokens, nb_meta_tokens, group_ranges) are the
+    // FINAL WIRE stream + its per-section ranges — LZ77-transformed when
+    // the transform materialized a reference, raw otherwise. The state's
+    // group_tokens carries exactly this pair, so per-group section writes
+    // can emit their slice directly (no re-collect, no LZ77 re-apply).
+    crate::error::check_stop(stop)?;
+    let (all_tokens, nb_meta_tokens, group_ranges, lz77_params) = match lz77_applied {
+        Some((tokens, nb_meta, ranges, params)) => (tokens, nb_meta, ranges, Some(params)),
+        None => (all_tokens, nb_meta_tokens, group_ranges, None),
+    };
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+
+    // Step 4: Build multi-context ANS code with enhanced clustering.
+    //
+    // Reuse the self-repair's already-built code when present (task #14 perf):
+    // it fires only on the LZ77-off e5/e6 tree-lift path where this build's
+    // params are IDENTICAL — same winning tokens (no LZ77 transform, so
+    // `all_tokens` is unchanged), `ans_num_contexts == num_contexts ==
+    // count_contexts(tree)`, same clustering/uint flags, `lz77_params = None`.
+    // So the cached code is byte-for-byte what this build would produce; the
+    // `!use_lz77` guard is a belt-and-braces assertion of that invariant.
+    #[cfg(feature = "__env_var_diagnostics")]
+    let _ll_t_ans0 = crate::clock::Instant::now();
+    crate::error::check_stop(stop)?;
+    let code = crate::profile_time!("modular/build_ans_code", {
+        match cached_winner_code.take() {
+            Some(cached) if !use_lz77 => cached,
+            _ => build_entropy_code_ans_with_options_stop(
+                &all_tokens,
+                ans_num_contexts,
+                true, // enhanced clustering (pair-merge refinement)
+                true, // optimize uint configs
+                lz77_params.as_ref(),
+                Some(total_pixels),
+                stop,
+            ),
+        }
+    });
+    #[cfg(feature = "__env_var_diagnostics")]
+    if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+        eprintln!(
+            "lossless-tail: ans_build={:.1}ms",
+            _ll_t_ans0.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+
+    // Per-seed diagnostics are emitted inside the loop via the
+    // `MULTI_SEED_TREE_PICK` trace; here we just summarise the picked tree.
+    crate::trace::debug_eprintln!(
+        "DIAG tree: {} nodes, {} contexts, {} total_tokens (seeds={})",
+        tree.len(),
+        num_contexts,
+        all_tokens.len(),
+        seeds,
+    );
+    crate::trace::debug_eprintln!(
+        "DIAG code: {} histograms (from {} contexts), rct={:?}, compact={}",
+        code.histograms.len(),
+        ans_num_contexts,
+        transforms.rct_type,
+        transforms.compact_info.len(),
+    );
+
+    // Step 5: Write bitstream
+    let bits_before = writer.bits_written();
+    crate::f16::write_lf_quant(writer, dc_quant_custom)?;
+    // has_tree = true
+    writer.write(1, 1)?;
+
+    // Write the learned tree
+    let bits_before_tree = writer.bits_written();
+    write_tree(writer, &tree)?;
+    let _tree_bits = writer.bits_written() - bits_before_tree;
+
+    // Write LZ77 header + ANS data histogram.
+    let bits_before_histo = writer.bits_written();
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
+        write_entropy_code_ans(&code, writer)?;
+    } else {
+        write_ans_modular_header(writer, &code)?;
+    }
+    let _histo_bits = writer.bits_written() - bits_before_histo;
+
+    // GroupHeader (global modular group)
+    writer.write(1, 1)?; // use_global_tree = true
+    write_wp_header(writer, &wp_params)?;
+    write_global_transforms_full(writer, &transforms)?;
+
+    // Write meta-channel tokens (palette data) in the global section, after GroupHeader.
+    // These are part of the global modular image — they stay whole (not split across groups).
+    //
+    // Even when nb_meta_tokens == 0, we still emit a 32-bit ANS initial state so the
+    // section forms a valid (empty) ANS stream. Pre-fix jxl-oxide always calls
+    // `decoder.begin()` here regardless of buffers — without these bits we'd EOF
+    // mid-LfGlobal. libjxl is bug-compatible by writing the same 32 bits via its
+    // `WriteTokens`/`ANSCoder::Flush` codepath. djxl and jxl-rs short-circuit before
+    // reading the state when there are no decodable channels in this section (the
+    // `num_chans == 0` / `is_empty` early-returns), so the extra 4 bytes are simply
+    // padding to them. See `imazen/jxl-oxide@fd4e2c3` for the matching decoder fix.
+    let meta_token_slice = &all_tokens[..nb_meta_tokens];
+    write_tokens_ans_stop(meta_token_slice, &code, lz77_params.as_ref(), writer, stop)?;
+
+    let _total_lf_global_bits = writer.bits_written() - bits_before;
+    crate::trace::debug_eprintln!(
+        "DIAG LfGlobal: tree={} bits ({} B), histo={} bits ({} B), \
+         meta_tokens={}, total={} bits ({} B)",
+        _tree_bits,
+        _tree_bits / 8,
+        _histo_bits,
+        _histo_bits / 8,
+        nb_meta_tokens,
+        _total_lf_global_bits,
+        _total_lf_global_bits / 8,
+    );
+
+    writer.zero_pad_to_byte();
+
+    // Hand the wave-learned per-group trees to the hybrid caller.
+    if let Some(out) = hybrid_local_trees {
+        *out = hybrid_slot.into_inner();
+    }
+
+    Ok(GlobalModularState::AnsWithTree {
+        code,
+        tree,
+        wp_params,
+        lz77: lz77_params.map(|p| (lz77_method, p)),
+        require_stored_tokens: false,
+        group_tokens: Some(GroupTokenStore {
+            tokens: all_tokens,
+            group_ranges,
+        }),
+    })
+}
+
+/// Info about global transforms to write in the LfGlobal GroupHeader.
+pub struct GlobalTransforms {
+    /// Full-image palette transform (issue #69 item 2):
+    /// `(begin_c, num_c, nb_colors)`. Mutually exclusive with
+    /// `compact_info`/`rct_type` (indices are nominal — RCT is skipped,
+    /// and a full palette subsumes per-channel compaction).
+    pub full_palette: Option<(usize, usize, usize)>,
+    /// Per-channel ChannelCompact transforms: (begin_c, nb_colors).
+    pub compact_info: Vec<(usize, usize)>,
+    /// Optional RCT type (begin_c is adjusted for ChannelCompact meta channels).
+    pub rct_type: Option<RctType>,
+}
+
+impl GlobalTransforms {
+    pub fn rct_only(rct_type: Option<RctType>) -> Self {
+        Self {
+            full_palette: None,
+            compact_info: Vec::new(),
+            rct_type,
+        }
+    }
+}
+
+/// Write num_transforms + transform descriptors for the global GroupHeader.
+///
+/// When `compact_info` is present, writes ChannelCompact (kPalette with num_c=1)
+/// transforms first, then RCT with begin_c shifted by the number of compact meta channels.
+fn write_global_transforms_full(
+    writer: &mut BitWriter,
+    transforms: &GlobalTransforms,
+) -> Result<()> {
+    let num_transforms = transforms.full_palette.is_some() as u32
+        + transforms.compact_info.len() as u32
+        + transforms.rct_type.is_some() as u32;
+    super::encode::write_num_transforms(writer, num_transforms)?;
+
+    // Full-image palette (issue #69 item 2) — written exactly like the
+    // single-group palette path (nb_deltas=0, d_pred=0, lossless).
+    if let Some((begin_c, num_c, nb_colors)) = transforms.full_palette {
+        write_palette_transform(writer, begin_c, num_c, nb_colors, 0, 0)?;
+    }
+
+    // ChannelCompact transforms first (per-channel palette, num_c=1)
+    for &(begin_c, nb_colors) in &transforms.compact_info {
+        write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
+    }
+    // RCT (begin_c adjusted for ChannelCompact meta channels)
+    if let Some(rct) = transforms.rct_type {
+        let rct_begin_c = transforms.compact_info.len();
+        write_rct_transform(writer, rct_begin_c, rct)?;
+    }
+    Ok(())
+}
+
+/// Collect packed residuals from a group image using gradient prediction.
+#[allow(dead_code)] // legacy wrapper retained for hash-lock parity
+fn collect_group_residuals(group_image: &ModularImage) -> Vec<u32> {
+    collect_group_residuals_with_predictor(group_image, 5)
+}
+
+/// Knob-aware variant of [`collect_group_residuals`] that honours the
+/// libjxl `--modular_predictor` override.
+fn collect_group_residuals_with_predictor(
+    group_image: &ModularImage,
+    predictor_id: u8,
+) -> Vec<u32> {
+    let mut residuals = Vec::new();
+    for channel in &group_image.channels {
+        let width = channel.width();
+        let height = channel.height();
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = channel.get(x, y);
+                let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
+                let residual = pixel.wrapping_sub(prediction);
+                residuals.push(pack_signed(residual));
+            }
+        }
+    }
+    residuals
+}
+
+/// Writes a group's data section for multi-group modular encoding.
+///
+/// This writes:
+/// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
+/// - Encoded pixel residuals using HybridUint {4,2,0} + global entropy codes
+///
+/// The `group_image` should be the extracted region for this group.
+// `MemoryBudget` is a `pub` type; this `pub` fn lives in the
+// `pub mod section` (re-exported only inside `pub mod encode`),
+// so it is not externally reachable despite the `pub` keyword. The budget
+// param is an internal allocation-policy detail.
+/// LfGlobal for the sectioned-tree mode: byte-shape-identical to the proven
+/// global-tree LfGlobal (has_tree = 1, tree, histograms, GroupHeader,
+/// meta-token ANS stream) — every image-sized channel is group-streamed and
+/// the pass groups carry their own local trees, so stream 0 only ever codes
+/// the META channels (full-image palette / ChannelCompact palettes, issue
+/// #96 residual scope). Global transforms (palette, ChannelCompact, RCT) are
+/// signaled here exactly like the global-tree path, so decoders apply them
+/// at full-image reconstruction as today.
+///
+/// * `meta_image == None` (no palette / compaction): the tree is a TRIVIAL
+///   single-leaf Gradient tree with a one-context code and ZERO tokens
+///   (just the ANS final state) — unchanged v1 bytes.
+/// * `meta_image == Some(..)`: the tree is learned from the meta channels'
+///   own samples (they are tiny — `nb_colors × num_c` — so the gather is
+///   unstrided and the learn costs microseconds) and stream 0 carries their
+///   tokens, the same `collect_residuals_with_tree` + LZ77 + ANS chain the
+///   sectioned group writer uses with stream id 0 (property 1 = 0 is what
+///   decoders evaluate for the global stream). Before this arm any
+///   palette/compact content silently fell back to the whole-image global
+///   tree under `SectionedTrees::On` (measured: imac_dark wrote 0 local
+///   sections, 85.6 / 137.7 B/px peak vs the sectioned 48–72 B/px floor).
+#[allow(clippy::too_many_arguments)]
+pub fn write_local_trees_lf_global(
+    writer: &mut BitWriter,
+    transforms: GlobalTransforms,
+    meta_image: Option<&ModularImage>,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
+    use super::encode::{write_tree, write_wp_header};
+    use super::predictor::WeightedPredictorParams;
+    use super::tree::count_contexts;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, WpCache, WpCacheMode,
+        collect_residuals_with_tree_offset_with_budget_wp, compute_best_tree_with_budget,
+        gather_samples_strided_filling_wp_cache, max_ref_channels,
+    };
+    use crate::entropy_coding::encode::{
+        build_entropy_code_ans_with_options_stop, write_entropy_code_ans,
+    };
+    use crate::entropy_coding::lz77::write_lz77_header;
+
+    let wp_params = profile
+        .forced_wp_mode
+        .map(WeightedPredictorParams::for_mode)
+        .unwrap_or_default();
+    let meta_pixels: usize = meta_image
+        .map(|m| m.channels.iter().map(|c| c.width() * c.height()).sum())
+        .unwrap_or(0);
+
+    let (tree, tokens, lz77_params) = match meta_image {
+        Some(meta) if meta_pixels > 0 => {
+            // Learn stream 0's tree from the meta channels only (stride 1:
+            // the whole palette is a handful of KiB at most).
+            let num_refs = max_ref_channels(meta);
+            let mut samples = TreeSamples::new_with_ref_channels(num_refs);
+            let mut wp_cache = WpCache::new();
+            gather_samples_strided_filling_wp_cache(
+                &mut samples,
+                meta,
+                0,
+                0,
+                1,
+                &wp_params,
+                &mut wp_cache,
+                stop,
+            )?;
+            let params = TreeLearningParams::from_profile(profile)
+                .with_ref_properties(num_refs, profile.effort)
+                .with_total_pixels(meta_pixels)
+                .with_pixel_fraction(1.0);
+            let tree = compute_best_tree_with_budget(&mut samples, &params, None, stop)?;
+            drop(samples);
+            let tokens = collect_residuals_with_tree_offset_with_budget_wp(
+                meta,
+                &tree,
+                0,
+                0,
+                &wp_params,
+                budget,
+                WpCacheMode::Read(&wp_cache),
+                stop,
+            )?;
+            let num_contexts = count_contexts(&tree) as usize;
+            let dist_multiplier = meta.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
+            let (tokens, lz77_params) = if use_lz77 {
+                match crate::entropy_coding::lz77::apply_lz77_stop(
+                    &tokens,
+                    num_contexts,
+                    false,
+                    lz77_method,
+                    dist_multiplier,
+                    budget,
+                    stop,
+                )? {
+                    Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+                    None => (tokens, None),
+                }
+            } else {
+                (tokens, None)
+            };
+            (tree, tokens, lz77_params)
+        }
+        _ => {
+            // The histogram must be buildable (a zero-count context cannot
+            // normalize); the trivial code below is derived from one dummy
+            // token while the stream itself carries ZERO tokens.
+            let tree = super::tree::simple_tree(super::predictor::Predictor::Gradient);
+            (tree, alloc::vec::Vec::new(), None)
+        }
+    };
+    let num_contexts = count_contexts(&tree) as usize;
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+    let code = if tokens.is_empty() {
+        let seed_tokens = alloc::vec![crate::entropy_coding::token::Token::new(0, 0)];
+        build_entropy_code_ans(&seed_tokens, 1)
+    } else {
+        build_entropy_code_ans_with_options_stop(
+            &tokens,
+            ans_num_contexts,
+            true,
+            true,
+            lz77_params.as_ref(),
+            Some(meta_pixels),
+            stop,
+        )
+    };
+
+    crate::f16::write_lf_quant(writer, None)?;
+    writer.write(1, 1)?; // has_tree
+    write_tree(writer, &tree)?;
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
+        write_entropy_code_ans(&code, writer)?;
+    } else {
+        write_ans_modular_header(writer, &code)?;
+    }
+    // GroupHeader for the global modular image (meta channels only).
+    writer.write(1, 1)?; // use_global_tree = true (the tree above)
+    write_wp_header(writer, &wp_params)?;
+    write_global_transforms_full(writer, &transforms)?;
+    // Meta-token ANS stream. With no meta channels this is the empty
+    // stream's 32-bit final state that keeps every decoder's
+    // begin()/final-state check happy (same rationale as the global-tree
+    // writer's zero-meta case).
+    write_tokens_ans_stop(&tokens, &code, lz77_params.as_ref(), writer, stop)?;
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
+/// Writes a PassGroup modular section that carries its OWN MA tree and
+/// histograms (`use_global_tree = false`) — the sectioned-tree lossless
+/// memory mode (imazen/jxl-encoder#96).
+///
+/// The stream is fully self-contained: GroupHeader (local tree, wp params,
+/// optional per-group RCT descriptor), the tree learned from THIS group's
+/// samples only, its entropy code, then the group's tokens. Peak memory for
+/// the whole encode becomes the image copies plus ONE group's tree-learn
+/// working set instead of the whole-image sample accumulator — measured
+/// tradeoff in `benchmarks/jxl_sectioned_tree_tradeoff_2026-08-13.md`.
+///
+/// The caller writes an LfGlobal with `has_tree = 0` and NO global stream
+/// content (grammar: decoders early-out on the empty global channel set
+/// before reading a GroupHeader, so global transforms cannot be signaled
+/// there — which is why the RCT descriptor rides in each group's header;
+/// RCT is pointwise per pixel, so per-group application is equivalent).
+#[allow(private_interfaces)]
+#[allow(clippy::too_many_arguments)]
+/// Default per-group predictor-pruning strength for the sectioned
+/// local-tree writer: keep the 8 root-cheapest candidate predictors
+/// (Weighted always retained) out of 14. See the call site below for the
+/// measured trade; hybrid per-group learns keep the full set by default
+/// (RD-max mode) and honor the same env override.
+pub const SECTIONED_PRUNE_PREDICTORS_K: usize = 8;
+
+/// Content-adaptive predictor set for the sectioned per-group tree learns
+/// (#99 item 1): learn ONE capped probe tree over a strided subsample of
+/// the groups and return the predictors its leaves actually use.
+///
+/// This replaces a fixed `SECTIONED_PRUNE_PREDICTORS_K` with a count the
+/// CONTENT chooses, and it applies at a strictly better place in the
+/// pipeline: the fixed-K path gathers all 14 predictor columns per group
+/// and drops 6 afterwards, so it only ever saved split-search time, while
+/// the probe list is handed to each group's `TreeSamples` up front so the
+/// gather tokenizes only the survivors.
+///
+/// Root-cost ranking — what `TreeSamples::prune_to_top_predictors` uses —
+/// is REFUTED as the selector for this decision (2026-08-15,
+/// `benchmarks/jxl_probe_prune_2026-08-15.md`): predictor value is
+/// leaf-conditional, so flat/palette content loses predictors whose root
+/// cost looks terrible but whose leaves carry real mass. That is exactly
+/// the asymmetry the 2026-08-28 K sweep measured (K=4 costs the palette
+/// screenshot +1.35 % bytes and the photo +0.02 %). The probe tree
+/// exercises the real contextual machinery, so its leaf histogram is the
+/// honest selector, and `predictors_used_by_tree` already carries the
+/// corpus-gated leaf floor and coverage cap.
+///
+/// Amortization is the reason this is affordable per-image but not
+/// per-group: ONE probe over every `probe_group_stride`-th group at
+/// `PROBE_PIXEL_STRIDE_MULT`x the gather stride serves every group's
+/// learn.
+/// Returns `None` when the probe tree is too small to have exercised the
+/// predictor space — see [`SECTIONED_PROBE_MIN_LEAVES`]. The caller then
+/// keeps the shipping fixed-K root-cost prune, so the gate can only ever
+/// change behaviour where the probe is trustworthy.
+pub fn sectioned_probe_predictors(
+    images: &[ModularImage],
+    profile: &crate::effort::EffortProfile,
+    per_group_id_offset: u32,
+    stride: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<Option<alloc::vec::Vec<super::predictor::Predictor>>> {
+    use super::predictor::WeightedPredictorParams;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, compute_best_tree_with_budget,
+        gather_samples_strided_with_budget, max_ref_channels, sectioned_predictors_from_tree,
+    };
+    let wp_params = profile
+        .forced_wp_mode
+        .map(WeightedPredictorParams::for_mode)
+        .unwrap_or_default();
+    let num_refs = images.iter().map(max_ref_channels).max().unwrap_or(0);
+    // Sample EVERY group, thinly, rather than every Nth group densely.
+    //
+    // The global probe skips groups (every 4th at e7) because its consumer
+    // is one whole-image tree, so a group-level sample is unbiased for it.
+    // The sectioned consumer is N per-group trees, and the whole point of
+    // sectioned mode is that groups differ — skipping groups makes the list
+    // wrong for exactly the heterogeneous images (charts with a flat field
+    // plus a dense plot area, product shots with a white ground plus a
+    // detailed subject) where per-group adaptation is the win. MEASURED
+    // 2026-08-31: at group_stride 4 the worst byte cell is +12.4 % vs the
+    // fixed-K default on a 4-group screenshot crop; covering every group at
+    // the SAME total sample count removes that failure mode.
+    let (probe_group_stride, probe_pixel_mult) = probe_density(profile.effort);
+    let probe_stride = stride.saturating_mul(probe_pixel_mult).max(1);
+    let mut probe = TreeSamples::new_with_ref_channels(num_refs);
+    // The probe gather fans out across the sampled groups and merges in
+    // index order (`append_from` is order-dependent, and the merge order
+    // fixes the sample order the learn sees, so this stays deterministic).
+    // Fanning out is load-bearing at high thread counts, NOT a micro-opt:
+    // the per-group learns it feeds are already parallel, so a SEQUENTIAL
+    // probe is Amdahl serial work whose share grows with the thread count —
+    // measured +20 % wall at t=8 before this, against +1 % at t=1.
+    // Store only the property columns the learn will read. The gather
+    // otherwise materializes all ~24 raw columns where the learn uses 7-9,
+    // which is most of the probe's cost and buys nothing — the global probe
+    // has always masked; this one had not (measured: it is the difference
+    // between a probe that pays for itself and one that eats the saving).
+    let active_prop_list: alloc::vec::Vec<usize> = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .properties
+        .clone();
+    let active_mask: alloc::boxed::Box<[bool]> = {
+        let mut m = alloc::vec![false; probe.total_num_properties()].into_boxed_slice();
+        for &p in &active_prop_list {
+            if p < m.len() {
+                m[p] = true;
+            }
+        }
+        m
+    };
+    probe.set_active_props(active_mask.clone());
+    let probe_indices: alloc::vec::Vec<usize> = (0..images.len())
+        .step_by(probe_group_stride.max(1))
+        .collect();
+    let locals: alloc::vec::Vec<TreeSamples> =
+        crate::parallel::parallel_map_result(probe_indices.len(), |i| {
+            let gi = probe_indices[i];
+            let mut local = TreeSamples::new_with_ref_channels(num_refs);
+            local.set_active_props(active_mask.clone());
+            gather_samples_strided_with_budget(
+                &mut local,
+                &images[gi],
+                gi as u32 + per_group_id_offset,
+                0,
+                probe_stride,
+                &wp_params,
+                None,
+                stop,
+            )?;
+            Ok(local)
+        })?;
+    for local in locals {
+        probe.append_from(local);
+    }
+    let probe_pixels: usize = images
+        .iter()
+        .step_by(probe_group_stride)
+        .flat_map(|img| img.channels.iter())
+        .map(|c| c.width() * c.height())
+        .sum();
+    let mut probe_params = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .with_total_pixels(probe_pixels.max(1))
+        .with_pixel_fraction(if probe_pixels > 0 {
+            probe.total_gathered_weight() as f64 / probe_pixels as f64
+        } else {
+            1.0
+        });
+    probe_params.max_property_values = probe_params
+        .max_property_values
+        .min(if profile.effort >= 8 { 64 } else { 32 });
+    // Cap the probe tree's SIZE, not just its property resolution. Capping
+    // `max_property_values` alone leaves the node count unbounded: on the
+    // 3840x2160 photo the probe grew a 9515-LEAF tree and cost 1.39 s —
+    // 14 % of the whole encode, more than the split-search saving it
+    // enables. The probe's output is a LEAF HISTOGRAM over 14 predictors;
+    // a few hundred leaves already resolve that, and the tail leaves a deep
+    // tree adds are noise for this purpose. The cap must stay above
+    // `SECTIONED_PROBE_MIN_LEAVES` or the trust gate would reject every
+    // probe by construction.
+    probe_params.max_nodes = probe_params.max_nodes.min(sectioned_probe_max_nodes());
+    let probe_tree = compute_best_tree_with_budget(&mut probe, &probe_params, None, stop)?;
+    let leaves = probe_tree.iter().filter(|n| n.property < 0).count();
+    if leaves < sectioned_probe_min_leaves() {
+        #[cfg(feature = "std")]
+        if std::env::var_os("JXL_PROBE_COSTS").is_some() {
+            eprintln!("[sectioned-probe] leaves={leaves} UNTRUSTED -> fixed-K fallback");
+        }
+        return Ok(None);
+    }
+    Ok(Some(sectioned_predictors_from_tree(
+        &probe_tree,
+        sectioned_probe_coverage_pct(),
+        SECTIONED_PRUNE_PREDICTORS_K,
+    )))
+}
+
+/// Cumulative static leaf-mass coverage the SECTIONED probe selector keeps
+/// (percent).
+///
+/// FITTED 2026-08-31 jointly with [`SECTIONED_PROBE_MIN_LEAVES`] on the
+/// 310-rendition / 52-origin clustered corpus, train/validate split by
+/// ORIGIN: `benchmarks/jxl_sectioned_adaptive_k_2026-08-31.{tsv,meta}`.
+/// Selection rule was stated before the numbers (lowest byte cost subject
+/// to a 1 % train worst-case budget, then best wall). 85 is statistically
+/// indistinguishable from 80 on the selection objective and gives the same
+/// predictor set on the 4K photo cell; 90 does NOT reach the wall bar.
+pub const SECTIONED_PROBE_COVERAGE_PCT: u64 = 80;
+
+/// Probe sample density as `(group_stride, pixel_stride_multiplier)`. The
+/// product is the sample-count divisor; the split between the two factors
+/// is the COVERAGE choice (see `sectioned_probe_predictors`). Overridable
+/// for the fit sweep via `JXL_SECTIONED_PROBE_GROUP_STRIDE` /
+/// `JXL_SECTIONED_PROBE_PIXEL_MULT`.
+fn probe_density(effort: u8) -> (usize, usize) {
+    // e8+ trees are deeper (max_property_values 128-256), so the probe is
+    // resolved denser there or its leaf set under-represents the tail — the
+    // same reason the global probe halves its group stride at e8.
+    let (mut gs, mut pm) = if effort >= 8 { (1, 8) } else { (1, 16) };
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_GROUP_STRIDE")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            gs = n.max(1);
+        }
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_PIXEL_MULT")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            pm = n.max(1);
+        }
+    }
+    (gs, pm)
+}
+
+/// Node cap for the probe tree.
+///
+/// MEASURED 2026-08-31 on the 3840x2160 photo at e7 t=1: uncapped the probe
+/// grew a 9515-leaf tree costing 1.39 s (14 % of the whole encode, more than
+/// the split-search saving it enables); the cost then flattens — 4095 nodes
+/// 748 ms, 2047 nodes 706 ms, 1023 nodes 677 ms, 511 nodes 661 ms — because
+/// the residue is the probe gather plus the top splits. 2047 sits on the
+/// plateau and keeps the most leaf resolution for
+/// [`SECTIONED_PROBE_MIN_LEAVES`], which is expressed relative to it:
+/// CHANGING THIS REQUIRES RE-FITTING THAT.
+pub const SECTIONED_PROBE_MAX_NODES: usize = 2047;
+
+/// `JXL_SECTIONED_PROBE_MAX_NODES=N` — A/B dial for
+/// [`SECTIONED_PROBE_MAX_NODES`].
+fn sectioned_probe_max_nodes() -> usize {
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_MAX_NODES")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            return n.max(3);
+        }
+    }
+    SECTIONED_PROBE_MAX_NODES
+}
+
+/// Minimum probe-tree leaf count for the probe's predictor list to be
+/// trusted. Below it the shipping fixed-K root-cost prune is kept.
+///
+/// This is a TRUST gate, not a speed gate, and it is the one the corpus
+/// measurement forced. A probe tree with a handful of leaves has not
+/// exercised the predictor space: on 362-px crops of charts and line art
+/// the probe learns 5-15 leaves, names 4-6 predictors, and the resulting
+/// restriction costs up to +8 % bytes because the real per-group learns
+/// (four times the samples, per group) reach for predictors the probe
+/// never split on. The same cells have nothing to gain — their learns are
+/// so cheap that dropping from 14 predictors to 8 moves wall by under 5 %.
+///
+/// FITTED 2026-08-31 jointly with [`SECTIONED_PROBE_COVERAGE_PCT`]
+/// (`benchmarks/jxl_sectioned_adaptive_k_2026-08-31.{tsv,meta}`). Because
+/// [`SECTIONED_PROBE_MAX_NODES`] caps the probe at 1024 leaves, this reads
+/// as "trust the probe only when its tree wanted to be at least 3/4 of the
+/// cap" — the two constants are a pair and neither can be moved alone.
+/// Over the corpus the gate fires on 49 of 310 renditions; documents,
+/// screenshots, plots, clipart and the gb82-sc screens never trip it and
+/// are byte-identical to the shipping fixed-K path.
+pub const SECTIONED_PROBE_MIN_LEAVES: usize = 768;
+
+/// `JXL_SECTIONED_PROBE_MIN_LEAVES=N` — A/B dial for
+/// [`SECTIONED_PROBE_MIN_LEAVES`].
+fn sectioned_probe_min_leaves() -> usize {
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_MIN_LEAVES")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            return n;
+        }
+    }
+    SECTIONED_PROBE_MIN_LEAVES
+}
+
+/// Minimum group count for the sectioned probe selector to be worth
+/// running. MEASURED 2026-08-31: no separate size gate is needed — the
+/// probe-tree trust gate already subsumes it (over the corpus, ZERO cells
+/// with 4 or fewer groups produce a probe tree large enough to be trusted),
+/// so this stays at the no-op value rather than adding a second threshold
+/// that the data does not ask for.
+pub const SECTIONED_PROBE_MIN_GROUPS: usize = 1;
+
+/// `JXL_SECTIONED_PROBE_MIN_GROUPS=N` — A/B dial for
+/// [`SECTIONED_PROBE_MIN_GROUPS`].
+pub fn sectioned_probe_min_groups() -> usize {
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_MIN_GROUPS")
+            && let Ok(n) = v.trim().parse::<usize>()
+        {
+            return n;
+        }
+    }
+    SECTIONED_PROBE_MIN_GROUPS
+}
+
+/// `JXL_SECTIONED_PROBE_COVERAGE=P` — A/B dial for
+/// [`SECTIONED_PROBE_COVERAGE_PCT`] (the fit sweep's axis).
+fn sectioned_probe_coverage_pct() -> u64 {
+    #[cfg(feature = "std")]
+    {
+        if let Ok(v) = std::env::var("JXL_SECTIONED_PROBE_COVERAGE")
+            && let Ok(n) = v.trim().parse::<u64>()
+        {
+            return n.min(100);
+        }
+    }
+    SECTIONED_PROBE_COVERAGE_PCT
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn write_group_modular_section_local_tree(
+    group_image: &ModularImage,
+    stream_id: u32,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    rct_type: Option<RctType>,
+    gather_stride: Option<usize>,
+    predictors: Option<&[super::predictor::Predictor]>,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> Result<()> {
+    write_group_modular_section_local_tree_stop(
+        group_image,
+        stream_id,
+        profile,
+        use_lz77,
+        lz77_method,
+        rct_type,
+        gather_stride,
+        predictors,
+        writer,
+        budget,
+        None,
+    )
+}
+
+/// [`write_group_modular_section_local_tree`] with cancellation polling.
+/// No-op / byte-identical under `None`.
+#[allow(clippy::too_many_arguments)]
+pub fn write_group_modular_section_local_tree_stop(
+    group_image: &ModularImage,
+    stream_id: u32,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    rct_type: Option<RctType>,
+    gather_stride: Option<usize>,
+    predictors: Option<&[super::predictor::Predictor]>,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
+    use super::predictor::WeightedPredictorParams;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, WpCache, WpCacheMode, compute_best_tree_with_budget,
+        compute_gather_stride_from_profile, gather_samples_strided_filling_wp_cache,
+        max_ref_channels,
+    };
+
+    // No per-group search: use the explicit mode or the historical default.
+    // Learning, residual collection and this group's header share the params.
+    let wp_params = profile
+        .forced_wp_mode
+        .map(WeightedPredictorParams::for_mode)
+        .unwrap_or_default();
+    let total_pixels: usize = group_image
+        .channels
+        .iter()
+        .map(|c| c.width() * c.height())
+        .sum();
+    // Whole-image-equivalent gather stride when the caller provides it, so
+    // per-group sample density tracks the full-image profile rather than
+    // the group's own pixel count. (At 4K e7/e9 the two formulas coincide -
+    // measured byte-identical - but they diverge at other size/effort
+    // points and the full-image density is the calibrated one.)
+    let stride =
+        gather_stride.unwrap_or_else(|| compute_gather_stride_from_profile(total_pixels, profile));
+    let num_refs = max_ref_channels(group_image);
+
+    // Learn this group's tree from this group's samples only. Property 1
+    // (group id) is the spec stream id, matching what the residual
+    // collector below feeds the tree at encode time.
+    //
+    // `predictors` (the whole-image probe-tree list, #99 item 1) restricts
+    // the candidate set BEFORE the gather, so the tokenization, the
+    // token/ebit columns and the split search all shrink together. Without
+    // it the gather stays at all 14 and `prune_to_top_predictors` below
+    // trims the columns afterwards (split search only).
+    let mut samples = match predictors {
+        Some(list) => TreeSamples::new_with_owned_predictors(list.to_vec(), num_refs),
+        None => TreeSamples::new_with_ref_channels(num_refs),
+    };
+    // WP-cache fusion: the gather's WP walk records its per-pixel outputs
+    // so the residual collect below skips the WP state machine — one WP
+    // walk per group instead of two. Values (and bytes) are identical.
+    let mut wp_cache = WpCache::new();
+    crate::profile_time!("sectioned/gather", {
+        gather_samples_strided_filling_wp_cache(
+            &mut samples,
+            group_image,
+            stream_id,
+            0,
+            stride,
+            &wp_params,
+            &mut wp_cache,
+            stop,
+        )
+    })?;
+    let pixel_fraction = if total_pixels > 0 {
+        samples.total_gathered_weight() as f64 / total_pixels as f64
+    } else {
+        1.0
+    };
+    let params = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
+        .with_total_pixels(total_pixels)
+        .with_pixel_fraction(pixel_fraction);
+    // #96 next-gen: per-group predictor pruning — DEFAULT-ON for the
+    // sectioned writer at K = 8. Measured (4K, t=1, photo mosaic,
+    // benchmarks/jxl_pred_prune_2026-08-14.md): bytes -0.03% (e7) /
+    // +0.04% (e9) — noise-level — for wall -25% / -26%; K=6 saves -34%
+    // but costs +0.06% at e9, kept as an env choice. The sectioned mode
+    // is the memory/production mode and its bytes are not hash-locked;
+    // JXL_TREE_PRUNE_PREDICTORS=K overrides (>= 14 disables).
+    //
+    // Skipped entirely when `predictors` selected the set up front (#99
+    // item 1) — pruning a probe-selected list by root cost would re-impose
+    // exactly the ranking the probe exists to replace.
+    if predictors.is_none() {
+        let prune_k =
+            super::tree_learn::tree_prune_predictors_env().unwrap_or(SECTIONED_PRUNE_PREDICTORS_K);
+        crate::profile_time!("sectioned/prune_predictors", {
+            samples.prune_to_top_predictors(prune_k)
+        });
+    }
+    let tree = crate::profile_time!("sectioned/learn", {
+        compute_best_tree_with_budget(&mut samples, &params, None, stop)
+    })?;
+    drop(samples);
+
+    write_group_modular_section_local_tree_with_tree_stop(
+        group_image,
+        stream_id,
+        use_lz77,
+        lz77_method,
+        rct_type,
+        &tree,
+        &wp_params,
+        writer,
+        budget,
+        WpCacheMode::Read(&wp_cache),
+        profile.lz77_keep_best,
+        stop,
+    )
+}
+
+/// [`write_group_modular_section_local_tree`] with a PRE-LEARNED tree and
+/// the WP params it was learned under (the hybrid path learns per-group
+/// trees during the global gather — the same wp_params as the global tree —
+/// and must write those in this group's header so decode prediction and
+/// property 15 match the tree's training data).
+#[allow(private_interfaces)]
+#[allow(clippy::too_many_arguments)]
+pub fn write_group_modular_section_local_tree_with_tree(
+    group_image: &ModularImage,
+    stream_id: u32,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    rct_type: Option<RctType>,
+    tree: &super::tree::Tree,
+    wp_params: &super::predictor::WeightedPredictorParams,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    wp_cache: super::tree_learn::WpCacheMode<'_>,
+    keep_best: bool,
+) -> Result<()> {
+    write_group_modular_section_local_tree_with_tree_stop(
+        group_image,
+        stream_id,
+        use_lz77,
+        lz77_method,
+        rct_type,
+        tree,
+        wp_params,
+        writer,
+        budget,
+        wp_cache,
+        keep_best,
+        None,
+    )
+}
+
+/// [`write_group_modular_section_local_tree_with_tree`] with cancellation
+/// polling. No-op / byte-identical under `None`.
+#[allow(clippy::too_many_arguments)]
+pub fn write_group_modular_section_local_tree_with_tree_stop(
+    group_image: &ModularImage,
+    stream_id: u32,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    rct_type: Option<RctType>,
+    tree: &super::tree::Tree,
+    wp_params: &super::predictor::WeightedPredictorParams,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    wp_cache: super::tree_learn::WpCacheMode<'_>,
+    keep_best: bool,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
+    use super::encode::{write_num_transforms, write_tree, write_wp_header};
+    use super::tree::count_contexts;
+    use super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp;
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options_stop;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::write_lz77_header;
+
+    let total_pixels: usize = group_image
+        .channels
+        .iter()
+        .map(|c| c.width() * c.height())
+        .sum();
+
+    let tokens = crate::profile_time!("sectioned/collect", {
+        collect_residuals_with_tree_offset_with_budget_wp(
+            group_image,
+            tree,
+            stream_id,
+            0,
+            wp_params,
+            budget,
+            wp_cache,
+            stop,
+        )
+    })?;
+    let num_contexts = count_contexts(tree) as usize;
+
+    // Same LZ77 construction as the single-group tree writer.
+    let dist_multiplier = group_image
+        .channels
+        .iter()
+        .map(|c| c.width())
+        .max()
+        .unwrap_or(0) as i32;
+    let write_candidate = |tokens: &[crate::entropy_coding::token::Token],
+                           code: &crate::entropy_coding::encode_ans::OwnedAnsEntropyCode,
+                           lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
+                           writer: &mut BitWriter|
+     -> Result<()> {
+        let ans_num_contexts = num_contexts + usize::from(lz77_params.is_some());
+        // GroupHeader: local tree, the wp params used above, per-group RCT.
+        writer.write(1, 0)?; // use_global_tree = false
+        write_wp_header(writer, wp_params)?;
+        let num_transforms = u32::from(rct_type.is_some());
+        write_num_transforms(writer, num_transforms)?;
+        if let Some(rct) = rct_type {
+            write_rct_transform(writer, 0, rct)?;
+        }
+
+        // Local tree + its entropy code, exactly the single-group serialization.
+        crate::profile_time!("sectioned/write", {
+            write_tree(writer, tree)?;
+            if ans_num_contexts > 1 {
+                write_lz77_header(lz77_params, writer)?;
+                write_entropy_code_ans(code, writer)?;
+            } else {
+                write_ans_modular_header(writer, code)?;
+            }
+            write_tokens_ans_stop(tokens, code, lz77_params, writer, stop)?;
+        });
+        // Sections are byte-delimited by the TOC; pad to the byte boundary like
+        // every other section writer does before the caller's `finish()`.
+        writer.zero_pad_to_byte();
+        Ok(())
+    };
+
+    if keep_best && use_lz77 {
+        let streams = [(&tokens[..], dist_multiplier)];
+        let selected = super::lz77_keep_best::Selection {
+            streams: &streams,
+            num_contexts,
+            total_pixels,
+            method: lz77_method,
+            budget,
+            stop,
+        }
+        .select(|candidate| {
+            let mut scratch = writer.clone();
+            write_candidate(
+                &candidate.tokens,
+                &candidate.code,
+                candidate.params.as_ref(),
+                &mut scratch,
+            )?;
+            Ok(scratch.bits_written().div_ceil(8))
+        })?;
+        return write_candidate(
+            &selected.tokens,
+            &selected.code,
+            selected.params.as_ref(),
+            writer,
+        );
+    }
+
+    let (tokens, lz77_params) = if use_lz77 {
+        match crate::profile_time!("sectioned/lz77", {
+            crate::entropy_coding::lz77::apply_lz77_stop(
+                &tokens,
+                num_contexts,
+                false,
+                lz77_method,
+                dist_multiplier,
+                budget,
+                stop,
+            )
+        })? {
+            Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+            None => (tokens, None),
+        }
+    } else {
+        (tokens, None)
+    };
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+    let code = crate::profile_time!("sectioned/ans_build", {
+        build_entropy_code_ans_with_options_stop(
+            &tokens,
+            ans_num_contexts,
+            true,
+            true,
+            lz77_params.as_ref(),
+            Some(total_pixels),
+            stop,
+        )
+    });
+
+    write_candidate(&tokens, &code, lz77_params.as_ref(), writer)
+}
+
+/// Group-section writer with an explicit group index
+/// for tree property 1 (group_id). Required when the learned tree splits on group_id.
+///
+/// `rct_type`: Optional per-group RCT transform to write in this group's GroupHeader.
+/// When `Some`, the group data is assumed to be already RCT-transformed and the
+/// decoder will apply inverse RCT when decoding this group.
+/// Per-group transform info for ChannelCompact + RCT.
+#[derive(Clone)]
+pub struct GroupTransforms {
+    /// Per-channel ChannelCompact transforms: (begin_c, nb_colors).
+    pub compact_info: Vec<(usize, usize)>,
+    /// Optional RCT type (begin_c is adjusted for ChannelCompact meta channels).
+    pub rct_type: Option<RctType>,
+}
+
+impl GroupTransforms {
+    pub fn none() -> Self {
+        Self {
+            compact_info: Vec::new(),
+            rct_type: None,
+        }
+    }
+}
+
+pub fn write_group_header(
+    writer: &mut BitWriter,
+    wp_params: Option<&super::predictor::WeightedPredictorParams>,
+    transforms: &GroupTransforms,
+) -> Result<()> {
+    writer.write(1, 1)?;
+    if let Some(wp) = wp_params {
+        super::encode::write_wp_header(writer, wp)?;
+    } else {
+        writer.write(1, 1)?;
+    }
+    // Per-group transforms: ChannelCompact(s) + optional RCT
+    let num_transforms =
+        transforms.compact_info.len() as u32 + transforms.rct_type.is_some() as u32;
+    super::encode::write_num_transforms(writer, num_transforms)?;
+    for &(begin_c, nb_colors) in &transforms.compact_info {
+        write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
+    }
+    if let Some(rct) = transforms.rct_type {
+        let rct_begin_c = transforms.compact_info.len();
+        write_rct_transform(writer, rct_begin_c, rct)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn write_group_modular_section_idx(
+    group_image: &ModularImage,
+    state: &GlobalModularState,
+    group_idx: u32,
+    transforms: &GroupTransforms,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    wp_cache: super::tree_learn::WpCacheMode<'_>,
+    pre_collected: Option<&[crate::entropy_coding::token::Token]>,
+) -> Result<()> {
+    write_group_modular_section_idx_stop(
+        group_image,
+        state,
+        group_idx,
+        transforms,
+        writer,
+        budget,
+        wp_cache,
+        pre_collected,
+        None,
+    )
+}
+
+/// [`write_group_modular_section_idx`] with cancellation polling.
+/// No-op / byte-identical under `None`.
+#[allow(clippy::too_many_arguments)]
+pub fn write_group_modular_section_idx_stop(
+    group_image: &ModularImage,
+    state: &GlobalModularState,
+    group_idx: u32,
+    transforms: &GroupTransforms,
+    writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    wp_cache: super::tree_learn::WpCacheMode<'_>,
+    pre_collected: Option<&[crate::entropy_coding::token::Token]>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<()> {
+    crate::trace::debug_eprintln!(
+        "GROUP_MODULAR [bit {}]: Starting group section ({}x{}, compact={}, rct={:?})",
+        writer.bits_written(),
+        group_image.width(),
+        group_image.height(),
+        transforms.compact_info.len(),
+        transforms.rct_type,
+    );
+
+    let wp_params = match state {
+        GlobalModularState::AnsWithTree { wp_params, .. } => Some(wp_params),
+        _ => None,
+    };
+    write_group_header(writer, wp_params, transforms)?;
+
+    match state {
+        GlobalModularState::Huffman {
+            depths,
+            codes,
+            predictor_id,
+        } => {
+            // Encode residuals with HybridUint {4,2,0} + Huffman, honouring
+            // the global section's forced predictor (libjxl `cjxl -P`).
+            let predictor_id = *predictor_id;
+            for channel in &group_image.channels {
+                let width = channel.width();
+                let height = channel.height();
+                for y in 0..height {
+                    for x in 0..width {
+                        let pixel = channel.get(x, y);
+                        let prediction = predict_pixel_with_id(channel, x, y, predictor_id);
+                        let residual = pixel.wrapping_sub(prediction);
+                        let packed = pack_signed(residual);
+
+                        let (token, extra_bits, num_extra) = MODULAR_HYBRID_UINT.encode(packed);
+                        let depth = depths.get(token as usize).copied().unwrap_or(0);
+                        let code = codes.get(token as usize).copied().unwrap_or(0);
+                        if depth > 0 {
+                            writer.write(depth as usize, code as u64)?;
+                        }
+                        if num_extra > 0 {
+                            writer.write(num_extra as usize, extra_bits as u64)?;
+                        }
+                    }
+                }
+            }
+        }
+        GlobalModularState::Ans { code, predictor_id } => {
+            // Collect residuals for this group and encode with ANS
+            let residuals = collect_group_residuals_with_predictor(group_image, *predictor_id);
+            let tokens: Vec<AnsToken> = residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
+            write_tokens_ans_stop(&tokens, code, None, writer, stop)?;
+        }
+        GlobalModularState::AnsWithTree {
+            code,
+            tree,
+            wp_params,
+            lz77,
+            group_tokens: _,
+            require_stored_tokens,
+        } => {
+            // Collect residuals using the learned tree (multi-context).
+            // Per-group images use 0-based channel indices (matching the decoder,
+            // which builds per-group images with only non-meta channels).
+            // Reuse the pre-collected whole-image tokens when the state
+            // carries them (byte-identical: collect_for_tree produced
+            // exactly these, per group, in the same order); otherwise
+            // collect fresh. The _wp variant threads the WpCacheMode
+            // (hybrid fills here so the local-tree rewrite of this group
+            // skips its WP walk) — reuse skips that walk entirely, so
+            // hybrid's Fill request degrades to a fresh collect.
+            #[cfg(feature = "std")]
+            let pre_collected =
+                if !require_stored_tokens && std::env::var_os("JXL_TOKEN_REUSE_OFF").is_some() {
+                    None
+                } else {
+                    pre_collected
+                };
+            #[cfg(feature = "std")]
+            if std::env::var_os("JXL_TOKEN_REUSE_VERIFY").is_some()
+                && let Some(slice) = pre_collected
+            {
+                let fresh = super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+                    group_image,
+                    tree,
+                    group_idx,
+                    0,
+                    wp_params,
+                    None,
+                    super::tree_learn::WpCacheMode::Off,
+                    stop,
+                )?;
+                if fresh.len() != slice.len() {
+                    eprintln!(
+                        "[token-verify] g={group_idx} LEN fresh={} reused={}",
+                        fresh.len(),
+                        slice.len()
+                    );
+                } else if let Some(i) = (0..fresh.len())
+                    .find(|&i| format!("{:?}", fresh[i]) != format!("{:?}", slice[i]))
+                {
+                    eprintln!(
+                        "[token-verify] g={group_idx} first diff at {i}: fresh={:?} reused={:?}",
+                        fresh[i], slice[i]
+                    );
+                }
+            }
+            // Pre-collected slices are the WIRE stream — the state stores
+            // the post-LZ77 tokens with matching ranges, so reuse skips
+            // BOTH the collect (a full WP walk) and the per-section LZ77
+            // re-apply. The fresh path collects raw and re-applies the
+            // exact transform the global histogram was built over — same
+            // method, same num_contexts (from the same tree), this
+            // section's dist_multiplier (max channel width of THIS group,
+            // matching the decoder's fresh per-section LZ77 state);
+            // apply_lz77 is deterministic, so the fresh stream equals the
+            // histogram-time slice either way.
+            if *require_stored_tokens
+                && (pre_collected.is_none()
+                    || !matches!(wp_cache, super::tree_learn::WpCacheMode::Off))
+            {
+                return Err(crate::error::Error::InvalidInput(
+                    "selected LZ77 stream requires its stored tokens".into(),
+                ));
+            }
+            let (tokens, lz77_params) = match (pre_collected, &wp_cache) {
+                (Some(slice), super::tree_learn::WpCacheMode::Off) => {
+                    (slice.to_vec(), lz77.as_ref().map(|(_, p)| p))
+                }
+                _ => {
+                    let tokens = crate::profile_time!("modular/collect_residuals_per_group", {
+                        super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+                            group_image,
+                            tree,
+                            group_idx,
+                            0,
+                            wp_params,
+                            None,
+                            wp_cache,
+                            stop,
+                        )?
+                    });
+                    match lz77 {
+                        Some((method, params)) => {
+                            let dist_multiplier = group_image
+                                .channels
+                                .iter()
+                                .map(|c| c.width())
+                                .max()
+                                .unwrap_or(0)
+                                as i32;
+                            let num_contexts = super::tree::count_contexts(tree) as usize;
+                            let transformed = match crate::entropy_coding::lz77::apply_lz77_stop(
+                                &tokens,
+                                num_contexts,
+                                false,
+                                *method,
+                                dist_multiplier,
+                                budget,
+                                stop,
+                            )? {
+                                Some((lz77_tokens, _)) => lz77_tokens,
+                                None => tokens,
+                            };
+                            (transformed, Some(params))
+                        }
+                        None => (tokens, None),
+                    }
+                }
+            };
+            crate::profile_time!("modular/write_tokens_per_group", {
+                write_tokens_ans_stop(&tokens, code, lz77_params, writer, stop)?;
+            });
+        }
+    }
+
+    // Byte-align at end of group section
+    writer.zero_pad_to_byte();
+    crate::trace::debug_eprintln!(
+        "GROUP_MODULAR [bit {}]: Group section done",
+        writer.bits_written()
+    );
+
+    Ok(())
+}

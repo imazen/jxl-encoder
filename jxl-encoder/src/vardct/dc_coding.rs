@@ -28,17 +28,7 @@ use crate::error::Result;
 /// - Clamped to the range [min(n,w), max(n,w)] otherwise
 ///
 /// This predictor is good for smooth gradients while handling edges well.
-#[inline]
-pub fn clamped_gradient(n: i32, w: i32, l: i32) -> i32 {
-    let m = n.min(w);
-    let big_m = n.max(w);
-    // Compute gradient with overflow protection
-    let grad = (n as i64 + w as i64 - l as i64) as i32;
-    // Clamp to [m, M]
-    let grad_clamp_m = if l < m { big_m } else { grad };
-    if l > big_m { m } else { grad_clamp_m }
-}
-
+pub use jxl_modular::common::clamped_gradient;
 /// Context lookup table for DC coding based on gradient property.
 ///
 /// The gradient property is computed as 512 + top + left - topleft, clamped to [0, 1023].

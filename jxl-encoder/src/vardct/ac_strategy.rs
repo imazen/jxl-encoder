@@ -764,20 +764,7 @@ pub(crate) const MASK_CHANNEL_OFFSET: [f32; 3] = [12.0, 0.0, 4.0];
 /// strict `EncoderStrategy::Libjxl` profile swaps in
 /// [`CHANNEL_MUL_LIBJXL`] via
 /// [`EffortProfile::apply_ac_loss_channel_mul_libjxl`].
-pub(crate) const CHANNEL_MUL: [f64; 3] = [
-    20882706.4655936, // X channel: historical value (see note above)
-    1.0,              // Y channel: 1.0^8
-    1.26677008064,    // B channel: 1.03^8
-];
-
-/// libjxl `enc_ac_strategy.cc` `kChannelMul` —
-/// `{pow(8.2, 8.0), 1.0, pow(1.03, 8.0)}`. Used by the strict
-/// `EncoderStrategy::Libjxl` profile only (W45-RECON part 6).
-pub(crate) const CHANNEL_MUL_LIBJXL: [f64; 3] = [
-    20441408.586549744, // X channel: 8.2^8
-    1.0,                // Y channel: 1.0^8
-    1.2667700813876164, // B channel: 1.03^8
-];
+pub(crate) use jxl_modular::consts::CHANNEL_MUL;
 
 /// Distance scaling exponents from libjxl enc_ac_strategy.cc:1115-1120
 pub(crate) const K_BIAS: f32 = 0.137_317_43;
