@@ -667,14 +667,11 @@ pub fn dct_64x64_neon(token: archmage::NeonToken, input: &[f32; 4096], output: &
             v[j] *= inv64;
         }
         for j in 0..64 {
-            scatter_col_neon(token, v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<4096>();
-    for r in 0..64 {
-        for c in 0..64 {
-            transposed[c * 64 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -682,7 +679,7 @@ pub fn dct_64x64_neon(token: archmage::NeonToken, input: &[f32; 4096], output: &
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col_neon(token, &transposed, base, j, 64);
+            v[j] = gather_col_neon(token, &tmp, base, j, 64);
         }
         dct1d_64_batch_neon(token, &mut v);
         for j in 0..64 {
@@ -718,14 +715,11 @@ pub fn dct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &
             v[j] *= inv32;
         }
         for j in 0..32 {
-            scatter_col_neon(token, v[j], &mut tmp, base, j, 32);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..64 {
-        for c in 0..32 {
-            transposed[c * 64 + r] = tmp[r * 32 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -734,7 +728,7 @@ pub fn dct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col_neon(token, &transposed, base, j, 64);
+            v[j] = gather_col_neon(token, &tmp, base, j, 64);
         }
         dct1d_64_batch_neon(token, &mut v);
         for j in 0..64 {
@@ -770,14 +764,11 @@ pub fn dct_32x64_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &
             v[j] *= inv64;
         }
         for j in 0..64 {
-            scatter_col_neon(token, v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 32 + base..j * 32 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -786,21 +777,21 @@ pub fn dct_32x64_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col_neon(token, &transposed, base, j, 32);
+            v[j] = gather_col_neon(token, &tmp, base, j, 32);
         }
         crate::dct32::dct1d_32_batch_neon(token, &mut v);
         for j in 0..32 {
             v[j] *= inv32;
         }
         for j in 0..32 {
-            scatter_col_neon(token, v[j], &mut transposed, base, j, 32);
+            scatter_col_neon(token, v[j], &mut tmp, base, j, 32);
         }
     }
 
     // Final transpose 64×32 → 32×64 (ROWS < COLS branch).
     for r in 0..64 {
         for c in 0..32 {
-            output[c * 64 + r] = transposed[r * 32 + c];
+            output[c * 64 + r] = tmp[r * 32 + c];
         }
     }
 }
@@ -909,14 +900,11 @@ pub fn dct_64x64_wasm128(
             v[j] *= inv64;
         }
         for j in 0..64 {
-            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<4096>();
-    for r in 0..64 {
-        for c in 0..64 {
-            transposed[c * 64 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -924,7 +912,7 @@ pub fn dct_64x64_wasm128(
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col_wasm128(token, &transposed, base, j, 64);
+            v[j] = gather_col_wasm128(token, &tmp, base, j, 64);
         }
         dct1d_64_batch_wasm128(token, &mut v);
         for j in 0..64 {
@@ -963,14 +951,11 @@ pub fn dct_64x32_wasm128(
             v[j] *= inv32;
         }
         for j in 0..32 {
-            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 32);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..64 {
-        for c in 0..32 {
-            transposed[c * 64 + r] = tmp[r * 32 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -978,7 +963,7 @@ pub fn dct_64x32_wasm128(
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col_wasm128(token, &transposed, base, j, 64);
+            v[j] = gather_col_wasm128(token, &tmp, base, j, 64);
         }
         dct1d_64_batch_wasm128(token, &mut v);
         for j in 0..64 {
@@ -1017,14 +1002,11 @@ pub fn dct_32x64_wasm128(
             v[j] *= inv64;
         }
         for j in 0..64 {
-            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 32 + base..j * 32 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -1032,20 +1014,20 @@ pub fn dct_32x64_wasm128(
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col_wasm128(token, &transposed, base, j, 32);
+            v[j] = gather_col_wasm128(token, &tmp, base, j, 32);
         }
         crate::dct32::dct1d_32_batch_wasm128(token, &mut v);
         for j in 0..32 {
             v[j] *= inv32;
         }
         for j in 0..32 {
-            scatter_col_wasm128(token, v[j], &mut transposed, base, j, 32);
+            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 32);
         }
     }
 
     for r in 0..64 {
         for c in 0..32 {
-            output[c * 64 + r] = transposed[r * 32 + c];
+            output[c * 64 + r] = tmp[r * 32 + c];
         }
     }
 }

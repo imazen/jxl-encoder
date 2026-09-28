@@ -739,14 +739,11 @@ pub fn idct_64x64_neon(token: archmage::NeonToken, input: &[f32; 4096], output: 
         }
         idct1d_64_batch_neon(token, &mut v);
         for j in 0..64 {
-            scatter_col_neon(token, v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<4096>();
-    for r in 0..64 {
-        for c in 0..64 {
-            transposed[c * 64 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -754,7 +751,7 @@ pub fn idct_64x64_neon(token: archmage::NeonToken, input: &[f32; 4096], output: 
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col_neon(token, &transposed, base, j, 64);
+            v[j] = gather_col_neon(token, &tmp, base, j, 64);
         }
         idct1d_64_batch_neon(token, &mut v);
         for j in 0..64 {
@@ -782,14 +779,11 @@ pub fn idct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: 
         }
         idct1d_64_batch_neon(token, &mut v);
         for j in 0..64 {
-            scatter_col_neon(token, v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 32 + base..j * 32 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -798,7 +792,7 @@ pub fn idct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: 
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col_neon(token, &transposed, base, j, 32);
+            v[j] = gather_col_neon(token, &tmp, base, j, 32);
         }
         crate::idct32::idct1d_32_batch_neon(token, &mut v);
         for j in 0..32 {
@@ -814,34 +808,17 @@ pub fn idct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: 
 #[allow(clippy::needless_range_loop)]
 pub fn idct_32x64_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &mut [f32; 2048]) {
     use magetypes::simd::f32x4;
-
-    // Un-transpose: 32×64 → 64×32.
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = input[r * 64 + c];
-        }
-    }
-
     // Pass 1: IDCT-32 on 64 rows (stride 32), 16 batches of 4.
     let mut tmp = crate::scratch_buf::<2048>();
     for batch in 0..16 {
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col_neon(token, &transposed, base, j, 32);
+            v[j] = f32x4::from_slice(token, &input[j * 64 + base..j * 64 + base + 4]);
         }
         crate::idct32::idct1d_32_batch_neon(token, &mut v);
         for j in 0..32 {
             scatter_col_neon(token, v[j], &mut tmp, base, j, 32);
-        }
-    }
-
-    // Transpose 64×32 → 32×64.
-    let mut transposed2 = crate::scratch_buf::<2048>();
-    for r in 0..64 {
-        for c in 0..32 {
-            transposed2[c * 64 + r] = tmp[r * 32 + c];
         }
     }
 
@@ -850,7 +827,7 @@ pub fn idct_32x64_neon(token: archmage::NeonToken, input: &[f32; 2048], output: 
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col_neon(token, &transposed2, base, j, 64);
+            v[j] = f32x4::from_slice(token, &tmp[j * 32 + base..j * 32 + base + 4]);
         }
         idct1d_64_batch_neon(token, &mut v);
         for j in 0..64 {
@@ -976,14 +953,11 @@ pub fn idct_64x64_wasm128(
         }
         idct1d_64_batch_wasm128(token, &mut v);
         for j in 0..64 {
-            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<4096>();
-    for r in 0..64 {
-        for c in 0..64 {
-            transposed[c * 64 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -991,7 +965,7 @@ pub fn idct_64x64_wasm128(
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col_wasm128(token, &transposed, base, j, 64);
+            v[j] = gather_col_wasm128(token, &tmp, base, j, 64);
         }
         idct1d_64_batch_wasm128(token, &mut v);
         for j in 0..64 {
@@ -1022,14 +996,11 @@ pub fn idct_64x32_wasm128(
         }
         idct1d_64_batch_wasm128(token, &mut v);
         for j in 0..64 {
-            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 32 + base..j * 32 + base + 4])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -1037,7 +1008,7 @@ pub fn idct_64x32_wasm128(
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col_wasm128(token, &transposed, base, j, 32);
+            v[j] = gather_col_wasm128(token, &tmp, base, j, 32);
         }
         crate::idct32::idct1d_32_batch_wasm128(token, &mut v);
         for j in 0..32 {
@@ -1057,20 +1028,12 @@ pub fn idct_32x64_wasm128(
     output: &mut [f32; 2048],
 ) {
     use magetypes::simd::f32x4;
-
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = input[r * 64 + c];
-        }
-    }
-
     let mut tmp = crate::scratch_buf::<2048>();
     for batch in 0..16 {
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col_wasm128(token, &transposed, base, j, 32);
+            v[j] = f32x4::from_slice(token, &input[j * 64 + base..j * 64 + base + 4]);
         }
         crate::idct32::idct1d_32_batch_wasm128(token, &mut v);
         for j in 0..32 {
@@ -1078,18 +1041,11 @@ pub fn idct_32x64_wasm128(
         }
     }
 
-    let mut transposed2 = crate::scratch_buf::<2048>();
-    for r in 0..64 {
-        for c in 0..32 {
-            transposed2[c * 64 + r] = tmp[r * 32 + c];
-        }
-    }
-
     for batch in 0..8 {
         let base = batch * 4;
         let mut v = [f32x4::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col_wasm128(token, &transposed2, base, j, 64);
+            v[j] = f32x4::from_slice(token, &tmp[j * 32 + base..j * 32 + base + 4]);
         }
         idct1d_64_batch_wasm128(token, &mut v);
         for j in 0..64 {
