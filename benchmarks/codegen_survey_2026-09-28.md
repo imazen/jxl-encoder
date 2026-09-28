@@ -199,9 +199,11 @@ K300 (20 classes) at e9 (`~/tmp/gaps-i265/k300.tsv`).
   Output is now identical at every thread count by construction; where
   it diverged, 1T picks up the *better* tree. 1T wall is image-mixed
   (frymire +28%, codec_wiki −17%, roughly neutral geomean).
-- `5c0235c6` — `Auto` resolves to **Hybrid (keep-best) at e ≥ 10**:
-  global learn + per-group local writes, smaller section wins per group.
-  Byte-monotone vs global by construction (never worse per group).
+- `5c0235c6` + `a7a70f98` — `Auto` resolves to **Hybrid (keep-best) at
+  e ≥ 8**: global learn + per-group local writes, smaller section wins
+  per group. Byte-monotone vs global by construction (never worse on
+  34 probe cells; codec_wiki e8 −3.2%, frymire e9 −0.3%) at ≈equal MT
+  wall (0.97×/1.00× of global at e8/e9).
 
 ## Measured landscape (geomean vs global mode, 14 imgs, 8T)
 
