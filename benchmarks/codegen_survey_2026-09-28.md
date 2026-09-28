@@ -19,8 +19,11 @@ source — those became `f32x8::from_slice` loads.
 - lossy e7 wall: 66.5 → 64.4 ms median (~−3%); memset Ir 509M → 369M
 - 197/197 `jxl-encoder-simd` tests pass on x86-64; encoder lossless output
   byte-identical (sha256); lossy output size identical (122448 B)
-- Not applied to NEON/wasm128/scalar variants (same pattern exists there —
-  mechanical follow-up; only x86-64 was measured).
+
+**`a15b3a13` — same fusion for NEON + wasm128** (all 32/64 kernels; scalar
+left as the parity reference). Bigger win at 4-wide: arm64 `dct_32x32`
+937→733 ns/call (−22%), `dct_64x64` 6216→4859 ns/call (−22%), checksums
+bit-identical, 194/194 tests pass on aarch64, wasm32 compiles clean.
 
 ## Measured and rejected
 
