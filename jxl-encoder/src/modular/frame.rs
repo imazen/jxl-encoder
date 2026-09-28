@@ -40,18 +40,21 @@ enum TreeMode {
 /// per-image byte variance buys nothing without the wall win). Pin
 /// `with_sectioned_trees(On/Off)` for thread-invariant output.
 fn auto_tree_mode(effort: u8, threads: usize, memory_pressure: bool) -> TreeMode {
-    // e ≥ 10 forces the whole-image global tree, even under memory
-    // pressure — libjxl disables chunked/streaming encoding and forces
-    // `ComputeTree` at `speed_tier < kTortoise` (`enc_frame.cc:1692`,
-    // `:1806`), and our e10 supersets libjxl e10 (issue #45 ladder
-    // shift). Via the public API this arm is unreachable under pressure
-    // anyway: the preflight's sectioned estimate band stops at e9
-    // (`heuristics::sectioned_estimate_available`), so an
-    // over-budget e ≥ 10 encode is rejected up front rather than
-    // silently sectioned. An explicit `SectionedTrees::On` still wins —
-    // this gate only decides `Auto`.
+    // e ≥ 10 keeps the max-bytes tier but upgrades to keep-best: the
+    // global tree is still learned (libjxl `ComputeTree` at
+    // `speed_tier < kTortoise`, `enc_frame.cc:1692`/`:1806` — our e10
+    // supersets libjxl e10, issue #45 ladder shift), AND every group
+    // additionally gets a local-tree write; the smaller section wins
+    // per group. Bytes are ≤ the pure-global result by construction
+    // (measured: never worse, up to -3% on screenshots) at the cost of
+    // the extra per-group learn wave — acceptable at the max-quality
+    // tier. Via the public API this arm is unreachable under memory
+    // pressure anyway (the preflight's sectioned estimate band stops at
+    // e9, `heuristics::sectioned_estimate_available`), and an explicit
+    // `SectionedTrees::On`/`Off` still wins — this gate only decides
+    // `Auto`.
     if effort >= 10 {
-        return TreeMode::Global;
+        return TreeMode::Hybrid;
     }
     if memory_pressure {
         return TreeMode::Sectioned;
@@ -74,22 +77,30 @@ mod tree_mode_tests {
             // single-threaded stays global
             assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Global, "e{e} t1");
         }
-        // e8+ stays global regardless of threads
-        for e in [8u8, 9, 10, 11, 12, 13] {
+        // e8-e9 stays global regardless of threads
+        for e in [8u8, 9] {
             assert_eq!(auto_tree_mode(e, 8, false), TreeMode::Global, "e{e} t8");
             assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Global, "e{e} t1");
+        }
+        // e10+ upgrades to keep-best (Hybrid): global tree + per-group
+        // local writes, smaller section wins — bytes <= global by
+        // construction, at any thread count.
+        for e in [10u8, 11, 12, 13] {
+            assert_eq!(auto_tree_mode(e, 8, false), TreeMode::Hybrid, "e{e} t8");
+            assert_eq!(auto_tree_mode(e, 1, false), TreeMode::Hybrid, "e{e} t1");
         }
         // memory pressure overrides the thread arm at e <= 9 (the
         // pre-existing escape)
         assert_eq!(auto_tree_mode(9, 1, true), TreeMode::Sectioned);
         assert_eq!(auto_tree_mode(3, 1, true), TreeMode::Sectioned);
-        // …but NOT the e >= 10 global-tree force (libjxl kGlacier
-        // parity: chunked encoding off, global MA tree — issue #45).
+        // …but NOT the e >= 10 keep-best force (the sectioned estimate
+        // band stops at e9 — this arm is unreachable under pressure via
+        // the public API anyway).
         for e in [10u8, 11, 12, 13] {
             assert_eq!(
                 auto_tree_mode(e, 8, true),
-                TreeMode::Global,
-                "e{e} pressure: e>=10 Auto still forces the global tree"
+                TreeMode::Hybrid,
+                "e{e} pressure: e>=10 Auto still takes the keep-best tier"
             );
         }
     }
