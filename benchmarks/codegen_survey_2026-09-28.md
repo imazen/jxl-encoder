@@ -139,3 +139,46 @@ where many small CCs survive. Byte-identical traversal order.
 - `histogram_distance_reuse` (~134M Ir incl. zip + tail copy): work is
   already zip/SIMD-shaped; cost is call-count-driven (clustering O(n²)
   pairs) — algorithmic.
+
+---
+
+# Appendix B — vs-cjxl gap sweep + lossless e1-e4 fix (i265, 2026-09-28)
+
+14-image × (lossless e1-e9, lossy d1/d3 × e3-e9) sweep vs libjxl-0.12
+cjxl at 8T (`~/tmp/gaps-i265/sweep.tsv`). Headline numbers:
+
+| axis | before | after `8e2a0c7b` |
+|---|---|---|
+| lossless e1 (51-img corpus) | — | geomean **−25.8%**, 0 losers |
+| lossless e3 geomean | **+24.6%** (worst +77%) | **−9.95%**, 2 losers (gui +2.9%, 3762075 +0.4%) |
+| lossless e5/e7/e9 geomean | −8.5/−9.9/−12.9% | unchanged (already winning) |
+| lossy d1/d3 e3 geomean | +0.7%/+2.2% | unchanged (left) |
+| lossless wall e7/e9 | ~1.9×/~2.7× geo, max 10.5× | unchanged — tree-learn bound |
+
+## What landed (`8e2a0c7b`)
+
+**Lift `lift_integer_tree_learning` from e5/e6 → e1-e4** for int8/int16
+layouts, keeping the profile's cheap e≤4 tree params (3 props/32
+buckets/0.15 frac/65k cap). The `tree_learning: effort >= 7` schedule was
+the entire wedge — libjxl learns MA trees at every effort. e1/e2
+additionally need `use_ans` (tree ⇒ ANS context stream), wired as
+`cfg.ans() || (lifted && use_ans.is_none())` at all three lossless frame
+sites; explicit `with_ans(false)` still wins. Bench: codec_wiki e1
+1.79MB→242k (cjxl 366k), e3 526k→241k (cjxl 297k); dead ladder steps
+(e1≡e2, e3≡e4) are gone — each effort now strictly improves.
+
+## Remaining gaps (measured, deferred)
+
+- **Lossless e7-e9 wall on screenshots**: 5-10× vs cjxl; `--no-tree-learning`
+  on codec_wiki e9 → 542ms vs 5585ms — the MA-tree learn itself is ~10×,
+  not LZ77/palette. Structural (find_best_split chain; our 7-9 predictors
+  vs libjxl's 2). Biggest single wall wedge.
+- **frymire lossless e5-e9** (+5..+19%): sample-density underfit —
+  `--tree-learning-sample-fraction 1.0` at e9 gives −8% vs cjxl (245k vs
+  253k). Jittered gather (`JXL_TREE_SAMPLE_RANDOM`) is a no-op → NOT
+  stride-aliasing (self-repair's stride≥8 floor irrelevant); dense texture
+  just needs more samples. Needs a content-gated densify policy.
+- **Lossy e3** +0.7-2.2% geo (photos to +8.4% at d3): `--butteraugli-iters 2`
+  recovers ~2.6% — a wall-vs-bytes tradeoff; libjxl itself doesn't buttloop
+  below e8. Residual likely gaborish/ac_strategy absence; left.
+- **gui lossless e3** +2.9% residual: not RCT (all RCT modes identical).
