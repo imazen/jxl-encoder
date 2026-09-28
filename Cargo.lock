@@ -3975,8 +3975,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af411a89dd994324c442cea3fa0ded10aac0550cadb9a5cb2ba03c9596a4ed05"
+source = "git+https://github.com/imazen/ultrahdr?rev=633f71e9d0c8fc82cc29b58ffaa92d367d82f9f9#633f71e9d0c8fc82cc29b58ffaa92d367d82f9f9"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -3987,8 +3986,8 @@ dependencies = [
  "thiserror 2.0.21",
  "whereat",
  "zencodec",
- "zenpixels 0.2.16",
- "zenpixels-convert 0.2.16",
+ "zenpixels 0.3.1",
+ "zenpixels-convert 0.3.1",
  "zentone",
 ]
 

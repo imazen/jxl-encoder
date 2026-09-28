@@ -385,7 +385,7 @@ impl<'a> HdrFromSdrRequest<'a> {
     }
 }
 
-/// Adapt `ultrahdr_core::Error` into our `EncodeError`. The variants
+/// Adapt the traced Ultra HDR error into our `EncodeError`. The variants
 /// don't line up 1:1, so we route everything through `InvalidInput`
 /// with the original error text — the alternative would be to extend
 /// `EncodeError` with HDR-specific variants which would leak even when
