@@ -1,0 +1,15 @@
+[package]
+name = "archmage-audit"
+version = "0.1.0"
+edition = "2021"
+description = "Static analysis of archmage dispatch topology: call trees, feature-context boundaries, and idiom violations"
+
+# Standalone crate — not part of the parent workspace.
+[workspace]
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit", "parsing"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+walkdir = "2"
+serde_json = "1"

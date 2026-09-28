@@ -360,3 +360,28 @@ dead zero-inits (~100 sites across dct16/32/64 + idct16/32/64).
 `core::array::from_fn(|j| fill)` removes the memset but per-element
 closure codegen regresses ~+2% wall on frymire/imac_dark d1e9 —
 stack memsets were already L1-cheap. Reverted.
+
+## 2026-09-29 PM4 — archmage-audit lint (tools vendored)
+
+`tools/archmage-audit` vendored from imazen/rav1d-safe PR #534 —
+static analysis of archmage dispatch topology (contexts, call edges,
+idiom violations). Run: `archmage-audit jxl-encoder-simd/src
+jxl-encoder/src --lint`. Result: 243 findings, classified:
+
+- `arcane-could-be-rite` ×21 (hot dct/idct batch + gather_col helpers —
+  trampoline "dead" because all callers are in-context). **Tested the
+  whole class: net ~+2% wall REGRESSION** — the arcane trampoline is a
+  beneficial inlining boundary, not waste. Reverted; documented so
+  nobody mass-converts on the lint alone.
+- `incant-in-vanilla` ×15 — all entry-point dispatchers (correct:
+  dispatch has to happen somewhere). Hoist only matters for
+  per-element/per-block kernels inside hot loops — summon is ~1ns,
+  kernel bodies are ≥100ns — sub-0.1% lever, skipped.
+- `manual-tier-select` ×55, `scalar-no-token-param` ×106,
+  `missing-tier-suffix` ×23, `cross-isa-twin` ×2 — hygiene/idiom
+  (hand-rolled summon dispatchers → `#[autoversion]`, `_scalar` →
+  `_default` naming, incantability). No runtime effect; deferred.
+- `tier-boundary` ×14 — scalar islands inside SIMD fns (my gaussian5
+  edge-pixel calls included) — intended.
+- `token-unwrap` ×2 — false positives (`.expect` on stop-Results in
+  fns whose names contain "token"; not SimdToken unwraps).
