@@ -93,7 +93,7 @@ zensim-gpu = { version = "0.0.1", default-features = false, features = ["cuda", 
 # serializer (re-exported from zencodec). `std` is enabled for std-only
 # error types and allocation paths. Mandatory deps still include zenpixels
 # + zencodec (already in the dep tree of ultrahdr-core 0.5+).
-ultrahdr-core = { version = "0.5.0", default-features = false, features = ["std"], optional = true }
+ultrahdr-core = { version = "0.6.0", default-features = false, features = ["std"], optional = true }
 # W44-211: opt-in for the `tuning-override` feature (future sweep runner).
 # `default-features = false` + minimal features so production builds
 # don't pull serde/postcard transitively unless the feature is enabled.
