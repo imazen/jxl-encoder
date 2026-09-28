@@ -6,31 +6,32 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: jxl-encoder.txt 1256 lines (supported surface) | jxl-encoder.features.txt 0 added (features: none) | jxl-encoder.internal.txt 1298 lines (1616 hidden + 150 excluded-feature)
+# files: jxl-encoder.txt 1348 lines (supported surface) | jxl-encoder.features.txt 0 added (features: none) | jxl-encoder.internal.txt 1350 lines (1672 hidden + 188 excluded-feature)
 
 ## summary
 #
-#   pub modules                                 7
-#   pub types (struct/enum/trait/alias)       100
-#   pub consts/statics                         73
+#   pub modules                                 8
+#   pub types (struct/enum/trait/alias)       104
+#   pub consts/statics                         81
 #   free functions                              6
-#   inherent methods                          612
-#   struct fields                             157
-#   enum variants                             290
+#   inherent methods                          638
+#   struct fields                             212
+#   enum variants                             292
 #   re-exports                                 12
-#   trait roster entries (type × trait)       297
-#   auto-trait-complete types                  61
+#   trait roster entries (type × trait)       302
+#   auto-trait-complete types                  63
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          358
-#   api                             841
+#   (root)                          386
+#   api                             885
 #   entropy_coding                    8
+#   loop_trace                       22
 #   modular                           1
-#   validation                       41
+#   validation                       43
 #   vardct                            8
 
-## items (1192 lines)
+## items (1282 lines)
 
 pub mod jxl_encoder
 pub use At
@@ -190,13 +191,17 @@ pub api::PixelLayout::RgbaLinearF16
 pub api::PixelLayout::RgbaLinearF32
 pub api::PixelLayout::RgbaPqF32
 pub const fn api::PixelLayout::bytes_per_pixel(self) -> usize [also: (root)]
+pub const fn api::PixelLayout::float_channel_count(self) -> usize [also: (root)]
 pub const fn api::PixelLayout::has_alpha(self) -> bool [also: (root)]
 pub const fn api::PixelLayout::is_16bit(self) -> bool [also: (root)]
 pub const fn api::PixelLayout::is_cmyk(self) -> bool [also: (root)]
 pub const fn api::PixelLayout::is_f16(self) -> bool [also: (root)]
 pub const fn api::PixelLayout::is_f32(self) -> bool [also: (root)]
+pub const fn api::PixelLayout::is_gray_float(self) -> bool [also: (root)]
 pub const fn api::PixelLayout::is_grayscale(self) -> bool [also: (root)]
 pub const fn api::PixelLayout::is_linear(self) -> bool [also: (root)]
+pub const fn api::PixelLayout::lossless_float_bit_depth(self) -> core::option::Option<(u32, u32)> [also: (root)]
+pub const fn api::PixelLayout::source_bit_depth(self) -> (bool, u32, u32) [also: (root)]
 pub api::PixelLossDispatch::AlwaysOff
 pub api::PixelLossDispatch::AlwaysOn
 pub api::PixelLossDispatch::Auto
@@ -246,6 +251,7 @@ pub api::AnimationParams::premultiplied_alpha: bool
 pub api::AnimationParams::tps_denominator: u32
 pub api::AnimationParams::tps_numerator: u32
 pub fn api::EncodeRequest<'a>::encode(self, &[u8]) -> api::Result<alloc::vec::Vec<u8>>
+pub fn api::EncodeRequest<'a>::encode_animation(self, &api::AnimationParams, &[api::AnimationFrame<'_>]) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::EncodeRequest<'a>::encode_into(self, &[u8], &mut alloc::vec::Vec<u8>) -> api::Result<api::EncodeResult>
 pub fn api::EncodeRequest<'a>::encode_to(self, &[u8], impl core::io::write::Write) -> api::Result<api::EncodeResult>
 pub fn api::EncodeRequest<'a>::encode_with_stats(self, &[u8]) -> api::Result<api::EncodeResult>
@@ -257,6 +263,7 @@ pub fn api::EncodeRequest<'a>::with_extra_channels(self, &'a [api::ExtraChannel<
 pub fn api::EncodeRequest<'a>::with_intensity_target(self, f32) -> Self
 pub fn api::EncodeRequest<'a>::with_limits(self, &'a api::Limits) -> Self
 pub fn api::EncodeRequest<'a>::with_linear_below(self, f32) -> Self
+pub fn api::EncodeRequest<'a>::with_loop_trace(self, &loop_trace::LoopTrace) -> Self
 pub fn api::EncodeRequest<'a>::with_metadata(self, &'a api::ImageMetadata<'a>) -> Self
 pub fn api::EncodeRequest<'a>::with_min_nits(self, f32) -> Self
 pub fn api::EncodeRequest<'a>::with_premultiplied_alpha(self, bool) -> Self
@@ -280,40 +287,64 @@ pub fn api::EncodeStats::pixel_domain_loss(&self) -> bool
 pub fn api::EncodeStats::strategy_counts(&self) -> &[u32; 19]
 pub fn api::EncodeStats::threads_used(&self) -> u32
 pub struct api::EncoderImprovementsCustom
+pub api::EncoderImprovementsCustom::ac_channel_loss_mul_libjxl: bool
+pub api::EncoderImprovementsCustom::ac_meta_libjxl_tree: bool
 pub api::EncoderImprovementsCustom::adaptive_buttloop_iters: bool
 pub api::EncoderImprovementsCustom::adaptive_buttloop_iters_narrow: bool
 pub api::EncoderImprovementsCustom::adaptive_quant_qf_seed: api::AdaptiveQuantQfSeedPolicy
+pub api::EncoderImprovementsCustom::aqba_max_quant_libjxl: bool
+pub api::EncoderImprovementsCustom::auto_resample_libjxl_rule: bool
 pub api::EncoderImprovementsCustom::block_ctx_map_15_cluster: bool
+pub api::EncoderImprovementsCustom::block_ctx_map_qf_zero_based_libjxl: bool
 pub api::EncoderImprovementsCustom::buttloop_epf_sharpness_seed: api::EpfSharpnessSeed
 pub api::EncoderImprovementsCustom::buttloop_qf_seed: api::ButtloopQfSeedPolicy
 pub api::EncoderImprovementsCustom::cfl_keep_best: core::option::Option<bool>
 pub api::EncoderImprovementsCustom::cfl_newton_libjxl_math_with_ls_warm_start: bool
 pub api::EncoderImprovementsCustom::cfl_newton_libjxl_parity: bool
+pub api::EncoderImprovementsCustom::cfl_pass1_min_effort: api::EffortGate
 pub api::EncoderImprovementsCustom::cfl_pass1_screenshot_x0_start: bool
 pub api::EncoderImprovementsCustom::cfl_pass2_ls_at_low_effort: bool
 pub api::EncoderImprovementsCustom::cfl_two_pass_min_effort: api::EffortGate
 pub api::EncoderImprovementsCustom::cfl_zero_for_search: bool
 pub api::EncoderImprovementsCustom::coeff_orders_disable_large_buckets: bool
 pub api::EncoderImprovementsCustom::coeff_orders_disable_medium_buckets: bool
+pub api::EncoderImprovementsCustom::coeff_orders_libjxl_parity: bool
 pub api::EncoderImprovementsCustom::content_class_auto_classify: bool
+pub api::EncoderImprovementsCustom::dc_adaptive_smoothing: bool
+pub api::EncoderImprovementsCustom::dc_encode_libjxl_parity: bool
 pub api::EncoderImprovementsCustom::dct32_search_policy: api::Dct32SearchPolicy
 pub api::EncoderImprovementsCustom::dct64_search_policy: api::Dct64SearchPolicy
+pub api::EncoderImprovementsCustom::dct_pass_order_libjxl: bool
+pub api::EncoderImprovementsCustom::entropy_codes_libjxl_parity: bool
 pub api::EncoderImprovementsCustom::epf_dispatch: api::EpfDispatch
 pub api::EncoderImprovementsCustom::epf_dynamic_sharpness_min_effort: api::EffortGate
+pub api::EncoderImprovementsCustom::epf_sharpness_pre_gab_libjxl: bool
+pub api::EncoderImprovementsCustom::extras_global_stream_libjxl: bool
 pub api::EncoderImprovementsCustom::find_best_32_per_m3_lift: bool
+pub api::EncoderImprovementsCustom::gaborish_libjxl_parity: bool
+pub api::EncoderImprovementsCustom::header_all_default_fast_paths: bool
 pub api::EncoderImprovementsCustom::high_colour_class_exclude: bool
 pub api::EncoderImprovementsCustom::high_d_photo_entropy_mul: api::HighDPhotoEntropyMulPolicy
 pub api::EncoderImprovementsCustom::learned_subband_exclude: bool
+pub api::EncoderImprovementsCustom::lossless_large_tree_bucket_reduction: bool
+pub api::EncoderImprovementsCustom::lossless_lz77_keep_best: bool
+pub api::EncoderImprovementsCustom::lossless_tree_self_repair: bool
+pub api::EncoderImprovementsCustom::ma_tree_root_splitval_libjxl: bool
 pub api::EncoderImprovementsCustom::patches_dispatch: api::PatchesDispatch
 pub api::EncoderImprovementsCustom::photo_epf_seed_admit: bool
 pub api::EncoderImprovementsCustom::photo_variant_z_admit: bool
 pub api::EncoderImprovementsCustom::pixel_loss_dispatch: api::PixelLossDispatch
+pub api::EncoderImprovementsCustom::quant_weights_libjxl: bool
+pub api::EncoderImprovementsCustom::rendering_intent_libjxl_parity: bool
 pub api::EncoderImprovementsCustom::screenshot_entropy_mul: api::ScreenshotEntropyMulPolicy
 pub api::EncoderImprovementsCustom::single_pass_entropy_dispatch: api::SinglePassEntropyDispatch
 pub api::EncoderImprovementsCustom::smooth_photo_dct64_admission: api::SmoothPhotoDct64Policy
+pub api::EncoderImprovementsCustom::srgb_eotf_libjxl_parity: bool
 pub api::EncoderImprovementsCustom::terminal_class_exclude: bool
 pub api::EncoderImprovementsCustom::textured_low_colour_exclude: bool
 pub api::EncoderImprovementsCustom::try_dct64_min_effort: api::EffortGate
+pub api::EncoderImprovementsCustom::x_qm_scale_from_original_distance: bool
+pub api::EncoderImprovementsCustom::xyb_cbrt_libjxl_parity: bool
 pub struct api::ExtraChannel<'a>
 pub fn api::ExtraChannel<'a>::black(&'a [u8]) -> Self
 pub fn api::ExtraChannel<'a>::black_u16(&'a [u16]) -> Self
@@ -378,12 +409,14 @@ pub fn api::LosslessConfig::effort(&self) -> u8
 pub fn api::LosslessConfig::encode(&self, &[u8], u32, u32, api::PixelLayout) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encode_animation(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>]) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encode_animation_with_limits(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::Limits) -> api::Result<alloc::vec::Vec<u8>>
+pub fn api::LosslessConfig::encode_animation_with_metadata(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::ImageMetadata<'_>) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encode_into(&self, &[u8], u32, u32, api::PixelLayout, &mut alloc::vec::Vec<u8>) -> api::Result<()>
 pub fn api::LosslessConfig::encode_request(&self, u32, u32, api::PixelLayout) -> api::EncodeRequest<'_>
 pub fn api::LosslessConfig::estimate_encode(&self, u32, u32, api::PixelLayout) -> core::option::Option<heuristics::EncodeEstimate>
 pub fn api::LosslessConfig::estimate_peak_memory_bytes(&self, u32, u32, api::PixelLayout) -> core::option::Option<u64>
 pub fn api::LosslessConfig::faster_decoding(&self) -> u8
 pub fn api::LosslessConfig::force_rct(&self) -> core::option::Option<RctType>
+pub fn api::LosslessConfig::limits(&self) -> core::option::Option<&api::Limits>
 pub fn api::LosslessConfig::lossy_palette(&self) -> bool
 pub fn api::LosslessConfig::lz77(&self) -> bool
 pub fn api::LosslessConfig::lz77_method(&self) -> Lz77Method
@@ -398,6 +431,7 @@ pub fn api::LosslessConfig::new() -> Self
 pub fn api::LosslessConfig::patches(&self) -> bool
 pub fn api::LosslessConfig::sectioned_trees(&self) -> api::SectionedTrees
 pub fn api::LosslessConfig::squeeze(&self) -> bool
+pub fn api::LosslessConfig::strategy(&self) -> &api::EncoderStrategy
 pub fn api::LosslessConfig::threads(&self) -> usize
 pub fn api::LosslessConfig::tree_learning(&self) -> bool
 pub fn api::LosslessConfig::tree_learning_sample_fraction(&self) -> core::option::Option<f32>
@@ -405,9 +439,11 @@ pub fn api::LosslessConfig::with_auto_delta_frames(self, bool) -> Self
 pub fn api::LosslessConfig::with_buffering(self, api::Buffering) -> Self
 pub fn api::LosslessConfig::with_container_mode(self, api::ContainerMode) -> Self
 pub fn api::LosslessConfig::with_effort(self, u8) -> Self
+pub fn api::LosslessConfig::with_fast_decode(self) -> Self
 pub fn api::LosslessConfig::with_faster_decoding(self, u8) -> Self
 pub fn api::LosslessConfig::with_force_rct(self, core::option::Option<RctType>) -> Self
 pub fn api::LosslessConfig::with_keep_invisible(self, bool) -> Self
+pub fn api::LosslessConfig::with_limits(self, &api::Limits) -> Self
 pub fn api::LosslessConfig::with_lossy_palette(self, bool) -> Self
 pub fn api::LosslessConfig::with_mode(self, api::EncoderMode) -> Self
 pub fn api::LosslessConfig::with_modular_channel_colors_global_percent(self, core::option::Option<f32>) -> Self
@@ -418,8 +454,10 @@ pub fn api::LosslessConfig::with_modular_palette_colors(self, core::option::Opti
 pub fn api::LosslessConfig::with_modular_predictor(self, core::option::Option<u8>) -> Self
 pub fn api::LosslessConfig::with_sectioned_trees(self, api::SectionedTrees) -> Self
 pub fn api::LosslessConfig::with_squeeze(self, bool) -> Self
+pub fn api::LosslessConfig::with_strategy(self, api::EncoderStrategy) -> Self
 pub fn api::LosslessConfig::with_threads(self, usize) -> Self
 pub fn api::LosslessConfig::with_tree_learning_sample_fraction(self, f32) -> Self
+pub fn api::LosslessConfig::encode_planar_int(&self, u32, u32, &[&[u32]], u32, bool, bool) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encoder(&self, u32, u32, api::PixelLayout) -> api::Result<api::LosslessEncoder>
 pub fn api::LosslessConfig::validate(&self) -> core::result::Result<(), validation::ValidationError>
 pub fn api::LosslessEncoder::finish(self) -> api::Result<alloc::vec::Vec<u8>>
@@ -472,6 +510,7 @@ pub fn api::LossyConfig::effort(&self) -> u8
 pub fn api::LossyConfig::encode(&self, &[u8], u32, u32, api::PixelLayout) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LossyConfig::encode_animation(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>]) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LossyConfig::encode_animation_with_limits(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::Limits) -> api::Result<alloc::vec::Vec<u8>>
+pub fn api::LossyConfig::encode_animation_with_metadata(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::ImageMetadata<'_>) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LossyConfig::encode_into(&self, &[u8], u32, u32, api::PixelLayout, &mut alloc::vec::Vec<u8>) -> api::Result<()>
 pub fn api::LossyConfig::encode_request(&self, u32, u32, api::PixelLayout) -> api::EncodeRequest<'_>
 pub fn api::LossyConfig::epf_level(&self) -> i8
@@ -589,6 +628,24 @@ pub entropy_coding::ANSHistogramStrategy::Precise
 pub entropy_coding::Lz77Method::Greedy
 pub entropy_coding::Lz77Method::Optimal
 pub entropy_coding::Lz77Method::Rle
+pub mod loop_trace
+pub loop_trace::LoopFrame::diffmap: alloc::vec::Vec<f32>
+pub loop_trace::LoopFrame::height: u32
+pub loop_trace::LoopFrame::iter: u32
+pub loop_trace::LoopFrame::metric: &'static str
+pub loop_trace::LoopFrame::next_quant_field: core::option::Option<alloc::vec::Vec<f32>>
+pub loop_trace::LoopFrame::quant_field: alloc::vec::Vec<f32>
+pub loop_trace::LoopFrame::recon: [alloc::vec::Vec<f32>; 3]
+pub loop_trace::LoopFrame::score: f64
+pub loop_trace::LoopFrame::seed: f64
+pub loop_trace::LoopFrame::target: f64
+pub loop_trace::LoopFrame::tile_dist: alloc::vec::Vec<f32>
+pub loop_trace::LoopFrame::width: u32
+pub loop_trace::LoopFrame::xsize_blocks: u32
+pub loop_trace::LoopFrame::ysize_blocks: u32
+pub fn loop_trace::LoopTrace::frames(&self) -> alloc::vec::Vec<loop_trace::LoopFrame>
+pub fn loop_trace::LoopTrace::new() -> Self
+pub fn loop_trace::LoopTrace::take(&self) -> alloc::vec::Vec<loop_trace::LoopFrame>
 pub mod modular
 pub const RctType::GBR_SUBGR: RctType
 pub const RctType::NONE: RctType
@@ -612,6 +669,8 @@ pub validation::ValidationError::FineGrainedStepOutOfRange::value: u8
 pub validation::ValidationError::ForceStrategyOutOfRange
 pub validation::ValidationError::ForceStrategyOutOfRange::max_exclusive: u8
 pub validation::ValidationError::ForceStrategyOutOfRange::value: u8
+pub validation::ValidationError::ForcedWpModeOutOfRange
+pub validation::ValidationError::ForcedWpModeOutOfRange::value: u8
 pub validation::ValidationError::IterCountOutOfRange
 pub validation::ValidationError::IterCountOutOfRange::name: &'static str
 pub validation::ValidationError::IterCountOutOfRange::valid: core::ops::range::RangeInclusive<u32>
@@ -801,6 +860,8 @@ pub ValidationError::FineGrainedStepOutOfRange::value: u8
 pub ValidationError::ForceStrategyOutOfRange
 pub ValidationError::ForceStrategyOutOfRange::max_exclusive: u8
 pub ValidationError::ForceStrategyOutOfRange::value: u8
+pub ValidationError::ForcedWpModeOutOfRange
+pub ValidationError::ForcedWpModeOutOfRange::value: u8
 pub ValidationError::IterCountOutOfRange
 pub ValidationError::IterCountOutOfRange::name: &'static str
 pub ValidationError::IterCountOutOfRange::valid: core::ops::range::RangeInclusive<u32>
@@ -889,6 +950,7 @@ pub CustomPrimaries::green: CIExy
 pub CustomPrimaries::red: CIExy
 pub struct EncodeRequest<'a> [also: api]
 pub fn api::EncodeRequest<'a>::encode(self, &[u8]) -> api::Result<alloc::vec::Vec<u8>>
+pub fn api::EncodeRequest<'a>::encode_animation(self, &api::AnimationParams, &[api::AnimationFrame<'_>]) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::EncodeRequest<'a>::encode_into(self, &[u8], &mut alloc::vec::Vec<u8>) -> api::Result<api::EncodeResult>
 pub fn api::EncodeRequest<'a>::encode_to(self, &[u8], impl core::io::write::Write) -> api::Result<api::EncodeResult>
 pub fn api::EncodeRequest<'a>::encode_with_stats(self, &[u8]) -> api::Result<api::EncodeResult>
@@ -900,6 +962,7 @@ pub fn api::EncodeRequest<'a>::with_extra_channels(self, &'a [api::ExtraChannel<
 pub fn api::EncodeRequest<'a>::with_intensity_target(self, f32) -> Self
 pub fn api::EncodeRequest<'a>::with_limits(self, &'a api::Limits) -> Self
 pub fn api::EncodeRequest<'a>::with_linear_below(self, f32) -> Self
+pub fn api::EncodeRequest<'a>::with_loop_trace(self, &loop_trace::LoopTrace) -> Self
 pub fn api::EncodeRequest<'a>::with_metadata(self, &'a api::ImageMetadata<'a>) -> Self
 pub fn api::EncodeRequest<'a>::with_min_nits(self, f32) -> Self
 pub fn api::EncodeRequest<'a>::with_premultiplied_alpha(self, bool) -> Self
@@ -926,6 +989,7 @@ pub fn api::EncodeStats::strategy_counts(&self) -> &[u32; 19]
 pub fn api::EncodeStats::threads_used(&self) -> u32
 #[non_exhaustive] pub struct EntropyMulTable
 pub EntropyMulTable::afv: f32
+pub EntropyMulTable::channel_loss_mul: [f64; 3]
 pub EntropyMulTable::dct16x16: f32
 pub EntropyMulTable::dct16x32: f32
 pub EntropyMulTable::dct16x8: f32
@@ -991,6 +1055,25 @@ pub fn api::Limits::with_max_memory_bytes(self, u64) -> Self
 pub fn api::Limits::with_max_pixels(self, u64) -> Self
 pub fn api::Limits::with_max_quant_loop_iters(self, u32) -> Self
 pub fn api::Limits::with_max_width(self, u64) -> Self
+#[non_exhaustive] pub struct LoopFrame [also: loop_trace]
+pub LoopFrame::diffmap: alloc::vec::Vec<f32>
+pub LoopFrame::height: u32
+pub LoopFrame::iter: u32
+pub LoopFrame::metric: &'static str
+pub LoopFrame::next_quant_field: core::option::Option<alloc::vec::Vec<f32>>
+pub LoopFrame::quant_field: alloc::vec::Vec<f32>
+pub LoopFrame::recon: [alloc::vec::Vec<f32>; 3]
+pub LoopFrame::score: f64
+pub LoopFrame::seed: f64
+pub LoopFrame::target: f64
+pub LoopFrame::tile_dist: alloc::vec::Vec<f32>
+pub LoopFrame::width: u32
+pub LoopFrame::xsize_blocks: u32
+pub LoopFrame::ysize_blocks: u32
+pub struct LoopTrace [also: loop_trace]
+pub fn loop_trace::LoopTrace::frames(&self) -> alloc::vec::Vec<loop_trace::LoopFrame>
+pub fn loop_trace::LoopTrace::new() -> Self
+pub fn loop_trace::LoopTrace::take(&self) -> alloc::vec::Vec<loop_trace::LoopFrame>
 pub struct LosslessConfig [also: api]
 pub fn api::LosslessConfig::ans(&self) -> bool
 pub fn api::LosslessConfig::auto_delta_frames(&self) -> bool
@@ -1000,12 +1083,14 @@ pub fn api::LosslessConfig::effort(&self) -> u8
 pub fn api::LosslessConfig::encode(&self, &[u8], u32, u32, api::PixelLayout) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encode_animation(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>]) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encode_animation_with_limits(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::Limits) -> api::Result<alloc::vec::Vec<u8>>
+pub fn api::LosslessConfig::encode_animation_with_metadata(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::ImageMetadata<'_>) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encode_into(&self, &[u8], u32, u32, api::PixelLayout, &mut alloc::vec::Vec<u8>) -> api::Result<()>
 pub fn api::LosslessConfig::encode_request(&self, u32, u32, api::PixelLayout) -> api::EncodeRequest<'_>
 pub fn api::LosslessConfig::estimate_encode(&self, u32, u32, api::PixelLayout) -> core::option::Option<heuristics::EncodeEstimate>
 pub fn api::LosslessConfig::estimate_peak_memory_bytes(&self, u32, u32, api::PixelLayout) -> core::option::Option<u64>
 pub fn api::LosslessConfig::faster_decoding(&self) -> u8
 pub fn api::LosslessConfig::force_rct(&self) -> core::option::Option<RctType>
+pub fn api::LosslessConfig::limits(&self) -> core::option::Option<&api::Limits>
 pub fn api::LosslessConfig::lossy_palette(&self) -> bool
 pub fn api::LosslessConfig::lz77(&self) -> bool
 pub fn api::LosslessConfig::lz77_method(&self) -> Lz77Method
@@ -1020,6 +1105,7 @@ pub fn api::LosslessConfig::new() -> Self
 pub fn api::LosslessConfig::patches(&self) -> bool
 pub fn api::LosslessConfig::sectioned_trees(&self) -> api::SectionedTrees
 pub fn api::LosslessConfig::squeeze(&self) -> bool
+pub fn api::LosslessConfig::strategy(&self) -> &api::EncoderStrategy
 pub fn api::LosslessConfig::threads(&self) -> usize
 pub fn api::LosslessConfig::tree_learning(&self) -> bool
 pub fn api::LosslessConfig::tree_learning_sample_fraction(&self) -> core::option::Option<f32>
@@ -1027,9 +1113,11 @@ pub fn api::LosslessConfig::with_auto_delta_frames(self, bool) -> Self
 pub fn api::LosslessConfig::with_buffering(self, api::Buffering) -> Self
 pub fn api::LosslessConfig::with_container_mode(self, api::ContainerMode) -> Self
 pub fn api::LosslessConfig::with_effort(self, u8) -> Self
+pub fn api::LosslessConfig::with_fast_decode(self) -> Self
 pub fn api::LosslessConfig::with_faster_decoding(self, u8) -> Self
 pub fn api::LosslessConfig::with_force_rct(self, core::option::Option<RctType>) -> Self
 pub fn api::LosslessConfig::with_keep_invisible(self, bool) -> Self
+pub fn api::LosslessConfig::with_limits(self, &api::Limits) -> Self
 pub fn api::LosslessConfig::with_lossy_palette(self, bool) -> Self
 pub fn api::LosslessConfig::with_mode(self, api::EncoderMode) -> Self
 pub fn api::LosslessConfig::with_modular_channel_colors_global_percent(self, core::option::Option<f32>) -> Self
@@ -1040,8 +1128,10 @@ pub fn api::LosslessConfig::with_modular_palette_colors(self, core::option::Opti
 pub fn api::LosslessConfig::with_modular_predictor(self, core::option::Option<u8>) -> Self
 pub fn api::LosslessConfig::with_sectioned_trees(self, api::SectionedTrees) -> Self
 pub fn api::LosslessConfig::with_squeeze(self, bool) -> Self
+pub fn api::LosslessConfig::with_strategy(self, api::EncoderStrategy) -> Self
 pub fn api::LosslessConfig::with_threads(self, usize) -> Self
 pub fn api::LosslessConfig::with_tree_learning_sample_fraction(self, f32) -> Self
+pub fn api::LosslessConfig::encode_planar_int(&self, u32, u32, &[&[u32]], u32, bool, bool) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LosslessConfig::encoder(&self, u32, u32, api::PixelLayout) -> api::Result<api::LosslessEncoder>
 pub fn api::LosslessConfig::validate(&self) -> core::result::Result<(), validation::ValidationError>
 pub struct LosslessEncoder [also: api]
@@ -1096,6 +1186,7 @@ pub fn api::LossyConfig::effort(&self) -> u8
 pub fn api::LossyConfig::encode(&self, &[u8], u32, u32, api::PixelLayout) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LossyConfig::encode_animation(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>]) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LossyConfig::encode_animation_with_limits(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::Limits) -> api::Result<alloc::vec::Vec<u8>>
+pub fn api::LossyConfig::encode_animation_with_metadata(&self, u32, u32, api::PixelLayout, &api::AnimationParams, &[api::AnimationFrame<'_>], &api::ImageMetadata<'_>) -> api::Result<alloc::vec::Vec<u8>>
 pub fn api::LossyConfig::encode_into(&self, &[u8], u32, u32, api::PixelLayout, &mut alloc::vec::Vec<u8>) -> api::Result<()>
 pub fn api::LossyConfig::encode_request(&self, u32, u32, api::PixelLayout) -> api::EncodeRequest<'_>
 pub fn api::LossyConfig::epf_level(&self) -> i8
@@ -1225,7 +1316,7 @@ pub fn calibrated_jxl_quality(f32) -> f32 [also: api]
 pub fn downsample_channel_u8(&[u8], usize, usize, u32) -> alloc::vec::Vec<u8> [also: api]
 pub fn quality_to_distance(f32) -> f32 [also: api]
 
-## trait impls (61 types)
+## trait impls (63 types)
 
 ANSHistogramStrategy: Clone, Copy, Debug, Default, Eq, PartialEq
 BlendMode: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -1285,12 +1376,14 @@ api::SectionedTrees: Clone, Copy, Debug, Default, Eq, PartialEq
 api::SinglePassEntropyDispatch: Clone, Copy, Debug, Default, Eq, PartialEq
 api::SmoothPhotoDct64Policy: Clone, Copy, Debug, Default, Eq, PartialEq
 api::StrategyOverrides: Clone, Debug, Default, PartialEq
+loop_trace::LoopFrame: Clone, Debug
+loop_trace::LoopTrace: Clone, Debug, Default
 validation::ValidationError: Clone, Debug, Display, Error
 vardct::hdr_metrics::HdrLoss: Clone, Copy, Debug, Default, Eq, PartialEq
 vardct::hdr_metrics::HdrMetricError: Clone, Debug, Display, Eq, Error, PartialEq
 
 ## auto traits
 
-61 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+63 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 api::EncodeError: !RefUnwindSafe !UnwindSafe
 api::EncodeRequest<'a>: !RefUnwindSafe !UnwindSafe
