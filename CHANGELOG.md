@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- Fix malformed lossless animation headers when identical frames repeat on a 1×1 canvas. Omit the redundant full-canvas crop so Replace blending does not emit a partial-frame source field.
+
 ### Animation request contract
 
 - `EncodeRequest::encode_animation` applies the same metadata, color encoding,
