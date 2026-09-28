@@ -2131,7 +2131,7 @@ dependencies = [
  "zenjpeg",
  "zenjxl-decoder 0.3.10",
  "zenjxl-decoder 0.4.0",
- "zenpixels-convert",
+ "zenpixels-convert 0.3.1",
  "zenpng",
  "zenpredict",
  "zensim",
@@ -3847,7 +3847,7 @@ dependencies = [
  "thiserror",
  "wide",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.2.16",
  "zentone",
 ]
 
@@ -3863,7 +3863,7 @@ dependencies = [
  "thiserror",
  "whereat",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.2.16",
 ]
 
 [[package]]
@@ -4636,8 +4636,8 @@ dependencies = [
  "garb",
  "linear-srgb",
  "magetypes",
- "zenpixels",
- "zenpixels-convert",
+ "zenpixels 0.3.1",
+ "zenpixels-convert 0.3.1",
 ]
 
 [[package]]
@@ -4674,7 +4674,7 @@ dependencies = [
  "almost-enough",
  "enough",
  "whereat",
- "zenpixels",
+ "zenpixels 0.2.16",
 ]
 
 [[package]]
@@ -5000,7 +5000,7 @@ dependencies = [
  "whereat",
  "zenanalyze",
  "zencodec",
- "zenpixels",
+ "zenpixels 0.3.1",
  "zenyuv 0.1.3 (git+https://github.com/imazen/zenjpeg?rev=fd36fd472ca88526eccf8a78788026e704042ba6)",
 ]
 
@@ -5136,6 +5136,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenpixels"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=cabe3d06e8d31911bed3964d836aefc170bff1e8#cabe3d06e8d31911bed3964d836aefc170bff1e8"
+dependencies = [
+ "bytemuck",
+ "imgref",
+ "rgb",
+ "whereat",
+]
+
+[[package]]
 name = "zenpixels-convert"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5152,7 +5163,24 @@ dependencies = [
  "paste",
  "rgb",
  "whereat",
- "zenpixels",
+ "zenpixels 0.2.16",
+]
+
+[[package]]
+name = "zenpixels-convert"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=cabe3d06e8d31911bed3964d836aefc170bff1e8#cabe3d06e8d31911bed3964d836aefc170bff1e8"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "garb",
+ "libm",
+ "linear-srgb",
+ "magetypes",
+ "once_cell",
+ "paste",
+ "whereat",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -5174,8 +5202,8 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenflate",
- "zenpixels",
- "zenpixels-convert",
+ "zenpixels 0.2.16",
+ "zenpixels-convert 0.2.16",
 ]
 
 [[package]]
@@ -5203,7 +5231,7 @@ dependencies = [
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -5258,7 +5286,7 @@ dependencies = [
  "imgref",
  "rgb",
  "serde",
- "zenpixels",
+ "zenpixels 0.3.1",
  "zensim",
  "zensim-experimental",
 ]
