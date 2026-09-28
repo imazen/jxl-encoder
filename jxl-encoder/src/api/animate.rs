@@ -300,7 +300,8 @@ pub(crate) fn encode_animation_lossless(
         let mut use_tree_learning = cfg.effective_tree_learning();
         let mut smart_profile =
             cfg.effective_profile_for_image((frame_w as u64) * (frame_h as u64));
-        // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
+        // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6,
+        // extended to int8/int16 at e1-e4 (see api.rs one-shot path).
         use_tree_learning |= cfg.lift_integer_tree_learning(
             layout,
             (frame_w as u64) * (frame_h as u64),
@@ -320,7 +321,9 @@ pub(crate) fn encode_animation_lossless(
                 sectioned_trees: cfg.sectioned_trees(),
                 use_modular: true,
                 effort: cfg.effort,
-                use_ans: cfg.ans(),
+                // Tree learning requires ANS; a lifted tree at e1/e2
+                // lights it unless the caller pinned `with_ans(false)`.
+                use_ans: cfg.ans() || (use_tree_learning && cfg.use_ans.is_none()),
                 use_tree_learning,
                 use_squeeze: cfg.squeeze,
                 enable_lz77: cfg.effective_lz77(),

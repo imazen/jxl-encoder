@@ -933,7 +933,16 @@ impl LosslessConfig {
         pixels: u64,
         profile: &mut crate::effort::EffortProfile,
     ) -> bool {
-        let is_int16_rgb = matches!(layout, PixelLayout::Rgb16 | PixelLayout::Rgba16);
+        // The e1-4 extension additionally covers 16-bit gray — same
+        // mechanism, same hooks. (The original e5/e6 lift kept
+        // Rgb16/Rgba16 only because that was the #72 measured surface.)
+        let is_int16 = matches!(
+            layout,
+            PixelLayout::Rgb16
+                | PixelLayout::Rgba16
+                | PixelLayout::Gray16
+                | PixelLayout::GrayAlpha16
+        );
         let is_int8 = matches!(
             layout,
             PixelLayout::Rgb8
@@ -943,8 +952,8 @@ impl LosslessConfig {
                 | PixelLayout::Gray8
                 | PixelLayout::GrayAlpha8
         );
-        if !(is_int16_rgb || is_int8)
-            || !(5..=6).contains(&self.effort)
+        if !(is_int16 || is_int8)
+            || !(1..=6).contains(&self.effort)
             || self.tree_learning.is_some()
             || self.tree_learning()
             || self.faster_decoding >= 4
@@ -952,7 +961,7 @@ impl LosslessConfig {
             return false;
         }
         #[cfg(feature = "std")]
-        if is_int16_rgb && std::env::var_os("JXL_NO_16BIT_TREE_LIFT").is_some() {
+        if is_int16 && std::env::var_os("JXL_NO_16BIT_TREE_LIFT").is_some() {
             return false;
         }
         #[cfg(feature = "std")]
@@ -966,7 +975,19 @@ impl LosslessConfig {
         //   +43 % (was +443 %), ~2.4x cjxl-e5 wall.
         // e6 "mid": mean -5.5 % vs cjxl-e5 — BEATS the reference — worse
         //   on only 6/76, tail +12 %, cjxl-e8-class wall.
-        if self.effort == 5 {
+        // e1..=4 (i265 sweep, 2026-09-28): the profile's own low-effort
+        //   row already carries libjxl's cheap tree shape (3 props /
+        //   32 buckets / 0.15 fraction / 65k-sample cap) — the flag was
+        //   the only missing piece. Measured codec_wiki e3 525,716 →
+        //   241,398 B (cjxl 297,013), e1 1,788,569 → 242,388 B (cjxl
+        //   366,637); cid22:1025469 e3 275,879 → 238,165 B (cjxl
+        //   246,412). ANS follows the lifted flag at the frame sites
+        //   (tree tokens need the ANS context stream); e1/e2's prefix
+        //   path only survives on non-integer layouts.
+        if self.effort <= 4 {
+            // Keep the profile's e<=4 defaults — they are already the
+            // cheap config.
+        } else if self.effort == 5 {
             profile.tree_sample_fraction = 0.05;
             profile.tree_num_properties = 4;
             profile.tree_max_buckets = 32;
@@ -974,7 +995,7 @@ impl LosslessConfig {
             // regressed photos-png e5 by +19 % vs the no-tree path
             // (the off path's best-of-7 RCT is where photo bytes
             // live); 16-bit keeps the measured #72 cap.
-            if is_int16_rgb {
+            if is_int16 {
                 profile.nb_rcts_to_try = 1;
             }
             profile.wp_num_param_sets = 0;
@@ -7269,7 +7290,9 @@ impl<'a> EncodeRequest<'a> {
         // Encode frame
         let mut use_tree_learning = cfg.effective_tree_learning();
         let mut smart_profile = cfg.effective_profile_for_image((w as u64) * (h as u64));
-        // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6.
+        // Issue #72: budgeted tree learning for 16-bit RGB(A) at e5/e6,
+        // extended to int8/int16 at e1-e4 (the e<=4 wedge: off-until-e7
+        // was +12..470% vs cjxl — libjxl learns trees at every effort).
         use_tree_learning |= cfg.lift_integer_tree_learning(
             self.layout,
             (w as u64) * (h as u64),
@@ -7281,7 +7304,12 @@ impl<'a> EncodeRequest<'a> {
             FrameEncoderOptions {
                 use_modular: true,
                 effort: cfg.effort,
-                use_ans: cfg.ans(),
+                // Tree learning requires the ANS context stream — a
+                // lifted (or caller-forced) tree at e1/e2 must light ANS
+                // too; without a tree this stays prefix-coded. An explicit
+                // `with_ans(false)` still wins (touched-bit contract):
+                // then the tree is inert, matching pre-lift behaviour.
+                use_ans: cfg.ans() || (use_tree_learning && cfg.use_ans.is_none()),
                 use_tree_learning,
                 use_squeeze: cfg.squeeze,
                 enable_lz77: cfg.effective_lz77(),
@@ -9925,7 +9953,11 @@ impl LosslessEncoder {
                 FrameEncoderOptions {
                     use_modular: true,
                     effort: cfg.effort,
-                    use_ans: cfg.ans(),
+                    // Tree learning requires the ANS context stream
+                    // (see the one-shot path comment); a lifted tree at
+                    // e1/e2 must light ANS too. An explicit
+                    // `with_ans(false)` still wins.
+                    use_ans: cfg.ans() || (use_tree_learning_l && cfg.use_ans.is_none()),
                     use_tree_learning: use_tree_learning_l,
                     use_squeeze: cfg.squeeze,
                     enable_lz77: cfg.effective_lz77(),
