@@ -337,9 +337,26 @@ inputs; d3e7 wall −4..8% on 4K, ~neutral at 512px.
 (replaces (tok-16)/3 f64-div chain per sample×pred — pure function of
 tok, order-preserved). ~−1.3% frymire d1e9; byte-identical.
 
-**Probed, negative:** LZ77 match-extend block compare (8×u32 slice eq)
-— byte-identical but wall-neutral on checker1/pal150/windows95; the
-early-match-mismatch path dominates and scalar head didn't recover it.
-Reverted. ALSO: an earlier stale-baseline reading ("lz77 −35%",
-"lossless +20%") turned out to be the pre-hybrid-default binary
-difference, not the patch — lesson: always A/B same-build±patch.
+**Landed `c7d6ba50`** — LZ77 match-extend: scalar head for first 8
+elements (early mismatches stay cheap), then 8×u32-slice block compare
+for confirmed-long matches, tail walks to exact first mismatch.
+Byte-identical. Wide-pattern A/B (same-build±patch): periodic16
+d1e9 −60% (47→19s) / ll-e9 −27%, checker1 d1e9 −35%, pal150 −8% ll,
+big_mix −3..6%; photos/noise/short-match inputs neutral. First
+evaluation was wrongly killed by a stale-baseline reading ("lz77
+−35%", "lossless +20%") — the gaps-i265 binary predated the
+hybrid-default flip, so every "new" row paid hybrid's learn cost.
+Lesson: always A/B same-build±patch; match-extend wins are purely
+data-dependent.
+
+**Landed `b73f0571`** — i16 bucket LUT in `bucketize_column` (~5% Ir
+of e9): 64K-entry u8 LUT built once per column replaces n ×
+binary_search when n ≥ 16384; lut[v] = count(ts < v) == binary_search
+index (ts sorted-unique by construction), `as u8` wrap semantics
+preserved. Byte-identical; −1..4% e9 wall on wiki/frymire/4K.
+
+**Probed, negative:** DCT/IDCT batch `v = [f32xN::zero(token); K]`
+dead zero-inits (~100 sites across dct16/32/64 + idct16/32/64).
+`core::array::from_fn(|j| fill)` removes the memset but per-element
+closure codegen regresses ~+2% wall on frymire/imac_dark d1e9 —
+stack memsets were already L1-cheap. Reverted.
