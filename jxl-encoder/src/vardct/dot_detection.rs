@@ -901,18 +901,10 @@ pub(crate) fn gaussian_separable_5_horizontal(
 ) {
     debug_assert_eq!(src.len(), width * height);
     debug_assert_eq!(dst.len(), width * height);
-    let [w0, w1, w2] = taps;
-    for y in 0..height {
-        let row = &src[y * width..(y + 1) * width];
-        let drow = &mut dst[y * width..(y + 1) * width];
-        for x in 0..width {
-            let xm2 = x.saturating_sub(2);
-            let xm1 = x.saturating_sub(1);
-            let xp1 = if x + 1 < width { x + 1 } else { width - 1 };
-            let xp2 = if x + 2 < width { x + 2 } else { width - 1 };
-            drow[x] = w0 * row[x] + w1 * (row[xm1] + row[xp1]) + w2 * (row[xm2] + row[xp2]);
-        }
-    }
+    // Bit-identical SIMD dispatch: jxl_simd::gaussian5_horizontal
+    // evaluates the same per-lane expression tree (explicit mul/add, no
+    // FMA) — every tier produces the same bits as this scalar body.
+    jxl_simd::gaussian5_horizontal(src, dst, width, height, taps);
 }
 
 /// Single-pass 5-tap vertical Gaussian convolution. Same conventions
@@ -926,19 +918,7 @@ pub(crate) fn gaussian_separable_5_vertical(
 ) {
     debug_assert_eq!(src.len(), width * height);
     debug_assert_eq!(dst.len(), width * height);
-    let [w0, w1, w2] = taps;
-    for y in 0..height {
-        let ym2 = y.saturating_sub(2);
-        let ym1 = y.saturating_sub(1);
-        let yp1 = if y + 1 < height { y + 1 } else { height - 1 };
-        let yp2 = if y + 2 < height { y + 2 } else { height - 1 };
-        for x in 0..width {
-            let v = w0 * src[y * width + x]
-                + w1 * (src[ym1 * width + x] + src[yp1 * width + x])
-                + w2 * (src[ym2 * width + x] + src[yp2 * width + x]);
-            dst[y * width + x] = v;
-        }
-    }
+    jxl_simd::gaussian5_vertical(src, dst, width, height, taps);
 }
 
 /// Apply a single full 5×5 separable Gaussian (horizontal then
