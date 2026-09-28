@@ -519,16 +519,13 @@ pub fn idct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output:
             v[j] = gather_col(token, input, base, j, 64);
         }
         idct1d_64_batch(token, &mut v);
+        // Transposed store: tmp[j*64 + base + lane] (row b+l, pos j).
         for j in 0..64 {
-            scatter_col(v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    // Transpose 64×64
-    let mut transposed = crate::scratch_buf::<4096>();
-    for r in 0..64 {
-        for c in 0..64 {
-            transposed[c * 64 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 8])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -537,7 +534,7 @@ pub fn idct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output:
         let base = batch * 8;
         let mut v = [f32x8::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col(token, &transposed, base, j, 64);
+            v[j] = gather_col(token, &tmp, base, j, 64);
         }
         idct1d_64_batch(token, &mut v);
         for j in 0..64 {
@@ -564,16 +561,13 @@ pub fn idct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
             v[j] = gather_col(token, input, base, j, 64);
         }
         idct1d_64_batch(token, &mut v);
+        // Transposed store: tmp[j*32 + base + lane] (row b+l, pos j).
         for j in 0..64 {
-            scatter_col(v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    // Transpose 32×64 → 64×32
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 32 + base..j * 32 + base + 8])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -582,7 +576,7 @@ pub fn idct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
         let base = batch * 8;
         let mut v = [f32x8::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col(token, &transposed, base, j, 32);
+            v[j] = gather_col(token, &tmp, base, j, 32);
         }
         crate::idct32::idct1d_32_batch(token, &mut v);
         for j in 0..32 {
@@ -599,33 +593,20 @@ pub fn idct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
 pub fn idct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: &mut [f32; 2048]) {
     use magetypes::simd::f32x8;
 
-    // Un-transpose: 32×64 → 64×32
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = input[r * 64 + c];
-        }
-    }
-
-    // Pass 1: IDCT-32 on 64 rows (stride 32), 8 batches of 8
+    // Transpose-free: pass 1 reads input "columns" as contiguous runs
+    // (input[j*64 + base + lane] == transposed[(base+lane)*32 + j]), and
+    // pass 2's gather is likewise a contiguous slice of tmp
+    // (tmp[j*32 + base + lane] == transposed2[(base+lane)*64 + j]).
     let mut tmp = crate::scratch_buf::<2048>();
     for batch in 0..8 {
         let base = batch * 8;
         let mut v = [f32x8::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col(token, &transposed, base, j, 32);
+            v[j] = f32x8::from_slice(token, &input[j * 64 + base..j * 64 + base + 8]);
         }
         crate::idct32::idct1d_32_batch(token, &mut v);
         for j in 0..32 {
             scatter_col(v[j], &mut tmp, base, j, 32);
-        }
-    }
-
-    // Transpose 64×32 → 32×64
-    let mut transposed2 = crate::scratch_buf::<2048>();
-    for r in 0..64 {
-        for c in 0..32 {
-            transposed2[c * 64 + r] = tmp[r * 32 + c];
         }
     }
 
@@ -634,7 +615,7 @@ pub fn idct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
         let base = batch * 8;
         let mut v = [f32x8::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col(token, &transposed2, base, j, 64);
+            v[j] = f32x8::from_slice(token, &tmp[j * 32 + base..j * 32 + base + 8]);
         }
         idct1d_64_batch(token, &mut v);
         for j in 0..64 {

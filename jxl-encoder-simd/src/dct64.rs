@@ -431,16 +431,13 @@ pub fn dct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output: 
         for j in 0..64 {
             v[j] *= inv64;
         }
+        // Transposed store: tmp[j*64 + base + lane] (row b+l, pos j).
         for j in 0..64 {
-            scatter_col(v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    // Transpose 64×64
-    let mut transposed = crate::scratch_buf::<4096>();
-    for r in 0..64 {
-        for c in 0..64 {
-            transposed[c * 64 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 8])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -449,7 +446,7 @@ pub fn dct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output: 
         let base = batch * 8;
         let mut v = [f32x8::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col(token, &transposed, base, j, 64);
+            v[j] = gather_col(token, &tmp, base, j, 64);
         }
         dct1d_64_batch(token, &mut v);
         for j in 0..64 {
@@ -484,16 +481,13 @@ pub fn dct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
         for j in 0..32 {
             v[j] *= inv32;
         }
+        // Transposed store: tmp[j*64 + base + lane] (row b+l, pos j).
         for j in 0..32 {
-            scatter_col(v[j], &mut tmp, base, j, 32);
-        }
-    }
-
-    // Transpose 64×32 → 32×64
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..64 {
-        for c in 0..32 {
-            transposed[c * 64 + r] = tmp[r * 32 + c];
+            v[j].store(
+                (&mut tmp[j * 64 + base..j * 64 + base + 8])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -502,7 +496,7 @@ pub fn dct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
         let base = batch * 8;
         let mut v = [f32x8::zero(token); 64];
         for j in 0..64 {
-            v[j] = gather_col(token, &transposed, base, j, 64);
+            v[j] = gather_col(token, &tmp, base, j, 64);
         }
         dct1d_64_batch(token, &mut v);
         for j in 0..64 {
@@ -537,16 +531,13 @@ pub fn dct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
         for j in 0..64 {
             v[j] *= inv64;
         }
+        // Transposed store: tmp[j*32 + base + lane] (row b+l, pos j).
         for j in 0..64 {
-            scatter_col(v[j], &mut tmp, base, j, 64);
-        }
-    }
-
-    // Transpose 32×64 → 64×32
-    let mut transposed = crate::scratch_buf::<2048>();
-    for r in 0..32 {
-        for c in 0..64 {
-            transposed[c * 32 + r] = tmp[r * 64 + c];
+            v[j].store(
+                (&mut tmp[j * 32 + base..j * 32 + base + 8])
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 
@@ -555,21 +546,21 @@ pub fn dct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
         let base = batch * 8;
         let mut v = [f32x8::zero(token); 32];
         for j in 0..32 {
-            v[j] = gather_col(token, &transposed, base, j, 32);
+            v[j] = gather_col(token, &tmp, base, j, 32);
         }
         crate::dct32::dct1d_32_batch(token, &mut v);
         for j in 0..32 {
             v[j] *= inv32;
         }
         for j in 0..32 {
-            scatter_col(v[j], &mut transposed, base, j, 32);
+            scatter_col(v[j], &mut tmp, base, j, 32);
         }
     }
 
     // Final transpose 64×32 → 32×64 (ROWS < COLS branch)
     for r in 0..64 {
         for c in 0..32 {
-            output[c * 64 + r] = transposed[r * 32 + c];
+            output[c * 64 + r] = tmp[r * 32 + c];
         }
     }
 }
