@@ -801,10 +801,28 @@ impl HashChain {
                     j += skip;
                 }
 
-                // Extend match
-                while i < end && self.data[i] == self.data[j] {
+                // Extend match — scalar head for the first 8 elements
+                // (most candidates mismatch early; a block compare on
+                // them pays call overhead for nothing). Once a match is
+                // known ≥8, extend u32-slice-at-a-time: identical match
+                // lengths — a mismatch inside a block falls to the tail
+                // loop which walks to the exact first differing element.
+                while i < end && i - pos < 8 && self.data[i] == self.data[j] {
                     i += 1;
                     j += 1;
+                }
+                if i - pos >= 8 {
+                    while i + 8 <= end {
+                        if self.data[i..i + 8] != self.data[j..j + 8] {
+                            break;
+                        }
+                        i += 8;
+                        j += 8;
+                    }
+                    while i < end && self.data[i] == self.data[j] {
+                        i += 1;
+                        j += 1;
+                    }
                 }
 
                 let len = i - pos;
