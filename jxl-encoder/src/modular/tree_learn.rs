@@ -1776,12 +1776,32 @@ pub(crate) fn bucketize_column(col: &PropColumn, n: usize, ts: &[i32]) -> alloc:
     let num_thresholds = ts.len();
     match col {
         PropColumn::I16(v) => {
-            for (o, &x) in out.iter_mut().zip(v[..n].iter()) {
-                let b = match ts.binary_search(&(x as i32)) {
-                    Ok(pos) => pos,
-                    Err(pos) => pos,
-                };
-                *o = b.min(num_thresholds) as u8;
+            // i16 domain is exactly 65536 — a per-value bucket LUT beats
+            // n × binary_search once n is large (LUT build ~64K ops vs
+            // ~8 ops/sample; breakeven ≈ n ≈ 10-16K). Byte-identical:
+            // lut[v] = count(ts[i] < v) == binary_search's Ok|Err index
+            // because `ts` is sorted-unique by construction.
+            if n >= 16384 {
+                let mut lut = [0u8; 65536];
+                let mut t = 0usize;
+                for (val, slot) in lut.iter_mut().enumerate() {
+                    let x = val as i32 - 32768;
+                    while t < num_thresholds && ts[t] < x {
+                        t += 1;
+                    }
+                    *slot = t as u8;
+                }
+                for (o, &x) in out.iter_mut().zip(v[..n].iter()) {
+                    *o = lut[(x as u16 ^ 0x8000) as usize];
+                }
+            } else {
+                for (o, &x) in out.iter_mut().zip(v[..n].iter()) {
+                    let b = match ts.binary_search(&(x as i32)) {
+                        Ok(pos) => pos,
+                        Err(pos) => pos,
+                    };
+                    *o = b.min(num_thresholds) as u8;
+                }
             }
         }
         PropColumn::I32(v) => {
