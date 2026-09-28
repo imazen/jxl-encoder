@@ -1527,7 +1527,7 @@ fn rct_cost_plain_channel(
     rct_cost_entropy_finish(histograms, total_bits);
 }
 
-pub(crate) fn estimate_cost(image: &ModularImage) -> f64 {
+fn estimate_cost(image: &ModularImage) -> f64 {
     use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
     let config = HybridUintConfig::new(4, 2, 0);
@@ -1563,12 +1563,18 @@ pub(crate) fn palette_keep_best_pays(
     num_c: usize,
     analysis: &super::palette::PaletteAnalysis,
 ) -> bool {
-    let cost_before = estimate_cost(image);
+    // `estimate_global_image_cost` is the oracle-pinned port of libjxl's
+    // `EstimateCost` (ma_libjxl.rs — 96 integer costs match the C++
+    // oracle); the whole palettized image is costed including the
+    // palette meta-channel, matching `maybe_do_transform`'s after-cost.
+    let cost_before =
+        super::ma_libjxl::estimate_global_image_cost(image.channels.iter());
     let mut trial = image.clone();
     if super::palette::apply_palette(&mut trial, begin_c, num_c, analysis).is_err() {
         return false;
     }
-    let cost_after = estimate_cost(&trial);
+    let cost_after =
+        super::ma_libjxl::estimate_global_image_cost(trial.channels.iter());
     if std::env::var("JXL_DBG_PALETTE_COST").is_ok() {
         eprintln!("PALETTE_COST: before={cost_before:.1} after={cost_after:.1} ratio={:.4}",
                   cost_after / cost_before);
