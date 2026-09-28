@@ -5601,14 +5601,18 @@ fn build_tree_from_prequantized(
         // documented in commit `cb5e202`. Resurrecting the owned-clone
         // path to fix the +6.2% borrowed-view regression on top of
         // that is tracked separately (see CLAUDE.md / the audit memory).
-        // Single-worker pools skip the fork engine entirely: with one
-        // thread `parallel_join` runs both sides sequentially anyway, so
-        // the owned per-side clones / borrowed views and per-fork
-        // bookkeeping are pure overhead over the sequential loop below
-        // (bitstream-equivalent by construction; measured on the #96
-        // sectioned e7 path, 135 per-group learns at threads=1).
-        let single_worker = crate::parallel::effective_threads() <= 1;
-        if !single_worker && n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold
+        // The fork-shaped engine runs at ANY thread count — do not gate on
+        // `effective_threads() <= 1` here. The old `single_worker` bypass
+        // assumed bitstream equivalence, but the sequential engine below
+        // calls `find_best_split` (owned) while every subtree inside this
+        // path calls `find_best_split_borrowed`, and the two differ enough
+        // to change trees (measured: frymire lossless e9 sectioned
+        // 292,491 B at threads=1 vs 269,064 B at >=2 threads). rayon::join
+        // is sequential + order-deterministic on a 1-thread pool, so the
+        // fork path yields identical bytes at any thread count. 1T wall
+        // impact is image-dependent and roughly neutral (frymire e9
+        // sectioned +28%, codec_wiki -17%); invariance wins.
+        if n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold
         {
             // Pop the root candidate and try its split.
             let root_candidate = stack.pop().expect("root candidate just pushed");
