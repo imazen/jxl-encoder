@@ -9,31 +9,32 @@
 
 ## summary
 #
-#   pub modules                                22
-#   pub types (struct/enum/trait/alias)        57
-#   pub consts/statics                         60
+#   pub modules                                23
+#   pub types (struct/enum/trait/alias)        59
+#   pub consts/statics                         61
 #   pub macros                                 13
-#   free functions                            165
-#   inherent methods                          301
-#   struct fields                             592
-#   enum variants                              25
-#   trait roster entries (type × trait)       152
-#   auto-trait-complete types                  44
+#   free functions                            197
+#   inherent methods                          304
+#   struct fields                             627
+#   enum variants                              28
+#   trait roster entries (type × trait)       158
+#   auto-trait-complete types                  45
 #   auto-trait exceptions                       5
 #
 # per-module pub lines:
-#   (root)                          185
+#   (root)                          203
 #   __bench_internals                48
-#   __gpu                           101
-#   __internals                      67
-#   __pre_quantized                 247
-#   __test_exports                  387
+#   __gpu                           102
+#   __internals                      78
+#   __pre_quantized                 263
+#   __test_exports                  409
 #   api                              55
+#   profile_phases                    6
 #   sweep                            22
-#   test_helpers                     11
-#   vardct                          112
+#   test_helpers                     13
+#   vardct                          113
 
-## items (1214 lines)
+## items (1287 lines)
 
 #[non_exhaustive] pub struct EffortProfile [also: __pre_quantized]
 #[non_exhaustive] pub struct EncodeEstimate
@@ -85,6 +86,7 @@ pub const __test_exports::xyb::NEG_OPSIN_ABSORBANCE_BIAS_CBRT: [f32; 3]
 pub const __test_exports::xyb::OPSIN_ABSORBANCE_BIAS: [f32; 3]
 pub const __test_exports::xyb::OPSIN_ABSORBANCE_MATRIX: [[f32; 3]; 3]
 pub const __test_exports::zq_seed::ZQ_FEATURE_NAMES: [&str; 8]
+pub const test_helpers::REQUIRED_LIBJXL_VERSION: &str
 pub const vardct::__buttloop_overrides::DEFAULT_CUR_POW_HIGH: f64
 pub const vardct::__buttloop_overrides::DEFAULT_CUR_POW_LOW: f64
 pub const vardct::__buttloop_overrides::DEFAULT_DISTANCE_SPLIT: f64
@@ -93,6 +95,7 @@ pub const vardct::__buttloop_overrides::DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT: f6
 pub const vardct::__buttloop_overrides::DEFAULT_MAX_INCREASE_LOW: f64
 pub const vardct::__buttloop_overrides::SCREENSHOT_MEDIAN_THRESHOLD: f32
 pub enum __bench_internals::tree_learn_split::PartitionKey
+pub enum __internals::Downsample2xKernel
 pub enum __internals::PrototypeIterMode
 pub enum __test_exports::ans::ANSHistogramStrategy
 pub enum __test_exports::coupling::ContentStratum
@@ -154,7 +157,7 @@ pub fn __bench_internals::inline_dedup_table::InlineDedupTable::unique_keys(&sel
 pub fn __bench_internals::tree_learn_split::PartitionKey::clone(&self) -> __bench_internals::tree_learn_split::PartitionKey
 pub fn __bench_internals::tree_learn_split::PartitionKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn __bench_internals::tree_learn_split::SplittableSamples<'a>::swap_rows(&mut self, usize, usize)
-pub fn __bench_internals::tree_learn_split::split_tree_samples_in_place(&mut __bench_internals::tree_learn_split::SplittableSamples<'_>, usize, usize, usize, __bench_internals::tree_learn_split::PartitionKey) -> usize
+pub fn __bench_internals::tree_learn_split::split_tree_samples_in_place(&mut __bench_internals::tree_learn_split::SplittableSamples<'_>, usize, usize, usize, __bench_internals::tree_learn_split::PartitionKey, core::option::Option<&dyn enough::Stop>) -> usize
 pub fn __gpu::GroupTransformResult::new(usize, usize, usize, usize) -> Self
 pub fn __gpu::GroupTransformResult::scatter_into(self, &mut __pre_quantized::TransformOutput, usize)
 pub fn __gpu::dc_from_dct_16x16(&[f32; 256]) -> [f32; 4] [also: __test_exports::dct]
@@ -170,6 +173,10 @@ pub fn __gpu::dc_from_dct_8x8(&[f32; 64]) -> f32 [also: __test_exports::dct]
 pub fn __gpu::dct2x2_transform(&[f32; 64], &mut [f32; 64]) [also: __test_exports::dct]
 pub fn __gpu::dct_4x8(&[f32; 32], &mut [f32; 32]) [also: __test_exports::dct]
 pub fn __gpu::identity_transform(&[f32; 64], &mut [f32; 64]) [also: __test_exports::dct]
+pub fn __internals::Downsample2xKernel::assert_fields_are_eq(&self)
+pub fn __internals::Downsample2xKernel::clone(&self) -> __internals::Downsample2xKernel
+pub fn __internals::Downsample2xKernel::eq(&self, &__internals::Downsample2xKernel) -> bool
+pub fn __internals::Downsample2xKernel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn __internals::LastPatchesDetectStats::clone(&self) -> __internals::LastPatchesDetectStats
 pub fn __internals::LastPatchesDetectStats::default() -> __internals::LastPatchesDetectStats
 pub fn __internals::LastPatchesDetectStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -183,17 +190,20 @@ pub fn __internals::PrototypeIterMode::fmt(&self, &mut core::fmt::Formatter<'_>)
 pub fn __internals::ZenanalyzeProxies::clone(&self) -> __internals::ZenanalyzeProxies
 pub fn __internals::ZenanalyzeProxies::compute_srgb_u8(&[u8], usize, usize, usize, usize, usize, usize) -> Self
 pub fn __internals::ZenanalyzeProxies::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn __internals::adjust_quant_block_ac_free(&[f32], &[f32], f32, f32, usize, u8, usize, usize, usize, usize, &mut [f32; 4], &mut i32) -> (u8, f32, f32, i32)
+pub fn __internals::adjust_quant_block_ac_free(&[f32], &[f32], f32, f32, usize, u8, usize, usize, usize, usize, &mut [f32; 4], &mut i32, bool) -> (u8, f32, f32, i32)
 pub fn __internals::compare_vdp2_interleaved(&[f32], &[f32], &[f32], &[f32], usize, usize, usize, f32) -> core::result::Result<__internals::VdpResult, &'static str>
 pub fn __internals::compare_vdp2_planar(&[f32], &[f32], &[f32], &[f32], &[f32], &[f32], usize, usize, usize, f32) -> core::result::Result<__internals::VdpResult, &'static str>
 pub fn __internals::compute_scaled_constants_free(f32, (f32, f32, f32)) -> (f32, f32, f32)
+pub fn __internals::dequant_matrix_lj(usize, usize) -> &'static [f32]
 pub fn __internals::divergence_entries() -> alloc::vec::Vec<(&'static str, &'static str, &'static str, &'static str)>
 pub fn __internals::epf_step0_strip_free([&[f32]; 3], &[f32], usize, usize, usize, usize, usize, usize, &mut [f32], &mut [f32], &mut [f32])
 pub fn __internals::find_and_build_patches_lossless(&[u8], usize, usize, usize, u32) -> core::option::Option<__pre_quantized::PatchesData>
+pub fn __internals::inv_dequant_matrix_lj(usize, usize) -> &'static [f32]
 pub fn __internals::is_cost_effective_lossless(&__pre_quantized::PatchesData, u32, bool) -> bool
 pub fn __internals::patches_data_stats(&__pre_quantized::PatchesData) -> (usize, usize, usize, usize)
 pub fn __internals::patches_trial_overhead(&__pre_quantized::PatchesData, f32, bool) -> (usize, usize)
 pub fn __internals::patches_trial_overhead_lossless(&__pre_quantized::PatchesData, u32, bool) -> (usize, usize)
+pub fn __internals::resample_roundtrip_2x_rgb(&[f32], usize, usize, __internals::Downsample2xKernel) -> alloc::vec::Vec<f32>
 pub fn __internals::resolve_prototype_strategy_named_for_test(&str) -> (bool, bool, __internals::PrototypeIterMode)
 pub fn __internals::resolve_prototype_strategy_named_for_test_impl(&str) -> (bool, bool, __internals::PrototypeIterMode)
 pub fn __internals::resolve_strategy_for_test(&api::EncoderStrategy) -> (api::ButtloopQfSeedPolicy, api::AdaptiveQuantQfSeedPolicy, api::EpfSharpnessSeed)
@@ -246,7 +256,7 @@ pub fn __pre_quantized::find_and_build_patches([&[f32]; 3], usize, usize, usize)
 pub fn __pre_quantized::gaborish_inverse(&mut [f32], &mut [f32], &mut [f32], usize, usize) -> core::result::Result<(), api::EncodeError>
 pub fn __pre_quantized::quant_weights_dct8(usize) -> &'static [f32]
 pub fn __pre_quantized::quantize_quant_field(&[f32], f32) -> alloc::vec::Vec<u8>
-pub fn __pre_quantized::refine_cfl_map(&mut __pre_quantized::CflMap, &[f32], &[f32], &[f32], usize, usize, usize, &__pre_quantized::AcStrategyMap, &[u8], f32, bool, f32, usize, bool, bool, bool)
+pub fn __pre_quantized::refine_cfl_map(&mut __pre_quantized::CflMap, &[f32], &[f32], &[f32], usize, usize, usize, &__pre_quantized::AcStrategyMap, &[u8], f32, bool, f32, usize, bool, bool, bool, bool, core::option::Option<&dyn enough::Stop>)
 pub fn __pre_quantized::subtract_patches(&mut [alloc::vec::Vec<f32>; 3], usize, &__pre_quantized::PatchesData)
 pub fn __test_exports::VarDctEncoder::default() -> Self
 pub fn __test_exports::VarDctEncoder::encode(&self, usize, usize, &[f32], core::option::Option<&[u8]>) -> core::result::Result<__test_exports::VarDctOutput, error::Error>
@@ -264,7 +274,7 @@ pub fn __test_exports::ans::ANSEncodingHistogram::clone(&self) -> __test_exports
 pub fn __test_exports::ans::ANSEncodingHistogram::default() -> Self
 pub fn __test_exports::ans::ANSEncodingHistogram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn __test_exports::ans::ANSEncodingHistogram::from_histogram(&__test_exports::histogram::Histogram, __test_exports::ans::ANSHistogramStrategy) -> core::result::Result<Self, error::Error>
-pub fn __test_exports::ans::ANSEncodingHistogram::from_histogram_cached(&__test_exports::histogram::Histogram, __test_exports::ans::ANSHistogramStrategy, &__test_exports::ans::AllowedCountsCache) -> core::result::Result<Self, error::Error>
+pub fn __test_exports::ans::ANSEncodingHistogram::from_histogram_cached(&__test_exports::histogram::Histogram, __test_exports::ans::ANSHistogramStrategy, &__test_exports::ans::AllowedCountsCache, bool) -> core::result::Result<Self, error::Error>
 pub fn __test_exports::ans::ANSEncodingHistogram::new() -> Self
 pub fn __test_exports::ans::ANSEncodingHistogram::write(&self, &mut __test_exports::bit_writer::BitWriter) -> core::result::Result<(), error::Error>
 pub fn __test_exports::ans::ANSHistogramStrategy::assert_fields_are_eq(&self)
@@ -273,7 +283,6 @@ pub fn __test_exports::ans::ANSHistogramStrategy::default() -> __test_exports::a
 pub fn __test_exports::ans::ANSHistogramStrategy::eq(&self, &__test_exports::ans::ANSHistogramStrategy) -> bool
 pub fn __test_exports::ans::ANSHistogramStrategy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn __test_exports::ans::AllowedCountsCache::default() -> Self
-pub fn __test_exports::ans::AllowedCountsCache::get(&self, u32) -> &[i32]
 pub fn __test_exports::ans::AllowedCountsCache::new() -> Self
 pub fn __test_exports::ans::AnsDistribution::alphabet_size(&self) -> usize
 pub fn __test_exports::ans::AnsDistribution::clone(&self) -> __test_exports::ans::AnsDistribution
@@ -355,6 +364,7 @@ pub fn __test_exports::coupling::p3_p6_screenshot_qac_lift(f32) -> (f32, f32)
 pub fn __test_exports::coupling::p4_p5_buttloop_vs_adaptive_quant_dispatch(f32, f32) -> (f32, f32)
 pub fn __test_exports::coupling::p4_p6_e7_buttloop_synergy(f32, f32) -> (f32, f32)
 pub fn __test_exports::coupling::p5_p6_effort_conditional_lift(f32) -> (f32, f32)
+pub fn __test_exports::dct::dc_from_dct_32x32_lj(&[f32; 1024]) -> [f32; 16]
 pub fn __test_exports::dct::dc_from_dct_4x4_full(&[f32; 64]) -> f32
 pub fn __test_exports::dct::dc_from_dct_4x8_full(&[f32; 64]) -> f32
 pub fn __test_exports::dct::dc_from_dct_8x4_full(&[f32; 64]) -> f32
@@ -365,39 +375,61 @@ pub fn __test_exports::dct::dct1d_4(&mut [f32])
 pub fn __test_exports::dct::dct1d_64(&mut [f32])
 pub fn __test_exports::dct::dct1d_8(&mut [f32])
 pub fn __test_exports::dct::dct_16x16(&[f32; 256], &mut [f32; 256])
+pub fn __test_exports::dct::dct_16x16_lj(&[f32; 256], &mut [f32; 256])
 pub fn __test_exports::dct::dct_16x32(&[f32; 512], &mut [f32; 512])
+pub fn __test_exports::dct::dct_16x32_lj(&[f32; 512], &mut [f32; 512])
 pub fn __test_exports::dct::dct_16x8(&[f32; 128], &mut [f32; 128])
+pub fn __test_exports::dct::dct_16x8_lj(&[f32; 128], &mut [f32; 128])
 pub fn __test_exports::dct::dct_32x16(&[f32; 512], &mut [f32; 512])
+pub fn __test_exports::dct::dct_32x16_lj(&[f32; 512], &mut [f32; 512])
 pub fn __test_exports::dct::dct_32x32(&[f32; 1024], &mut [f32; 1024])
+pub fn __test_exports::dct::dct_32x32_lj(&[f32; 1024], &mut [f32; 1024])
 pub fn __test_exports::dct::dct_32x64(&[f32], &mut [f32])
+pub fn __test_exports::dct::dct_32x64_lj(&[f32], &mut [f32])
 pub fn __test_exports::dct::dct_4x4(&[f32; 16], &mut [f32; 16])
 pub fn __test_exports::dct::dct_4x4_full(&[f32; 64], &mut [f32; 64])
+pub fn __test_exports::dct::dct_4x4_full_lj(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::dct_4x8_full(&[f32; 64], &mut [f32; 64])
+pub fn __test_exports::dct::dct_4x8_full_lj(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::dct_64x32(&[f32], &mut [f32])
+pub fn __test_exports::dct::dct_64x32_lj(&[f32], &mut [f32])
 pub fn __test_exports::dct::dct_64x64(&[f32], &mut [f32])
+pub fn __test_exports::dct::dct_64x64_lj(&[f32], &mut [f32])
 pub fn __test_exports::dct::dct_8x16(&[f32; 128], &mut [f32; 128])
+pub fn __test_exports::dct::dct_8x16_lj(&[f32; 128], &mut [f32; 128])
 pub fn __test_exports::dct::dct_8x4(&[f32; 32], &mut [f32; 32])
 pub fn __test_exports::dct::dct_8x4_full(&[f32; 64], &mut [f32; 64])
+pub fn __test_exports::dct::dct_8x4_full_lj(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::dct_8x8(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::idct1d_16(&mut [f32])
 pub fn __test_exports::dct::idct1d_2(&mut [f32])
 pub fn __test_exports::dct::idct1d_4(&mut [f32])
 pub fn __test_exports::dct::idct1d_8(&mut [f32])
 pub fn __test_exports::dct::idct_16x16(&[f32; 256], &mut [f32; 256])
+pub fn __test_exports::dct::idct_16x16_lj(&[f32; 256], &mut [f32; 256])
 pub fn __test_exports::dct::idct_16x32(&[f32; 512], &mut [f32; 512])
+pub fn __test_exports::dct::idct_16x32_lj(&[f32; 512], &mut [f32; 512])
 pub fn __test_exports::dct::idct_16x8(&[f32; 128], &mut [f32; 128])
 pub fn __test_exports::dct::idct_32x16(&[f32; 512], &mut [f32; 512])
+pub fn __test_exports::dct::idct_32x16_lj(&[f32; 512], &mut [f32; 512])
 pub fn __test_exports::dct::idct_32x32(&[f32; 1024], &mut [f32; 1024])
+pub fn __test_exports::dct::idct_32x32_lj(&[f32; 1024], &mut [f32; 1024])
 pub fn __test_exports::dct::idct_32x64(&[f32], &mut [f32])
+pub fn __test_exports::dct::idct_32x64_lj(&[f32], &mut [f32])
 pub fn __test_exports::dct::idct_4x4(&[f32; 16], &mut [f32; 16])
 pub fn __test_exports::dct::idct_4x4_full(&[f32; 64], &mut [f32; 64])
+pub fn __test_exports::dct::idct_4x4_full_lj(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::idct_4x8(&[f32; 32], &mut [f32; 32])
 pub fn __test_exports::dct::idct_4x8_full(&[f32; 64], &mut [f32; 64])
+pub fn __test_exports::dct::idct_4x8_full_lj(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::idct_64x32(&[f32], &mut [f32])
+pub fn __test_exports::dct::idct_64x32_lj(&[f32], &mut [f32])
 pub fn __test_exports::dct::idct_64x64(&[f32], &mut [f32])
+pub fn __test_exports::dct::idct_64x64_lj(&[f32], &mut [f32])
 pub fn __test_exports::dct::idct_8x16(&[f32; 128], &mut [f32; 128])
 pub fn __test_exports::dct::idct_8x4(&[f32; 32], &mut [f32; 32])
 pub fn __test_exports::dct::idct_8x4_full(&[f32; 64], &mut [f32; 64])
+pub fn __test_exports::dct::idct_8x4_full_lj(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::idct_8x8(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::inverse_dct2x2_transform(&[f32; 64], &mut [f32; 64])
 pub fn __test_exports::dct::inverse_identity_transform(&[f32; 64], &mut [f32; 64])
@@ -427,11 +459,6 @@ pub fn __test_exports::histogram::Histogram::with_capacity(usize) -> Self
 pub fn __test_exports::histogram::histogram_distance(&__test_exports::histogram::Histogram, &__test_exports::histogram::Histogram) -> f32
 pub fn __test_exports::histogram::histogram_distance_reuse(&__test_exports::histogram::Histogram, &__test_exports::histogram::Histogram, &mut __test_exports::histogram::DistanceScratch) -> f32
 pub fn __test_exports::histogram::histogram_kl_divergence(&__test_exports::histogram::Histogram, &__test_exports::histogram::Histogram) -> f32
-pub fn __test_exports::profile_phases::PhaseGuard::drop(&mut self)
-pub fn __test_exports::profile_phases::PhaseGuard::new(&'static str) -> Self
-pub fn __test_exports::profile_phases::record(&'static str, u128)
-pub fn __test_exports::profile_phases::reset()
-pub fn __test_exports::profile_phases::take_snapshot() -> alloc::vec::Vec<(&'static str, u128)>
 pub fn __test_exports::xyb::linear_image_to_xyb(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32])
 pub fn __test_exports::xyb::linear_rgb_to_xyb(f32, f32, f32) -> (f32, f32, f32)
 pub fn __test_exports::xyb::linear_rgb_to_xyb_scaled(f32, f32, f32, f32) -> (f32, f32, f32)
@@ -500,6 +527,11 @@ pub fn estimate_encode(u32, u32, u8, bool, bool, u8) -> core::option::Option<Enc
 pub fn estimate_encode_threaded(u32, u32, u8, bool, bool, u8, usize) -> core::option::Option<EncodeEstimate>
 pub fn is_bare_codestream(&[u8]) -> bool
 pub fn is_container(&[u8]) -> bool
+pub fn profile_phases::PhaseGuard::drop(&mut self)
+pub fn profile_phases::PhaseGuard::new(&'static str) -> Self
+pub fn profile_phases::record(&'static str, u128) [also: __test_exports::profile_phases]
+pub fn profile_phases::reset() [also: __test_exports::profile_phases]
+pub fn profile_phases::take_snapshot() -> alloc::vec::Vec<(&'static str, u128)> [also: __test_exports::profile_phases]
 pub fn sweep::LosslessSweep::axis(self, alloc::vec::Vec<alloc::boxed::Box<dyn core::ops::function::Fn(&mut LosslessInternalParams)>>) -> Self
 pub fn sweep::LosslessSweep::new(u8, api::EncoderMode) -> Self
 pub fn sweep::LosslessSweep::total_combinations(&self) -> usize
@@ -515,6 +547,7 @@ pub fn test_helpers::corpus_dir() -> std::path::PathBuf
 pub fn test_helpers::djxl_path() -> alloc::string::String
 pub fn test_helpers::jxl_cli_path() -> alloc::string::String
 pub fn test_helpers::measure_file_header_len(u32, u32, bool, bool, bool, bool) -> usize
+pub fn test_helpers::measure_file_header_len_float(u32, u32, bool, bool, bool, u32, u32) -> usize
 pub fn test_helpers::output_dir(&str) -> std::path::PathBuf
 pub fn test_helpers::output_dir_for(&str, &str) -> std::path::PathBuf
 pub fn test_helpers::output_file_for(&str, &str) -> std::path::PathBuf
@@ -533,6 +566,7 @@ pub fn vardct::__recon_hook::ProductionQf::clone(&self) -> vardct::__recon_hook:
 pub fn vardct::__recon_hook::StepXyb::clone(&self) -> vardct::__recon_hook::StepXyb
 pub fn vardct::__recon_hook::Xyb::clone(&self) -> vardct::__recon_hook::Xyb
 pub fn vardct::__recon_hook::Xyb::default() -> vardct::__recon_hook::Xyb
+pub fn vardct::__recon_hook::all_iters_enabled() -> bool
 pub fn vardct::__recon_hook::capture_enabled() -> bool
 pub fn vardct::__recon_hook::production_qf_capture_enabled() -> bool
 pub fn vardct::__recon_hook::set_capture_enabled(bool)
@@ -550,10 +584,14 @@ pub fn vardct::hdr_metrics::HdrLoss::assert_fields_are_eq(&self)
 pub fn vardct::hdr_metrics::HdrMetricError::assert_fields_are_eq(&self)
 pub fn vardct::reset_dct8_branch_counters()
 pub fn vardct::set_force_unfused_dct8_entropy(bool)
+pub fn wrap_in_container(&[u8], core::option::Option<&[u8]>, core::option::Option<&[u8]>) -> alloc::vec::Vec<u8>
+pub EffortProfile::ac_meta_libjxl_tree: bool
 pub EffortProfile::ac_strategy_enabled: bool
 pub EffortProfile::adjust_quant_ac: bool
 pub EffortProfile::adjust_thresholds: [f32; 4]
 pub EffortProfile::ans_histogram_strategy_vardct: __test_exports::ans::ANSHistogramStrategy
+pub EffortProfile::aqba_max_over_channels: bool
+pub EffortProfile::bcm_qf_zero_based: bool
 pub EffortProfile::butteraugli_iters: u32
 pub EffortProfile::cfl_keep_best: bool
 pub EffortProfile::cfl_newton: bool
@@ -561,22 +599,30 @@ pub EffortProfile::cfl_newton_eps: f32
 pub EffortProfile::cfl_newton_libjxl_math_with_ls_warm_start: bool
 pub EffortProfile::cfl_newton_libjxl_parity: bool
 pub EffortProfile::cfl_newton_max_iters: usize
+pub EffortProfile::cfl_pass1: bool
 pub EffortProfile::cfl_pass1_screenshot_x0_start: bool
 pub EffortProfile::cfl_pass2_ls_at_low_effort: bool
 pub EffortProfile::cfl_two_pass: bool
 pub EffortProfile::cfl_zero_for_search: bool
 pub EffortProfile::chromacity_adjustment: bool
+pub EffortProfile::coeff_orders_libjxl_parity: bool
 pub EffortProfile::custom_orders: bool
+pub EffortProfile::dct_pass_order_libjxl: bool
 pub EffortProfile::effort: u8
 pub EffortProfile::enhanced_clustering_vardct: bool
+pub EffortProfile::entropy_codes_libjxl_parity: bool
 pub EffortProfile::entropy_mul_table: EntropyMulTable
 pub EffortProfile::epf_dynamic_sharpness: bool
+pub EffortProfile::epf_sharpness_pre_gab_libjxl: bool
 pub EffortProfile::error_diffusion: bool
 pub EffortProfile::extra_dc_precision: u8
+pub EffortProfile::extras_global_stream_libjxl: bool
 pub EffortProfile::fine_grained_step: u8
 pub EffortProfile::fixed_thresholds_y: [f32; 4]
 pub EffortProfile::forced_rct: core::option::Option<RctType>
+pub EffortProfile::forced_wp_mode: core::option::Option<u8>
 pub EffortProfile::gaborish: bool
+pub EffortProfile::gaborish_libjxl_kernel: bool
 pub EffortProfile::gather_dedup: bool
 pub EffortProfile::gather_dedup_phase3: bool
 pub EffortProfile::initial_q_numerator: f32
@@ -592,9 +638,11 @@ pub EffortProfile::k_favor_2x2: f32
 pub EffortProfile::k_info_loss_mul_base: f32
 pub EffortProfile::k_zeros_mul_base: f32
 pub EffortProfile::lloyd_max_buckets: bool
+pub EffortProfile::lossless_large_tree_bucket_reduction: bool
 pub EffortProfile::lossy_search_seeds: u8
 pub EffortProfile::lz77: bool
 pub EffortProfile::lz77_method: Lz77Method
+pub EffortProfile::ma_root_split_2ndg: bool
 pub EffortProfile::nb_rcts_to_try: u8
 pub EffortProfile::non_aligned_eval: bool
 pub EffortProfile::optimize_codes: bool
@@ -602,6 +650,7 @@ pub EffortProfile::optimize_uint_configs_vardct: bool
 pub EffortProfile::patch_ref_tree_learning: bool
 pub EffortProfile::patches: bool
 pub EffortProfile::pixel_domain_loss: bool
+pub EffortProfile::quant_weights_libjxl: bool
 pub EffortProfile::tree_learn_seeds: u8
 pub EffortProfile::tree_learning: bool
 pub EffortProfile::tree_max_buckets: u16
@@ -614,6 +663,7 @@ pub EffortProfile::tree_parallel_root_threshold: usize
 pub EffortProfile::tree_parallel_small_image_fallback: bool
 pub EffortProfile::tree_sample_fraction: f32
 pub EffortProfile::tree_self_repair: bool
+pub EffortProfile::tree_self_repair_allowed: bool
 pub EffortProfile::tree_threshold_base: f32
 pub EffortProfile::try_dct16: bool
 pub EffortProfile::try_dct32: bool
@@ -630,6 +680,7 @@ pub EncodeEstimate::peak_memory_bytes_max: u64
 pub EncodeEstimate::peak_memory_bytes_min: u64
 pub EncodeEstimate::time_ms: f32
 pub LosslessInternalParams::forced_rct: core::option::Option<RctType>
+pub LosslessInternalParams::forced_wp_mode: core::option::Option<u8>
 pub LosslessInternalParams::gather_dedup: core::option::Option<bool>
 pub LosslessInternalParams::gather_dedup_phase3: core::option::Option<bool>
 pub LosslessInternalParams::lloyd_max_buckets: core::option::Option<bool>
@@ -756,6 +807,7 @@ pub __gpu::VarDctEncoder::progressive: api::ProgressiveMode
 pub __gpu::VarDctEncoder::quant_ac_rescale: core::option::Option<f32>
 pub __gpu::VarDctEncoder::relative_to_max_display: bool
 pub __gpu::VarDctEncoder::single_pass_entropy_dispatch: api::SinglePassEntropyDispatch
+pub __gpu::VarDctEncoder::source_bit_depth: core::option::Option<(bool, u32, u32)>
 pub __gpu::VarDctEncoder::source_gamma: core::option::Option<f32>
 pub __gpu::VarDctEncoder::splines: core::option::Option<alloc::vec::Vec<Spline>>
 pub __gpu::VarDctEncoder::target_display: api::DisplayConfig
@@ -765,6 +817,9 @@ pub __gpu::VarDctEncoder::use_ans: bool
 pub __gpu::VarDctEncoder::use_lf_frame: bool
 pub __gpu::VarDctEncoder::zensim_loop: bool
 pub __gpu::VarDctEncoder::zensim_use_cpu: bool
+pub __internals::Downsample2xKernel::Box
+pub __internals::Downsample2xKernel::Iterative
+pub __internals::Downsample2xKernel::Sharper
 pub __internals::LastPatchesDetectStats::accepted_ccs: u32
 pub __internals::LastPatchesDetectStats::accepted_pixels: u64
 pub __internals::LastPatchesDetectStats::bg_count: usize
@@ -811,10 +866,13 @@ pub __pre_quantized::DistanceParams::quant_dc: i32
 pub __pre_quantized::DistanceParams::scale: f32
 pub __pre_quantized::DistanceParams::scale_dc: f32
 pub __pre_quantized::DistanceParams::x_qm_scale: u32
+pub __pre_quantized::EffortProfile::ac_meta_libjxl_tree: bool
 pub __pre_quantized::EffortProfile::ac_strategy_enabled: bool
 pub __pre_quantized::EffortProfile::adjust_quant_ac: bool
 pub __pre_quantized::EffortProfile::adjust_thresholds: [f32; 4]
 pub __pre_quantized::EffortProfile::ans_histogram_strategy_vardct: __test_exports::ans::ANSHistogramStrategy
+pub __pre_quantized::EffortProfile::aqba_max_over_channels: bool
+pub __pre_quantized::EffortProfile::bcm_qf_zero_based: bool
 pub __pre_quantized::EffortProfile::butteraugli_iters: u32
 pub __pre_quantized::EffortProfile::cfl_keep_best: bool
 pub __pre_quantized::EffortProfile::cfl_newton: bool
@@ -822,22 +880,30 @@ pub __pre_quantized::EffortProfile::cfl_newton_eps: f32
 pub __pre_quantized::EffortProfile::cfl_newton_libjxl_math_with_ls_warm_start: bool
 pub __pre_quantized::EffortProfile::cfl_newton_libjxl_parity: bool
 pub __pre_quantized::EffortProfile::cfl_newton_max_iters: usize
+pub __pre_quantized::EffortProfile::cfl_pass1: bool
 pub __pre_quantized::EffortProfile::cfl_pass1_screenshot_x0_start: bool
 pub __pre_quantized::EffortProfile::cfl_pass2_ls_at_low_effort: bool
 pub __pre_quantized::EffortProfile::cfl_two_pass: bool
 pub __pre_quantized::EffortProfile::cfl_zero_for_search: bool
 pub __pre_quantized::EffortProfile::chromacity_adjustment: bool
+pub __pre_quantized::EffortProfile::coeff_orders_libjxl_parity: bool
 pub __pre_quantized::EffortProfile::custom_orders: bool
+pub __pre_quantized::EffortProfile::dct_pass_order_libjxl: bool
 pub __pre_quantized::EffortProfile::effort: u8
 pub __pre_quantized::EffortProfile::enhanced_clustering_vardct: bool
+pub __pre_quantized::EffortProfile::entropy_codes_libjxl_parity: bool
 pub __pre_quantized::EffortProfile::entropy_mul_table: EntropyMulTable
 pub __pre_quantized::EffortProfile::epf_dynamic_sharpness: bool
+pub __pre_quantized::EffortProfile::epf_sharpness_pre_gab_libjxl: bool
 pub __pre_quantized::EffortProfile::error_diffusion: bool
 pub __pre_quantized::EffortProfile::extra_dc_precision: u8
+pub __pre_quantized::EffortProfile::extras_global_stream_libjxl: bool
 pub __pre_quantized::EffortProfile::fine_grained_step: u8
 pub __pre_quantized::EffortProfile::fixed_thresholds_y: [f32; 4]
 pub __pre_quantized::EffortProfile::forced_rct: core::option::Option<RctType>
+pub __pre_quantized::EffortProfile::forced_wp_mode: core::option::Option<u8>
 pub __pre_quantized::EffortProfile::gaborish: bool
+pub __pre_quantized::EffortProfile::gaborish_libjxl_kernel: bool
 pub __pre_quantized::EffortProfile::gather_dedup: bool
 pub __pre_quantized::EffortProfile::gather_dedup_phase3: bool
 pub __pre_quantized::EffortProfile::initial_q_numerator: f32
@@ -853,9 +919,11 @@ pub __pre_quantized::EffortProfile::k_favor_2x2: f32
 pub __pre_quantized::EffortProfile::k_info_loss_mul_base: f32
 pub __pre_quantized::EffortProfile::k_zeros_mul_base: f32
 pub __pre_quantized::EffortProfile::lloyd_max_buckets: bool
+pub __pre_quantized::EffortProfile::lossless_large_tree_bucket_reduction: bool
 pub __pre_quantized::EffortProfile::lossy_search_seeds: u8
 pub __pre_quantized::EffortProfile::lz77: bool
 pub __pre_quantized::EffortProfile::lz77_method: Lz77Method
+pub __pre_quantized::EffortProfile::ma_root_split_2ndg: bool
 pub __pre_quantized::EffortProfile::nb_rcts_to_try: u8
 pub __pre_quantized::EffortProfile::non_aligned_eval: bool
 pub __pre_quantized::EffortProfile::optimize_codes: bool
@@ -863,6 +931,7 @@ pub __pre_quantized::EffortProfile::optimize_uint_configs_vardct: bool
 pub __pre_quantized::EffortProfile::patch_ref_tree_learning: bool
 pub __pre_quantized::EffortProfile::patches: bool
 pub __pre_quantized::EffortProfile::pixel_domain_loss: bool
+pub __pre_quantized::EffortProfile::quant_weights_libjxl: bool
 pub __pre_quantized::EffortProfile::tree_learn_seeds: u8
 pub __pre_quantized::EffortProfile::tree_learning: bool
 pub __pre_quantized::EffortProfile::tree_max_buckets: u16
@@ -875,6 +944,7 @@ pub __pre_quantized::EffortProfile::tree_parallel_root_threshold: usize
 pub __pre_quantized::EffortProfile::tree_parallel_small_image_fallback: bool
 pub __pre_quantized::EffortProfile::tree_sample_fraction: f32
 pub __pre_quantized::EffortProfile::tree_self_repair: bool
+pub __pre_quantized::EffortProfile::tree_self_repair_allowed: bool
 pub __pre_quantized::EffortProfile::tree_threshold_base: f32
 pub __pre_quantized::EffortProfile::try_dct16: bool
 pub __pre_quantized::EffortProfile::try_dct32: bool
@@ -970,6 +1040,7 @@ pub __pre_quantized::VarDctEncoder::progressive: api::ProgressiveMode
 pub __pre_quantized::VarDctEncoder::quant_ac_rescale: core::option::Option<f32>
 pub __pre_quantized::VarDctEncoder::relative_to_max_display: bool
 pub __pre_quantized::VarDctEncoder::single_pass_entropy_dispatch: api::SinglePassEntropyDispatch
+pub __pre_quantized::VarDctEncoder::source_bit_depth: core::option::Option<(bool, u32, u32)>
 pub __pre_quantized::VarDctEncoder::source_gamma: core::option::Option<f32>
 pub __pre_quantized::VarDctEncoder::splines: core::option::Option<alloc::vec::Vec<Spline>>
 pub __pre_quantized::VarDctEncoder::target_display: api::DisplayConfig
@@ -1041,6 +1112,7 @@ pub __test_exports::VarDctEncoder::progressive: api::ProgressiveMode
 pub __test_exports::VarDctEncoder::quant_ac_rescale: core::option::Option<f32>
 pub __test_exports::VarDctEncoder::relative_to_max_display: bool
 pub __test_exports::VarDctEncoder::single_pass_entropy_dispatch: api::SinglePassEntropyDispatch
+pub __test_exports::VarDctEncoder::source_bit_depth: core::option::Option<(bool, u32, u32)>
 pub __test_exports::VarDctEncoder::source_gamma: core::option::Option<f32>
 pub __test_exports::VarDctEncoder::splines: core::option::Option<alloc::vec::Vec<Spline>>
 pub __test_exports::VarDctEncoder::target_display: api::DisplayConfig
@@ -1051,6 +1123,7 @@ pub __test_exports::VarDctEncoder::use_lf_frame: bool
 pub __test_exports::VarDctEncoder::zensim_loop: bool
 pub __test_exports::VarDctEncoder::zensim_use_cpu: bool
 pub __test_exports::VarDctOutput::data: alloc::vec::Vec<u8>
+pub __test_exports::VarDctOutput::needs_modular_32bit: bool
 pub __test_exports::VarDctOutput::strategy_counts: [u32; 19]
 pub __test_exports::ans::ANSEncodingHistogram::alphabet_size: usize
 pub __test_exports::ans::ANSEncodingHistogram::cost: f32
@@ -1197,6 +1270,7 @@ pub mod __test_exports::histogram
 pub mod __test_exports::profile_phases
 pub mod __test_exports::xyb
 pub mod __test_exports::zq_seed
+pub mod profile_phases
 pub mod sweep
 pub mod test_helpers
 pub mod vardct::__afv
@@ -1239,7 +1313,7 @@ pub struct __test_exports::bit_writer::BitWriter
 pub struct __test_exports::coupling::CouplingSummary
 pub struct __test_exports::histogram::DistanceScratch
 pub struct __test_exports::histogram::Histogram
-pub struct __test_exports::profile_phases::PhaseGuard
+pub struct profile_phases::PhaseGuard [also: __test_exports::profile_phases]
 pub struct sweep::LosslessSweep
 pub struct sweep::LossySweep
 pub struct sweep::UniqueLosslessConfig
@@ -1250,7 +1324,7 @@ pub struct vardct::__recon_hook::ProductionQf
 pub struct vardct::__recon_hook::StepXyb
 pub struct vardct::__recon_hook::Xyb
 
-## trait impls (78 types)
+## trait impls (79 types)
 
 BlendMode: TrivialClone
 CIExy: TrivialClone
@@ -1273,6 +1347,7 @@ __bench_internals::inline_add_sample::BuilderOverflow: Clone, Copy, Debug, Eq, P
 __bench_internals::inline_add_sample::FinalizedKey: Clone, Copy, TrivialClone
 __bench_internals::inline_add_sample::FusedHashKeyBuilder: Clone, Copy, Default, TrivialClone
 __bench_internals::tree_learn_split::PartitionKey: Clone, Copy, Debug, TrivialClone
+__internals::Downsample2xKernel: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 __internals::LastPatchesDetectStats: Clone, Copy, Debug, Default, TrivialClone
 __internals::LastPatchesStats: Clone, Copy, Debug, TrivialClone
 __internals::PrototypeIterMode: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
@@ -1296,7 +1371,6 @@ __test_exports::coupling::CouplingClass: Clone, Copy, Debug, Eq, PartialEq, Triv
 __test_exports::coupling::CouplingSummary: Clone, Copy, Debug, TrivialClone
 __test_exports::histogram::DistanceScratch: Default
 __test_exports::histogram::Histogram: Clone, Debug, Default
-__test_exports::profile_phases::PhaseGuard: Drop
 api::AdaptiveQuantQfSeedPolicy: TrivialClone
 api::Buffering: TrivialClone
 api::ButtloopQfSeedPolicy: TrivialClone
@@ -1325,6 +1399,7 @@ api::ScreenshotEntropyMulPolicy: TrivialClone
 api::SectionedTrees: TrivialClone
 api::SinglePassEntropyDispatch: TrivialClone
 api::SmoothPhotoDct64Policy: TrivialClone
+profile_phases::PhaseGuard: Drop
 vardct::__recon_hook::InternalRecon: Clone
 vardct::__recon_hook::ProductionQf: Clone
 vardct::__recon_hook::StepXyb: Clone
@@ -1333,7 +1408,7 @@ vardct::hdr_metrics::HdrLoss: TrivialClone
 
 ## auto traits
 
-44 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+45 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 __bench_internals::tree_learn_split::SplittableSamples<'a>: !UnwindSafe
 __test_exports::VarDctEncoder: !Freeze
 __test_exports::histogram::Histogram: !Freeze !RefUnwindSafe !Sync

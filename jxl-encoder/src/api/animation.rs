@@ -61,7 +61,7 @@ impl Default for AnimationParams {
 pub struct AnimationFrame<'a> {
     /// Raw pixel data (must match width/height/layout from the encode call).
     pub pixels: &'a [u8],
-    /// Duration of this frame in ticks (tps_numerator/tps_denominator seconds per tick).
+    /// Duration in ticks (`tps_denominator / tps_numerator` seconds per tick).
     pub duration: u32,
     /// Per-frame blend mode (libjxl `BlendingInfo::mode`). `None` keeps the
     /// encoder default — `Replace` for frame 0 and any full-frame replacement,

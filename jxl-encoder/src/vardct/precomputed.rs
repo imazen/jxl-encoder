@@ -1628,6 +1628,7 @@ pub(crate) fn compute_dc_group(
             padded_width,
             profile,
             &tiles,
+            None, // Offline precomputation has no request cancellation token.
         )
     };
 

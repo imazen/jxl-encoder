@@ -91,16 +91,20 @@ fn validate_animation_input(
 
 pub(crate) fn encode_animation_lossless(
     cfg: &LosslessConfig,
-    width: u32,
-    height: u32,
-    layout: PixelLayout,
+    request: &EncodeRequest<'_>,
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
-    limits: Option<&Limits>,
 ) -> Result<Vec<u8>> {
+    let (width, height, layout, limits, stop) = (
+        request.width,
+        request.height,
+        request.layout,
+        request.limits,
+        request.stop,
+    );
     use crate::bit_writer::BitWriter;
+    use crate::headers::FileHeader;
     use crate::headers::file_header::AnimationHeader;
-    use crate::headers::{ColorEncoding, FileHeader};
     use crate::modular::channel::ModularImage;
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
 
@@ -139,7 +143,7 @@ pub(crate) fn encode_animation_lossless(
     let budget = preflight.budget;
 
     // Build file header with animation
-    let sample_image = match layout {
+    let mut sample_image = match layout {
         PixelLayout::Rgb8 => ModularImage::from_rgb8(frames[0].pixels, w, h),
         PixelLayout::Rgba8 => ModularImage::from_rgba8(frames[0].pixels, w, h),
         PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(frames[0].pixels, 3, None), w, h),
@@ -156,6 +160,9 @@ pub(crate) fn encode_animation_lossless(
     }
     .map_err(at_from)?;
 
+    if let Some(bits) = request.bits_per_sample {
+        sample_image.bit_depth = bits;
+    }
     let mut file_header = if sample_image.is_grayscale {
         FileHeader::new_gray(width, height)
     } else if sample_image.has_alpha {
@@ -169,6 +176,34 @@ pub(crate) fn encode_animation_lossless(
             ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
         }
     }
+    if let Some(bits) = request.bits_per_sample {
+        file_header.metadata.bit_depth.bits_per_sample = bits;
+        for ec in &mut file_header.metadata.extra_channels {
+            ec.bit_depth.bits_per_sample = bits;
+        }
+    }
+    if let Some(ce) = request.color_encoding.clone() {
+        file_header.metadata.color_encoding = ce;
+        if sample_image.is_grayscale {
+            file_header.metadata.color_encoding.color_space =
+                crate::headers::color_encoding::ColorSpace::Gray;
+        }
+    }
+    if request.color_encoding.is_none()
+        && let Some(gamma) = request.source_gamma
+    {
+        file_header.metadata.color_encoding = if sample_image.is_grayscale {
+            crate::headers::color_encoding::ColorEncoding::gray_with_gamma(gamma)
+        } else {
+            crate::headers::color_encoding::ColorEncoding::with_gamma(gamma)
+        };
+    }
+    if animation.premultiplied_alpha {
+        for ec in &mut file_header.metadata.extra_channels {
+            ec.alpha_associated = true;
+        }
+    }
+    apply_animation_metadata(request, &mut file_header.metadata);
     // `have_timecodes` flips to true if any frame supplied an
     // explicit timecode (libjxl writes the 32-bit timecode field
     // per-frame, so the file-level flag must be on).
@@ -183,14 +218,18 @@ pub(crate) fn encode_animation_lossless(
     // Write file header
     let mut writer = BitWriter::new();
     file_header.write(&mut writer).map_err(at_from)?;
+    if let Some(icc) = request.metadata.and_then(|m| m.icc_profile) {
+        crate::icc::write_icc(icc, &mut writer).map_err(at_from)?;
+    }
     writer.zero_pad_to_byte();
 
-    // Encode each frame with crop detection
-    let color_encoding = ColorEncoding::srgb();
+    // Frame color interpretation must match the file header.
+    let color_encoding = file_header.metadata.color_encoding.clone();
     let bpp = layout.bytes_per_pixel();
     let mut prev_pixels: Option<&[u8]> = None;
 
     for (i, frame) in frames.iter().enumerate() {
+        crate::error::check_stop(stop).map_err(at_from)?;
         // Reference-only frames must be written full-size — they ARE
         // the canvas later regular frames composite against. Skip crop
         // detection; the diff base for the next regular frame stays
@@ -274,7 +313,7 @@ pub(crate) fn encode_animation_lossless(
             frame.pixels
         };
 
-        let image = match layout {
+        let mut image = match layout {
             PixelLayout::Rgb8 => ModularImage::from_rgb8(frame_pixels, frame_w, frame_h),
             PixelLayout::Rgba8 => ModularImage::from_rgba8(frame_pixels, frame_w, frame_h),
             PixelLayout::Bgr8 => {
@@ -296,6 +335,10 @@ pub(crate) fn encode_animation_lossless(
             other => return Err(at!(EncodeError::UnsupportedPixelLayout(other))),
         }
         .map_err(at_from)?;
+        if let Some(bits) = request.bits_per_sample {
+            image.bit_depth = bits;
+        }
+        crate::error::check_stop(stop).map_err(at_from)?;
 
         let mut use_tree_learning = cfg.effective_tree_learning();
         let mut smart_profile =
@@ -377,7 +420,7 @@ pub(crate) fn encode_animation_lossless(
             make_opts(crop, identity_blend_mode, identity_ec_override),
         )
         .with_budget(alloc::sync::Arc::clone(&budget))
-        .encode_modular(&image, &color_encoding, &mut writer_a, None)
+        .encode_modular(&image, &color_encoding, &mut writer_a, stop)
         .map_err(at_from)?;
 
         // Trial-encode candidate B: full-frame `BlendMode::Add` delta
@@ -409,7 +452,10 @@ pub(crate) fn encode_animation_lossless(
             // canvas, so the `crop` is `None` and the blend covers
             // the whole frame at (0,0).
             match build_lossless_delta_image(layout, frame.pixels, prev, w, h, bpp) {
-                Some(delta_image) => {
+                Some(mut delta_image) => {
+                    if let Some(bits) = request.bits_per_sample {
+                        delta_image.bit_depth = bits;
+                    }
                     let mut wb = crate::bit_writer::BitWriter::new();
                     FrameEncoder::new(
                         w,
@@ -425,7 +471,7 @@ pub(crate) fn encode_animation_lossless(
                         ),
                     )
                     .with_budget(alloc::sync::Arc::clone(&budget))
-                    .encode_modular(&delta_image, &color_encoding, &mut wb, None)
+                    .encode_modular(&delta_image, &color_encoding, &mut wb, stop)
                     .map_err(at_from)?;
                     Some(wb)
                 }
@@ -578,13 +624,17 @@ fn build_lossless_delta_image(
 
 pub(crate) fn encode_animation_lossy(
     cfg: &LossyConfig,
-    width: u32,
-    height: u32,
-    layout: PixelLayout,
+    request: &EncodeRequest<'_>,
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
-    limits: Option<&Limits>,
 ) -> Result<Vec<u8>> {
+    let (width, height, layout, limits, stop) = (
+        request.width,
+        request.height,
+        request.layout,
+        request.limits,
+        request.stop,
+    );
     use crate::bit_writer::BitWriter;
     use crate::headers::file_header::AnimationHeader;
     use crate::headers::frame_header::FrameOptions;
@@ -745,16 +795,75 @@ pub(crate) fn encode_animation_lossy(
 
     // Detect alpha and 16-bit from layout
     let has_alpha = layout.has_alpha();
-    let bit_depth_16 = matches!(layout, PixelLayout::Rgb16 | PixelLayout::Rgba16);
+    let bit_depth_16 = layout.is_16bit();
     enc.bit_depth_16 = bit_depth_16;
 
+    enc.source_gamma = request.source_gamma;
+    enc.color_encoding = request.color_encoding.clone().or_else(|| {
+        use crate::headers::color_encoding::{ColorEncoding, TransferFunction};
+        match layout.implied_transfer_function() {
+            Some(TransferFunction::Pq) => Some(ColorEncoding::bt2100_pq()),
+            Some(TransferFunction::Hlg) => Some(ColorEncoding::bt2100_hlg()),
+            Some(TransferFunction::Linear) => Some(ColorEncoding::linear_srgb()),
+            Some(TransferFunction::Bt709) => Some(ColorEncoding {
+                transfer_function: TransferFunction::Bt709,
+                ..ColorEncoding::srgb()
+            }),
+            _ => None,
+        }
+    });
+    if let Some(ce) = &enc.color_encoding {
+        use crate::headers::color_encoding::TransferFunction;
+        match ce.transfer_function {
+            TransferFunction::Pq => enc.intensity_target = 10_000.0,
+            TransferFunction::Hlg => enc.intensity_target = 1_000.0,
+            _ => {}
+        }
+    }
+    let depth = layout.source_bit_depth();
+    enc.source_bit_depth = depth.0.then_some(depth);
+    enc.bits_per_sample_override = request.bits_per_sample;
+    if let Some(meta) = request.metadata {
+        enc.icc_profile = meta.icc_profile.map(<[u8]>::to_vec);
+        if let Some(v) = meta.intensity_target {
+            enc.intensity_target = v;
+        }
+        if let Some(v) = meta.min_nits {
+            enc.min_nits = v;
+        }
+        if let Some(v) = meta.relative_to_max_display {
+            enc.relative_to_max_display = v;
+        }
+        if let Some(v) = meta.linear_below {
+            enc.linear_below = v;
+        }
+        enc.intrinsic_size = meta.intrinsic_size;
+    }
+    if let Some(v) = request.intensity_target {
+        enc.intensity_target = v;
+    }
+    if let Some(v) = request.min_nits {
+        enc.min_nits = v;
+    }
+    if let Some(v) = request.relative_to_max_display {
+        enc.relative_to_max_display = v;
+    }
+    if let Some(v) = request.linear_below {
+        enc.linear_below = v;
+    }
     // Build file header from VarDCT encoder (sets xyb_encoded, rendering_intent, etc.)
     // then add animation metadata. Animation frames currently carry at
     // most one extra (alpha) — passing the alpha info list mirrors what
     // the old has_alpha bool used to derive.
+    let alpha_bits = if layout.is_16bit() {
+        request.bits_per_sample.unwrap_or(16)
+    } else {
+        8
+    };
     let alpha_info_buf;
     let extras_info: &[crate::headers::extra_channels::ExtraChannelInfo] = if has_alpha {
         let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+        info.bit_depth.bits_per_sample = alpha_bits;
         info.alpha_associated = enc.alpha_associated;
         alpha_info_buf = [info];
         &alpha_info_buf
@@ -785,6 +894,7 @@ pub(crate) fn encode_animation_lossy(
     let mut prev_pixels: Option<&[u8]> = None;
 
     for (i, frame) in frames.iter().enumerate() {
+        crate::error::check_stop(stop).map_err(at_from)?;
         // Reference-only frames are written full-size into a save slot
         // — they ARE the canvas that subsequent regular frames composite
         // against, so cropping them would discard the area outside the
@@ -866,116 +976,11 @@ pub(crate) fn encode_animation_lossy(
             frame.pixels
         };
 
-        let (linear_rgb, alpha) = match layout {
-            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(src_pixels, 3, None), None),
-            PixelLayout::Bgr8 => (
-                srgb_u8_to_linear_f32(&bgr_to_rgb(src_pixels, 3, None), 3, None),
-                None,
-            ),
-            PixelLayout::Rgba8 => {
-                let rgb = srgb_u8_to_linear_f32(src_pixels, 4, None);
-                let alpha = extract_alpha(src_pixels, 4, 3, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::Bgra8 => {
-                let swapped = bgr_to_rgb(src_pixels, 4, None);
-                let rgb = srgb_u8_to_linear_f32(&swapped, 4, None);
-                let alpha = extract_alpha(src_pixels, 4, 3, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::Gray8 => (gray_u8_to_linear_f32_rgb(src_pixels, 1, None), None),
-            PixelLayout::GrayAlpha8 => {
-                let rgb = gray_u8_to_linear_f32_rgb(src_pixels, 2, None);
-                let alpha = extract_alpha(src_pixels, 2, 1, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(src_pixels, 3, 65535.0, None), None),
-            PixelLayout::Rgba16 => {
-                let rgb = srgb_u16_to_linear_f32(src_pixels, 4, 65535.0, None);
-                let alpha = extract_alpha_u16(src_pixels, 4, 3, 65535.0, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::Gray16 => (
-                gray_u16_to_linear_f32_rgb(src_pixels, 1, 65535.0, None),
-                None,
-            ),
-            PixelLayout::GrayAlpha16 => {
-                let rgb = gray_u16_to_linear_f32_rgb(src_pixels, 2, 65535.0, None);
-                let alpha = extract_alpha_u16(src_pixels, 2, 1, 65535.0, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::RgbLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (floats.to_vec(), None)
-            }
-            PixelLayout::RgbaLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb: Vec<f32> = floats
-                    .chunks(4)
-                    .flat_map(|px| [px[0], px[1], px[2]])
-                    .collect();
-                let alpha = extract_alpha_f32(floats, 4, 3, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::GrayLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (gray_f32_to_linear_f32_rgb(floats, 1, None), None)
-            }
-            PixelLayout::GrayAlphaLinearF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb = gray_f32_to_linear_f32_rgb(floats, 2, None);
-                let alpha = extract_alpha_f32(floats, 2, 1, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::RgbLinearF16 => (f16_to_linear_f32_rgb(src_pixels, 3, None), None),
-            PixelLayout::RgbaLinearF16 => {
-                let rgb = f16_to_linear_f32_rgb(src_pixels, 4, None);
-                let alpha = extract_alpha_f16(src_pixels, 4, 3, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::GrayLinearF16 => (f16_gray_to_linear_f32_rgb(src_pixels, 1, None), None),
-            PixelLayout::GrayAlphaLinearF16 => {
-                let rgb = f16_gray_to_linear_f32_rgb(src_pixels, 2, None);
-                let alpha = extract_alpha_f16(src_pixels, 2, 1, None);
-                (rgb, Some(alpha))
-            }
-            // A3 chunk 1b: f32 PQ/HLG/BT.709 RGB(A) (issue #46).
-            PixelLayout::RgbPqF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (pq_f32_to_linear_f32_rgb(floats, 3, None), None)
-            }
-            PixelLayout::RgbaPqF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb = pq_f32_to_linear_f32_rgb(floats, 4, None);
-                let alpha = extract_alpha_f32(floats, 4, 3, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::RgbHlgF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (hlg_f32_to_linear_f32_rgb(floats, 3, None), None)
-            }
-            PixelLayout::RgbaHlgF32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb = hlg_f32_to_linear_f32_rgb(floats, 4, None);
-                let alpha = extract_alpha_f32(floats, 4, 3, None);
-                (rgb, Some(alpha))
-            }
-            PixelLayout::RgbBt709F32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                (bt709_f32_to_linear_f32_rgb(floats, 3, None), None)
-            }
-            PixelLayout::RgbaBt709F32 => {
-                let floats: &[f32] = &cast_pixel_lanes(src_pixels);
-                let rgb = bt709_f32_to_linear_f32_rgb(floats, 4, None);
-                let alpha = extract_alpha_f32(floats, 4, 3, None);
-                (rgb, Some(alpha))
-            }
-            // Animated CMYK (multi-frame lossy) is not yet wired — only
-            // the one-shot lossless path handles CMYK input.
-            PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
-                return Err(at!(EncodeError::UnsupportedPixelLayout(layout)));
-            }
-        };
+        let LossyPixels {
+            linear_rgb, alpha, ..
+        } = request
+            .prepare_lossy_pixels(cfg, src_pixels, frame_w, frame_h)
+            .map_err(at_from)?;
 
         // Mirror of the still-image lossy pre-passes at api.rs:3776-3807.
         // Order is load-bearing: unpremultiply FIRST so SimplifyInvisible
@@ -1051,6 +1056,18 @@ pub(crate) fn encode_animation_lossy(
         // Animation frames currently only support alpha as an extra
         // channel. Build the extras list (zero or one entries) and
         // hand it to the encoder.
+        // The color pre-pass uses an 8-bit coverage mask. Encode integer
+        // alpha from the original samples so 10/12/16-bit coverage survives.
+        let alpha_u16: Option<Vec<u16>> = if has_alpha && layout.is_16bit() {
+            Some(
+                src_pixels
+                    .chunks_exact(bpp)
+                    .map(|pixel| u16::from_ne_bytes([pixel[bpp - 2], pixel[bpp - 1]]))
+                    .collect(),
+            )
+        } else {
+            None
+        };
         let alpha_info_buf;
         let alpha_view_buf;
         let frame_extras: &[crate::vardct::extras::VardctExtra<'_>] = match alpha.as_deref() {
@@ -1058,10 +1075,14 @@ pub(crate) fn encode_animation_lossy(
             Some(buf) => {
                 let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
                 info.alpha_associated = enc.alpha_associated;
+                info.bit_depth.bits_per_sample = alpha_bits;
                 alpha_info_buf = info;
                 alpha_view_buf = [crate::vardct::extras::VardctExtra {
                     info: &alpha_info_buf,
-                    data: crate::vardct::extras::VardctExtraBuf::U8(buf),
+                    data: match alpha_u16.as_deref() {
+                        Some(samples) => crate::vardct::extras::VardctExtraBuf::U16(samples),
+                        None => crate::vardct::extras::VardctExtraBuf::U8(buf),
+                    },
                 }];
                 &alpha_view_buf[..]
             }
@@ -1074,6 +1095,7 @@ pub(crate) fn encode_animation_lossy(
             frame_extras,
             &frame_options,
             &mut writer,
+            stop,
         )
         .map_err(at_from)?;
 
@@ -1210,4 +1232,42 @@ fn extract_pixel_crop(
         out.extend_from_slice(&pixels[row_start..row_start + cw * bytes_per_pixel]);
     }
     out
+}
+
+fn apply_animation_metadata(
+    request: &EncodeRequest<'_>,
+    header: &mut crate::headers::file_header::ImageMetadata,
+) {
+    if let Some(meta) = request.metadata {
+        header.color_encoding.want_icc = meta.icc_profile.is_some();
+        if let Some(v) = meta.intensity_target {
+            header.intensity_target = v;
+        }
+        if let Some(v) = meta.min_nits {
+            header.min_nits = v;
+        }
+        if let Some(v) = meta.relative_to_max_display {
+            header.relative_to_max_display = v;
+        }
+        if let Some(v) = meta.linear_below {
+            header.linear_below = v;
+        }
+        if let Some((w, h)) = meta.intrinsic_size {
+            header.have_intrinsic_size = true;
+            header.intrinsic_width = w;
+            header.intrinsic_height = h;
+        }
+    }
+    if let Some(v) = request.intensity_target {
+        header.intensity_target = v;
+    }
+    if let Some(v) = request.min_nits {
+        header.min_nits = v;
+    }
+    if let Some(v) = request.relative_to_max_display {
+        header.relative_to_max_display = v;
+    }
+    if let Some(v) = request.linear_below {
+        header.linear_below = v;
+    }
 }
