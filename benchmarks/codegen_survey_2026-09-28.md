@@ -283,3 +283,37 @@ lossless (`enc_modular.cc:527`); our `with_squeeze` is opt-in only.
 still costs the wave-learn wall (+5-7% at e9) but the wins are real.
 e≤7 MT stays Sectioned (wall win, byte cost dominated by group-header
 overhead, not fixable by better local trees).
+
+## 2026-09-29 PM2 — wide-corpus exception hunt (88 imgs × e8/e9 × 3 modes)
+
+Post-fixes full sweep (`~/tmp/gaps-i265/final.tsv`, 528 cells):
+16 adversarial + 20 K300 classes + 10 gb82 + 41 CID22 + frymire.
+
+**Exceptions found: ZERO.** `hybrid > global` on 0/176 cells; hybrid <
+global on 31 cells (all e8 screenshots/photos: imessage −3.3%, wiki
+−3.2%, imac_g3 −2.9%, imac_dark −2.7%/−1.7% e8/e9, gui −1.6%).
+
+**Honest wall numbers after the keep-best fix** (locals actually run
+now — earlier ~1.0× figures were the broken-baseline artifact):
+
+| effort | hyb bytes | hyb wall | sec bytes | sec wall |
+|---|---|---|---|---|
+| e8 | 0.9977× | 1.227× | 1.0261× | 0.506× |
+| e9 | 0.9994× | 1.181× | 1.0388× | 0.527× |
+
+Hybrid e8's ~+23% wall buys −0.23% geomean bytes (concentrated: −3% on
+screenshots). e9 −0.06% geo. Both still ≤ global on every cell.
+
+Codegen probes, all negative (byte-identical, no wall change):
+`ACCUM_4WAY_MIN_RUN` 256→64, `FBS_ACCUM_PAR_MIN_ROWS` 64K→8K, packed
+`(tok|count)` u64 fused-load microbench (slower — 8B/sample cache
+pressure beats halving the loads). The e9 scatter-accumulate hotspot
+(~30% Ir) is already replica+parallel tuned; `predict_and_property`
+(~11%) is a serial WP recurrence — no SIMD surface. e9 wall is
+learn-bound and the learn is load-bearing (max-samples 100K: −68% wall,
++61% bytes — samples are what buy bytes).
+
+Remaining real trade: sectioned's +3-4% byte penalty at e8/e9 is the
+price of −50% wall; hybrid pays +20% wall to shave the screenshot side
+of it. No free knob left — the next wall step needs either a cheaper
+tree learner or accepting sectioned's byte cost.
