@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased: animation clock field bounds
+
+- Reject animation clocks outside numerator 1..=2^30 and denominator 1..=1024 before encoding and in the header writer. Previously larger `u32` values overflowed their bit fields and corrupted following metadata. Bounds match libjxl 0.12 `AnimationHeader::VisitFields`.
+
 ## [Unreleased]
 
 ### Animation request contract
