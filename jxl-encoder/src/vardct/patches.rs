@@ -945,8 +945,12 @@ fn replay_cc(ctx: &CcReplayCtx<'_>, si: usize) -> CcOutcome {
         stride_i,
         stride_i + 1,
     ];
-    let mut stack: Vec<u32> = Vec::with_capacity(128);
-    stack.push(si as u32);
+    // Stack entries are (x, y) pairs: the flat-index encoding cost one
+    // `div` per pop (pi % stride / pi / stride); the pi flat index is
+    // recovered with a single multiply. Identical traversal order — the
+    // pushed neighbor sequence is unchanged.
+    let mut stack: Vec<(u32, u32)> = Vec::with_capacity(128);
+    stack.push((start_x as u32, start_y as u32));
     let mut min_x = start_x;
     let mut max_x = start_x;
     let mut min_y = start_y;
@@ -955,9 +959,9 @@ fn replay_cc(ctx: &CcReplayCtx<'_>, si: usize) -> CcOutcome {
     let mut all_similar = true;
     let mut ref_bg: [f32; 3] = [0.0; 3];
 
-    while let Some(pi32) = stack.pop() {
-        let pi = pi32 as usize;
-        let (px, py) = (pi % stride, pi / stride);
+    while let Some((px32, py32)) = stack.pop() {
+        let (px, py) = (px32 as usize, py32 as usize);
+        let pi = py * stride + px;
         let vi = vis_idx(px, py);
         if win_visited[vi] {
             continue;
@@ -991,7 +995,7 @@ fn replay_cc(ctx: &CcReplayCtx<'_>, si: usize) -> CcOutcome {
             let ni = (pi as isize + neighbor_offsets[k]) as usize;
             if !ctx.is_background[ni] {
                 if !win_visited[vis_idx(nx as usize, ny as usize)] {
-                    stack.push(ni as u32);
+                    stack.push((nx as u32, ny as u32));
                 }
             } else {
                 // Border consistency — identical to the sequential body
@@ -1141,33 +1145,44 @@ fn patches_cc_min_starts(
         let y_lo = si * STRIP;
         let y_hi = (y_lo + STRIP).min(height);
         for y in y_lo..y_hi {
+            let row_off = y * stride;
+            // Row slices let LLVM prove every `bg_row[x]`/`bg_prev[nxx]`
+            // index is in-bounds — previously each access paid a check.
+            let bg_row = &is_background[row_off..row_off + width];
             for x in 0..width {
-                let gi = y * stride + x;
-                if is_background[gi] {
+                if bg_row[x] {
                     continue;
                 }
+                let gi = row_off + x;
                 chunk[gi - base] = gi as u32;
-                if x > 0 && !is_background[gi - 1] {
-                    let ra = find_local(chunk, base, gi as u32);
+                // `gi`'s root while ITS unions run is just the running min —
+                // a fresh `chunk[gi]=gi` init makes the first find trivial,
+                // and each union only ever moves the root to a smaller
+                // index we already hold. Tracking it skips one `find_local`
+                // walk per unioned neighbor (up to 4/pixel).
+                let mut root = gi as u32;
+                if x > 0 && !bg_row[x - 1] {
                     let rb = find_local(chunk, base, (gi - 1) as u32);
-                    if ra < rb {
-                        chunk[rb as usize - base] = ra;
-                    } else if rb < ra {
-                        chunk[ra as usize - base] = rb;
+                    if rb < root {
+                        chunk[root as usize - base] = rb;
+                        root = rb;
+                    } else if root < rb {
+                        chunk[rb as usize - base] = root;
                     }
                 }
                 if y > y_lo {
+                    let bg_prev = &is_background[row_off - stride..row_off - stride + width];
                     let x_lo = x.saturating_sub(1);
                     let x_hi = (x + 2).min(width);
                     for nxx in x_lo..x_hi {
                         let ni = gi - stride - x + nxx;
-                        if !is_background[ni] {
-                            let ra = find_local(chunk, base, gi as u32);
+                        if !bg_prev[nxx] {
                             let rb = find_local(chunk, base, ni as u32);
-                            if ra < rb {
-                                chunk[rb as usize - base] = ra;
-                            } else if rb < ra {
-                                chunk[ra as usize - base] = rb;
+                            if rb < root {
+                                chunk[root as usize - base] = rb;
+                                root = rb;
+                            } else if root < rb {
+                                chunk[rb as usize - base] = root;
                             }
                         }
                     }
@@ -1175,9 +1190,11 @@ fn patches_cc_min_starts(
             }
         }
         for y in y_lo..y_hi {
+            let row_off = y * stride;
+            let bg_row = &is_background[row_off..row_off + width];
             for x in 0..width {
-                let gi = y * stride + x;
-                if !is_background[gi] {
+                if !bg_row[x] {
+                    let gi = row_off + x;
                     let r = find_local(chunk, base, gi as u32);
                     chunk[gi - base] = r;
                 }
@@ -1249,11 +1266,13 @@ fn patches_cc_min_starts(
             let y_hi = (y_lo + STRIP).min(height);
             let mut out = Vec::new();
             for y in y_lo..y_hi {
+                let row_off = y * stride;
+                let bg_row = &is_background[row_off..row_off + width];
                 for x in 0..width {
-                    let gi = y * stride + x;
-                    if is_background[gi] {
+                    if bg_row[x] {
                         continue;
                     }
+                    let gi = row_off + x;
                     let mut r = gi as u32;
                     loop {
                         let pr = parent_ro[r as usize];
@@ -1521,20 +1540,35 @@ pub(crate) fn find_text_like_patches_with_min_peak(
             // thrown away.
             let masks: Vec<Vec<u8>> = {
                 let already_bg: &[bool] = &is_background;
+                // Hoist the three plane slices + channel weights out of the
+                // per-candidate call: `planes[c]` reloads a (ptr,len) pair and
+                // `channel_weights[c]` a lane each iteration otherwise.
+                let (p0, p1, p2) = (xyb_ref[0], xyb_ref[1], xyb_ref[2]);
+                let (cw0, cw1, cw2) = (
+                    cs.channel_weights[0],
+                    cs.channel_weights[1],
+                    cs.channel_weights[2],
+                );
                 let eval_chunk = |ci: usize| {
                     let lo = ci * chunk;
                     let hi = (lo + chunk).min(level.len());
                     let mut out = Vec::with_capacity(hi - lo);
                     for &(cx, cy, sx, sy) in &level[lo..hi] {
                         let si = sy as usize * stride + sx as usize;
-                        let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
+                        let src_color = [p0[si], p1[si], p2[si]];
                         let ci_flat = cy as usize * stride + cx as usize;
+                        // Interior pixels have all 8 neighbors in-bounds —
+                        // skip the per-k coordinate range checks entirely.
+                        let interior = cx >= 1
+                            && (cx as usize) + 1 < width
+                            && cy >= 1
+                            && (cy as usize) + 1 < height;
                         let mut mask = 0u8;
                         for k in 0..8 {
                             let (dx, dy) = NEIGHBORS_8[k];
                             let nx = cx as i32 + dx;
                             let ny = cy as i32 + dy;
-                            if (nx as usize) >= width || (ny as usize) >= height {
+                            if !interior && ((nx as usize) >= width || (ny as usize) >= height) {
                                 continue;
                             }
                             let ni = (ci_flat as isize + neighbor_offsets[k]) as usize;
@@ -1546,9 +1580,13 @@ pub(crate) fn find_text_like_patches_with_min_peak(
                             if manhattan > DISTANCE_LIMIT as u32 {
                                 continue;
                             }
-                            if weighted_distance_to_color_idx(&xyb_ref, ni, &src_color, &cs)
-                                <= SIMILAR_THRESHOLD
-                            {
+                            // Inlined weighted_distance_to_color_idx: the
+                            // leading `0.0 +` term folds exactly (all terms
+                            // are abs()*w ≥ +0.0).
+                            let dist = (p0[ni] - src_color[0]).abs() * cw0
+                                + (p1[ni] - src_color[1]).abs() * cw1
+                                + (p2[ni] - src_color[2]).abs() * cw2;
+                            if dist <= SIMILAR_THRESHOLD {
                                 mask |= 1 << k;
                             }
                         }

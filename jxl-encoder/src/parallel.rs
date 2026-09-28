@@ -81,6 +81,30 @@ where
     (0..n).map(|i| f(&mut scratch, i)).collect()
 }
 
+/// Apply `f` to each disjoint `chunk`-element mutable partition of `buf`.
+/// `f` receives `(chunk_index, &mut [T])`; the last chunk may be short.
+/// Parallel via `par_chunks_mut` when enabled, sequential otherwise.
+#[cfg(feature = "parallel")]
+pub fn parallel_chunks_mut<T, F>(buf: &mut [T], chunk: usize, f: F)
+where
+    T: Send,
+    F: Fn(usize, &mut [T]) + Send + Sync,
+{
+    use rayon::prelude::*;
+    buf.par_chunks_mut(chunk)
+        .enumerate()
+        .for_each(|(i, c)| f(i, c));
+}
+
+/// Sequential fallback for [`parallel_chunks_mut`].
+#[cfg(not(feature = "parallel"))]
+pub fn parallel_chunks_mut<T, F>(buf: &mut [T], chunk: usize, f: F)
+where
+    F: Fn(usize, &mut [T]),
+{
+    buf.chunks_mut(chunk).enumerate().for_each(|(i, c)| f(i, c));
+}
+
 /// Map `f` over `0..n`, collecting results in index order. Falls back to
 /// serial execution when `n < min_parallel_n`, even with `parallel` enabled.
 ///

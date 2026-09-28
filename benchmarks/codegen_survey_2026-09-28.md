@@ -67,3 +67,75 @@ bit-identical, 194/194 tests pass on aarch64, wasm32 compiles clean.
 construction. `estimate_bits_u32` dispatch overhead ≈ 119M Ir (0.4%);
 `summon()` is a cached atomic load per project notes. Further wins there are
 algorithmic (fewer split evaluations), not codegen.
+
+# Continuation — 2026-09-28 (i265, Zen5-class x86_64, 20c)
+
+Second sweep on i265. Workload changed: `jxl-encoder/tests/images/frymire.png`
+(1118×1105, ~1.24 MP photo) lossy e7/d1.0 `--features parallel` — nature1024.ppm
+was not transferable, so absolute numbers are NOT comparable to the r7900x
+rows above. callgrind Ir totals: 6,324M → 6,030M. Wall: paired-interleaved
+15-run A/B, base median 115.3 ms → exp 103.8 ms (**−10.0%**, min −14.6%,
+exp won all 15 pairs). Lossless e9 frymire: 4.88 s → 4.83 s (neutral).
+Both outputs sha256-identical on lossy-e7 and lossless-e9.
+
+## Landed (i265)
+
+**gaborish 5×5 kernel — row pre-slicing** (`gaborish_5x5_impl`, shared
+magetypes body so v3/v4/neon/wasm128 all get it). The inner loop issued 25
+`f32x8::from_slice` calls per 8-pixel iteration, each carrying a
+`len >= 8` bounds check LLVM could not elide — `slice::index` attribution
+**129.5M → 10.1M Ir (−119M)**. Fix: slice the five stencil rows + output
+row once per `y` (`len == width` known), so `x < width - 10` proves every
+`row[x..]` load. Store via `out_row[x..x+8]` likewise.
+
+**`gaborish_5x5_into` (out-of-place entry point) + strip writes direct to
+`out`** (`parallel_chunks_mut` helper added to `parallel.rs`, rayon
+`par_chunks_mut` / sequential `chunks_mut`). The strip-parallel path used to
+`to_vec()` the halo-extended input AND let `gaborish_5x5_channel` copy it
+into scratch, then `drain`+`extend` the kept rows — ~4 full-strip copies.
+Now: kernel reads `raw` in place and writes a strip tmp; kept rows
+`copy_from_slice` into `out`. memcpy **170.6M → 85.5M Ir (−85M)**. Same fix
+applied to `compute_mask1x1_strip_parallel`.
+
+**`transform_blocks_into` env-probe hoist.** `JXL_QAC_DUMP` /
+`JXL_COEFF_IN_DUMP` were read with `std::env::var_os` **per block** — getenv
+is a linear environ scan (~800 Ir each). Hoisted to once per call:
+getenv **30.6M → 0.57M Ir**.
+
+**`patches_cc_min_starts` phase-1 root tracking + row slices.** Each
+foreground pixel unioned W/NW/N/NE neighbors with a fresh `find_local(gi)`
+per union — but `gi`'s root while its own unions run is just the running
+min (its entry was self-initialized one instruction earlier). Track `root`
+locally; skip up to 4 find walks per pixel. Plus `is_background` row slices
+killing per-pixel bounds checks. `closure#1`: **112.5M → 74.7M Ir (−38M)**.
+
+**BFS `eval_chunk` — plane/weight hoisting + interior fast path.**
+`weighted_distance_to_color_idx` reloads a (ptr,len) slice header per
+channel per call; inlined it with `p0/p1/p2` + `cw0..2` hoisted, and added
+an `interior` predicate (all 8 neighbors in-bounds) skipping the per-k
+coordinate range checks. `closure#3`: **203.5M → 155.7M Ir (−48M)**.
+
+**`replay_cc` stack entries → (x,y) pairs.** The flat u32 index encoding
+paid `pi % stride` + `pi / stride` (a hardware `div`) per pop; (x,y) pairs
+recover `pi` with one multiply. Small on photo input (the single giant
+foreground CC rejects on size quickly) — larger on screenshot corpora
+where many small CCs survive. Byte-identical traversal order.
+
+## Measurement notes
+
+- **callgrind massively overstates `memset`/`memcpy` ERMS cost**: glibc's
+  `__memset_avx2_unaligned_erms` uses `rep stosb`/`rep movsb`; callgrind
+  counts ~8 Ir per *byte*. The ~436M Ir memset residue (DCT-kernel
+  `scratch_buf` zero-init, ~4 KB per call) is real but the wall cost is
+  ~50-100 ns per call — the survey's "~1-2%" estimate is an Ir-space
+  overstatement. The correct fix remains caller-passed scratch (~168 call
+  sites) — deferred again on wall-ROI grounds, not Ir.
+- `compute_srgb_u8` (~117M Ir: `row_sums` + `flat_blocks` + Sobel luma)
+  needs a stride-3 deinterleave to SIMD — **no gather/shuffle exists in
+  the magetypes portable surface** (`i32x8` has no `shuffle`, `u8x32` no
+  gather). Can't express it under `#![forbid(unsafe_code)]` without
+  archmage-side support. Left as-is; a per-(bpp,offsets) const-generic
+  specialization is the remaining scalar lever (~10-20M Ir estimate).
+- `histogram_distance_reuse` (~134M Ir incl. zip + tail copy): work is
+  already zip/SIMD-shaped; cost is call-count-driven (clustering O(n²)
+  pairs) — algorithmic.

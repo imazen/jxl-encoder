@@ -600,23 +600,20 @@ pub(crate) fn compute_mask1x1_libjxl_exact(
 /// discarded; unchanged width keeps lanes identical).
 fn compute_mask1x1_strip_parallel(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
     const STRIP_ROWS: usize = 64;
-    let n_strips = height.div_ceil(STRIP_ROWS);
-    let strips: Vec<Vec<f32>> = crate::parallel::parallel_map(n_strips, |si| {
+    let mut out = vec![0.0_f32; width * height];
+    crate::parallel::parallel_chunks_mut(&mut out, STRIP_ROWS * width, |si, keep| {
         let ky0 = si * STRIP_ROWS;
         let ky1 = (ky0 + STRIP_ROWS).min(height);
         let ty0 = ky0.saturating_sub(1);
         let ty1 = (ky1 + 1).min(height);
         let sub_h = ty1 - ty0;
-        let mut sub_out = vec![0.0_f32; sub_h * width];
-        jxl_simd::compute_mask1x1(&xyb_y[ty0 * width..ty1 * width], width, sub_h, &mut sub_out);
-        sub_out.drain(..(ky0 - ty0) * width);
-        sub_out.truncate((ky1 - ky0) * width);
-        sub_out
+        // Kernel writes all `sub_h` rows (halo included); copy just the kept
+        // rows into `out`. One tmp buffer + one memcpy per strip, replacing
+        // per-strip Vec collect + drain + extend.
+        let mut tmp = vec![0.0_f32; sub_h * width];
+        jxl_simd::compute_mask1x1(&xyb_y[ty0 * width..ty1 * width], width, sub_h, &mut tmp);
+        keep.copy_from_slice(&tmp[(ky0 - ty0) * width..(ky0 - ty0) * width + keep.len()]);
     });
-    let mut out = Vec::with_capacity(width * height);
-    for s in strips {
-        out.extend_from_slice(&s);
-    }
     out
 }
 
@@ -632,18 +629,21 @@ pub(super) fn gaborish_5x5_strip_parallel(
     w: [f32; 6],
 ) -> Vec<f32> {
     const STRIP_ROWS: usize = 64;
-    let n_strips = height.div_ceil(STRIP_ROWS);
-    let strips: Vec<Vec<f32>> = crate::parallel::parallel_map(n_strips, |si| {
+    let mut out = vec![0.0_f32; width * height];
+    crate::parallel::parallel_chunks_mut(&mut out, STRIP_ROWS * width, |si, keep| {
         let ky0 = si * STRIP_ROWS;
         let ky1 = (ky0 + STRIP_ROWS).min(height);
         let ty0 = ky0.saturating_sub(2);
         let ty1 = (ky1 + 2).min(height);
         let sub_h = ty1 - ty0;
-        let mut sub_data = raw[ty0 * width..ty1 * width].to_vec();
-        let mut scratch = vec![0.0_f32; sub_h * width];
-        jxl_simd::gaborish_5x5_channel(
-            &mut sub_data,
-            &mut scratch,
+        // Out-of-place kernel: reads `raw`'s halo strip directly (no input
+        // copy, no internal scratch copy), writes a strip-local buffer whose
+        // kept rows are then copied straight into `out` — one memcpy per
+        // strip instead of to_vec + drain + extend.
+        let mut tmp = vec![0.0_f32; sub_h * width];
+        jxl_simd::gaborish_5x5_into(
+            &mut tmp,
+            &raw[ty0 * width..ty1 * width],
             width,
             sub_h,
             w[0],
@@ -653,14 +653,8 @@ pub(super) fn gaborish_5x5_strip_parallel(
             w[4],
             w[5],
         );
-        sub_data.drain(..(ky0 - ty0) * width);
-        sub_data.truncate((ky1 - ky0) * width);
-        sub_data
+        keep.copy_from_slice(&tmp[(ky0 - ty0) * width..(ky0 - ty0) * width + keep.len()]);
     });
-    let mut out = Vec::with_capacity(width * height);
-    for s in strips {
-        out.extend_from_slice(&s);
-    }
     out
 }
 

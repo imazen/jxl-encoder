@@ -65,6 +65,36 @@ pub fn gaborish_5x5_channel(
     ));
 }
 
+/// Out-of-place variant of [`gaborish_5x5_channel`]: convolve `input` into
+/// `output` without copying the input first. Both must be at least
+/// `width * height` elements; the regions must not overlap.
+///
+/// Bit-identical to `gaborish_5x5_channel` (same dispatched kernel body;
+/// the in-place wrapper only copies `data` into `scratch` so that the
+/// kernel's read side aliases an unmodified input).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn gaborish_5x5_into(
+    output: &mut [f32],
+    input: &[f32],
+    width: usize,
+    height: usize,
+    wc: f32,
+    wr: f32,
+    wd: f32,
+    w_big_r: f32,
+    wl: f32,
+    w_big_d: f32,
+) {
+    let n = width * height;
+    debug_assert!(output.len() >= n);
+    debug_assert!(input.len() >= n);
+
+    incant!(gaborish_5x5_impl(
+        output, input, width, height, wc, wr, wd, w_big_r, wl, w_big_d
+    ));
+}
+
 // ============================================================================
 // Scalar fallback
 // ============================================================================
@@ -225,12 +255,17 @@ pub fn gaborish_5x5_impl(
             output[y * width + x] = scalar_pixel(x as isize, iy);
         }
 
-        // Pre-slice rows to help compiler eliminate bounds checks.
-        let r_m2 = (y - 2) * width;
-        let r_m1 = (y - 1) * width;
+        // Pre-slice the five stencil rows AND the output row so each slice
+        // has exact `width` length: inside `x < width - 10` LLVM can then
+        // prove `row[x..].len() >= 10` and elide all 25 per-load bounds
+        // checks (measured ~130M Ir / ~2% of lossy-e7 encode on 1 MP).
         let r_0 = y * width;
-        let r_p1 = (y + 1) * width;
-        let r_p2 = (y + 2) * width;
+        let in_m2 = &input[(y - 2) * width..(y - 2) * width + width];
+        let in_m1 = &input[(y - 1) * width..(y - 1) * width + width];
+        let in_0 = &input[r_0..r_0 + width];
+        let in_p1 = &input[(y + 1) * width..(y + 1) * width + width];
+        let in_p2 = &input[(y + 2) * width..(y + 2) * width + width];
+        let out_row = &mut output[r_0..r_0 + width];
 
         // SIMD interior: loads access x-2..x+10, so need x + 10 <= width.
         let simd_end = if width >= 12 { width - 10 } else { 2 };
@@ -238,45 +273,45 @@ pub fn gaborish_5x5_impl(
 
         while x < simd_end {
             // Center
-            let center = f32x8::from_slice(token, &input[r_0 + x..]);
+            let center = f32x8::from_slice(token, &in_0[x..]);
 
             // r: 4 orthogonal at distance 1
-            let left1 = f32x8::from_slice(token, &input[r_0 + x - 1..]);
-            let right1 = f32x8::from_slice(token, &input[r_0 + x + 1..]);
-            let top1 = f32x8::from_slice(token, &input[r_m1 + x..]);
-            let bot1 = f32x8::from_slice(token, &input[r_p1 + x..]);
+            let left1 = f32x8::from_slice(token, &in_0[x - 1..]);
+            let right1 = f32x8::from_slice(token, &in_0[x + 1..]);
+            let top1 = f32x8::from_slice(token, &in_m1[x..]);
+            let bot1 = f32x8::from_slice(token, &in_p1[x..]);
             let r_sum = left1 + right1 + top1 + bot1;
 
             // d: 4 diagonal at distance sqrt(2)
-            let tl1 = f32x8::from_slice(token, &input[r_m1 + x - 1..]);
-            let tr1 = f32x8::from_slice(token, &input[r_m1 + x + 1..]);
-            let bl1 = f32x8::from_slice(token, &input[r_p1 + x - 1..]);
-            let br1 = f32x8::from_slice(token, &input[r_p1 + x + 1..]);
+            let tl1 = f32x8::from_slice(token, &in_m1[x - 1..]);
+            let tr1 = f32x8::from_slice(token, &in_m1[x + 1..]);
+            let bl1 = f32x8::from_slice(token, &in_p1[x - 1..]);
+            let br1 = f32x8::from_slice(token, &in_p1[x + 1..]);
             let d_sum = tl1 + tr1 + bl1 + br1;
 
             // R: 4 orthogonal at distance 2
-            let left2 = f32x8::from_slice(token, &input[r_0 + x - 2..]);
-            let right2 = f32x8::from_slice(token, &input[r_0 + x + 2..]);
-            let top2 = f32x8::from_slice(token, &input[r_m2 + x..]);
-            let bot2 = f32x8::from_slice(token, &input[r_p2 + x..]);
+            let left2 = f32x8::from_slice(token, &in_0[x - 2..]);
+            let right2 = f32x8::from_slice(token, &in_0[x + 2..]);
+            let top2 = f32x8::from_slice(token, &in_m2[x..]);
+            let bot2 = f32x8::from_slice(token, &in_p2[x..]);
             let big_r_sum = left2 + right2 + top2 + bot2;
 
             // L: 8 knight's move neighbors
-            let l_a = f32x8::from_slice(token, &input[r_m1 + x - 2..]);
-            let l_b = f32x8::from_slice(token, &input[r_p1 + x - 2..]);
-            let l_c = f32x8::from_slice(token, &input[r_m1 + x + 2..]);
-            let l_d = f32x8::from_slice(token, &input[r_p1 + x + 2..]);
-            let l_e = f32x8::from_slice(token, &input[r_m2 + x - 1..]);
-            let l_f = f32x8::from_slice(token, &input[r_m2 + x + 1..]);
-            let l_g = f32x8::from_slice(token, &input[r_p2 + x - 1..]);
-            let l_h = f32x8::from_slice(token, &input[r_p2 + x + 1..]);
+            let l_a = f32x8::from_slice(token, &in_m1[x - 2..]);
+            let l_b = f32x8::from_slice(token, &in_p1[x - 2..]);
+            let l_c = f32x8::from_slice(token, &in_m1[x + 2..]);
+            let l_d = f32x8::from_slice(token, &in_p1[x + 2..]);
+            let l_e = f32x8::from_slice(token, &in_m2[x - 1..]);
+            let l_f = f32x8::from_slice(token, &in_m2[x + 1..]);
+            let l_g = f32x8::from_slice(token, &in_p2[x - 1..]);
+            let l_h = f32x8::from_slice(token, &in_p2[x + 1..]);
             let l_sum = l_a + l_b + l_c + l_d + l_e + l_f + l_g + l_h;
 
             // D: 4 corner at distance 2*sqrt(2)
-            let tl2 = f32x8::from_slice(token, &input[r_m2 + x - 2..]);
-            let tr2 = f32x8::from_slice(token, &input[r_m2 + x + 2..]);
-            let bl2 = f32x8::from_slice(token, &input[r_p2 + x - 2..]);
-            let br2 = f32x8::from_slice(token, &input[r_p2 + x + 2..]);
+            let tl2 = f32x8::from_slice(token, &in_m2[x - 2..]);
+            let tr2 = f32x8::from_slice(token, &in_m2[x + 2..]);
+            let bl2 = f32x8::from_slice(token, &in_p2[x - 2..]);
+            let br2 = f32x8::from_slice(token, &in_p2[x + 2..]);
             let big_d_sum = tl2 + tr2 + bl2 + br2;
 
             // Combine with FMA chains:
@@ -297,7 +332,7 @@ pub fn gaborish_5x5_impl(
                 ),
             );
 
-            let out_arr: &mut [f32; 8] = (&mut output[r_0 + x..r_0 + x + 8]).try_into().unwrap();
+            let out_arr: &mut [f32; 8] = (&mut out_row[x..x + 8]).try_into().unwrap();
             result.store(out_arr);
 
             x += 8;
@@ -305,7 +340,7 @@ pub fn gaborish_5x5_impl(
 
         // Scalar right border + remainder
         while x < width {
-            output[y * width + x] = scalar_pixel(x as isize, iy);
+            out_row[x] = scalar_pixel(x as isize, iy);
             x += 1;
         }
     }

@@ -462,6 +462,13 @@ impl VarDctEncoder {
         // Max flat_nz size: for DCT64x64, covered = 8×8, flat_len = 7*width+8
         let mut nz_flat_scratch = vec![0u8; 7 * width + 8];
 
+        // Env-dump probes are per-process constants for the duration of an
+        // encode; reading them per block paid ~45M Ir of getenv at 1 MP.
+        #[cfg(feature = "std")]
+        let qac_dump_path = std::env::var_os("JXL_QAC_DUMP");
+        #[cfg(feature = "std")]
+        let coeff_in_dump_enabled = std::env::var_os("JXL_COEFF_IN_DUMP").is_some();
+
         for by in start_by..end_by {
             for bx in start_bx..end_bx {
                 // Skip non-first blocks of multi-block transforms
@@ -748,8 +755,7 @@ impl VarDctEncoder {
                 // JXL_QAC_DUMP record (dct_coeffs[1] is overwritten by
                 // the roundtrip dequantization in Step 4).
                 #[cfg(feature = "std")]
-                let qac_pre_y: alloc::vec::Vec<f32> = if std::env::var_os("JXL_QAC_DUMP").is_some()
-                {
+                let qac_pre_y: alloc::vec::Vec<f32> = if qac_dump_path.is_some() {
                     dct_coeffs[1][..size].to_vec()
                 } else {
                     alloc::vec::Vec::new()
@@ -759,7 +765,7 @@ impl VarDctEncoder {
                 // (post-DCT, post-DC-extraction, pre-CfL on X/B) for the
                 // same probe blocks as the cjxl COEFFIN dump.
                 #[cfg(feature = "std")]
-                if std::env::var_os("JXL_COEFF_IN_DUMP").is_some()
+                if coeff_in_dump_enabled
                     && ((bx == 41 && by == 0)
                         || (bx == 22 && by == 5)
                         || (bx == 0 && by == 0)
@@ -916,7 +922,7 @@ impl VarDctEncoder {
                         super::quant::quant_weights(raw_strategy as usize, c)
                     };
                     #[cfg(feature = "std")]
-                    if std::env::var_os("JXL_COEFF_IN_DUMP").is_some() && bx == 41 && by == 0 {
+                    if coeff_in_dump_enabled && bx == 41 && by == 0 {
                         let mut ob = alloc::format!(
                             "QPAR {} {} c={} kind={} quant={} qac={:.9} qm_mul={:.9}\nQM",
                             bx,
@@ -1325,7 +1331,7 @@ impl VarDctEncoder {
                         super::quant::quant_weights(raw_strategy as usize, c)
                     };
                     #[cfg(feature = "std")]
-                    if std::env::var_os("JXL_COEFF_IN_DUMP").is_some() && bx == 41 && by == 0 {
+                    if coeff_in_dump_enabled && bx == 41 && by == 0 {
                         let mut ob = alloc::format!(
                             "QPAR {} {} c={} kind={} quant={} qac={:.9} qm_mul={:.9}\nQM",
                             bx,
@@ -1467,7 +1473,7 @@ impl VarDctEncoder {
                 // 3*size f32 (dct_coeffs post-CfL/post-Y-roundtrip) then
                 // 3*size i32 flat-quantized in cx*8-stride layout.
                 #[cfg(feature = "std")]
-                if let Some(path) = std::env::var_os("JXL_QAC_DUMP") {
+                if let Some(path) = &qac_dump_path {
                     use std::io::Write;
                     // Assemble the whole record in memory, then one
                     // locked write — per-word writes interleave across
@@ -1530,7 +1536,7 @@ impl VarDctEncoder {
                     let mut f = std::fs::OpenOptions::new()
                         .create(true)
                         .append(true)
-                        .open(&path)
+                        .open(path)
                         .unwrap();
                     f.write_all(&rec).unwrap();
                 }
