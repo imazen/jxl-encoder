@@ -56,6 +56,9 @@ rust-version = "1.93"
 # bitstreams whose modular global section is empty — the same bitstreams djxl
 # and jxl-rs already accept.
 [patch.crates-io]
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "633f71e9d0c8fc82cc29b58ffaa92d367d82f9f9" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "cabe3d06e8d31911bed3964d836aefc170bff1e8" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "cabe3d06e8d31911bed3964d836aefc170bff1e8" }
 jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
