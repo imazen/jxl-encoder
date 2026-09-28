@@ -4912,3 +4912,20 @@ Calibration CONFIG names this decoder era; older files refuse before encoding.
 [Registration and validation](benchmarks/zensim_decode_contract_2026-09-08.md).
 This repairs measurement consistency. The failed D model/allocation screen
 remains failed; decoder parity is not a spatial or model qualification pass.
+
+## Animation request contract — 2026-09-28
+
+`EncodeRequest::encode_animation` is the shared entry for metadata, limits,
+cancellation and color/sample signaling; configuration-only helpers delegate.
+Previously lossless animation dropped ICC, lossy integer linear/custom-gamma
+input followed the sRGB path, and lossy U16 alpha passed through an 8-bit mask.
+The regressions in `tests/animation_contract.rs` failed on those old paths.
+The full-range alpha samples now feed a matching-depth modular extra channel.
+
+Generate the 24 native lossless fixtures with `JXL_ANIMATION_ARTIFACTS=<dir>`
+and the `lossless_animation_preserves` test. Run
+`scripts/check-animation-libjxl.py --djxl <v0.12-djxl> <dir>` for the independent
+reference check. It requires libjxl 0.12 and verifies every RGB sample in three
+presentations per file against the authored integer formula (17×13 and
+511×259; 10/12/16 bits; sRGB/linear/PQ/HLG). The reference is validation-only.
+Reference commit a7a9c787341cf703dede03c2009fa460cae5e5df passed all 24 files.

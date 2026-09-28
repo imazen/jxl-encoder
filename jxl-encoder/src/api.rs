@@ -1800,12 +1800,10 @@ impl LosslessConfig {
         limits: Option<&Limits>,
         metadata: Option<&ImageMetadata<'_>>,
     ) -> Result<Vec<u8>> {
-        let codestream =
-            encode_animation_lossless(self, width, height, layout, animation, frames, limits)
-                .at()?;
-        crate::api::ingest::finish_animation_output(
-            codestream, width, height, layout, true, metadata, None,
-        )
+        let mut request = self.encode_request(width, height, layout);
+        request.limits = limits;
+        request.metadata = metadata;
+        request.encode_animation(animation, frames)
     }
 
     /// Encode a multi-frame animation with explicit resource [`Limits`].
@@ -5510,11 +5508,10 @@ impl LossyConfig {
         limits: Option<&Limits>,
         metadata: Option<&ImageMetadata<'_>>,
     ) -> Result<Vec<u8>> {
-        let codestream =
-            encode_animation_lossy(self, width, height, layout, animation, frames, limits).at()?;
-        crate::api::ingest::finish_animation_output(
-            codestream, width, height, layout, false, metadata, None,
-        )
+        let mut request = self.encode_request(width, height, layout);
+        request.limits = limits;
+        request.metadata = metadata;
+        request.encode_animation(animation, frames)
     }
 
     /// Encode a multi-frame animation with explicit resource [`Limits`].
@@ -5545,6 +5542,14 @@ impl LossyConfig {
 enum ConfigRef<'a> {
     Lossless(&'a LosslessConfig),
     Lossy(&'a LossyConfig),
+}
+
+struct LossyPixels {
+    linear_rgb: Vec<f32>,
+    alpha: Option<Vec<u8>>,
+    bit_depth_16: bool,
+    synthesised_black_u8: Option<Vec<u8>>,
+    synthesised_black_u16: Option<Vec<u16>>,
 }
 
 /// An encoding request — binds config + image dimensions + pixel layout.
@@ -5828,6 +5833,112 @@ impl<'a> ExtraChannel<'a> {
 }
 
 impl<'a> EncodeRequest<'a> {
+    /// Encode tightly packed, equally sized animation frames with this
+    /// request's color signaling, metadata, allocation limits and cancellation.
+    ///
+    /// Lossless frames retain their integer samples. Lossy input uses the same
+    /// transfer-function conversion as a still request; an ICC profile is
+    /// embedded as the output profile and does not itself transform input.
+    /// Use `with_color_encoding` to specify the lossy input interpretation.
+    /// Custom row strides, extra channels and automatic alpha association are
+    /// rejected; pack frames and select alpha association explicitly first.
+    #[track_caller]
+    pub fn encode_animation(
+        self,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+    ) -> Result<Vec<u8>> {
+        crate::error::check_stop(self.stop).map_err(at_from)?;
+        if animation.tps_numerator == 0 || animation.tps_denominator == 0 {
+            return Err(at!(EncodeError::InvalidInput {
+                message: "animation tick rate must be positive".into()
+            }));
+        }
+        if self.row_stride.is_some()
+            || !self.extra_channels.is_empty()
+            || self.premultiplied_alpha_mode == Some(PremultipliedAlphaMode::Auto)
+        {
+            return Err(at!(EncodeError::InvalidInput { message: "animation requires packed frames, no additional extra channels, and explicit alpha association".into() }));
+        }
+        if let Some(ref ce) = self.color_encoding {
+            crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
+        }
+        validate_metadata_sizes(
+            self.metadata.and_then(|m| m.icc_profile),
+            self.metadata.and_then(|m| m.exif),
+            self.metadata.and_then(|m| m.xmp),
+            self.metadata.and_then(|m| m.jumbf),
+        )?;
+        validate_tone_mapping_full(
+            self.intensity_target
+                .or_else(|| self.metadata.and_then(|m| m.intensity_target)),
+            self.min_nits
+                .or_else(|| self.metadata.and_then(|m| m.min_nits)),
+            self.relative_to_max_display
+                .or_else(|| self.metadata.and_then(|m| m.relative_to_max_display)),
+            self.linear_below
+                .or_else(|| self.metadata.and_then(|m| m.linear_below)),
+        )?;
+        validate_source_gamma(self.source_gamma)?;
+        validate_intrinsic_size(self.metadata.and_then(|m| m.intrinsic_size))?;
+        if let Some(bits) = self.bits_per_sample {
+            let storage_bits = if self.layout.is_16bit() { 16 } else { 8 };
+            if self.layout.source_bit_depth().0 || bits > storage_bits {
+                return Err(at!(EncodeError::InvalidInput {
+                    message: "animation sample precision must fit integer storage".into(),
+                }));
+            }
+            let max = (1_u32 << bits) - 1;
+            for frame in frames {
+                for chunk in frame.pixels.chunks(8192) {
+                    crate::error::check_stop(self.stop).map_err(at_from)?;
+                    let valid = if storage_bits == 16 {
+                        chunk
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .all(|b| u32::from(u16::from_ne_bytes([b[0], b[1]])) <= max)
+                    } else {
+                        chunk.iter().all(|&b| u32::from(b) <= max)
+                    };
+                    if !valid {
+                        return Err(at!(EncodeError::InvalidInput {
+                            message: "animation sample exceeds its declared precision".into(),
+                        }));
+                    }
+                }
+            }
+        }
+        let mut animation = animation.clone();
+        animation.premultiplied_alpha = match self.premultiplied_alpha_mode {
+            Some(PremultipliedAlphaMode::On) => true,
+            Some(PremultipliedAlphaMode::Off) => false,
+            _ => animation.premultiplied_alpha || self.premultiplied_alpha,
+        };
+        let (codestream, lossless) = match self.config {
+            ConfigRef::Lossless(cfg) => (
+                encode_animation_lossless(cfg, &self, &animation, frames)?,
+                true,
+            ),
+            ConfigRef::Lossy(cfg) => (
+                encode_animation_lossy(cfg, &self, &animation, frames)?,
+                false,
+            ),
+        };
+        crate::error::check_stop(self.stop).map_err(at_from)?;
+        let output = crate::api::ingest::finish_animation_output(
+            codestream,
+            self.width,
+            self.height,
+            self.layout,
+            lossless,
+            self.metadata,
+            self.brotli_metadata_quality,
+        )?;
+        crate::error::check_stop(self.stop).map_err(at_from)?;
+        Ok(output)
+    }
+
     /// Attach image metadata (ICC, EXIF, XMP).
     pub fn with_metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
         self.metadata = Some(meta);
@@ -7343,52 +7454,38 @@ impl<'a> EncodeRequest<'a> {
 
     // ── Lossy path ──────────────────────────────────────────────────────
 
-    fn encode_lossy(
+    fn prepare_lossy_pixels(
         &self,
         cfg: &LossyConfig,
         pixels: &[u8],
-        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
-    ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
-        // Chroma subsampling gate (issue #47).
-        //
-        // - Chunk 3: signal-only. All non-Full444 modes returned
-        //   InvalidConfig.
-        // - Chunk 4: Sub420 routed through the JPEG-shaped pipeline
-        //   in `vardct::chroma_subsampling` (RGB → YCbCr+420 via
-        //   zenyuv → forward-DCT8 → integer quantize → reuse
-        //   `crate::jpeg::encode_jpeg_to_jxl`).
-        // - Chunk 5 (this change): Sub422 and Sub440 join Sub420 on
-        //   the same JPEG-shaped path. Chroma downsampling for the
-        //   single-axis modes goes through a small box-filter tail on
-        //   top of zenyuv's 4:4:4 SIMD encode (zenyuv 0.1.3 has no
-        //   dedicated 4:2:2 / 4:4:0 kernels; a future zenyuv release
-        //   can swap in here without API change).
-        //
-        // The subsampled paths only fire when BOTH `chroma-subsampling`
-        // and `jpeg-reencoding` features are compiled in; without
-        // them the InvalidConfig fallback still ships.
-        #[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
-        if !cfg.chroma_subsampling.is_full() {
-            return self.encode_lossy_sub_via_jpeg_path(cfg, pixels);
-        }
-        if !cfg.chroma_subsampling.is_full() {
-            return Err(EncodeError::InvalidConfig {
-                message: format!(
-                    "chroma subsampling {} requires `do_ycbcr=true` + \
-                     per-channel block grids. The subsampled lossy path \
-                     requires both `chroma-subsampling` and \
-                     `jpeg-reencoding` cargo features.",
-                    cfg.chroma_subsampling.tag(),
-                ),
-            });
-        }
-        let w = self.width as usize;
-        let h = self.height as usize;
-
+        w: usize,
+        h: usize,
+    ) -> core::result::Result<LossyPixels, EncodeError> {
         // Build linear f32 RGB and extract alpha from input layout.
         // Grayscale layouts are expanded to RGB (R=G=B) for VarDCT encoding.
         // When source_gamma is set, use gamma linearization instead of sRGB TF.
-        let gamma = self.source_gamma;
+        let gamma = self.source_gamma.or_else(|| {
+            self.color_encoding.as_ref().and_then(|ce| {
+                ce.gamma.or(match ce.transfer_function {
+                    crate::headers::color_encoding::TransferFunction::Linear => Some(1.0),
+                    crate::headers::color_encoding::TransferFunction::Dci => Some(1.0 / 2.6),
+                    _ => None,
+                })
+            })
+        });
+        if !self.layout.is_f32()
+            && !self.layout.is_f16()
+            && gamma.is_none()
+            && self.color_encoding.as_ref().is_some_and(|ce| {
+                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Unknown
+            })
+        {
+            return Err(EncodeError::InvalidInput {
+                message:
+                    "lossy integer input needs a known transfer function or explicit source gamma"
+                        .into(),
+            });
+        }
         // Configurable bits_per_sample for u16 input (closes that
         // sub-feature of #18). Default 65535 = full 16-bit precision;
         // override via with_bits_per_sample(N) so 10/12/14-bit data
@@ -7833,6 +7930,65 @@ impl<'a> EncodeRequest<'a> {
                 apply_hlg_forward_ootf(&mut linear_rgb, hlg_ootf_luminances(primaries), g);
             }
         }
+
+        Ok(LossyPixels {
+            linear_rgb,
+            alpha,
+            bit_depth_16,
+            synthesised_black_u8,
+            synthesised_black_u16,
+        })
+    }
+
+    fn encode_lossy(
+        &self,
+        cfg: &LossyConfig,
+        pixels: &[u8],
+        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
+    ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
+        // Chroma subsampling gate (issue #47).
+        //
+        // - Chunk 3: signal-only. All non-Full444 modes returned
+        //   InvalidConfig.
+        // - Chunk 4: Sub420 routed through the JPEG-shaped pipeline
+        //   in `vardct::chroma_subsampling` (RGB → YCbCr+420 via
+        //   zenyuv → forward-DCT8 → integer quantize → reuse
+        //   `crate::jpeg::encode_jpeg_to_jxl`).
+        // - Chunk 5 (this change): Sub422 and Sub440 join Sub420 on
+        //   the same JPEG-shaped path. Chroma downsampling for the
+        //   single-axis modes goes through a small box-filter tail on
+        //   top of zenyuv's 4:4:4 SIMD encode (zenyuv 0.1.3 has no
+        //   dedicated 4:2:2 / 4:4:0 kernels; a future zenyuv release
+        //   can swap in here without API change).
+        //
+        // The subsampled paths only fire when BOTH `chroma-subsampling`
+        // and `jpeg-reencoding` features are compiled in; without
+        // them the InvalidConfig fallback still ships.
+        #[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
+        if !cfg.chroma_subsampling.is_full() {
+            return self.encode_lossy_sub_via_jpeg_path(cfg, pixels);
+        }
+        if !cfg.chroma_subsampling.is_full() {
+            return Err(EncodeError::InvalidConfig {
+                message: format!(
+                    "chroma subsampling {} requires `do_ycbcr=true` + \
+                     per-channel block grids. The subsampled lossy path \
+                     requires both `chroma-subsampling` and \
+                     `jpeg-reencoding` cargo features.",
+                    cfg.chroma_subsampling.tag(),
+                ),
+            });
+        }
+        let w = self.width as usize;
+        let h = self.height as usize;
+
+        let LossyPixels {
+            mut linear_rgb,
+            alpha,
+            bit_depth_16,
+            synthesised_black_u8,
+            synthesised_black_u16,
+        } = self.prepare_lossy_pixels(cfg, pixels, w, h)?;
 
         // W44-35: cheap smooth-photo auto-detect on the raw sRGB u8
         // input (when applicable) feeds the DCT64 admission gate via

@@ -127,12 +127,12 @@ cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "
 # cvvdp-fork Phase 5 (2026-05-24): CPU CVVDP backend for the perceptual
 # quantization loop. Opt-in via the `cvvdp-loop-cpu` cargo feature.
 # Pure Rust, no CUDA, no SIMD intrinsics — runs anywhere. `publish = false`
-# so path-pinned directly here. 2026-05-27: zenmetrics renamed the crate
+# so Git-pinned directly here. 2026-05-27: zenmetrics renamed the crate
 # `cvvdp-cpu` → package `cvvdp` (dir + package); keep the jxl-encoder dep
 # NAME `cvvdp-cpu` (so `dep:cvvdp-cpu` + `cvvdp_cpu::` source are unchanged)
 # via `package = "cvvdp"`. Default features include `std` + `parallel` for
 # the rayon-backed per-band fan-out (matches the buttloop's rayon usage).
-cvvdp-cpu = { package = "cvvdp", version = "0.1.0", path = "../../zenmetrics/crates/cvvdp", default-features = false, features = ["std", "parallel"], optional = true }
+cvvdp-cpu = { package = "cvvdp", version = "0.1.0", git = "https://github.com/imazen/zenmetrics", rev = "0a61830db89a768ab9462f166d1412e948e4efa9", default-features = false, features = ["std", "parallel"], optional = true }
 
 [features]
 # W44-231 learned qf-seed sub-band admission (see vardct/learned_admission.rs)
@@ -402,7 +402,7 @@ anyhow = "1"
 # Native PNG IO for canonical targeting/intervention instruments.
 zenpng = { version = "=0.1.4", default-features = false }
 # Shared Rust target controller/calibration; native adapters stay in this repo.
-zensim-target = { path = "../../zensim/zensim-target", default-features = false }
+zensim-target = { git = "https://github.com/imazen/zensim", rev = "0badd3669704549294b855d5ec36cb837f349016", default-features = false }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 # Transitive-version pin (#82), NOT used directly. `brotli` (a dev-dep via
@@ -445,7 +445,7 @@ zenjpeg = { version = "0.9.0", default-features = false, features = ["parallel"]
 zenjxl-decoder = { version = "0.3.8", features = ["jpeg"] }
 # Current decoder for canonical delivered RGB8 and JPEG reconstruction.
 # The jpeg feature includes the standalone restart writer fix (#120).
-zensim-decoder = { package = "zenjxl-decoder", path = "../../zenjxl-decoder/zenjxl-decoder", features = ["jpeg"] }
+zensim-decoder = { package = "zenjxl-decoder", git = "https://github.com/imazen/zenjxl-decoder", rev = "426f179be58fbf7943e6030164c29b261eb290f1", features = ["jpeg"] }
 # Microbench harness for the chunk-1 SplitTreeSamples primitive (issue #40).
 # zenbench is the workspace-standard benchmarking tool — interleaved sampling
 # and paired statistics give cleaner signal than criterion's isolated rounds.
@@ -488,7 +488,7 @@ fastrand = "2.4.1"
 # `examples/dct64_smart_dispatch_calibrate.rs` + `dct64_smart_dispatch_proxy_calibrate.rs`
 # (W44-35 calibration for the smooth-photo DCT64 admission detector),
 # and the picker-oracle calibration harnesses. Out of CI; re-add locally with:
-#   zenanalyze = { path = "../../zenanalyze", features = ["experimental"] }
+#   zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "6bbcacb11313923ded6e5eeebb725878c5736453", features = ["experimental"] }
 # alongside a [[example]] block for the sweep, then revert before pushing.
 
 # Standard examples (autoexamples is disabled above; list each explicitly).

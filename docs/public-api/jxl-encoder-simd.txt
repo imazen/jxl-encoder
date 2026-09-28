@@ -6,33 +6,40 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: jxl-encoder-simd.txt 170 lines (supported surface) | jxl-encoder-simd.features.txt 0 added (features: avx512,std) | jxl-encoder-simd.internal.txt 1 lines (1 hidden + 0 excluded-feature)
+# files: jxl-encoder-simd.txt 188 lines (supported surface) | jxl-encoder-simd.features.txt 0 added (features: avx512,std) | jxl-encoder-simd.internal.txt 15 lines (16 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 1
-#   pub types (struct/enum/trait/alias)         1
-#   pub consts/statics                          5
-#   free functions                            155
+#   pub types (struct/enum/trait/alias)         2
+#   pub consts/statics                          6
+#   free functions                            166
 #   struct fields                               4
+#   enum variants                               4
 #   re-exports                                  2
-#   trait roster entries (type × trait)         3
-#   auto-trait-complete types                   1
+#   trait roster entries (type × trait)         8
+#   auto-trait-complete types                   2
 #
 # per-module pub lines:
-#   (root)                          168
+#   (root)                          185
 
-## items (168 lines)
+## items (185 lines)
 
 pub mod jxl_encoder_simd
 pub use SimdToken
 pub use X64V3Token
+pub enum XybCubeRoot
+pub XybCubeRoot::Libjxl
+pub XybCubeRoot::LibjxlUnfused
+pub XybCubeRoot::LowP
+pub XybCubeRoot::MidP
 pub struct EntropyCoeffResult
 pub EntropyCoeffResult::entropy_sum: f32
 pub EntropyCoeffResult::info_loss2_sum: f32
 pub EntropyCoeffResult::info_loss_sum: f32
 pub EntropyCoeffResult::nzeros_sum: f32
 pub const EntropyCoeffResult::ZERO: Self
+pub const K_MIN_SIGMA: f32
 pub const NEWTON_EPS_DEFAULT: f32
 pub const NEWTON_EPS_LIBJXL: f32
 pub const NEWTON_MAX_ITERS_DEFAULT: usize
@@ -51,6 +58,10 @@ pub fn compute_mask1x1_scalar(&[f32], usize, usize, &mut [f32])
 pub fn compute_pre_erosion(&[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
 pub fn compute_pre_erosion_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
 pub fn compute_pre_erosion_scalar(&[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
+pub fn dct2x2_from_pixels(&[f32; 64], &mut [f32; 64])
+pub fn dct2x2_from_pixels_scalar(&[f32; 64], &mut [f32; 64])
+pub fn dct2x2_to_pixels(&[f32; 64], &mut [f32; 64])
+pub fn dct2x2_to_pixels_scalar(&[f32; 64], &mut [f32; 64])
 pub fn dct_16x16(&[f32; 256], &mut [f32; 256])
 pub fn dct_16x16_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32; 256], &mut [f32; 256])
 pub fn dct_16x16_scalar(&[f32; 256], &mut [f32; 256])
@@ -110,8 +121,8 @@ pub fn estimate_bits_u32(&[u32], u32) -> f64
 pub fn fast_log2f(f32) -> f32
 pub fn fast_pow2f(f32) -> f32
 pub fn fast_powf(f32, f32) -> f32
-pub fn forward_xyb_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
-pub fn forward_xyb_scalar(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn forward_xyb_avx2(archmage::tokens::generated::x86::X64V3Token, XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn forward_xyb_scalar(XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
 pub fn fused_dct8_entropy(&[f32], usize, usize, usize, &[f32; 64], &[f32; 64], &[f32; 64], f32, f32, f32, &mut [f32; 64], core::option::Option<&mut [f32; 64]>) -> EntropyCoeffResult
 pub fn fused_dct8_entropy_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32], usize, usize, usize, &[f32; 64], &[f32; 64], &[f32; 64], f32, f32, f32, &mut [f32; 64], core::option::Option<&mut [f32; 64]>) -> EntropyCoeffResult
 pub fn fused_dct8_entropy_fallback(&[f32], usize, usize, usize, &[f32; 64], &[f32; 64], &[f32; 64], f32, f32, f32, &mut [f32; 64], core::option::Option<&mut [f32; 64]>) -> EntropyCoeffResult
@@ -120,6 +131,7 @@ pub fn gab_smooth_channel(&mut [f32], &mut [f32], usize, usize, f32, f32, f32)
 pub fn gab_smooth_scalar(&mut [f32], &[f32], usize, usize, f32, f32, f32)
 pub fn gaborish_5x5_avx2(archmage::tokens::generated::x86::X64V3Token, &mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
 pub fn gaborish_5x5_channel(&mut [f32], &mut [f32], usize, usize, f32, f32, f32, f32, f32, f32)
+pub fn gaborish_5x5_channel_libjxl(&mut [f32], &mut [f32], usize, usize, f32, f32, f32, f32, f32, f32)
 pub fn gaborish_5x5_scalar(&mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
 pub fn idct_16x16(&[f32; 256], &mut [f32; 256])
 pub fn idct_16x16_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32; 256], &mut [f32; 256])
@@ -160,6 +172,10 @@ pub fn idct_8x4_full_scalar(&[f32; 64], &mut [f32; 64])
 pub fn idct_8x8(&[f32; 64], &mut [f32; 64])
 pub fn idct_8x8_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32; 64], &mut [f32; 64])
 pub fn idct_8x8_scalar(&[f32; 64], &mut [f32; 64])
+pub fn identity_from_pixels(&[f32; 64], &mut [f32; 64])
+pub fn identity_from_pixels_scalar(&[f32; 64], &mut [f32; 64])
+pub fn identity_to_pixels(&[f32; 64], &mut [f32; 64])
+pub fn identity_to_pixels_scalar(&[f32; 64], &mut [f32; 64])
 pub fn inverse_xyb_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32], &[f32], &[f32], &mut [f32], usize)
 pub fn inverse_xyb_planar_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
 pub fn inverse_xyb_planar_scalar(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
@@ -167,7 +183,7 @@ pub fn inverse_xyb_scalar(&[f32], &[f32], &[f32], &mut [f32], usize)
 pub fn is_finite_plane(&[f32]) -> bool
 pub fn is_finite_plane_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32]) -> bool
 pub fn is_finite_plane_scalar(&[f32]) -> bool
-pub fn linear_rgb_to_xyb_batch(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32])
+pub fn linear_rgb_to_xyb_batch(XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32])
 pub fn pad_plane(&[f32], usize, usize, usize) -> alloc::vec::Vec<f32>
 pub fn per_block_modulations(&[f32], &[f32], &[f32], usize, f32, f32, usize, usize, usize, usize, &mut [f32], usize)
 pub fn per_block_modulations_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32], &[f32], &[f32], usize, f32, f32, usize, usize, usize, usize, &mut [f32], usize)
@@ -176,7 +192,9 @@ pub fn pixel_domain_loss(&[f32], &[f32], usize, usize, f32, usize, usize) -> f64
 pub fn pixel_domain_loss_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32], &[f32], usize, usize, f32, usize, usize) -> f64
 pub fn pixel_domain_loss_scalar(&[f32], &[f32], usize, usize, f32, usize, usize) -> f64
 pub fn quantize_block_dct8(&[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
+pub fn quantize_block_dct8_libjxl(&[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
 pub fn quantize_block_large(&[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
+pub fn quantize_block_large_libjxl(&[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
 pub fn quantize_dct8_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
 pub fn quantize_dct8_scalar(&[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
 pub fn quantize_large_avx2(archmage::tokens::generated::x86::X64V3Token, &[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
@@ -193,10 +211,11 @@ pub fn vec_f32_dirty(usize) -> alloc::vec::Vec<f32>
 pub fn xyb_to_linear_rgb_batch(&[f32], &[f32], &[f32], &mut [f32], usize)
 pub fn xyb_to_linear_rgb_planar(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
 
-## trait impls (1 types)
+## trait impls (2 types)
 
 EntropyCoeffResult: Clone, Copy, Debug
+XybCubeRoot: Clone, Copy, Debug, Eq, PartialEq
 
 ## auto traits
 
-1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

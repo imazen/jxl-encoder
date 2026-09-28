@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Animation request contract
+
+- `EncodeRequest::encode_animation` applies the same metadata, color encoding,
+  sample precision, limits, and cancellation controls as still-image requests.
+  Existing configuration animation methods delegate to this entry point.
+- Preserve ICC profiles, 10/12/16-bit modular samples, HDR color signaling, and
+  full 10/12/16-bit alpha in lossy animation. Apply declared linear and custom
+  gamma input transfer functions before the lossy XYB transform.
+- Reject zero animation clocks, out-of-range sample codes, and unsupported
+  custom extra-channel/stride requests before encoding.
+- Animation fixtures cover odd and multiple-group dimensions and are checked
+  against both Rust decoders and the pinned libjxl 0.12 reference. Dependencies
+  used by standalone validation now use portable Git revisions.
+
 ### QUEUED BREAKING CHANGES
 - `EncoderImprovementsCustom` gains `lossless_lz77_keep_best`; exhaustive struct literals must supply it or use `..Default::default()` (`4e1d70a6`).
 

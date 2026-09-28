@@ -1938,7 +1938,9 @@ impl VarDctEncoder {
         extras: &[super::extras::VardctExtra<'_>],
         frame_options: &FrameOptions,
         writer: &mut BitWriter,
+        stop: Option<&dyn enough::Stop>,
     ) -> Result<[u32; 19]> {
+        crate::error::check_stop(stop)?;
         // Reuse the full encode pipeline from encode() but write to an existing writer.
         // This duplicates some setup from encode(), but keeps the code paths separate.
         let xsize_blocks = div_ceil(width, BLOCK_DIM);
@@ -2637,6 +2639,7 @@ impl VarDctEncoder {
             )?;
         }
 
+        crate::error::check_stop(stop)?;
         let mut transform_out = self.transform_and_quantize(
             &xyb_x,
             &xyb_y,
@@ -2648,7 +2651,7 @@ impl VarDctEncoder {
             &mut quant_field,
             &cfl_map,
             &ac_strategy,
-            None,
+            stop,
         )?;
 
         // W44-AUDIT-8 Phase 7: same libjxl nl_dc QuantizeWP shape the
@@ -2790,9 +2793,10 @@ impl VarDctEncoder {
             None, // No splines in animation frames
             None, // No LfFrame in animation frames
             writer,
-            None,
+            stop,
         )?;
 
+        crate::error::check_stop(stop)?;
         Ok(strategy_counts)
     }
 
