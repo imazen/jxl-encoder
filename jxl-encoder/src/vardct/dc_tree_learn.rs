@@ -1091,6 +1091,15 @@ fn find_best_split_variable_incremental(
     let mut total_per_pred = vec![0u32; p];
     let mut extra_bits_total = vec![0.0f64; p];
 
+    // Per-token extra-bits table — `eb_delta` is a pure function of `tok`
+    // ((tok-16)/3 + 2.0). Hoisting the div + f64 conversion out of the
+    // per-(sample,pred) loops keeps the accumulated f64 values identical
+    // while cutting ~6 ops per lookup.
+    let mut eb_of_tok = vec![0.0f64; s];
+    for (tok, e) in eb_of_tok.iter_mut().enumerate().skip(GATHER_SPLIT as usize) {
+        *e = ((tok as u32 - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN)) as f64 + 2.0;
+    }
+
     for (pred_slot, &pred_id) in pred_indices.iter().enumerate() {
         let pred = pred_id as usize;
         let tokens = &samples.residual_tokens_per_predictor[pred];
@@ -1104,11 +1113,7 @@ fn find_best_split_variable_incremental(
             // HybridUint {4,1,2} extra bits — must match
             // `estimate_subset_cost_per_predictor` exactly so the per-side
             // costs sum back to the parent's base_per_pred values.
-            if tok >= GATHER_SPLIT {
-                let n_minus_split_exp =
-                    (tok - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN);
-                eb += (n_minus_split_exp as f64) + 2.0;
-            }
+            eb += eb_of_tok[tok as usize];
         }
         total_per_pred[pred_slot] = total;
         extra_bits_total[pred_slot] = eb;
@@ -1268,14 +1273,9 @@ fn find_best_split_variable_incremental(
                     total_above[pred_slot] -= 1;
                     // Match `estimate_subset_cost_per_predictor` extra-bits
                     // formula exactly.
-                    let tok_u32 = tok as u32;
-                    if tok_u32 >= GATHER_SPLIT {
-                        let n_minus_split_exp =
-                            (tok_u32 - GATHER_SPLIT) / (GATHER_MSB_IN_TOKEN + GATHER_LSB_IN_TOKEN);
-                        let eb_delta = (n_minus_split_exp as f64) + 2.0;
-                        eb_below[pred_slot] += eb_delta;
-                        eb_above[pred_slot] -= eb_delta;
-                    }
+                    let eb_delta = eb_of_tok[tok];
+                    eb_below[pred_slot] += eb_delta;
+                    eb_above[pred_slot] -= eb_delta;
                 }
                 cursor += 1;
             }
