@@ -317,3 +317,29 @@ Remaining real trade: sectioned's +3-4% byte penalty at e8/e9 is the
 price of −50% wall; hybrid pays +20% wall to shave the screenshot side
 of it. No free knob left — the next wall step needs either a cheaper
 tree learner or accepting sectioned's byte cost.
+
+## 2026-09-29 PM3 — lossy-path codegen: gaussian5 + DC eb-table
+
+Callgrind d3e7 512px (pre-change): `gaussian_separable_5_horizontal`
+6.5% Ir — scalar 5-tap blur run ~13x/encode by dot detection (d>=3,
+e>=7, no patches). Callgrind d1e9 4K: DC `find_best_split_variable_
+incremental` ~12.6%, LZ77 `find_match` ~7%, butteraugli internals ~15%
+(external crate), memset ~3%.
+
+**Landed `21afccba`** — `jxl-encoder-simd::gaussian5_{h,v}` magetypes
+kernels (v4/v3/neon/wasm128 + scalar fallback). Lane-pure mul/add, no
+FMA, identical expression tree -> bit-identical on every tier; edges +
+tiny images stay scalar. Scalar-vs-dispatch equality test across token
+permutations + 12 boundary sizes. Measured: byte-identical on all
+inputs; d3e7 wall −4..8% on 4K, ~neutral at 512px.
+
+**Landed `cb9cf62a`** — per-token `eb_of_tok` table in DC split search
+(replaces (tok-16)/3 f64-div chain per sample×pred — pure function of
+tok, order-preserved). ~−1.3% frymire d1e9; byte-identical.
+
+**Probed, negative:** LZ77 match-extend block compare (8×u32 slice eq)
+— byte-identical but wall-neutral on checker1/pal150/windows95; the
+early-match-mismatch path dominates and scalar head didn't recover it.
+Reverted. ALSO: an earlier stale-baseline reading ("lz77 −35%",
+"lossless +20%") turned out to be the pre-hybrid-default binary
+difference, not the patch — lesson: always A/B same-build±patch.
