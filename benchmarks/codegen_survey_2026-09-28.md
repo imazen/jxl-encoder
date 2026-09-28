@@ -357,9 +357,17 @@ preserved. Byte-identical; −1..4% e9 wall on wiki/frymire/4K.
 
 **Probed, negative:** DCT/IDCT batch `v = [f32xN::zero(token); K]`
 dead zero-inits (~100 sites across dct16/32/64 + idct16/32/64).
-`core::array::from_fn(|j| fill)` removes the memset but per-element
-closure codegen regresses ~+2% wall on frymire/imac_dark d1e9 —
-stack memsets were already L1-cheap. Reverted.
+`core::array::from_fn(|j| fill)` removes the memset. First read
+(8 cells) showed +2%; **wide retest (8 imgs x 2 efforts incl.
+screenshots/periodic/strips/16-bit) = wall-neutral** — both reads
+were layout noise either side of zero. Reverted anyway: 104 sites
+of churn for unmeasurable gain isn't worth it.
+
+**Probed, negative (wide retest):** `ACCUM_4WAY_MIN_RUN` 256→64 +
+`FBS_ACCUM_PAR_MIN_ROWS` 64K→8K — byte-identical everywhere but
+big_mix e9 **+5-10% wall** across 3 reps (short/mid-run 4-way merge
+overhead is real on big images); wiki −2% doesn't compensate.
+Confirmed negative on the wider corpus.
 
 ## 2026-09-29 PM4 — archmage-audit lint (tools vendored)
 
@@ -369,10 +377,14 @@ idiom violations). Run: `archmage-audit jxl-encoder-simd/src
 jxl-encoder/src --lint`. Result: 243 findings, classified:
 
 - `arcane-could-be-rite` ×21 (hot dct/idct batch + gather_col helpers —
-  trampoline "dead" because all callers are in-context). **Tested the
-  whole class: net ~+2% wall REGRESSION** — the arcane trampoline is a
-  beneficial inlining boundary, not waste. Reverted; documented so
-  nobody mass-converts on the lint alone.
+  trampoline "dead" because all callers are in-context). First narrow
+  read said +2% regression; **wide-corpus retest (10 imgs d1e9 + 4
+  d3e7: screenshots, photos, periodic, checker, noise, strips) =
+  wall-NEUTRAL** — the "regression" was layout noise. Landed as
+  `dcb46700` (idiom cleanup: dead dispatch wrappers gone,
+  byte-identical). LESSON: ±2% swings between same-build±patch runs
+  on this box are code-layout noise; single-sign consistency across
+  ~8 cells is NOT proof.
 - `incant-in-vanilla` ×15 — all entry-point dispatchers (correct:
   dispatch has to happen somewhere). Hoist only matters for
   per-element/per-block kernels inside hot loops — summon is ~1ns,
