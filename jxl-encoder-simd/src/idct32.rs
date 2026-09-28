@@ -356,7 +356,7 @@ fn scatter_col(
 /// Recursively calls `idct1d_16_core_batch` from `idct16.rs` for the two halves.
 /// Does NOT apply the *= 32 scaling factor — use `idct1d_32_batch` for the scaled version.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 pub(crate) fn idct1d_32_core_batch(
     token: archmage::X64V3Token,
@@ -404,7 +404,7 @@ pub(crate) fn idct1d_32_core_batch(
 /// `v[0..32]` holds positions 0-31 across 8 independent 1D transforms.
 /// Applies *= 32 scaling then delegates to `idct1d_32_core_batch`.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 pub(crate) fn idct1d_32_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 32]) {
     use magetypes::simd::f32x8;

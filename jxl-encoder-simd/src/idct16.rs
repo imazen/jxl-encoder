@@ -217,7 +217,7 @@ fn idct1d_16_scalar(mem: &mut [f32]) {
 
 /// Load column `j` from 8 consecutive rows starting at `base_row` in `data` (stride 16).
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn gather_col(
     token: archmage::X64V3Token,
@@ -255,7 +255,7 @@ fn scatter_col(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, j: 
 ///
 /// `v` holds [v0, v1, v2, v3] representing positions 0-3 across 8 lanes.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn idct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4]) {
     use magetypes::simd::f32x8;
@@ -298,7 +298,7 @@ fn idct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 
 ///
 /// `v` holds [v0..v7] representing positions 0-7 across 8 lanes.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn idct1d_8_core_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8]) {
     use magetypes::simd::f32x8;
@@ -343,7 +343,7 @@ fn idct1d_8_core_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f3
 ///
 /// `v` holds [v0..v15] representing positions 0-15 across 8 lanes.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 pub(crate) fn idct1d_16_core_batch(
     token: archmage::X64V3Token,
@@ -409,7 +409,7 @@ pub(crate) fn idct1d_16_core_batch(
 ///
 /// `v` holds [v0..v15] representing positions 0-15 across 8 lanes.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 pub(crate) fn idct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
     use magetypes::simd::f32x8;
@@ -565,7 +565,7 @@ fn idct1d_8_scalar(mem: &mut [f32]) {
 
 /// Load column `j` from 8 consecutive rows starting at `base_row` in `data` (stride 8).
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn gather_col_s8(
     token: archmage::X64V3Token,
@@ -603,7 +603,7 @@ fn scatter_col_s8(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, 
 ///
 /// `v` holds [v0..v7] representing positions 0-7 across 8 lanes.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn idct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8]) {
     use magetypes::simd::f32x8;

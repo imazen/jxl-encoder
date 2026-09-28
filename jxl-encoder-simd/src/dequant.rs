@@ -252,7 +252,7 @@ pub fn dequant_dct8_avx2(
 ///   else: result = q - 0.145/q
 ///   output = result * weight / (qac * qm_mul)
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn dequant_8_avx2(

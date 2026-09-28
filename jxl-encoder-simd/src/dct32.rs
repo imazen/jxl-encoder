@@ -309,7 +309,7 @@ fn scatter_col(
 /// `v[0..32]` holds positions 0-31 across 8 independent 1D transforms.
 /// Recursively calls `dct1d_16_batch` from `dct16.rs` for the two halves.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 pub(crate) fn dct1d_32_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 32]) {
     use magetypes::simd::f32x8;

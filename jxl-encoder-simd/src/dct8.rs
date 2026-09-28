@@ -380,7 +380,7 @@ pub fn idct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mu
 /// The butterfly operates across registers (cross-position), processing
 /// all 8 DCTs simultaneously via SIMD element-wise operations.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn vectorized_dct1d_8(
     token: archmage::X64V3Token,
@@ -490,7 +490,7 @@ pub(crate) fn vectorized_dct1d_8(
 
 /// Vectorized 8-point inverse DCT butterfly.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn vectorized_idct1d_8(
     token: archmage::X64V3Token,

@@ -438,7 +438,7 @@ fn scatter_col(
 /// `v[0..64]` holds positions 0-63 across 8 independent 1D transforms.
 /// Recursively calls `idct1d_32_core_batch` from `idct32.rs` for the two halves.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 pub(crate) fn idct1d_64_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 64]) {
     use magetypes::simd::f32x8;
@@ -458,7 +458,7 @@ pub(crate) fn idct1d_64_batch(token: archmage::X64V3Token, v: &mut [magetypes::s
 /// `v[0..64]` holds positions 0-63 across 8 independent 1D transforms.
 /// Does NOT apply the *= 64 scaling factor.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 pub(crate) fn idct1d_64_core_batch(
     token: archmage::X64V3Token,

@@ -222,7 +222,7 @@ fn dct1d_16_scalar(mem: &mut [f32]) {
 
 /// Load column `j` from 8 consecutive rows starting at `base_row` in `data` (stride 16).
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn gather_col(
     token: archmage::X64V3Token,
@@ -260,7 +260,7 @@ fn scatter_col(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, j: 
 ///
 /// `v` holds [v0, v1, v2, v3] representing positions 0-3 across 8 lanes.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn dct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4]) {
     use magetypes::simd::f32x8;
@@ -301,7 +301,7 @@ fn dct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4
 ///
 /// `v` holds [v0..v7] representing positions 0-7 across 8 lanes.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8]) {
     use magetypes::simd::f32x8;
@@ -353,7 +353,7 @@ fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8
 ///
 /// `v` holds [v0..v15] representing positions 0-15 across 8 lanes.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
@@ -587,7 +587,7 @@ pub fn dct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
 
 /// Load column `j` from 8 consecutive rows starting at `base_row` in `data` (stride 8).
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
+#[archmage::rite]
 #[inline(always)]
 fn gather_col_s8(
     token: archmage::X64V3Token,
