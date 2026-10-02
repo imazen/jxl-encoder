@@ -3111,6 +3111,36 @@ impl VarDctEncoder {
             learned_dc_state = None;
             merged_dc_state = None;
             global_stream_state = None;
+        } else if self.profile.decoding_speed_tier >= 1
+            && !self.extras_global_stream_eligible(extras, width, height, num_dc_groups)
+        {
+            // `--faster_decoding` >= 1: libjxl overrides the DC stream's tree
+            // kind with `kGradientFixedDC` at every effort
+            // (`enc_modular.cc:1604-1607`): the fixed gradient-property tree
+            // with Gradient leaves, which decoders read through a
+            // gradient-lookup fast path instead of a learned or
+            // weighted-predictor tree. It is tokenized through the learned-tree
+            // path, which computes the gradient property and per-leaf
+            // predictors. Frames whose extra channels go to the global stream
+            // keep the paths below (that stream is only wired there).
+            let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
+            let (gradient_tree, gradient_num_contexts) =
+                super::dc_tree_learn::build_gradient_fixed_dc_tree(total_dc_pixels, 8);
+            let (wrapped, num_ctx, dc_remap, ctx_map) =
+                super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                    &gradient_tree,
+                    gradient_num_contexts,
+                    num_dc_groups,
+                    ac_meta_kind,
+                    self.profile.ma_root_split_2ndg,
+                );
+            learned_tree_tokens = Some(wrapped);
+            total_contexts = num_ctx;
+            ac_meta_ctx_map = ctx_map;
+            wp_dc_state = None;
+            learned_dc_state = Some((gradient_tree, dc_remap));
+            merged_dc_state = None;
+            global_stream_state = None;
         } else if self.profile.ac_meta_libjxl_tree
             && self.effort >= DC_TREE_VARIABLE_TRIAL_MIN_EFFORT
         {

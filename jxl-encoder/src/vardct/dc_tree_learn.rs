@@ -3058,6 +3058,29 @@ pub const WP_PROP_INDEX: i32 = 15;
 /// * `total_pixels` - total DC pixels (width_blocks * height_blocks * 3 channels)
 /// * `bitdepth` - bit depth of the DC values (typically 8)
 pub fn build_wp_fixed_dc_tree(total_pixels: usize, bitdepth: u32) -> (DcTree, u32) {
+    build_fixed_dc_tree(total_pixels, bitdepth, WP_PROP_INDEX, 6)
+}
+
+/// Property index of the gradient property (`left + top - topleft`),
+/// libjxl `kGradientProp`.
+pub const GRADIENT_PROP_INDEX: i32 = 9;
+
+/// Build the `kGradientFixedDC` tree: libjxl's `MakeFixedTree(kGradientProp,
+/// cutoffs, Predictor::Gradient, ...)` (`enc_encoding.cc:555-558`), the DC
+/// tree libjxl uses at `decoding_speed_tier >= 1`. Same cutoffs and shape as
+/// [`build_wp_fixed_dc_tree`], split on the gradient property, with Gradient
+/// leaves. Decoders take a gradient-lookup fast path for it.
+pub fn build_gradient_fixed_dc_tree(total_pixels: usize, bitdepth: u32) -> (DcTree, u32) {
+    build_fixed_dc_tree(total_pixels, bitdepth, GRADIENT_PROP_INDEX, 5)
+}
+
+/// libjxl `MakeFixedTree` on `property` with `predictor` leaves.
+fn build_fixed_dc_tree(
+    total_pixels: usize,
+    bitdepth: u32,
+    property: i32,
+    predictor: u32,
+) -> (DcTree, u32) {
     let log_px = if total_pixels > 0 {
         (usize::BITS - total_pixels.leading_zeros()) as usize // ceil_log2
     } else {
@@ -3081,6 +3104,8 @@ pub fn build_wp_fixed_dc_tree(total_pixels: usize, bitdepth: u32) -> (DcTree, u3
         cutoffs.len(),
         min_gap,
         mul,
+        property,
+        predictor,
         &mut tree,
         &mut next_context,
     );
@@ -3092,12 +3117,15 @@ pub fn build_wp_fixed_dc_tree(total_pixels: usize, bitdepth: u32) -> (DcTree, u3
 ///
 /// Mirrors libjxl's MakeFixedTree BFS queue, but builds in DFS order
 /// (our tree_tokens_with_ac_metadata_prefix handles the BFS conversion).
+#[allow(clippy::too_many_arguments)]
 fn build_wp_bsp_recursive(
     cutoffs: &[i32],
     begin: usize,
     end: usize,
     min_gap: usize,
     mul: i32,
+    property: i32,
+    predictor: u32,
     tree: &mut DcTree,
     next_context: &mut u32,
 ) -> usize {
@@ -3108,7 +3136,7 @@ fn build_wp_bsp_recursive(
         tree.push(DcTreeNode {
             property: -1,
             context_id: *next_context,
-            predictor: 6, // Predictor::Weighted
+            predictor,
             ..Default::default()
         });
         *next_context += 1;
@@ -3122,12 +3150,32 @@ fn build_wp_bsp_recursive(
     tree.push(DcTreeNode::default());
 
     // rchild = values > cutoff → covers [split+1, end)
-    let rchild = build_wp_bsp_recursive(cutoffs, split + 1, end, min_gap, mul, tree, next_context);
+    let rchild = build_wp_bsp_recursive(
+        cutoffs,
+        split + 1,
+        end,
+        min_gap,
+        mul,
+        property,
+        predictor,
+        tree,
+        next_context,
+    );
     // lchild = values <= cutoff → covers [begin, split)
-    let lchild = build_wp_bsp_recursive(cutoffs, begin, split, min_gap, mul, tree, next_context);
+    let lchild = build_wp_bsp_recursive(
+        cutoffs,
+        begin,
+        split,
+        min_gap,
+        mul,
+        property,
+        predictor,
+        tree,
+        next_context,
+    );
 
     tree[node_idx] = DcTreeNode {
-        property: WP_PROP_INDEX,
+        property,
         splitval: cutoff,
         lchild,
         rchild,

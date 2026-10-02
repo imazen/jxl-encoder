@@ -127,6 +127,7 @@ impl EffortProfile {
         // u8 (8), u16 (1), u32 (3), usize (3).
         [
             self.effort,
+            self.decoding_speed_tier,
             self.fine_grained_step,
             self.extra_dc_precision,
             self.nb_rcts_to_try,

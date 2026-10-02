@@ -2425,17 +2425,27 @@ fn test_faster_decoding_lossy_roundtrip_levels_0_2_4() {
     };
 
     let bytes0 = encode(0);
+    let bytes1 = encode(1);
     let bytes2 = encode(2);
+    let bytes3 = encode(3);
     let bytes4 = encode(4);
 
     eprintln!(
-        "faster_decoding lossy bytes: t0={} t2={} t4={}",
+        "faster_decoding lossy bytes: t0={} t1={} t2={} t3={} t4={}",
         bytes0.len(),
+        bytes1.len(),
         bytes2.len(),
+        bytes3.len(),
         bytes4.len(),
     );
 
-    for (tier, bytes) in [(0, &bytes0), (2, &bytes2), (4, &bytes4)] {
+    for (tier, bytes) in [
+        (0, &bytes0),
+        (1, &bytes1),
+        (2, &bytes2),
+        (3, &bytes3),
+        (4, &bytes4),
+    ] {
         let decoded = crate::test_helpers::decode_with_jxl_rs(bytes)
             .unwrap_or_else(|e| panic!("jxl-rs decode tier={} failed: {:?}", tier, e));
         assert_eq!(decoded.width, W as usize, "tier {} width", tier);
@@ -2470,12 +2480,17 @@ fn test_faster_decoding_profile_apply() {
     assert_eq!(p1.enhanced_clustering_vardct, base_enhanced);
     assert_eq!(p1.custom_orders, base_custom_orders);
 
-    // Tier 2.
+    // Tier 2: + no 64x32/32x64/64x64 transforms (libjxl
+    // `decoding_speed_tier_max_limit = 1` for the DCT64X32 merge).
     let mut p2 = p.clone();
     p2.apply_faster_decoding(2);
     assert!(!p2.lz77);
     assert!(!p2.enhanced_clustering_vardct);
     assert_eq!(p2.custom_orders, base_custom_orders);
+    assert!(!p2.try_dct64);
+    assert_eq!(p2.try_dct32, base_try_dct32);
+    assert_eq!(p2.decoding_speed_tier, 2);
+    assert_eq!(p0.decoding_speed_tier, 0);
 
     // Tier 3: + custom_orders off + threshold raised.
     let mut p3 = p.clone();
@@ -3656,6 +3671,60 @@ fn streaming_finish_rechecks_limits_attached_after_all_rows() {
             assert!(
                 matches!(lossless.with_limits(&limits).finish(), Err(e) if matches!(e.error(), EncodeError::LimitExceeded { .. }))
             );
+        }
+    }
+}
+
+/// EPF iterations by decoding speed tier follow libjxl v0.12
+/// `LoopFilterFromParams`: thresholds {0.7, 1.5, 4.0}, tier 2 skips the
+/// first, tier 3+ disables EPF. Checked through `compute_for_profile`, the
+/// encoder's entry point.
+#[test]
+fn test_faster_decoding_epf_iters_match_libjxl() {
+    use crate::effort::EffortProfile;
+    use crate::vardct::frame::DistanceParams;
+    // (distance, [tier 0, 1, 2, 3, 4])
+    let table: [(f32, [u32; 5]); 8] = [
+        (0.5, [0, 0, 0, 0, 0]),
+        (0.7, [1, 1, 0, 0, 0]),
+        (1.0, [1, 1, 0, 0, 0]),
+        (1.5, [2, 2, 1, 0, 0]),
+        (2.0, [2, 2, 1, 0, 0]),
+        (3.99, [2, 2, 1, 0, 0]),
+        (4.0, [3, 3, 2, 0, 0]),
+        (8.0, [3, 3, 2, 0, 0]),
+    ];
+    for (distance, expected) in table {
+        for (tier, want) in expected.iter().enumerate() {
+            let mut profile = EffortProfile::lossy(7, EncoderMode::Reference);
+            profile.apply_faster_decoding(tier as u8);
+            let params = DistanceParams::compute_for_profile(distance, &profile);
+            assert_eq!(params.epf_iters, *want, "distance {distance} tier {tier}");
+            let reencode =
+                DistanceParams::compute_for_profile_with_original(distance, 8.0, &profile);
+            assert_eq!(reencode.epf_iters, *want, "re-encode distance {distance} tier {tier}");
+        }
+    }
+}
+
+/// `kGradientFixedDC` is libjxl's `MakeFixedTree` on the gradient property
+/// with Gradient leaves: same balanced shape as the `kWPFixedDC` tree.
+#[test]
+fn test_gradient_fixed_dc_tree_shape() {
+    use crate::vardct::dc_tree_learn::{build_gradient_fixed_dc_tree, build_wp_fixed_dc_tree};
+    for total_pixels in [100usize, 5_000, 200_000] {
+        let (grad, grad_ctx) = build_gradient_fixed_dc_tree(total_pixels, 8);
+        let (wp, wp_ctx) = build_wp_fixed_dc_tree(total_pixels, 8);
+        assert_eq!(grad_ctx, wp_ctx, "{total_pixels} px");
+        assert_eq!(grad.len(), wp.len(), "{total_pixels} px");
+        for (g, w) in grad.iter().zip(wp.iter()) {
+            if g.property < 0 {
+                assert_eq!(g.predictor, 5, "Gradient leaf");
+                assert_eq!(w.property, -1);
+            } else {
+                assert_eq!(g.property, 9, "split on the gradient property");
+                assert_eq!((g.splitval, g.lchild, g.rchild), (w.splitval, w.lchild, w.rchild));
+            }
         }
     }
 }

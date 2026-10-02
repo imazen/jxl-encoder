@@ -606,6 +606,12 @@ pub struct EffortProfile {
     /// config trial (2026-08-29 ladder shift, issue #45).
     pub effort: u8,
 
+    /// libjxl `cparams.decoding_speed_tier` (`--faster_decoding`), set by
+    /// [`Self::apply_faster_decoding`]. Consulted where libjxl gates on the
+    /// tier directly rather than through a feature flag: the EPF iteration
+    /// count ([`crate::vardct::frame::DistanceParams::compute_for_profile`]).
+    pub decoding_speed_tier: u8,
+
     // ─── Feature flags ───────────────────────────────────────────────────
     /// Use ANS entropy coding instead of Huffman.
     pub use_ans: bool,
@@ -1592,6 +1598,7 @@ impl EffortProfile {
 
         Self {
             effort,
+            decoding_speed_tier: 0,
 
             // ── Feature flags ──
             use_ans: effort >= 3,
@@ -1966,6 +1973,7 @@ impl EffortProfile {
 
         Self {
             effort,
+            decoding_speed_tier: 0,
 
             // ── Feature flags ──
             use_ans: effort >= 3,
@@ -3217,36 +3225,38 @@ impl EffortProfile {
     /// 1..=N):
     ///
     /// - `0`: no-op (default).
-    /// - `1`: disable LZ77 backward references.
-    ///   - VarDCT: AC stream tokens no longer rate-search LZ77 (libjxl
-    ///     `enc_ans.cc:1372` flips `lz77_method = kNone` for VarDCT at
-    ///     `decoding_speed_tier >= 1`).
-    ///   - Modular: residual streams skip LZ77 (libjxl `enc_modular.cc`
-    ///     `cparams_.decoding_speed_tier >= 1` clamps the histogram-pass
-    ///     LZ77 method).
-    ///   - Modular DC stream switches to the fixed `kGradientFixedDC` tree
-    ///     (libjxl `enc_modular.cc:1600`) — handled by [`Self::tree_learning`]
-    ///     being false on the DC sub-stream below.
-    /// - `2`: tier 1 plus drop enhanced (pair-merge) histogram clustering
-    ///   for VarDCT. libjxl caps modular `max_histograms = 12` and forces
-    ///   `modular_group_size_shift = 0` at this tier; the group-size
-    ///   override is applied by the per-config getter
-    ///   ([`crate::api::LosslessConfig::effective_modular_group_size_shift`]),
-    ///   not on this profile.
-    /// - `3`: tier 2 plus drop custom coefficient orders. Decoders skip the
-    ///   per-block permutation lookup and use the fixed natural order
-    ///   (libjxl `enc_modular.cc:533` raises the tree-split threshold by
-    ///   `+10 * decoding_speed_tier` — captured here by lowering tree
-    ///   shape parameters).
-    /// - `4`: tier 3 plus simpler context tree + no patches/tree-learning
-    ///   pass on the modular path. libjxl also disables gaborish
-    ///   (`enc_frame.cc:280`), DCT32X32 (`enc_ac_strategy.cc:936`), and
-    ///   the `decoding_speed_tier_max_limit < 4` AC merges; mirrored here
-    ///   by flipping `gaborish` / `try_dct32` / `try_dct64`.
+    /// - `1`: disable LZ77 backward references (VarDCT AC tokens and modular
+    ///   residual streams), and code the VarDCT DC stream with libjxl's fixed
+    ///   `kGradientFixedDC` tree (`enc_modular.cc:1604-1607`; built by
+    ///   `vardct::dc_tree_learn::build_gradient_fixed_dc_tree`) instead of a
+    ///   learned or weighted-predictor tree. Frames whose extra channels use
+    ///   the global modular stream keep the previous DC tree.
+    ///   Not yet mirrored: libjxl's two-context block context map and the
+    ///   6-histogram AC cap at this tier (`enc_heuristics.cc:72`,
+    ///   `enc_frame.cc:1294`).
+    /// - `2`: tier 1 plus no enhanced (pair-merge) histogram clustering for
+    ///   VarDCT, no 64x32/32x64/64x64 transforms (`enc_ac_strategy.cc`), and
+    ///   EPF only from distance 1.5 up (`enc_frame.cc:335-341`, see
+    ///   `vardct::frame::epf_iters_for_tier`). libjxl also caps modular
+    ///   `max_histograms = 12` and forces `modular_group_size_shift = 0`; the
+    ///   group-size override is applied by
+    ///   [`crate::api::LosslessConfig::effective_modular_group_size_shift`].
+    /// - `3`: tier 2 plus no EPF, no custom coefficient orders (libjxl keeps
+    ///   them), and a higher tree-split threshold (`enc_modular.cc:533`,
+    ///   `+10 * decoding_speed_tier`).
+    /// - `4`: tier 3 plus no gaborish (`enc_frame.cc:320`), no DCT32X32
+    ///   (`enc_ac_strategy.cc:936`), and no patches or MA-tree learning on
+    ///   the modular path.
+    ///
+    /// Measured 2026-10-02 (M4 Pro, 4 CLIC photos, d1 e7, tier 4, zenjxl-
+    /// decoder): 74.8 -> 100.3 MP/s single-threaded and 275 -> 439 MP/s on 12
+    /// threads after the EPF and DC-tree changes, matching libjxl's tier-4
+    /// files (101.8 / 442), for 1.3% more bytes than before.
     ///
     /// Bitstream remains 100 % spec-valid at every tier — these are encoder
     /// choices the libjxl decoder reads natively.
     pub fn apply_faster_decoding(&mut self, tier: u8) {
+        self.decoding_speed_tier = tier;
         if tier == 0 {
             return;
         }
@@ -3254,11 +3264,17 @@ impl EffortProfile {
         if tier >= 1 {
             self.lz77 = false;
         }
-        // Tier 2: + disable enhanced (pair-merge) clustering for VarDCT.
+        // Tier 2: + disable enhanced (pair-merge) clustering for VarDCT, and
+        // the 64x32/32x64/64x64 transforms (libjxl `enc_ac_strategy.cc`
+        // `decoding_speed_tier_max_limit = 1` for the DCT64X32 merge, which
+        // also carries the 64x64 square search). EPF from distance 1.5 up
+        // (`epf_iters_for_tier`).
         if tier >= 2 {
             self.enhanced_clustering_vardct = false;
+            self.try_dct64 = false;
         }
-        // Tier 3: + drop custom coefficient orders, raise tree-split
+        // Tier 3: + no EPF (`epf_iters_for_tier`), drop custom coefficient
+        // orders, raise tree-split
         // threshold (libjxl enc_modular.cc:533 `+10 * speed_tier`).
         if tier >= 3 {
             self.custom_orders = false;
@@ -3274,7 +3290,6 @@ impl EffortProfile {
             self.patches = false;
             self.gaborish = false;
             self.try_dct32 = false;
-            self.try_dct64 = false;
             // Tighter MA-tree shape on the modular side (libjxl
             // enc_modular.cc:506-513 `nb_repeats = 0` is the strongest
             // signal — captured by zeroing tree_sample_fraction so the

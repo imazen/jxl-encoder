@@ -224,6 +224,23 @@ fn quant_dc(distance: f32) -> f32 {
     (DC_QUANT / effective_dist).min(50.0)
 }
 
+/// EPF iterations for `distance` at a decoding speed tier, as libjxl
+/// v0.12 `LoopFilterFromParams` (`enc_frame.cc:327-341`): one iteration per
+/// threshold in {0.7, 1.5, 4.0} reached, tier 2 skips the first threshold,
+/// and tier 3 and above disable EPF. Tier 0 and 1 match the plain rule in
+/// `compute_internal`.
+pub(crate) fn epf_iters_for_tier(distance: f32, decoding_speed_tier: u8) -> u32 {
+    const EPF_THRESHOLDS: [f32; 3] = [0.7, 1.5, 4.0];
+    if decoding_speed_tier >= 3 {
+        return 0;
+    }
+    let first = if decoding_speed_tier == 2 { 1 } else { 0 };
+    EPF_THRESHOLDS[first..]
+        .iter()
+        .filter(|&&t| distance >= t)
+        .count() as u32
+}
+
 impl DistanceParams {
     /// Compute distance-dependent parameters using fixed global_scale formula.
     /// This is the fallback when no quant field is available.
@@ -244,7 +261,10 @@ impl DistanceParams {
     /// global_scale after each iteration.
     pub fn compute_for_profile(distance: f32, profile: &crate::effort::EffortProfile) -> Self {
         let q = profile.initial_q_numerator / distance;
-        Self::compute_internal(distance, distance, Some(q), profile.extra_dc_precision)
+        let mut params =
+            Self::compute_internal(distance, distance, Some(q), profile.extra_dc_precision);
+        params.epf_iters = epf_iters_for_tier(distance, profile.decoding_speed_tier);
+        params
     }
 
     /// Same as [`Self::compute_for_profile`] but with an explicit
@@ -268,12 +288,14 @@ impl DistanceParams {
         profile: &crate::effort::EffortProfile,
     ) -> Self {
         let q = profile.initial_q_numerator / distance;
-        Self::compute_internal(
+        let mut params = Self::compute_internal(
             distance,
             original_distance,
             Some(q),
             profile.extra_dc_precision,
-        )
+        );
+        params.epf_iters = epf_iters_for_tier(distance, profile.decoding_speed_tier);
+        params
     }
 
     /// Compute distance-dependent parameters using content-adaptive global_scale.
