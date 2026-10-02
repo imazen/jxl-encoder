@@ -55,6 +55,17 @@ wide-integer-check manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_ENCODER_OUTPUT_DIR="$HOME/tmp/jxl-wide-integer" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --test it high_bit_depth_int -- --test-threads=1
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib planar_admission_tests_95
 
+# Fast-decode lossless preset: exact round trip through jxl-rs, jxl-oxide,
+# libjxl v0.12 djxl and zenjxl-decoder (in-tree test, patched oxide fork).
+fast-decode-check manifest="Cargo.toml":
+    TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" JXL_ENCODER_OUTPUT_DIR="$HOME/tmp/jxl-fast-decode" nice -n 19 cargo test --locked --manifest-path "{{manifest}}" --release -p jxl-encoder --test it fast_decode_lossless
+
+# Released (unpatched) jxl-rs + jxl-oxide crates and djxl v0.12 against a
+# source PNG: `just fast-decode-conformance source.png a.jxl b.jxl ...`
+fast-decode-conformance source +files:
+    CARGO_BUILD_JOBS=4 nice -n 19 cargo build --release --manifest-path "{{justfile_directory()}}/tools/decoder-conformance/Cargo.toml"
+    DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" "{{justfile_directory()}}/tools/decoder-conformance/target/release/decoder-conformance" "{{source}}" {{files}}
+
 triage-hook-lint manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internal_recon_hook --test it --example rd_monotonicity_gate --example distance_targeting_probe -- -D warnings
 

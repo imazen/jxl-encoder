@@ -47,6 +47,7 @@ mod encode_from_precomputed_extras;
 mod epf_force_level;
 mod error_location_trace;
 mod f16_input_roundtrip;
+mod fast_decode_lossless;
 mod frymire_diag;
 mod hash_lock_features;
 mod hdr_loss_ssim2_promotion;

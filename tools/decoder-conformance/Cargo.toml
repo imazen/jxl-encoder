@@ -1,0 +1,16 @@
+[package]
+name = "decoder-conformance"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Check that independent JPEG XL decoders reproduce lossless sources exactly"
+license = "AGPL-3.0-or-later"
+
+# Standalone: released decoder crates only, so the workspace's patched
+# jxl-oxide fork does not apply.
+[workspace]
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+jxl-image-rs-integration = "0.7.4"
+jxl-oxide = "0.12.6"

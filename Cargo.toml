@@ -30,7 +30,7 @@ members = [
 # `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
 # `cargo test` and every CI job (incl. --all-features) never compile its
 # dependency tree or run rustdoc. Regenerate via `just api-doc`.
-exclude = ["apidoc"]
+exclude = ["apidoc", "tools/decoder-conformance"]
 resolver = "2"
 
 [workspace.lints.clippy]
