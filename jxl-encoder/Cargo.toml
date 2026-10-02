@@ -493,6 +493,10 @@ fastrand = "2.4.1"
 
 # Standard examples (autoexamples is disabled above; list each explicitly).
 [[example]]
+name = "fast_decode_lossless"
+path = "examples/fast_decode_lossless.rs"
+
+[[example]]
 name = "lossy_phase_baseline"
 required-features = ["__env_var_diagnostics"]
 path = "examples/lossy_phase_baseline.rs"
