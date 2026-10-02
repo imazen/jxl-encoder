@@ -3702,7 +3702,10 @@ fn test_faster_decoding_epf_iters_match_libjxl() {
             assert_eq!(params.epf_iters, *want, "distance {distance} tier {tier}");
             let reencode =
                 DistanceParams::compute_for_profile_with_original(distance, 8.0, &profile);
-            assert_eq!(reencode.epf_iters, *want, "re-encode distance {distance} tier {tier}");
+            assert_eq!(
+                reencode.epf_iters, *want,
+                "re-encode distance {distance} tier {tier}"
+            );
         }
     }
 }
@@ -3723,7 +3726,10 @@ fn test_gradient_fixed_dc_tree_shape() {
                 assert_eq!(w.property, -1);
             } else {
                 assert_eq!(g.property, 9, "split on the gradient property");
-                assert_eq!((g.splitval, g.lchild, g.rchild), (w.splitval, w.lchild, w.rchild));
+                assert_eq!(
+                    (g.splitval, g.lchild, g.rchild),
+                    (w.splitval, w.lchild, w.rchild)
+                );
             }
         }
     }

@@ -5632,8 +5632,7 @@ fn build_tree_from_prequantized(
         // fork path yields identical bytes at any thread count. 1T wall
         // impact is image-dependent and roughly neutral (frymire e9
         // sectioned +28%, codec_wiki -17%); invariance wins.
-        if n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold
-        {
+        if n >= parallel_root_threshold && max_nodes >= 4 && root_bits > threshold {
             // Pop the root candidate and try its split.
             let root_candidate = stack.pop().expect("root candidate just pushed");
             // PERF-HIST-SUB-LOSSLESS: capture the root's tensor while its
@@ -9698,6 +9697,7 @@ const TENSOR_BUILD_PAR_MIN_ROWS: usize = 1 << 18;
 /// the dispatch comment there. Byte-identical: per-prop work is
 /// independent and writes disjoint tensor regions.
 #[cfg(all(feature = "parallel", feature = "parallel-tree-learning"))]
+#[allow(clippy::too_many_arguments)]
 fn build_node_tensor_borrowed_parallel(
     samples: &BorrowedSamples<'_>,
     params: &TreeLearningParams,
@@ -11304,6 +11304,7 @@ fn chunk3c_skip_is_disabled() -> bool {
 /// `true` to elide the per-property `Vec<i32>` swaps. See
 /// [`tree_learn_split::SplittableSamples::skip_props_swap`] for safety
 /// conditions.
+#[allow(clippy::too_many_arguments)]
 fn partition_node_in_place_with(
     samples: &mut TreeSamples,
     pq: &mut PreQuantizedProps,
@@ -13349,6 +13350,7 @@ mod tests {
             histogram_size,
             root_pred,
             root_bits,
+            None,
         );
 
         // The trees must serialize to identical token streams. Compare token
@@ -15498,7 +15500,16 @@ mod tests {
 
         let view = BorrowedSamples::from_owned(&mut samples, &mut pq);
         let mut borrowed = NodeTensor::zeroed(&layout);
-        build_node_tensor_borrowed(&view, &params, &layout, histogram_size, 0, n, &mut borrowed);
+        build_node_tensor_borrowed(
+            &view,
+            &params,
+            &layout,
+            histogram_size,
+            0,
+            n,
+            &mut borrowed,
+            None,
+        );
         assert_tensors_identical(&owned, &borrowed, "borrowed-vs-owned build");
     }
 }

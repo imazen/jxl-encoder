@@ -240,7 +240,6 @@ mod tests {
     use super::*;
     use crate::test_helpers::{gen_f32, run_dispatch_parity};
     use alloc::vec;
-    use alloc::vec::Vec;
 
     const TAPS: [f32; 3] = [0.4, 0.2, 0.1];
 

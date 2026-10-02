@@ -1569,7 +1569,7 @@ pub(crate) fn compact_keep_best_pays(
     analysis: &super::palette::PaletteAnalysis,
 ) -> bool {
     use super::channel::Channel;
-    let cost_before = super::ma_libjxl::estimate_global_image_cost([ch].into_iter());
+    let cost_before = super::ma_libjxl::estimate_global_image_cost([ch]);
 
     // Materialize the two channels the transform would emit: the index
     // channel (w x h palette indices) and the palette meta channel
@@ -1594,8 +1594,7 @@ pub(crate) fn compact_keep_best_pays(
     for (i, color) in analysis.palette.iter().enumerate() {
         meta.set(i, 0, color[0]);
     }
-    let cost_after =
-        super::ma_libjxl::estimate_global_image_cost([&idx, &meta].into_iter());
+    let cost_after = super::ma_libjxl::estimate_global_image_cost([&idx, &meta]);
     if std::env::var("JXL_DBG_PALETTE_COST").is_ok() {
         eprintln!(
             "COMPACT_COST: before={cost_before:.1} after={cost_after:.1} ratio={:.4}",
@@ -1615,17 +1614,17 @@ pub(crate) fn palette_keep_best_pays(
     // `EstimateCost` (ma_libjxl.rs — 96 integer costs match the C++
     // oracle); the whole palettized image is costed including the
     // palette meta-channel, matching `maybe_do_transform`'s after-cost.
-    let cost_before =
-        super::ma_libjxl::estimate_global_image_cost(image.channels.iter());
+    let cost_before = super::ma_libjxl::estimate_global_image_cost(image.channels.iter());
     let mut trial = image.clone();
     if super::palette::apply_palette(&mut trial, begin_c, num_c, analysis).is_err() {
         return false;
     }
-    let cost_after =
-        super::ma_libjxl::estimate_global_image_cost(trial.channels.iter());
+    let cost_after = super::ma_libjxl::estimate_global_image_cost(trial.channels.iter());
     if std::env::var("JXL_DBG_PALETTE_COST").is_ok() {
-        eprintln!("PALETTE_COST: before={cost_before:.1} after={cost_after:.1} ratio={:.4}",
-                  cost_after / cost_before);
+        eprintln!(
+            "PALETTE_COST: before={cost_before:.1} after={cost_after:.1} ratio={:.4}",
+            cost_after / cost_before
+        );
     }
     cost_after < cost_before
 }
@@ -2412,36 +2411,33 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
     // Honours `--modular_channel_colors_global_percent` override; falls
     // back to `CHANNEL_COLORS_PERCENT` (95.0).
     let channel_colors_percent = knobs.channel_colors_global_percent_or_default();
-    let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> = if palette_info.is_none()
-        && !is_lossy
-        && palette
-        && image.channels.len() >= 2
-    {
-        // Color channels = base color set (1 gray or 3 RGB).
-        // Everything beyond is extra (alpha, depth, spot, …) and
-        // ChannelCompact must skip them. The previous formula
-        // `len - 1 if has_alpha` was wrong for >1 extras (refs #9):
-        // it would treat the spot/depth/etc as a color channel and
-        // try to compact it alongside RGB, blowing the layout.
-        let num_color_channels = if image.is_grayscale { 1 } else { 3 };
-        (0..num_color_channels.min(image.channels.len()))
-            .filter_map(|i| {
-                let a = super::palette::analyze_channel_compact(
-                    &image.channels[i],
-                    channel_colors_percent,
-                )?;
-                // libjxl `maybe_do_transform` cost check at e >= 8 —
-                // keep the compaction only when the index + meta
-                // channels estimate cheaper than the original channel.
-                if profile.effort >= 8 && !compact_keep_best_pays(&image.channels[i], &a) {
-                    return None;
-                }
-                Some((i, a))
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> =
+        if palette_info.is_none() && !is_lossy && palette && image.channels.len() >= 2 {
+            // Color channels = base color set (1 gray or 3 RGB).
+            // Everything beyond is extra (alpha, depth, spot, …) and
+            // ChannelCompact must skip them. The previous formula
+            // `len - 1 if has_alpha` was wrong for >1 extras (refs #9):
+            // it would treat the spot/depth/etc as a color channel and
+            // try to compact it alongside RGB, blowing the layout.
+            let num_color_channels = if image.is_grayscale { 1 } else { 3 };
+            (0..num_color_channels.min(image.channels.len()))
+                .filter_map(|i| {
+                    let a = super::palette::analyze_channel_compact(
+                        &image.channels[i],
+                        channel_colors_percent,
+                    )?;
+                    // libjxl `maybe_do_transform` cost check at e >= 8 —
+                    // keep the compaction only when the index + meta
+                    // channels estimate cheaper than the original channel.
+                    if profile.effort >= 8 && !compact_keep_best_pays(&image.channels[i], &a) {
+                        return None;
+                    }
+                    Some((i, a))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
     // Apply transforms: multi-channel palette, ChannelCompact + RCT, or RCT only.
     // compact_info tracks ChannelCompact transforms for the bitstream:

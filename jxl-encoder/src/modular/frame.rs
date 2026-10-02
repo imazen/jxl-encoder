@@ -862,9 +862,7 @@ impl FrameEncoder {
                         // transform applies unconditionally.
                         if analysis.use_palette
                             && (self.options.effort < 8
-                                || super::encode::palette_keep_best_pays(
-                                    image, 0, nc, &analysis,
-                                ))
+                                || super::encode::palette_keep_best_pays(image, 0, nc, &analysis))
                         {
                             Some((nc, analysis))
                         } else {
@@ -1445,133 +1443,134 @@ impl FrameEncoder {
                 }
                 _ => None,
             };
-            let results = crate::parallel::parallel_map_result(
-                num_groups * num_passes,
-                |flat_idx| {
-                let group_idx = flat_idx / num_passes;
-                let group_image = &group_images[group_idx];
+            let results =
+                crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
+                    let group_idx = flat_idx / num_passes;
+                    let group_image = &group_images[group_idx];
 
-                let mut group_writer = BitWriter::new();
-                let mut chose_local = false;
-                // WP-cache fusion (hybrid): when this group also gets a
-                // local-tree rewrite below, the global-section collect
-                // records its WP walk so the rewrite's collect skips the
-                // WP state machine — one walk per group instead of two.
-                let hybrid_entry = match (hybrid_trees.get(group_idx), global_wp.as_ref()) {
-                    (Some(Some(ltree)), Some(wp)) => Some((ltree, wp)),
-                    _ => None,
-                };
-                let mut wp_cache = super::tree_learn::WpCache::new();
-                // Pre-collected group tokens. Under `require_stored_tokens`
-                // (the LZ77 keep-best layout arm) the stored stream IS the
-                // priced layout — the global write must use it even when a
-                // hybrid local attempt follows. The hybrid local write no
-                // longer depends on this collect filling `wp_cache`: when
-                // the global write consumes stored tokens the cache stays
-                // empty and the local write runs its own WP state machine
-                // (`WpCacheMode::Off` below). Alignment guard: the store's
-                // ranges were built over the LfGlobal writer's group
-                // images; on paths where those differ from THIS loop's
-                // images (squeeze channel grouping, multiple passes) the
-                // per-group token count no longer equals the group's pixel
-                // count — fall back to a fresh collect (the pre-guard
-                // mismatch indexed out of bounds: issue68 e9 noise
-                // regression tests).
-                let pre_collected = match token_store {
-                    Some(store)
-                        if num_passes == 1 && store.group_ranges.len() == num_groups =>
-                    {
-                        store
-                            .group_ranges
-                            .get(group_idx)
-                            .filter(|r| r.end <= store.tokens.len())
-                            .map(|r| &store.tokens[r.clone()])
-                    }
-                    _ => None,
-                };
-                // WP-cache Fill only when this group both (a) wants a
-                // hybrid local attempt and (b) is about to walk pixels —
-                // a stored-token write never runs the WP machine, so
-                // nothing would fill.
-                let fills_wp_cache = hybrid_entry.is_some() && pre_collected.is_none();
-                super::section::write_group_modular_section_idx_stop(
-                    group_image,
-                    global_state,
-                    group_idx as u32 + per_group_id_offset,
-                    &group_transforms[group_idx],
-                    &mut group_writer,
-                    budget,
-                    if fills_wp_cache {
-                        super::tree_learn::WpCacheMode::Fill(&mut wp_cache)
-                    } else {
-                        super::tree_learn::WpCacheMode::Off
-                    },
-                    pre_collected,
-                    stop,
-                )?;
-
-                // Hybrid: also write this group as a self-contained local-tree
-                // stream (tree learned during the gather wave) and keep
-                // whichever section is smaller. Ties keep global (stability;
-                // shared histograms cost nothing extra).
-                // NOTE (measured, do not re-add): skipping the local attempt
-                // for tiny global sections (< 512 B) LOSES 4.4-7.5 KB per 4K
-                // image for ~zero wall — tiny groups are where self-contained
-                // local sections (single-leaf tree + ~100 B) beat the shared
-                // stream, and the wall cost lives in the wave-time LEARNS,
-                // not these writes. A wall filter must gate the learn, which
-                // needs a pre-gather signal.
-                if let Some((ltree, wp)) = hybrid_entry {
-                    let mut local_writer = BitWriter::new();
-                    super::section::write_group_modular_section_local_tree_with_tree(
+                    let mut group_writer = BitWriter::new();
+                    let mut chose_local = false;
+                    // WP-cache fusion (hybrid): when this group also gets a
+                    // local-tree rewrite below, the global-section collect
+                    // records its WP walk so the rewrite's collect skips the
+                    // WP state machine — one walk per group instead of two.
+                    let hybrid_entry = match (hybrid_trees.get(group_idx), global_wp.as_ref()) {
+                        (Some(Some(ltree)), Some(wp)) => Some((ltree, wp)),
+                        _ => None,
+                    };
+                    let mut wp_cache = super::tree_learn::WpCache::new();
+                    // Pre-collected group tokens. Under `require_stored_tokens`
+                    // (the LZ77 keep-best layout arm) the stored stream IS the
+                    // priced layout — the global write must use it even when a
+                    // hybrid local attempt follows. The hybrid local write no
+                    // longer depends on this collect filling `wp_cache`: when
+                    // the global write consumes stored tokens the cache stays
+                    // empty and the local write runs its own WP state machine
+                    // (`WpCacheMode::Off` below). Alignment guard: the store's
+                    // ranges were built over the LfGlobal writer's group
+                    // images; on paths where those differ from THIS loop's
+                    // images (squeeze channel grouping, multiple passes) the
+                    // per-group token count no longer equals the group's pixel
+                    // count — fall back to a fresh collect (the pre-guard
+                    // mismatch indexed out of bounds: issue68 e9 noise
+                    // regression tests).
+                    let pre_collected = match token_store {
+                        Some(store)
+                            if num_passes == 1 && store.group_ranges.len() == num_groups =>
+                        {
+                            store
+                                .group_ranges
+                                .get(group_idx)
+                                .filter(|r| r.end <= store.tokens.len())
+                                .map(|r| &store.tokens[r.clone()])
+                        }
+                        _ => None,
+                    };
+                    // WP-cache Fill only when this group both (a) wants a
+                    // hybrid local attempt and (b) is about to walk pixels —
+                    // a stored-token write never runs the WP machine, so
+                    // nothing would fill.
+                    let fills_wp_cache = hybrid_entry.is_some() && pre_collected.is_none();
+                    super::section::write_group_modular_section_idx_stop(
                         group_image,
+                        global_state,
                         group_idx as u32 + per_group_id_offset,
-                        self.options.enable_lz77,
-                        self.options.lz77_method,
-                        None,
-                        ltree,
-                        wp,
-                        &mut local_writer,
+                        &group_transforms[group_idx],
+                        &mut group_writer,
                         budget,
                         if fills_wp_cache {
-                            super::tree_learn::WpCacheMode::Read(&wp_cache)
+                            super::tree_learn::WpCacheMode::Fill(&mut wp_cache)
                         } else {
                             super::tree_learn::WpCacheMode::Off
                         },
-                        self.options.profile.lz77_keep_best,
+                        pre_collected,
+                        stop,
                     )?;
-                    if std::env::var_os("JXL_DBG_HYBRID").is_some() {
+
+                    // Hybrid: also write this group as a self-contained local-tree
+                    // stream (tree learned during the gather wave) and keep
+                    // whichever section is smaller. Ties keep global (stability;
+                    // shared histograms cost nothing extra).
+                    // NOTE (measured, do not re-add): skipping the local attempt
+                    // for tiny global sections (< 512 B) LOSES 4.4-7.5 KB per 4K
+                    // image for ~zero wall — tiny groups are where self-contained
+                    // local sections (single-leaf tree + ~100 B) beat the shared
+                    // stream, and the wall cost lives in the wave-time LEARNS,
+                    // not these writes. A wall filter must gate the learn, which
+                    // needs a pre-gather signal.
+                    if let Some((ltree, wp)) = hybrid_entry {
+                        let mut local_writer = BitWriter::new();
+                        super::section::write_group_modular_section_local_tree_with_tree(
+                            group_image,
+                            group_idx as u32 + per_group_id_offset,
+                            self.options.enable_lz77,
+                            self.options.lz77_method,
+                            None,
+                            ltree,
+                            wp,
+                            &mut local_writer,
+                            budget,
+                            if fills_wp_cache {
+                                super::tree_learn::WpCacheMode::Read(&wp_cache)
+                            } else {
+                                super::tree_learn::WpCacheMode::Off
+                            },
+                            self.options.profile.lz77_keep_best,
+                        )?;
+                        if std::env::var_os("JXL_DBG_HYBRID").is_some() {
+                            eprintln!(
+                                "[hybrid] g{group_idx} global={}B local={}B",
+                                group_writer.bits_written().div_ceil(8),
+                                local_writer.bits_written().div_ceil(8)
+                            );
+                        }
+                        if local_writer.bits_written().div_ceil(8)
+                            < group_writer.bits_written().div_ceil(8)
+                        {
+                            group_writer = local_writer;
+                            chose_local = true;
+                        }
+                    }
+
+                    crate::trace::debug_eprintln!(
+                        "MULTI_GROUP: PassGroup {} section = {} bytes",
+                        group_idx,
+                        group_writer.bits_written() / 8,
+                    );
+                    if std::env::var_os("JXL_SECTION_SIZES").is_some() {
                         eprintln!(
-                            "[hybrid] g{group_idx} global={}B local={}B",
-                            group_writer.bits_written().div_ceil(8),
-                            local_writer.bits_written().div_ceil(8)
+                            "[section-size] mode=global group={} bytes={}",
+                            group_idx,
+                            group_writer.bits_written().div_ceil(8)
                         );
                     }
-                    if local_writer.bits_written().div_ceil(8)
-                        < group_writer.bits_written().div_ceil(8)
-                    {
-                        group_writer = local_writer;
-                        chose_local = true;
-                    }
-                }
-
-                crate::trace::debug_eprintln!(
-                    "MULTI_GROUP: PassGroup {} section = {} bytes",
-                    group_idx,
-                    group_writer.bits_written() / 8,
-                );
-                if std::env::var_os("JXL_SECTION_SIZES").is_some() {
-                    eprintln!(
-                        "[section-size] mode=global group={} bytes={}",
-                        group_idx,
-                        group_writer.bits_written().div_ceil(8)
-                    );
-                }
-                Ok((group_writer.finish(), chose_local))
-            })?;
-            let all_picked_local =
-                !results.is_empty() && results.iter().all(|(_, l)| *l);
-            (results.into_iter().map(|(b, _)| b).collect::<Vec<_>>(), all_picked_local)
+                    Ok((group_writer.finish(), chose_local))
+                })?;
+            let all_picked_local = !results.is_empty() && results.iter().all(|(_, l)| *l);
+            (
+                results.into_iter().map(|(b, _)| b).collect::<Vec<_>>(),
+                all_picked_local,
+            )
         };
 
         // Keep-best completion: when EVERY group chose its local section,
@@ -1583,11 +1582,7 @@ impl FrameEncoder {
         if tree_mode == TreeMode::Hybrid && all_picked_local {
             let mut alt = BitWriter::new();
             if let Some(pd) = patches {
-                crate::vardct::patches::encode_patches_section(
-                    pd,
-                    self.options.use_ans,
-                    &mut alt,
-                )?;
+                crate::vardct::patches::encode_patches_section(pd, self.options.use_ans, &mut alt)?;
             }
             super::section::write_local_trees_lf_global(
                 &mut alt,

@@ -1628,6 +1628,8 @@ pub(crate) fn compute_dc_group(
             padded_width,
             profile,
             &tiles,
+            // Per-DC-group precompute has no cancellation token of its own.
+            None,
         )
     };
 
