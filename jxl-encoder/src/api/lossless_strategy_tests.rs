@@ -210,7 +210,8 @@ fn lossless_keep_best_respects_methods_and_explicit_opt_outs() {
                 config.clone().with_lz77(false),
                 config.clone().with_ans(false),
                 config.clone().with_tree_learning(false),
-                config.clone().with_faster_decoding(1),
+                // Tier 4 drops LZ77; tiers 1-3 keep it (libjxl parity).
+                config.clone().with_faster_decoding(4),
                 config.with_lz77_method(Lz77Method::Rle),
             ] {
                 assert!(!disabled.effective_profile().lz77_keep_best);

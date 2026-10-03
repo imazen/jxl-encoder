@@ -3221,12 +3221,17 @@ impl EffortProfile {
     /// `cjxl --faster_decoding 0..4`. Applied on top of the effort-derived
     /// profile and any `__expert` overrides — call last.
     ///
+    /// Every tier `t >= 1` raises the MA-tree split threshold by `10 * t`
+    /// (libjxl `enc_modular.cc:536-538`). The lossless tree learner also
+    /// restricts its predictors and properties by tier (`LosslessTreeMode`
+    /// in the modular tree learner: no weighted predictor at tiers 1-2,
+    /// gradient-only at tier 3, static splits only at tier 4).
+    ///
     /// Per-tier effects (additive — tier N applies the changes for tiers
     /// 1..=N):
     ///
     /// - `0`: no-op (default).
-    /// - `1`: disable LZ77 backward references (VarDCT AC tokens and modular
-    ///   residual streams), and code the VarDCT DC stream with libjxl's fixed
+    /// - `1`: code the VarDCT DC stream with libjxl's fixed
     ///   `kGradientFixedDC` tree (`enc_modular.cc:1604-1607`; built by
     ///   `vardct::dc_tree_learn::build_gradient_fixed_dc_tree`) instead of a
     ///   learned or weighted-predictor tree. Frames whose extra channels use
@@ -3241,12 +3246,13 @@ impl EffortProfile {
     ///   `max_histograms = 12` and forces `modular_group_size_shift = 0`; the
     ///   group-size override is applied by
     ///   [`crate::api::LosslessConfig::effective_modular_group_size_shift`].
-    /// - `3`: tier 2 plus no EPF, no custom coefficient orders (libjxl keeps
-    ///   them), and a higher tree-split threshold (`enc_modular.cc:533`,
-    ///   `+10 * decoding_speed_tier`).
+    /// - `3`: tier 2 plus no EPF and no custom coefficient orders (libjxl
+    ///   keeps them).
     /// - `4`: tier 3 plus no gaborish (`enc_frame.cc:320`), no DCT32X32
-    ///   (`enc_ac_strategy.cc:936`), and no patches or MA-tree learning on
-    ///   the modular path.
+    ///   (`enc_ac_strategy.cc:936`), and no patches, LZ77 or MA-tree learning
+    ///   on the modular path. libjxl keeps LZ77; this encoder drops it so
+    ///   decoders can use their paths for streams without backward
+    ///   references.
     ///
     /// Measured 2026-10-02 (M4 Pro, 4 CLIC photos, d1 e7, tier 4, zenjxl-
     /// decoder): 74.8 -> 100.3 MP/s single-threaded and 275 -> 439 MP/s on 12
@@ -3260,10 +3266,9 @@ impl EffortProfile {
         if tier == 0 {
             return;
         }
-        // Tier 1: disable LZ77.
-        if tier >= 1 {
-            self.lz77 = false;
-        }
+        // libjxl `splitting_heuristics_node_threshold = 75 + 14 * speed_tier
+        // + 10 * decoding_speed_tier`, biasing the tree shallower.
+        self.tree_threshold_base += 10.0 * tier as f32;
         // Tier 2: + disable enhanced (pair-merge) clustering for VarDCT, and
         // the 64x32/32x64/64x64 transforms (libjxl `enc_ac_strategy.cc`
         // `decoding_speed_tier_max_limit = 1` for the DCT64X32 merge, which
@@ -3274,18 +3279,16 @@ impl EffortProfile {
             self.try_dct64 = false;
         }
         // Tier 3: + no EPF (`epf_iters_for_tier`), drop custom coefficient
-        // orders, raise tree-split
-        // threshold (libjxl enc_modular.cc:533 `+10 * speed_tier`).
+        // orders.
         if tier >= 3 {
             self.custom_orders = false;
-            // Mirror libjxl `splitting_heuristics_node_threshold +=
-            // 10 * decoding_speed_tier` — at tier 3 that's +30 over the
-            // effort-derived base, biasing the tree shallower.
-            self.tree_threshold_base += 10.0 * tier as f32;
         }
         // Tier 4: + no MA tree learning, no patches; force-disable the
         // libjxl-gated VarDCT features (gaborish, DCT32X32, DCT64).
         if tier >= 4 {
+            // LZ77 off is this encoder's choice (libjxl keeps it); decoders
+            // run their fastest paths on streams without backward references.
+            self.lz77 = false;
             self.tree_learning = false;
             self.patches = false;
             self.gaborish = false;

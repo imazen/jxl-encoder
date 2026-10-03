@@ -2251,27 +2251,26 @@ fn test_faster_decoding_lossless_effective_getters() {
     assert_eq!(cfg.effective_patches(), stored_patches);
     assert_eq!(cfg.effective_modular_group_size_shift(), None);
 
-    // Tier 1: LZ77 off. Tree-learning + patches unchanged.
+    // Tier 1: LZ77, tree learning and patches unchanged (libjxl keeps
+    // LZ77 for lossless at every tier).
     let cfg = LosslessConfig::new().with_faster_decoding(1);
-    assert!(!cfg.effective_lz77(), "tier 1 disables LZ77");
+    assert_eq!(cfg.effective_lz77(), stored_lz77, "tier 1 keeps LZ77");
     assert_eq!(cfg.effective_tree_learning(), stored_tree);
     assert_eq!(cfg.effective_patches(), stored_patches);
     assert_eq!(cfg.effective_modular_group_size_shift(), None);
 
     // Tier 2: + group_size_shift = 0 + patches off.
     let cfg = LosslessConfig::new().with_faster_decoding(2);
-    assert!(!cfg.effective_lz77());
+    assert_eq!(cfg.effective_lz77(), stored_lz77);
     assert_eq!(cfg.effective_tree_learning(), stored_tree);
     assert!(!cfg.effective_patches(), "tier 2 disables patches");
     assert_eq!(cfg.effective_modular_group_size_shift(), Some(0));
 
-    // Tier 4: + tree_learning off.
+    // Tier 4: LZ77 off; tree learning keeps the effort's choice (the
+    // learner is restricted to static splits).
     let cfg = LosslessConfig::new().with_faster_decoding(4);
     assert!(!cfg.effective_lz77());
-    assert!(
-        !cfg.effective_tree_learning(),
-        "tier 4 disables tree learning"
-    );
+    assert_eq!(cfg.effective_tree_learning(), stored_tree);
     assert!(!cfg.effective_patches());
     assert_eq!(cfg.effective_modular_group_size_shift(), Some(0));
 

@@ -720,19 +720,36 @@ impl LosslessConfig {
     ///
     /// Per-tier effect on the modular path
     /// ([libjxl `enc_modular.cc:469-516`][libjxl-modular],
-    /// [`enc_frame.cc:340`][libjxl-frame]):
+    /// [`enc_frame.cc:340`][libjxl-frame]). Every tier `t >= 1` also raises
+    /// the tree-split threshold by `10 * t`.
     ///
-    /// - `1`: disables the Weighted predictor in tree learning;
-    ///   `fast_decode_multiplier = 1.005` lifts the split-cost threshold
-    ///   so the tree stays shallower.
-    /// - `2`: same as tier 1 plus `modular_group_size_shift = 0`
-    ///   (small groups for multithreaded decode);
-    ///   `fast_decode_multiplier = 1.015`. Also clamps modular ANS
-    ///   `max_histograms = 12`.
-    /// - `3`: forces the Gradient predictor only and skips the MA tree
-    ///   learner entirely (libjxl `kGradientOnly`).
-    /// - `4`: tier 3 plus `nb_repeats = 0` (no MA tree at all). Also
-    ///   disables the DC-frame patches pass.
+    /// - `1`: no Weighted predictor or WP-error property in the MA tree.
+    ///   Below effort 10 the leaves use Gradient only (libjxl's lossless
+    ///   predictor set there is {Weighted, Gradient}); from effort 10 every
+    ///   other predictor stays available. Previous-channel properties are
+    ///   left out (libjxl only uses them with `-E`), and a split on the
+    ///   channel or group id replaces a better split costing up to 0.5%
+    ///   less (`fast_decode_multiplier = 1.005`).
+    /// - `2`: tier 1 with a 1.5% static-split margin, no patches, and
+    ///   `modular_group_size_shift = 0` (small groups for multithreaded
+    ///   decode). libjxl also caps the histogram count at 12; this encoder
+    ///   does not.
+    /// - `3`: the tree uses the Gradient predictor and splits only on the
+    ///   gradient property, which decoders can evaluate with one table
+    ///   lookup per sample (libjxl `kGradientOnly`).
+    /// - `4`: the tree splits only on the channel and group id, so every
+    ///   group decodes as one Gradient leaf with its own histograms; LZ77
+    ///   and the e1-e6 integer tree lift are off. libjxl learns no tree here
+    ///   but keeps one single-leaf tree per group, and keeps LZ77.
+    ///
+    /// LZ77 stays enabled at tiers 1-3, as in libjxl.
+    ///
+    /// Measured 2026-10-02 (M4 Pro, effort 7, two 2048x1358 photos,
+    /// single-threaded zenjxl-decoder; bytes and MP/s, cjxl v0.12 in
+    /// brackets): tier 0 3,873,677 / 8.6 (3,906,277 / 10.0); tier 1
+    /// 3,969,394 / 13.1 (3,941,743 / 14.3); tier 2 4,036,728 / 16.4
+    /// (4,023,115 / 17.1); tier 3 4,322,665 / 39.7 (4,461,635 / 45.6);
+    /// tier 4 4,496,299 / 56.1 (4,778,313 / 58.8).
     ///
     /// [libjxl-cparams]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_params.h
     /// [libjxl-modular]: https://github.com/libjxl/libjxl/blob/main/lib/jxl/enc_modular.cc
@@ -904,24 +921,23 @@ impl LosslessConfig {
         None
     }
 
-    /// Resolve the effective LZ77 enable flag, honoring
-    /// `faster_decoding >= 1` (libjxl `enc_ans.cc:1372` and
-    /// `enc_modular.cc` paths set the LZ77 method to `kNone`).
-    /// Returns the stored `cfg.lz77()` field at tier 0.
+    /// Resolve the effective LZ77 enable flag. libjxl keeps LZ77 for
+    /// lossless modular at every decoding-speed tier; this encoder turns it
+    /// off at tier 4, where decoders without backward references run their
+    /// fastest paths. Returns the stored `cfg.lz77()` field below tier 4.
     pub(crate) fn effective_lz77(&self) -> bool {
-        if self.faster_decoding >= 1 {
+        if self.faster_decoding >= 4 {
             return false;
         }
         self.lz77()
     }
 
-    /// Resolve the effective tree-learning enable flag, honoring
-    /// `faster_decoding >= 4` (libjxl `enc_modular.cc:506-513` zeros
-    /// `nb_repeats` at tier 4, disabling MA-tree learning).
+    /// Resolve the effective tree-learning enable flag. Every tier keeps
+    /// the effort's choice: at tier 4 the learner may split only on the
+    /// channel and group id (libjxl learns no tree there but keeps
+    /// per-group histograms), and the e1-e6 integer tree lift stays off
+    /// ([`Self::lift_integer_tree_learning`]).
     pub(crate) fn effective_tree_learning(&self) -> bool {
-        if self.faster_decoding >= 4 {
-            return false;
-        }
         self.tree_learning()
     }
 
@@ -3064,10 +3080,10 @@ impl LossyConfig {
         self.patches()
     }
 
-    /// Effective LZ77 flag. libjxl `enc_ans.cc:1372` skips LZ77 for
-    /// VarDCT streams at `decoding_speed_tier >= 1` (the per-frame
-    /// AC histogram pass forces `lz77_method = kNone`). Returns the
-    /// stored `cfg.lz77()` field at tier 0.
+    /// Effective LZ77 flag: off at `decoding_speed_tier >= 1`. This is an
+    /// encoder choice for decode speed, not a libjxl rule (libjxl's VarDCT
+    /// LZ77 depends on effort alone). Returns the stored `cfg.lz77()` field
+    /// at tier 0.
     pub(crate) fn effective_lz77(&self) -> bool {
         if self.faster_decoding >= 1 {
             return false;

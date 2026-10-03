@@ -423,6 +423,85 @@ pub struct TreeLearningParams {
     /// [`crate::api::LosslessConfig`] `__expert` overrides
     /// ([`crate::effort::LosslessInternalParams::lloyd_max_buckets`]).
     pub lloyd_max_buckets: bool,
+    /// Predictor and property restriction for lossless decoding-speed
+    /// tiers (libjxl `ModularOptions::wp_tree_mode`). Applied when the tree
+    /// is built ([`build_tree_from_prequantized`]); the lossy multiplier
+    /// learner ignores it.
+    pub(crate) tree_mode: LosslessTreeMode,
+    /// libjxl `fast_decode_multiplier` for lossless decoding-speed tiers:
+    /// a split on a static property (channel, group id) replaces the best
+    /// split when it costs at most this factor more (`enc_ma.cc:456-460`).
+    /// Decoders resolve static splits once per channel. `1.0` disables it.
+    pub(crate) static_split_multiplier: f64,
+}
+
+/// Property 9: `W + N - NW` (libjxl `kGradientProp`).
+const GRADIENT_PROP: usize = 9;
+/// Property 15: weighted-predictor max error (libjxl `kWPProp`).
+const WP_PROP: usize = 15;
+
+/// libjxl `ModularOptions::TreeMode` as set for lossless modular by
+/// `decoding_speed_tier` (`enc_modular.cc` v0.12, lines 484-516, and
+/// `TreeSamples::SetPredictor`/`SetProperties` in `enc_ma.cc`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LosslessTreeMode {
+    /// Tier 0: no restriction.
+    Default,
+    /// Tiers 1-2 (`kNoWP`): neither the Weighted predictor nor the WP
+    /// max-error property, so decoders never run the weighted predictor,
+    /// and no previous-channel properties.
+    NoWp,
+    /// Tiers 1-2 below effort 10: `kNoWP` applied to libjxl's lossless
+    /// predictor set `Best` = {Weighted, Gradient} (`enc_modular.cc:643`),
+    /// which leaves Gradient alone. Splits may use any property but WP's.
+    NoWpGradient,
+    /// Tier 3 (`kGradientOnly`): the Gradient predictor, splitting only
+    /// on the gradient property. Decoders can evaluate such a tree with one
+    /// table lookup per sample.
+    GradientOnly,
+    /// Tier 4: the Gradient predictor, splitting only on the static
+    /// properties (channel, group id). libjxl learns no tree at this tier
+    /// (`nb_repeats = 0`) but keeps one single-leaf tree, and so one set of
+    /// histograms, per group; static splits give the same per-channel and
+    /// per-group histograms in one tree, and decoders resolve them before
+    /// decoding a group, leaving a single Gradient leaf.
+    StaticGradient,
+}
+
+impl LosslessTreeMode {
+    /// libjxl uses every predictor (`Variable`) only from effort 10
+    /// (`kGlacier`); below that its lossless set is {Weighted, Gradient}.
+    pub(crate) fn for_decoding_speed_tier(tier: u8, effort: u8) -> Self {
+        match tier {
+            0 => Self::Default,
+            1 | 2 if effort >= 10 => Self::NoWp,
+            1 | 2 => Self::NoWpGradient,
+            3 => Self::GradientOnly,
+            _ => Self::StaticGradient,
+        }
+    }
+
+    fn allows_predictor(self, p: Predictor) -> bool {
+        match self {
+            Self::Default => true,
+            Self::NoWp => p != Predictor::Weighted,
+            Self::NoWpGradient | Self::GradientOnly | Self::StaticGradient => {
+                p == Predictor::Gradient
+            }
+        }
+    }
+
+    fn allows_property(self, prop: usize) -> bool {
+        match self {
+            Self::Default => true,
+            // Previous-channel properties (16+) make decoders evaluate other
+            // channels per sample; libjxl leaves them out unless asked
+            // (`options.max_properties = 0`, cjxl `-E`).
+            Self::NoWp | Self::NoWpGradient => prop != WP_PROP && prop < NUM_PROPERTIES,
+            Self::GradientOnly => prop == GRADIENT_PROP,
+            Self::StaticGradient => prop < NUM_STATIC_PROPS,
+        }
+    }
 }
 
 impl TreeLearningParams {
@@ -471,10 +550,25 @@ impl TreeLearningParams {
             if is_squeeze { "squeeze" } else { "no-squeeze" },
         );
         let num_props = (profile.tree_num_properties as usize).min(order.len());
+        let mut properties = order[..num_props].to_vec();
+        let tree_mode =
+            LosslessTreeMode::for_decoding_speed_tier(profile.decoding_speed_tier, profile.effort);
+        // The restricted modes split on these properties, so they must be
+        // among the pre-quantized ones.
+        let required: &[usize] = match tree_mode {
+            LosslessTreeMode::GradientOnly => &[GRADIENT_PROP],
+            LosslessTreeMode::StaticGradient => &[0, 1],
+            _ => &[],
+        };
+        for &prop in required {
+            if !properties.contains(&prop) {
+                properties.push(prop);
+            }
+        }
 
         Self {
             skip_dedup: false,
-            properties: order[..num_props].to_vec(),
+            properties,
             max_property_values: profile.tree_max_buckets as usize,
             split_threshold: profile.tree_threshold_base as f64,
             // kMaxTreeSize from libjxl ma_common.h:24 — absolute decoder cap.
@@ -489,6 +583,14 @@ impl TreeLearningParams {
             parallel_root_threshold: profile.tree_parallel_root_threshold,
             parallel_small_image_fallback: profile.tree_parallel_small_image_fallback,
             lloyd_max_buckets: profile.lloyd_max_buckets,
+            tree_mode,
+            // libjxl sets 1.001 at tier 0 too; left out there to keep the
+            // tier-0 output unchanged.
+            static_split_multiplier: match profile.decoding_speed_tier {
+                1 => 1.005,
+                2 => 1.015,
+                _ => 1.0,
+            },
         }
     }
 
@@ -539,6 +641,8 @@ impl TreeLearningParams {
             parallel_root_threshold,
             parallel_small_image_fallback: false,
             lloyd_max_buckets: false,
+            tree_mode: LosslessTreeMode::Default,
+            static_split_multiplier: 1.0,
         }
     }
 
@@ -1143,6 +1247,35 @@ impl TreeSamples {
             costs.push(hist_bits + ebits_sum as f64);
         }
         costs
+    }
+
+    /// Drops the candidate predictors (and their token columns) that
+    /// `mode` disallows. Leaves the set unchanged when `mode` allows all
+    /// of them or none of them.
+    pub(crate) fn retain_predictors_for(&mut self, mode: LosslessTreeMode) {
+        let keep: alloc::vec::Vec<bool> = self
+            .candidate_predictors
+            .iter()
+            .map(|&p| mode.allows_predictor(p))
+            .collect();
+        // Squeeze samples carry only the Zero predictor; keep it rather
+        // than leave the learner without a candidate.
+        if keep.iter().all(|&k| k) || !keep.iter().any(|&k| k) {
+            return;
+        }
+        let new_list: alloc::vec::Vec<Predictor> = self
+            .candidate_predictors
+            .iter()
+            .zip(&keep)
+            .filter_map(|(&p, &k)| k.then_some(p))
+            .collect();
+        let old = core::mem::take(&mut self.residual_tokens);
+        self.residual_tokens = old
+            .into_iter()
+            .zip(&keep)
+            .filter_map(|(c, &k)| k.then_some(c))
+            .collect();
+        self.candidate_predictors = alloc::borrow::Cow::Owned(new_list);
     }
 
     /// Prune the candidate predictor set to the `keep` cheapest by
@@ -5435,6 +5568,22 @@ fn build_tree_from_prequantized(
             samples.num_predictors()
         );
     }
+    // Lossless decoding-speed tiers: drop the disallowed predictors'
+    // columns and properties before the split search.
+    let restricted;
+    let params = if params.tree_mode == LosslessTreeMode::Default {
+        params
+    } else {
+        samples.retain_predictors_for(params.tree_mode);
+        let mut p = derive_seeded_params(params, 0);
+        p.properties
+            .retain(|&prop| params.tree_mode.allows_property(prop));
+        if p.properties.is_empty() {
+            p.properties = params.properties.clone();
+        }
+        restricted = p;
+        &restricted
+    };
     // Same acceptance threshold as the pre-seam header (libjxl
     // required_cost formula) — recomputed here so both entries share it.
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
@@ -7097,7 +7246,6 @@ struct PropCaptureBlock {
 #[cfg(feature = "parallel-tree-learning")]
 struct PropOutcome {
     prop_pos: usize,
-    #[cfg_attr(not(feature = "__env_var_diagnostics"), allow(dead_code))]
     prop_idx: usize,
     /// This property's best candidate STRICTLY below `base_bits`, if any.
     candidate: Option<(f64, BestSplit)>,
@@ -7575,6 +7723,8 @@ fn find_best_split_borrowed(
     let total_num_pred = samples.num_predictors();
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
+    let track_static = params.static_split_multiplier > 1.0;
+    let mut static_best: Option<BestSplit> = None;
     #[cfg(feature = "__env_var_diagnostics")]
     let mut mab_per_prop: Vec<(u8, f64)> = Vec::new();
 
@@ -7697,6 +7847,7 @@ fn find_best_split_borrowed(
         |o: PropOutcome,
          best: &mut Option<BestSplit>,
          best_bits: &mut f64,
+         static_best: &mut Option<BestSplit>,
          capture: &mut Option<(&TensorLayout, &mut NodeTensor)>,
          cap_totals: &mut Vec<u32>,
          cap_total_ebits: &mut Vec<u64>,
@@ -7739,11 +7890,17 @@ fn find_best_split_borrowed(
                     }
                 }
             }
-            if let Some((total, cand)) = o.candidate
-                && total < *best_bits
-            {
-                *best_bits = total;
-                *best = Some(cand);
+            if let Some((total, cand)) = o.candidate {
+                if track_static
+                    && o.prop_idx < NUM_STATIC_PROPS
+                    && static_best.as_ref().is_none_or(|b| total < b.total_bits)
+                {
+                    *static_best = Some(cand.clone());
+                }
+                if total < *best_bits {
+                    *best_bits = total;
+                    *best = Some(cand);
+                }
             }
             #[cfg(feature = "__env_var_diagnostics")]
             if let Some(mp) = o.mab_prop_best {
@@ -7788,6 +7945,7 @@ fn find_best_split_borrowed(
                         o,
                         &mut best,
                         &mut best_bits,
+                        &mut static_best,
                         &mut capture,
                         &mut cap_totals,
                         &mut cap_total_ebits,
@@ -7807,6 +7965,7 @@ fn find_best_split_borrowed(
                 o,
                 &mut best,
                 &mut best_bits,
+                &mut static_best,
                 &mut capture,
                 &mut cap_totals,
                 &mut cap_total_ebits,
@@ -7833,6 +7992,13 @@ fn find_best_split_borrowed(
             debug_assert!(best.is_none());
         }
     }
+    prefer_static_split(
+        &mut best,
+        static_best,
+        base_bits,
+        threshold,
+        params.static_split_multiplier,
+    );
 
     #[cfg(feature = "__env_var_diagnostics")]
     mabsplit_dump::record(
@@ -10214,7 +10380,30 @@ fn with_workspace_dispatched<R>(
     }
 }
 
+/// Number of static properties (channel, group id), libjxl
+/// `kNumStaticProperties`.
+const NUM_STATIC_PROPS: usize = 2;
+
+/// libjxl `enc_ma.cc:456-460`: take the best static-property split instead
+/// of `best` when it still clears the split threshold and costs at most
+/// `multiplier` times as much.
+fn prefer_static_split(
+    best: &mut Option<BestSplit>,
+    static_best: Option<BestSplit>,
+    base_bits: f64,
+    threshold: f64,
+    multiplier: f64,
+) {
+    if let (Some(b), Some(st)) = (best.as_ref(), static_best)
+        && st.total_bits + threshold < base_bits
+        && st.total_bits <= multiplier * b.total_bits
+    {
+        *best = Some(st);
+    }
+}
+
 /// Result of finding the best split for a node.
+#[derive(Clone)]
 struct BestSplit {
     property: usize,
     splitval: i32,
@@ -10284,6 +10473,8 @@ fn find_best_split(
     let total_num_pred = samples.num_predictors();
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
+    let track_static = params.static_split_multiplier > 1.0;
+    let mut static_best: Option<BestSplit> = None;
     #[cfg(feature = "__env_var_diagnostics")]
     let mut mab_per_prop: Vec<(u8, f64)> = Vec::new();
 
@@ -10762,6 +10953,22 @@ fn find_best_split(
                 mab_prop_best = total;
             }
 
+            if track_static
+                && prop_idx < NUM_STATIC_PROPS
+                && total < static_best.as_ref().map_or(base_bits, |b| b.total_bits)
+            {
+                static_best = Some(BestSplit {
+                    property: prop_idx,
+                    splitval: threshold_set[bmin + local_k],
+                    left_predictor: best_l_pred[local_k],
+                    right_predictor: best_r_pred[local_k],
+                    total_bits: total,
+                    left_count: bucket_starts[local_k + 1],
+                    left_bits: best_l_cost[local_k],
+                    right_bits: best_r_cost[local_k],
+                });
+            }
+
             if total < best_bits {
                 best_bits = total;
                 // Map local_k back to global threshold index: bmin + local_k
@@ -10812,6 +11019,13 @@ fn find_best_split(
             debug_assert!(best.is_none());
         }
     }
+    prefer_static_split(
+        &mut best,
+        static_best,
+        base_bits,
+        threshold,
+        params.static_split_multiplier,
+    );
 
     #[cfg(feature = "__env_var_diagnostics")]
     mabsplit_dump::record(
@@ -12450,6 +12664,8 @@ pub fn derive_seeded_params(base: &TreeLearningParams, seed: u64) -> TreeLearnin
             parallel_root_threshold: b.parallel_root_threshold,
             parallel_small_image_fallback: b.parallel_small_image_fallback,
             lloyd_max_buckets: b.lloyd_max_buckets,
+            tree_mode: b.tree_mode,
+            static_split_multiplier: b.static_split_multiplier,
         }
     };
     if seed == 0 {
@@ -13238,6 +13454,99 @@ mod tests {
         assert!(!tree.is_empty());
         // Root should be a leaf
         assert_eq!(tree[0].property, -1);
+    }
+
+    #[test]
+    fn lossless_tree_mode_tier_mapping() {
+        use LosslessTreeMode as M;
+        assert_eq!(M::for_decoding_speed_tier(0, 7), M::Default);
+        assert_eq!(M::for_decoding_speed_tier(1, 7), M::NoWpGradient);
+        assert_eq!(M::for_decoding_speed_tier(2, 9), M::NoWpGradient);
+        assert_eq!(M::for_decoding_speed_tier(1, 10), M::NoWp);
+        assert_eq!(M::for_decoding_speed_tier(3, 7), M::GradientOnly);
+        assert_eq!(M::for_decoding_speed_tier(4, 7), M::StaticGradient);
+    }
+
+    /// Trees learned under each decoding-speed mode use only the
+    /// predictors and split properties that mode allows.
+    #[test]
+    fn lossless_tree_modes_restrict_learned_trees() {
+        let mut image = ModularImage {
+            channels: Vec::new(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        for c in 0u32..3 {
+            let mut ch = Channel::new(96, 96).unwrap();
+            for y in 0u32..96 {
+                for x in 0u32..96 {
+                    let noise = (x.wrapping_mul(0x9e37) ^ y.wrapping_mul(0x7f4a)) & 0x3F;
+                    let v = match c {
+                        0 => (x * 2 + y) & 0xFF,
+                        1 => noise * 4,
+                        _ => ((x / 8 + y / 8) * 16 + noise) & 0xFF,
+                    };
+                    ch.set(x as usize, y as usize, v as i32);
+                }
+            }
+            image.channels.push(ch);
+        }
+        // Unrestricted, this image learns WP and non-gradient predictors
+        // and non-static splits, so each check below can fail.
+        let mut samples = TreeSamples::new();
+        gather_samples(&mut samples, &image, 0);
+        let tree = compute_best_tree(&mut samples, &TreeLearningParams::for_effort(9));
+        assert!(
+            tree.iter()
+                .any(|n| n.property < 0 && n.predictor == Predictor::Weighted)
+        );
+        assert!(
+            tree.iter()
+                .any(|n| n.property < 0 && n.predictor != Predictor::Gradient)
+        );
+        assert!(tree.iter().any(|n| n.property as usize == WP_PROP));
+        assert!(
+            tree.iter()
+                .any(|n| n.property >= 0 && n.property as usize != GRADIENT_PROP)
+        );
+
+        for mode in [
+            LosslessTreeMode::NoWp,
+            LosslessTreeMode::NoWpGradient,
+            LosslessTreeMode::GradientOnly,
+            LosslessTreeMode::StaticGradient,
+        ] {
+            let mut samples = TreeSamples::new();
+            gather_samples(&mut samples, &image, 0);
+            let mut params = TreeLearningParams::for_effort(9);
+            params.tree_mode = mode;
+            for prop in [0, 1, GRADIENT_PROP] {
+                if !params.properties.contains(&prop) {
+                    params.properties.push(prop);
+                }
+            }
+            let tree = compute_best_tree(&mut samples, &params);
+            assert!(
+                tree.len() > 1,
+                "{mode:?}: expected a split, got a single leaf"
+            );
+            for node in &tree {
+                if node.property < 0 {
+                    assert!(
+                        mode.allows_predictor(node.predictor),
+                        "{mode:?}: leaf uses {:?}",
+                        node.predictor
+                    );
+                } else {
+                    assert!(
+                        mode.allows_property(node.property as usize),
+                        "{mode:?}: split on property {}",
+                        node.property
+                    );
+                }
+            }
+        }
     }
 
     /// Layer-2 invariant for the parallel-tree-learning feature (issue #41 follow-on).
