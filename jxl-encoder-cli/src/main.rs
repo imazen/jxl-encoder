@@ -620,14 +620,25 @@ struct Args {
 
     /// Bias the encoder toward simpler bitstreams that decode faster, at
     /// the cost of compression. Mirrors libjxl `cjxl --faster_decoding
-    /// 0..4`. `0` (default) keeps the existing behaviour. Higher tiers
-    /// progressively drop encoder features (Weighted predictor → MA
-    /// tree learner → EPF → DCT32+ + gaborish). See
-    /// `LossyConfig::with_faster_decoding` / `LosslessConfig::with_faster_decoding`
-    /// for per-tier specifics. Applied on both lossy and lossless
-    /// paths.
+    /// 0..4`; `0` (default) keeps the existing behaviour. Lossless: tier 1
+    /// drops the weighted predictor, tier 2 also uses small groups, tier 3
+    /// uses a gradient-only tree, tier 4 splits only by channel and group
+    /// and drops LZ77. Lossy: EPF, transform sizes, the DC tree and gaborish
+    /// are reduced by tier. See `LosslessConfig::with_faster_decoding` and
+    /// `LossyConfig::with_faster_decoding` for details. For the fastest
+    /// lossless decoding use `--fast-decode`.
     #[arg(long, value_name = "TIER", default_value = "0")]
     faster_decoding: u8,
+
+    /// Lossless only: encode for the fastest decoding
+    /// (`LosslessConfig::with_fast_decode`). Every channel uses one fixed
+    /// Gradient predictor and no MA tree, with prefix codes and no LZ77,
+    /// patches or squeeze. Applied after the other modular options, so it
+    /// overrides `-P`, `--no-ans`, `--tree-learning`, `--lz77` and
+    /// `--squeeze`. The output is a normal JPEG XL file; decoders with a
+    /// fast path for this shape read it fastest.
+    #[arg(long, requires = "lossless")]
+    fast_decode: bool,
 
     /// Modular group-size override (lossless / modular path only).
     /// Mirrors libjxl `cjxl -g 0..3` / `cparams.modular_group_size_shift`.
@@ -1914,6 +1925,9 @@ fn main() {
         cfg = cfg.with_modular_group_size(args.modular_group_size);
         cfg = cfg.with_container_mode(container_mode_from_cli(args.container));
         cfg = cfg.with_buffering(Buffering::from_i8(args.buffering));
+        if args.fast_decode {
+            cfg = cfg.with_fast_decode();
+        }
         let cfg = cfg;
 
         // `--ec_resampling N` (libjxl parity): pre-downsample the
