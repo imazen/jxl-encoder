@@ -62,14 +62,14 @@ brotli-metadata = ["jxl_encoder/brotli-metadata"]
 
 [dependencies]
 jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", version = "0.4.0", default-features = false }
-clap = { version = "4", features = ["derive"] }
-png = "0.18"
+clap = { version = "4.6.1", features = ["derive"] }
+png = "0.18.1"
 
 [dev-dependencies]
 # Used by integration tests to load + crop the real-photo fixture
 # (jxl-encoder/tests/images/frymire.png) into a small region the CLI
 # can encode quickly.
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [lints]
 workspace = true

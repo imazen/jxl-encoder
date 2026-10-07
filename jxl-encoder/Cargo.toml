@@ -29,22 +29,22 @@ autoexamples = false
 zenanalyze = { version = "0.2.0", optional = true }
 enough = "0.4.3"
 zenpixels-convert = { version = "0.2.16", default-features = false }
-once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
-hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
+once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
+hashbrown = { version = "0.16.1", default-features = false, features = ["default-hasher"] }
 # W44-192: strategy_def! proc-macro for declarative gate registries.
 jxl_encoder_macros = { package = "jxl-encoder-macros", version = "0.4.0", path = "../jxl-encoder-macros" }
 whereat = { version = "0.1.5"}
-bytemuck = { version = "1.25", features = ["derive"] }
-thiserror = { version = "2.0", default-features = false }
+bytemuck = { version = "1.25.0", features = ["derive"] }
+thiserror = { version = "2.0.18", default-features = false }
 jxl_simd = { package = "jxl-encoder-simd", version = "0.4.0", path = "../jxl-encoder-simd", default-features = false }
 # Kept in lockstep with jxl-encoder-simd's magetypes 0.9.27 floor (see that
 # crate's Cargo.toml comment) — archmage and magetypes ship from the same
 # monorepo and are always released together.
 archmage = { version = "0.9.27", default-features = false, features = ["macros"] }
-rayon = { version = "1.10", optional = true }
+rayon = { version = "1.12.0", optional = true }
 # zenjpeg 0.9.0: decoder is unconditional (no `decoder` feature since 0.8.x).
 zenjpeg = { version = "0.9.0", default-features = false, optional = true }
-brotli = { version = "8.0", default-features = false, features = ["std"], optional = true }
+brotli = { version = "8.0.3", default-features = false, features = ["std"], optional = true }
 # Issue #47 chunk 3: SIMD RGB↔YCbCr / 4:4:4 / 4:2:0 / 4:2:2 conversion +
 # Sharp YUV for chroma subsampling. Production-quality, archmage-based
 # (matches our SIMD dispatch convention). Used by the chroma-subsampling
@@ -61,8 +61,8 @@ zenjxl-decoder = { version = "0.3.8", optional = true }
 # (the #93 buttloop budget guard, vardct/perceptual_loop.rs) ships in 0.9.4;
 # 0.9.3 fails to compile (verified 2026-08-29, #76 step 7 probe).
 butteraugli = { version = "0.9.4", optional = true }
-imgref = { version = "1.12", optional = true }
-rgb = { version = "0.8", optional = true }
+imgref = { version = "1.12.3", optional = true }
+rgb = { version = "0.8.53", optional = true }
 fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
 # diffmap-RD worktree (2026-07-18): custom-profiles enables mounting arbitrary
 # bakes (ZensimProfile::Custom) + DiffmapWeighting::ModelSensitivity for the
@@ -74,7 +74,7 @@ fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
 zensim = { version = "0.3.0", optional = true, features = ["custom-profiles", "feature-regime-v2"] }
 # Match zensim's runtime type; candidate inference stays on BakeScorer.
 zenpredict = { version = "0.2.0", git = "https://github.com/imazen/zenanalyze", rev = "05de3cbc44b19d8769077d99710b0146c761d6df", optional = true }
-serde_json = { version = "1", optional = true }
+serde_json = { version = "1.0.150", optional = true }
 sha2 = { version = "0.11.0", optional = true }
 # zensim-fork Phase 3 (2026-05-25): GPU zensim backend for the perceptual
 # quantization loop (RFC `docs/RFC_ZENSIM_FORK_PLAN.md` §5). Opt-in via
@@ -98,7 +98,7 @@ ultrahdr-core = { version = "0.5.0", default-features = false, features = ["std"
 # `default-features = false` + minimal features so production builds
 # don't pull serde/postcard transitively unless the feature is enabled.
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
-postcard = { version = "1.1", default-features = false, features = ["use-std"], optional = true }
+postcard = { version = "1.1.3", default-features = false, features = ["use-std"], optional = true }
 # W44-phase3-B1: GPU butteraugli backend (CUDA via CubeCL). Opt-in via the
 # `gpu-butteraugli` cargo feature; requires CUDA runtime at build + load
 # time. Path-patched in the workspace `[patch.crates-io]` to point at
@@ -398,13 +398,13 @@ path = "examples/sectioned_k_corpus.rs"
 required-features = ["std", "parallel"]
 
 [dev-dependencies]
-anyhow = "1"
+anyhow = "1.0.102"
 # Native PNG IO for canonical targeting/intervention instruments.
 zenpng = { version = "=0.1.4", default-features = false }
 # Shared Rust target controller/calibration; native adapters stay in this repo.
 zensim-target = { path = "../../zensim/zensim-target", default-features = false }
-serde_json = "1"
-serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.150"
+serde = { version = "1.0.228", features = ["derive"] }
 # Transitive-version pin (#82), NOT used directly. `brotli` (a dev-dep via
 # `zenjxl-decoder`, and our own optional `brotli-metadata` dep) pulls
 # `alloc-stdlib`, which provides `StandardAlloc: alloc_no_stdlib::Allocator`.
@@ -416,7 +416,7 @@ serde = { version = "1", features = ["derive"] }
 # excluding the 3.x-pulling `0.3.x`) keeps `alloc-no-stdlib` on 2.x in
 # Cargo.toml — durable regardless of `--locked` or future upstream drift.
 alloc-stdlib = "0.2.4"
-image = "0.25"
+image = "0.25.10"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
 jxl = "0.4.0"
 jxl_transforms = "0.4.0"
@@ -428,9 +428,9 @@ fast-ssim2 = { version = "0.7.1", features = ["imgref"] }
 yuvxyb = "0.5.0"
 # Butteraugli perceptual quality metric
 butteraugli = "0.9.4"
-imgref = "1.12"
-rgb = "0.8"
-walkdir = "2.5"
+imgref = "1.12.3"
+rgb = "0.8.53"
+walkdir = "2.5.0"
 sha2 = "0.11.0"
 # zenjpeg comparator for the lossy low-effort cross-codec baseline (W38).
 # `parallel` enables rayon-fanout for fair wall-clock comparison. Since
@@ -467,7 +467,7 @@ cvvdp-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "
 # codec-corpus uses fd-lock which doesn't compile on WASM
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 codec-corpus = "1.0.1"
-rayon = "1.10"
+rayon = "1.12.0"
 # Restored 2026-05-18 (W44-16) — required by examples/cjxl_parity_ledger.rs
 # for inline TOC parsing of cjxl reference bitstreams. These were dropped
 # in the W43-2 chunk-7 mass-deletion (ac903e02) but the example survived
