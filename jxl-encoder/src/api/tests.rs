@@ -3336,6 +3336,7 @@ fn test_target_display_default_and_round_trip() {
 /// MUST force `resolve_target_display()` to `WebSdr80` regardless
 /// of the field value (strict cjxl-parity invariant — mirrors
 /// W44-126 for `with_perceptual_metric`).
+#[cfg(feature = "butteraugli-loop")]
 #[test]
 fn test_resolve_target_display_libjxl_short_circuit() {
     // Libjxl + explicit Tv setter: field reflects the setter, but

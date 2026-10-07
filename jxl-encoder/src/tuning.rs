@@ -116,7 +116,9 @@ pub mod discriminator_thresholds {
     pub(crate) use crate::vardct::encoder::W44_168_SMOOTH_MASK_P25_MIN;
     pub(crate) use crate::vardct::encoder::W44_168_TEXTURED_EDGE_DENSITY_MIN;
     pub(crate) use crate::vardct::encoder::W44_168_TEXTURED_ITERS_AT_E7;
+    #[cfg(feature = "butteraugli-loop")]
     pub(crate) use crate::vardct::encoder::W44_169_NARROW_MAX_DISTANCE;
+    #[cfg(feature = "butteraugli-loop")]
     pub(crate) use crate::vardct::encoder::W44_169_NARROW_MIN_DISTANCE;
 
     // Top-level dispatch thresholds

@@ -968,6 +968,7 @@ pub(crate) fn w44_168_is_textured(edge_density: Option<f32>) -> bool {
 ///
 /// Mirrors the W44-156 distance-narrowing pattern (variant Z @ d > 5.5)
 /// applied to the W44-168 mechanism layer.
+#[cfg(feature = "butteraugli-loop")]
 pub const W44_169_NARROW_MIN_DISTANCE: f32 = 4.0;
 
 /// W44-169 (Smart-Zenjxl chunk 6, 2026-05-21): maximum `target_distance`
@@ -976,6 +977,7 @@ pub const W44_169_NARROW_MIN_DISTANCE: f32 = 4.0;
 /// Excludes d=6 specifically to preserve the W44-166 +0.45 SSIM2 win on
 /// 1418519 e8 d=6 (the surface that broad Mode B destroyed). See
 /// [`W44_169_NARROW_MIN_DISTANCE`] for the full design rationale.
+#[cfg(feature = "butteraugli-loop")]
 pub const W44_169_NARROW_MAX_DISTANCE: f32 = 5.0;
 
 /// W44-169 helper: compute the adjusted `butteraugli_iters` value for
@@ -992,6 +994,7 @@ pub const W44_169_NARROW_MAX_DISTANCE: f32 = 5.0;
 ///
 /// Mode A baseline (when `narrow_enabled = false`) returns `base_iters`
 /// always — byte-identical to pre-W44-169.
+#[cfg(feature = "butteraugli-loop")]
 #[inline]
 pub(crate) fn w44_169_compute_iters_narrow(
     base_iters: u32,
