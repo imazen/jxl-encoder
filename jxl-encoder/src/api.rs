@@ -5103,7 +5103,7 @@ impl LossyConfig {
     /// which may differ from [`Self::target_display`] when the active
     /// strategy is [`EncoderStrategy::Libjxl`] (forces `WebSdr80` —
     /// matches the W44-126 pattern for `with_perceptual_metric`).
-    #[cfg(feature = "butteraugli-loop")]
+    #[cfg_attr(not(feature = "butteraugli-loop"), allow(dead_code))]
     pub(crate) fn resolve_target_display(&self) -> DisplayConfig {
         if matches!(self.strategy, EncoderStrategy::Libjxl) {
             return DisplayConfig::WebSdr80;

@@ -397,7 +397,7 @@ pub(crate) fn vec_with_capacity_fallible<T>(fallible: bool, cap: usize) -> Resul
 /// - fallible: `try_reserve_exact` + `resize` — returns
 ///   [`Error::OutOfMemory`] instead of aborting when the size cannot be
 ///   satisfied (e.g. a cap raised above physical RAM for trusted batch).
-#[cfg(feature = "butteraugli-loop")]
+#[cfg_attr(not(feature = "butteraugli-loop"), allow(dead_code))]
 pub(crate) fn vec_f32_zeroed_fallible(fallible: bool, len: usize) -> Result<Vec<f32>> {
     if fallible {
         let mut v: Vec<f32> = Vec::new();

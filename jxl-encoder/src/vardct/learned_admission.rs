@@ -43,6 +43,8 @@
 //! byte-identical to the pre-W44-231 stack. The registry gate
 //! `learned_subband_exclude` (Zenjxl/Aggressive on, Libjxl/LeanFaster
 //! off) and env escape `JXL_W44_231_DISABLE=1` sit on top.
+// Only the `learned-admission` callers use these; the tests run in every config.
+#![cfg_attr(not(feature = "learned-admission"), allow(dead_code))]
 
 /// Feature order matches the frozen model artifact.
 const FEATURE_MEAN: [f64; 4] = [
