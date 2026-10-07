@@ -4789,11 +4789,11 @@ Compression Status (Feb 16, 2026)" deep-status sections were archived to
 
 ## API Convergence TODOs
 
-See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec comparison.
+See `~/work/zendiff/API_COMPARISON.md` (local checkout) for full cross-codec comparison.
 
-**Three-layer pattern: EncoderConfig → EncodeRequest<'a> → Encoder (streaming only)**
+**Three-layer pattern: EncoderConfig → EncodeJob → Encoder (zencodec traits; older notes say EncodeRequest)**
 
-**No backwards compatibility required** — we have no external users. Just bump the 0.x major version for breaking changes. No deprecation shims or legacy aliases — delete old APIs. Prefer one obvious way to do things — no duplicate entry points. Minimize API surface for forwards compatibility. Avoid free functions — use methods on types (Config, Request, Decoder) instead.
+**Semver:** avoid breaking changes (add instead of change, deprecate instead of delete, feature-gate); unavoidable breaks are queued under `QUEUED BREAKING CHANGES` in CHANGELOG.md and ship together in one approved leading-digit bump. Prefer one obvious way to do things — no duplicate entry points. Minimize API surface for forwards compatibility. Functionality lives on types (Config, Job, Decoder); the only free function is one crate-level onboarding one-shot.
 
 **Builder convention**: `with_` prefix for consuming builder setters, bare-name for getters.
 
