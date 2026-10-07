@@ -65,12 +65,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc7bb162ec39d46ab1ca8c77bf72e890535becd1751bb45f64c597edb4c8c6b3"
 
 [[package]]
+name = "alloc-no-stdlib"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2fb6cfd47bf496ff64095c20eaba0c201404ee38714d4142fcfa1dc334fcc7a"
+
+[[package]]
 name = "alloc-stdlib"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e76a019e91224d279006ff972f1e984179a6e9feb050adba6ce8274aef23195"
 dependencies = [
- "alloc-no-stdlib",
+ "alloc-no-stdlib 2.0.4",
+]
+
+[[package]]
+name = "alloc-stdlib"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1"
+dependencies = [
+ "alloc-no-stdlib 3.0.0",
 ]
 
 [[package]]
@@ -481,9 +496,20 @@ version = "8.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5cc91aac060a7a1e25823bdccbfb6af1875b88f17c6daac97894eed8207166b3"
 dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
- "brotli-decompressor",
+ "alloc-no-stdlib 2.0.4",
+ "alloc-stdlib 0.2.4",
+ "brotli-decompressor 5.0.3",
+]
+
+[[package]]
+name = "brotli"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8b851b75c23ca7873623d612fe49bd1989aeb03d08fb9432187eb253d3d4c6b"
+dependencies = [
+ "alloc-no-stdlib 3.0.0",
+ "alloc-stdlib 0.3.0",
+ "brotli-decompressor 6.0.1",
 ]
 
 [[package]]
@@ -492,8 +518,18 @@ version = "5.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a32acac15fe1967bc3986b2a6347dffc965602354ea6f450ad07e8bfd253583"
 dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
+ "alloc-no-stdlib 2.0.4",
+ "alloc-stdlib 0.2.4",
+]
+
+[[package]]
+name = "brotli-decompressor"
+version = "6.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941cd9bd4ddab83cb46fa5a2d428f1c857b24ac78cb876cf7beb710840934bd7"
+dependencies = [
+ "alloc-no-stdlib 3.0.0",
+ "alloc-stdlib 0.3.0",
 ]
 
 [[package]]
@@ -1821,6 +1857,9 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heapless"
@@ -2081,10 +2120,10 @@ dependencies = [
 name = "jxl-encoder"
 version = "0.4.0"
 dependencies = [
- "alloc-stdlib",
+ "alloc-stdlib 0.3.0",
  "anyhow",
  "archmage",
- "brotli",
+ "brotli 9.0.0",
  "butteraugli",
  "butteraugli-gpu",
  "bytemuck",
@@ -2094,7 +2133,7 @@ dependencies = [
  "enough",
  "fast-ssim2 0.7.1",
  "fastrand",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "image",
  "imgref",
  "jxl",
@@ -2118,7 +2157,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "thiserror",
- "ultrahdr-core 0.5.0",
+ "ultrahdr-core",
  "walkdir",
  "whereat",
  "yuvxyb 0.5.0",
@@ -2153,7 +2192,7 @@ version = "0.4.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
  "trybuild",
 ]
 
@@ -2207,7 +2246,7 @@ name = "jxl-jbr"
 version = "0.2.1"
 source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
- "brotli-decompressor",
+ "brotli-decompressor 5.0.3",
  "jxl-bitstream",
  "jxl-frame",
  "jxl-grid",
@@ -2237,7 +2276,7 @@ name = "jxl-oxide"
 version = "0.12.6"
 source = "git+https://github.com/imazen/jxl-oxide.git?rev=08395e61c1789f70bd1890fb29682e5aca274efa#08395e61c1789f70bd1890fb29682e5aca274efa"
 dependencies = [
- "brotli-decompressor",
+ "brotli-decompressor 5.0.3",
  "jxl-bitstream",
  "jxl-color",
  "jxl-frame",
@@ -3830,9 +3869,9 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ultrahdr-core"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d65bd22a90785bb7360076b599ffbc201aef2c5817d2e5f37f37357829d476e"
+checksum = "af411a89dd994324c442cea3fa0ded10aac0550cadb9a5cb2ba03c9596a4ed05"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -3841,25 +3880,11 @@ dependencies = [
  "linear-srgb",
  "magetypes",
  "thiserror",
- "wide",
- "zencodec",
- "zenpixels",
- "zentone",
-]
-
-[[package]]
-name = "ultrahdr-core"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af411a89dd994324c442cea3fa0ded10aac0550cadb9a5cb2ba03c9596a4ed05"
-dependencies = [
- "bytemuck",
- "enough",
- "linear-srgb",
- "thiserror",
  "whereat",
  "zencodec",
  "zenpixels",
+ "zenpixels-convert",
+ "zentone",
 ]
 
 [[package]]
@@ -4991,7 +5016,7 @@ dependencies = [
  "safe_unaligned_simd",
  "thiserror",
  "tinyvec",
- "ultrahdr-core 0.6.0",
+ "ultrahdr-core",
  "whereat",
  "zenanalyze",
  "zencodec",
@@ -5008,7 +5033,7 @@ dependencies = [
  "aligned-vec",
  "array-init",
  "atomic_refcell",
- "brotli",
+ "brotli 8.0.4",
  "bytemuck",
  "byteorder",
  "enough",
@@ -5028,7 +5053,7 @@ dependencies = [
  "aligned-vec",
  "array-init",
  "atomic_refcell",
- "brotli",
+ "brotli 8.0.4",
  "bytemuck",
  "byteorder",
  "enough",

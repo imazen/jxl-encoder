@@ -30,7 +30,7 @@ zenanalyze = { version = "0.2.0", optional = true }
 enough = "0.4.3"
 zenpixels-convert = { version = "0.2.16", default-features = false }
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
-hashbrown = { version = "0.16.1", default-features = false, features = ["default-hasher"] }
+hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"] }
 # W44-192: strategy_def! proc-macro for declarative gate registries.
 jxl_encoder_macros = { package = "jxl-encoder-macros", version = "0.4.0", path = "../jxl-encoder-macros" }
 whereat = { version = "0.1.5"}
@@ -44,7 +44,7 @@ archmage = { version = "0.9.27", default-features = false, features = ["macros"]
 rayon = { version = "1.12.0", optional = true }
 # zenjpeg 0.9.0: decoder is unconditional (no `decoder` feature since 0.8.x).
 zenjpeg = { version = "0.9.0", default-features = false, optional = true }
-brotli = { version = "8.0.3", default-features = false, features = ["std"], optional = true }
+brotli = { version = "9.0.0", default-features = false, features = ["std"], optional = true }
 # Issue #47 chunk 3: SIMD RGB↔YCbCr / 4:4:4 / 4:2:0 / 4:2:2 conversion +
 # Sharp YUV for chroma subsampling. Production-quality, archmage-based
 # (matches our SIMD dispatch convention). Used by the chroma-subsampling
@@ -93,7 +93,7 @@ zensim-gpu = { version = "0.0.1", default-features = false, features = ["cuda", 
 # serializer (re-exported from zencodec). `std` is enabled for std-only
 # error types and allocation paths. Mandatory deps still include zenpixels
 # + zencodec (already in the dep tree of ultrahdr-core 0.5+).
-ultrahdr-core = { version = "0.5.0", default-features = false, features = ["std"], optional = true }
+ultrahdr-core = { version = "0.6.0", default-features = false, features = ["std"], optional = true }
 # W44-211: opt-in for the `tuning-override` feature (future sweep runner).
 # `default-features = false` + minimal features so production builds
 # don't pull serde/postcard transitively unless the feature is enabled.
@@ -415,7 +415,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 # re-tightened the range to `<3.0`. Pinning to the `0.2.4`+ line (and thereby
 # excluding the 3.x-pulling `0.3.x`) keeps `alloc-no-stdlib` on 2.x in
 # Cargo.toml — durable regardless of `--locked` or future upstream drift.
-alloc-stdlib = "0.2.4"
+alloc-stdlib = "0.3.0"
 image = "0.25.10"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
 jxl = "0.4.0"

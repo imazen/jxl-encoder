@@ -390,8 +390,9 @@ impl<'a> HdrFromSdrRequest<'a> {
 /// with the original error text — the alternative would be to extend
 /// `EncodeError` with HDR-specific variants which would leak even when
 /// the `hdr-gainmap` feature is off.
-fn uhdr_error(e: ultrahdr_core::Error) -> EncodeError {
-    invalid(format!("hdr-gainmap: {e}"))
+fn uhdr_error(e: crate::api::At<ultrahdr_core::Error>) -> EncodeError {
+    // ultrahdr-core 0.6 returns whereat-wrapped errors; keep the message text.
+    invalid(format!("hdr-gainmap: {}", e.error()))
 }
 
 fn at_to_inner(at: crate::api::At<EncodeError>) -> EncodeError {
