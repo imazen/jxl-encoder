@@ -35,7 +35,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
@@ -116,7 +116,7 @@ jobs:
           - { os: windows-11-arm, name: "Windows ARM", run_tests: true }
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
@@ -154,7 +154,7 @@ jobs:
           - { target: armv7-unknown-linux-gnueabihf, run_tests: false }
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
@@ -202,7 +202,7 @@ jobs:
           - { name: simd128, rustflags: "-C target-feature=+simd128" }
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
@@ -251,7 +251,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
@@ -276,7 +276,7 @@ jobs:
         run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info --exclude jxl-encoder-simd
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           fail_ci_if_error: false
@@ -297,7 +297,7 @@ jobs:
     name: Expert tests (__expert)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
 
@@ -325,7 +325,7 @@ jobs:
           - { os: ubuntu-24.04-arm, name: aarch64 }
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
@@ -372,7 +372,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
@@ -400,7 +400,7 @@ jobs:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings

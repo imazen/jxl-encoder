@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
@@ -208,7 +208,7 @@ jobs:
       CARGO_BUILD_JOBS: 4
       RAYON_NUM_THREADS: 4
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/clone-siblings
       - uses: dtolnay/rust-toolchain@nightly
       - name: Prepare real-image fuzz corpus
