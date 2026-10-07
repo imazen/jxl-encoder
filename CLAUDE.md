@@ -2813,6 +2813,25 @@ the same day.)
 
 ## Investigation Notes
 
+### 2026-10-07: a JPEG transcode's render is not the JPEG's decode, by spec
+
+[PROVEN] A report that zenjpeg JPEGs transcode to JXL files rendering up to
+45 levels from the JPEG decode is not an encoder bug: on all 8 inputs (e7
+and e9) djxl renders our transcode byte-identically to libjxl v0.12's `cjxl
+--lossless_jpeg=1`, and JBRD reconstructs byte-exactly. The gap is decoder
+semantics: no per-sample Y/Cb/Cr clamp before YCbCr->RGB (up to 39 alone),
+default AC quant bias (unsignallable: `opsin_inverse_matrix` needs
+`xyb_encoded`), and float chroma-from-luma at 4:4:4 (the only
+encoder-controlled term; CfL off lowers 1407 q90 4:4:4 from 39 to 8, but
+8370 q30 stays 36). A spec model reproduces every render within ±1. Do not
+chase "transcode pixels != JPEG pixels" in the encoder; JPEG-identical pixels
+come from JBRD + a JPEG decoder. jxl-oxide fork `08395e61` panics
+reconstructing 4:2:0 progressive transcodes, libjxl's included
+(single-component scan geometry in `jxl-jbr`); djxl is exact.
+[Record](benchmarks/jpeg_transcode_render_vs_jpeg_2026-10-07.md),
+`just jpeg-render-attribution`, regression test
+`jpeg_cfl_reference_zenjpeg_styles_match_libjxl_render_and_reconstruct`.
+
 ### 2026-09-26: #95 wide-integer validation scope
 
 The 17–31-bit grayscale regression now covers 40x30 and multi-group 259x17,

@@ -3361,3 +3361,10 @@ path = "examples/w45_p21_perf_ab.rs"
 name = "jpeg_fixture_setup"
 path = "examples/jpeg_fixture_setup.rs"
 required-features = ["std", "jpeg-reencoding"]
+
+# Dumps a JPEG's quantized coefficients and quant tables for
+# scripts/jpeg_transcode_render_model.py (render-vs-JPEG-decode attribution).
+[[example]]
+name = "jpeg_coeff_dump"
+path = "examples/jpeg_coeff_dump.rs"
+required-features = ["std", "jpeg-reencoding"]

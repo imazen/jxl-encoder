@@ -587,6 +587,33 @@ jpeg-cfl-check label:
     nice -n 19 cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_cfl_reference_ -- --nocapture > "$HOME/tmp/jxl-backlog/jpeg-cfl-{{label}}.log" 2>&1
     rg 'test result:' "$HOME/tmp/jxl-backlog/jpeg-cfl-{{label}}.log"
 
+# Attribute a recompressed JPEG's JPEG XL render vs its JPEG decode: dumps the
+# coefficients, transcodes with ours and libjxl v0.12 (CfL on/off), renders via
+# djxl, checks render parity + JBRD, then runs scripts/jpeg_transcode_render_model.py.
+# The JPEG decode reference is ImageMagick (libjpeg-turbo). Tools: CJXL_PATH /
+# DJXL_PATH override .ci-libjxl/tools.
+jpeg-render-attribution label jpeg effort="7":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cjxl="${CJXL_PATH:-$PWD/.ci-libjxl/tools/cjxl}"
+    djxl="${DJXL_PATH:-$PWD/.ci-libjxl/tools/djxl}"
+    out="$HOME/tmp/jxl-backlog/jpeg-render-{{label}}"
+    mkdir -p "$out"
+    export TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4
+    nice -n 19 cargo run --locked --release -p jxl-encoder --features jpeg-reencoding --example jpeg_coeff_dump -- "{{jpeg}}" "$out/input.coef"
+    nice -n 19 cargo run --locked --release -p jxl-encoder-cli --features jpeg-reencoding -- "{{jpeg}}" "$out/ours.jxl" -e {{effort}} --quiet
+    "$cjxl" --lossless_jpeg=1 -e {{effort}} --quiet "{{jpeg}}" "$out/libjxl.jxl"
+    "$cjxl" --lossless_jpeg=1 --jpeg_reconstruction_cfl=0 -e {{effort}} --quiet "{{jpeg}}" "$out/libjxl-nocfl.jxl"
+    for n in ours libjxl libjxl-nocfl; do
+        "$djxl" --quiet "$out/$n.jxl" "$out/$n.ppm"
+        magick "$out/$n.ppm" -depth 8 "rgb:$out/$n.rgb8"
+    done
+    cmp "$out/ours.rgb8" "$out/libjxl.rgb8" && echo "render: ours == libjxl v0.12"
+    "$djxl" --quiet "$out/ours.jxl" "$out/reconstructed.jpg"
+    cmp "$out/reconstructed.jpg" "{{jpeg}}" && echo "djxl JBRD: byte-exact"
+    magick "{{jpeg}}" -depth 8 "rgb:$out/jpeg.rgb8"
+    python3 scripts/jpeg_transcode_render_model.py "$out/input.coef" "$out/jpeg.rgb8" --render-cfl "$out/ours.rgb8" --render-nocfl "$out/libjxl-nocfl.rgb8" --label "{{label}}" | tee "$out/model.tsv"
+
 # ISO gain-map container, exact JPEG reconstruction, and independent pixel checks.
 jpeg-gainmap-check label:
     #!/usr/bin/env bash
