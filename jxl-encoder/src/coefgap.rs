@@ -88,6 +88,9 @@ pub struct Switches {
     pub max_ac_histograms: usize,
     /// Most clustered DC histograms (0 = the encoder's own limit).
     pub max_dc_histograms: usize,
+    /// The default HybridUint config (4, 2, 0) for every DC and AC histogram
+    /// instead of the per-histogram optimized ones.
+    pub fixed_uint: bool,
 }
 
 /// Bytes and estimated bits of one transcode.
@@ -395,7 +398,7 @@ pub fn dc_coded_bytes(
         &all,
         total_ctx as usize,
         true,
-        true,
+        !sw.fixed_uint,
         None,
         Some(w * h * 64),
     );

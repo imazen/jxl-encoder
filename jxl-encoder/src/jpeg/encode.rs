@@ -354,6 +354,10 @@ fn encode_jpeg_to_jxl_inner(
     let (cg_no_cfl, cg_no_dc_ctx, cg_no_orders) = (cg.no_cfl, cg.no_dc_ctx, cg.no_orders);
     #[cfg(not(feature = "coefgap"))]
     let (cg_no_cfl, cg_no_dc_ctx, cg_no_orders) = (false, false, false);
+    #[cfg(feature = "coefgap")]
+    let cg_fixed_uint = cg.fixed_uint;
+    #[cfg(not(feature = "coefgap"))]
+    let cg_fixed_uint = false;
     let cfl_map = if !is_gray && is_444 && num_components == 3 && !cg_no_cfl {
         // Build scaled_qtable per chroma channel for the JPEG-CfL search.
         //
@@ -1091,7 +1095,7 @@ fn encode_jpeg_to_jxl_inner(
         &all_dc_tokens,
         dc_num_contexts,
         /*enhanced_clustering=*/ dc_enhanced_clustering,
-        /*optimize_uint_configs=*/ true,
+        /*optimize_uint_configs=*/ !cg_fixed_uint,
         /*lz77=*/ None,
         /*total_pixel_hint=*/ Some(width * height),
     );
@@ -1237,7 +1241,7 @@ fn encode_jpeg_to_jxl_inner(
     //
     // `JPEG_E9_FORCE_UINT_OPT_OFF=1` environment hook lets future
     // investigators A/B if needed.
-    let mut optimize_uint_configs_ac = true;
+    let mut optimize_uint_configs_ac = !cg_fixed_uint;
     if std::env::var_os("JPEG_E9_FORCE_UINT_OPT_OFF").is_some() {
         optimize_uint_configs_ac = false;
     }
