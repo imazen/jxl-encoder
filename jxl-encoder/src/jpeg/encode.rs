@@ -348,7 +348,13 @@ fn encode_jpeg_to_jxl_inner(
     let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
     let ysize_tiles = div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS);
     let is_444 = jpeg_upsampling.iter().all(|&u| u == 0);
-    let cfl_map = if !is_gray && is_444 && num_components == 3 {
+    #[cfg(feature = "coefgap")]
+    let cg = crate::coefgap::switches();
+    #[cfg(feature = "coefgap")]
+    let (cg_no_cfl, cg_no_dc_ctx, cg_no_orders) = (cg.no_cfl, cg.no_dc_ctx, cg.no_orders);
+    #[cfg(not(feature = "coefgap"))]
+    let (cg_no_cfl, cg_no_dc_ctx, cg_no_orders) = (false, false, false);
+    let cfl_map = if !is_gray && is_444 && num_components == 3 && !cg_no_cfl {
         // Build scaled_qtable per chroma channel for the JPEG-CfL search.
         //
         // libjxl reference (`enc_frame.cc:830-841`):
@@ -534,6 +540,25 @@ fn encode_jpeg_to_jxl_inner(
         let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
         let (wp_tree, wp_num_ctx) =
             crate::vardct::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
+        #[cfg(feature = "coefgap")]
+        let (wp_tree, wp_num_ctx) = {
+            use crate::coefgap::{DcMode, single_leaf_tree};
+            match cg.dc_mode {
+                DcMode::WpTree => (wp_tree, wp_num_ctx),
+                DcMode::WpSingle => single_leaf_tree(6),
+                DcMode::GradSingle => single_leaf_tree(5),
+                DcMode::GradTree => {
+                    crate::vardct::dc_tree_learn::build_gradient_fixed_dc_tree(total_dc_pixels, 8)
+                }
+                DcMode::GradWpCtx => {
+                    let mut t = wp_tree;
+                    for n in t.iter_mut().filter(|n| n.property < 0) {
+                        n.predictor = 5;
+                    }
+                    (t, wp_num_ctx)
+                }
+            }
+        };
         let (wrapped, total_ctx, dc_remap, ac_map) =
             crate::vardct::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
                 &wp_tree,
@@ -559,7 +584,48 @@ fn encode_jpeg_to_jxl_inner(
         let region_xsize = end_bx - start_bx;
         let region_ysize = end_by - start_by;
 
-        let dc_tokens = if let Some((ref wp_tree, _, _, ref dc_remap, _)) = wp_dc_state {
+        #[cfg(feature = "coefgap")]
+        let cg_dc = cg.dc_mode != crate::coefgap::DcMode::WpTree
+            || cg.dc_stripe_rows > 0
+            || cg.dc_lanes > 1;
+        #[cfg(not(feature = "coefgap"))]
+        let cg_dc = false;
+        let dc_tokens = if let (true, Some((wp_tree, _, _, dc_remap, _))) = (cg_dc, &wp_dc_state) {
+            #[cfg(feature = "coefgap")]
+            {
+                assert!(
+                    channel_shifts.iter().all(|&s| s == (0, 0)),
+                    "coefgap DC modes: 4:4:4 only"
+                );
+                let (fixed, _) = crate::vardct::dc_tree_learn::build_wp_fixed_dc_tree(
+                    xsize_blocks * ysize_blocks * 3,
+                    8,
+                );
+                let mut t = Vec::new();
+                for &c in &[1usize, 0, 2] {
+                    crate::coefgap::dc_tokens_segmented(
+                        &quant_dc[c],
+                        start_bx,
+                        end_bx,
+                        start_by,
+                        end_by,
+                        &cg,
+                        wp_tree,
+                        &fixed,
+                        &mut t,
+                    );
+                }
+                for tok in t.iter_mut() {
+                    tok.set_context(dc_remap[tok.context() as usize]);
+                }
+                t
+            }
+            #[cfg(not(feature = "coefgap"))]
+            {
+                let _ = (wp_tree, dc_remap);
+                unreachable!()
+            }
+        } else if let Some((ref wp_tree, _, _, ref dc_remap, _)) = wp_dc_state {
             let mut t = crate::vardct::dc_coding::collect_dc_tokens_wp_region_jpeg(
                 &quant_dc,
                 wp_tree,
@@ -707,7 +773,11 @@ fn encode_jpeg_to_jxl_inner(
             }
             None => false,
         };
-        if use_ex_j15 {
+        if cg_no_dc_ctx {
+            // coefgap: an empty luma DC histogram yields no thresholds (one
+            // block context per channel).
+            ac_context::BlockCtxMap::jpeg_dc_quantile(&[0usize; 2048], 0, qt_ac_sum, is_gray)
+        } else if use_ex_j15 {
             ac_context::BlockCtxMap::jpeg_dc_quantile_ex_j15(
                 &dc_counts,
                 total_dc_luma,
@@ -775,7 +845,8 @@ fn encode_jpeg_to_jxl_inner(
     // disabling via env hook produced +0.433% regression (-44118 bytes /
     // 50 files) on the paired bench. cjxl-e7 also uses sampled custom
     // orders for JPEG. Keep the env hook for future investigators.
-    let custom_orders_enabled = std::env::var_os("JPEG_NO_CUSTOM_ORDERS").is_none();
+    let custom_orders_enabled =
+        std::env::var_os("JPEG_NO_CUSTOM_ORDERS").is_none() && !cg_no_orders;
     let (custom_order_map, used_orders) =
         if custom_orders_enabled && (xsize_blocks >= 5 || ysize_blocks >= 5) {
             let mut zero_counts: Vec<Vec<Vec<i64>>> = (0..NUM_ORDER_BUCKETS_JPEG)
@@ -848,6 +919,9 @@ fn encode_jpeg_to_jxl_inner(
         };
 
     let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
+    // coefgap: per AC token, channel * 2 + (0 count token, 1 coefficient).
+    #[cfg(feature = "coefgap")]
+    let mut cg_labels: Vec<Vec<u8>> = Vec::with_capacity(num_groups);
     for group_idx in 0..num_groups {
         // Coarse cancellation point (per group, NOT per block — the inner
         // block loops are hot). Byte-identical when `stop` is `None`.
@@ -862,6 +936,8 @@ fn encode_jpeg_to_jxl_inner(
         let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
 
         let mut tokens = Vec::new();
+        #[cfg(feature = "coefgap")]
+        let mut labels: Vec<u8> = Vec::new();
         for by in start_by..end_by {
             for bx in start_bx..end_bx {
                 // All DCT8, so every block is "first"
@@ -901,6 +977,21 @@ fn encode_jpeg_to_jxl_inner(
                     } else {
                         predict_from_top_and_left(row_top, &nzeros[c][ch_by], ch_bx, 32)
                     };
+                    #[cfg(feature = "coefgap")]
+                    let predicted_nz = if cg.nz_pred == crate::coefgap::NzPred::TopLeft {
+                        predicted_nz
+                    } else {
+                        crate::coefgap::predict_nz(
+                            cg.nz_pred,
+                            &nzeros[c],
+                            ch_bx,
+                            ch_by,
+                            ch_start_bx,
+                            ch_start_by,
+                        )
+                    };
+                    #[cfg(feature = "coefgap")]
+                    let n0 = tokens.len();
                     let qf_val = quant_field[by * xsize_blocks + bx] as u32;
                     // Issue #65: DC bucket from luma DC (libjxl
                     // `dec_group.cc:491` uses `qdc_row[lbx]` for ALL
@@ -926,10 +1017,17 @@ fn encode_jpeg_to_jxl_inner(
                         block_ctx_map.num_ctxs,
                         custom_order,
                     );
+                    #[cfg(feature = "coefgap")]
+                    {
+                        labels.push(c as u8 * 2);
+                        labels.extend(core::iter::repeat_n(c as u8 * 2 + 1, tokens.len() - n0 - 1));
+                    }
                 }
             }
         }
         ac_section_tokens.push(tokens);
+        #[cfg(feature = "coefgap")]
+        cg_labels.push(labels);
     }
 
     // ── Build entropy codes (ANS) ──
@@ -987,6 +1085,8 @@ fn encode_jpeg_to_jxl_inner(
     // signaling overhead amortization is comparable on DC. Env hook
     // JPEG_DC_NO_CLUSTERING=1 forces kFast for A/B measurement.
     let dc_enhanced_clustering = effort >= 7 && std::env::var_os("JPEG_DC_NO_CLUSTERING").is_none();
+    #[cfg(feature = "coefgap")]
+    crate::coefgap::set_hist_cap(cg.max_dc_histograms);
     let dc_code = build_entropy_code_ans_with_options(
         &all_dc_tokens,
         dc_num_contexts,
@@ -1182,6 +1282,8 @@ fn encode_jpeg_to_jxl_inner(
     if let Some(s) = stop {
         s.check().map_err(|_| crate::error::Error::Cancelled)?;
     }
+    #[cfg(feature = "coefgap")]
+    crate::coefgap::set_hist_cap(cg.max_ac_histograms);
     let ac_code = build_entropy_code_ans_with_options(
         &all_ac_tokens,
         ac_code_num_contexts,
@@ -1190,6 +1292,9 @@ fn encode_jpeg_to_jxl_inner(
         ac_lz77_params.as_ref(),
         /*total_pixel_hint=*/ Some(width * height),
     );
+
+    #[cfg(feature = "coefgap")]
+    crate::coefgap::set_hist_cap(0);
 
     // ── Pass 2: Write bitstream ──
 
@@ -1344,6 +1449,52 @@ fn encode_jpeg_to_jxl_inner(
             dc_code.context_map.len(),
             dc_code.histograms.len(),
         );
+    }
+
+    #[cfg(feature = "coefgap")]
+    {
+        use crate::entropy_coding::encode_ans::coefgap_token_bits as bits;
+        let code_bits = |code: &OwnedAnsEntropyCode| -> Result<usize> {
+            let mut w = BitWriter::new();
+            write_entropy_code_ans(code, &mut w)?;
+            Ok(w.bits_written())
+        };
+        let mut r = crate::coefgap::Report {
+            headers: writer.bytes_written(),
+            dc_global: dc_global.bytes_written(),
+            dc_groups: dc_groups.iter().map(|w| w.bytes_written()).sum(),
+            ac_global: ac_global.bytes_written(),
+            ac_groups: ac_groups.iter().map(|w| w.bytes_written()).sum(),
+            dc_code_bits: code_bits(&dc_code)?,
+            ac_code_bits: code_bits(&ac_code)?,
+            histograms: [dc_code.histograms.len(), ac_code.histograms.len()],
+            contexts: [dc_code.context_map.len(), ac_code.context_map.len()],
+            used_orders,
+            num_dc_ctxs: block_ctx_map.num_dc_ctxs,
+            ..Default::default()
+        };
+        for t in &dc_tokens_per_group {
+            // Channels Y, X, B in equal thirds (4:4:4).
+            let third = t.len() / 3;
+            for (i, tok) in t.iter().enumerate() {
+                let c = [1usize, 0, 2][(i / third.max(1)).min(2)];
+                r.dc_bits[c] += bits(tok, &dc_code);
+            }
+            r.tokens[0] += t.len();
+        }
+        for t in &ac_metadata_tokens_per_group {
+            r.meta_bits += t.iter().map(|tok| bits(tok, &dc_code)).sum::<f64>();
+            r.tokens[1] += t.len();
+        }
+        if ac_lz77_params.is_none() {
+            for (t, l) in ac_section_tokens.iter().zip(&cg_labels) {
+                for (tok, &lab) in t.iter().zip(l) {
+                    r.ac_bits[(lab / 2) as usize][(lab & 1) as usize] += bits(tok, &ac_code);
+                }
+                r.tokens[2] += t.len();
+            }
+        }
+        crate::coefgap::put_report(r);
     }
 
     // Assemble frame (shared single-group/multi-group assembly logic)

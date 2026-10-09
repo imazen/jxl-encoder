@@ -283,6 +283,10 @@ pub fn build_entropy_code_from_accumulated_ans_with_strategy(
     if let Some(tp) = total_pixel_hint {
         max_histograms = max_histograms.min((tp / 2048).max(1));
     }
+    #[cfg(feature = "coefgap")]
+    if crate::coefgap::hist_cap() > 0 {
+        max_histograms = max_histograms.min(crate::coefgap::hist_cap());
+    }
     // libjxl `ClusterHistograms` always merges on the real `ANSPopulationCost`
     // (`enc_cluster.cc`); strict parity therefore uses the unconditional
     // accurate cost model. Non-strict callers keep the legacy estimate unless
@@ -2160,6 +2164,20 @@ pub(crate) fn write_tokens_ans_stop(
     encoder.finalize(writer)?;
 
     Ok(())
+}
+
+/// coefgap: estimated bits of `token` under `code` (`log2(4096 / freq)` plus
+/// its raw bits); no LZ77.
+#[cfg(feature = "coefgap")]
+pub(crate) fn coefgap_token_bits(token: &Token, code: &OwnedAnsEntropyCode) -> f64 {
+    let ctx = token.context() as usize;
+    let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
+    let config = code.uint_configs.get(dist_idx).copied().unwrap_or_default();
+    let (encoded, sym) = encode_token_value_with_config(token, None, &config);
+    let freq = code.distributions[dist_idx]
+        .get(sym as usize)
+        .map_or(1, |i| i.freq.max(1));
+    (super::ans::ANS_LOG_TAB_SIZE as f64 - (freq as f64).log2()) + encoded.nbits as f64
 }
 
 /// Verify that each ANS histogram serializes and deserializes correctly.

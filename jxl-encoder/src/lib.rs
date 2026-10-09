@@ -26,6 +26,8 @@ pub mod api;
 pub(crate) mod bit_writer;
 pub(crate) mod budget;
 pub(crate) mod clock;
+#[cfg(feature = "coefgap")]
+pub mod coefgap;
 pub(crate) mod color;
 pub(crate) mod container;
 pub(crate) mod debug_rect;

@@ -150,6 +150,9 @@ _dev = ["archmage/testable_dispatch"]
 # container so capable decoders reconstruct the HDR while standard decoders
 # display the SDR. Requires `std`. Issue #46 (A3 chunks 3+4).
 hdr-gainmap = ["std", "dep:ultrahdr-core"]
+# IMIJ coefficient-gap study (2026-10-09): transcode mechanism switches and a
+# per-section byte report (`jxl_encoder::coefgap`). Off: byte-identical.
+coefgap = ["jpeg-reencoding", "std"]
 trace-bitstream = []
 # Verbose debug output for token encoding (DC, AC, entropy codes)
 debug-tokens = []

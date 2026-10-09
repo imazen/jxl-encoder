@@ -405,6 +405,14 @@ pub fn collect_ac_coefficients_into(
 
     let mut nzeros_left = nzeros as usize;
     let mut prev = if nzeros_left > size / 16 { 0 } else { 1 };
+    // coefgap: zero-density contexts without the previous-coefficient bit.
+    #[cfg(feature = "coefgap")]
+    let no_prev = crate::coefgap::switches().no_prev;
+    #[cfg(not(feature = "coefgap"))]
+    let no_prev = false;
+    if no_prev {
+        prev = 0;
+    }
 
     for k in covered_blocks..size.min(order.len()) {
         if nzeros_left == 0 {
@@ -418,7 +426,7 @@ pub fn collect_ac_coefficients_into(
         tokens.push(Token::new(ctx as u32, u_coef));
 
         if coef != 0 {
-            prev = 1;
+            prev = (!no_prev) as usize;
             nzeros_left -= 1;
         } else {
             prev = 0;
