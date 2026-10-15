@@ -24,7 +24,7 @@
 //! backward-compat alias `crate::vardct::butteraugli_loop = perceptual_loop`
 //! lives in `vardct/mod.rs` so the 30+ in-crate `use` sites keep working.
 
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use super::ac_strategy::AcStrategyMap;
 use super::adaptive_quant::quantize_quant_field;
@@ -162,6 +162,14 @@ pub static MAX_INCREASE_X1000_HIGH_SCREENSHOT: AtomicI32 = AtomicI32::new(i32::M
 /// value (NOT `i32::MIN`) so that `resolved_*` helpers always see a
 /// valid split even when production runs without any harness present.
 pub static DISTANCE_SPLIT_X1000: AtomicI32 = AtomicI32::new(2000);
+
+/// Sweep override that turns off the fixed-point stop in the perceptual
+/// loop (`true` = stop, the default). From iteration 2 on, `cur_pow` is 0
+/// and only blocks over target move; once an iteration leaves the quant
+/// field bit-identical, every later iteration re-encodes that same field
+/// and reproduces the same score, map and output. Harnesses set this to
+/// `false` to time and byte-compare the full iteration count.
+pub static FIXPOINT_STOP: AtomicBool = AtomicBool::new(true);
 
 /// Helper: read an `_X1000` override; return `default` when unset.
 fn read_override_x1000(slot: &AtomicI32, default: f64) -> f64 {
@@ -2083,6 +2091,17 @@ impl VarDctEncoder {
         // the ~width*height*4 B/iter fresh allocation the prior
         // `BackendCompareResult { diffmap: Vec<f32> }` path produced.
         let mut diffmap_vec: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
+        // The field the current iteration encoded, kept for the
+        // fixed-point check after Step 8.
+        let fixpoint_stop = FIXPOINT_STOP.load(Ordering::Relaxed);
+        // The recon-hook captures key on `iter == iters` (or every iter),
+        // so they keep the full schedule.
+        #[cfg(feature = "__internal_recon_hook")]
+        let fixpoint_stop = fixpoint_stop
+            && !recon_hook::capture_enabled()
+            && !recon_hook::steps_capture_enabled()
+            && !recon_hook::all_iters_enabled();
+        let mut encoded_qf: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
 
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
@@ -2890,6 +2909,14 @@ impl VarDctEncoder {
             if iter == iters {
                 break;
             }
+            // Iterations 0 and 1 have their own rules (good-block
+            // reclamation, the clamp toward the initial field), so only
+            // the cur_pow = 0 regime has a fixed point worth checking.
+            let check_fixpoint = fixpoint_stop && iter >= 2;
+            if check_fixpoint {
+                encoded_qf.clear();
+                encoded_qf.extend_from_slice(quant_field_float);
+            }
 
             // Step 7: kOriginalComparisonRound = 1: constrain toward initial BEFORE adjustment.
             // Prevents oscillation by keeping qf from diverging too far from initial.
@@ -3065,6 +3092,14 @@ impl VarDctEncoder {
             }
             if let Some(trace) = &self.loop_trace {
                 trace.set_next_quant_field(quant_field_float);
+            }
+            // Fixed point: no block went over target, so the field is
+            // bit-identical to the one just encoded. Each remaining
+            // iteration would re-encode it and reproduce this score, map
+            // and quant field, so the loop state already equals what the
+            // compare-only final iteration would leave behind.
+            if check_fixpoint && encoded_qf.as_slice() == &*quant_field_float {
+                break;
             }
         }
 
