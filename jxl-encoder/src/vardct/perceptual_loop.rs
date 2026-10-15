@@ -123,6 +123,11 @@ pub static CUR_POW_X1000_LOW: AtomicI32 = AtomicI32::new(i32::MIN);
 /// [`DEFAULT_CUR_POW_HIGH`]".
 pub static CUR_POW_X1000_HIGH: AtomicI32 = AtomicI32::new(i32::MIN);
 
+/// Sweep override for `cur_pow` from iteration 2 on, at every distance.
+/// `i32::MIN` means "use 0.0" (libjxl: only blocks above target move).
+/// A non-zero value keeps coarsening good blocks in the later iterations.
+pub static LATE_CUR_POW_X1000: AtomicI32 = AtomicI32::new(i32::MIN);
+
 /// Sweep override for `max_increase` (per-iter bad-block bump cap) at
 /// low distances. Stored as `value × 1000`. `i32::MIN` means "use
 /// [`DEFAULT_MAX_INCREASE_LOW`]".
@@ -269,12 +274,12 @@ pub(crate) fn per_block_mask1x1_mean(
 /// Resolve `cur_pow` for the current iter + `target_distance`, honouring
 /// any sweep overrides set in `CUR_POW_X1000_{LOW,HIGH}`.
 ///
-/// Returns 0.0 for `iter >= 2` regardless of override (only iter < 2
-/// has a good-block reclamation regime; later iters only bump bad
-/// blocks — same as libjxl `enc_adaptive_quantization.cc:1106`).
+/// Returns 0.0 for `iter >= 2` unless `LATE_CUR_POW_X1000` is set (only
+/// iter < 2 has a good-block reclamation regime by default; later iters
+/// only bump bad blocks — same as libjxl `enc_adaptive_quantization.cc:1106`).
 pub(crate) fn resolved_cur_pow(iter: usize, target_distance: f64) -> f64 {
     if iter >= 2 {
-        return 0.0;
+        return read_override_x1000(&LATE_CUR_POW_X1000, 0.0);
     }
     let split = read_override_x1000(&DISTANCE_SPLIT_X1000, DEFAULT_DISTANCE_SPLIT);
     if target_distance < split {

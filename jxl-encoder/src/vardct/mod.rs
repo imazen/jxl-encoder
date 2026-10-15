@@ -281,7 +281,8 @@ pub mod __buttloop_overrides {
     // `perceptual_loop` (only meaningful when the loop runs).
     pub use super::butteraugli_loop::{
         CUR_POW_X1000_HIGH, CUR_POW_X1000_LOW, DISTANCE_SPLIT_X1000, FIXPOINT_STOP,
-        MAX_INCREASE_X1000_HIGH, MAX_INCREASE_X1000_HIGH_SCREENSHOT, MAX_INCREASE_X1000_LOW,
+        LATE_CUR_POW_X1000, MAX_INCREASE_X1000_HIGH, MAX_INCREASE_X1000_HIGH_SCREENSHOT,
+        MAX_INCREASE_X1000_LOW,
     };
     // The production-default constants moved to the always-compiled
     // `perceptual_tuning`; re-export them from there so this `pub use`

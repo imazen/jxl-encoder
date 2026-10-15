@@ -623,6 +623,11 @@ name = "loop_fixpoint_ab"
 path = "examples/loop_fixpoint_ab.rs"
 required-features = ["butteraugli-loop"]
 
+[[example]]
+name = "loop_overshoot"
+path = "examples/loop_overshoot.rs"
+required-features = ["butteraugli-loop"]
+
 # Focused W42-2 A/B for the patches `group_size_shift` libjxl-parity fix.
 # 4 screenshots + 3 photos × 4 distances × {ours, cjxl} = 56 cells, e7 only.
 [[example]]
