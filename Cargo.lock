@@ -5266,6 +5266,7 @@ name = "zenyuv"
 version = "0.1.3"
 dependencies = [
  "archmage",
+ "imgref",
  "libm",
  "linear-srgb",
  "magetypes",
@@ -5368,3 +5369,7 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "zencodec"
+version = "0.1.27"
