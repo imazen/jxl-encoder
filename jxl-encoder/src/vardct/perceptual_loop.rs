@@ -2094,6 +2094,8 @@ impl VarDctEncoder {
             // (libjxl: SetQuantFieldRect: ClampVal(row_qf[x] * inv_global_scale_ + 0.5f, 1, 255))
             let qf_vec = quantize_quant_field(quant_field_float, current_params.inv_scale);
             quant_field.copy_from_slice(&qf_vec);
+            // The field this iteration encodes with, for a caller's trace.
+            let traced_qf = self.loop_trace.as_ref().map(|_| quant_field_float.to_vec());
 
             // Step 2: Transform and quantize with current params.
             // `transform_out` is `&mut TransformOutput` from our caller;
@@ -2843,6 +2845,35 @@ impl VarDctEncoder {
                 );
             }
 
+            if let (Some(trace), Some(quant_field)) = (&self.loop_trace, traced_qf) {
+                let crop = |plane: &[f32]| -> alloc::vec::Vec<f32> {
+                    (0..height)
+                        .flat_map(|y| plane[y * padded_width..y * padded_width + width].iter())
+                        .copied()
+                        .collect()
+                };
+                trace.push(crate::LoopFrame {
+                    seed: k_init_mul,
+                    iter: iter as u32,
+                    metric: match active_metric {
+                        ActiveMetric::Butteraugli => "butteraugli",
+                        ActiveMetric::Cvvdp => "cvvdp",
+                        ActiveMetric::Zensim => "zensim",
+                    },
+                    score: iter_score,
+                    target: f64::from(effective_metric_target_distance),
+                    width: width as u32,
+                    height: height as u32,
+                    xsize_blocks: xsize_blocks as u32,
+                    ysize_blocks: ysize_blocks as u32,
+                    quant_field,
+                    next_quant_field: None,
+                    tile_dist: tile_dist.to_vec(),
+                    diffmap: diffmap_vec.clone(),
+                    recon: [crop(recon_r), crop(recon_g), crop(recon_b)],
+                });
+            }
+
             // Last iteration is compare-only (libjxl: if (i == iters) break;)
             if iter == iters {
                 break;
@@ -3019,6 +3050,9 @@ impl VarDctEncoder {
                     }
                     quant_field_float[bi] = quant_field_float[bi].clamp(qf_lower, qf_higher);
                 }
+            }
+            if let Some(trace) = &self.loop_trace {
+                trace.set_next_quant_field(quant_field_float);
             }
         }
 
