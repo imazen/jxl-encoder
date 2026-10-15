@@ -695,6 +695,24 @@ impl PerceptualBackend for CpuButteraugliBackend {
 // External backend — a caller-supplied metric (`__external_metric`)
 // ============================================================================
 
+/// The loop's backend for the caller's external metric, when one is attached
+/// ([`crate::EncodeRequest::with_external_metric`]).
+pub(crate) fn external_backend(
+    enc: &super::encoder::VarDctEncoder,
+) -> Option<alloc::boxed::Box<dyn PerceptualBackend>> {
+    #[cfg(feature = "__external_metric")]
+    {
+        enc.external_metric.clone().map(|m| {
+            alloc::boxed::Box::new(ExternalBackend(m)) as alloc::boxed::Box<dyn PerceptualBackend>
+        })
+    }
+    #[cfg(not(feature = "__external_metric"))]
+    {
+        let _ = enc;
+        None
+    }
+}
+
 /// Scores with the caller's [`crate::ExternalMetric`] instead of butteraugli.
 #[cfg(feature = "__external_metric")]
 #[derive(Debug)]

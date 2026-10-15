@@ -1059,22 +1059,16 @@ impl VarDctEncoder {
                     // matching DisplayConfig.
                     target_display: self.target_display,
                 };
-                #[cfg(feature = "__external_metric")]
-                let external = self.external_metric.clone().map(|m| {
-                    alloc::boxed::Box::new(super::perceptual_backend::ExternalBackend(m))
-                        as alloc::boxed::Box<dyn super::perceptual_backend::PerceptualBackend>
-                });
-                #[cfg(not(feature = "__external_metric"))]
-                let external = None;
-                let mut b = external.unwrap_or_else(|| {
-                    super::perceptual_backend::construct_backend(
-                        width as u32,
-                        height as u32,
-                        butteraugli_params,
-                        metric_intensity_target,
-                        selection,
-                    )
-                });
+                let mut b =
+                    super::perceptual_backend::external_backend(self).unwrap_or_else(|| {
+                        super::perceptual_backend::construct_backend(
+                            width as u32,
+                            height as u32,
+                            butteraugli_params,
+                            metric_intensity_target,
+                            selection,
+                        )
+                    });
                 // #106: select the actual backend first so CPU fallback and
                 // GPU's optional CPU shadow cannot evade this reservation.
                 // Reserve construction + comparison scratch + retained pool,
