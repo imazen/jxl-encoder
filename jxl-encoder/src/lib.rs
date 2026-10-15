@@ -95,6 +95,7 @@ pub(crate) mod trace;
 // Re-exports owned by their source-of-truth modules; the optional
 // `tuning-override` feature adds a `runtime` submodule with a postcard
 // runtime override layer for the sweep runner.
+pub mod loop_trace;
 #[cfg(feature = "zensim-loop")]
 pub(crate) mod s4_eps;
 pub(crate) mod tuning;
@@ -107,6 +108,7 @@ pub(crate) mod zq_seed;
 #[cfg(feature = "convenience")]
 pub mod convenience;
 
+pub use loop_trace::{LoopFrame, LoopTrace};
 // Re-export new API as primary
 pub use api::{
     AnimationFrame, AnimationParams, At, BlendMode, Buffering, ChromaSubsampling, ContainerMode,

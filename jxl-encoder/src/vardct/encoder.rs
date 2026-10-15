@@ -1964,6 +1964,9 @@ pub(crate) fn w44_audit_5_p3_force_libjxl_parity_for_screenshot(
 pub struct VarDctEncoder {
     /// Target distance (quality). 1.0 = visually lossless.
     pub distance: f32,
+    /// Per-iteration perceptual-loop record, when the caller attached one
+    /// ([`crate::EncodeRequest::with_loop_trace`]).
+    pub(crate) loop_trace: Option<crate::LoopTrace>,
     /// Effort level (1–13). Controls AC strategy gating and search depth.
     /// e10 = libjxl kGlacier superset; e11/e12/e13 extend past libjxl via
     /// longer search budgets (8/16/32 butteraugli iters; `ITER_MAX = 32`).
@@ -2612,6 +2615,7 @@ impl Default for VarDctEncoder {
     fn default() -> Self {
         Self {
             distance: 1.0,
+            loop_trace: None,
             effort: 7,
             profile: crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference),
             optimize_codes: true,
@@ -2776,6 +2780,7 @@ impl VarDctEncoder {
     pub fn new(distance: f32) -> Self {
         Self {
             distance,
+            loop_trace: None,
             effort: 7,
             profile: crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference),
             optimize_codes: true,

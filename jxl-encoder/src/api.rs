@@ -1749,6 +1749,7 @@ impl LosslessConfig {
             metadata: None,
             limits: None,
             stop: None,
+            loop_trace: None,
             source_gamma: None,
             color_encoding: None,
             intensity_target: None,
@@ -5466,6 +5467,7 @@ impl LossyConfig {
             metadata: None,
             limits: None,
             stop: None,
+            loop_trace: None,
             source_gamma: None,
             color_encoding: None,
             intensity_target: None,
@@ -5624,6 +5626,8 @@ pub struct EncodeRequest<'a> {
     metadata: Option<&'a ImageMetadata<'a>>,
     limits: Option<&'a Limits>,
     stop: Option<&'a dyn Stop>,
+    /// Per-iteration perceptual-loop record ([`Self::with_loop_trace`]).
+    loop_trace: Option<crate::LoopTrace>,
     source_gamma: Option<f32>,
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     intensity_target: Option<f32>,
@@ -5912,6 +5916,17 @@ impl<'a> EncodeRequest<'a> {
     /// [`EncodeError::Cancelled`] if stopped.
     pub fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
         self.stop = Some(stop);
+        self
+    }
+
+    /// Record every scored iteration of the VarDCT perceptual quantization
+    /// loop into `trace` (a clone shares the same frames): the quant field
+    /// each iteration encoded with and the one it adjusted to, the metric's
+    /// diffmap and per-block distances, the score and target, and the
+    /// reconstruction. Encoded bytes are unchanged. Nothing is recorded when
+    /// the loop does not run (lossless, or a loop iteration count of 0).
+    pub fn with_loop_trace(mut self, trace: &crate::LoopTrace) -> Self {
+        self.loop_trace = Some(trace.clone());
         self
     }
 
@@ -8318,6 +8333,7 @@ impl<'a> EncodeRequest<'a> {
             enc.source_bit_depth = if sbd.0 { Some(sbd) } else { None };
         }
         enc.source_gamma = self.source_gamma;
+        enc.loop_trace = self.loop_trace.clone();
         // A3 chunk 1b (issue #46): if the caller didn't set an
         // explicit color encoding but the layout name carries an
         // implied transfer function (PQ / HLG / BT.709 f32), auto-set

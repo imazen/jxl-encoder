@@ -68,6 +68,7 @@ mod lf_frame_multipliers_regression;
 mod lf_quality;
 mod llf_invariants;
 mod lloyd_max_buckets_roundtrip;
+mod loop_trace;
 mod lossless_compare;
 mod lossless_float;
 mod lossless_multigroup_lz77;
