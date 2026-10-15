@@ -947,6 +947,13 @@ impl VarDctEncoder {
         // `gpu-butteraugli` cargo feature is on AND CUDA initialises, the
         // backend dispatches to the GPU pipeline (~27× faster at 1024²+
         // per W44-RECON-DEEP/A7).
+        #[cfg(feature = "__external_metric")]
+        if use_vdp2 && self.external_metric.is_some() {
+            return Err(crate::error::Error::InvalidInput(
+                "an external loop metric replaces butteraugli; the HDR path scores with VDP2"
+                    .into(),
+            ));
+        }
         let backend: Option<alloc::boxed::Box<dyn super::perceptual_backend::PerceptualBackend>> =
             if use_vdp2 {
                 // VDP2 path: the planar refs (reserved by
@@ -1052,13 +1059,22 @@ impl VarDctEncoder {
                     // matching DisplayConfig.
                     target_display: self.target_display,
                 };
-                let mut b = super::perceptual_backend::construct_backend(
-                    width as u32,
-                    height as u32,
-                    butteraugli_params,
-                    metric_intensity_target,
-                    selection,
-                );
+                #[cfg(feature = "__external_metric")]
+                let external = self.external_metric.clone().map(|m| {
+                    alloc::boxed::Box::new(super::perceptual_backend::ExternalBackend(m))
+                        as alloc::boxed::Box<dyn super::perceptual_backend::PerceptualBackend>
+                });
+                #[cfg(not(feature = "__external_metric"))]
+                let external = None;
+                let mut b = external.unwrap_or_else(|| {
+                    super::perceptual_backend::construct_backend(
+                        width as u32,
+                        height as u32,
+                        butteraugli_params,
+                        metric_intensity_target,
+                        selection,
+                    )
+                });
                 // #106: select the actual backend first so CPU fallback and
                 // GPU's optional CPU shadow cannot evade this reservation.
                 // Reserve construction + comparison scratch + retained pool,
@@ -2856,6 +2872,8 @@ impl VarDctEncoder {
                     seed: k_init_mul,
                     iter: iter as u32,
                     metric: match active_metric {
+                        #[cfg(feature = "__external_metric")]
+                        ActiveMetric::Butteraugli if self.external_metric.is_some() => "external",
                         ActiveMetric::Butteraugli => "butteraugli",
                         ActiveMetric::Cvvdp => "cvvdp",
                         ActiveMetric::Zensim => "zensim",

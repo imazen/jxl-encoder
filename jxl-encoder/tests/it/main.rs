@@ -46,6 +46,8 @@ mod encode_from_pre_quantized_ac_extras;
 mod encode_from_precomputed_extras;
 mod epf_force_level;
 mod error_location_trace;
+#[cfg(feature = "__external_metric")]
+mod external_metric;
 mod f16_input_roundtrip;
 mod fast_decode_lossless;
 mod frymire_diag;

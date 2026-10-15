@@ -1967,6 +1967,10 @@ pub struct VarDctEncoder {
     /// Per-iteration perceptual-loop record, when the caller attached one
     /// ([`crate::EncodeRequest::with_loop_trace`]).
     pub(crate) loop_trace: Option<crate::LoopTrace>,
+    /// Caller-supplied loop metric replacing butteraugli
+    /// ([`crate::EncodeRequest::with_external_metric`]).
+    #[cfg(feature = "__external_metric")]
+    pub(crate) external_metric: Option<crate::ExternalMetric>,
     /// Effort level (1–13). Controls AC strategy gating and search depth.
     /// e10 = libjxl kGlacier superset; e11/e12/e13 extend past libjxl via
     /// longer search budgets (8/16/32 butteraugli iters; `ITER_MAX = 32`).
@@ -2616,6 +2620,8 @@ impl Default for VarDctEncoder {
         Self {
             distance: 1.0,
             loop_trace: None,
+            #[cfg(feature = "__external_metric")]
+            external_metric: None,
             effort: 7,
             profile: crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference),
             optimize_codes: true,
@@ -2781,6 +2787,8 @@ impl VarDctEncoder {
         Self {
             distance,
             loop_trace: None,
+            #[cfg(feature = "__external_metric")]
+            external_metric: None,
             effort: 7,
             profile: crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference),
             optimize_codes: true,
