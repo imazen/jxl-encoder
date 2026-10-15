@@ -280,8 +280,8 @@ pub mod __buttloop_overrides {
     // The atomic sweep-override statics live in the `butteraugli-loop`-gated
     // `perceptual_loop` (only meaningful when the loop runs).
     pub use super::butteraugli_loop::{
-        CUR_POW_X1000_HIGH, CUR_POW_X1000_LOW, DISTANCE_SPLIT_X1000, MAX_INCREASE_X1000_HIGH,
-        MAX_INCREASE_X1000_HIGH_SCREENSHOT, MAX_INCREASE_X1000_LOW,
+        CUR_POW_X1000_HIGH, CUR_POW_X1000_LOW, DISTANCE_SPLIT_X1000, LATE_CUR_POW_X1000,
+        MAX_INCREASE_X1000_HIGH, MAX_INCREASE_X1000_HIGH_SCREENSHOT, MAX_INCREASE_X1000_LOW,
     };
     // The production-default constants moved to the always-compiled
     // `perceptual_tuning`; re-export them from there so this `pub use`
@@ -290,7 +290,7 @@ pub mod __buttloop_overrides {
     pub use super::perceptual_tuning::{
         DEFAULT_CUR_POW_HIGH, DEFAULT_CUR_POW_LOW, DEFAULT_DISTANCE_SPLIT,
         DEFAULT_MAX_INCREASE_HIGH, DEFAULT_MAX_INCREASE_HIGH_SCREENSHOT, DEFAULT_MAX_INCREASE_LOW,
-        SCREENSHOT_MEDIAN_THRESHOLD,
+        SCREENSHOT_MEDIAN_THRESHOLD, ZENJXL_CUR_POW, ZENJXL_CUR_POW_FLAT_FCBR,
     };
 }
 

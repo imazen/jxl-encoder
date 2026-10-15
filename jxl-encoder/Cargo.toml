@@ -614,6 +614,11 @@ name = "loop_trace_dump"
 path = "examples/loop_trace_dump.rs"
 required-features = ["butteraugli-loop"]
 
+[[example]]
+name = "loop_overshoot"
+path = "examples/loop_overshoot.rs"
+required-features = ["butteraugli-loop", "__internals"]
+
 # Focused W42-2 A/B for the patches `group_size_shift` libjxl-parity fix.
 # 4 screenshots + 3 photos × 4 distances × {ours, cjxl} = 56 cells, e7 only.
 [[example]]
