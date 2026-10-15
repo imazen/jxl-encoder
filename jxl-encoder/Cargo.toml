@@ -330,6 +330,13 @@ __pre_quantized = []
 # for the in-crate microbench (benches/tree_learn_split_read_pattern.rs).
 # Off by default; not stable; pure re-export with no behavior change. Issue #40.
 __bench_internals = []
+# Caller-supplied perceptual metric for the VarDCT quantization loop:
+# exposes `ExternalLoopMetric` / `ExternalMetric` and
+# `EncodeRequest::with_external_metric`, which replace butteraugli as the
+# loop's scorer (values on butteraugli's scale). Off by default; not stable;
+# the trait may change in any release. Output is byte-identical with the
+# feature on and no metric attached.
+__external_metric = ["butteraugli-loop", "std"]
 # Debug hook for capturing the butteraugli loop's INTERNAL reconstruction
 # (the planar linear RGB the loop measures butteraugli against, after the
 # final SetQuantField → transform → quantize → reconstruct → gab → EPF

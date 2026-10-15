@@ -692,6 +692,88 @@ impl PerceptualBackend for CpuButteraugliBackend {
 }
 
 // ============================================================================
+// External backend — a caller-supplied metric (`__external_metric`)
+// ============================================================================
+
+/// The loop's backend for the caller's external metric, when one is attached
+/// ([`crate::EncodeRequest::with_external_metric`]).
+pub(crate) fn external_backend(
+    enc: &super::encoder::VarDctEncoder,
+) -> Option<alloc::boxed::Box<dyn PerceptualBackend>> {
+    #[cfg(feature = "__external_metric")]
+    {
+        enc.external_metric.clone().map(|m| {
+            alloc::boxed::Box::new(ExternalBackend(m)) as alloc::boxed::Box<dyn PerceptualBackend>
+        })
+    }
+    #[cfg(not(feature = "__external_metric"))]
+    {
+        let _ = enc;
+        None
+    }
+}
+
+/// Scores with the caller's [`crate::ExternalMetric`] instead of butteraugli.
+#[cfg(feature = "__external_metric")]
+#[derive(Debug)]
+pub(crate) struct ExternalBackend(pub(crate) crate::ExternalMetric);
+
+#[cfg(feature = "__external_metric")]
+impl PerceptualBackend for ExternalBackend {
+    fn name(&self) -> &'static str {
+        "external"
+    }
+
+    fn set_reference(
+        &mut self,
+        ref_r: &[f32],
+        ref_g: &[f32],
+        ref_b: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Result<()> {
+        self.0
+            .with(|m| m.set_reference(ref_r, ref_g, ref_b, width, height))
+            .map_err(|e| {
+                crate::error::Error::InvalidInput(format!("external metric reference: {e}"))
+            })
+    }
+
+    fn compare_with_reference(
+        &mut self,
+        dist_r: &[f32],
+        dist_g: &[f32],
+        dist_b: &[f32],
+        padded_width: usize,
+        width: usize,
+        height: usize,
+        diffmap_out: &mut alloc::vec::Vec<f32>,
+    ) -> Result<BackendCompareResult> {
+        let score = self
+            .0
+            .with(|m| {
+                m.compare(
+                    dist_r,
+                    dist_g,
+                    dist_b,
+                    padded_width,
+                    width,
+                    height,
+                    diffmap_out,
+                )
+            })
+            .map_err(|e| crate::error::Error::InvalidInput(format!("external metric: {e}")))?;
+        if diffmap_out.len() != width * height || !score.is_finite() {
+            return Err(crate::error::Error::InvalidInput(format!(
+                "external metric returned {} diffmap values for {width}×{height} and score {score}",
+                diffmap_out.len()
+            )));
+        }
+        Ok(BackendCompareResult { score })
+    }
+}
+
+// ============================================================================
 // GPU backend — feature-gated, opt-in
 // ============================================================================
 

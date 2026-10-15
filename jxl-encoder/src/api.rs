@@ -1750,6 +1750,8 @@ impl LosslessConfig {
             limits: None,
             stop: None,
             loop_trace: None,
+            #[cfg(feature = "__external_metric")]
+            external_metric: None,
             source_gamma: None,
             color_encoding: None,
             intensity_target: None,
@@ -5468,6 +5470,8 @@ impl LossyConfig {
             limits: None,
             stop: None,
             loop_trace: None,
+            #[cfg(feature = "__external_metric")]
+            external_metric: None,
             source_gamma: None,
             color_encoding: None,
             intensity_target: None,
@@ -5628,6 +5632,9 @@ pub struct EncodeRequest<'a> {
     stop: Option<&'a dyn Stop>,
     /// Per-iteration perceptual-loop record ([`Self::with_loop_trace`]).
     loop_trace: Option<crate::LoopTrace>,
+    /// Loop metric replacing butteraugli ([`Self::with_external_metric`]).
+    #[cfg(feature = "__external_metric")]
+    external_metric: Option<crate::ExternalMetric>,
     source_gamma: Option<f32>,
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     intensity_target: Option<f32>,
@@ -5927,6 +5934,21 @@ impl<'a> EncodeRequest<'a> {
     /// the loop does not run (lossless, or a loop iteration count of 0).
     pub fn with_loop_trace(mut self, trace: &crate::LoopTrace) -> Self {
         self.loop_trace = Some(trace.clone());
+        self
+    }
+
+    /// Score the VarDCT perceptual quantization loop with `metric` instead
+    /// of butteraugli (**unstable**, `__external_metric` feature). The
+    /// metric's values must be on butteraugli's scale; see
+    /// [`crate::loop_metric`]. The loop runs only where it would run with
+    /// butteraugli (lossy VarDCT with a nonzero iteration count).
+    ///
+    /// The encode fails with [`EncodeError::InvalidConfig`] when combined
+    /// with a CVVDP or Zensim loop metric, or on the HDR path that scores
+    /// with VDP2.
+    #[cfg(feature = "__external_metric")]
+    pub fn with_external_metric(mut self, metric: &crate::ExternalMetric) -> Self {
+        self.external_metric = Some(metric.clone());
         self
     }
 
@@ -8334,6 +8356,24 @@ impl<'a> EncodeRequest<'a> {
         }
         enc.source_gamma = self.source_gamma;
         enc.loop_trace = self.loop_trace.clone();
+        #[cfg(feature = "__external_metric")]
+        if let Some(metric) = &self.external_metric {
+            if enc.cvvdp_loop || enc.zensim_loop {
+                return Err(EncodeError::InvalidConfig {
+                    message: "an external loop metric replaces butteraugli; it cannot be \
+                              combined with a CVVDP or Zensim loop metric"
+                        .into(),
+                });
+            }
+            if matches!(enc.hdr_loss, crate::vardct::hdr_metrics::HdrLoss::Vdp2) {
+                return Err(EncodeError::InvalidConfig {
+                    message: "an external loop metric replaces butteraugli; the HDR path \
+                              scores with VDP2 instead"
+                        .into(),
+                });
+            }
+            enc.external_metric = Some(metric.clone());
+        }
         // A3 chunk 1b (issue #46): if the caller didn't set an
         // explicit color encoding but the layout name carries an
         // implied transfer function (PQ / HLG / BT.709 f32), auto-set

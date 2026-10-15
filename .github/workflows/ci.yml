@@ -65,6 +65,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance
 
+      - name: Test the external loop metric (__external_metric)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked --release -p jxl-encoder --features __external_metric --test it -- external_metric loop_trace
+
       - name: Provision legacy JPEG reconstruction fixtures
         if: matrix.os == 'ubuntu-latest'
         shell: bash
