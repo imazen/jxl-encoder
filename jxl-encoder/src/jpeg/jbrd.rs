@@ -264,12 +264,14 @@ fn write_u32_jbrd(
         }
     }
 
-    // Try bits+offset matches
+    // Try bits+offset matches. Every selector, the last included, must hold the
+    // value: writing an out-of-range value into the last selector's bits would
+    // truncate it and leave a jbrd box no decoder can rebuild from (a progressive
+    // JPEG with more than 65,555 EOB-run reset points in one scan reached this).
     let base_selector = direct_values.len();
     for (i, &(bits, offset)) in bits_offset.iter().enumerate() {
         let selector = base_selector + i;
-        let is_last = selector >= 3;
-        if is_last || (value >= offset && (bits == 0 || (value - offset) < (1 << bits))) {
+        if value >= offset && (bits == 0 || u64::from(value - offset) < (1u64 << bits)) {
             writer.write(2, selector as u64)?;
             if bits > 0 {
                 writer.write(bits, (value - offset) as u64)?;
@@ -278,12 +280,12 @@ fn write_u32_jbrd(
         }
     }
 
-    // With a well-formed 4-selector table the `is_last` (selector >= 3) branch
-    // above always matches, so this is normally unreachable. Return a typed
-    // error rather than panicking on the write path (#77 item 3) — a malformed
-    // selector table or an out-of-range value must not abort the process.
+    // A value no selector can hold is beyond what the jbrd format can carry, as
+    // libjxl also reports ("JPEG bitstream reconstruction data cannot be encoded").
+    // Return a typed error rather than panicking on the write path (#77 item 3).
     Err(crate::error::Error::InvalidInput(format!(
-        "JBRD U32 value {value} matched no selector ({} direct + {} bits/offset)",
+        "JPEG reconstruction data cannot carry the value {value}: it is beyond the \
+         jbrd field's U32 range ({} direct + {} bits/offset selectors)",
         direct_values.len(),
         bits_offset.len()
     )))
@@ -389,11 +391,8 @@ pub(crate) fn extract_xmp(jpeg: &JpegData) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    /// #77 item 3: an out-of-range JBRD U32 value that matches no selector in a
-    /// malformed (< 4-selector) table returns a typed `InvalidInput` error
-    /// instead of panicking on the write path. With a well-formed 4-selector
-    /// table the `is_last` (selector >= 3) branch always matches, so this only
-    /// fires on a corrupt table — but it must degrade to an error, not abort.
+    /// #77 item 3: a value no selector holds (here a 2-selector table, value
+    /// below the only offset) is a typed error, not a panic.
     #[test]
     fn write_u32_jbrd_no_selector_match_is_typed_error() {
         let mut w = BitWriter::new();
@@ -407,14 +406,52 @@ mod tests {
         );
     }
 
-    /// Regression guard: a well-formed 4-selector table always encodes (selector
-    /// 3 is the catch-all `is_last` branch) — the fallback must not fire on the
-    /// normal path.
+    /// Regression guard: a value inside a well-formed table's range encodes on
+    /// the normal path.
     #[test]
     fn write_u32_jbrd_well_formed_table_encodes() {
         let mut w = BitWriter::new();
         // 2 direct + 2 bits/offset = 4 selectors; value 999 lands on selector 3.
         let r = write_u32_jbrd(&mut w, 999, &[0, 1], &[(4, 2), (16, 0)]);
         assert!(r.is_ok(), "well-formed table should encode, got {r:?}");
+    }
+
+    /// zenjxl-decoder#59: the per-scan reset-point count uses
+    /// U32(Val(0), BitsOffset(2, 1), BitsOffset(4, 4), BitsOffset(16, 20)), so the
+    /// largest count is 20 + 65,535. One more used to be written into the last
+    /// selector's 16 bits truncated, leaving a jbrd box that rebuilds nothing.
+    #[test]
+    fn write_u32_jbrd_refuses_values_beyond_the_last_selector() {
+        let table: (&[u32], &[(usize, u32)]) = (&[0], &[(2, 1), (4, 4), (16, 20)]);
+        let mut w = BitWriter::new();
+        assert!(write_u32_jbrd(&mut w, 65_555, table.0, table.1).is_ok());
+        for v in [65_556, 202_514, u32::MAX] {
+            let r = write_u32_jbrd(&mut w, v, table.0, table.1);
+            assert!(
+                matches!(r, Err(crate::error::Error::InvalidInput(_))),
+                "{v} must be refused, got {r:?}"
+            );
+        }
+        // The other jbrd fields' tables, at and beyond their maxima.
+        assert!(write_u32_jbrd(&mut w, 20 + 255, &[1], &[(2, 2), (4, 5), (8, 20)]).is_ok());
+        assert!(write_u32_jbrd(&mut w, 20 + 256, &[1], &[(2, 2), (4, 5), (8, 20)]).is_err());
+        assert!(
+            write_u32_jbrd(
+                &mut w,
+                65_793 + (1 << 22) - 1,
+                &[0],
+                &[(8, 1), (16, 257), (22, 65_793)]
+            )
+            .is_ok()
+        );
+        assert!(
+            write_u32_jbrd(
+                &mut w,
+                65_793 + (1 << 22),
+                &[0],
+                &[(8, 1), (16, 257), (22, 65_793)]
+            )
+            .is_err()
+        );
     }
 }
