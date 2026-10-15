@@ -8042,6 +8042,7 @@ impl<'a> EncodeRequest<'a> {
                 || ri.textured_low_colour_exclude
                 || ri.learned_subband_exclude
                 || ri.cfl_pass1_screenshot_x0_start
+                || ri.buttloop_good_block_pow
         };
         let shared_proxies =
             if proxies_consumed && (cfg.effort() >= 5 || cfg.effective_distance() >= 2.0) {

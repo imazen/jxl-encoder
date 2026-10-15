@@ -113,7 +113,7 @@ use std::path::PathBuf;
 /// W45-RECON part 21 added `extras_global_stream_libjxl` Section D gate → 55.
 // Lossless strategy: self-repair and large-image bucket reduction → 57.
 // Production lossless LZ77 keep-best strategy control → 58.
-const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 58;
+const EXPECTED_DIVERGENCE_GATE_COUNT: usize = 59;
 
 fn divergence_table_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -228,6 +228,7 @@ fn extract_anchors(row_ref: &str) -> Vec<String> {
             "lossless_tree_self_repair",
             "lossless_lz77_keep_best",
             "lossless_large_tree_bucket_reduction",
+            "buttloop_good_block_pow",
         ] {
             if row_ref.contains(gate) {
                 out.push(gate.to_string());

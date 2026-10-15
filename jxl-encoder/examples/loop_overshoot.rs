@@ -16,7 +16,7 @@
 //! `scripts/loop_overshoot_summary.py` does both.
 //!
 //! Usage:
-//!   cargo run --release -p jxl-encoder --features butteraugli-loop \
+//!   cargo run --release -p jxl-encoder --features butteraugli-loop,__internals \
 //!     --example loop_overshoot -- out.tsv [--efforts 9] \
 //!     [--distances 0.5,1,2] [--crop 512] [--cur-pow 0.5] [--late-cur-pow 0.2] [--label loop] \
 //!     [--no-baseline] <image.png>...
@@ -32,6 +32,7 @@ use std::io::{Cursor, Write};
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
+use jxl_encoder::__internals::ZenanalyzeProxies;
 use jxl_encoder::vardct::__buttloop_overrides::{
     CUR_POW_X1000_HIGH, CUR_POW_X1000_LOW, LATE_CUR_POW_X1000,
 };
@@ -198,13 +199,28 @@ fn main() {
         out,
         "image\twidth\theight\teffort\tdistance\tmode\tbytes\tbfly_max\tbfly_p3\tssim2\
          \tseeds\titers_run\tinternal_scores\tfinal_target\tblocks_above\tblock_p50\tblock_p90\
-         \tblocks_below_half"
+         \tblocks_below_half\tm3\tfcbr\tedge_density\tluma_var"
     )
     .unwrap();
     let total = paths.len() * efforts.len() * distances.len();
     let mut k = 0;
     for path in &paths {
         let img = load(path, crop);
+        // The proxies the encoder's content gates read, on the cropped
+        // pixels the encoder sees.
+        let p = ZenanalyzeProxies::compute_srgb_u8(
+            &img.rgb,
+            img.w as usize,
+            img.h as usize,
+            3,
+            0,
+            1,
+            2,
+        );
+        let proxies = format!(
+            "{:.3}\t{:.4}\t{:.4}\t{:.1}",
+            p.m3_colourfulness, p.flat_color_block_ratio, p.edge_density, p.luma_var
+        );
         for &effort in &efforts {
             for &distance in &distances {
                 k += 1;
@@ -227,7 +243,7 @@ fn main() {
                 let row = |mode: &str, bytes: &[u8], extra: String| {
                     let (bmax, bp3, ssim2) = score(&img, bytes);
                     format!(
-                        "{}\t{}\t{}\t{effort}\t{distance}\t{mode}\t{}\t{bmax:.4}\t{bp3:.4}\t{ssim2:.3}\t{extra}",
+                        "{}\t{}\t{}\t{effort}\t{distance}\t{mode}\t{}\t{bmax:.4}\t{bp3:.4}\t{ssim2:.3}\t{extra}\t{proxies}",
                         img.name,
                         img.w,
                         img.h,
