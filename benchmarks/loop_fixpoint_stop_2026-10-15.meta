@@ -1,0 +1,20 @@
+# loop_fixpoint_stop_2026-10-15: the VarDCT perceptual loop's fixed-point stop, off vs on
+host: i265 (Core Ultra 7 265K), 2026-10-15, run-heavy --mem 14G --jobs 4; 2817 s, peak RSS 0.42 GiB
+source: jxl-encoder change "perf(vardct): stop the perceptual loop at a quant-field fixed point"
+  on main 2b561e1e, siblings at .github/sibling-revisions.tsv; release build, default features
+command: cargo run --release -p jxl-encoder --example loop_fixpoint_ab -- cells.tsv \
+  --efforts 9,11,12 --distances 0.5,1,1.5,2,3,4,6,8 \
+  CID22/CID22-512/validation/*.png gb82-sc/*.png
+summary: python3 scripts/loop_fixpoint_summary.py cells.tsv > benchmarks/loop_fixpoint_stop_2026-10-15.tsv
+corpus: imazen/codec-corpus 5804c0f044a6f04f646d5eaa34935e8826e5a2dc; 41 CID22-512 validation photos
+  (512x512) and 10 gb82-sc screenshots centre-cropped to at most 512x512
+per cell: one encode with FIXPOINT_STOP off and one with it on (timed, order alternating per cell,
+  single process, cells run one at a time), plus one traced full-schedule encode whose frames give
+  where each seed reaches its fixed point; "identical" requires all three outputs byte-equal
+per-cell table (1224 rows, 141 KB): dev:/mnt/v/output/jxl-encoder/loop_fixpoint_stop_2026-10-15/loop_fixpoint_stop.tsv
+  sha256 c0743a359dc075623e9fc2667755d43c295f5a8aac186ce929d0e64ebbd55904
+columns: stopped_early = cells where at least one seed stopped before its schedule; stop_iter_* =
+  over those cells, the earliest iteration at which a seed stopped; frames = scored iterations over
+  all seeds; s_stop_* = summed encode wall seconds
+result: 1224/1224 cells byte-identical. Wall: e9 113.4 s -> 98.0 s (-13.6 %), e11 252.3 s -> 141.4 s
+  (-44.0 %), e12 782.8 s -> 222.6 s (-71.6 %). e8 (2 iterations) never reaches the check.
