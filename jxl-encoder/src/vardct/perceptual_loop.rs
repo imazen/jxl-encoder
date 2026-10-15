@@ -277,15 +277,34 @@ pub(crate) fn per_block_mask1x1_mean(
 /// Returns 0.0 for `iter >= 2` unless `LATE_CUR_POW_X1000` is set (only
 /// iter < 2 has a good-block reclamation regime by default; later iters
 /// only bump bad blocks — same as libjxl `enc_adaptive_quantization.cc:1106`).
+#[cfg(test)]
 pub(crate) fn resolved_cur_pow(iter: usize, target_distance: f64) -> f64 {
+    resolved_cur_pow_with(iter, target_distance, None)
+}
+
+/// [`resolved_cur_pow`] with the strategy's iteration-0/1 exponent:
+/// `None` is libjxl's per-regime default, `Some(v)` replaces it at every
+/// distance (the `buttloop_good_block_pow` gate). Sweep overrides win
+/// over both.
+pub(crate) fn resolved_cur_pow_with(
+    iter: usize,
+    target_distance: f64,
+    good_block_pow: Option<f64>,
+) -> f64 {
     if iter >= 2 {
         return read_override_x1000(&LATE_CUR_POW_X1000, 0.0);
     }
     let split = read_override_x1000(&DISTANCE_SPLIT_X1000, DEFAULT_DISTANCE_SPLIT);
     if target_distance < split {
-        read_override_x1000(&CUR_POW_X1000_LOW, DEFAULT_CUR_POW_LOW)
+        read_override_x1000(
+            &CUR_POW_X1000_LOW,
+            good_block_pow.unwrap_or(DEFAULT_CUR_POW_LOW),
+        )
     } else {
-        read_override_x1000(&CUR_POW_X1000_HIGH, DEFAULT_CUR_POW_HIGH)
+        read_override_x1000(
+            &CUR_POW_X1000_HIGH,
+            good_block_pow.unwrap_or(DEFAULT_CUR_POW_HIGH),
+        )
     }
 }
 
@@ -2112,6 +2131,13 @@ impl VarDctEncoder {
             && !recon_hook::all_iters_enabled();
         let mut encoded_qf: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
 
+        // The iteration-0/1 good-block exponent: libjxl's per-regime
+        // default unless the `buttloop_good_block_pow` gate is on.
+        let good_block_pow = self
+            .resolved_improvements
+            .buttloop_good_block_pow
+            .then(|| zenjxl_good_block_pow(self.zenanalyze_proxies.as_ref()));
+
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).
         // i=0..iters-1: SetQuantField + roundtrip + compare + adjust
         // i=iters: SetQuantField + roundtrip + compare + break
@@ -2978,7 +3004,7 @@ impl VarDctEncoder {
             // (only iter < 2 reduces quality of good blocks; later
             // iters only bump bad blocks — same as libjxl
             // `enc_adaptive_quantization.cc:1106`).
-            let cur_pow: f64 = resolved_cur_pow(iter, target_distance as f64);
+            let cur_pow: f64 = resolved_cur_pow_with(iter, target_distance as f64, good_block_pow);
             // W39-2 (WF3 fix): HIGH-regime + screenshot-class content
             // can cap `max_increase` at a lower value than the libjxl
             // default. `is_screenshot` was classified once at the
@@ -3855,6 +3881,7 @@ mod tuning_tests {
     fn reset_overrides() {
         CUR_POW_X1000_LOW.store(i32::MIN, Ordering::Relaxed);
         CUR_POW_X1000_HIGH.store(i32::MIN, Ordering::Relaxed);
+        LATE_CUR_POW_X1000.store(i32::MIN, Ordering::Relaxed);
         MAX_INCREASE_X1000_LOW.store(i32::MIN, Ordering::Relaxed);
         MAX_INCREASE_X1000_HIGH.store(i32::MIN, Ordering::Relaxed);
         MAX_INCREASE_X1000_HIGH_SCREENSHOT.store(i32::MIN, Ordering::Relaxed);
@@ -3896,6 +3923,42 @@ mod tuning_tests {
         assert_eq!(resolved_cur_pow(2, 1.0), 0.0);
         assert_eq!(resolved_cur_pow(3, 3.0), 0.0);
         assert_eq!(resolved_cur_pow(99, 5.0), 0.0);
+    }
+
+    #[test]
+    fn resolved_cur_pow_with_strategy_exponent() {
+        reset_overrides();
+        // The gate's exponent replaces libjxl's at iterations 0 and 1 only.
+        // d < split: the HIGH-regime override slot is not read.
+        assert!((resolved_cur_pow_with(0, 1.0, Some(ZENJXL_CUR_POW)) - 0.5).abs() < 1e-9);
+        assert!((resolved_cur_pow_with(1, 1.0, Some(ZENJXL_CUR_POW)) - 0.5).abs() < 1e-9);
+        assert_eq!(resolved_cur_pow_with(2, 1.0, Some(ZENJXL_CUR_POW)), 0.0);
+        assert!((resolved_cur_pow_with(0, 1.0, None) - DEFAULT_CUR_POW_LOW).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zenjxl_good_block_pow_keeps_libjxl_on_flat_colour() {
+        use crate::vardct::encoder::ZenanalyzeProxies;
+        let with_fcbr = |fcbr| ZenanalyzeProxies {
+            m3_colourfulness: 20.0,
+            flat_color_block_ratio: fcbr,
+            edge_density: 0.1,
+            luma_var: 2000.0,
+        };
+        assert_eq!(zenjxl_good_block_pow(None), ZENJXL_CUR_POW);
+        assert_eq!(zenjxl_good_block_pow(Some(&with_fcbr(0.0))), ZENJXL_CUR_POW);
+        assert_eq!(
+            zenjxl_good_block_pow(Some(&with_fcbr(0.49))),
+            ZENJXL_CUR_POW
+        );
+        assert_eq!(
+            zenjxl_good_block_pow(Some(&with_fcbr(0.5))),
+            DEFAULT_CUR_POW_LOW
+        );
+        assert_eq!(
+            zenjxl_good_block_pow(Some(&with_fcbr(0.98))),
+            DEFAULT_CUR_POW_LOW
+        );
     }
 
     #[test]

@@ -37,20 +37,18 @@
 /// value (bit-identical to libjxl).
 pub(crate) const LIBJXL_INIT_MUL: f64 = 0.6;
 
-/// Production default for `cur_pow` in the LOW regime
-/// (`target_distance < DEFAULT_DISTANCE_SPLIT`). Matches libjxl's
-/// default — **the literal GPU port (`0.5`) was tested A/B on CPU
-/// and over-reclaims, costing 1-13 % butteraugli at d<2.0** (see
-/// `benchmarks/buttloop_distance_split_port_*.{tsv,meta}`). The
-/// scaffolding stays so sweep harnesses can find a CPU-specific
-/// LOW value via `CUR_POW_X1000_LOW`, but the default is the
-/// libjxl-faithful value until that sweep lands.
+/// libjxl's `cur_pow` in the LOW regime
+/// (`target_distance < DEFAULT_DISTANCE_SPLIT`), used by the Libjxl and
+/// LeanFaster strategies and by Zenjxl on flat-colour dominated images
+/// (see [`zenjxl_good_block_pow`]). The earlier
+/// `benchmarks/buttloop_distance_split_port_*.{tsv,meta}` A/B tested the
+/// GPU port's `0.5` together with a `max_increase` 1.3 cap at matched
+/// distance and measured 1-13 % worse butteraugli at d<2.0; at matched
+/// delivered quality, without that cap, `0.5` is cheaper
+/// ([`ZENJXL_CUR_POW`], `benchmarks/loop_overshoot_2026-10-15.md`).
 ///
 /// GPU equivalent: `DEFAULT_CUR_POW_LOW = 0.5` in
-/// `jxl-encoder-gpu/src/forks/butteraugli_loop.rs`. The GPU's
-/// `0.5` tuning was calibrated to its own baseline (≈9 % smaller
-/// bytes at e7 than cjxl); CPU's e7 baseline differs and the same
-/// value is too aggressive here.
+/// `jxl-encoder-gpu/src/forks/butteraugli_loop.rs`.
 pub const DEFAULT_CUR_POW_LOW: f64 = 0.2;
 
 /// Production default for `cur_pow` in the HIGH regime
@@ -58,6 +56,35 @@ pub const DEFAULT_CUR_POW_LOW: f64 = 0.2;
 /// default (`enc_adaptive_quantization.cc:1106`) — no change from
 /// pre-port CPU behaviour.
 pub const DEFAULT_CUR_POW_HIGH: f64 = 0.2;
+
+/// Good-block exponent for iterations 0 and 1 when the
+/// `buttloop_good_block_pow` strategy gate is on (Zenjxl, Aggressive):
+/// each block's quant field is scaled by `(tile/target)^cur_pow`, so a
+/// larger exponent coarsens blocks far below the target harder. libjxl's
+/// 0.2 ([`DEFAULT_CUR_POW_LOW`] / [`DEFAULT_CUR_POW_HIGH`]) leaves
+/// screenshots and high-distance photos finer than requested.
+/// See `benchmarks/loop_overshoot_2026-10-15.md`.
+pub const ZENJXL_CUR_POW: f64 = 0.5;
+
+/// Flat-colour block ratio (zenanalyze `flat_color_block_ratio`) at or
+/// above which the gate keeps libjxl's 0.2. On imazen-26 train, flat-colour
+/// dominated pages (document scans, brochures, charts) are the classes where
+/// 0.5 costs bytes at matched SSIMULACRA2; see
+/// `benchmarks/loop_overshoot_2026-10-15.md`.
+pub const ZENJXL_CUR_POW_FLAT_FCBR: f32 = 0.5;
+
+/// The iteration-0/1 good-block exponent for this image when the
+/// `buttloop_good_block_pow` gate is on: [`DEFAULT_CUR_POW_LOW`] for
+/// flat-colour dominated images, else [`ZENJXL_CUR_POW`]. Without
+/// proxies (non-sRGB-u8 input) it uses [`ZENJXL_CUR_POW`].
+pub(crate) fn zenjxl_good_block_pow(
+    proxies: Option<&crate::vardct::encoder::ZenanalyzeProxies>,
+) -> f64 {
+    match proxies {
+        Some(p) if p.flat_color_block_ratio >= ZENJXL_CUR_POW_FLAT_FCBR => DEFAULT_CUR_POW_LOW,
+        _ => ZENJXL_CUR_POW,
+    }
+}
 
 /// Production default for `max_increase` (per-iter bad-block bump cap)
 /// in the LOW regime. Matches libjxl's implicit "no cap" — set to
