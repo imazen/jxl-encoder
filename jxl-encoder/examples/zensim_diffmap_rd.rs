@@ -346,6 +346,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // useless for a diffmap comparison. Default to 3 redistribution iters.
     let mut iters: u32 = 3;
     let mut corpus_file: Option<String> = None;
+    let mut canonical_png = false;
     let mut distances: Vec<f32> = vec![1.0, 2.0, 3.0];
     // C3b target-A/B mode (activated by --zensim-targets): per
     // (fixture × target × arm) encode with the shared target controller and
@@ -377,6 +378,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "--out-dir" => out_dir = PathBuf::from(args.next().unwrap_or_default()),
             "--iters" => iters = args.next().and_then(|s| s.parse().ok()).unwrap_or(iters),
             "--corpus-file" => corpus_file = args.next(),
+            "--canonical-png" => canonical_png = true,
             "--distances" => {
                 if let Some(s) = args.next() {
                     distances = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
@@ -543,13 +545,21 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     for (name, corpus_name, path) in &corpus {
         let (name, corpus_name) = (name.as_str(), corpus_name.as_str());
-        let (pixels, w, h) = load_rgb8(path)?;
+        let (pixels, w, h) = if canonical_png {
+            targeting::read_png(std::path::Path::new(path), true)?
+        } else {
+            load_rgb8(path)?
+        };
         // Save the clean reference once (as PNG) for the external scorer.
         let ref_png = ref_dir.join(format!("{name}.png"));
         if !ref_png.exists() {
-            image::RgbImage::from_raw(w, h, pixels.clone())
-                .ok_or("ref from_raw")?
-                .save(&ref_png)?;
+            if canonical_png {
+                targeting::write_png(&ref_png, &pixels, w, h)?;
+            } else {
+                image::RgbImage::from_raw(w, h, pixels.clone())
+                    .ok_or("ref from_raw")?
+                    .save(&ref_png)?;
+            }
         }
         for &d in &distances {
             let t = Instant::now();
@@ -572,6 +582,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
             let encoded = cfg.encode(&pixels, w, h, PixelLayout::Rgb8)?;
             let encode_ms = t.elapsed().as_secs_f64() * 1000.0;
+            targeting::retain_encoded(&out_dir, &encoded)?;
             let bytes = encoded.len();
             let td = Instant::now();
             let decoded = decode_jxl_srgb_u8(&encoded, w, h)?;
@@ -598,9 +609,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     &candidate_ladder,
                 )?;
             }
-            image::RgbImage::from_raw(w, h, decoded)
-                .ok_or("dec from_raw")?
-                .save(&dist_png)?;
+            if canonical_png {
+                targeting::write_png(&dist_png, &decoded, w, h)?;
+            } else {
+                image::RgbImage::from_raw(w, h, decoded)
+                    .ok_or("dec from_raw")?
+                    .save(&dist_png)?;
+            }
             manifest.push_str(&format!(
                 "{}\t{}\t{label}\t{name}\t{corpus_name}\t{d:.2}\t{bytes}\t{encode_ms:.1}\n",
                 ref_png.display(),

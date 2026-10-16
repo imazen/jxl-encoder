@@ -32,8 +32,8 @@ avx512 = ["magetypes/avx512", "archmage/avx512"]
 # transpose.rs), which only exists uniformly from 0.9.27 onward — pinning
 # below it risks resolving to a version whose bare aarch64/wasm32 f32x4 is
 # still the old concrete struct lacking those methods.
-archmage = { version = "0.9.27", default-features = false, features = ["macros"] }
-magetypes = { version = "0.9.27", default-features = false }
+archmage = { version = "0.9.30", default-features = false, features = ["macros"] }
+magetypes = { version = "0.9.30", default-features = false }
 # Pure-Rust libm fallback. Only pulled in when `std` is OFF — the
 # `scalarmath` veneer in `lib.rs` cfg-gates each `f32` math call so
 # `std` builds use the inherent methods (which lower to hardware
@@ -49,6 +49,6 @@ name = "kernel_tiers"
 harness = false
 
 [dev-dependencies]
-archmage = { version = "0.9.27", features = ["testable_dispatch"] }
+archmage = { version = "0.9.30", features = ["testable_dispatch"] }
 # Workspace-standard benchmarking harness (interleaved arms, paired statistics).
 zenbench = "0.1.8"

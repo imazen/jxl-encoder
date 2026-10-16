@@ -688,3 +688,15 @@ lz77-keep-best-timing binary manifest output repeats="5":
     mkdir -p "$(dirname '{{output}}')"
     nice -n19 python3 scripts/lz77_keep_best_timing.py '{{binary}}' '{{manifest}}' '{{output}}' --repeats '{{repeats}}' > '{{output}}.log' 2>&1
     cat '{{output}}/summary.tsv'
+shipgates-native-check:
+    cargo clippy --release --locked -p jxl-encoder --example zensim_diffmap_rd --features __expert,butteraugli-loop,zensim-loop,ssim2-loop,parallel --target-dir target -- -D warnings
+
+shipgates-native-build:
+    cargo build --release --locked -p jxl-encoder --example zensim_diffmap_rd --features __expert,butteraugli-loop,zensim-loop,ssim2-loop,parallel --target-dir target
+
+shipgates-map-check:
+    cargo test --release --locked -p jxl-encoder --lib --features zensim-loop --target-dir target rd_map_cas_preserves_bits_and_refuses_missing_or_changed_artifacts
+
+
+shipgates-simd-check:
+    cargo test --release --locked -p jxl-encoder-simd --lib --target-dir target

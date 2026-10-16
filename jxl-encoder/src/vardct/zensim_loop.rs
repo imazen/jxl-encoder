@@ -22,6 +22,87 @@ use super::frame::DistanceParams;
 use crate::debug_rect;
 use crate::error::Result;
 
+/// Optional research artifact sink. A requested sink must succeed; missing
+/// maps cannot silently turn a completed encode into complete evidence.
+pub(crate) fn persist_rd_map(kind: &str, width: usize, height: usize, bin: usize, values: &[f32]) {
+    let Some(root) = std::env::var_os("JXL_RD_MAP_CAS") else {
+        return;
+    };
+    persist_rd_map_at(
+        std::path::Path::new(&root),
+        kind,
+        width,
+        height,
+        bin,
+        values,
+    )
+    .expect("requested RD map persistence must succeed");
+}
+
+fn persist_rd_map_at(
+    root: &std::path::Path,
+    kind: &str,
+    width: usize,
+    height: usize,
+    bin: usize,
+    values: &[f32],
+) -> std::io::Result<()> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Error, ErrorKind, Write};
+    if width == 0 || height == 0 || bin == 0 || values.iter().any(|v| !v.is_finite()) {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "invalid map geometry/values",
+        ));
+    }
+    if width.div_ceil(bin).checked_mul(height.div_ceil(bin)) != Some(values.len()) {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "map grid length mismatch",
+        ));
+    }
+    let mut bytes = b"ZMAP1\0".to_vec();
+    bytes.extend_from_slice(&(kind.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(kind.as_bytes());
+    for value in [width, height, bin, values.len()] {
+        bytes.extend_from_slice(&(value as u64).to_le_bytes());
+    }
+    bytes.extend(values.iter().flat_map(|v| v.to_le_bytes()));
+    let digest = Sha256::digest(&bytes)
+        .iter()
+        .map(|v| format!("{v:02x}"))
+        .collect::<String>();
+    std::fs::create_dir_all(root)?;
+    let path = root.join(format!("{digest}.zmap"));
+    match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+    {
+        Ok(mut file) => file.write_all(&bytes)?,
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+            if std::fs::read(path)? != bytes {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "existing CAS map differs",
+                ));
+            }
+        }
+        Err(e) => return Err(e),
+    }
+    let mut index = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("index.jsonl"))?;
+    writeln!(
+        index,
+        "{}",
+        serde_json::json!({"sha256":digest,"kind":kind,
+        "width":width,"height":height,"bin":bin,"values":values.len()})
+    )?;
+    Ok(())
+}
+
 /// Minimum |Δln L| for the diffmap secant to trust its measured elasticity —
 /// a NUMERICAL floor, deliberately inert in the measured regime.
 ///
@@ -813,6 +894,8 @@ struct IterationRecord<'a> {
 /// anchor-blended tile distance otherwise.
 struct TileFieldRecord<'a> {
     values: &'a [f32],
+    width: usize,
+    height: usize,
 }
 
 /// One damped-controller step.
@@ -904,6 +987,7 @@ impl EnvTraceObserver {
 
 impl ZensimLoopObserver for EnvTraceObserver {
     fn on_tile_field(&self, r: &TileFieldRecord<'_>) {
+        persist_rd_map("candidate-tile-field", r.width, r.height, 8, r.values);
         let Some(pp) = &self.attr_probe_path else {
             return;
         };
@@ -1872,6 +1956,14 @@ impl VarDctEncoder {
                                 value.has_corruption_gate(),
                             )));
                         }
+                        let density = value.attribution();
+                        persist_rd_map(
+                            "candidate-density",
+                            density.width(),
+                            density.height(),
+                            density.bin(),
+                            density.density(),
+                        );
                         Some(value)
                     };
                     zensim_score = if map_model.is_none() && !stale {
@@ -1931,6 +2023,8 @@ impl VarDctEncoder {
                         );
                     }
                     observer.on_tile_field(&TileFieldRecord {
+                        width: xsize_blocks * 8,
+                        height: ysize_blocks * 8,
                         values: if h_arm.is_some() {
                             &tile_signed
                         } else {
@@ -2164,6 +2258,8 @@ impl VarDctEncoder {
                 // observer writes the same 4-column line to
                 // `JXL_ZENSIM_ATTR_PROBE`.
                 observer.on_tile_field(&TileFieldRecord {
+                    width: xsize_blocks * 8,
+                    height: ysize_blocks * 8,
                     values: if h_arm.is_some() {
                         &tile_signed
                     } else {
@@ -2714,6 +2810,43 @@ mod c10_loud_tests {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+
+    #[test]
+    fn rd_map_cas_preserves_bits_and_refuses_missing_or_changed_artifacts() {
+        let root = std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+            .join("tmp")
+            .join(format!("jxl-rd-map-cas-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.parent().unwrap()).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        let values = [-0.0_f32, 2.0];
+        for _ in 0..2 {
+            persist_rd_map_at(&root, "test", 16, 8, 8, &values).unwrap();
+        }
+        let maps: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|v| v == "zmap"))
+            .collect();
+        assert_eq!(maps.len(), 1, "identical content must deduplicate");
+        let bytes = std::fs::read(&maps[0]).unwrap();
+        let expected: Vec<_> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        assert_eq!(&bytes[bytes.len() - expected.len()..], expected);
+        assert_eq!(
+            std::fs::read_to_string(root.join("index.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+        std::fs::write(&maps[0], b"changed").unwrap();
+        assert!(persist_rd_map_at(&root, "test", 16, 8, 8, &values).is_err());
+        assert!(persist_rd_map_at(&root, "test", 16, 8, 8, &[f32::NAN, 2.]).is_err());
+        assert!(persist_rd_map_at(&root, "test", 16, 8, 8, &[1.]).is_err());
+        let blocked = root.join("not-a-directory");
+        std::fs::write(&blocked, b"occupied").unwrap();
+        assert!(persist_rd_map_at(&blocked, "test", 16, 8, 8, &values).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn zero_gain_keeps_the_actual_seed_bitstream() {

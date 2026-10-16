@@ -36,8 +36,8 @@ impl ModelInput {
     fn load(spec: &str) -> Result<Self> {
         let revision = std::env::var("ZENSIM_FORMULA_REV").unwrap_or_else(|_| "1".into());
         ensure!(
-            revision == "1" || revision == "3",
-            "native experiment requires explicit revision 1 or 3"
+            revision == "1" || revision == "3" || revision == "5",
+            "native experiment requires explicit revision 1, 3 or 5"
         );
         if let Some(path) = spec.strip_prefix("ensemble:") {
             #[derive(Deserialize)]
@@ -213,6 +213,29 @@ fn sha(bytes: &[u8]) -> String {
         .map(|v| format!("{v:02x}"))
         .collect()
 }
+
+/// Retain every completed encode, including search probes not selected for
+/// emission. The outer experiment may share one CAS across all model arms.
+pub(super) fn retain_encoded(root: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    let root = std::env::var_os("JXL_RD_ARTIFACT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("artifacts"));
+    let dir = root.join("jxl");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.jxl", sha(bytes)));
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => file.write_all(bytes)?,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            ensure!(fs::read(&path)? == bytes, "retained bitstream differs");
+        }
+        Err(e) => return Err(e.into()),
+    }
+    Ok(path)
+}
 fn driver_sha() -> Result<String> {
     file_sha(&std::env::current_exe()?)
 }
@@ -279,7 +302,7 @@ fn pixels(source: &Source) -> Result<(Vec<u8>, u32, u32)> {
 // Private research IO: packed opaque RGB8, width*3 byte stride, no color
 // conversion. Source metadata is admitted explicitly; compatibility PNGs
 // from the port reference may carry its generated sRGB profile.
-fn read_png(path: &Path, source: bool) -> Result<(Vec<u8>, u32, u32)> {
+pub(super) fn read_png(path: &Path, source: bool) -> Result<(Vec<u8>, u32, u32)> {
     let decoded = zenpng::decode(
         &fs::read(path)?,
         &zenpng::PngDecodeConfig::default(),
@@ -321,7 +344,7 @@ fn read_png(path: &Path, source: bool) -> Result<(Vec<u8>, u32, u32)> {
     Ok((rgb, info.width, info.height))
 }
 
-fn write_png(path: &Path, rgb: &[u8], w: u32, h: u32) -> Result<String> {
+pub(super) fn write_png(path: &Path, rgb: &[u8], w: u32, h: u32) -> Result<String> {
     use rgb::FromSlice;
     ensure!(
         w > 0 && h > 0 && rgb.len() == w as usize * h as usize * 3,
@@ -445,6 +468,10 @@ impl CodecBackend for Native {
             .with_zensim_iters(if self.scalar_only { 0 } else { 2 })
             .encode(rgb, w, h, PixelLayout::Rgb8)?;
         let encode_seconds = start.elapsed().as_secs_f64();
+        retain_encoded(
+            self.stats.parent().context("native output directory")?,
+            &encoded,
+        )?;
         let start = Instant::now();
         let decoded = super::decode_jxl_srgb_u8(&encoded, w, h)
             .map_err(|e| anyhow::anyhow!("jxl-rs: {e}"))?;

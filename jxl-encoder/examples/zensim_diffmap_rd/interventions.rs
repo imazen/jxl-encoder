@@ -6,7 +6,7 @@ use jxl_encoder::__pre_quantized::{
 use jxl_encoder::vardct::__recon_hook;
 use zensim::Fused944Session;
 
-const CONFIG: &str = "native-precomputed,e8,Reference,CfL,gaborish,pixel-loss,no-noise,no-denoise,no-patches,no-inner-loop;distances1,3;min-step1;formula1,bin8";
+const CONFIG_BASE: &str = "native-precomputed,e8,Reference,CfL,gaborish,pixel-loss,no-noise,no-denoise,no-patches,no-inner-loop;distances1,3;min-step1;bin8";
 
 #[derive(Clone, Serialize)]
 struct Region {
@@ -154,6 +154,7 @@ fn probe(
     let encode_seconds = start.elapsed().as_secs_f64();
     __recon_hook::set_production_qf_capture_enabled(false);
     let encoded = result?;
+    retain_encoded(dir, &encoded)?;
     let quant =
         __recon_hook::take_last_production_qf().context("missing actual quantizer field")?;
     ensure!(
@@ -211,10 +212,12 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
     let policy = region_mode == "coarse-policy";
     let coarse = region_mode != "transform";
     let factors = if coarse { [0.8f32, 1.2] } else { [0.9, 1.1] };
+    let revision = std::env::var("ZENSIM_FORMULA_REV")?;
     ensure!(
-        std::env::var("ZENSIM_FORMULA_REV").as_deref() == Ok("1"),
-        "requires explicit ZENSIM_FORMULA_REV=1"
+        matches!(revision.as_str(), "1" | "5"),
+        "requires explicit formula revision 1 or 5"
     );
+    let configuration = format!("{CONFIG_BASE};formula{revision}");
     // Record the existing encoder approximation versus the decoder transfer.
     // Frozen linear inputs below use the latter explicitly, not an assumed
     // numeric equivalence between these two implementations.
@@ -245,7 +248,7 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
     fs::write(
         out.join("INPUTS.json"),
         serde_json::to_vec_pretty(&json!({
-            "schema":if policy {"native-jxl-allocation-v1"} else {"native-jxl-interventions-v2"},"config":CONFIG,
+            "schema":if policy {"native-jxl-allocation-v1"} else {"native-jxl-interventions-v2"},"config":configuration,
             "region_mode":region_mode,"raw_q_factors":factors,
             "png_io":"zenpng-0.1.4-packed-opaque-rgb8-v1",
             "model_sha256":sha(&model_bytes),"driver_sha256":driver_sha()?,

@@ -663,6 +663,8 @@ impl PerceptualBackend for CpuButteraugliBackend {
             let buf = dm.into_buf();
             debug_assert_eq!(buf.len(), width * height);
             *diffmap_out = buf;
+            #[cfg(feature = "zensim-loop")]
+            super::zensim_loop::persist_rd_map("butteraugli-pixel", width, height, 1, diffmap_out);
             let _ = (width, height);
             return Ok(BackendCompareResult { score: r.score });
         }
@@ -677,6 +679,8 @@ impl PerceptualBackend for CpuButteraugliBackend {
         })
         .map_err(|e| crate::error::Error::InvalidInput(format!("butteraugli compare: {e}")))?;
         debug_assert_eq!(diffmap_out.len(), width * height);
+        #[cfg(feature = "zensim-loop")]
+        super::zensim_loop::persist_rd_map("butteraugli-pixel", width, height, 1, diffmap_out);
         // Phase 8b: optional diffmap distribution dump.
         maybe_dump_diffmap_stats(
             "B_CPU",
