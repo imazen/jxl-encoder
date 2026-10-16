@@ -493,14 +493,14 @@ where
     T: magetypes::simd::backends::F32x8Convert,
 {
     use magetypes::simd::generic::{f32x8, i32x8};
-    let k1_3 = f32x8::splat(token, 1.0 / 3.0);
-    let k4_3 = f32x8::splat(token, 4.0 / 3.0);
+    let k1_3 = f32x8::splat_t(token, 1.0 / 3.0);
+    let k4_3 = f32x8::splat_t(token, 4.0 / 3.0);
     let xa_3 = k1_3 * x;
 
     let m1 = x.bitcast_i32x8();
-    let izero = i32x8::splat(token, 0);
-    let m2 = i32x8::splat(token, 0x5480_0000)
-        - m1.shr_arithmetic_const::<23>() * i32x8::splat(token, 0x002A_AAAA);
+    let izero = i32x8::splat_t(token, 0);
+    let m2 = i32x8::splat_t(token, 0x5480_0000)
+        - m1.shr_arithmetic_const::<23>() * i32x8::splat_t(token, 0x002A_AAAA);
     let m2 = i32x8::blend(m1.simd_eq(izero), izero, m2);
     let mut r = m2.bitcast_f32x8();
 
@@ -529,32 +529,32 @@ pub fn forward_xyb_impl(
     b_out: &mut [f32],
     n: usize,
 ) {
-    let m00 = f32x8::splat(token, OPSIN_MATRIX[0][0]);
-    let m01 = f32x8::splat(token, OPSIN_MATRIX[0][1]);
-    let m02 = f32x8::splat(token, OPSIN_MATRIX[0][2]);
-    let m10 = f32x8::splat(token, OPSIN_MATRIX[1][0]);
-    let m11 = f32x8::splat(token, OPSIN_MATRIX[1][1]);
-    let m12 = f32x8::splat(token, OPSIN_MATRIX[1][2]);
-    let m20 = f32x8::splat(token, OPSIN_MATRIX[2][0]);
-    let m21 = f32x8::splat(token, OPSIN_MATRIX[2][1]);
-    let m22 = f32x8::splat(token, OPSIN_MATRIX[2][2]);
-    let bias0 = f32x8::splat(token, OPSIN_BIAS[0]);
-    let bias1 = f32x8::splat(token, OPSIN_BIAS[1]);
-    let bias2 = f32x8::splat(token, OPSIN_BIAS[2]);
-    let neg_cbrt0 = f32x8::splat(token, NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x8::splat(token, NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x8::splat(token, NEG_CBRT_BIAS[2]);
-    let half = f32x8::splat(token, 0.5);
-    let zero = f32x8::splat(token, 0.0);
+    let m00 = f32x8::splat_t(token, OPSIN_MATRIX[0][0]);
+    let m01 = f32x8::splat_t(token, OPSIN_MATRIX[0][1]);
+    let m02 = f32x8::splat_t(token, OPSIN_MATRIX[0][2]);
+    let m10 = f32x8::splat_t(token, OPSIN_MATRIX[1][0]);
+    let m11 = f32x8::splat_t(token, OPSIN_MATRIX[1][1]);
+    let m12 = f32x8::splat_t(token, OPSIN_MATRIX[1][2]);
+    let m20 = f32x8::splat_t(token, OPSIN_MATRIX[2][0]);
+    let m21 = f32x8::splat_t(token, OPSIN_MATRIX[2][1]);
+    let m22 = f32x8::splat_t(token, OPSIN_MATRIX[2][2]);
+    let bias0 = f32x8::splat_t(token, OPSIN_BIAS[0]);
+    let bias1 = f32x8::splat_t(token, OPSIN_BIAS[1]);
+    let bias2 = f32x8::splat_t(token, OPSIN_BIAS[2]);
+    let neg_cbrt0 = f32x8::splat_t(token, NEG_CBRT_BIAS[0]);
+    let neg_cbrt1 = f32x8::splat_t(token, NEG_CBRT_BIAS[1]);
+    let neg_cbrt2 = f32x8::splat_t(token, NEG_CBRT_BIAS[2]);
+    let half = f32x8::splat_t(token, 0.5);
+    let zero = f32x8::splat_t(token, 0.0);
 
     let chunks = n / 8;
     let simd_n = chunks * 8;
 
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let rv = f32x8::from_slice(token, &r[base..]);
-        let gv = f32x8::from_slice(token, &g[base..]);
-        let bv = f32x8::from_slice(token, &b[base..]);
+        let rv = f32x8::from_slice_t(token, &r[base..]);
+        let gv = f32x8::from_slice_t(token, &g[base..]);
+        let bv = f32x8::from_slice_t(token, &b[base..]);
 
         // Matrix multiply + bias (FMA chains, association preserved)
         let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
@@ -664,32 +664,32 @@ pub fn forward_xyb_impl_neon(
 ) {
     use magetypes::simd::f32x8;
 
-    let m00 = f32x8::splat(token, OPSIN_MATRIX[0][0]);
-    let m01 = f32x8::splat(token, OPSIN_MATRIX[0][1]);
-    let m02 = f32x8::splat(token, OPSIN_MATRIX[0][2]);
-    let m10 = f32x8::splat(token, OPSIN_MATRIX[1][0]);
-    let m11 = f32x8::splat(token, OPSIN_MATRIX[1][1]);
-    let m12 = f32x8::splat(token, OPSIN_MATRIX[1][2]);
-    let m20 = f32x8::splat(token, OPSIN_MATRIX[2][0]);
-    let m21 = f32x8::splat(token, OPSIN_MATRIX[2][1]);
-    let m22 = f32x8::splat(token, OPSIN_MATRIX[2][2]);
-    let bias0 = f32x8::splat(token, OPSIN_BIAS[0]);
-    let bias1 = f32x8::splat(token, OPSIN_BIAS[1]);
-    let bias2 = f32x8::splat(token, OPSIN_BIAS[2]);
-    let neg_cbrt0 = f32x8::splat(token, NEG_CBRT_BIAS[0]);
-    let neg_cbrt1 = f32x8::splat(token, NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x8::splat(token, NEG_CBRT_BIAS[2]);
-    let half = f32x8::splat(token, 0.5);
-    let zero = f32x8::splat(token, 0.0);
+    let m00 = f32x8::splat_t(token, OPSIN_MATRIX[0][0]);
+    let m01 = f32x8::splat_t(token, OPSIN_MATRIX[0][1]);
+    let m02 = f32x8::splat_t(token, OPSIN_MATRIX[0][2]);
+    let m10 = f32x8::splat_t(token, OPSIN_MATRIX[1][0]);
+    let m11 = f32x8::splat_t(token, OPSIN_MATRIX[1][1]);
+    let m12 = f32x8::splat_t(token, OPSIN_MATRIX[1][2]);
+    let m20 = f32x8::splat_t(token, OPSIN_MATRIX[2][0]);
+    let m21 = f32x8::splat_t(token, OPSIN_MATRIX[2][1]);
+    let m22 = f32x8::splat_t(token, OPSIN_MATRIX[2][2]);
+    let bias0 = f32x8::splat_t(token, OPSIN_BIAS[0]);
+    let bias1 = f32x8::splat_t(token, OPSIN_BIAS[1]);
+    let bias2 = f32x8::splat_t(token, OPSIN_BIAS[2]);
+    let neg_cbrt0 = f32x8::splat_t(token, NEG_CBRT_BIAS[0]);
+    let neg_cbrt1 = f32x8::splat_t(token, NEG_CBRT_BIAS[1]);
+    let neg_cbrt2 = f32x8::splat_t(token, NEG_CBRT_BIAS[2]);
+    let half = f32x8::splat_t(token, 0.5);
+    let zero = f32x8::splat_t(token, 0.0);
 
     // One 8-lane group: matrix + bias (same association as every other tier),
     // clamp, `$cb`, bias offset, XYB mix, store.
     macro_rules! group {
         ($base:expr, $cb:expr) => {{
             let base = $base;
-            let rv = f32x8::from_slice(token, &r[base..]);
-            let gv = f32x8::from_slice(token, &g[base..]);
-            let bv = f32x8::from_slice(token, &b[base..]);
+            let rv = f32x8::from_slice_t(token, &r[base..]);
+            let gv = f32x8::from_slice_t(token, &g[base..]);
+            let bv = f32x8::from_slice_t(token, &b[base..]);
 
             let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
             let mixed1 = m10.mul_add(rv, m11.mul_add(gv, m12.mul_add(bv, bias1)));
@@ -808,30 +808,30 @@ pub fn inverse_xyb_planar_impl(
     out_b: &mut [f32],
     n: usize,
 ) {
-    let neg_cbrt0 = f32x8::splat(token, -NEG_CBRT_BIAS[0]); // positive: cbrt(bias)
-    let neg_cbrt1 = f32x8::splat(token, -NEG_CBRT_BIAS[1]);
-    let neg_cbrt2 = f32x8::splat(token, -NEG_CBRT_BIAS[2]);
-    let neg_bias0 = f32x8::splat(token, -OPSIN_BIAS[0]);
-    let neg_bias1 = f32x8::splat(token, -OPSIN_BIAS[1]);
-    let neg_bias2 = f32x8::splat(token, -OPSIN_BIAS[2]);
-    let inv00 = f32x8::splat(token, INV_OPSIN[0][0]);
-    let inv01 = f32x8::splat(token, INV_OPSIN[0][1]);
-    let inv02 = f32x8::splat(token, INV_OPSIN[0][2]);
-    let inv10 = f32x8::splat(token, INV_OPSIN[1][0]);
-    let inv11 = f32x8::splat(token, INV_OPSIN[1][1]);
-    let inv12 = f32x8::splat(token, INV_OPSIN[1][2]);
-    let inv20 = f32x8::splat(token, INV_OPSIN[2][0]);
-    let inv21 = f32x8::splat(token, INV_OPSIN[2][1]);
-    let inv22 = f32x8::splat(token, INV_OPSIN[2][2]);
+    let neg_cbrt0 = f32x8::splat_t(token, -NEG_CBRT_BIAS[0]); // positive: cbrt(bias)
+    let neg_cbrt1 = f32x8::splat_t(token, -NEG_CBRT_BIAS[1]);
+    let neg_cbrt2 = f32x8::splat_t(token, -NEG_CBRT_BIAS[2]);
+    let neg_bias0 = f32x8::splat_t(token, -OPSIN_BIAS[0]);
+    let neg_bias1 = f32x8::splat_t(token, -OPSIN_BIAS[1]);
+    let neg_bias2 = f32x8::splat_t(token, -OPSIN_BIAS[2]);
+    let inv00 = f32x8::splat_t(token, INV_OPSIN[0][0]);
+    let inv01 = f32x8::splat_t(token, INV_OPSIN[0][1]);
+    let inv02 = f32x8::splat_t(token, INV_OPSIN[0][2]);
+    let inv10 = f32x8::splat_t(token, INV_OPSIN[1][0]);
+    let inv11 = f32x8::splat_t(token, INV_OPSIN[1][1]);
+    let inv12 = f32x8::splat_t(token, INV_OPSIN[1][2]);
+    let inv20 = f32x8::splat_t(token, INV_OPSIN[2][0]);
+    let inv21 = f32x8::splat_t(token, INV_OPSIN[2][1]);
+    let inv22 = f32x8::splat_t(token, INV_OPSIN[2][2]);
 
     let chunks = n / 8;
     let simd_n = chunks * 8;
 
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let x = f32x8::from_slice(token, &xyb_x[base..]);
-        let y = f32x8::from_slice(token, &xyb_y[base..]);
-        let b = f32x8::from_slice(token, &xyb_b[base..]);
+        let x = f32x8::from_slice_t(token, &xyb_x[base..]);
+        let y = f32x8::from_slice_t(token, &xyb_y[base..]);
+        let b = f32x8::from_slice_t(token, &xyb_b[base..]);
 
         // Unmix to gamma-domain LMS + add cbrt(bias)
         let gamma_r = y + x + neg_cbrt0;

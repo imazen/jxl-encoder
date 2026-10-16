@@ -65,7 +65,7 @@ pub fn is_finite_plane_scalar(plane: &[f32]) -> bool {
 #[archmage::arcane]
 pub fn is_finite_plane_avx2(token: archmage::X64V3Token, plane: &[f32]) -> bool {
     use magetypes::simd::f32x8;
-    let zero = f32x8::splat(token, 0.0);
+    let zero = f32x8::splat_t(token, 0.0);
 
     let n = plane.len();
     let chunks = n / 8;
@@ -75,12 +75,12 @@ pub fn is_finite_plane_avx2(token: archmage::X64V3Token, plane: &[f32]) -> bool 
     // Sum across chunks — NaN propagates through addition. At the end,
     // if any lane is non-zero or non-finite, some input lane was
     // non-finite.
-    let mut acc = f32x8::splat(token, 0.0);
+    let mut acc = f32x8::splat_t(token, 0.0);
 
     for c in 0..chunks {
         let off = c * 8;
         let arr: &[f32; 8] = (&plane[off..off + 8]).try_into().unwrap();
-        let v = f32x8::load(token, arr);
+        let v = f32x8::load_t(token, arr);
         acc += v * zero;
     }
 
@@ -99,18 +99,18 @@ pub fn is_finite_plane_avx2(token: archmage::X64V3Token, plane: &[f32]) -> bool 
 #[archmage::arcane]
 pub fn is_finite_plane_neon(token: archmage::NeonToken, plane: &[f32]) -> bool {
     use magetypes::simd::f32x4;
-    let zero = f32x4::splat(token, 0.0);
+    let zero = f32x4::splat_t(token, 0.0);
 
     let n = plane.len();
     let chunks = n / 4;
     let tail_start = chunks * 4;
 
-    let mut acc = f32x4::splat(token, 0.0);
+    let mut acc = f32x4::splat_t(token, 0.0);
 
     for c in 0..chunks {
         let off = c * 4;
         let arr: &[f32; 4] = (&plane[off..off + 4]).try_into().unwrap();
-        let v = f32x4::load(token, arr);
+        let v = f32x4::load_t(token, arr);
         acc += v * zero;
     }
 
@@ -163,7 +163,7 @@ pub fn sanitize_finite_scalar(plane: &mut [f32]) -> bool {
 #[archmage::arcane]
 pub fn sanitize_finite_avx2(token: archmage::X64V3Token, plane: &mut [f32]) -> bool {
     use magetypes::simd::f32x8;
-    let zero = f32x8::splat(token, 0.0);
+    let zero = f32x8::splat_t(token, 0.0);
 
     let n = plane.len();
     let chunks = n / 8;
@@ -173,12 +173,12 @@ pub fn sanitize_finite_avx2(token: archmage::X64V3Token, plane: &mut [f32]) -> b
     // values through via floating-point addition (NaN + x = NaN, Inf + x
     // = Inf for finite x). At the end any non-zero or non-finite lane in
     // the accumulator signals a replacement.
-    let mut nonfinite_acc = f32x8::splat(token, 0.0);
+    let mut nonfinite_acc = f32x8::splat_t(token, 0.0);
 
     for c in 0..chunks {
         let off = c * 8;
         let arr: &mut [f32; 8] = (&mut plane[off..off + 8]).try_into().unwrap();
-        let v = f32x8::load(token, arr);
+        let v = f32x8::load_t(token, arr);
         // `v * 0` is `0.0` for finite v, `NaN` for ±Inf or NaN. Comparing
         // to `0.0` with `simd_eq` (which uses `_CMP_EQ_OQ` — *ordered*
         // equality) returns:
@@ -214,18 +214,18 @@ pub fn sanitize_finite_avx2(token: archmage::X64V3Token, plane: &mut [f32]) -> b
 #[archmage::arcane]
 pub fn sanitize_finite_neon(token: archmage::NeonToken, plane: &mut [f32]) -> bool {
     use magetypes::simd::f32x4;
-    let zero = f32x4::splat(token, 0.0);
+    let zero = f32x4::splat_t(token, 0.0);
 
     let n = plane.len();
     let chunks = n / 4;
     let tail_start = chunks * 4;
 
-    let mut nonfinite_acc = f32x4::splat(token, 0.0);
+    let mut nonfinite_acc = f32x4::splat_t(token, 0.0);
 
     for c in 0..chunks {
         let off = c * 4;
         let arr: &mut [f32; 4] = (&mut plane[off..off + 4]).try_into().unwrap();
-        let v = f32x4::load(token, arr);
+        let v = f32x4::load_t(token, arr);
         // See AVX2 path for the finite-mask trick.
         let finite_mask = (v * zero).simd_eq(zero);
         let cleaned = f32x4::blend(finite_mask, v, zero);

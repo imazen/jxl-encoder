@@ -146,8 +146,8 @@ pub fn pixel_domain_loss_impl(
     block_width: usize,
     block_height: usize,
 ) -> f64 {
-    let offset_v = f32x8::splat(token, mask_offset);
-    let mut acc = f32x8::zero(token);
+    let offset_v = f32x8::splat_t(token, mask_offset);
+    let mut acc = f32x8::zero_t(token);
 
     for py in 0..block_height {
         let mask_row_start = mask_row_base + py * mask_stride;
@@ -159,8 +159,8 @@ pub fn pixel_domain_loss_impl(
         let (mask_chunks, _) = mask_row.as_chunks::<8>();
         let (error_chunks, _) = error_row.as_chunks::<8>();
         for (mask_chunk, error_chunk) in mask_chunks.iter().zip(error_chunks) {
-            let mask_v = f32x8::from_slice(token, mask_chunk);
-            let error_v = f32x8::from_slice(token, error_chunk);
+            let mask_v = f32x8::from_slice_t(token, mask_chunk);
+            let error_v = f32x8::from_slice_t(token, error_chunk);
 
             // libjxl order: masku = mask + offset; in = masku * err;
             // in = in*in (x3) -> masked^8, all f32.

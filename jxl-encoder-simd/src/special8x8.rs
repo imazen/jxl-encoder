@@ -283,7 +283,7 @@ pub fn identity_from_pixels_avx2(
     // (y*4 + 1).
     let perm_ref = _mm256_setr_epi32(1, 5, 1, 5, 1, 5, 1, 5);
 
-    let p_row = |r: usize| f32x8::from_slice(token, &pixels[r * 8..]);
+    let p_row = |r: usize| f32x8::from_slice_t(token, &pixels[r * 8..]);
     let ref0 = _mm256_permutevar8x32_ps(p_row(1).raw(), perm_ref);
     let ref1 = _mm256_permutevar8x32_ps(p_row(5).raw(), perm_ref);
 
@@ -293,7 +293,7 @@ pub fn identity_from_pixels_avx2(
         let src = p_row(y * 4 + iy).raw();
         let permuted = _mm256_permutevar8x32_ps(src, perm_in);
         let refs = if y == 0 { ref0 } else { ref1 };
-        let out = f32x8::from_m256(token, _mm256_sub_ps(permuted, refs));
+        let out = f32x8::from_raw_t(token, _mm256_sub_ps(permuted, refs));
         out.store(sub_array_mut(coefficients, r * 8));
     }
 
@@ -365,7 +365,7 @@ pub fn identity_to_pixels_avx2(
     // source row y + iy*2; lane px reads coefficient lane
     // (px>>2) + (px&3)*2  ==  the [0,2,4,6,1,3,5,7] deinterleave.
     let perm_out = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
-    let c_row = |r: usize| f32x8::from_slice(token, &coefficients[r * 8..]);
+    let c_row = |r: usize| f32x8::from_slice_t(token, &coefficients[r * 8..]);
     // Ref vector for pixel rows of sub-block row y: [ref(y,0) x4 | ref(y,1) x4].
     let refs_y0 = _mm256_setr_ps(
         refs[0], refs[0], refs[0], refs[0], refs[1], refs[1], refs[1], refs[1],
@@ -380,7 +380,7 @@ pub fn identity_to_pixels_avx2(
         let src = c_row(y + iy * 2).raw();
         let permuted = _mm256_permutevar8x32_ps(src, perm_out);
         let rv = if y == 0 { refs_y0 } else { refs_y1 };
-        let out = f32x8::from_m256(token, _mm256_add_ps(permuted, rv));
+        let out = f32x8::from_raw_t(token, _mm256_add_ps(permuted, rv));
         out.store(sub_array_mut(pixels, pr * 8));
     }
 
@@ -414,8 +414,8 @@ pub fn dct2x2_from_pixels_avx2(
     // ── Pass S=8: pixels -> coefficients ──
     let mut rows_04: [__m256; 4] = [_mm256_setzero_ps(); 4]; // out rows 0..3
     for y in 0..4usize {
-        let a = f32x8::from_slice(token, &pixels[(2 * y) * 8..]).raw();
-        let b = f32x8::from_slice(token, &pixels[(2 * y + 1) * 8..]).raw();
+        let a = f32x8::from_slice_t(token, &pixels[(2 * y) * 8..]).raw();
+        let b = f32x8::from_slice_t(token, &pixels[(2 * y + 1) * 8..]).raw();
         let ea = _mm256_permutevar8x32_ps(a, perm_even);
         let oa = _mm256_permutevar8x32_ps(a, perm_odd);
         let eb = _mm256_permutevar8x32_ps(b, perm_even);
@@ -431,7 +431,7 @@ pub fn dct2x2_from_pixels_avx2(
         // duplicated their selection into the high half, so taking
         // r00.lo128 | r01.hi128 yields exactly that.
         rows_04[y] = _mm256_permute2f128_ps::<0x30>(r00, r01);
-        let lower = f32x8::from_m256(token, _mm256_permute2f128_ps::<0x30>(r10, r11));
+        let lower = f32x8::from_raw_t(token, _mm256_permute2f128_ps::<0x30>(r10, r11));
         lower.store(sub_array_mut(coefficients, (y + 4) * 8));
     }
 
@@ -462,7 +462,7 @@ pub fn dct2x2_from_pixels_avx2(
         out_r[yp + 2] = _mm256_blend_ps::<0xF0>(bot, rows_04[yp + 2]);
     }
     for (y, row) in out_r.iter().enumerate() {
-        f32x8::from_m256(token, *row).store(sub_array_mut(coefficients, y * 8));
+        f32x8::from_raw_t(token, *row).store(sub_array_mut(coefficients, y * 8));
     }
 
     // ── Pass S=2: scalar on the stored array (exact reference order) ──
@@ -503,10 +503,10 @@ pub fn dct2x2_to_pixels_avx2(
     // ── Pass S=4: rows 0..1 x quadrant lanes {x} / {x+2}, write rows 0..3
     // lanes 0..3, preserve lanes 4..7 ──
     {
-        let r0 = f32x8::from_slice(token, &pixels[0..]).raw();
-        let r1 = f32x8::from_slice(token, &pixels[8..]).raw();
-        let r2 = f32x8::from_slice(token, &pixels[16..]).raw();
-        let r3 = f32x8::from_slice(token, &pixels[24..]).raw();
+        let r0 = f32x8::from_slice_t(token, &pixels[0..]).raw();
+        let r1 = f32x8::from_slice_t(token, &pixels[8..]).raw();
+        let r2 = f32x8::from_slice_t(token, &pixels[16..]).raw();
+        let r3 = f32x8::from_slice_t(token, &pixels[24..]).raw();
         // Swap lane pairs (0,1)<->(2,3) within each 128 half: imm 0b01001110.
         let swap2 = |v: __m256| _mm256_permute_ps::<0b0100_1110>(v);
         let rows_in = [r0, r1];
@@ -531,7 +531,7 @@ pub fn dct2x2_to_pixels_avx2(
             out[2 * y + 1] = _mm256_blend_ps::<0xF0>(bot, out[2 * y + 1]);
         }
         for (i, row) in out.iter().enumerate() {
-            f32x8::from_m256(token, *row).store(sub_array_mut(pixels, i * 8));
+            f32x8::from_raw_t(token, *row).store(sub_array_mut(pixels, i * 8));
         }
     }
 
@@ -539,7 +539,7 @@ pub fn dct2x2_to_pixels_avx2(
     {
         let mut rows: [__m256; 8] = [_mm256_setzero_ps(); 8];
         for (i, row) in rows.iter_mut().enumerate() {
-            *row = f32x8::from_slice(token, &pixels[i * 8..]).raw();
+            *row = f32x8::from_slice_t(token, &pixels[i * 8..]).raw();
         }
         for y in 0..4usize {
             let a = rows[y];
@@ -559,8 +559,8 @@ pub fn dct2x2_to_pixels_avx2(
             let il2 = _mm256_unpacklo_ps(r10, r11);
             let ih2 = _mm256_unpackhi_ps(r10, r11);
             let bot = _mm256_permute2f128_ps::<0x20>(il2, ih2);
-            f32x8::from_m256(token, top).store(sub_array_mut(pixels, (2 * y) * 8));
-            f32x8::from_m256(token, bot).store(sub_array_mut(pixels, (2 * y + 1) * 8));
+            f32x8::from_raw_t(token, top).store(sub_array_mut(pixels, (2 * y) * 8));
+            f32x8::from_raw_t(token, bot).store(sub_array_mut(pixels, (2 * y + 1) * 8));
         }
     }
 }

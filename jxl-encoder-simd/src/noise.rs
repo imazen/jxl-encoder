@@ -204,10 +204,10 @@ pub fn denoise_channel_avx2(
 ) {
     use magetypes::simd::f32x8;
 
-    let zero_v = f32x8::splat(token, 0.0);
-    let count_inv_v = f32x8::splat(token, 1.0 / 25.0);
-    let eps_v = f32x8::splat(token, EPS);
-    let half_v = f32x8::splat(token, 0.5);
+    let zero_v = f32x8::splat_t(token, 0.0);
+    let count_inv_v = f32x8::splat_t(token, 1.0 / 25.0);
+    let eps_v = f32x8::splat_t(token, EPS);
+    let half_v = f32x8::splat_t(token, 0.5);
 
     for py in 0..height {
         // Border rows: full scalar
@@ -251,13 +251,13 @@ pub fn denoise_channel_avx2(
             let idx_base = py * width + px;
 
             // Scalar LUT interpolation for 8 y_channel values
-            let y_arr: [f32; 8] = f32x8::from_slice(token, &y_channel[idx_base..]).into();
+            let y_arr: [f32; 8] = f32x8::from_slice_t(token, &y_channel[idx_base..]).into();
             let mut sigma_arr = [0.0f32; 8];
             for j in 0..8 {
                 sigma_arr[j] = interpolate_noise_lut(noise_lut, y_arr[j].abs()) * denoise_scale;
             }
             let noise_var = {
-                let sigma = f32x8::from_array(token, sigma_arr);
+                let sigma = f32x8::from_array_t(token, sigma_arr);
                 sigma * sigma
             };
 
@@ -271,7 +271,7 @@ pub fn denoise_channel_avx2(
                 let row_start = ((py as i32 + dy) as usize) * width;
                 for dx in -(RADIUS as i32)..=(RADIUS as i32) {
                     let off = row_start + ((px as i32 + dx) as usize);
-                    let v = f32x8::from_slice(token, &orig[off..]);
+                    let v = f32x8::from_slice_t(token, &orig[off..]);
                     sum_v = sum_v + v;
                     sum_sq_v = v.mul_add(v, sum_sq_v);
                 }
@@ -288,7 +288,7 @@ pub fn denoise_channel_avx2(
             // When noise_var < EPS, wiener approaches 1.0 and result approaches orig.
             let wiener = signal_var / (signal_var + noise_var + eps_v);
 
-            let orig_vals = f32x8::from_slice(token, &orig[idx_base..]);
+            let orig_vals = f32x8::from_slice_t(token, &orig[idx_base..]);
             let result = mean + (orig_vals - mean) * wiener;
             result.store((&mut dest[idx_base..idx_base + 8]).try_into().unwrap());
 
@@ -327,10 +327,10 @@ pub fn denoise_channel_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let zero_v = f32x4::splat(token, 0.0);
-    let count_inv_v = f32x4::splat(token, 1.0 / 25.0);
-    let eps_v = f32x4::splat(token, EPS);
-    let half_v = f32x4::splat(token, 0.5);
+    let zero_v = f32x4::splat_t(token, 0.0);
+    let count_inv_v = f32x4::splat_t(token, 1.0 / 25.0);
+    let eps_v = f32x4::splat_t(token, EPS);
+    let half_v = f32x4::splat_t(token, 0.5);
 
     for py in 0..height {
         if py < RADIUS || py + RADIUS >= height {
@@ -371,13 +371,13 @@ pub fn denoise_channel_neon(
         while px + 6 <= width {
             let idx_base = py * width + px;
 
-            let y_arr: [f32; 4] = f32x4::from_slice(token, &y_channel[idx_base..]).into();
+            let y_arr: [f32; 4] = f32x4::from_slice_t(token, &y_channel[idx_base..]).into();
             let mut sigma_arr = [0.0f32; 4];
             for j in 0..4 {
                 sigma_arr[j] = interpolate_noise_lut(noise_lut, y_arr[j].abs()) * denoise_scale;
             }
             let noise_var = {
-                let sigma = f32x4::from_array(token, sigma_arr);
+                let sigma = f32x4::from_array_t(token, sigma_arr);
                 sigma * sigma
             };
 
@@ -387,7 +387,7 @@ pub fn denoise_channel_neon(
                 let row_start = ((py as i32 + dy) as usize) * width;
                 for dx in -(RADIUS as i32)..=(RADIUS as i32) {
                     let off = row_start + ((px as i32 + dx) as usize);
-                    let v = f32x4::from_slice(token, &orig[off..]);
+                    let v = f32x4::from_slice_t(token, &orig[off..]);
                     sum_v = sum_v + v;
                     sum_sq_v = v.mul_add(v, sum_sq_v);
                 }
@@ -400,7 +400,7 @@ pub fn denoise_channel_neon(
             let signal_var = (raw_signal + raw_signal.abs()) * half_v;
             let wiener = signal_var / (signal_var + noise_var + eps_v);
 
-            let orig_vals = f32x4::from_slice(token, &orig[idx_base..]);
+            let orig_vals = f32x4::from_slice_t(token, &orig[idx_base..]);
             let result = mean + (orig_vals - mean) * wiener;
             result.store((&mut dest[idx_base..idx_base + 4]).try_into().unwrap());
 
@@ -438,10 +438,10 @@ pub fn denoise_channel_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let zero_v = f32x4::splat(token, 0.0);
-    let count_inv_v = f32x4::splat(token, 1.0 / 25.0);
-    let eps_v = f32x4::splat(token, EPS);
-    let half_v = f32x4::splat(token, 0.5);
+    let zero_v = f32x4::splat_t(token, 0.0);
+    let count_inv_v = f32x4::splat_t(token, 1.0 / 25.0);
+    let eps_v = f32x4::splat_t(token, EPS);
+    let half_v = f32x4::splat_t(token, 0.5);
 
     for py in 0..height {
         if py < RADIUS || py + RADIUS >= height {
@@ -482,13 +482,13 @@ pub fn denoise_channel_wasm128(
         while px + 6 <= width {
             let idx_base = py * width + px;
 
-            let y_arr: [f32; 4] = f32x4::from_slice(token, &y_channel[idx_base..]).into();
+            let y_arr: [f32; 4] = f32x4::from_slice_t(token, &y_channel[idx_base..]).into();
             let mut sigma_arr = [0.0f32; 4];
             for j in 0..4 {
                 sigma_arr[j] = interpolate_noise_lut(noise_lut, y_arr[j].abs()) * denoise_scale;
             }
             let noise_var = {
-                let sigma = f32x4::from_array(token, sigma_arr);
+                let sigma = f32x4::from_array_t(token, sigma_arr);
                 sigma * sigma
             };
 
@@ -498,7 +498,7 @@ pub fn denoise_channel_wasm128(
                 let row_start = ((py as i32 + dy) as usize) * width;
                 for dx in -(RADIUS as i32)..=(RADIUS as i32) {
                     let off = row_start + ((px as i32 + dx) as usize);
-                    let v = f32x4::from_slice(token, &orig[off..]);
+                    let v = f32x4::from_slice_t(token, &orig[off..]);
                     sum_v = sum_v + v;
                     sum_sq_v = v.mul_add(v, sum_sq_v);
                 }
@@ -511,7 +511,7 @@ pub fn denoise_channel_wasm128(
             let signal_var = (raw_signal + raw_signal.abs()) * half_v;
             let wiener = signal_var / (signal_var + noise_var + eps_v);
 
-            let orig_vals = f32x4::from_slice(token, &orig[idx_base..]);
+            let orig_vals = f32x4::from_slice_t(token, &orig[idx_base..]);
             let result = mean + (orig_vals - mean) * wiener;
             result.store((&mut dest[idx_base..idx_base + 4]).try_into().unwrap());
 

@@ -54,14 +54,14 @@ pub fn transpose_8x8_avx2(token: archmage::X64V3Token, input: &[f32], output: &m
     use magetypes::simd::f32x8;
 
     // Load 8 rows
-    let r0 = f32x8::from_slice(token, &input[0..]);
-    let r1 = f32x8::from_slice(token, &input[8..]);
-    let r2 = f32x8::from_slice(token, &input[16..]);
-    let r3 = f32x8::from_slice(token, &input[24..]);
-    let r4 = f32x8::from_slice(token, &input[32..]);
-    let r5 = f32x8::from_slice(token, &input[40..]);
-    let r6 = f32x8::from_slice(token, &input[48..]);
-    let r7 = f32x8::from_slice(token, &input[56..]);
+    let r0 = f32x8::from_slice_t(token, &input[0..]);
+    let r1 = f32x8::from_slice_t(token, &input[8..]);
+    let r2 = f32x8::from_slice_t(token, &input[16..]);
+    let r3 = f32x8::from_slice_t(token, &input[24..]);
+    let r4 = f32x8::from_slice_t(token, &input[32..]);
+    let r5 = f32x8::from_slice_t(token, &input[40..]);
+    let r6 = f32x8::from_slice_t(token, &input[48..]);
+    let r7 = f32x8::from_slice_t(token, &input[56..]);
 
     // 3-stage AVX2 8x8 transpose:
     // Stage 1: unpacklo/hi pairs within 128-bit lanes
@@ -109,14 +109,14 @@ pub fn transpose_8x8_avx2(token: archmage::X64V3Token, input: &[f32], output: &m
     let c7 = _mm256_permute2f128_ps::<0x31>(s3, s7);
 
     // Store results — from_m256 is token-gated safe
-    f32x8::from_m256(token, c0).store((&mut output[0..8]).try_into().unwrap());
-    f32x8::from_m256(token, c1).store((&mut output[8..16]).try_into().unwrap());
-    f32x8::from_m256(token, c2).store((&mut output[16..24]).try_into().unwrap());
-    f32x8::from_m256(token, c3).store((&mut output[24..32]).try_into().unwrap());
-    f32x8::from_m256(token, c4).store((&mut output[32..40]).try_into().unwrap());
-    f32x8::from_m256(token, c5).store((&mut output[40..48]).try_into().unwrap());
-    f32x8::from_m256(token, c6).store((&mut output[48..56]).try_into().unwrap());
-    f32x8::from_m256(token, c7).store((&mut output[56..64]).try_into().unwrap());
+    f32x8::from_raw_t(token, c0).store((&mut output[0..8]).try_into().unwrap());
+    f32x8::from_raw_t(token, c1).store((&mut output[8..16]).try_into().unwrap());
+    f32x8::from_raw_t(token, c2).store((&mut output[16..24]).try_into().unwrap());
+    f32x8::from_raw_t(token, c3).store((&mut output[24..32]).try_into().unwrap());
+    f32x8::from_raw_t(token, c4).store((&mut output[32..40]).try_into().unwrap());
+    f32x8::from_raw_t(token, c5).store((&mut output[40..48]).try_into().unwrap());
+    f32x8::from_raw_t(token, c6).store((&mut output[48..56]).try_into().unwrap());
+    f32x8::from_raw_t(token, c7).store((&mut output[56..64]).try_into().unwrap());
 }
 
 // ============================================================================
@@ -138,22 +138,22 @@ pub fn transpose_8x8_neon(token: archmage::NeonToken, input: &[f32], output: &mu
     use magetypes::simd::f32x4;
 
     // Load 8 rows as pairs of f32x4 (lo = cols 0-3, hi = cols 4-7)
-    let r0_lo = f32x4::from_slice(token, &input[0..]).into_repr();
-    let r0_hi = f32x4::from_slice(token, &input[4..]).into_repr();
-    let r1_lo = f32x4::from_slice(token, &input[8..]).into_repr();
-    let r1_hi = f32x4::from_slice(token, &input[12..]).into_repr();
-    let r2_lo = f32x4::from_slice(token, &input[16..]).into_repr();
-    let r2_hi = f32x4::from_slice(token, &input[20..]).into_repr();
-    let r3_lo = f32x4::from_slice(token, &input[24..]).into_repr();
-    let r3_hi = f32x4::from_slice(token, &input[28..]).into_repr();
-    let r4_lo = f32x4::from_slice(token, &input[32..]).into_repr();
-    let r4_hi = f32x4::from_slice(token, &input[36..]).into_repr();
-    let r5_lo = f32x4::from_slice(token, &input[40..]).into_repr();
-    let r5_hi = f32x4::from_slice(token, &input[44..]).into_repr();
-    let r6_lo = f32x4::from_slice(token, &input[48..]).into_repr();
-    let r6_hi = f32x4::from_slice(token, &input[52..]).into_repr();
-    let r7_lo = f32x4::from_slice(token, &input[56..]).into_repr();
-    let r7_hi = f32x4::from_slice(token, &input[60..]).into_repr();
+    let r0_lo = f32x4::from_slice_t(token, &input[0..]).into_repr();
+    let r0_hi = f32x4::from_slice_t(token, &input[4..]).into_repr();
+    let r1_lo = f32x4::from_slice_t(token, &input[8..]).into_repr();
+    let r1_hi = f32x4::from_slice_t(token, &input[12..]).into_repr();
+    let r2_lo = f32x4::from_slice_t(token, &input[16..]).into_repr();
+    let r2_hi = f32x4::from_slice_t(token, &input[20..]).into_repr();
+    let r3_lo = f32x4::from_slice_t(token, &input[24..]).into_repr();
+    let r3_hi = f32x4::from_slice_t(token, &input[28..]).into_repr();
+    let r4_lo = f32x4::from_slice_t(token, &input[32..]).into_repr();
+    let r4_hi = f32x4::from_slice_t(token, &input[36..]).into_repr();
+    let r5_lo = f32x4::from_slice_t(token, &input[40..]).into_repr();
+    let r5_hi = f32x4::from_slice_t(token, &input[44..]).into_repr();
+    let r6_lo = f32x4::from_slice_t(token, &input[48..]).into_repr();
+    let r6_hi = f32x4::from_slice_t(token, &input[52..]).into_repr();
+    let r7_lo = f32x4::from_slice_t(token, &input[56..]).into_repr();
+    let r7_hi = f32x4::from_slice_t(token, &input[60..]).into_repr();
 
     // Transpose quadrant A (rows 0-3, cols 0-3) → output rows 0-3, cols 0-3
     let (a0, a1, a2, a3) = transpose_4x4_neon(token, r0_lo, r1_lo, r2_lo, r3_lo);

@@ -98,13 +98,13 @@ pub fn quantize_dct8_avx2(
 ) {
     use magetypes::simd::f32x8;
 
-    let qac_qm_v = f32x8::splat(token, qac_qm);
-    let zero_f = f32x8::zero(token);
+    let qac_qm_v = f32x8::splat_t(token, qac_qm);
+    let zero_f = f32x8::zero_t(token);
 
     // Pre-build threshold vectors for each row group:
     // Rows 0-3: [t[0], t[0], t[0], t[0], t[1], t[1], t[1], t[1]]
     // Rows 4-7: [t[2], t[2], t[2], t[2], t[3], t[3], t[3], t[3]]
-    let thr_top = f32x8::from_array(
+    let thr_top = f32x8::from_array_t(
         token,
         [
             thresholds[0],
@@ -117,7 +117,7 @@ pub fn quantize_dct8_avx2(
             thresholds[1],
         ],
     );
-    let thr_bot = f32x8::from_array(
+    let thr_bot = f32x8::from_array_t(
         token,
         [
             thresholds[2],
@@ -134,8 +134,8 @@ pub fn quantize_dct8_avx2(
     // Process 8 chunks of 8 elements (one row each)
     for chunk in 0..8 {
         let base = chunk * 8;
-        let coeffs = f32x8::from_slice(token, &dct_coeffs[base..]);
-        let w = f32x8::from_slice(token, &weights[base..]);
+        let coeffs = f32x8::from_slice_t(token, &dct_coeffs[base..]);
+        let w = f32x8::from_slice_t(token, &weights[base..]);
         let thr = if chunk < 4 { thr_top } else { thr_bot };
 
         // val = coeffs / weights * qac_qm
@@ -173,8 +173,8 @@ pub fn quantize_dct8_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let qac_qm_v = f32x4::splat(token, qac_qm);
-    let zero_f = f32x4::zero(token);
+    let qac_qm_v = f32x4::splat_t(token, qac_qm);
+    let zero_f = f32x4::zero_t(token);
 
     // With f32x4 (4 elements = half a row), each chunk has a uniform threshold:
     // row 0-3 lo (cols 0-3): thresholds[0]
@@ -182,10 +182,10 @@ pub fn quantize_dct8_neon(
     // row 4-7 lo (cols 0-3): thresholds[2]
     // row 4-7 hi (cols 4-7): thresholds[3]
     let thr = [
-        f32x4::splat(token, thresholds[0]),
-        f32x4::splat(token, thresholds[1]),
-        f32x4::splat(token, thresholds[2]),
-        f32x4::splat(token, thresholds[3]),
+        f32x4::splat_t(token, thresholds[0]),
+        f32x4::splat_t(token, thresholds[1]),
+        f32x4::splat_t(token, thresholds[2]),
+        f32x4::splat_t(token, thresholds[3]),
     ];
 
     // Process 16 chunks of 4 elements (2 per row, 8 rows)
@@ -193,8 +193,8 @@ pub fn quantize_dct8_neon(
         let thr_row = if row < 4 { 0 } else { 2 };
         for half in 0..2usize {
             let base = row * 8 + half * 4;
-            let coeffs = f32x4::from_slice(token, &dct_coeffs[base..]);
-            let w = f32x4::from_slice(token, &weights[base..]);
+            let coeffs = f32x4::from_slice_t(token, &dct_coeffs[base..]);
+            let w = f32x4::from_slice_t(token, &weights[base..]);
             let t = thr[thr_row + half];
 
             let val = coeffs / w * qac_qm_v;
@@ -225,14 +225,14 @@ pub fn quantize_dct8_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let qac_qm_v = f32x4::splat(token, qac_qm);
-    let zero_f = f32x4::zero(token);
+    let qac_qm_v = f32x4::splat_t(token, qac_qm);
+    let zero_f = f32x4::zero_t(token);
 
     let thr = [
-        f32x4::splat(token, thresholds[0]),
-        f32x4::splat(token, thresholds[1]),
-        f32x4::splat(token, thresholds[2]),
-        f32x4::splat(token, thresholds[3]),
+        f32x4::splat_t(token, thresholds[0]),
+        f32x4::splat_t(token, thresholds[1]),
+        f32x4::splat_t(token, thresholds[2]),
+        f32x4::splat_t(token, thresholds[3]),
     ];
 
     // Process 16 chunks of 4 elements (2 per row, 8 rows)
@@ -240,8 +240,8 @@ pub fn quantize_dct8_wasm128(
         let thr_row = if row < 4 { 0 } else { 2 };
         for half in 0..2usize {
             let base = row * 8 + half * 4;
-            let coeffs = f32x4::from_slice(token, &dct_coeffs[base..]);
-            let w = f32x4::from_slice(token, &weights[base..]);
+            let coeffs = f32x4::from_slice_t(token, &dct_coeffs[base..]);
+            let w = f32x4::from_slice_t(token, &weights[base..]);
             let t = thr[thr_row + half];
 
             let val = coeffs / w * qac_qm_v;
@@ -345,10 +345,10 @@ pub fn quantize_dct8_avx2_lj(
 ) {
     use magetypes::simd::f32x8;
 
-    let qac_qm_v = f32x8::splat(token, qac_qm);
-    let zero_f = f32x8::zero(token);
+    let qac_qm_v = f32x8::splat_t(token, qac_qm);
+    let zero_f = f32x8::zero_t(token);
 
-    let thr_top = f32x8::from_array(
+    let thr_top = f32x8::from_array_t(
         token,
         [
             thresholds[0],
@@ -361,7 +361,7 @@ pub fn quantize_dct8_avx2_lj(
             thresholds[1],
         ],
     );
-    let thr_bot = f32x8::from_array(
+    let thr_bot = f32x8::from_array_t(
         token,
         [
             thresholds[2],
@@ -377,8 +377,8 @@ pub fn quantize_dct8_avx2_lj(
 
     for chunk in 0..8 {
         let base = chunk * 8;
-        let coeffs = f32x8::from_slice(token, &dct_coeffs[base..]);
-        let w = f32x8::from_slice(token, &weights[base..]);
+        let coeffs = f32x8::from_slice_t(token, &dct_coeffs[base..]);
+        let w = f32x8::from_slice_t(token, &weights[base..]);
         let thr = if chunk < 4 { thr_top } else { thr_bot };
 
         // val = (w * qac_qm) * coeffs  (libjxl Mul(Mul(qm,quantv),in))
@@ -408,22 +408,22 @@ pub fn quantize_dct8_neon_lj(
 ) {
     use magetypes::simd::f32x4;
 
-    let qac_qm_v = f32x4::splat(token, qac_qm);
-    let zero_f = f32x4::zero(token);
+    let qac_qm_v = f32x4::splat_t(token, qac_qm);
+    let zero_f = f32x4::zero_t(token);
 
     let thr = [
-        f32x4::splat(token, thresholds[0]),
-        f32x4::splat(token, thresholds[1]),
-        f32x4::splat(token, thresholds[2]),
-        f32x4::splat(token, thresholds[3]),
+        f32x4::splat_t(token, thresholds[0]),
+        f32x4::splat_t(token, thresholds[1]),
+        f32x4::splat_t(token, thresholds[2]),
+        f32x4::splat_t(token, thresholds[3]),
     ];
 
     for row in 0..8 {
         let thr_row = if row < 4 { 0 } else { 2 };
         for half in 0..2usize {
             let base = row * 8 + half * 4;
-            let coeffs = f32x4::from_slice(token, &dct_coeffs[base..]);
-            let w = f32x4::from_slice(token, &weights[base..]);
+            let coeffs = f32x4::from_slice_t(token, &dct_coeffs[base..]);
+            let w = f32x4::from_slice_t(token, &weights[base..]);
             let t = thr[thr_row + half];
 
             let val = w * qac_qm_v * coeffs;
@@ -452,22 +452,22 @@ pub fn quantize_dct8_wasm128_lj(
 ) {
     use magetypes::simd::f32x4;
 
-    let qac_qm_v = f32x4::splat(token, qac_qm);
-    let zero_f = f32x4::zero(token);
+    let qac_qm_v = f32x4::splat_t(token, qac_qm);
+    let zero_f = f32x4::zero_t(token);
 
     let thr = [
-        f32x4::splat(token, thresholds[0]),
-        f32x4::splat(token, thresholds[1]),
-        f32x4::splat(token, thresholds[2]),
-        f32x4::splat(token, thresholds[3]),
+        f32x4::splat_t(token, thresholds[0]),
+        f32x4::splat_t(token, thresholds[1]),
+        f32x4::splat_t(token, thresholds[2]),
+        f32x4::splat_t(token, thresholds[3]),
     ];
 
     for row in 0..8 {
         let thr_row = if row < 4 { 0 } else { 2 };
         for half in 0..2usize {
             let base = row * 8 + half * 4;
-            let coeffs = f32x4::from_slice(token, &dct_coeffs[base..]);
-            let w = f32x4::from_slice(token, &weights[base..]);
+            let coeffs = f32x4::from_slice_t(token, &dct_coeffs[base..]);
+            let w = f32x4::from_slice_t(token, &weights[base..]);
             let t = thr[thr_row + half];
 
             let val = w * qac_qm_v * coeffs;
@@ -630,18 +630,18 @@ pub fn quantize_large_avx2_lj(
 ) {
     use magetypes::simd::f32x8;
 
-    let qac_v = f32x8::splat(token, qac_qm);
-    let zero_f = f32x8::zero(token);
+    let qac_v = f32x8::splat_t(token, qac_qm);
+    let zero_f = f32x8::zero_t(token);
 
     let half_h = grid_height / 2;
     let half_w = grid_width / 2;
     let chunks_per_row = grid_width / 8;
 
     let thr_splat = [
-        f32x8::splat(token, thresholds[0]),
-        f32x8::splat(token, thresholds[1]),
-        f32x8::splat(token, thresholds[2]),
-        f32x8::splat(token, thresholds[3]),
+        f32x8::splat_t(token, thresholds[0]),
+        f32x8::splat_t(token, thresholds[1]),
+        f32x8::splat_t(token, thresholds[2]),
+        f32x8::splat_t(token, thresholds[3]),
     ];
 
     let coeffs = &dct_coeffs[..grid_width * grid_height];
@@ -698,17 +698,17 @@ pub fn quantize_large_neon_lj(
 ) {
     use magetypes::simd::f32x4;
 
-    let qac_v = f32x4::splat(token, qac_qm);
-    let zero_f = f32x4::zero(token);
+    let qac_v = f32x4::splat_t(token, qac_qm);
+    let zero_f = f32x4::zero_t(token);
 
     let half_h = grid_height / 2;
     let half_w = grid_width / 2;
 
     let thr_splat = [
-        f32x4::splat(token, thresholds[0]),
-        f32x4::splat(token, thresholds[1]),
-        f32x4::splat(token, thresholds[2]),
-        f32x4::splat(token, thresholds[3]),
+        f32x4::splat_t(token, thresholds[0]),
+        f32x4::splat_t(token, thresholds[1]),
+        f32x4::splat_t(token, thresholds[2]),
+        f32x4::splat_t(token, thresholds[3]),
     ];
 
     let coeffs = &dct_coeffs[..grid_width * grid_height];
@@ -725,8 +725,8 @@ pub fn quantize_large_neon_lj(
             let base = row_off + x_base;
             let thr_idx = row_thr_base + if x_base >= half_w { 1 } else { 0 };
 
-            let c = f32x4::from_slice(token, &coeffs[base..]);
-            let w = f32x4::from_slice(token, &wts[base..]);
+            let c = f32x4::from_slice_t(token, &coeffs[base..]);
+            let w = f32x4::from_slice_t(token, &wts[base..]);
             let thr = thr_splat[thr_idx];
 
             let val = w * qac_v * c;
@@ -765,17 +765,17 @@ pub fn quantize_large_wasm128_lj(
 ) {
     use magetypes::simd::f32x4;
 
-    let qac_v = f32x4::splat(token, qac_qm);
-    let zero_f = f32x4::zero(token);
+    let qac_v = f32x4::splat_t(token, qac_qm);
+    let zero_f = f32x4::zero_t(token);
 
     let half_h = grid_height / 2;
     let half_w = grid_width / 2;
 
     let thr_splat = [
-        f32x4::splat(token, thresholds[0]),
-        f32x4::splat(token, thresholds[1]),
-        f32x4::splat(token, thresholds[2]),
-        f32x4::splat(token, thresholds[3]),
+        f32x4::splat_t(token, thresholds[0]),
+        f32x4::splat_t(token, thresholds[1]),
+        f32x4::splat_t(token, thresholds[2]),
+        f32x4::splat_t(token, thresholds[3]),
     ];
 
     let coeffs = &dct_coeffs[..grid_width * grid_height];
@@ -792,8 +792,8 @@ pub fn quantize_large_wasm128_lj(
             let base = row_off + x_base;
             let thr_idx = row_thr_base + if x_base >= half_w { 1 } else { 0 };
 
-            let c = f32x4::from_slice(token, &coeffs[base..]);
-            let w = f32x4::from_slice(token, &wts[base..]);
+            let c = f32x4::from_slice_t(token, &coeffs[base..]);
+            let w = f32x4::from_slice_t(token, &wts[base..]);
             let thr = thr_splat[thr_idx];
 
             let val = w * qac_v * c;
@@ -976,8 +976,8 @@ pub fn quantize_large_avx2(
 ) {
     use magetypes::simd::f32x8;
 
-    let qac_v = f32x8::splat(token, qac_qm);
-    let zero_f = f32x8::zero(token);
+    let qac_v = f32x8::splat_t(token, qac_qm);
+    let zero_f = f32x8::zero_t(token);
 
     let half_h = grid_height / 2;
     let half_w = grid_width / 2;
@@ -985,10 +985,10 @@ pub fn quantize_large_avx2(
 
     // Pre-build threshold splats for each quadrant
     let thr_splat = [
-        f32x8::splat(token, thresholds[0]),
-        f32x8::splat(token, thresholds[1]),
-        f32x8::splat(token, thresholds[2]),
-        f32x8::splat(token, thresholds[3]),
+        f32x8::splat_t(token, thresholds[0]),
+        f32x8::splat_t(token, thresholds[1]),
+        f32x8::splat_t(token, thresholds[2]),
+        f32x8::splat_t(token, thresholds[3]),
     ];
 
     // Pre-slice to help bounds check elimination
@@ -1049,17 +1049,17 @@ pub fn quantize_large_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let qac_v = f32x4::splat(token, qac_qm);
-    let zero_f = f32x4::zero(token);
+    let qac_v = f32x4::splat_t(token, qac_qm);
+    let zero_f = f32x4::zero_t(token);
 
     let half_h = grid_height / 2;
     let half_w = grid_width / 2;
 
     let thr_splat = [
-        f32x4::splat(token, thresholds[0]),
-        f32x4::splat(token, thresholds[1]),
-        f32x4::splat(token, thresholds[2]),
-        f32x4::splat(token, thresholds[3]),
+        f32x4::splat_t(token, thresholds[0]),
+        f32x4::splat_t(token, thresholds[1]),
+        f32x4::splat_t(token, thresholds[2]),
+        f32x4::splat_t(token, thresholds[3]),
     ];
 
     let coeffs = &dct_coeffs[..grid_width * grid_height];
@@ -1077,8 +1077,8 @@ pub fn quantize_large_neon(
             let base = row_off + x_base;
             let thr_idx = row_thr_base + if x_base >= half_w { 1 } else { 0 };
 
-            let c = f32x4::from_slice(token, &coeffs[base..]);
-            let w = f32x4::from_slice(token, &wts[base..]);
+            let c = f32x4::from_slice_t(token, &coeffs[base..]);
+            let w = f32x4::from_slice_t(token, &wts[base..]);
             let thr = thr_splat[thr_idx];
 
             let val = c / w * qac_v;
@@ -1118,17 +1118,17 @@ pub fn quantize_large_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let qac_v = f32x4::splat(token, qac_qm);
-    let zero_f = f32x4::zero(token);
+    let qac_v = f32x4::splat_t(token, qac_qm);
+    let zero_f = f32x4::zero_t(token);
 
     let half_h = grid_height / 2;
     let half_w = grid_width / 2;
 
     let thr_splat = [
-        f32x4::splat(token, thresholds[0]),
-        f32x4::splat(token, thresholds[1]),
-        f32x4::splat(token, thresholds[2]),
-        f32x4::splat(token, thresholds[3]),
+        f32x4::splat_t(token, thresholds[0]),
+        f32x4::splat_t(token, thresholds[1]),
+        f32x4::splat_t(token, thresholds[2]),
+        f32x4::splat_t(token, thresholds[3]),
     ];
 
     let coeffs = &dct_coeffs[..grid_width * grid_height];
@@ -1145,8 +1145,8 @@ pub fn quantize_large_wasm128(
             let base = row_off + x_base;
             let thr_idx = row_thr_base + if x_base >= half_w { 1 } else { 0 };
 
-            let c = f32x4::from_slice(token, &coeffs[base..]);
-            let w = f32x4::from_slice(token, &wts[base..]);
+            let c = f32x4::from_slice_t(token, &coeffs[base..]);
+            let w = f32x4::from_slice_t(token, &wts[base..]);
             let thr = thr_splat[thr_idx];
 
             let val = c / w * qac_v;
