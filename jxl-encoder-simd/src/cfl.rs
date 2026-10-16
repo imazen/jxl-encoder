@@ -407,10 +407,10 @@ pub fn find_best_multiplier_avx2(
         return 0;
     }
 
-    let inv_cf = f32x8::splat(token, K_INV_COLOR_FACTOR);
-    let base_v = f32x8::splat(token, base);
-    let mut acc_aa = f32x8::splat(token, 0.0);
-    let mut acc_ab = f32x8::splat(token, 0.0);
+    let inv_cf = f32x8::splat_t(token, K_INV_COLOR_FACTOR);
+    let base_v = f32x8::splat_t(token, base);
+    let mut acc_aa = f32x8::splat_t(token, 0.0);
+    let mut acc_ab = f32x8::splat_t(token, 0.0);
 
     let simd_end = num & !7;
     let mut i = 0;
@@ -459,16 +459,16 @@ pub fn find_best_multiplier_neon(
         return 0;
     }
 
-    let inv_cf = f32x4::splat(token, K_INV_COLOR_FACTOR);
-    let base_v = f32x4::splat(token, base);
-    let mut acc_aa = f32x4::splat(token, 0.0);
-    let mut acc_ab = f32x4::splat(token, 0.0);
+    let inv_cf = f32x4::splat_t(token, K_INV_COLOR_FACTOR);
+    let base_v = f32x4::splat_t(token, base);
+    let mut acc_aa = f32x4::splat_t(token, 0.0);
+    let mut acc_ab = f32x4::splat_t(token, 0.0);
 
     let simd_end = num & !3;
     let mut i = 0;
     while i < simd_end {
-        let m = f32x4::from_slice(token, &values_m[i..]);
-        let s = f32x4::from_slice(token, &values_s[i..]);
+        let m = f32x4::from_slice_t(token, &values_m[i..]);
+        let s = f32x4::from_slice_t(token, &values_s[i..]);
         let a = inv_cf * m;
         let b = base_v * m - s;
         acc_aa = a.mul_add(a, acc_aa);
@@ -509,16 +509,16 @@ pub fn find_best_multiplier_wasm128(
         return 0;
     }
 
-    let inv_cf = f32x4::splat(token, K_INV_COLOR_FACTOR);
-    let base_v = f32x4::splat(token, base);
-    let mut acc_aa = f32x4::splat(token, 0.0);
-    let mut acc_ab = f32x4::splat(token, 0.0);
+    let inv_cf = f32x4::splat_t(token, K_INV_COLOR_FACTOR);
+    let base_v = f32x4::splat_t(token, base);
+    let mut acc_aa = f32x4::splat_t(token, 0.0);
+    let mut acc_ab = f32x4::splat_t(token, 0.0);
 
     let simd_end = num & !3;
     let mut i = 0;
     while i < simd_end {
-        let m = f32x4::from_slice(token, &values_m[i..]);
-        let s = f32x4::from_slice(token, &values_s[i..]);
+        let m = f32x4::from_slice_t(token, &values_m[i..]);
+        let s = f32x4::from_slice_t(token, &values_s[i..]);
         let a = inv_cf * m;
         let b = base_v * m - s;
         acc_aa = a.mul_add(a, acc_aa);
@@ -823,18 +823,18 @@ pub fn find_best_multiplier_newton_avx2(
         return bias_and_quantize(0.0);
     }
 
-    let inv_cf = f32x8::splat(token, K_INV_COLOR_FACTOR);
-    let base_v = f32x8::splat(token, base);
-    let coeffx2_v = f32x8::splat(token, NEWTON_COEFF * 2.0);
-    let one = f32x8::splat(token, 1.0);
-    let zero = f32x8::splat(token, 0.0);
-    let thres_v = f32x8::splat(token, NEWTON_THRES);
+    let inv_cf = f32x8::splat_t(token, K_INV_COLOR_FACTOR);
+    let base_v = f32x8::splat_t(token, base);
+    let coeffx2_v = f32x8::splat_t(token, NEWTON_COEFF * 2.0);
+    let one = f32x8::splat_t(token, 1.0);
+    let zero = f32x8::splat_t(token, 0.0);
+    let thres_v = f32x8::splat_t(token, NEWTON_THRES);
 
     let simd_end = num & !7;
 
     // Compute LS solution as starting point for Newton (reuses SIMD loop).
-    let mut acc_aa = f32x8::splat(token, 0.0);
-    let mut acc_ab = f32x8::splat(token, 0.0);
+    let mut acc_aa = f32x8::splat_t(token, 0.0);
+    let mut acc_ab = f32x8::splat_t(token, 0.0);
     let mut i = 0;
     while i < simd_end {
         let m = crate::load_f32x8(token, values_m, i);
@@ -867,18 +867,18 @@ pub fn find_best_multiplier_newton_avx2(
     let mut converged = false;
 
     for _ in 0..max_iters {
-        let x_v = f32x8::splat(token, x);
-        let xpe_v = f32x8::splat(token, x + eps);
-        let xme_v = f32x8::splat(token, x - eps);
+        let x_v = f32x8::splat_t(token, x);
+        let xpe_v = f32x8::splat_t(token, x + eps);
+        let xme_v = f32x8::splat_t(token, x - eps);
 
-        let mut acc_fd = f32x8::splat(token, 0.0);
-        let mut acc_fdpe = f32x8::splat(token, 0.0);
-        let mut acc_fdme = f32x8::splat(token, 0.0);
+        let mut acc_fd = f32x8::splat_t(token, 0.0);
+        let mut acc_fdpe = f32x8::splat_t(token, 0.0);
+        let mut acc_fdme = f32x8::splat_t(token, 0.0);
 
         let mut i = 0;
         while i < simd_end {
-            let m = f32x8::from_slice(token, &values_m[i..]);
-            let s = f32x8::from_slice(token, &values_s[i..]);
+            let m = f32x8::from_slice_t(token, &values_m[i..]);
+            let s = f32x8::from_slice_t(token, &values_s[i..]);
             let a = inv_cf * m;
             let b = base_v * m - s;
 
@@ -1056,22 +1056,22 @@ pub fn find_best_multiplier_newton_neon(
         return bias_and_quantize(0.0);
     }
 
-    let inv_cf = f32x4::splat(token, K_INV_COLOR_FACTOR);
-    let base_v = f32x4::splat(token, base);
-    let coeffx2_v = f32x4::splat(token, NEWTON_COEFF * 2.0);
-    let one = f32x4::splat(token, 1.0);
-    let zero = f32x4::splat(token, 0.0);
-    let thres_v = f32x4::splat(token, NEWTON_THRES);
+    let inv_cf = f32x4::splat_t(token, K_INV_COLOR_FACTOR);
+    let base_v = f32x4::splat_t(token, base);
+    let coeffx2_v = f32x4::splat_t(token, NEWTON_COEFF * 2.0);
+    let one = f32x4::splat_t(token, 1.0);
+    let zero = f32x4::splat_t(token, 0.0);
+    let thres_v = f32x4::splat_t(token, NEWTON_THRES);
 
     let simd_end = num & !3;
 
     // Compute LS solution as starting point for Newton (reuses SIMD loop).
-    let mut acc_aa = f32x4::splat(token, 0.0);
-    let mut acc_ab = f32x4::splat(token, 0.0);
+    let mut acc_aa = f32x4::splat_t(token, 0.0);
+    let mut acc_ab = f32x4::splat_t(token, 0.0);
     let mut i = 0;
     while i < simd_end {
-        let m = f32x4::from_slice(token, &values_m[i..]);
-        let s = f32x4::from_slice(token, &values_s[i..]);
+        let m = f32x4::from_slice_t(token, &values_m[i..]);
+        let s = f32x4::from_slice_t(token, &values_s[i..]);
         let a = inv_cf * m;
         let b = base_v * m - s;
         acc_aa = a.mul_add(a, acc_aa);
@@ -1100,18 +1100,18 @@ pub fn find_best_multiplier_newton_neon(
     let mut converged = false;
 
     for _ in 0..max_iters {
-        let x_v = f32x4::splat(token, x);
-        let xpe_v = f32x4::splat(token, x + eps);
-        let xme_v = f32x4::splat(token, x - eps);
+        let x_v = f32x4::splat_t(token, x);
+        let xpe_v = f32x4::splat_t(token, x + eps);
+        let xme_v = f32x4::splat_t(token, x - eps);
 
-        let mut acc_fd = f32x4::splat(token, 0.0);
-        let mut acc_fdpe = f32x4::splat(token, 0.0);
-        let mut acc_fdme = f32x4::splat(token, 0.0);
+        let mut acc_fd = f32x4::splat_t(token, 0.0);
+        let mut acc_fdpe = f32x4::splat_t(token, 0.0);
+        let mut acc_fdme = f32x4::splat_t(token, 0.0);
 
         let mut i = 0;
         while i < simd_end {
-            let m = f32x4::from_slice(token, &values_m[i..]);
-            let s = f32x4::from_slice(token, &values_s[i..]);
+            let m = f32x4::from_slice_t(token, &values_m[i..]);
+            let s = f32x4::from_slice_t(token, &values_s[i..]);
             let a = inv_cf * m;
             let b = base_v * m - s;
 

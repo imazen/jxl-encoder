@@ -573,17 +573,17 @@ pub fn compute_pre_erosion_avx2(
     let max_y = height - 1;
 
     // SIMD constants
-    let quarter = f32x8::splat(token, 0.25);
-    let gamma_off = f32x8::splat(token, MATCH_GAMMA_OFFSET);
-    let zero = f32x8::splat(token, 0.0);
-    let eps_v = f32x8::splat(token, EPSILON);
-    let k_num_mul_v = f32x8::splat(token, K_NUM_MUL);
-    let k_den_mul_v = f32x8::splat(token, K_DEN_MUL);
-    let k_v_offset_v = f32x8::splat(token, K_V_OFFSET);
-    let limit_v = f32x8::splat(token, LIMIT);
-    let masking_mul_v = f32x8::splat(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
-    let masking_offset_v = f32x8::splat(token, MASKING_K_LOG_OFFSET);
-    let masking_scale = f32x8::splat(token, 0.25);
+    let quarter = f32x8::splat_t(token, 0.25);
+    let gamma_off = f32x8::splat_t(token, MATCH_GAMMA_OFFSET);
+    let zero = f32x8::splat_t(token, 0.0);
+    let eps_v = f32x8::splat_t(token, EPSILON);
+    let k_num_mul_v = f32x8::splat_t(token, K_NUM_MUL);
+    let k_den_mul_v = f32x8::splat_t(token, K_DEN_MUL);
+    let k_v_offset_v = f32x8::splat_t(token, K_V_OFFSET);
+    let limit_v = f32x8::splat_t(token, LIMIT);
+    let masking_mul_v = f32x8::splat_t(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
+    let masking_offset_v = f32x8::splat_t(token, MASKING_K_LOG_OFFSET);
+    let masking_scale = f32x8::splat_t(token, 0.25);
 
     for y in y_start..y_end {
         let yc = y.min(max_y);
@@ -663,7 +663,7 @@ pub fn compute_pre_erosion_avx2(
 
             // Accumulate into diff_buffer
             if (y - y_start) % 4 != 0 {
-                let existing = f32x8::from_slice(token, &diff_buffer[local_x..]);
+                let existing = f32x8::from_slice_t(token, &diff_buffer[local_x..]);
                 let sum = existing + result;
                 let out: &mut [f32; 8] =
                     (&mut diff_buffer[local_x..local_x + 8]).try_into().unwrap();
@@ -744,19 +744,19 @@ pub fn per_block_modulations_avx2(
     let add = (1.0 - dampen) * base_level;
 
     // SIMD constants for gamma modulation
-    let bias_v = f32x8::splat(token, GM_K_BIAS);
-    let zero_v = f32x8::splat(token, 0.0);
-    let eps_v = f32x8::splat(token, EPSILON);
-    let k_num_v = f32x8::splat(token, K_NUM_MUL);
-    let k_den_v = f32x8::splat(token, K_DEN_MUL);
-    let k_voff_v = f32x8::splat(token, K_V_OFFSET);
+    let bias_v = f32x8::splat_t(token, GM_K_BIAS);
+    let zero_v = f32x8::splat_t(token, 0.0);
+    let eps_v = f32x8::splat_t(token, EPSILON);
+    let k_num_v = f32x8::splat_t(token, K_NUM_MUL);
+    let k_den_v = f32x8::splat_t(token, K_DEN_MUL);
+    let k_voff_v = f32x8::splat_t(token, K_V_OFFSET);
 
     // HF modulation constants
-    let valmin_v = f32x8::splat(token, HF_VALMIN_Y);
+    let valmin_v = f32x8::splat_t(token, HF_VALMIN_Y);
 
     // Blue modulation constants
-    let bm_offset_v = f32x8::splat(token, BM_K_OFFSET);
-    let bm_limit_v = f32x8::splat(token, BM_K_LIMIT);
+    let bm_offset_v = f32x8::splat_t(token, BM_K_OFFSET);
+    let bm_limit_v = f32x8::splat_t(token, BM_K_LIMIT);
 
     for iy in 0..rect_h_blocks {
         let block_iy = rect_y0_blocks + iy;
@@ -772,7 +772,7 @@ pub fn per_block_modulations_avx2(
 
             // GammaModulation: accumulate over 8×8 = 64 pixels
             // Process 8 pixels at a time (one row)
-            let mut ratio_acc = f32x8::splat(token, 0.0);
+            let mut ratio_acc = f32x8::splat_t(token, 0.0);
             for dy in 0..8 {
                 let row_off = (py + dy) * stride + px;
                 let y_vals = crate::load_f32x8(token, xyb_y, row_off);
@@ -798,7 +798,7 @@ pub fn per_block_modulations_avx2(
 
             // HfModulation: accumulate abs-diff with right and below neighbors
             let mask_val = out_val;
-            let mut hf_acc = f32x8::splat(token, 0.0);
+            let mut hf_acc = f32x8::splat_t(token, 0.0);
             for dy in 0..8 {
                 let row_off = (py + dy) * stride + px;
                 let next_row_off = if dy == 7 {
@@ -814,7 +814,7 @@ pub fn per_block_modulations_avx2(
                 // Position 7 (dx=7) has no right neighbor, so it contributes 0.
                 // Duplicating cur[7] at position 7 makes diff=0 → abs(0).min(valmin)=0.
                 let cur_arr: [f32; 8] = cur.into();
-                let right = f32x8::from_array(
+                let right = f32x8::from_array_t(
                     token,
                     [
                         cur_arr[1], cur_arr[2], cur_arr[3], cur_arr[4], cur_arr[5], cur_arr[6],
@@ -828,7 +828,7 @@ pub fn per_block_modulations_avx2(
             let after_hf = mask_val + sum_y * HF_K_MUL_Y + HF_K_OFFSET;
 
             // BlueModulation: conditional accumulate
-            let mut blue_acc = f32x8::splat(token, 0.0);
+            let mut blue_acc = f32x8::splat_t(token, 0.0);
             for dy in 0..8 {
                 let row_off = (py + dy) * stride + px;
                 let x_vals = crate::load_f32x8(token, xyb_x, row_off);
@@ -898,17 +898,17 @@ pub fn compute_pre_erosion_neon(
     let max_x = width - 1;
     let max_y = height - 1;
 
-    let quarter = f32x4::splat(token, 0.25);
-    let gamma_off = f32x4::splat(token, MATCH_GAMMA_OFFSET);
-    let zero = f32x4::splat(token, 0.0);
-    let eps_v = f32x4::splat(token, EPSILON);
-    let k_num_mul_v = f32x4::splat(token, K_NUM_MUL);
-    let k_den_mul_v = f32x4::splat(token, K_DEN_MUL);
-    let k_v_offset_v = f32x4::splat(token, K_V_OFFSET);
-    let limit_v = f32x4::splat(token, LIMIT);
-    let masking_mul_v = f32x4::splat(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
-    let masking_offset_v = f32x4::splat(token, MASKING_K_LOG_OFFSET);
-    let masking_scale = f32x4::splat(token, 0.25);
+    let quarter = f32x4::splat_t(token, 0.25);
+    let gamma_off = f32x4::splat_t(token, MATCH_GAMMA_OFFSET);
+    let zero = f32x4::splat_t(token, 0.0);
+    let eps_v = f32x4::splat_t(token, EPSILON);
+    let k_num_mul_v = f32x4::splat_t(token, K_NUM_MUL);
+    let k_den_mul_v = f32x4::splat_t(token, K_DEN_MUL);
+    let k_v_offset_v = f32x4::splat_t(token, K_V_OFFSET);
+    let limit_v = f32x4::splat_t(token, LIMIT);
+    let masking_mul_v = f32x4::splat_t(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
+    let masking_offset_v = f32x4::splat_t(token, MASKING_K_LOG_OFFSET);
+    let masking_scale = f32x4::splat_t(token, 0.25);
 
     for y in y_start..y_end {
         let yc = y.min(max_y);
@@ -955,11 +955,11 @@ pub fn compute_pre_erosion_neon(
             let x = x0 + local_x;
             let xc = x.min(max_x);
 
-            let top = f32x4::from_slice(token, &xyb_y[y1 * width + xc..]);
-            let bot = f32x4::from_slice(token, &xyb_y[y2 * width + xc..]);
-            let left = f32x4::from_slice(token, &xyb_y[yc * width + xc - 1..]);
-            let right = f32x4::from_slice(token, &xyb_y[yc * width + xc + 1..]);
-            let center = f32x4::from_slice(token, &xyb_y[yc * width + xc..]);
+            let top = f32x4::from_slice_t(token, &xyb_y[y1 * width + xc..]);
+            let bot = f32x4::from_slice_t(token, &xyb_y[y2 * width + xc..]);
+            let left = f32x4::from_slice_t(token, &xyb_y[yc * width + xc - 1..]);
+            let right = f32x4::from_slice_t(token, &xyb_y[yc * width + xc + 1..]);
+            let center = f32x4::from_slice_t(token, &xyb_y[yc * width + xc..]);
 
             let base = quarter * (top + bot + left + right);
 
@@ -976,7 +976,7 @@ pub fn compute_pre_erosion_neon(
             let result = masking_scale * (clamped.mul_add(masking_mul_v, masking_offset_v)).sqrt();
 
             if (y - y_start) % 4 != 0 {
-                let existing = f32x4::from_slice(token, &diff_buffer[local_x..]);
+                let existing = f32x4::from_slice_t(token, &diff_buffer[local_x..]);
                 let sum = existing + result;
                 let out: &mut [f32; 4] =
                     (&mut diff_buffer[local_x..local_x + 4]).try_into().unwrap();
@@ -1055,15 +1055,15 @@ pub fn per_block_modulations_neon(
     let mul = scale * dampen;
     let add = (1.0 - dampen) * base_level;
 
-    let bias_v = f32x4::splat(token, GM_K_BIAS);
-    let zero_v = f32x4::splat(token, 0.0);
-    let eps_v = f32x4::splat(token, EPSILON);
-    let k_num_v = f32x4::splat(token, K_NUM_MUL);
-    let k_den_v = f32x4::splat(token, K_DEN_MUL);
-    let k_voff_v = f32x4::splat(token, K_V_OFFSET);
-    let valmin_v = f32x4::splat(token, HF_VALMIN_Y);
-    let bm_offset_v = f32x4::splat(token, BM_K_OFFSET);
-    let bm_limit_v = f32x4::splat(token, BM_K_LIMIT);
+    let bias_v = f32x4::splat_t(token, GM_K_BIAS);
+    let zero_v = f32x4::splat_t(token, 0.0);
+    let eps_v = f32x4::splat_t(token, EPSILON);
+    let k_num_v = f32x4::splat_t(token, K_NUM_MUL);
+    let k_den_v = f32x4::splat_t(token, K_DEN_MUL);
+    let k_voff_v = f32x4::splat_t(token, K_V_OFFSET);
+    let valmin_v = f32x4::splat_t(token, HF_VALMIN_Y);
+    let bm_offset_v = f32x4::splat_t(token, BM_K_OFFSET);
+    let bm_limit_v = f32x4::splat_t(token, BM_K_LIMIT);
 
     for iy in 0..rect_h_blocks {
         let block_iy = rect_y0_blocks + iy;
@@ -1081,8 +1081,8 @@ pub fn per_block_modulations_neon(
                 let row_off = (py + dy) * stride + px;
                 for half in 0..2 {
                     let off = row_off + half * 4;
-                    let y_vals = f32x4::from_slice(token, &xyb_y[off..]);
-                    let x_vals = f32x4::from_slice(token, &xyb_x[off..]);
+                    let y_vals = f32x4::from_slice_t(token, &xyb_y[off..]);
+                    let x_vals = f32x4::from_slice_t(token, &xyb_x[off..]);
                     let iny = y_vals + bias_v;
                     let r = (iny - x_vals).max(zero_v);
                     let g = (iny + x_vals).max(zero_v);
@@ -1112,8 +1112,8 @@ pub fn per_block_modulations_neon(
                 };
                 for half in 0..2 {
                     let off = row_off + half * 4;
-                    let cur = f32x4::from_slice(token, &xyb_y[off..]);
-                    let below = f32x4::from_slice(token, &xyb_y[next_row_off + half * 4..]);
+                    let cur = f32x4::from_slice_t(token, &xyb_y[off..]);
+                    let below = f32x4::from_slice_t(token, &xyb_y[next_row_off + half * 4..]);
                     let bd = (cur - below).abs().min(valmin_v);
                     let bd_arr: [f32; 4] = bd.into();
                     hf_total += bd_arr[0] + bd_arr[1] + bd_arr[2] + bd_arr[3];
@@ -1124,10 +1124,10 @@ pub fn per_block_modulations_neon(
                     // half=1: dx=7 has no right neighbor (duplicated → diff=0)
                     let cur_arr: [f32; 4] = cur.into();
                     let right = if half == 0 {
-                        f32x4::from_slice(token, &xyb_y[off + 1..])
+                        f32x4::from_slice_t(token, &xyb_y[off + 1..])
                     } else {
                         // Shift left, duplicate last element (diff=0 for dx=7)
-                        f32x4::from_array(token, [cur_arr[1], cur_arr[2], cur_arr[3], cur_arr[3]])
+                        f32x4::from_array_t(token, [cur_arr[1], cur_arr[2], cur_arr[3], cur_arr[3]])
                     };
                     let rd = (cur - right).abs().min(valmin_v);
                     let rd_arr: [f32; 4] = rd.into();
@@ -1146,9 +1146,9 @@ pub fn per_block_modulations_neon(
                 let row_off = (py + dy) * stride + px;
                 for half in 0..2 {
                     let off = row_off + half * 4;
-                    let x_vals = f32x4::from_slice(token, &xyb_x[off..]);
-                    let y_vals = f32x4::from_slice(token, &xyb_y[off..]);
-                    let b_vals = f32x4::from_slice(token, &xyb_b[off..]);
+                    let x_vals = f32x4::from_slice_t(token, &xyb_x[off..]);
+                    let y_vals = f32x4::from_slice_t(token, &xyb_y[off..]);
+                    let b_vals = f32x4::from_slice_t(token, &xyb_b[off..]);
                     let y_eff = y_vals + bm_offset_v + x_vals.abs();
                     let excess = (b_vals - y_eff).min(bm_limit_v).max(zero_v);
                     let arr: [f32; 4] = excess.into();
@@ -1214,17 +1214,17 @@ pub fn compute_pre_erosion_wasm128(
     let max_x = width - 1;
     let max_y = height - 1;
 
-    let quarter = f32x4::splat(token, 0.25);
-    let gamma_off = f32x4::splat(token, MATCH_GAMMA_OFFSET);
-    let zero = f32x4::splat(token, 0.0);
-    let eps_v = f32x4::splat(token, EPSILON);
-    let k_num_mul_v = f32x4::splat(token, K_NUM_MUL);
-    let k_den_mul_v = f32x4::splat(token, K_DEN_MUL);
-    let k_v_offset_v = f32x4::splat(token, K_V_OFFSET);
-    let limit_v = f32x4::splat(token, LIMIT);
-    let masking_mul_v = f32x4::splat(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
-    let masking_offset_v = f32x4::splat(token, MASKING_K_LOG_OFFSET);
-    let masking_scale = f32x4::splat(token, 0.25);
+    let quarter = f32x4::splat_t(token, 0.25);
+    let gamma_off = f32x4::splat_t(token, MATCH_GAMMA_OFFSET);
+    let zero = f32x4::splat_t(token, 0.0);
+    let eps_v = f32x4::splat_t(token, EPSILON);
+    let k_num_mul_v = f32x4::splat_t(token, K_NUM_MUL);
+    let k_den_mul_v = f32x4::splat_t(token, K_DEN_MUL);
+    let k_v_offset_v = f32x4::splat_t(token, K_V_OFFSET);
+    let limit_v = f32x4::splat_t(token, LIMIT);
+    let masking_mul_v = f32x4::splat_t(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
+    let masking_offset_v = f32x4::splat_t(token, MASKING_K_LOG_OFFSET);
+    let masking_scale = f32x4::splat_t(token, 0.25);
 
     for y in y_start..y_end {
         let yc = y.min(max_y);
@@ -1271,11 +1271,11 @@ pub fn compute_pre_erosion_wasm128(
             let x = x0 + local_x;
             let xc = x.min(max_x);
 
-            let top = f32x4::from_slice(token, &xyb_y[y1 * width + xc..]);
-            let bot = f32x4::from_slice(token, &xyb_y[y2 * width + xc..]);
-            let left = f32x4::from_slice(token, &xyb_y[yc * width + xc - 1..]);
-            let right = f32x4::from_slice(token, &xyb_y[yc * width + xc + 1..]);
-            let center = f32x4::from_slice(token, &xyb_y[yc * width + xc..]);
+            let top = f32x4::from_slice_t(token, &xyb_y[y1 * width + xc..]);
+            let bot = f32x4::from_slice_t(token, &xyb_y[y2 * width + xc..]);
+            let left = f32x4::from_slice_t(token, &xyb_y[yc * width + xc - 1..]);
+            let right = f32x4::from_slice_t(token, &xyb_y[yc * width + xc + 1..]);
+            let center = f32x4::from_slice_t(token, &xyb_y[yc * width + xc..]);
 
             let base = quarter * (top + bot + left + right);
 
@@ -1292,7 +1292,7 @@ pub fn compute_pre_erosion_wasm128(
             let result = masking_scale * (clamped.mul_add(masking_mul_v, masking_offset_v)).sqrt();
 
             if (y - y_start) % 4 != 0 {
-                let existing = f32x4::from_slice(token, &diff_buffer[local_x..]);
+                let existing = f32x4::from_slice_t(token, &diff_buffer[local_x..]);
                 let sum = existing + result;
                 let out: &mut [f32; 4] =
                     (&mut diff_buffer[local_x..local_x + 4]).try_into().unwrap();
@@ -1371,15 +1371,15 @@ pub fn per_block_modulations_wasm128(
     let mul = scale * dampen;
     let add = (1.0 - dampen) * base_level;
 
-    let bias_v = f32x4::splat(token, GM_K_BIAS);
-    let zero_v = f32x4::splat(token, 0.0);
-    let eps_v = f32x4::splat(token, EPSILON);
-    let k_num_v = f32x4::splat(token, K_NUM_MUL);
-    let k_den_v = f32x4::splat(token, K_DEN_MUL);
-    let k_voff_v = f32x4::splat(token, K_V_OFFSET);
-    let valmin_v = f32x4::splat(token, HF_VALMIN_Y);
-    let bm_offset_v = f32x4::splat(token, BM_K_OFFSET);
-    let bm_limit_v = f32x4::splat(token, BM_K_LIMIT);
+    let bias_v = f32x4::splat_t(token, GM_K_BIAS);
+    let zero_v = f32x4::splat_t(token, 0.0);
+    let eps_v = f32x4::splat_t(token, EPSILON);
+    let k_num_v = f32x4::splat_t(token, K_NUM_MUL);
+    let k_den_v = f32x4::splat_t(token, K_DEN_MUL);
+    let k_voff_v = f32x4::splat_t(token, K_V_OFFSET);
+    let valmin_v = f32x4::splat_t(token, HF_VALMIN_Y);
+    let bm_offset_v = f32x4::splat_t(token, BM_K_OFFSET);
+    let bm_limit_v = f32x4::splat_t(token, BM_K_LIMIT);
 
     for iy in 0..rect_h_blocks {
         let block_iy = rect_y0_blocks + iy;
@@ -1397,8 +1397,8 @@ pub fn per_block_modulations_wasm128(
                 let row_off = (py + dy) * stride + px;
                 for half in 0..2 {
                     let off = row_off + half * 4;
-                    let y_vals = f32x4::from_slice(token, &xyb_y[off..]);
-                    let x_vals = f32x4::from_slice(token, &xyb_x[off..]);
+                    let y_vals = f32x4::from_slice_t(token, &xyb_y[off..]);
+                    let x_vals = f32x4::from_slice_t(token, &xyb_x[off..]);
                     let iny = y_vals + bias_v;
                     let r = (iny - x_vals).max(zero_v);
                     let g = (iny + x_vals).max(zero_v);
@@ -1428,18 +1428,18 @@ pub fn per_block_modulations_wasm128(
                 };
                 for half in 0..2 {
                     let off = row_off + half * 4;
-                    let cur = f32x4::from_slice(token, &xyb_y[off..]);
-                    let below = f32x4::from_slice(token, &xyb_y[next_row_off + half * 4..]);
+                    let cur = f32x4::from_slice_t(token, &xyb_y[off..]);
+                    let below = f32x4::from_slice_t(token, &xyb_y[next_row_off + half * 4..]);
                     let bd = (cur - below).abs().min(valmin_v);
                     let bd_arr: [f32; 4] = bd.into();
                     hf_total += bd_arr[0] + bd_arr[1] + bd_arr[2] + bd_arr[3];
 
                     let cur_arr: [f32; 4] = cur.into();
                     let right = if half == 0 {
-                        f32x4::from_slice(token, &xyb_y[off + 1..])
+                        f32x4::from_slice_t(token, &xyb_y[off + 1..])
                     } else {
                         // Shift left, duplicate last element (diff=0 for dx=7)
-                        f32x4::from_array(token, [cur_arr[1], cur_arr[2], cur_arr[3], cur_arr[3]])
+                        f32x4::from_array_t(token, [cur_arr[1], cur_arr[2], cur_arr[3], cur_arr[3]])
                     };
                     let rd = (cur - right).abs().min(valmin_v);
                     let rd_arr: [f32; 4] = rd.into();
@@ -1458,9 +1458,9 @@ pub fn per_block_modulations_wasm128(
                 let row_off = (py + dy) * stride + px;
                 for half in 0..2 {
                     let off = row_off + half * 4;
-                    let x_vals = f32x4::from_slice(token, &xyb_x[off..]);
-                    let y_vals = f32x4::from_slice(token, &xyb_y[off..]);
-                    let b_vals = f32x4::from_slice(token, &xyb_b[off..]);
+                    let x_vals = f32x4::from_slice_t(token, &xyb_x[off..]);
+                    let y_vals = f32x4::from_slice_t(token, &xyb_y[off..]);
+                    let b_vals = f32x4::from_slice_t(token, &xyb_b[off..]);
                     let y_eff = y_vals + bm_offset_v + x_vals.abs();
                     let excess = (b_vals - y_eff).min(bm_limit_v).max(zero_v);
                     let arr: [f32; 4] = excess.into();

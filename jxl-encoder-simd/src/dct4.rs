@@ -595,7 +595,7 @@ fn vectorized_dct1d_4(
 ) {
     use magetypes::simd::f32x8;
 
-    let sqrt2 = f32x8::splat(token, SQRT2);
+    let sqrt2 = f32x8::splat_t(token, SQRT2);
 
     // AddReverse / SubReverse
     let t0 = r0 + r3;
@@ -608,8 +608,8 @@ fn vectorized_dct1d_4(
     let u1 = t0 - t1;
 
     // WcMultipliers_4 on second half
-    let v0 = t2 * f32x8::splat(token, WC_MULTIPLIERS_4[0]);
-    let v1 = t3 * f32x8::splat(token, WC_MULTIPLIERS_4[1]);
+    let v0 = t2 * f32x8::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let v1 = t3 * f32x8::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     // DCT-2 on second half
     let w0 = v0 + v1;
@@ -642,8 +642,8 @@ fn vectorized_idct1d_4(
 ) {
     use magetypes::simd::f32x8;
 
-    let inv_sqrt2 = f32x8::splat(token, INV_SQRT2);
-    let half = f32x8::splat(token, 0.5);
+    let inv_sqrt2 = f32x8::splat_t(token, INV_SQRT2);
+    let half = f32x8::splat_t(token, 0.5);
 
     // De-interleave: even0=r0, even1=r2, odd0=r1, odd1=r3
     let even0 = r0;
@@ -659,8 +659,8 @@ fn vectorized_idct1d_4(
     let o1_pre = (c - odd1) * half;
 
     // Reverse WcMultipliers
-    let o0 = o0_pre * f32x8::splat(token, INV_WC_MULTIPLIERS_4[0]);
-    let o1 = o1_pre * f32x8::splat(token, INV_WC_MULTIPLIERS_4[1]);
+    let o0 = o0_pre * f32x8::splat_t(token, INV_WC_MULTIPLIERS_4[0]);
+    let o1 = o1_pre * f32x8::splat_t(token, INV_WC_MULTIPLIERS_4[1]);
 
     // Reverse IDCT-2 on even half
     let e0 = (even0 + even1) * half;
@@ -715,10 +715,10 @@ fn transpose_4x4_per_lane(
     let s3 = _mm256_shuffle_ps::<0xEE>(t1, t3); // [a3,b3,c3,d3 | e3,f3,g3,h3]
 
     (
-        f32x8::from_m256(token, s0),
-        f32x8::from_m256(token, s1),
-        f32x8::from_m256(token, s2),
-        f32x8::from_m256(token, s3),
+        f32x8::from_raw_t(token, s0),
+        f32x8::from_raw_t(token, s1),
+        f32x8::from_raw_t(token, s2),
+        f32x8::from_raw_t(token, s3),
     )
 }
 
@@ -733,7 +733,7 @@ fn interleave_lanes(
     use magetypes::simd::f32x8;
 
     let perm = _mm256_setr_epi32(0, 4, 1, 5, 2, 6, 3, 7);
-    f32x8::from_m256(token, _mm256_permutevar8x32_ps(v.raw(), perm))
+    f32x8::from_raw_t(token, _mm256_permutevar8x32_ps(v.raw(), perm))
 }
 
 /// De-interleave: [a0,b0,a1,b1,a2,b2,a3,b3] → [a0,a1,a2,a3|b0,b1,b2,b3]
@@ -747,7 +747,7 @@ fn deinterleave_lanes(
     use magetypes::simd::f32x8;
 
     let perm = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
-    f32x8::from_m256(token, _mm256_permutevar8x32_ps(v.raw(), perm))
+    f32x8::from_raw_t(token, _mm256_permutevar8x32_ps(v.raw(), perm))
 }
 
 /// AVX2 DCT4x4 full transform.
@@ -760,18 +760,18 @@ fn deinterleave_lanes(
 pub fn dct_4x4_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
     use magetypes::simd::f32x8;
 
-    let scale = f32x8::splat(token, 0.25);
+    let scale = f32x8::splat_t(token, 0.25);
 
     // Load 8 rows. Each row naturally packs left/right sub-blocks:
     // r0 = [sub(0,0)_row0 | sub(0,1)_row0], etc.
-    let r0 = f32x8::from_slice(token, &input[0..]);
-    let r1 = f32x8::from_slice(token, &input[8..]);
-    let r2 = f32x8::from_slice(token, &input[16..]);
-    let r3 = f32x8::from_slice(token, &input[24..]);
-    let r4 = f32x8::from_slice(token, &input[32..]);
-    let r5 = f32x8::from_slice(token, &input[40..]);
-    let r6 = f32x8::from_slice(token, &input[48..]);
-    let r7 = f32x8::from_slice(token, &input[56..]);
+    let r0 = f32x8::from_slice_t(token, &input[0..]);
+    let r1 = f32x8::from_slice_t(token, &input[8..]);
+    let r2 = f32x8::from_slice_t(token, &input[16..]);
+    let r3 = f32x8::from_slice_t(token, &input[24..]);
+    let r4 = f32x8::from_slice_t(token, &input[32..]);
+    let r5 = f32x8::from_slice_t(token, &input[40..]);
+    let r6 = f32x8::from_slice_t(token, &input[48..]);
+    let r7 = f32x8::from_slice_t(token, &input[56..]);
 
     // Column DCTs on top pair (y=0 sub-blocks: rows 0-3)
     let (t0, t1, t2, t3) = vectorized_dct1d_4(token, r0, r1, r2, r3);
@@ -858,17 +858,17 @@ pub fn idct_4x4_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output
     // De-interleave rows and load with 4x scaling
     // Input is interleaved: output[(y + col*2)*8 + x + ix*2]
     // We need to de-interleave back to [sub_left | sub_right] per row.
-    let scale4 = f32x8::splat(token, 4.0);
+    let scale4 = f32x8::splat_t(token, 4.0);
 
     // Load interleaved rows and de-interleave
-    let row0 = deinterleave_lanes(token, f32x8::from_slice(token, &coeffs[0..]));
-    let row1 = deinterleave_lanes(token, f32x8::from_slice(token, &coeffs[8..]));
-    let row2 = deinterleave_lanes(token, f32x8::from_slice(token, &coeffs[16..]));
-    let row3 = deinterleave_lanes(token, f32x8::from_slice(token, &coeffs[24..]));
-    let row4 = deinterleave_lanes(token, f32x8::from_slice(token, &coeffs[32..]));
-    let row5 = deinterleave_lanes(token, f32x8::from_slice(token, &coeffs[40..]));
-    let row6 = deinterleave_lanes(token, f32x8::from_slice(token, &coeffs[48..]));
-    let row7 = deinterleave_lanes(token, f32x8::from_slice(token, &coeffs[56..]));
+    let row0 = deinterleave_lanes(token, f32x8::from_slice_t(token, &coeffs[0..]));
+    let row1 = deinterleave_lanes(token, f32x8::from_slice_t(token, &coeffs[8..]));
+    let row2 = deinterleave_lanes(token, f32x8::from_slice_t(token, &coeffs[16..]));
+    let row3 = deinterleave_lanes(token, f32x8::from_slice_t(token, &coeffs[24..]));
+    let row4 = deinterleave_lanes(token, f32x8::from_slice_t(token, &coeffs[32..]));
+    let row5 = deinterleave_lanes(token, f32x8::from_slice_t(token, &coeffs[40..]));
+    let row6 = deinterleave_lanes(token, f32x8::from_slice_t(token, &coeffs[48..]));
+    let row7 = deinterleave_lanes(token, f32x8::from_slice_t(token, &coeffs[56..]));
 
     // Top pair (y=0): rows 0,2,4,6 contain col_freq 0,1,2,3
     // Bottom pair (y=1): rows 1,3,5,7 contain col_freq 0,1,2,3
@@ -926,18 +926,18 @@ pub fn dct_4x8_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output:
     use crate::dct8::{transpose_8x8_regs, vectorized_dct1d_8};
     use magetypes::simd::f32x8;
 
-    let scale4 = f32x8::splat(token, 0.25);
-    let scale8 = f32x8::splat(token, 0.125);
+    let scale4 = f32x8::splat_t(token, 0.25);
+    let scale8 = f32x8::splat_t(token, 0.125);
 
     // Load 8 rows
-    let r0 = f32x8::from_slice(token, &input[0..]);
-    let r1 = f32x8::from_slice(token, &input[8..]);
-    let r2 = f32x8::from_slice(token, &input[16..]);
-    let r3 = f32x8::from_slice(token, &input[24..]);
-    let r4 = f32x8::from_slice(token, &input[32..]);
-    let r5 = f32x8::from_slice(token, &input[40..]);
-    let r6 = f32x8::from_slice(token, &input[48..]);
-    let r7 = f32x8::from_slice(token, &input[56..]);
+    let r0 = f32x8::from_slice_t(token, &input[0..]);
+    let r1 = f32x8::from_slice_t(token, &input[8..]);
+    let r2 = f32x8::from_slice_t(token, &input[16..]);
+    let r3 = f32x8::from_slice_t(token, &input[24..]);
+    let r4 = f32x8::from_slice_t(token, &input[32..]);
+    let r5 = f32x8::from_slice_t(token, &input[40..]);
+    let r6 = f32x8::from_slice_t(token, &input[48..]);
+    let r7 = f32x8::from_slice_t(token, &input[56..]);
 
     // 4-point column DCTs on top half (rows 0-3) and bottom half (rows 4-7)
     // Each register holds a full row (8 elements = 8 independent column DCTs)
@@ -1015,18 +1015,18 @@ pub fn idct_4x8_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output
     coeffs[0] = combined_dc + combined_ac;
     coeffs[8] = combined_dc - combined_ac;
 
-    let scale4 = f32x8::splat(token, 4.0);
+    let scale4 = f32x8::splat_t(token, 4.0);
 
     // Load de-interleaved: forward stored [top_cf0, bot_cf0, top_cf1, bot_cf1, ...]
     // Top sub-block column-freq bands from even rows, bottom from odd rows
-    let ct0 = f32x8::from_slice(token, &coeffs[0..]); // row 0: top col-freq 0
-    let cb0 = f32x8::from_slice(token, &coeffs[8..]); // row 1: bot col-freq 0
-    let ct1 = f32x8::from_slice(token, &coeffs[16..]); // row 2: top col-freq 1
-    let cb1 = f32x8::from_slice(token, &coeffs[24..]); // row 3: bot col-freq 1
-    let ct2 = f32x8::from_slice(token, &coeffs[32..]); // row 4: top col-freq 2
-    let cb2 = f32x8::from_slice(token, &coeffs[40..]); // row 5: bot col-freq 2
-    let ct3 = f32x8::from_slice(token, &coeffs[48..]); // row 6: top col-freq 3
-    let cb3 = f32x8::from_slice(token, &coeffs[56..]); // row 7: bot col-freq 3
+    let ct0 = f32x8::from_slice_t(token, &coeffs[0..]); // row 0: top col-freq 0
+    let cb0 = f32x8::from_slice_t(token, &coeffs[8..]); // row 1: bot col-freq 0
+    let ct1 = f32x8::from_slice_t(token, &coeffs[16..]); // row 2: top col-freq 1
+    let cb1 = f32x8::from_slice_t(token, &coeffs[24..]); // row 3: bot col-freq 1
+    let ct2 = f32x8::from_slice_t(token, &coeffs[32..]); // row 4: top col-freq 2
+    let cb2 = f32x8::from_slice_t(token, &coeffs[40..]); // row 5: bot col-freq 2
+    let ct3 = f32x8::from_slice_t(token, &coeffs[48..]); // row 6: top col-freq 3
+    let cb3 = f32x8::from_slice_t(token, &coeffs[56..]); // row 7: bot col-freq 3
 
     // Transpose: each register becomes one row-freq position across all 8 col-freq bands
     let (p0, p1, p2, p3, p4, p5, p6, p7) =
@@ -1081,18 +1081,18 @@ pub fn dct_8x4_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output:
     use crate::dct8::{transpose_8x8_regs, vectorized_dct1d_8};
     use magetypes::simd::f32x8;
 
-    let scale4 = f32x8::splat(token, 0.25);
-    let scale8 = f32x8::splat(token, 0.125);
+    let scale4 = f32x8::splat_t(token, 0.25);
+    let scale8 = f32x8::splat_t(token, 0.125);
 
     // Load 8 rows. Each row has [sub0_cols(0-3) | sub1_cols(0-3)]
-    let r0 = f32x8::from_slice(token, &input[0..]);
-    let r1 = f32x8::from_slice(token, &input[8..]);
-    let r2 = f32x8::from_slice(token, &input[16..]);
-    let r3 = f32x8::from_slice(token, &input[24..]);
-    let r4 = f32x8::from_slice(token, &input[32..]);
-    let r5 = f32x8::from_slice(token, &input[40..]);
-    let r6 = f32x8::from_slice(token, &input[48..]);
-    let r7 = f32x8::from_slice(token, &input[56..]);
+    let r0 = f32x8::from_slice_t(token, &input[0..]);
+    let r1 = f32x8::from_slice_t(token, &input[8..]);
+    let r2 = f32x8::from_slice_t(token, &input[16..]);
+    let r3 = f32x8::from_slice_t(token, &input[24..]);
+    let r4 = f32x8::from_slice_t(token, &input[32..]);
+    let r5 = f32x8::from_slice_t(token, &input[40..]);
+    let r6 = f32x8::from_slice_t(token, &input[48..]);
+    let r7 = f32x8::from_slice_t(token, &input[56..]);
 
     // 8-point column DCTs: processes 8 independent column DCTs
     // (4 columns per sub-block × 2 sub-blocks = 8)
@@ -1165,18 +1165,18 @@ pub fn idct_8x4_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output
     coeffs[0] = combined_dc + combined_ac;
     coeffs[8] = combined_dc - combined_ac;
 
-    let scale4 = f32x8::splat(token, 4.0);
+    let scale4 = f32x8::splat_t(token, 4.0);
 
     // Load de-interleaved: forward stored [sub0_rf0, sub1_rf0, sub0_rf1, sub1_rf1, ...]
     // Sub0 row-freq bands from even rows, sub1 from odd rows
-    let s0_0 = f32x8::from_slice(token, &coeffs[0..]); // row 0: sub0 rfreq 0
-    let s1_0 = f32x8::from_slice(token, &coeffs[8..]); // row 1: sub1 rfreq 0
-    let s0_1 = f32x8::from_slice(token, &coeffs[16..]); // row 2: sub0 rfreq 1
-    let s1_1 = f32x8::from_slice(token, &coeffs[24..]); // row 3: sub1 rfreq 1
-    let s0_2 = f32x8::from_slice(token, &coeffs[32..]); // row 4: sub0 rfreq 2
-    let s1_2 = f32x8::from_slice(token, &coeffs[40..]); // row 5: sub1 rfreq 2
-    let s0_3 = f32x8::from_slice(token, &coeffs[48..]); // row 6: sub0 rfreq 3
-    let s1_3 = f32x8::from_slice(token, &coeffs[56..]); // row 7: sub1 rfreq 3
+    let s0_0 = f32x8::from_slice_t(token, &coeffs[0..]); // row 0: sub0 rfreq 0
+    let s1_0 = f32x8::from_slice_t(token, &coeffs[8..]); // row 1: sub1 rfreq 0
+    let s0_1 = f32x8::from_slice_t(token, &coeffs[16..]); // row 2: sub0 rfreq 1
+    let s1_1 = f32x8::from_slice_t(token, &coeffs[24..]); // row 3: sub1 rfreq 1
+    let s0_2 = f32x8::from_slice_t(token, &coeffs[32..]); // row 4: sub0 rfreq 2
+    let s1_2 = f32x8::from_slice_t(token, &coeffs[40..]); // row 5: sub1 rfreq 2
+    let s0_3 = f32x8::from_slice_t(token, &coeffs[48..]); // row 6: sub0 rfreq 3
+    let s1_3 = f32x8::from_slice_t(token, &coeffs[56..]); // row 7: sub1 rfreq 3
 
     // Inverse 4-pt row DCTs with 4x pre-scaling (vectorized_idct1d_4 has internal halvings)
     let (s0_0, s0_1, s0_2, s0_3) = vectorized_idct1d_4(

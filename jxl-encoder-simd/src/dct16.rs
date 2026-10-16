@@ -230,7 +230,7 @@ fn gather_col(
     base_row: usize,
     j: usize,
 ) -> magetypes::simd::f32x8 {
-    magetypes::simd::f32x8::from_array(
+    magetypes::simd::f32x8::from_array_t(
         token,
         [
             data[base_row * 16 + j],
@@ -265,9 +265,9 @@ fn scatter_col(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, j: 
 fn dct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4]) {
     use magetypes::simd::f32x8;
 
-    let sqrt2 = f32x8::splat(token, SQRT2);
-    let wc4_0 = f32x8::splat(token, WC_MULTIPLIERS_4[0]);
-    let wc4_1 = f32x8::splat(token, WC_MULTIPLIERS_4[1]);
+    let sqrt2 = f32x8::splat_t(token, SQRT2);
+    let wc4_0 = f32x8::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let wc4_1 = f32x8::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     // AddReverse / SubReverse
     let a0 = v[0] + v[3];
@@ -306,7 +306,7 @@ fn dct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4
 fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8]) {
     use magetypes::simd::f32x8;
 
-    let sqrt2 = f32x8::splat(token, SQRT2);
+    let sqrt2 = f32x8::splat_t(token, SQRT2);
 
     // AddReverse for first half, SubReverse for second half
     let a0 = v[0] + v[7];
@@ -323,10 +323,10 @@ fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8
     dct1d_4_batch(token, &mut first_half);
 
     // Multiply second half by WcMultipliers_8
-    let s0 = s0 * f32x8::splat(token, WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x8::splat(token, WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x8::splat(token, WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x8::splat(token, WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x8::splat_t(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x8::splat_t(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x8::splat_t(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x8::splat_t(token, WC_MULTIPLIERS_8[3]);
 
     // DCT-4 on second half {s0, s1, s2, s3}
     let mut second_half = [s0, s1, s2, s3];
@@ -359,7 +359,7 @@ fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8
 pub(crate) fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
     use magetypes::simd::f32x8;
 
-    let sqrt2 = f32x8::splat(token, SQRT2);
+    let sqrt2 = f32x8::splat_t(token, SQRT2);
 
     // AddReverse for first half, SubReverse for second half
     let a0 = v[0] + v[15];
@@ -384,14 +384,14 @@ pub(crate) fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::si
     dct1d_8_batch(token, &mut first_half);
 
     // Multiply second half by WcMultipliers_16
-    let s0 = s0 * f32x8::splat(token, WC_MULTIPLIERS_16[0]);
-    let s1 = s1 * f32x8::splat(token, WC_MULTIPLIERS_16[1]);
-    let s2 = s2 * f32x8::splat(token, WC_MULTIPLIERS_16[2]);
-    let s3 = s3 * f32x8::splat(token, WC_MULTIPLIERS_16[3]);
-    let s4 = s4 * f32x8::splat(token, WC_MULTIPLIERS_16[4]);
-    let s5 = s5 * f32x8::splat(token, WC_MULTIPLIERS_16[5]);
-    let s6 = s6 * f32x8::splat(token, WC_MULTIPLIERS_16[6]);
-    let s7 = s7 * f32x8::splat(token, WC_MULTIPLIERS_16[7]);
+    let s0 = s0 * f32x8::splat_t(token, WC_MULTIPLIERS_16[0]);
+    let s1 = s1 * f32x8::splat_t(token, WC_MULTIPLIERS_16[1]);
+    let s2 = s2 * f32x8::splat_t(token, WC_MULTIPLIERS_16[2]);
+    let s3 = s3 * f32x8::splat_t(token, WC_MULTIPLIERS_16[3]);
+    let s4 = s4 * f32x8::splat_t(token, WC_MULTIPLIERS_16[4]);
+    let s5 = s5 * f32x8::splat_t(token, WC_MULTIPLIERS_16[5]);
+    let s6 = s6 * f32x8::splat_t(token, WC_MULTIPLIERS_16[6]);
+    let s7 = s7 * f32x8::splat_t(token, WC_MULTIPLIERS_16[7]);
 
     // DCT-8 on second half {s0..s7}
     let mut second_half = [s0, s1, s2, s3, s4, s5, s6, s7];
@@ -435,13 +435,13 @@ pub(crate) fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::si
 pub fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut [f32; 256]) {
     use magetypes::simd::f32x8;
 
-    let scale = f32x8::splat(token, 1.0 / 16.0);
+    let scale = f32x8::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<256>();
 
     // --- Pass 1: Forward DCT on rows ---
     // Process rows 0-7 (first batch of 8)
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, input, 0, j);
         }
@@ -456,7 +456,7 @@ pub fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &
 
     // Process rows 8-15 (second batch of 8)
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, input, 8, j);
         }
@@ -480,7 +480,7 @@ pub fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &
     // --- Pass 2: Forward DCT on columns (now rows of transposed) ---
     // Process rows 0-7
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, &transposed, 0, j);
         }
@@ -495,7 +495,7 @@ pub fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &
 
     // Process rows 8-15
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, &transposed, 8, j);
         }
@@ -595,7 +595,7 @@ fn gather_col_s8(
     base_row: usize,
     j: usize,
 ) -> magetypes::simd::f32x8 {
-    magetypes::simd::f32x8::from_array(
+    magetypes::simd::f32x8::from_array_t(
         token,
         [
             data[base_row * 8 + j],
@@ -628,8 +628,8 @@ fn scatter_col_s8(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, 
 pub fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x8;
 
-    let scale8 = f32x8::splat(token, 1.0 / 8.0);
-    let scale16 = f32x8::splat(token, 1.0 / 16.0);
+    let scale8 = f32x8::splat_t(token, 1.0 / 8.0);
+    let scale16 = f32x8::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<128>();
 
     // --- Pass 1: 8-point forward DCT on each of 16 rows (stride 8) ---
@@ -637,7 +637,7 @@ pub fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
     // Gather column j from 8 rows -> f32x8, apply dct1d_8_batch, scatter back.
     // Batch 1: rows 0-7
     {
-        let mut v = [f32x8::zero(token); 8];
+        let mut v = [f32x8::zero_t(token); 8];
         for j in 0..8 {
             v[j] = gather_col_s8(token, input, 0, j);
         }
@@ -651,7 +651,7 @@ pub fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
     }
     // Batch 2: rows 8-15
     {
-        let mut v = [f32x8::zero(token); 8];
+        let mut v = [f32x8::zero_t(token); 8];
         for j in 0..8 {
             v[j] = gather_col_s8(token, input, 8, j);
         }
@@ -675,7 +675,7 @@ pub fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
     // --- Pass 2: 16-point forward DCT on each of 8 rows (stride 16) ---
     // Each row has 16 elements. Gather column j from 8 rows (all 8 rows fit in one batch).
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, &transposed, 0, j);
         }
@@ -778,14 +778,14 @@ pub fn dct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
 pub fn dct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x8;
 
-    let scale8 = f32x8::splat(token, 1.0 / 8.0);
-    let scale16 = f32x8::splat(token, 1.0 / 16.0);
+    let scale8 = f32x8::splat_t(token, 1.0 / 8.0);
+    let scale16 = f32x8::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<128>();
 
     // --- Pass 1: 16-point forward DCT on each of 8 rows (stride 16) ---
     // All 8 rows fit in one batch. Gather column j from 8 rows.
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, input, 0, j);
         }
@@ -810,7 +810,7 @@ pub fn dct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
     // Process 8 rows at a time (2 batches for 16 rows).
     // Batch 1: rows 0-7
     {
-        let mut v = [f32x8::zero(token); 8];
+        let mut v = [f32x8::zero_t(token); 8];
         for j in 0..8 {
             v[j] = gather_col_s8(token, &transposed, 0, j);
         }
@@ -824,7 +824,7 @@ pub fn dct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
     }
     // Batch 2: rows 8-15
     {
-        let mut v = [f32x8::zero(token); 8];
+        let mut v = [f32x8::zero_t(token); 8];
         for j in 0..8 {
             v[j] = gather_col_s8(token, &transposed, 8, j);
         }
@@ -859,7 +859,7 @@ fn gather_col_neon(
     j: usize,
     s: usize,
 ) -> magetypes::simd::f32x4 {
-    magetypes::simd::f32x4::from_array(
+    magetypes::simd::f32x4::from_array_t(
         token,
         [
             data[base_row * s + j],
@@ -894,9 +894,9 @@ fn scatter_col_neon(
 fn dct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 4]) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
-    let wc4_0 = f32x4::splat(token, WC_MULTIPLIERS_4[0]);
-    let wc4_1 = f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
+    let wc4_0 = f32x4::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let wc4_1 = f32x4::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     let a0 = v[0] + v[3];
     let a1 = v[1] + v[2];
@@ -924,7 +924,7 @@ fn dct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x
 fn dct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
 
     let a0 = v[0] + v[7];
     let a1 = v[1] + v[6];
@@ -938,10 +938,10 @@ fn dct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x
     let mut first_half = [a0, a1, a2, a3];
     dct1d_4_batch_neon(token, &mut first_half);
 
-    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x4::splat_t(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat_t(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat_t(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat_t(token, WC_MULTIPLIERS_8[3]);
     let mut second_half = [s0, s1, s2, s3];
     dct1d_4_batch_neon(token, &mut second_half);
 
@@ -968,7 +968,7 @@ pub(crate) fn dct1d_16_batch_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
 
     let a0 = v[0] + v[15];
     let a1 = v[1] + v[14];
@@ -990,14 +990,14 @@ pub(crate) fn dct1d_16_batch_neon(
     let mut first_half = [a0, a1, a2, a3, a4, a5, a6, a7];
     dct1d_8_batch_neon(token, &mut first_half);
 
-    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_16[0]);
-    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_16[1]);
-    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_16[2]);
-    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_16[3]);
-    let s4 = s4 * f32x4::splat(token, WC_MULTIPLIERS_16[4]);
-    let s5 = s5 * f32x4::splat(token, WC_MULTIPLIERS_16[5]);
-    let s6 = s6 * f32x4::splat(token, WC_MULTIPLIERS_16[6]);
-    let s7 = s7 * f32x4::splat(token, WC_MULTIPLIERS_16[7]);
+    let s0 = s0 * f32x4::splat_t(token, WC_MULTIPLIERS_16[0]);
+    let s1 = s1 * f32x4::splat_t(token, WC_MULTIPLIERS_16[1]);
+    let s2 = s2 * f32x4::splat_t(token, WC_MULTIPLIERS_16[2]);
+    let s3 = s3 * f32x4::splat_t(token, WC_MULTIPLIERS_16[3]);
+    let s4 = s4 * f32x4::splat_t(token, WC_MULTIPLIERS_16[4]);
+    let s5 = s5 * f32x4::splat_t(token, WC_MULTIPLIERS_16[5]);
+    let s6 = s6 * f32x4::splat_t(token, WC_MULTIPLIERS_16[6]);
+    let s7 = s7 * f32x4::splat_t(token, WC_MULTIPLIERS_16[7]);
     let mut second_half = [s0, s1, s2, s3, s4, s5, s6, s7];
     dct1d_8_batch_neon(token, &mut second_half);
 
@@ -1039,7 +1039,7 @@ fn neon_dct8_batch(
     stride: usize,
     scale: magetypes::simd::f32x4,
 ) {
-    let mut v = [magetypes::simd::f32x4::zero(token); 8];
+    let mut v = [magetypes::simd::f32x4::zero_t(token); 8];
     for j in 0..8 {
         v[j] = gather_col_neon(token, data_in, base_row, j, stride);
     }
@@ -1062,7 +1062,7 @@ fn neon_dct16_batch(
     data_out: &mut [f32; 64],
     scale: magetypes::simd::f32x4,
 ) {
-    let mut v = [magetypes::simd::f32x4::zero(token); 16];
+    let mut v = [magetypes::simd::f32x4::zero_t(token); 16];
     for j in 0..16 {
         v[j] = gather_col_neon(token, data_in, 0, j, 16);
     }
@@ -1082,7 +1082,7 @@ fn neon_dct16_batch(
 #[allow(clippy::needless_range_loop)]
 pub fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [f32; 256]) {
     use magetypes::simd::f32x4;
-    let scale = f32x4::splat(token, 1.0 / 16.0);
+    let scale = f32x4::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<256>();
 
     // Pass 1: Forward DCT on rows (4 batches of 4 rows)
@@ -1121,8 +1121,8 @@ pub fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &m
 #[allow(clippy::needless_range_loop)]
 pub fn dct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x4;
-    let scale8 = f32x4::splat(token, 1.0 / 8.0);
-    let scale16 = f32x4::splat(token, 1.0 / 16.0);
+    let scale8 = f32x4::splat_t(token, 1.0 / 8.0);
+    let scale16 = f32x4::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 8-point DCT on 16 rows (stride 8), 4 batches of 4 rows
@@ -1156,8 +1156,8 @@ pub fn dct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
 #[allow(clippy::needless_range_loop)]
 pub fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x4;
-    let scale8 = f32x4::splat(token, 1.0 / 8.0);
-    let scale16 = f32x4::splat(token, 1.0 / 16.0);
+    let scale8 = f32x4::splat_t(token, 1.0 / 8.0);
+    let scale16 = f32x4::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 16-point DCT on 8 rows (stride 16), 2 batches of 4 rows
@@ -1206,7 +1206,7 @@ fn gather_col_wasm128(
     j: usize,
     s: usize,
 ) -> magetypes::simd::f32x4 {
-    magetypes::simd::f32x4::from_array(
+    magetypes::simd::f32x4::from_array_t(
         token,
         [
             data[base_row * s + j],
@@ -1241,9 +1241,9 @@ fn scatter_col_wasm128(
 fn dct1d_4_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 4]) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
-    let wc4_0 = f32x4::splat(token, WC_MULTIPLIERS_4[0]);
-    let wc4_1 = f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
+    let wc4_0 = f32x4::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let wc4_1 = f32x4::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     let a0 = v[0] + v[3];
     let a1 = v[1] + v[2];
@@ -1271,7 +1271,7 @@ fn dct1d_4_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd
 fn dct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
 
     let a0 = v[0] + v[7];
     let a1 = v[1] + v[6];
@@ -1285,10 +1285,10 @@ fn dct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd
     let mut first_half = [a0, a1, a2, a3];
     dct1d_4_batch_wasm128(token, &mut first_half);
 
-    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x4::splat_t(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat_t(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat_t(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat_t(token, WC_MULTIPLIERS_8[3]);
     let mut second_half = [s0, s1, s2, s3];
     dct1d_4_batch_wasm128(token, &mut second_half);
 
@@ -1315,7 +1315,7 @@ pub(crate) fn dct1d_16_batch_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
 
     let a0 = v[0] + v[15];
     let a1 = v[1] + v[14];
@@ -1337,14 +1337,14 @@ pub(crate) fn dct1d_16_batch_wasm128(
     let mut first_half = [a0, a1, a2, a3, a4, a5, a6, a7];
     dct1d_8_batch_wasm128(token, &mut first_half);
 
-    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_16[0]);
-    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_16[1]);
-    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_16[2]);
-    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_16[3]);
-    let s4 = s4 * f32x4::splat(token, WC_MULTIPLIERS_16[4]);
-    let s5 = s5 * f32x4::splat(token, WC_MULTIPLIERS_16[5]);
-    let s6 = s6 * f32x4::splat(token, WC_MULTIPLIERS_16[6]);
-    let s7 = s7 * f32x4::splat(token, WC_MULTIPLIERS_16[7]);
+    let s0 = s0 * f32x4::splat_t(token, WC_MULTIPLIERS_16[0]);
+    let s1 = s1 * f32x4::splat_t(token, WC_MULTIPLIERS_16[1]);
+    let s2 = s2 * f32x4::splat_t(token, WC_MULTIPLIERS_16[2]);
+    let s3 = s3 * f32x4::splat_t(token, WC_MULTIPLIERS_16[3]);
+    let s4 = s4 * f32x4::splat_t(token, WC_MULTIPLIERS_16[4]);
+    let s5 = s5 * f32x4::splat_t(token, WC_MULTIPLIERS_16[5]);
+    let s6 = s6 * f32x4::splat_t(token, WC_MULTIPLIERS_16[6]);
+    let s7 = s7 * f32x4::splat_t(token, WC_MULTIPLIERS_16[7]);
     let mut second_half = [s0, s1, s2, s3, s4, s5, s6, s7];
     dct1d_8_batch_wasm128(token, &mut second_half);
 
@@ -1386,7 +1386,7 @@ fn wasm128_dct8_batch(
     stride: usize,
     scale: magetypes::simd::f32x4,
 ) {
-    let mut v = [magetypes::simd::f32x4::zero(token); 8];
+    let mut v = [magetypes::simd::f32x4::zero_t(token); 8];
     for j in 0..8 {
         v[j] = gather_col_wasm128(token, data_in, base_row, j, stride);
     }
@@ -1411,7 +1411,7 @@ fn wasm128_dct16_batch(
     stride: usize,
     scale: magetypes::simd::f32x4,
 ) {
-    let mut v = [magetypes::simd::f32x4::zero(token); 16];
+    let mut v = [magetypes::simd::f32x4::zero_t(token); 16];
     for j in 0..16 {
         v[j] = gather_col_wasm128(token, data_in, base_row, j, stride);
     }
@@ -1435,7 +1435,7 @@ pub fn dct_16x16_wasm128(
     output: &mut [f32; 256],
 ) {
     use magetypes::simd::f32x4;
-    let scale = f32x4::splat(token, 1.0 / 16.0);
+    let scale = f32x4::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<256>();
 
     // Pass 1: Forward DCT on rows (4 batches of 4 rows)
@@ -1468,8 +1468,8 @@ pub fn dct_16x8_wasm128(
     output: &mut [f32; 128],
 ) {
     use magetypes::simd::f32x4;
-    let scale8 = f32x4::splat(token, 1.0 / 8.0);
-    let scale16 = f32x4::splat(token, 1.0 / 16.0);
+    let scale8 = f32x4::splat_t(token, 1.0 / 8.0);
+    let scale16 = f32x4::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 8-point DCT on 16 rows (stride 8), 4 batches of 4 rows
@@ -1502,8 +1502,8 @@ pub fn dct_8x16_wasm128(
     output: &mut [f32; 128],
 ) {
     use magetypes::simd::f32x4;
-    let scale8 = f32x4::splat(token, 1.0 / 8.0);
-    let scale16 = f32x4::splat(token, 1.0 / 16.0);
+    let scale8 = f32x4::splat_t(token, 1.0 / 8.0);
+    let scale16 = f32x4::splat_t(token, 1.0 / 16.0);
     let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 16-point DCT on 8 rows (stride 16), 2 batches of 4 rows

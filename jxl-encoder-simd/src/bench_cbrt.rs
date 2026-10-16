@@ -22,16 +22,16 @@ use archmage::prelude::*;
 /// block vectorisation outright.
 #[magetypes(define(f32x8, i32x8), v3, neon, wasm128, scalar)]
 pub fn cbrt_libjxl_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize) {
-    let k1_3 = f32x8::splat(token, 1.0 / 3.0);
-    let k4_3 = f32x8::splat(token, 4.0 / 3.0);
-    let exp_bias = i32x8::splat(token, 0x5480_0000);
-    let exp_mul = i32x8::splat(token, 0x002A_AAAA);
-    let izero = i32x8::splat(token, 0);
+    let k1_3 = f32x8::splat_t(token, 1.0 / 3.0);
+    let k4_3 = f32x8::splat_t(token, 4.0 / 3.0);
+    let exp_bias = i32x8::splat_t(token, 0x5480_0000);
+    let exp_mul = i32x8::splat_t(token, 0x002A_AAAA);
+    let izero = i32x8::splat_t(token, 0);
 
     let chunks = n / 8;
     for c in 0..chunks {
         let base = c * 8;
-        let x = f32x8::from_slice(token, &src[base..]);
+        let x = f32x8::from_slice_t(token, &src[base..]);
         let xa_3 = k1_3 * x;
 
         let m1 = x.bitcast_i32x8();
@@ -63,7 +63,9 @@ pub fn cbrt_lowp_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize
     for c in 0..chunks {
         let base = c * 8;
         let os: &mut [f32; 8] = (&mut out[base..base + 8]).try_into().unwrap();
-        f32x8::from_slice(token, &src[base..]).cbrt_lowp().store(os);
+        f32x8::from_slice_t(token, &src[base..])
+            .cbrt_lowp()
+            .store(os);
     }
     for i in (chunks * 8)..n {
         out[i] = src[i].cbrt();
@@ -77,7 +79,9 @@ pub fn cbrt_midp_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize
     for c in 0..chunks {
         let base = c * 8;
         let os: &mut [f32; 8] = (&mut out[base..base + 8]).try_into().unwrap();
-        f32x8::from_slice(token, &src[base..]).cbrt_midp().store(os);
+        f32x8::from_slice_t(token, &src[base..])
+            .cbrt_midp()
+            .store(os);
     }
     for i in (chunks * 8)..n {
         out[i] = src[i].cbrt();
@@ -137,17 +141,17 @@ pub fn cbrt_midp_batch(src: &[f32], out: &mut [f32]) {
 #[magetypes(define(f32x8, i32x8), v3, neon, wasm128, scalar)]
 pub fn cbrt_lowp_vecguess_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize) {
     const MAGIC: i32 = 0x2a50_8c2d;
-    let magic = i32x8::splat(token, MAGIC);
-    let three = i32x8::splat(token, 3);
-    let eleven = i32x8::splat(token, 11);
-    let two = f32x8::splat(token, 2.0);
-    let zero = f32x8::splat(token, 0.0);
-    let sign_mask = f32x8::splat(token, -0.0);
+    let magic = i32x8::splat_t(token, MAGIC);
+    let three = i32x8::splat_t(token, 3);
+    let eleven = i32x8::splat_t(token, 11);
+    let two = f32x8::splat_t(token, 2.0);
+    let zero = f32x8::splat_t(token, 0.0);
+    let sign_mask = f32x8::splat_t(token, -0.0);
 
     let chunks = n / 8;
     for c in 0..chunks {
         let base = c * 8;
-        let x = f32x8::from_slice(token, &src[base..]);
+        let x = f32x8::from_slice_t(token, &src[base..]);
         let sign = x & sign_mask;
         let abs_x = x.abs();
 

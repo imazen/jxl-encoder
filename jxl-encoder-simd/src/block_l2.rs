@@ -149,16 +149,16 @@ pub fn compute_block_l2_errors_avx2(
 ) -> Vec<f32> {
     use magetypes::simd::f32x8;
 
-    let w_x = f32x8::splat(token, CHANNEL_WEIGHTS[0]);
+    let w_x = f32x8::splat_t(token, CHANNEL_WEIGHTS[0]);
     // w_y = 1.0, multiplication skipped in inner loop
-    let w_b = f32x8::splat(token, CHANNEL_WEIGHTS[2]);
+    let w_b = f32x8::splat_t(token, CHANNEL_WEIGHTS[2]);
 
     let mut errors = vec![0.0f32; nblocks];
 
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
             let block_idx = by * xsize_blocks + bx;
-            let mut acc = f32x8::zero(token);
+            let mut acc = f32x8::zero_t(token);
 
             for py in 0..8 {
                 let row_start = (by * 8 + py) * padded_width + bx * 8;
@@ -215,15 +215,15 @@ pub fn compute_block_l2_errors_neon(
 ) -> Vec<f32> {
     use magetypes::simd::f32x4;
 
-    let w_x = f32x4::splat(token, CHANNEL_WEIGHTS[0]);
-    let w_b = f32x4::splat(token, CHANNEL_WEIGHTS[2]);
+    let w_x = f32x4::splat_t(token, CHANNEL_WEIGHTS[0]);
+    let w_b = f32x4::splat_t(token, CHANNEL_WEIGHTS[2]);
 
     let mut errors = vec![0.0f32; nblocks];
 
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
             let block_idx = by * xsize_blocks + bx;
-            let mut acc = f32x4::zero(token);
+            let mut acc = f32x4::zero_t(token);
 
             for py in 0..8 {
                 let row_start = (by * 8 + py) * padded_width + bx * 8;
@@ -232,21 +232,21 @@ pub fn compute_block_l2_errors_neon(
                 for half in 0..2usize {
                     let off = row_start + half * 4;
 
-                    let mask_v = f32x4::from_slice(token, &mask1x1[off..]);
+                    let mask_v = f32x4::from_slice_t(token, &mask1x1[off..]);
                     let mask_sq = mask_v * mask_v;
 
-                    let orig_x = f32x4::from_slice(token, &original[0][off..]);
-                    let recon_x = f32x4::from_slice(token, &reconstructed[0][off..]);
+                    let orig_x = f32x4::from_slice_t(token, &original[0][off..]);
+                    let recon_x = f32x4::from_slice_t(token, &reconstructed[0][off..]);
                     let diff_x = orig_x - recon_x;
                     acc += w_x * mask_sq * diff_x * diff_x;
 
-                    let orig_y = f32x4::from_slice(token, &original[1][off..]);
-                    let recon_y = f32x4::from_slice(token, &reconstructed[1][off..]);
+                    let orig_y = f32x4::from_slice_t(token, &original[1][off..]);
+                    let recon_y = f32x4::from_slice_t(token, &reconstructed[1][off..]);
                     let diff_y = orig_y - recon_y;
                     acc += mask_sq * diff_y * diff_y;
 
-                    let orig_b = f32x4::from_slice(token, &original[2][off..]);
-                    let recon_b = f32x4::from_slice(token, &reconstructed[2][off..]);
+                    let orig_b = f32x4::from_slice_t(token, &original[2][off..]);
+                    let recon_b = f32x4::from_slice_t(token, &reconstructed[2][off..]);
                     let diff_b = orig_b - recon_b;
                     acc += w_b * mask_sq * diff_b * diff_b;
                 }
@@ -279,15 +279,15 @@ pub fn compute_block_l2_errors_wasm128(
 ) -> Vec<f32> {
     use magetypes::simd::f32x4;
 
-    let w_x = f32x4::splat(token, CHANNEL_WEIGHTS[0]);
-    let w_b = f32x4::splat(token, CHANNEL_WEIGHTS[2]);
+    let w_x = f32x4::splat_t(token, CHANNEL_WEIGHTS[0]);
+    let w_b = f32x4::splat_t(token, CHANNEL_WEIGHTS[2]);
 
     let mut errors = vec![0.0f32; nblocks];
 
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
             let block_idx = by * xsize_blocks + bx;
-            let mut acc = f32x4::zero(token);
+            let mut acc = f32x4::zero_t(token);
 
             for py in 0..8 {
                 let row_start = (by * 8 + py) * padded_width + bx * 8;
@@ -296,21 +296,21 @@ pub fn compute_block_l2_errors_wasm128(
                 for half in 0..2usize {
                     let off = row_start + half * 4;
 
-                    let mask_v = f32x4::from_slice(token, &mask1x1[off..]);
+                    let mask_v = f32x4::from_slice_t(token, &mask1x1[off..]);
                     let mask_sq = mask_v * mask_v;
 
-                    let orig_x = f32x4::from_slice(token, &original[0][off..]);
-                    let recon_x = f32x4::from_slice(token, &reconstructed[0][off..]);
+                    let orig_x = f32x4::from_slice_t(token, &original[0][off..]);
+                    let recon_x = f32x4::from_slice_t(token, &reconstructed[0][off..]);
                     let diff_x = orig_x - recon_x;
                     acc += w_x * mask_sq * diff_x * diff_x;
 
-                    let orig_y = f32x4::from_slice(token, &original[1][off..]);
-                    let recon_y = f32x4::from_slice(token, &reconstructed[1][off..]);
+                    let orig_y = f32x4::from_slice_t(token, &original[1][off..]);
+                    let recon_y = f32x4::from_slice_t(token, &reconstructed[1][off..]);
                     let diff_y = orig_y - recon_y;
                     acc += mask_sq * diff_y * diff_y;
 
-                    let orig_b = f32x4::from_slice(token, &original[2][off..]);
-                    let recon_b = f32x4::from_slice(token, &reconstructed[2][off..]);
+                    let orig_b = f32x4::from_slice_t(token, &original[2][off..]);
+                    let recon_b = f32x4::from_slice_t(token, &reconstructed[2][off..]);
                     let diff_b = orig_b - recon_b;
                     acc += w_b * mask_sq * diff_b * diff_b;
                 }
