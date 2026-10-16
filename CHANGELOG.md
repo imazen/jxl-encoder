@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Extend the private native quantizer intervention probe to frozen Rev5 D12 refinement gains and butteraugli pixel-map providers, with explicit first-party linear input transfer and unchanged neutral controls.
+
 ### QUEUED BREAKING CHANGES
 - `EncoderImprovementsCustom` gains `lossless_lz77_keep_best`; exhaustive struct literals must supply it or use `..Default::default()` (`4e1d70a6`).
 

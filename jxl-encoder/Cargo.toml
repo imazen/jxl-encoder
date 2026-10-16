@@ -405,6 +405,8 @@ path = "examples/sectioned_k_corpus.rs"
 required-features = ["std", "parallel"]
 
 [dev-dependencies]
+# Explicit first-party transfer reference for private intervention inputs.
+linear-srgb = { version = "0.6.12", default-features = false, features = ["std"] }
 anyhow = "1.0.102"
 # Native PNG IO for canonical targeting/intervention instruments.
 zenpng = { version = "=0.1.4", default-features = false }

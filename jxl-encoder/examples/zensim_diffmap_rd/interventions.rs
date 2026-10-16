@@ -217,14 +217,38 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
         matches!(revision.as_str(), "1" | "5"),
         "requires explicit formula revision 1 or 5"
     );
-    let configuration = format!("{CONFIG_BASE};formula{revision}");
-    // Record the existing encoder approximation versus the decoder transfer.
-    // Frozen linear inputs below use the latter explicitly, not an assumed
-    // numeric equivalence between these two implementations.
+    let provider =
+        std::env::var("JXL_INTERVENTION_MAP_PROVIDER").unwrap_or_else(|_| "zensim".into());
+    ensure!(
+        matches!(provider.as_str(), "zensim" | "butteraugli"),
+        "unknown map provider"
+    );
+    let legacy = revision == "1" && provider == "zensim";
+    ensure!(
+        legacy || revision == "5",
+        "new intervention providers require registered Rev5 inputs"
+    );
+    ensure!(
+        !policy || legacy,
+        "Rev5 allocation policy is not registered; use coarse4 interventions"
+    );
+    let map_kind = if provider == "butteraugli" {
+        "pixel-integral"
+    } else {
+        "refinement-gain"
+    };
+    let configuration = if legacy {
+        "native-precomputed,e8,Reference,CfL,gaborish,pixel-loss,no-noise,no-denoise,no-patches,no-inner-loop;distances1,3;min-step1;formula1,bin8".to_string()
+    } else {
+        format!("{CONFIG_BASE};formula{revision};map-provider:{provider};map-kind:{map_kind}")
+    };
+    // Bind the private instrument's input conversion to the first-party
+    // linear-srgb precise C0 transfer. Record its difference from the encoder
+    // approximation; every baseline and intervention uses identical inputs.
     let conversion_error = (0..=255)
         .map(|v| {
             let native = jxl_encoder::__test_exports::xyb::srgb_to_linear_value(v as f32);
-            let reference = super::super::decode::srgb_to_linear(v as f32 / 255.);
+            let reference = linear_srgb::precise::srgb_to_linear(v as f32 / 255.);
             (native - reference).abs()
         })
         .fold(0.0f32, f32::max);
@@ -248,11 +272,12 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
     fs::write(
         out.join("INPUTS.json"),
         serde_json::to_vec_pretty(&json!({
-            "schema":if policy {"native-jxl-allocation-v1"} else {"native-jxl-interventions-v2"},"config":configuration,
+            "schema":if policy {"native-jxl-allocation-v1"} else if legacy {"native-jxl-interventions-v2"} else {"native-jxl-interventions-v3"},"config":configuration,
+            "formula_revision":revision,"map_provider":provider,"map_kind":if provider=="butteraugli" {"butteraugli-pixel-integral"} else if revision=="5" {"D12-refinement-gain"} else {"legacy-density"},
             "region_mode":region_mode,"raw_q_factors":factors,
             "png_io":"zenpng-0.1.4-packed-opaque-rgb8-v1",
             "model_sha256":sha(&model_bytes),"driver_sha256":driver_sha()?,
-        "srgb_conversion_max_abs_error":conversion_error,
+        "srgb_conversion_max_abs_error":conversion_error,"linear_input_transfer":"linear-srgb0.6.12 precise C0 sRGB",
             "source_manifest_sha256":manifest_sha,"corpus_commit":sources.corpus_commit,
             "split_manifest_sha256":sources.split_manifest_sha256,"sources":selected,
             "qualification":"mechanism screen only; no target attainment or held-out RD claim"
@@ -286,7 +311,7 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
             let start = Instant::now();
             let linear: Vec<f32> = rgb
                 .iter()
-                .map(|&v| super::super::decode::srgb_to_linear(f32::from(v) / 255.))
+                .map(|&v| linear_srgb::precise::srgb_to_linear(f32::from(v) / 255.))
                 .collect();
             let profile = EffortProfile::lossy(8, jxl_encoder::api::EncoderMode::Reference);
             let pre = EncoderPrecomputed::compute(
@@ -370,13 +395,35 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
                 8,
             )?;
             ensure!(
-                spatial.unsupported_feature_ids().is_empty() && !spatial.has_corruption_gate(),
+                (if revision == "5" {
+                    spatial.unsupported_refinement_feature_ids().is_empty()
+                } else {
+                    spatial.unsupported_feature_ids().is_empty()
+                }) && !spatial.has_corruption_gate(),
                 "unsupported spatial terms or corruption gate"
             );
             ensure!(
                 (spatial.result().score() - f64::from(baseline.score)).abs() <= 1e-5,
                 "scalar/map mismatch"
             );
+            let butter = if provider == "butteraugli" {
+                use rgb::FromSlice;
+                Some(
+                    butteraugli::butteraugli(
+                        imgref::ImgRef::new(rgb.as_rgb(), width as usize, height as usize),
+                        imgref::ImgRef::new(
+                            baseline.decoded.as_rgb(),
+                            width as usize,
+                            height as usize,
+                        ),
+                        &butteraugli::ButteraugliParams::new().with_compute_diffmap(true),
+                    )?
+                    .diffmap
+                    .context("missing butteraugli pixel map")?,
+                )
+            } else {
+                None
+            };
             let map_seconds = start.elapsed().as_secs_f64();
             maps += 1;
             let mut regions = Vec::new();
@@ -393,7 +440,17 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
                         continue;
                     }
                     let area = (x1 - x * 8) * (y1 - y * 8);
-                    let mass = spatial.attribution().query_rect(x * 8, y * 8, x1, y1);
+                    let mass = if let Some(map) = &butter {
+                        map.rows()
+                            .skip(y * 8)
+                            .take(y1 - y * 8)
+                            .map(|row| row[x * 8..x1].iter().map(|&v| f64::from(v)).sum::<f64>())
+                            .sum()
+                    } else if revision == "5" {
+                        spatial.refinement_gain(x * 8, y * 8, x1, y1)
+                    } else {
+                        spatial.attribution().query_rect(x * 8, y * 8, x1, y1)
+                    };
                     ensure!(mass.is_finite(), "nonfinite region integral");
                     regions.push(Region {
                         x,
@@ -405,6 +462,18 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
                         map_density: mass / area as f64,
                     });
                 }
+            }
+            retain_map(
+                out,
+                &json!({"kind":if provider=="butteraugli" {"butteraugli-region-integral"} else {"candidate-region-gain"},
+                "width":width,"height":height,"model_sha256":sha(&model_bytes),"regions":regions}),
+            )?;
+            if let Some(map) = &butter {
+                let values: Vec<f32> = map.rows().flat_map(|row| row.iter().copied()).collect();
+                retain_map(
+                    out,
+                    &json!({"kind":"butteraugli-pixel","width":width,"height":height,"values":values}),
+                )?;
             }
             fs::write(
                 dir.join("regions.json"),
@@ -685,5 +754,24 @@ pub(super) fn run(manifest: &Path, bake: &str, out: &Path, region_mode: &str) ->
             "process_peak_rss_kib":rss_kib(),"independent_judges":"pending external owner"
         }))?,
     )?;
+    Ok(())
+}
+
+fn retain_map(out: &Path, value: &serde_json::Value) -> Result<()> {
+    let bytes = serde_json::to_vec(value)?;
+    let directory = out.join("artifacts/maps");
+    fs::create_dir_all(&directory)?;
+    let path = directory.join(format!("{}.json", sha(&bytes)));
+    match fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+    {
+        Ok(mut file) => file.write_all(&bytes)?,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            ensure!(fs::read(&path)? == bytes, "existing map CAS differs")
+        }
+        Err(e) => return Err(e.into()),
+    }
     Ok(())
 }

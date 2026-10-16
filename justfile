@@ -703,3 +703,12 @@ shipgates-simd-check:
 
 shipgates-ci-sources root:
     python3 scripts/ci_frozen_sources.py .github/sibling-revisions.tsv {{quote(root)}}
+
+shipgates-arm-check:
+    cargo clippy --release --locked -p jxl-encoder-simd --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
+
+shipgates-intervention-build:
+    cargo build --release --locked -p jxl-encoder --example zensim_diffmap_rd --features __expert,__pre_quantized,__internal_recon_hook,butteraugli-loop,zensim-loop,ssim2-loop,parallel --target-dir target
+
+shipgates-intervention-check:
+    cargo clippy --release --locked -p jxl-encoder --example zensim_diffmap_rd --features __expert,__pre_quantized,__internal_recon_hook,butteraugli-loop,zensim-loop,ssim2-loop,parallel --target-dir target -- -D warnings
