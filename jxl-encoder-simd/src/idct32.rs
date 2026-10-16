@@ -364,12 +364,12 @@ pub(crate) fn idct1d_32_core_batch(
 ) {
     use magetypes::simd::f32x8;
 
-    let half = f32x8::splat(token, 0.5);
-    let inv_sqrt2 = f32x8::splat(token, 1.0 / SQRT2);
+    let half = f32x8::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x8::splat_t(token, 1.0 / SQRT2);
 
     // De-interleave: even → first_half, odd → second_half
-    let mut first = [f32x8::zero(token); 16];
-    let mut second = [f32x8::zero(token); 16];
+    let mut first = [f32x8::zero_t(token); 16];
+    let mut second = [f32x8::zero_t(token); 16];
     for i in 0..16 {
         first[i] = v[2 * i];
         second[i] = v[2 * i + 1];
@@ -386,7 +386,7 @@ pub(crate) fn idct1d_32_core_batch(
 
     // Divide by WcMultipliers_32 (multiply by inverse)
     for i in 0..16 {
-        second[i] *= f32x8::splat(token, INV_WC32[i]);
+        second[i] *= f32x8::splat_t(token, INV_WC32[i]);
     }
 
     // IDCT-16 core on first half (no scaling)
@@ -409,7 +409,7 @@ pub(crate) fn idct1d_32_core_batch(
 pub(crate) fn idct1d_32_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 32]) {
     use magetypes::simd::f32x8;
 
-    let scale32 = f32x8::splat(token, 32.0);
+    let scale32 = f32x8::splat_t(token, 32.0);
 
     // Scale by 32
     for vi in v.iter_mut() {
@@ -436,7 +436,7 @@ pub fn idct_32x32_avx2(token: archmage::X64V3Token, input: &[f32; 1024], output:
     // Pass 1: IDCT-32 on rows, 4 batches of 8 rows
     for batch in 0..4 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 32];
+        let mut v = [f32x8::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col(token, input, base, j, 32);
         }
@@ -453,7 +453,7 @@ pub fn idct_32x32_avx2(token: archmage::X64V3Token, input: &[f32; 1024], output:
     // Pass 2: IDCT-32 on columns, 4 batches of 8 columns
     for batch in 0..4 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 32];
+        let mut v = [f32x8::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col(token, &tmp, base, j, 32);
         }
@@ -477,7 +477,7 @@ pub fn idct_32x16_avx2(token: archmage::X64V3Token, input: &[f32; 512], output: 
     // Pass 1: IDCT-32 on 16 rows (stride 32), 2 batches of 8
     for batch in 0..2 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 32];
+        let mut v = [f32x8::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col(token, input, base, j, 32);
         }
@@ -495,7 +495,7 @@ pub fn idct_32x16_avx2(token: archmage::X64V3Token, input: &[f32; 512], output: 
     // Pass 2: IDCT-16 on 32 rows (stride 16), 4 batches of 8
     for batch in 0..4 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, &tmp, base, j, 16);
         }
@@ -521,9 +521,9 @@ pub fn idct_16x32_avx2(token: archmage::X64V3Token, input: &[f32; 512], output: 
     let mut tmp = crate::scratch_buf::<512>();
     for batch in 0..4 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
-            v[j] = f32x8::from_slice(token, &input[j * 32 + base..j * 32 + base + 8]);
+            v[j] = f32x8::from_slice_t(token, &input[j * 32 + base..j * 32 + base + 8]);
         }
         crate::idct16::idct1d_16_batch(token, &mut v);
         for j in 0..16 {
@@ -534,9 +534,9 @@ pub fn idct_16x32_avx2(token: archmage::X64V3Token, input: &[f32; 512], output: 
     // Pass 2: IDCT-32 on 16 rows (stride 32), 2 batches of 8
     for batch in 0..2 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 32];
+        let mut v = [f32x8::zero_t(token); 32];
         for j in 0..32 {
-            v[j] = f32x8::from_slice(token, &tmp[j * 16 + base..j * 16 + base + 8]);
+            v[j] = f32x8::from_slice_t(token, &tmp[j * 16 + base..j * 16 + base + 8]);
         }
         idct1d_32_batch(token, &mut v);
         for j in 0..32 {
@@ -561,7 +561,7 @@ fn gather_col_neon(
     j: usize,
     s: usize,
 ) -> magetypes::simd::f32x4 {
-    magetypes::simd::f32x4::from_array(
+    magetypes::simd::f32x4::from_array_t(
         token,
         [
             data[base_row * s + j],
@@ -599,11 +599,11 @@ pub(crate) fn idct1d_32_core_batch_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let half = f32x4::splat(token, 0.5);
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+    let half = f32x4::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
 
-    let mut first = [f32x4::zero(token); 16];
-    let mut second = [f32x4::zero(token); 16];
+    let mut first = [f32x4::zero_t(token); 16];
+    let mut second = [f32x4::zero_t(token); 16];
     for i in 0..16 {
         first[i] = v[2 * i];
         second[i] = v[2 * i + 1];
@@ -617,7 +617,7 @@ pub(crate) fn idct1d_32_core_batch_neon(
     crate::idct16::idct1d_16_core_batch_neon(token, &mut second);
 
     for i in 0..16 {
-        second[i] *= f32x4::splat(token, INV_WC32[i]);
+        second[i] *= f32x4::splat_t(token, INV_WC32[i]);
     }
 
     crate::idct16::idct1d_16_core_batch_neon(token, &mut first);
@@ -636,7 +636,7 @@ pub(crate) fn idct1d_32_batch_neon(
     v: &mut [magetypes::simd::f32x4; 32],
 ) {
     use magetypes::simd::f32x4;
-    let scale32 = f32x4::splat(token, 32.0);
+    let scale32 = f32x4::splat_t(token, 32.0);
     for vi in v.iter_mut() {
         *vi *= scale32;
     }
@@ -655,7 +655,7 @@ pub fn idct_32x32_neon(token: archmage::NeonToken, input: &[f32; 1024], output: 
 
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_neon(token, input, base, j, 32);
         }
@@ -671,7 +671,7 @@ pub fn idct_32x32_neon(token: archmage::NeonToken, input: &[f32; 1024], output: 
 
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_neon(token, &tmp, base, j, 32);
         }
@@ -695,7 +695,7 @@ pub fn idct_32x16_neon(token: archmage::NeonToken, input: &[f32; 512], output: &
     // Pass 1: IDCT-32 on 16 rows (stride 32), 4 batches of 4.
     for batch in 0..4 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_neon(token, input, base, j, 32);
         }
@@ -712,7 +712,7 @@ pub fn idct_32x16_neon(token: archmage::NeonToken, input: &[f32; 512], output: &
     // Pass 2: IDCT-16 on 32 rows (stride 16), 8 batches of 4.
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 16];
+        let mut v = [f32x4::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col_neon(token, &tmp, base, j, 16);
         }
@@ -734,9 +734,9 @@ pub fn idct_16x32_neon(token: archmage::NeonToken, input: &[f32; 512], output: &
     let mut tmp = crate::scratch_buf::<512>();
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 16];
+        let mut v = [f32x4::zero_t(token); 16];
         for j in 0..16 {
-            v[j] = f32x4::from_slice(token, &input[j * 32 + base..j * 32 + base + 4]);
+            v[j] = f32x4::from_slice_t(token, &input[j * 32 + base..j * 32 + base + 4]);
         }
         crate::idct16::idct1d_16_batch_neon(token, &mut v);
         for j in 0..16 {
@@ -747,9 +747,9 @@ pub fn idct_16x32_neon(token: archmage::NeonToken, input: &[f32; 512], output: &
     // Pass 2: IDCT-32 on 16 rows (stride 32), 4 batches of 4.
     for batch in 0..4 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
-            v[j] = f32x4::from_slice(token, &tmp[j * 16 + base..j * 16 + base + 4]);
+            v[j] = f32x4::from_slice_t(token, &tmp[j * 16 + base..j * 16 + base + 4]);
         }
         idct1d_32_batch_neon(token, &mut v);
         for j in 0..32 {
@@ -771,7 +771,7 @@ fn gather_col_wasm128(
     j: usize,
     s: usize,
 ) -> magetypes::simd::f32x4 {
-    magetypes::simd::f32x4::from_array(
+    magetypes::simd::f32x4::from_array_t(
         token,
         [
             data[base_row * s + j],
@@ -809,11 +809,11 @@ pub(crate) fn idct1d_32_core_batch_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let half = f32x4::splat(token, 0.5);
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+    let half = f32x4::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
 
-    let mut first = [f32x4::zero(token); 16];
-    let mut second = [f32x4::zero(token); 16];
+    let mut first = [f32x4::zero_t(token); 16];
+    let mut second = [f32x4::zero_t(token); 16];
     for i in 0..16 {
         first[i] = v[2 * i];
         second[i] = v[2 * i + 1];
@@ -827,7 +827,7 @@ pub(crate) fn idct1d_32_core_batch_wasm128(
     crate::idct16::idct1d_16_core_batch_wasm128(token, &mut second);
 
     for i in 0..16 {
-        second[i] *= f32x4::splat(token, INV_WC32[i]);
+        second[i] *= f32x4::splat_t(token, INV_WC32[i]);
     }
 
     crate::idct16::idct1d_16_core_batch_wasm128(token, &mut first);
@@ -846,7 +846,7 @@ pub(crate) fn idct1d_32_batch_wasm128(
     v: &mut [magetypes::simd::f32x4; 32],
 ) {
     use magetypes::simd::f32x4;
-    let scale32 = f32x4::splat(token, 32.0);
+    let scale32 = f32x4::splat_t(token, 32.0);
     for vi in v.iter_mut() {
         *vi *= scale32;
     }
@@ -869,7 +869,7 @@ pub fn idct_32x32_wasm128(
 
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_wasm128(token, input, base, j, 32);
         }
@@ -885,7 +885,7 @@ pub fn idct_32x32_wasm128(
 
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_wasm128(token, &tmp, base, j, 32);
         }
@@ -912,7 +912,7 @@ pub fn idct_32x16_wasm128(
 
     for batch in 0..4 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_wasm128(token, input, base, j, 32);
         }
@@ -928,7 +928,7 @@ pub fn idct_32x16_wasm128(
 
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 16];
+        let mut v = [f32x4::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col_wasm128(token, &tmp, base, j, 16);
         }
@@ -953,9 +953,9 @@ pub fn idct_16x32_wasm128(
     let mut tmp = crate::scratch_buf::<512>();
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 16];
+        let mut v = [f32x4::zero_t(token); 16];
         for j in 0..16 {
-            v[j] = f32x4::from_slice(token, &input[j * 32 + base..j * 32 + base + 4]);
+            v[j] = f32x4::from_slice_t(token, &input[j * 32 + base..j * 32 + base + 4]);
         }
         crate::idct16::idct1d_16_batch_wasm128(token, &mut v);
         for j in 0..16 {
@@ -965,9 +965,9 @@ pub fn idct_16x32_wasm128(
 
     for batch in 0..4 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
-            v[j] = f32x4::from_slice(token, &tmp[j * 16 + base..j * 16 + base + 4]);
+            v[j] = f32x4::from_slice_t(token, &tmp[j * 16 + base..j * 16 + base + 4]);
         }
         idct1d_32_batch_wasm128(token, &mut v);
         for j in 0..32 {

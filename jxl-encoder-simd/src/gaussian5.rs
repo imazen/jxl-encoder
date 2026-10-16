@@ -150,9 +150,9 @@ fn gaussian5_h_impl(
         gaussian5_h_scalar(src, dst, width, height, taps);
         return;
     }
-    let w0 = f32x8::splat(token, taps[0]);
-    let w1 = f32x8::splat(token, taps[1]);
-    let w2 = f32x8::splat(token, taps[2]);
+    let w0 = f32x8::splat_t(token, taps[0]);
+    let w1 = f32x8::splat_t(token, taps[1]);
+    let w2 = f32x8::splat_t(token, taps[2]);
 
     for y in 0..height {
         let row = &src[y * width..(y + 1) * width];
@@ -168,11 +168,11 @@ fn gaussian5_h_impl(
         // x + 9 <= width - 1, i.e. x + 10 <= width.
         let mut x = 2usize;
         while x + 10 <= width {
-            let c = f32x8::from_slice(token, &row[x..x + 8]);
-            let m1 = f32x8::from_slice(token, &row[x - 1..x + 7]);
-            let p1 = f32x8::from_slice(token, &row[x + 1..x + 9]);
-            let m2 = f32x8::from_slice(token, &row[x - 2..x + 6]);
-            let p2 = f32x8::from_slice(token, &row[x + 2..x + 10]);
+            let c = f32x8::from_slice_t(token, &row[x..x + 8]);
+            let m1 = f32x8::from_slice_t(token, &row[x - 1..x + 7]);
+            let p1 = f32x8::from_slice_t(token, &row[x + 1..x + 9]);
+            let m2 = f32x8::from_slice_t(token, &row[x - 2..x + 6]);
+            let p2 = f32x8::from_slice_t(token, &row[x + 2..x + 10]);
             // Same expression tree as the scalar reference — no fma.
             let v = w0 * c + w1 * (m1 + p1) + w2 * (m2 + p2);
             v.store((&mut drow[x..x + 8]).try_into().unwrap());
@@ -197,9 +197,9 @@ fn gaussian5_v_impl(
         gaussian5_v_scalar(src, dst, width, height, taps);
         return;
     }
-    let w0 = f32x8::splat(token, taps[0]);
-    let w1 = f32x8::splat(token, taps[1]);
-    let w2 = f32x8::splat(token, taps[2]);
+    let w0 = f32x8::splat_t(token, taps[0]);
+    let w1 = f32x8::splat_t(token, taps[1]);
+    let w2 = f32x8::splat_t(token, taps[2]);
 
     // Interior rows y ∈ [2, height-2): vectorize the full row over x
     // (contiguous strided loads, no x clamps needed).
@@ -213,11 +213,11 @@ fn gaussian5_v_impl(
 
         let mut x = 0usize;
         while x + 8 <= width {
-            let cv = f32x8::from_slice(token, &c[x..x + 8]);
-            let m1v = f32x8::from_slice(token, &m1[x..x + 8]);
-            let p1v = f32x8::from_slice(token, &p1[x..x + 8]);
-            let m2v = f32x8::from_slice(token, &m2[x..x + 8]);
-            let p2v = f32x8::from_slice(token, &p2[x..x + 8]);
+            let cv = f32x8::from_slice_t(token, &c[x..x + 8]);
+            let m1v = f32x8::from_slice_t(token, &m1[x..x + 8]);
+            let p1v = f32x8::from_slice_t(token, &p1[x..x + 8]);
+            let m2v = f32x8::from_slice_t(token, &m2[x..x + 8]);
+            let p2v = f32x8::from_slice_t(token, &p2[x..x + 8]);
             let v = w0 * cv + w1 * (m1v + p1v) + w2 * (m2v + p2v);
             v.store((&mut drow[x..x + 8]).try_into().unwrap());
             x += 8;

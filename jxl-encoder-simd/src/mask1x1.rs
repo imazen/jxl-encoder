@@ -158,26 +158,26 @@ pub fn compute_mask1x1_avx2(
         return;
     }
 
-    let quarter = f32x8::splat(token, 0.25);
-    let gamma_off = f32x8::splat(token, MATCH_GAMMA_OFFSET);
-    let zero = f32x8::splat(token, 0.0);
-    let eps_v = f32x8::splat(token, EPSILON);
-    let k_num_mul_v = f32x8::splat(token, K_NUM_MUL);
-    let k_den_mul_v = f32x8::splat(token, K_DEN_MUL);
-    let k_v_offset_v = f32x8::splat(token, K_V_OFFSET);
-    let one_v = f32x8::splat(token, 1.0);
-    let ln2_v = f32x8::splat(token, LN2);
-    let k_offset_v = f32x8::splat(token, K_OFFSET);
-    let k_mul_v = f32x8::splat(token, K_MUL);
+    let quarter = f32x8::splat_t(token, 0.25);
+    let gamma_off = f32x8::splat_t(token, MATCH_GAMMA_OFFSET);
+    let zero = f32x8::splat_t(token, 0.0);
+    let eps_v = f32x8::splat_t(token, EPSILON);
+    let k_num_mul_v = f32x8::splat_t(token, K_NUM_MUL);
+    let k_den_mul_v = f32x8::splat_t(token, K_DEN_MUL);
+    let k_v_offset_v = f32x8::splat_t(token, K_V_OFFSET);
+    let one_v = f32x8::splat_t(token, 1.0);
+    let ln2_v = f32x8::splat_t(token, LN2);
+    let k_offset_v = f32x8::splat_t(token, K_OFFSET);
+    let k_mul_v = f32x8::splat_t(token, K_MUL);
 
     // fast_log2f constants
-    let log2_offset = i32x8::splat(token, 0x3f2a_aaab_u32 as i32);
-    let log2_p0_v = f32x8::splat(token, LOG2_P0);
-    let log2_p1_v = f32x8::splat(token, LOG2_P1);
-    let log2_p2_v = f32x8::splat(token, LOG2_P2);
-    let log2_q0_v = f32x8::splat(token, LOG2_Q0);
-    let log2_q1_v = f32x8::splat(token, LOG2_Q1);
-    let log2_q2_v = f32x8::splat(token, LOG2_Q2);
+    let log2_offset = i32x8::splat_t(token, 0x3f2a_aaab_u32 as i32);
+    let log2_p0_v = f32x8::splat_t(token, LOG2_P0);
+    let log2_p1_v = f32x8::splat_t(token, LOG2_P1);
+    let log2_p2_v = f32x8::splat_t(token, LOG2_P2);
+    let log2_q0_v = f32x8::splat_t(token, LOG2_Q0);
+    let log2_q1_v = f32x8::splat_t(token, LOG2_Q1);
+    let log2_q2_v = f32x8::splat_t(token, LOG2_Q2);
 
     // SIMD fast_log2f: log2(x) via integer bit manipulation
     #[allow(clippy::too_many_arguments)]
@@ -314,26 +314,26 @@ pub fn compute_mask1x1_neon(
         return;
     }
 
-    let quarter = f32x4::splat(token, 0.25);
-    let gamma_off = f32x4::splat(token, MATCH_GAMMA_OFFSET);
-    let zero = f32x4::splat(token, 0.0);
-    let eps_v = f32x4::splat(token, EPSILON);
-    let k_num_mul_v = f32x4::splat(token, K_NUM_MUL);
-    let k_den_mul_v = f32x4::splat(token, K_DEN_MUL);
-    let k_v_offset_v = f32x4::splat(token, K_V_OFFSET);
-    let one_v = f32x4::splat(token, 1.0);
-    let ln2_v = f32x4::splat(token, LN2);
-    let k_offset_v = f32x4::splat(token, K_OFFSET);
-    let k_mul_v = f32x4::splat(token, K_MUL);
+    let quarter = f32x4::splat_t(token, 0.25);
+    let gamma_off = f32x4::splat_t(token, MATCH_GAMMA_OFFSET);
+    let zero = f32x4::splat_t(token, 0.0);
+    let eps_v = f32x4::splat_t(token, EPSILON);
+    let k_num_mul_v = f32x4::splat_t(token, K_NUM_MUL);
+    let k_den_mul_v = f32x4::splat_t(token, K_DEN_MUL);
+    let k_v_offset_v = f32x4::splat_t(token, K_V_OFFSET);
+    let one_v = f32x4::splat_t(token, 1.0);
+    let ln2_v = f32x4::splat_t(token, LN2);
+    let k_offset_v = f32x4::splat_t(token, K_OFFSET);
+    let k_mul_v = f32x4::splat_t(token, K_MUL);
 
     // fast_log2f constants
-    let log2_offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
-    let log2_p0_v = f32x4::splat(token, LOG2_P0);
-    let log2_p1_v = f32x4::splat(token, LOG2_P1);
-    let log2_p2_v = f32x4::splat(token, LOG2_P2);
-    let log2_q0_v = f32x4::splat(token, LOG2_Q0);
-    let log2_q1_v = f32x4::splat(token, LOG2_Q1);
-    let log2_q2_v = f32x4::splat(token, LOG2_Q2);
+    let log2_offset = i32x4::splat_t(token, 0x3f2a_aaab_u32 as i32);
+    let log2_p0_v = f32x4::splat_t(token, LOG2_P0);
+    let log2_p1_v = f32x4::splat_t(token, LOG2_P1);
+    let log2_p2_v = f32x4::splat_t(token, LOG2_P2);
+    let log2_q0_v = f32x4::splat_t(token, LOG2_Q0);
+    let log2_q1_v = f32x4::splat_t(token, LOG2_Q1);
+    let log2_q2_v = f32x4::splat_t(token, LOG2_Q2);
 
     // SIMD fast_log2f via integer bit manipulation (f32x4 version)
     #[allow(clippy::too_many_arguments)]
@@ -383,11 +383,11 @@ pub fn compute_mask1x1_neon(
         let mut x = 1;
 
         while x < simd_end {
-            let top = f32x4::from_slice(token, &xyb_y[r_top + x..]);
-            let bot = f32x4::from_slice(token, &xyb_y[r_bot + x..]);
-            let left = f32x4::from_slice(token, &xyb_y[r_cur + x - 1..]);
-            let right = f32x4::from_slice(token, &xyb_y[r_cur + x + 1..]);
-            let center = f32x4::from_slice(token, &xyb_y[r_cur + x..]);
+            let top = f32x4::from_slice_t(token, &xyb_y[r_top + x..]);
+            let bot = f32x4::from_slice_t(token, &xyb_y[r_bot + x..]);
+            let left = f32x4::from_slice_t(token, &xyb_y[r_cur + x - 1..]);
+            let right = f32x4::from_slice_t(token, &xyb_y[r_cur + x + 1..]);
+            let center = f32x4::from_slice_t(token, &xyb_y[r_cur + x..]);
 
             let base = quarter * (top + bot + left + right);
 
@@ -461,26 +461,26 @@ pub fn compute_mask1x1_wasm128(
         return;
     }
 
-    let quarter = f32x4::splat(token, 0.25);
-    let gamma_off = f32x4::splat(token, MATCH_GAMMA_OFFSET);
-    let zero = f32x4::splat(token, 0.0);
-    let eps_v = f32x4::splat(token, EPSILON);
-    let k_num_mul_v = f32x4::splat(token, K_NUM_MUL);
-    let k_den_mul_v = f32x4::splat(token, K_DEN_MUL);
-    let k_v_offset_v = f32x4::splat(token, K_V_OFFSET);
-    let one_v = f32x4::splat(token, 1.0);
-    let ln2_v = f32x4::splat(token, LN2);
-    let k_offset_v = f32x4::splat(token, K_OFFSET);
-    let k_mul_v = f32x4::splat(token, K_MUL);
+    let quarter = f32x4::splat_t(token, 0.25);
+    let gamma_off = f32x4::splat_t(token, MATCH_GAMMA_OFFSET);
+    let zero = f32x4::splat_t(token, 0.0);
+    let eps_v = f32x4::splat_t(token, EPSILON);
+    let k_num_mul_v = f32x4::splat_t(token, K_NUM_MUL);
+    let k_den_mul_v = f32x4::splat_t(token, K_DEN_MUL);
+    let k_v_offset_v = f32x4::splat_t(token, K_V_OFFSET);
+    let one_v = f32x4::splat_t(token, 1.0);
+    let ln2_v = f32x4::splat_t(token, LN2);
+    let k_offset_v = f32x4::splat_t(token, K_OFFSET);
+    let k_mul_v = f32x4::splat_t(token, K_MUL);
 
     // fast_log2f constants
-    let log2_offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
-    let log2_p0_v = f32x4::splat(token, LOG2_P0);
-    let log2_p1_v = f32x4::splat(token, LOG2_P1);
-    let log2_p2_v = f32x4::splat(token, LOG2_P2);
-    let log2_q0_v = f32x4::splat(token, LOG2_Q0);
-    let log2_q1_v = f32x4::splat(token, LOG2_Q1);
-    let log2_q2_v = f32x4::splat(token, LOG2_Q2);
+    let log2_offset = i32x4::splat_t(token, 0x3f2a_aaab_u32 as i32);
+    let log2_p0_v = f32x4::splat_t(token, LOG2_P0);
+    let log2_p1_v = f32x4::splat_t(token, LOG2_P1);
+    let log2_p2_v = f32x4::splat_t(token, LOG2_P2);
+    let log2_q0_v = f32x4::splat_t(token, LOG2_Q0);
+    let log2_q1_v = f32x4::splat_t(token, LOG2_Q1);
+    let log2_q2_v = f32x4::splat_t(token, LOG2_Q2);
 
     // SIMD fast_log2f via integer bit manipulation (f32x4 version)
     #[allow(clippy::too_many_arguments)]
@@ -530,11 +530,11 @@ pub fn compute_mask1x1_wasm128(
         let mut x = 1;
 
         while x < simd_end {
-            let top = f32x4::from_slice(token, &xyb_y[r_top + x..]);
-            let bot = f32x4::from_slice(token, &xyb_y[r_bot + x..]);
-            let left = f32x4::from_slice(token, &xyb_y[r_cur + x - 1..]);
-            let right = f32x4::from_slice(token, &xyb_y[r_cur + x + 1..]);
-            let center = f32x4::from_slice(token, &xyb_y[r_cur + x..]);
+            let top = f32x4::from_slice_t(token, &xyb_y[r_top + x..]);
+            let bot = f32x4::from_slice_t(token, &xyb_y[r_bot + x..]);
+            let left = f32x4::from_slice_t(token, &xyb_y[r_cur + x - 1..]);
+            let right = f32x4::from_slice_t(token, &xyb_y[r_cur + x + 1..]);
+            let center = f32x4::from_slice_t(token, &xyb_y[r_cur + x..]);
 
             let base = quarter * (top + bot + left + right);
 

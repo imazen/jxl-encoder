@@ -150,7 +150,7 @@ pub(crate) fn load_f32x8(
     offset: usize,
 ) -> magetypes::simd::f32x8 {
     use magetypes::simd::f32x8;
-    f32x8::from_slice(token, &s[offset..])
+    f32x8::from_slice_t(token, &s[offset..])
 }
 
 /// Store 8 floats at offset.
@@ -171,7 +171,7 @@ pub(crate) fn gather_col_strided(
     j: usize,
     stride: usize,
 ) -> magetypes::simd::f32x8 {
-    magetypes::simd::f32x8::from_array(
+    magetypes::simd::f32x8::from_array_t(
         token,
         [
             data[base_row * stride + j],

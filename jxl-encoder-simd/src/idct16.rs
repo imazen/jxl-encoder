@@ -225,7 +225,7 @@ fn gather_col(
     base_row: usize,
     j: usize,
 ) -> magetypes::simd::f32x8 {
-    magetypes::simd::f32x8::from_array(
+    magetypes::simd::f32x8::from_array_t(
         token,
         [
             data[base_row * 16 + j],
@@ -260,10 +260,10 @@ fn scatter_col(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, j: 
 fn idct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4]) {
     use magetypes::simd::f32x8;
 
-    let half = f32x8::splat(token, 0.5);
-    let inv_sqrt2 = f32x8::splat(token, 1.0 / SQRT2);
-    let inv_wc4_0 = f32x8::splat(token, INV_WC4[0]);
-    let inv_wc4_1 = f32x8::splat(token, INV_WC4[1]);
+    let half = f32x8::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x8::splat_t(token, 1.0 / SQRT2);
+    let inv_wc4_0 = f32x8::splat_t(token, INV_WC4[0]);
+    let inv_wc4_1 = f32x8::splat_t(token, INV_WC4[1]);
 
     // De-interleave: even positions -> first half, odd positions -> second half
     // Input: [v0, v1, v2, v3] -> tmp = [v0, v2, v1, v3]
@@ -303,8 +303,8 @@ fn idct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 
 fn idct1d_8_core_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8]) {
     use magetypes::simd::f32x8;
 
-    let half = f32x8::splat(token, 0.5);
-    let inv_sqrt2 = f32x8::splat(token, 1.0 / SQRT2);
+    let half = f32x8::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x8::splat_t(token, 1.0 / SQRT2);
 
     // De-interleave: even -> first_half, odd -> second_half
     let mut first_half = [v[0], v[2], v[4], v[6]];
@@ -319,10 +319,10 @@ fn idct1d_8_core_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f3
     idct1d_4_batch(token, &mut second_half);
 
     // Divide by WcMultipliers_8
-    second_half[0] *= f32x8::splat(token, INV_WC8[0]);
-    second_half[1] *= f32x8::splat(token, INV_WC8[1]);
-    second_half[2] *= f32x8::splat(token, INV_WC8[2]);
-    second_half[3] *= f32x8::splat(token, INV_WC8[3]);
+    second_half[0] *= f32x8::splat_t(token, INV_WC8[0]);
+    second_half[1] *= f32x8::splat_t(token, INV_WC8[1]);
+    second_half[2] *= f32x8::splat_t(token, INV_WC8[2]);
+    second_half[3] *= f32x8::splat_t(token, INV_WC8[3]);
 
     // IDCT-4 on first half
     idct1d_4_batch(token, &mut first_half);
@@ -351,8 +351,8 @@ pub(crate) fn idct1d_16_core_batch(
 ) {
     use magetypes::simd::f32x8;
 
-    let half = f32x8::splat(token, 0.5);
-    let inv_sqrt2 = f32x8::splat(token, 1.0 / SQRT2);
+    let half = f32x8::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x8::splat_t(token, 1.0 / SQRT2);
 
     // De-interleave: even -> first_half[0..8], odd -> second_half[0..8]
     let mut first_half = [v[0], v[2], v[4], v[6], v[8], v[10], v[12], v[14]];
@@ -373,14 +373,14 @@ pub(crate) fn idct1d_16_core_batch(
     idct1d_8_core_batch(token, &mut second_half);
 
     // Divide by WcMultipliers_16
-    second_half[0] *= f32x8::splat(token, INV_WC16[0]);
-    second_half[1] *= f32x8::splat(token, INV_WC16[1]);
-    second_half[2] *= f32x8::splat(token, INV_WC16[2]);
-    second_half[3] *= f32x8::splat(token, INV_WC16[3]);
-    second_half[4] *= f32x8::splat(token, INV_WC16[4]);
-    second_half[5] *= f32x8::splat(token, INV_WC16[5]);
-    second_half[6] *= f32x8::splat(token, INV_WC16[6]);
-    second_half[7] *= f32x8::splat(token, INV_WC16[7]);
+    second_half[0] *= f32x8::splat_t(token, INV_WC16[0]);
+    second_half[1] *= f32x8::splat_t(token, INV_WC16[1]);
+    second_half[2] *= f32x8::splat_t(token, INV_WC16[2]);
+    second_half[3] *= f32x8::splat_t(token, INV_WC16[3]);
+    second_half[4] *= f32x8::splat_t(token, INV_WC16[4]);
+    second_half[5] *= f32x8::splat_t(token, INV_WC16[5]);
+    second_half[6] *= f32x8::splat_t(token, INV_WC16[6]);
+    second_half[7] *= f32x8::splat_t(token, INV_WC16[7]);
 
     // IDCT-8 core on first half
     idct1d_8_core_batch(token, &mut first_half);
@@ -414,7 +414,7 @@ pub(crate) fn idct1d_16_core_batch(
 pub(crate) fn idct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
     use magetypes::simd::f32x8;
 
-    let scale16 = f32x8::splat(token, 16.0);
+    let scale16 = f32x8::splat_t(token, 16.0);
     for vi in v.iter_mut() {
         *vi *= scale16;
     }
@@ -434,7 +434,7 @@ pub fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: 
     // --- Pass 1: IDCT on rows ---
     // Process rows 0-7 (first batch of 8)
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, input, 0, j);
         }
@@ -446,7 +446,7 @@ pub fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: 
 
     // Process rows 8-15 (second batch of 8)
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, input, 8, j);
         }
@@ -467,7 +467,7 @@ pub fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: 
     // --- Pass 2: IDCT on columns (now rows of transposed) ---
     // Process rows 0-7
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, &transposed, 0, j);
         }
@@ -479,7 +479,7 @@ pub fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: 
 
     // Process rows 8-15
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, &transposed, 8, j);
         }
@@ -573,7 +573,7 @@ fn gather_col_s8(
     base_row: usize,
     j: usize,
 ) -> magetypes::simd::f32x8 {
-    magetypes::simd::f32x8::from_array(
+    magetypes::simd::f32x8::from_array_t(
         token,
         [
             data[base_row * 8 + j],
@@ -608,7 +608,7 @@ fn scatter_col_s8(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, 
 fn idct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8]) {
     use magetypes::simd::f32x8;
 
-    let scale8 = f32x8::splat(token, 8.0);
+    let scale8 = f32x8::splat_t(token, 8.0);
     for vi in v.iter_mut() {
         *vi *= scale8;
     }
@@ -628,7 +628,7 @@ pub fn idct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &
     // Process 8 rows at a time. Gather column j from 8 rows -> f32x8.
     // Batch 1: rows 0-7
     {
-        let mut v = [f32x8::zero(token); 8];
+        let mut v = [f32x8::zero_t(token); 8];
         for j in 0..8 {
             v[j] = gather_col_s8(token, input, 0, j);
         }
@@ -639,7 +639,7 @@ pub fn idct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &
     }
     // Batch 2: rows 8-15
     {
-        let mut v = [f32x8::zero(token); 8];
+        let mut v = [f32x8::zero_t(token); 8];
         for j in 0..8 {
             v[j] = gather_col_s8(token, input, 8, j);
         }
@@ -652,9 +652,9 @@ pub fn idct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &
     // --- Pass 2: 16-point IDCT (with x16 scaling) on each of 8 columns ---
     // Load row i as contiguous f32x8 from tmp[i*8..i*8+8]. Each lane k = column k's i-th element.
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for i in 0..16 {
-            v[i] = f32x8::from_slice(token, &tmp[i * 8..i * 8 + 8]);
+            v[i] = f32x8::from_slice_t(token, &tmp[i * 8..i * 8 + 8]);
         }
         idct1d_16_batch(token, &mut v);
         for i in 0..16 {
@@ -740,7 +740,7 @@ pub fn idct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &
     // --- Pass 1: 16-point IDCT (with x16 scaling) on each of 8 rows (stride 16) ---
     // All 8 rows fit in one batch. Gather column j from 8 rows at stride 16.
     {
-        let mut v = [f32x8::zero(token); 16];
+        let mut v = [f32x8::zero_t(token); 16];
         for j in 0..16 {
             v[j] = gather_col(token, input, 0, j);
         }
@@ -754,9 +754,9 @@ pub fn idct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &
     // Process 8 columns at a time via contiguous loads (2 batches for 16 columns).
     // Batch 1: columns 0-7
     {
-        let mut v = [f32x8::zero(token); 8];
+        let mut v = [f32x8::zero_t(token); 8];
         for i in 0..8 {
-            v[i] = f32x8::from_slice(token, &tmp[i * 16..i * 16 + 8]);
+            v[i] = f32x8::from_slice_t(token, &tmp[i * 16..i * 16 + 8]);
         }
         idct1d_8_batch(token, &mut v);
         for i in 0..8 {
@@ -765,9 +765,9 @@ pub fn idct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &
     }
     // Batch 2: columns 8-15
     {
-        let mut v = [f32x8::zero(token); 8];
+        let mut v = [f32x8::zero_t(token); 8];
         for i in 0..8 {
-            v[i] = f32x8::from_slice(token, &tmp[i * 16 + 8..i * 16 + 16]);
+            v[i] = f32x8::from_slice_t(token, &tmp[i * 16 + 8..i * 16 + 16]);
         }
         idct1d_8_batch(token, &mut v);
         for i in 0..8 {
@@ -790,7 +790,7 @@ fn gather_col_neon(
     j: usize,
     s: usize,
 ) -> magetypes::simd::f32x4 {
-    magetypes::simd::f32x4::from_array(
+    magetypes::simd::f32x4::from_array_t(
         token,
         [
             data[base_row * s + j],
@@ -825,10 +825,10 @@ fn scatter_col_neon(
 fn idct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 4]) {
     use magetypes::simd::f32x4;
 
-    let half = f32x4::splat(token, 0.5);
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
-    let inv_wc4_0 = f32x4::splat(token, INV_WC4[0]);
-    let inv_wc4_1 = f32x4::splat(token, INV_WC4[1]);
+    let half = f32x4::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
+    let inv_wc4_0 = f32x4::splat_t(token, INV_WC4[0]);
+    let inv_wc4_1 = f32x4::splat_t(token, INV_WC4[1]);
 
     // De-interleave: [v0, v1, v2, v3] -> [v0, v2, v1, v3]
     let t0 = v[0];
@@ -864,8 +864,8 @@ fn idct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32
 fn idct1d_8_core_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
-    let half = f32x4::splat(token, 0.5);
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+    let half = f32x4::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
 
     // De-interleave: even -> first_half, odd -> second_half
     let mut first_half = [v[0], v[2], v[4], v[6]];
@@ -880,10 +880,10 @@ fn idct1d_8_core_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd
     idct1d_4_batch_neon(token, &mut second_half);
 
     // Divide by WcMultipliers_8
-    second_half[0] *= f32x4::splat(token, INV_WC8[0]);
-    second_half[1] *= f32x4::splat(token, INV_WC8[1]);
-    second_half[2] *= f32x4::splat(token, INV_WC8[2]);
-    second_half[3] *= f32x4::splat(token, INV_WC8[3]);
+    second_half[0] *= f32x4::splat_t(token, INV_WC8[0]);
+    second_half[1] *= f32x4::splat_t(token, INV_WC8[1]);
+    second_half[2] *= f32x4::splat_t(token, INV_WC8[2]);
+    second_half[3] *= f32x4::splat_t(token, INV_WC8[3]);
 
     // IDCT-4 on first half
     idct1d_4_batch_neon(token, &mut first_half);
@@ -905,7 +905,7 @@ fn idct1d_8_core_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd
 fn idct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
-    let scale8 = f32x4::splat(token, 8.0);
+    let scale8 = f32x4::splat_t(token, 8.0);
     for vi in v.iter_mut() {
         *vi *= scale8;
     }
@@ -921,8 +921,8 @@ pub(crate) fn idct1d_16_core_batch_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let half = f32x4::splat(token, 0.5);
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+    let half = f32x4::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
 
     // De-interleave: even -> first_half[0..8], odd -> second_half[0..8]
     let mut first_half = [v[0], v[2], v[4], v[6], v[8], v[10], v[12], v[14]];
@@ -941,14 +941,14 @@ pub(crate) fn idct1d_16_core_batch_neon(
     idct1d_8_core_batch_neon(token, &mut second_half);
 
     // Divide by WcMultipliers_16
-    second_half[0] *= f32x4::splat(token, INV_WC16[0]);
-    second_half[1] *= f32x4::splat(token, INV_WC16[1]);
-    second_half[2] *= f32x4::splat(token, INV_WC16[2]);
-    second_half[3] *= f32x4::splat(token, INV_WC16[3]);
-    second_half[4] *= f32x4::splat(token, INV_WC16[4]);
-    second_half[5] *= f32x4::splat(token, INV_WC16[5]);
-    second_half[6] *= f32x4::splat(token, INV_WC16[6]);
-    second_half[7] *= f32x4::splat(token, INV_WC16[7]);
+    second_half[0] *= f32x4::splat_t(token, INV_WC16[0]);
+    second_half[1] *= f32x4::splat_t(token, INV_WC16[1]);
+    second_half[2] *= f32x4::splat_t(token, INV_WC16[2]);
+    second_half[3] *= f32x4::splat_t(token, INV_WC16[3]);
+    second_half[4] *= f32x4::splat_t(token, INV_WC16[4]);
+    second_half[5] *= f32x4::splat_t(token, INV_WC16[5]);
+    second_half[6] *= f32x4::splat_t(token, INV_WC16[6]);
+    second_half[7] *= f32x4::splat_t(token, INV_WC16[7]);
 
     // IDCT-8 core on first half
     idct1d_8_core_batch_neon(token, &mut first_half);
@@ -981,7 +981,7 @@ pub(crate) fn idct1d_16_batch_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let scale16 = f32x4::splat(token, 16.0);
+    let scale16 = f32x4::splat_t(token, 16.0);
     for vi in v.iter_mut() {
         *vi *= scale16;
     }
@@ -999,7 +999,7 @@ fn neon_idct8_batch(
     base_row: usize,
     stride: usize,
 ) {
-    let mut v = [magetypes::simd::f32x4::zero(token); 8];
+    let mut v = [magetypes::simd::f32x4::zero_t(token); 8];
     for j in 0..8 {
         v[j] = gather_col_neon(token, data_in, base_row, j, stride);
     }
@@ -1020,7 +1020,7 @@ fn neon_idct16_batch(
     base_row: usize,
     stride: usize,
 ) {
-    let mut v = [magetypes::simd::f32x4::zero(token); 16];
+    let mut v = [magetypes::simd::f32x4::zero_t(token); 16];
     for j in 0..16 {
         v[j] = gather_col_neon(token, data_in, base_row, j, stride);
     }
@@ -1076,9 +1076,9 @@ pub fn idct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &m
     // With NEON (4-wide), we process 4 columns at a time.
     for col_base in (0..8).step_by(4) {
         // Gather 16 values from 4 columns into f32x4 vectors
-        let mut v = [magetypes::simd::f32x4::zero(token); 16];
+        let mut v = [magetypes::simd::f32x4::zero_t(token); 16];
         for row in 0..16 {
-            v[row] = magetypes::simd::f32x4::from_array(
+            v[row] = magetypes::simd::f32x4::from_array_t(
                 token,
                 [
                     tmp[row * 8 + col_base],
@@ -1117,9 +1117,9 @@ pub fn idct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &m
     // Process 4 columns at a time (4 batches for 16 columns)
     for col_base in (0..16).step_by(4) {
         // Gather 8 values from 4 columns into f32x4 vectors
-        let mut v = [magetypes::simd::f32x4::zero(token); 8];
+        let mut v = [magetypes::simd::f32x4::zero_t(token); 8];
         for row in 0..8 {
-            v[row] = magetypes::simd::f32x4::from_array(
+            v[row] = magetypes::simd::f32x4::from_array_t(
                 token,
                 [
                     tmp[row * 16 + col_base],
@@ -1155,7 +1155,7 @@ fn gather_col_wasm128(
     j: usize,
     s: usize,
 ) -> magetypes::simd::f32x4 {
-    magetypes::simd::f32x4::from_array(
+    magetypes::simd::f32x4::from_array_t(
         token,
         [
             data[base_row * s + j],
@@ -1190,10 +1190,10 @@ fn scatter_col_wasm128(
 fn idct1d_4_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 4]) {
     use magetypes::simd::f32x4;
 
-    let half = f32x4::splat(token, 0.5);
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
-    let inv_wc4_0 = f32x4::splat(token, INV_WC4[0]);
-    let inv_wc4_1 = f32x4::splat(token, INV_WC4[1]);
+    let half = f32x4::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
+    let inv_wc4_0 = f32x4::splat_t(token, INV_WC4[0]);
+    let inv_wc4_1 = f32x4::splat_t(token, INV_WC4[1]);
 
     // De-interleave: [v0, v1, v2, v3] -> [v0, v2, v1, v3]
     let t0 = v[0];
@@ -1229,8 +1229,8 @@ fn idct1d_4_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::sim
 fn idct1d_8_core_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
-    let half = f32x4::splat(token, 0.5);
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+    let half = f32x4::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
 
     // De-interleave: even -> first_half, odd -> second_half
     let mut first_half = [v[0], v[2], v[4], v[6]];
@@ -1245,10 +1245,10 @@ fn idct1d_8_core_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes
     idct1d_4_batch_wasm128(token, &mut second_half);
 
     // Divide by WcMultipliers_8
-    second_half[0] *= f32x4::splat(token, INV_WC8[0]);
-    second_half[1] *= f32x4::splat(token, INV_WC8[1]);
-    second_half[2] *= f32x4::splat(token, INV_WC8[2]);
-    second_half[3] *= f32x4::splat(token, INV_WC8[3]);
+    second_half[0] *= f32x4::splat_t(token, INV_WC8[0]);
+    second_half[1] *= f32x4::splat_t(token, INV_WC8[1]);
+    second_half[2] *= f32x4::splat_t(token, INV_WC8[2]);
+    second_half[3] *= f32x4::splat_t(token, INV_WC8[3]);
 
     // IDCT-4 on first half
     idct1d_4_batch_wasm128(token, &mut first_half);
@@ -1270,7 +1270,7 @@ fn idct1d_8_core_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes
 fn idct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
-    let scale8 = f32x4::splat(token, 8.0);
+    let scale8 = f32x4::splat_t(token, 8.0);
     for vi in v.iter_mut() {
         *vi *= scale8;
     }
@@ -1286,8 +1286,8 @@ pub(crate) fn idct1d_16_core_batch_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let half = f32x4::splat(token, 0.5);
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+    let half = f32x4::splat_t(token, 0.5);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
 
     // De-interleave: even -> first_half[0..8], odd -> second_half[0..8]
     let mut first_half = [v[0], v[2], v[4], v[6], v[8], v[10], v[12], v[14]];
@@ -1306,14 +1306,14 @@ pub(crate) fn idct1d_16_core_batch_wasm128(
     idct1d_8_core_batch_wasm128(token, &mut second_half);
 
     // Divide by WcMultipliers_16
-    second_half[0] *= f32x4::splat(token, INV_WC16[0]);
-    second_half[1] *= f32x4::splat(token, INV_WC16[1]);
-    second_half[2] *= f32x4::splat(token, INV_WC16[2]);
-    second_half[3] *= f32x4::splat(token, INV_WC16[3]);
-    second_half[4] *= f32x4::splat(token, INV_WC16[4]);
-    second_half[5] *= f32x4::splat(token, INV_WC16[5]);
-    second_half[6] *= f32x4::splat(token, INV_WC16[6]);
-    second_half[7] *= f32x4::splat(token, INV_WC16[7]);
+    second_half[0] *= f32x4::splat_t(token, INV_WC16[0]);
+    second_half[1] *= f32x4::splat_t(token, INV_WC16[1]);
+    second_half[2] *= f32x4::splat_t(token, INV_WC16[2]);
+    second_half[3] *= f32x4::splat_t(token, INV_WC16[3]);
+    second_half[4] *= f32x4::splat_t(token, INV_WC16[4]);
+    second_half[5] *= f32x4::splat_t(token, INV_WC16[5]);
+    second_half[6] *= f32x4::splat_t(token, INV_WC16[6]);
+    second_half[7] *= f32x4::splat_t(token, INV_WC16[7]);
 
     // IDCT-8 core on first half
     idct1d_8_core_batch_wasm128(token, &mut first_half);
@@ -1346,7 +1346,7 @@ pub(crate) fn idct1d_16_batch_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let scale16 = f32x4::splat(token, 16.0);
+    let scale16 = f32x4::splat_t(token, 16.0);
     for vi in v.iter_mut() {
         *vi *= scale16;
     }
@@ -1364,7 +1364,7 @@ fn wasm128_idct8_batch(
     base_row: usize,
     stride: usize,
 ) {
-    let mut v = [magetypes::simd::f32x4::zero(token); 8];
+    let mut v = [magetypes::simd::f32x4::zero_t(token); 8];
     for j in 0..8 {
         v[j] = gather_col_wasm128(token, data_in, base_row, j, stride);
     }
@@ -1385,7 +1385,7 @@ fn wasm128_idct16_batch(
     base_row: usize,
     stride: usize,
 ) {
-    let mut v = [magetypes::simd::f32x4::zero(token); 16];
+    let mut v = [magetypes::simd::f32x4::zero_t(token); 16];
     for j in 0..16 {
         v[j] = gather_col_wasm128(token, data_in, base_row, j, stride);
     }
@@ -1449,9 +1449,9 @@ pub fn idct_16x8_wasm128(
     // With WASM128 (4-wide), we process 4 columns at a time.
     for col_base in (0..8).step_by(4) {
         // Gather 16 values from 4 columns into f32x4 vectors
-        let mut v = [magetypes::simd::f32x4::zero(token); 16];
+        let mut v = [magetypes::simd::f32x4::zero_t(token); 16];
         for row in 0..16 {
-            v[row] = magetypes::simd::f32x4::from_array(
+            v[row] = magetypes::simd::f32x4::from_array_t(
                 token,
                 [
                     tmp[row * 8 + col_base],
@@ -1494,9 +1494,9 @@ pub fn idct_8x16_wasm128(
     // Process 4 columns at a time (4 batches for 16 columns)
     for col_base in (0..16).step_by(4) {
         // Gather 8 values from 4 columns into f32x4 vectors
-        let mut v = [magetypes::simd::f32x4::zero(token); 8];
+        let mut v = [magetypes::simd::f32x4::zero_t(token); 8];
         for row in 0..8 {
-            v[row] = magetypes::simd::f32x4::from_array(
+            v[row] = magetypes::simd::f32x4::from_array_t(
                 token,
                 [
                     tmp[row * 16 + col_base],
