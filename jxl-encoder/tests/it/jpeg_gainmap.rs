@@ -42,6 +42,60 @@ fn reference_decode(input: &Path, output: &Path, reconstruct: bool) {
     );
 }
 
+/// The orientation a JXL file's or bare codestream's header signals, read with jxl-rs
+/// without applying it.
+fn header_orientation(data: &[u8]) -> String {
+    use jxl::api::{JxlDecoder, JxlDecoderOptions, ProcessingResult, states};
+    let mut input = data;
+    let mut options = JxlDecoderOptions::default();
+    options.adjust_orientation = false;
+    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+    let decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                assert!(!input.is_empty(), "jxl-rs: truncated header");
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs header decode error: {e:?}"),
+        }
+    };
+    format!("{:?}", decoder.basic_info().orientation)
+}
+
+/// `jpeg` with an Exif APP1 (after any JFIF APP0) whose IFD0 holds only `orientation`.
+fn with_exif_orientation(jpeg: &[u8], orientation: u16) -> Vec<u8> {
+    let mut exif = b"Exif\0\0II*\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0".to_vec();
+    exif.extend(orientation.to_le_bytes());
+    exif.extend([0, 0, 0, 0, 0, 0]);
+    let at = if jpeg[2..4] == [0xff, 0xe0] {
+        4 + u16::from_be_bytes([jpeg[4], jpeg[5]]) as usize
+    } else {
+        2
+    };
+    let mut out = jpeg[..at].to_vec();
+    out.extend([0xff, 0xe1]);
+    out.extend(u16::try_from(2 + exif.len()).unwrap().to_be_bytes());
+    out.extend(exif);
+    out.extend_from_slice(&jpeg[at..]);
+    out
+}
+
+/// The Exif orientation value for a jxl-rs orientation name.
+fn exif_value(orientation: &str) -> u16 {
+    match orientation {
+        "Identity" => 1,
+        "FlipHorizontal" => 2,
+        "Rotate180" => 3,
+        "FlipVertical" => 4,
+        "Transpose" => 5,
+        "Rotate90Cw" | "Rotate90CW" => 6,
+        "AntiTranspose" => 7,
+        "Rotate90Ccw" | "Rotate90CCW" => 8,
+        other => panic!("orientation {other}"),
+    }
+}
+
 fn verify(original: &[u8], dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
     let config = LosslessConfig::new().with_effort(3);
@@ -58,7 +112,22 @@ fn verify(original: &[u8], dir: &Path) {
         metadata, source_metadata,
         "preserve exact ISO rational bytes"
     );
-    let standalone = config.encode_jpeg_transcode_codestream(secondary).unwrap();
+    // The gain map takes the primary's orientation; with none it is the secondary's own
+    // transcode byte for byte.
+    let orientation = header_orientation(&encoded);
+    assert_eq!(
+        header_orientation(gain_map),
+        orientation,
+        "the gain-map codestream carries the primary's orientation"
+    );
+    let oriented_secondary = if orientation == "Identity" {
+        secondary.to_vec()
+    } else {
+        with_exif_orientation(secondary, exif_value(&orientation))
+    };
+    let standalone = config
+        .encode_jpeg_transcode_codestream(&oriented_secondary)
+        .unwrap();
     assert_eq!(gain_map, standalone);
     let gain_pixels = decode_jxl_rs(gain_map);
     let base_pixels = decode_jxl_rs(&encoded);
@@ -87,7 +156,7 @@ fn verify(original: &[u8], dir: &Path) {
         (gain.width() as usize, gain.height() as usize),
         (gain_pixels.0, gain_pixels.1)
     );
-    std::fs::write(dir.join("gain-map.jpg"), secondary).unwrap();
+    std::fs::write(dir.join("gain-map.jpg"), &oriented_secondary).unwrap();
     let result = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
         .arg(dir.join("gain-map.jpg"))
         .arg(dir.join("reference-gain-map.jxl"))
@@ -216,6 +285,32 @@ fn iso_gain_map_survives_container_and_jpeg_reconstruction() {
             jxl_encoder::jpeg::encode_jpeg_to_jxl_container_with_effort(&parsed, 3).unwrap()
         );
     }
+}
+
+/// A primary JPEG with Exif orientation 6 (a portrait phone photo stored landscape) and its
+/// gain map, stored the same way: the jhgm gain map must display in the base's orientation.
+#[test]
+fn iso_gain_map_follows_primary_orientation() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/jpeg-gainmap-validation");
+    let primary = with_exif_orientation(&jpeg_crop(64, 32), 6);
+    let secondary = with_iso_metadata(&jpeg_crop(64, 32));
+    let mut original = primary.clone();
+    original.extend_from_slice(&secondary);
+    verify(&original, &root.join("orientation-6"));
+    let encoded = LosslessConfig::new()
+        .with_effort(3)
+        .encode_jpeg_transcode(&original)
+        .unwrap();
+    let (_, gain_map) = gain_map_bundle(&encoded);
+    assert_eq!(header_orientation(&encoded), header_orientation(gain_map));
+    let base = decode_jxl_rs(&encoded);
+    let gain = decode_jxl_rs(gain_map);
+    assert_eq!((base.0, base.1), (32, 64), "the base displays rotated");
+    assert_eq!(
+        (gain.0, gain.1),
+        (32, 64),
+        "the gain map displays like the base"
+    );
 }
 
 #[cfg(feature = "corpus-tests")]

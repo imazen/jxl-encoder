@@ -106,7 +106,7 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
 ///
 /// Effort 0-8 is byte-identical to [`encode_jpeg_to_jxl`] (which uses effort 7).
 pub fn encode_jpeg_to_jxl_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, None, None)?;
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, None, None, None)?;
     Ok(codestream)
 }
 
@@ -122,8 +122,30 @@ pub(crate) fn encode_jpeg_to_jxl_with_effort_stop(
     stop: Option<&dyn Stop>,
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget)?;
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, None)?;
     Ok(codestream)
+}
+
+/// Like [`encode_jpeg_to_jxl_with_effort_stop`], with the codestream's orientation set to
+/// `orientation` instead of read from `jpeg`'s own Exif: an UltraHDR gain map takes its
+/// primary image's orientation, so a decoder that orients each codestream lines the two up.
+pub(crate) fn encode_jpeg_to_jxl_oriented_stop(
+    jpeg: &JpegData,
+    effort: u8,
+    orientation: crate::headers::file_header::Orientation,
+    stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<Vec<u8>> {
+    let (codestream, _split) =
+        encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, Some(orientation))?;
+    Ok(codestream)
+}
+
+/// The orientation `jpeg`'s Exif signals, as the transcode writes it into the codestream.
+pub(crate) fn jpeg_orientation(
+    jpeg: &JpegData,
+) -> Option<crate::headers::file_header::Orientation> {
+    super::jbrd::exif_payload(jpeg).and_then(exif_orientation)
 }
 
 /// Inner function that returns both codestream bytes and the file header size
@@ -138,6 +160,7 @@ fn encode_jpeg_to_jxl_inner(
     effort: u8,
     stop: Option<&dyn Stop>,
     budget: Option<&Arc<MemoryBudget>>,
+    orientation: Option<crate::headers::file_header::Orientation>,
 ) -> Result<(Vec<u8>, usize)> {
     if let Some(s) = stop {
         s.check().map_err(|_| crate::error::Error::Cancelled)?;
@@ -1212,7 +1235,9 @@ fn encode_jpeg_to_jxl_inner(
 
     // File header (write() includes the signature)
     let mut file_header = build_jpeg_file_header(width, height, is_gray);
-    if let Some(exif) = super::jbrd::exif_payload(jpeg) {
+    if let Some(orientation) = orientation {
+        file_header.metadata.orientation = orientation;
+    } else if let Some(exif) = super::jbrd::exif_payload(jpeg) {
         file_header.metadata.orientation = exif_orientation(exif).unwrap_or_default();
     }
     if icc_profile.is_some() {
@@ -1392,7 +1417,8 @@ pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
     budget: Option<&Arc<MemoryBudget>>,
     max_pixels: Option<u64>,
 ) -> Result<Vec<u8>> {
-    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget)?;
+    let (codestream, file_header_size) =
+        encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, None)?;
     let jbrd = encode_jbrd(jpeg)?;
     let exif = extract_exif(jpeg);
     let xmp = extract_xmp(jpeg);

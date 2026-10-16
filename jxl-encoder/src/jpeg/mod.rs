@@ -23,7 +23,8 @@ pub use encode::{
 // Cancellable (Stop-polling) variants — internal; the public transcode entry
 // points in `api.rs` use these for `*_with_stop`. See issue #77 item 2.
 pub(crate) use encode::{
-    encode_jpeg_to_jxl_container_with_effort_stop, encode_jpeg_to_jxl_with_effort_stop,
+    encode_jpeg_to_jxl_container_with_effort_stop, encode_jpeg_to_jxl_oriented_stop,
+    encode_jpeg_to_jxl_with_effort_stop, jpeg_orientation,
 };
 pub use lossy::{
     coarsen_coefficients, coarsen_coefficients_auto, coarsen_coefficients_dz,

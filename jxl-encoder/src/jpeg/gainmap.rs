@@ -8,7 +8,10 @@ use alloc::vec::Vec;
 use enough::Stop;
 use zenjpeg::container::marker::{self, MarkerKind};
 
-use super::{JpegData, JpegError, encode_jpeg_to_jxl_with_effort_stop, read_jpeg_with_stop};
+use super::{
+    JpegData, JpegError, encode_jpeg_to_jxl_oriented_stop, encode_jpeg_to_jxl_with_effort_stop,
+    jpeg_orientation, read_jpeg_with_stop,
+};
 use crate::budget::{MemoryBudget, vec_with_capacity_fallible};
 use crate::error::{Error, Result};
 use crate::hdr::GainMapBundle;
@@ -118,7 +121,17 @@ pub(super) fn append(
             }
             other => invalid(format!("gain-map JPEG: {other}")),
         })?;
-    let codestream = encode_jpeg_to_jxl_with_effort_stop(&gain_map, effort, stop, budget)?;
+    // The gain map is stored like the primary's pixels, before the primary's Exif
+    // orientation. The primary codestream carries that orientation in its header, so the
+    // gain-map codestream carries it too: a decoder that orients each codestream (the JXL
+    // default) then gets a gain map that lines up with the displayed base. A primary without
+    // an orientation leaves the gain map's own.
+    let codestream = match jpeg_orientation(jpeg) {
+        Some(orientation) => {
+            encode_jpeg_to_jxl_oriented_stop(&gain_map, effort, orientation, stop, budget)?
+        }
+        None => encode_jpeg_to_jxl_with_effort_stop(&gain_map, effort, stop, budget)?,
+    };
     drop(gain_map);
     poll(stop)?;
     // Copy the ISO rational representation verbatim. Parsing and serializing
