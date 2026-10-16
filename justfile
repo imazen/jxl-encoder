@@ -359,8 +359,15 @@ arm-kernel-tiers-macos group="":
     CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p jxl-encoder-simd --bench kernel_tiers -- --group='{{group}}' --format=llm > "$HOME/tmp/jxl-encoder-kernel-tiers.log" 2>&1
 
 arm-encode-tiers-macos:
-    mkdir -p "$HOME/tmp"
-    CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" nice -n 19 cargo bench --locked -p jxl-encoder --features _dev --bench tier_isolation -- --format=llm > "$HOME/tmp/jxl-encoder-full-tiers.log" 2>&1
+    #!/usr/bin/env bash
+    set -euo pipefail
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    artifact_dir="$HOME/tmp/jxl-encoder-arm-audit-$stamp"
+    log="$HOME/tmp/jxl-encoder-full-tiers-$stamp.log"
+    mkdir -p "$artifact_dir"
+    CODEC_BENCH_ARTIFACT_DIR="$artifact_dir" CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=4 OMP_NUM_THREADS=4 TMPDIR="$HOME/tmp" \
+      nice -n 19 cargo bench -p jxl-encoder --features _dev --bench tier_isolation -- --cpu-policy=unrestricted --format=llm > "$log" 2>&1
+    printf 'Benchmark log: %s\nBitstreams: %s\n' "$log" "$artifact_dir"
 
 # Issue 103: local validation with explicit reference tools and caller filters.
 issue103-test *args:
