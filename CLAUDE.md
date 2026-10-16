@@ -1198,6 +1198,20 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-10-16: ship-gate CI source closure and ARM checks
+
+The native research example's updated zensim/zenpredict dependencies require the
+matching frozen sibling revisions and lockfile; resolving against mutable local
+siblings did not verify CI's locked source closure. The corrected closure passes
+local locked metadata and strict native Clippy (`5c18e3b6`). CI then exposed
+remaining ARM-only deprecated token constructors and a bundled libpng preprocessor
+include path: pinned libjxl v0.12's placeholder ZLIB_INCLUDE_DIR propagated to
+FindZLIB instead of the source/generated header directories. Keep all existing
+warnings-as-errors and reference-tool requirements. ARM constructor and Windows
+reference-build repairs are under verification; do not infer remote success from
+an x86 build.
+
+
 ### 2026-09-26: RD gate evidence repair and #114 reproduction
 
 The distance gate previously passed empty runs, incomplete/duplicate ladders
