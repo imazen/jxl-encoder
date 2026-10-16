@@ -7,7 +7,7 @@ runs:
       id: tools
       with:
         path: .ci-libjxl/tools
-        key: libjxl-v0.12.0-${{ runner.os }}-${{ runner.arch }}-v1
+        key: libjxl-v0.12.0-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'Windows' && runner.arch == 'ARM64' && 'v2' || 'v1' }}
 
     - name: Download static Linux x64 reference tools
       if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Linux' && runner.arch == 'X64'
@@ -22,7 +22,7 @@ runs:
         tar --lzip -xf .ci-libjxl/linux.tar.lz -C .ci-libjxl/tools
 
     - name: Download static Windows reference tools
-      if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Windows' && runner.arch == 'X64'
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force .ci-libjxl/tools | Out-Null
@@ -31,8 +31,8 @@ runs:
         if ($digest -ne '3025d7e308390796d20492322e606bc92decaee7b6bc99d3f7547870ae5db7de') { throw 'libjxl archive checksum mismatch' }
         Expand-Archive .ci-libjxl/windows.zip -DestinationPath .ci-libjxl/tools
 
-    - name: Check out pinned source for macOS and Linux ARM
-      if: steps.tools.outputs.cache-hit != 'true' && (runner.os == 'macOS' || (runner.os == 'Linux' && runner.arch == 'ARM64'))
+    - name: Check out pinned source for macOS, Linux ARM and Windows ARM
+      if: steps.tools.outputs.cache-hit != 'true' && (runner.os == 'macOS' || (runner.os == 'Linux' && runner.arch == 'ARM64') || (runner.os == 'Windows' && runner.arch == 'ARM64'))
       uses: actions/checkout@v7
       with:
         repository: libjxl/libjxl
@@ -56,6 +56,23 @@ runs:
         nice -n 19 cmake --build .ci-libjxl/build --target cjxl djxl --parallel 4
         mkdir -p .ci-libjxl/tools
         cp .ci-libjxl/build/tools/cjxl .ci-libjxl/build/tools/djxl .ci-libjxl/tools/
+
+    - name: Build native reference tools for Windows ARM
+      if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Windows' && runner.arch == 'ARM64'
+      shell: pwsh
+      run: |
+        cmake -S .ci-libjxl/source -B .ci-libjxl/build -G 'Visual Studio 18 2026' -A ARM64 `
+          -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF `
+          -DJPEGXL_ENABLE_TOOLS=ON -DJPEGXL_ENABLE_BENCHMARK=OFF `
+          -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_JNI=OFF `
+          -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SJPEG=OFF `
+          -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF `
+          -DJPEGXL_BUNDLE_LIBPNG=ON -DJPEGXL_ENABLE_SKCMS=ON
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        cmake --build .ci-libjxl/build --config Release --target cjxl djxl --parallel 4
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        New-Item -ItemType Directory -Force .ci-libjxl/tools | Out-Null
+        Copy-Item .ci-libjxl/build/tools/Release/cjxl.exe, .ci-libjxl/build/tools/Release/djxl.exe .ci-libjxl/tools/
 
     - name: Verify versions and export reference paths
       shell: bash
