@@ -305,13 +305,13 @@ pub fn epf_step2_avx2(
         return;
     }
 
-    let ch_w_x = f32x8::splat(token, EPF_CHANNEL_SCALE[0]);
-    let ch_w_y = f32x8::splat(token, EPF_CHANNEL_SCALE[1]);
-    let ch_w_b = f32x8::splat(token, EPF_CHANNEL_SCALE[2]);
-    let one = f32x8::splat(token, 1.0);
-    let zero_v = f32x8::zero(token);
+    let ch_w_x = f32x8::splat_t(token, EPF_CHANNEL_SCALE[0]);
+    let ch_w_y = f32x8::splat_t(token, EPF_CHANNEL_SCALE[1]);
+    let ch_w_b = f32x8::splat_t(token, EPF_CHANNEL_SCALE[2]);
+    let one = f32x8::splat_t(token, 1.0);
+    let zero_v = f32x8::zero_t(token);
 
-    let sm_interior = f32x8::from_array(
+    let sm_interior = f32x8::from_array_t(
         token,
         [
             sigma_scale * border_sigma_mul,
@@ -324,7 +324,7 @@ pub fn epf_step2_avx2(
             sigma_scale * border_sigma_mul,
         ],
     );
-    let sm_border_row = f32x8::splat(token, sigma_scale * border_sigma_mul);
+    let sm_border_row = f32x8::splat_t(token, sigma_scale * border_sigma_mul);
 
     let block_dim = 8usize;
 
@@ -362,7 +362,7 @@ pub fn epf_step2_avx2(
                 continue;
             }
 
-            let is_v = f32x8::splat(token, is);
+            let is_v = f32x8::splat_t(token, is);
             let eff_is = is_v * sm_vec;
 
             let cx = load_f32x8(token, in_x, r0 + x);
@@ -804,13 +804,13 @@ pub fn epf_step1_avx2(
         return;
     }
 
-    let ch_w_x = f32x8::splat(token, EPF_CHANNEL_SCALE[0]);
-    let ch_w_y = f32x8::splat(token, EPF_CHANNEL_SCALE[1]);
-    let ch_w_b = f32x8::splat(token, EPF_CHANNEL_SCALE[2]);
-    let one = f32x8::splat(token, 1.0);
-    let zero_v = f32x8::zero(token);
+    let ch_w_x = f32x8::splat_t(token, EPF_CHANNEL_SCALE[0]);
+    let ch_w_y = f32x8::splat_t(token, EPF_CHANNEL_SCALE[1]);
+    let ch_w_b = f32x8::splat_t(token, EPF_CHANNEL_SCALE[2]);
+    let one = f32x8::splat_t(token, 1.0);
+    let zero_v = f32x8::zero_t(token);
 
-    let sm_interior = f32x8::from_array(
+    let sm_interior = f32x8::from_array_t(
         token,
         [
             sigma_scale * border_sigma_mul,
@@ -823,7 +823,7 @@ pub fn epf_step1_avx2(
             sigma_scale * border_sigma_mul,
         ],
     );
-    let sm_border_row = f32x8::splat(token, sigma_scale * border_sigma_mul);
+    let sm_border_row = f32x8::splat_t(token, sigma_scale * border_sigma_mul);
 
     let block_dim = 8usize;
 
@@ -863,7 +863,7 @@ pub fn epf_step1_avx2(
                 continue;
             }
 
-            let is_v = f32x8::splat(token, is);
+            let is_v = f32x8::splat_t(token, is);
             let eff_is = is_v * sm_vec;
 
             let cx = load_f32x8(token, in_x, r_0 + x);
@@ -982,13 +982,13 @@ pub fn epf_step2_neon(
         return;
     }
 
-    let ch_w_x = f32x4::splat(token, EPF_CHANNEL_SCALE[0]);
-    let ch_w_y = f32x4::splat(token, EPF_CHANNEL_SCALE[1]);
-    let ch_w_b = f32x4::splat(token, EPF_CHANNEL_SCALE[2]);
-    let one = f32x4::splat(token, 1.0);
-    let zero_v = f32x4::zero(token);
+    let ch_w_x = f32x4::splat_t(token, EPF_CHANNEL_SCALE[0]);
+    let ch_w_y = f32x4::splat_t(token, EPF_CHANNEL_SCALE[1]);
+    let ch_w_b = f32x4::splat_t(token, EPF_CHANNEL_SCALE[2]);
+    let one = f32x4::splat_t(token, 1.0);
+    let zero_v = f32x4::zero_t(token);
 
-    let sm_interior_lo = f32x4::from_array(
+    let sm_interior_lo = f32x4::from_array_t(
         token,
         [
             sigma_scale * border_sigma_mul,
@@ -997,7 +997,7 @@ pub fn epf_step2_neon(
             sigma_scale,
         ],
     );
-    let sm_interior_hi = f32x4::from_array(
+    let sm_interior_hi = f32x4::from_array_t(
         token,
         [
             sigma_scale,
@@ -1006,7 +1006,7 @@ pub fn epf_step2_neon(
             sigma_scale * border_sigma_mul,
         ],
     );
-    let sm_border_row = f32x4::splat(token, sigma_scale * border_sigma_mul);
+    let sm_border_row = f32x4::splat_t(token, sigma_scale * border_sigma_mul);
 
     let block_dim = 8usize;
 
@@ -1036,7 +1036,7 @@ pub fn epf_step2_neon(
                 continue;
             }
 
-            let is_v = f32x4::splat(token, is);
+            let is_v = f32x4::splat_t(token, is);
 
             for half in 0..2usize {
                 let hx = x + half * 4;
@@ -1049,9 +1049,9 @@ pub fn epf_step2_neon(
                 };
                 let eff_is = is_v * sm_vec;
 
-                let cx = f32x4::from_slice(token, &in_x[r0 + hx..]);
-                let cy = f32x4::from_slice(token, &in_y[r0 + hx..]);
-                let cb = f32x4::from_slice(token, &in_b[r0 + hx..]);
+                let cx = f32x4::from_slice_t(token, &in_x[r0 + hx..]);
+                let cy = f32x4::from_slice_t(token, &in_y[r0 + hx..]);
+                let cb = f32x4::from_slice_t(token, &in_b[r0 + hx..]);
 
                 let mut sum_x = cx;
                 let mut sum_y = cy;
@@ -1059,9 +1059,9 @@ pub fn epf_step2_neon(
                 let mut total_w = one;
 
                 // Top
-                let nx = f32x4::from_slice(token, &in_x[rt + hx..]);
-                let ny = f32x4::from_slice(token, &in_y[rt + hx..]);
-                let nb = f32x4::from_slice(token, &in_b[rt + hx..]);
+                let nx = f32x4::from_slice_t(token, &in_x[rt + hx..]);
+                let ny = f32x4::from_slice_t(token, &in_y[rt + hx..]);
+                let nb = f32x4::from_slice_t(token, &in_b[rt + hx..]);
                 let sad =
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
@@ -1071,9 +1071,9 @@ pub fn epf_step2_neon(
                 sum_b = w.mul_add(nb, sum_b);
 
                 // Bottom
-                let nx = f32x4::from_slice(token, &in_x[rb + hx..]);
-                let ny = f32x4::from_slice(token, &in_y[rb + hx..]);
-                let nb = f32x4::from_slice(token, &in_b[rb + hx..]);
+                let nx = f32x4::from_slice_t(token, &in_x[rb + hx..]);
+                let ny = f32x4::from_slice_t(token, &in_y[rb + hx..]);
+                let nb = f32x4::from_slice_t(token, &in_b[rb + hx..]);
                 let sad =
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
@@ -1083,9 +1083,9 @@ pub fn epf_step2_neon(
                 sum_b = w.mul_add(nb, sum_b);
 
                 // Left
-                let nx = f32x4::from_slice(token, &in_x[r0 + hx - 1..]);
-                let ny = f32x4::from_slice(token, &in_y[r0 + hx - 1..]);
-                let nb = f32x4::from_slice(token, &in_b[r0 + hx - 1..]);
+                let nx = f32x4::from_slice_t(token, &in_x[r0 + hx - 1..]);
+                let ny = f32x4::from_slice_t(token, &in_y[r0 + hx - 1..]);
+                let nb = f32x4::from_slice_t(token, &in_b[r0 + hx - 1..]);
                 let sad =
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
@@ -1095,9 +1095,9 @@ pub fn epf_step2_neon(
                 sum_b = w.mul_add(nb, sum_b);
 
                 // Right
-                let nx = f32x4::from_slice(token, &in_x[r0 + hx + 1..]);
-                let ny = f32x4::from_slice(token, &in_y[r0 + hx + 1..]);
-                let nb = f32x4::from_slice(token, &in_b[r0 + hx + 1..]);
+                let nx = f32x4::from_slice_t(token, &in_x[r0 + hx + 1..]);
+                let ny = f32x4::from_slice_t(token, &in_y[r0 + hx + 1..]);
+                let nb = f32x4::from_slice_t(token, &in_b[r0 + hx + 1..]);
                 let sad =
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
@@ -1155,23 +1155,23 @@ fn sad_3x3_plus_neon(
     // Plus pattern: (0,0), (-1,0), (0,-1), (1,0), (0,1)
     // Position (0,0): center row, x vs neighbor row, nx
     let mut sad = {
-        let c0x = f32x4::from_slice(token, &in_x[cx0..]);
-        let c0y = f32x4::from_slice(token, &in_y[cx0..]);
-        let c0b = f32x4::from_slice(token, &in_b[cx0..]);
-        let n0x = f32x4::from_slice(token, &in_x[nx0..]);
-        let n0y = f32x4::from_slice(token, &in_y[nx0..]);
-        let n0b = f32x4::from_slice(token, &in_b[nx0..]);
+        let c0x = f32x4::from_slice_t(token, &in_x[cx0..]);
+        let c0y = f32x4::from_slice_t(token, &in_y[cx0..]);
+        let c0b = f32x4::from_slice_t(token, &in_b[cx0..]);
+        let n0x = f32x4::from_slice_t(token, &in_x[nx0..]);
+        let n0y = f32x4::from_slice_t(token, &in_y[nx0..]);
+        let n0b = f32x4::from_slice_t(token, &in_b[nx0..]);
         (c0x - n0x).abs() * ch_w_x + (c0y - n0y).abs() * ch_w_y + (c0b - n0b).abs() * ch_w_b
     };
 
     // Position (-1,0): same rows, x-1 vs nx-1
     {
-        let c1x = f32x4::from_slice(token, &in_x[cx_m1..]);
-        let c1y = f32x4::from_slice(token, &in_y[cx_m1..]);
-        let c1b = f32x4::from_slice(token, &in_b[cx_m1..]);
-        let n1x = f32x4::from_slice(token, &in_x[nx_m1..]);
-        let n1y = f32x4::from_slice(token, &in_y[nx_m1..]);
-        let n1b = f32x4::from_slice(token, &in_b[nx_m1..]);
+        let c1x = f32x4::from_slice_t(token, &in_x[cx_m1..]);
+        let c1y = f32x4::from_slice_t(token, &in_y[cx_m1..]);
+        let c1b = f32x4::from_slice_t(token, &in_b[cx_m1..]);
+        let n1x = f32x4::from_slice_t(token, &in_x[nx_m1..]);
+        let n1y = f32x4::from_slice_t(token, &in_y[nx_m1..]);
+        let n1b = f32x4::from_slice_t(token, &in_b[nx_m1..]);
         sad = sad
             + (c1x - n1x).abs() * ch_w_x
             + (c1y - n1y).abs() * ch_w_y
@@ -1180,12 +1180,12 @@ fn sad_3x3_plus_neon(
 
     // Position (0,-1): row y-1, x vs row ndy-1, nx
     {
-        let c2x = f32x4::from_slice(token, &in_x[c_rm1 + x..]);
-        let c2y = f32x4::from_slice(token, &in_y[c_rm1 + x..]);
-        let c2b = f32x4::from_slice(token, &in_b[c_rm1 + x..]);
-        let n2x = f32x4::from_slice(token, &in_x[(n_rm1 as isize + x as isize + ndx) as usize..]);
-        let n2y = f32x4::from_slice(token, &in_y[(n_rm1 as isize + x as isize + ndx) as usize..]);
-        let n2b = f32x4::from_slice(token, &in_b[(n_rm1 as isize + x as isize + ndx) as usize..]);
+        let c2x = f32x4::from_slice_t(token, &in_x[c_rm1 + x..]);
+        let c2y = f32x4::from_slice_t(token, &in_y[c_rm1 + x..]);
+        let c2b = f32x4::from_slice_t(token, &in_b[c_rm1 + x..]);
+        let n2x = f32x4::from_slice_t(token, &in_x[(n_rm1 as isize + x as isize + ndx) as usize..]);
+        let n2y = f32x4::from_slice_t(token, &in_y[(n_rm1 as isize + x as isize + ndx) as usize..]);
+        let n2b = f32x4::from_slice_t(token, &in_b[(n_rm1 as isize + x as isize + ndx) as usize..]);
         sad = sad
             + (c2x - n2x).abs() * ch_w_x
             + (c2y - n2y).abs() * ch_w_y
@@ -1194,12 +1194,12 @@ fn sad_3x3_plus_neon(
 
     // Position (1,0): same rows, x+1 vs nx+1
     {
-        let c3x = f32x4::from_slice(token, &in_x[cx_p1..]);
-        let c3y = f32x4::from_slice(token, &in_y[cx_p1..]);
-        let c3b = f32x4::from_slice(token, &in_b[cx_p1..]);
-        let n3x = f32x4::from_slice(token, &in_x[nx_p1..]);
-        let n3y = f32x4::from_slice(token, &in_y[nx_p1..]);
-        let n3b = f32x4::from_slice(token, &in_b[nx_p1..]);
+        let c3x = f32x4::from_slice_t(token, &in_x[cx_p1..]);
+        let c3y = f32x4::from_slice_t(token, &in_y[cx_p1..]);
+        let c3b = f32x4::from_slice_t(token, &in_b[cx_p1..]);
+        let n3x = f32x4::from_slice_t(token, &in_x[nx_p1..]);
+        let n3y = f32x4::from_slice_t(token, &in_y[nx_p1..]);
+        let n3b = f32x4::from_slice_t(token, &in_b[nx_p1..]);
         sad = sad
             + (c3x - n3x).abs() * ch_w_x
             + (c3y - n3y).abs() * ch_w_y
@@ -1208,12 +1208,12 @@ fn sad_3x3_plus_neon(
 
     // Position (0,1): row y+1, x vs row ndy+1, nx
     {
-        let c4x = f32x4::from_slice(token, &in_x[c_rp1 + x..]);
-        let c4y = f32x4::from_slice(token, &in_y[c_rp1 + x..]);
-        let c4b = f32x4::from_slice(token, &in_b[c_rp1 + x..]);
-        let n4x = f32x4::from_slice(token, &in_x[(n_rp1 as isize + x as isize + ndx) as usize..]);
-        let n4y = f32x4::from_slice(token, &in_y[(n_rp1 as isize + x as isize + ndx) as usize..]);
-        let n4b = f32x4::from_slice(token, &in_b[(n_rp1 as isize + x as isize + ndx) as usize..]);
+        let c4x = f32x4::from_slice_t(token, &in_x[c_rp1 + x..]);
+        let c4y = f32x4::from_slice_t(token, &in_y[c_rp1 + x..]);
+        let c4b = f32x4::from_slice_t(token, &in_b[c_rp1 + x..]);
+        let n4x = f32x4::from_slice_t(token, &in_x[(n_rp1 as isize + x as isize + ndx) as usize..]);
+        let n4y = f32x4::from_slice_t(token, &in_y[(n_rp1 as isize + x as isize + ndx) as usize..]);
+        let n4b = f32x4::from_slice_t(token, &in_b[(n_rp1 as isize + x as isize + ndx) as usize..]);
         sad = sad
             + (c4x - n4x).abs() * ch_w_x
             + (c4y - n4y).abs() * ch_w_y
@@ -1250,13 +1250,13 @@ pub fn epf_step1_neon(
         return;
     }
 
-    let ch_w_x = f32x4::splat(token, EPF_CHANNEL_SCALE[0]);
-    let ch_w_y = f32x4::splat(token, EPF_CHANNEL_SCALE[1]);
-    let ch_w_b = f32x4::splat(token, EPF_CHANNEL_SCALE[2]);
-    let one = f32x4::splat(token, 1.0);
-    let zero_v = f32x4::zero(token);
+    let ch_w_x = f32x4::splat_t(token, EPF_CHANNEL_SCALE[0]);
+    let ch_w_y = f32x4::splat_t(token, EPF_CHANNEL_SCALE[1]);
+    let ch_w_b = f32x4::splat_t(token, EPF_CHANNEL_SCALE[2]);
+    let one = f32x4::splat_t(token, 1.0);
+    let zero_v = f32x4::zero_t(token);
 
-    let sm_interior_lo = f32x4::from_array(
+    let sm_interior_lo = f32x4::from_array_t(
         token,
         [
             sigma_scale * border_sigma_mul,
@@ -1265,7 +1265,7 @@ pub fn epf_step1_neon(
             sigma_scale,
         ],
     );
-    let sm_interior_hi = f32x4::from_array(
+    let sm_interior_hi = f32x4::from_array_t(
         token,
         [
             sigma_scale,
@@ -1274,7 +1274,7 @@ pub fn epf_step1_neon(
             sigma_scale * border_sigma_mul,
         ],
     );
-    let sm_border_row = f32x4::splat(token, sigma_scale * border_sigma_mul);
+    let sm_border_row = f32x4::splat_t(token, sigma_scale * border_sigma_mul);
 
     let block_dim = 8usize;
 
@@ -1309,7 +1309,7 @@ pub fn epf_step1_neon(
                 continue;
             }
 
-            let is_v = f32x4::splat(token, is);
+            let is_v = f32x4::splat_t(token, is);
 
             for half in 0..2usize {
                 let hx = x + half * 4;
@@ -1322,9 +1322,9 @@ pub fn epf_step1_neon(
                 };
                 let eff_is = is_v * sm_vec;
 
-                let cx = f32x4::from_slice(token, &in_x[r_0 + hx..]);
-                let cy = f32x4::from_slice(token, &in_y[r_0 + hx..]);
-                let cb = f32x4::from_slice(token, &in_b[r_0 + hx..]);
+                let cx = f32x4::from_slice_t(token, &in_x[r_0 + hx..]);
+                let cy = f32x4::from_slice_t(token, &in_y[r_0 + hx..]);
+                let cb = f32x4::from_slice_t(token, &in_b[r_0 + hx..]);
 
                 let mut sum_x = cx;
                 let mut sum_y = cy;
@@ -1339,9 +1339,9 @@ pub fn epf_step1_neon(
                     );
                     let w = (sad * eff_is + one).max(zero_v);
                     total_w += w;
-                    let nx = f32x4::from_slice(token, &in_x[r_m1 + hx..]);
-                    let ny = f32x4::from_slice(token, &in_y[r_m1 + hx..]);
-                    let nb = f32x4::from_slice(token, &in_b[r_m1 + hx..]);
+                    let nx = f32x4::from_slice_t(token, &in_x[r_m1 + hx..]);
+                    let ny = f32x4::from_slice_t(token, &in_y[r_m1 + hx..]);
+                    let nb = f32x4::from_slice_t(token, &in_b[r_m1 + hx..]);
                     sum_x = w.mul_add(nx, sum_x);
                     sum_y = w.mul_add(ny, sum_y);
                     sum_b = w.mul_add(nb, sum_b);
@@ -1355,9 +1355,9 @@ pub fn epf_step1_neon(
                     );
                     let w = (sad * eff_is + one).max(zero_v);
                     total_w += w;
-                    let nx = f32x4::from_slice(token, &in_x[r_p1 + hx..]);
-                    let ny = f32x4::from_slice(token, &in_y[r_p1 + hx..]);
-                    let nb = f32x4::from_slice(token, &in_b[r_p1 + hx..]);
+                    let nx = f32x4::from_slice_t(token, &in_x[r_p1 + hx..]);
+                    let ny = f32x4::from_slice_t(token, &in_y[r_p1 + hx..]);
+                    let nb = f32x4::from_slice_t(token, &in_b[r_p1 + hx..]);
                     sum_x = w.mul_add(nx, sum_x);
                     sum_y = w.mul_add(ny, sum_y);
                     sum_b = w.mul_add(nb, sum_b);
@@ -1371,9 +1371,9 @@ pub fn epf_step1_neon(
                     );
                     let w = (sad * eff_is + one).max(zero_v);
                     total_w += w;
-                    let nx = f32x4::from_slice(token, &in_x[r_0 + hx - 1..]);
-                    let ny = f32x4::from_slice(token, &in_y[r_0 + hx - 1..]);
-                    let nb = f32x4::from_slice(token, &in_b[r_0 + hx - 1..]);
+                    let nx = f32x4::from_slice_t(token, &in_x[r_0 + hx - 1..]);
+                    let ny = f32x4::from_slice_t(token, &in_y[r_0 + hx - 1..]);
+                    let nb = f32x4::from_slice_t(token, &in_b[r_0 + hx - 1..]);
                     sum_x = w.mul_add(nx, sum_x);
                     sum_y = w.mul_add(ny, sum_y);
                     sum_b = w.mul_add(nb, sum_b);
@@ -1387,9 +1387,9 @@ pub fn epf_step1_neon(
                     );
                     let w = (sad * eff_is + one).max(zero_v);
                     total_w += w;
-                    let nx = f32x4::from_slice(token, &in_x[r_0 + hx + 1..]);
-                    let ny = f32x4::from_slice(token, &in_y[r_0 + hx + 1..]);
-                    let nb = f32x4::from_slice(token, &in_b[r_0 + hx + 1..]);
+                    let nx = f32x4::from_slice_t(token, &in_x[r_0 + hx + 1..]);
+                    let ny = f32x4::from_slice_t(token, &in_y[r_0 + hx + 1..]);
+                    let nb = f32x4::from_slice_t(token, &in_b[r_0 + hx + 1..]);
                     sum_x = w.mul_add(nx, sum_x);
                     sum_y = w.mul_add(ny, sum_y);
                     sum_b = w.mul_add(nb, sum_b);
@@ -1439,13 +1439,13 @@ pub fn epf_step2_wasm128(
         return;
     }
 
-    let ch_w_x = f32x4::splat(token, EPF_CHANNEL_SCALE[0]);
-    let ch_w_y = f32x4::splat(token, EPF_CHANNEL_SCALE[1]);
-    let ch_w_b = f32x4::splat(token, EPF_CHANNEL_SCALE[2]);
-    let one = f32x4::splat(token, 1.0);
-    let zero_v = f32x4::zero(token);
+    let ch_w_x = f32x4::splat_t(token, EPF_CHANNEL_SCALE[0]);
+    let ch_w_y = f32x4::splat_t(token, EPF_CHANNEL_SCALE[1]);
+    let ch_w_b = f32x4::splat_t(token, EPF_CHANNEL_SCALE[2]);
+    let one = f32x4::splat_t(token, 1.0);
+    let zero_v = f32x4::zero_t(token);
 
-    let sm_interior_lo = f32x4::from_array(
+    let sm_interior_lo = f32x4::from_array_t(
         token,
         [
             sigma_scale * border_sigma_mul,
@@ -1454,7 +1454,7 @@ pub fn epf_step2_wasm128(
             sigma_scale,
         ],
     );
-    let sm_interior_hi = f32x4::from_array(
+    let sm_interior_hi = f32x4::from_array_t(
         token,
         [
             sigma_scale,
@@ -1463,7 +1463,7 @@ pub fn epf_step2_wasm128(
             sigma_scale * border_sigma_mul,
         ],
     );
-    let sm_border_row = f32x4::splat(token, sigma_scale * border_sigma_mul);
+    let sm_border_row = f32x4::splat_t(token, sigma_scale * border_sigma_mul);
 
     let block_dim = 8usize;
 
@@ -1493,7 +1493,7 @@ pub fn epf_step2_wasm128(
                 continue;
             }
 
-            let is_v = f32x4::splat(token, is);
+            let is_v = f32x4::splat_t(token, is);
 
             for half in 0..2usize {
                 let hx = x + half * 4;
@@ -1506,9 +1506,9 @@ pub fn epf_step2_wasm128(
                 };
                 let eff_is = is_v * sm_vec;
 
-                let cx = f32x4::from_slice(token, &in_x[r0 + hx..]);
-                let cy = f32x4::from_slice(token, &in_y[r0 + hx..]);
-                let cb = f32x4::from_slice(token, &in_b[r0 + hx..]);
+                let cx = f32x4::from_slice_t(token, &in_x[r0 + hx..]);
+                let cy = f32x4::from_slice_t(token, &in_y[r0 + hx..]);
+                let cb = f32x4::from_slice_t(token, &in_b[r0 + hx..]);
 
                 let mut sum_x = cx;
                 let mut sum_y = cy;
@@ -1516,9 +1516,9 @@ pub fn epf_step2_wasm128(
                 let mut total_w = one;
 
                 // Top
-                let nx = f32x4::from_slice(token, &in_x[rt + hx..]);
-                let ny = f32x4::from_slice(token, &in_y[rt + hx..]);
-                let nb = f32x4::from_slice(token, &in_b[rt + hx..]);
+                let nx = f32x4::from_slice_t(token, &in_x[rt + hx..]);
+                let ny = f32x4::from_slice_t(token, &in_y[rt + hx..]);
+                let nb = f32x4::from_slice_t(token, &in_b[rt + hx..]);
                 let sad =
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
@@ -1528,9 +1528,9 @@ pub fn epf_step2_wasm128(
                 sum_b = w.mul_add(nb, sum_b);
 
                 // Bottom
-                let nx = f32x4::from_slice(token, &in_x[rb + hx..]);
-                let ny = f32x4::from_slice(token, &in_y[rb + hx..]);
-                let nb = f32x4::from_slice(token, &in_b[rb + hx..]);
+                let nx = f32x4::from_slice_t(token, &in_x[rb + hx..]);
+                let ny = f32x4::from_slice_t(token, &in_y[rb + hx..]);
+                let nb = f32x4::from_slice_t(token, &in_b[rb + hx..]);
                 let sad =
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
@@ -1540,9 +1540,9 @@ pub fn epf_step2_wasm128(
                 sum_b = w.mul_add(nb, sum_b);
 
                 // Left
-                let nx = f32x4::from_slice(token, &in_x[r0 + hx - 1..]);
-                let ny = f32x4::from_slice(token, &in_y[r0 + hx - 1..]);
-                let nb = f32x4::from_slice(token, &in_b[r0 + hx - 1..]);
+                let nx = f32x4::from_slice_t(token, &in_x[r0 + hx - 1..]);
+                let ny = f32x4::from_slice_t(token, &in_y[r0 + hx - 1..]);
+                let nb = f32x4::from_slice_t(token, &in_b[r0 + hx - 1..]);
                 let sad =
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
@@ -1552,9 +1552,9 @@ pub fn epf_step2_wasm128(
                 sum_b = w.mul_add(nb, sum_b);
 
                 // Right
-                let nx = f32x4::from_slice(token, &in_x[r0 + hx + 1..]);
-                let ny = f32x4::from_slice(token, &in_y[r0 + hx + 1..]);
-                let nb = f32x4::from_slice(token, &in_b[r0 + hx + 1..]);
+                let nx = f32x4::from_slice_t(token, &in_x[r0 + hx + 1..]);
+                let ny = f32x4::from_slice_t(token, &in_y[r0 + hx + 1..]);
+                let nb = f32x4::from_slice_t(token, &in_b[r0 + hx + 1..]);
                 let sad =
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
@@ -1612,23 +1612,23 @@ fn sad_3x3_plus_wasm128(
     // Plus pattern: (0,0), (-1,0), (0,-1), (1,0), (0,1)
     // Position (0,0): center row, x vs neighbor row, nx
     let mut sad = {
-        let c0x = f32x4::from_slice(token, &in_x[cx0..]);
-        let c0y = f32x4::from_slice(token, &in_y[cx0..]);
-        let c0b = f32x4::from_slice(token, &in_b[cx0..]);
-        let n0x = f32x4::from_slice(token, &in_x[nx0..]);
-        let n0y = f32x4::from_slice(token, &in_y[nx0..]);
-        let n0b = f32x4::from_slice(token, &in_b[nx0..]);
+        let c0x = f32x4::from_slice_t(token, &in_x[cx0..]);
+        let c0y = f32x4::from_slice_t(token, &in_y[cx0..]);
+        let c0b = f32x4::from_slice_t(token, &in_b[cx0..]);
+        let n0x = f32x4::from_slice_t(token, &in_x[nx0..]);
+        let n0y = f32x4::from_slice_t(token, &in_y[nx0..]);
+        let n0b = f32x4::from_slice_t(token, &in_b[nx0..]);
         (c0x - n0x).abs() * ch_w_x + (c0y - n0y).abs() * ch_w_y + (c0b - n0b).abs() * ch_w_b
     };
 
     // Position (-1,0): same rows, x-1 vs nx-1
     {
-        let c1x = f32x4::from_slice(token, &in_x[cx_m1..]);
-        let c1y = f32x4::from_slice(token, &in_y[cx_m1..]);
-        let c1b = f32x4::from_slice(token, &in_b[cx_m1..]);
-        let n1x = f32x4::from_slice(token, &in_x[nx_m1..]);
-        let n1y = f32x4::from_slice(token, &in_y[nx_m1..]);
-        let n1b = f32x4::from_slice(token, &in_b[nx_m1..]);
+        let c1x = f32x4::from_slice_t(token, &in_x[cx_m1..]);
+        let c1y = f32x4::from_slice_t(token, &in_y[cx_m1..]);
+        let c1b = f32x4::from_slice_t(token, &in_b[cx_m1..]);
+        let n1x = f32x4::from_slice_t(token, &in_x[nx_m1..]);
+        let n1y = f32x4::from_slice_t(token, &in_y[nx_m1..]);
+        let n1b = f32x4::from_slice_t(token, &in_b[nx_m1..]);
         sad = sad
             + (c1x - n1x).abs() * ch_w_x
             + (c1y - n1y).abs() * ch_w_y
@@ -1637,12 +1637,12 @@ fn sad_3x3_plus_wasm128(
 
     // Position (0,-1): row y-1, x vs row ndy-1, nx
     {
-        let c2x = f32x4::from_slice(token, &in_x[c_rm1 + x..]);
-        let c2y = f32x4::from_slice(token, &in_y[c_rm1 + x..]);
-        let c2b = f32x4::from_slice(token, &in_b[c_rm1 + x..]);
-        let n2x = f32x4::from_slice(token, &in_x[(n_rm1 as isize + x as isize + ndx) as usize..]);
-        let n2y = f32x4::from_slice(token, &in_y[(n_rm1 as isize + x as isize + ndx) as usize..]);
-        let n2b = f32x4::from_slice(token, &in_b[(n_rm1 as isize + x as isize + ndx) as usize..]);
+        let c2x = f32x4::from_slice_t(token, &in_x[c_rm1 + x..]);
+        let c2y = f32x4::from_slice_t(token, &in_y[c_rm1 + x..]);
+        let c2b = f32x4::from_slice_t(token, &in_b[c_rm1 + x..]);
+        let n2x = f32x4::from_slice_t(token, &in_x[(n_rm1 as isize + x as isize + ndx) as usize..]);
+        let n2y = f32x4::from_slice_t(token, &in_y[(n_rm1 as isize + x as isize + ndx) as usize..]);
+        let n2b = f32x4::from_slice_t(token, &in_b[(n_rm1 as isize + x as isize + ndx) as usize..]);
         sad = sad
             + (c2x - n2x).abs() * ch_w_x
             + (c2y - n2y).abs() * ch_w_y
@@ -1651,12 +1651,12 @@ fn sad_3x3_plus_wasm128(
 
     // Position (1,0): same rows, x+1 vs nx+1
     {
-        let c3x = f32x4::from_slice(token, &in_x[cx_p1..]);
-        let c3y = f32x4::from_slice(token, &in_y[cx_p1..]);
-        let c3b = f32x4::from_slice(token, &in_b[cx_p1..]);
-        let n3x = f32x4::from_slice(token, &in_x[nx_p1..]);
-        let n3y = f32x4::from_slice(token, &in_y[nx_p1..]);
-        let n3b = f32x4::from_slice(token, &in_b[nx_p1..]);
+        let c3x = f32x4::from_slice_t(token, &in_x[cx_p1..]);
+        let c3y = f32x4::from_slice_t(token, &in_y[cx_p1..]);
+        let c3b = f32x4::from_slice_t(token, &in_b[cx_p1..]);
+        let n3x = f32x4::from_slice_t(token, &in_x[nx_p1..]);
+        let n3y = f32x4::from_slice_t(token, &in_y[nx_p1..]);
+        let n3b = f32x4::from_slice_t(token, &in_b[nx_p1..]);
         sad = sad
             + (c3x - n3x).abs() * ch_w_x
             + (c3y - n3y).abs() * ch_w_y
@@ -1665,12 +1665,12 @@ fn sad_3x3_plus_wasm128(
 
     // Position (0,1): row y+1, x vs row ndy+1, nx
     {
-        let c4x = f32x4::from_slice(token, &in_x[c_rp1 + x..]);
-        let c4y = f32x4::from_slice(token, &in_y[c_rp1 + x..]);
-        let c4b = f32x4::from_slice(token, &in_b[c_rp1 + x..]);
-        let n4x = f32x4::from_slice(token, &in_x[(n_rp1 as isize + x as isize + ndx) as usize..]);
-        let n4y = f32x4::from_slice(token, &in_y[(n_rp1 as isize + x as isize + ndx) as usize..]);
-        let n4b = f32x4::from_slice(token, &in_b[(n_rp1 as isize + x as isize + ndx) as usize..]);
+        let c4x = f32x4::from_slice_t(token, &in_x[c_rp1 + x..]);
+        let c4y = f32x4::from_slice_t(token, &in_y[c_rp1 + x..]);
+        let c4b = f32x4::from_slice_t(token, &in_b[c_rp1 + x..]);
+        let n4x = f32x4::from_slice_t(token, &in_x[(n_rp1 as isize + x as isize + ndx) as usize..]);
+        let n4y = f32x4::from_slice_t(token, &in_y[(n_rp1 as isize + x as isize + ndx) as usize..]);
+        let n4b = f32x4::from_slice_t(token, &in_b[(n_rp1 as isize + x as isize + ndx) as usize..]);
         sad = sad
             + (c4x - n4x).abs() * ch_w_x
             + (c4y - n4y).abs() * ch_w_y
@@ -1707,13 +1707,13 @@ pub fn epf_step1_wasm128(
         return;
     }
 
-    let ch_w_x = f32x4::splat(token, EPF_CHANNEL_SCALE[0]);
-    let ch_w_y = f32x4::splat(token, EPF_CHANNEL_SCALE[1]);
-    let ch_w_b = f32x4::splat(token, EPF_CHANNEL_SCALE[2]);
-    let one = f32x4::splat(token, 1.0);
-    let zero_v = f32x4::zero(token);
+    let ch_w_x = f32x4::splat_t(token, EPF_CHANNEL_SCALE[0]);
+    let ch_w_y = f32x4::splat_t(token, EPF_CHANNEL_SCALE[1]);
+    let ch_w_b = f32x4::splat_t(token, EPF_CHANNEL_SCALE[2]);
+    let one = f32x4::splat_t(token, 1.0);
+    let zero_v = f32x4::zero_t(token);
 
-    let sm_interior_lo = f32x4::from_array(
+    let sm_interior_lo = f32x4::from_array_t(
         token,
         [
             sigma_scale * border_sigma_mul,
@@ -1722,7 +1722,7 @@ pub fn epf_step1_wasm128(
             sigma_scale,
         ],
     );
-    let sm_interior_hi = f32x4::from_array(
+    let sm_interior_hi = f32x4::from_array_t(
         token,
         [
             sigma_scale,
@@ -1731,7 +1731,7 @@ pub fn epf_step1_wasm128(
             sigma_scale * border_sigma_mul,
         ],
     );
-    let sm_border_row = f32x4::splat(token, sigma_scale * border_sigma_mul);
+    let sm_border_row = f32x4::splat_t(token, sigma_scale * border_sigma_mul);
 
     let block_dim = 8usize;
 
@@ -1766,7 +1766,7 @@ pub fn epf_step1_wasm128(
                 continue;
             }
 
-            let is_v = f32x4::splat(token, is);
+            let is_v = f32x4::splat_t(token, is);
 
             for half in 0..2usize {
                 let hx = x + half * 4;
@@ -1779,9 +1779,9 @@ pub fn epf_step1_wasm128(
                 };
                 let eff_is = is_v * sm_vec;
 
-                let cx = f32x4::from_slice(token, &in_x[r_0 + hx..]);
-                let cy = f32x4::from_slice(token, &in_y[r_0 + hx..]);
-                let cb = f32x4::from_slice(token, &in_b[r_0 + hx..]);
+                let cx = f32x4::from_slice_t(token, &in_x[r_0 + hx..]);
+                let cy = f32x4::from_slice_t(token, &in_y[r_0 + hx..]);
+                let cb = f32x4::from_slice_t(token, &in_b[r_0 + hx..]);
 
                 let mut sum_x = cx;
                 let mut sum_y = cy;
@@ -1796,9 +1796,9 @@ pub fn epf_step1_wasm128(
                     );
                     let w = (sad * eff_is + one).max(zero_v);
                     total_w += w;
-                    let nx = f32x4::from_slice(token, &in_x[r_m1 + hx..]);
-                    let ny = f32x4::from_slice(token, &in_y[r_m1 + hx..]);
-                    let nb = f32x4::from_slice(token, &in_b[r_m1 + hx..]);
+                    let nx = f32x4::from_slice_t(token, &in_x[r_m1 + hx..]);
+                    let ny = f32x4::from_slice_t(token, &in_y[r_m1 + hx..]);
+                    let nb = f32x4::from_slice_t(token, &in_b[r_m1 + hx..]);
                     sum_x = w.mul_add(nx, sum_x);
                     sum_y = w.mul_add(ny, sum_y);
                     sum_b = w.mul_add(nb, sum_b);
@@ -1812,9 +1812,9 @@ pub fn epf_step1_wasm128(
                     );
                     let w = (sad * eff_is + one).max(zero_v);
                     total_w += w;
-                    let nx = f32x4::from_slice(token, &in_x[r_p1 + hx..]);
-                    let ny = f32x4::from_slice(token, &in_y[r_p1 + hx..]);
-                    let nb = f32x4::from_slice(token, &in_b[r_p1 + hx..]);
+                    let nx = f32x4::from_slice_t(token, &in_x[r_p1 + hx..]);
+                    let ny = f32x4::from_slice_t(token, &in_y[r_p1 + hx..]);
+                    let nb = f32x4::from_slice_t(token, &in_b[r_p1 + hx..]);
                     sum_x = w.mul_add(nx, sum_x);
                     sum_y = w.mul_add(ny, sum_y);
                     sum_b = w.mul_add(nb, sum_b);
@@ -1828,9 +1828,9 @@ pub fn epf_step1_wasm128(
                     );
                     let w = (sad * eff_is + one).max(zero_v);
                     total_w += w;
-                    let nx = f32x4::from_slice(token, &in_x[r_0 + hx - 1..]);
-                    let ny = f32x4::from_slice(token, &in_y[r_0 + hx - 1..]);
-                    let nb = f32x4::from_slice(token, &in_b[r_0 + hx - 1..]);
+                    let nx = f32x4::from_slice_t(token, &in_x[r_0 + hx - 1..]);
+                    let ny = f32x4::from_slice_t(token, &in_y[r_0 + hx - 1..]);
+                    let nb = f32x4::from_slice_t(token, &in_b[r_0 + hx - 1..]);
                     sum_x = w.mul_add(nx, sum_x);
                     sum_y = w.mul_add(ny, sum_y);
                     sum_b = w.mul_add(nb, sum_b);
@@ -1844,9 +1844,9 @@ pub fn epf_step1_wasm128(
                     );
                     let w = (sad * eff_is + one).max(zero_v);
                     total_w += w;
-                    let nx = f32x4::from_slice(token, &in_x[r_0 + hx + 1..]);
-                    let ny = f32x4::from_slice(token, &in_y[r_0 + hx + 1..]);
-                    let nb = f32x4::from_slice(token, &in_b[r_0 + hx + 1..]);
+                    let nx = f32x4::from_slice_t(token, &in_x[r_0 + hx + 1..]);
+                    let ny = f32x4::from_slice_t(token, &in_y[r_0 + hx + 1..]);
+                    let nb = f32x4::from_slice_t(token, &in_b[r_0 + hx + 1..]);
                     sum_x = w.mul_add(nx, sum_x);
                     sum_y = w.mul_add(ny, sum_y);
                     sum_b = w.mul_add(nb, sum_b);

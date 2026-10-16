@@ -123,9 +123,9 @@ pub fn gab_smooth_avx2(
 ) {
     use magetypes::simd::f32x8;
 
-    let wc_v = f32x8::splat(token, w_center);
-    let w1_v = f32x8::splat(token, w1);
-    let w2_v = f32x8::splat(token, w2);
+    let wc_v = f32x8::splat_t(token, w_center);
+    let w1_v = f32x8::splat_t(token, w1);
+    let w2_v = f32x8::splat_t(token, w2);
 
     // For images too small for SIMD or with width < 10 (need x-1..x+8+1), use scalar
     if width < 10 || height < 3 {
@@ -239,9 +239,9 @@ pub fn gab_smooth_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let wc_v = f32x4::splat(token, w_center);
-    let w1_v = f32x4::splat(token, w1);
-    let w2_v = f32x4::splat(token, w2);
+    let wc_v = f32x4::splat_t(token, w_center);
+    let w1_v = f32x4::splat_t(token, w1);
+    let w2_v = f32x4::splat_t(token, w2);
 
     if width < 6 || height < 3 {
         gab_smooth_scalar(output, input, width, height, w_center, w1, w2);
@@ -273,15 +273,15 @@ pub fn gab_smooth_neon(
         let simd_end = if width > 4 { width - 4 } else { 1 };
         let mut x = 1usize;
         while x < simd_end {
-            let center = f32x4::from_slice(token, &input[row_c + x..]);
-            let top = f32x4::from_slice(token, &input[row_t + x..]);
-            let bottom = f32x4::from_slice(token, &input[row_b + x..]);
-            let left = f32x4::from_slice(token, &input[row_c + x - 1..]);
-            let right = f32x4::from_slice(token, &input[row_c + x + 1..]);
-            let tl = f32x4::from_slice(token, &input[row_t + x - 1..]);
-            let tr = f32x4::from_slice(token, &input[row_t + x + 1..]);
-            let bl = f32x4::from_slice(token, &input[row_b + x - 1..]);
-            let br = f32x4::from_slice(token, &input[row_b + x + 1..]);
+            let center = f32x4::from_slice_t(token, &input[row_c + x..]);
+            let top = f32x4::from_slice_t(token, &input[row_t + x..]);
+            let bottom = f32x4::from_slice_t(token, &input[row_b + x..]);
+            let left = f32x4::from_slice_t(token, &input[row_c + x - 1..]);
+            let right = f32x4::from_slice_t(token, &input[row_c + x + 1..]);
+            let tl = f32x4::from_slice_t(token, &input[row_t + x - 1..]);
+            let tr = f32x4::from_slice_t(token, &input[row_t + x + 1..]);
+            let bl = f32x4::from_slice_t(token, &input[row_b + x - 1..]);
+            let br = f32x4::from_slice_t(token, &input[row_b + x + 1..]);
 
             let cardinals = top + bottom + left + right;
             let diagonals = tl + tr + bl + br;

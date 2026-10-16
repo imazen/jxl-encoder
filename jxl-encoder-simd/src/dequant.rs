@@ -165,27 +165,27 @@ pub fn dequant_dct8_avx2(
 ) {
     use magetypes::simd::{f32x8, i32x8};
 
-    let inv_qac_x_v = f32x8::splat(token, 1.0 / qac_qm[0]);
-    let inv_qac_y_v = f32x8::splat(token, 1.0 / qac_qm[1]);
-    let inv_qac_b_v = f32x8::splat(token, 1.0 / qac_qm[2]);
-    let x_factor_v = f32x8::splat(token, x_factor);
-    let b_factor_v = f32x8::splat(token, b_factor);
-    let zero_f = f32x8::zero(token);
-    let zero_i = i32x8::zero(token);
-    let one_f = f32x8::splat(token, 1.0);
-    let neg_one_f = f32x8::splat(token, -1.0);
-    let threshold = f32x8::splat(token, 1.125);
-    let bias_recip_v = f32x8::splat(token, BIAS_RECIP);
-    let bias_x_v = f32x8::splat(token, BIAS_X);
-    let bias_y_v = f32x8::splat(token, BIAS_Y);
-    let bias_b_v = f32x8::splat(token, BIAS_B);
+    let inv_qac_x_v = f32x8::splat_t(token, 1.0 / qac_qm[0]);
+    let inv_qac_y_v = f32x8::splat_t(token, 1.0 / qac_qm[1]);
+    let inv_qac_b_v = f32x8::splat_t(token, 1.0 / qac_qm[2]);
+    let x_factor_v = f32x8::splat_t(token, x_factor);
+    let b_factor_v = f32x8::splat_t(token, b_factor);
+    let zero_f = f32x8::zero_t(token);
+    let zero_i = i32x8::zero_t(token);
+    let one_f = f32x8::splat_t(token, 1.0);
+    let neg_one_f = f32x8::splat_t(token, -1.0);
+    let threshold = f32x8::splat_t(token, 1.125);
+    let bias_recip_v = f32x8::splat_t(token, BIAS_RECIP);
+    let bias_x_v = f32x8::splat_t(token, BIAS_X);
+    let bias_y_v = f32x8::splat_t(token, BIAS_Y);
+    let bias_b_v = f32x8::splat_t(token, BIAS_B);
 
     // Process 8 chunks of 8 coefficients
     for chunk in 0..8 {
         let base = chunk * 8;
 
         // --- Channel Y ---
-        let q_i_y = i32x8::from_slice(token, &quant_ac_y[base..]);
+        let q_i_y = i32x8::from_slice_t(token, &quant_ac_y[base..]);
         let dq_y = dequant_8_avx2(
             token,
             q_i_y,
@@ -202,7 +202,7 @@ pub fn dequant_dct8_avx2(
         dq_y.store((&mut output_y[base..base + 8]).try_into().unwrap());
 
         // --- Channel X + CfL ---
-        let q_i_x = i32x8::from_slice(token, &quant_ac_x[base..]);
+        let q_i_x = i32x8::from_slice_t(token, &quant_ac_x[base..]);
         let dq_x_raw = dequant_8_avx2(
             token,
             q_i_x,
@@ -220,7 +220,7 @@ pub fn dequant_dct8_avx2(
         dq_x.store((&mut output_x[base..base + 8]).try_into().unwrap());
 
         // --- Channel B + CfL ---
-        let q_i_b = i32x8::from_slice(token, &quant_ac_b[base..]);
+        let q_i_b = i32x8::from_slice_t(token, &quant_ac_b[base..]);
         let dq_b_raw = dequant_8_avx2(
             token,
             q_i_b,
@@ -290,11 +290,11 @@ fn dequant_8_avx2(
     let biased = f32x8::blend(is_large, case_large, case_one);
 
     // Zero out where q == 0 (compare in f32 space since blend needs f32 mask)
-    let is_nonzero = abs_q.simd_ge(f32x8::splat(token, 0.5)); // integers: |q|>=0.5 means nonzero
+    let is_nonzero = abs_q.simd_ge(f32x8::splat_t(token, 0.5)); // integers: |q|>=0.5 means nonzero
     let biased = f32x8::blend(is_nonzero, biased, zero_f);
 
     // Multiply by dequant weight and inverse qac_qm
-    let w = f32x8::from_slice(token, weights);
+    let w = f32x8::from_slice_t(token, weights);
     biased * w * inv_qac_qm
 }
 
@@ -321,27 +321,27 @@ pub fn dequant_dct8_neon(
 ) {
     use magetypes::simd::{f32x4, i32x4};
 
-    let inv_qac_x_v = f32x4::splat(token, 1.0 / qac_qm[0]);
-    let inv_qac_y_v = f32x4::splat(token, 1.0 / qac_qm[1]);
-    let inv_qac_b_v = f32x4::splat(token, 1.0 / qac_qm[2]);
-    let x_factor_v = f32x4::splat(token, x_factor);
-    let b_factor_v = f32x4::splat(token, b_factor);
-    let zero_f = f32x4::zero(token);
-    let one_f = f32x4::splat(token, 1.0);
-    let neg_one_f = f32x4::splat(token, -1.0);
-    let threshold = f32x4::splat(token, 1.125);
-    let bias_recip_v = f32x4::splat(token, BIAS_RECIP);
-    let bias_x_v = f32x4::splat(token, BIAS_X);
-    let bias_y_v = f32x4::splat(token, BIAS_Y);
-    let bias_b_v = f32x4::splat(token, BIAS_B);
-    let half_v = f32x4::splat(token, 0.5);
+    let inv_qac_x_v = f32x4::splat_t(token, 1.0 / qac_qm[0]);
+    let inv_qac_y_v = f32x4::splat_t(token, 1.0 / qac_qm[1]);
+    let inv_qac_b_v = f32x4::splat_t(token, 1.0 / qac_qm[2]);
+    let x_factor_v = f32x4::splat_t(token, x_factor);
+    let b_factor_v = f32x4::splat_t(token, b_factor);
+    let zero_f = f32x4::zero_t(token);
+    let one_f = f32x4::splat_t(token, 1.0);
+    let neg_one_f = f32x4::splat_t(token, -1.0);
+    let threshold = f32x4::splat_t(token, 1.125);
+    let bias_recip_v = f32x4::splat_t(token, BIAS_RECIP);
+    let bias_x_v = f32x4::splat_t(token, BIAS_X);
+    let bias_y_v = f32x4::splat_t(token, BIAS_Y);
+    let bias_b_v = f32x4::splat_t(token, BIAS_B);
+    let half_v = f32x4::splat_t(token, 0.5);
 
     // Process 16 chunks of 4 coefficients
     for chunk in 0..16 {
         let base = chunk * 4;
 
         // Channel Y
-        let q_i_y = i32x4::from_slice(token, &quant_ac_y[base..]);
+        let q_i_y = i32x4::from_slice_t(token, &quant_ac_y[base..]);
         let dq_y = neon_dequant_4(
             token,
             q_i_y,
@@ -358,7 +358,7 @@ pub fn dequant_dct8_neon(
         dq_y.store((&mut output_y[base..base + 4]).try_into().unwrap());
 
         // Channel X + CfL
-        let q_i_x = i32x4::from_slice(token, &quant_ac_x[base..]);
+        let q_i_x = i32x4::from_slice_t(token, &quant_ac_x[base..]);
         let dq_x_raw = neon_dequant_4(
             token,
             q_i_x,
@@ -376,7 +376,7 @@ pub fn dequant_dct8_neon(
         dq_x.store((&mut output_x[base..base + 4]).try_into().unwrap());
 
         // Channel B + CfL
-        let q_i_b = i32x4::from_slice(token, &quant_ac_b[base..]);
+        let q_i_b = i32x4::from_slice_t(token, &quant_ac_b[base..]);
         let dq_b_raw = neon_dequant_4(
             token,
             q_i_b,
@@ -436,7 +436,7 @@ fn neon_dequant_4(
     let is_nonzero = abs_q.simd_ge(half_v);
     let biased = f32x4::blend(is_nonzero, biased, zero_f);
 
-    let w = f32x4::from_slice(token, weights);
+    let w = f32x4::from_slice_t(token, weights);
     biased * w * inv_qac_qm
 }
 
@@ -463,27 +463,27 @@ pub fn dequant_dct8_wasm128(
 ) {
     use magetypes::simd::{f32x4, i32x4};
 
-    let inv_qac_x_v = f32x4::splat(token, 1.0 / qac_qm[0]);
-    let inv_qac_y_v = f32x4::splat(token, 1.0 / qac_qm[1]);
-    let inv_qac_b_v = f32x4::splat(token, 1.0 / qac_qm[2]);
-    let x_factor_v = f32x4::splat(token, x_factor);
-    let b_factor_v = f32x4::splat(token, b_factor);
-    let zero_f = f32x4::zero(token);
-    let one_f = f32x4::splat(token, 1.0);
-    let neg_one_f = f32x4::splat(token, -1.0);
-    let threshold = f32x4::splat(token, 1.125);
-    let bias_recip_v = f32x4::splat(token, BIAS_RECIP);
-    let bias_x_v = f32x4::splat(token, BIAS_X);
-    let bias_y_v = f32x4::splat(token, BIAS_Y);
-    let bias_b_v = f32x4::splat(token, BIAS_B);
-    let half_v = f32x4::splat(token, 0.5);
+    let inv_qac_x_v = f32x4::splat_t(token, 1.0 / qac_qm[0]);
+    let inv_qac_y_v = f32x4::splat_t(token, 1.0 / qac_qm[1]);
+    let inv_qac_b_v = f32x4::splat_t(token, 1.0 / qac_qm[2]);
+    let x_factor_v = f32x4::splat_t(token, x_factor);
+    let b_factor_v = f32x4::splat_t(token, b_factor);
+    let zero_f = f32x4::zero_t(token);
+    let one_f = f32x4::splat_t(token, 1.0);
+    let neg_one_f = f32x4::splat_t(token, -1.0);
+    let threshold = f32x4::splat_t(token, 1.125);
+    let bias_recip_v = f32x4::splat_t(token, BIAS_RECIP);
+    let bias_x_v = f32x4::splat_t(token, BIAS_X);
+    let bias_y_v = f32x4::splat_t(token, BIAS_Y);
+    let bias_b_v = f32x4::splat_t(token, BIAS_B);
+    let half_v = f32x4::splat_t(token, 0.5);
 
     // Process 16 chunks of 4 coefficients
     for chunk in 0..16 {
         let base = chunk * 4;
 
         // Channel Y
-        let q_i_y = i32x4::from_slice(token, &quant_ac_y[base..]);
+        let q_i_y = i32x4::from_slice_t(token, &quant_ac_y[base..]);
         let dq_y = wasm128_dequant_4(
             token,
             q_i_y,
@@ -500,7 +500,7 @@ pub fn dequant_dct8_wasm128(
         dq_y.store((&mut output_y[base..base + 4]).try_into().unwrap());
 
         // Channel X + CfL
-        let q_i_x = i32x4::from_slice(token, &quant_ac_x[base..]);
+        let q_i_x = i32x4::from_slice_t(token, &quant_ac_x[base..]);
         let dq_x_raw = wasm128_dequant_4(
             token,
             q_i_x,
@@ -518,7 +518,7 @@ pub fn dequant_dct8_wasm128(
         dq_x.store((&mut output_x[base..base + 4]).try_into().unwrap());
 
         // Channel B + CfL
-        let q_i_b = i32x4::from_slice(token, &quant_ac_b[base..]);
+        let q_i_b = i32x4::from_slice_t(token, &quant_ac_b[base..]);
         let dq_b_raw = wasm128_dequant_4(
             token,
             q_i_b,
@@ -578,7 +578,7 @@ fn wasm128_dequant_4(
     let is_nonzero = abs_q.simd_ge(half_v);
     let biased = f32x4::blend(is_nonzero, biased, zero_f);
 
-    let w = f32x4::from_slice(token, weights);
+    let w = f32x4::from_slice_t(token, weights);
     biased * w * inv_qac_qm
 }
 

@@ -375,11 +375,11 @@ fn scatter_col(
 pub(crate) fn dct1d_64_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 64]) {
     use magetypes::simd::f32x8;
 
-    let sqrt2 = f32x8::splat(token, SQRT2);
+    let sqrt2 = f32x8::splat_t(token, SQRT2);
 
     // AddReverse + SubReverse
-    let mut a = [f32x8::zero(token); 32];
-    let mut s = [f32x8::zero(token); 32];
+    let mut a = [f32x8::zero_t(token); 32];
+    let mut s = [f32x8::zero_t(token); 32];
     for i in 0..32 {
         a[i] = v[i] + v[63 - i];
         s[i] = v[i] - v[63 - i];
@@ -390,7 +390,7 @@ pub(crate) fn dct1d_64_batch(token: archmage::X64V3Token, v: &mut [magetypes::si
 
     // Multiply second half by WcMultipliers_64
     for i in 0..32 {
-        s[i] *= f32x8::splat(token, WC_MULTIPLIERS_64[i]);
+        s[i] *= f32x8::splat_t(token, WC_MULTIPLIERS_64[i]);
     }
 
     // DCT-32 on second half
@@ -417,13 +417,13 @@ pub(crate) fn dct1d_64_batch(token: archmage::X64V3Token, v: &mut [magetypes::si
 pub fn dct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output: &mut [f32; 4096]) {
     use magetypes::simd::f32x8;
 
-    let inv64 = f32x8::splat(token, 1.0 / 64.0);
+    let inv64 = f32x8::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<4096>();
 
     // Pass 1: DCT-64 on rows, 8 batches of 8 rows
     for batch in 0..8 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 64];
+        let mut v = [f32x8::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col(token, input, base, j, 64);
         }
@@ -444,7 +444,7 @@ pub fn dct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output: 
     // Pass 2: DCT-64 on columns (now rows of transposed), 8 batches of 8 rows
     for batch in 0..8 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 64];
+        let mut v = [f32x8::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col(token, &tmp, base, j, 64);
         }
@@ -466,14 +466,14 @@ pub fn dct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output: 
 pub fn dct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: &mut [f32; 2048]) {
     use magetypes::simd::f32x8;
 
-    let inv32 = f32x8::splat(token, 1.0 / 32.0);
-    let inv64 = f32x8::splat(token, 1.0 / 64.0);
+    let inv32 = f32x8::splat_t(token, 1.0 / 32.0);
+    let inv64 = f32x8::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<2048>();
 
     // Pass 1: DCT-32 on 64 rows (stride 32), 8 batches of 8
     for batch in 0..8 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 32];
+        let mut v = [f32x8::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col(token, input, base, j, 32);
         }
@@ -494,7 +494,7 @@ pub fn dct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
     // Pass 2: DCT-64 on 32 rows (stride 64), 4 batches of 8
     for batch in 0..4 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 64];
+        let mut v = [f32x8::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col(token, &tmp, base, j, 64);
         }
@@ -516,14 +516,14 @@ pub fn dct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
 pub fn dct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: &mut [f32; 2048]) {
     use magetypes::simd::f32x8;
 
-    let inv32 = f32x8::splat(token, 1.0 / 32.0);
-    let inv64 = f32x8::splat(token, 1.0 / 64.0);
+    let inv32 = f32x8::splat_t(token, 1.0 / 32.0);
+    let inv64 = f32x8::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<2048>();
 
     // Pass 1: DCT-64 on 32 rows (stride 64), 4 batches of 8
     for batch in 0..4 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 64];
+        let mut v = [f32x8::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col(token, input, base, j, 64);
         }
@@ -544,7 +544,7 @@ pub fn dct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
     // Pass 2: DCT-32 on 64 rows (stride 32), 8 batches of 8
     for batch in 0..8 {
         let base = batch * 8;
-        let mut v = [f32x8::zero(token); 32];
+        let mut v = [f32x8::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col(token, &tmp, base, j, 32);
         }
@@ -580,7 +580,7 @@ fn gather_col_neon(
     j: usize,
     s: usize,
 ) -> magetypes::simd::f32x4 {
-    magetypes::simd::f32x4::from_array(
+    magetypes::simd::f32x4::from_array_t(
         token,
         [
             data[base_row * s + j],
@@ -618,10 +618,10 @@ pub(crate) fn dct1d_64_batch_neon(
 ) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
 
-    let mut a = [f32x4::zero(token); 32];
-    let mut s = [f32x4::zero(token); 32];
+    let mut a = [f32x4::zero_t(token); 32];
+    let mut s = [f32x4::zero_t(token); 32];
     for i in 0..32 {
         a[i] = v[i] + v[63 - i];
         s[i] = v[i] - v[63 - i];
@@ -630,7 +630,7 @@ pub(crate) fn dct1d_64_batch_neon(
     crate::dct32::dct1d_32_batch_neon(token, &mut a);
 
     for i in 0..32 {
-        s[i] *= f32x4::splat(token, WC_MULTIPLIERS_64[i]);
+        s[i] *= f32x4::splat_t(token, WC_MULTIPLIERS_64[i]);
     }
     crate::dct32::dct1d_32_batch_neon(token, &mut s);
 
@@ -653,12 +653,12 @@ pub(crate) fn dct1d_64_batch_neon(
 pub fn dct_64x64_neon(token: archmage::NeonToken, input: &[f32; 4096], output: &mut [f32; 4096]) {
     use magetypes::simd::f32x4;
 
-    let inv64 = f32x4::splat(token, 1.0 / 64.0);
+    let inv64 = f32x4::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<4096>();
 
     for batch in 0..16 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 64];
+        let mut v = [f32x4::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col_neon(token, input, base, j, 64);
         }
@@ -677,7 +677,7 @@ pub fn dct_64x64_neon(token: archmage::NeonToken, input: &[f32; 4096], output: &
 
     for batch in 0..16 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 64];
+        let mut v = [f32x4::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col_neon(token, &tmp, base, j, 64);
         }
@@ -699,14 +699,14 @@ pub fn dct_64x64_neon(token: archmage::NeonToken, input: &[f32; 4096], output: &
 pub fn dct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &mut [f32; 2048]) {
     use magetypes::simd::f32x4;
 
-    let inv32 = f32x4::splat(token, 1.0 / 32.0);
-    let inv64 = f32x4::splat(token, 1.0 / 64.0);
+    let inv32 = f32x4::splat_t(token, 1.0 / 32.0);
+    let inv64 = f32x4::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<2048>();
 
     // Pass 1: DCT-32 on 64 rows (stride 32), 16 batches of 4.
     for batch in 0..16 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_neon(token, input, base, j, 32);
         }
@@ -726,7 +726,7 @@ pub fn dct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &
     // Pass 2: DCT-64 on 32 rows (stride 64), 8 batches of 4.
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 64];
+        let mut v = [f32x4::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col_neon(token, &tmp, base, j, 64);
         }
@@ -748,14 +748,14 @@ pub fn dct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &
 pub fn dct_32x64_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &mut [f32; 2048]) {
     use magetypes::simd::f32x4;
 
-    let inv32 = f32x4::splat(token, 1.0 / 32.0);
-    let inv64 = f32x4::splat(token, 1.0 / 64.0);
+    let inv32 = f32x4::splat_t(token, 1.0 / 32.0);
+    let inv64 = f32x4::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<2048>();
 
     // Pass 1: DCT-64 on 32 rows (stride 64), 8 batches of 4.
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 64];
+        let mut v = [f32x4::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col_neon(token, input, base, j, 64);
         }
@@ -775,7 +775,7 @@ pub fn dct_32x64_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &
     // Pass 2: DCT-32 on 64 rows (stride 32), 16 batches of 4.
     for batch in 0..16 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_neon(token, &tmp, base, j, 32);
         }
@@ -809,7 +809,7 @@ fn gather_col_wasm128(
     j: usize,
     s: usize,
 ) -> magetypes::simd::f32x4 {
-    magetypes::simd::f32x4::from_array(
+    magetypes::simd::f32x4::from_array_t(
         token,
         [
             data[base_row * s + j],
@@ -847,10 +847,10 @@ pub(crate) fn dct1d_64_batch_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
 
-    let mut a = [f32x4::zero(token); 32];
-    let mut s = [f32x4::zero(token); 32];
+    let mut a = [f32x4::zero_t(token); 32];
+    let mut s = [f32x4::zero_t(token); 32];
     for i in 0..32 {
         a[i] = v[i] + v[63 - i];
         s[i] = v[i] - v[63 - i];
@@ -859,7 +859,7 @@ pub(crate) fn dct1d_64_batch_wasm128(
     crate::dct32::dct1d_32_batch_wasm128(token, &mut a);
 
     for i in 0..32 {
-        s[i] *= f32x4::splat(token, WC_MULTIPLIERS_64[i]);
+        s[i] *= f32x4::splat_t(token, WC_MULTIPLIERS_64[i]);
     }
     crate::dct32::dct1d_32_batch_wasm128(token, &mut s);
 
@@ -886,12 +886,12 @@ pub fn dct_64x64_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let inv64 = f32x4::splat(token, 1.0 / 64.0);
+    let inv64 = f32x4::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<4096>();
 
     for batch in 0..16 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 64];
+        let mut v = [f32x4::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col_wasm128(token, input, base, j, 64);
         }
@@ -910,7 +910,7 @@ pub fn dct_64x64_wasm128(
 
     for batch in 0..16 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 64];
+        let mut v = [f32x4::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col_wasm128(token, &tmp, base, j, 64);
         }
@@ -936,13 +936,13 @@ pub fn dct_64x32_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let inv32 = f32x4::splat(token, 1.0 / 32.0);
-    let inv64 = f32x4::splat(token, 1.0 / 64.0);
+    let inv32 = f32x4::splat_t(token, 1.0 / 32.0);
+    let inv64 = f32x4::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<2048>();
 
     for batch in 0..16 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_wasm128(token, input, base, j, 32);
         }
@@ -961,7 +961,7 @@ pub fn dct_64x32_wasm128(
 
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 64];
+        let mut v = [f32x4::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col_wasm128(token, &tmp, base, j, 64);
         }
@@ -987,13 +987,13 @@ pub fn dct_32x64_wasm128(
 ) {
     use magetypes::simd::f32x4;
 
-    let inv32 = f32x4::splat(token, 1.0 / 32.0);
-    let inv64 = f32x4::splat(token, 1.0 / 64.0);
+    let inv32 = f32x4::splat_t(token, 1.0 / 32.0);
+    let inv64 = f32x4::splat_t(token, 1.0 / 64.0);
     let mut tmp = crate::scratch_buf::<2048>();
 
     for batch in 0..8 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 64];
+        let mut v = [f32x4::zero_t(token); 64];
         for j in 0..64 {
             v[j] = gather_col_wasm128(token, input, base, j, 64);
         }
@@ -1012,7 +1012,7 @@ pub fn dct_32x64_wasm128(
 
     for batch in 0..16 {
         let base = batch * 4;
-        let mut v = [f32x4::zero(token); 32];
+        let mut v = [f32x4::zero_t(token); 32];
         for j in 0..32 {
             v[j] = gather_col_wasm128(token, &tmp, base, j, 32);
         }

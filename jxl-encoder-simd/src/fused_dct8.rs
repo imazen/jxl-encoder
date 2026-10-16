@@ -179,7 +179,7 @@ pub fn fused_dct8_entropy_avx2(
         crate::dct8::vectorized_dct1d_8(token, r0, r1, r2, r3, r4, r5, r6, r7);
 
     // Scale by 1/8
-    let scale = f32x8::splat(token, 0.125);
+    let scale = f32x8::splat_t(token, 0.125);
     let r0 = r0 * scale;
     let r1 = r1 * scale;
     let r2 = r2 * scale;
@@ -208,7 +208,7 @@ pub fn fused_dct8_entropy_avx2(
     let r7 = r7 * scale;
 
     // Zero DC: element [0] of r0 in transposed layout. Multiply by mask [0,1,1,1,1,1,1,1].
-    let dc_mask = f32x8::from_array(token, [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
+    let dc_mask = f32x8::from_array_t(token, [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
     let r0 = r0 * dc_mask;
 
     // Store DCT output if requested (Y channel for CfL reference)
@@ -225,14 +225,14 @@ pub fn fused_dct8_entropy_avx2(
 
     // Row-by-row entropy estimation from DCT registers.
     // Each row is one f32x8 register — no memory round-trip for DCT coefficients.
-    let cmap_v = f32x8::splat(token, cmap_factor);
-    let quant_v = f32x8::splat(token, quant);
-    let cost_delta_v = f32x8::splat(token, k_cost_delta);
-    let zero = f32x8::zero(token);
-    let one = f32x8::splat(token, 1.0);
+    let cmap_v = f32x8::splat_t(token, cmap_factor);
+    let quant_v = f32x8::splat_t(token, quant);
+    let cost_delta_v = f32x8::splat_t(token, k_cost_delta);
+    let zero = f32x8::zero_t(token);
+    let one = f32x8::splat_t(token, 1.0);
 
-    let mut entropy_acc = f32x8::zero(token);
-    let mut nzeros_acc = f32x8::zero(token);
+    let mut entropy_acc = f32x8::zero_t(token);
+    let mut nzeros_acc = f32x8::zero_t(token);
 
     // Process one row of DCT output: quantize, accumulate entropy, write error coefficients.
     macro_rules! process_row {

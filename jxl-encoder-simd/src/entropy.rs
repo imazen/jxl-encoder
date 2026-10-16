@@ -228,19 +228,19 @@ pub fn entropy_coeffs_impl(
     pixel_domain: bool,
     error_coeffs: &mut [f32],
 ) -> EntropyCoeffResult {
-    let cmap_v = f32x8::splat(token, cmap_factor);
-    let quant_v = f32x8::splat(token, quant);
-    let cost_delta_v = f32x8::splat(token, k_cost_delta);
-    let cost2_v = f32x8::splat(token, k_cost2);
-    let zero = f32x8::zero(token);
-    let one = f32x8::splat(token, 1.0);
-    let thr_1_5 = f32x8::splat(token, 1.5);
+    let cmap_v = f32x8::splat_t(token, cmap_factor);
+    let quant_v = f32x8::splat_t(token, quant);
+    let cost_delta_v = f32x8::splat_t(token, k_cost_delta);
+    let cost2_v = f32x8::splat_t(token, k_cost2);
+    let zero = f32x8::zero_t(token);
+    let one = f32x8::splat_t(token, 1.0);
+    let thr_1_5 = f32x8::splat_t(token, 1.5);
 
-    let mut entropy_acc = f32x8::zero(token);
-    let mut nzeros_acc = f32x8::zero(token);
-    let mut info_loss_acc = f32x8::zero(token);
-    let mut info_loss2_acc = f32x8::zero(token);
-    let mut cost2_acc = f32x8::zero(token);
+    let mut entropy_acc = f32x8::zero_t(token);
+    let mut nzeros_acc = f32x8::zero_t(token);
+    let mut info_loss_acc = f32x8::zero_t(token);
+    let mut info_loss2_acc = f32x8::zero_t(token);
+    let mut cost2_acc = f32x8::zero_t(token);
 
     let chunks = n / 8;
     let simd_n = chunks * 8;
@@ -251,10 +251,10 @@ pub fn entropy_coeffs_impl(
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let bc = f32x8::from_slice(token, &block_c_s[base..]);
-        let by_v = f32x8::from_slice(token, &block_y_s[base..]);
-        let w = f32x8::from_slice(token, &weights_s[base..]);
-        let iw = f32x8::from_slice(token, &inv_weights_s[base..]);
+        let bc = f32x8::from_slice_t(token, &block_c_s[base..]);
+        let by_v = f32x8::from_slice_t(token, &block_y_s[base..]);
+        let w = f32x8::from_slice_t(token, &weights_s[base..]);
+        let iw = f32x8::from_slice_t(token, &inv_weights_s[base..]);
 
         // val = (block_c - block_y * cmap_factor) * inv_weights * quant
         let adjusted = bc - by_v * cmap_v;
@@ -375,25 +375,25 @@ pub fn entropy_coeffs_impl_scalar(
     #[inline(always)]
     fn fma8(token: archmage::ScalarToken, a: F, b: F, c: F) -> F {
         let (a, b, c) = (a.to_array(), b.to_array(), c.to_array());
-        F::from_array(
+        F::from_array_t(
             token,
             core::array::from_fn(|i| crate::scalarmath::mul_add_f32(a[i], b[i], c[i])),
         )
     }
 
-    let cmap_v = F::splat(token, cmap_factor);
-    let quant_v = F::splat(token, quant);
-    let cost_delta_v = F::splat(token, k_cost_delta);
-    let cost2_v = F::splat(token, k_cost2);
-    let zero = F::zero(token);
-    let one = F::splat(token, 1.0);
-    let thr_1_5 = F::splat(token, 1.5);
+    let cmap_v = F::splat_t(token, cmap_factor);
+    let quant_v = F::splat_t(token, quant);
+    let cost_delta_v = F::splat_t(token, k_cost_delta);
+    let cost2_v = F::splat_t(token, k_cost2);
+    let zero = F::zero_t(token);
+    let one = F::splat_t(token, 1.0);
+    let thr_1_5 = F::splat_t(token, 1.5);
 
-    let mut entropy_acc = F::zero(token);
-    let mut nzeros_acc = F::zero(token);
-    let mut info_loss_acc = F::zero(token);
-    let mut info_loss2_acc = F::zero(token);
-    let mut cost2_acc = F::zero(token);
+    let mut entropy_acc = F::zero_t(token);
+    let mut nzeros_acc = F::zero_t(token);
+    let mut info_loss_acc = F::zero_t(token);
+    let mut info_loss2_acc = F::zero_t(token);
+    let mut cost2_acc = F::zero_t(token);
 
     let chunks = n / 8;
     let simd_n = chunks * 8;
@@ -404,10 +404,10 @@ pub fn entropy_coeffs_impl_scalar(
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let bc = F::from_slice(token, &block_c_s[base..]);
-        let by_v = F::from_slice(token, &block_y_s[base..]);
-        let w = F::from_slice(token, &weights_s[base..]);
-        let iw = F::from_slice(token, &inv_weights_s[base..]);
+        let bc = F::from_slice_t(token, &block_c_s[base..]);
+        let by_v = F::from_slice_t(token, &block_y_s[base..]);
+        let w = F::from_slice_t(token, &weights_s[base..]);
+        let iw = F::from_slice_t(token, &inv_weights_s[base..]);
 
         let adjusted = bc - by_v * cmap_v;
         let val = adjusted * iw * quant_v;
@@ -597,25 +597,25 @@ pub fn shannon_entropy_scalar(counts: &[i32], total_count: usize) -> f32 {
 
 #[magetypes(define(f32x8, i32x8), v4, v3, neon, wasm128, scalar)]
 pub fn shannon_entropy_impl(token: Token, counts: &[i32], total_count: usize) -> f32 {
-    let inv_total_v = f32x8::splat(token, 1.0 / total_count as f32);
-    let total_f_v = f32x8::splat(token, total_count as f32);
-    let zero_f = f32x8::zero(token);
-    let one = f32x8::splat(token, 1.0);
-    let mut acc = f32x8::zero(token);
+    let inv_total_v = f32x8::splat_t(token, 1.0 / total_count as f32);
+    let total_f_v = f32x8::splat_t(token, total_count as f32);
+    let zero_f = f32x8::zero_t(token);
+    let one = f32x8::splat_t(token, 1.0);
+    let mut acc = f32x8::zero_t(token);
 
     // fast_log2f constants
-    let offset = i32x8::splat(token, 0x3f2a_aaab_u32 as i32);
-    let p0 = f32x8::splat(token, LOG2_P0);
-    let p1 = f32x8::splat(token, LOG2_P1);
-    let p2 = f32x8::splat(token, LOG2_P2);
-    let q0 = f32x8::splat(token, LOG2_Q0);
-    let q1 = f32x8::splat(token, LOG2_Q1);
-    let q2 = f32x8::splat(token, LOG2_Q2);
+    let offset = i32x8::splat_t(token, 0x3f2a_aaab_u32 as i32);
+    let p0 = f32x8::splat_t(token, LOG2_P0);
+    let p1 = f32x8::splat_t(token, LOG2_P1);
+    let p2 = f32x8::splat_t(token, LOG2_P2);
+    let q0 = f32x8::splat_t(token, LOG2_Q0);
+    let q1 = f32x8::splat_t(token, LOG2_Q1);
+    let q2 = f32x8::splat_t(token, LOG2_Q2);
 
     let chunks = counts.len() / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let c_i = i32x8::from_slice(token, &counts[base..]);
+        let c_i = i32x8::from_slice_t(token, &counts[base..]);
         let c_f = c_i.to_f32x8();
 
         let nonzero_mask = c_f.simd_gt(zero_f);
@@ -729,35 +729,35 @@ pub fn estimate_bits_scalar_f64(counts: &[u32], total: u32) -> f64 {
 #[magetypes(define(f32x8, i32x8, u32x8), v4, v3, neon, wasm128, scalar)]
 pub fn estimate_bits_u32_impl(token: Token, counts: &[u32], total: u32) -> f64 {
     let total_f = total as f32;
-    let inv_total = f32x8::splat(token, 1.0 / total_f);
-    let min_prob = f32x8::splat(token, 1.0 / 4096.0);
-    let zero_f = f32x8::zero(token);
-    let one = f32x8::splat(token, 1.0);
+    let inv_total = f32x8::splat_t(token, 1.0 / total_f);
+    let min_prob = f32x8::splat_t(token, 1.0 / 4096.0);
+    let zero_f = f32x8::zero_t(token);
+    let one = f32x8::splat_t(token, 1.0);
 
     // fast_log2f constants
-    let offset = i32x8::splat(token, 0x3f2a_aaab_u32 as i32);
-    let p0 = f32x8::splat(token, LOG2_P0);
-    let p1 = f32x8::splat(token, LOG2_P1);
-    let p2 = f32x8::splat(token, LOG2_P2);
-    let q0 = f32x8::splat(token, LOG2_Q0);
-    let q1 = f32x8::splat(token, LOG2_Q1);
-    let q2 = f32x8::splat(token, LOG2_Q2);
+    let offset = i32x8::splat_t(token, 0x3f2a_aaab_u32 as i32);
+    let p0 = f32x8::splat_t(token, LOG2_P0);
+    let p1 = f32x8::splat_t(token, LOG2_P1);
+    let p2 = f32x8::splat_t(token, LOG2_P2);
+    let q0 = f32x8::splat_t(token, LOG2_Q0);
+    let q1 = f32x8::splat_t(token, LOG2_Q1);
+    let q2 = f32x8::splat_t(token, LOG2_Q2);
 
     // fast_log2f (log2 via integer bit manipulation) is inlined at each
     // use site below — lane-pure, so every tier computes identical
     // per-element values.
 
-    let mut acc_a = f32x8::zero(token);
-    let mut acc_b = f32x8::zero(token);
+    let mut acc_a = f32x8::zero_t(token);
+    let mut acc_b = f32x8::zero_t(token);
     let blocks = counts.len() / 8;
     let mut blk = 0usize;
     while blk + 1 < blocks {
         let base_a = blk * 8;
         let base_b = base_a + 8;
-        let ca = u32x8::from_slice(token, &counts[base_a..base_a + 8])
+        let ca = u32x8::from_slice_t(token, &counts[base_a..base_a + 8])
             .bitcast_i32x8()
             .to_f32x8();
-        let cb = u32x8::from_slice(token, &counts[base_b..base_b + 8])
+        let cb = u32x8::from_slice_t(token, &counts[base_b..base_b + 8])
             .bitcast_i32x8()
             .to_f32x8();
         let nza = ca.simd_gt(zero_f);
@@ -797,7 +797,7 @@ pub fn estimate_bits_u32_impl(token: Token, counts: &[u32], total: u32) -> f64 {
     if blk < blocks {
         // Trailing lone block has an even index — virtual accs 0-7 (acc_a).
         let base = blk * 8;
-        let c = u32x8::from_slice(token, &counts[base..base + 8])
+        let c = u32x8::from_slice_t(token, &counts[base..base + 8])
             .bitcast_i32x8()
             .to_f32x8();
         let nz = c.simd_gt(zero_f);

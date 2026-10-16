@@ -282,21 +282,21 @@ pub fn dct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut
     use magetypes::simd::f32x8;
 
     // Load 8 rows
-    let r0 = f32x8::from_slice(token, &input[0..]);
-    let r1 = f32x8::from_slice(token, &input[8..]);
-    let r2 = f32x8::from_slice(token, &input[16..]);
-    let r3 = f32x8::from_slice(token, &input[24..]);
-    let r4 = f32x8::from_slice(token, &input[32..]);
-    let r5 = f32x8::from_slice(token, &input[40..]);
-    let r6 = f32x8::from_slice(token, &input[48..]);
-    let r7 = f32x8::from_slice(token, &input[56..]);
+    let r0 = f32x8::from_slice_t(token, &input[0..]);
+    let r1 = f32x8::from_slice_t(token, &input[8..]);
+    let r2 = f32x8::from_slice_t(token, &input[16..]);
+    let r3 = f32x8::from_slice_t(token, &input[24..]);
+    let r4 = f32x8::from_slice_t(token, &input[32..]);
+    let r5 = f32x8::from_slice_t(token, &input[40..]);
+    let r6 = f32x8::from_slice_t(token, &input[48..]);
+    let r7 = f32x8::from_slice_t(token, &input[56..]);
 
     // Column-DCT: butterfly on registers (processes all 8 columns simultaneously)
     let (r0, r1, r2, r3, r4, r5, r6, r7) =
         vectorized_dct1d_8(token, r0, r1, r2, r3, r4, r5, r6, r7);
 
     // Scale by 1/8
-    let scale = f32x8::splat(token, 0.125);
+    let scale = f32x8::splat_t(token, 0.125);
     let r0 = r0 * scale;
     let r1 = r1 * scale;
     let r2 = r2 * scale;
@@ -342,14 +342,14 @@ pub fn idct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mu
     use magetypes::simd::f32x8;
 
     // Load 8 registers (input is in transposed layout)
-    let r0 = f32x8::from_slice(token, &input[0..]);
-    let r1 = f32x8::from_slice(token, &input[8..]);
-    let r2 = f32x8::from_slice(token, &input[16..]);
-    let r3 = f32x8::from_slice(token, &input[24..]);
-    let r4 = f32x8::from_slice(token, &input[32..]);
-    let r5 = f32x8::from_slice(token, &input[40..]);
-    let r6 = f32x8::from_slice(token, &input[48..]);
-    let r7 = f32x8::from_slice(token, &input[56..]);
+    let r0 = f32x8::from_slice_t(token, &input[0..]);
+    let r1 = f32x8::from_slice_t(token, &input[8..]);
+    let r2 = f32x8::from_slice_t(token, &input[16..]);
+    let r3 = f32x8::from_slice_t(token, &input[24..]);
+    let r4 = f32x8::from_slice_t(token, &input[32..]);
+    let r5 = f32x8::from_slice_t(token, &input[40..]);
+    let r6 = f32x8::from_slice_t(token, &input[48..]);
+    let r7 = f32x8::from_slice_t(token, &input[56..]);
 
     // Inverse row-DCT
     let (r0, r1, r2, r3, r4, r5, r6, r7) =
@@ -404,7 +404,7 @@ pub(crate) fn vectorized_dct1d_8(
 ) {
     use magetypes::simd::f32x8;
 
-    let sqrt2 = f32x8::splat(token, SQRT2);
+    let sqrt2 = f32x8::splat_t(token, SQRT2);
 
     // ---- Level 0: 8-point split ----
     // AddReverse / SubReverse
@@ -428,8 +428,8 @@ pub(crate) fn vectorized_dct1d_8(
     let c1 = b0 - b1;
 
     // WcMultipliers_4 on {b2, b3}
-    let b2 = b2 * f32x8::splat(token, WC_MULTIPLIERS_4[0]);
-    let b3 = b3 * f32x8::splat(token, WC_MULTIPLIERS_4[1]);
+    let b2 = b2 * f32x8::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let b3 = b3 * f32x8::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     // DCT-2 on {b2, b3}
     let d0 = b2 + b3;
@@ -445,10 +445,10 @@ pub(crate) fn vectorized_dct1d_8(
     let fh3 = d1;
 
     // ---- WcMultipliers_8 on second half {s0,s1,s2,s3} ----
-    let s0 = s0 * f32x8::splat(token, WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x8::splat(token, WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x8::splat(token, WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x8::splat(token, WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x8::splat_t(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x8::splat_t(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x8::splat_t(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x8::splat_t(token, WC_MULTIPLIERS_8[3]);
 
     // ---- DCT-4 on second half {s0,s1,s2,s3} ----
     let e0 = s0 + s3;
@@ -461,8 +461,8 @@ pub(crate) fn vectorized_dct1d_8(
     let f1 = e0 - e1;
 
     // WcMultipliers_4
-    let e2 = e2 * f32x8::splat(token, WC_MULTIPLIERS_4[0]);
-    let e3 = e3 * f32x8::splat(token, WC_MULTIPLIERS_4[1]);
+    let e2 = e2 * f32x8::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let e3 = e3 * f32x8::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     // DCT-2
     let g0 = e2 + e3;
@@ -514,7 +514,7 @@ pub(crate) fn vectorized_idct1d_8(
 ) {
     use magetypes::simd::f32x8;
 
-    let inv_sqrt2 = f32x8::splat(token, 1.0 / SQRT2);
+    let inv_sqrt2 = f32x8::splat_t(token, 1.0 / SQRT2);
 
     // ---- De-interleave (reverse of InverseEvenOdd) ----
     // Input order from forward: [fh0, sh0, fh1, sh1, fh2, sh2, fh3, sh3]
@@ -549,8 +549,8 @@ pub(crate) fn vectorized_idct1d_8(
     let e3p = g0 - g1;
 
     // Inverse WcMultipliers_4
-    let e2 = e2p * f32x8::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
-    let e3 = e3p * f32x8::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+    let e2 = e2p * f32x8::splat_t(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let e3 = e3p * f32x8::splat_t(token, 1.0 / WC_MULTIPLIERS_4[1]);
 
     // Inverse DCT-2
     let e0p = f0 + f1;
@@ -563,10 +563,10 @@ pub(crate) fn vectorized_idct1d_8(
     let s2 = e1p - e3;
 
     // Inverse WcMultipliers_8
-    let s0 = s0 * f32x8::splat(token, 1.0 / WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x8::splat(token, 1.0 / WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x8::splat(token, 1.0 / WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x8::splat(token, 1.0 / WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x8::splat_t(token, 1.0 / WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x8::splat_t(token, 1.0 / WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x8::splat_t(token, 1.0 / WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x8::splat_t(token, 1.0 / WC_MULTIPLIERS_8[3]);
 
     // ---- First half: inverse InverseEvenOdd ----
     let c0 = fh0;
@@ -582,8 +582,8 @@ pub(crate) fn vectorized_idct1d_8(
     let b3p = d0_in - d1;
 
     // Inverse WcMultipliers_4
-    let b2 = b2p * f32x8::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
-    let b3 = b3p * f32x8::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+    let b2 = b2p * f32x8::splat_t(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let b3 = b3p * f32x8::splat_t(token, 1.0 / WC_MULTIPLIERS_4[1]);
 
     // Inverse DCT-2 of {c0, c1}
     let b0p = c0 + c1;
@@ -677,14 +677,14 @@ pub(crate) fn transpose_8x8_regs(
     let c7 = _mm256_permute2f128_ps::<0x31>(s3, s7);
 
     (
-        f32x8::from_m256(token, c0),
-        f32x8::from_m256(token, c1),
-        f32x8::from_m256(token, c2),
-        f32x8::from_m256(token, c3),
-        f32x8::from_m256(token, c4),
-        f32x8::from_m256(token, c5),
-        f32x8::from_m256(token, c6),
-        f32x8::from_m256(token, c7),
+        f32x8::from_raw_t(token, c0),
+        f32x8::from_raw_t(token, c1),
+        f32x8::from_raw_t(token, c2),
+        f32x8::from_raw_t(token, c3),
+        f32x8::from_raw_t(token, c4),
+        f32x8::from_raw_t(token, c5),
+        f32x8::from_raw_t(token, c6),
+        f32x8::from_raw_t(token, c7),
     )
 }
 
@@ -699,17 +699,17 @@ pub(crate) fn transpose_8x8_regs(
 pub fn dct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
     use magetypes::simd::f32x4;
 
-    let scale = f32x4::splat(token, 0.125);
+    let scale = f32x4::splat_t(token, 0.125);
 
     // Pass 1: Column-DCT on left 4 columns
-    let l0 = f32x4::from_slice(token, &input[0..]);
-    let l1 = f32x4::from_slice(token, &input[8..]);
-    let l2 = f32x4::from_slice(token, &input[16..]);
-    let l3 = f32x4::from_slice(token, &input[24..]);
-    let l4 = f32x4::from_slice(token, &input[32..]);
-    let l5 = f32x4::from_slice(token, &input[40..]);
-    let l6 = f32x4::from_slice(token, &input[48..]);
-    let l7 = f32x4::from_slice(token, &input[56..]);
+    let l0 = f32x4::from_slice_t(token, &input[0..]);
+    let l1 = f32x4::from_slice_t(token, &input[8..]);
+    let l2 = f32x4::from_slice_t(token, &input[16..]);
+    let l3 = f32x4::from_slice_t(token, &input[24..]);
+    let l4 = f32x4::from_slice_t(token, &input[32..]);
+    let l5 = f32x4::from_slice_t(token, &input[40..]);
+    let l6 = f32x4::from_slice_t(token, &input[48..]);
+    let l7 = f32x4::from_slice_t(token, &input[56..]);
 
     let (l0, l1, l2, l3, l4, l5, l6, l7) = neon_dct1d_8(token, l0, l1, l2, l3, l4, l5, l6, l7);
     let l0 = l0 * scale;
@@ -722,14 +722,14 @@ pub fn dct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut 
     let l7 = l7 * scale;
 
     // Pass 2: Column-DCT on right 4 columns
-    let h0 = f32x4::from_slice(token, &input[4..]);
-    let h1 = f32x4::from_slice(token, &input[12..]);
-    let h2 = f32x4::from_slice(token, &input[20..]);
-    let h3 = f32x4::from_slice(token, &input[28..]);
-    let h4 = f32x4::from_slice(token, &input[36..]);
-    let h5 = f32x4::from_slice(token, &input[44..]);
-    let h6 = f32x4::from_slice(token, &input[52..]);
-    let h7 = f32x4::from_slice(token, &input[60..]);
+    let h0 = f32x4::from_slice_t(token, &input[4..]);
+    let h1 = f32x4::from_slice_t(token, &input[12..]);
+    let h2 = f32x4::from_slice_t(token, &input[20..]);
+    let h3 = f32x4::from_slice_t(token, &input[28..]);
+    let h4 = f32x4::from_slice_t(token, &input[36..]);
+    let h5 = f32x4::from_slice_t(token, &input[44..]);
+    let h6 = f32x4::from_slice_t(token, &input[52..]);
+    let h7 = f32x4::from_slice_t(token, &input[60..]);
 
     let (h0, h1, h2, h3, h4, h5, h6, h7) = neon_dct1d_8(token, h0, h1, h2, h3, h4, h5, h6, h7);
     let h0 = h0 * scale;
@@ -800,22 +800,22 @@ pub fn idct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut
     use magetypes::simd::f32x4;
 
     // Load as 8 rows × (lo, hi)
-    let l0 = f32x4::from_slice(token, &input[0..]);
-    let h0 = f32x4::from_slice(token, &input[4..]);
-    let l1 = f32x4::from_slice(token, &input[8..]);
-    let h1 = f32x4::from_slice(token, &input[12..]);
-    let l2 = f32x4::from_slice(token, &input[16..]);
-    let h2 = f32x4::from_slice(token, &input[20..]);
-    let l3 = f32x4::from_slice(token, &input[24..]);
-    let h3 = f32x4::from_slice(token, &input[28..]);
-    let l4 = f32x4::from_slice(token, &input[32..]);
-    let h4 = f32x4::from_slice(token, &input[36..]);
-    let l5 = f32x4::from_slice(token, &input[40..]);
-    let h5 = f32x4::from_slice(token, &input[44..]);
-    let l6 = f32x4::from_slice(token, &input[48..]);
-    let h6 = f32x4::from_slice(token, &input[52..]);
-    let l7 = f32x4::from_slice(token, &input[56..]);
-    let h7 = f32x4::from_slice(token, &input[60..]);
+    let l0 = f32x4::from_slice_t(token, &input[0..]);
+    let h0 = f32x4::from_slice_t(token, &input[4..]);
+    let l1 = f32x4::from_slice_t(token, &input[8..]);
+    let h1 = f32x4::from_slice_t(token, &input[12..]);
+    let l2 = f32x4::from_slice_t(token, &input[16..]);
+    let h2 = f32x4::from_slice_t(token, &input[20..]);
+    let l3 = f32x4::from_slice_t(token, &input[24..]);
+    let h3 = f32x4::from_slice_t(token, &input[28..]);
+    let l4 = f32x4::from_slice_t(token, &input[32..]);
+    let h4 = f32x4::from_slice_t(token, &input[36..]);
+    let l5 = f32x4::from_slice_t(token, &input[40..]);
+    let h5 = f32x4::from_slice_t(token, &input[44..]);
+    let l6 = f32x4::from_slice_t(token, &input[48..]);
+    let h6 = f32x4::from_slice_t(token, &input[52..]);
+    let l7 = f32x4::from_slice_t(token, &input[56..]);
+    let h7 = f32x4::from_slice_t(token, &input[60..]);
 
     // Inverse row-DCT: left half
     let (l0, l1, l2, l3, l4, l5, l6, l7) = neon_idct1d_8(token, l0, l1, l2, l3, l4, l5, l6, l7);
@@ -880,7 +880,7 @@ fn neon_dct1d_8(
 ) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
 
     // Level 0: AddReverse / SubReverse
     let a0 = r0 + r7;
@@ -901,8 +901,8 @@ fn neon_dct1d_8(
     let c0 = b0 + b1;
     let c1 = b0 - b1;
 
-    let b2 = b2 * f32x4::splat(token, WC_MULTIPLIERS_4[0]);
-    let b3 = b3 * f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+    let b2 = b2 * f32x4::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let b3 = b3 * f32x4::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     let d0 = b2 + b3;
     let d1 = b2 - b3;
@@ -914,10 +914,10 @@ fn neon_dct1d_8(
     let fh3 = d1;
 
     // WcMultipliers_8 on second half
-    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x4::splat_t(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat_t(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat_t(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat_t(token, WC_MULTIPLIERS_8[3]);
 
     // DCT-4 on second half
     let e0 = s0 + s3;
@@ -928,8 +928,8 @@ fn neon_dct1d_8(
     let f0 = e0 + e1;
     let f1 = e0 - e1;
 
-    let e2 = e2 * f32x4::splat(token, WC_MULTIPLIERS_4[0]);
-    let e3 = e3 * f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+    let e2 = e2 * f32x4::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let e3 = e3 * f32x4::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     let g0 = e2 + e3;
     let g1 = e2 - e3;
@@ -974,7 +974,7 @@ fn neon_idct1d_8(
 ) {
     use magetypes::simd::f32x4;
 
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
 
     // De-interleave
     let fh0 = r0;
@@ -1001,8 +1001,8 @@ fn neon_idct1d_8(
     let e2p = g0 + g1;
     let e3p = g0 - g1;
 
-    let e2 = e2p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
-    let e3 = e3p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+    let e2 = e2p * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let e3 = e3p * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_4[1]);
 
     let e0p = f0 + f1;
     let e1p = f0 - f1;
@@ -1012,10 +1012,10 @@ fn neon_idct1d_8(
     let s1 = e1p + e3;
     let s2 = e1p - e3;
 
-    let s0 = s0 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_8[3]);
 
     // First half
     let c0 = fh0;
@@ -1028,8 +1028,8 @@ fn neon_idct1d_8(
     let b2p = d0_in + d1;
     let b3p = d0_in - d1;
 
-    let b2 = b2p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
-    let b3 = b3p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+    let b2 = b2p * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let b3 = b3p * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_4[1]);
 
     let b0p = c0 + c1;
     let b1p = c0 - c1;
@@ -1111,17 +1111,17 @@ fn neon_transpose_4x4(
 pub fn dct_8x8_wasm128(token: archmage::Wasm128Token, input: &[f32; 64], output: &mut [f32; 64]) {
     use magetypes::simd::f32x4;
 
-    let scale = f32x4::splat(token, 0.125);
+    let scale = f32x4::splat_t(token, 0.125);
 
     // Pass 1: Column-DCT on left 4 columns
-    let l0 = f32x4::from_slice(token, &input[0..]);
-    let l1 = f32x4::from_slice(token, &input[8..]);
-    let l2 = f32x4::from_slice(token, &input[16..]);
-    let l3 = f32x4::from_slice(token, &input[24..]);
-    let l4 = f32x4::from_slice(token, &input[32..]);
-    let l5 = f32x4::from_slice(token, &input[40..]);
-    let l6 = f32x4::from_slice(token, &input[48..]);
-    let l7 = f32x4::from_slice(token, &input[56..]);
+    let l0 = f32x4::from_slice_t(token, &input[0..]);
+    let l1 = f32x4::from_slice_t(token, &input[8..]);
+    let l2 = f32x4::from_slice_t(token, &input[16..]);
+    let l3 = f32x4::from_slice_t(token, &input[24..]);
+    let l4 = f32x4::from_slice_t(token, &input[32..]);
+    let l5 = f32x4::from_slice_t(token, &input[40..]);
+    let l6 = f32x4::from_slice_t(token, &input[48..]);
+    let l7 = f32x4::from_slice_t(token, &input[56..]);
 
     let (l0, l1, l2, l3, l4, l5, l6, l7) = wasm128_dct1d_8(token, l0, l1, l2, l3, l4, l5, l6, l7);
     let l0 = l0 * scale;
@@ -1134,14 +1134,14 @@ pub fn dct_8x8_wasm128(token: archmage::Wasm128Token, input: &[f32; 64], output:
     let l7 = l7 * scale;
 
     // Pass 2: Column-DCT on right 4 columns
-    let h0 = f32x4::from_slice(token, &input[4..]);
-    let h1 = f32x4::from_slice(token, &input[12..]);
-    let h2 = f32x4::from_slice(token, &input[20..]);
-    let h3 = f32x4::from_slice(token, &input[28..]);
-    let h4 = f32x4::from_slice(token, &input[36..]);
-    let h5 = f32x4::from_slice(token, &input[44..]);
-    let h6 = f32x4::from_slice(token, &input[52..]);
-    let h7 = f32x4::from_slice(token, &input[60..]);
+    let h0 = f32x4::from_slice_t(token, &input[4..]);
+    let h1 = f32x4::from_slice_t(token, &input[12..]);
+    let h2 = f32x4::from_slice_t(token, &input[20..]);
+    let h3 = f32x4::from_slice_t(token, &input[28..]);
+    let h4 = f32x4::from_slice_t(token, &input[36..]);
+    let h5 = f32x4::from_slice_t(token, &input[44..]);
+    let h6 = f32x4::from_slice_t(token, &input[52..]);
+    let h7 = f32x4::from_slice_t(token, &input[60..]);
 
     let (h0, h1, h2, h3, h4, h5, h6, h7) = wasm128_dct1d_8(token, h0, h1, h2, h3, h4, h5, h6, h7);
     let h0 = h0 * scale;
@@ -1208,22 +1208,22 @@ pub fn idct_8x8_wasm128(token: archmage::Wasm128Token, input: &[f32; 64], output
     use magetypes::simd::f32x4;
 
     // Load as 8 rows × (lo, hi)
-    let l0 = f32x4::from_slice(token, &input[0..]);
-    let h0 = f32x4::from_slice(token, &input[4..]);
-    let l1 = f32x4::from_slice(token, &input[8..]);
-    let h1 = f32x4::from_slice(token, &input[12..]);
-    let l2 = f32x4::from_slice(token, &input[16..]);
-    let h2 = f32x4::from_slice(token, &input[20..]);
-    let l3 = f32x4::from_slice(token, &input[24..]);
-    let h3 = f32x4::from_slice(token, &input[28..]);
-    let l4 = f32x4::from_slice(token, &input[32..]);
-    let h4 = f32x4::from_slice(token, &input[36..]);
-    let l5 = f32x4::from_slice(token, &input[40..]);
-    let h5 = f32x4::from_slice(token, &input[44..]);
-    let l6 = f32x4::from_slice(token, &input[48..]);
-    let h6 = f32x4::from_slice(token, &input[52..]);
-    let l7 = f32x4::from_slice(token, &input[56..]);
-    let h7 = f32x4::from_slice(token, &input[60..]);
+    let l0 = f32x4::from_slice_t(token, &input[0..]);
+    let h0 = f32x4::from_slice_t(token, &input[4..]);
+    let l1 = f32x4::from_slice_t(token, &input[8..]);
+    let h1 = f32x4::from_slice_t(token, &input[12..]);
+    let l2 = f32x4::from_slice_t(token, &input[16..]);
+    let h2 = f32x4::from_slice_t(token, &input[20..]);
+    let l3 = f32x4::from_slice_t(token, &input[24..]);
+    let h3 = f32x4::from_slice_t(token, &input[28..]);
+    let l4 = f32x4::from_slice_t(token, &input[32..]);
+    let h4 = f32x4::from_slice_t(token, &input[36..]);
+    let l5 = f32x4::from_slice_t(token, &input[40..]);
+    let h5 = f32x4::from_slice_t(token, &input[44..]);
+    let l6 = f32x4::from_slice_t(token, &input[48..]);
+    let h6 = f32x4::from_slice_t(token, &input[52..]);
+    let l7 = f32x4::from_slice_t(token, &input[56..]);
+    let h7 = f32x4::from_slice_t(token, &input[60..]);
 
     // Inverse row-DCT: left half
     let (l0, l1, l2, l3, l4, l5, l6, l7) = wasm128_idct1d_8(token, l0, l1, l2, l3, l4, l5, l6, l7);
@@ -1286,7 +1286,7 @@ fn wasm128_dct1d_8(
 ) {
     use magetypes::simd::f32x4;
 
-    let sqrt2 = f32x4::splat(token, SQRT2);
+    let sqrt2 = f32x4::splat_t(token, SQRT2);
 
     let a0 = r0 + r7;
     let a1 = r1 + r6;
@@ -1305,8 +1305,8 @@ fn wasm128_dct1d_8(
     let c0 = b0 + b1;
     let c1 = b0 - b1;
 
-    let b2 = b2 * f32x4::splat(token, WC_MULTIPLIERS_4[0]);
-    let b3 = b3 * f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+    let b2 = b2 * f32x4::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let b3 = b3 * f32x4::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     let d0 = b2 + b3;
     let d1 = b2 - b3;
@@ -1317,10 +1317,10 @@ fn wasm128_dct1d_8(
     let fh2 = c1;
     let fh3 = d1;
 
-    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x4::splat_t(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat_t(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat_t(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat_t(token, WC_MULTIPLIERS_8[3]);
 
     let e0 = s0 + s3;
     let e1 = s1 + s2;
@@ -1330,8 +1330,8 @@ fn wasm128_dct1d_8(
     let f0 = e0 + e1;
     let f1 = e0 - e1;
 
-    let e2 = e2 * f32x4::splat(token, WC_MULTIPLIERS_4[0]);
-    let e3 = e3 * f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+    let e2 = e2 * f32x4::splat_t(token, WC_MULTIPLIERS_4[0]);
+    let e3 = e3 * f32x4::splat_t(token, WC_MULTIPLIERS_4[1]);
 
     let g0 = e2 + e3;
     let g1 = e2 - e3;
@@ -1375,7 +1375,7 @@ fn wasm128_idct1d_8(
 ) {
     use magetypes::simd::f32x4;
 
-    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+    let inv_sqrt2 = f32x4::splat_t(token, 1.0 / SQRT2);
 
     let fh0 = r0;
     let sh0 = r1;
@@ -1400,8 +1400,8 @@ fn wasm128_idct1d_8(
     let e2p = g0 + g1;
     let e3p = g0 - g1;
 
-    let e2 = e2p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
-    let e3 = e3p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+    let e2 = e2p * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let e3 = e3p * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_4[1]);
 
     let e0p = f0 + f1;
     let e1p = f0 - f1;
@@ -1411,10 +1411,10 @@ fn wasm128_idct1d_8(
     let s1 = e1p + e3;
     let s2 = e1p - e3;
 
-    let s0 = s0 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[0]);
-    let s1 = s1 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[1]);
-    let s2 = s2 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[2]);
-    let s3 = s3 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[3]);
+    let s0 = s0 * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_8[3]);
 
     let c0 = fh0;
     let d0 = fh1;
@@ -1426,8 +1426,8 @@ fn wasm128_idct1d_8(
     let b2p = d0_in + d1;
     let b3p = d0_in - d1;
 
-    let b2 = b2p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
-    let b3 = b3p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+    let b2 = b2p * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let b3 = b3p * f32x4::splat_t(token, 1.0 / WC_MULTIPLIERS_4[1]);
 
     let b0p = c0 + c1;
     let b1p = c0 - c1;
