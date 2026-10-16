@@ -700,3 +700,6 @@ shipgates-map-check:
 
 shipgates-simd-check:
     cargo test --release --locked -p jxl-encoder-simd --lib --target-dir target
+
+shipgates-ci-sources root:
+    python3 scripts/ci_frozen_sources.py .github/sibling-revisions.tsv {{quote(root)}}
