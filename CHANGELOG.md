@@ -10,6 +10,7 @@
 published. See docs/RELEASE_0.4.0.md for the publish gates.)
 
 ### Added
+- Native RD experiments admit explicit Rev5 candidates and retain requested bitstreams/maps by content hash; the distance ladder can use canonical PNG IO (`b73ca3a1`). Internal SIMD token constructors use the magetypes 0.9.30 names.
 - `EncodeRequest::with_external_metric(&ExternalMetric)` with the `ExternalLoopMetric` trait (unstable `__external_metric` feature; #130, `a8c11520`): a caller-supplied metric scores the VarDCT perceptual quantization loop in butteraugli's place, on butteraugli's scale, keeping the seeds, iterations, block reduction and quant-field update. Butteraugli itself plugged in through the trait reproduces the built-in loop byte for byte and frame for frame; refused with a CVVDP or Zensim loop metric or on the VDP2 HDR path (`tests/it/external_metric.rs`).
 - `EncodeRequest::with_loop_trace(&LoopTrace)` with `LoopTrace` / `LoopFrame` (additive; #129, `63eec756`): records every scored iteration of the VarDCT perceptual quantization loop (per seed: the quant field encoded with and the one adjusted to, the metric's diffmap and per-block tile distances, score and target, the linear-RGB reconstruction) for viewers that step through how the map drives quantization. Encoded bytes are unchanged with a trace; each frame's adjusted field equals the next iteration's input (`tests/it/loop_trace.rs`).
 - `cjxl-rs --fast-decode` (with `--lossless`) selects `LosslessConfig::with_fast_decode()`; output is byte-identical to the API preset (`b11d78da`).
