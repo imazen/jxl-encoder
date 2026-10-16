@@ -7,7 +7,7 @@ runs:
       id: tools
       with:
         path: .ci-libjxl/tools
-        key: libjxl-v0.12.0-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'Windows' && runner.arch == 'ARM64' && 'v2' || 'v1' }}
+        key: libjxl-v0.12.0-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'Windows' && runner.arch == 'ARM64' && 'v3' || 'v1' }}
 
     - name: Download static Linux x64 reference tools
       if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Linux' && runner.arch == 'X64'
@@ -61,6 +61,15 @@ runs:
       if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Windows' && runner.arch == 'ARM64'
       shell: pwsh
       run: |
+        # FindZLIB copies ZLIB_INCLUDE_DIR into the libpng preprocessor's include
+        # list. Replace the pinned bundled-build placeholder with both real
+        # header directories (zlib.h in source, generated zconf.h in build).
+        $cmakeFile = '.ci-libjxl/source/third_party/CMakeLists.txt'
+        $cmakeText = [IO.File]::ReadAllText($cmakeFile)
+        $needle = 'set(ZLIB_INCLUDE_DIR bing_bong_dir)'
+        if ([regex]::Matches($cmakeText, [regex]::Escape($needle)).Count -ne 1) { throw 'Pinned libjxl zlib include binding changed' }
+        $replacement = 'set(ZLIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/zlib;${CMAKE_CURRENT_BINARY_DIR}/zlib")'
+        [IO.File]::WriteAllText($cmakeFile, $cmakeText.Replace($needle, $replacement))
         cmake -S .ci-libjxl/source -B .ci-libjxl/build -G 'Visual Studio 18 2026' -A ARM64 `
           -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF `
           -DJPEGXL_ENABLE_TOOLS=ON -DJPEGXL_ENABLE_BENCHMARK=OFF `
