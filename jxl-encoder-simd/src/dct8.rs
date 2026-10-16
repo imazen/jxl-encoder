@@ -1093,10 +1093,10 @@ fn neon_transpose_4x4(
 
     // Token needed for from_repr, get it back via _token
     (
-        f32x4::from_repr(_token, out0),
-        f32x4::from_repr(_token, out1),
-        f32x4::from_repr(_token, out2),
-        f32x4::from_repr(_token, out3),
+        f32x4::from_repr_t(_token, out0),
+        f32x4::from_repr_t(_token, out1),
+        f32x4::from_repr_t(_token, out2),
+        f32x4::from_repr_t(_token, out3),
     )
 }
 
@@ -1494,10 +1494,10 @@ fn wasm128_transpose_4x4(
     let out3 = i64x2_shuffle::<1, 3>(t1, t3);
 
     (
-        f32x4::from_repr(token, out0),
-        f32x4::from_repr(token, out1),
-        f32x4::from_repr(token, out2),
-        f32x4::from_repr(token, out3),
+        f32x4::from_repr_t(token, out0),
+        f32x4::from_repr_t(token, out1),
+        f32x4::from_repr_t(token, out2),
+        f32x4::from_repr_t(token, out3),
     )
 }
 
