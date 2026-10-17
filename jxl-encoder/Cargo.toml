@@ -616,6 +616,13 @@ name = "loop_trace_dump"
 path = "examples/loop_trace_dump.rs"
 required-features = ["butteraugli-loop"]
 
+# Fixed-point stop A/B: wall time and frames with the stop off vs on,
+# byte-identical per cell (benchmarks/loop_fixpoint_stop_*.tsv).
+[[example]]
+name = "loop_fixpoint_ab"
+path = "examples/loop_fixpoint_ab.rs"
+required-features = ["butteraugli-loop"]
+
 # Focused W42-2 A/B for the patches `group_size_shift` libjxl-parity fix.
 # 4 screenshots + 3 photos × 4 distances × {ours, cjxl} = 56 cells, e7 only.
 [[example]]
