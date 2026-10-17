@@ -367,6 +367,12 @@ impl FileHeader {
     }
 
     /// Writes the size header.
+    fn write_size_header(&self, writer: &mut BitWriter) -> Result<()> {
+        Self::write_size(writer, self.width, self.height)
+    }
+
+    /// Writes a `SizeHeader`: the image size, and the intrinsic size, which is
+    /// one too (libjxl `ImageMetadata::VisitFields`).
     ///
     /// JXL Size format:
     /// - small: Bool (1 bit) - true if both dimensions are multiples of 8 and <= 256
@@ -378,16 +384,16 @@ impl FileHeader {
     ///   - ysize: 1 + u2S(Bits(9), Bits(13), Bits(18), Bits(30))
     ///   - ratio: Bits(3)
     ///   - If ratio == 0: xsize: 1 + u2S(Bits(9), Bits(13), Bits(18), Bits(30))
-    fn write_size_header(&self, writer: &mut BitWriter) -> Result<()> {
+    fn write_size(writer: &mut BitWriter, width: u32, height: u32) -> Result<()> {
         // small = true if both dimensions are multiples of 8 and fit in 5 bits (8-256)
-        let h_div8 = self.height.is_multiple_of(8) && self.height / 8 >= 1 && self.height / 8 <= 32;
-        let w_div8 = self.width.is_multiple_of(8) && self.width / 8 >= 1 && self.width / 8 <= 32;
+        let h_div8 = height.is_multiple_of(8) && height / 8 >= 1 && height / 8 <= 32;
+        let w_div8 = width.is_multiple_of(8) && width / 8 >= 1 && width / 8 <= 32;
         let small = h_div8 && w_div8;
 
         crate::trace::debug_eprintln!(
             "SIZE_HDR: {}x{}, small={}, h_div8={}, w_div8={}",
-            self.width,
-            self.height,
+            width,
+            height,
             small,
             h_div8,
             w_div8
@@ -396,32 +402,29 @@ impl FileHeader {
 
         if small {
             // ysize_div8_minus_1: Bits(5), decoder adds 1 then multiplies by 8
-            crate::trace::debug_eprintln!("SIZE_HDR: ysize_div8_minus_1 = {}", self.height / 8 - 1);
-            writer.write(5, (self.height / 8 - 1) as u64)?;
+            crate::trace::debug_eprintln!("SIZE_HDR: ysize_div8_minus_1 = {}", height / 8 - 1);
+            writer.write(5, (height / 8 - 1) as u64)?;
 
-            let ratio = self.compute_ratio();
+            let ratio = Self::compute_ratio(width, height);
             crate::trace::debug_eprintln!("SIZE_HDR: ratio = {}", ratio);
             writer.write(3, ratio as u64)?;
 
             if ratio == 0 {
                 // xsize_div8_minus_1: Bits(5), decoder adds 1 then multiplies by 8
-                crate::trace::debug_eprintln!(
-                    "SIZE_HDR: xsize_div8_minus_1 = {}",
-                    self.width / 8 - 1
-                );
-                writer.write(5, (self.width / 8 - 1) as u64)?;
+                crate::trace::debug_eprintln!("SIZE_HDR: xsize_div8_minus_1 = {}", width / 8 - 1);
+                writer.write(5, (width / 8 - 1) as u64)?;
             }
         } else {
             // ysize: 1 + u2S(Bits(9), Bits(13), Bits(18), Bits(30))
             // Write height - 1 using u2S encoding
-            self.write_size_u2s(writer, self.height - 1)?;
+            Self::write_size_u2s(writer, height - 1)?;
 
-            let ratio = self.compute_ratio();
+            let ratio = Self::compute_ratio(width, height);
             writer.write(3, ratio as u64)?;
 
             if ratio == 0 {
                 // xsize: 1 + u2S(Bits(9), Bits(13), Bits(18), Bits(30))
-                self.write_size_u2s(writer, self.width - 1)?;
+                Self::write_size_u2s(writer, width - 1)?;
             }
         }
 
@@ -430,7 +433,7 @@ impl FileHeader {
 
     /// Writes a size value using u2S(Bits(9), Bits(13), Bits(18), Bits(30)) encoding.
     /// The decoder adds 1 to the result, so we write value directly (not value-1).
-    fn write_size_u2s(&self, writer: &mut BitWriter, value: u32) -> Result<()> {
+    fn write_size_u2s(writer: &mut BitWriter, value: u32) -> Result<()> {
         if value < (1 << 9) {
             writer.write(2, 0)?; // selector 0
             writer.write(9, value as u64)?;
@@ -448,21 +451,22 @@ impl FileHeader {
     }
 
     /// Computes the aspect ratio selector (0 = explicit width).
-    fn compute_ratio(&self) -> u8 {
+    fn compute_ratio(width: u32, height: u32) -> u8 {
+        let (width, height) = (u64::from(width), u64::from(height));
         // Ratio selectors: 1=1:1, 2=12:10, 3=4:3, 4=3:2, 5=16:9, 6=5:4, 7=2:1
-        if self.width == self.height {
+        if width == height {
             1 // 1:1
-        } else if self.width * 10 == self.height * 12 {
+        } else if width * 10 == height * 12 {
             2 // 12:10
-        } else if self.width * 3 == self.height * 4 {
+        } else if width * 3 == height * 4 {
             3 // 4:3
-        } else if self.width * 2 == self.height * 3 {
+        } else if width * 2 == height * 3 {
             4 // 3:2
-        } else if self.width * 9 == self.height * 16 {
+        } else if width * 9 == height * 16 {
             5 // 16:9
-        } else if self.width * 4 == self.height * 5 {
+        } else if width * 4 == height * 5 {
             6 // 5:4
-        } else if self.width == self.height * 2 {
+        } else if width == height * 2 {
             7 // 2:1
         } else {
             0 // Explicit
@@ -600,9 +604,11 @@ impl FileHeader {
             // have_intrinsic_size
             writer.write_bit(meta.have_intrinsic_size)?;
             if meta.have_intrinsic_size {
-                // Intrinsic size uses same u2S encoding as Size
-                self.write_size_u2s(writer, meta.intrinsic_width - 1)?;
-                self.write_size_u2s(writer, meta.intrinsic_height - 1)?;
+                // A SizeHeader, like the image size (libjxl
+                // `ImageMetadata::VisitFields`). Writing the two sizes as bare
+                // U32s, width first, left a header that neither libjxl 0.12
+                // nor jxl-oxide could read.
+                Self::write_size(writer, meta.intrinsic_width, meta.intrinsic_height)?;
             }
 
             // have_preview (not implemented)

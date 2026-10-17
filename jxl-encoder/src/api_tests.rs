@@ -11812,3 +11812,40 @@ mod encode_preflight_walkdown {
         assert!(encode_preflight(12000, 9000, 3, false, false, 5, 1, false, Some(&limits)).is_ok());
     }
 }
+
+/// The intrinsic size is a `SizeHeader` (libjxl `ImageMetadata::VisitFields`).
+/// Until 2026-10-17 it went out as two bare U32s, width first, and neither
+/// libjxl 0.12 (`djxl`: "Failed to decode image") nor jxl-oxide could read the
+/// file.
+#[test]
+fn test_intrinsic_size_roundtrip() {
+    let (w, h) = (64u32, 48u32);
+    let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i * 7 % 251) as u8).collect();
+    for (iw, ih) in [(128, 96), (1000, 3), (64, 48), (9, 300_000)] {
+        let meta = ImageMetadata::new().with_intrinsic_size(iw, ih);
+        let encoded = LosslessConfig::new()
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_metadata(&meta)
+            .encode(&pixels)
+            .unwrap();
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .unwrap_or_else(|e| panic!("intrinsic {iw}x{ih}: {e}"));
+        assert_eq!((image.width(), image.height()), (w, h));
+        let intrinsic = image
+            .image_header()
+            .metadata
+            .intrinsic_size
+            .as_ref()
+            .unwrap();
+        assert_eq!((intrinsic.width, intrinsic.height), (iw, ih));
+        let render = image.render_frame(0).unwrap();
+        let decoded: Vec<u8> = render
+            .image_all_channels()
+            .buf()
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+        assert_eq!(decoded, pixels, "intrinsic {iw}x{ih}");
+    }
+}
