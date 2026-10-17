@@ -324,12 +324,51 @@ pub fn wrap_in_container_with_jbrd_and_level_and_jumbf(
     level: u8,
     jumbf: Option<&[u8]>,
 ) -> Vec<u8> {
+    // A container this crate's encoder wrote without metadata (a level-10
+    // codestream, one jxlc box after jxll; the animation API returns one for
+    // 16-bit lossless) is unwrapped, so the boxes join its codestream instead
+    // of nesting the whole container inside a jxlc box.
+    if let Some((inner, inner_level)) = bare_container_codestream(codestream) {
+        return wrap_in_container_with_jbrd_and_level_and_jumbf(
+            inner,
+            jbrd,
+            exif,
+            xmp,
+            level.max(inner_level),
+            jumbf,
+        );
+    }
     let mut boxes = Vec::new();
     if let Some(jbrd_data) = jbrd {
         write_box(&mut boxes, b"jbrd", jbrd_data);
     }
     write_metadata_boxes(&mut boxes, exif, xmp, jumbf, None);
     assemble(codestream, None, level, &boxes)
+}
+
+/// The codestream and level of a container that holds only the signature,
+/// `ftyp`, an optional `jxll` and one `jxlc` box: what [`wrap_encoded`] writes
+/// for a level-10 codestream without metadata.
+fn bare_container_codestream(data: &[u8]) -> Option<(&[u8], u8)> {
+    if !is_container(data) {
+        return None;
+    }
+    let boxes = top_level_boxes(data)?;
+    let payload = |b: &TopBox| &data[b.offset + b.header..b.offset + b.size];
+    match boxes.as_slice() {
+        [_, ftyp, cs] if &ftyp.box_type == b"ftyp" && &cs.box_type == b"jxlc" => {
+            Some((payload(cs), 5))
+        }
+        [_, ftyp, level, cs]
+            if &ftyp.box_type == b"ftyp"
+                && &level.box_type == b"jxll"
+                && &cs.box_type == b"jxlc"
+                && payload(level).len() == 1 =>
+        {
+            Some((payload(cs), payload(level)[0]))
+        }
+        _ => None,
+    }
 }
 
 /// Boxes an encode adds to its codestream, in libjxl's queue order (cjxl's
@@ -2238,6 +2277,25 @@ mod tests {
         for result in [&bare, &split, &jxlc, &old] {
             assert_eq!(codestream_of(result), codestream);
         }
+    }
+
+    #[test]
+    fn test_wrap_joins_a_level10_container() {
+        let (codestream, len) = codestream_with(&FileHeader::new_rgb(64, 64), None);
+        let level10 = wrap_in_container_with_level(&codestream, None, None, 10);
+        let result = wrap_in_container(&level10, None, Some(b"<x/>"));
+        assert_eq!(
+            types(&result),
+            [*b"JXL ", *b"ftyp", *b"jxll", *b"jxlp", *b"xml ", *b"jxlp"]
+        );
+        assert_eq!(codestream_of(&result), codestream);
+        assert_eq!(top_level_boxes(&result).unwrap()[3].size, 8 + 4 + len);
+        // A level-5 container joins at level 5.
+        let level5 = wrap_in_container_with_level(&codestream, None, None, 5);
+        assert_eq!(
+            types(&wrap_in_container(&level5, Some(b"MM\x00\x2a"), None)),
+            [*b"JXL ", *b"ftyp", *b"jxlp", *b"Exif", *b"jxlp"]
+        );
     }
 
     #[cfg(feature = "jpeg-reencoding")]
