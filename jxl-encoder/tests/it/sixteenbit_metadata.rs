@@ -302,10 +302,14 @@ fn test_exif_container_wrapping() {
         "container should contain Exif box"
     );
 
-    // Should contain 'jxlc' box
+    // libjxl's layout: the codestream split into two 'jxlp' boxes, the
+    // header first, with the Exif box between the header and the frames.
+    let first_jxlp = jxl.windows(4).position(|w| w == b"jxlp").unwrap();
+    let last_jxlp = jxl.windows(4).rposition(|w| w == b"jxlp").unwrap();
+    let exif = jxl.windows(4).position(|w| w == b"Exif").unwrap();
     assert!(
-        jxl.windows(4).any(|w| w == b"jxlc"),
-        "container should contain jxlc box"
+        first_jxlp < exif && exif < last_jxlp,
+        "Exif box should sit between the codestream header and the frames"
     );
 
     // Verify it decodes (jxl-oxide supports container format)
@@ -354,10 +358,13 @@ fn test_exif_and_xmp_container() {
         .encode(&pixels)
         .unwrap();
 
-    // Both boxes present
-    assert!(jxl.windows(4).any(|w| w == b"Exif"));
-    assert!(jxl.windows(4).any(|w| w == b"xml "));
-    assert!(jxl.windows(4).any(|w| w == b"jxlc"));
+    // Both boxes present, in libjxl's order between the codestream header
+    // ('jxlp' 0) and the frames (the last 'jxlp').
+    let first_jxlp = jxl.windows(4).position(|w| w == b"jxlp").unwrap();
+    let exif = jxl.windows(4).position(|w| w == b"Exif").unwrap();
+    let xml = jxl.windows(4).position(|w| w == b"xml ").unwrap();
+    let last_jxlp = jxl.windows(4).rposition(|w| w == b"jxlp").unwrap();
+    assert!(first_jxlp < exif && exif < xml && xml < last_jxlp);
 
     // Decodes
     let (dec_w, dec_h, _, _) = decode_oxide(&jxl);

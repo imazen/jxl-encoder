@@ -6431,43 +6431,20 @@ impl<'a> EncodeRequest<'a> {
         // Wrap in container if metadata (EXIF/XMP/JUMBF/colr/hCdR) is
         // present OR if the level requires a container (level != 5
         // means a `jxll` box must precede the codestream — mirrors
-        // libjxl `MustUseContainer`).
-        let colr = self.metadata.and_then(|m| m.colr_payload);
-        let hcdr = self.metadata.and_then(|m| m.hcdr_payload);
-        let has_meta = self
-            .metadata
-            .map(|m| m.exif.is_some() || m.xmp.is_some() || m.jumbf.is_some())
-            .unwrap_or(false);
-        let has_aux_boxes = colr.is_some() || hcdr.is_some();
-        let mut output =
-            if has_meta || has_aux_boxes || crate::container::level_requires_container(level) {
-                let (exif, xmp, jumbf) = match self.metadata {
-                    Some(m) => (m.exif, m.xmp, m.jumbf),
-                    None => (None, None, None),
-                };
-                wrap_metadata_container(
-                    &codestream,
-                    exif,
-                    xmp,
-                    jumbf,
-                    self.brotli_metadata_quality,
-                    level,
-                )
-            } else {
-                codestream
-            };
-        // Append `colr` (alternative colour descriptor) and `hCdR` (HDR
-        // metadata) boxes last. They are pass-through extras for
-        // ISOBMFF-aware tooling; per JPEG XL spec clause 5 a decoder
-        // MUST ignore unrecognised boxes so this never alters decoded
-        // pixels. Appended after standard metadata so legacy readers
-        // that stop at the first unknown box still see the codestream.
-        if let Some(payload) = colr {
-            output = crate::container::append_colr_box(&output, payload);
-        }
-        if let Some(payload) = hcdr {
-            output = crate::container::append_hcdr_box(&output, payload);
-        }
+        // libjxl `MustUseContainer`). The boxes sit between the
+        // codestream header and the frames, as libjxl writes them;
+        // `colr` (alternative colour descriptor) and `hCdR` (HDR
+        // metadata) follow the standard metadata. They are pass-through
+        // extras for ISOBMFF-aware tooling; per JPEG XL spec clause 5 a
+        // decoder MUST ignore unrecognised boxes so this never alters
+        // decoded pixels.
+        let output = wrap_metadata_container(
+            codestream,
+            self.metadata.and_then(|m| m.icc_profile),
+            self.metadata,
+            self.brotli_metadata_quality,
+            level,
+        );
 
         stats.output_size = output.len();
         // Poll before handing bytes to any caller-owned destination, including
@@ -10135,19 +10112,19 @@ impl LosslessEncoder {
             !stats.needs_modular_32bit,
         )?;
 
-        let has_meta = self.exif.is_some() || self.xmp.is_some() || self.jumbf.is_some();
-        let output = if has_meta || crate::container::level_requires_container(level) {
-            wrap_metadata_container(
-                &codestream,
-                self.exif.as_deref(),
-                self.xmp.as_deref(),
-                self.jumbf.as_deref(),
-                self.brotli_metadata_quality,
-                level,
-            )
-        } else {
-            codestream
+        let boxes = crate::container::EncodedBoxes {
+            exif: self.exif.as_deref(),
+            xmp: self.xmp.as_deref(),
+            jumbf: self.jumbf.as_deref(),
+            ..Default::default()
         };
+        let output = crate::container::wrap_encoded(
+            codestream,
+            self.icc_profile.as_deref(),
+            level,
+            &boxes,
+            self.brotli_metadata_quality,
+        );
 
         stats.output_size = output.len();
         Ok(EncodeResult {

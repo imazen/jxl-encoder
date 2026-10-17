@@ -1882,6 +1882,10 @@ path = "examples/zq_feat_probe.rs"
 required-features = ["learned-admission"]
 
 [[example]]
+name = "libjxl_header_split"
+path = "examples/libjxl_header_split.rs"
+
+[[example]]
 name = "q2d_probe"
 path = "examples/q2d_probe.rs"
 

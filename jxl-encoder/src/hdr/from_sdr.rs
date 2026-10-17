@@ -485,19 +485,11 @@ mod tests {
             ],
             "expected JXL container signature"
         );
-        // Must contain a `jhgm` box.
-        let needle = b"jhgm";
-        let pos = bytes
-            .windows(needle.len())
-            .position(|w| w == needle)
-            .expect("expected jhgm box in container output");
-        assert!(pos > 12, "jhgm box should follow signature");
-
-        // Must contain a `jxlc` box (the SDR base codestream).
-        let jxlc = b"jxlc";
-        assert!(
-            bytes.windows(jxlc.len()).any(|w| w == jxlc),
-            "expected jxlc box in container output"
+        // libjxl's layout: the SDR base codestream split after its header,
+        // with the `jhgm` box between the header and the frames.
+        assert_eq!(
+            crate::container::box_types(&bytes),
+            [*b"JXL ", *b"ftyp", *b"jxlp", *b"jhgm", *b"jxlp"]
         );
     }
 

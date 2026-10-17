@@ -155,12 +155,16 @@ pub(super) fn append(
     owned_metadata.extend_from_slice(metadata);
     let bundle = GainMapBundle::new(owned_metadata, codestream);
     let mut output = vec_with_capacity_fallible(fallible, output_size)?;
-    output.extend_from_slice(&container);
+    // Where libjxl puts a box queued before the frames: after the header part,
+    // jbrd, Exif and XMP, ahead of the frames (`crate::container` docs).
+    let at = crate::container::frames_box_offset(&container).unwrap_or(container.len());
+    output.extend_from_slice(&container[..at]);
     output.extend_from_slice(&box_size.to_be_bytes());
     output.extend_from_slice(b"jhgm");
     bundle
         .serialize_into_reserved(&mut output)
         .map_err(|e| invalid(e.to_string()))?;
+    output.extend_from_slice(&container[at..]);
     poll(stop)?;
     Ok(output)
 }

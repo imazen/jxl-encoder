@@ -7,15 +7,26 @@
 //! When EXIF/XMP metadata is present, the codestream must be wrapped in a
 //! container format. The container uses ISOBMFF-style boxes.
 //!
-//! Standard layout (single `jxlc` codestream box):
+//! The box order is libjxl's (`encode.cc`, `ProcessOneEnqueuedInput`, v0.12):
+//! boxes queued before the frames go between the codestream header and the
+//! frames, which split into two `jxlp` boxes, and no box follows the last
+//! codestream box. cjxl queues Exif, XMP, JUMBF and the `jhgm` gain map that
+//! way (`lib/extras/enc/jxl.cc`), and `JxlEncoderAddJPEGFrame` queues the
+//! JPEG's Exif, XMP and JUMBF ahead of its frame.
 //! ```text
-//! [JXL signature] [ftyp] [jxlc] [Exif?] [xml?]
+//! no boxes, level 5:   bare codestream
+//! no boxes, level 10:  [JXL signature] [ftyp] [jxll] [jxlc]
+//! boxes:               [JXL signature] [ftyp] [jxll?] [jxlp 0: header] [Exif?] [xml ?] [jumb?] [colr?] [hCdR?] [jhgm?] [jxlp 1 (last): frames]
+//! JPEG reconstruction: [JXL signature] [ftyp] [jxll?] [jxlp 0: header] [jbrd] [Exif?] [xml ?] [jhgm?] [jxlp 1 (last): frames]
 //! ```
+//! The header part is the codestream's signature, SizeHeader, ImageMetadata,
+//! CustomTransformData and ICC profile, zero-padded to a byte: the bytes libjxl
+//! writes into its first `jxlp` box "so that it comes before metadata or jpeg
+//! reconstruction boxes". [`codestream_header_len`] finds where they end.
 //!
-//! JPEG lossless reencoding layout (split `jxlp` boxes with `jbrd` between):
-//! ```text
-//! [JXL signature] [ftyp] [jxlp part 0] [jbrd] [jxlp part 1 (last)] [Exif?] [xml?]
-//! ```
+//! A box after the last codestream box is valid, but Ubuntu 24.04's ffmpeg 6.1
+//! (libjxl 0.7) loops on one until it runs out of memory. Files in libjxl's
+//! layout decode there exactly (imazen-26 reader census, 2026-10-17).
 
 /// JXL container signature box (12 bytes).
 const JXL_CONTAINER_SIGNATURE: [u8; 12] = [
@@ -175,6 +186,7 @@ pub fn wrap_in_container_with_jumbf(
 
 /// Like [`wrap_in_container_with_jumbf`] but also emits a `jxll`
 /// codestream-level box when `level != 5`.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn wrap_in_container_with_level_and_jumbf(
     codestream: &[u8],
     exif: Option<&[u8]>,
@@ -198,6 +210,7 @@ pub fn wrap_in_container_with_level_and_jumbf(
 /// The codestream itself is never compressed (always written as `jxlc`).
 /// Compression for `jbrd` is handled separately by the
 /// `jpeg-reencoding` feature.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 #[cfg(feature = "brotli-metadata")]
 pub fn wrap_in_container_with_brob(
     codestream: &[u8],
@@ -210,6 +223,7 @@ pub fn wrap_in_container_with_brob(
 
 /// Like [`wrap_in_container_with_brob`] but emits a `jxll` (codestream
 /// level) box directly after `ftyp` when `level != 5`.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 #[cfg(feature = "brotli-metadata")]
 pub fn wrap_in_container_with_brob_and_level(
     codestream: &[u8],
@@ -232,6 +246,7 @@ pub fn wrap_in_container_with_brob_and_level(
 /// (`jumb`) box through the same brob compress-if-smaller path. JUMBF
 /// payloads carrying C2PA manifests can be sizable (XMP-shaped XML +
 /// embedded cose signatures), so brob savings are worth attempting.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 #[cfg(feature = "brotli-metadata")]
 pub fn wrap_in_container_with_brob_and_jumbf(
     codestream: &[u8],
@@ -245,6 +260,7 @@ pub fn wrap_in_container_with_brob_and_jumbf(
 
 /// Full-fat brob path: accepts JUMBF + a non-default codestream level.
 /// All other `wrap_in_container_with_brob*` entry points delegate here.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 #[cfg(feature = "brotli-metadata")]
 pub fn wrap_in_container_with_brob_and_level_and_jumbf(
     codestream: &[u8],
@@ -254,64 +270,17 @@ pub fn wrap_in_container_with_brob_and_level_and_jumbf(
     brotli_quality: u32,
     level: u8,
 ) -> Vec<u8> {
-    let header_size = JXL_CONTAINER_SIGNATURE.len()
-        + FTYP_BOX.len()
-        + if level == 5 {
-            0
-        } else {
-            JXLL_BOX_HEADER.len() + 1
-        };
-    let jxlc_size = 8 + codestream.len();
-    // Worst-case sizes for pre-allocation: assume each metadata blob
-    // either compresses (8 + 4 + payload.len) or stays uncompressed
-    // (8 + 4 + payload.len for exif, 8 + payload.len for xmp/jumb).
-    // The uncompressed Exif size already includes the 4-byte Tiff prefix.
-    let exif_size = exif.map_or(0, |e| 8 + 4 + e.len());
-    let xmp_size = xmp.map_or(0, |x| 8 + x.len());
-    let jumbf_size = jumbf.map_or(0, |j| 8 + j.len());
-    let total = header_size + jxlc_size + exif_size + xmp_size + jumbf_size;
-    let mut out = Vec::with_capacity(total);
-
-    out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
-    out.extend_from_slice(&FTYP_BOX);
-    write_level_box(&mut out, level);
-    write_box(&mut out, b"jxlc", codestream);
-
-    // Exif: build the Exif payload (4-byte Tiff offset + EXIF data),
-    // then try brob. The brob's "original type" is the box type that
-    // would have been used, INCLUDING the 4-byte Tiff prefix in the
-    // payload — matches libjxl's brob-Exif convention.
-    if let Some(exif_data) = exif {
-        let mut exif_payload = Vec::with_capacity(4 + exif_data.len());
-        exif_payload.extend_from_slice(&[0u8; 4]); // Tiff offset
-        exif_payload.extend_from_slice(exif_data);
-        if !try_write_brob_box(&mut out, b"Exif", &exif_payload, brotli_quality) {
-            write_exif_box(&mut out, exif_data);
-        }
-    }
-    // XMP: payload is the raw XML; type is `xml ` (note trailing space).
-    if let Some(xmp_data) = xmp
-        && !try_write_brob_box(&mut out, b"xml ", xmp_data, brotli_quality)
-    {
-        write_box(&mut out, b"xml ", xmp_data);
-    }
-    // JUMBF: payload is the raw JUMBF superbox bytes; original type is
-    // `jumb`. Nested brob inside jumb is forbidden per spec, but the
-    // outer wrap of jumb in brob is allowed (libjxl emits it via the
-    // same JxlEncoderAddBox/compress_box path).
-    if let Some(jumbf_data) = jumbf
-        && !try_write_brob_box(&mut out, b"jumb", jumbf_data, brotli_quality)
-    {
-        write_box(&mut out, b"jumb", jumbf_data);
-    }
-    out
+    let mut boxes = Vec::new();
+    write_metadata_boxes(&mut boxes, exif, xmp, jumbf, Some(brotli_quality));
+    assemble(codestream, None, level, &boxes)
 }
 
 /// Wraps a JXL codestream in a container with optional JBRD, EXIF, and XMP.
 ///
 /// The `jbrd` box contains JPEG Bitstream Reconstruction Data needed for
-/// byte-exact JPEG reconstruction from the JXL file. When present, the box
-/// order is: signature, ftyp, jxlc, jbrd, Exif (optional), xml (optional).
+/// byte-exact JPEG reconstruction from the JXL file. When present, it comes
+/// first among the boxes between the codestream header and the frames, as in
+/// libjxl.
 #[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn wrap_in_container_with_jbrd(
     codestream: &[u8],
@@ -338,11 +307,15 @@ pub fn wrap_in_container_with_jbrd_and_level(
 /// Wraps a JXL codestream with optional JBRD, EXIF, XMP, and JUMBF
 /// boxes, plus a `jxll` codestream-level box when `level != 5`.
 ///
-/// Box order: signature, ftyp, jxll? (level != 5), jxlc, jbrd?, Exif?,
-/// xml?, jumb?. Matches libjxl's ordering — JUMBF (C2PA / Content
-/// Authenticity Initiative, ISO 19566-5) is appended after the standard
-/// metadata boxes so legacy readers that stop at the first unknown box
-/// still see the codestream.
+/// Box order (libjxl's): signature, ftyp, jxll? (level != 5), then the
+/// codestream split after its header: `jxlp` 0, jbrd?, Exif?, xml?, jumb?,
+/// `jxlp` 1 (last). Without any box the codestream stays one `jxlc` box. The
+/// JUMBF payload (C2PA / Content Authenticity Initiative, ISO 19566-5) is the
+/// superbox contents verbatim; it is not validated or interpreted.
+///
+/// The header's end comes from [`codestream_header_len`]. This function does
+/// not know the ICC profile, so a codestream that embeds one (or a preview,
+/// or one it can't parse) keeps a single `jxlc` box, after the other boxes.
 pub fn wrap_in_container_with_jbrd_and_level_and_jumbf(
     codestream: &[u8],
     jbrd: Option<&[u8]>,
@@ -351,62 +324,154 @@ pub fn wrap_in_container_with_jbrd_and_level_and_jumbf(
     level: u8,
     jumbf: Option<&[u8]>,
 ) -> Vec<u8> {
-    // Calculate total size for pre-allocation
-    let level_size = if level == 5 {
-        0
-    } else {
-        JXLL_BOX_HEADER.len() + 1
-    };
-    let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len() + level_size; // 32 (+9)
-    let jxlc_size = 8 + codestream.len();
-    let jbrd_size = jbrd.map_or(0, |j| 8 + j.len());
-    let exif_size = exif.map_or(0, |e| 8 + 4 + e.len()); // 4-byte Tiff header offset prefix
-    let xmp_size = xmp.map_or(0, |x| 8 + x.len());
-    let jumbf_size = jumbf.map_or(0, |j| 8 + j.len());
-    let total = header_size + jxlc_size + jbrd_size + exif_size + xmp_size + jumbf_size;
+    let mut boxes = Vec::new();
+    if let Some(jbrd_data) = jbrd {
+        write_box(&mut boxes, b"jbrd", jbrd_data);
+    }
+    write_metadata_boxes(&mut boxes, exif, xmp, jumbf, None);
+    assemble(codestream, None, level, &boxes)
+}
 
-    let mut out = Vec::with_capacity(total);
+/// Boxes an encode adds to its codestream, in libjxl's queue order (cjxl's
+/// `lib/extras/enc/jxl.cc`: Exif, XMP, JUMBF), then this crate's `colr` and
+/// `hCdR` descriptor boxes.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct EncodedBoxes<'a> {
+    pub(crate) exif: Option<&'a [u8]>,
+    pub(crate) xmp: Option<&'a [u8]>,
+    pub(crate) jumbf: Option<&'a [u8]>,
+    pub(crate) colr: Option<&'a [u8]>,
+    pub(crate) hcdr: Option<&'a [u8]>,
+}
 
-    // Container header
+impl EncodedBoxes<'_> {
+    fn is_empty(&self) -> bool {
+        self.exif.is_none()
+            && self.xmp.is_none()
+            && self.jumbf.is_none()
+            && self.colr.is_none()
+            && self.hcdr.is_none()
+    }
+}
+
+/// The container of a codestream this crate's encoder wrote, in libjxl's
+/// layout. `icc` is the profile the encoder embedded, if any: the header's end
+/// is found by re-encoding it and checking the codestream holds those bits.
+/// `brotli_quality` puts Exif, XMP and JUMBF in `brob` boxes where that is
+/// smaller (with the `brotli-metadata` feature).
+///
+/// Returns the bare codestream when there is no box and `level` is 5.
+pub(crate) fn wrap_encoded(
+    codestream: Vec<u8>,
+    icc: Option<&[u8]>,
+    level: u8,
+    boxes: &EncodedBoxes<'_>,
+    brotli_quality: Option<u32>,
+) -> Vec<u8> {
+    if boxes.is_empty() && !level_requires_container(level) {
+        return codestream;
+    }
+    let mut meta = Vec::new();
+    write_metadata_boxes(
+        &mut meta,
+        boxes.exif,
+        boxes.xmp,
+        boxes.jumbf,
+        brotli_quality,
+    );
+    if let Some(payload) = boxes.colr {
+        write_box(&mut meta, b"colr", payload);
+    }
+    if let Some(payload) = boxes.hcdr {
+        write_box(&mut meta, b"hCdR", payload);
+    }
+    assemble(&codestream, icc, level, &meta)
+}
+
+/// Exif (with its 4-byte TIFF offset), XMP and JUMBF boxes in that order,
+/// each in a `brob` box when `brotli_quality` is set, the `brotli-metadata`
+/// feature is on, and compression makes it smaller.
+fn write_metadata_boxes(
+    out: &mut Vec<u8>,
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    jumbf: Option<&[u8]>,
+    brotli_quality: Option<u32>,
+) {
+    if let Some(exif_data) = exif {
+        // The brob's payload includes the TIFF offset, so it decompresses to
+        // what a plain `Exif` box holds (libjxl's convention).
+        let mut payload = Vec::with_capacity(4 + exif_data.len());
+        payload.extend_from_slice(&[0u8; 4]);
+        payload.extend_from_slice(exif_data);
+        write_metadata_box(out, b"Exif", &payload, brotli_quality);
+    }
+    if let Some(xmp_data) = xmp {
+        write_metadata_box(out, b"xml ", xmp_data, brotli_quality);
+    }
+    // Nested brob inside jumb is forbidden per spec, but the outer wrap of
+    // jumb in brob is allowed (libjxl emits it via the same
+    // JxlEncoderAddBox/compress_box path).
+    if let Some(jumbf_data) = jumbf {
+        write_metadata_box(out, b"jumb", jumbf_data, brotli_quality);
+    }
+}
+
+fn write_metadata_box(
+    out: &mut Vec<u8>,
+    box_type: &[u8; 4],
+    payload: &[u8],
+    brotli_quality: Option<u32>,
+) {
+    #[cfg(feature = "brotli-metadata")]
+    if let Some(quality) = brotli_quality
+        && try_write_brob_box(out, box_type, payload, quality)
+    {
+        return;
+    }
+    #[cfg(not(feature = "brotli-metadata"))]
+    let _ = brotli_quality;
+    write_box(out, box_type, payload);
+}
+
+/// Signature, `ftyp`, the `jxll` box when `level != 5`, and the codestream with
+/// the serialized `boxes` where libjxl puts boxes queued before the frames.
+///
+/// With boxes, the codestream splits after its header (see
+/// [`codestream_header_len`]; `icc` as there) into `jxlp` 0, the boxes, and
+/// `jxlp` 1 (last). When the header's end can't be found, the boxes go ahead
+/// of a single `jxlc` box instead, so still no box follows the codestream.
+fn assemble(codestream: &[u8], icc: Option<&[u8]>, level: u8, boxes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64 + boxes.len() + codestream.len());
     out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
     out.extend_from_slice(&FTYP_BOX);
     write_level_box(&mut out, level);
-
-    // jxlc box (codestream)
-    write_box(&mut out, b"jxlc", codestream);
-
-    // jbrd box (JPEG Bitstream Reconstruction Data)
-    if let Some(jbrd_data) = jbrd {
-        write_box(&mut out, b"jbrd", jbrd_data);
+    if boxes.is_empty() {
+        write_box(&mut out, b"jxlc", codestream);
+        return out;
     }
-
-    // Exif box (with 4-byte Tiff header offset prefix, always 0)
-    if let Some(exif_data) = exif {
-        write_exif_box(&mut out, exif_data);
+    match codestream_header_len(codestream, icc) {
+        Some(header) => {
+            write_jxlp_box(&mut out, 0, false, &codestream[..header]);
+            out.extend_from_slice(boxes);
+            write_jxlp_box(&mut out, 1, true, &codestream[header..]);
+        }
+        None => {
+            out.extend_from_slice(boxes);
+            write_box(&mut out, b"jxlc", codestream);
+        }
     }
-
-    // xml box (raw XMP data)
-    if let Some(xmp_data) = xmp {
-        write_box(&mut out, b"xml ", xmp_data);
-    }
-
-    // jumb box (JUMBF / C2PA metadata, ISO 19566-5). Caller-provided
-    // payload is the JUMBF superbox contents verbatim; we do not
-    // validate or interpret it (third-party libraries like c2pa-rs
-    // produce conformant payloads).
-    if let Some(jumbf_data) = jumbf {
-        write_box(&mut out, b"jumb", jumbf_data);
-    }
-
     out
 }
 
 /// Wraps a split codestream in a container with jxlp boxes, jbrd, and metadata.
 ///
-/// The codestream is split into two `jxlp` boxes with the `jbrd` box between
-/// them. This matches libjxl's JPEG lossless transcoding container format:
+/// The codestream is split into two `jxlp` boxes with the `jbrd` box and the
+/// JPEG's metadata between them. This matches libjxl's JPEG lossless
+/// transcoding container format (`JxlEncoderAddJPEGFrame` queues the Exif and
+/// XMP boxes ahead of the frame):
 /// ```text
-/// [JXL signature] [ftyp] [jxlp part 0] [jbrd] [jxlp part 1 (last)] [Exif?] [xml?]
+/// [JXL signature] [ftyp] [jxlp part 0] [jbrd] [Exif?] [xml?] [jxlp part 1 (last)]
 /// ```
 /// Each `jxlp` box has a 4-byte BE counter where bit 31 marks the last part.
 #[cfg(feature = "jpeg-reencoding")]
@@ -458,9 +523,6 @@ pub fn wrap_in_container_jxlp_with_level(
     // jbrd box
     write_box(&mut out, b"jbrd", jbrd);
 
-    // Second jxlp box: frame data (counter = 1, last)
-    write_jxlp_box(&mut out, 1, true, cs_part2);
-
     // Exif box — try brob first, fall back to raw if brotli doesn't help.
     //
     // For XMP this is usually a big win (2-6× smaller — XMP is XML, very
@@ -500,12 +562,14 @@ pub fn wrap_in_container_jxlp_with_level(
         write_box(&mut out, b"xml ", xmp_data);
     }
 
+    // Second jxlp box: frame data (counter = 1, last)
+    write_jxlp_box(&mut out, 1, true, cs_part2);
+
     out
 }
 
 /// Write a jxlp (partial codestream) box.
 /// Counter format: bits 0-30 = sequence number, bit 31 = last part flag.
-#[allow(dead_code)]
 fn write_jxlp_box(out: &mut Vec<u8>, sequence: u32, is_last: bool, data: &[u8]) {
     let total_size = 8u64 + 4 + data.len() as u64;
     if total_size <= u32::MAX as u64 {
@@ -527,6 +591,7 @@ fn write_jxlp_box(out: &mut Vec<u8>, sequence: u32, is_last: bool, data: &[u8]) 
 }
 
 /// Write an Exif box: box header + 4-byte Tiff offset (always 0) + EXIF data.
+#[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
 fn write_exif_box(out: &mut Vec<u8>, exif_data: &[u8]) {
     // Exif box payload = 4-byte Tiff offset + EXIF data
     let payload_size = 4u64 + exif_data.len() as u64;
@@ -647,76 +712,474 @@ pub fn is_bare_codestream(data: &[u8]) -> bool {
     data.len() >= 2 && data[0] == 0xFF && data[1] == 0x0A
 }
 
-/// Append a `jhgm` box to JXL data (container or bare codestream).
+/// Add a `jhgm` box to JXL data (container or bare codestream).
 ///
 /// `jhgm_payload` is the raw gain map bundle payload (ISO 21496-1).
 ///
-/// If `jxl_data` is already a container (starts with JXL signature), the
-/// `jhgm` box is appended at the end. If `jxl_data` is a bare codestream,
-/// it is first wrapped in a container (signature + ftyp + jxlc), then the
-/// jhgm box is appended.
+/// The box goes where libjxl puts a box queued before the frames (cjxl queues
+/// `jhgm` after Exif, XMP and JUMBF): see [`insert_box`]. A bare codestream
+/// becomes a container first.
 #[must_use]
 pub fn append_gain_map_box(jxl_data: &[u8], jhgm_payload: &[u8]) -> Vec<u8> {
-    if is_container(jxl_data) {
-        // Already a container — append jhgm box at the end.
-        let jhgm_box_size = 8 + jhgm_payload.len();
-        let mut out = Vec::with_capacity(jxl_data.len() + jhgm_box_size);
-        out.extend_from_slice(jxl_data);
-        write_box(&mut out, b"jhgm", jhgm_payload);
-        out
-    } else {
-        // Bare codestream — wrap in container first, then append jhgm.
-        let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len();
-        let jxlc_size = 8 + jxl_data.len();
-        let jhgm_box_size = 8 + jhgm_payload.len();
-        let total = header_size + jxlc_size + jhgm_box_size;
-
-        let mut out = Vec::with_capacity(total);
-        out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
-        out.extend_from_slice(&FTYP_BOX);
-        write_box(&mut out, b"jxlc", jxl_data);
-        write_box(&mut out, b"jhgm", jhgm_payload);
-        out
-    }
+    insert_box(jxl_data, b"jhgm", jhgm_payload)
 }
 
-/// Append a `jumb` box (JUMBF / C2PA superbox, ISO 19566-5) to JXL data.
+/// Add a `jumb` box (JUMBF / C2PA superbox, ISO 19566-5) to JXL data.
 ///
 /// `jumbf_payload` is the raw JUMBF superbox bytes provided by the caller
 /// (e.g. produced by the `c2pa` crate). The encoder does not validate or
 /// interpret the payload — it is the caller's responsibility to provide
 /// a conformant JUMBF blob.
 ///
-/// If `jxl_data` is already a container (starts with the 12-byte JXL
-/// signature), the `jumb` box is appended at the end. If `jxl_data` is a
-/// bare codestream (starts with `0xFF 0x0A`), it is first wrapped in a
-/// container (signature + ftyp + jxlc), then the `jumb` box is appended.
-/// Matches libjxl's box ordering when JUMBF is added via
-/// `JxlEncoderAddBox(enc, "jumb", ...)` (see libjxl `encode.cc:2214`).
+/// The box goes where libjxl puts a box queued with
+/// `JxlEncoderAddBox(enc, "jumb", ...)` before the frames: see
+/// [`insert_box`]. A bare codestream becomes a container first.
 #[must_use]
 #[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn append_jumbf_box(jxl_data: &[u8], jumbf_payload: &[u8]) -> Vec<u8> {
-    if is_container(jxl_data) {
-        // Already a container — append jumb box at the end.
-        let jumb_box_size = 8 + jumbf_payload.len();
-        let mut out = Vec::with_capacity(jxl_data.len() + jumb_box_size);
-        out.extend_from_slice(jxl_data);
-        write_box(&mut out, b"jumb", jumbf_payload);
-        out
-    } else {
-        // Bare codestream — wrap in container first, then append jumb.
-        let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len();
-        let jxlc_size = 8 + jxl_data.len();
-        let jumb_box_size = 8 + jumbf_payload.len();
-        let total = header_size + jxlc_size + jumb_box_size;
+    insert_box(jxl_data, b"jumb", jumbf_payload)
+}
 
-        let mut out = Vec::with_capacity(total);
-        out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
-        out.extend_from_slice(&FTYP_BOX);
-        write_box(&mut out, b"jxlc", jxl_data);
-        write_box(&mut out, b"jumb", jumbf_payload);
-        out
+/// Put one box where libjxl puts a box queued before the frames: after the
+/// codestream header and the boxes already there, ahead of the frames.
+///
+/// - A container whose codestream is split into `jxlp` boxes gets the box
+///   right before the second codestream box (the first that holds frames).
+/// - A container with one codestream box (`jxlc`, or a single `jxlp`), or a
+///   bare codestream (which becomes a container), has the codestream split
+///   after its header into `jxlp` 0 and `jxlp` 1 with the box between. When
+///   [`codestream_header_len`] can't find the header's end (an embedded ICC
+///   profile, which this function can't verify, a preview, or a codestream
+///   it can't parse), the box goes ahead of the codestream box instead.
+///
+/// Boxes already after the codestream stay where they are. A container whose
+/// top-level boxes don't parse gets the box at the end, as before.
+fn insert_box(jxl_data: &[u8], box_type: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+    let mut new_box = Vec::with_capacity(16 + payload.len());
+    write_box(&mut new_box, box_type, payload);
+    if !is_container(jxl_data) {
+        return assemble(jxl_data, None, 5, &new_box);
     }
+    let mut out = Vec::with_capacity(jxl_data.len() + new_box.len() + 12);
+    let codestream_boxes: Vec<TopBox> = match top_level_boxes(jxl_data) {
+        Some(boxes) => boxes
+            .into_iter()
+            .filter(|b| &b.box_type == b"jxlc" || &b.box_type == b"jxlp")
+            .collect(),
+        None => Vec::new(),
+    };
+    match codestream_boxes.as_slice() {
+        [] => {
+            out.extend_from_slice(jxl_data);
+            out.extend_from_slice(&new_box);
+        }
+        [only] => {
+            let counter = if &only.box_type == b"jxlp" { 4 } else { 0 };
+            let start = only.offset + only.header + counter;
+            let end = only.offset + only.size;
+            let codestream = jxl_data.get(start..end).unwrap_or_default();
+            out.extend_from_slice(&jxl_data[..only.offset]);
+            match codestream_header_len(codestream, None) {
+                Some(header) => {
+                    write_jxlp_box(&mut out, 0, false, &codestream[..header]);
+                    out.extend_from_slice(&new_box);
+                    write_jxlp_box(&mut out, 1, true, &codestream[header..]);
+                }
+                _ => {
+                    out.extend_from_slice(&new_box);
+                    out.extend_from_slice(&jxl_data[only.offset..end]);
+                }
+            }
+            out.extend_from_slice(&jxl_data[end..]);
+        }
+        [_, frames, ..] => {
+            out.extend_from_slice(&jxl_data[..frames.offset]);
+            out.extend_from_slice(&new_box);
+            out.extend_from_slice(&jxl_data[frames.offset..]);
+        }
+    }
+    out
+}
+
+/// Offset of the first codestream box that holds frames in a container whose
+/// codestream is split into `jxlp` boxes: where libjxl puts a box queued
+/// before the frames, after the ones already there. `None` when the container
+/// has fewer than two codestream boxes or doesn't parse.
+#[cfg_attr(not(feature = "jpeg-reencoding"), allow(dead_code))]
+pub(crate) fn frames_box_offset(container: &[u8]) -> Option<usize> {
+    top_level_boxes(container)?
+        .into_iter()
+        .filter(|b| &b.box_type == b"jxlc" || &b.box_type == b"jxlp")
+        .nth(1)
+        .map(|b| b.offset)
+}
+
+/// Top-level box types of a container, for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn box_types(data: &[u8]) -> Vec<[u8; 4]> {
+    top_level_boxes(data)
+        .expect("top-level boxes parse")
+        .iter()
+        .map(|b| b.box_type)
+        .collect()
+}
+
+/// One top-level box of a container.
+struct TopBox {
+    offset: usize,
+    /// Header length: 8, or 16 with a 64-bit size.
+    header: usize,
+    /// Total size, header included.
+    size: usize,
+    box_type: [u8; 4],
+}
+
+/// The top-level boxes of a container, or `None` if they don't parse.
+fn top_level_boxes(data: &[u8]) -> Option<Vec<TopBox>> {
+    let mut boxes = Vec::new();
+    let mut offset = 0usize;
+    while offset < data.len() {
+        let rest = &data[offset..];
+        let size32 = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?);
+        let box_type: [u8; 4] = rest.get(4..8)?.try_into().ok()?;
+        let (header, size) = match size32 {
+            0 => (8, rest.len()),
+            1 => (
+                16,
+                usize::try_from(u64::from_be_bytes(rest.get(8..16)?.try_into().ok()?)).ok()?,
+            ),
+            n => (8, n as usize),
+        };
+        if size < header || size > rest.len() {
+            return None;
+        }
+        boxes.push(TopBox {
+            offset,
+            header,
+            size,
+            box_type,
+        });
+        offset += size;
+    }
+    Some(boxes)
+}
+
+// ── Codestream header length ────────────────────────────────────────────
+
+/// One choice of a JPEG XL `U32` field: a value, or `n` bits plus an offset.
+#[derive(Clone, Copy)]
+enum U32Dist {
+    Val(u32),
+    Bits(u32, u32),
+}
+
+/// LSB-first reader over a codestream for [`codestream_header_len`]. Every
+/// read returns `None` past the end of the data.
+struct HeaderReader<'a> {
+    data: &'a [u8],
+    /// Position in bits.
+    pos: usize,
+}
+
+impl HeaderReader<'_> {
+    fn bits(&mut self, n: u32) -> Option<u64> {
+        let mut value = 0u64;
+        for i in 0..n {
+            let byte = *self.data.get(self.pos / 8)?;
+            value |= u64::from((byte >> (self.pos % 8)) & 1) << i;
+            self.pos += 1;
+        }
+        Some(value)
+    }
+
+    fn bool(&mut self) -> Option<bool> {
+        Some(self.bits(1)? == 1)
+    }
+
+    fn skip(&mut self, n: u64) -> Option<()> {
+        let end = (self.pos as u64).checked_add(n)?;
+        if end > (self.data.len() as u64) * 8 {
+            return None;
+        }
+        self.pos = usize::try_from(end).ok()?;
+        Some(())
+    }
+
+    fn u32(&mut self, dist: [U32Dist; 4]) -> Option<u32> {
+        match dist[self.bits(2)? as usize] {
+            U32Dist::Val(v) => Some(v),
+            U32Dist::Bits(n, offset) => u32::try_from(self.bits(n)?).ok()?.checked_add(offset),
+        }
+    }
+
+    /// `U64` (libjxl `U64Coder::Read`).
+    fn u64(&mut self) -> Option<u64> {
+        match self.bits(2)? {
+            0 => Some(0),
+            1 => Some(1 + self.bits(4)?),
+            2 => Some(17 + self.bits(8)?),
+            _ => {
+                let mut value = self.bits(12)?;
+                let mut shift = 12;
+                while self.bool()? {
+                    if shift == 60 {
+                        value |= self.bits(4)? << shift;
+                        break;
+                    }
+                    value |= self.bits(8)? << shift;
+                    shift += 8;
+                }
+                Some(value)
+            }
+        }
+    }
+
+    /// `Enum`: U32(Val(0), Val(1), BitsOffset(4, 2), BitsOffset(6, 18)).
+    fn enumeration(&mut self) -> Option<u32> {
+        use U32Dist::{Bits, Val};
+        self.u32([Val(0), Val(1), Bits(4, 2), Bits(6, 18)])
+    }
+
+    /// A bundle's extensions: the mask, one size per set bit, then those
+    /// bits, which a reader skips (libjxl `ReadVisitor::EndExtensions`).
+    fn extensions(&mut self) -> Option<()> {
+        let mask = self.u64()?;
+        let mut total = 0u64;
+        for _ in 0..mask.count_ones() {
+            total = total.checked_add(self.u64()?)?;
+        }
+        self.skip(total)
+    }
+
+    /// `SizeHeader`; the intrinsic size is one too.
+    fn size_header(&mut self) -> Option<()> {
+        use U32Dist::Bits;
+        let dist = [Bits(9, 1), Bits(13, 1), Bits(18, 1), Bits(30, 1)];
+        let small = self.bool()?;
+        if small {
+            self.bits(5)?;
+        } else {
+            self.u32(dist)?;
+        }
+        if self.bits(3)? == 0 {
+            if small {
+                self.bits(5)?;
+            } else {
+                self.u32(dist)?;
+            }
+        }
+        Some(())
+    }
+
+    fn preview_header(&mut self) -> Option<()> {
+        use U32Dist::{Bits, Val};
+        let div8 = self.bool()?;
+        let dist = if div8 {
+            [Val(16), Val(32), Bits(5, 1), Bits(9, 33)]
+        } else {
+            [Bits(6, 1), Bits(8, 65), Bits(10, 321), Bits(12, 1345)]
+        };
+        self.u32(dist)?;
+        if self.bits(3)? == 0 {
+            self.u32(dist)?;
+        }
+        Some(())
+    }
+
+    fn bit_depth(&mut self) -> Option<()> {
+        use U32Dist::{Bits, Val};
+        if self.bool()? {
+            self.u32([Val(32), Val(16), Val(24), Bits(6, 1)])?;
+            self.bits(4)?;
+        } else {
+            self.u32([Val(8), Val(10), Val(12), Bits(6, 1)])?;
+        }
+        Some(())
+    }
+
+    /// `Customxy`: two `U32`s.
+    fn custom_xy(&mut self) -> Option<()> {
+        use U32Dist::Bits;
+        let dist = [
+            Bits(19, 0),
+            Bits(19, 524_288),
+            Bits(20, 1_048_576),
+            Bits(21, 2_097_152),
+        ];
+        self.u32(dist)?;
+        self.u32(dist)?;
+        Some(())
+    }
+}
+
+/// What the header bundles say about the bytes after them.
+struct HeaderBundles {
+    /// Bit position after `CustomTransformData`.
+    end_bits: usize,
+    want_icc: bool,
+    have_preview: bool,
+}
+
+/// Read the signature, `SizeHeader`, `ImageMetadata` and `CustomTransformData`
+/// (libjxl `VisitFields` of each, v0.12).
+fn read_header_bundles(codestream: &[u8]) -> Option<HeaderBundles> {
+    use U32Dist::{Bits, Val};
+    const COLOUR_SPACE_GREY: u32 = 1;
+    const COLOUR_SPACE_XYB: u32 = 2;
+    const WHITE_POINT_CUSTOM: u32 = 2;
+    const PRIMARIES_CUSTOM: u32 = 2;
+    const EXTRA_ALPHA: u32 = 0;
+    const EXTRA_SPOT_COLOUR: u32 = 2;
+    const EXTRA_CFA: u32 = 5;
+
+    let mut r = HeaderReader {
+        data: codestream,
+        pos: 0,
+    };
+    if r.bits(16)? != 0x0AFF {
+        return None;
+    }
+    r.size_header()?;
+
+    // ImageMetadata. Its all-default form is 8-bit XYB with no ICC profile.
+    let mut want_icc = false;
+    let mut have_preview = false;
+    let mut xyb_encoded = true;
+    if !r.bool()? {
+        let extra_fields = r.bool()?;
+        if extra_fields {
+            r.bits(3)?; // orientation - 1
+            if r.bool()? {
+                r.size_header()?; // intrinsic size
+            }
+            have_preview = r.bool()?;
+            if have_preview {
+                r.preview_header()?;
+            }
+            if r.bool()? {
+                // AnimationHeader
+                r.u32([Val(100), Val(1000), Bits(10, 1), Bits(30, 1)])?;
+                r.u32([Val(1), Val(1001), Bits(8, 1), Bits(10, 1)])?;
+                r.u32([Val(0), Bits(3, 0), Bits(16, 0), Bits(32, 0)])?;
+                r.bool()?; // have_timecodes
+            }
+        }
+        r.bit_depth()?;
+        r.bool()?; // modular_16_bit_buffer_sufficient
+        let num_extra_channels = r.u32([Val(0), Val(1), Bits(4, 2), Bits(12, 1)])?;
+        for _ in 0..num_extra_channels {
+            if r.bool()? {
+                continue; // all_default: an 8-bit alpha channel
+            }
+            let kind = r.enumeration()?;
+            r.bit_depth()?;
+            r.u32([Val(0), Val(3), Val(4), Bits(3, 1)])?; // dim_shift
+            let name_len = r.u32([Val(0), Bits(4, 0), Bits(5, 16), Bits(10, 48)])?;
+            r.skip(u64::from(name_len) * 8)?;
+            match kind {
+                EXTRA_ALPHA => {
+                    r.bool()?; // alpha_associated
+                }
+                EXTRA_SPOT_COLOUR => r.skip(4 * 16)?,
+                EXTRA_CFA => {
+                    r.u32([Val(1), Bits(2, 0), Bits(4, 3), Bits(8, 19)])?;
+                }
+                _ => {}
+            }
+        }
+        xyb_encoded = r.bool()?;
+        // ColourEncoding
+        if !r.bool()? {
+            want_icc = r.bool()?;
+            let colour_space = r.enumeration()?;
+            if !want_icc {
+                if colour_space != COLOUR_SPACE_XYB && r.enumeration()? == WHITE_POINT_CUSTOM {
+                    r.custom_xy()?;
+                }
+                if colour_space != COLOUR_SPACE_GREY
+                    && colour_space != COLOUR_SPACE_XYB
+                    && r.enumeration()? == PRIMARIES_CUSTOM
+                {
+                    r.custom_xy()?;
+                    r.custom_xy()?;
+                    r.custom_xy()?;
+                }
+                // CustomTransferFunction, implicit for XYB.
+                if colour_space != COLOUR_SPACE_XYB {
+                    if r.bool()? {
+                        r.bits(24)?; // gamma
+                    } else {
+                        r.enumeration()?;
+                    }
+                }
+                r.enumeration()?; // rendering_intent
+            }
+        }
+        if extra_fields && !r.bool()? {
+            // ToneMapping: intensity_target, min_nits, relative_to_max_display,
+            // linear_below.
+            r.skip(32)?;
+            r.bool()?;
+            r.skip(16)?;
+        }
+        r.extensions()?;
+    }
+
+    // CustomTransformData
+    if !r.bool()? {
+        if xyb_encoded && !r.bool()? {
+            r.skip(16 * 16)?; // OpsinInverseMatrix: 9 + 3 + 4 F16
+        }
+        let mask = r.bits(3)?;
+        for (bit, weights) in [(1, 15u64), (2, 55), (4, 210)] {
+            if mask & bit != 0 {
+                r.skip(weights * 16)?;
+            }
+        }
+    }
+    Some(HeaderBundles {
+        end_bits: r.pos,
+        want_icc,
+        have_preview,
+    })
+}
+
+/// Length in bytes of `codestream`'s header: the signature, `SizeHeader`,
+/// `ImageMetadata`, `CustomTransformData` and ICC profile, zero-padded to a
+/// byte. libjxl writes exactly these bytes as `header_bytes` and puts them in
+/// the first `jxlp` box when boxes come before the frames (`encode.cc`).
+///
+/// `icc` is the profile the encoder embedded. The ICC stream is entropy-coded,
+/// so its end is found by encoding `icc` again and checking the codestream
+/// holds those bits; a header that wants a profile when `icc` is `None` or
+/// different returns `None`. So do a preview (its frame comes before the
+/// first frame proper), padding bits that aren't zero, and anything that
+/// doesn't parse or leaves no frame data.
+pub fn codestream_header_len(codestream: &[u8], icc: Option<&[u8]>) -> Option<usize> {
+    let bundles = read_header_bundles(codestream)?;
+    if bundles.have_preview {
+        return None;
+    }
+    let mut end = bundles.end_bits;
+    if bundles.want_icc {
+        let mut writer = crate::bit_writer::BitWriter::new();
+        crate::icc::write_icc(icc?, &mut writer).ok()?;
+        let n = writer.bits_written();
+        let encoded = writer.finish_with_padding();
+        for i in 0..n {
+            let ours = (encoded[i / 8] >> (i % 8)) & 1;
+            let at = end + i;
+            if (*codestream.get(at / 8)? >> (at % 8)) & 1 != ours {
+                return None;
+            }
+        }
+        end += n;
+    }
+    let len = end.div_ceil(8);
+    if len >= codestream.len() || (end % 8 != 0 && codestream[len - 1] >> (end % 8) != 0) {
+        return None;
+    }
+    Some(len)
 }
 
 /// Build a `colr` box payload using the `nclx` (named-colour, on-screen)
@@ -779,11 +1242,10 @@ pub fn colr_nclx_payload(
 /// clause 5, decoders MUST ignore boxes with unrecognised types — so
 /// emitting this box never alters decoded pixels.
 ///
-/// If `jxl_data` is already a container (starts with the 12-byte JXL
-/// signature), the `colr` box is appended at the end. If `jxl_data` is a
-/// bare codestream (starts with `0xFF 0x0A`), it is first wrapped in a
-/// container (signature + ftyp + jxlc), then the `colr` box is
-/// appended.
+/// The box goes where libjxl puts a box queued before the frames: see
+/// [`insert_box`]. A bare codestream (starts with `0xFF 0x0A`) becomes a
+/// container first.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 #[must_use]
 pub fn append_colr_box(jxl_data: &[u8], colr_payload: &[u8]) -> Vec<u8> {
     append_aux_box(jxl_data, b"colr", colr_payload)
@@ -813,40 +1275,20 @@ pub fn append_colr_box(jxl_data: &[u8], colr_payload: &[u8]) -> Vec<u8> {
 /// ignore boxes with unrecognised types — so emitting this box never
 /// alters decoded pixels.
 ///
-/// If `jxl_data` is already a container, the `hCdR` box is appended at
-/// the end. If `jxl_data` is a bare codestream, it is first wrapped in
-/// a container (signature + ftyp + jxlc), then the `hCdR` box is
-/// appended.
+/// The box goes where libjxl puts a box queued before the frames: see
+/// [`insert_box`]. A bare codestream becomes a container first.
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 #[must_use]
 pub fn append_hcdr_box(jxl_data: &[u8], hcdr_payload: &[u8]) -> Vec<u8> {
     append_aux_box(jxl_data, b"hCdR", hcdr_payload)
 }
 
-/// Shared implementation for appending an auxiliary metadata box to
-/// either an existing container or a bare codestream. Used by
-/// [`append_colr_box`] and [`append_hcdr_box`] — same control flow as
-/// [`append_jumbf_box`] / [`append_gain_map_box`], factored out to
-/// avoid copy-paste drift.
+/// Shared implementation for adding an auxiliary metadata box to either an
+/// existing container or a bare codestream. Used by [`append_colr_box`] and
+/// [`append_hcdr_box`]; the box goes where [`insert_box`] puts it.
+#[allow(dead_code)] // #76: reached through append_colr_box / append_hcdr_box
 fn append_aux_box(jxl_data: &[u8], box_type: &[u8; 4], payload: &[u8]) -> Vec<u8> {
-    if is_container(jxl_data) {
-        let aux_box_size = 8 + payload.len();
-        let mut out = Vec::with_capacity(jxl_data.len() + aux_box_size);
-        out.extend_from_slice(jxl_data);
-        write_box(&mut out, box_type, payload);
-        out
-    } else {
-        let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len();
-        let jxlc_size = 8 + jxl_data.len();
-        let aux_box_size = 8 + payload.len();
-        let total = header_size + jxlc_size + aux_box_size;
-
-        let mut out = Vec::with_capacity(total);
-        out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
-        out.extend_from_slice(&FTYP_BOX);
-        write_box(&mut out, b"jxlc", jxl_data);
-        write_box(&mut out, box_type, payload);
-        out
-    }
+    insert_box(jxl_data, box_type, payload)
 }
 
 #[cfg(test)]
@@ -869,13 +1311,14 @@ mod tests {
         let codestream = b"\xFF\x0A";
         let exif = b"Exif\x00\x00MM\x00\x2a"; // minimal EXIF
         let result = wrap_in_container(codestream, Some(exif), None);
-        // Header (32) + jxlc (8+2) + Exif (8+4+10)
-        assert_eq!(result.len(), 32 + 10 + 22);
-        // Find Exif box
-        let exif_start = 32 + 10; // after header + jxlc
+        // Header (32) + Exif (8+4+10) + jxlc (8+2)
+        assert_eq!(result.len(), 32 + 22 + 10);
+        // A codestream without a header to parse: the box goes ahead of it.
+        let exif_start = 32;
         assert_eq!(&result[exif_start + 4..exif_start + 8], b"Exif");
         // Tiff offset prefix (4 zero bytes)
         assert_eq!(&result[exif_start + 8..exif_start + 12], &[0, 0, 0, 0]);
+        assert_eq!(&result[32 + 22 + 4..32 + 22 + 8], b"jxlc");
     }
 
     #[test]
@@ -883,10 +1326,11 @@ mod tests {
         let codestream = b"\xFF\x0A";
         let xmp = b"<?xpacket begin='...'?>";
         let result = wrap_in_container(codestream, None, Some(xmp));
-        // Header (32) + jxlc (8+2) + xml (8+23)
-        assert_eq!(result.len(), 32 + 10 + 31);
-        let xml_start = 32 + 10;
+        // Header (32) + xml (8+23) + jxlc (8+2)
+        assert_eq!(result.len(), 32 + 31 + 10);
+        let xml_start = 32;
         assert_eq!(&result[xml_start + 4..xml_start + 8], b"xml ");
+        assert_eq!(&result[32 + 31 + 4..32 + 31 + 8], b"jxlc");
     }
 
     #[test]
@@ -926,23 +1370,15 @@ mod tests {
         assert_eq!(&result[..12], &JXL_CONTAINER_SIGNATURE);
         assert_eq!(&result[12..32], &FTYP_BOX);
 
-        // jxlc box at offset 32
-        let jxlc_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
-        assert_eq!(jxlc_size as usize, 8 + codestream.len());
-        assert_eq!(&result[36..40], b"jxlc");
-        assert_eq!(&result[40..40 + codestream.len()], codestream);
-
-        // jhgm box follows jxlc
-        let jhgm_offset = 40 + codestream.len();
-        let jhgm_size = u32::from_be_bytes([
-            result[jhgm_offset],
-            result[jhgm_offset + 1],
-            result[jhgm_offset + 2],
-            result[jhgm_offset + 3],
-        ]);
+        // A codestream without a header to parse: jhgm goes ahead of it.
+        let jhgm_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
         assert_eq!(jhgm_size as usize, 8 + jhgm_payload.len());
-        assert_eq!(&result[jhgm_offset + 4..jhgm_offset + 8], b"jhgm");
-        assert_eq!(&result[jhgm_offset + 8..], jhgm_payload);
+        assert_eq!(&result[36..40], b"jhgm");
+        assert_eq!(&result[40..40 + jhgm_payload.len()], jhgm_payload);
+
+        let jxlc_offset = 40 + jhgm_payload.len();
+        assert_eq!(&result[jxlc_offset + 4..jxlc_offset + 8], b"jxlc");
+        assert_eq!(&result[jxlc_offset + 8..], codestream);
     }
 
     #[test]
@@ -957,13 +1393,12 @@ mod tests {
         let jhgm_payload = b"\x00\x00\x01\xAA\x00\x00\x00\x00\x00\xFF\x0A";
         let result = append_gain_map_box(&container, jhgm_payload);
 
-        // Original container bytes preserved
-        assert_eq!(&result[..container.len()], container.as_slice());
-
-        // jhgm box appended at the end
-        let jhgm_offset = container.len();
-        assert_eq!(&result[jhgm_offset + 4..jhgm_offset + 8], b"jhgm");
-        assert_eq!(&result[jhgm_offset + 8..], jhgm_payload);
+        // A codestream without a header to parse: jhgm goes ahead of the
+        // jxlc box, which follows unchanged.
+        assert_eq!(&result[..32], &container[..32]);
+        assert_eq!(&result[36..40], b"jhgm");
+        assert_eq!(&result[40..40 + jhgm_payload.len()], jhgm_payload);
+        assert_eq!(&result[40 + jhgm_payload.len()..], &container[32..]);
     }
 
     #[test]
@@ -1057,9 +1492,9 @@ mod tests {
         // only.
         let jumbf = b"\x00\x00\x00\x10jumdc2pa\x00\x00\x00\x00";
         let result = wrap_in_container_with_jumbf(codestream, None, None, Some(jumbf));
-        // Header (32) + jxlc (8 + 4) + jumb (8 + 16)
-        assert_eq!(result.len(), 32 + 12 + 24);
-        let jumb_start = 32 + 12;
+        // Header (32) + jumb (8 + 16) + jxlc (8 + 4)
+        assert_eq!(result.len(), 32 + 24 + 12);
+        let jumb_start = 32;
         let jumb_size = u32::from_be_bytes([
             result[jumb_start],
             result[jumb_start + 1],
@@ -1077,13 +1512,16 @@ mod tests {
         let exif = b"MM\x00\x2a\x00\x00\x00\x08";
         let jumbf = b"\x00\x00\x00\x0Cjumdc2pa";
         let result = wrap_in_container_with_jumbf(codestream, Some(exif), None, Some(jumbf));
-        // Order: header (32) + jxlc (8+2) + Exif (8+4+exif.len) + jumb (8+jumbf.len)
-        let expected = 32 + 10 + (8 + 4 + exif.len()) + (8 + jumbf.len());
+        // Order: header (32) + Exif (8+4+exif.len) + jumb (8+jumbf.len) + jxlc (8+2)
+        let expected = 32 + (8 + 4 + exif.len()) + (8 + jumbf.len()) + 10;
         assert_eq!(result.len(), expected);
-        // Find jumb at the tail.
-        let jumb_offset = 32 + 10 + 8 + 4 + exif.len();
+        let jumb_offset = 32 + 8 + 4 + exif.len();
         assert_eq!(&result[jumb_offset + 4..jumb_offset + 8], b"jumb");
-        assert_eq!(&result[jumb_offset + 8..], jumbf);
+        assert_eq!(
+            &result[jumb_offset + 8..jumb_offset + 8 + jumbf.len()],
+            jumbf
+        );
+        assert_eq!(&result[expected - 10 + 4..expected - 10 + 8], b"jxlc");
     }
 
     #[test]
@@ -1107,22 +1545,14 @@ mod tests {
         // Result is a container starting with the signature + ftyp.
         assert!(is_container(&result));
         assert_eq!(&result[12..32], &FTYP_BOX);
-        // jxlc box at offset 32.
-        let jxlc_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
-        assert_eq!(jxlc_size as usize, 8 + codestream.len());
-        assert_eq!(&result[36..40], b"jxlc");
-        assert_eq!(&result[40..40 + codestream.len()], codestream);
-        // jumb box follows jxlc.
-        let jumb_offset = 40 + codestream.len();
-        let jumb_size = u32::from_be_bytes([
-            result[jumb_offset],
-            result[jumb_offset + 1],
-            result[jumb_offset + 2],
-            result[jumb_offset + 3],
-        ]);
+        // A codestream without a header to parse: jumb goes ahead of it.
+        let jumb_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
         assert_eq!(jumb_size as usize, 8 + jumbf.len());
-        assert_eq!(&result[jumb_offset + 4..jumb_offset + 8], b"jumb");
-        assert_eq!(&result[jumb_offset + 8..], jumbf);
+        assert_eq!(&result[36..40], b"jumb");
+        assert_eq!(&result[40..40 + jumbf.len()], jumbf);
+        let jxlc_offset = 40 + jumbf.len();
+        assert_eq!(&result[jxlc_offset + 4..jxlc_offset + 8], b"jxlc");
+        assert_eq!(&result[jxlc_offset + 8..], codestream);
     }
 
     #[test]
@@ -1137,12 +1567,12 @@ mod tests {
         let jumbf = b"\x00\x00\x00\x0Cjumdc2pa";
         let result = append_jumbf_box(&container, jumbf);
 
-        // Original container bytes preserved.
-        assert_eq!(&result[..container.len()], container.as_slice());
-        // jumb box appended at the end.
-        let jumb_offset = container.len();
-        assert_eq!(&result[jumb_offset + 4..jumb_offset + 8], b"jumb");
-        assert_eq!(&result[jumb_offset + 8..], jumbf);
+        // A codestream without a header to parse: jumb goes ahead of the jxlc
+        // box, which follows unchanged.
+        assert_eq!(&result[..32], &container[..32]);
+        assert_eq!(&result[36..40], b"jumb");
+        assert_eq!(&result[40..40 + jumbf.len()], jumbf);
+        assert_eq!(&result[40 + jumbf.len()..], &container[32..]);
     }
 
     #[cfg(feature = "brotli-metadata")]
@@ -1175,7 +1605,7 @@ mod tests {
         // payload (matches libjxl convention). Verify the brob's
         // original_type is `Exif`.
         let codestream = b"\xFF\x0A";
-        let exif = vec![0x4D, 0x4D, 0x00, 0x2A].repeat(64); // 256-byte TIFF-MM-tagged blob
+        let exif = [0x4D, 0x4D, 0x00, 0x2A].repeat(64); // 256-byte TIFF-MM-tagged blob
         let result = wrap_in_container_with_brob(codestream, Some(&exif), None, 4);
         let mut found_brob_exif = false;
         for i in 0..result.len().saturating_sub(8) {
@@ -1288,19 +1718,20 @@ mod tests {
 
     #[test]
     fn test_wrap_with_level10_and_metadata() {
-        // jxll box still sits between ftyp and jxlc; Exif follows jxlc.
+        // jxll box still sits directly after ftyp; with a codestream whose
+        // header doesn't parse, Exif goes ahead of the jxlc box.
         let codestream = b"\xFF\x0A";
         let exif = b"MM\x00\x2a\x00\x00";
         let result = wrap_in_container_with_level(codestream, Some(exif), None, 10);
-        // 32 + 9 + (8 + 2) jxlc + (8 + 4 + 6) Exif
-        assert_eq!(result.len(), 32 + 9 + 10 + 18);
+        // 32 + 9 + (8 + 4 + 6) Exif + (8 + 2) jxlc
+        assert_eq!(result.len(), 32 + 9 + 18 + 10);
         assert_eq!(&result[32..36], &[0, 0, 0, 0x09]);
         assert_eq!(&result[36..40], b"jxll");
         assert_eq!(result[40], 10);
-        assert_eq!(&result[41..45], &[0, 0, 0, 0x0A]); // jxlc size 10
-        assert_eq!(&result[45..49], b"jxlc");
-        // Exif starts at 32 + 9 + 10 = 51.
-        assert_eq!(&result[51 + 4..51 + 8], b"Exif");
+        assert_eq!(&result[41 + 4..41 + 8], b"Exif");
+        // jxlc starts at 32 + 9 + 18 = 59.
+        assert_eq!(&result[59..63], &[0, 0, 0, 0x0A]); // jxlc size 10
+        assert_eq!(&result[63..67], b"jxlc");
     }
 
     #[test]
@@ -1347,22 +1778,14 @@ mod tests {
         // Result is a container.
         assert!(is_container(&result));
         assert_eq!(&result[12..32], &FTYP_BOX);
-        // jxlc box at offset 32.
-        let jxlc_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
-        assert_eq!(jxlc_size as usize, 8 + codestream.len());
-        assert_eq!(&result[36..40], b"jxlc");
-        assert_eq!(&result[40..40 + codestream.len()], codestream);
-        // colr box follows jxlc.
-        let colr_offset = 40 + codestream.len();
-        let colr_size = u32::from_be_bytes([
-            result[colr_offset],
-            result[colr_offset + 1],
-            result[colr_offset + 2],
-            result[colr_offset + 3],
-        ]);
+        // A codestream without a header to parse: colr goes ahead of it.
+        let colr_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
         assert_eq!(colr_size as usize, 8 + payload.len());
-        assert_eq!(&result[colr_offset + 4..colr_offset + 8], b"colr");
-        assert_eq!(&result[colr_offset + 8..], &payload);
+        assert_eq!(&result[36..40], b"colr");
+        assert_eq!(&result[40..40 + payload.len()], &payload);
+        let jxlc_offset = 40 + payload.len();
+        assert_eq!(&result[jxlc_offset + 4..jxlc_offset + 8], b"jxlc");
+        assert_eq!(&result[jxlc_offset + 8..], codestream);
     }
 
     #[test]
@@ -1379,10 +1802,10 @@ mod tests {
         payload.extend_from_slice(b"fake-icc-bytes");
         let result = append_colr_box(&container, &payload);
 
-        assert_eq!(&result[..container.len()], container.as_slice());
-        let colr_offset = container.len();
-        assert_eq!(&result[colr_offset + 4..colr_offset + 8], b"colr");
-        assert_eq!(&result[colr_offset + 8..], payload.as_slice());
+        assert_eq!(&result[..32], &container[..32]);
+        assert_eq!(&result[36..40], b"colr");
+        assert_eq!(&result[40..40 + payload.len()], payload.as_slice());
+        assert_eq!(&result[40 + payload.len()..], &container[32..]);
     }
 
     #[test]
@@ -1402,19 +1825,15 @@ mod tests {
         let result = append_hcdr_box(codestream, &payload);
 
         assert!(is_container(&result));
-        let jxlc_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
-        assert_eq!(jxlc_size as usize, 8 + codestream.len());
-        let hcdr_offset = 40 + codestream.len();
-        let hcdr_size = u32::from_be_bytes([
-            result[hcdr_offset],
-            result[hcdr_offset + 1],
-            result[hcdr_offset + 2],
-            result[hcdr_offset + 3],
-        ]);
+        // A codestream without a header to parse: hCdR goes ahead of it.
+        let hcdr_size = u32::from_be_bytes([result[32], result[33], result[34], result[35]]);
         assert_eq!(hcdr_size as usize, 8 + payload.len());
         // Case-sensitive FourCC: capital C and R.
-        assert_eq!(&result[hcdr_offset + 4..hcdr_offset + 8], b"hCdR");
-        assert_eq!(&result[hcdr_offset + 8..], &payload);
+        assert_eq!(&result[36..40], b"hCdR");
+        assert_eq!(&result[40..40 + payload.len()], &payload);
+        let jxlc_offset = 40 + payload.len();
+        assert_eq!(&result[jxlc_offset + 4..jxlc_offset + 8], b"jxlc");
+        assert_eq!(&result[jxlc_offset + 8..], codestream);
     }
 
     #[test]
@@ -1428,10 +1847,10 @@ mod tests {
         let payload = b"\x00\x01\x02\x03\x04\x05\x06\x07";
         let result = append_hcdr_box(&container, payload);
 
-        assert_eq!(&result[..container.len()], container.as_slice());
-        let hcdr_offset = container.len();
-        assert_eq!(&result[hcdr_offset + 4..hcdr_offset + 8], b"hCdR");
-        assert_eq!(&result[hcdr_offset + 8..], payload);
+        assert_eq!(&result[..32], &container[..32]);
+        assert_eq!(&result[36..40], b"hCdR");
+        assert_eq!(&result[40..40 + payload.len()], payload);
+        assert_eq!(&result[40 + payload.len()..], &container[32..]);
     }
 
     #[test]
@@ -1461,5 +1880,383 @@ mod tests {
         let colr_pos = step2.windows(4).position(|w| w == b"colr").unwrap();
         let hcdr_pos = step2.windows(4).position(|w| w == b"hCdR").unwrap();
         assert!(colr_pos < hcdr_pos);
+    }
+
+    // ─── libjxl's box order on real codestream headers ─────────────
+
+    use crate::bit_writer::BitWriter;
+    use crate::headers::color_encoding::{CIExy, CustomPrimaries, RenderingIntent};
+    use crate::headers::extra_channels::{ExtraChannelInfo, ExtraChannelType};
+    use crate::headers::file_header::{AnimationHeader, BitDepth, Orientation};
+    use crate::headers::{ColorEncoding, FileHeader};
+
+    /// A codestream with `header` (and `icc`) followed by stand-in frame bytes,
+    /// and the header's length as the writer produced it.
+    fn codestream_with(header: &FileHeader, icc: Option<&[u8]>) -> (Vec<u8>, usize) {
+        let mut writer = BitWriter::new();
+        header.write(&mut writer).unwrap();
+        if let Some(icc) = icc {
+            crate::icc::write_icc(icc, &mut writer).unwrap();
+        }
+        writer.zero_pad_to_byte();
+        let len = writer.bytes_written();
+        let mut codestream = writer.finish_with_padding();
+        codestream.extend_from_slice(&[0x5A; 16]);
+        (codestream, len)
+    }
+
+    /// The 256-byte profile `icc::tests` builds, with one tag of type `tag`.
+    fn test_icc(tag: &[u8; 4]) -> Vec<u8> {
+        let mut icc = vec![0u8; 256];
+        icc[..4].copy_from_slice(&256u32.to_be_bytes());
+        icc[12..16].copy_from_slice(b"mntr");
+        icc[16..20].copy_from_slice(b"RGB ");
+        icc[20..24].copy_from_slice(b"XYZ ");
+        icc[36..40].copy_from_slice(b"acsp");
+        icc[128..132].copy_from_slice(&1u32.to_be_bytes());
+        icc[132..136].copy_from_slice(tag);
+        icc[136..140].copy_from_slice(&144u32.to_be_bytes());
+        icc[140..144].copy_from_slice(&12u32.to_be_bytes());
+        icc[144..148].copy_from_slice(b"text");
+        icc
+    }
+
+    /// Headers that reach every branch of the header parse this crate writes.
+    fn header_variants() -> Vec<(String, FileHeader)> {
+        let mut out: Vec<(String, FileHeader)> = vec![
+            ("rgb 64x64".into(), FileHeader::new_rgb(64, 64)),
+            ("gray 37x1000".into(), FileHeader::new_gray(37, 1000)),
+            ("rgba 300x200".into(), FileHeader::new_rgba(300, 200)),
+            ("gray+alpha 1x1".into(), FileHeader::new_gray_alpha(1, 1)),
+            ("rgb 2320x3408".into(), FileHeader::new_rgb(2320, 3408)),
+            ("rgb 300000x3".into(), FileHeader::new_rgb(300_000, 3)),
+        ];
+        let mut h = FileHeader::new_rgb(256, 256);
+        h.metadata.xyb_encoded = true;
+        h.metadata.color_encoding.rendering_intent = RenderingIntent::Relative;
+        h.header_all_default_fast_paths = true;
+        out.push(("all-default ImageMetadata".into(), h));
+        let mut h = FileHeader::new_rgba(640, 480);
+        h.metadata.bit_depth = BitDepth::uint16();
+        for ec in &mut h.metadata.extra_channels {
+            ec.bit_depth = BitDepth::uint16();
+        }
+        out.push(("rgba 16-bit".into(), h));
+        let mut h = FileHeader::new_rgb(8, 8);
+        h.metadata.bit_depth = BitDepth::float32();
+        out.push(("float32".into(), h));
+        let mut h = FileHeader::new_gray(2320, 3408);
+        h.metadata.bit_depth.bits_per_sample = 1;
+        h.metadata.color_encoding = ColorEncoding::gray();
+        out.push(("gray 1-bit".into(), h));
+        let mut h = FileHeader::new_rgba(64, 48);
+        h.metadata.animation = Some(AnimationHeader {
+            tps_numerator: 1000,
+            tps_denominator: 1,
+            num_loops: 0,
+            have_timecodes: false,
+        });
+        out.push(("animation".into(), h));
+        let mut h = FileHeader::new_rgb(64, 48);
+        h.metadata.animation = Some(AnimationHeader {
+            tps_numerator: 30_000,
+            tps_denominator: 1001,
+            num_loops: 70_000,
+            have_timecodes: true,
+        });
+        out.push(("animation with timecodes".into(), h));
+        let mut h = FileHeader::new_rgb(4000, 3000);
+        h.metadata.orientation = Orientation::Rotate90CW;
+        h.metadata.intensity_target = 1000.0;
+        h.metadata.min_nits = 0.005;
+        h.metadata.relative_to_max_display = true;
+        h.metadata.linear_below = 0.25;
+        out.push(("orientation and tone mapping".into(), h));
+        let mut h = FileHeader::new_rgb(64, 64);
+        h.metadata.extra_channels = vec![
+            ExtraChannelInfo {
+                name: "depth map".into(),
+                dim_shift: 3,
+                ..ExtraChannelInfo::depth()
+            },
+            ExtraChannelInfo::spot_color([0.1, 0.2, 0.3, 0.9]),
+            ExtraChannelInfo {
+                ec_type: ExtraChannelType::Cfa,
+                cfa_channel: 2,
+                ..Default::default()
+            },
+            ExtraChannelInfo {
+                name: "x".repeat(70),
+                alpha_associated: true,
+                ..ExtraChannelInfo::alpha()
+            },
+        ];
+        out.push(("named extra channels".into(), h));
+        let primaries = CustomPrimaries {
+            red: CIExy { x: 0.68, y: 0.32 },
+            green: CIExy { x: 0.265, y: 0.69 },
+            blue: CIExy { x: 0.15, y: 0.06 },
+        };
+        for (name, colour) in [
+            ("display p3", ColorEncoding::display_p3()),
+            ("gamma", ColorEncoding::with_gamma(0.45455)),
+            ("pq", ColorEncoding::bt2100_pq()),
+            (
+                "custom white point and primaries",
+                ColorEncoding::with_custom_white_point_and_primaries(
+                    CIExy {
+                        x: 0.3127,
+                        y: 0.329,
+                    },
+                    primaries,
+                ),
+            ),
+        ] {
+            let mut h = FileHeader::new_rgb(64, 64);
+            h.metadata.color_encoding = colour;
+            out.push((name.into(), h));
+        }
+        let mut h = FileHeader::new_rgb(640, 480);
+        h.metadata.have_intrinsic_size = true;
+        h.metadata.intrinsic_width = 1280;
+        h.metadata.intrinsic_height = 960;
+        out.push(("intrinsic size".into(), h));
+        for factor in [2, 4, 8] {
+            let mut h = FileHeader::new_rgb(64, 64);
+            h.metadata.xyb_encoded = true;
+            h.upsampling_factor = factor;
+            h.upsampling_mode = Some(0);
+            out.push((format!("upsampling weights x{factor}"), h));
+        }
+        out
+    }
+
+    use super::box_types as types;
+
+    /// A container's codestream: its `jxlc` box, or its `jxlp` boxes joined.
+    fn codestream_of(data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for b in top_level_boxes(data).unwrap() {
+            let skip = match &b.box_type {
+                b"jxlc" => 0,
+                b"jxlp" => 4,
+                _ => continue,
+            };
+            out.extend_from_slice(&data[b.offset + b.header + skip..b.offset + b.size]);
+        }
+        out
+    }
+
+    #[test]
+    fn test_header_len_matches_writer() {
+        for (name, header) in header_variants() {
+            let (codestream, len) = codestream_with(&header, None);
+            assert_eq!(
+                codestream_header_len(&codestream, None),
+                Some(len),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_len_with_icc() {
+        let icc = test_icc(b"cprt");
+        for (name, mut header) in header_variants() {
+            header.metadata.color_encoding.want_icc = true;
+            let (codestream, len) = codestream_with(&header, Some(&icc));
+            assert_eq!(
+                codestream_header_len(&codestream, Some(&icc)),
+                Some(len),
+                "{name}"
+            );
+            // The profile's end can't be found without it, or with another one.
+            assert_eq!(codestream_header_len(&codestream, None), None, "{name}");
+            assert_eq!(
+                codestream_header_len(&codestream, Some(&test_icc(b"desc"))),
+                None,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_len_rejects_preview_and_bad_input() {
+        // Signature, an 8x8 SizeHeader, and ImageMetadata with or without a
+        // 128x128 preview; then CustomTransformData.
+        let header = |preview: bool| {
+            let mut w = BitWriter::new();
+            FileHeader::write_signature(&mut w).unwrap();
+            for (bits, value) in [(1, 1), (5, 0), (3, 1), (1, 0), (1, 1), (3, 0), (1, 0)] {
+                w.write(bits, value).unwrap();
+            }
+            w.write_bit(preview).unwrap();
+            if preview {
+                w.write(1, 1).unwrap(); // div8
+                w.write(2, 0).unwrap(); // ysize_div8 = 16
+                w.write(3, 1).unwrap(); // ratio 1:1
+            }
+            // have_animation, bit depth (integer, 8), modular_16_bit,
+            // no extra channels, xyb_encoded, colour and tone mapping
+            // all-default, no extensions, CustomTransformData all-default.
+            for (bits, value) in [(1, 0), (1, 0), (2, 0), (1, 1), (2, 0), (1, 1), (1, 1)] {
+                w.write(bits, value).unwrap();
+            }
+            for (bits, value) in [(1, 1), (2, 0), (1, 1)] {
+                w.write(bits, value).unwrap();
+            }
+            w.zero_pad_to_byte();
+            let len = w.bytes_written();
+            let mut codestream = w.finish_with_padding();
+            codestream.extend_from_slice(&[0x5A; 16]);
+            (codestream, len)
+        };
+        let (codestream, len) = header(false);
+        assert_eq!(codestream_header_len(&codestream, None), Some(len));
+        // A preview's frame follows the header: the frames don't start there.
+        let (codestream, _) = header(true);
+        assert_eq!(codestream_header_len(&codestream, None), None);
+
+        assert_eq!(codestream_header_len(b"\x00\x00\x00\x00", None), None);
+        let (codestream, len) = codestream_with(&FileHeader::new_rgb(64, 64), None);
+        // Truncated, or nothing after the header.
+        assert_eq!(codestream_header_len(&codestream[..len - 1], None), None);
+        assert_eq!(codestream_header_len(&codestream[..len], None), None);
+    }
+
+    #[test]
+    fn test_wrap_splits_after_header() {
+        let (codestream, len) = codestream_with(&FileHeader::new_rgb(64, 64), None);
+        let exif = b"MM\x00\x2a\x00\x00\x00\x08";
+        let xmp = b"<x:xmpmeta/>";
+        let jumbf = b"\x00\x00\x00\x0Cjumdc2pa";
+        let result = wrap_in_container_with_jbrd_and_level_and_jumbf(
+            &codestream,
+            None,
+            Some(exif),
+            Some(xmp),
+            10,
+            Some(jumbf),
+        );
+        assert_eq!(
+            types(&result),
+            [
+                *b"JXL ", *b"ftyp", *b"jxll", *b"jxlp", *b"Exif", *b"xml ", *b"jumb", *b"jxlp"
+            ]
+        );
+        // jxlp 0 holds exactly the header, jxlp 1 (last) the frames.
+        let boxes = top_level_boxes(&result).unwrap();
+        let payload = |b: &TopBox| &result[b.offset + b.header..b.offset + b.size];
+        assert_eq!(
+            payload(&boxes[3]),
+            [&0u32.to_be_bytes()[..], &codestream[..len]].concat()
+        );
+        assert_eq!(
+            payload(&boxes[7]),
+            [&0x8000_0001u32.to_be_bytes()[..], &codestream[len..]].concat()
+        );
+        // No boxes: one jxlc box, as libjxl writes it.
+        assert_eq!(
+            types(&wrap_in_container_with_level(&codestream, None, None, 10)),
+            [*b"JXL ", *b"ftyp", *b"jxll", *b"jxlc"]
+        );
+    }
+
+    #[test]
+    fn test_wrap_encoded_finds_header_with_icc() {
+        let icc = test_icc(b"cprt");
+        let mut header = FileHeader::new_rgb(64, 64);
+        header.metadata.color_encoding.want_icc = true;
+        let (codestream, len) = codestream_with(&header, Some(&icc));
+        let boxes = EncodedBoxes {
+            xmp: Some(b"<x/>"),
+            colr: Some(b"nclx"),
+            hcdr: Some(b"hdr"),
+            ..Default::default()
+        };
+        let result = wrap_encoded(codestream.clone(), Some(&icc), 5, &boxes, None);
+        assert_eq!(
+            types(&result),
+            [
+                *b"JXL ", *b"ftyp", *b"jxlp", *b"xml ", *b"colr", *b"hCdR", *b"jxlp"
+            ]
+        );
+        let first = &top_level_boxes(&result).unwrap()[2];
+        assert_eq!(first.size, 8 + 4 + len);
+        assert_eq!(codestream_of(&result), codestream);
+        // No boxes at level 5: the bare codestream.
+        assert_eq!(
+            wrap_encoded(
+                codestream.clone(),
+                Some(&icc),
+                5,
+                &EncodedBoxes::default(),
+                None
+            ),
+            codestream
+        );
+    }
+
+    #[test]
+    fn test_insert_box_at_libjxl_position() {
+        let (codestream, _) = codestream_with(&FileHeader::new_rgb(64, 64), None);
+        // A bare codestream: split after the header.
+        let bare = append_gain_map_box(&codestream, b"gain map");
+        assert_eq!(
+            types(&bare),
+            [*b"JXL ", *b"ftyp", *b"jxlp", *b"jhgm", *b"jxlp"]
+        );
+        // A split container: after the boxes already there, ahead of the frames.
+        let split = append_jumbf_box(
+            &wrap_in_container(&codestream, None, Some(b"<x/>")),
+            b"c2pa",
+        );
+        assert_eq!(
+            types(&split),
+            [*b"JXL ", *b"ftyp", *b"jxlp", *b"xml ", *b"jumb", *b"jxlp"]
+        );
+        // A jxlc container: split, the level box kept.
+        let jxlc = append_gain_map_box(
+            &wrap_in_container_with_level(&codestream, None, None, 10),
+            b"gain map",
+        );
+        assert_eq!(
+            types(&jxlc),
+            [*b"JXL ", *b"ftyp", *b"jxll", *b"jxlp", *b"jhgm", *b"jxlp"]
+        );
+        // A box already after the codestream stays there.
+        let mut old = Vec::new();
+        old.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
+        old.extend_from_slice(&FTYP_BOX);
+        write_box(&mut old, b"jxlc", &codestream);
+        write_box(&mut old, b"xml ", b"<x/>");
+        let old = append_hcdr_box(&old, b"hdr");
+        assert_eq!(
+            types(&old),
+            [*b"JXL ", *b"ftyp", *b"jxlp", *b"hCdR", *b"jxlp", *b"xml "]
+        );
+        for result in [&bare, &split, &jxlc, &old] {
+            assert_eq!(codestream_of(result), codestream);
+        }
+    }
+
+    #[cfg(feature = "jpeg-reencoding")]
+    #[test]
+    fn test_jpeg_layout_puts_metadata_before_frames() {
+        let exif = [0x4D, 0x4D, 0x00, 0x2A].repeat(64);
+        let xmp = b"<x:xmpmeta/>";
+        let result =
+            wrap_in_container_jxlp(b"\xFF\x0A\x00", b"frames", b"jbrd", Some(&exif), Some(xmp));
+        // Exif compresses into a brob box; the short XMP stays plain.
+        assert_eq!(
+            types(&result),
+            [
+                *b"JXL ", *b"ftyp", *b"jxlp", *b"jbrd", *b"brob", *b"xml ", *b"jxlp"
+            ]
+        );
+        // A gain map goes after them, ahead of the frames.
+        let at = frames_box_offset(&result).unwrap();
+        assert_eq!(&result[at + 4..at + 8], b"jxlp");
+        assert_eq!(top_level_boxes(&result).unwrap()[6].offset, at);
     }
 }

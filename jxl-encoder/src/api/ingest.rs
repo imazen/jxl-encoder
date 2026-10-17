@@ -1230,38 +1230,35 @@ pub(crate) fn unpack_strided_pixels(
     Ok(packed)
 }
 
-/// Dispatch container-wrap by Brotli setting (closes #15 wire-up).
+/// The output of an encode: `codestream` in libjxl's container layout with the
+/// metadata boxes `metadata` carries (Exif, XMP, JUMBF, `colr`, `hCdR`), or
+/// bare when there are none and `level` is 5. Centralizing it keeps the call
+/// sites (encode_inner, LosslessEncoder::finish_inner, animation) aligned.
 ///
-/// When `brotli_quality` is `Some(q)` AND the `brotli-metadata`
-/// feature is enabled, routes through `wrap_in_container_with_brob`
-/// (each metadata blob falls back to plain box if brob would be
-/// bigger). Otherwise (or when feature is off), uses the plain
-/// `wrap_in_container`. Centralizing the dispatch keeps the 3 call
-/// sites (encode_inner, LossyEncoder::finish_inner,
-/// LosslessEncoder::finish_inner) aligned.
+/// The boxes go between the codestream header and the frames, as libjxl
+/// writes them (`crate::container` docs); `icc` is the profile the encoder
+/// embedded, which locates the header's end. When `brotli_quality` is
+/// `Some(q)` AND the `brotli-metadata` feature is enabled, Exif, XMP and
+/// JUMBF go in `brob` boxes where that is smaller (closes #15 wire-up).
 ///
 /// `level` is the codestream level (5 or 10). When `level != 5` a
-/// `jxll` (level) box is emitted directly after `ftyp`. For level 5
-/// the byte layout is byte-identical to the historical wrap. See
+/// `jxll` (level) box is emitted directly after `ftyp`. See
 /// [`crate::container::compute_codestream_level`].
 pub(crate) fn wrap_metadata_container(
-    codestream: &[u8],
-    exif: Option<&[u8]>,
-    xmp: Option<&[u8]>,
-    jumbf: Option<&[u8]>,
+    codestream: Vec<u8>,
+    icc: Option<&[u8]>,
+    metadata: Option<&ImageMetadata<'_>>,
     brotli_quality: Option<u32>,
     level: u8,
 ) -> Vec<u8> {
-    #[cfg(feature = "brotli-metadata")]
-    {
-        if let Some(q) = brotli_quality {
-            return crate::container::wrap_in_container_with_brob_and_level_and_jumbf(
-                codestream, exif, xmp, jumbf, q, level,
-            );
-        }
-    }
-    let _ = brotli_quality;
-    crate::container::wrap_in_container_with_level_and_jumbf(codestream, exif, xmp, level, jumbf)
+    let boxes = metadata.map_or_else(Default::default, |m| crate::container::EncodedBoxes {
+        exif: m.exif,
+        xmp: m.xmp,
+        jumbf: m.jumbf,
+        colr: m.colr_payload,
+        hcdr: m.hcdr_payload,
+    });
+    crate::container::wrap_encoded(codestream, icc, level, &boxes, brotli_quality)
 }
 
 /// Pick the codestream level required for an image with the given
@@ -1328,37 +1325,13 @@ pub(crate) fn finish_animation_output(
         probe.modular_16bit_buffer_sufficient(),
     )?;
 
-    let (exif, xmp, jumbf) = match metadata {
-        Some(m) => (m.exif, m.xmp, m.jumbf),
-        None => (None, None, None),
-    };
-    let has_meta = exif.is_some() || xmp.is_some() || jumbf.is_some();
-    let colr = metadata.and_then(|m| m.colr_payload);
-    let hcdr = metadata.and_then(|m| m.hcdr_payload);
-
-    let mut out = if has_meta
-        || colr.is_some()
-        || hcdr.is_some()
-        || crate::container::level_requires_container(level)
-    {
-        wrap_metadata_container(
-            &codestream,
-            exif,
-            xmp,
-            jumbf,
-            brotli_metadata_quality,
-            level,
-        )
-    } else {
-        codestream
-    };
-    if let Some(payload) = colr {
-        out = crate::container::append_colr_box(&out, payload);
-    }
-    if let Some(payload) = hcdr {
-        out = crate::container::append_hcdr_box(&out, payload);
-    }
-    Ok(out)
+    Ok(wrap_metadata_container(
+        codestream,
+        metadata.and_then(|m| m.icc_profile),
+        metadata,
+        brotli_metadata_quality,
+        level,
+    ))
 }
 
 pub(crate) fn compute_required_level(

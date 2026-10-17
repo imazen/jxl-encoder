@@ -270,6 +270,9 @@ pub mod __test_exports {
     pub mod xyb {
         pub use crate::color::xyb::*;
     }
+    /// Where a codestream's header ends, for the libjxl comparison in
+    /// `examples/libjxl_header_split.rs`.
+    pub use crate::container::codestream_header_len;
     /// colr-box payload builder (`tests/it/colr_hcdr_boxes.rs`).
     pub use crate::container::colr_nclx_payload;
     /// Tier-2 coupling knobs (`examples/w44_229_parity_check.rs` +
