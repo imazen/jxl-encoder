@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Metadata boxes go where libjxl writes them: between the codestream header (its own first `jxlp` box) and the frames, with no box after the last codestream box. That covers Exif, XMP, JUMBF, `colr` and `hCdR` on every encode, the JPEG transcode's `jbrd`, Exif, XMP and UltraHDR `jhgm`, and `append_gain_map_box` and the other `append_*` helpers. Ubuntu 24.04's ffmpeg 6.1 loops on a box after the codestream, and files in this order decode there. The header split matches cjxl v0.12's on 20 files (`examples/libjxl_header_split.rs`) (`11ffbf9c`).
+- Fixed: `ImageMetadata::with_intrinsic_size` wrote a header that libjxl and jxl-oxide could not decode; the intrinsic size is now a SizeHeader (`5923e603`).
 - Extend the private native quantizer intervention probe to frozen Rev5 D12 refinement gains and butteraugli pixel-map providers, with explicit first-party linear input transfer and unchanged neutral controls.
 
 ### QUEUED BREAKING CHANGES
