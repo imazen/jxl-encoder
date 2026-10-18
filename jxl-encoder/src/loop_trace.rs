@@ -20,7 +20,10 @@ pub struct LoopFrame {
     /// best; frames of one seed share this value).
     pub seed: f64,
     /// Iteration index within the seed, from 0. The last iteration of a
-    /// seed only scores; it has no [`Self::next_quant_field`].
+    /// seed's schedule only scores; it has no [`Self::next_quant_field`].
+    /// A seed ends early, from iteration 2 on, when an iteration leaves the
+    /// field unchanged: later iterations would repeat it exactly, so its
+    /// last frame's [`Self::next_quant_field`] equals [`Self::quant_field`].
     pub iter: u32,
     /// The metric that scored it: `"butteraugli"`, `"cvvdp"` or `"zensim"`.
     pub metric: &'static str,
@@ -41,7 +44,8 @@ pub struct LoopFrame {
     /// block, row-major (higher = finer quantization).
     pub quant_field: Vec<f32>,
     /// The quant field after this iteration's adjustment: what the next
-    /// iteration encodes with. `None` on a seed's final, score-only pass.
+    /// iteration encodes with. `None` on a seed's final, score-only pass;
+    /// equal to [`Self::quant_field`] when the loop stopped at a fixed point.
     pub next_quant_field: Option<Vec<f32>>,
     /// Per-block distance from the metric's diffmap (the 16-norm of each
     /// block's values times the metric's tile constant), row-major; blocks
