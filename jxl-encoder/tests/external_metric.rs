@@ -1,11 +1,39 @@
 //! `EncodeRequest::with_external_metric`: a caller's metric scores the
 //! perceptual loop in butteraugli's place.
+//!
+//! Its own process: the full-schedule equivalence oracle temporarily disables
+//! the global fixed-point switch. Other integration binaries keep their own
+//! independent switch, and the tests here serialize access.
+#![cfg(feature = "__external_metric")]
 
 use jxl_encoder::api::PerceptualMetric;
 use jxl_encoder::{
     EncodeError, ExternalLoopMetric, ExternalMetric, LoopTrace, LossyConfig, PixelLayout,
 };
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
+
+use jxl_encoder::vardct::__buttloop_overrides::FIXPOINT_STOP;
+
+#[path = "common/external_butteraugli.rs"]
+mod external_butteraugli;
+use external_butteraugli::Butteraugli;
+
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+struct FullSchedule(bool);
+
+impl FullSchedule {
+    fn new() -> Self {
+        Self(FIXPOINT_STOP.swap(false, Ordering::Relaxed))
+    }
+}
+
+impl Drop for FullSchedule {
+    fn drop(&mut self) {
+        FIXPOINT_STOP.store(self.0, Ordering::Relaxed);
+    }
+}
 
 fn textured(w: usize, h: usize) -> Vec<u8> {
     (0..w * h)
@@ -16,53 +44,6 @@ fn textured(w: usize, h: usize) -> Vec<u8> {
             [v, v.wrapping_add(31), v.wrapping_mul(3)]
         })
         .collect()
-}
-
-/// Butteraugli through the external interface, with the parameters the
-/// built-in CPU backend uses for SDR input.
-struct Butteraugli {
-    reference: Option<butteraugli::ButteraugliReference>,
-    calls: Arc<Mutex<u32>>,
-}
-
-impl ExternalLoopMetric for Butteraugli {
-    fn set_reference(
-        &mut self,
-        r: &[f32],
-        g: &[f32],
-        b: &[f32],
-        width: usize,
-        height: usize,
-    ) -> Result<(), String> {
-        let params = butteraugli::ButteraugliParams::new()
-            .with_intensity_target(80.0)
-            .with_compute_diffmap(true);
-        self.reference = Some(
-            butteraugli::ButteraugliReference::new_linear_planar(
-                r, g, b, width, height, width, params,
-            )
-            .map_err(|e| e.to_string())?,
-        );
-        Ok(())
-    }
-
-    fn compare(
-        &mut self,
-        r: &[f32],
-        g: &[f32],
-        b: &[f32],
-        stride: usize,
-        _width: usize,
-        _height: usize,
-        diffmap: &mut Vec<f32>,
-    ) -> Result<f64, String> {
-        *self.calls.lock().unwrap() += 1;
-        let reference = self.reference.as_ref().ok_or("no reference")?;
-        reference
-            .compare_linear_planar_into(r, g, b, stride, diffmap)
-            .map(|(score, _)| score)
-            .map_err(|e| e.to_string())
-    }
 }
 
 /// A metric that sees no error anywhere.
@@ -97,6 +78,10 @@ impl ExternalLoopMetric for Blind {
 
 #[test]
 fn butteraugli_as_an_external_metric_reproduces_the_builtin_loop() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    // Compare the same full schedule on both paths. The separate
+    // loop_fixpoint binary tests the optimized schedule and external bypass.
+    let _schedule = FullSchedule::new();
     let (w, h) = (96usize, 72usize);
     let px = textured(w, h);
     let config = LossyConfig::new(1.5)
@@ -134,6 +119,7 @@ fn butteraugli_as_an_external_metric_reproduces_the_builtin_loop() {
 
 #[test]
 fn an_external_metric_steers_the_quant_field() {
+    let _lock = TEST_LOCK.lock().unwrap();
     let (w, h) = (96usize, 72usize);
     let px = textured(w, h);
     let config = LossyConfig::new(1.5)
@@ -169,6 +155,7 @@ fn an_external_metric_steers_the_quant_field() {
 
 #[test]
 fn an_external_metric_refuses_other_loop_metrics() {
+    let _lock = TEST_LOCK.lock().unwrap();
     let (w, h) = (32u32, 32u32);
     let px = textured(w as usize, h as usize);
     let compiled = [

@@ -41,6 +41,8 @@ pub trait ExternalLoopMetric: Send {
     /// Scores one reconstruction, planar linear RGB whose rows are `stride`
     /// values apart (`stride ≥ width`). Fills `diffmap` with `width × height`
     /// values, row-major, on butteraugli's scale, and returns the score.
+    /// The callback may be stateful. The loop preserves every scheduled
+    /// comparison, even when an adjustment leaves the quant field unchanged.
     ///
     /// # Errors
     /// An error ends the current seed with the previous iteration's result,

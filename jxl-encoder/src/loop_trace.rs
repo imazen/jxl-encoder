@@ -20,7 +20,16 @@ pub struct LoopFrame {
     /// best; frames of one seed share this value).
     pub seed: f64,
     /// Iteration index within the seed, from 0. The last iteration of a
-    /// seed only scores; it has no [`Self::next_quant_field`].
+    /// seed's schedule only scores; it has no [`Self::next_quant_field`].
+    /// A seed ends early, from iteration 2 on, when an iteration leaves the
+    /// field bit-identical with a repeatable backend: later iterations
+    /// would repeat it exactly, so its last frame's [`Self::next_quant_field`]
+    /// equals [`Self::quant_field`]. This can include above-target blocks
+    /// saturated at the quant-field upper bound; it is not a quality guarantee.
+    /// External metrics retain the full schedule because their callbacks
+    /// may depend on call history.
+    /// Cancellation or a failed metric comparison can leave a partial seed
+    /// trace; these frames do not record the reason for termination.
     pub iter: u32,
     /// The metric that scored it: `"butteraugli"`, `"cvvdp"` or `"zensim"`.
     pub metric: &'static str,
@@ -41,12 +50,17 @@ pub struct LoopFrame {
     /// block, row-major (higher = finer quantization).
     pub quant_field: Vec<f32>,
     /// The quant field after this iteration's adjustment: what the next
-    /// iteration encodes with. `None` on a seed's final, score-only pass.
+    /// iteration encodes with. `None` on a seed's final, score-only pass;
+    /// equal bitwise to [`Self::quant_field`] when the loop stopped at a fixed
+    /// point. Equality alone does not identify the terminal frame: an
+    /// intermediate frame may also leave the field unchanged. Consumers
+    /// should group frames by seed and inspect the last frame of each group.
     pub next_quant_field: Option<Vec<f32>>,
     /// Per-block distance from the metric's diffmap (the 16-norm of each
     /// block's values times the metric's tile constant), row-major; blocks
     /// inside a larger transform carry their first block's value. Blocks
-    /// above [`Self::target`] get finer quantization next iteration.
+    /// above [`Self::target`] request finer quantization next iteration,
+    /// subject to the quant-field bounds and per-iteration increase cap.
     pub tile_dist: Vec<f32>,
     /// The metric's per-pixel diffmap of this reconstruction,
     /// `width × height`, row-major.
