@@ -812,6 +812,31 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-18: PR131 fixed-point determinism and saturation
+
+**Status**: [RESOLVED] in the fixed-point safety follow-up.
+
+- [PROVEN by source inspection] An unchanged quant field does not imply all
+  blocks satisfy the target: Step 8 clamps requests to `qf_higher`.
+- [PROVEN by source inspection] `ExternalLoopMetric::compare` is mutable and
+  has no determinism contract. Omitting calls can change later output or seeds.
+- The follow-up uses a private backend opt-in (CPU Butteraugli only), explicit
+  bitwise equality, and a cancellation check at the early exit. The exact late
+  adjustment is shared with saturation/minimum-step unit tests. Integration
+  tests compare the remaining schedule and delayed/saturated external callbacks.
+- [Transition proof and trace semantics](docs/PERCEPTUAL_LOOP_FIXED_POINT.md).
+  No public API is added.
+
+Validation: the exact committed 16-sibling source closure and unchanged
+`Cargo.lock` pass the full library baseline (including libjxl v0.12 decoder
+controls), fixed-point/stateful-callback/cancellation/capture checks, original
+hash and Libjxl locks, divergence drift, the external-only minimal feature
+closure, and workspace/focused all-target Clippy with `-D warnings`. Existing
+ignore annotations and expected bytes are unchanged. On macOS the baseline
+requires explicit verified `CJXL_PATH`/`DJXL_PATH`; resolving against live
+siblings or inheriting ancestor Cargo patches does not verify the pinned graph.
+
+
 ### RESOLVED 2026-09-24: explicit CLI strategy conflicted with lossless test contract
 
 Historical rejection is superseded by the approved lossless strategy wiring

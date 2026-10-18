@@ -165,9 +165,10 @@ pub static DISTANCE_SPLIT_X1000: AtomicI32 = AtomicI32::new(2000);
 
 /// Sweep override that turns off the fixed-point stop in the perceptual
 /// loop (`true` = stop, the default). From iteration 2 on, `cur_pow` is 0
-/// and only blocks over target move; once an iteration leaves the quant
-/// field bit-identical, every later iteration re-encodes that same field
-/// and reproduces the same score, map and output. Harnesses set this to
+/// and only blocks over target can move (clamping can prevent movement).
+/// With a repeatable backend, once an iteration leaves the quant field
+/// bit-identical, every later iteration reproduces the same state. This
+/// does not imply that all blocks meet the target. Harnesses set this to
 /// `false` to time and byte-compare the full iteration count.
 pub static FIXPOINT_STOP: AtomicBool = AtomicBool::new(true);
 
@@ -1955,7 +1956,7 @@ impl VarDctEncoder {
     }
 
     /// Inner per-seed body of the butteraugli quantization loop.
-    /// Runs the full `iters + 1` iteration sequence on the supplied
+    /// Runs up to `iters + 1` iterations on the supplied
     /// `quant_field_float` (and the matching u8 `quant_field`) and
     /// returns the resulting [`SeedOutcome`].
     ///
@@ -2093,7 +2094,10 @@ impl VarDctEncoder {
         let mut diffmap_vec: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
         // The field the current iteration encoded, kept for the
         // fixed-point check after Step 8.
-        let fixpoint_stop = FIXPOINT_STOP.load(Ordering::Relaxed);
+        let fixpoint_stop = FIXPOINT_STOP.load(Ordering::Relaxed)
+            && backend
+                .as_deref()
+                .is_some_and(|b| b.supports_fixed_point_stop());
         // The recon-hook captures key on `iter == iters` (or every iter),
         // so they keep the full schedule.
         #[cfg(feature = "__internal_recon_hook")]
@@ -2986,50 +2990,16 @@ impl VarDctEncoder {
             let quantizer_scale = current_params.scale; // = global_scale / 65536
 
             if cur_pow == 0.0 {
-                // Only adjust bad blocks (diff > 1.0)
-                // (libjxl enc_adaptive_quantization.cc:1066-1086)
-                for bi in 0..num_blocks {
-                    // butteraugli's ButteraugliReference is finite by
-                    // construction on any finite XYB input — non-finite
-                    // here is always an upstream bug. The 270-encode
-                    // trigger-fixture sweep + the math (XYB transform is
-                    // total on ℝ via cbrt + bias) prove these never fire
-                    // on legitimate input.
-                    assert!(
-                        tile_dist[bi].is_finite(),
-                        "butteraugli loop: non-finite tile_dist[{bi}] = {} \
-                         (upstream butteraugli should never produce non-finite)",
-                        tile_dist[bi]
-                    );
-                    assert!(
-                        quant_field_float[bi].is_finite(),
-                        "butteraugli loop: non-finite quant_field_float[{bi}] = {} \
-                         (clamps should keep this finite every iter)",
-                        quant_field_float[bi]
-                    );
-                    // cvvdp-fork Phase 4: diff_raw is the per-block bump
-                    // ratio in metric-direction units. Bitstream
-                    // `target_distance` is NOT used here — we want the
-                    // metric the buttloop is actually converging against.
-                    let diff_raw = tile_dist[bi] / effective_metric_target_distance;
-                    // W38-2 #3.1: cap the per-iter bump (no-op in HIGH
-                    // regime where max_increase = 100.0).
-                    let diff = diff_raw.min(max_increase as f32);
-                    if diff > 1.0 {
-                        let old = quant_field_float[bi];
-                        quant_field_float[bi] = old * diff;
-                        // Minimum step check: if rounding to integer quant produces
-                        // the same value, bump by one quantizer step
-                        // (libjxl: if (fi == pi) row_q[x] = old + quantizer.Scale())
-                        let qf_old = (old * inv_global_scale + 0.5).floor() as i32;
-                        let qf_new =
-                            (quant_field_float[bi] * inv_global_scale + 0.5).floor() as i32;
-                        if qf_old == qf_new {
-                            quant_field_float[bi] = old + quantizer_scale;
-                        }
-                    }
-                    quant_field_float[bi] = quant_field_float[bi].clamp(qf_lower, qf_higher);
-                }
+                adjust_late_quant_field(
+                    &mut quant_field_float[..num_blocks],
+                    tile_dist,
+                    effective_metric_target_distance,
+                    max_increase,
+                    inv_global_scale,
+                    quantizer_scale,
+                    qf_lower,
+                    qf_higher,
+                );
             } else {
                 // Adjust both directions (libjxl enc_adaptive_quantization.cc:1087-1110)
                 for bi in 0..num_blocks {
@@ -3093,12 +3063,23 @@ impl VarDctEncoder {
             if let Some(trace) = &self.loop_trace {
                 trace.set_next_quant_field(quant_field_float);
             }
-            // Fixed point: no block went over target, so the field is
-            // bit-identical to the one just encoded. Each remaining
-            // iteration would re-encode it and reproduce this score, map
-            // and quant field, so the loop state already equals what the
-            // compare-only final iteration would leave behind.
-            if check_fixpoint && encoded_qf.as_slice() == &*quant_field_float {
+            // From iter >= 2, Step 7 is inactive and Step 8 uses cur_pow=0
+            // with the same bounds and bump rule for every remaining iter.
+            // An unchanged field may still contain above-target blocks at
+            // qf_higher. With stable sweep overrides, the same field gives
+            // the same params, integer quantizers, transform coefficients,
+            // reconstruction, sharpness (frozen or recomputed), score and
+            // map on a repeatable backend. Step 8 then repeats this fixed
+            // point. The final compare-only pass would leave those buffers
+            // and last_score unchanged, including the seed picker's inputs.
+            // Compare bits explicitly: neither epsilon nor float equality
+            // establishes the bit identity required by this shortcut.
+            if check_fixpoint && quant_fields_bit_equal(&encoded_qf, quant_field_float) {
+                // Honor cancellation requested during this last compare,
+                // even though the next iteration checkpoint is omitted.
+                if let Some(s) = stop {
+                    s.check().map_err(|_| crate::error::Error::Cancelled)?;
+                }
                 break;
             }
         }
@@ -3474,6 +3455,71 @@ impl VarDctEncoder {
     }
 }
 
+/// Exact identity for the fixed-point shortcut, including signed zero.
+#[cfg(feature = "butteraugli-loop")]
+fn quant_fields_bit_equal(a: &[f32], b: &[f32]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits())
+}
+
+/// The stationary Step 8 transition used at every iteration from index 2.
+/// Keep the arithmetic identical to the early-iteration bad-block branch.
+#[cfg(feature = "butteraugli-loop")]
+#[allow(clippy::too_many_arguments)]
+fn adjust_late_quant_field(
+    quant_field_float: &mut [f32],
+    tile_dist: &[f32],
+    effective_metric_target_distance: f32,
+    max_increase: f64,
+    inv_global_scale: f32,
+    quantizer_scale: f32,
+    qf_lower: f32,
+    qf_higher: f32,
+) {
+    // Only adjust bad blocks (diff > 1.0)
+    // (libjxl enc_adaptive_quantization.cc:1066-1086)
+    for bi in 0..quant_field_float.len() {
+        // butteraugli's ButteraugliReference is finite by
+        // construction on any finite XYB input — non-finite
+        // here is always an upstream bug. The 270-encode
+        // trigger-fixture sweep + the math (XYB transform is
+        // total on ℝ via cbrt + bias) prove these never fire
+        // on legitimate input.
+        assert!(
+            tile_dist[bi].is_finite(),
+            "butteraugli loop: non-finite tile_dist[{bi}] = {} \
+         (upstream butteraugli should never produce non-finite)",
+            tile_dist[bi]
+        );
+        assert!(
+            quant_field_float[bi].is_finite(),
+            "butteraugli loop: non-finite quant_field_float[{bi}] = {} \
+         (clamps should keep this finite every iter)",
+            quant_field_float[bi]
+        );
+        // cvvdp-fork Phase 4: diff_raw is the per-block bump
+        // ratio in metric-direction units. Bitstream
+        // `target_distance` is NOT used here — we want the
+        // metric the buttloop is actually converging against.
+        let diff_raw = tile_dist[bi] / effective_metric_target_distance;
+        // W38-2 #3.1: cap the per-iter bump (no-op in HIGH
+        // regime where max_increase = 100.0).
+        let diff = diff_raw.min(max_increase as f32);
+        if diff > 1.0 {
+            let old = quant_field_float[bi];
+            quant_field_float[bi] = old * diff;
+            // Minimum step check: if rounding to integer quant produces
+            // the same value, bump by one quantizer step
+            // (libjxl: if (fi == pi) row_q[x] = old + quantizer.Scale())
+            let qf_old = (old * inv_global_scale + 0.5).floor() as i32;
+            let qf_new = (quant_field_float[bi] * inv_global_scale + 0.5).floor() as i32;
+            if qf_old == qf_new {
+                quant_field_float[bi] = old + quantizer_scale;
+            }
+        }
+        quant_field_float[bi] = quant_field_float[bi].clamp(qf_lower, qf_higher);
+    }
+}
+
 /// Mean of the float quant_field — the picker's smallest-bytes proxy
 /// in [`VarDctEncoder::butteraugli_refine_quant_field`]. Larger mean
 /// means coarser per-block quantization, which empirically correlates
@@ -3748,6 +3794,50 @@ pub mod recon_hook {
 // serially (`cargo test --lib -- --test-threads=1` if interleaved
 // flakes appear). They mirror the GPU encoder's
 // `forks/butteraugli_loop.rs::resolved_*` tests for parity.
+#[cfg(all(test, feature = "butteraugli-loop"))]
+mod fixed_point_tests {
+    use super::{adjust_late_quant_field, quant_fields_bit_equal};
+
+    #[test]
+    fn identity_checks_bits_and_length() {
+        assert!(quant_fields_bit_equal(&[0.25, 1.0], &[0.25, 1.0]));
+        assert!(!quant_fields_bit_equal(&[0.0], &[-0.0]));
+        assert!(!quant_fields_bit_equal(
+            &[1.0],
+            &[f32::from_bits(1.0f32.to_bits() + 1)]
+        ));
+        assert!(!quant_fields_bit_equal(&[1.0], &[1.0, 2.0]));
+    }
+
+    #[test]
+    fn late_transition_saturates_above_target_and_repeats() {
+        // The first block is already at its upper bound despite exceeding
+        // target. The second reaches it now; the third meets the target.
+        let mut q = [2.0, 1.0, 0.5];
+        let tile_dist = [4.0, 4.0, 0.5];
+        let step = |q: &mut [f32]| {
+            adjust_late_quant_field(q, &tile_dist, 1.0, 100.0, 16.0, 0.0625, 0.25, 2.0);
+        };
+        step(&mut q);
+        assert!(quant_fields_bit_equal(&q, &[2.0, 2.0, 0.5]));
+        assert!(tile_dist[0] > 1.0 && tile_dist[1] > 1.0);
+        let fixed = q;
+        // Exercise every remaining adjustment in a 16-iteration schedule.
+        for _ in 3..16 {
+            step(&mut q);
+            assert!(quant_fields_bit_equal(&q, &fixed));
+        }
+    }
+
+    #[test]
+    fn minimum_quantizer_step_prevents_a_false_fixed_point() {
+        let mut q = [1.0];
+        adjust_late_quant_field(&mut q, &[1.001], 1.0, 100.0, 16.0, 0.0625, 0.25, 2.0);
+        assert_eq!(q[0].to_bits(), 1.0625f32.to_bits());
+        assert!(!quant_fields_bit_equal(&q, &[1.0]));
+    }
+}
+
 #[cfg(test)]
 mod tuning_tests {
     // Constant-pinning tests deliberately assert relationships between

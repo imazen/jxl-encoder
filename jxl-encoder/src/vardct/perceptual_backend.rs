@@ -471,6 +471,14 @@ pub(crate) fn maybe_dump_diffmap_stats(
 /// strides on the distorted side; the reference side is always tight
 /// (`width == stride`).
 pub(crate) trait PerceptualBackend: core::fmt::Debug {
+    /// Whether repeated identical input produces bit-identical scores and
+    /// diffmaps, without call-dependent failures or effects needed by later
+    /// seeds. Backends must opt in before the loop can omit repeated calls.
+    /// In particular, an external callback has no determinism contract.
+    fn supports_fixed_point_stop(&self) -> bool {
+        false
+    }
+
     /// Backend identifier (for logging). e.g. `"cpu"`, `"gpu-cuda"`,
     /// `"gpu-fallback-cpu"`.
     ///
@@ -595,6 +603,10 @@ impl CpuButteraugliBackend {
 
 #[cfg(feature = "butteraugli-loop")]
 impl PerceptualBackend for CpuButteraugliBackend {
+    fn supports_fixed_point_stop(&self) -> bool {
+        true
+    }
+
     fn cpu_butteraugli_peak_bytes(&self, width: usize, height: usize) -> Option<usize> {
         butteraugli::ButteraugliReference::estimated_planar_peak_bytes(width, height, &self.params)
     }
