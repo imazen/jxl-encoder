@@ -761,3 +761,9 @@ beta-cohort-check:
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
+
+# Isolated public orientation contract; uses jxl-rs and pinned libjxl v0.12 djxl.
+native-orientation-check:
+    cargo test --manifest-path tools/native-orientation/Cargo.toml --test native_orientation -- --nocapture
+    cargo clippy --manifest-path tools/native-orientation/Cargo.toml --all-targets -- -D warnings
+    cargo fmt --manifest-path tools/native-orientation/Cargo.toml -- --check
