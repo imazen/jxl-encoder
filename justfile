@@ -1,5 +1,28 @@
 # jxl-encoder-rs task runner
 
+# Independent decoder controls require verified CJXL_PATH/DJXL_PATH on macOS.
+fixed-point-baseline manifest="Cargo.toml":
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib
+
+# Exact fixed-point transition, full-schedule byte/state parity, callback and
+# cancellation behavior. The caller supplies run-heavy/resource controls.
+fixed-point-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib fixed_point_tests
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internals,__external_metric,__internal_recon_hook --test loop_fixpoint
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internals,__external_metric,__internal_recon_hook --test it loop_trace
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internals,__external_metric,__internal_recon_hook --test external_metric
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internals,__external_metric,__internal_recon_hook --test it hash_lock_features
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internals,__external_metric,__internal_recon_hook --test it strategy_libjxl
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internals,__external_metric,__internal_recon_hook --test it divergence_table_drift
+
+fixed-point-lint manifest="Cargo.toml":
+    cargo clippy --locked --manifest-path "{{manifest}}" --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internals,__external_metric,__internal_recon_hook --test loop_fixpoint --test external_metric --test it -- -D warnings
+
+# Prove the isolated external oracle needs only its own feature closure.
+fixed-point-external-minimal manifest="Cargo.toml":
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --no-default-features --features __external_metric --test external_metric
+
 # Format workspace members (NOT --all: that recurses into cloned sibling
 # path-dep repos) and refresh the public-API surface snapshots.
 # The snapshot runner lives in the workspace-excluded apidoc/ package, so it
