@@ -1279,6 +1279,15 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
+## Native orientation integration (2026-10-18)
+
+`ImageMetadata::with_orientation` sets the codestream orientation independently
+of EXIF container bytes. Both lossless and VarDCT writers must receive it; input
+sample order and coded dimensions stay unchanged. `just native-orientation-check`
+uses the isolated contract package so unrelated workspace path dependencies do
+not prevent API validation. The test requires the version-guarded libjxl v0.12
+reference in addition to the primary Rust decoder.
+
 ## Known Bugs (ACTIVE)
 
 ### RESOLVED 2026-10-19: Relative constructor header policy
