@@ -814,7 +814,7 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ### RESOLVED 2026-10-18: PR131 fixed-point determinism and saturation
 
-**Status**: [RESOLVED] in the fixed-point safety follow-up.
+**Status**: [RESOLVED] by `89918522` (fixed-point safety follow-up).
 
 - [PROVEN by source inspection] An unchanged quant field does not imply all
   blocks satisfy the target: Step 8 clamps requests to `qf_higher`.

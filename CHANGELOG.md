@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Constrain the perceptual-loop fixed-point shortcut to repeatable backends (currently CPU Butteraugli); external callbacks keep every scheduled comparison. Compare quant fields bitwise and check cancellation at an early exit. Document that saturation can leave blocks above target ([details](docs/PERCEPTUAL_LOOP_FIXED_POINT.md), PR131 follow-up).
+- Constrain the perceptual-loop fixed-point shortcut to repeatable backends (currently CPU Butteraugli); external callbacks keep every scheduled comparison. Compare quant fields bitwise and check cancellation at an early exit. Document that saturation can leave blocks above target ([details](docs/PERCEPTUAL_LOOP_FIXED_POINT.md), PR131 follow-up, `89918522`).
 
 - Metadata boxes go where libjxl writes them: between the codestream header (its own first `jxlp` box) and the frames, with no box after the last codestream box. That covers Exif, XMP, JUMBF, `colr` and `hCdR` on every encode, the JPEG transcode's `jbrd`, Exif, XMP and UltraHDR `jhgm`, and `append_gain_map_box` and the other `append_*` helpers. Ubuntu 24.04's ffmpeg 6.1 loops on a box after the codestream, and files in this order decode there. The header split matches cjxl v0.12's on 20 files (`examples/libjxl_header_split.rs`) (`11ffbf9c`).
 - `wrap_in_container` (doc-hidden, for zenjxl's animation adapter) wraps the codestream of a container this crate wrote without metadata, a level-10 `jxll` + `jxlc`, instead of nesting the whole container in a `jxlc` box (`d48504b2`).
