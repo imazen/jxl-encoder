@@ -62,13 +62,29 @@ fn displayed(stored: &[u8], orientation: u8) -> (usize, usize, Vec<u8>) {
     (width, height, pixels)
 }
 
+fn oracle_directory() -> &'static std::path::Path {
+    static DIRECTORY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIRECTORY.get_or_init(|| {
+        let root = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "native-orientation");
+        for run in 0u64.. {
+            let directory = root.join(format!("run-{run}"));
+            match std::fs::create_dir(&directory) {
+                Ok(()) => return directory,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("create oracle directory {}: {error}", directory.display()),
+            }
+        }
+        unreachable!("oracle run directory index exhausted")
+    })
+}
+
 fn assert_libjxl_display(
     data: &[u8],
     name: &str,
     lossless: bool,
     expected: &(usize, usize, Vec<u8>),
 ) {
-    let dir = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "native-orientation");
+    let dir = oracle_directory();
     let input = dir.join(format!("{name}.jxl"));
     let output = dir.join(format!("{name}.ppm"));
     std::fs::write(&input, data).unwrap();
