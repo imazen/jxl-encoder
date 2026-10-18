@@ -895,6 +895,14 @@ requires explicit verified `CJXL_PATH`/`DJXL_PATH`; resolving against live
 siblings or inheriting ancestor Cargo patches does not verify the pinned graph.
 
 
+### RESOLVED 2026-10-18: animation metadata lost native orientation
+
+The new metadata orientation reached still headers but animation headers
+retained Identity. The public regression reproduced requested tag 2 returning
+tag 1. Both animation writers now receive the same tag without changing their
+resource limits or stored pixels (`0ea6ed00`). `just native-orientation-check`
+checks all eight tags for still and single-frame animation inputs in both modes.
+
 ### RESOLVED 2026-09-24: explicit CLI strategy conflicted with lossless test contract
 
 Historical rejection is superseded by the approved lossless strategy wiring
