@@ -1868,8 +1868,12 @@ impl LosslessConfig {
         limits: Option<&Limits>,
         metadata: Option<&ImageMetadata<'_>>,
     ) -> Result<Vec<u8>> {
+        let options = AnimationEncodeOptions {
+            limits,
+            orientation: metadata.map_or(crate::Orientation::Identity, |m| m.orientation),
+        };
         let codestream =
-            encode_animation_lossless(self, width, height, layout, animation, frames, limits)
+            encode_animation_lossless(self, width, height, layout, animation, frames, options)
                 .at()?;
         crate::api::ingest::finish_animation_output(
             codestream, width, height, layout, true, metadata, None,
@@ -5582,8 +5586,12 @@ impl LossyConfig {
         limits: Option<&Limits>,
         metadata: Option<&ImageMetadata<'_>>,
     ) -> Result<Vec<u8>> {
+        let options = AnimationEncodeOptions {
+            limits,
+            orientation: metadata.map_or(crate::Orientation::Identity, |m| m.orientation),
+        };
         let codestream =
-            encode_animation_lossy(self, width, height, layout, animation, frames, limits).at()?;
+            encode_animation_lossy(self, width, height, layout, animation, frames, options).at()?;
         crate::api::ingest::finish_animation_output(
             codestream, width, height, layout, false, metadata, None,
         )
@@ -10665,7 +10673,7 @@ fn run_with_threads<T>(_threads: usize, f: impl FnOnce() -> T) -> T {
 // ── Animation encode implementations ────────────────────────────────────────
 
 mod animate;
-use animate::{encode_animation_lossless, encode_animation_lossy};
+use animate::{AnimationEncodeOptions, encode_animation_lossless, encode_animation_lossy};
 
 // ── Pixel conversion helpers ────────────────────────────────────────────────
 

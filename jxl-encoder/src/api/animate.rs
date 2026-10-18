@@ -8,6 +8,11 @@
 use super::validate::validate_dims;
 use super::*;
 
+pub(crate) struct AnimationEncodeOptions<'a> {
+    pub(crate) limits: Option<&'a Limits>,
+    pub(crate) orientation: crate::Orientation,
+}
+
 fn validate_animation_input(
     width: u32,
     height: u32,
@@ -96,7 +101,7 @@ pub(crate) fn encode_animation_lossless(
     layout: PixelLayout,
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
-    limits: Option<&Limits>,
+    options: AnimationEncodeOptions<'_>,
 ) -> Result<Vec<u8>> {
     use crate::bit_writer::BitWriter;
     use crate::headers::file_header::AnimationHeader;
@@ -104,6 +109,10 @@ pub(crate) fn encode_animation_lossless(
     use crate::modular::channel::ModularImage;
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
 
+    let AnimationEncodeOptions {
+        limits,
+        orientation,
+    } = options;
     cfg.validate().map_err(at_from)?;
     validate_animation_input(width, height, layout, frames)?;
 
@@ -163,6 +172,7 @@ pub(crate) fn encode_animation_lossless(
     } else {
         FileHeader::new_rgb(width, height)
     };
+    file_header.metadata.orientation = orientation;
     if sample_image.bit_depth == 16 {
         file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
         for ec in &mut file_header.metadata.extra_channels {
@@ -586,12 +596,16 @@ pub(crate) fn encode_animation_lossy(
     layout: PixelLayout,
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
-    limits: Option<&Limits>,
+    options: AnimationEncodeOptions<'_>,
 ) -> Result<Vec<u8>> {
     use crate::bit_writer::BitWriter;
     use crate::headers::file_header::AnimationHeader;
     use crate::headers::frame_header::FrameOptions;
 
+    let AnimationEncodeOptions {
+        limits,
+        orientation,
+    } = options;
     cfg.validate().map_err(at_from)?;
     validate_animation_input(width, height, layout, frames)?;
 
@@ -765,6 +779,7 @@ pub(crate) fn encode_animation_lossy(
         &[]
     };
     let mut file_header = enc.build_file_header(w, h, extras_info);
+    file_header.metadata.orientation = orientation;
     // `have_timecodes` flips to true if any frame supplied an explicit
     // timecode (libjxl writes the 32-bit timecode field per-frame, so
     // the file-level flag must be on).

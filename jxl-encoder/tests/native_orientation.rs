@@ -1,6 +1,9 @@
 //! Native orientation changes display geometry, never stored sample order.
 
-use jxl_encoder::{ImageMetadata, LosslessConfig, LossyConfig, Orientation, PixelLayout};
+use jxl_encoder::{
+    AnimationFrame, AnimationParams, ImageMetadata, LosslessConfig, LossyConfig, Orientation,
+    PixelLayout,
+};
 use zensim_decoder::api::{
     JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat,
     ProcessingResult,
@@ -59,6 +62,35 @@ fn displayed(stored: &[u8], orientation: u8) -> (usize, usize, Vec<u8>) {
     (width, height, pixels)
 }
 
+fn assert_libjxl_display(
+    data: &[u8],
+    name: &str,
+    lossless: bool,
+    expected: &(usize, usize, Vec<u8>),
+) {
+    let dir = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "native-orientation");
+    let input = dir.join(format!("{name}.jxl"));
+    let output = dir.join(format!("{name}.ppm"));
+    std::fs::write(&input, data).unwrap();
+    let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(input)
+        .arg(&output)
+        .arg("--num_threads=1")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let ppm = std::fs::read(output).unwrap();
+    let header = format!("P6\n{} {}\n255\n", expected.0, expected.1);
+    assert!(ppm.starts_with(header.as_bytes()));
+    if lossless {
+        assert_eq!(&ppm[header.len()..], expected.2);
+    }
+}
+
 #[test]
 fn every_native_orientation_preserves_stored_pixels_and_display() {
     let source: Vec<u8> = (0..9 * 5 * 3).map(|n| (n * 37 % 251) as u8).collect();
@@ -101,29 +133,75 @@ fn every_native_orientation_preserves_stored_pixels_and_display() {
             let expected = displayed(&reference, orientation as u8);
             assert_eq!((w, h, rendered), expected);
 
-            let dir =
-                jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "native-orientation");
             let name = format!("{lossless}-{}", orientation as u8);
-            let input = dir.join(format!("{name}.jxl"));
-            let output = dir.join(format!("{name}.ppm"));
-            std::fs::write(&input, data).unwrap();
-            let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
-                .arg(input)
-                .arg(&output)
-                .arg("--num_threads=1")
-                .output()
-                .unwrap();
-            assert!(
-                result.status.success(),
-                "{}",
-                String::from_utf8_lossy(&result.stderr)
-            );
-            let ppm = std::fs::read(output).unwrap();
-            let header = format!("P6\n{} {}\n255\n", expected.0, expected.1);
-            assert!(ppm.starts_with(header.as_bytes()));
+            assert_libjxl_display(&data, &name, lossless, &expected);
+        }
+    }
+}
+
+#[test]
+fn animation_metadata_preserves_native_orientation() {
+    let source: Vec<u8> = (0..9 * 5 * 3).map(|n| (n * 37 % 251) as u8).collect();
+    let frames = [AnimationFrame {
+        pixels: &source,
+        duration: 5,
+        ..Default::default()
+    }];
+    for lossless in [true, false] {
+        let encode = |orientation| {
+            let metadata = ImageMetadata::new().with_orientation(orientation);
             if lossless {
-                assert_eq!(&ppm[header.len()..], expected.2);
+                LosslessConfig::new()
+                    .encode_animation_with_metadata(
+                        9,
+                        5,
+                        PixelLayout::Rgb8,
+                        &AnimationParams::default(),
+                        &frames,
+                        &metadata,
+                    )
+                    .unwrap()
+            } else {
+                LossyConfig::new(1.0)
+                    .with_effort(1)
+                    .encode_animation_with_metadata(
+                        9,
+                        5,
+                        PixelLayout::Rgb8,
+                        &AnimationParams::default(),
+                        &frames,
+                        &metadata,
+                    )
+                    .unwrap()
             }
+        };
+        let reference = decode(&encode(Orientation::Identity), false).3;
+        if lossless {
+            assert_eq!(reference, source);
+        }
+        let mut reference_cases = Vec::new();
+        for orientation in [
+            Orientation::Identity,
+            Orientation::FlipHorizontal,
+            Orientation::Rotate180,
+            Orientation::FlipVertical,
+            Orientation::Transpose,
+            Orientation::Rotate90CW,
+            Orientation::AntiTranspose,
+            Orientation::Rotate90CCW,
+        ] {
+            let data = encode(orientation);
+            let (w, h, tag, stored) = decode(&data, false);
+            assert_eq!((w, h, tag), (9, 5, orientation as u8));
+            assert_eq!(stored, reference);
+            let (w, h, _, rendered) = decode(&data, true);
+            let expected = displayed(&reference, orientation as u8);
+            assert_eq!((w, h, rendered), expected);
+            let name = format!("animation-{lossless}-{}", orientation as u8);
+            reference_cases.push((data, name, expected));
+        }
+        for (data, name, expected) in reference_cases {
+            assert_libjxl_display(&data, &name, lossless, &expected);
         }
     }
 }

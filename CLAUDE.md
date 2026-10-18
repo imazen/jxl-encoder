@@ -1288,6 +1288,12 @@ uses the isolated contract package so unrelated workspace path dependencies do
 not prevent API validation. The test requires the version-guarded libjxl v0.12
 reference in addition to the primary Rust decoder.
 
+The animation entry points accepting `ImageMetadata` must forward the same
+native tag to their file headers. The regression first reproduced orientation
+2 becoming 1. Both modes now pass all eight tags for still and single-frame
+animation inputs: stored samples remain unchanged, display transforms match,
+and libjxl v0.12 independently checks geometry and lossless display pixels.
+
 ## Known Bugs (ACTIVE)
 
 ### RESOLVED 2026-10-19: Relative constructor header policy

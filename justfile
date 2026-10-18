@@ -763,6 +763,9 @@ beta-cohort-check:
     cargo test --locked --workspace --lib --no-fail-fast
 
 # Isolated public orientation contract; uses jxl-rs and pinned libjxl v0.12 djxl.
+native-orientation-animation-check:
+    cargo test --manifest-path tools/native-orientation/Cargo.toml --test native_orientation animation_metadata_preserves_native_orientation -- --nocapture
+
 native-orientation-check:
     cargo test --manifest-path tools/native-orientation/Cargo.toml --test native_orientation -- --nocapture
     cargo clippy --manifest-path tools/native-orientation/Cargo.toml --all-targets -- -D warnings
