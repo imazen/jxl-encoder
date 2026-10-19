@@ -2230,3 +2230,11 @@ unqualified. This changes the research harness, not default production coding.
 The private trace mutation helpers compile with `butteraugli-loop`, matching
 the perceptual-loop callers. The public collector remains available with `std`.
 This changes compilation only; no encoding algorithm or header choice changes.
+
+### Relative intent and VarDCT byte locks (2026-10-19)
+
+`ColorEncoding::write` opts into the compact spec-default header. VarDCT
+callers retain their explicit long-form policy when
+`header_all_default_fast_paths` is disabled. Changing a constructor to Relative
+does not enable that separate VarDCT policy. This retains its existing byte locks
+without changing their expectations; explicitly Perceptual encodings stay long form.

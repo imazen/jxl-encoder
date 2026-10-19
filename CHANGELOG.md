@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Preserve VarDCT's selected long-form color-header policy when using Relative constructors; the normal lossless color writer keeps its compact sRGB header. Existing VarDCT byte-lock expectations are unchanged.
+
 - Standard color constructors and their default use Relative rendering intent, matching the JPEG XL spec and the unchanged compact sRGB header. P3/PQ and gray now explicitly signal Relative; caller-selected intents remain supported (`21cd3e47`).
 
 - Compile private loop-trace mutation helpers only with `butteraugli-loop`, matching their callers (`81fd1d39`); the minimal `std,convenience` build passes strict lint.

@@ -745,3 +745,9 @@ loop-trace-feature-check:
 rendering-intent-check:
     cargo test --locked -p jxl-encoder --lib headers::color_encoding::tests
     cargo clippy --locked -p jxl-encoder --lib -- -D warnings
+
+# Keep existing VarDCT byte locks while fixing constructor intent.
+relative-header-byte-check:
+    cargo test --locked -p jxl-encoder --lib headers::color_encoding::tests
+    cargo test --locked -p jxl-encoder --lib vardct::encoder::tests::test_hash_lock_
+    cargo clippy --locked -p jxl-encoder --lib -- -D warnings

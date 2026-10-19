@@ -302,6 +302,10 @@ pub struct FileHeader {
     /// `docs/LIBJXL_DIVERGENCES.md` Section D for why the default is the
     /// larger encoding.
     pub header_all_default_fast_paths: bool,
+    /// Color-bundle compaction is independent of outer metadata compaction.
+    /// Normal/lossless/JPEG headers keep their compact sRGB color bundle;
+    /// VarDCT can retain its selected long-form byte policy.
+    pub(crate) color_encoding_all_default_fast_path: bool,
 }
 
 impl FileHeader {
@@ -315,6 +319,7 @@ impl FileHeader {
             upsampling_factor: 1,
             // Opt-in only; see `is_metadata_default`.
             header_all_default_fast_paths: false,
+            color_encoding_all_default_fast_path: true,
         }
     }
 
@@ -710,7 +715,7 @@ impl FileHeader {
             writer.bits_written()
         );
         meta.color_encoding
-            .write_with_spec_default_fast_path(writer, self.header_all_default_fast_paths)?;
+            .write_with_spec_default_fast_path(writer, self.color_encoding_all_default_fast_path)?;
         crate::trace::debug_eprintln!("META [bit {}]: After color_encoding", writer.bits_written());
 
         // tone_mapping - only if extra_fields
@@ -1021,6 +1026,22 @@ mod tests {
         FileHeader::write_signature(&mut writer).unwrap();
         let bytes = writer.finish();
         assert_eq!(bytes, vec![0xFF, 0x0A]);
+    }
+
+    #[test]
+    fn lossless_srgb_keeps_compact_color_bundle() {
+        let mut header = FileHeader::new_rgb(16, 16);
+        header.metadata.xyb_encoded = false;
+        let mut compact = BitWriter::new();
+        header.write(&mut compact).unwrap();
+        let compact = compact.finish_with_padding();
+
+        header.color_encoding_all_default_fast_path = false;
+        let mut explicit = BitWriter::new();
+        header.write(&mut explicit).unwrap();
+        let explicit = explicit.finish_with_padding();
+        // The explicit Relative sRGB bundle is 17 bits; all_default is one bit.
+        assert_eq!(explicit.len(), compact.len() + 2);
     }
 
     #[test]

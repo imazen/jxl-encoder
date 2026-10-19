@@ -1223,6 +1223,14 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-10-19: Relative constructor header policy
+
+CI caught four VarDCT byte-lock failures after the Relative constructor change:
+the generic compact-header predicate also enabled compact serialization for
+VarDCT's explicit long-form policy. The normal color writer opts in to the
+spec-default fast path; an opted-out VarDCT writer stays long. Keep the four
+existing hash expectations unchanged.
+
 ### RESOLVED 2026-10-19: minimal loop-trace feature build
 
 The private trace mutation helpers compiled without their `butteraugli-loop`

@@ -1253,6 +1253,9 @@ impl VarDctEncoder {
             // `EncoderStrategy::Libjxl` because flipping it moves every
             // zen-mode hash lock; the two encodings decode identically.
             header_all_default_fast_paths: self.resolved_improvements.header_all_default_fast_paths,
+            color_encoding_all_default_fast_path: self
+                .resolved_improvements
+                .header_all_default_fast_paths,
         }
     }
 

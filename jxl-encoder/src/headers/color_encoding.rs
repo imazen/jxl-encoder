@@ -548,7 +548,7 @@ impl ColorEncoding {
 
     /// Writes the color encoding to the bitstream.
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
-        self.write_with_spec_default_fast_path(writer, false)
+        self.write_with_spec_default_fast_path(writer, true)
     }
 
     /// Write the compact header only for the spec-default Relative encoding.
@@ -557,18 +557,16 @@ impl ColorEncoding {
     /// explicitly requested Perceptual encoding uses the long form. cjxl copies
     /// a PNG `sRGB` chunk's intent byte; that can differ from this constructor
     /// policy, while a PNG `cICP` chunk leaves Relative as the default.
+    /// `allow_spec_default = false` preserves a caller's long-form byte policy.
     pub(crate) fn write_with_spec_default_fast_path(
         &self,
         writer: &mut BitWriter,
         allow_spec_default: bool,
     ) -> Result<()> {
-        // Both predicates require the spec-default Relative intent. Neither
-        // path may silently serialize Perceptual as all_default = 1.
-        let all_default = if allow_spec_default {
-            self.is_spec_default()
-        } else {
-            self.is_srgb()
-        };
+        // The normal color writer opts in. VarDCT's historical long-form
+        // policy can opt out without changing the encoding's Relative intent.
+        // Perceptual is never eligible for the compact spec-default bundle.
+        let all_default = allow_spec_default && self.is_spec_default();
         crate::trace::debug_eprintln!(
             "CENC [bit {}]: all_default = {}",
             writer.bits_written(),
@@ -828,6 +826,21 @@ mod tests {
         assert_eq!(writer.bits_written(), 8);
         assert_eq!(writer.as_bytes(), &[1], "historical one-bit sRGB header");
         assert!(enc.is_spec_default());
+    }
+
+    #[test]
+    fn var_dct_can_keep_the_relative_long_form() {
+        let encoding = ColorEncoding::srgb();
+        let mut long = BitWriter::new();
+        encoding
+            .write_with_spec_default_fast_path(&mut long, false)
+            .unwrap();
+        assert_eq!(long.bits_written(), 17);
+        let mut compact = BitWriter::new();
+        encoding.write(&mut compact).unwrap();
+        assert_eq!(compact.bits_written(), 1);
+        compact.zero_pad_to_byte();
+        assert_eq!(compact.as_bytes(), &[1]);
     }
 
     #[test]
