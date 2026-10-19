@@ -755,3 +755,9 @@ relative-header-byte-check:
 # Includes split-header integration locks, beyond the whole-bitstream unit locks.
 relative-integration-byte-check:
     cargo test --locked -p jxl-encoder --features __expert --test it hash_lock_features -- --test-threads=4
+
+# Check compatibility after admitting the current archmage/magetypes beta.
+beta-cohort-check:
+    cargo fmt --check
+    cargo clippy --locked --workspace --lib -- -D warnings
+    cargo test --locked --workspace --lib --no-fail-fast
