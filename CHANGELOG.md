@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Keep the library lockfile aligned with the pinned CI sibling revisions; current-main consumer builds use their own recorded overrides and locks.
+
 - Admit archmage/magetypes 0.9.31-beta.1 alongside compatible stable versions for current-main consumer tool builds.
 
 - Grayscale lossless header byte locks reflect the owner-approved Perceptual-to-Relative change; both encoded sizes and frame hashes stay unchanged. Split-header test helpers retain the VarDCT serialization policy.
