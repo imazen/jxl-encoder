@@ -100,6 +100,7 @@ impl LoopTrace {
         }
     }
 
+    #[cfg(feature = "butteraugli-loop")]
     pub(crate) fn push(&self, frame: LoopFrame) {
         match self.frames.lock() {
             Ok(mut f) => f.push(frame),
@@ -108,6 +109,7 @@ impl LoopTrace {
     }
 
     /// Sets the last frame's [`LoopFrame::next_quant_field`].
+    #[cfg(feature = "butteraugli-loop")]
     pub(crate) fn set_next_quant_field(&self, qf: &[f32]) {
         let mut guard = match self.frames.lock() {
             Ok(f) => f,

@@ -2224,3 +2224,9 @@ The native calibration preregistration above is implemented. See the
 [810-case result](../benchmarks/zensim_native_targeting_2026-09-08.md): complete
 encode accounting and admission controls pass, independent spatial RD remains
 unqualified. This changes the research harness, not default production coding.
+
+### Loop-trace feature closure (2026-10-19)
+
+The private trace mutation helpers compile with `butteraugli-loop`, matching
+the perceptual-loop callers. The public collector remains available with `std`.
+This changes compilation only; no encoding algorithm or header choice changes.

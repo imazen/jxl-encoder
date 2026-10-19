@@ -735,3 +735,8 @@ shipgates-intervention-build:
 
 shipgates-intervention-check:
     cargo clippy --release --locked -p jxl-encoder --example zensim_diffmap_rd --features __expert,__pre_quantized,__internal_recon_hook,butteraugli-loop,zensim-loop,ssim2-loop,parallel --target-dir target -- -D warnings
+
+# LoopTrace is public with std; its mutation helpers need the perceptual backend.
+loop-trace-feature-check:
+    cargo clippy --locked -p jxl-encoder --lib --no-default-features --features std,convenience -- -D warnings
+    cargo clippy --locked -p jxl-encoder --lib -- -D warnings

@@ -1223,6 +1223,13 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-10-19: minimal loop-trace feature build
+
+The private trace mutation helpers compiled without their `butteraugli-loop`
+callers, failing strict lint for `--no-default-features --features std,convenience`.
+They now share the callers' feature gate. `just loop-trace-feature-check` checks
+strict minimal and default library builds. No encoding choice changes.
+
 ### 2026-10-16: ship-gate CI source closure and ARM checks
 
 The native research example's updated zensim/zenpredict dependencies require the
