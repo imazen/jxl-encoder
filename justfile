@@ -751,3 +751,7 @@ relative-header-byte-check:
     cargo test --locked -p jxl-encoder --lib headers::color_encoding::tests
     cargo test --locked -p jxl-encoder --lib vardct::encoder::tests::test_hash_lock_
     cargo clippy --locked -p jxl-encoder --lib -- -D warnings
+
+# Includes split-header integration locks, beyond the whole-bitstream unit locks.
+relative-integration-byte-check:
+    cargo test --locked -p jxl-encoder --features __expert --test it hash_lock_features -- --test-threads=4

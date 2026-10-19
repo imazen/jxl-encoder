@@ -926,7 +926,7 @@ pub fn measure_file_header_len(
         upsampling_mode: None,
         upsampling_factor: 1,
         header_all_default_fast_paths: false,
-        color_encoding_all_default_fast_path: true,
+        color_encoding_all_default_fast_path: !xyb_encoded,
     };
 
     let mut writer = crate::bit_writer::BitWriter::new();
@@ -989,7 +989,7 @@ pub fn measure_file_header_len_float(
         upsampling_mode: None,
         upsampling_factor: 1,
         header_all_default_fast_paths: false,
-        color_encoding_all_default_fast_path: true,
+        color_encoding_all_default_fast_path: !xyb_encoded,
     };
 
     let mut writer = crate::bit_writer::BitWriter::new();
