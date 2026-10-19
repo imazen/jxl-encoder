@@ -194,10 +194,10 @@ pub enum TransferFunction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum RenderingIntent {
-    /// Perceptual (libjxl default for lossless encoding).
-    #[default]
+    /// Perceptual.
     Perceptual = 0,
-    /// Relative colorimetric.
+    /// Relative colorimetric (the JPEG XL spec default).
+    #[default]
     Relative = 1,
     /// Saturation.
     Saturation = 2,
@@ -239,12 +239,7 @@ impl ColorEncoding {
     /// `primaries = kSRGB`, transfer function = `kSRGB` (i.e. *not* a
     /// custom gamma), `rendering_intent = kRelative`.
     ///
-    /// Note the rendering-intent trap: [`Self::srgb`] builds
-    /// `Perceptual`, which is **not** the spec default. The VarDCT
-    /// header builder overwrites it with `Relative` to match libjxl, so
-    /// the lossy path qualifies and a caller-supplied `srgb()` used
-    /// verbatim would not. Testing the field rather than the
-    /// constructor is deliberate.
+    /// Constructors use Relative so their fields agree with this compact header.
     pub(crate) fn is_spec_default(&self) -> bool {
         !self.want_icc
             && self.color_space == ColorSpace::Rgb
@@ -266,7 +261,7 @@ impl ColorEncoding {
             primaries: Primaries::Srgb,
             custom_primaries: None,
             transfer_function: TransferFunction::Srgb,
-            rendering_intent: RenderingIntent::Perceptual,
+            rendering_intent: RenderingIntent::Relative,
             want_icc: false,
             gamma: None,
         }
@@ -281,7 +276,7 @@ impl ColorEncoding {
             primaries: Primaries::Srgb,
             custom_primaries: None,
             transfer_function: TransferFunction::Linear,
-            rendering_intent: RenderingIntent::Perceptual,
+            rendering_intent: RenderingIntent::Relative,
             want_icc: false,
             gamma: None,
         }
@@ -296,7 +291,7 @@ impl ColorEncoding {
             primaries: Primaries::Srgb,
             custom_primaries: None,
             transfer_function: TransferFunction::Srgb,
-            rendering_intent: RenderingIntent::Perceptual,
+            rendering_intent: RenderingIntent::Relative,
             want_icc: false,
             gamma: None,
         }
@@ -311,7 +306,7 @@ impl ColorEncoding {
             primaries: Primaries::P3,
             custom_primaries: None,
             transfer_function: TransferFunction::Srgb,
-            rendering_intent: RenderingIntent::Perceptual,
+            rendering_intent: RenderingIntent::Relative,
             want_icc: false,
             gamma: None,
         }
@@ -345,7 +340,7 @@ impl ColorEncoding {
             primaries: Primaries::Bt2100,
             custom_primaries: None,
             transfer_function: TransferFunction::Pq,
-            rendering_intent: RenderingIntent::Perceptual,
+            rendering_intent: RenderingIntent::Relative,
             want_icc: false,
             gamma: None,
         }
@@ -360,7 +355,7 @@ impl ColorEncoding {
             primaries: Primaries::Bt2100,
             custom_primaries: None,
             transfer_function: TransferFunction::Hlg,
-            rendering_intent: RenderingIntent::Perceptual,
+            rendering_intent: RenderingIntent::Relative,
             want_icc: false,
             gamma: None,
         }
@@ -375,7 +370,7 @@ impl ColorEncoding {
             primaries: Primaries::Srgb,
             custom_primaries: None,
             transfer_function: TransferFunction::Srgb,
-            rendering_intent: RenderingIntent::Perceptual,
+            rendering_intent: RenderingIntent::Relative,
             want_icc: false,
             gamma: None,
         }
@@ -523,14 +518,14 @@ impl ColorEncoding {
             primaries,
             custom_primaries: None,
             transfer_function,
-            rendering_intent: RenderingIntent::Perceptual,
+            rendering_intent: RenderingIntent::Relative,
             want_icc: false,
             gamma: None,
         })
     }
 
     /// Returns true if this matches the JXL default color encoding.
-    /// (sRGB with Perceptual rendering intent, no ICC)
+    /// (sRGB with Relative rendering intent, no ICC)
     ///
     /// When all_default=true for metadata with xyb_encoded=true (lossy mode),
     /// the decoder assumes sRGB input color space.
@@ -541,7 +536,7 @@ impl ColorEncoding {
             && self.primaries == Primaries::Srgb
             && self.custom_primaries.is_none()
             && self.transfer_function == TransferFunction::Srgb
-            && self.rendering_intent == RenderingIntent::Perceptual
+            && self.rendering_intent == RenderingIntent::Relative
             && !self.want_icc
             && self.gamma.is_none()
     }
@@ -556,40 +551,19 @@ impl ColorEncoding {
         self.write_with_spec_default_fast_path(writer, false)
     }
 
-    /// [`Self::write`] with the spec-default `all_default` fast path
-    /// opt-in.
+    /// Write the compact header only for the spec-default Relative encoding.
     ///
-    /// Two predicates can put a `1` bit here, and they differ only in
-    /// rendering intent:
-    ///
-    /// - [`Self::is_srgb`] (`Perceptual`) — the historical path, always
-    ///   live. **It is not actually the spec default**: libjxl's
-    ///   `ColorEncoding` defaults `rendering_intent` to `kRelative`
-    ///   (`color_encoding_internal.cc`), so a `Perceptual` encoding
-    ///   written this way comes back from any decoder as `Relative`.
-    ///   That is a pre-existing metadata infidelity, kept because it is
-    ///   what the lossless path emits today and it is byte-identical to
-    ///   cjxl there (cjxl writes the same single bit).
-    /// - [`Self::is_spec_default`] (`Relative`) — the true spec default,
-    ///   gated by `allow_spec_default`. The lossy VarDCT builder sets
-    ///   `Relative` explicitly to match libjxl, which is exactly why the
-    ///   `is_srgb` predicate never fires there: every lossy encode whose
-    ///   outer `ImageMetadata.all_default` is blocked (alpha, non-8-bit
-    ///   depth, HDR metadata) spelled out 17 bits of colour encoding
-    ///   that cjxl writes in one.
+    /// Standard sRGB constructors retain their historical one-bit header. An
+    /// explicitly requested Perceptual encoding uses the long form. cjxl copies
+    /// a PNG `sRGB` chunk's intent byte; that can differ from this constructor
+    /// policy, while a PNG `cICP` chunk leaves Relative as the default.
     pub(crate) fn write_with_spec_default_fast_path(
         &self,
         writer: &mut BitWriter,
         allow_spec_default: bool,
     ) -> Result<()> {
-        // all_default flag. libjxl `Bundle::AllDefault` requires every
-        // field at its SPEC default (`is_spec_default`, intent =
-        // kRelative). The `is_srgb()` shortcut (intent = kPerceptual)
-        // is only valid when the spec-default path is disallowed —
-        // permitting it while `allow_spec_default` is set would emit
-        // `all_default = 1` for a Perceptual bundle, which a decoder
-        // then reads back as kRelative. cjxl therefore always writes
-        // the long form for PNM-sourced (Perceptual) colour encodings.
+        // Both predicates require the spec-default Relative intent. Neither
+        // path may silently serialize Perceptual as all_default = 1.
         let all_default = if allow_spec_default {
             self.is_spec_default()
         } else {
@@ -757,6 +731,84 @@ mod tests {
     use super::*;
 
     #[test]
+    fn relative_headers_roundtrip_in_independent_decoders() {
+        use jxl::api::{JxlColorEncoding, JxlColorProfile, JxlDecoder, JxlDecoderOptions};
+        use jxl::api::{ProcessingResult, states};
+
+        let mut perceptual = ColorEncoding::srgb();
+        perceptual.rendering_intent = RenderingIntent::Perceptual;
+        let encodings = [
+            (ColorEncoding::default(), 1),
+            (ColorEncoding::srgb(), 1),
+            (ColorEncoding::linear_srgb(), 1),
+            (ColorEncoding::gray(), 1),
+            (ColorEncoding::grayscale(), 1),
+            (ColorEncoding::display_p3(), 1),
+            (ColorEncoding::bt2100_pq(), 1),
+            (ColorEncoding::bt2100_hlg(), 1),
+            (ColorEncoding::from_cicp(12, 13, 0, true).unwrap(), 1),
+            (ColorEncoding::from_cicp(12, 16, 0, true).unwrap(), 1),
+            (perceptual, 0),
+        ];
+        for (encoding, intent) in encodings {
+            let gray = encoding.is_gray();
+            let channels = if gray { 1 } else { 3 };
+            let pixels: Vec<u8> = (0..16 * 16 * channels)
+                .map(|i| ((i * 37 + i / 7) % 256) as u8)
+                .collect();
+            let layout = if gray {
+                crate::PixelLayout::Gray8
+            } else {
+                crate::PixelLayout::Rgb8
+            };
+            let encoded = crate::LosslessConfig::new()
+                .encode_request(16, 16, layout)
+                .with_color_encoding(encoding)
+                .encode(&pixels)
+                .unwrap();
+            let mut input = &encoded[..];
+            let mut decoder = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+            let header = loop {
+                match decoder.process(&mut input).unwrap() {
+                    ProcessingResult::Complete { result } => break result,
+                    ProcessingResult::NeedsMoreInput { fallback, .. } => {
+                        assert!(!input.is_empty(), "incomplete color header");
+                        decoder = fallback;
+                    }
+                }
+            };
+            let JxlColorProfile::Simple(color) = header.embedded_color_profile() else {
+                panic!("expected an enum color encoding");
+            };
+            let read_intent = match color {
+                JxlColorEncoding::RgbColorSpace {
+                    rendering_intent, ..
+                }
+                | JxlColorEncoding::GrayscaleColorSpace {
+                    rendering_intent, ..
+                }
+                | JxlColorEncoding::XYB { rendering_intent } => *rendering_intent as u8,
+            };
+            assert_eq!(read_intent, intent, "serialized rendering intent");
+
+            for decoded in [
+                crate::test_helpers::decode_with_jxl_rs(&encoded).unwrap(),
+                crate::test_helpers::decode_with_djxl(&encoded).unwrap(),
+            ] {
+                assert_eq!((decoded.width, decoded.height), (16, 16));
+                for (i, &sample) in decoded.pixels.iter().enumerate() {
+                    let expected = if gray {
+                        pixels[i / decoded.channels]
+                    } else {
+                        pixels[i]
+                    };
+                    assert_eq!((sample * 255.0).round() as u8, expected, "sample {i}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_srgb_is_default() {
         let enc = ColorEncoding::srgb();
         // is_srgb() returns true for default sRGB encoding
@@ -774,24 +826,26 @@ mod tests {
         // With is_srgb() returning true, all_default=true is written (1 bit)
         // Padded to byte boundary = 8 bits
         assert_eq!(writer.bits_written(), 8);
+        assert_eq!(writer.as_bytes(), &[1], "historical one-bit sRGB header");
+        assert!(enc.is_spec_default());
     }
 
     #[test]
     fn test_write_non_default_srgb() {
-        // Non-default sRGB (Relative intent instead of Perceptual)
+        // Explicit Perceptual is not the JPEG XL spec default.
         let enc = ColorEncoding {
-            rendering_intent: RenderingIntent::Relative, // Non-default
+            rendering_intent: RenderingIntent::Perceptual, // Non-default
             ..ColorEncoding::srgb()
         };
         let mut writer = BitWriter::new();
         enc.write(&mut writer).unwrap();
         writer.zero_pad_to_byte();
 
-        // With is_srgb() returning false (Relative != Perceptual),
+        // With a non-default Perceptual intent,
         // explicit color encoding is written:
         // all_default=0 (1), want_icc=0 (1), color_space=0 (2),
         // white_point D65=1 (2), primaries sRGB=1 (2), have_gamma=0 (1),
-        // transfer_function sRGB=13 (2+4=6), rendering_intent=1 (2)
+        // transfer_function sRGB=13 (2+4=6), rendering_intent=0 (2)
         // Total: 17 bits -> 24 bits padded = 3 bytes
         assert_eq!(writer.bits_written(), 24);
     }
@@ -899,7 +953,7 @@ mod tests {
         assert_eq!(enc.white_point, WhitePoint::D65);
         assert_eq!(enc.primaries, Primaries::Bt2100);
         assert_eq!(enc.transfer_function, TransferFunction::Hlg);
-        assert_eq!(enc.rendering_intent, RenderingIntent::Perceptual);
+        assert_eq!(enc.rendering_intent, RenderingIntent::Relative);
         assert!(!enc.want_icc);
 
         let mut writer = BitWriter::new();
@@ -1017,7 +1071,7 @@ mod tests {
         assert_eq!(enc.white_point, WhitePoint::D65);
         assert_eq!(enc.primaries, Primaries::Srgb);
         assert_eq!(enc.transfer_function, TransferFunction::Srgb);
-        assert_eq!(enc.rendering_intent, RenderingIntent::Perceptual);
+        assert_eq!(enc.rendering_intent, RenderingIntent::Relative);
         assert!(!enc.want_icc);
         assert!(enc.gamma.is_none());
     }
@@ -1417,7 +1471,7 @@ mod tests {
         assert_eq!(ce.white_point, WhitePoint::D65);
         assert_eq!(ce.primaries, Primaries::Srgb);
         assert_eq!(ce.transfer_function, TransferFunction::Srgb);
-        assert_eq!(ce.rendering_intent, RenderingIntent::Perceptual);
+        assert_eq!(ce.rendering_intent, RenderingIntent::Relative);
         assert!(!ce.want_icc);
         assert!(ce.is_srgb(), "CICP (1,13,0,1) must be exactly sRGB default");
     }

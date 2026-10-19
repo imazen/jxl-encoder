@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-- Compile private loop-trace mutation helpers only with `butteraugli-loop`, matching their callers; the minimal `std,convenience` build passes strict lint.
+- Standard color constructors and their default use Relative rendering intent, matching the JPEG XL spec and the unchanged compact sRGB header. P3/PQ and gray now explicitly signal Relative; caller-selected intents remain supported.
+
+- Compile private loop-trace mutation helpers only with `butteraugli-loop`, matching their callers (`81fd1d39`); the minimal `std,convenience` build passes strict lint.
 
 - Constrain the perceptual-loop fixed-point shortcut to repeatable backends (currently CPU Butteraugli); external callbacks keep every scheduled comparison. Compare quant fields bitwise and check cancellation at an early exit. Document that saturation can leave blocks above target ([details](docs/PERCEPTUAL_LOOP_FIXED_POINT.md), PR131 follow-up, `89918522`).
 

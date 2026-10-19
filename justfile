@@ -740,3 +740,8 @@ shipgates-intervention-check:
 loop-trace-feature-check:
     cargo clippy --locked -p jxl-encoder --lib --no-default-features --features std,convenience -- -D warnings
     cargo clippy --locked -p jxl-encoder --lib -- -D warnings
+
+# Independent color-header readback, lossless sample parity, and constructor serialization.
+rendering-intent-check:
+    cargo test --locked -p jxl-encoder --lib headers::color_encoding::tests
+    cargo clippy --locked -p jxl-encoder --lib -- -D warnings
