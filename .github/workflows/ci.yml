@@ -63,7 +63,7 @@ jobs:
 
       - name: Test JPEG reconstruction contract
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jbrd_roundtrip_conformance
+        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it -- jbrd_roundtrip_conformance jbrd_spec_validity
 
       - name: Test the external loop metric (__external_metric)
         if: matrix.os == 'ubuntu-latest'
