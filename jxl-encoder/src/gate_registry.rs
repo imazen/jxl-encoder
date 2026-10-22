@@ -228,6 +228,8 @@ jxl_encoder_macros::strategy_def! {
             find_best_32_per_m3_lift = false,
             adaptive_buttloop_iters = false,
             adaptive_buttloop_iters_narrow = false,
+            // Strict parity: libjxl's good-block exponent 0.2.
+            buttloop_good_block_pow = false,
             terminal_class_exclude = false,
             // W44-AUDIT-6 Phase 1: strict libjxl parity → high-colour
             // class exclude is OFF on Libjxl strategy (the W44-109 lift
@@ -392,6 +394,7 @@ jxl_encoder_macros::strategy_def! {
             find_best_32_per_m3_lift = false,
             adaptive_buttloop_iters = false,
             adaptive_buttloop_iters_narrow = false,
+            buttloop_good_block_pow = false,
             terminal_class_exclude = false,
             // W44-AUDIT-6 Phase 1: LeanFaster drops every per-image
             // content gate (matches the W44-176 pattern); the W44-109
@@ -515,6 +518,7 @@ jxl_encoder_macros::strategy_def! {
             find_best_32_per_m3_lift = true,
             adaptive_buttloop_iters = false,
             adaptive_buttloop_iters_narrow = false,
+            buttloop_good_block_pow = true,
             terminal_class_exclude = true,
             // W44-AUDIT-6 Phase 1 (2026-05-24): Zenjxl default ON —
             // excludes codec_wiki-class high-colour mixed-content
@@ -657,6 +661,7 @@ jxl_encoder_macros::strategy_def! {
             find_best_32_per_m3_lift = true,
             adaptive_buttloop_iters = false,
             adaptive_buttloop_iters_narrow = false,
+            buttloop_good_block_pow = true,
             terminal_class_exclude = true,
             // W44-AUDIT-6 Phase 1: Aggressive mirrors Zenjxl per the
             // standing pattern (Aggressive is a forward-compatible slot
@@ -978,6 +983,19 @@ jxl_encoder_macros::strategy_def! {
         adaptive_buttloop_iters_narrow: bool {
             divergence_section = "B",
             divergence_row_ref = "W44-169 distance-narrowed buttloop iter reduction; opt-in after #103",
+        },
+
+        /// Coarsen good blocks harder in the butteraugli loop's first two
+        /// iterations: `(tile/target)^cur_pow` with exponent 0.5 instead of
+        /// libjxl's 0.2, except on flat-colour dominated images (zenanalyze
+        /// flat-colour block ratio >= 0.5), which keep 0.2
+        /// (`perceptual_tuning::zenjxl_good_block_pow`). Cheaper at matched
+        /// butteraugli and SSIMULACRA2; lands screenshots and high-distance
+        /// photos closer to the requested distance
+        /// (`benchmarks/loop_overshoot_2026-10-15.md`). Section B.
+        buttloop_good_block_pow: bool {
+            divergence_section = "B",
+            divergence_row_ref = "butteraugli loop good-block exponent (buttloop_good_block_pow)",
         },
 
         /// W44-176: exclude terminal-class screenshots from W44-108
@@ -2048,6 +2066,12 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
         raw: __CUSTOM_DIVERGENCE_ADAPTIVE_BUTTLOOP_ITERS_NARROW,
     },
     DivergenceEntry {
+        gate_name: "buttloop_good_block_pow",
+        section: "B",
+        row_ref: "butteraugli loop good-block exponent (buttloop_good_block_pow)",
+        raw: __CUSTOM_DIVERGENCE_BUTTLOOP_GOOD_BLOCK_POW,
+    },
+    DivergenceEntry {
         gate_name: "terminal_class_exclude",
         section: "B",
         row_ref: "W44-176 terminal-class exclude from W44-108",
@@ -2331,6 +2355,7 @@ mod tests {
         assert!(d.find_best_32_per_m3_lift);
         assert!(!d.adaptive_buttloop_iters);
         assert!(!d.adaptive_buttloop_iters_narrow);
+        assert!(d.buttloop_good_block_pow);
         assert!(d.terminal_class_exclude);
         // W44-AUDIT-6 Phase 1: Zenjxl default = ON.
         assert!(d.high_colour_class_exclude);
