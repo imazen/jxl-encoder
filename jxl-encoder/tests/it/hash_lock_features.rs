@@ -427,7 +427,12 @@ fn noise_rgb_512x512() -> Vec<u8> {
 /// byte-lock coverage — the same lock-coverage gap that let the
 /// `resampling > 1` bugs survive (see CLAUDE.md, 2026-08-30).
 fn photoish_rgb_1024x1024() -> Vec<u8> {
-    let (w, h) = (1024usize, 1024usize);
+    photoish_rgb(1024, 1024)
+}
+
+/// The `photoish_rgb_1024x1024` field at any size (identical pixels where
+/// the two overlap).
+fn photoish_rgb(w: usize, h: usize) -> Vec<u8> {
     let hash = |x: i64, y: i64, c: i64| -> f32 {
         let mut v = (x.wrapping_mul(0x27d4_eb2d)
             ^ y.wrapping_mul(0x1656_67b1)
@@ -1408,6 +1413,30 @@ fn lossy_mg_rgb_512x512_noise_r2_e3() {
         &data,
         512,
         512,
+        true,
+        false,
+        false,
+        false,
+    );
+}
+
+/// Progressive DC on an image wider than 2048 px: the separate LF frame
+/// spans two groups and takes the multi-group modular path, which wrote an
+/// undecodable frame until 2026-10-22 (group regions cut 8x too small).
+/// `assert_hashes` renders every cell through jxl-oxide; the three-decoder
+/// round trip lives in `progressive_dc_multi_group`.
+#[test]
+fn lossy_mg_rgb_2049x300_photoish_progressive_dc1_e5() {
+    let data = LossyConfig::new(1.0)
+        .with_effort(5)
+        .with_progressive_dc(1)
+        .encode(&photoish_rgb(2049, 300), 2049, 300, PixelLayout::Rgb8)
+        .unwrap();
+    assert_hashes(
+        "lossy_mg_rgb_2049x300_photoish_progressive_dc1_e5",
+        &data,
+        2049,
+        300,
         true,
         false,
         false,

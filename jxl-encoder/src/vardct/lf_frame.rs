@@ -251,7 +251,7 @@ pub(crate) fn encode_lf_frame(
     ch_by.hshift = 3;
     ch_by.vshift = 3;
     let mod_channels = vec![ch_y, ch_x, ch_by];
-    let image = ModularImage {
+    let mut image = ModularImage {
         channels: mod_channels,
         bit_depth: 16, // Fixed-point representation
         is_grayscale: false,
@@ -318,8 +318,21 @@ pub(crate) fn encode_lf_frame(
         // Write section data
         writer.append_bytes(&section_data)?;
     } else {
-        // Multi-group: DC image larger than 256×256 blocks (original > 2048×2048).
+        // Multi-group: the DC image is wider or taller than 256 blocks
+        // (original wider or taller than 2048 px).
         // Section layout: LfGlobal | LfGroup×N (empty) | HfGlobal (empty) | PassGroup×N
+        //
+        // The 3/3 shifts above are only a quantizer-table hint for the lossy
+        // single-group stream. Nothing transforms these channels in the
+        // bitstream, so the decoder sees them unshifted at the LF frame's
+        // own resolution. `extract_region` reads the shifts as real channel
+        // downsampling and would cut every group 8x too small on each axis,
+        // which no decoder can read. The multi-group stream is lossless and
+        // has no quantizer to hint, so the channels are encoded unshifted.
+        for ch in &mut image.channels {
+            ch.hshift = 0;
+            ch.vshift = 0;
+        }
         encode_lf_frame_multi_group(
             &image,
             &factors,

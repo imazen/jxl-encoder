@@ -87,6 +87,7 @@ mod nonfinite_xyb_repro;
 mod patches_oob_repro;
 mod pathological;
 mod perceptual_target_score_smoke;
+mod progressive_dc_multi_group;
 mod quality_compare;
 mod rate_control;
 mod resampling_odd_dims;

@@ -822,6 +822,35 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-22: `with_progressive_dc` wrote an undecodable LF frame above 2048 px
+
+`with_progressive_dc(1|2)` (and `with_lf_frame(true)`) on any image wider
+or taller than 2048 px produced a file no decoder reads: jxl-rs
+`SectionTooShort`, djxl v0.12 "Failed to decode", jxl-oxide "reference
+frame failed to render"; 600x400 and 2048x2048 decoded. Found by a
+container-permutation harness. Mechanism [PROVEN]: `encode_lf_frame` tags
+its three DC channels `hshift = vshift = 3` as a quantizer-table hint for the
+lossy single-group stream. Above 256 blocks on either axis the LF frame
+itself spans more than one 256-px group and takes
+`encode_lf_frame_multi_group`, whose `extract_region` reads those shifts as
+real channel downsampling (`x >> 3`), so each group carried a region 8x too
+small on each axis (32x4 for a 256x38 group of the 2049x300 case). The
+decoder sees the channels unshifted (nothing in the stream transforms them)
+and reads past the section end. Fix: the multi-group branch clears the hint
+before splitting; it is lossless and has no quantizer to hint. The
+single-group path and every image up to 2048x2048 are untouched (64 of 64
+hash-lock cells byte-identical). Pinned by
+`progressive_dc_multi_group::progressive_dc_above_one_lf_group_decodes_in_three_decoders`
+(mirror-tiled frymire at 2049x300 and 2400x2100, levels 1 and 2, full decode
+in jxl-rs, djxl v0.12 and jxl-oxide, mean-abs-error bound against the
+no-LF-frame encode; fails on the old code with `SectionTooShort`) and the new
+hash-lock cell `lossy_mg_rgb_2049x300_photoish_progressive_dc1_e5`. Measured
+mean abs error: progressive 0.01284/0.01054 vs 0.01294/0.01059 without
+(2049x300 / 2400x2100). Still open, not changed here: above 2048 px the LF
+frame is lossless at full precision while the single-group path is lossy
+modular, so the two sizes code DC differently; `with_progressive_dc(2)` still
+emits a single LF frame.
+
 ### RESOLVED 2026-10-22: Saturation and Absolute rendering intents wrote an undecodable colour header
 
 `ColorEncoding::write` emitted `rendering_intent` as a raw 2-bit field; the
