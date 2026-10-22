@@ -845,6 +845,160 @@ pub fn estimate_bits_u32_impl(token: Token, counts: &[u32], total: u32) -> f64 {
     bits
 }
 
+/// Paired estimate for the tree-learner's split sweep: computes the left and
+/// right child costs in one dispatched call so the SIMD prologue (the ~15
+/// loop-invariant constant splats and accumulator zeroing) is shared instead
+/// of paid twice per candidate threshold.
+///
+/// Bit-identity: each side runs the identical per-lane and combine-tree
+/// sequence as [`estimate_bits_u32_impl`] — the two calls are sequential
+/// inside one tier body, so no accumulation order changes. `total == 0`
+/// keeps the wrapper's early-out semantics per side.
+#[inline]
+pub fn estimate_bits_u32_pair(
+    left: &[u32],
+    left_total: u32,
+    right: &[u32],
+    right_total: u32,
+) -> (f64, f64) {
+    if left_total == 0 {
+        return (0.0, estimate_bits_u32(right, right_total));
+    }
+    if right_total == 0 {
+        return (estimate_bits_u32(left, left_total), 0.0);
+    }
+    incant!(
+        estimate_bits_u32_pair_impl(left, left_total, right, right_total),
+        [v4, v3, neon, wasm128, scalar]
+    )
+}
+
+#[magetypes(define(f32x8, i32x8, u32x8), v4, v3, neon, wasm128, scalar)]
+pub fn estimate_bits_u32_pair_impl(
+    token: Token,
+    left: &[u32],
+    left_total: u32,
+    right: &[u32],
+    right_total: u32,
+) -> (f64, f64) {
+    // Shared prologue: constants identical for both sides (totals differ, so
+    // `inv_total` stays per-side). Written once by hand per side below via
+    // the `est` macro — same expansion as `estimate_bits_u32_impl`, same
+    // accumulation order, so results are bit-identical to two calls.
+    let min_prob = f32x8::splat(token, 1.0 / 4096.0);
+    let zero_f = f32x8::zero(token);
+    let one = f32x8::splat(token, 1.0);
+    let offset = i32x8::splat(token, 0x3f2a_aaab_u32 as i32);
+    let p0 = f32x8::splat(token, LOG2_P0);
+    let p1 = f32x8::splat(token, LOG2_P1);
+    let p2 = f32x8::splat(token, LOG2_P2);
+    let q0 = f32x8::splat(token, LOG2_Q0);
+    let q1 = f32x8::splat(token, LOG2_Q1);
+    let q2 = f32x8::splat(token, LOG2_Q2);
+
+    macro_rules! est {
+        ($counts:expr, $total:expr) => {{
+            let counts: &[u32] = $counts;
+            let total: u32 = $total;
+            let inv_total = f32x8::splat(token, 1.0 / total as f32);
+            let mut acc_a = f32x8::zero(token);
+            let mut acc_b = f32x8::zero(token);
+            let blocks = counts.len() / 8;
+            let mut blk = 0usize;
+            while blk + 1 < blocks {
+                let base_a = blk * 8;
+                let base_b = base_a + 8;
+                let ca = u32x8::from_slice(token, &counts[base_a..base_a + 8])
+                    .bitcast_i32x8()
+                    .to_f32x8();
+                let cb = u32x8::from_slice(token, &counts[base_b..base_b + 8])
+                    .bitcast_i32x8()
+                    .to_f32x8();
+                let nza = ca.simd_gt(zero_f);
+                let nzb = cb.simd_gt(zero_f);
+                let sa = f32x8::blend(nza, ca, one);
+                let sb = f32x8::blend(nzb, cb, one);
+                let pa = (sa * inv_total).max(min_prob);
+                let pb = (sb * inv_total).max(min_prob);
+                let la = {
+                    let x_bits: i32x8 = pa.bitcast_i32x8();
+                    let exp_bits = x_bits - offset;
+                    let exp_shifted = exp_bits.shr_arithmetic::<23>();
+                    let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+                    let mantissa = mantissa_bits.bitcast_f32x8();
+                    let exp_val = exp_shifted.to_f32x8();
+                    let frac = mantissa - one;
+                    let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+                    let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+                    num / den + exp_val
+                };
+                let lb = {
+                    let x_bits: i32x8 = pb.bitcast_i32x8();
+                    let exp_bits = x_bits - offset;
+                    let exp_shifted = exp_bits.shr_arithmetic::<23>();
+                    let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+                    let mantissa = mantissa_bits.bitcast_f32x8();
+                    let exp_val = exp_shifted.to_f32x8();
+                    let frac = mantissa - one;
+                    let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+                    let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+                    num / den + exp_val
+                };
+                acc_a -= ca * la;
+                acc_b -= cb * lb;
+                blk += 2;
+            }
+            if blk < blocks {
+                let base = blk * 8;
+                let c = u32x8::from_slice(token, &counts[base..base + 8])
+                    .bitcast_i32x8()
+                    .to_f32x8();
+                let nz = c.simd_gt(zero_f);
+                let sc = f32x8::blend(nz, c, one);
+                let pc = (sc * inv_total).max(min_prob);
+                let lc = {
+                    let x_bits: i32x8 = pc.bitcast_i32x8();
+                    let exp_bits = x_bits - offset;
+                    let exp_shifted = exp_bits.shr_arithmetic::<23>();
+                    let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+                    let mantissa = mantissa_bits.bitcast_f32x8();
+                    let exp_val = exp_shifted.to_f32x8();
+                    let frac = mantissa - one;
+                    let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+                    let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+                    num / den + exp_val
+                };
+                acc_a -= c * lc;
+            }
+            let mut arr_a = [0.0f32; 8];
+            let mut arr_b = [0.0f32; 8];
+            acc_a.store(&mut arr_a);
+            acc_b.store(&mut arr_b);
+            let mut s8 = [0.0f32; 8];
+            for j in 0..8 {
+                s8[j] = arr_a[j] + arr_b[j];
+            }
+            let s4 = [s8[0] + s8[4], s8[1] + s8[5], s8[2] + s8[6], s8[3] + s8[7]];
+            let acc_f32 = (s4[0] + s4[2]) + (s4[1] + s4[3]);
+            let mut bits = acc_f32 as f64;
+            let total_f64 = total as f64;
+            let min_prob_f64 = 1.0 / 4096.0;
+            for &c in &counts[blocks * 8..] {
+                if c > 0 {
+                    let p = (c as f64 / total_f64).max(min_prob_f64);
+                    bits -= c as f64 * fast_log2f(p as f32) as f64;
+                }
+            }
+            bits
+        }};
+    }
+
+    (
+        est!(left, left_total),
+        est!(right, right_total),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

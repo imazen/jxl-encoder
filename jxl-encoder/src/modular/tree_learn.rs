@@ -7453,10 +7453,14 @@ fn eval_split_prop_borrowed(
                 continue;
             }
 
-            let l_bits = jxl_simd::estimate_bits_u32(&left_counts[..support], left_total)
-                + left_extra as f64;
-            let r_bits = jxl_simd::estimate_bits_u32(&right_counts[..support], right_total)
-                + right_extra as f64;
+            let (l_bits_e, r_bits_e) = jxl_simd::estimate_bits_u32_pair(
+                &left_counts[..support],
+                left_total,
+                &right_counts[..support],
+                right_total,
+            );
+            let l_bits = l_bits_e + left_extra as f64;
+            let r_bits = r_bits_e + right_extra as f64;
 
             if l_bits + penalty < best_l_penalized[local_k] {
                 best_l_penalized[local_k] = l_bits + penalty;
@@ -10696,10 +10700,14 @@ fn find_best_split(
                 // scalar `subsd` dep chain serialized the inner loop at ~25
                 // cycles/iter; SIMD breaks it into 2 independent f32 lanes
                 // and hides the fast_log2f latency).
-                let l_bits = jxl_simd::estimate_bits_u32(&left_counts[..support], left_total)
-                    + left_extra as f64;
-                let r_bits = jxl_simd::estimate_bits_u32(&right_counts[..support], right_total)
-                    + right_extra as f64;
+                let (l_bits_e, r_bits_e) = jxl_simd::estimate_bits_u32_pair(
+                    &left_counts[..support],
+                    left_total,
+                    &right_counts[..support],
+                    right_total,
+                );
+                let l_bits = l_bits_e + left_extra as f64;
+                let r_bits = r_bits_e + right_extra as f64;
 
                 // Predictor selection uses penalized cost (matching libjxl).
                 // Raw cost stored separately for the final split decision.

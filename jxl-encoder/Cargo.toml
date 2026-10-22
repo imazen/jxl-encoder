@@ -3357,3 +3357,7 @@ path = "examples/w45_p21_perf_ab.rs"
 name = "jpeg_fixture_setup"
 path = "examples/jpeg_fixture_setup.rs"
 required-features = ["std", "jpeg-reencoding"]
+
+[[example]]
+name = "cg_profile"
+path = "examples/cg_profile.rs"
