@@ -37,6 +37,7 @@
   custom extra-channel/stride requests before encoding.
 - Animation fixtures cover odd and multiple-group dimensions and are checked
   against both Rust decoders and the pinned libjxl 0.12 reference.
+- Reject animation clocks outside numerator 1..=2^30 and denominator 1..=1024 before encoding and in the header writer. Previously larger `u32` values overflowed their bit fields and corrupted following metadata. Bounds match libjxl 0.12 `AnimationHeader::VisitFields`.
 
 ### QUEUED BREAKING CHANGES
 - `EncoderImprovementsCustom` gains `lossless_lz77_keep_best`; exhaustive struct literals must supply it or use `..Default::default()` (`4e1d70a6`).

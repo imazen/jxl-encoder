@@ -8,9 +8,9 @@ use super::*;
 /// Animation timing parameters.
 #[derive(Clone, Debug)]
 pub struct AnimationParams {
-    /// Ticks per second numerator (default 100 = 10ms precision).
+    /// Ticks per second numerator, 1..=2^30 (default 100 = 10ms precision).
     pub tps_numerator: u32,
-    /// Ticks per second denominator (default 1).
+    /// Ticks per second denominator, 1..=1024 (default 1).
     pub tps_denominator: u32,
     /// Number of loops: 0 = infinite (default), >0 = play N times.
     pub num_loops: u32,
