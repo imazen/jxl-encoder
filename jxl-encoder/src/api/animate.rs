@@ -270,6 +270,10 @@ pub(crate) fn encode_animation_lossless(
             match detect_frame_crop(prev, frame.pixels, w, h, bpp, false) {
                 Some(crop) if (crop.width as usize) < w || (crop.height as usize) < h => Some(crop),
                 Some(_) => None, // Crop covers full frame — no benefit
+                // A 1x1 crop covers the entire 1x1 canvas. Emitting it as a
+                // partial frame writes a blend source that decoders omit for
+                // full-canvas Replace, shifting subsequent header fields.
+                None if w == 1 && h == 1 => None,
                 None => {
                     // Frames are identical — emit a minimal 1x1 crop to preserve canvas
                     if cfg.auto_delta_frames && frame.blend_mode.is_none() {
