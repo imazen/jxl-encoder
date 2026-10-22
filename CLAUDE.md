@@ -702,6 +702,16 @@ neither this model nor its predecessor takes it as an input.
 
 ### Cross-cutting facts worth not rediscovering
 
+- **An exported source closure must not share a Cargo target dir with
+  another tree** (measured 2026-10-21). Cargo hashes path packages relative to
+  their workspace root, and `git archive` stamps sources with the commit time,
+  so building a `scripts/prepare_clean_source.py` export (or any archived tree)
+  into a target dir that already holds another tree's artifacts can skip the
+  rebuild entirely: workspace clippy on a second PR tree "finished" in 0.28 s,
+  replaying the first tree's results. The justfile recipes that take
+  `manifest=` default to the shared `target/`. Give each export its own
+  `CARGO_TARGET_DIR`, or touch its sources before each build; the exporter now
+  stamps the sources it extracts, which covers only the first build.
 - **`cargo fmt --all` reaches into sibling path-dep repos** and will silently
   reformat them (confirmed live on 2026-08-29: it edited `../zenav1-aom`).
   Always scope: `cargo fmt -p <pkg>`.
