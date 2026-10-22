@@ -1,0 +1,16 @@
+# w44_200_section_audit_cell7063.tsv — provenance
+
+Recovered 2026-10-21 from r7900x (x86_64) when its stale `jxl-encoder--x64verify`
+clone was removed. The file was untracked there; mtime 2026-08-21 09:41 -0600.
+sha256 4e4f85496df20e4c3beb4706704d8b317a8fb132529f5d626992afbac8da6646.
+
+Build commit: NOT RECORDED. The clone's HEAD at removal (25f97de6, 10:27) is
+later than the file, so it is not the build that produced these rows.
+
+What it is: the per-section byte split (same columns as
+`w44_200_section_audit_sect7063.tsv`) of imazen-26 cell 7063 at e7 d3 for
+zenjxl, our Libjxl strategy and cjxl. The zenjxl row's 96,587 bytes equals the
+`ours` row of `w44_199_ac_dump_cell7063.tsv` (committed 8e832550, 09:54 the same
+morning), so it is the section split of that same encode. The committed
+`sect7063` audit (96,566 bytes) is a later re-run of the same cell. cjxl's row is
+identical in both files.
