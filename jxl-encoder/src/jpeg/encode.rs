@@ -13,7 +13,7 @@ use super::jbrd::{encode_jbrd, extract_exif, extract_icc, extract_xmp};
 use crate::BLOCK_SIZE;
 use crate::bit_writer::BitWriter;
 use crate::budget::MemoryBudget;
-use crate::container::wrap_in_container_jxlp;
+use crate::container::wrap_in_container_jxlp_with_level;
 use crate::entropy_coding::encode::{
     OwnedAnsEntropyCode, build_entropy_code_ans_with_options, write_entropy_code_ans,
     write_tokens_ans,
@@ -698,7 +698,7 @@ fn encode_jpeg_to_jxl_inner(
         // full block resolution under any subsampling.
         for row in &quant_dc[1] {
             for &dc_val in row {
-                let idx = (dc_val as i32 + 1024).clamp(0, 2047) as usize;
+                let idx = (dc_val + 1024).clamp(0, 2047) as usize;
                 dc_counts[idx] += 1;
                 total_dc_luma += 1;
             }
@@ -757,7 +757,7 @@ fn encode_jpeg_to_jxl_inner(
             let row = &quant_dc[1].get(by);
             if let Some(row) = row {
                 for bx in 0..xsize_blocks {
-                    let dc_val = row.get(bx).copied().unwrap_or(0) as i32;
+                    let dc_val = row.get(bx).copied().unwrap_or(0);
                     let bucket = thresholds.iter().filter(|&&t| dc_val > t).count() as u8;
                     buckets[by * xsize_blocks + bx] = bucket;
                 }
@@ -1423,14 +1423,45 @@ pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
     let exif = extract_exif(jpeg);
     let xmp = extract_xmp(jpeg);
 
+    // The codestream level the container must declare (ISO/IEC 18181-2, 9.3:
+    // no `jxll` box means level 5, and the codestream must then satisfy it).
+    // A JPEG stays within level 5 by its dimensions unless the caller lifted
+    // `Limits::max_pixels` past 2^28, but its ICC profile can exceed the
+    // level-5 cap of 2^22 bytes. Before 2026-10-22 this path hard-coded level
+    // 5. The 16-bit-buffer flag comes from the same header builder the
+    // codestream used, so the two cannot disagree.
+    let icc_size = extract_icc(jpeg).map_or(0u64, |icc| icc.len() as u64);
+    let is_gray = jpeg.components.len() == 1;
+    let header = build_jpeg_file_header(jpeg.width as usize, jpeg.height as usize, is_gray);
+    let level = crate::container::compute_codestream_level(
+        jpeg.width,
+        jpeg.height,
+        0,
+        false,
+        icc_size,
+        header.metadata.modular_16bit_buffer_sufficient(),
+    )
+    .ok_or_else(|| {
+        crate::error::Error::InvalidInput(format!(
+            "JPEG {}x{} with a {icc_size}-byte ICC profile exceeds JPEG XL level 10 limits",
+            jpeg.width, jpeg.height
+        ))
+    })?;
+
     // Split codestream at file header boundary for jxlp box format.
     // libjxl requires the jbrd box to appear between the file header
     // and frame data, using jxlp (partial codestream) boxes.
     let cs_part1 = &codestream[..file_header_size];
     let cs_part2 = &codestream[file_header_size..];
 
-    let container =
-        wrap_in_container_jxlp(cs_part1, cs_part2, &jbrd, exif.as_deref(), xmp.as_deref());
+    let container = wrap_in_container_jxlp_with_level(
+        cs_part1,
+        cs_part2,
+        &jbrd,
+        exif.as_deref(),
+        xmp.as_deref(),
+        level,
+    );
     super::gainmap::append(jpeg, container, effort, stop, budget, max_pixels)
 }
 
@@ -1528,7 +1559,7 @@ fn compute_jpeg_dc_offset(jpeg: &JpegData, jpeg_c_map: &[usize; 3], is_ycbcr: bo
         if jpeg_c >= jpeg.components.len() {
             continue;
         }
-        let Some(qt) = quant_table_by_id(jpeg, jpeg.components[jpeg_c].quant_idx) else {
+        let Some(qt) = quant_table_at(jpeg, jpeg.components[jpeg_c].quant_idx) else {
             continue;
         };
         let qt_dc = qt.values[0];
@@ -1660,18 +1691,19 @@ fn map_jpeg_coefficients(
     Ok((quant_dc, quant_ac, nzeros, raw_nzeros))
 }
 
-/// Look up the JPEG quantization table a component references by its DQT
-/// identifier (`Tq`), returning `None` if no such table was defined.
+/// Look up the JPEG quantization table a component references by its
+/// POSITION in `jpeg.quant`, returning `None` if it is out of range.
 ///
-/// The referencing component stores the DQT *identifier*, not a position in the
-/// parsed table list. A crafted JPEG can reference an in-range-but-undefined
-/// table (or define DQT tables out of order / sparsely), so indexing
-/// `jpeg.quant` by the identifier would panic (index OOB) or silently select the
-/// wrong table and embed it into the JXL (non-byte-exact reconstruction). For a
-/// well-formed JPEG with in-order, contiguous DQT tables this is identical to
-/// positional lookup.
-fn quant_table_by_id(jpeg: &JpegData, tq: u32) -> Option<&JpegQuantTable> {
-    jpeg.quant.iter().find(|t| t.index == tq)
+/// `JpegComponent::quant_idx` is a position, not the SOF's DQT identifier
+/// (`Tq`): `jpeg::parse::fixup_quant_indexes` maps the identifier to the first
+/// table that defines it, as libjxl's `FixupIndexes` does, because that is
+/// what the jbrd's `component_q_idx` means (ISO/IEC 18181-2 Table 12, A.6) and
+/// what the DQT reconstruction indexes. Before 2026-10-22 this looked tables
+/// up by identifier while the jbrd wrote the identifier as if it were a
+/// position, so a JPEG whose DQT segments were not in identifier order
+/// reconstructed with the wrong tables.
+fn quant_table_at(jpeg: &JpegData, position: u32) -> Option<&JpegQuantTable> {
+    jpeg.quant.get(position as usize)
 }
 
 /// Resolve the quantization table for a JPEG component by its DQT identifier,
@@ -1687,9 +1719,10 @@ fn quant_table_for(jpeg: &JpegData, jpeg_c: usize) -> Result<&JpegQuantTable> {
             ))
         })?
         .quant_idx;
-    quant_table_by_id(jpeg, tq).ok_or_else(|| {
+    quant_table_at(jpeg, tq).ok_or_else(|| {
         crate::error::Error::InvalidInput(format!(
-            "JPEG component references undefined quantization table {tq}"
+            "JPEG component references quantization table position {tq} of {}",
+            jpeg.quant.len()
         ))
     })
 }
@@ -2187,16 +2220,18 @@ mod tests {
         }
     }
 
-    // Regression: a crafted JPEG-transcode input whose component references an
-    // in-range-but-undefined DQT (or has out-of-order DQT tables) must resolve by
-    // the DQT identifier and error rather than panic on an OOB Vec index.
+    // `quant_idx` is a POSITION in `jpeg.quant` (the parser's
+    // `fixup_quant_indexes` maps the SOF's DQT identifier onto it, as libjxl
+    // `FixupIndexes` does, because the jbrd's `component_q_idx` is positional).
+    // A synthesized `JpegData` with an out-of-range position must error rather
+    // than panic on an OOB Vec index.
     #[test]
-    fn quant_table_lookup_is_by_identifier_and_rejects_undefined() {
+    fn quant_table_lookup_is_positional_and_rejects_out_of_range() {
         let c_map = [0usize, 1, 2];
 
-        // Component references Tq=1 but only Tq=0 is defined → error, no panic.
+        // Component references position 1 but only one table exists → error, no panic.
         let jpeg = jpeg_with_components(vec![qtable(0, 10)], [0, 1, 0]);
-        assert!(quant_table_by_id(&jpeg, 1).is_none());
+        assert!(quant_table_at(&jpeg, 1).is_none());
         assert!(quant_table_for(&jpeg, 1).is_err());
         assert!(build_raw_qtables(&jpeg, &c_map).is_err());
         assert!(build_dc_dequant(&jpeg, &c_map).is_err());
@@ -2206,11 +2241,13 @@ mod tests {
         assert!(build_raw_qtables(&none, &c_map).is_err());
         assert!(build_dc_dequant(&none, &c_map).is_err());
 
-        // Out-of-order DQT: tables stored as index 1 then index 0. Lookup must key
-        // on `.index`, not Vec position.
+        // Tables stored as identifier 1 then identifier 0: the lookup is by
+        // position, so position 0 is the table with identifier 1. (The parser
+        // has already remapped identifiers to positions by the time the encoder
+        // runs; `jpeg_spec_validity` in tests/it proves that end to end.)
         let jpeg = jpeg_with_components(vec![qtable(1, 11), qtable(0, 22)], [0, 1, 0]);
-        assert_eq!(quant_table_for(&jpeg, 0).unwrap().values[0], 22);
-        assert_eq!(quant_table_for(&jpeg, 1).unwrap().values[0], 11);
+        assert_eq!(quant_table_for(&jpeg, 0).unwrap().values[0], 11);
+        assert_eq!(quant_table_for(&jpeg, 1).unwrap().values[0], 22);
     }
 
     #[test]

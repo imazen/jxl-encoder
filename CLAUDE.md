@@ -812,6 +812,64 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-22: file-format (ISO/IEC 18181-2) audit — the JPEG transcode path hard-coded level 5, and the jbrd writer could emit data no decoder rebuilds
+
+Audit of the container and `jbrd` writers against the Part 2 text (the file
+format: boxes, jbrd + Annex A, jhgm, the HEIF annex; Part 1 was not audited).
+The private notes live outside this repo (the spec is committee-private;
+cite clauses here, never text). Container verdict: signature, ftyp (minor 0),
+`jxll` third, `jxlp` 0 then 1|last, box sizes, jxlc-xor-jxlp and the
+brob/Exif/xml layouts are all compliant on the pixel paths. Two classes of
+defect, both fixed the same day:
+
+1. **`encode_jpeg_transcode` wrote level 5 unconditionally**
+   (`jpeg/encode.rs` → `wrap_in_container_jxlp`, no `compute_codestream_level`
+   call). A JPEG whose ICC profile exceeds 2^22 bytes (multi-chunk APP2 ICC
+   reaches 16 MB), or whose pixel count exceeds 2^28 once a caller lifts
+   `Limits::max_pixels`, produced a level-10 codestream labelled level 5. Now
+   the level comes from the same header builder the codestream used.
+   Pinned by `jbrd_spec_validity::large_icc_profile_declares_level_10`.
+2. **jbrd validity (9.12 / Annex A).** `component_q_idx` is a POSITION in the
+   quant array, but the writer stored the SOF's DQT identifier (`Tq`) while
+   the codestream side looked tables up by identifier — DQT segments out of
+   identifier order reconstructed with the wrong tables (libjxl remaps with
+   `FixupIndexes`; we now do, in `parse::fixup_quant_indexes`, which also
+   refuses an unused first table and a non-trivial unused table, A.6).
+   The marker scanner pushed EVERY marker into the array (DNL, SOF3, JPGn…
+   have no Annex A instruction; a marker below 0xC0 underflowed the 6-bit
+   field) and dropped the bytes between segments (fill bytes, stray data) —
+   both are now unrecognized-data segments (0xFF entries), exactly libjxl's
+   `FindNextMarker`. Empty DHT segments (`FF C4 00 02`) misaligned the table
+   iterator; they are now an all-zero table (A.2). Duplicate Huffman values,
+   DC categories > 11, over-allocated code lengths, repeated DRI with a
+   different interval, zero quantization factors, duplicate SOF/component ids
+   and > 16384 markers are refused with typed errors. ICC chunks are typed
+   only when canonically numbered, and an out-of-order or incomplete chunk
+   run is refused (libjxl `DetectIccProfile` parity): A.8 regenerates chunk
+   numbers 1..n, so nothing else can be exact.
+   Every shape is pinned in `tests/it/jbrd_spec_validity.rs`: jxl-rs decodes
+   the fixture's pixels and the mutated JPEG is rebuilt byte for byte (the
+   control fixture passed before the fix; the mutations did not). **Two of
+   the cells need djxl as the oracle because jxl-oxide (imazen fork rev
+   08395e6, `jxl-jbr/src/reconstruct.rs`) is wrong there**: it matches DQT
+   tables to components by DQT identifier instead of array position (`:638`,
+   so a swapped-DQT file rebuilds with the wrong tables) and underflows on an
+   all-zero (empty-DHT) table (`:480`). libjxl's `dec_frame.cc` uses the
+   position, as the format specifies.
+
+**What the audit found elsewhere (not bugs here):** libjxl v0.12.0 already
+writes ED4's ftyp minor-version-1 out-of-order `jxlp` files (`--output_mode
+2`), which jxl-rs and jxl-oxide reject (they never read the minor version);
+libjxl's `jxli` writer has wrong `T_i`/tick-unit/`F_i` semantics; libjxl's
+decoder never parses `jxll`; libjxl refuses a jbrd with four quant tables
+(`jpeg_data.cc`) although the field allows 1..4, so a 4-table JPEG transcoded
+by us will not reconstruct in djxl (we refuse only non-trivial unused
+tables). `GainMapBundle` does not enforce `want_icc ⇔ alt_icc` (9.11) —
+caller-constructed bundles only; the JPEG gain-map path never sets either.
+`colr`/`hCdR` are not Part 2 boxes (legal as unknown boxes, parsed by no
+reader). `with_exif` still documents no payload contract (TIFF-first is
+assumed; an "Exif\0\0"-prefixed blob gets a wrong tiff_header_offset).
+
 ### RESOLVED 2026-10-18: PR131 fixed-point determinism and saturation
 
 **Status**: [RESOLVED] by `89918522` (fixed-point safety follow-up).

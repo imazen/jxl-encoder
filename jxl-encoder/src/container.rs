@@ -514,6 +514,7 @@ fn assemble(codestream: &[u8], icc: Option<&[u8]>, level: u8, boxes: &[u8]) -> V
 /// ```
 /// Each `jxlp` box has a 4-byte BE counter where bit 31 marks the last part.
 #[cfg(feature = "jpeg-reencoding")]
+#[allow(dead_code)] // #76: thin delegating wrapper; unit tests exercise the family
 pub fn wrap_in_container_jxlp(
     cs_part1: &[u8],
     cs_part2: &[u8],

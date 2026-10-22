@@ -158,7 +158,7 @@ fn layer4_compression_ratio_is_reasonable() {
 /// Runs `djxl <input.jxl> <output.jpg> --reconstruct_jpeg` and returns
 /// the recovered JPEG bytes on success. Panics on djxl failure with a
 /// descriptive message.
-fn djxl_reconstruct_jpeg(jxl_bytes: &[u8], label: &str) -> Vec<u8> {
+pub(super) fn djxl_reconstruct_jpeg(jxl_bytes: &[u8], label: &str) -> Vec<u8> {
     let djxl = jxl_encoder::test_helpers::djxl_path();
     if !std::path::Path::new(&djxl).exists() {
         // Match `skip_without_binary!` behaviour — silently skip when

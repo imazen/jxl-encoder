@@ -27,11 +27,29 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
     let is_gray = jpeg.components.len() == 1;
     writer.write(1, is_gray as u64)?;
 
-    // Marker sequence (6 bits each, offset from 0xC0)
-    for &marker in &jpeg.marker_order {
-        writer.write(6, (marker - 0xC0) as u64)?;
+    // Marker sequence (6 bits each, offset from 0xC0). The decoder reads
+    // markers until it meets EOI, and the format caps the array; the parser
+    // guarantees both, this is the writer's own check (ISO/IEC 18181-2 9.12).
+    if jpeg.marker_order.len() > super::parse::MAX_JBRD_MARKERS {
+        return Err(crate::error::Error::InvalidInput(format!(
+            "JPEG has {} marker segments; the jbrd format allows at most {}",
+            jpeg.marker_order.len(),
+            super::parse::MAX_JBRD_MARKERS
+        )));
     }
-    // marker_order should end with 0xD9 (EOI)
+    if jpeg.marker_order.last() != Some(&0xD9) {
+        return Err(crate::error::Error::InvalidInput(
+            "JPEG marker sequence does not end with EOI; jbrd cannot represent it".into(),
+        ));
+    }
+    for &marker in &jpeg.marker_order {
+        let Some(code) = marker.checked_sub(0xC0) else {
+            return Err(crate::error::Error::InvalidInput(format!(
+                "marker 0x{marker:02X} is below 0xC0 and has no jbrd encoding"
+            )));
+        };
+        writer.write(6, u64::from(code))?;
+    }
 
     let num_app_markers = jpeg.app_data.len();
 
@@ -94,7 +112,15 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
         // This fills the remaining Huffman code space with an invalid symbol.
         // Our parser stores counts[0..15] for bit lengths 1-16.
         // max_depth_idx = index of deepest non-zero count (0-based, maps to bit length idx+1)
-        let max_depth_idx = hc.counts.iter().rposition(|&c| c > 0).unwrap_or(0);
+        //
+        // An all-zero table is an EMPTY DHT segment (ISO/IEC 18181-2 A.2): it is
+        // written as 17 zero counts and no values, with no sentinel.
+        let Some(max_depth_idx) = hc.counts.iter().rposition(|&c| c > 0) else {
+            for _ in 0..17 {
+                write_u32_jbrd(&mut writer, 0, &[0, 1], &[(3, 2), (8, 0)])?;
+            }
+            continue;
+        };
 
         // 17 count values (bit lengths 0-16)
         // U32(Val(0), Val(1), BitsOffset(3, 2), Bits(8))
@@ -185,9 +211,22 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
 
     // Inter-marker data lengths
     let num_intermarkers = jpeg.marker_order.iter().filter(|&&m| m == 0xFF).count();
-    for i in 0..num_intermarkers {
-        let len = jpeg.inter_marker_data[i].len() as u32;
-        writer.write(16, len as u64)?;
+    if jpeg.inter_marker_data.len() != num_intermarkers {
+        return Err(crate::error::Error::InvalidInput(format!(
+            "{} unrecognized-data markers but {} data segments",
+            num_intermarkers,
+            jpeg.inter_marker_data.len()
+        )));
+    }
+    for imd in &jpeg.inter_marker_data {
+        // intermarker_length is u(16).
+        let Ok(len) = u16::try_from(imd.len()) else {
+            return Err(crate::error::Error::InvalidInput(format!(
+                "{} bytes of unrecognized data between markers; jbrd holds at most 65535",
+                imd.len()
+            )));
+        };
+        writer.write(16, u64::from(len))?;
     }
 
     // Tail data length
@@ -203,8 +242,15 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
     // Padding bits
     writer.write(1, jpeg.has_zero_padding_bit as u64)?;
     if jpeg.has_zero_padding_bit {
+        // nbit is u(24).
+        if jpeg.padding_bits.len() >= (1 << 24) {
+            return Err(crate::error::Error::InvalidInput(format!(
+                "{} padding bits; jbrd holds fewer than 2^24",
+                jpeg.padding_bits.len()
+            )));
+        }
         let nbit = jpeg.padding_bits.len() as u32;
-        writer.write(24, nbit as u64)?;
+        writer.write(24, u64::from(nbit))?;
         for &bit in &jpeg.padding_bits {
             writer.write(1, bit as u64)?;
         }

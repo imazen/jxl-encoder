@@ -123,6 +123,26 @@ pub(crate) fn read_jpeg_with_stop(
     Ok(jpeg)
 }
 
+/// Markers the JPEG XL file format can reconstruct (ISO/IEC 18181-2 Annex A):
+/// SOF0-2, DHT, RST0-7, EOI, SOS, DQT, DRI, APP0-15 and COM. libjxl's
+/// `FindNextMarker` stops only at these; every other byte between segments
+/// (fill bytes, stuffed `FF 00`, DNL, SOF3/5-15, JPGn, stray bytes) is kept
+/// verbatim as an unrecognized data segment (a 0xFF entry in the marker
+/// array) so the reconstruction stays byte-exact and the jbrd stays
+/// well-formed. Before 2026-10-22 unknown markers were pushed into
+/// `marker_order` as themselves, which no decoder can reconstruct, and the
+/// bytes between segments were dropped.
+const fn is_reconstructible_marker(marker: u8) -> bool {
+    matches!(
+        marker,
+        0xC0..=0xC2 | 0xC4 | 0xD0..=0xD7 | 0xD9..=0xDB | 0xDD | 0xE0..=0xEF | 0xFE
+    )
+}
+
+/// Upper bound on the marker array (ISO/IEC 18181-2, 9.12; libjxl
+/// `jpeg_data.cc` rejects more on read and write).
+pub(crate) const MAX_JBRD_MARKERS: usize = 16384;
+
 /// Lightweight marker scanner that reads JPEG marker structure without
 /// decoding entropy data. Extracts everything needed for jbrd box serialization.
 fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
@@ -142,7 +162,8 @@ fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
         components: Vec::new(),
         scan_info: Vec::new(),
         marker_order: vec![],
-        inter_marker_data: vec![Vec::new()],
+        // One entry per 0xFF (unrecognized data) marker, in order.
+        inter_marker_data: Vec::new(),
         tail_data: Vec::new(),
         has_zero_padding_bit: false,
         padding_bits: Vec::new(),
@@ -154,35 +175,40 @@ fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
     let mut adobe_transform: Option<u8> = None;
     let mut have_exif = false;
     let mut have_xmp = false;
+    let mut found_sof = false;
+    let mut found_dri: Option<u32> = None;
+    let mut found_eoi = false;
 
-    loop {
-        // Skip to next marker (0xFF followed by non-zero byte)
-        while pos < data.len() && data[pos] != 0xFF {
-            // Inter-marker data
-            if let Some(imd) = jpeg.inter_marker_data.last_mut() {
-                imd.push(data[pos]);
-            }
+    let push_marker = |jpeg: &mut JpegData, marker: u8| -> Result<()> {
+        if jpeg.marker_order.len() >= MAX_JBRD_MARKERS {
+            return Err(JpegError::Unsupported(format!(
+                "more than {MAX_JBRD_MARKERS} marker segments (jbrd limit)"
+            )));
+        }
+        jpeg.marker_order.push(marker);
+        Ok(())
+    };
+
+    while pos + 1 < data.len() {
+        // Everything up to the next `FF <reconstructible marker>` pair is
+        // unrecognized data (libjxl `FindNextMarker`).
+        let start = pos;
+        while pos + 1 < data.len()
+            && !(data[pos] == 0xFF && is_reconstructible_marker(data[pos + 1]))
+        {
             pos += 1;
         }
-
-        // Skip fill bytes (consecutive 0xFF)
-        while pos < data.len() && data[pos] == 0xFF {
-            pos += 1;
-        }
-
-        if pos >= data.len() {
+        if pos + 1 >= data.len() {
             break;
         }
-
-        let marker = data[pos];
-        pos += 1;
-
-        if marker == 0x00 {
-            continue; // Byte stuffing outside entropy data, skip
+        if pos > start {
+            push_marker(&mut jpeg, 0xFF)?;
+            jpeg.inter_marker_data.push(data[start..pos].to_vec());
         }
 
-        jpeg.marker_order.push(marker);
-        jpeg.inter_marker_data.push(Vec::new());
+        let marker = data[pos + 1];
+        pos += 2;
+        push_marker(&mut jpeg, marker)?;
 
         match marker {
             0xD9 => {
@@ -190,34 +216,21 @@ fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
                 if pos < data.len() {
                     jpeg.tail_data = data[pos..].to_vec();
                 }
+                found_eoi = true;
                 break;
             }
-            0xC0 | 0xC1 => {
-                // SOF0 (baseline) / SOF1 (extended sequential)
+            0xC0..=0xC2 => {
+                // SOF0 (baseline), SOF1 (extended sequential), SOF2
+                // (progressive). zenjpeg's `decode_coefficients()` merges
+                // progressive scans into final 64-coefficient blocks, so the
+                // downstream encoder and JBRD writer see one shape; the
+                // per-scan `Ss / Se / Ah / Al` are kept verbatim by
+                // `parse_sos_header`.
+                if found_sof {
+                    return Err(JpegError::Invalid("duplicate SOF marker".into()));
+                }
                 parse_sof_marker(data, &mut pos, &mut jpeg, max_pixels)?;
-            }
-            0xC2 => {
-                // SOF2: progressive JPEG. zenjpeg's `decode_coefficients()`
-                // accepts SOF2 sources and merges per-scan band updates into
-                // final 64-coefficient blocks before returning, so the
-                // downstream encoder (`encode_jpeg_to_jxl`) and JBRD writer
-                // (which already loops `for scan in scan_info`) see exactly
-                // the same shape as a baseline (SOF0) source.
-                //
-                // The two relevant differences from baseline parsing:
-                //   1. Multiple SOS markers (one per progressive scan); the
-                //      main loop already handles this — `parse_sos_header`
-                //      appends to `scan_info` on every visit.
-                //   2. The SOS markers carry non-default
-                //      `Ss / Se / Ah / Al`; `parse_sos_header` stores those
-                //      verbatim into the new scan_info entry, and `jbrd.rs`
-                //      already serializes them.
-                //
-                // `last_needed_pass` (per-scan field in JBRD) is the only
-                // value we currently hard-code to 0. For multi-scan inputs
-                // this needs the per-scan pass index — handled at the JBRD
-                // writer rather than in this branch.
-                parse_sof_marker(data, &mut pos, &mut jpeg, max_pixels)?;
+                found_sof = true;
             }
             0xDB => {
                 // DQT
@@ -228,12 +241,23 @@ fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
                 parse_dht_marker(data, &mut pos, &mut jpeg)?;
             }
             0xDD => {
-                // DRI
+                // DRI. The jbrd carries ONE restart interval that every DRI
+                // segment is rebuilt from, so repeated DRI markers are only
+                // representable when they agree.
                 if pos + 3 >= data.len() {
                     return Err(JpegError::UnexpectedEof);
                 }
                 let _len = u16::from_be_bytes([data[pos], data[pos + 1]]);
-                jpeg.restart_interval = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as u32;
+                let interval = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as u32;
+                if let Some(previous) = found_dri
+                    && previous != interval
+                {
+                    return Err(JpegError::Unsupported(format!(
+                        "DRI redefined ({previous} then {interval}); jbrd holds one interval"
+                    )));
+                }
+                found_dri = Some(interval);
+                jpeg.restart_interval = interval;
                 pos += 4;
             }
             0xDA => {
@@ -253,9 +277,12 @@ fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
                 }
                 let payload = &data[pos + 2..pos + len];
 
+                // Exif / XMP are classified here; ICC chunks are classified
+                // after the scan by `detect_icc_profile` (the whole chunk
+                // sequence must be canonical). libjxl only marks the FIRST
+                // Exif and FIRST XMP marker; duplicates remain Unknown (go in
+                // the JBRD data stream).
                 let mut marker_type = classify_app_marker(marker, payload);
-                // libjxl only marks the FIRST Exif and FIRST XMP marker;
-                // duplicates remain Unknown (go in JBRD data stream).
                 match marker_type {
                     AppMarkerType::Exif if have_exif => marker_type = AppMarkerType::Unknown,
                     AppMarkerType::Exif => have_exif = true,
@@ -303,19 +330,117 @@ fn scan_markers(data: &[u8], max_pixels: u64) -> Result<JpegData> {
                 // RST markers (no payload)
             }
             _ => {
-                // Unknown marker with length prefix
-                if pos + 1 < data.len() {
-                    let len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
-                    if pos + len <= data.len() {
-                        pos += len;
-                    }
-                }
+                // `is_reconstructible_marker` admits nothing else.
+                return Err(JpegError::Invalid(format!(
+                    "unexpected marker 0x{marker:02X}"
+                )));
             }
         }
     }
 
+    if !found_eoi {
+        // Table 12 reads markers until EOI; a jbrd without it is ill-formed.
+        return Err(JpegError::Invalid("missing EOI marker".into()));
+    }
+    if !found_sof {
+        return Err(JpegError::Invalid("missing SOF marker".into()));
+    }
+    if jpeg.scan_info.is_empty() {
+        return Err(JpegError::Invalid("no SOS marker".into()));
+    }
+
+    fixup_quant_indexes(&mut jpeg)?;
+    detect_icc_profile(&mut jpeg)?;
     jpeg.component_type = classify_components(&jpeg, seen_jfif, adobe_transform);
     Ok(jpeg)
+}
+
+/// Turn every component's DQT identifier (`Tq`, what the SOF carries) into a
+/// position in `jpeg.quant`, which is what `component_q_idx` means in the
+/// jbrd (ISO/IEC 18181-2 Table 12, A.6) and what every consumer in this crate
+/// indexes with. Mirrors libjxl `FixupIndexes` (`enc_jpeg_data_reader.cc`):
+/// the first table with that identifier wins.
+///
+/// Then enforces what the reconstruction needs to be exact and valid:
+/// position 0 must be used by some component, and an unused table must
+/// repeat the one before it (A.6 rebuilds it from position p-1; libjxl
+/// refuses "Non-trivial unused quant table").
+fn fixup_quant_indexes(jpeg: &mut JpegData) -> Result<()> {
+    for comp in &mut jpeg.components {
+        let tq = comp.quant_idx;
+        let Some(position) = jpeg.quant.iter().position(|t| t.index == tq) else {
+            return Err(JpegError::Invalid(format!(
+                "component {} references undefined quantization table {tq}",
+                comp.id
+            )));
+        };
+        comp.quant_idx = position as u32;
+    }
+    let mut used = vec![false; jpeg.quant.len()];
+    for comp in &jpeg.components {
+        used[comp.quant_idx as usize] = true;
+    }
+    for (p, is_used) in used.iter().enumerate() {
+        if *is_used {
+            continue;
+        }
+        if p == 0 {
+            return Err(JpegError::Unsupported(
+                "first quantization table unused (jbrd requires component_q_idx 0)".into(),
+            ));
+        }
+        if jpeg.quant[p].values != jpeg.quant[p - 1].values {
+            return Err(JpegError::Unsupported(format!(
+                "unused quantization table at position {p} differs from the previous one; \
+                 the jbrd reconstruction cannot reproduce it"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Mark the APP2 `ICC_PROFILE` chunks as [`AppMarkerType::Icc`] only when
+/// they form a canonical sequence (chunk ids 1..=n in order, one consistent
+/// chunk count). Annex A.8 rebuilds the chunk header bytes from the counts
+/// of type-1 markers, so anything else must stay raw data (type 0) to be
+/// exact. Mirrors libjxl `DetectIccProfile` (`enc_jpeg_data.cc`), including
+/// its refusal of an incomplete sequence.
+fn detect_icc_profile(jpeg: &mut JpegData) -> Result<()> {
+    const ICC_TAG: &[u8] = b"ICC_PROFILE\0";
+    let mut num_icc: usize = 0;
+    let mut num_icc_jpeg: usize = 0;
+    for (app, kind) in jpeg.app_data.iter().zip(jpeg.app_marker_type.iter_mut()) {
+        // [marker, len_hi, len_lo, tag, chunk_id, num_chunks, data...]
+        if app[0] != 0xE2 {
+            continue;
+        }
+        let tag_start = 3;
+        let Some(after_tag) = app.get(tag_start + ICC_TAG.len()..) else {
+            continue;
+        };
+        if &app[tag_start..tag_start + ICC_TAG.len()] != ICC_TAG || after_tag.len() < 2 {
+            continue;
+        }
+        let chunk_id = usize::from(after_tag[0]);
+        let num_chunks = usize::from(after_tag[1]);
+        if chunk_id != num_icc + 1 {
+            continue;
+        }
+        if num_icc_jpeg == 0 {
+            num_icc_jpeg = num_chunks;
+        }
+        if num_icc_jpeg != num_chunks {
+            continue;
+        }
+        num_icc += 1;
+        *kind = AppMarkerType::Icc;
+    }
+    if num_icc != num_icc_jpeg {
+        return Err(JpegError::Invalid(format!(
+            "ICC profile chunks are incomplete ({num_icc} of {num_icc_jpeg})"
+        )));
+    }
+    Ok(())
 }
 
 /// Parse SOF marker (without the marker bytes, starting at length field).
@@ -343,6 +468,11 @@ fn parse_sof_marker(
     }
     jpeg.height = u16::from_be_bytes([data[p + 3], data[p + 4]]) as u32;
     jpeg.width = u16::from_be_bytes([data[p + 5], data[p + 6]]) as u32;
+    if jpeg.width == 0 || jpeg.height == 0 {
+        return Err(JpegError::Invalid(
+            "SOF dimensions must be at least 1x1".into(),
+        ));
+    }
 
     // Pre-flight pixel cap on the untrusted SOF dimensions, BEFORE the
     // per-block coefficient buffers are allocated (the transcode path does not
@@ -376,7 +506,7 @@ fn parse_sof_marker(
 
     let mut max_h = 1u32;
     let mut max_v = 1u32;
-    let mut raw = Vec::new();
+    let mut raw: Vec<(u32, u32, u32, u32)> = Vec::new();
 
     for i in 0..num_comp {
         let base = p + 8 + i * 3;
@@ -384,6 +514,11 @@ fn parse_sof_marker(
             return Err(JpegError::UnexpectedEof);
         }
         let id = data[base] as u32;
+        if raw.iter().any(|&(other, ..)| other == id) {
+            return Err(JpegError::Invalid(format!(
+                "duplicate component id {id} in SOF"
+            )));
+        }
         let hv = data[base + 1];
         let h = (hv >> 4) as u32;
         let v = (hv & 0x0F) as u32;
@@ -425,6 +560,12 @@ fn parse_dqt_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
         return Err(JpegError::Invalid("DQT truncated".into()));
     }
 
+    if len < 3 {
+        return Err(JpegError::Invalid(
+            "DQT marker: no quantization table".into(),
+        ));
+    }
+
     let end = p + len;
     let mut cur = p + 2;
     let mut first = true;
@@ -434,6 +575,17 @@ fn parse_dqt_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
         cur += 1;
         let precision = (pq_tq >> 4) as u32;
         let index = (pq_tq & 0x0F) as u32;
+        if precision > 1 || index > 3 {
+            return Err(JpegError::Invalid(format!(
+                "DQT table byte 0x{pq_tq:02X}: precision must be 0 or 1, id at most 3"
+            )));
+        }
+        // The jbrd field `num_quant_tables` is 1 + u(2).
+        if jpeg.quant.len() >= 4 {
+            return Err(JpegError::Unsupported(
+                "more than 4 quantization tables (jbrd limit)".into(),
+            ));
+        }
 
         let mut values = [0i32; 64];
         for &natural_idx in &JPEG_NATURAL_ORDER {
@@ -449,6 +601,13 @@ fn parse_dqt_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
                 values[natural_idx] = u16::from_be_bytes([data[cur], data[cur + 1]]) as i32;
                 cur += 2;
             }
+        }
+
+        // A zero factor divides the DC offset and dequantization by zero.
+        if values.contains(&0) {
+            return Err(JpegError::Invalid(format!(
+                "DQT table {index} contains a zero quantization factor"
+            )));
         }
 
         if !first && let Some(last) = jpeg.quant.last_mut() {
@@ -483,21 +642,60 @@ fn parse_dht_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
     let mut cur = p + 2;
     let mut first = true;
 
+    if len == 2 {
+        // Empty DHT segment: useless but seen in the wild. The jbrd
+        // represents it as a table with all-zero counts that is the only
+        // entity of its segment (ISO/IEC 18181-2 A.2; libjxl `ProcessDHT`).
+        jpeg.huffman_code.push(JpegHuffmanCode {
+            is_ac: false,
+            id: 0,
+            is_last: true,
+            counts: [0; 16],
+            values: Vec::new(),
+        });
+        *pos = end;
+        return Ok(());
+    }
+
     while cur < end {
         let tc_th = data[cur];
         cur += 1;
-        let is_ac = (tc_th >> 4) != 0;
+        let tc = tc_th >> 4;
         let id = (tc_th & 0x0F) as u32;
+        if tc > 1 || id > 3 {
+            return Err(JpegError::Invalid(format!(
+                "DHT table byte 0x{tc_th:02X}: class must be 0 or 1, id at most 3"
+            )));
+        }
+        let is_ac = tc != 0;
 
         let mut counts = [0u32; 16];
         let mut total = 0u32;
-        for count in &mut counts {
+        // Kraft space in units of 2^-16; a code that over-allocates it is
+        // not a prefix code (libjxl "Invalid Huffman code lengths").
+        let mut space: i64 = 1 << 16;
+        for (i, count) in counts.iter_mut().enumerate() {
             if cur >= end {
                 return Err(JpegError::UnexpectedEof);
             }
             *count = data[cur] as u32;
             total += *count;
+            space -= i64::from(*count) << (15 - i);
             cur += 1;
+        }
+        // The jbrd stores one extra (sentinel) symbol per table; a DC table
+        // has at most 12 symbols and an AC table at most 256 (so the sum of
+        // the stored counts stays at most 257).
+        let max_symbols = if is_ac { 256 } else { 12 };
+        if total > max_symbols {
+            return Err(JpegError::Invalid(format!(
+                "DHT table {id}: {total} symbols, at most {max_symbols} allowed"
+            )));
+        }
+        if space < 0 {
+            return Err(JpegError::Invalid(format!(
+                "DHT table {id}: code lengths exceed the prefix-code space"
+            )));
         }
 
         if cur + total as usize > end {
@@ -505,6 +703,22 @@ fn parse_dht_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
         }
         let values = data[cur..cur + total as usize].to_vec();
         cur += total as usize;
+
+        // The jbrd forbids a value occurring twice and DC categories above 11.
+        let mut seen = [false; 256];
+        for &value in &values {
+            if seen[value as usize] {
+                return Err(JpegError::Invalid(format!(
+                    "DHT table {id}: duplicate Huffman value {value}"
+                )));
+            }
+            seen[value as usize] = true;
+            if !is_ac && value > 11 {
+                return Err(JpegError::Invalid(format!(
+                    "DHT DC table {id}: value {value} is not a DC category"
+                )));
+            }
+        }
 
         if !first && let Some(last) = jpeg.huffman_code.last_mut() {
             last.is_last = false;
@@ -815,13 +1029,8 @@ fn classify_app_marker(marker_byte: u8, payload: &[u8]) -> AppMarkerType {
                 AppMarkerType::Unknown
             }
         }
-        0xE2 => {
-            if payload.starts_with(b"ICC_PROFILE\0") {
-                AppMarkerType::Icc
-            } else {
-                AppMarkerType::Unknown
-            }
-        }
+        // APP2 `ICC_PROFILE` chunks are classified by `detect_icc_profile`
+        // once the whole sequence is known (only a canonical run is type 1).
         _ => AppMarkerType::Unknown,
     }
 }

@@ -497,42 +497,42 @@ pub fn collect_dc_tokens_wp_region_jpeg(
 
         for y in ch_start_by..ch_end_by {
             for x in ch_start_bx..ch_end_bx {
-                let actual = channel[y][x] as i32;
+                let actual = channel[y][x];
 
                 let w = if x > ch_start_bx {
-                    channel[y][x - 1] as i32
+                    channel[y][x - 1]
                 } else if y > ch_start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     0
                 };
                 let n = if y > ch_start_by {
-                    channel[y - 1][x] as i32
+                    channel[y - 1][x]
                 } else {
                     w
                 };
                 let nw = if x > ch_start_bx && y > ch_start_by {
-                    channel[y - 1][x - 1] as i32
+                    channel[y - 1][x - 1]
                 } else {
                     w
                 };
                 let ne = if x + 1 < ch_end_bx && y > ch_start_by {
-                    channel[y - 1][x + 1] as i32
+                    channel[y - 1][x + 1]
                 } else {
                     n
                 };
                 let ww = if x > ch_start_bx + 1 {
-                    channel[y][x - 2] as i32
+                    channel[y][x - 2]
                 } else {
                     w
                 };
                 let nn = if y > ch_start_by + 1 {
-                    channel[y - 2][x] as i32
+                    channel[y - 2][x]
                 } else {
                     n
                 };
                 let nee = if x + 2 < ch_end_bx && y > ch_start_by {
-                    channel[y - 1][x + 2] as i32
+                    channel[y - 1][x + 2]
                 } else {
                     ne
                 };

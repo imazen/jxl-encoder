@@ -817,6 +817,43 @@ mod tests {
         assert!(!predicted.is_empty());
     }
 
+    /// A profile with one unknown tag whose payload is incompressible.
+    fn profile_with_opaque_tag(total: usize) -> Vec<u8> {
+        let mut icc = vec![0u8; 128];
+        icc[..4].copy_from_slice(&(total as u32).to_be_bytes());
+        icc[8..12].copy_from_slice(&0x0210_0000u32.to_be_bytes());
+        icc[12..24].copy_from_slice(b"mntrRGB XYZ ");
+        icc[36..40].copy_from_slice(b"acsp");
+        icc.extend_from_slice(&1u32.to_be_bytes()); // one tag
+        let data_start = 128 + 4 + 12;
+        icc.extend_from_slice(b"zpad");
+        icc.extend_from_slice(&(data_start as u32).to_be_bytes());
+        icc.extend_from_slice(&((total - data_start) as u32).to_be_bytes());
+        icc.extend_from_slice(b"zpad\0\0\0\0");
+        icc.extend((icc.len()..total).map(|i| (i.wrapping_mul(31) % 251) as u8));
+        assert_eq!(icc.len(), total);
+        icc
+    }
+
+    /// Every decoder rejects a predicted stream more than 64 KiB longer than
+    /// the profile it encodes (libjxl `CheckPreamble`: `osize + 65536 <
+    /// enc_size` is "Malformed ICC"; jxl-rs and jxl-oxide `IccTooLarge`), so
+    /// the predictor must never expand a profile by that much, whatever its
+    /// contents or size (level 10 allows 2^28 bytes).
+    #[test]
+    fn predicted_stream_stays_within_the_decoders_size_bound() {
+        for total in [70_000usize, (1 << 22) + 70_000] {
+            let icc = profile_with_opaque_tag(total);
+            let enc = predict_icc(&icc).unwrap();
+            assert!(
+                enc.len() <= total + 65536,
+                "{total}-byte profile predicts to {} bytes (+{})",
+                enc.len(),
+                enc.len() as i64 - total as i64
+            );
+        }
+    }
+
     #[test]
     fn test_predict_icc_roundtrip_structure() {
         let mut icc = vec![0u8; 256];

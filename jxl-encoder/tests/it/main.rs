@@ -59,6 +59,7 @@ mod hdr_vdp2_loss;
 mod high_bit_depth_int;
 mod idct_parity;
 mod jbrd_roundtrip_conformance;
+mod jbrd_spec_validity;
 mod jpeg_cfl_reference;
 mod jpeg_gainmap;
 mod jpeg_public_api;
