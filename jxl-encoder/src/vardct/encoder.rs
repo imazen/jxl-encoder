@@ -2395,6 +2395,8 @@ pub struct VarDctEncoder {
     pub color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     /// Peak display luminance in nits for ToneMapping. Default 255.0 (SDR).
     pub intensity_target: f32,
+    /// Native display orientation; never changes the stored pixel order.
+    pub(crate) orientation: crate::Orientation,
     /// Minimum display luminance in nits for ToneMapping. Default 0.0.
     pub min_nits: f32,
     /// `ToneMapping.relative_to_max_display` (default `false`). When
@@ -2730,6 +2732,7 @@ impl Default for VarDctEncoder {
             source_gamma: None,
             color_encoding: None,
             intensity_target: 255.0,
+            orientation: crate::Orientation::Identity,
             min_nits: 0.0,
             relative_to_max_display: false,
             linear_below: 0.0,
@@ -2897,6 +2900,7 @@ impl VarDctEncoder {
             source_gamma: None,
             color_encoding: None,
             intensity_target: 255.0,
+            orientation: crate::Orientation::Identity,
             min_nits: 0.0,
             relative_to_max_display: false,
             linear_below: 0.0,

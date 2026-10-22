@@ -1224,6 +1224,7 @@ impl VarDctEncoder {
             width: display_width,
             height: display_height,
             metadata: ImageMetadata {
+                orientation: self.orientation,
                 bit_depth,
                 color_encoding,
                 extra_channels,

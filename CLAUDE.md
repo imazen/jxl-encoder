@@ -895,6 +895,14 @@ requires explicit verified `CJXL_PATH`/`DJXL_PATH`; resolving against live
 siblings or inheriting ancestor Cargo patches does not verify the pinned graph.
 
 
+### RESOLVED 2026-10-18: animation metadata lost native orientation
+
+The new metadata orientation reached still headers but animation headers
+retained Identity. The public regression reproduced requested tag 2 returning
+tag 1. Both animation writers now receive the same tag without changing their
+resource limits or stored pixels (`0ea6ed00`). `just native-orientation-check`
+checks all eight tags for still and single-frame animation inputs in both modes.
+
 ### RESOLVED 2026-09-24: explicit CLI strategy conflicted with lossless test contract
 
 Historical rejection is superseded by the approved lossless strategy wiring
@@ -1278,6 +1286,21 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 9. **Use vast.ai interruptible** — `--bid_price` is ~50-70% cheaper than on-demand; fleet already takes eviction hits handled by chunk-rescue. Reference: `scripts/zenjxl-tuning-sweep/launch_w44_216_fleet.sh` (env-toggleable via `INTERRUPTIBLE=0` for smoke pods).
 
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
+
+## Native orientation integration (2026-10-18)
+
+`ImageMetadata::with_orientation` sets the codestream orientation independently
+of EXIF container bytes. Both lossless and VarDCT writers must receive it; input
+sample order and coded dimensions stay unchanged. `just native-orientation-check`
+uses the isolated contract package so unrelated workspace path dependencies do
+not prevent API validation. The test requires the version-guarded libjxl v0.12
+reference in addition to the primary Rust decoder.
+
+The animation entry points accepting `ImageMetadata` must forward the same
+native tag to their file headers. The regression first reproduced orientation
+2 becoming 1. Both modes now pass all eight tags for still and single-frame
+animation inputs: stored samples remain unchanged, display transforms match,
+and libjxl v0.12 independently checks geometry and lossless display pixels.
 
 ## Known Bugs (ACTIVE)
 
