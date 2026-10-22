@@ -822,6 +822,26 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-22: Saturation and Absolute rendering intents wrote an undecodable colour header
+
+`ColorEncoding::write` emitted `rendering_intent` as a raw 2-bit field; the
+field is an enum and uses the same selector coding as the other enums in
+that header (`BitWriter::write_enum_default`, libjxl `visitor->Enum`).
+Perceptual (0) and Relative (1) produce identical bits under both codings,
+so every shipped default and every hash lock is unchanged. Saturation (2)
+and Absolute (3) produced a header jxl-rs rejects (`InvalidEnum(6,
+"RenderingIntent")`, measured on the old writer). Found by a
+container-permutation harness. It is the only colour-encoding writer in
+the crate; the readers in `api/container.rs` already parse it as an enum.
+Pinned by `headers::color_encoding::tests::
+every_rendering_intent_roundtrips_in_three_decoders`: lossless 64x32 and
+multi-group 300x260 frymire crops x all four intents; jxl-rs and jxl-oxide
+must report the intent, jxl-rs and djxl v0.12 must reproduce every sample,
+jxl-oxide must render. Fails on the old writer at the first Saturation cell.
+Note: the lossy VarDCT path still overrides any caller-set intent
+(`vardct/bitstream.rs`, `rendering_intent_libjxl_parity`), so only the
+lossless/modular path can emit Saturation or Absolute today.
+
 ### RESOLVED 2026-10-22: file-format (ISO/IEC 18181-2) audit — the JPEG transcode path hard-coded level 5, and the jbrd writer could emit data no decoder rebuilds
 
 Audit of the container and `jbrd` writers against the Part 2 text (the file

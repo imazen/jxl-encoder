@@ -717,7 +717,9 @@ impl ColorEncoding {
             self.rendering_intent,
             self.rendering_intent as u8
         );
-        writer.write(2, self.rendering_intent as u64)?;
+        // An enum field: Perceptual and Relative share their bits with a raw
+        // 2-bit write, but Saturation and Absolute need the enum selector.
+        writer.write_enum_default(self.rendering_intent as u32)?;
         crate::trace::debug_eprintln!("CENC [bit {}]: color_encoding done", writer.bits_written());
 
         Ok(())
@@ -802,6 +804,96 @@ mod tests {
                     };
                     assert_eq!((sample * 255.0).round() as u8, expected, "sample {i}");
                 }
+            }
+        }
+    }
+
+    /// Every rendering intent must reach both reference decoders, on a
+    /// single-group and a multi-group real-image crop. Saturation and
+    /// Absolute were once written as raw bits and rejected by both decoders.
+    #[test]
+    fn every_rendering_intent_roundtrips_in_three_decoders() {
+        use jxl::api::{JxlColorEncoding, JxlColorProfile, JxlDecoder, JxlDecoderOptions};
+        use jxl::api::{ProcessingResult, states};
+
+        let source = image::load_from_memory(include_bytes!("../../tests/images/frymire-srgb.png"))
+            .expect("decode real screenshot fixture")
+            .to_rgb8();
+        let intents = [
+            RenderingIntent::Perceptual,
+            RenderingIntent::Relative,
+            RenderingIntent::Saturation,
+            RenderingIntent::Absolute,
+        ];
+        for (w, h) in [(64u32, 32u32), (300, 260)] {
+            let pixels = image::imageops::crop_imm(&source, 0, 0, w, h)
+                .to_image()
+                .into_raw();
+            for intent in intents {
+                let encoding = ColorEncoding {
+                    rendering_intent: intent,
+                    ..ColorEncoding::srgb()
+                };
+                let encoded = crate::LosslessConfig::new()
+                    .encode_request(w, h, crate::PixelLayout::Rgb8)
+                    .with_color_encoding(encoding)
+                    .encode(&pixels)
+                    .unwrap();
+
+                let mut input = &encoded[..];
+                let mut decoder =
+                    JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+                let header = loop {
+                    match decoder.process(&mut input).unwrap() {
+                        ProcessingResult::Complete { result } => break result,
+                        ProcessingResult::NeedsMoreInput { fallback, .. } => {
+                            assert!(!input.is_empty(), "incomplete color header");
+                            decoder = fallback;
+                        }
+                    }
+                };
+                let JxlColorProfile::Simple(JxlColorEncoding::RgbColorSpace {
+                    rendering_intent,
+                    ..
+                }) = header.embedded_color_profile()
+                else {
+                    panic!("expected an RGB enum color encoding");
+                };
+                assert_eq!(
+                    *rendering_intent as u8, intent as u8,
+                    "jxl-rs intent {w}x{h} {intent:?}"
+                );
+
+                let oxide = jxl_oxide::JxlImage::builder()
+                    .read(std::io::Cursor::new(&encoded))
+                    .unwrap();
+                let jxl_oxide::color::ColourEncoding::Enum(oxide_color) =
+                    &oxide.image_header().metadata.colour_encoding
+                else {
+                    panic!("jxl-oxide: expected an enum color encoding");
+                };
+                assert_eq!(
+                    oxide_color.rendering_intent as u8, intent as u8,
+                    "jxl-oxide intent {w}x{h} {intent:?}"
+                );
+
+                for (name, decoded) in [
+                    ("jxl-rs", crate::test_helpers::decode_with_jxl_rs(&encoded)),
+                    ("djxl", crate::test_helpers::decode_with_djxl(&encoded)),
+                ] {
+                    let decoded = decoded.unwrap_or_else(|e| panic!("{name} {intent:?}: {e:?}"));
+                    assert_eq!((decoded.width, decoded.height), (w as usize, h as usize));
+                    for (i, &sample) in decoded.pixels.iter().enumerate() {
+                        assert_eq!(
+                            (sample * 255.0).round() as u8,
+                            pixels[i],
+                            "{name} {w}x{h} {intent:?} sample {i}"
+                        );
+                    }
+                }
+                oxide
+                    .render_frame(0)
+                    .unwrap_or_else(|e| panic!("jxl-oxide render {intent:?}: {e:?}"));
             }
         }
     }
