@@ -500,6 +500,7 @@ impl FrameEncoder {
             // Write patches section first (within the single TOC section)
             crate::vardct::patches::encode_patches_section(
                 patches,
+                num_extra_channels,
                 self.options.use_ans,
                 &mut section_writer,
             )?;
@@ -769,6 +770,13 @@ impl FrameEncoder {
         // Captured before `image_src` is dropped at the end of step 0 — the
         // sectioned-trees Auto gate below needs it after that point.
         let image_has_alpha = image.has_alpha;
+        // Extra channels beyond the colour set; the patches section carries a
+        // blend mode for each.
+        let num_extra_channels =
+            image
+                .channels
+                .len()
+                .saturating_sub(if image.is_grayscale { 1 } else { 3 });
         // Cooperative cancellation entry checkpoint for the lossless/modular
         // heavy path (#77 cross-codec cancellation note). Further checkpoints
         // sit before MA tree learning and per group below. No-op / byte-
@@ -1167,6 +1175,7 @@ impl FrameEncoder {
         if let Some(pd) = patches {
             crate::vardct::patches::encode_patches_section(
                 pd,
+                num_extra_channels,
                 self.options.use_ans,
                 &mut lf_global_writer,
             )?;
@@ -1582,7 +1591,12 @@ impl FrameEncoder {
         if tree_mode == TreeMode::Hybrid && all_picked_local {
             let mut alt = BitWriter::new();
             if let Some(pd) = patches {
-                crate::vardct::patches::encode_patches_section(pd, self.options.use_ans, &mut alt)?;
+                crate::vardct::patches::encode_patches_section(
+                    pd,
+                    num_extra_channels,
+                    self.options.use_ans,
+                    &mut alt,
+                )?;
             }
             super::section::write_local_trees_lf_global(
                 &mut alt,

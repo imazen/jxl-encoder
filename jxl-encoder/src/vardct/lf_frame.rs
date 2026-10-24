@@ -142,6 +142,7 @@ pub(crate) fn encode_lf_frame(
     ysize_blocks: usize,
     use_ans: bool,
     effort: u8,
+    num_extra_channels: usize,
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<([Vec<f32>; 3], [f32; 3])> {
@@ -229,7 +230,8 @@ pub(crate) fn encode_lf_frame(
     }
 
     // Build LfFrame header
-    let fh = FrameHeader::lf_frame(xsize_blocks as u32, ysize_blocks as u32, 1);
+    let mut fh = FrameHeader::lf_frame(xsize_blocks as u32, ysize_blocks as u32, 1);
+    fh.ec_upsampling = vec![1; num_extra_channels];
     fh.write(writer)?;
 
     // Build modular image with 3 channels [Y, X, B-Y]
@@ -250,7 +252,14 @@ pub(crate) fn encode_lf_frame(
     ch_x.vshift = 3;
     ch_by.hshift = 3;
     ch_by.vshift = 3;
-    let mod_channels = vec![ch_y, ch_x, ch_by];
+    let mut mod_channels = vec![ch_y, ch_x, ch_by];
+    // Zero placeholders for the image's extra channels: DC frames do not encode
+    // extra channels, but every frame must carry as many as the codestream
+    // metadata declares (libjxl enc_cache.cc does the same). Lossy encodes
+    // reject extra channels with dim_shift > 0, so these are full DC size.
+    for _ in 0..num_extra_channels {
+        mod_channels.push(Channel::from_vec(vec![0; n], xsize_blocks, ysize_blocks)?);
+    }
     let mut image = ModularImage {
         channels: mod_channels,
         bit_depth: 16, // Fixed-point representation

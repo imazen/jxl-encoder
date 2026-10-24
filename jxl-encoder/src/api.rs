@@ -7337,6 +7337,12 @@ impl<'a> EncodeRequest<'a> {
                 image.bit_depth,
                 cfg.ans(),
                 lossless_profile.patch_ref_tree_learning,
+                &file_header
+                    .metadata
+                    .extra_channels
+                    .iter()
+                    .map(|ec| ec.dim_shift)
+                    .collect::<Vec<_>>(),
                 &mut writer,
                 Some(budget),
             )
@@ -10002,6 +10008,12 @@ impl LosslessEncoder {
                     image.bit_depth,
                     cfg.ans(),
                     lossless_profile.patch_ref_tree_learning,
+                    &file_header
+                        .metadata
+                        .extra_channels
+                        .iter()
+                        .map(|ec| ec.dim_shift)
+                        .collect::<Vec<_>>(),
                     &mut writer,
                     Some(&budget),
                 )

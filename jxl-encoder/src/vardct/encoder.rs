@@ -6685,6 +6685,7 @@ impl VarDctEncoder {
                 &block_ctx_map,
                 None, // No learned tree in single-pass mode
                 None, // No patches in streaming mode
+                0,
                 None, // No splines in streaming mode
                 None, // No custom dc_quant in single-pass mode
                 &mut dc_global,
@@ -6835,6 +6836,7 @@ impl VarDctEncoder {
                 &block_ctx_map,
                 None, // No learned tree in single-pass mode
                 None, // No patches in streaming mode
+                0,
                 None, // No splines in streaming mode
                 None, // No custom dc_quant in single-pass mode
                 &mut dc_global,

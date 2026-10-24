@@ -836,13 +836,14 @@ the learner grow invalid nodes to its cap: a 259x133 RGBA e9 encode took 36 s
 probe that found this and the alpha-frame bugs below is described in its
 CHANGELOG.
 
-**Still open on main (found by the same probe, 2026-10-24):** `with_lf_frame`
-and patches on images with alpha write LF / patch-reference frames without the
-declared extra channel (rejected by jxl-rs and djxl v0.12 at every size);
-`release/0.3.x` commit "LF and patch-reference frames omitted the image's
-extra channels" has the libjxl-style placeholder fix. Main alone also fails
-64x32 RGB/Gray `with_lf_frame` encodes (jxl-rs `InvalidUintConfig`), which
-0.3.x encodes correctly.
+**Also fixed on main the same day (found by the same probe):** LF / patch
+reference frames omitted the image's extra channels (now zero placeholders,
+libjxl-style), and every `with_lf_frame` encode up to 128x64 was undecodable
+because a one-context entropy code wrote a context map decoders never read
+(regression from `0784632b`'s single-leaf AC-metadata tree, bisected). Pinned
+by `tests/it/aux_frames.rs`. Trap for future tests: crates.io jxl-oxide 0.12
+(used by 0.3.x tests) mis-reads some multi-group modular frames that jxl-rs
+and djxl accept; use jxl-rs + djxl v0.12 as the oracles.
 
 ### RESOLVED 2026-10-22: `with_progressive_dc` wrote an undecodable LF frame above 2048 px
 

@@ -21,6 +21,7 @@ mod animation;
 mod ans_roundtrip;
 mod auto_resample_strategy_gate;
 mod auto_splines;
+mod aux_frames;
 mod buffering_dispatch;
 mod buffering_enum;
 mod buttloop_recon_parity;

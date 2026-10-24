@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fixed: `with_lf_frame(true)` produced undecodable files for every image up to 128x64 (all efforts). Below ~320 AC-metadata samples the LF-frame VarDCT tree is a single leaf, so its entropy code has one context, and the ANS and prefix-code writers emitted a 3-bit context map that decoders never read for a single context. Both writers now omit it. Regression from the libjxl-exact merge (`0784632b`, single-leaf AC-metadata tree); bisected.
+- Fixed: `with_lf_frame(true)` and patches (lossy and lossless) on images with extra channels wrote LF / patch-reference frames without those channels and patch positions without per-extra-channel blend modes; jxl-rs and djxl v0.12 rejected every such file. The frames now carry zero-filled placeholder extra channels (each at its own `dim_shift`) and kNone blend modes, as libjxl does. Also on 0.3.2.
 - Fixed: lossless property quantisation could keep 256 thresholds while bucket indices are `u8`, so at e9 a sample above every threshold wrapped from bucket 256 to bucket 0 and landed on the wrong side of evaluated splits. Thresholds are now capped at 255 in both producers (`thresholds_from_sorted_unique`, `lloyd_max_thresholds`); all 76 hash/byte-lock and drift checks stay byte-identical. Found while backporting to 0.3.2, where it made a 259x133 RGBA e9 encode take 36 s.
 
 - JPEG transcode: the container now declares the codestream level it needs (a `jxll` box as the third box when the JPEG's ICC profile exceeds the level-5 cap of 2^22 bytes, or its pixel count 2^28 under a lifted `Limits::max_pixels`); the path used to hard-code level 5.

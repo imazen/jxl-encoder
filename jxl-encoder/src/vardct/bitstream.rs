@@ -1327,6 +1327,7 @@ impl VarDctEncoder {
         block_ctx_map: &BlockCtxMap,
         learned_tree_tokens: Option<&[(u32, u32)]>,
         patches: Option<&super::patches::PatchesData>,
+        num_extra_channels: usize,
         splines: Option<&super::splines::SplinesData>,
         dc_quant_custom: Option<[f32; 3]>,
         writer: &mut BitWriter,
@@ -1340,7 +1341,7 @@ impl VarDctEncoder {
         if let Some(pd) = patches {
             #[cfg(feature = "trace-bitstream")]
             let patch_start = writer.bits_written();
-            super::patches::encode_patches_section(pd, self.use_ans, writer)?;
+            super::patches::encode_patches_section(pd, num_extra_channels, self.use_ans, writer)?;
             #[cfg(feature = "trace-bitstream")]
             {
                 let patch_dict_bytes = (writer.bits_written() - patch_start).div_ceil(8);
@@ -2759,6 +2760,7 @@ impl VarDctEncoder {
                 self.distance,
                 self.use_ans,
                 self.profile.patch_ref_tree_learning,
+                &extras.iter().map(|e| e.info.dim_shift).collect::<Vec<_>>(),
                 writer,
                 self.budget.as_ref(),
             )?;
@@ -2853,6 +2855,7 @@ impl VarDctEncoder {
                 ysize_blocks,
                 self.use_ans,
                 self.effort,
+                extras.len(),
                 &mut writer,
                 self.budget.as_ref(),
             )?;
@@ -2879,6 +2882,7 @@ impl VarDctEncoder {
                 self.distance,
                 self.use_ans,
                 self.profile.patch_ref_tree_learning,
+                &extras.iter().map(|e| e.info.dim_shift).collect::<Vec<_>>(),
                 &mut writer,
                 self.budget.as_ref(),
             )?;
@@ -4516,6 +4520,7 @@ impl VarDctEncoder {
             &block_ctx_map,
             learned_tree_tokens.as_deref(),
             patches,
+            extras.len(),
             splines,
             dc_quant_custom,
             &mut dc_global,

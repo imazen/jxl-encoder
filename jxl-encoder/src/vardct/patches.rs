@@ -2566,6 +2566,7 @@ pub(crate) fn add_patches(
 /// ```
 pub(crate) fn encode_patches_section(
     patches: &PatchesData,
+    num_extra_channels: usize,
     use_ans: bool,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -2616,6 +2617,12 @@ pub(crate) fn encode_patches_section(
             // blend_mode = kAdd = 2 (always for no-alpha patches)
             tokens.push(Token::new(5, 2));
             // No alpha_channel or clamp fields for kAdd blend mode
+            // Decoders read one blend mode per extra channel after the colour
+            // one. kNone = 0 leaves the extra channel untouched and carries no
+            // alpha/clamp fields.
+            for _ in 0..num_extra_channels {
+                tokens.push(Token::new(5, 0));
+            }
 
             prev_x = pos.x;
             prev_y = pos.y;
@@ -3276,7 +3283,7 @@ pub(crate) fn trial_encode_ref_frame_bytes(
     let mut writer = BitWriter::new();
     // Trial encode always uses default (no tree learning) — tree learning is slower
     // and the cost estimate only needs to be approximate for the gating decision.
-    if encode_reference_frame(patches, distance, use_ans, false, &mut writer, None).is_ok() {
+    if encode_reference_frame(patches, distance, use_ans, false, &[], &mut writer, None).is_ok() {
         writer.zero_pad_to_byte();
         writer.bytes_written()
     } else {
@@ -3311,7 +3318,9 @@ pub(crate) fn trial_encode_ref_frame_bytes_lossless(
     use_ans: bool,
 ) -> usize {
     let mut writer = BitWriter::new();
-    if encode_reference_frame_rgb(patches, bit_depth, use_ans, false, &mut writer, None).is_ok() {
+    if encode_reference_frame_rgb(patches, bit_depth, use_ans, false, &[], &mut writer, None)
+        .is_ok()
+    {
         writer.zero_pad_to_byte();
         writer.bytes_written()
     } else {
@@ -3337,7 +3346,7 @@ pub(crate) fn trial_encode_dict_section_bytes(
     use_ans: bool,
 ) -> Option<usize> {
     let mut writer = BitWriter::new();
-    encode_patches_section(patches, use_ans, &mut writer).ok()?;
+    encode_patches_section(patches, 0, use_ans, &mut writer).ok()?;
     writer.zero_pad_to_byte();
     Some(writer.bytes_written())
 }
@@ -3355,6 +3364,7 @@ pub(crate) fn encode_reference_frame_rgb(
     bit_depth: u32,
     use_ans: bool,
     use_tree_learning: bool,
+    extra_channel_shifts: &[u32],
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
@@ -3382,6 +3392,7 @@ pub(crate) fn encode_reference_frame_rgb(
     // (enc_frame.cc:125-146) — small ref frames should not be split into
     // 256-pixel groups; that quadruples per-stream entropy overhead.
     fh.group_size_shift = patches_ref_group_size_shift(ref_w, ref_h);
+    fh.ec_upsampling = vec![1; extra_channel_shifts.len()];
 
     fh.write(writer)?;
 
@@ -3399,6 +3410,7 @@ pub(crate) fn encode_reference_frame_rgb(
         }
         channels.push(Channel::from_vec(data, ref_w, ref_h)?);
     }
+    push_placeholder_extra_channels(&mut channels, ref_w, ref_h, extra_channel_shifts)?;
 
     let image = ModularImage {
         channels,
@@ -3432,6 +3444,28 @@ pub(crate) fn encode_reference_frame_rgb(
     }
     encoder.encode_modular_body(&image, writer, None)?;
 
+    Ok(())
+}
+
+/// Append zero-filled placeholders for the image's extra channels to a patch
+/// reference frame. Patch frames do not encode extra-channel content, but every
+/// frame must carry as many extra channels as the codestream metadata declares
+/// (libjxl's `RoundtripPatchFrame` does the same). Each placeholder takes its
+/// channel's `dim_shift`, matching the size decoders expect.
+fn push_placeholder_extra_channels(
+    channels: &mut alloc::vec::Vec<crate::modular::channel::Channel>,
+    width: usize,
+    height: usize,
+    dim_shifts: &[u32],
+) -> Result<()> {
+    for &shift in dim_shifts {
+        let w = width.div_ceil(1usize << shift);
+        let h = height.div_ceil(1usize << shift);
+        let mut ch = crate::modular::channel::Channel::from_vec(alloc::vec![0; w * h], w, h)?;
+        ch.hshift = shift;
+        ch.vshift = shift;
+        channels.push(ch);
+    }
     Ok(())
 }
 
@@ -3521,6 +3555,7 @@ pub(crate) fn encode_reference_frame(
     distance: f32,
     use_ans: bool,
     use_tree_learning: bool,
+    extra_channel_shifts: &[u32],
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
@@ -3547,6 +3582,7 @@ pub(crate) fn encode_reference_frame(
     // (enc_frame.cc:125-146) — small ref frames should not be split into
     // 256-pixel groups; that quadruples per-stream entropy overhead.
     fh.group_size_shift = patches_ref_group_size_shift(ref_w, ref_h);
+    fh.ec_upsampling = vec![1; extra_channel_shifts.len()];
 
     #[cfg(feature = "trace-bitstream")]
     let ref_frame_start = writer.bits_written();
@@ -3610,11 +3646,12 @@ pub(crate) fn encode_reference_frame(
         ch_by.push(b_int - ch_y[i]);
     }
 
-    let mod_channels = vec![
+    let mut mod_channels = vec![
         Channel::from_vec(ch_y, ref_w, ref_h)?,
         Channel::from_vec(ch_x, ref_w, ref_h)?,
         Channel::from_vec(ch_by, ref_w, ref_h)?,
     ];
+    push_placeholder_extra_channels(&mut mod_channels, ref_w, ref_h, extra_channel_shifts)?;
     let image = ModularImage {
         channels: mod_channels,
         bit_depth: 16, // Fixed-point representation
