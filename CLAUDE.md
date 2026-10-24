@@ -822,6 +822,28 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-24: lossless property buckets wrapped at 256 thresholds (e9)
+
+Bucket indices are `u8` over `0..=thresholds.len()`, and the e9 default of
+256 property values let `thresholds_from_sorted_unique` / `lloyd_max_thresholds`
+keep 256 thresholds, so a sample above every threshold wrapped to bucket 0.
+`MAX_BUCKET_THRESHOLDS = 255` now caps both. All 76 hash/byte-lock and drift
+checks were byte-identical, so no locked cell reached 256 thresholds; pinned
+by `bucket_index_tests::quantize_prop_column_bucket_index_never_wraps`
+(fails on the old code: `v=256: bucket 0`). On the 0.3 line the same wrap made
+the learner grow invalid nodes to its cap: a 259x133 RGBA e9 encode took 36 s
+(0.41 s fixed). The 0.3.x maintenance line lives on `release/0.3.x`; the
+probe that found this and the alpha-frame bugs below is described in its
+CHANGELOG.
+
+**Still open on main (found by the same probe, 2026-10-24):** `with_lf_frame`
+and patches on images with alpha write LF / patch-reference frames without the
+declared extra channel (rejected by jxl-rs and djxl v0.12 at every size);
+`release/0.3.x` commit "LF and patch-reference frames omitted the image's
+extra channels" has the libjxl-style placeholder fix. Main alone also fails
+64x32 RGB/Gray `with_lf_frame` encodes (jxl-rs `InvalidUintConfig`), which
+0.3.x encodes correctly.
+
 ### RESOLVED 2026-10-22: `with_progressive_dc` wrote an undecodable LF frame above 2048 px
 
 `with_progressive_dc(1|2)` (and `with_lf_frame(true)`) on any image wider

@@ -2195,6 +2195,8 @@ fn lloyd_max_thresholds<T: PropScalar>(
     max_buckets: usize,
     stop: Option<&dyn enough::Stop>,
 ) -> Vec<i32> {
+    // Same `u8` bucket-index bound as `thresholds_from_sorted_unique`.
+    let max_buckets = max_buckets.min(MAX_BUCKET_THRESHOLDS);
     // Build empirical histogram. Range fits in (max_val - min_val + 1)
     // buckets; for the energy properties this is typically <= 4096 entries
     // (8-bit |N| / |W|) or <= 2*wp_max_error range (~512 entries).
@@ -3207,11 +3209,20 @@ impl DistinctPropertyValues {
 /// the thresholds that come out are bit-for-bit the ones the current
 /// props-array path produces. The 24 i32 property columns are ~1.14 GB of the
 /// ~2.07 GB 4K lossless e9 peak, so that is the remaining lever.
+/// Largest threshold count a property may keep. Bucket indices are stored
+/// as `u8` and range over `0..=thresholds.len()`, so 256 thresholds would
+/// wrap a sample above every threshold from bucket 256 to bucket 0, putting
+/// it on the wrong side of every split the learner evaluates.
+const MAX_BUCKET_THRESHOLDS: usize = u8::MAX as usize;
+
 fn thresholds_from_sorted_unique(
     mut unique_ascending: Vec<i32>,
     max_buckets: usize,
     step_mode: ThresholdStep,
 ) -> Option<Vec<i32>> {
+    // Bucket indices are `u8` over 0..=thresholds.len(), so at most 255
+    // thresholds fit; the e9 default of 256 wrapped the top bucket to 0.
+    let max_buckets = max_buckets.min(MAX_BUCKET_THRESHOLDS);
     if unique_ascending.len() <= 1 {
         return None;
     }
@@ -15918,6 +15929,42 @@ mod sectioned_probe_selector_tests {
                 "coverage {cov} added a predictor: {cur:?} not a subset of {prev:?}"
             );
             prev = cur;
+        }
+    }
+}
+
+#[cfg(test)]
+mod bucket_index_tests {
+    use super::quantize_prop_column;
+
+    /// Every sample's bucket index must bracket its value:
+    /// `ts[b-1] < v <= ts[b]`. Bucket indices are `u8`, so with the e9
+    /// default of 256 property values a sample above every threshold must
+    /// not wrap from bucket 256 to bucket 0.
+    #[test]
+    fn quantize_prop_column_bucket_index_never_wraps() {
+        for distinct in [257i32, 300, 1000] {
+            let props: Vec<i32> = (0..4096i32).map(|i| (i * 7919) % distinct).collect();
+            for prop_idx in [0usize, 4, 9] {
+                let (ts, bi) = quantize_prop_column(&props, prop_idx, 256, false, None);
+                assert!(!ts.is_empty(), "distinct={distinct}: no thresholds");
+                for (i, &b) in bi.iter().enumerate() {
+                    let (b, v) = (b as usize, props[i]);
+                    assert!(
+                        b <= ts.len(),
+                        "distinct={distinct}: bucket {b} > {}",
+                        ts.len()
+                    );
+                    assert!(
+                        b == 0 || ts[b - 1] < v,
+                        "distinct={distinct} v={v}: bucket {b} below"
+                    );
+                    assert!(
+                        b == ts.len() || v <= ts[b],
+                        "distinct={distinct} v={v}: bucket {b} above"
+                    );
+                }
+            }
         }
     }
 }
