@@ -359,7 +359,12 @@ impl TreeSamples {
     /// This is done once before tree building, replacing per-node binary_search
     /// and threshold_set allocation with a single upfront pass.
     fn pre_quantize(&self, params: &TreeLearningParams) -> PreQuantizedProps {
-        let max_buckets = params.max_property_values;
+        // Bucket indices are stored as `u8` and range over 0..=thresholds.len(),
+        // so at most 255 thresholds fit. The e9 default of 256 let a sample
+        // above every threshold wrap to bucket 0, which put it on the wrong
+        // side of the chosen split: the learner then grew invalid nodes up to
+        // the node cap and the validator's repair loop ran for tens of seconds.
+        let max_buckets = params.max_property_values.min(u8::MAX as usize);
         let n = self.num_samples;
         let total_props = self.total_num_properties();
         let mut threshold_sets = vec![Vec::new(); total_props];
@@ -2304,6 +2309,35 @@ fn traverse_with_props<'a>(tree: &'a Tree, props: &[i32]) -> &'a PropertyDecisio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every sample's bucket index must bracket its value:
+    /// `ts[b-1] < v <= ts[b]`. Bucket indices are `u8`, so with the e9
+    /// default of 256 property values a sample above every threshold used
+    /// to wrap from bucket 256 to bucket 0.
+    #[test]
+    fn pre_quantize_bucket_index_never_wraps() {
+        for distinct in [257i32, 300, 1000] {
+            let n = 4096usize;
+            let mut samples = TreeSamples::new();
+            samples.num_samples = n;
+            for p in 0..samples.props.len() {
+                samples.props[p] = (0..n).map(|i| (i as i32 * 7919) % distinct).collect();
+            }
+            let params = TreeLearningParams::for_effort(9);
+            assert_eq!(params.max_property_values, 256);
+            let pq = samples.pre_quantize(&params);
+            for &p in &params.properties {
+                let ts = &pq.threshold_sets[p];
+                assert!(!ts.is_empty(), "distinct={distinct} prop {p}: no thresholds");
+                for (i, &b) in pq.bucket_indices[p].iter().enumerate() {
+                    let (b, v) = (b as usize, samples.props[p][i]);
+                    assert!(b <= ts.len(), "distinct={distinct} prop {p}: bucket {b} > {}", ts.len());
+                    assert!(b == 0 || ts[b - 1] < v, "distinct={distinct} prop {p} v={v}: bucket {b} below");
+                    assert!(b == ts.len() || v <= ts[b], "distinct={distinct} prop {p} v={v}: bucket {b} above");
+                }
+            }
+        }
+    }
     use crate::modular::channel::ModularImage;
 
     #[test]
