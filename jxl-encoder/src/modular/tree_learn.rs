@@ -1609,11 +1609,17 @@ pub fn compute_best_tree_with_multipliers(
     tree
 }
 
-/// Padded histogram size for count_increase: next power of 2 above typical
-/// histogram_size (~56 for 8-bit, HybridUint {4,1,2}). Using a power-of-2
-/// stride with bitmask indexing eliminates bounds checks: `tok & HISTO_MASK`
-/// is guaranteed < HISTO_PADDED. Set to 128 for safety margin.
-const HISTO_PADDED: usize = 128;
+/// Padded histogram size for `count_increase`: power-of-2 stride above the
+/// maximum token `GATHER_HYBRID_UINT.encode` can produce. Bitmask indexing
+/// (`tok & HISTO_MASK`) is bounds-check-free given `tok < HISTO_PADDED`.
+///
+/// Bound derivation for `GATHER_HYBRID_UINT { split=16, m=1, l=2 }`:
+/// `token = 16 + 8·n_extra + 4·token_shift + low_bits`. With u32 input,
+/// `value_shifted ≤ 2^30 − 1`, `value_bits ≤ 30`, `n ≤ 28`, `n_extra ≤ 27`,
+/// so `token ≤ 16 + 216 + 4 + 3 = 239`. The previous size (128) was
+/// reachable past via RCT/Squeeze-amplified 16-bit residuals — closed
+/// by the bump to 256 (security audit H3).
+const HISTO_PADDED: usize = 256;
 const HISTO_MASK: usize = HISTO_PADDED - 1;
 
 /// Pre-allocated workspace for find_best_split, reused across calls.
@@ -1639,12 +1645,9 @@ struct SplitWorkspace {
 
 impl SplitWorkspace {
     fn new(max_count: usize, histogram_size: usize, max_buckets: usize) -> Self {
-        assert!(
-            histogram_size <= HISTO_PADDED,
-            "histogram_size {} exceeds HISTO_PADDED {}",
-            histogram_size,
-            HISTO_PADDED
-        );
+        // Provable: `histogram_size` derives from `GATHER_HYBRID_UINT.encode`
+        // tokens, max 239 for any u32 input (see HISTO_PADDED comment).
+        debug_assert!(histogram_size <= HISTO_PADDED);
         Self {
             count_increase: vec![0u32; max_buckets * HISTO_PADDED],
             extra_bits_increase: vec![0u64; max_buckets],
@@ -2454,6 +2457,35 @@ mod tests {
         props[0] = 1;
         let leaf = traverse_with_spec_props(&tree, &props);
         assert_eq!(leaf.predictor, Predictor::Gradient);
+    }
+
+    #[test]
+    fn split_workspace_handles_boundary_histogram_size() {
+        // HISTO_PADDED = 256 covers the max token (239) the GATHER_HYBRID_UINT
+        // config can produce; this confirms the workspace constructs at the cap.
+        let _ws = SplitWorkspace::new(8, HISTO_PADDED, 2);
+        let _ws = SplitWorkspace::new(8, HISTO_PADDED - 1, 2);
+        let _ws = SplitWorkspace::new(8, 1, 2);
+    }
+
+    #[test]
+    fn gather_hybrid_uint_token_bound() {
+        // Proof companion to HISTO_PADDED's bound derivation: any u32 input
+        // produces a token <= 239, which fits in a u8 without saturation.
+        let probes: [u32; 8] = [
+            0,
+            15,
+            16,
+            (1u32 << 17) - 2, // max packed for ±65535 (16-bit pixel residual)
+            (1u32 << 20),
+            (1u32 << 25),
+            (1u32 << 30),
+            u32::MAX,
+        ];
+        for v in probes {
+            let (token, _, _) = GATHER_HYBRID_UINT.encode(v);
+            assert!(token <= 239, "token {token} exceeded 239 for input {v}");
+        }
     }
 
     #[test]
