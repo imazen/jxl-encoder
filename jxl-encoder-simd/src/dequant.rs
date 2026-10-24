@@ -418,7 +418,7 @@ fn neon_dequant_4(
 ) -> magetypes::simd::f32x4 {
     use magetypes::simd::f32x4;
 
-    let q_f = f32x4::from_i32x4(q_int);
+    let q_f = f32x4::from_i32x4(token, q_int);
     let abs_q = q_f.abs();
 
     let sign = f32x4::blend(q_f.simd_ge(zero_f), one_f, neg_one_f);
@@ -560,7 +560,7 @@ fn wasm128_dequant_4(
 ) -> magetypes::simd::f32x4 {
     use magetypes::simd::f32x4;
 
-    let q_f = f32x4::from_i32x4(q_int);
+    let q_f = f32x4::from_i32x4(token, q_int);
     let abs_q = q_f.abs();
 
     let sign = f32x4::blend(q_f.simd_ge(zero_f), one_f, neg_one_f);

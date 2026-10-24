@@ -138,22 +138,22 @@ pub fn transpose_8x8_neon(token: archmage::NeonToken, input: &[f32], output: &mu
     use magetypes::simd::f32x4;
 
     // Load 8 rows as pairs of f32x4 (lo = cols 0-3, hi = cols 4-7)
-    let r0_lo = f32x4::from_slice(token, &input[0..]).raw();
-    let r0_hi = f32x4::from_slice(token, &input[4..]).raw();
-    let r1_lo = f32x4::from_slice(token, &input[8..]).raw();
-    let r1_hi = f32x4::from_slice(token, &input[12..]).raw();
-    let r2_lo = f32x4::from_slice(token, &input[16..]).raw();
-    let r2_hi = f32x4::from_slice(token, &input[20..]).raw();
-    let r3_lo = f32x4::from_slice(token, &input[24..]).raw();
-    let r3_hi = f32x4::from_slice(token, &input[28..]).raw();
-    let r4_lo = f32x4::from_slice(token, &input[32..]).raw();
-    let r4_hi = f32x4::from_slice(token, &input[36..]).raw();
-    let r5_lo = f32x4::from_slice(token, &input[40..]).raw();
-    let r5_hi = f32x4::from_slice(token, &input[44..]).raw();
-    let r6_lo = f32x4::from_slice(token, &input[48..]).raw();
-    let r6_hi = f32x4::from_slice(token, &input[52..]).raw();
-    let r7_lo = f32x4::from_slice(token, &input[56..]).raw();
-    let r7_hi = f32x4::from_slice(token, &input[60..]).raw();
+    let r0_lo = f32x4::from_slice(token, &input[0..]).into_repr();
+    let r0_hi = f32x4::from_slice(token, &input[4..]).into_repr();
+    let r1_lo = f32x4::from_slice(token, &input[8..]).into_repr();
+    let r1_hi = f32x4::from_slice(token, &input[12..]).into_repr();
+    let r2_lo = f32x4::from_slice(token, &input[16..]).into_repr();
+    let r2_hi = f32x4::from_slice(token, &input[20..]).into_repr();
+    let r3_lo = f32x4::from_slice(token, &input[24..]).into_repr();
+    let r3_hi = f32x4::from_slice(token, &input[28..]).into_repr();
+    let r4_lo = f32x4::from_slice(token, &input[32..]).into_repr();
+    let r4_hi = f32x4::from_slice(token, &input[36..]).into_repr();
+    let r5_lo = f32x4::from_slice(token, &input[40..]).into_repr();
+    let r5_hi = f32x4::from_slice(token, &input[44..]).into_repr();
+    let r6_lo = f32x4::from_slice(token, &input[48..]).into_repr();
+    let r6_hi = f32x4::from_slice(token, &input[52..]).into_repr();
+    let r7_lo = f32x4::from_slice(token, &input[56..]).into_repr();
+    let r7_hi = f32x4::from_slice(token, &input[60..]).into_repr();
 
     // Transpose quadrant A (rows 0-3, cols 0-3) → output rows 0-3, cols 0-3
     let (a0, a1, a2, a3) = transpose_4x4_neon(token, r0_lo, r1_lo, r2_lo, r3_lo);
@@ -166,22 +166,22 @@ pub fn transpose_8x8_neon(token: archmage::NeonToken, input: &[f32], output: &mu
 
     // Store: output row i = [A^T row i | C^T row i] for i=0..3
     //        output row i = [B^T row (i-4) | D^T row (i-4)] for i=4..7
-    f32x4::from_float32x4_t(token, a0).store((&mut output[0..4]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, c0).store((&mut output[4..8]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, a1).store((&mut output[8..12]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, c1).store((&mut output[12..16]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, a2).store((&mut output[16..20]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, c2).store((&mut output[20..24]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, a3).store((&mut output[24..28]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, c3).store((&mut output[28..32]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, b0).store((&mut output[32..36]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, d0).store((&mut output[36..40]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, b1).store((&mut output[40..44]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, d1).store((&mut output[44..48]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, b2).store((&mut output[48..52]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, d2).store((&mut output[52..56]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, b3).store((&mut output[56..60]).try_into().unwrap());
-    f32x4::from_float32x4_t(token, d3).store((&mut output[60..64]).try_into().unwrap());
+    f32x4::from_repr(token, a0).store((&mut output[0..4]).try_into().unwrap());
+    f32x4::from_repr(token, c0).store((&mut output[4..8]).try_into().unwrap());
+    f32x4::from_repr(token, a1).store((&mut output[8..12]).try_into().unwrap());
+    f32x4::from_repr(token, c1).store((&mut output[12..16]).try_into().unwrap());
+    f32x4::from_repr(token, a2).store((&mut output[16..20]).try_into().unwrap());
+    f32x4::from_repr(token, c2).store((&mut output[20..24]).try_into().unwrap());
+    f32x4::from_repr(token, a3).store((&mut output[24..28]).try_into().unwrap());
+    f32x4::from_repr(token, c3).store((&mut output[28..32]).try_into().unwrap());
+    f32x4::from_repr(token, b0).store((&mut output[32..36]).try_into().unwrap());
+    f32x4::from_repr(token, d0).store((&mut output[36..40]).try_into().unwrap());
+    f32x4::from_repr(token, b1).store((&mut output[40..44]).try_into().unwrap());
+    f32x4::from_repr(token, d1).store((&mut output[44..48]).try_into().unwrap());
+    f32x4::from_repr(token, b2).store((&mut output[48..52]).try_into().unwrap());
+    f32x4::from_repr(token, d2).store((&mut output[52..56]).try_into().unwrap());
+    f32x4::from_repr(token, b3).store((&mut output[56..60]).try_into().unwrap());
+    f32x4::from_repr(token, d3).store((&mut output[60..64]).try_into().unwrap());
 }
 
 /// NEON 4x4 transpose using vtrn + 64-bit lane swap.

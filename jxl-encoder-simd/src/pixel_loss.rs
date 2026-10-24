@@ -240,9 +240,9 @@ pub fn pixel_domain_loss_neon(
             let m2_v = masked_v * masked_v;
 
             // Convert f32x4 m2 to two f64x2 vectors
-            let m2_raw = m2_v.raw();
-            let m2_lo = f64x2::from_float64x2_t(token, vcvt_f64_f32(vget_low_f32(m2_raw)));
-            let m2_hi = f64x2::from_float64x2_t(token, vcvt_high_f64_f32(m2_raw));
+            let m2_raw = m2_v.into_repr();
+            let m2_lo = f64x2::from_repr(token, vcvt_f64_f32(vget_low_f32(m2_raw)));
+            let m2_hi = f64x2::from_repr(token, vcvt_high_f64_f32(m2_raw));
 
             // m4 = m2 * m2, m8 = m4 * m4 (in f64)
             let m4_lo = m2_lo * m2_lo;
@@ -303,11 +303,11 @@ pub fn pixel_domain_loss_wasm128(
             let m2_v = masked_v * masked_v;
 
             // Convert f32x4 m2 to two f64x2 vectors via WASM intrinsics
-            let m2_raw = m2_v.raw();
-            let m2_lo = f64x2::from_v128(token, f64x2_promote_low_f32x4(m2_raw));
+            let m2_raw = m2_v.into_repr();
+            let m2_lo = f64x2::from_repr(token, f64x2_promote_low_f32x4(m2_raw));
             // Shuffle high pair to low position, then promote
             let high_shuffled = i32x4_shuffle::<2, 3, 0, 1>(m2_raw, m2_raw);
-            let m2_hi = f64x2::from_v128(token, f64x2_promote_low_f32x4(high_shuffled));
+            let m2_hi = f64x2::from_repr(token, f64x2_promote_low_f32x4(high_shuffled));
 
             // m4 = m2 * m2, m8 = m4 * m4 (in f64)
             let m4_lo = m2_lo * m2_lo;
