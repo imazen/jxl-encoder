@@ -467,6 +467,14 @@ fn skip_entropy_data(data: &[u8], pos: &mut usize) {
     }
 }
 
+/// Block count and coefficient-buffer length for a JPEG component, computed
+/// with checked `usize` arithmetic. Returns `None` on overflow.
+fn checked_coeff_len(width_in_blocks: usize, height_in_blocks: usize) -> Option<(usize, usize)> {
+    let num_blocks = width_in_blocks.checked_mul(height_in_blocks)?;
+    let coeff_len = num_blocks.checked_mul(64)?;
+    Some((num_blocks, coeff_len))
+}
+
 /// Extract DCT coefficients using zenjpeg's decoder.
 fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> {
     use zenjpeg::decoder::DecodeConfig;
@@ -488,8 +496,29 @@ fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> 
     // Copy coefficients from zenjpeg's zigzag format to our natural-order format
     for (i, zen_comp) in decoded.components.iter().enumerate() {
         let comp = &mut jpeg.components[i];
-        let num_blocks = (comp.width_in_blocks * comp.height_in_blocks) as usize;
-        comp.coeffs = vec![0i16; num_blocks * 64];
+        // SOF dims are attacker-controlled (each `*_in_blocks` up to ~983025),
+        // so `wb * hb` overflows `u32` and `* 64` overflows `usize` on 32-bit.
+        // A wrapped count would size `comp.coeffs` short and make the zigzag
+        // copy below read out of bounds, so a malformed SOF must error.
+        let (num_blocks, coeff_len) = checked_coeff_len(
+            comp.width_in_blocks as usize,
+            comp.height_in_blocks as usize,
+        )
+        .ok_or_else(|| {
+            JpegError::Invalid(format!(
+                "component {i}: coefficient count overflow ({} x {} blocks)",
+                comp.width_in_blocks, comp.height_in_blocks
+            ))
+        })?;
+        // The zigzag copy indexes `zen_comp.coeffs` by block, so a shorter
+        // zenjpeg buffer (marker scan inconsistent with decode) would read OOB.
+        if zen_comp.coeffs.len() < coeff_len {
+            return Err(JpegError::Invalid(format!(
+                "component {i}: zenjpeg decoded {} coefficients, SOF implies {coeff_len}",
+                zen_comp.coeffs.len()
+            )));
+        }
+        comp.coeffs = vec![0i16; coeff_len];
 
         for blk in 0..num_blocks {
             let src_base = blk * 64;

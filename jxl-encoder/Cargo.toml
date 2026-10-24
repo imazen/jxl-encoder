@@ -28,7 +28,7 @@ thiserror = { version = "2.0", default-features = false }
 jxl_simd = { package = "jxl-encoder-simd", version = "0.3.0", path = "../jxl-encoder-simd", default-features = false }
 archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
 rayon = { version = "1.10", optional = true }
-zenjpeg = { version = "0.7.1", default-features = false, features = ["decoder"], optional = true }
+zenjpeg = { version = "0.8.4", default-features = false, features = ["decoder"], optional = true }
 brotli = { version = "8.0", default-features = false, features = ["std"], optional = true }
 # Optional dependencies for butteraugli-loop and rate-control features
 jxl-oxide = { version = "0.12.5", default-features = false, optional = true }
