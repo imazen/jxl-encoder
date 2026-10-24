@@ -781,6 +781,11 @@ struct ZensimLoopConfig {
     secant: Option<SecantGuards>,
     /// `JXL_ZENSIM_FDPROBE=seq` — the legacy per-probe FD gradient path.
     fd_gradient_sequential: bool,
+    /// `JXL_ZENSIM_GUIDED_COARSE` — zensim's opt-in guided, mass-conserving
+    /// redistribution of coarse-scale diffmap contributions (E-JBU,
+    /// `DiffmapOptions::guided_coarse_redistribution`). Default off: the
+    /// trained diffmap replicates each coarse cell uniformly.
+    guided_coarse: bool,
 }
 
 impl Default for ZensimLoopConfig {
@@ -806,6 +811,7 @@ impl Default for ZensimLoopConfig {
             ctrl_clamp: CTRL_CLAMP_DEFAULT,
             secant: Some(SecantGuards::default()),
             fd_gradient_sequential: false,
+            guided_coarse: false,
         }
     }
 }
@@ -856,6 +862,7 @@ impl ZensimLoopConfig {
                 .unwrap_or(true)
                 .then(SecantGuards::from_env),
             fd_gradient_sequential: env_str("JXL_ZENSIM_FDPROBE").is_some_and(|v| v == "seq"),
+            guided_coarse: env_flag("JXL_ZENSIM_GUIDED_COARSE"),
         }
     }
 
@@ -1757,7 +1764,7 @@ impl VarDctEncoder {
             include_hf: params.include_hf,
             masking_strength: params.masking_strength,
             sqrt: params.sqrt,
-            guided_coarse_redistribution: false,
+            guided_coarse_redistribution: cfg.guided_coarse,
         };
 
         // Deviation bounds (same as butteraugli loop).
@@ -2994,6 +3001,7 @@ mod config_tests {
         assert!(d.s4_eps_prior);
         assert!(!d.emit_best);
         assert!(!d.singlepass);
+        assert!(!d.guided_coarse);
         assert!(d.map_arm.is_none());
         // Secant ON by default, with the two FITTED floors.
         let g = d.secant.expect("secant is ON by default");
