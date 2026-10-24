@@ -549,7 +549,23 @@ impl HashChain {
     {
         let wpos = pos & self.window_mask;
         let hashval = self.get_hash(pos);
-        let mut hashpos = self.chain[wpos];
+        // SECURITY: every chain follow masks hashpos with window_mask
+        // before using it as an index into window-sized arrays
+        // (`val`, `zeros`, `chain`, `chainz`). The chain arrays are
+        // initialized with `0..window_size` self-references and only
+        // ever assigned `wpos as u32` values in `update()`, so under
+        // a normal call sequence the values stored are always
+        // in-range. But synthetic / pathological inputs (e.g. tiny
+        // ~96 px gradient renders observed in v09 sweep) can send
+        // `chain[idx]` past window_size during the cost-estimator
+        // bootstrap pass that runs against a fake `Lz77Params` —
+        // the stored u32 ends up larger than the eventual real
+        // `window_size`. Without the mask, that index becomes a
+        // panic and a remote-input DoS vector. Masking is cheap
+        // (one AND per follow) and matches libjxl C's behavior of
+        // treating chain values as window-modular positions.
+        let mask = self.window_mask as u32;
+        let mut hashpos = self.chain[wpos] & mask;
 
         let mut prev_dist = 0i32;
         let end = (pos + self.max_length).min(self.size);
@@ -611,22 +627,26 @@ impl HashChain {
                 break;
             }
 
-            // Follow chain
+            // Follow chain. Mask every loaded chain pointer with
+            // window_mask before using it as an index — see the
+            // SECURITY comment at the top of this fn for why.
             if self.numzeros >= 3 && best_len > self.numzeros as usize {
                 // Use zero-run chain for efficiency
-                if hashpos == self.chainz[hashpos as usize] {
+                let next = self.chainz[hashpos as usize] & mask;
+                if hashpos == next {
                     break;
                 }
-                hashpos = self.chainz[hashpos as usize];
+                hashpos = next;
                 if self.zeros[hashpos as usize] != self.numzeros {
                     break;
                 }
             } else {
                 // Use regular hash chain
-                if hashpos == self.chain[hashpos as usize] {
+                let next = self.chain[hashpos as usize] & mask;
+                if hashpos == next {
                     break;
                 }
-                hashpos = self.chain[hashpos as usize];
+                hashpos = next;
                 if self.val[hashpos as usize] != hashval as i32 {
                     // Outdated hash value
                     break;
