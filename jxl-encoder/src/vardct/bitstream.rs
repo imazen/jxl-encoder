@@ -2147,12 +2147,20 @@ impl VarDctEncoder {
                 dc_quant_custom,
                 &mut dc_global,
             )?;
-            // Multi-group alpha: write empty modular global sub-bitstream.
-            // Alpha channels are NOT meta_or_small for >256px images, so no data here.
-            // The decoder still reads the GroupHeader + tree for the global section.
-            if alpha.is_some() {
-                Self::write_modular_empty_global(&mut dc_global)?;
+            // Channel placement follows the image size, not the TOC layout: a
+            // single-group image (<=256x256) keeps alpha in LfGlobal even when
+            // progressive AC forces separate sections. Larger images write an
+            // empty modular global sub-bitstream (alpha is not meta_or_small)
+            // and carry alpha in the pass groups.
+            let alpha_in_global = num_groups == 1;
+            if let Some(alpha_data) = &alpha {
+                if alpha_in_global {
+                    Self::write_modular_alpha_global(alpha_data, width, height, &mut dc_global)?;
+                } else {
+                    Self::write_modular_empty_global(&mut dc_global)?;
+                }
             }
+            let group_alpha = if alpha_in_global { None } else { alpha };
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
@@ -2197,7 +2205,7 @@ impl VarDctEncoder {
                             &ac_section_tokens_per_pass[pass][group_idx],
                             &ac_built_codes[pass],
                             ac_lz77_params_per_pass[pass].as_ref(),
-                            alpha,
+                            group_alpha,
                             is_last_pass,
                             group_idx,
                             xsize_groups,
