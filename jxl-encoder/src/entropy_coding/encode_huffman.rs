@@ -704,7 +704,9 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
     #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
 
-    if code.num_contexts == 0 {
+    // Zero or one context: no context map in the bitstream (decoders read one
+    // only for two or more contexts; see `write_context_map_for_ans`).
+    if code.num_contexts <= 1 {
         return Ok(());
     }
 

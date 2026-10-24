@@ -1173,6 +1173,14 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
 /// context map is large and repetitive (e.g. 1485 AC contexts with 8 histograms:
 /// simple = 4455 bits, Huffman+MTF ≈ 800 bits).
 fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
+    // A single-context code has no context map in the bitstream: decoders
+    // only read one when there are two or more contexts (libjxl calls
+    // `EncodeContextMap` only for `context_map.size() > 1`). Writing the 3-bit
+    // simple map here desynchronised every reader, which is what the
+    // single-leaf AC-metadata tree in an LF-frame encode produced.
+    if code.context_map.len() <= 1 {
+        return Ok(());
+    }
     let num_histograms = code.histograms.len();
 
     if num_histograms == 1 {
