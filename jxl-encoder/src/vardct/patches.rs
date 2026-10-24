@@ -212,6 +212,10 @@ pub(crate) struct PatchesData {
     pub ref_width: usize,
     /// Reference frame height.
     pub ref_height: usize,
+    /// Extra channels declared by the image (alpha). Every frame must carry
+    /// them, so the reference frame gets zero-filled placeholders and each
+    /// patch position a blend mode per extra channel. Set by the caller.
+    pub num_extra_channels: usize,
 }
 
 impl PatchesData {
@@ -1247,6 +1251,7 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
         ref_image,
         ref_width,
         ref_height,
+        num_extra_channels: 0,
     })
 }
 
@@ -1396,6 +1401,12 @@ pub(crate) fn encode_patches_section(
             // blend_mode = kAdd = 2 (always for no-alpha patches)
             tokens.push(Token::new(5, 2));
             // No alpha_channel or clamp fields for kAdd blend mode
+            // One blend mode per extra channel follows (decoders read
+            // num_extra_channels + 1 modes per position). kNone = 0 leaves the
+            // extra channel untouched and has no alpha/clamp fields.
+            for _ in 0..patches.num_extra_channels {
+                tokens.push(Token::new(5, 0));
+            }
 
             prev_x = pos.x;
             prev_y = pos.y;
@@ -1700,6 +1711,7 @@ pub(crate) fn encode_reference_frame_rgb(
     fh.epf_iters = 0;
     fh.width = ref_w as u32;
     fh.height = ref_h as u32;
+    fh.ec_upsampling = vec![1; patches.num_extra_channels];
 
     fh.write(writer)?;
 
@@ -1714,12 +1726,18 @@ pub(crate) fn encode_reference_frame_rgb(
         }
         channels.push(Channel::from_vec(data, ref_w, ref_h)?);
     }
+    // Zero placeholders for the image's extra channels (libjxl does the same:
+    // patch frames do not encode extra channels, but every frame must carry
+    // as many as the codestream metadata declares).
+    for _ in 0..patches.num_extra_channels {
+        channels.push(Channel::from_vec(vec![0; n], ref_w, ref_h)?);
+    }
 
     let image = ModularImage {
         channels,
         bit_depth,
         is_grayscale: false,
-        has_alpha: false,
+        has_alpha: patches.num_extra_channels > 0,
     };
 
     // Use FrameEncoder for body — handles single/multi-group automatically.
@@ -1779,6 +1797,7 @@ pub(crate) fn encode_reference_frame(
     // Set dimensions to the reference frame size (via have_crop mechanism)
     fh.width = ref_w as u32;
     fh.height = ref_h as u32;
+    fh.ec_upsampling = vec![1; patches.num_extra_channels];
 
     #[cfg(feature = "trace-bitstream")]
     let ref_frame_start = writer.bits_written();
@@ -1830,16 +1849,20 @@ pub(crate) fn encode_reference_frame(
         ch_by.push(b_int - ch_y[i]);
     }
 
-    let mod_channels = vec![
+    let mut mod_channels = vec![
         Channel::from_vec(ch_y, ref_w, ref_h)?,
         Channel::from_vec(ch_x, ref_w, ref_h)?,
         Channel::from_vec(ch_by, ref_w, ref_h)?,
     ];
+    // Zero placeholders for the image's extra channels (see the RGB variant).
+    for _ in 0..patches.num_extra_channels {
+        mod_channels.push(Channel::from_vec(vec![0; n], ref_w, ref_h)?);
+    }
     let image = ModularImage {
         channels: mod_channels,
         bit_depth: 16, // Fixed-point representation
         is_grayscale: false,
-        has_alpha: false,
+        has_alpha: patches.num_extra_channels > 0,
     };
 
     // Use FrameEncoder for body — handles single/multi-group automatically.

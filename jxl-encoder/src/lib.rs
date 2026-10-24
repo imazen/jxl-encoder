@@ -107,6 +107,10 @@ mod api_tests;
 #[path = "issue68_regression_tests.rs"]
 mod issue68_regression_tests;
 
+#[cfg(all(test, not(target_family = "wasm")))]
+#[path = "alpha_frames_regression_tests.rs"]
+mod alpha_frames_regression_tests;
+
 #[cfg(all(test, feature = "__expert"))]
 #[path = "effort_expert_tests.rs"]
 mod effort_expert_tests;

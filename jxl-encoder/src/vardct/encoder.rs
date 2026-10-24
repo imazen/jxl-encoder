@@ -414,6 +414,7 @@ impl VarDctEncoder {
         // Quantize ref_image so subtract/add use the same values the decoder will reconstruct.
         if let Some(ref mut pd) = patches_data {
             pd.quantize_ref_image();
+            pd.num_extra_channels = usize::from(alpha.is_some());
         }
         if let Some(ref pd) = patches_data {
             let mut xyb = [

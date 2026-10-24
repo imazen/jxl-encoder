@@ -1471,6 +1471,7 @@ impl VarDctEncoder {
                 ysize_blocks,
                 self.use_ans,
                 self.effort,
+                usize::from(has_alpha),
                 &mut writer,
             )?;
             writer.zero_pad_to_byte();

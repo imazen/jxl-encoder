@@ -1805,6 +1805,10 @@ impl<'a> EncodeRequest<'a> {
                 num_channels,
                 image.bit_depth,
             )
+            .map(|mut pd| {
+                pd.num_extra_channels = usize::from(image.has_alpha);
+                pd
+            })
         } else {
             None
         };
@@ -3043,6 +3047,10 @@ impl LosslessEncoder {
                     num_channels,
                     image.bit_depth,
                 )
+                .map(|mut pd| {
+                    pd.num_extra_channels = usize::from(image.has_alpha);
+                    pd
+                })
             } else {
                 None
             };
