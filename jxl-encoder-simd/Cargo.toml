@@ -22,6 +22,12 @@ unsafe-performance = []
 [dependencies]
 archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
 magetypes = { version = "0.9.15", default-features = false }
+# Pure-Rust libm fallback. Only used when `std` is OFF — the
+# `scalarmath` veneer in `lib.rs` cfg-gates each `f32` math call so
+# `std` builds use the inherent methods (hardware FMA / rounding) and
+# `no_std` builds fall back to libm's software implementations
+# (closes #38).
+libm = { version = "0.2.16", default-features = false }
 
 [lints]
 workspace = true

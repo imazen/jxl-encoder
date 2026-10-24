@@ -163,7 +163,7 @@ pub fn entropy_coeffs_scalar(
         let val_in = block_c[i];
         let val_y = block_y[i] * cmap_factor;
         let val = (val_in - val_y) * inv_weights[i] * quant;
-        let rval = val.round();
+        let rval = crate::scalarmath::round_f32(val);
         let diff = val - rval;
 
         if pixel_domain {
@@ -171,7 +171,7 @@ pub fn entropy_coeffs_scalar(
         }
 
         let q = rval.abs();
-        entropy_sum = q.sqrt().mul_add(k_cost_delta, entropy_sum);
+        entropy_sum = crate::scalarmath::mul_add_f32(crate::scalarmath::sqrt_f32(q), k_cost_delta, entropy_sum);
         if q != 0.0 {
             nzeros_sum += 1.0;
         }
@@ -179,7 +179,7 @@ pub fn entropy_coeffs_scalar(
         if !pixel_domain {
             let diff_abs = diff.abs();
             info_loss_sum += diff_abs;
-            info_loss2_sum = diff_abs.mul_add(diff_abs, info_loss2_sum);
+            info_loss2_sum = crate::scalarmath::mul_add_f32(diff_abs, diff_abs, info_loss2_sum);
             if q >= 1.5 {
                 entropy_sum += k_cost2;
             }
@@ -567,7 +567,7 @@ pub fn fast_log2f(x: f32) -> f32 {
 #[inline(always)]
 #[allow(clippy::excessive_precision)]
 pub fn fast_pow2f(x: f32) -> f32 {
-    let floorx = x.floor();
+    let floorx = crate::scalarmath::floor_f32(x);
     // Integer part → IEEE 754 exponent via bit shift
     let exp = f32::from_bits(((floorx as i32 + 127) << 23) as u32);
     let frac = x - floorx;

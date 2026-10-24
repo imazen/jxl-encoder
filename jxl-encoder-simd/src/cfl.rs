@@ -23,7 +23,7 @@ fn bias_and_quantize(x: f32) -> i8 {
     } else {
         0.0
     };
-    biased.round().clamp(-128.0, 127.0) as i8
+    crate::scalarmath::round_f32(biased).clamp(-128.0, 127.0) as i8
 }
 
 /// Newton's method constants.

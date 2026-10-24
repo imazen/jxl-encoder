@@ -28,6 +28,85 @@
 #![no_std]
 extern crate alloc;
 
+/// Crate-internal `f32` math veneer that compiles under both `std`
+/// and `no_std` (closes #38). `f32`'s inherent `floor` / `sqrt` /
+/// `mul_add` / `round` / `round_ties_even` only exist with `std`,
+/// but the crate is `#![no_std]` and downstream may build with
+/// `--no-default-features`. Under `std` we use the inherent methods
+/// (which lower to hardware intrinsics on platforms with FMA / SSE
+/// rounding); under `no_std` we route through [`libm`] (a pure-Rust
+/// software fallback). Each helper is `#[inline(always)]` so the
+/// dispatch overhead vanishes after monomorphization.
+pub(crate) mod scalarmath {
+    /// Largest integer ≤ x. Mirrors `f32::floor`.
+    #[inline(always)]
+    pub fn floor_f32(x: f32) -> f32 {
+        #[cfg(feature = "std")]
+        {
+            x.floor()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            libm::floorf(x)
+        }
+    }
+    /// Square root. Mirrors `f32::sqrt`.
+    #[inline(always)]
+    pub fn sqrt_f32(x: f32) -> f32 {
+        #[cfg(feature = "std")]
+        {
+            x.sqrt()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            libm::sqrtf(x)
+        }
+    }
+    /// Round half away from zero. Mirrors `f32::round`.
+    #[inline(always)]
+    pub fn round_f32(x: f32) -> f32 {
+        #[cfg(feature = "std")]
+        {
+            x.round()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            libm::roundf(x)
+        }
+    }
+    /// Round half to even (banker's rounding). Mirrors
+    /// `f32::round_ties_even`. The `no_std` path uses libm's
+    /// `roundevenf` which always rounds halves to even regardless of
+    /// the FP rounding mode.
+    #[inline(always)]
+    pub fn round_ties_even_f32(x: f32) -> f32 {
+        #[cfg(feature = "std")]
+        {
+            x.round_ties_even()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            libm::roundevenf(x)
+        }
+    }
+    /// Fused multiply-add: `a * b + c` with a single rounding.
+    /// Mirrors `f32::mul_add`. Under `std` this lowers to the
+    /// hardware FMA on AVX2+ / NEON; under `no_std` falls back to
+    /// libm's software `fmaf`.
+    #[inline(always)]
+    pub fn mul_add_f32(a: f32, b: f32, c: f32) -> f32 {
+        #[cfg(feature = "std")]
+        {
+            a.mul_add(b, c)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            libm::fmaf(a, b, c)
+        }
+    }
+}
+
+
 /// Return an uninitialized `[f32; N]` scratch buffer (unsafe-performance path).
 ///
 /// # Safety
