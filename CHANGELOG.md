@@ -2,6 +2,68 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-24
+
+Maintenance release on the 0.3 line. Builds again under fresh dependency
+resolution and carries the security/decodability fixes that apply to 0.3.x.
+No public API changes. Encoded bytes can differ from 0.3.1 only where a fix
+applies (LZ77 match-length cap, e9 lossless property buckets, alpha-bearing
+LF/patch/progressive frames, lossless colour-encoding header).
+
+### Fixed
+
+- `jxl-encoder-simd`: build with `--no-default-features` (no_std). Scalar
+  paths called std-only `f32` methods; they now go through a `scalarmath`
+  veneer that uses the inherent methods under `std` and `libm` otherwise
+  (backport of 4705cb6, #38).
+- `jpeg-reencoding` feature: build against zenjpeg 0.8.4. zenjpeg 0.7.1
+  fails to compile with magetypes 0.9.30. The coefficient copy now uses
+  checked arithmetic for attacker-controlled SOF block counts and errors
+  when the decoded buffer is shorter than the SOF implies (from d6ec9a7).
+- Effort-9 encodes hung on periodic content (optimal LZ77 match extension
+  was unbounded). Match length is capped at 1024 in both the optimal and
+  greedy paths (from 45a63c3, #27).
+- Out-of-bounds index panics in LZ77 chain following and the patches BFS
+  (backport of 6796417, #30).
+- Streaming encoders validate pixel dimensions like the one-shot path;
+  tree learning and the JPEG SOS parser are hardened against malformed
+  input (backport of 071adbb, #35).
+- Panics on internal-consistency failures in ANS writing, Huffman depth
+  overflow, and oversized/empty ICC profiles now return errors; patch
+  bin-packing and perceptual-loop iteration counts are bounded (from
+  45a63c3, #33).
+- `ColorEncoding::write` coded `rendering_intent` as raw bits, so Saturation
+  and Absolute produced a header no decoder accepts. In 0.3.1 this was
+  reachable only through the public `headers` writers; with the lossless
+  colour-encoding fix below it is reachable from `with_color_encoding` too.
+  The field is now coded as an enum (backport of 157ebfb).
+- Effort-9 multi-group lossless emitted streams no decoder accepts: the
+  ref-property stride was cut mid 4-slot group, and tree property 1
+  (`group_id`) used ad-hoc ids instead of the spec stream id (backport of
+  5eefe5f and 329f207, #68).
+- Effort-9 property quantisation kept up to 256 thresholds while bucket
+  indices are `u8`, so the top bucket wrapped to 0. The tree learner then
+  grew invalid nodes up to its cap and the validator repaired them one at a
+  time: a 259x133 RGBA lossless e9 encode went from 36 s / 7,460 bytes to
+  0.41 s / 4,154 bytes (e8 unchanged). Thresholds are now capped at 255.
+- Lossless `GrayAlpha8`/`GrayAlpha16` (one-shot, streaming and animation)
+  wrote a header without the alpha extra channel; every such file was
+  undecodable (backport of c6e20f6).
+- Lossy RGBA with progressive AC on a single-group (<=256x256) image moved
+  alpha out of LfGlobal, producing an undecodable file (placement fix from
+  0ca49f0).
+- `with_lf_frame(true)` and patches (lossy e7+, lossless e5+) on images with
+  alpha wrote LF / patch-reference frames without the declared extra
+  channel, and patch positions without per-extra-channel blend modes; the
+  files were undecodable. Those frames now carry zero-filled placeholder
+  extra channels, as libjxl does.
+- aarch64 and wasm32 builds failed with magetypes 0.9.27+ (retired
+  per-platform SIMD structs); kernels use the generic API and the
+  archmage/magetypes floor is 0.9.27 (backport of 4c09d53, #137).
+- Lossless encodes ignored `with_color_encoding` and always signalled sRGB
+  (backport of 52976f1, #17).
+- `jxl-encoder-cli` no longer enables `unsafe-performance` by default.
+
 ## [0.3.1] - 2026-05-02
 
 ### QUEUED BREAKING CHANGES
