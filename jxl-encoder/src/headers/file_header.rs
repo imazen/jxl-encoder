@@ -233,6 +233,21 @@ impl FileHeader {
         header
     }
 
+    /// Creates a new file header for a grayscale image WITH an alpha channel.
+    ///
+    /// Grayscale + alpha needs both the gray colour encoding and the alpha
+    /// extra-channel entry. `new_gray` supplies only the first; using it for a
+    /// two-channel image claims one channel and no extras while the modular
+    /// stream carries two, which no decoder accepts.
+    pub fn new_gray_alpha(width: u32, height: u32) -> Self {
+        let mut header = Self::new_gray(width, height);
+        header
+            .metadata
+            .extra_channels
+            .push(ExtraChannelInfo::alpha());
+        header
+    }
+
     /// Creates a new file header for a grayscale image.
     pub fn new_gray(width: u32, height: u32) -> Self {
         let mut header = Self::new_rgb(width, height);

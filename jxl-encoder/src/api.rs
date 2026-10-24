@@ -1810,7 +1810,11 @@ impl<'a> EncodeRequest<'a> {
         };
 
         // Build file header
-        let mut file_header = if image.is_grayscale {
+        // Grayscale + alpha needs the alpha extra-channel entry too; `new_gray`
+        // alone produced an undecodable header for every GrayAlpha encode.
+        let mut file_header = if image.is_grayscale && image.has_alpha {
+            FileHeader::new_gray_alpha(self.width, self.height)
+        } else if image.is_grayscale {
             FileHeader::new_gray(self.width, self.height)
         } else if image.has_alpha {
             FileHeader::new_rgba(self.width, self.height)
@@ -3044,7 +3048,11 @@ impl LosslessEncoder {
             };
 
             // Build file header
-            let mut file_header = if image.is_grayscale {
+            // Grayscale + alpha needs the alpha extra-channel entry too; `new_gray`
+            // alone produced an undecodable header for every GrayAlpha encode.
+            let mut file_header = if image.is_grayscale && image.has_alpha {
+                FileHeader::new_gray_alpha(self.width, self.height)
+            } else if image.is_grayscale {
                 FileHeader::new_gray(self.width, self.height)
             } else if image.has_alpha {
                 FileHeader::new_rgba(self.width, self.height)
@@ -3323,7 +3331,11 @@ fn encode_animation_lossless(
     }
     .map_err(EncodeError::from)?;
 
-    let mut file_header = if sample_image.is_grayscale {
+    // Grayscale + alpha needs the alpha extra-channel entry too; `new_gray`
+    // alone produced an undecodable header for every GrayAlpha encode.
+    let mut file_header = if sample_image.is_grayscale && sample_image.has_alpha {
+        FileHeader::new_gray_alpha(width, height)
+    } else if sample_image.is_grayscale {
         FileHeader::new_gray(width, height)
     } else if sample_image.has_alpha {
         FileHeader::new_rgba(width, height)
