@@ -552,7 +552,11 @@ impl ColorEncoding {
             self.rendering_intent,
             self.rendering_intent as u8
         );
-        writer.write(2, self.rendering_intent as u64)?;
+        // An enum field, coded like the other enums in this header (libjxl
+        // `visitor->Enum`). Perceptual (0) and Relative (1) produce the same
+        // bits either way; a raw 2-bit write made Saturation/Absolute
+        // undecodable.
+        writer.write_enum_default(self.rendering_intent as u32)?;
         crate::trace::debug_eprintln!("CENC [bit {}]: color_encoding done", writer.bits_written());
 
         Ok(())
@@ -562,6 +566,49 @@ impl ColorEncoding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every rendering intent must produce a header both Rust decoders accept,
+    /// with exact lossless samples, on single- and multi-group frames. Before
+    /// the enum coding fix Saturation/Absolute were rejected by jxl-rs.
+    #[test]
+    fn every_rendering_intent_roundtrips() {
+        use crate::test_helpers::{decode_with_jxl_oxide, decode_with_jxl_rs};
+        for (w, h) in [(64u32, 32u32), (300, 260)] {
+            let px: Vec<u8> = (0..w * h)
+                .flat_map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    [(x * 3) as u8, (y * 5) as u8, ((x ^ y) * 7) as u8]
+                })
+                .collect();
+            for ri in [
+                RenderingIntent::Perceptual,
+                RenderingIntent::Relative,
+                RenderingIntent::Saturation,
+                RenderingIntent::Absolute,
+            ] {
+                let mut ce = ColorEncoding::srgb();
+                ce.rendering_intent = ri;
+                let jxl = crate::LosslessConfig::new()
+                    .with_effort(5)
+                    .encode_request(w, h, crate::PixelLayout::Rgb8)
+                    .with_color_encoding(ce)
+                    .encode(&px)
+                    .unwrap();
+                // jxl-oxide's helper renders linear light, so it checks the
+                // full decode and dimensions; jxl-rs checks every sample.
+                let ox = decode_with_jxl_oxide(&jxl)
+                    .unwrap_or_else(|e| panic!("jxl-oxide {w}x{h} {ri:?}: {e:?}"));
+                assert_eq!((ox.width, ox.height), (w as usize, h as usize));
+                let img = decode_with_jxl_rs(&jxl)
+                    .unwrap_or_else(|e| panic!("jxl-rs {w}x{h} {ri:?}: {e:?}"));
+                assert_eq!((img.width, img.height), (w as usize, h as usize));
+                for (i, &want) in px.iter().enumerate() {
+                    let got = (img.pixels[i / 3 * img.channels + i % 3] * 255.0).round();
+                    assert_eq!(got, want as f32, "jxl-rs {w}x{h} {ri:?} sample {i}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_srgb_is_default() {
