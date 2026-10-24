@@ -867,24 +867,26 @@ pub fn write_tokens_ans(
         let config = code.uint_configs.get(dist_idx).copied().unwrap_or_default();
         let (encoded, sym) = encode_token_value_with_config(token, lz77, &config);
 
-        // Get the distribution for this context
-        let dist = code.distributions.get(dist_idx).unwrap_or_else(|| {
-            panic!(
-                "ANS: missing distribution at index {} for context {}",
-                dist_idx, ctx
-            )
-        });
+        // Get the distribution for this context. Out-of-range here is an
+        // internal-consistency bug, not user-recoverable, but we still
+        // surface it as a Result rather than panicking — a panic in this
+        // code path would be a DoS vector if a malformed Lz77Params or
+        // tokenization-bug ever produced a sym/ctx outside the distribution.
+        let dist = code.distributions.get(dist_idx).ok_or_else(|| {
+            crate::error::Error::InvalidInput(format!(
+                "ANS internal: missing distribution at index {dist_idx} for context {ctx}"
+            ))
+        })?;
 
         // Push extra bits first (they come after the symbol in forward order)
         encoder.push_bits(encoded.bits, encoded.nbits as u8);
 
         // Push the ANS symbol
-        let info = dist.get(sym as usize).unwrap_or_else(|| {
-            panic!(
-                "ANS: symbol {} not in distribution (ctx={}, dist_idx={})",
-                sym, ctx, dist_idx
-            )
-        });
+        let info = dist.get(sym as usize).ok_or_else(|| {
+            crate::error::Error::InvalidInput(format!(
+                "ANS internal: symbol {sym} not in distribution (ctx={ctx}, dist_idx={dist_idx})"
+            ))
+        })?;
 
         #[cfg(feature = "debug-tokens")]
         if _i < 5 || _i >= tokens.len() - 3 {

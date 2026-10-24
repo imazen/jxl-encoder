@@ -136,7 +136,9 @@ impl VarDctEncoder {
         let mut recon_b = vec![0.0f32; padded_pixels];
         let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
 
-        let iters = self.ssim2_iters as usize;
+        // Saturate at consumption so a caller that skipped validation
+        // cannot request unbounded full-metric iterations.
+        let iters = self.ssim2_iters.min(crate::validation::ITER_MAX) as usize;
         let mut current_params;
 
         for iter in 0..iters + 1 {

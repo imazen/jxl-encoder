@@ -1093,8 +1093,11 @@ fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
     let mut ref_width = side.max(max_x_size);
     let mut ref_height = side.max(max_y_size);
 
-    // First-fit grid placement with grow-and-retry
-    loop {
+    // First-fit grid placement with grow-and-retry. Each retry grows the
+    // canvas by 1.05x + 1, so legitimate inputs converge well inside the cap;
+    // the cap bounds the work if an invariant ever breaks.
+    const BIN_PACK_MAX_RETRIES: usize = 50;
+    for _retry in 0..BIN_PACK_MAX_RETRIES {
         // Grow by 5% + 1 before each attempt (matches libjxl: grow at start of do-while)
         ref_width = (ref_width as f32 * BIN_PACKING_SLACKNESS) as usize + 1;
         ref_height = (ref_height as f32 * BIN_PACKING_SLACKNESS) as usize + 1;
@@ -1160,6 +1163,9 @@ fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
             return (ref_width, max_y, positions);
         }
     }
+    // Retry cap reached: the caller treats an empty layout as "no patches",
+    // which degrades compression but keeps the encode alive.
+    (0, 0, Vec::new())
 }
 
 // ── Build PatchesData ──────────────────────────────────────────────────────────

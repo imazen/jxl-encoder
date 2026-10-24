@@ -19,7 +19,16 @@ name = "cjxl-rs"
 path = "src/main.rs"
 
 [features]
-default = ["jxl_encoder/std", "butteraugli-loop", "unsafe-performance", "parallel"]
+# SECURITY: `unsafe-performance` is NOT in the default set. It eliminates
+# memset zero-fills on hot-path scratch buffers via MaybeUninit and
+# get_unchecked, but every misuse becomes UB rather than a panic. The
+# v09/v11 production sweep crashes (0x40000000-prefix indices in patches.rs
+# and lz77 chain arrays) are consistent with one such misuse leaking into
+# adjacent heap memory — the defensive bounds added in commit 1498053
+# block the symptom but the underlying UB is still possible. Run
+# `cjxl-rs` with `--features unsafe-performance` only when the input is
+# trusted; do not use it on a public-facing image proxy.
+default = ["jxl_encoder/std", "butteraugli-loop", "parallel"]
 debug-tokens = ["jxl_encoder/debug-tokens"]
 debug-ac-strategy = ["jxl_encoder/debug-ac-strategy"]
 debug-rect = ["jxl_encoder/debug-rect"]

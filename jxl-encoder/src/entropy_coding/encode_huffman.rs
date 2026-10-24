@@ -43,8 +43,11 @@ pub fn convert_bit_depths_to_symbols(depth: &[u8], bits: &mut [u16]) {
     const MAX_BITS: usize = 16;
     let mut bl_count = [0u16; MAX_BITS];
 
+    // See encode_huffman tree: defensively clamp d to MAX_BITS-1 in case
+    // a caller bypasses create_huffman_tree's depth-limit retry loop.
     for &d in depth.iter() {
-        bl_count[d as usize] += 1;
+        let di = (d as usize).min(MAX_BITS - 1);
+        bl_count[di] += 1;
     }
     bl_count[0] = 0;
 
@@ -57,8 +60,9 @@ pub fn convert_bit_depths_to_symbols(depth: &[u8], bits: &mut [u16]) {
 
     for (i, &d) in depth.iter().enumerate() {
         if d > 0 {
-            bits[i] = reverse_bits(d as u32, next_code[d as usize]);
-            next_code[d as usize] += 1;
+            let di = (d as usize).min(MAX_BITS - 1);
+            bits[i] = reverse_bits(di as u32, next_code[di]);
+            next_code[di] += 1;
         }
     }
 }
