@@ -619,8 +619,8 @@ mod tests {
                     .unwrap();
                 // djxl (DJXL_PATH, libjxl v0.12) checks the full decode and
                 // dimensions; jxl-rs checks every sample.
-                let r = decode_with_djxl(&jxl)
-                    .unwrap_or_else(|e| panic!("djxl {w}x{h} {ri:?}: {e:?}"));
+                let r =
+                    decode_with_djxl(&jxl).unwrap_or_else(|e| panic!("djxl {w}x{h} {ri:?}: {e:?}"));
                 assert_eq!((r.width, r.height), (w as usize, h as usize));
                 let img = decode_with_jxl_rs(&jxl)
                     .unwrap_or_else(|e| panic!("jxl-rs {w}x{h} {ri:?}: {e:?}"));

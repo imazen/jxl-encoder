@@ -171,7 +171,11 @@ pub fn entropy_coeffs_scalar(
         }
 
         let q = rval.abs();
-        entropy_sum = crate::scalarmath::mul_add_f32(crate::scalarmath::sqrt_f32(q), k_cost_delta, entropy_sum);
+        entropy_sum = crate::scalarmath::mul_add_f32(
+            crate::scalarmath::sqrt_f32(q),
+            k_cost_delta,
+            entropy_sum,
+        );
         if q != 0.0 {
             nzeros_sum += 1.0;
         }

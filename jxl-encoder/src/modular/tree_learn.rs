@@ -2328,12 +2328,25 @@ mod tests {
             let pq = samples.pre_quantize(&params);
             for &p in &params.properties {
                 let ts = &pq.threshold_sets[p];
-                assert!(!ts.is_empty(), "distinct={distinct} prop {p}: no thresholds");
+                assert!(
+                    !ts.is_empty(),
+                    "distinct={distinct} prop {p}: no thresholds"
+                );
                 for (i, &b) in pq.bucket_indices[p].iter().enumerate() {
                     let (b, v) = (b as usize, samples.props[p][i]);
-                    assert!(b <= ts.len(), "distinct={distinct} prop {p}: bucket {b} > {}", ts.len());
-                    assert!(b == 0 || ts[b - 1] < v, "distinct={distinct} prop {p} v={v}: bucket {b} below");
-                    assert!(b == ts.len() || v <= ts[b], "distinct={distinct} prop {p} v={v}: bucket {b} above");
+                    assert!(
+                        b <= ts.len(),
+                        "distinct={distinct} prop {p}: bucket {b} > {}",
+                        ts.len()
+                    );
+                    assert!(
+                        b == 0 || ts[b - 1] < v,
+                        "distinct={distinct} prop {p} v={v}: bucket {b} below"
+                    );
+                    assert!(
+                        b == ts.len() || v <= ts[b],
+                        "distinct={distinct} prop {p} v={v}: bucket {b} above"
+                    );
                 }
             }
         }

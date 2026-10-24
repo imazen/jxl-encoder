@@ -106,7 +106,6 @@ pub(crate) mod scalarmath {
     }
 }
 
-
 /// Return an uninitialized `[f32; N]` scratch buffer (unsafe-performance path).
 ///
 /// # Safety

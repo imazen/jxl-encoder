@@ -19,8 +19,12 @@ use crate::api::{LosslessConfig, LossyConfig, PixelLayout, ProgressiveMode};
 /// alpha ramp, as RGBA8.
 fn frymire_rgba(w: u32, h: u32) -> Vec<u8> {
     let corpus = codec_corpus::Corpus::new().expect("codec-corpus");
-    let dir = corpus.get("imageflow/test_inputs").expect("imageflow corpus");
-    let img = image::open(dir.join("frymire.png")).expect("frymire.png").to_rgba8();
+    let dir = corpus
+        .get("imageflow/test_inputs")
+        .expect("imageflow corpus");
+    let img = image::open(dir.join("frymire.png"))
+        .expect("frymire.png")
+        .to_rgba8();
     let mut out = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
         for x in 0..w {
@@ -37,7 +41,11 @@ fn assert_alpha_roundtrip(jxl: &[u8], alpha: impl Iterator<Item = u8>, w: u32, h
     // multi-group modular frames that jxl-rs and djxl both accept.
     let r = crate::test_helpers::decode_with_djxl(jxl)
         .unwrap_or_else(|e| panic!("{what}: djxl: {e:?}"));
-    assert_eq!((r.width, r.height), (w as usize, h as usize), "{what}: djxl dims");
+    assert_eq!(
+        (r.width, r.height),
+        (w as usize, h as usize),
+        "{what}: djxl dims"
+    );
     let d = crate::test_helpers::decode_with_jxl_rs(jxl)
         .unwrap_or_else(|e| panic!("{what}: jxl-rs: {e:?}"));
     assert_eq!((d.width, d.height), (w as usize, h as usize), "{what}");
@@ -74,9 +82,22 @@ fn lossy_rgba_progressive_and_lf_frame_decode() {
         let rgba = frymire_rgba(w, h);
         let alpha = || rgba.chunks(4).map(|p| p[3]);
         for (name, cfg) in [
-            ("prog2", LossyConfig::new(2.0).with_effort(5).with_progressive(ProgressiveMode::QuantizedAcFullAc)),
-            ("prog3", LossyConfig::new(2.0).with_effort(5).with_progressive(ProgressiveMode::DcVlfLfAc)),
-            ("lf_frame", LossyConfig::new(2.0).with_effort(7).with_lf_frame(true)),
+            (
+                "prog2",
+                LossyConfig::new(2.0)
+                    .with_effort(5)
+                    .with_progressive(ProgressiveMode::QuantizedAcFullAc),
+            ),
+            (
+                "prog3",
+                LossyConfig::new(2.0)
+                    .with_effort(5)
+                    .with_progressive(ProgressiveMode::DcVlfLfAc),
+            ),
+            (
+                "lf_frame",
+                LossyConfig::new(2.0).with_effort(7).with_lf_frame(true),
+            ),
         ] {
             let jxl = cfg.encode(&rgba, w, h, PixelLayout::Rgba8).unwrap();
             assert_alpha_roundtrip(&jxl, alpha(), w, h, &format!("lossy RGBA {w}x{h} {name}"));
@@ -89,13 +110,20 @@ fn lossy_rgba_progressive_and_lf_frame_decode() {
 fn patches_with_alpha_decode() {
     let corpus = codec_corpus::Corpus::new().expect("codec-corpus");
     let dir = corpus.get("gb82-sc").expect("gb82-sc corpus");
-    let img = image::open(dir.join("terminal.png")).expect("terminal.png").to_rgba8();
+    let img = image::open(dir.join("terminal.png"))
+        .expect("terminal.png")
+        .to_rgba8();
     let (w, h) = (img.width().min(600), img.height().min(400));
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
         for x in 0..w {
             let p = img.get_pixel(x, y);
-            rgba.extend([p[0], p[1], p[2], if (x / 16 + y / 16) % 3 == 0 { 128 } else { 255 }]);
+            rgba.extend([
+                p[0],
+                p[1],
+                p[2],
+                if (x / 16 + y / 16) % 3 == 0 { 128 } else { 255 },
+            ]);
         }
     }
     let alpha = || rgba.chunks(4).map(|p| p[3]);

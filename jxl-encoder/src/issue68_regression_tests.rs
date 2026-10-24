@@ -28,7 +28,11 @@ fn assert_decodes_exactly(jxl: &[u8], px: &[u8], w: u32, h: u32, what: &str) {
     // multi-group modular frames that jxl-rs and djxl both accept.
     let r = crate::test_helpers::decode_with_djxl(jxl)
         .unwrap_or_else(|e| panic!("{what}: djxl: {e:?}"));
-    assert_eq!((r.width, r.height), (w as usize, h as usize), "{what}: djxl dims");
+    assert_eq!(
+        (r.width, r.height),
+        (w as usize, h as usize),
+        "{what}: djxl dims"
+    );
     let d = crate::test_helpers::decode_with_jxl_rs(jxl)
         .unwrap_or_else(|e| panic!("{what}: jxl-rs: {e:?}"));
     assert_eq!((d.width, d.height), (w as usize, h as usize), "{what}");
@@ -81,7 +85,11 @@ fn e9_lossless_decodes_on_group_distinct_content() {
                     [v, v, (x % 251) as u8]
                 }
                 _ => {
-                    let v = if ((x / 4) + (y / 4)) % 2 == 0 { 25 } else { 230 };
+                    let v = if ((x / 4) + (y / 4)) % 2 == 0 {
+                        25
+                    } else {
+                        230
+                    };
                     [v, (y % 247) as u8, v]
                 }
             };
