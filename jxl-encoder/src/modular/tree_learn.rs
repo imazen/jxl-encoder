@@ -5843,8 +5843,7 @@ fn build_tree_from_prequantized(
                     let abs_mid = partition_node_in_place_with(
                         samples,
                         &mut pq,
-                        root_candidate.start,
-                        root_candidate.end,
+                        root_candidate.start..root_candidate.end,
                         split.left_count,
                         tree_learn_split::PartitionKey::Bucket {
                             prop_idx: split.property,
@@ -6186,8 +6185,7 @@ fn build_tree_from_prequantized(
                     partition_node_in_place_with(
                         samples,
                         &mut pq,
-                        candidate.start,
-                        candidate.end,
+                        candidate.start..candidate.end,
                         split.left_count,
                         tree_learn_split::PartitionKey::Bucket {
                             prop_idx: split.property,
@@ -9772,8 +9770,7 @@ fn build_node_tensor_borrowed(
             params,
             layout,
             histogram_size,
-            start,
-            end,
+            start..end,
             out,
             stop,
         );
@@ -9880,11 +9877,11 @@ fn build_node_tensor_borrowed_parallel(
     params: &TreeLearningParams,
     layout: &TensorLayout,
     histogram_size: usize,
-    start: usize,
-    end: usize,
+    span: core::ops::Range<usize>,
     out: &mut NodeTensor,
     stop: Option<&dyn enough::Stop>,
 ) {
+    let (start, end) = (span.start, span.end);
     let count = end - start;
     let num_pred = samples.num_predictors();
     let sample_counts = &samples.sample_counts[start..end];
@@ -11498,7 +11495,7 @@ fn partition_node_in_place(
     left_count: usize,
     key: tree_learn_split::PartitionKey,
 ) -> usize {
-    partition_node_in_place_with(samples, pq, start, end, left_count, key, false, None)
+    partition_node_in_place_with(samples, pq, start..end, left_count, key, false, None)
 }
 
 /// Issue #40 chunk-3c: env-var override `JXL_DISABLE_CHUNK3C=1` forces the
@@ -11533,13 +11530,13 @@ fn chunk3c_skip_is_disabled() -> bool {
 fn partition_node_in_place_with(
     samples: &mut TreeSamples,
     pq: &mut PreQuantizedProps,
-    start: usize,
-    end: usize,
+    span: core::ops::Range<usize>,
     left_count: usize,
     key: tree_learn_split::PartitionKey,
     skip_props_swap: bool,
     stop: Option<&dyn enough::Stop>,
 ) -> usize {
+    let (start, end) = (span.start, span.end);
     debug_assert!(left_count <= end - start);
     let num_samples = samples.num_samples;
     let skip_props_swap = skip_props_swap && !chunk3c_skip_is_disabled();
@@ -15651,8 +15648,7 @@ mod tests {
                     let abs_mid = partition_node_in_place_with(
                         samples,
                         &mut pq,
-                        candidate.start,
-                        candidate.end,
+                        candidate.start..candidate.end,
                         split.left_count,
                         tree_learn_split::PartitionKey::Bucket {
                             prop_idx: split.property,
