@@ -239,7 +239,7 @@ impl FileHeader {
     /// extra-channel entry. `new_gray` supplies only the first; using it for a
     /// two-channel image claims one channel and no extras while the modular
     /// stream carries two, which no decoder accepts.
-    pub fn new_gray_alpha(width: u32, height: u32) -> Self {
+    pub(crate) fn new_gray_alpha(width: u32, height: u32) -> Self {
         let mut header = Self::new_gray(width, height);
         header
             .metadata

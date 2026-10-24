@@ -567,12 +567,35 @@ impl ColorEncoding {
 mod tests {
     use super::*;
 
-    /// Every rendering intent must produce a header both Rust decoders accept,
+    /// Lossless encodes must signal the caller's colour encoding (#17): the
+    /// header used to say sRGB whatever `with_color_encoding` requested.
+    #[test]
+    fn lossless_header_carries_requested_color_encoding() {
+        let (w, h) = (64u32, 32u32);
+        let px: Vec<u8> = (0..w * h * 3).map(|i| (i * 7) as u8).collect();
+        for (layout, data) in [
+            (crate::PixelLayout::Rgb8, px.clone()),
+            (crate::PixelLayout::Gray8, px[..(w * h) as usize].to_vec()),
+        ] {
+            let jxl = crate::LosslessConfig::new()
+                .encode_request(w, h, layout)
+                .with_color_encoding(ColorEncoding::bt2100_pq())
+                .encode(&data)
+                .unwrap();
+            let img = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(&jxl))
+                .unwrap();
+            let ce = format!("{:?}", img.image_header().metadata.colour_encoding);
+            assert!(ce.contains("Pq"), "{layout:?}: header colour encoding {ce}");
+        }
+    }
+
+    /// Every rendering intent must produce a header jxl-rs and djxl accept,
     /// with exact lossless samples, on single- and multi-group frames. Before
     /// the enum coding fix Saturation/Absolute were rejected by jxl-rs.
     #[test]
     fn every_rendering_intent_roundtrips() {
-        use crate::test_helpers::{decode_with_jxl_oxide, decode_with_jxl_rs};
+        use crate::test_helpers::{decode_with_djxl, decode_with_jxl_rs};
         for (w, h) in [(64u32, 32u32), (300, 260)] {
             let px: Vec<u8> = (0..w * h)
                 .flat_map(|i| {
@@ -594,11 +617,11 @@ mod tests {
                     .with_color_encoding(ce)
                     .encode(&px)
                     .unwrap();
-                // jxl-oxide's helper renders linear light, so it checks the
-                // full decode and dimensions; jxl-rs checks every sample.
-                let ox = decode_with_jxl_oxide(&jxl)
-                    .unwrap_or_else(|e| panic!("jxl-oxide {w}x{h} {ri:?}: {e:?}"));
-                assert_eq!((ox.width, ox.height), (w as usize, h as usize));
+                // djxl (DJXL_PATH, libjxl v0.12) checks the full decode and
+                // dimensions; jxl-rs checks every sample.
+                let r = decode_with_djxl(&jxl)
+                    .unwrap_or_else(|e| panic!("djxl {w}x{h} {ri:?}: {e:?}"));
+                assert_eq!((r.width, r.height), (w as usize, h as usize));
                 let img = decode_with_jxl_rs(&jxl)
                     .unwrap_or_else(|e| panic!("jxl-rs {w}x{h} {ri:?}: {e:?}"));
                 assert_eq!((img.width, img.height), (w as usize, h as usize));

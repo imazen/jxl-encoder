@@ -11,7 +11,7 @@
 //!   positions lacked the per-extra-channel blend modes.
 //!
 //! Every case decodes through jxl-rs (alpha checked sample-exact; it is
-//! coded losslessly in all of these) and renders through jxl-oxide.
+//! coded losslessly in all of these) and fully decodes in djxl (`DJXL_PATH`, libjxl v0.12).
 
 use crate::api::{LosslessConfig, LossyConfig, PixelLayout, ProgressiveMode};
 
@@ -32,11 +32,12 @@ fn frymire_rgba(w: u32, h: u32) -> Vec<u8> {
 }
 
 fn assert_alpha_roundtrip(jxl: &[u8], alpha: impl Iterator<Item = u8>, w: u32, h: u32, what: &str) {
-    let mut img = jxl_oxide::JxlImage::builder()
-        .read(std::io::Cursor::new(jxl))
-        .unwrap_or_else(|e| panic!("{what}: jxl-oxide read: {e:?}"));
-    img.render_frame(0)
-        .unwrap_or_else(|e| panic!("{what}: jxl-oxide render: {e:?}"));
+    // Reference decoder (set DJXL_PATH to a libjxl v0.12 djxl). The
+    // crates.io jxl-oxide 0.12 used by this branch's tests mis-reads some
+    // multi-group modular frames that jxl-rs and djxl both accept.
+    let r = crate::test_helpers::decode_with_djxl(jxl)
+        .unwrap_or_else(|e| panic!("{what}: djxl: {e:?}"));
+    assert_eq!((r.width, r.height), (w as usize, h as usize), "{what}: djxl dims");
     let d = crate::test_helpers::decode_with_jxl_rs(jxl)
         .unwrap_or_else(|e| panic!("{what}: jxl-rs: {e:?}"));
     assert_eq!((d.width, d.height), (w as usize, h as usize), "{what}");

@@ -5,7 +5,8 @@
 //! lossless used to emit bitstreams no decoder accepts. Two independent
 //! causes: the ref-property stride cut mid 4-slot group, and tree
 //! property 1 (`group_id`) using ad-hoc ids instead of the spec stream id.
-//! Both tests decode with jxl-rs (exact samples) and jxl-oxide (render).
+//! Both tests decode with jxl-rs (exact samples) and djxl (`DJXL_PATH`,
+//! libjxl v0.12).
 
 use crate::api::{LosslessConfig, PixelLayout};
 
@@ -22,11 +23,12 @@ fn noise_rgb8(w: u32, h: u32, seed: u64) -> Vec<u8> {
 }
 
 fn assert_decodes_exactly(jxl: &[u8], px: &[u8], w: u32, h: u32, what: &str) {
-    let mut img = jxl_oxide::JxlImage::builder()
-        .read(std::io::Cursor::new(jxl))
-        .unwrap_or_else(|e| panic!("{what}: jxl-oxide read: {e:?}"));
-    img.render_frame(0)
-        .unwrap_or_else(|e| panic!("{what}: jxl-oxide render: {e:?}"));
+    // Reference decoder (set DJXL_PATH to a libjxl v0.12 djxl). The
+    // crates.io jxl-oxide 0.12 used by this branch's tests mis-reads some
+    // multi-group modular frames that jxl-rs and djxl both accept.
+    let r = crate::test_helpers::decode_with_djxl(jxl)
+        .unwrap_or_else(|e| panic!("{what}: djxl: {e:?}"));
+    assert_eq!((r.width, r.height), (w as usize, h as usize), "{what}: djxl dims");
     let d = crate::test_helpers::decode_with_jxl_rs(jxl)
         .unwrap_or_else(|e| panic!("{what}: jxl-rs: {e:?}"));
     assert_eq!((d.width, d.height), (w as usize, h as usize), "{what}");

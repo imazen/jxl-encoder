@@ -1831,6 +1831,20 @@ impl<'a> EncodeRequest<'a> {
                 ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
             }
         }
+        // Use the caller's `with_color_encoding(...)` in the codestream header;
+        // it was previously dropped and every lossless file signalled sRGB
+        // (backport of 52976f17, #17). Grayscale layouts keep a gray space.
+        if let Some(ce) = self.color_encoding.clone() {
+            file_header.metadata.color_encoding =
+                if image.is_grayscale && ce.color_space != ColorSpace::Gray {
+                    crate::headers::color_encoding::ColorEncoding {
+                        color_space: ColorSpace::Gray,
+                        ..ce
+                    }
+                } else {
+                    ce
+                };
+        }
         if let Some(meta) = self.metadata {
             if meta.icc_profile.is_some() {
                 file_header.metadata.color_encoding.want_icc = true;
@@ -3072,6 +3086,20 @@ impl LosslessEncoder {
                 for ec in &mut file_header.metadata.extra_channels {
                     ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
                 }
+            }
+            // Use the caller's `with_color_encoding(...)` in the codestream header;
+            // it was previously dropped and every lossless file signalled sRGB
+            // (backport of 52976f17, #17). Grayscale layouts keep a gray space.
+            if let Some(ce) = self.color_encoding.clone() {
+                file_header.metadata.color_encoding =
+                    if image.is_grayscale && ce.color_space != ColorSpace::Gray {
+                        crate::headers::color_encoding::ColorEncoding {
+                            color_space: ColorSpace::Gray,
+                            ..ce
+                        }
+                    } else {
+                        ce
+                    };
             }
             if self.icc_profile.is_some() {
                 file_header.metadata.color_encoding.want_icc = true;
