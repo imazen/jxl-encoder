@@ -2113,8 +2113,16 @@ pub fn collect_residuals_with_tree_offset(
     let mut tokens = Vec::new();
 
     // Pre-allocated extended property buffer (reused per pixel)
+    // #68: round the ref-property tail up to a WHOLE 4-slot ref-group. The
+    // per-pixel writer below fills ref groups four at a time behind a
+    // `base + 3 < num_extended_props` guard; with the stride cut at
+    // `max_tree_prop + 1`, a tree whose maximum property id lands mid-group
+    // (only reachable at e9+, where the learner may split on slots 0..2)
+    // skipped the entire top group, so the walk read zeros where every
+    // decoder computes real values: context desync, undecodable stream.
     let num_extended_props = if needs_ref_props {
-        max_tree_prop + 1
+        let ref_tail = max_tree_prop + 1 - NUM_PROPERTIES;
+        NUM_PROPERTIES + ref_tail.div_ceil(4) * 4
     } else {
         NUM_PROPERTIES
     };

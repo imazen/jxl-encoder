@@ -268,6 +268,10 @@ pub fn write_global_modular_section(
 /// - lz77.enabled = 0
 /// - Multi-context ANS data histogram (write_entropy_code_ans)
 /// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
+///
+/// `hf_stream_id_base` is [`modular_hf_stream_id_base`] for the frame: tree
+/// property 1 (`group_id`) of pass group `g` is `hf_stream_id_base + g`.
+#[allow(clippy::too_many_arguments)]
 pub fn write_global_modular_section_with_tree(
     images: &[ModularImage],
     writer: &mut BitWriter,
@@ -276,6 +280,7 @@ pub fn write_global_modular_section_with_tree(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     meta_image: Option<&ModularImage>,
+    hf_stream_id_base: u32,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant(
         images,
@@ -286,7 +291,23 @@ pub fn write_global_modular_section_with_tree(
         lz77_method,
         None,
         meta_image,
+        hf_stream_id_base,
     )
+}
+
+/// Number of quant-table modular streams in the spec stream numbering
+/// (libjxl `DequantMatrices::kNum`).
+pub(crate) const NUM_QUANT_TABLE_STREAMS: u32 = 17;
+
+/// First ModularHF stream id (pass 0, group 0) in the spec's modular stream
+/// numbering: the value decoders feed into tree property 1 (`group_id`) when
+/// decoding a pass-group section. Stream 0 is GlobalData, then
+/// `num_lf_groups` each of VarDCT-LF / ModularLF / LFMeta, then the 17
+/// quant-table streams. (#68: ad-hoc `meta_offset + group_idx` ids desynced
+/// every decoder whenever an e9+ tree split on property 1, which is only
+/// reachable on multi-group images.)
+pub(crate) fn modular_hf_stream_id_base(num_lf_groups: u32) -> u32 {
+    1 + 3 * num_lf_groups + NUM_QUANT_TABLE_STREAMS
 }
 
 /// Like [`write_global_modular_section_with_tree`] but with custom dc_quant for LfFrame.
@@ -300,6 +321,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     dc_quant_custom: Option<[f32; 3]>,
     meta_image: Option<&ModularImage>,
+    hf_stream_id_base: u32,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
@@ -357,10 +379,10 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     // only the non-meta channels. The tree distinguishes meta from per-group
     // via group_id property, not channel_idx offset.)
     //
-    // When meta-channels exist in the global section (group_id=0), per-group
-    // channels use group_id = 1 + group_idx to avoid collision. This lets the
-    // tree split on group_id > 0 to separate meta from per-group data.
-    let per_group_id_offset = if meta_image.is_some() { 1u32 } else { 0u32 };
+    // Property-1 (`group_id`) values MUST be the spec stream ids the decoder
+    // evaluates (#68): pass group g (single pass) is `hf_stream_id_base + g`;
+    // meta/global channels are stream 0 (GlobalData).
+    let per_group_id_offset = hf_stream_id_base;
     for (group_idx, group_image) in images.iter().enumerate() {
         gather_samples_strided(
             &mut samples,

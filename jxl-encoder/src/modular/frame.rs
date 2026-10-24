@@ -579,6 +579,7 @@ impl FrameEncoder {
                 self.options.enable_lz77,
                 self.options.lz77_method,
                 meta_image.as_ref(),
+                super::section::modular_hf_stream_id_base(self.num_lf_groups() as u32),
             )?
         } else {
             // Standard path: collect residuals with gradient predictor
@@ -632,10 +633,12 @@ impl FrameEncoder {
         // Step 5: Write each PassGroup's data (GroupHeader + pixel data)
         // Use the pre-extracted group_images to ensure residual consistency
         //
-        // When ChannelCompact meta-channels exist in the global section (group_id=0),
-        // per-group channels use group_id = 1 + group_idx to avoid collision.
-        // This must match the offset used during tree learning in section.rs.
-        let per_group_id_offset: u32 = if meta_image.is_some() { 1 } else { 0 };
+        // Property-1 (`group_id`) values MUST be the spec stream ids the
+        // decoder evaluates when walking the tree (#68): pass group g at
+        // pass 0 is `modular_hf_stream_id_base(num_lf_groups) + g`. Must stay
+        // in lockstep with the gather/apply ids in section.rs.
+        let per_group_id_offset: u32 =
+            super::section::modular_hf_stream_id_base(num_lf_groups as u32);
         // PassGroup sections — parallelizable (each group writes to its own BitWriter)
         let pass_group_data: Vec<Vec<u8>> =
             crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
