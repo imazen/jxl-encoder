@@ -82,8 +82,8 @@ jobs:
 
       - name: Run the sweep
         id: sweep
+        # DJXL_PATH comes from setup-libjxl (exported to $GITHUB_ENV).
         env:
-          DJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/djxl
           SEED: ${{ inputs.seed }}
           MINUTES: ${{ inputs.minutes || '240' }}
         run: |
