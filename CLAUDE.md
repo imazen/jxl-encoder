@@ -822,6 +822,20 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-25: low-effort lossy failed on symbols past the static alphabet
+
+[PROVEN] Effort <= 2 (and the W44-87 single-pass gate) writes with the
+static DC/AC prefix codes, `ALPHABET_SIZE = 64` symbols under the default
+integer coding. Bright PQ content at d0.1 quantizes past that (DC of the
+windows.png title bar), and the writer refused the encode ("token symbol 64
+exceeds the prefix-code alphabet"). Fix: `static_codes_cover_values` bounds
+the largest packed AC (`2*max|c|`) and DC residual (`4*max|dc|+1`) symbol
+via `encode::default_symbol_for` and makes such frames unrepresentable for
+single pass, so they take two-pass. The scan runs only when single pass is
+possible. Pinned by `low_effort_static_codes` (windows.png crops at
+(120,120) and (60,120), RgbPqF32 d0.1 e1/e2, decoded by jxl-rs and djxl;
+fails on the old code).
+
 ### RESOLVED 2026-10-25: learned MA trees exceeded the Level 5 depth limit
 
 [PROVEN] Level 5 allows MA trees at most 64 deep (root = 0; enforced by

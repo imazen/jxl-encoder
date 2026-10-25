@@ -81,6 +81,7 @@ mod lossy_alpha_precision;
 mod lossy_alpha_roundtrip;
 mod lossy_knobs_wiring;
 mod lossy_mixed_extras_alpha;
+mod low_effort_static_codes;
 mod lz77_oob_repro;
 mod minimal_ans;
 mod modular_16bit_level;

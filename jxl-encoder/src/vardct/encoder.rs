@@ -6522,7 +6522,15 @@ impl VarDctEncoder {
         // SAFETY portion runs here because `patches_data`,
         // `splines_data`, `sharpness_map`, `noise_params`, and the
         // extras slice are all in scope.
-        let single_pass_representable = extras.is_empty()
+        // The single-pass path writes with static prefix codes whose
+        // alphabet has ALPHABET_SIZE symbols. Very fine quantization (e.g.
+        // d0.1 on HDR content) can need larger symbols; the writer then
+        // refused the encode. Only scan when single pass is possible.
+        let single_pass_possible = !self.optimize_codes || single_pass_entropy_content_gate;
+        let static_codes_cover = !single_pass_possible
+            || static_codes_cover_values(&transform_out.quant_dc, &transform_out.quant_ac);
+        let single_pass_representable = static_codes_cover
+            && extras.is_empty()
             && patches_data.is_none()
             && splines_data.is_none()
             && sharpness_map.is_none()
@@ -7839,6 +7847,34 @@ impl LinearSource<'_> {
     fn release(&mut self) {
         *self = LinearSource::Borrowed(&[]);
     }
+}
+
+/// Whether the static single-pass prefix codes can represent every token
+/// this frame produces: packed AC coefficients (at most `2 * max |c|`) and DC
+/// residuals (a clamped-gradient residual is within twice the channel range,
+/// so `4 * max |dc| + 1` bounds its packed value).
+fn static_codes_cover_values(
+    quant_dc: &[alloc::vec::Vec<alloc::vec::Vec<i32>>; 3],
+    quant_ac: &[alloc::vec::Vec<alloc::vec::Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+) -> bool {
+    use crate::entropy_coding::encode::{ALPHABET_SIZE, default_symbol_for};
+    let max_ac = quant_ac
+        .iter()
+        .flatten()
+        .flatten()
+        .flat_map(|b| b.iter())
+        .map(|v| v.unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    let max_dc = quant_dc
+        .iter()
+        .flatten()
+        .flatten()
+        .map(|v| v.unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    let fits = |v: u32| (default_symbol_for(v) as usize) < ALPHABET_SIZE;
+    fits(max_ac.saturating_mul(2)) && fits(max_dc.saturating_mul(4).saturating_add(1))
 }
 
 #[cfg(test)]

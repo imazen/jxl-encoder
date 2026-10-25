@@ -21,6 +21,12 @@ use super::token::EncodedUint;
 pub use super::encode_ans::*;
 pub use super::encode_huffman::*;
 
+/// Symbol a value takes under the default integer coding (no LZ77), as the
+/// static prefix codes use it.
+pub(crate) fn default_symbol_for(value: u32) -> u32 {
+    encode_token_value(&Token::new(0, value), None).1
+}
+
 /// Encode a token's value, using the LZ77 uint config when `is_lz77_length` is set.
 /// Returns (encoded_uint, symbol_for_histogram) where symbol_for_histogram includes
 /// the min_symbol offset for LZ77 length tokens.
