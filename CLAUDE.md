@@ -822,6 +822,22 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-25: squeeze overflowed on f32 / wide-integer samples
+
+[PROVEN] `modular/squeeze.rs` forward squeeze computes `average`, `a - b`
+and `smooth_tendency` (`4*b - 3*n - a + 6`) in i32; f32 bit patterns
+(~1e9 for values near 1.0) wrap in release builds, while decoders invert in
+i64 (libjxl `pixel_type_w`, jxl-rs). Lossless float + squeeze therefore came
+back wrong in djxl, jxl-rs and zenjxl alike (0.0 -> 9.3e-36). libjxl's
+forward squeeze has the same i32 average/difference (enc_squeeze.cc) but its
+lossless float path never enables squeeze by default. Fix: `squeeze_fits`
+gates `use_squeeze` at both lossless config sites; with all samples within
++/-2^27 every intermediate provably fits i32 (later squeeze steps reuse only
+averages). Animation inputs are 8/16-bit and need no gate. Pinned by
+`lossless_float::f32_with_squeeze_round_trips_bit_exactly` (64x32 and
+300x260, e4/e7, bit-exact via jxl-rs, accepted by djxl; fails on the old
+code).
+
 ### RESOLVED 2026-10-25: LF frame + resampling wrote undecodable files
 
 [PROVEN] The spec derives an LF frame's size from the image size

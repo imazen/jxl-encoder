@@ -54,6 +54,23 @@ fn smooth_tendency(b: i32, a: i32, n: i32) -> i32 {
     diff
 }
 
+/// Largest sample magnitude for which the forward squeeze's i32 arithmetic
+/// cannot overflow: `4*b - 3*n - a + 6` stays within 2^30 and the residual
+/// within 2^29, and later squeeze steps only reuse averages, which stay
+/// inside the input range.
+const SQUEEZE_MAX_ABS_SAMPLE: i32 = 1 << 27;
+
+/// Whether every sample is small enough for squeeze to be lossless. Wider
+/// data (f32 bit patterns, integers above 28 bits) overflowed and decoded to
+/// different samples; callers skip squeeze for it.
+pub(crate) fn squeeze_fits(image: &ModularImage) -> bool {
+    image.channels.iter().all(|ch| {
+        ch.data()
+            .iter()
+            .all(|&v| (-SQUEEZE_MAX_ABS_SAMPLE..=SQUEEZE_MAX_ABS_SAMPLE).contains(&v))
+    })
+}
+
 /// Rounded average matching libjxl's AVERAGE macro.
 #[inline]
 fn average(x: i32, y: i32) -> i32 {

@@ -7402,7 +7402,9 @@ impl<'a> EncodeRequest<'a> {
                 // then the tree is inert, matching pre-lift behaviour.
                 use_ans: cfg.ans() || (use_tree_learning && cfg.use_ans.is_none()),
                 use_tree_learning,
-                use_squeeze: cfg.squeeze,
+                // Squeeze overflows i32 on wide samples (f32 bit patterns,
+                // integers above 28 bits); such images skip it.
+                use_squeeze: cfg.squeeze && crate::modular::squeeze::squeeze_fits(&image),
                 enable_lz77: cfg.effective_lz77(),
                 lz77_method: cfg.lz77_method(),
                 lossy_palette: cfg.lossy_palette,
@@ -10109,7 +10111,8 @@ impl LosslessEncoder {
                     // `with_ans(false)` still wins.
                     use_ans: cfg.ans() || (use_tree_learning_l && cfg.use_ans.is_none()),
                     use_tree_learning: use_tree_learning_l,
-                    use_squeeze: cfg.squeeze,
+                    // See the one-shot path: wide samples skip squeeze.
+                    use_squeeze: cfg.squeeze && crate::modular::squeeze::squeeze_fits(&image),
                     enable_lz77: cfg.effective_lz77(),
                     lz77_method: cfg.lz77_method(),
                     lossy_palette: cfg.lossy_palette,

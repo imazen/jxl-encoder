@@ -721,3 +721,43 @@ fn integer_gray_alpha_control_for_djxl() {
         "integer grayscale layouts djxl rejects (pre-existing, not float-related): {failures:?}"
     );
 }
+
+/// Squeeze's forward transform overflowed i32 on f32 bit patterns, so a
+/// lossless float encode with squeeze decoded to different samples in every
+/// decoder (found by the conformance sweep: 0.0 came back as 9.3e-36).
+/// Images whose samples do not fit squeeze's arithmetic now skip it.
+#[test]
+fn f32_with_squeeze_round_trips_bit_exactly() {
+    for (w, h) in [(64usize, 32usize), (300, 260)] {
+        let vals: Vec<f32> = (0..w * h * 3)
+            .map(|i| {
+                let x = (i / 3) % w;
+                let y = (i / 3) / w;
+                let c = i % 3;
+                let v = (x as f32 * 0.013 + y as f32 * 0.007 + c as f32 * 0.11).sin();
+                if (x + y) % 7 == 0 { 0.0 } else { v }
+            })
+            .collect();
+        let mut px = Vec::with_capacity(vals.len() * 4);
+        for v in &vals {
+            px.extend_from_slice(&v.to_ne_bytes());
+        }
+        for effort in [4u8, 7] {
+            let data = LosslessConfig::new()
+                .with_effort(effort)
+                .with_squeeze(true)
+                .encode_request(w as u32, h as u32, PixelLayout::RgbLinearF32)
+                .encode(&px)
+                .expect("encode");
+            let (dw, dh, decoded) = decode_jxlrs_planar(&data, 3);
+            assert_eq!((dw, dh), (w, h));
+            let bad = decoded
+                .iter()
+                .zip(&vals)
+                .filter(|(a, b)| a.to_bits() != b.to_bits())
+                .count();
+            assert_eq!(bad, 0, "{w}x{h} e{effort}: {bad} samples differ");
+            djxl_accepts(&data, &format!("f32_squeeze_{w}x{h}_e{effort}"));
+        }
+    }
+}
