@@ -1,8 +1,8 @@
 # jxl-encoder [![CI](https://img.shields.io/github/actions/workflow/status/imazen/jxl-encoder/ci.yml?style=flat-square)](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/jxl-encoder?style=flat-square)](https://crates.io/crates/jxl-encoder) [![lib.rs](https://img.shields.io/badge/lib.rs-jxl--encoder-orange?style=flat-square)](https://lib.rs/crates/jxl-encoder) [![docs.rs](https://img.shields.io/docsrs/jxl-encoder?style=flat-square)](https://docs.rs/jxl-encoder) [![codecov](https://img.shields.io/codecov/c/github/imazen/jxl-encoder?style=flat-square)](https://codecov.io/gh/imazen/jxl-encoder) [![license](https://img.shields.io/crates/l/jxl-encoder?style=flat-square)](https://github.com/imazen/jxl-encoder#license)
 
-A comprehensive, pure Rust JPEG XL encoder. 80k lines of library code, 29k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
+A pure Rust JPEG XL encoder covering lossy (VarDCT) and lossless (Modular) encoding. Output is checked against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
 
-Default: `#![forbid(unsafe_code)]` (relaxed with `unsafe-performance` feature). 940+ tests passing.
+`#![forbid(unsafe_code)]` unless the opt-in `unsafe-performance` feature is enabled.
 
 ## Library usage
 
@@ -17,7 +17,7 @@ let jxl = LossyConfig::new(1.0)
 let jxl = LosslessConfig::new()
     .encode(&pixels, width, height, PixelLayout::Rgb8)?;
 
-// Full control — limits, metadata, cancellation
+// Full control: encode_request() also takes with_metadata() and with_stop()
 let jxl = LossyConfig::new(1.0)
     .with_ans(true)
     .with_gaborish(true)
@@ -26,12 +26,14 @@ let jxl = LossyConfig::new(1.0)
     .encode(&pixels)?;
 ```
 
-Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `GrayAlpha16`, `RgbLinearF32`, `RgbaLinearF32`, `GrayLinearF32`, `GrayAlphaLinearF32`.
+Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `GrayAlpha16`, `RgbLinearF32`, `RgbaLinearF32`, `GrayLinearF32`, `GrayAlphaLinearF32`. Lossy accepts all 14; lossless accepts the integer layouts (the `f32` layouts are lossy-only in 0.3.x).
 
 ## CLI
 
+The CLI is not published for 0.3.x (crates.io has an older 0.2.0); build it from this branch:
+
 ```bash
-cargo install jxl-encoder-cli
+cargo build --release -p jxl-encoder-cli   # target/release/cjxl-rs
 
 # Lossy (distance 1.0 = visually lossless)
 cjxl-rs input.png output.jxl -d 1.0
@@ -45,7 +47,7 @@ cjxl-rs --help
 
 ## Lossy quality vs libjxl
 
-At size parity overall vs cjxl effort 7 (357 commits of optimization). At d=0.25-0.5, files are 2-3% smaller with better butteraugli. At d=1.0-2.0, files are 1-3% larger at comparable quality. Measured on 41 CID22 images across 9 distances.
+Against cjxl v0.12 at effort 7, on 41 CID22 photos at nine distances from 0.25 to 5 (same requested distance, not matched quality), total size and mean butteraugli are equal. Below d=1 our files are 2–3% smaller with lower butteraugli; from d=1 to 5 they are 1–3.5% larger, with butteraugli within 1.5% and SSIMULACRA2 0.4–1.8 points lower. Reproduce with `just quality-compare`; table in [`benchmarks/quality_vs_cjxl_e7_2026-10-25.txt`](benchmarks/quality_vs_cjxl_e7_2026-10-25.txt).
 
 ## Feature coverage
 
@@ -62,7 +64,7 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 | Chroma-from-luma (per-tile least-squares) | Yes | Yes | Yes |
 | Gaborish inverse pre-filter (default-on) | Yes | Yes | Yes |
 | Custom coefficient ordering (default-on) | Yes | Yes | Yes |
-| Butteraugli quant loop (default-on) | Yes | Yes | Yes (2 iterations) |
+| Butteraugli quant loop (effort 8+, as libjxl) | No | No | Yes (2 iterations at e8, 4 at e9+) |
 | EPF per-block sharpness | Yes | Yes | Yes |
 | Content-adaptive block context map | Yes | Yes | Yes |
 | Error diffusion in AC quantization | No | No | Yes (opt-in) |
@@ -73,7 +75,7 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 | 16-bit / float input | Yes | Yes | Yes (14 pixel layouts) |
 | Patches / dictionary (default-on for screenshots) | No | Yes | Yes |
 | Fine-grained AC strategy search | Yes | Yes | Yes (effort 9+) |
-| Splines (opt-in API) | No | Yes | Yes |
+| Splines (caller-supplied) | No | No | Yes (opt-in API) |
 | Dots detection | No | Yes | No |
 | Progressive VarDCT (2-pass / 3-pass) | Yes | Yes | Yes |
 
@@ -95,7 +97,8 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 | Multi-group encoding (any image size) | Yes | Yes |
 | RGBA / grayscale / alpha | Yes | Yes |
 | Lossy palette / delta palette (opt-in) | Yes | Yes |
-| 16-bit / float input | Yes | Yes |
+| 16-bit input | Yes | Yes |
+| Float input | Yes | No (lossy only in 0.3.x) |
 | Best/Variable predictors (effort 8+) | Yes | No (tree learning is equivalent) |
 
 ### Entropy coding
@@ -156,8 +159,8 @@ cargo clippy --workspace -- -D warnings    # lint
 ## Project structure
 
 ```
-jxl-encoder/                             ~265k lines of Rust
-├── jxl_encoder/             80k lib + 29k tests
+jxl-encoder/
+├── jxl-encoder/             # library (jxl-encoder on crates.io)
 │   └── src/
 │       ├── api.rs               # Public API (LossyConfig, LosslessConfig, EncodeRequest)
 │       ├── vardct/              # VarDCT (lossy) encoder
@@ -169,13 +172,13 @@ jxl-encoder/                             ~265k lines of Rust
 │       ├── modular/             # Modular (lossless) encoder
 │       ├── entropy_coding/      # ANS, Huffman, HybridUint, LZ77
 │       └── headers/             # File/frame headers
-├── jxl_simd/                # SIMD primitives (jxl-encoder-simd on crates.io)
-└── jxl_encoder_cli/         # CLI tool: cjxl-rs (jxl-encoder-cli on crates.io)
+├── jxl-encoder-simd/        # SIMD primitives (jxl-encoder-simd on crates.io)
+└── jxl-encoder-cli/         # CLI tool: cjxl-rs
 ```
 
 ## Credits
 
-- **[libjxl](https://github.com/libjxl/libjxl)** (JPEG XL Project Authors, BSD-3-Clause) — Reference encoder. Our algorithms, quantization weights, cost models, and bitstream format are derived from libjxl. [libjxl-tiny](https://github.com/nicoshev/libjxl-tiny) was the initial porting target.
+- **[libjxl](https://github.com/libjxl/libjxl)** (JPEG XL Project Authors, BSD-3-Clause) — Reference encoder. Our algorithms, quantization weights, cost models, and bitstream format are derived from libjxl. [libjxl-tiny](https://github.com/libjxl/libjxl-tiny) was the initial porting target.
 - **[zune-jpegxl](https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpegxl)** (Caleb Etemesi, MIT/Apache-2.0/Zlib) — Seeing a working pure-Rust JXL lossless encoder (~2.5k lines) was the inspiration for this project, which extends into lossy encoding and the features listed above.
 - **[jxl-rs](https://github.com/libjxl/jxl-rs)** (BSD-3-Clause) — Primary roundtrip validation decoder.
 - **[jxl-oxide](https://github.com/tirr-c/jxl-oxide)** — Secondary validation decoder.

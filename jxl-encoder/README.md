@@ -6,9 +6,10 @@
 [![codecov](https://codecov.io/gh/imazen/jxl-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jxl-encoder)
 [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
-Pure Rust JPEG XL encoder. Lossy (VarDCT) and lossless (Modular) encoding, verified against three independent decoders (jxl-rs, jxl-oxide, djxl). `#![forbid(unsafe_code)]`.
-
-740+ tests passing.
+Pure Rust JPEG XL encoder: lossy (VarDCT) and lossless (Modular). Output is
+checked against three independent decoders (jxl-rs, jxl-oxide and libjxl's
+djxl). `#![forbid(unsafe_code)]` unless you enable the opt-in
+`unsafe-performance` feature.
 
 ## Quick start
 
@@ -23,7 +24,8 @@ let jxl = LossyConfig::new(1.0)
 let jxl = LosslessConfig::new()
     .encode(&pixels, width, height, PixelLayout::Rgb8)?;
 
-// Full control — limits, metadata, cancellation
+// Full control: encode_request() also takes with_metadata() (ICC, EXIF, XMP)
+// and with_stop() (cancellation)
 use jxl_encoder::Limits;
 let jxl = LossyConfig::new(1.0)
     .with_ans(true)
@@ -35,35 +37,59 @@ let jxl = LossyConfig::new(1.0)
 
 ## Pixel layouts
 
-`Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `RgbLinearF32`.
+`Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`,
+`Gray16`, `GrayAlpha16`, `RgbLinearF32`, `RgbaLinearF32`, `GrayLinearF32`,
+`GrayAlphaLinearF32`.
 
-Lossy encoding supports all layouts including alpha (VarDCT for RGB + modular for the alpha channel). Lossless supports RGB, RGBA, grayscale, and gray+alpha.
+Lossy encoding accepts all 14 layouts; alpha is coded as a modular extra
+channel next to the VarDCT colour. Lossless encoding accepts the 8- and
+16-bit integer layouts; the linear `f32` layouts are lossy-only in 0.3.x.
 
 ## What works
 
-**Lossy (VarDCT)**: 19/27 AC strategies (all that libjxl evaluates through effort 7), ANS entropy coding, adaptive quantization, chroma-from-luma, gaborish, pixel-domain loss, butteraugli quantization loop, custom coefficient ordering, noise synthesis, error diffusion, EPF sharpness, JPEG re-encoding.
+**Lossy (VarDCT)**: the 19 of 27 AC strategies that libjxl evaluates through
+effort 9, ANS entropy coding, adaptive quantization, chroma-from-luma,
+gaborish, pixel-domain loss, the butteraugli quantization loop (effort 8+),
+custom coefficient orders, EPF sharpness, patches, progressive passes, and
+opt-in noise synthesis, error diffusion and splines. JPEG re-encoding with
+the `jpeg-reencoding` feature.
 
-**Lossless (Modular)**: RCT (all 42 variants), ANS + Huffman, LZ77 (RLE + hash chain), histogram clustering, content-adaptive MA tree learning, palette transform, squeeze (Haar wavelet), 14/14 predictors including Weighted.
+**Lossless (Modular)**: RCT (all 42 variants), ANS and Huffman, LZ77 (RLE,
+greedy and optimal), histogram clustering, content-adaptive MA tree learning,
+all 14 predictors including Weighted, palette, and squeeze.
 
-**Animation**: Both lossy and lossless, per-frame duration, loop count, frame crop detection.
+**Animation**: lossy and lossless, per-frame duration, loop count, frame crop
+detection.
 
-**Input formats**: 8-bit sRGB, 16-bit sRGB, linear f32, grayscale, alpha. BGR/BGRA layouts.
+**Metadata**: ICC profiles (coded in the codestream), EXIF and XMP
+(container boxes).
 
-**Lossy quality vs libjxl**: Within 3% of cjxl effort 5 at low distances (d <= 1.0). The gap widens to ~22-26% at higher distances due to missing cost model refinements (iterative rate control, full histogram clustering).
+**Lossy quality vs libjxl**: against cjxl v0.12 at effort 7, on 41 CID22
+photos at nine distances from 0.25 to 5 (same requested distance, not
+matched quality), total size and mean butteraugli are equal. Below d=1 our
+files are 2–3% smaller with lower butteraugli; from d=1 to 5 they are 1–3.5%
+larger, with butteraugli within 1.5% and SSIMULACRA2 0.4–1.8 points lower.
+Reproduce with `just quality-compare`; the table is in
+[`benchmarks/quality_vs_cjxl_e7_2026-10-25.txt`](https://github.com/imazen/jxl-encoder/blob/release/0.3.x/benchmarks/quality_vs_cjxl_e7_2026-10-25.txt).
 
 ## Features
 
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `std` | yes | Standard library support; enables `encode_to()` for `Write` targets |
-| `butteraugli-loop` | yes | Iterative quant field refinement via butteraugli distmap |
+| `butteraugli-loop` | yes | Butteraugli-driven quant field refinement at effort 8+ |
+| `parallel` | no | Multi-threaded encoding (rayon) |
+| `convenience` | no | Encode `imgref` buffers of `rgb` pixel types in one call |
+| `jpeg-reencoding` | no | Lossless JPEG recompression into JXL |
 | `rate-control` | no | Iterative encode for precise distance targeting |
-| `jpeg-reencoding` | no | JPEG bitstream re-encoding into JXL |
-| `trace-bitstream` | no | Zero-cost bitstream tracing for debugging |
+| `ssim2-loop` | no | Experimental: SSIMULACRA2-driven quantization loop (`with_ssim2_iters`) |
+| `zensim-loop` | no | Experimental: zensim-driven quantization loop (`with_zensim_iters`) |
+| `unsafe-performance` | no | Allows a few `unsafe` fast paths; without it the crates forbid `unsafe` |
+| `trace-bitstream` | no | Bitstream tracing to stderr, for debugging |
 
 ## License
 
-Dual-licensed: [AGPL-3.0](LICENSE-AGPL3) or [commercial](LICENSE-COMMERCIAL).
+Dual-licensed: [AGPL-3.0](https://github.com/imazen/jxl-encoder/blob/main/LICENSE-AGPL3) or [commercial](https://github.com/imazen/jxl-encoder/blob/main/LICENSE-COMMERCIAL).
 
 I've maintained and developed open-source image server software — and the 40+
 library ecosystem it depends on — full-time since 2011. Fifteen years of
@@ -84,7 +110,7 @@ Support sustainable and secure software; swap patch tuesday for patch leap-year.
   [Pricing & 60-day free trial →](https://www.imazen.io/pricing)
 - **AGPL v3** — Free and open. Share your source if you distribute.
 
-See [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) for details.
+See [LICENSE-COMMERCIAL](https://github.com/imazen/jxl-encoder/blob/main/LICENSE-COMMERCIAL) for details.
 
 ### Upstream
 

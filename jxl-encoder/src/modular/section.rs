@@ -464,7 +464,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         Some(total_pixels),
     );
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "DIAG tree: {} nodes, {} contexts, {} samples, {} total_tokens, \
          max_nodes={}, threshold={:.1}, pixel_frac={:.3}",
         tree.len(),
@@ -475,7 +475,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         params.split_threshold,
         pixel_fraction,
     );
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "DIAG code: {} histograms (from {} contexts), rct={:?}, compact={}",
         code.histograms.len(),
         ans_num_contexts,
@@ -484,17 +484,21 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     );
 
     // Step 5: Write bitstream
+    #[cfg(feature = "trace-bitstream")]
     let bits_before = writer.bits_written();
     crate::f16::write_lf_quant(writer, dc_quant_custom)?;
     // has_tree = true
     writer.write(1, 1)?;
 
     // Write the learned tree
+    #[cfg(feature = "trace-bitstream")]
     let bits_before_tree = writer.bits_written();
     write_tree(writer, &tree)?;
+    #[cfg(feature = "trace-bitstream")]
     let tree_bits = writer.bits_written() - bits_before_tree;
 
     // Write LZ77 header + ANS data histogram.
+    #[cfg(feature = "trace-bitstream")]
     let bits_before_histo = writer.bits_written();
     if ans_num_contexts > 1 {
         write_lz77_header(lz77_params.as_ref(), writer)?;
@@ -502,6 +506,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     } else {
         write_ans_modular_header(writer, &code)?;
     }
+    #[cfg(feature = "trace-bitstream")]
     let histo_bits = writer.bits_written() - bits_before_histo;
 
     // GroupHeader (global modular group)
@@ -516,8 +521,9 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         write_tokens_ans(meta_token_slice, &code, None, writer)?;
     }
 
+    #[cfg(feature = "trace-bitstream")]
     let total_lf_global_bits = writer.bits_written() - bits_before;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "DIAG LfGlobal: tree={} bits ({} B), histo={} bits ({} B), \
          meta_tokens={}, total={} bits ({} B)",
         tree_bits,

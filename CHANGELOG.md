@@ -2,9 +2,19 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-25
+
+Maintenance release on the 0.3 line: ICC and colour-header decodability
+fixes. No public API changes (`cargo semver-checks` clean for both crates).
+Encoded bytes differ from 0.3.2 only for lossless encodes with
+`with_source_gamma`, and for ICC profiles that contain `mAB `/`mBA ` curves
+or that would compress past the decoders' 256:1 ICC ratio limit.
+
 - Fixed (#128): ICC profiles with `curv` curves inside `mAB `/`mBA ` tags were rebuilt 12 bytes short per curve by decoders (djxl "Invalid result size", jxl-rs `InvalidIccStream`); among them ITU-R BT.2100 PQ, ICC Probe v4, sRGB v4 Appearance, RIMM-RGB v4 and the CGATS21/CRPC press profiles. The ICC predictor now inserts each curve's 12-byte header, as libjxl does. Backport from main.
 - Fixed (#128): ICC profiles that LZ77 compresses past 256:1 (zero or repeated tag payloads, from about 300 KB up) produced files djxl v0.12 rejects as a "Corrupted stream"; libjxl's ICC reader checks the ratio every 65536 decoded symbols. The writer now checks every such prefix and falls back to coding without LZ77, then to a code with at least one bit per symbol. Profiles whose predicted stream is 64 KiB or smaller are byte-identical. Backport from main.
 - Fixed: lossless `with_source_gamma` was ignored in the codestream header, which kept saying sRGB. One-shot and streaming lossless encodes now write the gamma, as lossy encodes do. Backport from main.
+- Fixed: multi-group lossless encodes at effort 7 and above printed `DIAG` lines to stderr; those diagnostics now print only with the `trace-bitstream` feature.
+- Docs: README claims re-verified for 0.3.3 (pixel layouts per mode, features, quality vs cjxl v0.12 from a new `just quality-compare` run, MSRV); stale test counts and numbers removed.
 
 ## [0.3.2] - 2026-10-24
 

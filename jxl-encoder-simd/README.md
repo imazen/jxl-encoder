@@ -7,17 +7,17 @@
 
 SIMD-accelerated primitives for [jxl-encoder](https://crates.io/crates/jxl-encoder). Internal crate — you probably want `jxl-encoder` instead.
 
-`#![no_std]`, `#![forbid(unsafe_code)]`.
+`#![no_std]`; `#![forbid(unsafe_code)]` unless the opt-in `unsafe-performance` feature is enabled.
 
-Uses [archmage](https://crates.io/crates/archmage) for portable SIMD dispatch across x86-64 (AVX2) and aarch64 (NEON) with scalar fallback.
+Uses [archmage](https://crates.io/crates/archmage) and magetypes for runtime SIMD dispatch: x86-64 (AVX2 + FMA), aarch64 (NEON) and wasm32 (SIMD128), with a scalar fallback.
 
 ## What's inside
 
-DCT/IDCT (8x8, 16x16), quantization, dequantization, XYB color transform, gaborish pre-filter, edge-preserving filter (EPF), adaptive quantization masking, entropy estimation, pixel-domain loss computation.
+Forward DCTs (4 to 64) and inverse DCTs (16 to 64), quantization, dequantization, XYB color transform, gaborish pre-filter, edge-preserving filter (EPF), adaptive quantization masking, chroma-from-luma, noise, entropy estimation, pixel-domain loss.
 
 ## License
 
-Dual-licensed: [AGPL-3.0](LICENSE-AGPL3) or [commercial](LICENSE-COMMERCIAL).
+Dual-licensed: [AGPL-3.0](https://github.com/imazen/jxl-encoder/blob/main/LICENSE-AGPL3) or [commercial](https://github.com/imazen/jxl-encoder/blob/main/LICENSE-COMMERCIAL).
 
 I've maintained and developed open-source image server software — and the 40+
 library ecosystem it depends on — full-time since 2011. Fifteen years of
@@ -38,7 +38,7 @@ Support sustainable and secure software; swap patch tuesday for patch leap-year.
   [Pricing & 60-day free trial →](https://www.imazen.io/pricing)
 - **AGPL v3** — Free and open. Share your source if you distribute.
 
-See [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) for details.
+See [LICENSE-COMMERCIAL](https://github.com/imazen/jxl-encoder/blob/main/LICENSE-COMMERCIAL) for details.
 
 ### Upstream
 
