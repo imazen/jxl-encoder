@@ -7257,6 +7257,14 @@ impl<'a> EncodeRequest<'a> {
                 } else {
                     ce
                 };
+        } else if let Some(gamma) = self.source_gamma {
+            // The header must carry the same gamma the frame encoder is
+            // given below; it used to stay sRGB.
+            file_header.metadata.color_encoding = if image.is_grayscale {
+                ColorEncoding::gray_with_gamma(gamma)
+            } else {
+                ColorEncoding::with_gamma(gamma)
+            };
         }
         // Configurable bits_per_sample for one-shot lossless (#18
         // sub-feature). Lossless preserves pixels bit-exactly so this
@@ -9936,6 +9944,13 @@ impl LosslessEncoder {
                     } else {
                         ce
                     };
+            } else if let Some(gamma) = self.source_gamma {
+                // Mirrors the one-shot path.
+                file_header.metadata.color_encoding = if image.is_grayscale {
+                    ColorEncoding::gray_with_gamma(gamma)
+                } else {
+                    ColorEncoding::with_gamma(gamma)
+                };
             }
             // Configurable bits_per_sample (#18 sub-feature). Lossless
             // preserves pixels bit-exactly so this only affects header

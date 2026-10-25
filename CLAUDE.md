@@ -822,6 +822,37 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-25: repetitive ICC profiles over-compressed past the decoders' ratio bound (#128, part)
+
+[PROVEN] libjxl `ICCReader::Process` (icc_codec.cc ~396-403) fails with
+"Corrupted stream" when, at a multiple of 65536 decoded symbols `i`, the bits
+consumed since the encoded-size field give `i > bytes * 256`. LZ77 shrinks a
+profile with a long zero or repeated private-tag payload far past that
+(a 1 MB repeat → ~1.7 KB). cjxl v0.12's own output for such profiles fails
+djxl the same way. `write_icc` now simulates every checkpoint against the
+actual coded bits (`icc_prefixes_within_decoder_ratio`, lower bound = headers
++ tokens ending at or before `i`) and falls back to no LZ77, then to a code
+with two phantom symbols per context (≥ 1 bit/symbol, ≤ 8:1). Profiles whose
+predicted stream is ≤ 65536 bytes never reach a checkpoint and stay
+byte-identical. Pinned by `tests/it/icc_ratio.rs` (zero/repeat payloads,
+300 KB and 1 MB, lossless and lossy; jxl-rs and djxl return the ICC byte for
+byte; fails at 300 KB with the guard disabled) and two `icc::tests` unit tests
+(per-prefix, not total; the one-bit floor). jxl-rs 0.4 has no such check but
+caps the encoded ICC at 1 MiB. **Still open in #128**: the named profiles
+`ITUR_2100_PQ_FULL.ICC` ("Invalid result size", icc_codec.cc:334) and
+`Probev1_ICCv4.icc` were not reproduced; neither file was available.
+
+### RESOLVED 2026-10-25: lossless `with_source_gamma` was ignored in the header
+
+[PROVEN] The one-shot and streaming lossless paths computed the gamma
+`ColorEncoding` but passed it only to `encode_modular_with_patches`, whose
+colour-encoding parameter is unused; the file header stayed sRGB. The #17 fix
+(`52976f17`) had wired only explicit `with_color_encoding`. Both paths now
+write the gamma (explicit `with_color_encoding` still wins). Pinned by
+`api_tests::lossless_source_gamma_reaches_header` (RGB/gray, 16² and 300×260,
+streaming == one-shot, jxl-oxide header, jxl-rs decode, exact djxl samples;
+fails on the old code with `tf: Srgb`). Also present on 0.3.x.
+
 ### RESOLVED 2026-10-24: lossless property buckets wrapped at 256 thresholds (e9)
 
 Bucket indices are `u8` over `0..=thresholds.len()`, and the e9 default of
