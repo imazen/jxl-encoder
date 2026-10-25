@@ -5750,6 +5750,21 @@ impl<'a> ExtraChannel<'a> {
         }
     }
 
+    /// Alpha from 16-bit samples with `bits` significant low bits.
+    pub(crate) fn from_alpha_u16(data: &'a [u16], associated: bool, bits: u32) -> Self {
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+        info.alpha_associated = associated;
+        info.bit_depth = crate::headers::file_header::BitDepth {
+            float_sample: false,
+            bits_per_sample: bits,
+            exponent_bits: 0,
+        };
+        Self {
+            info,
+            data: ExtraChannelBuf::U16(data),
+        }
+    }
+
     /// Attach a depth channel (`ExtraChannelType::Depth`). Use cases:
     /// 3D photos, iPhone Portrait Mode, structured-light scan output.
     /// `data` is `width * height` bytes of u8 depth values.
@@ -7896,6 +7911,15 @@ impl<'a> EncodeRequest<'a> {
                 (linear, None, true)
             }
         };
+        // 16-bit layouts code alpha at full precision. The 8-bit copy above
+        // only feeds the approximate pre-passes (invisible-pixel
+        // simplification, unpremultiply, resampling); alpha used to be coded
+        // from it, losing its low 8 bits.
+        let alpha_u16: Option<Vec<u16>> = match self.layout {
+            PixelLayout::Rgba16 => Some(extract_alpha_u16_raw(pixels, 4, 3, self.stop)),
+            PixelLayout::GrayAlpha16 => Some(extract_alpha_u16_raw(pixels, 2, 1, self.stop)),
+            _ => None,
+        };
         // Pixel converters early-exit with a partial buffer on stop; the
         // error propagates here before the truncated data is consumed.
         crate::error::check_stop(self.stop)?;
@@ -8608,6 +8632,30 @@ impl<'a> EncodeRequest<'a> {
         // so a caller can't accidentally ship a file whose extras are
         // sized for the original dims while the file header advertises
         // the downsampled dims.
+        // Full-precision 16-bit alpha when the frame is not resampled (a
+        // resampled frame codes the downsampled 8-bit alpha).
+        let alpha_bits = self.bits_per_sample.unwrap_or(16);
+        let premultiplied = self.premultiplied_alpha;
+        fn pick_alpha<'b>(
+            a8: &'b Option<Vec<u8>>,
+            a16: &'b Option<Vec<u16>>,
+            resampling: u32,
+            premultiplied: bool,
+            bits: u32,
+        ) -> Option<crate::api::ExtraChannel<'b>> {
+            match (a16, resampling) {
+                (Some(a), 1) => Some(crate::api::ExtraChannel::from_alpha_u16(
+                    a,
+                    premultiplied,
+                    bits,
+                )),
+                _ => a8
+                    .as_ref()
+                    .map(|a| crate::api::ExtraChannel::from_alpha_buf(a, premultiplied)),
+            }
+        }
+        let alpha_extra =
+            |a8, a16| pick_alpha(a8, a16, effective_resampling, premultiplied, alpha_bits);
         let has_synthesised_black =
             synthesised_black_u8.is_some() || synthesised_black_u16.is_some();
         let extras_vec: Vec<crate::api::ExtraChannel<'_>> = if !self.extra_channels.is_empty()
@@ -8637,11 +8685,8 @@ impl<'a> EncodeRequest<'a> {
             if let Some(ref k_u16) = synthesised_black_u16 {
                 v.push(crate::api::ExtraChannel::black_u16(k_u16));
             }
-            if let Some(ref buf) = encode_alpha {
-                v.push(crate::api::ExtraChannel::from_alpha_buf(
-                    buf,
-                    self.premultiplied_alpha,
-                ));
+            if let Some(ec) = alpha_extra(&encode_alpha, &alpha_u16) {
+                v.push(ec);
             }
             for ec in self.extra_channels.iter() {
                 if matches!(
@@ -8666,14 +8711,7 @@ impl<'a> EncodeRequest<'a> {
             // Fast path: no caller-supplied extras and no synthesised
             // K plane. Build just an alpha entry when the layout
             // carries alpha.
-            if let Some(ref buf) = encode_alpha {
-                vec![crate::api::ExtraChannel::from_alpha_buf(
-                    buf,
-                    self.premultiplied_alpha,
-                )]
-            } else {
-                Vec::new()
-            }
+            alpha_extra(&encode_alpha, &alpha_u16).into_iter().collect()
         };
 
         #[cfg(feature = "__env_var_diagnostics")]

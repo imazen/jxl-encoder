@@ -822,6 +822,22 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-25: lossy 16-bit alpha quantized to 8 bits
+
+[PROVEN] `encode_lossy` extracted alpha for `Rgba16`/`GrayAlpha16` through
+`extract_alpha_u16`, which scales to u8, and coded the extra channel from
+that copy (header bit depth 8). Alpha is lossless in lossy mode by default,
+so the low 8 bits were lost (all three decoders agree: 65534 -> 65535,
+3 -> 0). Now `extract_alpha_u16_raw` keeps the samples and
+`ExtraChannel::from_alpha_u16` codes them at the input precision
+(`with_bits_per_sample`, default 16) when the frame is not resampled. The u8
+copy still feeds SimplifyInvisible, unpremultiply and resampling. **Open:**
+float layouts (`*LinearF32/F16`, PQ/HLG/BT.709 `*F32`) still code alpha at
+8 bits; `ExtraChannelBuf`/`VardctExtraBuf` have no float variant. Pinned by
+`lossy_alpha_precision::lossy_16bit_alpha_keeps_all_bits` (Rgba16 and
+GrayAlpha16, 64x32 and 300x260, e3/e7, exact 16-bit alpha in jxl-rs and
+djxl; fails on the old code).
+
 ### RESOLVED 2026-10-25: lossy effort 1-2 dropped alpha
 
 [PROVEN] `optimize_codes` is off at effort <= 2, and the single-pass static

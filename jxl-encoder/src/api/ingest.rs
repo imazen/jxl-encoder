@@ -725,6 +725,27 @@ pub(crate) fn gamma_gray_u16_to_linear_f32_rgb(
         .collect()
 }
 
+/// Extract the alpha channel from interleaved 16-bit pixel data at full
+/// precision (native-endian samples, unscaled).
+pub(crate) fn extract_alpha_u16_raw(
+    data: &[u8],
+    stride: usize,
+    alpha_offset: usize,
+    stop: Option<&dyn enough::Stop>,
+) -> Vec<u16> {
+    let pixels: &[u16] = &cast_pixel_lanes(data);
+    pixels
+        .chunks(stride)
+        .scan(0usize, |t, px| {
+            *t += 1;
+            if *t & 0x3_FFFF == 0 && stop.is_some_and(|st| st.check().is_err()) {
+                return None;
+            }
+            Some(px[alpha_offset])
+        })
+        .collect()
+}
+
 /// Extract alpha channel from interleaved 16-bit pixel data as u8 (quantized).
 ///
 /// `u16_max` is the source-precision max value (65535 for 16-bit,
