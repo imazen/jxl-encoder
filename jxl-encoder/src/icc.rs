@@ -9,8 +9,8 @@
 //! then entropy-coded using Huffman with 41 contexts.
 
 use crate::bit_writer::BitWriter;
-use crate::entropy_coding::encode::build_entropy_code_with_options;
-use crate::entropy_coding::lz77::{Lz77Method, apply_lz77, write_lz77_header};
+use crate::entropy_coding::encode::{OwnedEntropyCode, build_entropy_code_with_options};
+use crate::entropy_coding::lz77::{Lz77Method, Lz77Params, apply_lz77, write_lz77_header};
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
@@ -770,41 +770,173 @@ pub fn write_icc(icc: &[u8], writer: &mut BitWriter) -> Result<()> {
     } else {
         Lz77Method::Greedy
     };
-    let (tokens, lz77_params) = match apply_lz77(
+    let lz77_result = apply_lz77(
         &tokens,
         NUM_ICC_CONTEXTS,
         true, // force_huffman
         lz77_method,
         0,    // no special distance codes for ICC
         None, // ICC profiles are small — not a budget-tracked allocation site
-    )? {
-        Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
-        None => (tokens, None),
-    };
+    )?;
 
-    // Build Huffman entropy code (libjxl uses force_huffman=true for ICC)
-    let num_contexts = if lz77_params.is_some() {
-        NUM_ICC_CONTEXTS + 1 // +1 for LZ77 distance context
-    } else {
-        NUM_ICC_CONTEXTS
-    };
-    let code = build_entropy_code_with_options(&tokens, num_contexts, false, lz77_params.as_ref());
+    if let Some((lz77_tokens, params)) = lz77_result {
+        let code = build_entropy_code_with_options(
+            &lz77_tokens,
+            NUM_ICC_CONTEXTS + 1,
+            false,
+            Some(&params),
+        );
+        if icc_prefixes_within_decoder_ratio(enc.len(), &lz77_tokens, Some(&params), &code)? {
+            return write_icc_stream(&lz77_tokens, Some(&params), &code, writer);
+        }
+        // A profile that LZ77 shrinks past the decoders' 256:1 bound is
+        // rejected as corrupt (issue #128); code it without LZ77 instead.
+    }
 
-    // Write LZ77 header (enabled or disabled)
-    write_lz77_header(lz77_params.as_ref(), writer)?;
+    let mut code = build_entropy_code_with_options(&tokens, NUM_ICC_CONTEXTS, false, None);
+    if !icc_prefixes_within_decoder_ratio(enc.len(), &tokens, None, &code)? {
+        // A prefix code with one used symbol costs zero bits per token.
+        code = build_icc_code_with_one_bit_floor(&tokens, NUM_ICC_CONTEXTS);
+        if !icc_prefixes_within_decoder_ratio(enc.len(), &tokens, None, &code)? {
+            return Err(crate::error::Error::InvalidInput(
+                "ICC profile is too repetitive to code within the decoders' 256:1 ratio limit"
+                    .into(),
+            ));
+        }
+    }
+    write_icc_stream(&tokens, None, &code, writer)
+}
 
-    // Write entropy code header (context map + prefix codes)
+/// Build an ICC entropy code in which every token costs at least one bit.
+///
+/// Two phantom symbols per context enter the histograms only, so every
+/// clustered prefix code has at least two used symbols. The ratio is then at
+/// most 8:1, inside the decoders' 256:1 bound. The phantom tokens are never
+/// written.
+fn build_icc_code_with_one_bit_floor(tokens: &[Token], num_contexts: usize) -> OwnedEntropyCode {
+    let mut with_phantoms = Vec::with_capacity(tokens.len() + 2 * num_contexts);
+    with_phantoms.extend_from_slice(tokens);
+    for ctx in 0..num_contexts as u32 {
+        with_phantoms.push(Token::new(ctx, 0));
+        with_phantoms.push(Token::new(ctx, 1));
+    }
+    build_entropy_code_with_options(&with_phantoms, num_contexts, false, None)
+}
+
+/// Write the LZ77 header, entropy code header and tokens of an ICC stream.
+fn write_icc_stream(
+    tokens: &[Token],
+    lz77_params: Option<&Lz77Params>,
+    code: &OwnedEntropyCode,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    write_lz77_header(lz77_params, writer)?;
     code.write_header(writer)?;
-
-    // Write tokens (with LZ77 if enabled)
-    code.write_tokens_owned(&tokens, lz77_params.as_ref(), writer)?;
-
+    code.write_tokens_owned(tokens, lz77_params, writer)?;
     Ok(())
+}
+
+/// Symbols between the decoders' compression-ratio checks.
+const ICC_RATIO_CHECK_INTERVAL: usize = 1 << 16;
+/// Maximum decoded-bytes-per-coded-byte ratio decoders accept.
+const ICC_MAX_RATIO: usize = 256;
+
+/// Whether every checked prefix of the ICC stream stays within the ratio
+/// decoders enforce.
+///
+/// libjxl's `ICCReader::Process` (icc_codec.cc) stops with "Corrupted stream"
+/// when, at a multiple of 65536 decoded symbols `i`, the bits consumed since
+/// the encoded-size field give `i > bytes * 256`. Highly repetitive profiles
+/// (zero or repeated tag payloads of a megabyte or more) compress past that
+/// under LZ77. The consumed bits counted here are a lower bound on what the
+/// decoder has read at `i`: the stream headers plus every token that ends at
+/// or before `i`.
+fn icc_prefixes_within_decoder_ratio(
+    enc_len: usize,
+    tokens: &[Token],
+    lz77_params: Option<&Lz77Params>,
+    code: &OwnedEntropyCode,
+) -> Result<bool> {
+    // The check runs only at i < enc_len.
+    if enc_len <= ICC_RATIO_CHECK_INTERVAL {
+        return Ok(true);
+    }
+    let mut scratch = BitWriter::new();
+    write_u64(enc_len as u64, &mut scratch)?;
+    write_lz77_header(lz77_params, &mut scratch)?;
+    code.write_header(&mut scratch)?;
+
+    // Slack for the decoder's f32 byte count.
+    const SLACK_SYMBOLS: usize = 4096;
+    let within = |bits: usize, i: usize| bits / 8 * ICC_MAX_RATIO >= i + SLACK_SYMBOLS;
+
+    let mut pos = 0usize;
+    let mut next_check = ICC_RATIO_CHECK_INTERVAL;
+    for token in tokens {
+        while next_check <= pos && next_check < enc_len {
+            if !within(scratch.bits_written(), next_check) {
+                return Ok(false);
+            }
+            next_check += ICC_RATIO_CHECK_INTERVAL;
+        }
+        code.write_tokens_owned(core::slice::from_ref(token), lz77_params, &mut scratch)?;
+        pos += match lz77_params {
+            Some(p) if token.is_lz77_length() => (token.value + p.min_length) as usize,
+            Some(p) if token.context() == p.distance_context => 0,
+            _ => 1,
+        };
+    }
+    while next_check < enc_len {
+        if !within(scratch.bits_written(), next_check) {
+            return Ok(false);
+        }
+        next_check += ICC_RATIO_CHECK_INTERVAL;
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #128: tokens a one-symbol prefix code codes at zero bits break the
+    /// decoders' 256:1 check; the one-bit floor restores it.
+    #[test]
+    fn one_symbol_stream_fails_ratio_and_floor_fixes_it() {
+        let n = 4 * ICC_RATIO_CHECK_INTERVAL + 7;
+        let tokens = vec![Token::new(0, 0); n];
+        let plain = build_entropy_code_with_options(&tokens, NUM_ICC_CONTEXTS, false, None);
+        assert!(!icc_prefixes_within_decoder_ratio(n, &tokens, None, &plain).unwrap());
+        let floored = build_icc_code_with_one_bit_floor(&tokens, NUM_ICC_CONTEXTS);
+        assert!(icc_prefixes_within_decoder_ratio(n, &tokens, None, &floored).unwrap());
+    }
+
+    /// The check is per prefix: a stream whose total ratio is fine but whose
+    /// first 64 Ki symbols are a long LZ77 run still fails at the first
+    /// checkpoint.
+    #[test]
+    fn ratio_check_is_per_prefix_not_total() {
+        let p = Lz77Params {
+            enabled: true,
+            min_symbol: 512,
+            min_length: 3,
+            distance_context: NUM_ICC_CONTEXTS as u32,
+        };
+        let mut tokens = vec![Token::new(0, 7)];
+        // One run covering the first 200k symbols.
+        tokens.push(Token::lz77_length(0, 200_000 - 1 - 3));
+        tokens.push(Token::new(p.distance_context, 0));
+        // Then 200k distinct-ish literals that cost real bits.
+        tokens.extend((0..200_000u32).map(|i| Token::new(1 + (i % 40), (i * 97 + i / 7) % 256)));
+        let n = 400_000;
+        let code = build_entropy_code_with_options(&tokens, NUM_ICC_CONTEXTS + 1, false, Some(&p));
+        assert!(!icc_prefixes_within_decoder_ratio(n, &tokens, Some(&p), &code).unwrap());
+
+        // The same literals alone pass.
+        let lits: Vec<Token> = tokens[3..].to_vec();
+        let code = build_entropy_code_with_options(&lits, NUM_ICC_CONTEXTS, false, None);
+        assert!(icc_prefixes_within_decoder_ratio(lits.len(), &lits, None, &code).unwrap());
+    }
 
     #[test]
     fn test_predict_icc_small_profile() {
