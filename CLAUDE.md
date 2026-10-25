@@ -846,6 +846,20 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-25: f16 subnormals read 8192x too large
+
+[PROVEN] `f16::f16_bits_to_f32` normalized subnormals with the exponent
+counter starting at -1 instead of -14, so every half below 2^-14 came back
+2^13 times too large. Lossy `RgbLinearF16`/`RgbaLinearF16`/`Gray*F16` input
+with dark linear content encoded as mid-grey (CI sweep seed 2964 cells 931,
+10244: near-black 64x48 crops decoded with mean error 0.24 in all three
+decoders). Lossless f16 stores bit patterns and was unaffected; 0.3.x has no
+f16 layouts. Fix: libjxl's formula, `(1/16384) * (m/1024)`. Pinned by
+`f16::subnormal_tests` (all 65,536 patterns vs an arithmetic reference) and
+`lossy_f16::lossy_f16_dark_values_decode_close_to_source` (both fail on the
+old code). Header F16 fields round-tripped through this function were only
+affected if subnormal.
+
 ### RESOLVED 2026-10-25: SimplifyInvisible rewrote nearly transparent 16-bit/float pixels
 
 [PROVEN] SimplifyInvisible (libjxl: alpha exactly 0) read the u8 alpha

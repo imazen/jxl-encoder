@@ -77,18 +77,13 @@ pub fn f16_bits_to_f32(bits: u16) -> f32 {
             // Zero (positive or negative)
             return f32::from_bits(sign << 31);
         }
-        // Denormalized: convert to normalized f32
-        // Find the leading 1 bit in mantissa
-        let mut m = mantissa;
-        let mut e: i32 = -1;
-        while m & 0x400 == 0 {
-            m <<= 1;
-            e -= 1;
-        }
-        m &= 0x3FF; // Remove implicit leading 1
-        let f32_exp = ((e + 127) as u32) & 0xFF;
-        let f32_mantissa = m << 13;
-        return f32::from_bits((sign << 31) | (f32_exp << 23) | f32_mantissa);
+        // Subnormal: mantissa * 2^-24, exactly as libjxl computes it
+        // (`(1.0f / 16384) * (mantissa * (1.0f / 1024))`). Every subnormal
+        // half is exactly representable in f32. The normalization this
+        // replaced started its exponent at -1 instead of -14 and returned
+        // values 8192x too large.
+        let magnitude = (1.0f32 / 16384.0) * (mantissa as f32 * (1.0 / 1024.0));
+        return if sign == 1 { -magnitude } else { magnitude };
     }
 
     if exp == 31 {
@@ -244,5 +239,40 @@ mod tests {
         let mut writer = BitWriter::new();
         write_f16(1.0, &mut writer).unwrap();
         assert_eq!(writer.bits_written(), 16);
+    }
+}
+
+#[cfg(test)]
+mod subnormal_tests {
+    use super::f16_bits_to_f32;
+
+    /// Every binary16 pattern against an arithmetic reference
+    /// (`(-1)^s * 2^(e-15) * (1 + m/1024)`, subnormals `m * 2^-24`).
+    #[test]
+    fn f16_bits_to_f32_matches_ieee_for_every_pattern() {
+        for bits in 0..=u16::MAX {
+            let sign = if bits & 0x8000 != 0 { -1.0f64 } else { 1.0 };
+            let exp = ((bits >> 10) & 0x1f) as i32;
+            let man = (bits & 0x3ff) as f64;
+            let got = f16_bits_to_f32(bits);
+            if exp == 31 {
+                if man == 0.0 {
+                    assert_eq!(got, (sign * f64::INFINITY) as f32, "{bits:#06x}");
+                } else {
+                    assert!(got.is_nan(), "{bits:#06x}");
+                }
+                continue;
+            }
+            let want = if exp == 0 {
+                sign * man * 2f64.powi(-24)
+            } else {
+                sign * (1.0 + man / 1024.0) * 2f64.powi(exp - 15)
+            };
+            assert_eq!(
+                got.to_bits(),
+                (want as f32).to_bits(),
+                "{bits:#06x}: {got} vs {want}"
+            );
+        }
     }
 }

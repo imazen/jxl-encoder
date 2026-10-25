@@ -79,6 +79,7 @@ mod lossless_multigroup_lz77;
 mod lossless_multigroup_palette;
 mod lossy_alpha_precision;
 mod lossy_alpha_roundtrip;
+mod lossy_f16;
 mod lossy_knobs_wiring;
 mod lossy_mixed_extras_alpha;
 mod low_effort_static_codes;

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Fixed: half-float subnormals (values below 6.1e-5) were read 8192x too large, so lossy `*LinearF16` input with dark linear values encoded as mid-grey (a near-black screenshot crop decoded with mean error 0.24). `f16_bits_to_f32` now computes subnormals as libjxl does (`mantissa * 2^-24`); checked against an arithmetic reference for all 65,536 patterns. Found by the weekly conformance sweep's first CI run.
 - Fixed: lossy encodes of 16-bit and float layouts with alpha rewrote the colour of nearly transparent pixels. SimplifyInvisible smooths colour where alpha is 0, but it read the 8-bit alpha copy, where small nonzero alpha rounds to 0. It now uses the exact source alpha. Found by the conformance sweep.
 - Fixed: lossy effort 1-2 encodes failed with "token symbol 64 exceeds the prefix-code alphabet" when very fine quantization (e.g. d0.1 on bright PQ content) needs symbols past the static codes' 64-symbol alphabet. Such frames now take the two-pass path. Found by the conformance sweep.
 - Fixed: lossless tree learning could build MA trees 65 nodes deep, past the Level 5 limit of 64, in a codestream that declares Level 5; jxl-rs rejects such files (`LevelLimitExceeded`). Learned trees are now cut at depth 64 (the cut node becomes a leaf with its leftmost descendant's predictor). Trees within the limit are unchanged. Found by the conformance sweep (lossless e8, an axis past 2048 px).
