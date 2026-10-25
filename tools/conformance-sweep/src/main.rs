@@ -1214,7 +1214,8 @@ fn check_one(
     let factor = lossy_config(cell).effective_resampling() as usize;
     let alpha_exact = factor == 1 && !pfm;
     let err = check_lossy(d, want, cell, who, alpha_exact)?;
-    let bound = 0.06 + 0.02 * cell.distance as f64;
+    // Resampling discards detail on purpose; scale the bound with it.
+    let bound = (0.06 + 0.02 * cell.distance as f64) * factor as f64;
     // HDR transfer layouts store signal values that the bound does not model.
     let hdr = matches!(
         cell.layout,
