@@ -133,13 +133,13 @@ jobs:
             if [ "$fails" -gt 0 ]; then
               echo "### Encoder failures (first 40)"
               echo '```'
-              awk -F'\t' '$2=="FAIL" {print $1": "$5" || "$6}' "$out/results.tsv" | head -40
+              awk -F'\t' '$2=="FAIL" && n++ < 40 {print $1": "$5" || "$6}' "$out/results.tsv"
               echo '```'
             fi
             if [ "$findings" -gt 0 ]; then
               echo "### Decoder findings (first 40; triage into docs/DECODER_FINDINGS.md)"
               echo '```'
-              awk -F'\t' '$2=="DECODER" {print $1": "$5" || "$6}' "$out/results.tsv" | head -40
+              awk -F'\t' '$2=="DECODER" && n++ < 40 {print $1": "$5" || "$6}' "$out/results.tsv"
               echo '```'
             fi
             echo
