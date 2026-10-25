@@ -43,7 +43,13 @@ the same day (see Resolved Bugs 2026-10-25). Harness traps: djxl's integer
 output is clamped and 8-bit output dithered (compare clamped values); djxl
 ignores `--bits_per_sample` for PAM; lossy alpha is inexact whenever
 `effective_resampling() > 1`, which includes `EncoderStrategy::Libjxl` at
-d >= 10; SimplifyInvisible rewrites colour under alpha 0.
+d >= 10; SimplifyInvisible rewrites colour under alpha 0. PQ/HLG/BT.709 float layouts (2026-10-25): compared in
+the clamped [0, 1] signal range (lossy decodes, cjxl's included, go far
+negative in PQ near black) and held to cjxl's error on the same source,
+`ours <= 1.5 * cjxl + 0.015` unless our file is >= 15% smaller (e8+ sits
+at a lower rate than cjxl: 2x its signal error for 6-15% fewer bytes on dark
+BT.709), on cells >= 32 px without noise, LF frame or progressive DC. The
+fixed bound catches a halved PQ light level in 3 of 40 cells; this, 25. HLG skips the cross-decoder check (DECODER_FINDINGS Z1).
 
 ## Project Overview
 

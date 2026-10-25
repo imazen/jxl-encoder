@@ -34,8 +34,9 @@
 //!     [--minutes N] [--threads N] [--only N]
 //! ```
 //! The seed defaults to the week number, so weekly runs rotate coverage.
-//! `DJXL_PATH` selects djxl (resolved and version-checked by
-//! `jxl_encoder::test_helpers::djxl_path`).
+//! `DJXL_PATH` and `CJXL_PATH` select djxl and cjxl (resolved and
+//! version-checked by `jxl_encoder::test_helpers`); cjxl encodes the
+//! reference for the PQ, HLG and BT.709 float layouts.
 
 use jxl_encoder::api::{EncoderStrategy, SectionedTrees};
 use jxl_encoder::{
@@ -1129,7 +1130,7 @@ fn check_lossy(
             let Some(v) = sample(d, i, c, ch) else {
                 return Err(format!("{who}: channel {c} missing"));
             };
-            let v = clamp_for(kind, v);
+            let v = clamp_for(cell, kind, v);
             let exp = want[i * ch + c] / s;
             if is_alpha {
                 if kind != Kind::F16
@@ -1152,12 +1153,29 @@ fn check_lossy(
 }
 
 /// Integer outputs clamp to the sample range while lossy float output can
-/// overshoot it, so integer layouts compare clamped values.
-fn clamp_for(kind: Kind, v: f32) -> f32 {
+/// overshoot it, so integer layouts compare clamped values. PQ, HLG and
+/// BT.709 float layouts hold transfer-coded signal in [0, 1]: lossy decodes
+/// land outside it (cjxl's own output does the same, by up to 0.7 in PQ
+/// near black), and decoders differ in whether they clamp
+/// (docs/DECODER_FINDINGS.md R2), so those compare clamped values too.
+fn clamp_for(cell: &Cell, kind: Kind, v: f32) -> f32 {
     match kind {
         Kind::U8 | Kind::U16 => v.clamp(0.0, 1.0),
+        Kind::F16 | Kind::F32 if transfer_signal(cell.layout) => v.clamp(0.0, 1.0),
         Kind::F16 | Kind::F32 => v,
     }
+}
+
+fn transfer_signal(layout: PixelLayout) -> bool {
+    matches!(
+        layout,
+        PixelLayout::RgbPqF32
+            | PixelLayout::RgbaPqF32
+            | PixelLayout::RgbHlgF32
+            | PixelLayout::RgbaHlgF32
+            | PixelLayout::RgbBt709F32
+            | PixelLayout::RgbaBt709F32
+    )
 }
 
 fn max_disagreement(a: &Decoded, b: &Decoded, cell: &Cell) -> f64 {
@@ -1167,7 +1185,8 @@ fn max_disagreement(a: &Decoded, b: &Decoded, cell: &Cell) -> f64 {
     for i in 0..cell.w * cell.h {
         for c in 0..color {
             if let (Some(x), Some(y)) = (sample(a, i, c, ch), sample(b, i, c, ch)) {
-                m = m.max((clamp_for(kind, x) as f64 - clamp_for(kind, y) as f64).abs());
+                m = m
+                    .max((clamp_for(cell, kind, x) as f64 - clamp_for(cell, kind, y) as f64).abs());
             }
         }
     }
@@ -1216,21 +1235,62 @@ fn check_one(
     let err = check_lossy(d, want, cell, who, alpha_exact)?;
     // Resampling discards detail on purpose; scale the bound with it.
     let bound = (0.06 + 0.02 * cell.distance as f64) * factor as f64;
-    // HDR transfer layouts store signal values that the bound does not model.
-    let hdr = matches!(
-        cell.layout,
-        PixelLayout::RgbPqF32
-            | PixelLayout::RgbaPqF32
-            | PixelLayout::RgbHlgF32
-            | PixelLayout::RgbaHlgF32
-    );
     // Resampling an image only a few blocks across leaves too few coded
     // samples for an error bound to mean anything.
     let tiny_resampled = factor > 1 && cell.w.min(cell.h) < 8 * factor;
-    if !hdr && !tiny_resampled && err > bound {
+    if !tiny_resampled && err > bound {
         return Err(format!("{who}: mean error {err:.4} over bound {bound:.3}"));
     }
     Ok(err)
+}
+
+/// Mean error and size of libjxl's own encode of the same source, for the
+/// transfer-coded float layouts. Their lossy error spans too wide a range
+/// (PQ up to 0.17 mean on clean cells) for a fixed bound to catch real
+/// defects, so the sweep holds ours to cjxl's error instead: same signal
+/// (16-bit PPM tagged with the layout's colour space), distance, effort and
+/// resampling, decoded and scored the same way.
+fn cjxl_reference_error(cell: &Cell, want: &[f64], dir: &Path) -> Result<(f64, usize), String> {
+    let (ch, kind, _, _) = describe(cell.layout);
+    let s = scale(kind);
+    let space = match cell.layout {
+        PixelLayout::RgbPqF32 | PixelLayout::RgbaPqF32 => "RGB_D65_202_Rel_PeQ",
+        PixelLayout::RgbHlgF32 | PixelLayout::RgbaHlgF32 => "RGB_D65_202_Rel_HLG",
+        _ => "RGB_D65_SRG_Rel_709",
+    };
+    let tag = format!("ref{}", cell.index);
+    let ppm = dir.join(format!("{tag}.ppm"));
+    let jxl = dir.join(format!("{tag}.jxl"));
+    let mut img = format!("P6\n{} {}\n65535\n", cell.w, cell.h).into_bytes();
+    for i in 0..cell.w * cell.h {
+        for c in 0..3 {
+            let v = (want[i * ch + c] / s).clamp(0.0, 1.0);
+            img.extend_from_slice(&((v * 65535.0).round() as u16).to_be_bytes());
+        }
+    }
+    std::fs::write(&ppm, img).map_err(|e| e.to_string())?;
+    let factor = lossy_config(cell).effective_resampling();
+    let o = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
+        .arg(&ppm)
+        .arg(&jxl)
+        .arg(format!("--distance={}", cell.distance))
+        .arg(format!("--effort={}", cell.effort.clamp(1, 10)))
+        .arg(format!("--resampling={factor}"))
+        .arg("-x")
+        .arg(format!("color_space={space}"))
+        .arg("--num_threads=1")
+        .output();
+    let _ = std::fs::remove_file(&ppm);
+    let o = o.map_err(|e| format!("run cjxl: {e}"))?;
+    let bytes = std::fs::read(&jxl);
+    let _ = std::fs::remove_file(&jxl);
+    if !o.status.success() {
+        let msg = String::from_utf8_lossy(&o.stderr);
+        return Err(format!("cjxl: {}", msg.lines().last().unwrap_or("?")));
+    }
+    let bytes = bytes.map_err(|e| e.to_string())?;
+    let d = decode_djxl(&bytes, dir, &tag, true)?;
+    Ok((check_lossy(&d, want, cell, "cjxl", false)?, bytes.len()))
 }
 
 fn run_cell(
@@ -1285,20 +1345,50 @@ fn run_cell(
     };
     let v_dj = judge(&dj, "djxl", float);
     let mut v_rs = judge(&rs, "jxl-rs", false);
+    // Transfer-coded float layouts: hold our error to libjxl's on the same
+    // source (`cjxl_reference_error`). Applied where the comparison is
+    // like for like: both sides at least 32 px, and none of the options
+    // cjxl is not given that change the error on purpose (photon noise, LF
+    // frames, progressive DC). A file at least 15% smaller than cjxl's is
+    // a different rate point, not a defect (e8+ runs smaller than cjxl at
+    // the same distance), so only error at a comparable size fails.
+    // Calibrated 2026-10-25 on seed 4: 2725 such cells, median error ratio
+    // 1.00, none above 1.5x + 0.015.
+    let mut v_dj = v_dj;
+    if v_dj.is_ok()
+        && !cell.lossless
+        && cell.icc.is_none()
+        && transfer_signal(cell.layout)
+        && cell.w.min(cell.h) >= 32
+        && !cell
+            .opts
+            .iter()
+            .any(|o| o == "noise" || o == "lf_frame" || o.starts_with("progressive_dc"))
+        && let Ok(d) = &dj
+    {
+        let ours = check_lossy(d, &want, cell, "djxl", false);
+        v_dj = match (ours, cjxl_reference_error(cell, &want, scratch)) {
+            (Ok(o), Ok((r, ref_len))) if o > 1.5 * r + 0.015 && len * 100 >= ref_len * 85 => {
+                Err(format!(
+                    "djxl: mean error {o:.4} over 1.5x cjxl's {r:.4} + 0.015 at {len} B vs {ref_len} B"
+                ))
+            }
+            (Ok(_), Ok(_)) => Ok(()),
+            (Err(e), _) | (_, Err(e)) => Err(format!("cjxl reference: {e}")),
+        };
+    }
     let mut v_zen = judge(&zen, "zenjxl", false);
-    // Lossy: each Rust decoder must agree with djxl. PQ and HLG output goes
-    // through an OOTF / tone mapping the decoders choose differently
-    // (docs/DECODER_FINDINGS.md R2, Z1), so those layouts are checked for
-    // decoding, dimensions and alpha only until outputs are compared in a
-    // common linear space.
-    let hdr_transfer = matches!(
+    // Lossy: each Rust decoder must agree with djxl (transfer-coded float
+    // output compared in the clamped signal range, see `clamp_for`). HLG is
+    // excluded: jxl-rs and zenjxl-decoder agree with each other but differ
+    // from djxl by up to 0.34 on bright pixels (seed 3, 46 of 2766 cells),
+    // an inverse-OOTF difference still in triage (docs/DECODER_FINDINGS.md
+    // Z1). All three are still checked against the source.
+    let hlg = matches!(
         cell.layout,
-        PixelLayout::RgbPqF32
-            | PixelLayout::RgbaPqF32
-            | PixelLayout::RgbHlgF32
-            | PixelLayout::RgbaHlgF32
+        PixelLayout::RgbHlgF32 | PixelLayout::RgbaHlgF32
     );
-    if !cell.lossless && cell.icc.is_none() && !hdr_transfer {
+    if !cell.lossless && cell.icc.is_none() && !hlg {
         let tol = if float { 0.02 } else { 3.0 / 255.0 };
         if let Ok(d) = &dj {
             for (v, other, who) in [(&mut v_rs, &rs, "jxl-rs"), (&mut v_zen, &zen, "zenjxl")] {
