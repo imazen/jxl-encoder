@@ -89,6 +89,14 @@ fast-decode-conformance source +files:
     CARGO_BUILD_JOBS=4 nice -n 19 cargo build --release --manifest-path "{{justfile_directory()}}/tools/decoder-conformance/Cargo.toml"
     DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" "{{justfile_directory()}}/tools/decoder-conformance/target/release/decoder-conformance" "{{source}}" {{files}}
 
+# Weekly conformance sweep (tools/conformance-sweep): random real-image
+# encodes checked by djxl v0.12, upstream jxl-rs and zenjxl-decoder.
+# `just conformance-sweep <out> <icc-dir> <images-or-dirs>... [--seed N] [--cells N] [--minutes N]`
+# ICC profiles: scripts/fetch_icc_profiles.sh <icc-dir>.
+conformance-sweep out icc +args:
+    CARGO_BUILD_JOBS=4 nice -n 19 cargo build --release --manifest-path "{{justfile_directory()}}/tools/conformance-sweep/Cargo.toml"
+    DJXL_PATH="${DJXL_PATH:-{{justfile_directory()}}/.ci-libjxl/tools/djxl}" nice -n 19 "{{justfile_directory()}}/tools/conformance-sweep/target/release/conformance-sweep" --out "{{out}}" --icc "{{icc}}" {{args}}
+
 triage-hook-lint manifest="Cargo.toml":
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" nice -n 19 cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --features __expert,__internal_recon_hook --test it --example rd_monotonicity_gate --example distance_targeting_probe -- -D warnings
 

@@ -1,0 +1,48 @@
+[package]
+name = "conformance-sweep"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Weekly random-encode conformance sweep: jxl-encoder output checked by libjxl djxl, jxl-rs and zenjxl-decoder"
+license = "AGPL-3.0-or-later"
+
+# Standalone so the third-party decoders stay out of the encoder's
+# dependency graph (and out of the workspace lock).
+[workspace]
+
+[dependencies]
+jxl-encoder = { path = "../../jxl-encoder" }
+# Upstream jxl-rs, latest release.
+jxl = "0.8.0"
+# Our jxl-rs fork; CI checks out the revision pinned in
+# .github/sibling-revisions.tsv next to this repository.
+zenjxl-decoder = { path = "../../../zenjxl-decoder/zenjxl-decoder" }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[profile.release]
+debug = 1
+
+# Unpublished requirements of jxl-encoder on main: the workspace root's
+# patch table, paths rebased to this directory. Keep in sync with it.
+[patch.crates-io]
+jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-bitstream = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-coding = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-frame = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-grid = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-modular = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-render = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-vardct = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+zenjpeg = { path = "../../../zenjpeg/zenjpeg" }
+zenjxl-decoder = { path = "../../../zenjxl-decoder/zenjxl-decoder" }
+butteraugli = { git = "https://github.com/imazen/butteraugli", rev = "d2466a4eaad67f8008838c0caa452484300214ca" }
+butteraugli-gpu = { path = "../../../zenmetrics/crates/butteraugli-gpu" }
+cvvdp-gpu = { path = "../../../zenmetrics/crates/cvvdp-gpu" }
+zensim-gpu = { path = "../../../zenmetrics/crates/zensim-gpu" }
+zensim = { path = "../../../zensim/zensim" }
+zenanalyze = { path = "../../../zenanalyze" }

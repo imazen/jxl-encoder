@@ -1,0 +1,156 @@
+name: Weekly conformance sweep
+
+# Random real-image encodes (tools/conformance-sweep) checked by three
+# decoders: libjxl v0.12 djxl, upstream jxl-rs (latest release) and
+# zenjxl-decoder at the pinned sibling revision. The seed is the week number,
+# so coverage rotates; every failure replays with `--seed S --only N`.
+#
+# Nobody needs to watch this run. When it finds encoder failures or decoder
+# findings it opens (or comments on) one tracking issue assigned to lilith,
+# and uploads the failing streams. Decoder findings go into
+# docs/DECODER_FINDINGS.md once triaged.
+
+on:
+  schedule:
+    # Mondays 05:00 UTC.
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: 'Seed (empty = week number)'
+        required: false
+        default: ''
+      minutes:
+        description: 'Time budget for encoding, in minutes'
+        required: false
+        default: '240'
+
+concurrency:
+  group: weekly-conformance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+jobs:
+  sweep:
+    name: Conformance sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Clone sibling path-dep repos
+        uses: ./.github/actions/clone-siblings
+
+      - name: Sparse-checkout codec corpus (photos and screenshots)
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/codec-corpus"
+          cd "$RUNNER_TEMP/codec-corpus"
+          git init -q
+          git remote add origin https://github.com/imazen/codec-corpus.git
+          git config core.sparseCheckout true
+          printf '%s\n' 'CID22/CID22-512/validation/' 'gb82-sc/' > .git/info/sparse-checkout
+          git pull --depth=1 origin main
+          ls CID22/CID22-512/validation | wc -l
+          ls gb82-sc | wc -l
+
+      - name: Fetch real-world ICC profiles
+        run: scripts/fetch_icc_profiles.sh "$RUNNER_TEMP/icc"
+
+      - name: Set up libjxl v0.12 reference tools
+        uses: ./.github/actions/setup-libjxl
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-conformance-sweep
+          workspaces: tools/conformance-sweep
+
+      - name: Build the sweep
+        run: cargo build --release --manifest-path tools/conformance-sweep/Cargo.toml
+
+      - name: Run the sweep
+        id: sweep
+        env:
+          DJXL_PATH: ${{ github.workspace }}/.ci-libjxl/tools/djxl
+          SEED: ${{ inputs.seed }}
+          MINUTES: ${{ inputs.minutes || '240' }}
+        run: |
+          set -uo pipefail
+          seed_args=()
+          if [ -n "${SEED:-}" ]; then seed_args=(--seed "$SEED"); fi
+          tools/conformance-sweep/target/release/conformance-sweep \
+            --images "$RUNNER_TEMP/codec-corpus/CID22/CID22-512/validation" \
+            --images "$RUNNER_TEMP/codec-corpus/gb82-sc" \
+            --icc "$RUNNER_TEMP/icc" \
+            --out "$RUNNER_TEMP/sweep" \
+            --cells 1000000 --minutes "$MINUTES" "${seed_args[@]}"
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/sweep/summary.txt"
+
+      - name: Upload results and failing streams
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-sweep-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/sweep/results.tsv
+            ${{ runner.temp }}/sweep/summary.txt
+            ${{ runner.temp }}/sweep/failures/
+            ${{ runner.temp }}/sweep/decoder_findings/
+          if-no-files-found: warn
+
+      - name: Report failures and decoder findings
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/sweep"
+          [ -f "$out/results.tsv" ] || { echo "no results"; exit 1; }
+          fails=$(awk -F'\t' '$2=="FAIL"' "$out/results.tsv" | wc -l)
+          findings=$(awk -F'\t' '$2=="DECODER"' "$out/results.tsv" | wc -l)
+          if [ "$fails" -eq 0 ] && [ "$findings" -eq 0 ]; then
+            echo "clean run"; exit 0
+          fi
+          {
+            echo "$(cat "$out/summary.txt")"
+            echo
+            echo "Run: $RUN_URL (streams in the run's artifact)."
+            echo
+            if [ "$fails" -gt 0 ]; then
+              echo "### Encoder failures (first 40)"
+              echo '```'
+              awk -F'\t' '$2=="FAIL" {print $1": "$5" || "$6}' "$out/results.tsv" | head -40
+              echo '```'
+            fi
+            if [ "$findings" -gt 0 ]; then
+              echo "### Decoder findings (first 40; triage into docs/DECODER_FINDINGS.md)"
+              echo '```'
+              awk -F'\t' '$2=="DECODER" {print $1": "$5" || "$6}' "$out/results.tsv" | head -40
+              echo '```'
+            fi
+            echo
+            echo "Replay a cell: conformance-sweep --seed <seed> --only <index> with the same --images and --icc inputs."
+          } > "$RUNNER_TEMP/report.md"
+          title="Weekly conformance sweep findings"
+          gh label create conformance-sweep --color B60205 --description "Weekly conformance sweep" --force
+          existing=$(gh issue list --state open --label conformance-sweep --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$RUNNER_TEMP/report.md"
+          else
+            gh issue create --title "$title" --label conformance-sweep --assignee lilith --body-file "$RUNNER_TEMP/report.md"
+          fi
+          [ "$fails" -eq 0 ]
