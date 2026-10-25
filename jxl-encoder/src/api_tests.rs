@@ -5988,3 +5988,54 @@ fn test_streaming_lossless_16bit() {
 
     assert_eq!(oneshot, streaming);
 }
+
+/// Lossless `with_source_gamma` must reach the codestream header, as it does
+/// on the lossy path; the header used to say sRGB. One-shot and streaming,
+/// RGB and gray, single- and multi-group: both paths must write identical
+/// bytes, the header must carry the gamma, and jxl-rs and djxl must
+/// reproduce every sample.
+#[test]
+fn lossless_source_gamma_reaches_header() {
+    use crate::test_helpers::{decode_with_djxl, decode_with_jxl_rs};
+    let gamma = 0.4545f32;
+    for (layout, channels) in [(PixelLayout::Rgb8, 3usize), (PixelLayout::Gray8, 1)] {
+        for (w, h) in [(16u32, 16u32), (300, 260)] {
+            let label = format!("{layout:?} {w}x{h}");
+            let pixels: Vec<u8> = (0..(w * h) as usize * channels)
+                .map(|i| ((i * 7 + i / 300) % 251) as u8)
+                .collect();
+            let cfg = LosslessConfig::new().with_effort(3);
+            let oneshot = cfg
+                .encode_request(w, h, layout)
+                .with_source_gamma(gamma)
+                .encode(&pixels)
+                .unwrap();
+            let mut enc = cfg.encoder(w, h, layout).unwrap().with_source_gamma(gamma);
+            let mid = (h / 2) as usize * w as usize * channels;
+            enc.push_rows(&pixels[..mid], h / 2).unwrap();
+            enc.push_rows(&pixels[mid..], h - h / 2).unwrap();
+            let streaming = enc.finish().unwrap();
+            assert_eq!(oneshot, streaming, "{label}: streaming vs one-shot");
+
+            let img = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(&oneshot))
+                .expect("jxl-oxide parse failed");
+            let ce = format!("{:?}", img.image_header().metadata.colour_encoding);
+            assert!(
+                ce.contains("Gamma") && ce.contains("4545000"),
+                "{label}: header should carry gamma 0.4545; got {ce}"
+            );
+
+            let rs = decode_with_jxl_rs(&oneshot).expect("jxl-rs decode");
+            assert_eq!((rs.width, rs.height), (w as usize, h as usize), "{label}");
+            let dj = decode_with_djxl(&oneshot).expect("djxl decode");
+            assert_eq!((dj.width, dj.height), (w as usize, h as usize), "{label}");
+            for (i, s) in pixels.iter().enumerate() {
+                let px = i / channels;
+                let c = i % channels;
+                let d = (dj.pixels[px * dj.channels + c] * 255.0).round() as u8;
+                assert_eq!(d, *s, "{label}: djxl sample {i}");
+            }
+        }
+    }
+}

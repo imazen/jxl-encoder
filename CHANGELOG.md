@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Fixed (#128): ICC profiles that LZ77 compresses past 256:1 (zero or repeated tag payloads, from about 300 KB up) produced files djxl v0.12 rejects as a "Corrupted stream"; libjxl's ICC reader checks the ratio every 65536 decoded symbols. The writer now checks every such prefix and falls back to coding without LZ77, then to a code with at least one bit per symbol. Profiles whose predicted stream is 64 KiB or smaller are byte-identical. Backport from main.
+- Fixed: lossless `with_source_gamma` was ignored in the codestream header, which kept saying sRGB. One-shot and streaming lossless encodes now write the gamma, as lossy encodes do. Backport from main.
+
 ## [0.3.2] - 2026-10-24
 
 Maintenance release on the 0.3 line. Builds again under fresh dependency

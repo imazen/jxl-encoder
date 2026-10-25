@@ -1844,6 +1844,14 @@ impl<'a> EncodeRequest<'a> {
                 } else {
                     ce
                 };
+        } else if let Some(gamma) = self.source_gamma {
+            // The header must carry the same gamma the frame encoder is
+            // given; it used to stay sRGB.
+            file_header.metadata.color_encoding = if image.is_grayscale {
+                ColorEncoding::gray_with_gamma(gamma)
+            } else {
+                ColorEncoding::with_gamma(gamma)
+            };
         }
         if let Some(meta) = self.metadata {
             if meta.icc_profile.is_some() {
@@ -3100,6 +3108,13 @@ impl LosslessEncoder {
                     } else {
                         ce
                     };
+            } else if let Some(gamma) = self.source_gamma {
+                // Mirrors the one-shot path.
+                file_header.metadata.color_encoding = if image.is_grayscale {
+                    ColorEncoding::gray_with_gamma(gamma)
+                } else {
+                    ColorEncoding::with_gamma(gamma)
+                };
             }
             if self.icc_profile.is_some() {
                 file_header.metadata.color_encoding.want_icc = true;
