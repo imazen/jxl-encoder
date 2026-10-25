@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Fixed (#128): ICC profiles with `curv` curves inside `mAB `/`mBA ` tags were rebuilt 12 bytes short per curve by decoders (djxl "Invalid result size", jxl-rs `InvalidIccStream`); among them ITU-R BT.2100 PQ, ICC Probe v4, sRGB v4 Appearance, RIMM-RGB v4 and the CGATS21/CRPC press profiles. The ICC predictor now inserts each curve's 12-byte header, as libjxl does. Backport from main.
 - Fixed (#128): ICC profiles that LZ77 compresses past 256:1 (zero or repeated tag payloads, from about 300 KB up) produced files djxl v0.12 rejects as a "Corrupted stream"; libjxl's ICC reader checks the ratio every 65536 decoded symbols. The writer now checks every such prefix and falls back to coding without LZ77, then to a code with at least one bit per symbol. Profiles whose predicted stream is 64 KiB or smaller are byte-identical. Backport from main.
 - Fixed: lossless `with_source_gamma` was ignored in the codestream header, which kept saying sRGB. One-shot and streaming lossless encodes now write the gamma, as lossy encodes do. Backport from main.
 
