@@ -838,9 +838,33 @@ byte-identical. Pinned by `tests/it/icc_ratio.rs` (zero/repeat payloads,
 300 KB and 1 MB, lossless and lossy; jxl-rs and djxl return the ICC byte for
 byte; fails at 300 KB with the guard disabled) and two `icc::tests` unit tests
 (per-prefix, not total; the one-bit floor). jxl-rs 0.4 has no such check but
-caps the encoded ICC at 1 MiB. **Still open in #128**: the named profiles
-`ITUR_2100_PQ_FULL.ICC` ("Invalid result size", icc_codec.cc:334) and
-`Probev1_ICCv4.icc` were not reproduced; neither file was available.
+caps the encoded ICC at 1 MiB. The ratio case is defensive: no real profile
+examined (138, below) comes near 256:1.
+
+### RESOLVED 2026-10-25: `mAB `/`mBA ` curve headers dropped by the ICC predictor (#128, the reported failure)
+
+[PROVEN] `predict_icc` ported libjxl's `PredictICC` loop with `last1`
+immutable; libjxl sets `last1 = pos` after skipping the 12-byte `curv`/`vcgt`
+header inside an `mAB `/`mBA ` tag, so that header is emitted as an Insert
+before the Predict command. Ours dropped it, and the decoder rebuilt a profile
+12 bytes short per curve: djxl "Invalid result size" (icc_codec.cc:334),
+jxl-rs `InvalidIccStream`. Measured on 138 real profiles (Ubuntu
+`icc-profiles` 2.5 + `icc-profiles-free`, plus W3C png-hdr-pq
+`ITUR_2100_PQ_FULL.ICC`): 15 broken before, among them the PQ profile,
+`Probev1_ICCv4.icc`, `sRGB_ICC_v4_Appearance.icc`, both RIMM-RGB v4 profiles
+and every CGATS21/CRPC press profile. After the fix all 138 predicted streams
+are byte-identical to libjxl v0.12 `PredictICC`, libjxl `UnpredictICC`
+rebuilds every profile exactly, and djxl decodes all 276 lossless/lossy files.
+Method worth reusing: a C++ harness linking libjxl's own
+`enc_icc_codec.cc.o`/`icc_codec.cc.o`/`icc_codec_common.cc.o` objects (with
+`-Wl,--unresolved-symbols=ignore-all` for the unused bit-I/O symbols) gives
+a reference `PredictICC`/`UnpredictICC` in a few lines. Pinned by
+`tests/it/icc_mab_curves.rs` (synthetic v4 profile with A2B0 `mAB ` and B2A0
+`mBA ` curves of 9/256/4096 samples, single- and multi-group, lossless and
+lossy; jxl-rs and djxl return the ICC byte for byte; fails with
+`InvalidIccStream` on the old code). jxl-rs still stops on RGB images tagged
+with a CMYK/Lab/XYZ profile ("eof hdr"); djxl decodes them. That is a probe
+artifact (no black channel), not this bug.
 
 ### RESOLVED 2026-10-25: lossless `with_source_gamma` was ignored in the header
 

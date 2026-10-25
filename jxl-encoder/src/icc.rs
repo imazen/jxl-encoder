@@ -504,7 +504,7 @@ fn predict_icc(icc: &[u8]) -> Result<Vec<u8>> {
     let mut last0 = pos;
 
     while pos <= size {
-        let last1 = pos;
+        let mut last1 = pos;
         let mut commands_add: Vec<u8> = Vec::new();
         let mut data_add: Vec<u8> = Vec::new();
 
@@ -579,6 +579,10 @@ fn predict_icc(icc: &[u8]) -> Result<Vec<u8>> {
                 let num = decode_uint32(icc, pos + 8) as usize * 2;
                 if num > 16 && num < (1 << 28) && pos + 12 + num <= size {
                     pos += 12;
+                    // The 12-byte curve header goes out as inserted bytes
+                    // (libjxl enc_icc_codec.cc `last1 = pos`); without this
+                    // the decoder rebuilds a profile 12 bytes short per curve.
+                    last1 = pos;
                     commands_add.push(COMMAND_PREDICT);
                     let order: i32 = 1;
                     let width: usize = 2;

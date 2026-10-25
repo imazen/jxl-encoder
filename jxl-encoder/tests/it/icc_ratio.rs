@@ -92,7 +92,7 @@ fn padded_icc(total: usize, fill: &[u8]) -> Vec<u8> {
 }
 
 /// Full jxl-rs decode; returns the embedded ICC profile.
-fn jxl_rs_icc(data: &[u8], label: &str) -> Vec<u8> {
+pub(crate) fn jxl_rs_icc(data: &[u8], label: &str) -> Vec<u8> {
     use jxl::api::{
         JxlColorProfile, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
         JxlPixelFormat, ProcessingResult, states,
@@ -150,7 +150,7 @@ fn jxl_rs_icc(data: &[u8], label: &str) -> Vec<u8> {
 }
 
 /// Full djxl v0.12 decode; returns the original ICC profile.
-fn djxl_icc(data: &[u8], label: &str) -> Vec<u8> {
+pub(crate) fn djxl_icc(data: &[u8], label: &str) -> Vec<u8> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/icc-ratio");
     std::fs::create_dir_all(&dir).unwrap();
     let input = dir.join(format!("{label}.jxl"));
