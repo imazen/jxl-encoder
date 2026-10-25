@@ -953,8 +953,22 @@ impl VarDctEncoder {
         // Free mask1x1 — up to ~115 MB at 4K (padded_pixels × f32).
         drop(mask1x1);
 
+        // Without `optimize_codes` (effort <= 2) the single-pass static-code
+        // path below is the default. It cannot write alpha, patches, splines,
+        // a sharpness map or an LF frame, nor symbols past the static
+        // alphabet; such frames take the two-pass path. Alpha used to be
+        // dropped from the file and fine quantization refused.
+        let needs_two_pass = self.optimize_codes
+            || alpha.is_some()
+            || patches_data.is_some()
+            || splines_data.is_some()
+            || sharpness_map.is_some()
+            || self.use_lf_frame
+            || self.dc_tree_learning
+            || !static_codes_cover_values(quant_dc, quant_ac);
+
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
-        if self.optimize_codes {
+        if needs_two_pass {
             let strategy_counts = ac_strategy.strategy_histogram();
             let data = self.encode_two_pass(
                 width,
@@ -1388,6 +1402,34 @@ impl VarDctEncoder {
             None, // float_dc
         )
     }
+}
+
+/// Whether the static single-pass prefix codes can represent every token
+/// this frame produces: packed AC coefficients (at most `2 * max |c|`) and DC
+/// residuals (a clamped-gradient residual is within twice the channel range,
+/// so `4 * max |dc| + 1` bounds its packed value).
+fn static_codes_cover_values(
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+) -> bool {
+    use crate::entropy_coding::encode::{ALPHABET_SIZE, default_symbol_for};
+    let max_ac = quant_ac
+        .iter()
+        .flatten()
+        .flatten()
+        .flat_map(|b| b.iter())
+        .map(|v| v.unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    let max_dc = quant_dc
+        .iter()
+        .flatten()
+        .flatten()
+        .map(|v| v.unsigned_abs() as u32)
+        .max()
+        .unwrap_or(0);
+    let fits = |v: u32| (default_symbol_for(v) as usize) < ALPHABET_SIZE;
+    fits(max_ac.saturating_mul(2)) && fits(max_dc.saturating_mul(4).saturating_add(1))
 }
 
 #[cfg(test)]

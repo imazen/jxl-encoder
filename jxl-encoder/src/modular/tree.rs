@@ -460,6 +460,48 @@ pub fn count_contexts(tree: &Tree) -> u32 {
     count.max(1)
 }
 
+/// Deepest MA tree node a Level 5 codestream may contain (root = depth 0);
+/// jxl-rs enforces it ("modular tree depth").
+pub const MAX_TREE_DEPTH: usize = 64;
+
+/// Make every split at depth `max_depth` or deeper a leaf, so no node lies
+/// deeper than `max_depth`. The new leaf takes the predictor, offset and
+/// multiplier of the split's leftmost descendant leaf; the subtree below it
+/// is left unreachable. Trees within the limit are not touched. Must run
+/// before contexts are assigned and before residuals are collected.
+pub fn cap_tree_depth(tree: &mut Tree, max_depth: usize) {
+    let mut stack = vec![(0usize, 0usize)];
+    while let Some((idx, depth)) = stack.pop() {
+        if tree[idx].property < 0 {
+            continue;
+        }
+        if depth >= max_depth {
+            let mut leaf = idx;
+            while tree[leaf].property >= 0 {
+                leaf = tree[leaf].lchild;
+            }
+            let (predictor, predictor_offset, multiplier) = (
+                tree[leaf].predictor,
+                tree[leaf].predictor_offset,
+                tree[leaf].multiplier,
+            );
+            tree[idx] = PropertyDecisionNode {
+                property: -1,
+                splitval: 0,
+                predictor,
+                predictor_offset,
+                multiplier,
+                lchild: 0,
+                rchild: 0,
+                context_id: 0,
+            };
+        } else {
+            stack.push((tree[idx].lchild, depth + 1));
+            stack.push((tree[idx].rchild, depth + 1));
+        }
+    }
+}
+
 /// Assign context IDs to leaf nodes sequentially in BFS order.
 ///
 /// The decoder assigns context IDs to leaves in the order it encounters them
@@ -570,5 +612,70 @@ mod tests {
 
         let tree = adaptive_gradient_weighted_tree();
         assert_eq!(count_contexts(&tree), 2);
+    }
+}
+
+#[cfg(test)]
+mod depth_cap_tests {
+    use super::*;
+
+    fn max_depth(tree: &Tree) -> usize {
+        let mut deepest = 0;
+        let mut stack = vec![(0usize, 0usize)];
+        while let Some((i, d)) = stack.pop() {
+            deepest = deepest.max(d);
+            if tree[i].property >= 0 {
+                stack.push((tree[i].lchild, d + 1));
+                stack.push((tree[i].rchild, d + 1));
+            }
+        }
+        deepest
+    }
+
+    /// A 70-deep chain of splits (each right child a leaf) is cut at depth
+    /// 64; the new leaf inherits its leftmost descendant's parameters, and
+    /// shallower parts of the tree are unchanged.
+    #[test]
+    fn cap_tree_depth_cuts_at_level5_limit() {
+        let depth = 70usize;
+        let mut tree: Tree = Vec::new();
+        for d in 0..depth {
+            let split = tree.len();
+            tree.push(PropertyDecisionNode {
+                property: 1,
+                splitval: d as i32,
+                ..Default::default()
+            });
+            tree.push(PropertyDecisionNode {
+                property: -1,
+                predictor: Predictor::Left,
+                ..Default::default()
+            });
+            tree[split].rchild = split + 1;
+            tree[split].lchild = split + 2;
+        }
+        tree.push(PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Weighted,
+            predictor_offset: 3,
+            multiplier: 5,
+            ..Default::default()
+        });
+        assert_eq!(max_depth(&tree), depth);
+        let before = tree.clone();
+        cap_tree_depth(&mut tree, MAX_TREE_DEPTH);
+        assert_eq!(max_depth(&tree), MAX_TREE_DEPTH);
+        let cut = 2 * MAX_TREE_DEPTH;
+        assert_eq!(tree[cut].property, -1);
+        assert_eq!(tree[cut].predictor, Predictor::Weighted);
+        assert_eq!((tree[cut].predictor_offset, tree[cut].multiplier), (3, 5));
+        for i in 0..cut {
+            assert_eq!(tree[i].property, before[i].property, "node {i}");
+        }
+
+        // Within the limit nothing changes.
+        let mut shallow = before[..].to_vec();
+        cap_tree_depth(&mut shallow, depth);
+        assert_eq!(max_depth(&shallow), depth);
     }
 }

@@ -1154,6 +1154,8 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
         }
     }
 
+    // Level 5 caps MA tree depth; deeper learned branches become leaves.
+    super::tree::cap_tree_depth(&mut tree, super::tree::MAX_TREE_DEPTH);
     // Assign sequential context IDs to leaves
     assign_sequential_contexts(&mut tree);
 
@@ -1572,6 +1574,8 @@ pub fn compute_best_tree_with_multipliers(
         }
     }
 
+    // Level 5 caps MA tree depth; deeper learned branches become leaves.
+    super::tree::cap_tree_depth(&mut tree, super::tree::MAX_TREE_DEPTH);
     // Assign sequential context IDs to leaves
     assign_sequential_contexts(&mut tree);
 

@@ -144,3 +144,26 @@ fn patches_with_alpha_decode() {
         assert_alpha_roundtrip(&jxl, alpha(), w, h, &format!("lossy patches RGBA e{e}"));
     }
 }
+
+/// Lossy effort 1 and 2 default to the single-pass static-code path, which
+/// cannot write alpha; it used to drop alpha from the file. Frames it cannot
+/// represent now take the two-pass path (0.3.4, backport of the main fix).
+#[test]
+fn lossy_low_effort_keeps_alpha() {
+    for (w, h) in [(64u32, 32u32), (300, 260)] {
+        let px = frymire_rgba(w, h);
+        for effort in [1u8, 2] {
+            let jxl = LossyConfig::new(1.0)
+                .with_effort(effort)
+                .encode(&px, w, h, PixelLayout::Rgba8)
+                .expect("low-effort lossy RGBA encode");
+            assert_alpha_roundtrip(
+                &jxl,
+                px.chunks(4).map(|p| p[3]),
+                w,
+                h,
+                &format!("lossy RGBA {w}x{h} e{effort}"),
+            );
+        }
+    }
+}
