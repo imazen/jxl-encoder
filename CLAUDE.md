@@ -822,6 +822,20 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-25: lossy effort 1-2 dropped alpha
+
+[PROVEN] `optimize_codes` is off at effort <= 2, and the single-pass static
+entropy path it selects writes the file header with no extra channels
+(`vardct/encoder.rs`, "doesn't carry any extras"). The W44-87 safety
+predicate that guards the *optional* switch to single pass already listed
+everything single pass cannot represent; it was simply not applied when
+single pass was the default. Every lossy RGBA / gray+alpha encode at e1/e2
+lost its alpha (djxl depth 3 for Rgba8). Present in 0.3.x (verified on
+0.3.3). Fix: `single_pass_representable` gates both cases; unrepresentable
+frames take two-pass. Pinned by `aux_frames::lossy_low_effort_keeps_alpha`
+(64x32 and 300x260, e1/e2, exact alpha in jxl-rs and djxl; fails on the old
+code). Found by the conformance sweep (`tools/conformance-sweep`).
+
 ### RESOLVED 2026-10-25: repetitive ICC profiles over-compressed past the decoders' ratio bound (#128, part)
 
 [PROVEN] libjxl `ICCReader::Process` (icc_codec.cc ~396-403) fails with

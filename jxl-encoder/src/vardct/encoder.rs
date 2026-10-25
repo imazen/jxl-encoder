@@ -6522,19 +6522,23 @@ impl VarDctEncoder {
         // SAFETY portion runs here because `patches_data`,
         // `splines_data`, `sharpness_map`, `noise_params`, and the
         // extras slice are all in scope.
-        let single_pass_entropy_safe = self.optimize_codes
-            && single_pass_entropy_content_gate
-            && extras.is_empty()
+        let single_pass_representable = extras.is_empty()
             && patches_data.is_none()
             && splines_data.is_none()
             && sharpness_map.is_none()
             && noise_params.is_none()
             && !self.use_lf_frame
             && !self.dc_tree_learning;
+        let single_pass_entropy_safe =
+            self.optimize_codes && single_pass_entropy_content_gate && single_pass_representable;
+        // Without `optimize_codes` (effort <= 2) the single-pass path is the
+        // default, so the same representability check applies: a frame it
+        // cannot serialize takes the two-pass path instead. It used to write
+        // the file header without extras, silently dropping alpha.
         let optimize_codes_effective = if single_pass_entropy_safe {
             false
         } else {
-            self.optimize_codes
+            self.optimize_codes || !single_pass_representable
         };
 
         // Two-pass mode: collect tokens, build optimal codes, write bitstream

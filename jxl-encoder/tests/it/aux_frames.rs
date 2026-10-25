@@ -227,3 +227,22 @@ fn lf_frame_small_images_decode() {
         }
     }
 }
+
+/// Lossy effort 1 and 2 skip code optimisation and default to the
+/// single-pass entropy path, which cannot write extra channels. It used to
+/// take that path anyway and drop alpha from the file; frames it cannot
+/// represent now take the two-pass path.
+#[test]
+fn lossy_low_effort_keeps_alpha() {
+    for (w, h) in [(64u32, 32u32), (300, 260)] {
+        let source = frymire_rgba(w, h);
+        for effort in [1u8, 2] {
+            let label = format!("lossy-rgba-{w}x{h}-e{effort}");
+            let bytes = LossyConfig::new(1.0)
+                .with_effort(effort)
+                .encode(&source, w, h, PixelLayout::Rgba8)
+                .expect("low-effort lossy RGBA encode");
+            assert_decodes_with_alpha(&bytes, &source, w, h, &label);
+        }
+    }
+}
