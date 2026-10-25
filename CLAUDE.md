@@ -21,6 +21,30 @@ seven models complete native assessment, four refuse unsupported spatial terms.
 No model is promoted; see the sibling zensim report for independent RD diagnostics.
 
 
+## Weekly conformance sweep (2026-10-25)
+
+`tools/conformance-sweep` encodes random real-image cells (corpus crop, size
+1x1 to 2049-wide, 24 layouts, lossless or lossy, effort, distance, option
+set, streaming, ICC, EXIF/XMP) and checks each with **three decoders**:
+djxl v0.12, upstream jxl-rs (crates.io `jxl`, latest release) and
+zenjxl-decoder (sibling checkout). Every cell derives from `(seed, index)`;
+replay with `--seed S --only N` and the same `--images`/`--icc` inputs.
+Verdicts: `FAIL` = ours (all decoders agree, djxl fails, or both Rust
+decoders against djxl); `DECODER` = one Rust decoder is the odd one out,
+logged for `docs/DECODER_FINDINGS.md` (the ledger of decoder bugs and their
+upstream report status; reports outside imazen/lilith need owner approval).
+Run: `just conformance-sweep <out> <icc-dir> <images>... [--seed N]
+[--minutes N]`, ICC set from `scripts/fetch_icc_profiles.sh`. Scheduled
+weekly by `.github/workflows/weekly-conformance.yml` (Monday 05:00 UTC,
+seed = week number); it opens or comments on one issue labelled
+`conformance-sweep`, assigned to lilith, and uploads failing streams. The
+first 20-minute local run (121k cells) found six encoder bugs, all fixed
+the same day (see Resolved Bugs 2026-10-25). Harness traps: djxl's integer
+output is clamped and 8-bit output dithered (compare clamped values); djxl
+ignores `--bits_per_sample` for PAM; lossy alpha is inexact whenever
+`effective_resampling() > 1`, which includes `EncoderStrategy::Libjxl` at
+d >= 10; SimplifyInvisible rewrites colour under alpha 0.
+
 ## Project Overview
 
 This is a work-in-progress Rust implementation of a JPEG XL encoder.
@@ -821,6 +845,18 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 ("Archived from CLAUDE.md 2026-07-19" section) — re-measure, don't trust them.
 
 ## Resolved Bugs
+
+### RESOLVED 2026-10-25: SimplifyInvisible rewrote nearly transparent 16-bit/float pixels
+
+[PROVEN] SimplifyInvisible (libjxl: alpha exactly 0) read the u8 alpha
+copy; for 16-bit and float layouts alpha below 1/510 rounds to 0 there, so
+visible (if faint) colour was smeared from neighbours (sweep: 1x1 Rgba16
+mean error 1.0; test: red under alpha 100/65535 came back blue). Fix:
+`ingest::exact_alpha_visibility` builds the mask from the exact samples
+(u16, f32, f16 incl. -0). **Same class, open:** `unpremultiply_alpha_inplace`
+still divides by the 8-bit alpha for 16-bit/float premultiplied input.
+Pinned by `lossy_alpha_precision::nearly_transparent_16bit_colour_is_kept`
+(fails on the old code with mean error 0.666).
 
 ### RESOLVED 2026-10-25: low-effort lossy failed on symbols past the static alphabet
 

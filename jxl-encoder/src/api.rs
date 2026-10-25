@@ -8142,9 +8142,19 @@ impl<'a> EncodeRequest<'a> {
         // premultiplied input the alpha-zero pixels already hold black
         // (premultiplication zeros them) so the smear contribution is
         // dilution-only, no win. We mirror that gate.
+        //
+        // "Invisible" means alpha exactly 0 in the source. For 16-bit and
+        // float layouts the 8-bit copy rounds small nonzero alpha to 0, so the
+        // mask comes from the exact samples; colour under nearly transparent
+        // pixels used to be rewritten.
+        let exact_visibility: Option<Vec<u8>> = if cfg.simplify_invisible {
+            exact_alpha_visibility(self.layout, pixels, alpha_u16.as_deref())
+        } else {
+            None
+        };
         if cfg.simplify_invisible
             && !self.premultiplied_alpha
-            && let Some(ref alpha_buf) = alpha
+            && let Some(alpha_buf) = exact_visibility.as_ref().or(alpha.as_ref())
             && crate::vardct::simplify_invisible::has_any_invisible_pixels(alpha_buf)
         {
             crate::vardct::simplify_invisible::simplify_invisible_rgb(

@@ -137,3 +137,62 @@ fn lossy_16bit_alpha_keeps_all_bits() {
         }
     }
 }
+
+/// SimplifyInvisible may rewrite the colour of pixels whose alpha is exactly
+/// 0. It used to decide from the 8-bit alpha copy, so a 16-bit alpha of
+/// 100/65535 counted as invisible and its colour was smeared from the
+/// neighbours (found by the conformance sweep).
+#[test]
+fn nearly_transparent_16bit_colour_is_kept() {
+    let (w, h) = (64usize, 32usize);
+    let mut px = Vec::with_capacity(w * h * 8);
+    let mut red_square = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            let (rgb, a): ([u16; 3], u16) = if (40..56).contains(&x) && (8..24).contains(&y) {
+                red_square.push(y * w + x);
+                ([65535, 0, 0], 100)
+            } else if x < 24 {
+                (
+                    [((x * 977) % 65536) as u16, 7, ((y * 131) % 65536) as u16],
+                    0,
+                )
+            } else {
+                ([0, 0, 65535], 65535)
+            };
+            for v in rgb.iter().chain(core::iter::once(&a)) {
+                px.extend_from_slice(&v.to_ne_bytes());
+            }
+        }
+    }
+    let label = "nearly-transparent-rgba16";
+    let bytes = LossyConfig::new(1.0)
+        .with_effort(7)
+        .encode(&px, w as u32, h as u32, PixelLayout::Rgba16)
+        .expect("encode");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lossy-alpha16");
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join(format!("{label}.jxl"));
+    let output = dir.join(format!("{label}.png"));
+    std::fs::write(&input, &bytes).unwrap();
+    let status = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(&input)
+        .arg(&output)
+        .arg("--num_threads=1")
+        .status()
+        .expect("run djxl");
+    assert!(status.success(), "djxl failed");
+    let img = image::open(&output).unwrap().to_rgba16();
+    let mean_red_err: f64 = red_square
+        .iter()
+        .map(|&i| {
+            let p = img.as_raw()[i * 4..i * 4 + 3].to_vec();
+            ((65535 - p[0] as i64).abs() + p[1] as i64 + p[2] as i64) as f64 / (3.0 * 65535.0)
+        })
+        .sum::<f64>()
+        / red_square.len() as f64;
+    assert!(
+        mean_red_err < 0.1,
+        "colour under alpha 100/65535 was rewritten: mean error {mean_red_err:.3}"
+    );
+}

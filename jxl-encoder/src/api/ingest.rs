@@ -725,6 +725,51 @@ pub(crate) fn gamma_gray_u16_to_linear_f32_rgb(
         .collect()
 }
 
+/// Visibility mask (0 = alpha exactly 0, 255 = anything else) from a
+/// layout's exact alpha samples, for layouts whose 8-bit alpha copy rounds
+/// small nonzero alpha to 0. `None` for 8-bit layouts (their copy is exact)
+/// and layouts without alpha.
+pub(crate) fn exact_alpha_visibility(
+    layout: PixelLayout,
+    data: &[u8],
+    alpha_u16: Option<&[u16]>,
+) -> Option<Vec<u8>> {
+    let mask = |visible: &mut dyn Iterator<Item = bool>| -> Vec<u8> {
+        visible.map(|v| if v { 255 } else { 0 }).collect()
+    };
+    match layout {
+        PixelLayout::Rgba16 | PixelLayout::GrayAlpha16 => {
+            alpha_u16.map(|a| mask(&mut a.iter().map(|&v| v != 0)))
+        }
+        PixelLayout::RgbaLinearF32
+        | PixelLayout::RgbaPqF32
+        | PixelLayout::RgbaHlgF32
+        | PixelLayout::RgbaBt709F32
+        | PixelLayout::GrayAlphaLinearF32 => {
+            let stride = if layout == PixelLayout::GrayAlphaLinearF32 {
+                2
+            } else {
+                4
+            };
+            let f: &[f32] = &cast_pixel_lanes(data);
+            Some(mask(&mut f.chunks(stride).map(|px| px[stride - 1] != 0.0)))
+        }
+        PixelLayout::RgbaLinearF16 | PixelLayout::GrayAlphaLinearF16 => {
+            let stride = if layout == PixelLayout::GrayAlphaLinearF16 {
+                2
+            } else {
+                4
+            };
+            let h: &[u16] = &cast_pixel_lanes(data);
+            // +0 and -0 are the only zero half-floats.
+            Some(mask(
+                &mut h.chunks(stride).map(|px| px[stride - 1] & 0x7fff != 0),
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// Extract the alpha channel from interleaved 16-bit pixel data at full
 /// precision (native-endian samples, unscaled).
 pub(crate) fn extract_alpha_u16_raw(
