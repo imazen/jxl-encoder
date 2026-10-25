@@ -1,4 +1,4 @@
-# jxl-encoder [![CI](https://img.shields.io/github/actions/workflow/status/imazen/jxl-encoder/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/jxl-encoder?style=flat-square)](https://crates.io/crates/jxl-encoder) [![lib.rs](https://img.shields.io/crates/v/jxl-encoder?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/jxl-encoder) [![docs.rs](https://img.shields.io/docsrs/jxl-encoder?style=flat-square)](https://docs.rs/jxl-encoder) [![license](https://img.shields.io/badge/license-AGPL--3.0%20%2F%20Commercial-blue?style=flat-square)](#license) ![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)
+# jxl-encoder [![CI](https://img.shields.io/github/actions/workflow/status/imazen/jxl-encoder/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/jxl-encoder?style=flat-square)](https://crates.io/crates/jxl-encoder) [![lib.rs](https://img.shields.io/crates/v/jxl-encoder?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/jxl-encoder) [![docs.rs](https://img.shields.io/docsrs/jxl-encoder?style=flat-square)](https://docs.rs/jxl-encoder) [![license](https://img.shields.io/badge/license-AGPL--3.0%20%2F%20Commercial-blue?style=flat-square)](#license) ![MSRV](https://img.shields.io/badge/MSRV-1.93-blue?style=flat-square)
 
 jxl-encoder is a pure-Rust [JPEG XL](https://jpeg.org/jpegxl/) encoder for both
 lossy (VarDCT) and lossless (Modular) images, built on the foundation of
@@ -128,7 +128,7 @@ let jxl = LossyConfig::new(1.0)
 ```
 
 `std` is on by default; `cargo add jxl-encoder` pulls the latest release. MSRV is
-Rust 1.89.
+Rust 1.93 on `main`; the published 0.3.x releases build with Rust 1.89.
 
 ## Quality (distance) and effort
 
@@ -316,7 +316,7 @@ fine-grained strategy search (step=1 for 32×32+ blocks).
 | Chroma-from-luma (per-tile least-squares) | Yes | Yes | Yes |
 | Gaborish inverse pre-filter (default-on) | Yes | Yes | Yes |
 | Custom coefficient ordering (default-on) | Yes | Yes | Yes |
-| Butteraugli quant loop (effort 8+) | Yes | Yes | Yes (2 iters at e8, 4 at e9+) |
+| Butteraugli quant loop (effort 8+, as libjxl) | No | No | Yes (2 iters at e8, 4 at e9+) |
 | EPF per-block sharpness | Yes | Yes | Yes |
 | Content-adaptive block context map | Yes | Yes | Yes |
 | Error diffusion in AC quantization | No | No | Yes (opt-in) |
@@ -327,7 +327,7 @@ fine-grained strategy search (step=1 for 32×32+ blocks).
 | 16-bit / float input | Yes | Yes | Yes (26 pixel layouts) |
 | Patches / dictionary (default-on for screenshots) | No | Yes | Yes |
 | Fine-grained AC strategy search | Yes | Yes | Yes (effort 9+) |
-| Splines | No | Yes | Yes (opt-in API) |
+| Splines (caller-supplied) | No | No | Yes (opt-in API) |
 | Dots detection | No | Yes | Yes (opt-in) |
 | Progressive VarDCT (2-pass / 3-pass) | Yes | Yes | Yes |
 | Photon-noise simulation | Yes | Yes | Yes (`with_photon_noise_iso`) |
@@ -393,11 +393,12 @@ fine-grained strategy search (step=1 for 32×32+ blocks).
 
 ## CLI
 
-A command-line wrapper, `cjxl-rs`, ships in the
-[`jxl-encoder-cli`](https://crates.io/crates/jxl-encoder-cli) crate:
+A command-line wrapper, `cjxl-rs`, lives in the `jxl-encoder-cli` workspace
+crate. The copy on crates.io is an old 0.2.0, so build it from this
+repository:
 
 ```bash
-cargo install jxl-encoder-cli
+cargo install --git https://github.com/imazen/jxl-encoder jxl-encoder-cli
 
 # Lossy (distance 1.0 = visually lossless)
 cjxl-rs input.png output.jxl -d 1.0
@@ -484,7 +485,7 @@ cargo clippy --workspace -- -D warnings    # lint
   BSD-3-Clause) — the reference encoder and a well-engineered, battle-tested
   codebase. Our algorithms, quantization weights, cost models, and bitstream
   format are derived from it.
-  [libjxl-tiny](https://github.com/nicoshev/libjxl-tiny) was the initial
+  [libjxl-tiny](https://github.com/libjxl/libjxl-tiny) was the initial
   porting target.
 - **[zune-jpegxl](https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpegxl)**
   (Caleb Etemesi, MIT/Apache-2.0/Zlib) — a working pure-Rust JXL lossless
