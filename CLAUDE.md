@@ -822,6 +822,21 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-25: LF frame + resampling wrote undecodable files
+
+[PROVEN] The spec derives an LF frame's size from the image size
+(`DivCeil(xsize, 1 << 3*dc_level)`, frame_header.h ToFrameDimensions), which
+cannot match the DC grid of a resampled main frame. libjxl refuses DC frames
+with resampling ("Resampling not supported with DC frames", enc_frame.cc)
+and zeroes `progressive_dc` whenever `resampling > 1`. We emitted the LF
+frame anyway: djxl, jxl-rs and zenjxl-decoder all failed (SectionTooShort)
+on ~75% of lf_frame/progressive_dc + resampling encodes, and on ~90% of
+LF-frame encodes at d >= 10 under `EncoderStrategy::Libjxl` (auto-resampling;
+the sweep first looked like a separate Libjxl bug). Fix:
+`use_lf_frame = cfg.lf_frame && effective_resampling == 1`. Pinned by
+`aux_frames::lf_frame_with_resampling_decodes` (factors 2/4/8 x pdc 0/1/2 x
+RGB/RGBA x 64x32/300x260 through jxl-rs and djxl; fails on the old code).
+
 ### RESOLVED 2026-10-25: lossy 16-bit alpha quantized to 8 bits
 
 [PROVEN] `encode_lossy` extracted alpha for `Rgba16`/`GrayAlpha16` through

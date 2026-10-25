@@ -4504,6 +4504,8 @@ impl LossyConfig {
     ///
     /// When true, DC coefficients are encoded as a separate modular frame
     /// before the main VarDCT frame, matching libjxl's `progressive_dc >= 1`.
+    /// Ignored when the frame is resampled (`with_resampling` or automatic
+    /// resampling), as in libjxl.
     pub fn with_lf_frame(mut self, enable: bool) -> Self {
         self.lf_frame = enable;
         self
@@ -4520,7 +4522,8 @@ impl LossyConfig {
     ///   surfaced via [`Self::progressive_dc`] for forward compatibility).
     ///
     /// Values are clamped to `0..=`[`MAX_PROGRESSIVE_DC`]. Setting
-    /// any non-zero level implies [`Self::with_lf_frame(true)`].
+    /// any non-zero level implies [`Self::with_lf_frame(true)`], and like it
+    /// is ignored when the frame is resampled.
     pub fn with_progressive_dc(mut self, level: u8) -> Self {
         let lvl = level.min(MAX_PROGRESSIVE_DC);
         self.progressive_dc = lvl;
@@ -8265,7 +8268,11 @@ impl<'a> EncodeRequest<'a> {
         enc.auto_splines = cfg.auto_splines();
         enc.is_grayscale = self.layout.is_grayscale();
         enc.progressive = cfg.progressive;
-        enc.use_lf_frame = cfg.lf_frame;
+        // An LF frame's dimensions are derived from the image size, so they
+        // cannot match a resampled main frame's DC grid; libjxl refuses DC
+        // frames with resampling and drops progressive_dc when resampling
+        // (enc_frame.cc). Those files used to be undecodable.
+        enc.use_lf_frame = cfg.lf_frame && effective_resampling == 1;
         // W44-130 Chunk D: `content_aware_entropy_mul` enable bit +
         // 5 `with_*_hint` Option<bool> setters + their VarDctEncoder
         // fallback fields all deleted. Strategy + overrides flow

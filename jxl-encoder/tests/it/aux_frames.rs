@@ -246,3 +246,41 @@ fn lossy_low_effort_keeps_alpha() {
         }
     }
 }
+
+/// An LF frame cannot represent a resampled main frame's DC grid (libjxl
+/// refuses the combination). LF frame and progressive DC requests are
+/// ignored under resampling; such files used to be undecodable.
+#[test]
+fn lf_frame_with_resampling_decodes() {
+    for (w, h) in [(64u32, 32u32), (300, 260)] {
+        let rgba = frymire_rgba(w, h);
+        let rgb: Vec<u8> = rgba.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+        for factor in [2u32, 4, 8] {
+            for pdc in [0u8, 1, 2] {
+                for (layout, px) in [(PixelLayout::Rgb8, &rgb), (PixelLayout::Rgba8, &rgba)] {
+                    let label = format!("lf-rs{factor}-pdc{pdc}-{layout:?}-{w}x{h}");
+                    let mut cfg = LossyConfig::new(2.0)
+                        .with_effort(7)
+                        .with_resampling(factor)
+                        .with_lf_frame(true);
+                    if pdc > 0 {
+                        cfg = cfg.with_progressive_dc(pdc);
+                    }
+                    let bytes = cfg
+                        .encode(px, w, h, layout)
+                        .expect("LF frame + resampling encode");
+                    assert_eq!(
+                        decode_jxl_rs(&bytes, &label),
+                        (w as usize, h as usize),
+                        "jxl-rs {label}"
+                    );
+                    assert_eq!(
+                        decode_djxl_rgba(&bytes, &label).dimensions(),
+                        (w, h),
+                        "djxl {label}"
+                    );
+                }
+            }
+        }
+    }
+}
