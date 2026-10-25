@@ -41,8 +41,9 @@ let jxl = LossyConfig::new(1.0)
 `Gray16`, `GrayAlpha16`, `RgbLinearF32`, `RgbaLinearF32`, `GrayLinearF32`,
 `GrayAlphaLinearF32`.
 
-Lossy encoding accepts all 14 layouts; alpha is coded as a modular extra
-channel next to the VarDCT colour. Lossless encoding accepts the 8- and
+Lossy encoding accepts all 14 layouts; alpha is coded losslessly as a
+modular extra channel next to the VarDCT colour, at 8 bits on 0.3.x (16-bit
+and float alpha are rounded to 8 bits; full precision is on main). Lossless encoding accepts the 8- and
 16-bit integer layouts; the linear `f32` layouts are lossy-only in 0.3.x.
 
 ## What works

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-25
+
+Maintenance release on the 0.3 line: fixes found by the new conformance
+sweep. No public API changes (`cargo semver-checks` clean for both crates).
+Encoded bytes differ from 0.3.3 only for lossy effort 1-2 encodes with
+alpha, patches, splines or an LF frame, and for lossless trees that would
+exceed depth 64.
+
 - Fixed: lossy encodes at effort 1 and 2 dropped the alpha channel (every RGBA / gray+alpha layout). Those efforts default to the single-pass static-code path, which writes the header without extra channels; frames it cannot represent (alpha, patches, splines, a sharpness map, an LF frame) now take the two-pass path. Backport from main; found by the new conformance sweep.
 - Lossless tree learning now cuts learned MA trees at the Level 5 depth limit of 64 (jxl-rs rejects deeper trees). On main the sweep produced depth-65 trees at lossless e8 past 2048 px; 0.3.x has the same unbounded learner but no reproduction yet. Backport from main.
 - The single-pass path also falls back to two-pass when quantized values need symbols past its 64-symbol static alphabet (a guard backported from main, where bright PQ input at d0.1 failed to encode; no 0.3.x input is known to reach it).
