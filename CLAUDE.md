@@ -822,6 +822,22 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-25: learned MA trees exceeded the Level 5 depth limit
+
+[PROVEN] Level 5 allows MA trees at most 64 deep (root = 0; enforced by
+jxl-rs 0.8 `frame/modular/tree.rs`, "modular tree depth"). Neither our
+learner nor libjxl's `ComputeBestTree` bounds depth; the sweep produced
+depth-65 trees on lossless e8 images with an axis past 2048 px (jxl-rs:
+`LevelLimitExceeded { val: 65, max: 64 }`; djxl does not check). Fix:
+`tree::cap_tree_depth(MAX_TREE_DEPTH = 64)` runs before context assignment
+at every learned-tree assembly (`tree_learn.rs` x2, `ma_libjxl.rs`); a split
+at depth 64 becomes a leaf with its leftmost descendant leaf's predictor,
+offset and multiplier. Trees within the limit are untouched (all locks
+byte-identical). Pinned by `tree::depth_cap_tests` (70-deep synthetic tree)
+and verified by replaying the three sweep cells (seed 2: 68815, 89101,
+90596) through jxl-rs 0.8. Not covered: per-group sectioned trees and the
+fixed/learned VarDCT DC trees are not capped (none observed near the limit).
+
 ### RESOLVED 2026-10-25: squeeze overflowed on f32 / wide-integer samples
 
 [PROVEN] `modular/squeeze.rs` forward squeeze computes `average`, `a - b`

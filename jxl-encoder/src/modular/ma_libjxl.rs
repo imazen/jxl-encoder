@@ -1784,6 +1784,8 @@ pub(crate) fn to_property_tree(jxl: &JxlTree) -> Tree {
             context_id: 0,
         })
         .collect();
+    // Level 5 caps MA tree depth; deeper learned branches become leaves.
+    super::tree::cap_tree_depth(&mut tree, super::tree::MAX_TREE_DEPTH);
     assign_sequential_contexts(&mut tree);
     tree
 }

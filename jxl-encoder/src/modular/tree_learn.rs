@@ -6281,6 +6281,8 @@ fn build_tree_from_prequantized(
         }
     }
 
+    // Level 5 caps MA tree depth; deeper learned branches become leaves.
+    super::tree::cap_tree_depth(&mut tree, super::tree::MAX_TREE_DEPTH);
     // Assign sequential context IDs to leaves
     assign_sequential_contexts(&mut tree);
 
@@ -9277,6 +9279,8 @@ pub(crate) fn compute_best_tree_with_multipliers_stop(
         }
     }
 
+    // Level 5 caps MA tree depth; deeper learned branches become leaves.
+    super::tree::cap_tree_depth(&mut tree, super::tree::MAX_TREE_DEPTH);
     // Assign sequential context IDs to leaves
     assign_sequential_contexts(&mut tree);
 
