@@ -862,6 +862,21 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-26: effort 1-2 spent ~820 bytes of static tables on small images
+
+[MEASURED] Zen strategies at effort 1-2 write with static prefix tables
+(`optimize_codes = effort >= 3`), which cost ~820 B and ~0.5 ms of setup per
+file: a 1x1 pixel was 875 B (63 B under `EncoderStrategy::Libjxl`, 54 B with
+dynamic codes), and below 128x128 the static path was also no faster.
+Images at or below `vardct::encoder::DYNAMIC_CODES_MAX_PIXELS` (128x128) now
+build dynamic codes: 3-15x smaller at 32x32-64x64, 28-83 % at 128x128, at
+most 0.73 ms slower (screenshot crops), faster on photo crops. Above it the
+static path stays: at 512x512-2048x2048 photo crops it saves 7-45 % encode
+time for 15-27 % more bytes, and a dynamic e1 there costs as much time as e3
+while e3 is smaller, so e1/e2 only make sense with static codes at those
+sizes. Pinned by `low_effort_static_codes::small_images_at_low_effort_skip_static_tables`
+(875 vs 63 B on the old code). No hash lock moved.
+
 ### RESOLVED 2026-10-26: LF frame DC coded far coarser than libjxl on small images
 
 [PROVEN] `with_lf_frame` / `with_progressive_dc` single-group DC frames
@@ -1620,12 +1635,6 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
-
-### 2026-10-26: effort 1-2 zen mode spends ~820 bytes of fixed overhead
-
-[MEASURED] A 1x1 PQ image at d0.5 is 884 B at e1/e2 under the zen
-strategies, 65 B at e3, 78 B under `EncoderStrategy::Libjxl`; a 3x2 Rgb8
-cell at e2 was 874 B (cjxl 61 B). Not yet attributed.
 
 ### RESOLVED 2026-10-19: Relative constructor header policy
 

@@ -1954,6 +1954,11 @@ pub(crate) fn w44_audit_5_p3_force_libjxl_parity_for_screenshot(
     crate::vardct::perceptual_tuning::w44_audit_6_is_high_colour_class(proxies)
 }
 
+/// Images at or below this many pixels never take the single-pass
+/// static-code path (effort <= 2 under the zen strategies), whose fixed
+/// tables dominate a small file. See the decision in `encode`.
+const DYNAMIC_CODES_MAX_PIXELS: usize = 128 * 128;
+
 /// Tiny JPEG XL encoder.
 ///
 /// This is a simplified VarDCT encoder based on libjxl-tiny that uses:
@@ -6526,7 +6531,14 @@ impl VarDctEncoder {
         // alphabet has ALPHABET_SIZE symbols. Very fine quantization (e.g.
         // d0.1 on HDR content) can need larger symbols; the writer then
         // refused the encode. Only scan when single pass is possible.
-        let single_pass_possible = !self.optimize_codes || single_pass_entropy_content_gate;
+        // Small images always build dynamic codes: the static tables cost
+        // ~820 bytes and ~0.5 ms of setup per file, so below 128x128 the
+        // single-pass path is larger (3-15x at 32x32-64x64, 28-83 % at
+        // 128x128) and at most 0.73 ms faster (measured 2026-10-26 on photo,
+        // terminal, windows and graph crops; libjxl has no static path).
+        let small_image = width * height <= DYNAMIC_CODES_MAX_PIXELS;
+        let single_pass_possible =
+            !small_image && (!self.optimize_codes || single_pass_entropy_content_gate);
         let static_codes_cover = !single_pass_possible
             || static_codes_cover_values(&transform_out.quant_dc, &transform_out.quant_ac);
         let single_pass_representable = static_codes_cover
@@ -6537,8 +6549,10 @@ impl VarDctEncoder {
             && noise_params.is_none()
             && !self.use_lf_frame
             && !self.dc_tree_learning;
-        let single_pass_entropy_safe =
-            self.optimize_codes && single_pass_entropy_content_gate && single_pass_representable;
+        let single_pass_entropy_safe = !small_image
+            && self.optimize_codes
+            && single_pass_entropy_content_gate
+            && single_pass_representable;
         // Without `optimize_codes` (effort <= 2) the single-pass path is the
         // default, so the same representability check applies: a frame it
         // cannot serialize takes the two-pass path instead. It used to write
@@ -6546,7 +6560,7 @@ impl VarDctEncoder {
         let optimize_codes_effective = if single_pass_entropy_safe {
             false
         } else {
-            self.optimize_codes || !single_pass_representable
+            self.optimize_codes || small_image || !single_pass_representable
         };
 
         // Two-pass mode: collect tokens, build optimal codes, write bitstream

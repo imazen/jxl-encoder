@@ -117,3 +117,51 @@ fn fine_hdr_quantization_at_low_effort_encodes() {
         }
     }
 }
+
+/// Effort 1-2 (zen strategies) write with static prefix tables. Those
+/// tables cost ~820 bytes per file, so small images came out 3-16x larger
+/// than the dynamic codes every other path builds (a 1x1 pixel: 875 B
+/// against 63 B under `EncoderStrategy::Libjxl`), and no faster. Images up to
+/// 128x128 now build dynamic codes; they must stay near the libjxl
+/// strategy's size and decode in jxl-rs and djxl.
+#[test]
+fn small_images_at_low_effort_skip_static_tables() {
+    use jxl_encoder::api::EncoderStrategy;
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus");
+    let sources = [
+        corpus
+            .get("CID22/CID22-512/validation")
+            .expect("CID22")
+            .join("1279330.png"),
+        corpus.get("gb82-sc").expect("gb82-sc").join("terminal.png"),
+    ];
+    for src in &sources {
+        let img = image::open(src).expect("source").to_rgb8();
+        for (w, h) in [(1u32, 1u32), (17, 9), (64, 64), (128, 128)] {
+            let crop = image::imageops::crop_imm(&img, 100, 100, w, h).to_image();
+            for effort in [1u8, 2] {
+                let label = format!(
+                    "{}-{w}x{h}-e{effort}",
+                    src.file_stem().unwrap().to_string_lossy()
+                );
+                let encode = |s: EncoderStrategy| {
+                    LossyConfig::new(1.0)
+                        .with_effort(effort)
+                        .with_strategy(s)
+                        .encode(crop.as_raw(), w, h, PixelLayout::Rgb8)
+                        .expect("encode")
+                };
+                let zen = encode(EncoderStrategy::Zenjxl);
+                let reference = encode(EncoderStrategy::Libjxl);
+                assert!(
+                    zen.len() as f64 <= 1.25 * reference.len() as f64 + 16.0,
+                    "{label}: {} B vs {} B under the libjxl strategy",
+                    zen.len(),
+                    reference.len()
+                );
+                assert_eq!(decode_dims_jxl_rs(&zen, &label), (w as usize, h as usize));
+                djxl_decodes(&zen, &label);
+            }
+        }
+    }
+}
