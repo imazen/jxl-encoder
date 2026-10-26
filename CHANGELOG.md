@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Fixed: lossless `*LinearF16` / `*LinearF32` input with text-like content (effort >= 5, where patches turn on) decoded to wrong values, including NaN, in every decoder: the patch detector read float samples as bytes and subtracted the reference in the integer domain, while decoders add patches in the float domain. Float layouts now skip patch detection. Found by the weekly conformance sweep.
 - Fixed: half-float subnormals (values below 6.1e-5) were read 8192x too large, so lossy `*LinearF16` input with dark linear values encoded as mid-grey (a near-black screenshot crop decoded with mean error 0.24). `f16_bits_to_f32` now computes subnormals as libjxl does (`mantissa * 2^-24`); checked against an arithmetic reference for all 65,536 patterns. Found by the weekly conformance sweep's first CI run.
 - Fixed: lossy encodes of 16-bit and float layouts with alpha rewrote the colour of nearly transparent pixels. SimplifyInvisible smooths colour where alpha is 0, but it read the 8-bit alpha copy, where small nonzero alpha rounds to 0. It now uses the exact source alpha. Found by the conformance sweep.
 - Fixed: lossy effort 1-2 encodes failed with "token symbol 64 exceeds the prefix-code alphabet" when very fine quantization (e.g. d0.1 on bright PQ content) needs symbols past the static codes' 64-symbol alphabet. Such frames now take the two-pass path. Found by the conformance sweep.

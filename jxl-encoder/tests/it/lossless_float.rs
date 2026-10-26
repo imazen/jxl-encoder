@@ -761,3 +761,144 @@ fn f32_with_squeeze_round_trips_bit_exactly() {
         }
     }
 }
+
+/// djxl v0.12's float output for a lossless RGB stream, top row first.
+fn djxl_rgb_f32(data: &[u8], name: &str) -> Vec<f32> {
+    let dir = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "lossless_float");
+    let jxl = dir.join(format!("{name}.jxl"));
+    let pfm = dir.join(format!("{name}.pfm"));
+    std::fs::write(&jxl, data).expect("write");
+    let out = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(&jxl)
+        .arg(&pfm)
+        .arg("--num_threads=1")
+        .output()
+        .expect("run djxl v0.12");
+    assert!(
+        out.status.success(),
+        "djxl rejected {name}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&pfm).expect("read pfm");
+    let mut fields = Vec::new();
+    let mut pos = 0;
+    while fields.len() < 4 {
+        while bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let start = pos;
+        while !bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        fields.push(String::from_utf8_lossy(&bytes[start..pos]).into_owned());
+    }
+    pos += 1;
+    assert_eq!(fields[0], "PF", "{name}");
+    let (w, h): (usize, usize) = (fields[1].parse().unwrap(), fields[2].parse().unwrap());
+    let little = fields[3].parse::<f32>().unwrap() < 0.0;
+    let data = &bytes[pos..];
+    assert_eq!(data.len(), w * h * 12, "{name}");
+    let mut out = vec![0f32; w * h * 3];
+    for (i, b) in data.as_chunks::<4>().0.iter().enumerate() {
+        let v = if little {
+            f32::from_le_bytes(*b)
+        } else {
+            f32::from_be_bytes(*b)
+        };
+        // PFM rows run bottom to top.
+        let (y, x) = (h - 1 - i / (w * 3), i % (w * 3));
+        out[y * w * 3 + x] = v;
+    }
+    out
+}
+
+/// Round-to-nearest-even f32 -> f16 for finite values in [0, 1].
+fn f32_to_f16_bits(v: f32) -> u16 {
+    let x = v.to_bits();
+    let e = ((x >> 23) & 0xff) as i32 - 127 + 15;
+    let m = x & 0x7f_ffff;
+    let round = |kept: u32, rem: u32, half: u32| {
+        kept + (rem > half || (rem == half && kept & 1 == 1)) as u32
+    };
+    if v == 0.0 {
+        return 0;
+    }
+    if e <= 0 {
+        let mant = m | 0x80_0000;
+        let shift = (14 - e) as u32;
+        if shift > 24 {
+            return 0;
+        }
+        return round(mant >> shift, mant & ((1 << shift) - 1), 1 << (shift - 1)) as u16;
+    }
+    round(((e as u32) << 10) | (m >> 13), m & 0x1fff, 0x1000) as u16
+}
+
+/// Text screenshots make the lossless patch detector fire. It used to run on
+/// float layouts too, reading each f16/f32 sample's bytes as separate 8-bit
+/// channels and subtracting the reference in the integer bit-pattern domain,
+/// while decoders add patches back in the float domain: the gb82 terminal
+/// screenshot as linear f16 came back with NaN and values up to 5860 in all
+/// three decoders (conformance sweep seed 9 cell 4098). Float layouts must
+/// round-trip bit for bit; checked through jxl-rs and djxl v0.12.
+#[test]
+fn float_text_screenshot_round_trips_bit_exactly() {
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus");
+    let dir = corpus.get("gb82-sc").expect("gb82-sc corpus");
+    let img = image::open(dir.join("terminal.png"))
+        .expect("terminal.png")
+        .to_rgb8();
+    let srgb_to_linear = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    // The sweep's crop (origin 333,135; 279 rows is the smallest failing
+    // height) and a larger one from the same text area.
+    for (ox, oy, w, h) in [(333u32, 135u32, 300usize, 279usize), (333, 135, 520, 600)] {
+        let mut linear = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                for &c in &img.get_pixel(ox + x as u32, oy + y as u32).0 {
+                    linear.push(srgb_to_linear(c));
+                }
+            }
+        }
+        for half in [true, false] {
+            let (layout, raw, want): (_, Vec<u8>, Vec<f32>) = if half {
+                let bits: Vec<u16> = linear.iter().map(|&v| f32_to_f16_bits(v)).collect();
+                (
+                    PixelLayout::RgbLinearF16,
+                    bits.iter().flat_map(|b| b.to_ne_bytes()).collect(),
+                    bits.iter().map(|&b| f16_bits_to_f32(b)).collect(),
+                )
+            } else {
+                (
+                    PixelLayout::RgbLinearF32,
+                    linear.iter().flat_map(|v| v.to_ne_bytes()).collect(),
+                    linear.clone(),
+                )
+            };
+            let label = format!("terminal_{w}x{h}_{}", if half { "f16" } else { "f32" });
+            let data = LosslessConfig::new()
+                .with_effort(5)
+                .encode(&raw, w as u32, h as u32, layout)
+                .expect("float lossless encode");
+            for (who, got) in [
+                ("jxl-rs", decode_jxlrs_planar(&data, 3).2),
+                ("djxl", djxl_rgb_f32(&data, &label)),
+            ] {
+                assert_eq!(got.len(), want.len(), "{label} {who}");
+                let bad = got
+                    .iter()
+                    .zip(&want)
+                    .filter(|(a, b)| a.to_bits() != b.to_bits())
+                    .count();
+                assert_eq!(bad, 0, "{label}: {who} differs in {bad} samples");
+            }
+        }
+    }
+}

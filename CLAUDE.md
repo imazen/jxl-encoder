@@ -862,6 +862,24 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-26: lossless float text screenshots decoded to NaN (patches)
+
+[PROVEN] The one-shot lossless patch gate (`api.rs`, before
+`find_and_build_lossless`) admitted float layouts: `is_16bit()` is false for
+f16/f32, so detection read each sample's bytes as separate 8-bit channels
+(6 for RGB f16, 12 for f32), and `subtract_patches_modular` subtracted the
+reference in the integer bit-pattern domain while decoders add patches back
+to float samples. A text screenshot as linear f16 came back with NaN and
+values up to 5860 in djxl, jxl-rs and zenjxl-decoder (sweep seed 9 cell
+4098, reported as "sectioned + optimal LZ77", but those options were inert:
+any effort >= 5, where lossless patches turn on, failed). The streaming
+path's `bit_depth <= 8` gate already excluded floats. Fix: float layouts
+skip patch detection. Pinned by
+`lossless_float::float_text_screenshot_round_trips_bit_exactly` (gb82
+terminal.png crops 300x279 and 520x600 at origin 333,135, f16 and f32,
+bit-exact through jxl-rs and djxl; fails on the old code with 20,997 wrong
+samples).
+
 ### RESOLVED 2026-10-25: f16 subnormals read 8192x too large
 
 [PROVEN] `f16::f16_bits_to_f32` normalized subnormals with the exponent
@@ -1574,14 +1592,6 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
-
-### 2026-10-26: lossless f16 + sectioned + optimal LZ77 decodes to NaN
-
-[PROVEN, all three decoders agree] Sweep seed 9 cell 4098: terminal.png
-300x2049 `RgbLinearF16` lossless e5 `lz77:optimal sectioned:on`; 18,244
-samples come back NaN in djxl, jxl-rs and zenjxl-decoder. Replay:
-`conformance-sweep --seed 9 --only 4098` with the CID22-512 validation and
-gb82-sc images. Under investigation.
 
 ### 2026-10-26: LF frame quantizes DC about 50x coarser than libjxl (opt-in path)
 

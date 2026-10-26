@@ -6858,12 +6858,17 @@ impl<'a> EncodeRequest<'a> {
         // probe placed the peak instant inside the detection phase
         // (`benchmarks/jxl_sectioned_patches_lifetime_2026-08-30.tsv`).
         //
-        // The gate is layout-derived: for every layout the match below
-        // ADMITS (integer RGB/gray/CMYK), `PixelLayout::is_16bit()` /
-        // `is_grayscale()` equal the built image's `bit_depth` /
-        // `is_grayscale` exactly (float layouts error out below before
-        // the old image-based gate could have seen them), so hoisting
-        // cannot change which encodes detect patches. CMYK is excluded:
+        // The gate is layout-derived: for the integer layouts
+        // `PixelLayout::is_16bit()` / `is_grayscale()` equal the built
+        // image's `bit_depth` / `is_grayscale` exactly. Float layouts are
+        // excluded: the detector reads 8/16-bit integer samples and
+        // `subtract_patches_modular` subtracts in the integer domain,
+        // while decoders add patches back to float samples in the float
+        // domain (and a float difference is not exactly invertible). Before
+        // 2026-10-26 lossless float reached this gate with each sample's
+        // BYTES read as separate 8-bit channels, and text screenshots came
+        // back with NaN (sweep seed 9 cell 4098; the streaming path's
+        // `bit_depth <= 8` gate already excluded floats). CMYK is excluded:
         // the detector assumes RGB-like perceptual colour and would
         // match on CMY planes. `bytes_per_pixel` counts BYTES; patches
         // detection wants the CHANNEL count (and, for 16-bit layouts,
@@ -6876,6 +6881,8 @@ impl<'a> EncodeRequest<'a> {
         let num_channels = self.layout.bytes_per_pixel() / bytes_per_sample;
         let can_use_patches = cfg.effective_patches()
             && !self.layout.is_grayscale()
+            && !self.layout.is_f32()
+            && !self.layout.is_f16()
             && num_channels >= 3
             && !self.layout.is_cmyk();
         let patches_data = if can_use_patches {
