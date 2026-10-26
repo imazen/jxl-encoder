@@ -6065,16 +6065,11 @@ impl<'a> EncodeRequest<'a> {
     /// header so decoders know to interpret the color values as
     /// already-multiplied-by-alpha.
     ///
-    /// **Lossless**: works correctly — the encoder writes the pixels
-    /// as-is and the header bit tells the decoder to keep them
-    /// premultiplied.
-    ///
-    /// **Lossy**: NOT YET supported (closes lossless portion of #13;
-    /// lossy portion needs the unpremultiplication pre-pass that
-    /// libjxl does at `enc_frame.cc:1588-1597` before XYB conversion
-    /// — quantization errors multiply with alpha if you skip it).
-    /// Calling this on a lossy encode returns
-    /// [`EncodeError::InvalidInput`].
+    /// The samples are coded as given (lossless: bit-exactly) and the
+    /// header bit tells decoders they are premultiplied, so they return
+    /// them that way, as libjxl does. Lossy encodes skip the
+    /// invisible-pixel simplification for premultiplied input, also as
+    /// libjxl does.
     ///
     /// Default is `false` (straight / unassociated alpha).
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
@@ -6098,10 +6093,7 @@ impl<'a> EncodeRequest<'a> {
     /// `On`/`Off` map directly onto
     /// [`Self::with_premultiplied_alpha(true|false)`]. `Auto` records
     /// the policy on the request; the encoder samples the input once
-    /// before the encode loop and resolves it to `On` or `Off`. Lossy
-    /// resolution to `On` still returns
-    /// [`EncodeError::InvalidInput`] until the unpremultiplication
-    /// pre-pass (#13) lands.
+    /// before the encode loop and resolves it to `On` or `Off`.
     pub fn with_premultiplied_alpha_mode(mut self, mode: PremultipliedAlphaMode) -> Self {
         self.premultiplied_alpha_mode = Some(mode);
         match mode {
@@ -7925,7 +7917,7 @@ impl<'a> EncodeRequest<'a> {
         };
         // 16-bit layouts code alpha at full precision. The 8-bit copy above
         // only feeds the approximate pre-passes (invisible-pixel
-        // simplification, unpremultiply, resampling); alpha used to be coded
+        // simplification, resampling); alpha used to be coded
         // from it, losing its low 8 bits.
         let alpha_u16: Option<Vec<u16>> = match self.layout {
             PixelLayout::Rgba16 => Some(extract_alpha_u16_raw(pixels, 4, 3, self.stop)),
@@ -8122,20 +8114,12 @@ impl<'a> EncodeRequest<'a> {
             auto_content_class,
         );
 
-        // Unpremultiply alpha BEFORE the SimplifyInvisible pre-pass and
-        // BEFORE XYB conversion (closes lossy portion of #13). libjxl
-        // `enc_frame.cc:1588-1597` runs SimplifyInvisible only when
-        // alpha is straight (`!alpha_eci->alpha_associated`); when the
-        // caller signals premultiplied input we unpremultiply first so
-        // the encoder can run the rest of its pipeline on straight
-        // RGB. The header gets `alpha_associated=true` so the decoder
-        // re-premultiplies on output, closing the round-trip.
-        if self.premultiplied_alpha
-            && let Some(ref alpha_buf) = alpha
-        {
-            unpremultiply_alpha_inplace(&mut linear_rgb, alpha_buf);
-        }
-
+        // Premultiplied (associated) alpha is coded as given, as libjxl
+        // does: `enc_frame.cc` never unpremultiplies, it only skips
+        // SimplifyInvisible for associated alpha (line 1618), and decoders
+        // return the samples premultiplied. Dividing by alpha here (as this
+        // path did until 2026-10-26) stored straight colour under the
+        // associated flag.
         // SimplifyInvisible pre-pass (closes #10): smooth color
         // values in alpha=0 pixels to a weighted average of visible
         // neighbors, reducing high-frequency DCT energy from arbitrary
@@ -8441,10 +8425,8 @@ impl<'a> EncodeRequest<'a> {
         });
         enc.non_finite_action = cfg.non_finite_action;
         enc.budget = Some(alloc::sync::Arc::clone(budget));
-        // Lossy portion of #13: signal premultiplied alpha in the
-        // codestream header (decoder re-premultiplies on output).
-        // The unpremultiplication of the input pixels already happened
-        // above (immediately after building linear_rgb).
+        // Premultiplied input: the samples were coded as given; the
+        // header bit tells decoders they are premultiplied.
         enc.alpha_associated = self.premultiplied_alpha;
         // Configurable bits_per_sample (#18 sub-feature) — drives the
         // codestream BitDepth header. Input normalization (u16_max)
@@ -9004,9 +8986,7 @@ impl LossyEncoder {
 
     /// Signal that the input alpha channel is premultiplied (associated).
     /// Mirrors [`EncodeRequest::with_premultiplied_alpha`]. See that
-    /// builder for the lossless-vs-lossy semantic discussion. The lossy
-    /// encoder unpremultiplies through the shared one-shot pipeline at
-    /// [`finish`](Self::finish).
+    /// builder: the samples are coded as given.
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
         self.premultiplied_alpha = enable;
         self
@@ -9531,9 +9511,7 @@ impl LosslessEncoder {
 
     /// Signal that the input alpha channel is premultiplied (associated).
     /// Mirrors [`EncodeRequest::with_premultiplied_alpha`]. See that
-    /// builder for the lossless-vs-lossy semantic discussion. The lossy
-    /// encoder unpremultiplies through the shared one-shot pipeline at
-    /// [`finish`](Self::finish).
+    /// builder: the samples are coded as given.
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
         self.premultiplied_alpha = enable;
         self

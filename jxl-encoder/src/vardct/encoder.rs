@@ -2417,11 +2417,9 @@ pub struct VarDctEncoder {
     pub intrinsic_size: Option<(u32, u32)>,
     /// When `true`, the alpha extra-channel header is emitted with
     /// `alpha_associated=true` (premultiplied / associated alpha).
-    /// The encoder DOES NOT premultiply or unpremultiply pixels here —
-    /// it's the caller's responsibility to feed straight color and
-    /// declare the encoded form. The high-level `EncodeRequest` /
-    /// `LossyEncoder` API does the unpremultiply pre-pass before
-    /// handing us the linear RGB.
+    /// The encoder neither premultiplies nor unpremultiplies: the colour
+    /// it is given is coded as is, and with this flag set it is the
+    /// premultiplied colour (libjxl does the same).
     pub alpha_associated: bool,
     /// Override `BitDepth.bits_per_sample` in the codestream header.
     /// `None` → derives from `bit_depth_16` (8 or 16). `Some(N)` →

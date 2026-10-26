@@ -741,9 +741,8 @@ pub(crate) fn encode_animation_lossy(
     enc.budget = Some(alloc::sync::Arc::clone(&budget));
     // Premultiplied-alpha signaling for animation (mirrors the still
     // image lossy path's `enc.alpha_associated = self.premultiplied_alpha`
-    // at api.rs:3877). Per-frame the linear RGB is unpremultiplied
-    // before XYB conversion below; the codestream header signals
-    // `alpha_associated=true` so the decoder re-premultiplies on output.
+    // path). The samples are coded as given; the header's
+    // `alpha_associated=true` tells decoders they are premultiplied.
     enc.alpha_associated = animation.premultiplied_alpha;
 
     // Detect alpha and 16-bit from layout
@@ -980,22 +979,10 @@ pub(crate) fn encode_animation_lossy(
             }
         };
 
-        // Mirror of the still-image lossy pre-passes at api.rs:3776-3807.
-        // Order is load-bearing: unpremultiply FIRST so SimplifyInvisible
-        // operates on straight-alpha RGB, matching libjxl
-        // `enc_frame.cc:1588-1597` which gates SimplifyInvisible on
-        // `!alpha_eci->alpha_associated`. After unpremultiplication the
-        // input is straight-alpha and the simplify pass is enabled even
-        // when the caller signalled premultiplied alpha. The codestream
-        // header still gets `alpha_associated=true` (set above) so the
-        // decoder re-premultiplies on output.
+        // Premultiplied alpha is coded as given (libjxl never
+        // unpremultiplies; see the still-image path). SimplifyInvisible
+        // stays off for it, as libjxl gates it on `!alpha_associated`.
         let mut linear_rgb = linear_rgb;
-        if animation.premultiplied_alpha
-            && let Some(ref alpha_buf) = alpha
-        {
-            unpremultiply_alpha_inplace(&mut linear_rgb, alpha_buf);
-        }
-
         // SimplifyInvisible pre-pass (closes #10) — mirrors the
         // one-shot still-image path at api.rs:3795-3807. Smear color
         // values in alpha=0 pixels to a weighted average of visible

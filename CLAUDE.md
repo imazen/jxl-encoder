@@ -862,6 +862,30 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-26: lossy premultiplied alpha stored straight colour under the associated flag
+
+[PROVEN] With `with_premultiplied_alpha(true)` (and the animation flag) the
+lossy path divided linear RGB by the 8-bit alpha copy before coding, then
+set `alpha_associated=true`. libjxl never unpremultiplies (`enc_frame.cc`
+only skips SimplifyInvisible for associated alpha, line 1618; the cited
+"pre-pass at enc_frame.cc:1588-1597" does not exist) and decoders return
+associated samples as coded, so djxl/jxl-rs returned straight colour
+labelled premultiplied: a 16-bit half-transparent pixel (premultiplied
+20000/10000/5000) decoded as 27938/14565/7609, a nearly transparent one at
+full brightness. Found while fixing the 8-bit-alpha divisor listed open on
+2026-10-25. Fix: samples coded as given (one-shot, streaming, animation);
+`unpremultiply_alpha_inplace` deleted. Pinned by
+`lossy_alpha_precision::premultiplied_alpha_decodes_premultiplied` (Rgba8 and
+Rgba16, 64x32 and 300x260, djxl PAM and jxl-rs: mean error 0.002-0.006 vs
+0.05 on the old code). `animation::test_animation_lossy_premultiplied_alpha_matches_straight`
+asserted the old behaviour (premultiplied decode equal to the straight
+encode's); it is now `..._decodes_premultiplied` and holds the premultiplied
+decode to the source's premultiplied samples within 1.5x the straight
+encode's own error (old code: mean 0.085 vs 0.0043). Docs on
+`with_premultiplied_alpha`, `with_premultiplied_alpha_mode`,
+`AnimationParams::premultiplied_alpha` and `PremultipliedAlphaMode` said lossy
+returned `InvalidInput` or unpremultiplied; corrected.
+
 ### RESOLVED 2026-10-26: effort 1-2 spent ~820 bytes of static tables on small images
 
 [MEASURED] Zen strategies at effort 1-2 write with static prefix tables
@@ -944,9 +968,8 @@ copy; for 16-bit and float layouts alpha below 1/510 rounds to 0 there, so
 visible (if faint) colour was smeared from neighbours (sweep: 1x1 Rgba16
 mean error 1.0; test: red under alpha 100/65535 came back blue). Fix:
 `ingest::exact_alpha_visibility` builds the mask from the exact samples
-(u16, f32, f16 incl. -0). **Same class, open:** `unpremultiply_alpha_inplace`
-still divides by the 8-bit alpha for 16-bit/float premultiplied input.
-Pinned by `lossy_alpha_precision::nearly_transparent_16bit_colour_is_kept`
+(u16, f32, f16 incl. -0). (The related 8-bit-alpha unpremultiply is gone:
+see the 2026-10-26 premultiplied-alpha entry.) Pinned by `lossy_alpha_precision::nearly_transparent_16bit_colour_is_kept`
 (fails on the old code with mean error 0.666).
 
 ### RESOLVED 2026-10-25: low-effort lossy failed on symbols past the static alphabet

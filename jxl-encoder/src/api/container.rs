@@ -326,13 +326,9 @@ impl Buffering {
 ///   scan is O(N) and runs before the encode loop; for trusted inputs
 ///   prefer the explicit [`Off`]/[`On`] forms.
 ///
-/// On the [`crate::LossyConfig`] path the encoder requires the
-/// unpremultiplication pre-pass (#13) — calling `finish()` on a lossy
-/// encode with [`On`] (or [`Auto`] that resolves to premultiplied)
-/// returns [`crate::EncodeError::InvalidInput`]. On the [`crate::LosslessConfig`]
-/// path the pixels are preserved bit-exactly and the
-/// `alpha_associated` header bit is set so the decoder interprets the
-/// stored values correctly.
+/// On both paths the samples are coded as given and the
+/// `alpha_associated` header bit is set, so decoders return them
+/// premultiplied (lossless: bit-exactly).
 ///
 /// [`Auto`]: PremultipliedAlphaMode::Auto
 /// [`Off`]: PremultipliedAlphaMode::Off

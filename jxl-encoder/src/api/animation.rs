@@ -16,12 +16,11 @@ pub struct AnimationParams {
     pub num_loops: u32,
     /// Input frame RGB is already multiplied by alpha (associated /
     /// premultiplied alpha). Default `false` (straight alpha). When
-    /// `true`, the encoder unpremultiplies before XYB conversion and
-    /// signals `alpha_associated=true` in the codestream so the decoder
-    /// re-premultiplies on output. Mirrors
+    /// `true`, the samples are coded as given and the codestream signals
+    /// `alpha_associated=true`, so decoders return them premultiplied
+    /// (libjxl behaves the same). Mirrors
     /// [`crate::EncodeRequest::with_premultiplied_alpha`] for the animation
-    /// path. Closes the lossy portion of the animation audit's
-    /// "doesn't unpremultiply alpha" finding.
+    /// path.
     pub premultiplied_alpha: bool,
 }
 

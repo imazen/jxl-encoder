@@ -7400,10 +7400,9 @@ fn test_encode_request_premultiplied_alpha_lossless() {
     );
 }
 
-/// #13 lossy variant: encoding premultiplied RGBA via lossy now goes
-/// through the unpremultiplication pre-pass, encodes the straight RGB,
-/// and signals `alpha_associated=true` so the decoder re-premultiplies
-/// on output.
+/// #13 lossy variant: premultiplied RGBA is coded as given and the header
+/// signals `alpha_associated=true` (decoded values are checked in
+/// `tests/it/lossy_alpha_precision.rs`).
 #[test]
 fn test_encode_request_premultiplied_alpha_lossy_round_trip() {
     let w = 16u32;
@@ -7415,7 +7414,7 @@ fn test_encode_request_premultiplied_alpha_lossy_round_trip() {
     for y in 0..h as usize {
         for x in 0..w as usize {
             let idx = (y * w as usize + x) * 4;
-            // straight color we want decoded (after re-premultiply):
+            // straight colour, premultiplied below:
             let r_straight = (x * 16) as u8;
             let g_straight = (y * 16) as u8;
             let b_straight = ((x + y) * 8) as u8;

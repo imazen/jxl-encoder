@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Fixed: lossy encodes with premultiplied alpha (`with_premultiplied_alpha(true)`, `AnimationParams::premultiplied_alpha`) divided colour by alpha before coding while flagging the alpha as premultiplied, so decoders returned straight colour labelled premultiplied (too bright wherever alpha < 1). The samples are now coded as given, as libjxl does.
 - Fixed: lossy effort 1-2 wrote ~820 bytes of static entropy tables into every file, so images up to 128x128 came out 3-16x larger than needed (a 1x1 image: 875 bytes). They now build dynamic codes (54 bytes for that 1x1); larger images keep the faster static path.
 - Fixed: the LF frame (`with_lf_frame`, `with_progressive_dc`) coded DC at the main distance instead of libjxl's 0.02x and skipped libjxl's chroma squeeze on small DC images, so small images lost up to 37x more accuracy than cjxl's LF frame; it now matches cjxl `--progressive_dc=1` at every size (512x512: 1-5 % smaller at error within 2 %; 2479-4000 px photos: within 1 %). Above 2048 px the LF frame was coded losslessly; it is now lossy like libjxl's, with LZ77 at libjxl's DC effort table.
 - Fixed: lossless `*LinearF16` / `*LinearF32` input with text-like content (effort >= 5, where patches turn on) decoded to wrong values, including NaN, in every decoder: the patch detector read float samples as bytes and subtracted the reference in the integer domain, while decoders add patches in the float domain. Float layouts now skip patch detection. Found by the weekly conformance sweep.

@@ -196,3 +196,210 @@ fn nearly_transparent_16bit_colour_is_kept() {
         "colour under alpha 100/65535 was rewritten: mean error {mean_red_err:.3}"
     );
 }
+
+/// Full jxl-rs decode of an RGBA file: interleaved RGB and alpha, f32 in the
+/// file's colour space as the decoder returns them.
+fn jxl_rs_rgba_f32(data: &[u8], label: &str) -> (Vec<f32>, Vec<f32>) {
+    use jxl::api::{
+        JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat,
+        ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+    let mut input = data;
+    let mut init = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+    let mut decoder = loop {
+        match init.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => init = fallback,
+            Err(e) => panic!("jxl-rs header {label}: {e:?}"),
+        }
+    };
+    let (w, h) = decoder.basic_info().size;
+    let format = decoder.current_pixel_format().clone();
+    assert_eq!(format.color_type.samples_per_pixel(), 3, "{label}");
+    let ne = format.extra_channel_format.len();
+    decoder.set_pixel_format(JxlPixelFormat {
+        color_type: format.color_type,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: vec![Some(JxlDataFormat::f32()); ne],
+    });
+    let mut frame = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder = fallback,
+            Err(e) => panic!("jxl-rs frame info {label}: {e:?}"),
+        }
+    };
+    let mut color = Image::<f32>::new((w * 3, h)).unwrap();
+    let mut alpha = Image::<f32>::new((w, h)).unwrap();
+    let mut bufs = vec![
+        JxlOutputBuffer::from_image_rect_mut(
+            color
+                .get_rect_mut(Rect {
+                    origin: (0, 0),
+                    size: (w * 3, h),
+                })
+                .into_raw(),
+        ),
+        JxlOutputBuffer::from_image_rect_mut(
+            alpha
+                .get_rect_mut(Rect {
+                    origin: (0, 0),
+                    size: (w, h),
+                })
+                .into_raw(),
+        ),
+    ];
+    loop {
+        match frame.process(&mut input, &mut bufs) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => frame = fallback,
+            Err(e) => panic!("jxl-rs decode {label}: {e:?}"),
+        }
+    }
+    drop(bufs);
+    let rgb = (0..h)
+        .flat_map(|y| color.row(y)[..w * 3].to_vec())
+        .collect();
+    let a = (0..h).flat_map(|y| alpha.row(y)[..w].to_vec()).collect();
+    (rgb, a)
+}
+
+/// djxl v0.12 to PAM (which djxl writes without unpremultiplying): RGB and
+/// alpha scaled to 0..=1.
+fn djxl_rgba_pam(data: &[u8], label: &str) -> (Vec<f32>, Vec<f32>) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lossy-premul");
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join(format!("{label}.jxl"));
+    let output = dir.join(format!("{label}.pam"));
+    std::fs::write(&input, data).unwrap();
+    let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(&input)
+        .arg(&output)
+        .arg("--num_threads=1")
+        .output()
+        .expect("run djxl v0.12");
+    assert!(result.status.success(), "djxl {label}");
+    let b = std::fs::read(&output).unwrap();
+    let end = b.windows(7).position(|w| w == b"ENDHDR\n").unwrap() + 7;
+    let header = String::from_utf8_lossy(&b[..end]).into_owned();
+    let field = |k: &str| -> usize {
+        header
+            .split(k)
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let (depth, maxval) = (field("DEPTH "), field("MAXVAL "));
+    assert_eq!(depth, 4, "{label}: PAM depth");
+    let n = if maxval > 255 { 2 } else { 1 };
+    let samples: Vec<f32> = b[end..]
+        .chunks(n)
+        .map(|c| c.iter().fold(0u32, |v, &x| v << 8 | x as u32) as f32 / maxval as f32)
+        .collect();
+    let rgb = samples.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let a = samples.chunks(4).map(|p| p[3]).collect();
+    (rgb, a)
+}
+
+/// Premultiplied (associated) alpha is coded as given: libjxl never
+/// unpremultiplies, and decoders return the samples premultiplied. The lossy
+/// path used to divide colour by alpha before coding while still flagging the
+/// alpha as associated, so decoders returned straight colour labelled
+/// premultiplied (a half-transparent pixel came back 40 % too bright, a
+/// nearly transparent one at full brightness: mean error 0.05 against 0.002
+/// now). Decoded colour must match the source's premultiplied samples and
+/// stay at or below its alpha.
+#[test]
+fn premultiplied_alpha_decodes_premultiplied() {
+    let source = image::load_from_memory(include_bytes!("../images/frymire-srgb.png"))
+        .unwrap()
+        .to_rgb8();
+    for (layout, w, h) in [
+        (PixelLayout::Rgba8, 64u32, 32u32),
+        (PixelLayout::Rgba16, 64, 32),
+        (PixelLayout::Rgba8, 300, 260),
+    ] {
+        // Straight colour from the photo, alpha a horizontal ramp from 1/64
+        // to 1, then premultiplied in the sample domain.
+        let mut px = Vec::new();
+        let mut want_rgb = Vec::new();
+        let mut want_a = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let p = source.get_pixel(x % source.width(), y % source.height()).0;
+                let a = (1 + x * 63 / (w - 1)) as f32 / 64.0;
+                let premul = p.map(|c| c as f32 / 255.0 * a);
+                want_rgb.extend_from_slice(&premul);
+                let max = if layout == PixelLayout::Rgba8 {
+                    255.0
+                } else {
+                    65535.0
+                };
+                want_a.push((a * max).round() / max);
+                if layout == PixelLayout::Rgba8 {
+                    px.extend(premul.map(|v| (v * 255.0).round() as u8));
+                    px.push((a * 255.0).round() as u8);
+                } else {
+                    for v in premul.iter().chain(core::iter::once(&a)) {
+                        px.extend_from_slice(&((v * 65535.0).round() as u16).to_ne_bytes());
+                    }
+                }
+            }
+        }
+        let label = format!("premul-{layout:?}-{w}x{h}");
+        let bytes = LossyConfig::new(1.0)
+            .with_effort(7)
+            .encode_request(w, h, layout)
+            .with_premultiplied_alpha(true)
+            .encode(&px)
+            .expect("encode");
+        for (who, (rgb, a)) in [
+            ("djxl", djxl_rgba_pam(&bytes, &label)),
+            ("jxl-rs", jxl_rs_rgba_f32(&bytes, &label)),
+        ] {
+            assert_eq!(rgb.len(), want_rgb.len(), "{label} {who}");
+            let mean_err = rgb
+                .iter()
+                .zip(&want_rgb)
+                .map(|(d, s)| (d - s).abs() as f64)
+                .sum::<f64>()
+                / rgb.len() as f64;
+            let max_excess = rgb
+                .chunks(3)
+                .zip(&a)
+                .map(|(c, a)| c.iter().fold(f32::MIN, |m, &v| m.max(v - a)))
+                .fold(f32::MIN, f32::max);
+            eprintln!(
+                "{label} {who}: mean error {mean_err:.4}, max colour - alpha {max_excess:.3}"
+            );
+            let over_alpha = rgb
+                .chunks(3)
+                .zip(&a)
+                .filter(|(c, a)| c.iter().any(|&v| v > *a + 0.05))
+                .count();
+            assert!(
+                mean_err < 0.02,
+                "{label} {who}: premultiplied colour mean error {mean_err:.4}"
+            );
+            // Lossy ringing on frymire's hard edges lifts a few pixels past
+            // alpha (58 of 78,000 at 300x260, by up to 0.114); the old path
+            // put the colour of every low-alpha pixel there.
+            assert!(
+                over_alpha * 200 < a.len(),
+                "{label} {who}: {over_alpha} of {} pixels decode brighter than their alpha",
+                a.len()
+            );
+            let alpha_err = a
+                .iter()
+                .zip(&want_a)
+                .map(|(d, s)| (d - s).abs())
+                .fold(0f32, f32::max);
+            assert!(alpha_err < 1e-3, "{label} {who}: alpha off by {alpha_err}");
+        }
+    }
+}

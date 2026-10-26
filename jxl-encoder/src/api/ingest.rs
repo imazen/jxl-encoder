@@ -1427,37 +1427,6 @@ pub(crate) fn compute_required_level(
     })
 }
 
-/// Divide premultiplied (associated) linear RGB values by alpha so the
-/// encoded codestream stores straight (unassociated) color. Mirrors
-/// libjxl `UnpremultiplyAlpha` in `lib/jxl/alpha.cc:106`. Pairs with
-/// `alpha_associated=true` in the codestream header — the decoder is
-/// responsible for re-premultiplying the output.
-///
-/// `alpha_u8` is the per-pixel alpha after our standard u8 quantization
-/// (matching the codestream's 8-bit BitDepth default). Using the same
-/// quantized value the decoder will see ensures the round-trip
-/// premultiplied → encode → decode → re-premultiplied closes.
-///
-/// `kSmallAlpha = 1.0 / (1<<26)` floor on the divisor — matches
-/// libjxl `lib/jxl/alpha.h:21`. Lifts division-by-zero on alpha=0
-/// pixels (where the original color is undefined anyway).
-pub(crate) fn unpremultiply_alpha_inplace(linear_rgb_interleaved: &mut [f32], alpha_u8: &[u8]) {
-    const K_SMALL_ALPHA: f32 = 1.0_f32 / ((1u32 << 26) as f32);
-    debug_assert_eq!(linear_rgb_interleaved.len(), alpha_u8.len() * 3);
-    for (rgb, &a) in linear_rgb_interleaved
-        .as_chunks_mut::<3>()
-        .0
-        .iter_mut()
-        .zip(alpha_u8.iter())
-    {
-        let a_f = (a as f32) / 255.0;
-        let inv = 1.0 / a_f.max(K_SMALL_ALPHA);
-        rgb[0] *= inv;
-        rgb[1] *= inv;
-        rgb[2] *= inv;
-    }
-}
-
 /// Extract alpha from interleaved f16 pixel data, converting to u8
 /// (0..255). Mirrors `extract_alpha_f32` but reads u16 bytes via f16
 /// conversion before clamping.
