@@ -50,6 +50,16 @@ negative in PQ near black) and held to cjxl's error on the same source,
 at a lower rate than cjxl: 2x its signal error for 6-15% fewer bytes on dark
 BT.709), on cells >= 32 px without noise, LF frame or progressive DC. The
 fixed bound catches a halved PQ light level in 3 of 40 cells; this, 25. HLG skips the cross-decoder check (DECODER_FINDINGS Z1).
+Images under 1024 px get twice the fixed bound (2026-10-26): a mean over a
+few samples does not average out one bad block, and cjxl v0.12 itself
+reaches 1.22x the plain bound there at e<=7 (3.8x at e8+), ours 1.13x,
+against at most 0.79x / 0.66x from 64x48 up (51,936 cells, seeds 7-9).
+`--reference-study [--study-max-pixels N]` re-measures this: it encodes
+each small lossy cell with cjxl too (mapped options: noise, gaborish, epf,
+lf_frame/progressive_dc, patches, dots, faster_decoding) and writes
+`reference_study.tsv`. Alpha layouts give cjxl a PPM without alpha, so
+their byte columns are not comparable.
+[Record](benchmarks/sweep_tiny_bound_2026-10-26.md).
 
 ## Project Overview
 
@@ -1564,6 +1574,38 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
+
+### 2026-10-26: lossless f16 + sectioned + optimal LZ77 decodes to NaN
+
+[PROVEN, all three decoders agree] Sweep seed 9 cell 4098: terminal.png
+300x2049 `RgbLinearF16` lossless e5 `lz77:optimal sectioned:on`; 18,244
+samples come back NaN in djxl, jxl-rs and zenjxl-decoder. Replay:
+`conformance-sweep --seed 9 --only 4098` with the CID22-512 validation and
+gb82-sc images. Under investigation.
+
+### 2026-10-26: LF frame quantizes DC about 50x coarser than libjxl (opt-in path)
+
+[PROVEN] `vardct/lf_frame.rs` single-group branch passes the main distance
+to the lossy-modular quantizer; libjxl encodes the DC frame at
+`max(0.05, d) * 0.02` (`enc_cache.cc:137-139`, then squeeze since
+`responsive` defaults on for lossy modular). On images up to 64x48 our
+`with_lf_frame` / `with_progressive_dc` error is 1.2-1.7x cjxl's
+`--progressive_dc=1` (1x1 PQ d0.5: 0.070 vs 0.012); from 127x129 up the
+two match. Using libjxl's distance fixes the small images (error at or
+below cjxl at every size, seed 9) but makes our LF frame 1.8x the size of
+cjxl's at 512x512 d3 (13,366 vs 7,458 B; files +10% at d1, +37% at d3), so
+our lossy-modular coding of near-lossless DC is the real gap (both use the
+Zero predictor for squeeze residues). Patch held, not applied: dev
+`/mnt/v/output/jxl-encoder/sweep-tiny-bound-2026-10-26/lf-distance-0.02.patch`
+([record](benchmarks/sweep_tiny_bound_2026-10-26.md)). Also: libjxl drops
+`progressive_dc` when the image has extra channels (`enc_frame.cc:2662`);
+we emit zero placeholder channels instead.
+
+### 2026-10-26: effort 1-2 zen mode spends ~820 bytes of fixed overhead
+
+[MEASURED] A 1x1 PQ image at d0.5 is 884 B at e1/e2 under the zen
+strategies, 65 B at e3, 78 B under `EncoderStrategy::Libjxl`; a 3x2 Rgb8
+cell at e2 was 874 B (cjxl 61 B). Not yet attributed.
 
 ### RESOLVED 2026-10-19: Relative constructor header policy
 

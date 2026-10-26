@@ -31,7 +31,7 @@
 //! ```text
 //! cargo run --release --manifest-path tools/conformance-sweep/Cargo.toml -- \
 //!     --images <dir-or-png>... --out <dir> [--icc <dir>] [--seed N] [--cells N]
-//!     [--minutes N] [--threads N] [--only N]
+//!     [--minutes N] [--threads N] [--only N] [--reference-study [--study-max-pixels N]]
 //! ```
 //! The seed defaults to the week number, so weekly runs rotate coverage.
 //! `DJXL_PATH` and `CJXL_PATH` select djxl and cjxl (resolved and
@@ -1234,7 +1234,15 @@ fn check_one(
     let alpha_exact = factor == 1 && !pfm;
     let err = check_lossy(d, want, cell, who, alpha_exact)?;
     // Resampling discards detail on purpose; scale the bound with it.
-    let bound = (0.06 + 0.02 * cell.distance as f64) * factor as f64;
+    // Below 32x32 pixels the mean covers too few samples to average out
+    // one badly placed block, so the bound doubles. Calibrated 2026-10-26
+    // (`--reference-study`, seeds 7-9, 51,936 lossy cells up to 1100x900):
+    // under 1024 px ours peaks at 1.13x the plain bound and cjxl v0.12 at
+    // effort <= 7 at 1.22x (cjxl e8+ reaches 3.8x there); from 64x48 up
+    // ours peaks at 0.66x and cjxl at 0.79x. Doubling gives the tiny cells
+    // about the headroom the large ones have.
+    let tiny = cell.w * cell.h < 32 * 32;
+    let bound = (0.06 + 0.02 * cell.distance as f64) * factor as f64 * if tiny { 2.0 } else { 1.0 };
     // Resampling an image only a few blocks across leaves too few coded
     // samples for an error bound to mean anything.
     let tiny_resampled = factor > 1 && cell.w.min(cell.h) < 8 * factor;
@@ -1250,22 +1258,40 @@ fn check_one(
 /// defects, so the sweep holds ours to cjxl's error instead: same signal
 /// (16-bit PPM tagged with the layout's colour space), distance, effort and
 /// resampling, decoded and scored the same way.
-fn cjxl_reference_error(cell: &Cell, want: &[f64], dir: &Path) -> Result<(f64, usize), String> {
-    let (ch, kind, _, _) = describe(cell.layout);
+fn cjxl_reference_error(
+    cell: &Cell,
+    want: &[f64],
+    dir: &Path,
+    extra: &[String],
+) -> Result<(f64, usize), String> {
+    let (ch, kind, _, linear) = describe(cell.layout);
     let s = scale(kind);
+    let gray = ch <= 2;
     let space = match cell.layout {
         PixelLayout::RgbPqF32 | PixelLayout::RgbaPqF32 => "RGB_D65_202_Rel_PeQ",
         PixelLayout::RgbHlgF32 | PixelLayout::RgbaHlgF32 => "RGB_D65_202_Rel_HLG",
-        _ => "RGB_D65_SRG_Rel_709",
+        PixelLayout::RgbBt709F32 | PixelLayout::RgbaBt709F32 => "RGB_D65_SRG_Rel_709",
+        _ if gray && linear => "Gra_D65_Rel_Lin",
+        _ if gray => "Gra_D65_Rel_SRG",
+        _ if linear => "RGB_D65_SRG_Rel_Lin",
+        _ => "RGB_D65_SRG_Rel_SRG",
     };
     let tag = format!("ref{}", cell.index);
     let ppm = dir.join(format!("{tag}.ppm"));
     let jxl = dir.join(format!("{tag}.jxl"));
-    let mut img = format!("P6\n{} {}\n65535\n", cell.w, cell.h).into_bytes();
+    // 8-bit layouts get their exact 8-bit samples; everything else 16 bits.
+    let maxval = if kind == Kind::U8 { 255u32 } else { 65535 };
+    let color = if gray { 1 } else { 3 };
+    let magic = if gray { "P5" } else { "P6" };
+    let mut img = format!("{magic}\n{} {}\n{maxval}\n", cell.w, cell.h).into_bytes();
     for i in 0..cell.w * cell.h {
-        for c in 0..3 {
-            let v = (want[i * ch + c] / s).clamp(0.0, 1.0);
-            img.extend_from_slice(&((v * 65535.0).round() as u16).to_be_bytes());
+        for c in 0..color {
+            let v = ((want[i * ch + c] / s).clamp(0.0, 1.0) * maxval as f64).round();
+            if maxval == 255 {
+                img.push(v as u8);
+            } else {
+                img.extend_from_slice(&(v as u16).to_be_bytes());
+            }
         }
     }
     std::fs::write(&ppm, img).map_err(|e| e.to_string())?;
@@ -1279,6 +1305,7 @@ fn cjxl_reference_error(cell: &Cell, want: &[f64], dir: &Path) -> Result<(f64, u
         .arg("-x")
         .arg(format!("color_space={space}"))
         .arg("--num_threads=1")
+        .args(extra)
         .output();
     let _ = std::fs::remove_file(&ppm);
     let o = o.map_err(|e| format!("run cjxl: {e}"))?;
@@ -1289,38 +1316,114 @@ fn cjxl_reference_error(cell: &Cell, want: &[f64], dir: &Path) -> Result<(f64, u
         return Err(format!("cjxl: {}", msg.lines().last().unwrap_or("?")));
     }
     let bytes = bytes.map_err(|e| e.to_string())?;
-    let d = decode_djxl(&bytes, dir, &tag, true)?;
+    let float = matches!(kind, Kind::F16 | Kind::F32);
+    let d = decode_djxl(&bytes, dir, &tag, float)?;
     Ok((check_lossy(&d, want, cell, "cjxl", false)?, bytes.len()))
 }
 
-fn run_cell(
-    seed: u64,
+/// `--reference-study`: for small lossy cells, also encode the source with
+/// cjxl and record both errors (one row per cell in `reference_study.tsv`).
+/// Used to calibrate the error bound where a mean over a few samples is
+/// too noisy for a fixed bound.
+static REFERENCE_STUDY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STUDY_MAX_PIXELS: AtomicUsize = AtomicUsize::new(128 * 128);
+
+/// cjxl flags for the cell options that have a direct cjxl equivalent.
+fn cjxl_flags_for(cell: &Cell) -> Vec<String> {
+    let mut f = Vec::new();
+    for o in &cell.opts {
+        let (k, v) = o.split_once(':').unwrap_or((o.as_str(), ""));
+        match k {
+            "noise" => f.push("--noise=1".into()),
+            "no_gaborish" => f.push("--gaborish=0".into()),
+            "epf" => f.push(format!("--epf={v}")),
+            "lf_frame" => f.push("--progressive_dc=1".into()),
+            "progressive_dc" => f.push(format!("--progressive_dc={v}")),
+            "patches" => f.push("--patches=1".into()),
+            "dots" => f.push("--dots=1".into()),
+            "faster_decoding" => f.push(format!("--faster_decoding={v}")),
+            _ => {}
+        }
+    }
+    f
+}
+
+fn study_row(
     cell: &Cell,
-    sources: &[Source],
-    iccs: &[Icc],
-    scratch: &Path,
-) -> (Verdict, Option<Vec<u8>>, Vec<u8>, Duration, usize) {
+    want: &[f64],
+    dj: &Result<Decoded, String>,
+    len: usize,
+    dir: &Path,
+) -> Option<String> {
+    if !REFERENCE_STUDY.load(Ordering::Relaxed)
+        || cell.lossless
+        || cell.icc.is_some()
+        || cell.w * cell.h > STUDY_MAX_PIXELS.load(Ordering::Relaxed)
+    {
+        return None;
+    }
+    let d = dj.as_ref().ok()?;
+    let ours = check_lossy(d, want, cell, "djxl", false).ok()?;
+    let factor = lossy_config(cell).effective_resampling();
+    let (r, rlen) = match cjxl_reference_error(cell, want, dir, &cjxl_flags_for(cell)) {
+        Ok(v) => v,
+        Err(e) => return Some(format!("{}\tERR\t{e}", cell.index)),
+    };
+    Some(format!(
+        "{}\t{}\t{}\t{:?}\t{}\t{}\t{factor}\t{}\t{ours:.6}\t{r:.6}\t{len}\t{rlen}",
+        cell.index,
+        cell.w,
+        cell.h,
+        cell.layout,
+        cell.distance,
+        cell.effort,
+        cell.opts.join(",")
+    ))
+}
+
+/// One cell's outcome: verdict, encoded stream (when encoding succeeded),
+/// encoder input, encode time and the optional reference-study row.
+struct CellRun {
+    verdict: Verdict,
+    bytes: Option<Vec<u8>>,
+    pixels: Vec<u8>,
+    elapsed: Duration,
+    study: Option<String>,
+}
+
+impl CellRun {
+    fn new(verdict: Verdict, bytes: Option<Vec<u8>>, pixels: Vec<u8>, elapsed: Duration) -> Self {
+        Self {
+            verdict,
+            bytes,
+            pixels,
+            elapsed,
+            study: None,
+        }
+    }
+}
+
+fn run_cell(seed: u64, cell: &Cell, sources: &[Source], iccs: &[Icc], scratch: &Path) -> CellRun {
     let mut r = Rng::for_cell(seed ^ 0xA11CE, cell.index);
     let (pixels, want) = make_pixels(&sources[cell.src], &mut r, cell.w, cell.h, cell.layout);
     let t = Instant::now();
     let bytes = match encode(cell, &pixels, iccs) {
         Ok(b) => b,
         Err(e) if expected_rejection(cell, &e) => {
-            return (Verdict::Rejected(e), None, pixels, t.elapsed(), 0);
+            return CellRun::new(Verdict::Rejected(e), None, pixels, t.elapsed());
         }
         Err(e) => {
-            return (
+            return CellRun::new(
                 Verdict::Fail(format!("encode: {e}")),
                 None,
                 pixels,
                 t.elapsed(),
-                0,
             );
         }
     };
     let elapsed = t.elapsed();
+    let done = |v: Verdict| CellRun::new(v, Some(bytes.clone()), pixels.clone(), elapsed);
     let len = bytes.len();
-    let done = |v: Verdict| (v, Some(bytes.clone()), pixels.clone(), elapsed, len);
     if let Some(rows) = cell.streaming {
         match encode_streaming(cell, &pixels, rows) {
             Err(e) => return done(Verdict::Fail(format!("streaming encode: {e}"))),
@@ -1367,7 +1470,7 @@ fn run_cell(
         && let Ok(d) = &dj
     {
         let ours = check_lossy(d, &want, cell, "djxl", false);
-        v_dj = match (ours, cjxl_reference_error(cell, &want, scratch)) {
+        v_dj = match (ours, cjxl_reference_error(cell, &want, scratch, &[])) {
             (Ok(o), Ok((r, ref_len))) if o > 1.5 * r + 0.015 && len * 100 >= ref_len * 85 => {
                 Err(format!(
                     "djxl: mean error {o:.4} over 1.5x cjxl's {r:.4} + 0.015 at {len} B vs {ref_len} B"
@@ -1412,7 +1515,11 @@ fn run_cell(
             Verdict::Fail(msgs.join("; "))
         }
     };
-    done(verdict)
+    let study = study_row(cell, &want, &dj, len, scratch);
+    CellRun {
+        study,
+        ..done(verdict)
+    }
 }
 
 // ── Driver ──────────────────────────────────────────────────────────────────
@@ -1444,6 +1551,10 @@ fn main() {
             "--minutes" => minutes = val().parse().unwrap(),
             "--threads" => threads = val().parse().unwrap(),
             "--only" => only = Some(val().parse::<u64>().unwrap()),
+            "--reference-study" => REFERENCE_STUDY.store(true, Ordering::Relaxed),
+            "--study-max-pixels" => {
+                STUDY_MAX_PIXELS.store(val().parse().unwrap(), Ordering::Relaxed)
+            }
             other if !other.starts_with("--") => images.push(PathBuf::from(other)),
             other => panic!("unknown argument {other}"),
         }
@@ -1482,6 +1593,7 @@ fn main() {
     let next = AtomicUsize::new(0);
     let stop = AtomicBool::new(false);
     let rows = Mutex::new(Vec::<(u64, String)>::new());
+    let study_rows = Mutex::new(Vec::<(u64, String)>::new());
     let (ok, rejected, failed) = (
         AtomicUsize::new(0),
         AtomicUsize::new(0),
@@ -1499,7 +1611,12 @@ fn main() {
                 let Some(&index) = indices.get(k) else { return };
                 let cell = plan(seed, index, &sources, &iccs);
                 let desc = cell.describe(&sources, &iccs);
-                let (verdict, bytes, pixels, elapsed, len) = run_cell(seed, &cell, &sources, &iccs, &scratch);
+                let CellRun { verdict, bytes, pixels, elapsed, study } =
+                    run_cell(seed, &cell, &sources, &iccs, &scratch);
+                let len = bytes.as_ref().map_or(0, Vec::len);
+                if let Some(row) = study {
+                    study_rows.lock().unwrap().push((index, row));
+                }
                 let (status, detail) = match &verdict {
                     Verdict::Ok => {
                         ok.fetch_add(1, Ordering::Relaxed);
@@ -1555,6 +1672,18 @@ fn main() {
         tsv.push('\n');
     }
     std::fs::write(out.join("results.tsv"), tsv).unwrap();
+    if REFERENCE_STUDY.load(Ordering::Relaxed) {
+        let mut st = study_rows.into_inner().unwrap();
+        st.sort_by_key(|r| r.0);
+        let mut t = format!(
+            "# reference study, seed {seed}\nindex\tw\th\tlayout\tdistance\teffort\tresampling\topts\tours_err\tcjxl_err\tours_bytes\tcjxl_bytes\n"
+        );
+        for (_, r) in &st {
+            t.push_str(r);
+            t.push('\n');
+        }
+        std::fs::write(out.join("reference_study.tsv"), t).unwrap();
+    }
     let _ = std::fs::remove_dir_all(&scratch);
     let (ok, rejected, failed) = (ok.into_inner(), rejected.into_inner(), failed.into_inner());
     let findings = findings.into_inner();
