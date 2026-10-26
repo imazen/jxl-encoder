@@ -423,6 +423,29 @@ impl ModularImage {
     /// [`Self::push_extra_channel_u8_with_shift`]. Same shift
     /// semantics — required when `ExtraChannelInfo.dim_shift > 0`
     /// for multi-group writes.
+    /// Push an f32 extra channel as binary32 bit patterns (the modular
+    /// sample of a float32 channel).
+    pub fn push_extra_channel_f32_with_shift(
+        &mut self,
+        data: &[f32],
+        width: usize,
+        height: usize,
+        hshift: u32,
+        vshift: u32,
+    ) -> Result<()> {
+        if data.len() != width * height {
+            return Err(Error::InvalidImageDimensions(width, height));
+        }
+        let mut channel = Channel::new(width, height)?;
+        for (i, &val) in data.iter().enumerate() {
+            channel.set(i % width, i / width, val.to_bits() as i32);
+        }
+        channel.hshift = hshift;
+        channel.vshift = vshift;
+        self.channels.push(channel);
+        Ok(())
+    }
+
     pub fn push_extra_channel_u16_with_shift(
         &mut self,
         data: &[u16],

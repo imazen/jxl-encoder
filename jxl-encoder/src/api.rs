@@ -5711,13 +5711,17 @@ pub struct ExtraChannel<'a> {
     data: ExtraChannelBuf<'a>,
 }
 
-/// Per-channel pixel data — either 8-bit or 16-bit samples.
+/// Per-channel pixel data: 8-bit, 16-bit or 32-bit float samples.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum ExtraChannelBuf<'a> {
     /// `width * height` u8 samples.
     U8(&'a [u8]),
-    /// `width * height` u16 samples (native byte order).
+    /// `width * height` u16 samples (native byte order). With a float16
+    /// bit depth these are half-float bit patterns.
     U16(&'a [u16]),
+    /// `width * height` f32 samples, coded exactly as binary32.
+    F32(&'a [f32]),
 }
 
 impl<'a> ExtraChannelBuf<'a> {
@@ -5726,11 +5730,54 @@ impl<'a> ExtraChannelBuf<'a> {
         match self {
             ExtraChannelBuf::U8(s) => s.len(),
             ExtraChannelBuf::U16(s) => s.len(),
+            ExtraChannelBuf::F32(s) => s.len(),
         }
     }
     /// `true` if the buffer has no samples.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+/// How a float layout's alpha is coded in a lossy encode (alpha is coded
+/// losslessly there unless `alpha_distance` asks otherwise).
+enum AlphaPlane {
+    /// 16-bit integers: lossy alpha (quantizing float bit patterns is
+    /// meaningless), or f32 alpha outside `[0, 1]`.
+    U16(Vec<u16>),
+    /// Half-float bit patterns under a float16 depth: exact for f16 input,
+    /// and for f32 input whose every sample is a half float.
+    F16(Vec<u16>),
+    /// Binary32 under a float32 depth: exact; every sample finite in `[0, 1]`.
+    F32(Vec<f32>),
+}
+
+impl AlphaPlane {
+    fn choose(values: Vec<f32>, lossy_alpha: bool) -> Self {
+        let to_u16 = |v: &[f32]| {
+            v.iter()
+                .map(|&a| (a.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16)
+                .collect()
+        };
+        if lossy_alpha {
+            return Self::U16(to_u16(&values));
+        }
+        let as_f16: Option<Vec<u16>> = values
+            .iter()
+            .map(|&a| {
+                crate::f16::f32_to_f16_bits(a)
+                    .ok()
+                    .filter(|&b| crate::f16::f16_bits_to_f32(b).to_bits() == a.to_bits())
+            })
+            .collect();
+        if let Some(bits) = as_f16 {
+            return Self::F16(bits);
+        }
+        if values.iter().all(|a| (0.0..=1.0).contains(a)) {
+            Self::F32(values)
+        } else {
+            Self::U16(to_u16(&values))
+        }
     }
 }
 
@@ -5765,6 +5812,40 @@ impl<'a> ExtraChannel<'a> {
         Self {
             info,
             data: ExtraChannelBuf::U16(data),
+        }
+    }
+
+    /// Alpha from half-float bit patterns, coded exactly under a float16
+    /// extra-channel bit depth (the modular sample is the bit pattern).
+    pub(crate) fn from_alpha_f16(data: &'a [u16], associated: bool) -> Self {
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+        info.alpha_associated = associated;
+        info.bit_depth = crate::headers::file_header::BitDepth {
+            float_sample: true,
+            bits_per_sample: 16,
+            exponent_bits: 5,
+        };
+        Self {
+            info,
+            data: ExtraChannelBuf::U16(data),
+        }
+    }
+
+    /// Alpha from f32 samples, coded exactly under a float32 extra-channel
+    /// bit depth. Callers keep every sample finite and in `[0, 1]`: the
+    /// VarDCT extras writer predicts in `i32`, which those bit patterns
+    /// (at most `0x3F80_0000`) cannot overflow.
+    pub(crate) fn from_alpha_f32(data: &'a [f32], associated: bool) -> Self {
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+        info.alpha_associated = associated;
+        info.bit_depth = crate::headers::file_header::BitDepth {
+            float_sample: true,
+            bits_per_sample: 32,
+            exponent_bits: 8,
+        };
+        Self {
+            info,
+            data: ExtraChannelBuf::F32(data),
         }
     }
 
@@ -7190,6 +7271,9 @@ impl<'a> EncodeRequest<'a> {
                 ExtraChannelBuf::U16(d) => {
                     image.push_extra_channel_u16_with_shift(d, ec_w, ec_h, ec_shift, ec_shift)
                 }
+                ExtraChannelBuf::F32(d) => {
+                    image.push_extra_channel_f32_with_shift(d, ec_w, ec_h, ec_shift, ec_shift)
+                }
             }
             .map_err(EncodeError::from)?;
         }
@@ -7915,14 +7999,43 @@ impl<'a> EncodeRequest<'a> {
                 (linear, None, true)
             }
         };
-        // 16-bit layouts code alpha at full precision. The 8-bit copy above
-        // only feeds the approximate pre-passes (invisible-pixel
-        // simplification, resampling); alpha used to be coded
-        // from it, losing its low 8 bits.
+        // Alpha is coded losslessly in a lossy encode, so it is coded from the
+        // input samples rather than the 8-bit copy above (which only feeds the
+        // approximate pre-passes: invisible-pixel simplification,
+        // resampling). 16-bit layouts keep all 16 bits; f16 layouts keep the
+        // half-float bit patterns under a float16 extra-channel depth (exact,
+        // as lossless f16 does); f32 layouts do the same when every alpha is a
+        // half float, else code 16-bit alpha (exact f32 alpha would need a
+        // 32-bit extra-channel buffer, which `ExtraChannelBuf` does not
+        // have). All three used to code 8 bits.
+        let lossy_alpha = cfg.alpha_distance.is_some_and(|d| d > 0.0);
         let alpha_u16: Option<Vec<u16>> = match self.layout {
             PixelLayout::Rgba16 => Some(extract_alpha_u16_raw(pixels, 4, 3, self.stop)),
             PixelLayout::GrayAlpha16 => Some(extract_alpha_u16_raw(pixels, 2, 1, self.stop)),
             _ => None,
+        };
+        let alpha_float: Option<AlphaPlane> = {
+            let stride = if self.layout.is_grayscale() { 2 } else { 4 };
+            let values: Option<Vec<f32>> = match self.layout {
+                PixelLayout::RgbaLinearF16 | PixelLayout::GrayAlphaLinearF16 => {
+                    let h: &[u16] = &cast_pixel_lanes(pixels);
+                    Some(
+                        h.chunks(stride)
+                            .map(|px| crate::f16::f16_bits_to_f32(px[stride - 1]))
+                            .collect(),
+                    )
+                }
+                PixelLayout::RgbaLinearF32
+                | PixelLayout::RgbaPqF32
+                | PixelLayout::RgbaHlgF32
+                | PixelLayout::RgbaBt709F32
+                | PixelLayout::GrayAlphaLinearF32 => {
+                    let f: &[f32] = &cast_pixel_lanes(pixels);
+                    Some(f.chunks(stride).map(|px| px[stride - 1]).collect())
+                }
+                _ => None,
+            };
+            values.map(|v| AlphaPlane::choose(v, lossy_alpha))
         };
         // Pixel converters early-exit with a partial buffer on stop; the
         // error propagates here before the truncated data is consumed.
@@ -8640,30 +8753,50 @@ impl<'a> EncodeRequest<'a> {
         // so a caller can't accidentally ship a file whose extras are
         // sized for the original dims while the file header advertises
         // the downsampled dims.
-        // Full-precision 16-bit alpha when the frame is not resampled (a
-        // resampled frame codes the downsampled 8-bit alpha).
+        // Full-precision alpha when the frame is not resampled (a
+        // resampled frame codes the downsampled 8-bit alpha): 16-bit layouts
+        // at their bit depth, float layouts as chosen by `AlphaPlane`.
         let alpha_bits = self.bits_per_sample.unwrap_or(16);
         let premultiplied = self.premultiplied_alpha;
         fn pick_alpha<'b>(
             a8: &'b Option<Vec<u8>>,
             a16: &'b Option<Vec<u16>>,
+            af: &'b Option<AlphaPlane>,
             resampling: u32,
             premultiplied: bool,
             bits: u32,
         ) -> Option<crate::api::ExtraChannel<'b>> {
-            match (a16, resampling) {
-                (Some(a), 1) => Some(crate::api::ExtraChannel::from_alpha_u16(
-                    a,
-                    premultiplied,
-                    bits,
-                )),
-                _ => a8
-                    .as_ref()
-                    .map(|a| crate::api::ExtraChannel::from_alpha_buf(a, premultiplied)),
+            use crate::api::ExtraChannel;
+            if resampling == 1 {
+                match (a16, af) {
+                    (Some(a), _) => {
+                        return Some(ExtraChannel::from_alpha_u16(a, premultiplied, bits));
+                    }
+                    (_, Some(AlphaPlane::U16(a))) => {
+                        return Some(ExtraChannel::from_alpha_u16(a, premultiplied, 16));
+                    }
+                    (_, Some(AlphaPlane::F16(a))) => {
+                        return Some(ExtraChannel::from_alpha_f16(a, premultiplied));
+                    }
+                    (_, Some(AlphaPlane::F32(a))) => {
+                        return Some(ExtraChannel::from_alpha_f32(a, premultiplied));
+                    }
+                    _ => {}
+                }
             }
+            a8.as_ref()
+                .map(|a| ExtraChannel::from_alpha_buf(a, premultiplied))
         }
-        let alpha_extra =
-            |a8, a16| pick_alpha(a8, a16, effective_resampling, premultiplied, alpha_bits);
+        let alpha_extra = |a8, a16| {
+            pick_alpha(
+                a8,
+                a16,
+                &alpha_float,
+                effective_resampling,
+                premultiplied,
+                alpha_bits,
+            )
+        };
         let has_synthesised_black =
             synthesised_black_u8.is_some() || synthesised_black_u16.is_some();
         let extras_vec: Vec<crate::api::ExtraChannel<'_>> = if !self.extra_channels.is_empty()

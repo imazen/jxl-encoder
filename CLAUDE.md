@@ -1042,9 +1042,11 @@ so the low 8 bits were lost (all three decoders agree: 65534 -> 65535,
 3 -> 0). Now `extract_alpha_u16_raw` keeps the samples and
 `ExtraChannel::from_alpha_u16` codes them at the input precision
 (`with_bits_per_sample`, default 16) when the frame is not resampled. The u8
-copy still feeds SimplifyInvisible, unpremultiply and resampling. **Open:**
-float layouts (`*LinearF32/F16`, PQ/HLG/BT.709 `*F32`) still code alpha at
-8 bits; `ExtraChannelBuf`/`VardctExtraBuf` have no float variant. Pinned by
+copy still feeds SimplifyInvisible and resampling. Float layouts followed
+on 2026-10-26: f16 alpha as half-float bit patterns, f32 alpha in [0, 1] as
+binary32 (both exact; `ExtraChannelBuf::F32`), 16-bit integers for lossy
+alpha or out-of-range f32 (`lossy_alpha_precision::lossy_float_alpha_*`).
+Pinned by
 `lossy_alpha_precision::lossy_16bit_alpha_keeps_all_bits` (Rgba16 and
 GrayAlpha16, 64x32 and 300x260, e3/e7, exact 16-bit alpha in jxl-rs and
 djxl; fails on the old code).

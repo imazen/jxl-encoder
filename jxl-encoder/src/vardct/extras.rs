@@ -47,6 +47,9 @@ pub(crate) enum VardctExtraBuf<'a> {
     /// `channel_width * channel_height` u16 samples (native byte
     /// order), row-major.
     U16(&'a [u16]),
+    /// f32 samples coded as their binary32 bit patterns (callers keep them
+    /// finite and in `[0, 1]`, so prediction stays within `i32`).
+    F32(&'a [f32]),
 }
 
 impl<'a> VardctExtraBuf<'a> {
@@ -57,6 +60,7 @@ impl<'a> VardctExtraBuf<'a> {
         match self {
             VardctExtraBuf::U8(s) => s[idx] as i32,
             VardctExtraBuf::U16(s) => s[idx] as i32,
+            VardctExtraBuf::F32(s) => s[idx].to_bits() as i32,
         }
     }
 }
@@ -67,6 +71,7 @@ impl<'a> VardctExtra<'a> {
         let data = match ec.data() {
             crate::api::ExtraChannelBuf::U8(s) => VardctExtraBuf::U8(s),
             crate::api::ExtraChannelBuf::U16(s) => VardctExtraBuf::U16(s),
+            crate::api::ExtraChannelBuf::F32(s) => VardctExtraBuf::F32(s),
         };
         Self {
             info: ec.info(),

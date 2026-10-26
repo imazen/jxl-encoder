@@ -403,3 +403,143 @@ fn premultiplied_alpha_decodes_premultiplied() {
         }
     }
 }
+
+fn f16_to_f32(h: u16) -> f32 {
+    let (sign, exp, man) = (
+        (h >> 15) as u32,
+        ((h >> 10) & 0x1f) as u32,
+        (h & 0x3ff) as u32,
+    );
+    let v = if exp == 0 {
+        man as f32 / 1024.0 / 16384.0
+    } else {
+        f32::from_bits(((exp + 112) << 23) | (man << 13))
+    };
+    if sign == 1 { -v } else { v }
+}
+
+/// Lossy float layouts code alpha losslessly too, but used to code it from
+/// the 8-bit copy (alpha 0.3 came back as 77/255 = 0.30196). f16 alpha is now
+/// coded as half-float bit patterns and f32 alpha in `[0, 1]` as binary32,
+/// both exact; f32 alpha outside `[0, 1]` and lossy alpha (`alpha_distance`)
+/// take 16-bit integers.
+#[test]
+fn lossy_float_alpha_keeps_precision() {
+    for (w, h) in [(64usize, 32usize), (300, 260)] {
+        // Alpha values chosen between 8-bit steps.
+        let alpha = |x: usize, y: usize| ((x * 37 + y * 11) % 997) as f32 / 996.0;
+        for half in [true, false] {
+            let mut px = Vec::new();
+            let mut want = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    let rgb = [0.2f32, 0.5, 0.8];
+                    let a = alpha(x, y);
+                    if half {
+                        let bits = |v: f32| half_bits(v);
+                        for v in rgb.iter().chain(core::iter::once(&a)) {
+                            px.extend_from_slice(&bits(*v).to_ne_bytes());
+                        }
+                        want.push(f16_to_f32(half_bits(a)));
+                    } else {
+                        for v in rgb.iter().chain(core::iter::once(&a)) {
+                            px.extend_from_slice(&v.to_ne_bytes());
+                        }
+                        want.push(a);
+                    }
+                }
+            }
+            let layout = if half {
+                PixelLayout::RgbaLinearF16
+            } else {
+                PixelLayout::RgbaLinearF32
+            };
+            let label = format!("float-alpha-{layout:?}-{w}x{h}");
+            let bytes = LossyConfig::new(1.0)
+                .with_effort(7)
+                .encode(&px, w as u32, h as u32, layout)
+                .expect("encode");
+            let (_, got) = jxl_rs_rgba_f32(&bytes, &label);
+            let tol = 0.0;
+            let worst = got
+                .iter()
+                .zip(&want)
+                .map(|(g, w)| (g - w).abs())
+                .fold(0f32, f32::max);
+            assert!(worst <= tol + 1e-7, "{label}: jxl-rs alpha off by {worst}");
+            // djxl's PAM writer refuses float extra channels; its PNG is 16-bit.
+            let djxl_a = djxl_alpha16(&bytes, &label, false);
+            let worst = djxl_a
+                .iter()
+                .zip(&want)
+                .map(|(&g, w)| (g as f32 / 65535.0 - w).abs())
+                .fold(0f32, f32::max);
+            assert!(
+                worst <= 0.6 / 65535.0 + tol,
+                "{label}: djxl alpha off by {worst}"
+            );
+        }
+    }
+}
+
+/// Round-to-nearest-even f32 -> f16 bits for values in [0, 1].
+fn half_bits(v: f32) -> u16 {
+    if v == 0.0 {
+        return 0;
+    }
+    let x = v.to_bits();
+    let e = ((x >> 23) & 0xff) as i32 - 112;
+    let m = x & 0x7f_ffff;
+    let round = |kept: u32, rem: u32, half: u32| {
+        kept + (rem > half || (rem == half && kept & 1 == 1)) as u32
+    };
+    if e <= 0 {
+        let mant = m | 0x80_0000;
+        let shift = (14 - e) as u32;
+        return round(mant >> shift, mant & ((1 << shift) - 1), 1 << (shift - 1)) as u16;
+    }
+    round(((e as u32) << 10) | (m >> 13), m & 0x1fff, 0x1000) as u16
+}
+
+/// The 16-bit fallbacks: f32 alpha outside `[0, 1]` (clamped, as the 8-bit
+/// copy always was) and lossy alpha, whose quantizer works on integers.
+#[test]
+fn lossy_float_alpha_16bit_fallbacks() {
+    let (w, h) = (64usize, 32usize);
+    for (case, alpha_distance) in [("out-of-range", None), ("lossy-alpha", Some(1.0f32))] {
+        let mut px = Vec::new();
+        let mut want = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let mut a = ((x * 37 + y * 11) % 997) as f32 / 996.0;
+                if case == "out-of-range" && x == 0 && y == 0 {
+                    a = 1.25;
+                }
+                for v in [0.2f32, 0.5, 0.8, a] {
+                    px.extend_from_slice(&v.to_ne_bytes());
+                }
+                want.push(a.clamp(0.0, 1.0));
+            }
+        }
+        let label = format!("float-alpha-{case}");
+        let bytes = LossyConfig::new(1.0)
+            .with_effort(7)
+            .with_alpha_distance(alpha_distance)
+            .encode(&px, w as u32, h as u32, PixelLayout::RgbaLinearF32)
+            .expect("encode");
+        let (_, got) = jxl_rs_rgba_f32(&bytes, &label);
+        let worst = got
+            .iter()
+            .zip(&want)
+            .map(|(g, w)| (g - w).abs())
+            .fold(0f32, f32::max);
+        // 16-bit steps, or the lossy alpha quantizer at distance 1.
+        let tol = if alpha_distance.is_some() {
+            0.02
+        } else {
+            0.51 / 65535.0
+        };
+        assert!(worst <= tol, "{label}: jxl-rs alpha off by {worst}");
+        djxl_alpha16(&bytes, &label, false);
+    }
+}
