@@ -129,7 +129,7 @@ fn round_hafz(val: f32) -> i32 {
 /// * `main_distance` - Main frame's butteraugli distance
 /// * `xsize_blocks` - Number of 8x8 blocks horizontally
 /// * `ysize_blocks` - Number of 8x8 blocks vertically
-/// * `use_ans` - Whether to use ANS entropy coding
+/// * `_use_ans` - Unused: the LF frame always codes with ANS
 /// * `effort` - Effort level (1-13; e10 = libjxl kGlacier superset,
 ///   e11/e12/e13 extend past libjxl — 2026-08-29 ladder shift)
 /// * `budget` - Optional allocation budget; threads the runtime fallible-alloc
@@ -140,27 +140,20 @@ pub(crate) fn encode_lf_frame(
     main_distance: f32,
     xsize_blocks: usize,
     ysize_blocks: usize,
-    use_ans: bool,
+    _use_ans: bool,
     effort: u8,
     num_extra_channels: usize,
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<([Vec<f32>; 3], [f32; 3])> {
-    // libjxl encodes the DC frame at `max(0.05, d) * 0.02` (enc_cache.cc:137-139).
-    // A single-group DC image takes libjxl's lossy modular path (responsive=1):
-    // full-precision enc_factors, then Squeeze + per-channel quantization at
-    // that distance. A multi-group one (image wider or taller than 2048 px) is
-    // coded losslessly here, since our multi-group modular writer has no
-    // Squeeze; it takes libjxl's other DC mode instead (responsive=0,
-    // enc_modular.cc:763-768): distance-scaled enc_factors, then lossless.
+    // libjxl encodes the DC frame at `max(0.05, d) * 0.02` (enc_cache.cc:137-139)
+    // through lossy modular (`responsive` defaults on for it): full-precision
+    // enc_factors, then Squeeze + per-channel quantization at that distance,
+    // whether the DC image fits one group or not.
     let dc_distance = (main_distance * 0.02).max(0.05 * 0.02);
     let single_group =
         xsize_blocks.div_ceil(crate::GROUP_DIM) * ysize_blocks.div_ceil(crate::GROUP_DIM) == 1;
-    let factors = if single_group {
-        DcQuantFactors::full_precision()
-    } else {
-        DcQuantFactors::compute(main_distance)
-    };
+    let factors = DcQuantFactors::full_precision();
 
     #[cfg(feature = "trace-bitstream")]
     {
@@ -263,10 +256,17 @@ pub(crate) fn encode_lf_frame(
     // libjxl (enc_cache.cc:121) disables patches for DC frames.
     // Patch detection is wasteful on tiny DC images (32x32 to 128x128).
     profile.patches = false;
-    // Disable LZ77 for DC frames — the DC image is small (typically 32-128px)
-    // and smooth, making backward references ineffective. LZ77 header overhead
-    // outweighs any savings on such small data.
-    profile.lz77 = false;
+    // LZ77 as libjxl picks it for Zero-predictor modular streams
+    // (enc_ans.cc:1376-1384) at the DC frame's speed tier, one slower than
+    // the main frame's: main e1-e2 none, e3-e4 RLE, e5-e7 LZ77, e8+ optimal.
+    // `apply_lz77` keeps matches only when they pay (a mirror-tiled photo's
+    // DC repeats; a natural photo's mostly does not).
+    (profile.lz77, profile.lz77_method) = match effort {
+        0..=2 => (false, profile.lz77_method),
+        3 | 4 => (true, crate::entropy_coding::lz77::Lz77Method::Rle),
+        5..=7 => (true, crate::entropy_coding::lz77::Lz77Method::Greedy),
+        _ => (true, crate::entropy_coding::lz77::Lz77Method::Optimal),
+    };
 
     // The integers the decoder reconstructs: the lossy stream's inverse
     // squeeze of its quantized coefficients, or the lossless integers.
@@ -303,18 +303,15 @@ pub(crate) fn encode_lf_frame(
         crate::modular::encode::lossy_modular_reconstruction(&image, dc_distance)?
     } else {
         // Multi-group: the DC image is wider or taller than 256 blocks.
-        // Section layout: LfGlobal | LfGroup×N (empty) | HfGlobal (empty) | PassGroup×N
-        encode_lf_frame_multi_group(
+        crate::modular::lossy_multi_group::write_lossy_multi_group_sections(
             &image,
-            &factors,
+            factors.dc_quant,
+            dc_distance,
             &profile,
-            xsize_blocks,
-            ysize_blocks,
-            use_ans,
+            crate::GROUP_DIM,
             writer,
             budget,
-        )?;
-        image
+        )?
     };
 
     // Modular [Y, X, B-Y] integers back to the [X, Y, B] float DC the
@@ -342,145 +339,8 @@ pub(crate) fn encode_lf_frame(
     Ok((decoded_dc, factors.dc_quant))
 }
 
-/// Multi-group LfFrame encoding.
-///
-/// For DC images larger than 256×256 blocks (original image > 2048×2048),
-/// the DC frame itself needs multi-group encoding.
-///
-/// Section layout matches the standard JXL multi-group modular frame:
-/// - Section 0: LfGlobal (dc_quant + tree + histogram)
-/// - Sections 1..num_lf_groups: LfGroup (empty for modular)
-/// - Section num_lf_groups+1: HfGlobal (empty for modular)
-/// - Sections num_lf_groups+2..: PassGroup (modular data per group)
-#[allow(clippy::too_many_arguments)]
-fn encode_lf_frame_multi_group(
-    image: &ModularImage,
-    factors: &DcQuantFactors,
-    profile: &crate::effort::EffortProfile,
-    xsize_blocks: usize,
-    ysize_blocks: usize,
-    _use_ans: bool,
-    writer: &mut BitWriter,
-    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
-) -> Result<()> {
-    use crate::modular::encode::write_group_modular_section_idx;
-    use crate::modular::section::{
-        GlobalTransforms, GroupTransforms, write_global_modular_section_with_tree_dc_quant,
-    };
-
-    let num_groups_x = xsize_blocks.div_ceil(crate::GROUP_DIM);
-    let num_groups_y = ysize_blocks.div_ceil(crate::GROUP_DIM);
-    let num_groups = num_groups_x * num_groups_y;
-
-    // LF groups are 8× larger than regular groups
-    let lf_group_dim = crate::GROUP_DIM * 8;
-    let num_lf_groups_x = xsize_blocks.div_ceil(lf_group_dim);
-    let num_lf_groups_y = ysize_blocks.div_ceil(lf_group_dim);
-    let num_lf_groups = num_lf_groups_x * num_lf_groups_y;
-
-    let num_passes = 1;
-
-    // Step 1: Extract group images
-    let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
-    for group_idx in 0..num_groups {
-        let gx = group_idx % num_groups_x;
-        let gy = group_idx / num_groups_x;
-        let x_start = gx * crate::GROUP_DIM;
-        let y_start = gy * crate::GROUP_DIM;
-        let x_end = (x_start + crate::GROUP_DIM).min(xsize_blocks);
-        let y_end = (y_start + crate::GROUP_DIM).min(ysize_blocks);
-        let group_image = image.extract_region(x_start, y_start, x_end, y_end)?;
-        group_images.push(group_image);
-    }
-
-    // Step 2: Write LfGlobal section (custom dc_quant + tree + histogram)
-    let mut lf_global_writer = BitWriter::new();
-    let global_state = write_global_modular_section_with_tree_dc_quant(
-        &group_images,
-        &mut lf_global_writer,
-        profile,
-        GlobalTransforms::rct_only(None), // no RCT (XYB integer channels)
-        false,
-        profile.lz77_method,
-        Some(factors.dc_quant),
-        None, // no ChannelCompact meta-channels for LfFrame
-        crate::modular::section::modular_hf_stream_id_base(num_lf_groups as u32),
-        budget,
-        None,
-    )?;
-    let lf_global_data = lf_global_writer.finish();
-
-    // Step 3: LfGroup sections (empty for modular encoding)
-    let lf_group_data: Vec<Vec<u8>> = (0..num_lf_groups).map(|_| Vec::new()).collect();
-
-    // Step 4: HfGlobal section (empty for modular encoding)
-    let hf_global_data: Vec<u8> = Vec::new();
-
-    // Step 5: Write PassGroup data
-    let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups * num_passes);
-    for (group_idx, group_image) in group_images.iter().enumerate() {
-        for _pass in 0..num_passes {
-            let mut group_writer = BitWriter::new();
-            write_group_modular_section_idx(
-                group_image,
-                &global_state,
-                // Spec stream id = property-1 value the decoder evaluates
-                // (#68): must match the gather/apply ids above.
-                crate::modular::section::modular_hf_stream_id_base(num_lf_groups as u32)
-                    + group_idx as u32,
-                &GroupTransforms::none(),
-                &mut group_writer,
-                budget,
-                crate::modular::tree_learn::WpCacheMode::Off,
-                None,
-            )?;
-            pass_group_data.push(group_writer.finish());
-        }
-    }
-
-    // Step 6: Collect section sizes in JXL order:
-    // LfGlobal | LfGroup[0..N] | HfGlobal | PassGroup[0..M]
-    let mut section_sizes = Vec::with_capacity(2 + num_lf_groups + num_groups * num_passes);
-    section_sizes.push(lf_global_data.len());
-    for data in &lf_group_data {
-        section_sizes.push(data.len());
-    }
-    section_sizes.push(hf_global_data.len());
-    for data in &pass_group_data {
-        section_sizes.push(data.len());
-    }
-
-    // Step 7: Write TOC
-    writer.write(1, 0)?; // permuted = false
-    writer.zero_pad_to_byte();
-    for &size in &section_sizes {
-        write_toc_entry(writer, size as u32)?;
-    }
-    writer.zero_pad_to_byte();
-
-    // Step 8: Write section data
-    for byte in &lf_global_data {
-        writer.write_u8(*byte)?;
-    }
-    for data in &lf_group_data {
-        for byte in data {
-            writer.write_u8(*byte)?;
-        }
-    }
-    for byte in &hf_global_data {
-        writer.write_u8(*byte)?;
-    }
-    for data in &pass_group_data {
-        for byte in data {
-            writer.write_u8(*byte)?;
-        }
-    }
-
-    Ok(())
-}
-
 /// Write a single TOC entry using u2S encoding.
-fn write_toc_entry(writer: &mut BitWriter, size: u32) -> Result<()> {
+pub(crate) fn write_toc_entry(writer: &mut BitWriter, size: u32) -> Result<()> {
     // u2S(Bits(10), Bits(14)+1024, Bits(22)+17408, Bits(30)+4211712)
     if size < 1024 {
         writer.write(2, 0)?;

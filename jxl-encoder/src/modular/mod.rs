@@ -24,6 +24,7 @@ pub(crate) mod frame;
 pub(crate) mod fuzz_safety;
 pub(crate) mod inline_add_sample;
 pub(crate) mod inline_dedup_table;
+pub(crate) mod lossy_multi_group;
 mod lz77_keep_best;
 // Strict `EncoderStrategy::Libjxl` adaptive MA-tree learner — a line-level
 // port of libjxl `enc_ma.cc`/`enc_encoding.cc` used only by the strict path.

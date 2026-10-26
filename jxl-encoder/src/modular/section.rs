@@ -424,37 +424,6 @@ pub fn write_global_modular_section_with_tree(
     )
 }
 
-/// Like [`write_global_modular_section_with_tree`] but with custom dc_quant for LfFrame.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn write_global_modular_section_with_tree_dc_quant(
-    images: &[ModularImage],
-    writer: &mut BitWriter,
-    profile: &crate::effort::EffortProfile,
-    transforms: GlobalTransforms,
-    use_lz77: bool,
-    lz77_method: crate::entropy_coding::lz77::Lz77Method,
-    dc_quant_custom: Option<[f32; 3]>,
-    meta_image: Option<&ModularImage>,
-    hf_stream_id_base: u32,
-    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
-    stop: Option<&dyn enough::Stop>,
-) -> Result<GlobalModularState> {
-    write_global_modular_section_with_tree_dc_quant_knobs(
-        images,
-        writer,
-        profile,
-        transforms,
-        use_lz77,
-        lz77_method,
-        dc_quant_custom,
-        meta_image,
-        &super::palette::ModularKnobs::default(),
-        hf_stream_id_base,
-        budget,
-        stop,
-    )
-}
-
 /// Knob-aware + LfFrame-aware variant of
 /// [`write_global_modular_section_with_tree`]. See
 /// [`write_global_modular_section_with_tree_dc_quant_knobs`] for the override
@@ -1686,7 +1655,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
     //   every candidate would multiply the e9 Optimal parse cost by the
     //   seed count; "pick tree, then LZ77" is the cheap order.
     // - Per-group sections re-collect tokens at write time
-    //   (write_group_modular_section_idx) and re-apply this same transform.
+    //   (write_group_modular_section_idx_stop) and re-apply this same transform.
     //   apply_lz77 is deterministic on identical inputs (same tree, same
     //   group_id, same num_contexts, same dist_multiplier), so the
     //   histogram-time slices and the write-time streams stay in lockstep.
@@ -1934,16 +1903,6 @@ pub struct GlobalTransforms {
     pub compact_info: Vec<(usize, usize)>,
     /// Optional RCT type (begin_c is adjusted for ChannelCompact meta channels).
     pub rct_type: Option<RctType>,
-}
-
-impl GlobalTransforms {
-    pub fn rct_only(rct_type: Option<RctType>) -> Self {
-        Self {
-            full_palette: None,
-            compact_info: Vec::new(),
-            rct_type,
-        }
-    }
 }
 
 /// Write num_transforms + transform descriptors for the global GroupHeader.
@@ -2870,31 +2829,7 @@ pub(super) fn write_group_header(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn write_group_modular_section_idx(
-    group_image: &ModularImage,
-    state: &GlobalModularState,
-    group_idx: u32,
-    transforms: &GroupTransforms,
-    writer: &mut BitWriter,
-    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
-    wp_cache: super::tree_learn::WpCacheMode<'_>,
-    pre_collected: Option<&[crate::entropy_coding::token::Token]>,
-) -> Result<()> {
-    write_group_modular_section_idx_stop(
-        group_image,
-        state,
-        group_idx,
-        transforms,
-        writer,
-        budget,
-        wp_cache,
-        pre_collected,
-        None,
-    )
-}
-
-/// [`write_group_modular_section_idx`] with cancellation polling.
+/// Writes one group's modular section, polling `stop` for cancellation.
 /// No-op / byte-identical under `None`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_group_modular_section_idx_stop(

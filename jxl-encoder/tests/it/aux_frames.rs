@@ -370,7 +370,10 @@ fn lf_frame_error_tracks_cjxl_on_small_photos() {
     }
     // Measured 2026-10-26: 2 of 120 (3x2 and 7x5 crops of 3156482 at d7);
     // the code before the fix put 88 of 120 over.
-    eprintln!("lf_frame vs cjxl: {} of {cells} cells over the bound", worse.len());
+    eprintln!(
+        "lf_frame vs cjxl: {} of {cells} cells over the bound",
+        worse.len()
+    );
     for w in &worse {
         eprintln!("  {w}");
     }
@@ -380,4 +383,71 @@ fn lf_frame_error_tracks_cjxl_on_small_photos() {
         worse.len(),
         worse.join("\n")
     );
+}
+
+/// Above 2048 px the DC image spans several groups. That LF frame used to be
+/// coded losslessly (no lossy Squeeze in the multi-group writer, LZ77 off
+/// for DC frames): 1.25-1.7x cjxl's LF bytes on real photos, and on this
+/// mirror-tiled photo, whose DC repeats, 1.29x cjxl's whole file. libjxl
+/// codes it like a small one, with LZ77 at its DC speed tier. File size and
+/// error must stay near cjxl `--progressive_dc=1`.
+#[test]
+fn lf_frame_above_2048_px_tracks_cjxl() {
+    // A CID22 photo, mirror-tiled past one LF group (graphics such as
+    // frymire compress well losslessly and hide the difference).
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus");
+    let dir = corpus
+        .get("CID22/CID22-512/validation")
+        .expect("CID22 validation");
+    let photo = image::open(dir.join("1279330.png"))
+        .expect("CID22 photo")
+        .to_rgb8();
+    let (pw, ph) = photo.dimensions();
+    let fold = |v: u32, n: u32| {
+        let m = v % (2 * n);
+        if m < n { m } else { 2 * n - 1 - m }
+    };
+    let (w, h) = (2400u32, 2100u32);
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            rgb.extend_from_slice(&photo.get_pixel(fold(x, pw), fold(y, ph)).0);
+        }
+    }
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/aux-frames");
+    std::fs::create_dir_all(&out).unwrap();
+    let png = out.join("lf-mg-source.png");
+    image::RgbImage::from_raw(w, h, rgb.clone())
+        .unwrap()
+        .save(&png)
+        .unwrap();
+    for distance in [1.0f32, 3.0] {
+        let label = format!("lf-mg-d{distance}");
+        let ours = LossyConfig::new(distance)
+            .with_effort(5)
+            .with_lf_frame(true)
+            .encode(&rgb, w, h, PixelLayout::Rgb8)
+            .expect("encode");
+        assert_eq!(decode_jxl_rs(&ours, &label), (w as usize, h as usize));
+        let reference = out.join(format!("{label}-cjxl.jxl"));
+        cjxl_lf_frame(&png, distance, 5, &reference);
+        let reference = std::fs::read(&reference).unwrap();
+        let e_ours = djxl_rgb_error(&ours, &rgb, &label);
+        let e_ref = djxl_rgb_error(&reference, &rgb, &format!("{label}-ref"));
+        eprintln!(
+            "{label}: ours {} B err {e_ours:.3}, cjxl {} B err {e_ref:.3}",
+            ours.len(),
+            reference.len()
+        );
+        assert!(
+            ours.len() as f64 <= 1.10 * reference.len() as f64,
+            "{label}: {} B vs cjxl {} B",
+            ours.len(),
+            reference.len()
+        );
+        assert!(
+            e_ours <= 1.10 * e_ref + 0.5,
+            "{label}: error {e_ours:.3} vs cjxl {e_ref:.3}"
+        );
+    }
 }

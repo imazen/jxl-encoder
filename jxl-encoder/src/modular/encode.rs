@@ -3516,9 +3516,9 @@ pub(crate) fn write_modular_stream_with_squeeze_and_tree_stop(
 // ===== Multi-group support =====
 // These functions are now in the section module for better organization
 
-// #76 (0.4.0): trimmed to the two names still consumed through this
+// #76 (0.4.0): trimmed to the one name still consumed through this
 // path; callers otherwise import from `super::section` directly.
-pub(crate) use super::section::{build_histogram_from_residuals, write_group_modular_section_idx};
+pub(crate) use super::section::build_histogram_from_residuals;
 
 #[cfg(test)]
 mod tests {

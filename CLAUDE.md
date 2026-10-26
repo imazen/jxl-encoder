@@ -880,10 +880,15 @@ LF decode-back now reconstructs through `modular::encode::lossy_modular_reconstr
 e7 bytes -1 to -5 % at error within 2 %; 225 CID22 crops 1x1-64x48 over
 1.25x cjxl + 0.5 levels in 2 cells (85 before). Pinned by
 `aux_frames::lf_frame_error_tracks_cjxl_on_small_photos` (88 of 120 cells
-over on the old code, 2 now). Multi-group LF frames take distance-scaled
-`enc_factors` now (LF bytes -15 to -18 %); the remaining gap is the ACTIVE
-entry above. One hash lock moved: `lossy_mg_rgb_2049x300_photoish_progressive_dc1_e5`
-113,517 -> 111,985 B.
+over on the old code, 2 now). Above 2048 px the LF frame was coded
+losslessly at full precision (1.25-1.71x cjxl's LF bytes on 2479-4000 px
+photos) with LZ77 forced off; it now goes through `modular::lossy_multi_group`
+(same lossy quantization, sections by the spec rule, one multiplier box per
+local channel and stream) with LZ77 by libjxl's DC-tier table: files within
+1 % of cjxl on those photos, within 4 % on a mirror-tiled 2400x2100 photo at
+e3-e9. Pinned by `aux_frames::lf_frame_above_2048_px_tracks_cjxl` (1.29x on
+the old code). One hash lock moved: `lossy_mg_rgb_2049x300_photoish_progressive_dc1_e5`
+113,517 -> 109,263 B.
 
 ### RESOLVED 2026-10-26: lossless float text screenshots decoded to NaN (patches)
 
@@ -1615,17 +1620,6 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
-
-### 2026-10-26: multi-group LF frame is 1.2-1.7x cjxl's (opt-in path)
-
-[MEASURED] Above 2048 px the LF frame takes `encode_lf_frame_multi_group`,
-which has no lossy Squeeze, so it uses libjxl's `responsive=0` DC mode
-(distance-scaled `enc_factors`, lossless). On 2479-4000 px photos at d3 that
-frame is 1.25-1.71x the bytes of cjxl's squeezed one (`benchmarks/
-sweep_tiny_bound_2026-10-26.md`). Next: lossy Squeeze in the multi-group
-modular writer (`modular/frame.rs` `encode_modular_multi_group_squeeze_with_tree`
-is the lossless starting point: drop its YCoCg RCT, quantize with
-`lossy_squeeze_quantize`, learn with multipliers, write custom dc_quant).
 
 ### 2026-10-26: effort 1-2 zen mode spends ~820 bytes of fixed overhead
 

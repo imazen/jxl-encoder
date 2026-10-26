@@ -53,3 +53,29 @@ LF-frame files at 512x512, e7 (mean abs error in 8-bit sRGB):
 
 Seed 5 after the change: 1 failure (cell 13930, RGBA8 photon-noise
 cross-decoder 0.0126 vs 0.0118 tolerance, predates this work) where there were 4.
+
+## Follow-up: LF frame fixed (same day)
+
+After the fix (libjxl DC distance, no shift hint, libjxl squeeze parameters,
+lossy multi-group writer, LZ77 by libjxl's DC-tier table), e7, LF-frame
+bytes / file bytes / mean abs error in 8-bit levels:
+
+| image (px) | d | before | after | cjxl --progressive_dc=1 |
+|---|---|---|---|---|
+| 1008 (4000x3000) | 1 | 419,144 / 2,069,645 / 1.367 | 340,355 / 1,990,856 / 1.384 | 322,881 / 1,991,625 / 1.371 |
+| 1406 (4000x2252) | 1 | 372,611 / 1,652,914 / 1.716 | 306,282 / 1,586,585 / 1.737 | 291,374 / 1,589,065 / 1.715 |
+| 3300 (2832x3722) | 1 | 362,648 / 1,778,799 / 1.078 | 293,473 / 1,709,624 / 1.111 | 277,616 / 1,699,123 / 1.109 |
+| 6108 (2479x3230) | 1 | 96,989 / 709,631 / 0.457 | 111,996 / 724,638 / 0.462 | 93,979 / 719,539 / 0.459 |
+| 1008 | 3 | 417,697 / 1,028,823 / 2.561 | 232,484 / 843,610 / 2.633 | 215,869 / 848,630 / 2.606 |
+| 1406 | 3 | 368,857 / 882,194 / 2.883 | 214,631 / 727,968 / 3.026 | 199,638 / 724,518 / 2.994 |
+| 3300 | 3 | 357,313 / 774,276 / 2.490 | 190,852 / 607,815 / 2.606 | 172,738 / 612,833 / 2.564 |
+| 6108 | 3 | 96,689 / 446,972 / 1.059 | 76,577 / 426,860 / 1.083 | 65,075 / 426,776 / 1.070 |
+
+(Images: imazen-26 lossless-bench PNGs on dev `/mnt/v/input/jxl-encoder/lossless-bench-imazen26-png/`.
+"LF bytes" is the codestream offset of the regular frame, so it includes a
+patches reference frame where one is written, as on the 6108 patent scan.)
+
+Mirror-tiled CID22 1279330 at 2400x2100, d3: LF frame 34 KB vs cjxl 30-35 KB
+at e5-e9 (139-223 KB before), files within 4 %. Small crops (225 CID22 cells,
+1x1 to 64x48, d4.5-15): over 1.25x cjxl's error + 0.5 levels in 2 cells, file
+bytes 1.049x cjxl; at d0.5-2, 1 cell and 0.993x.
