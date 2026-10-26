@@ -2842,9 +2842,11 @@ impl VarDctEncoder {
         // Write LfFrame (separate DC frame) before other frames.
         // Must come before patches ref frame and main VarDCT frame.
         //
-        // The encode returns decoded-back DC values (quantize→dequantize roundtrip)
-        // matching libjxl's decode-back step (enc_cache.cc:195-222). These represent
-        // the exact DC values the decoder will reconstruct from the LfFrame.
+        // The encode also returns the DC the decoder will reconstruct from the
+        // LfFrame (libjxl's decode-back, enc_cache.cc:195-222). Nothing here
+        // consumes it yet: the coefficients are already final, and the decoder
+        // rebuilds the lowest frequencies of large transforms from this DC.
+        // The perceptual loops still reconstruct with the main frame's own DC.
         let lf_dc_quant: Option<[f32; 3]> = if self.use_lf_frame
             && let Some(dc) = float_dc
         {

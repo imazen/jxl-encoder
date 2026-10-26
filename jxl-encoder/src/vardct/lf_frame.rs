@@ -146,10 +146,21 @@ pub(crate) fn encode_lf_frame(
     writer: &mut BitWriter,
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<([Vec<f32>; 3], [f32; 3])> {
-    // Full-precision enc_factors: lossy compression happens via Squeeze + modular
-    // quantization (tree leaf multipliers), not via coarser enc_factors. This
-    // matches libjxl's responsive=1 path where dc_quant is [1/65536, 1/4096, 1/4096].
-    let factors = DcQuantFactors::full_precision();
+    // libjxl encodes the DC frame at `max(0.05, d) * 0.02` (enc_cache.cc:137-139).
+    // A single-group DC image takes libjxl's lossy modular path (responsive=1):
+    // full-precision enc_factors, then Squeeze + per-channel quantization at
+    // that distance. A multi-group one (image wider or taller than 2048 px) is
+    // coded losslessly here, since our multi-group modular writer has no
+    // Squeeze; it takes libjxl's other DC mode instead (responsive=0,
+    // enc_modular.cc:763-768): distance-scaled enc_factors, then lossless.
+    let dc_distance = (main_distance * 0.02).max(0.05 * 0.02);
+    let single_group =
+        xsize_blocks.div_ceil(crate::GROUP_DIM) * ysize_blocks.div_ceil(crate::GROUP_DIM) == 1;
+    let factors = if single_group {
+        DcQuantFactors::full_precision()
+    } else {
+        DcQuantFactors::compute(main_distance)
+    };
 
     #[cfg(feature = "trace-bitstream")]
     {
@@ -194,28 +205,6 @@ pub(crate) fn encode_lf_frame(
         ch_by_data.push(b_int);
     }
 
-    // Decode-back: compute the exact float DC values the decoder will reconstruct.
-    //
-    // libjxl (enc_cache.cc:195-222) decodes the encoded LfFrame to get exact decoder
-    // DC values. Since modular encoding is lossless for integers, the decode-back is
-    // equivalent to: decoded_float = integer * dc_quant.
-    //
-    // Channel conversion: modular [Y, X, B-Y] integers → [X, Y, B] XYB floats
-    //   decoded_Y = y_int * dc_quant[1]
-    //   decoded_X = x_int * dc_quant[0]
-    //   decoded_B = (by_int + y_int) * dc_quant[2]
-    let decoded_dc = {
-        let mut dc_x = crate::budget::vec_with_capacity_fallible(fallible, n)?;
-        let mut dc_y = crate::budget::vec_with_capacity_fallible(fallible, n)?;
-        let mut dc_b = crate::budget::vec_with_capacity_fallible(fallible, n)?;
-        for i in 0..n {
-            dc_y.push(ch_y_data[i] as f32 * factors.dc_quant[1]);
-            dc_x.push(ch_x_data[i] as f32 * factors.dc_quant[0]);
-            dc_b.push((ch_by_data[i] + ch_y_data[i]) as f32 * factors.dc_quant[2]);
-        }
-        [dc_x, dc_y, dc_b]
-    };
-
     #[cfg(feature = "trace-bitstream")]
     {
         let y_min = ch_y_data.iter().copied().min().unwrap_or(0);
@@ -242,16 +231,6 @@ pub(crate) fn encode_lf_frame(
     ch_y.component = 0; // Y
     ch_x.component = 1; // X
     ch_by.component = 2; // B-Y
-    // DC at dc_level=1 represents 1/8 resolution (3 halvings per dimension).
-    // Setting hshift=vshift=3 tells the quantizer to use shift=5 (hshift+vshift-1)
-    // instead of shift=0, producing much gentler quantizers that don't destroy
-    // chrominance. Without this, X and B-Y channels get quantized to zero.
-    ch_y.hshift = 3;
-    ch_y.vshift = 3;
-    ch_x.hshift = 3;
-    ch_x.vshift = 3;
-    ch_by.hshift = 3;
-    ch_by.vshift = 3;
     let mut mod_channels = vec![ch_y, ch_x, ch_by];
     // Zero placeholders for the image's extra channels: DC frames do not encode
     // extra channels, but every frame must carry as many as the codestream
@@ -260,7 +239,7 @@ pub(crate) fn encode_lf_frame(
     for _ in 0..num_extra_channels {
         mod_channels.push(Channel::from_vec(vec![0; n], xsize_blocks, ysize_blocks)?);
     }
-    let mut image = ModularImage {
+    let image = ModularImage {
         channels: mod_channels,
         bit_depth: 16, // Fixed-point representation
         is_grayscale: false,
@@ -289,19 +268,16 @@ pub(crate) fn encode_lf_frame(
     // outweighs any savings on such small data.
     profile.lz77 = false;
 
-    let num_groups_x = xsize_blocks.div_ceil(crate::GROUP_DIM);
-    let num_groups_y = ysize_blocks.div_ceil(crate::GROUP_DIM);
-    let num_groups = num_groups_x * num_groups_y;
-
-    if num_groups == 1 {
-        // Single group: use write_modular_stream_with_tree_dc_quant for
-        // combined dc_quant + tree learning + lossy modular encoding.
+    // The integers the decoder reconstructs: the lossy stream's inverse
+    // squeeze of its quantized coefficients, or the lossless integers.
+    // libjxl decodes the DC frame back for the same reason
+    // (enc_cache.cc:195-222): the main frame must predict from the DC the
+    // decoder will actually have.
+    let decoded_ints = if single_group {
         let mut section_writer = BitWriter::new();
-
         let lossy_opts = crate::modular::encode::LossyModularOptions {
-            distance: main_distance,
+            distance: dc_distance,
         };
-
         crate::modular::encode::write_modular_stream_with_tree_dc_quant(
             &image,
             &mut section_writer,
@@ -315,7 +291,6 @@ pub(crate) fn encode_lf_frame(
             budget,
             None,
         )?;
-
         let section_data = section_writer.finish();
 
         // Write TOC (single entry, unpermuted)
@@ -323,25 +298,12 @@ pub(crate) fn encode_lf_frame(
         writer.zero_pad_to_byte();
         write_toc_entry(writer, section_data.len() as u32)?;
         writer.zero_pad_to_byte();
-
-        // Write section data
         writer.append_bytes(&section_data)?;
+
+        crate::modular::encode::lossy_modular_reconstruction(&image, dc_distance)?
     } else {
-        // Multi-group: the DC image is wider or taller than 256 blocks
-        // (original wider or taller than 2048 px).
+        // Multi-group: the DC image is wider or taller than 256 blocks.
         // Section layout: LfGlobal | LfGroup×N (empty) | HfGlobal (empty) | PassGroup×N
-        //
-        // The 3/3 shifts above are only a quantizer-table hint for the lossy
-        // single-group stream. Nothing transforms these channels in the
-        // bitstream, so the decoder sees them unshifted at the LF frame's
-        // own resolution. `extract_region` reads the shifts as real channel
-        // downsampling and would cut every group 8x too small on each axis,
-        // which no decoder can read. The multi-group stream is lossless and
-        // has no quantizer to hint, so the channels are encoded unshifted.
-        for ch in &mut image.channels {
-            ch.hshift = 0;
-            ch.vshift = 0;
-        }
         encode_lf_frame_multi_group(
             &image,
             &factors,
@@ -352,7 +314,30 @@ pub(crate) fn encode_lf_frame(
             writer,
             budget,
         )?;
-    }
+        image
+    };
+
+    // Modular [Y, X, B-Y] integers back to the [X, Y, B] float DC the
+    // decoder produces (ConvertModularXYBToF32Stage: B = (ch2 + ch0) * scale).
+    let decoded_dc = {
+        let (y, x, by) = (
+            &decoded_ints.channels[0],
+            &decoded_ints.channels[1],
+            &decoded_ints.channels[2],
+        );
+        let mut dc_x = crate::budget::vec_with_capacity_fallible(fallible, n)?;
+        let mut dc_y = crate::budget::vec_with_capacity_fallible(fallible, n)?;
+        let mut dc_b = crate::budget::vec_with_capacity_fallible(fallible, n)?;
+        for yb in 0..ysize_blocks {
+            for xb in 0..xsize_blocks {
+                let (yi, xi, bi) = (y.get(xb, yb), x.get(xb, yb), by.get(xb, yb));
+                dc_y.push(yi as f32 * factors.dc_quant[1]);
+                dc_x.push(xi as f32 * factors.dc_quant[0]);
+                dc_b.push((bi + yi) as f32 * factors.dc_quant[2]);
+            }
+        }
+        [dc_x, dc_y, dc_b]
+    };
 
     Ok((decoded_dc, factors.dc_quant))
 }

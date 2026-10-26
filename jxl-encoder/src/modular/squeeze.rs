@@ -277,6 +277,73 @@ pub fn default_squeeze_params(image: &ModularImage) -> Vec<SqueezeParams> {
     params
 }
 
+/// libjxl's `DefaultSqueezeParameters` (squeeze.cc:387-445) as the lossy
+/// modular path needs it. Unlike [`default_squeeze_params`] (kept for the
+/// lossless squeeze option, whose output is locked), this applies the 4:2:0
+/// chroma squeeze even when the image is already 8x8 or smaller, as libjxl
+/// does. libjxl also squeezes a chroma dimension of 1, leaving the samples
+/// unchanged and a zero-sized residual; our channels cannot be zero-sized,
+/// so those steps are left out and returned as extra (horizontal, vertical)
+/// shift for the chroma channels' quantizers. The decoder never sees
+/// quantizers (the tree multipliers carry them), so the reconstruction
+/// matches libjxl's.
+pub(crate) fn lossy_default_squeeze_params(image: &ModularImage) -> (Vec<SqueezeParams>, u32, u32) {
+    let nb_channels = image.channels.len();
+    if nb_channels == 0 {
+        return (Vec::new(), 0, 0);
+    }
+    let mut params = Vec::new();
+    let (mut extra_h, mut extra_v) = (0, 0);
+    let mut w = image.channels[0].width();
+    let mut h = image.channels[0].height();
+    if nb_channels > 2
+        && image.channels[1].width() == w
+        && image.channels[1].height() == h
+        && image.channels[2].width() == w
+        && image.channels[2].height() == h
+    {
+        for horizontal in [true, false] {
+            let dim = if horizontal { w } else { h };
+            if dim > 1 {
+                params.push(SqueezeParams {
+                    horizontal,
+                    in_place: false,
+                    begin_c: 1,
+                    num_c: 2,
+                });
+            } else if horizontal {
+                extra_h = 1;
+            } else {
+                extra_v = 1;
+            }
+        }
+    }
+    let sp = SqueezeParams {
+        horizontal: false,
+        in_place: true,
+        begin_c: 0,
+        num_c: nb_channels as u32,
+    };
+    if w <= h && h > MAX_FIRST_PREVIEW_SIZE {
+        params.push(sp);
+        h = h.div_ceil(2);
+    }
+    while w > MAX_FIRST_PREVIEW_SIZE || h > MAX_FIRST_PREVIEW_SIZE {
+        if w > MAX_FIRST_PREVIEW_SIZE {
+            params.push(SqueezeParams {
+                horizontal: true,
+                ..sp
+            });
+            w = w.div_ceil(2);
+        }
+        if h > MAX_FIRST_PREVIEW_SIZE {
+            params.push(sp);
+            h = h.div_ceil(2);
+        }
+    }
+    (params, extra_h, extra_v)
+}
+
 /// Apply forward squeeze transform to a modular image.
 ///
 /// Modifies the image in-place, replacing channels with average+residual pairs.

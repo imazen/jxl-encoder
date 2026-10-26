@@ -862,6 +862,29 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-10-26: LF frame DC coded far coarser than libjxl on small images
+
+[PROVEN] `with_lf_frame` / `with_progressive_dc` single-group DC frames
+used the main distance (libjxl: `max(0.05, d) * 0.02`, enc_cache.cc:137),
+compensated by tagging the DC channels `hshift = vshift = 3` (shift index
++6, 64x finer quantizers: effectively lossless, 1.8x cjxl's LF bytes at
+512x512 once the distance was corrected), and `default_squeeze_params`
+skipped libjxl's 4:2:0 chroma squeeze on DC images of 8x8 blocks or less,
+leaving chroma one qtable row coarser. Up to 37x cjxl's error on 1x1 crops.
+Fix: libjxl's DC distance, no shift hint, `squeeze::lossy_default_squeeze_params`
+(libjxl's parameters; steps on a chroma dimension of 1 are left out and their
+shift credited to the chroma quantizers, since our channels cannot be
+zero-sized; the lossless squeeze option keeps the old function), and the
+LF decode-back now reconstructs through `modular::encode::lossy_modular_reconstruction`
+(it assumed a lossless stream). Results vs cjxl `--progressive_dc=1`: 512x512
+e7 bytes -1 to -5 % at error within 2 %; 225 CID22 crops 1x1-64x48 over
+1.25x cjxl + 0.5 levels in 2 cells (85 before). Pinned by
+`aux_frames::lf_frame_error_tracks_cjxl_on_small_photos` (88 of 120 cells
+over on the old code, 2 now). Multi-group LF frames take distance-scaled
+`enc_factors` now (LF bytes -15 to -18 %); the remaining gap is the ACTIVE
+entry above. One hash lock moved: `lossy_mg_rgb_2049x300_photoish_progressive_dc1_e5`
+113,517 -> 111,985 B.
+
 ### RESOLVED 2026-10-26: lossless float text screenshots decoded to NaN (patches)
 
 [PROVEN] The one-shot lossless patch gate (`api.rs`, before
@@ -1593,23 +1616,16 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### 2026-10-26: LF frame quantizes DC about 50x coarser than libjxl (opt-in path)
+### 2026-10-26: multi-group LF frame is 1.2-1.7x cjxl's (opt-in path)
 
-[PROVEN] `vardct/lf_frame.rs` single-group branch passes the main distance
-to the lossy-modular quantizer; libjxl encodes the DC frame at
-`max(0.05, d) * 0.02` (`enc_cache.cc:137-139`, then squeeze since
-`responsive` defaults on for lossy modular). On images up to 64x48 our
-`with_lf_frame` / `with_progressive_dc` error is 1.2-1.7x cjxl's
-`--progressive_dc=1` (1x1 PQ d0.5: 0.070 vs 0.012); from 127x129 up the
-two match. Using libjxl's distance fixes the small images (error at or
-below cjxl at every size, seed 9) but makes our LF frame 1.8x the size of
-cjxl's at 512x512 d3 (13,366 vs 7,458 B; files +10% at d1, +37% at d3), so
-our lossy-modular coding of near-lossless DC is the real gap (both use the
-Zero predictor for squeeze residues). Patch held, not applied: dev
-`/mnt/v/output/jxl-encoder/sweep-tiny-bound-2026-10-26/lf-distance-0.02.patch`
-([record](benchmarks/sweep_tiny_bound_2026-10-26.md)). Also: libjxl drops
-`progressive_dc` when the image has extra channels (`enc_frame.cc:2662`);
-we emit zero placeholder channels instead.
+[MEASURED] Above 2048 px the LF frame takes `encode_lf_frame_multi_group`,
+which has no lossy Squeeze, so it uses libjxl's `responsive=0` DC mode
+(distance-scaled `enc_factors`, lossless). On 2479-4000 px photos at d3 that
+frame is 1.25-1.71x the bytes of cjxl's squeezed one (`benchmarks/
+sweep_tiny_bound_2026-10-26.md`). Next: lossy Squeeze in the multi-group
+modular writer (`modular/frame.rs` `encode_modular_multi_group_squeeze_with_tree`
+is the lossless starting point: drop its YCoCg RCT, quantize with
+`lossy_squeeze_quantize`, learn with multipliers, write custom dc_quant).
 
 ### 2026-10-26: effort 1-2 zen mode spends ~820 bytes of fixed overhead
 

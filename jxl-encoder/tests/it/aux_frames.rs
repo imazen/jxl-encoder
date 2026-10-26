@@ -284,3 +284,100 @@ fn lf_frame_with_resampling_decodes() {
         }
     }
 }
+
+/// Mean absolute error in 8-bit levels between djxl's output and the source.
+fn djxl_rgb_error(data: &[u8], source_rgb: &[u8], label: &str) -> f64 {
+    let decoded = decode_djxl_rgba(data, label);
+    let mut sum = 0f64;
+    for (d, s) in decoded.as_raw().chunks(4).zip(source_rgb.chunks(3)) {
+        for c in 0..3 {
+            sum += (d[c] as f64 - s[c] as f64).abs();
+        }
+    }
+    sum / source_rgb.len() as f64
+}
+
+/// cjxl v0.12 with `--progressive_dc=1` (its LF frame) on the same source.
+fn cjxl_lf_frame(source_png: &std::path::Path, distance: f32, effort: u8, out: &std::path::Path) {
+    let status = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
+        .arg(source_png)
+        .arg(out)
+        .arg(format!("--distance={distance}"))
+        .arg(format!("--effort={effort}"))
+        .arg("--progressive_dc=1")
+        .arg("--resampling=1")
+        .arg("--num_threads=1")
+        .output()
+        .expect("run cjxl v0.12");
+    assert!(
+        status.status.success(),
+        "cjxl: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+}
+
+/// The LF frame used to quantize DC at the main distance through squeeze
+/// tables shifted by six levels, and skipped libjxl's 4:2:0 chroma squeeze
+/// on DC images of 8x8 blocks or less. libjxl codes it at 0.02x the distance
+/// (enc_cache.cc:137-139) with `DefaultSqueezeParameters` (squeeze.cc:387).
+/// On small photos that cost up to 37x cjxl's error (a 1x1 crop at d4.5:
+/// 3.67 levels against 0.10). Our LF frame must stay near cjxl's on real
+/// crops from 1x1 to 64x48, through djxl and decodable by jxl-rs.
+#[test]
+fn lf_frame_error_tracks_cjxl_on_small_photos() {
+    let corpus = codec_corpus::Corpus::new().expect("codec-corpus");
+    let dir = corpus
+        .get("CID22/CID22-512/validation")
+        .expect("CID22 validation");
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/aux-frames");
+    std::fs::create_dir_all(&out).unwrap();
+    let mut worse = Vec::new();
+    let mut cells = 0;
+    for name in ["3156482.png", "225228.png", "2253934.png", "162520.png"] {
+        let img = image::open(dir.join(name)).expect("CID22 image").to_rgb8();
+        for (w, h) in [(1u32, 1u32), (3, 2), (7, 5), (17, 9), (64, 48)] {
+            for (ox, oy) in [(37u32, 211u32), (400, 400)] {
+                let crop = image::imageops::crop_imm(&img, ox, oy, w, h).to_image();
+                let rgb = crop.as_raw().clone();
+                let label = format!("lf-cjxl-{name}-{w}x{h}-{ox}");
+                let png = out.join(format!("{label}.png"));
+                crop.save(&png).unwrap();
+                for distance in [1.0f32, 4.5, 7.0] {
+                    let ours = LossyConfig::new(distance)
+                        .with_effort(7)
+                        .with_lf_frame(true)
+                        .encode(&rgb, w, h, PixelLayout::Rgb8)
+                        .expect("encode");
+                    assert_eq!(decode_jxl_rs(&ours, &label), (w as usize, h as usize));
+                    let reference = out.join(format!("{label}-d{distance}-cjxl.jxl"));
+                    cjxl_lf_frame(&png, distance, 7, &reference);
+                    let e_ours = djxl_rgb_error(&ours, &rgb, &format!("{label}-d{distance}"));
+                    let e_ref = djxl_rgb_error(
+                        &std::fs::read(&reference).unwrap(),
+                        &rgb,
+                        &format!("{label}-d{distance}-ref"),
+                    );
+                    cells += 1;
+                    // djxl's 8-bit output is dithered: allow half a level on top.
+                    if e_ours > 1.25 * e_ref + 0.5 {
+                        worse.push(format!(
+                            "{label} d{distance}: {e_ours:.2} vs cjxl {e_ref:.2}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    // Measured 2026-10-26: 2 of 120 (3x2 and 7x5 crops of 3156482 at d7);
+    // the code before the fix put 88 of 120 over.
+    eprintln!("lf_frame vs cjxl: {} of {cells} cells over the bound", worse.len());
+    for w in &worse {
+        eprintln!("  {w}");
+    }
+    assert!(
+        worse.len() <= 3,
+        "{} of {cells} cells over 1.25x cjxl's LF-frame error + 0.5 levels:\n{}",
+        worse.len(),
+        worse.join("\n")
+    );
+}

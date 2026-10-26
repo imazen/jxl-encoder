@@ -2159,6 +2159,57 @@ pub struct LossyModularOptions {
     pub distance: f32,
 }
 
+/// Lossy modular's transform: Squeeze with libjxl's default parameters, then
+/// every XYB channel (component 0..3) rounded to a multiple of its
+/// quantizer (libjxl enc_modular.cc:975-1030). Returns the squeeze steps (if
+/// any) and one quantizer per channel. Shared by the stream writer and by
+/// [`lossy_modular_reconstruction`], so the two cannot drift apart.
+pub(crate) fn lossy_squeeze_quantize(
+    image: &mut ModularImage,
+    distance: f32,
+) -> Result<(Option<Vec<super::squeeze::SqueezeParams>>, Vec<i32>)> {
+    use super::quantize::{compute_channel_quantizer_xyb, quantize_channel};
+    let (params, extra_h, extra_v) = super::squeeze::lossy_default_squeeze_params(image);
+    let params = if params.is_empty() {
+        None
+    } else {
+        super::squeeze::apply_squeeze(image, &params)?;
+        Some(params)
+    };
+    let mut quants = Vec::with_capacity(image.channels.len());
+    for ch in image.channels.iter_mut() {
+        if !(0..3).contains(&ch.component) {
+            quants.push(1);
+            continue;
+        }
+        // Chroma carries the shift of libjxl's degenerate squeeze steps.
+        let (hs, vs) = if ch.component == 0 {
+            (ch.hshift, ch.vshift)
+        } else {
+            (ch.hshift + extra_h, ch.vshift + extra_v)
+        };
+        let q = compute_channel_quantizer_xyb(ch.component as usize, hs, vs, distance);
+        quantize_channel(ch, q);
+        quants.push(q);
+    }
+    Ok((params, quants))
+}
+
+/// The samples a decoder reconstructs from a lossy modular stream of
+/// `image` at `distance`: the quantized squeeze coefficients are coded
+/// exactly (the tree multipliers undo nothing), so the reconstruction is
+/// the inverse squeeze of the pre-quantized coefficients.
+pub(crate) fn lossy_modular_reconstruction(
+    image: &ModularImage,
+    distance: f32,
+) -> Result<ModularImage> {
+    let mut work = image.clone();
+    if let (Some(params), _) = lossy_squeeze_quantize(&mut work, distance)? {
+        super::squeeze::inverse_squeeze(&mut work, &params)?;
+    }
+    Ok(work)
+}
+
 /// Like [`write_modular_stream_with_tree`] but with a custom dc_quant for LfFrame support
 /// and optional lossy modular quantization.
 ///
@@ -2544,51 +2595,14 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         (image.clone(), None, None, Vec::new())
     };
 
-    // Apply Squeeze (Haar wavelet) for spatial decorrelation.
-    // For lossy modular, Squeeze is always applied (matching libjxl responsive=1).
-    // For lossless, it's never applied here (separate squeeze+tree path exists).
-    let squeeze_params = if is_lossy {
-        use super::squeeze::default_squeeze_params;
-        let params = default_squeeze_params(&work_image);
-        if !params.is_empty() {
-            Some(params)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    // Lossy modular: Squeeze (Haar wavelet, always on, matching libjxl
+    // responsive=1), then per-channel pre-quantization and the multipliers
+    // that tell the tree what each channel was quantized by. Lossless never
+    // squeezes here (it has a separate squeeze+tree path).
     let mut work_image = work_image;
-    if let Some(ref params) = squeeze_params {
-        super::squeeze::apply_squeeze(&mut work_image, params)?;
-    }
-
-    // Lossy modular: compute per-channel quantizers, pre-quantize, build multiplier info.
-    let multiplier_info = if let Some(lossy) = lossy_options {
-        use super::quantize::{
-            build_multiplier_info, compute_channel_quantizer_xyb, quantize_channel,
-        };
-
-        let mut quants = Vec::new();
-        for ch in work_image.channels.iter_mut() {
-            let component = ch.component;
-            if !(0..3).contains(&component) {
-                // Non-XYB channel (shouldn't happen for LfFrame, but be safe)
-                quants.push(1);
-                continue;
-            }
-            let q = compute_channel_quantizer_xyb(
-                component as usize,
-                ch.hshift,
-                ch.vshift,
-                lossy.distance,
-            );
-            quantize_channel(ch, q);
-            quants.push(q);
-        }
-
-        let info = build_multiplier_info(&quants, 0);
-
+    let (squeeze_params, multiplier_info) = if let Some(lossy) = lossy_options {
+        let (params, quants) = lossy_squeeze_quantize(&mut work_image, lossy.distance)?;
+        let info = super::quantize::build_multiplier_info(&quants, 0);
         crate::trace::debug_eprintln!(
             "LOSSY_MODULAR: distance={:.2}, {} channels, quants={:?}, {} mul_info entries",
             lossy.distance,
@@ -2596,10 +2610,9 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
             quants,
             info.len(),
         );
-
-        Some(info)
+        (params, Some(info))
     } else {
-        None
+        (None, None)
     };
 
     // Step 0: WP parameters.
