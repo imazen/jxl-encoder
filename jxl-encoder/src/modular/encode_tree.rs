@@ -308,6 +308,10 @@ pub(crate) fn write_tree_histogram_for_channel_split_lossy(
 /// (`dec_ma.cc:75-125`): each internal node pushes its two children
 /// onto the to-decode queue, so we write `[D0, L0, D1, L1, ...,
 /// D_{N-2}, L_{N-2}, L_{N-1}]`.
+///
+/// The chain is N-1 deep, past Level 5's 64 only with more than 65 channels;
+/// that many needs more than 4 extra channels, which already makes the file
+/// Level 10 (depth limit 2048), so it is written as is.
 pub(crate) fn write_channel_split_tree_tokens(
     writer: &mut BitWriter,
     depths: &[u8],
@@ -777,6 +781,12 @@ pub fn write_tree(writer: &mut BitWriter, tree: &super::tree::Tree) -> Result<()
     use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
     let tokens = collect_tree_tokens(tree);
+    super::tree::check_tree_depth(super::tree::depth_from_bfs_decisions(
+        tokens
+            .iter()
+            .filter(|t| t.context == 1)
+            .map(|t| t.value != 0),
+    ))?;
 
     // Encode tree token values through HybridUint to keep the Huffman alphabet
     // within the 32768 symbol limit. Config {4,2,0} maps values up to ~40000

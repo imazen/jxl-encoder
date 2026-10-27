@@ -999,8 +999,25 @@ at depth 64 becomes a leaf with its leftmost descendant leaf's predictor,
 offset and multiplier. Trees within the limit are untouched (all locks
 byte-identical). Pinned by `tree::depth_cap_tests` (70-deep synthetic tree)
 and verified by replaying the three sweep cells (seed 2: 68815, 89101,
-90596) through jxl-rs 0.8. Not covered: per-group sectioned trees and the
-fixed/learned VarDCT DC trees are not capped (none observed near the limit).
+90596) through jxl-rs 0.8. Follow-up 2026-10-27: sectioned per-group learns
+go through the capped `build_tree_from_prequantized`, and VarDCT learned DC
+trees stop at depth 8, so neither needed a cap. Two real defects did: (1)
+the multiplier tree (lossy modular, LF frames) peels one quantizer box per
+level like libjxl, reaching depth 72/136 on 131072/262144-px-wide multi-group
+LF frames, where the cap cut inside the forced splits and merged boxes with
+different quantizers; past 64 levels the forced splits are now balanced
+(`quantize::forced_split`, LIBJXL_DIVERGENCES row), pinned by
+`tree_learn::multiplier_tree_depth_tests`. (2) lossless gathering indexed
+past its 32-entry reference-property array with more than 9 same-size
+channels (release panic, 70 extra channels); references are now limited to
+`tree_learn::MAX_REF_CHANNELS = 8`, pinned by `many_extra_channels`.
+`write_tree` and the VarDCT context-tree writers now refuse any tree deeper
+than 64 (`tree::check_tree_depth`). The lossy extra-channel split chain is
+N-1 deep and exempt: past 64 needs more than 4 extra channels, which makes
+the file Level 10 (limit 2048). Trap: jxl-rs 0.8's default decoder profile is
+Main5, so it rejects any file with more than 4 extra channels ("extra
+channels ... max 4") even when `jxll = 10` is declared; set
+`max_profile_level = Main10` to test those.
 
 ### RESOLVED 2026-10-25: squeeze overflowed on f32 / wide-integer samples
 

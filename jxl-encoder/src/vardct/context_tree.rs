@@ -20,6 +20,17 @@ use crate::entropy_coding::move_to_front_transform;
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
+/// Depth check for a context tree given as (context, value) tokens: context 1
+/// carries each node's property (0 = leaf), in breadth-first order.
+fn check_context_tree_depth(tokens: &[Token]) -> Result<()> {
+    crate::modular::tree::check_tree_depth(crate::modular::tree::depth_from_bfs_decisions(
+        tokens
+            .iter()
+            .filter(|t| t.context() == 1)
+            .map(|t| t.value != 0),
+    ))
+}
+
 /// Number of contexts for the context tree.
 pub const NUM_TREE_CONTEXTS: usize = 6;
 
@@ -652,6 +663,7 @@ pub fn write_jpeg_transcode_context_tree(
     //   stream_id <= (1 + num_dc_groups) → RIGHT subtree (gradient-DC)
     // Matches the [`write_context_tree`] root layout.
     tokens[1].value = pack_signed(1 + num_dc_groups as i32);
+    check_context_tree_depth(&tokens)?;
 
     writer.write(1, 1)?; // not an empty tree
     writer.write(1, 0)?; // no lz77
@@ -874,6 +886,7 @@ pub fn write_context_tree(
 
     // Token[1] value encodes the number of streams (1 + num_dc_groups)
     tokens[1].value = pack_signed(1 + num_dc_groups as i32);
+    check_context_tree_depth(&tokens)?;
 
     if let Some(params) = code_params {
         return write_tree_code_libjxl(&tokens, writer, params);
@@ -939,6 +952,7 @@ pub fn write_learned_context_tree(
         return write_learned_context_tree_inner(&simple_tree, writer, code_params);
     }
 
+    check_context_tree_depth(&tokens)?;
     write_learned_context_tree_inner(&tokens, writer, code_params)
 }
 

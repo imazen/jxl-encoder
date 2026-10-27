@@ -176,6 +176,90 @@ pub fn box_intersects(
     }
 }
 
+/// What the multiplier tree does with a node whose static range is `range`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ForcedSplit {
+    /// No box overlaps: learn splits freely.
+    Free,
+    /// The range lies inside one box: a leaf with this multiplier.
+    Inside(u32),
+    /// Split on static property `axis` at `val` (left = `<= val`).
+    Split(usize, u32),
+}
+
+/// The forced decision for `range`. `balanced == false` is libjxl's rule
+/// (enc_ma.cc ComputeBestTree): split at a boundary of the first
+/// overlapping box, which peels one box per level, so the forced splits
+/// grow as deep as the box count. `balanced == true` splits at the median
+/// box boundary inside the range (stream axis first), which keeps the
+/// depth logarithmic; both reach the same leaves.
+pub(crate) fn forced_split(
+    range: &[[u32; 2]; 2],
+    info: &[ModularMultiplierInfo],
+    balanced: bool,
+) -> ForcedSplit {
+    let mut first_partial = None;
+    for mmi in info {
+        match box_intersects(range, &mmi.range) {
+            (IntersectionType::None, ..) => {}
+            (IntersectionType::Inside, ..) => return ForcedSplit::Inside(mmi.multiplier),
+            (IntersectionType::Partial, axis, val) => {
+                if first_partial.is_none() {
+                    first_partial = Some((axis, val));
+                }
+                if !balanced {
+                    break;
+                }
+            }
+        }
+    }
+    let Some((axis, val)) = first_partial else {
+        return ForcedSplit::Free;
+    };
+    if !balanced {
+        return ForcedSplit::Split(axis, val);
+    }
+    for axis in [1, 0] {
+        let (lo, hi) = (range[axis][0], range[axis][1]);
+        let mut cuts: Vec<u32> = info
+            .iter()
+            .filter(|m| box_intersects(range, &m.range).0 != IntersectionType::None)
+            .flat_map(|m| m.range[axis])
+            .filter(|&b| b > lo && b < hi)
+            .map(|b| b - 1)
+            .collect();
+        if !cuts.is_empty() {
+            cuts.sort_unstable();
+            cuts.dedup();
+            return ForcedSplit::Split(axis, cuts[cuts.len() / 2]);
+        }
+    }
+    ForcedSplit::Split(axis, val)
+}
+
+/// Deepest leaf of the forced splits alone (root = 0), simulated on the box
+/// ranges without samples. Learned splits below `Free` nodes are not
+/// counted; every leaf under them has multiplier 1.
+pub(crate) fn forced_split_depth(
+    range: [[u32; 2]; 2],
+    info: &[ModularMultiplierInfo],
+    balanced: bool,
+) -> usize {
+    let mut deepest = 0;
+    let mut stack = vec![(range, 0usize)];
+    while let Some((r, depth)) = stack.pop() {
+        deepest = deepest.max(depth);
+        if let ForcedSplit::Split(axis, val) = forced_split(&r, info, balanced) {
+            let (mut left, mut right) = (r, r);
+            left[axis][1] = val + 1;
+            right[axis][0] = val + 1;
+            stack.push((left, depth + 1));
+            stack.push((right, depth + 1));
+        }
+    }
+    deepest
+}
+
 /// Build multiplier info from per-channel quantizers.
 ///
 /// For a single-group LfFrame, all channels share stream_id=0, so the range

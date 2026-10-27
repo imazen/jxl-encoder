@@ -2402,7 +2402,13 @@ fn find_ref_channels(image: &ModularImage, channel_idx: usize) -> Vec<usize> {
     refs
 }
 
-/// Compute the maximum number of reference channels across all channels.
+/// Most preceding channels whose properties feed the tree learner (the
+/// closest ones; 4 properties each). The sample gather holds them in a
+/// fixed `4 * MAX_REF_CHANNELS` buffer.
+pub(crate) const MAX_REF_CHANNELS: usize = 8;
+
+/// Compute the maximum number of reference channels across all channels,
+/// at most [`MAX_REF_CHANNELS`].
 ///
 /// This determines how many extra property slots (4 per ref channel) are needed
 /// in the TreeSamples structure.
@@ -2412,7 +2418,7 @@ pub fn max_ref_channels(image: &ModularImage) -> usize {
         let refs = find_ref_channels(image, i);
         max_refs = max_refs.max(refs.len());
     }
-    max_refs
+    max_refs.min(MAX_REF_CHANNELS)
 }
 
 /// Compute the 16 spec-matching properties for a pixel.
@@ -3539,9 +3545,11 @@ fn gather_channel_samples(
     // for ref-channel properties. We pad the ref-prop array to 32
     // (max_refs <= 8 in practice; we debug_assert below).
     const MAX_CAND_PRED: usize = 16; // > 14 candidates, leaves headroom
-    const MAX_REF_PROPS: usize = 32; // 4 props * 8 ref channels
+    const MAX_REF_PROPS: usize = 4 * MAX_REF_CHANNELS;
     debug_assert!(num_pred <= MAX_CAND_PRED);
-    debug_assert!(4 * max_refs <= MAX_REF_PROPS);
+    // An image with more same-size channels than this once indexed past
+    // `local_ref_props` (73 channels: index 32 of 32).
+    let max_refs = max_refs.min(MAX_REF_CHANNELS);
 
     for y in 0..height {
         // Cooperative cancellation: one poll per row bounds the gather
@@ -3623,7 +3631,7 @@ fn gather_channel_samples(
                 //  |ref1|, ref1, ..., 0, 0, 0, 0 (zero-pad)]
                 let mut local_ref_props = [0i32; MAX_REF_PROPS];
                 if max_refs > 0 {
-                    for (r, &ref_ch_idx) in ref_channel_indices.iter().enumerate() {
+                    for (r, &ref_ch_idx) in ref_channel_indices.iter().take(max_refs).enumerate() {
                         let ref_ch = &image.channels[ref_ch_idx];
                         let v = ref_ch.get(x, y);
                         let ref_left = if x > 0 { ref_ch.get(x - 1, y) } else { 0 };
@@ -8896,7 +8904,7 @@ pub(crate) fn compute_best_tree_with_multipliers_stop(
     initial_range: [[u32; 2]; 2],
     stop: Option<&dyn enough::Stop>,
 ) -> crate::error::Result<Tree> {
-    use super::quantize::{IntersectionType, box_intersects};
+    use super::quantize::{ForcedSplit, forced_split, forced_split_depth};
 
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
     let threshold = params.split_threshold * required_cost;
@@ -8953,6 +8961,20 @@ pub(crate) fn compute_best_tree_with_multipliers_stop(
         static_prop_range: [[u32; 2]; 2],
     }
 
+    // The depth cap below must never cut inside the forced splits: that
+    // would merge boxes with different multipliers into one leaf. libjxl's
+    // box-peeling order is kept while it fits Level 5; past that (on the
+    // order of 500 boxes, e.g. a 131072-px-wide LF frame) the forced splits
+    // are balanced instead.
+    let max_depth = super::tree::MAX_TREE_DEPTH;
+    let balanced = forced_split_depth(initial_range, multiplier_info, false) > max_depth;
+    if balanced && forced_split_depth(initial_range, multiplier_info, true) > max_depth {
+        return Err(crate::error::Error::InvalidInput(alloc::format!(
+            "{} quantizer boxes need forced MA tree splits deeper than Level 5 allows",
+            multiplier_info.len()
+        )));
+    }
+
     let mut stack: Vec<SplitCandidateWithRange> = Vec::new();
 
     tree.push(PropertyDecisionNode::default());
@@ -8974,23 +8996,15 @@ pub(crate) fn compute_best_tree_with_multipliers_stop(
         }
 
         // Check multiplier_info for forced splits or direct multiplier assignment
-        let mut forced_split: Option<(usize, u32)> = None; // (axis, val)
-        let mut assigned_multiplier: Option<u32> = None;
-
-        for mmi in multiplier_info {
-            let (t, axis, val) = box_intersects(&candidate.static_prop_range, &mmi.range);
-            match t {
-                IntersectionType::None => continue,
-                IntersectionType::Inside => {
-                    assigned_multiplier = Some(mmi.multiplier);
-                    break;
-                }
-                IntersectionType::Partial => {
-                    forced_split = Some((axis, val));
-                    break;
-                }
-            }
-        }
+        let decision = forced_split(&candidate.static_prop_range, multiplier_info, balanced);
+        let assigned_multiplier = match decision {
+            ForcedSplit::Inside(m) => Some(m),
+            _ => None,
+        };
+        let forced_split = match decision {
+            ForcedSplit::Split(axis, val) => Some((axis, val)),
+            _ => None,
+        };
 
         // If multiplier fully determined, finalize as leaf.
         // Force Zero predictor when multiplier > 1 to guarantee the
@@ -15970,5 +15984,118 @@ mod bucket_index_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod multiplier_tree_depth_tests {
+    use super::super::channel::{Channel, ModularImage};
+    use super::super::quantize::{ForcedSplit, ModularMultiplierInfo, forced_split};
+    use super::*;
+
+    /// A leaf's multiplier must divide the quantizer of every sample it
+    /// covers (multiplier 1 always does; a range without samples keeps the
+    /// default Gradient leaf), and the tree must fit Level 5.
+    fn check_leaves(tree: &Tree, info: &[ModularMultiplierInfo], range: [[u32; 2]; 2]) {
+        let mut stack = vec![(0usize, range, 0usize)];
+        while let Some((idx, r, depth)) = stack.pop() {
+            assert!(depth <= super::super::tree::MAX_TREE_DEPTH, "depth {depth}");
+            let node = &tree[idx];
+            if node.property < 0 {
+                if node.multiplier > 1 {
+                    match forced_split(&r, info, false) {
+                        ForcedSplit::Inside(q) => assert_eq!(
+                            q as i32 % node.multiplier,
+                            0,
+                            "leaf multiplier {} over quantizer {q} at {r:?}",
+                            node.multiplier
+                        ),
+                        other => panic!(
+                            "leaf multiplier {} over {other:?} at {r:?}",
+                            node.multiplier
+                        ),
+                    }
+                }
+                continue;
+            }
+            let (mut left, mut right) = (r, r);
+            if node.property < 2 {
+                let axis = node.property as usize;
+                left[axis][1] = left[axis][1].min(node.splitval as u32 + 1);
+                right[axis][0] = right[axis][0].max(node.splitval as u32 + 1);
+            }
+            stack.push((node.lchild, left, depth + 1));
+            stack.push((node.rchild, right, depth + 1));
+        }
+    }
+
+    fn tree_for(streams: u32, channels: u32) -> (Tree, Vec<ModularMultiplierInfo>, [[u32; 2]; 2]) {
+        let quant = |c: u32| if c.is_multiple_of(2) { 4 } else { 8 };
+        let mut info = Vec::new();
+        let mut samples = TreeSamples::new();
+        let wp = super::super::predictor::WeightedPredictorParams::default();
+        // Streams past `streams` carry no box: a free region with learned
+        // splits, which the depth cap may cut.
+        for s in 0..streams + 4 {
+            let image = ModularImage {
+                channels: (0..channels)
+                    .map(|c| {
+                        let mut ch = Channel::new(8, 8).unwrap();
+                        for y in 0..8 {
+                            for (x, v) in ch.row_mut(y).iter_mut().enumerate() {
+                                let raw = ((x * 7 + y * 13 + (s * 5 + c) as usize) % 23) as i32;
+                                *v = raw * quant(c) as i32;
+                            }
+                        }
+                        ch
+                    })
+                    .collect(),
+                bit_depth: 8,
+                is_grayscale: false,
+                has_alpha: false,
+            };
+            gather_samples_strided_with_budget_inner(
+                &mut samples,
+                &image,
+                s,
+                0,
+                1,
+                &wp,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            if s < streams {
+                for c in 0..channels {
+                    info.push(ModularMultiplierInfo {
+                        range: [[c, c + 1], [s, s + 1]],
+                        multiplier: quant(c),
+                    });
+                }
+            }
+        }
+        let range = [[0, channels], [0, streams + 4]];
+        let profile = crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference);
+        let params = TreeLearningParams::from_profile(&profile).with_pixel_fraction(1.0);
+        let tree =
+            compute_best_tree_with_multipliers_stop(&mut samples, &params, &info, range, None)
+                .unwrap();
+        (tree, info, range)
+    }
+
+    #[test]
+    fn few_boxes_keep_libjxl_split_order_and_leaves() {
+        let (tree, info, range) = tree_for(4, 3);
+        check_leaves(&tree, &info, range);
+    }
+
+    /// 1024 boxes peel 1000+ levels deep in libjxl's order; the cap used to
+    /// cut inside them and merge quantizers.
+    #[test]
+    fn many_boxes_stay_within_depth_with_correct_multipliers() {
+        let (tree, info, range) = tree_for(128, 8);
+        assert!(super::super::quantize::forced_split_depth(range, &info, false) > 64);
+        check_leaves(&tree, &info, range);
     }
 }

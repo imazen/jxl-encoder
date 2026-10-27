@@ -84,6 +84,7 @@ mod lossy_knobs_wiring;
 mod lossy_mixed_extras_alpha;
 mod low_effort_static_codes;
 mod lz77_oob_repro;
+mod many_extra_channels;
 mod minimal_ans;
 mod modular_16bit_level;
 mod modular_group_size_knob;

@@ -220,9 +220,7 @@ const MULTIPLIER_BITS_CONTEXT: usize = 5;
 /// Token for tree serialization.
 #[derive(Debug, Clone)]
 pub struct TreeToken {
-    /// Context for this token. Read by stream-comparison unit tests
-    /// only (#76) — the writer streams tokens without re-reading it.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Context for this token (the writer's depth check reads it).
     pub context: usize,
     /// Token value (unsigned for property/predictor/log, signed for split_val/offset).
     pub value: i32,
@@ -555,6 +553,41 @@ pub fn count_contexts(tree: &Tree) -> u32 {
 /// jxl-rs enforces it ("modular tree depth").
 pub const MAX_TREE_DEPTH: usize = 64;
 
+/// Depth of the deepest node of a tree serialized in breadth-first order,
+/// given whether each node (in that order) is a decision: the decoder reads
+/// nodes the same way, queueing two children per decision.
+pub fn depth_from_bfs_decisions(decisions: impl IntoIterator<Item = bool>) -> usize {
+    let mut queue = std::collections::VecDeque::from([0usize]);
+    let mut deepest = 0;
+    for decision in decisions {
+        let Some(depth) = queue.pop_front() else {
+            break;
+        };
+        deepest = deepest.max(depth);
+        if decision {
+            queue.push_back(depth + 1);
+            queue.push_back(depth + 1);
+        }
+    }
+    deepest
+}
+
+/// Refuse to serialize a tree deeper than Level 5 allows. Every learned tree
+/// is capped before residuals are collected ([`cap_tree_depth`]; multiplier
+/// trees keep their forced splits within the limit), and the fixed trees are
+/// shallow, so this only fires on a path that missed the cap; an error is
+/// better than a file Level 5 decoders reject. Level 10 allows depth 2048;
+/// the one writer that needs more than 64 there, the lossy extra-channel
+/// split chain, does not go through this check.
+pub(crate) fn check_tree_depth(depth: usize) -> crate::error::Result<()> {
+    if depth > MAX_TREE_DEPTH {
+        return Err(crate::error::Error::InvalidInput(alloc::format!(
+            "MA tree depth {depth} exceeds the Level 5 limit of {MAX_TREE_DEPTH}"
+        )));
+    }
+    Ok(())
+}
+
 /// Make every split at depth `max_depth` or deeper a leaf, so no node lies
 /// deeper than `max_depth`. The new leaf takes the predictor, offset and
 /// multiplier of the split's leftmost descendant leaf; the subtree below it
@@ -821,6 +854,54 @@ mod depth_cap_tests {
             }
         }
         deepest
+    }
+
+    /// Breadth-first decision flags give the decoder's depth: a chain of k
+    /// splits is k deep, a balanced tree of 2^k leaves is k deep, and the
+    /// writer check refuses anything past 64.
+    #[test]
+    fn bfs_depth_and_check() {
+        // Chain: decision, then (decision, leaf) pairs, then the last leaf.
+        let chain = |k: usize| {
+            let mut v = vec![true];
+            for _ in 1..k {
+                v.extend([true, false]);
+            }
+            v.extend([false, false]);
+            v
+        };
+        assert_eq!(depth_from_bfs_decisions(chain(1)), 1);
+        assert_eq!(depth_from_bfs_decisions(chain(64)), 64);
+        assert_eq!(depth_from_bfs_decisions(chain(65)), 65);
+        let balanced: Vec<bool> = (0..15).map(|i| i < 7).collect();
+        assert_eq!(depth_from_bfs_decisions(balanced), 3);
+        assert_eq!(depth_from_bfs_decisions([false]), 0);
+        assert!(check_tree_depth(64).is_ok());
+        assert!(check_tree_depth(65).is_err());
+        // Every tree written with write_tree passes through the check.
+        let mut chain_tree = Vec::new();
+        for k in 0..70usize {
+            chain_tree.push(PropertyDecisionNode {
+                property: Property::Channel as i32,
+                splitval: k as i32,
+                lchild: 2 * k + 2,
+                rchild: 2 * k + 1,
+                ..Default::default()
+            });
+            chain_tree.push(PropertyDecisionNode {
+                property: -1,
+                ..Default::default()
+            });
+        }
+        chain_tree.push(PropertyDecisionNode {
+            property: -1,
+            ..Default::default()
+        });
+        let mut w = crate::bit_writer::BitWriter::new();
+        assert!(super::super::encode::write_tree(&mut w, &chain_tree).is_err());
+        cap_tree_depth(&mut chain_tree, MAX_TREE_DEPTH);
+        let mut w = crate::bit_writer::BitWriter::new();
+        assert!(super::super::encode::write_tree(&mut w, &chain_tree).is_ok());
     }
 
     /// A 70-deep chain of splits (each right child a leaf) is cut at depth
