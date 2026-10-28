@@ -343,7 +343,7 @@ if OUT:
         # The full bake path repeats in every row (~40 KB of bloat) — commit
         # the basename; full paths live in the runner + registration doc.
         return row.replace(
-            "/home/lilith/work/zen/zensim/zensim/weights/", ""
+            "/home/lilith/work/zen/zensimx/zensim/weights/", ""
         ).replace(".bin\t", "\t")
 
     def cat(dst, srcs, id_col):

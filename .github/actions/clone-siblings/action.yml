@@ -25,7 +25,8 @@ description: >
     - imazen/zenmetrics → ../zenmetrics (multi-metric perceptual backend:
       [patch.crates-io] pins crates/{cvvdp-gpu,butteraugli-gpu,zensim-gpu};
       jxl-encoder member path-deps crates/cvvdp — the #66 failure).
-    - imazen/zensim → ../zensim ([patch.crates-io] zensim = ../zensim/zensim).
+    - imazen/zensimx → ../zensimx ([patch.crates-io] zensim = ../zensimx/zensim;
+      the research repository, renamed from imazen/zensim on 2026-10-28).
     - imazen/butteraugli → ../../butteraugli (GRANDPARENT level; pinned at
       ../../butteraugli/butteraugli).
 
@@ -87,7 +88,7 @@ runs:
         clone_if_missing https://github.com/imazen/zenjpeg       "$parent/zenjpeg"
         clone_if_missing https://github.com/imazen/zenjxl-decoder "$parent/zenjxl-decoder"
         clone_if_missing https://github.com/imazen/zenmetrics    "$parent/zenmetrics"
-        clone_if_missing https://github.com/imazen/zensim        "$parent/zensim"
+        clone_if_missing https://github.com/imazen/zensimx       "$parent/zensimx"
         clone_if_missing https://github.com/imazen/butteraugli   "$grandparent/butteraugli"
         # Transitive: sibling workspaces' own path deps
         clone_if_missing https://github.com/imazen/zenanalyze    "$parent/zenanalyze"

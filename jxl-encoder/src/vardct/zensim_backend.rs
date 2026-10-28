@@ -194,7 +194,7 @@ pub(crate) mod cpu {
             let n = (width as usize).checked_mul(height as usize)?;
             // Profile A (the v47-strict-QAT bake, external name `zensim-a`) — the
             // standardized profile as of the 2026-07-01 "ban PreviewV0_2, A only"
-            // directive. The local zensim 0.3.x (`../zensim/zensim`) provides it, and
+            // directive. The local zensim 0.3.x (`../zensimx/zensim`) provides it, and
             // it is the profile the canonical training data + zenmetrics production
             // scoring now use (`latest_preview()` also resolves to A). Pinned
             // explicitly rather than via `latest_preview()` so this encoder's

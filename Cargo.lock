@@ -2221,7 +2221,7 @@ dependencies = [
  "walkdir",
  "whereat",
  "yuvxyb 0.5.0",
- "zenanalyze 0.2.0",
+ "zenanalyze",
  "zenbench",
  "zenforks-cubecl 0.10.1",
  "zenjpeg",
@@ -2229,7 +2229,7 @@ dependencies = [
  "zenjxl-decoder 0.4.0",
  "zenpixels-convert",
  "zenpng",
- "zenpredict 0.2.0 (git+https://github.com/imazen/zenanalyze?rev=f0903489300aea240ffae2e3f1359f8f2b9a0ba4)",
+ "zenpredict",
  "zensim",
  "zensim-gpu",
  "zensim-target",
@@ -3471,6 +3471,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3714,6 +3723,12 @@ dependencies = [
  "lock_api",
  "portable-atomic",
 ]
+
+[[package]]
+name = "spin"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
 
 [[package]]
 name = "spirv"
@@ -4039,7 +4054,7 @@ dependencies = [
  "magetypes 0.9.30",
  "thiserror 2.0.21",
  "whereat",
- "zencodec",
+ "zencodec 0.1.26",
  "zenpixels",
  "zenpixels-convert",
  "zentone",
@@ -4830,19 +4845,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zenanalyze"
-version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=13d40c3be60e#13d40c3be60ecfc3e482476ef068ff773b2c5b8d"
-dependencies = [
- "archmage 0.9.30",
- "garb",
- "linear-srgb",
- "magetypes 0.9.30",
- "zenpixels",
- "zenpixels-convert",
-]
-
-[[package]]
 name = "zenbench"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4884,6 +4886,19 @@ checksum = "be4b0d4108a8f062c85090bf8d0e6dd00fea976ffacc0e4f3cb6b03284a75531"
 dependencies = [
  "almost-enough",
  "enough",
+ "whereat",
+ "zenpixels",
+]
+
+[[package]]
+name = "zencodec"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zencodec?rev=79676215c037bf222c414198813e4b4f6b6efb96#79676215c037bf222c414198813e4b4f6b6efb96"
+dependencies = [
+ "almost-enough",
+ "enough",
+ "how-far",
+ "spin 0.12.3",
  "whereat",
  "zenpixels",
 ]
@@ -5197,6 +5212,7 @@ dependencies = [
  "bytemuck",
  "enough",
  "garb",
+ "how-far",
  "imgref",
  "linear-srgb",
  "magetypes 0.9.30",
@@ -5208,8 +5224,8 @@ dependencies = [
  "tinyvec",
  "ultrahdr-core",
  "whereat",
- "zenanalyze 0.2.0 (git+https://github.com/imazen/zenanalyze?rev=13d40c3be60e)",
- "zencodec",
+ "zencodec 0.2.0",
+ "zenmeta",
  "zenpixels",
  "zenyuv 0.1.3",
 ]
@@ -5323,6 +5339,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenmeta"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zencodec?rev=79676215c037bf222c414198813e4b4f6b6efb96#79676215c037bf222c414198813e4b4f6b6efb96"
+dependencies = [
+ "roxmltree",
+ "zencodec 0.2.0",
+ "zenpixels",
+]
+
+[[package]]
 name = "zenmetrics-abstractions"
 version = "0.0.1"
 dependencies = [
@@ -5399,21 +5425,10 @@ dependencies = [
  "safe_unaligned_simd",
  "thiserror 2.0.21",
  "whereat",
- "zencodec",
+ "zencodec 0.1.26",
  "zenflate",
  "zenpixels",
  "zenpixels-convert",
-]
-
-[[package]]
-name = "zenpredict"
-version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=417cc785b83bee0b3f827ae85c5203f5e104a308#417cc785b83bee0b3f827ae85c5203f5e104a308"
-dependencies = [
- "archmage 0.9.30",
- "bytemuck",
- "libm",
- "lz4_flex 0.11.6",
 ]
 
 [[package]]
@@ -5458,7 +5473,7 @@ dependencies = [
  "rayon",
  "rgb",
  "thiserror 2.0.21",
- "zenpredict 0.2.0 (git+https://github.com/imazen/zenanalyze?rev=417cc785b83bee0b3f827ae85c5203f5e104a308)",
+ "zenpredict",
  "zenresize",
 ]
 
@@ -5514,6 +5529,7 @@ name = "zenyuv"
 version = "0.1.3"
 dependencies = [
  "archmage 0.9.30",
+ "imgref",
  "libm",
  "linear-srgb",
  "magetypes 0.9.30",

@@ -11,9 +11,9 @@ reimplementation.
 
 ## Vendored copy
 
-This file is a verbatim copy of `~/work/zen/zensim/scripts/lib/zen_stats.py`
+This file is a verbatim copy of `~/work/zen/zensimx/scripts/lib/zen_stats.py`
 with `_find_panel_bin()` extended to also search a sibling zensim
-checkout (`~/work/zen/zensim/target/release/panel`) so jxl-encoder
+checkout (`~/work/zen/zensimx/target/release/panel`) so jxl-encoder
 scripts can run without a local panel build. Keep in sync with the
 canonical source on stat-API changes.
 
@@ -69,7 +69,7 @@ def _find_panel_bin() -> str:
         return env
     # 1. In-tree target/{release,debug}/panel (if the user happens to
     #    have built panel inside the jxl-encoder repo for some reason).
-    # 2. Sibling zensim checkout under ~/work/zen/zensim/target/release/
+    # 2. Sibling zensim checkout under ~/work/zen/zensimx/target/release/
     #    — the canonical location when this shim is vendored into a
     #    consumer repo. Falls back to debug build.
     # 3. $HOME/.local/bin/panel — for users who symlinked the binary
@@ -78,8 +78,8 @@ def _find_panel_bin() -> str:
     candidates = [
         os.path.join(_REPO_ROOT, "target", "release", "panel"),
         os.path.join(_REPO_ROOT, "target", "debug", "panel"),
-        os.path.join(home, "work", "zen", "zensim", "target", "release", "panel"),
-        os.path.join(home, "work", "zen", "zensim", "target", "debug", "panel"),
+        os.path.join(home, "work", "zen", "zensimx", "target", "release", "panel"),
+        os.path.join(home, "work", "zen", "zensimx", "target", "debug", "panel"),
         os.path.join(home, ".local", "bin", "panel"),
     ]
     for cand in candidates:
@@ -88,7 +88,7 @@ def _find_panel_bin() -> str:
     raise FileNotFoundError(
         "zen_stats: `panel` binary not found. Build it with "
         "`cargo build --release -p zensim-validate --bin panel` from "
-        "the zensim repo, or set $ZEN_PANEL_BIN to its path."
+        "the zensimx (zensim research) repo, or set $ZEN_PANEL_BIN to its path."
     )
 
 

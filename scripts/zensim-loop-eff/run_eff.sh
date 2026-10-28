@@ -12,8 +12,8 @@ set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN=${ZDR_BIN:-${CARGO_TARGET_DIR:-$HOME/tmp/jxleff-target}/release/examples/zensim_diffmap_rd}
 OUT=${EFF_OUT:-$HOME/tmp/diffmap-eff}
-V47=${V47_BAKE:-$HOME/work/zen/zensim/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
-BLIN=${B_BAKE:-$HOME/work/zen/zensim/zensim/weights/b_sdr_linear_cid80_inclwinsor_dense_dial_2026-07-07.bin}
+V47=${V47_BAKE:-$HOME/work/zen/zensimx/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
+BLIN=${B_BAKE:-$HOME/work/zen/zensimx/zensim/weights/b_sdr_linear_cid80_inclwinsor_dense_dial_2026-07-07.bin}
 GB82=${GB82_DIR:-$HOME/work/codec-corpus/gb82-sc}
 CID=${CID_DIR:-$HOME/work/codec-corpus/CID22/CID22-512/validation}
 COH=${COH_DIR:-/mnt/v/output/zensim/diffmap-coherence-2026-07-18}

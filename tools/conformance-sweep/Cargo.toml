@@ -44,5 +44,5 @@ butteraugli = { git = "https://github.com/imazen/butteraugli", rev = "d2466a4eaa
 butteraugli-gpu = { path = "../../../zenmetrics/crates/butteraugli-gpu" }
 cvvdp-gpu = { path = "../../../zenmetrics/crates/cvvdp-gpu" }
 zensim-gpu = { path = "../../../zenmetrics/crates/zensim-gpu" }
-zensim = { path = "../../../zensim/zensim" }
+zensim = { path = "../../../zensimx/zensim" }
 zenanalyze = { path = "../../../zenanalyze" }

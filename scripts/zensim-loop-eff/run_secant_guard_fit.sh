@@ -26,7 +26,7 @@ set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN=${ZDR_BIN:-${CARGO_TARGET_DIR:-$HOME/tmp/jxlloop-target}/release/examples/zensim_diffmap_rd}
 CORPUS=${CORPUS_TSV:-$HOME/tmp/t2sec/corpus9.tsv}
-CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
+CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensimx/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
 THRESHOLDS=${THRESHOLDS:-"0 1e-4 1e-3 3e-3 6e-3 1e-2 2e-2 3e-2 6e-2 1e-1 2e-1 3e-1 6e-1"}
 KS=${KS:-"2 3"}
 TARGETS=${TARGETS:-70,80,88}

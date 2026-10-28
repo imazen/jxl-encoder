@@ -8,7 +8,7 @@ set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN=${ZDR_BIN:-${CARGO_TARGET_DIR:-$HOME/tmp/jxlloop-target}/release/examples/zensim_diffmap_rd}
 S4=${S4_OUT:-/mnt/v/output/jxl-encoder/s4-iter1-eps-2026-08-27}
-V47=${V47_BAKE:-$HOME/work/zen/zensim/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
+V47=${V47_BAKE:-$HOME/work/zen/zensimx/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
 TAB=${TAB_PATH:-$S4/ctrl_exp_table.tsv}
 SUF=${ARM_SUFFIX:-}
 CORPUS=$S4/corpus9.tsv

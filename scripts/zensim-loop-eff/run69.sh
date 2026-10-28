@@ -9,8 +9,8 @@ set -u
 BIN=${ZDR_BIN:-${CARGO_TARGET_DIR:-$HOME/tmp/jxleff-target}/release/examples/zensim_diffmap_rd}
 CORPUS=${CORPUS:-$HOME/tmp/diffmap-eff/corpus9.tsv}
 OUT=${OUT:-$HOME/tmp/attrmap-69/ab}
-V47=${V47_BAKE:-$HOME/work/zen/zensim/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
-BLIN=${B_BAKE:-$HOME/work/zen/zensim/zensim/weights/b_sdr_linear_cid80_inclwinsor_dense_dial_2026-07-07.bin}
+V47=${V47_BAKE:-$HOME/work/zen/zensimx/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
+BLIN=${B_BAKE:-$HOME/work/zen/zensimx/zensim/weights/b_sdr_linear_cid80_inclwinsor_dense_dial_2026-07-07.bin}
 ARMS=baseline,abs,attr,h1-signed,h2-ctrl,h3-mag
 mkdir -p "$OUT"
 LOG=$OUT/run69.log

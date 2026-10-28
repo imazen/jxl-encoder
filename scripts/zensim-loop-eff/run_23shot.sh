@@ -18,8 +18,8 @@ set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN=${ZDR_BIN:-${CARGO_TARGET_DIR:-$HOME/tmp/jxl23-target}/release/examples/zensim_diffmap_rd}
 OUT=${TS_OUT:-$HOME/tmp/23shot/run}
-V47=${V47_BAKE:-$HOME/work/zen/zensim/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
-BLIN=${B_BAKE:-$HOME/work/zen/zensim/zensim/weights/b_sdr_linear_cid80_inclwinsor_dense_dial_2026-07-07.bin}
+V47=${V47_BAKE:-$HOME/work/zen/zensimx/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
+BLIN=${B_BAKE:-$HOME/work/zen/zensimx/zensim/weights/b_sdr_linear_cid80_inclwinsor_dense_dial_2026-07-07.bin}
 BVLS=${BVLS_BAKE:-/mnt/v/output/zensim/bakes/v02_bvls_NO_shaping_2026-05-28.bin}
 BLEND=${BLEND_BAKE:-/mnt/v/output/zensim/reports/b_negatives/mlp_2L_diverse_H128_2026-07-15.bin}
 GB82=${GB82_DIR:-$HOME/work/codec-corpus/gb82-sc}

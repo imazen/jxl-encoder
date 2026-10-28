@@ -25,7 +25,7 @@ set -u
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN=${ZDR_BIN:-${CARGO_TARGET_DIR:-$HOME/tmp/jxlloop-target}/release/examples/zensim_diffmap_rd}
 OUT=${TS_OUT:-$HOME/tmp/jxlloop/run}
-V47=${V47_BAKE:-$HOME/work/zen/zensim/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
+V47=${V47_BAKE:-$HOME/work/zen/zensimx/zensim/weights/v47_strict_qat_native_2026-05-27.bin}
 CAND=${CAND_BAKE:-/mnt/v/output/zensim/bakes/sota944/bakes/W10L9_s4003_packed.bin}
 GB82=${GB82_DIR:-$HOME/work/codec-corpus/gb82-sc}
 CID=${CID_DIR:-$HOME/work/codec-corpus/CID22/CID22-512/validation}
@@ -311,7 +311,7 @@ if [ "$phase" = secant ]; then
   # want 54). Preserve any prior run, then start clean.
   [ -d "$SD" ] && mv "$SD" "$SD.bak.$(date -u +%s)"
   mkdir -p "$SD"
-  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
+  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensimx/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
   [ -f "$CBAKE" ] || { say "STOP: C bake missing at $CBAKE"; exit 1; }
   for sec in 0 1; do
     for mode in k2_last k2_best k3_last k3_best; do
@@ -385,7 +385,7 @@ if [ "$phase" = s3gain ]; then
   # want 54). Preserve any prior run, then start clean.
   [ -d "$SD" ] && mv "$SD" "$SD.bak.$(date -u +%s)"
   mkdir -p "$SD"
-  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
+  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensimx/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
   [ -f "$CBAKE" ] || { say "STOP: C bake missing at $CBAKE"; exit 1; }
   for gm in fixed tilesec; do
     GME=()
@@ -461,7 +461,7 @@ if [ "$phase" = s3s1 ]; then
   BD=${TS_BD:-$REPO/benchmarks}
   CTRL_TSV=$BD/zensim_loop_s3gain_decoded_2026-08-26.tsv
   [ -f "$CTRL_TSV" ] || { say "STOP: run the s3gain phase first (same-substrate controls)"; exit 1; }
-  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensim/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
+  CBAKE=${CBAKE_BAKE:-$HOME/work/zen/zensimx/zensim/weights/c_sdr_mlp944_corrmix_2026-08-05.bin}
   [ -f "$CBAKE" ] || { say "STOP: C bake missing at $CBAKE"; exit 1; }
   for gm in fixed tilesec; do
     GME=()
