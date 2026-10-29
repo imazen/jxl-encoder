@@ -409,7 +409,7 @@ required-features = ["std", "parallel"]
 linear-srgb = { version = "0.6.12", default-features = false, features = ["std"] }
 anyhow = "1.0.102"
 # Native PNG IO for canonical targeting/intervention instruments.
-zenpng = { version = "=0.1.4", default-features = false }
+zenpng = { version = ">=0.2.0, <0.4.0", default-features = false }
 # Shared Rust target controller/calibration; native adapters stay in this repo.
 zensim-target = { path = "../../zensimx/zensim-target", default-features = false }
 serde_json = "1.0.150"

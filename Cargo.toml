@@ -60,9 +60,14 @@ rust-version = "1.93"
 # bitstreams whose modular global section is empty — the same bitstreams djxl
 # and jxl-rs already accept.
 [patch.crates-io]
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "633f71e9d0c8fc82cc29b58ffaa92d367d82f9f9" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "cabe3d06e8d31911bed3964d836aefc170bff1e8" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "cabe3d06e8d31911bed3964d836aefc170bff1e8" }
+zenpng = { path = "../zenpng" }
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
+# Shared metadata types come from the same pinned sibling as direct path users.
+zencodec = { path = "../zencodec" }
+zenmeta = { path = "../zencodec/zenmeta" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "7e9d296c9e037e626234c9f0e8673d48278f83f0" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
 jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }

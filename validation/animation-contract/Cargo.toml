@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 jxl-encoder = { path = "../../jxl-encoder", default-features = false, features = ["std", "convenience"] }
 zensim-decoder = { package = "zenjxl-decoder", version = "0.4.0" }
-zenpixels-convert = { version = ">=0.2.16, <0.4.0", features = ["icc"] }
+zenpixels-convert = { version = ">=0.2.16, <0.4.0", features = ["icc-db"] }
 jxl-oxide = "0.12.6"
 enough = "0.4.3"
 
