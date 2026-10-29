@@ -769,3 +769,8 @@ beta-cohort-check:
     cargo fmt --check
     cargo clippy --locked --workspace --lib -- -D warnings
     cargo test --locked --workspace --lib --no-fail-fast
+
+# Full-range predictor and original native float/squeeze pixel oracle.
+gradient-float-check:
+    cargo test --locked -p jxl-encoder --lib --features __expert gradient_full_i32_matches_wide_arithmetic
+    cargo test --locked -p jxl-encoder --test it lossless_float::f32_with_squeeze_round_trips_bit_exactly -- --exact

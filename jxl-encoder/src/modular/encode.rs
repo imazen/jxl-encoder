@@ -308,11 +308,9 @@ fn write_improved_modular_stream_inner(
 /// when topleft is outside that range.
 #[inline]
 fn predict_gradient(left: i32, top: i32, topleft: i32) -> i32 {
-    let min = left.min(top);
-    let max = left.max(top);
-    let grad = left + top - topleft;
-    let grad_clamp_max = if topleft < min { max } else { grad };
-    if topleft > max { min } else { grad_clamp_max }
+    // Float packing uses the full i32 range. Reuse the modular predictor's
+    // wrapping intermediate arithmetic rather than overflowing before clamping.
+    super::predictor::clamped_gradient(top, left, topleft)
 }
 
 /// Predict a single pixel using a fixed `predictor_id` in `0..=13`.

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Reuse the full-range-safe modular gradient predictor for float-packed lossless encoding, avoiding intermediate signed overflow during squeeze.
+
 - Fixed: lossy float layouts coded alpha from an 8-bit copy. f16 alpha is now coded exactly as half floats, f32 alpha in [0, 1] exactly as binary32 (f32 alpha that is all half floats as f16); lossy alpha (`with_alpha_distance`) and out-of-range f32 alpha use 16-bit integers.
 - Added: `ExtraChannelBuf::F32` (and the enum is now `#[non_exhaustive]`; it is new in 0.4.0).
 - Fixed: lossy encodes with premultiplied alpha (`with_premultiplied_alpha(true)`, `AnimationParams::premultiplied_alpha`) divided colour by alpha before coding while flagging the alpha as premultiplied, so decoders returned straight colour labelled premultiplied (too bright wherever alpha < 1). The samples are now coded as given, as libjxl does.

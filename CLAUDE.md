@@ -5457,3 +5457,17 @@ reference check. It requires libjxl 0.12 and verifies every RGB sample in three
 presentations per file against the authored integer formula (17×13 and
 511×259; 10/12/16 bits; sRGB/linear/PQ/HLG). The reference is validation-only.
 Reference commit a7a9c787341cf703dede03c2009fa460cae5e5df passed all 24 files.
+
+## Known Bugs: full-range gradient intermediate overflow (2026-10-29)
+
+CI coverage at 11c6eb0c reproduced a debug overflow in the modular encoder's
+private gradient helper during the existing F32 squeeze round-trip. Float
+packing uses full-range i32 values, so an intermediate sum can overflow even
+when the clamped answer fits. The existing predictor module already implements
+the required wrapping intermediate arithmetic. The private encode helper now
+delegates to it. The new boundary control compares all triples of seven
+extrema against an i64 clamped oracle. The pre-fix boundary test fails; the
+fixed boundary and unchanged native F32 squeeze round-trip pass, including
+libjxl acceptance. The expert library suite passes (1717 passed, 29 existing
+ignored), and strict workspace/all-target Clippy passes. No pixel assertion
+or overflow check is disabled. Evidence: benchmarks/gradient_float_2026-10-29.md.
