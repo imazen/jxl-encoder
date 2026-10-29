@@ -3620,6 +3620,24 @@ mod tests {
     }
 
     #[test]
+    fn gradient_full_i32_matches_wide_arithmetic() {
+        let values = [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX];
+        for left in values {
+            for top in values {
+                for topleft in values {
+                    let exact = i64::from(left) + i64::from(top) - i64::from(topleft);
+                    let expected = exact.clamp(i64::from(left.min(top)), i64::from(left.max(top)));
+                    assert_eq!(
+                        i64::from(predict_gradient(left, top, topleft)),
+                        expected,
+                        "left={left}, top={top}, topleft={topleft}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_encode_hybrid_uint() {
         assert_eq!(encode_hybrid_uint_000(0), (0, 0, 0));
         assert_eq!(encode_hybrid_uint_000(1), (1, 0, 0));
