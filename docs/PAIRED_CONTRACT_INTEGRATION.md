@@ -43,3 +43,15 @@ The regenerated paired workspace passes `cargo check --workspace --release
 --locked`, including the CLI and tuning runner (rc0, 30 seconds, peak RSS
 0.63 GiB, minimum available 13753 MiB). No lock relaxation was used for that
 check. The original unregenerated-lock CI failures remain recorded.
+
+The expert-enabled encoder library suite passes with the checksum-pinned CI
+libjxl v0.12.0 oracle: 1716 passed, zero failures, 29 pre-existing ignores.
+The initial run had 25 failures, all from the unavailable v0.12 executable;
+the unchanged rerun passes after supplying that exact oracle. Final wrapper:
+rc0, 11 seconds, peak RSS 0.60 GiB, minimum available 13590 MiB. The initial
+build/run receipt remains rc101, 407 seconds, peak RSS 1.83 GiB.
+CI run 40920302100 also reports strict Clippy success on x64 and ARM64.
+The full portable zenjxl runtime suite passes 203 tests with zero failures and
+one existing ignored doctest; all-feature/all-target Clippy passes too.
+These gates qualify the integration; they are not a claim that every platform
+release gate or performance study is complete.
