@@ -1,0 +1,44 @@
+[package]
+name = "jxl-animation-contract-validation"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+jxl-encoder = { path = "../../jxl-encoder", default-features = false, features = ["std", "convenience"] }
+zensim-decoder = { package = "zenjxl-decoder", version = "0.4.0" }
+zenpixels-convert = { version = ">=0.2.16, <0.4.0", features = ["icc"] }
+jxl-oxide = "0.12.6"
+enough = "0.4.3"
+
+[[test]]
+name = "animation_contract"
+path = "../../jxl-encoder/tests/animation_contract.rs"
+
+[patch.crates-io]
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
+zenjxl-decoder = { git = "https://github.com/imazen/zenjxl-decoder", rev = "fe819360581acb3796ea2925f2a81f44f0a430e6" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "7e9d296c9e037e626234c9f0e8673d48278f83f0" }
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "c73a3cc90997c0553832243daba383ac3086dc98" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "7b6d1436db5d771fc43226c146847fc76305afde" }
+zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
+butteraugli = { git = "https://github.com/imazen/butteraugli", rev = "554a42f832ceffe7a70303d43f3cddcd5a8cd275" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "3f4fd14feb9bdfed041e426aaa569b236a201158" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "3f4fd14feb9bdfed041e426aaa569b236a201158" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "3f4fd14feb9bdfed041e426aaa569b236a201158" }
+jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-bitstream = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-coding = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-frame = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-grid = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-modular = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-render = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-vardct = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
+jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }

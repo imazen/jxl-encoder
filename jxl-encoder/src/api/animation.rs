@@ -8,9 +8,9 @@ use super::*;
 /// Animation timing parameters.
 #[derive(Clone, Debug)]
 pub struct AnimationParams {
-    /// Ticks per second numerator (default 100 = 10ms precision).
+    /// Ticks per second numerator, 1..=2^30 (default 100 = 10ms precision).
     pub tps_numerator: u32,
-    /// Ticks per second denominator (default 1).
+    /// Ticks per second denominator, 1..=1024 (default 1).
     pub tps_denominator: u32,
     /// Number of loops: 0 = infinite (default), >0 = play N times.
     pub num_loops: u32,
@@ -60,7 +60,7 @@ impl Default for AnimationParams {
 pub struct AnimationFrame<'a> {
     /// Raw pixel data (must match width/height/layout from the encode call).
     pub pixels: &'a [u8],
-    /// Duration of this frame in ticks (tps_numerator/tps_denominator seconds per tick).
+    /// Duration in ticks (`tps_denominator / tps_numerator` seconds per tick).
     pub duration: u32,
     /// Per-frame blend mode (libjxl `BlendingInfo::mode`). `None` keeps the
     /// encoder default — `Replace` for frame 0 and any full-frame replacement,

@@ -48,6 +48,21 @@
 - Fixed: `ImageMetadata::with_intrinsic_size` wrote a header that libjxl and jxl-oxide could not decode; the intrinsic size is now a SizeHeader (`5923e603`).
 - Extend the private native quantizer intervention probe to frozen Rev5 D12 refinement gains and butteraugli pixel-map providers, with explicit first-party linear input transfer and unchanged neutral controls.
 
+### Animation request contract
+
+- `EncodeRequest::encode_animation` applies the same metadata, color encoding,
+  sample precision, limits, and cancellation controls as still-image requests.
+  Existing configuration animation methods delegate to this entry point.
+- Preserve ICC profiles, 10/12/16-bit modular samples, HDR color signaling, and
+  full 10/12/16-bit alpha in lossy animation. Apply declared linear and custom
+  gamma input transfer functions before the lossy XYB transform.
+- Reject zero animation clocks, out-of-range sample codes, and unsupported
+  custom extra-channel/stride requests before encoding.
+- Animation fixtures cover odd and multiple-group dimensions and are checked
+  against both Rust decoders and the pinned libjxl 0.12 reference.
+- Reject animation clocks outside numerator 1..=2^30 and denominator 1..=1024 before encoding and in the header writer. Previously larger `u32` values overflowed their bit fields and corrupted following metadata. Bounds match libjxl 0.12 `AnimationHeader::VisitFields`.
+- Fix malformed lossless animation headers when identical frames repeat on a 1×1 canvas. Omit the redundant full-canvas crop so Replace blending does not emit a partial-frame source field.
+
 ### QUEUED BREAKING CHANGES
 - `EncoderImprovementsCustom` gains `lossless_lz77_keep_best`; exhaustive struct literals must supply it or use `..Default::default()` (`4e1d70a6`).
 

@@ -9,11 +9,31 @@
 
 ## summary
 #
-#   trait roster entries (type × trait)         1
+#   pub modules                                 1
+#   free functions                             12
+#   trait roster entries (type × trait)         2
+#
+# per-module pub lines:
+#   (root)                            1
+#   bench_cbrt                       12
 
-## items (0 lines)
+## items (13 lines)
 
+pub fn bench_cbrt::cbrt_libjxl_batch(&[f32], &mut [f32])
+pub fn bench_cbrt::cbrt_libjxl_batch_impl_scalar(archmage::tokens::ScalarToken, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_libjxl_batch_impl_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_lowp_batch(&[f32], &mut [f32])
+pub fn bench_cbrt::cbrt_lowp_batch_impl_scalar(archmage::tokens::ScalarToken, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_lowp_batch_impl_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_lowp_vecguess_batch(&[f32], &mut [f32])
+pub fn bench_cbrt::cbrt_lowp_vecguess_batch_impl_scalar(archmage::tokens::ScalarToken, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_lowp_vecguess_batch_impl_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_midp_batch(&[f32], &mut [f32])
+pub fn bench_cbrt::cbrt_midp_batch_impl_scalar(archmage::tokens::ScalarToken, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_midp_batch_impl_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &mut [f32], usize)
+pub mod bench_cbrt
 
-## trait impls (1 types)
+## trait impls (2 types)
 
 EntropyCoeffResult: TrivialClone
+XybCubeRoot: TrivialClone

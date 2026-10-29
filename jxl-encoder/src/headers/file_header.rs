@@ -108,6 +108,13 @@ impl AnimationHeader {
     /// - num_loops: u2S(0, Bits(3), Bits(16), Bits(32))
     /// - have_timecodes: Bool(false)
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
+        if !(1..=1 << 30).contains(&self.tps_numerator)
+            || !(1..=1024).contains(&self.tps_denominator)
+        {
+            return Err(crate::error::Error::InvalidInput(
+                "animation clock exceeds its bitstream fields".into(),
+            ));
+        }
         // tps_numerator: u2S(100, 1000, BitsOffset(10,1), BitsOffset(30,1))
         match self.tps_numerator {
             100 => writer.write(2, 0)?,
@@ -132,7 +139,7 @@ impl AnimationHeader {
                 writer.write(8, (v - 1) as u64)?;
             }
             v => {
-                debug_assert!((1..=1025).contains(&v), "tps_denominator {v} out of range");
+                debug_assert!((1..=1024).contains(&v), "tps_denominator {v} out of range");
                 writer.write(2, 3)?;
                 writer.write(10, (v - 1) as u64)?;
             }
