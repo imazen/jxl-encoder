@@ -120,6 +120,11 @@ issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
 hdr-intensity-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test hdr_intensity -- --nocapture
 
+# Caller supplies pinned siblings, v0.12 tools, flock and run-heavy controls.
+subsampled-metadata-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding,chroma-subsampling --test subsampled_odd_shapes --test subsampled_metadata
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding,chroma-subsampling --lib --test subsampled_odd_shapes --test subsampled_metadata -- -D warnings
+
 # Linux object oracle from an unmodified libjxl v0.12 build.
 libjxl-gradient-dc-oracle include object out:
     c++ -std=c++17 -O1 -no-pie -I{{quote(include)}} scripts/libjxl_gradient_dc.cc {{quote(object)}} -Wl,--unresolved-symbols=ignore-all -o {{quote(out)}}

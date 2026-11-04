@@ -65,6 +65,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it -- jbrd_roundtrip_conformance jbrd_spec_validity
 
+      - name: Subsampled RGB8 geometry, HDR and ICC metadata
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          cargo test --locked -p jxl-encoder --features jpeg-reencoding,chroma-subsampling
+          --test subsampled_odd_shapes --test subsampled_metadata
+
       - name: Test the external loop metric (__external_metric)
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked --release -p jxl-encoder --features __external_metric --test it -- external_metric loop_trace
