@@ -68,7 +68,7 @@ fn layer2_encoder_rejects_non_jpeg_input() {
     let png_bytes = [0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     let res = cfg.encode_jpeg_transcode(&png_bytes);
     assert!(res.is_err(), "encoder must reject non-JPEG bytes");
-    let err = res.unwrap_err().into_inner();
+    let (err, _trace) = res.unwrap_err().decompose();
     match err {
         EncodeError::JpegParse { .. } | EncodeError::InvalidInput { .. } => {}
         other => panic!("unexpected error variant for non-JPEG input: {:?}", other),

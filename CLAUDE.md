@@ -1731,6 +1731,18 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: strict JPEG integration-test lint
+
+The JPEG integration target now uses explicit error decomposition, a range
+pattern and the established alignment predicate. Outcome diagnostics have an
+explicit Debug implementation that reads every payload and retains the prior
+derived formatting. No field, assertion, accepted/rejected fixture or warning
+is removed. Strict JPEG library/test Clippy and fourteen reconstruction,
+validity and typed-error checks pass (`~/tmp/jxl-jpeg-lint-check.log`, rc0,
+60 s, peak RSS 1.09 GiB). The prior seven diagnostics remain recorded in
+`~/tmp/jxl-gainmap-after.log`.
+
+
 ### RESOLVED 2026-11-04: gain-map EXIF overrode an absent/invalid primary tag
 
 The gain-map side transcode always receives the primary's resolved native

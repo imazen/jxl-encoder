@@ -127,7 +127,7 @@ fn known_failure(_name: &str, _f: &JpegFeatures) -> Option<&'static str> {
 /// Policy: which inputs the JXL-JBRD container can carry byte-exactly. cjxl
 /// refuses the same boundaries (4-component, arithmetic, 12-bit, sampling > 2).
 fn classify(f: &JpegFeatures) -> Expect {
-    let arithmetic = matches!(f.sof_marker, 0xC9 | 0xCA | 0xCB);
+    let arithmetic = matches!(f.sof_marker, 0xC9..=0xCB);
     let lossless_or_hier = matches!(f.sof_marker, 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xCD | 0xCE | 0xCF);
     let bad_components = !matches!(f.num_components, 1 | 3);
     let sampling_gt2 = f.max_h > 2 || f.max_v > 2;
@@ -141,7 +141,6 @@ fn classify(f: &JpegFeatures) -> Expect {
 
 // ───────────────────────────── outcome model ─────────────────────────────
 
-#[derive(Debug)]
 enum Outcome {
     Rejected,                              // encoder returned Err — clean refusal
     RoundTripped,                          // encoded + reconstructed byte-exact
@@ -150,6 +149,26 @@ enum Outcome {
     ReconError(String),                    // encoded OK but the decoder errored
     EncodePanic(String),                   // encoder panicked — robustness bug
     DecodePanic(String),                   // decoder panicked — robustness bug
+}
+
+// Keep every diagnostic payload visible to the compiler as well as the
+// reporter; this has the same formatting as the former derived Debug impl.
+impl std::fmt::Debug for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rejected => f.write_str("Rejected"),
+            Self::RoundTripped => f.write_str("RoundTripped"),
+            Self::NoReconstruction => f.write_str("NoReconstruction"),
+            Self::Corrupted { got, want } => f
+                .debug_struct("Corrupted")
+                .field("got", got)
+                .field("want", want)
+                .finish(),
+            Self::ReconError(error) => f.debug_tuple("ReconError").field(error).finish(),
+            Self::EncodePanic(error) => f.debug_tuple("EncodePanic").field(error).finish(),
+            Self::DecodePanic(error) => f.debug_tuple("DecodePanic").field(error).finish(),
+        }
+    }
 }
 
 fn panic_msg(e: Box<dyn std::any::Any + Send>) -> String {

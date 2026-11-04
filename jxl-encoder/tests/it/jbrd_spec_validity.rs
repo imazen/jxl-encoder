@@ -92,7 +92,7 @@ fn synthetic_icc(total: usize) -> Vec<u8> {
         t.extend_from_slice(text);
         t.extend_from_slice(&[0u8; 11]); // ucs2 code + count, scriptcode code + count
         t.extend_from_slice(&[0u8; 67]); // scriptcode text
-        while t.len() % 4 != 0 {
+        while !t.len().is_multiple_of(4) {
             t.push(0);
         }
         t
