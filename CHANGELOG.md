@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- The CVVDP and zensim perceptual loops read planes at their padded width and no longer copy the distorted planes into a tight scratch on each compare; GPU CVVDP packs once inside the scorer because it uploads tight (`5b02572c`).
+
 - Reuse the full-range-safe modular gradient predictor for float-packed lossless encoding, avoiding intermediate signed overflow during squeeze.
 
 - Fixed: lossy float layouts coded alpha from an 8-bit copy. f16 alpha is now coded exactly as half floats, f32 alpha in [0, 1] exactly as binary32 (f32 alpha that is all half floats as f16); lossy alpha (`with_alpha_distance`) and out-of-range f32 alpha use 16-bit integers.
