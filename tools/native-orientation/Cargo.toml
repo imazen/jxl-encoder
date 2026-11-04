@@ -1,0 +1,15 @@
+[package]
+name = "native-orientation-contract"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+jxl-encoder = { path = "../../jxl-encoder", default-features = false, features = ["std", "convenience"] }
+zensim-decoder = { package = "zenjxl-decoder", git = "https://github.com/imazen/zenjxl-decoder", rev = "f27c5c6fb56b76c952d88aa7d5231a06f7e49b51" }
+
+[[test]]
+name = "native_orientation"
+path = "../../jxl-encoder/tests/native_orientation.rs"

@@ -820,3 +820,25 @@ beta-cohort-check:
 gradient-float-check:
     cargo test --locked -p jxl-encoder --lib --features __expert gradient_full_i32_matches_wide_arithmetic
     cargo test --locked -p jxl-encoder --test it lossless_float::f32_with_squeeze_round_trips_bit_exactly -- --exact
+
+# Uses the same locked source closure as CI; caller provides verified v0.12 tools.
+native-orientation-animation-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test native_orientation animation_metadata_preserves_native_orientation
+
+native-orientation-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding --test native_orientation
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding --test it jpeg_gainmap::iso_gain_map_follows
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding --test native_orientation -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -- --check
+
+# Diagnostic v0.12 decoder with failure locations; caller supplies run-heavy controls.
+libjxl-debug-oracle source out:
+    cmake -S {{quote(source)}} -B {{quote(out)}} -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g1" "-DCMAKE_C_FLAGS_DEBUG=-O1 -g1" -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_JPEGLI=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_DEVTOOLS=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_FORCE_SYSTEM_LCMS2=ON -DBUILD_TESTING=OFF
+    cmake --build {{quote(out)}} --target djxl --parallel "${CARGO_BUILD_JOBS:-4}"
+
+# Explicit caller-selected original-ICC oracle: default djxl cannot coalesce arbitrary-ICC XYB crops.
+libjxl-original-profile-oracle source build out:
+    c++ -std=c++17 -O1 scripts/libjxl_original_profile.cc -I{{quote(source + "/lib/include")}} -I{{quote(build + "/lib/include")}} -L{{quote(build + "/lib")}} -Wl,-rpath,{{quote(build + "/lib")}} -ljxl -ljxl_cms -o {{quote(out)}}
+
+native-orientation-icc-check manifest oracle:
+    LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests --test native_orientation original_icc_orientation_control -- --exact

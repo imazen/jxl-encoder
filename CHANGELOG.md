@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Native orientation via `ImageMetadata::with_orientation(Orientation)` for lossless and VarDCT still images and animations, preserving coded pixel order and dimensions.
+
 - Expand ICC repetition regressions through 4 MB and validate named RGB/CMYK profiles. Advance the native decoder pin with the ICC read-ahead repair while retaining its paired API review changes; upstream decoder failures remain explicit (`7197f8b5`).
 
 - Correct float exponent-field parsing in the independent bitstream diagnostic, preserving alignment of later metadata and frame fields (`fa1b084a`).

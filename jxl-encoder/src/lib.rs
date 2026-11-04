@@ -110,6 +110,8 @@ pub(crate) mod zq_seed;
 #[cfg(feature = "convenience")]
 pub mod convenience;
 
+/// Native JPEG XL display orientation (the EXIF 1–8 table).
+pub use headers::file_header::Orientation;
 #[cfg(feature = "__external_metric")]
 pub use loop_metric::{ExternalLoopMetric, ExternalMetric};
 pub use loop_trace::{LoopFrame, LoopTrace};
