@@ -181,7 +181,7 @@ class Parser:
             self.f(f"{p}.bits_per_sample",
                    br.u32([("V", 32), ("V", 16), ("V", 24), ("O", (6, 1))]))
             self.f(f"{p}.exponent_bits",
-                   br.u32([("V", 8), ("V", 5), ("V", 10), ("O", (6, 1))]))
+                   1 + br.bits(4))
 
     # ── ColorEncoding ───────────────────────────────────────────────────────
     def custom_xy(self, p):

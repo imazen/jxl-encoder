@@ -2066,6 +2066,16 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: diagnostic float bit-depth parsing
+
+`scripts/jxl_bitstream_diff.py::bit_depth` now reads the float exponent
+field as `1 + Bits(4)`, matching libjxl v0.12
+`image_metadata.cc::BitDepth::VisitFields`. Its prior U32 selector consumed
+the wrong number of bits and shifted later metadata/frame fields.
+`test_float_metadata_keeps_the_following_fields_aligned` pins a frozen
+real PQ F32 header and fails before the repair (34 exponent bits vs 8).
+No encoder gate or emitted bytes change.
+
 ### 2026-11-04: perceptual metric operands use one color domain (`f3559269`)
 
 | Site | Ours after repair | libjxl v0.12 | Status |

@@ -98,6 +98,9 @@ issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
     cargo test --release --manifest-path {{quote(manifest)}}
     cargo clippy --manifest-path {{quote(manifest)}} --all-targets -- -D warnings
 
+bitstream-parser-check:
+    python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
+
 # Caller supplies pinned siblings, reference tools, and run-heavy controls.
 metric-domain-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __external_metric --test metric_color_domain --test external_metric

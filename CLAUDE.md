@@ -1678,6 +1678,16 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: envelope parser misread floating-point exponent width
+
+`scripts/jxl_bitstream_diff.py::bit_depth` read `exponent_bits` with U32
+selector coding, while the writer and libjxl v0.12 use `1 + Bits(4)`.
+On a real PQ F32 stream it reported exponent 34 and shifted every later
+field, including a false 1.279-nit intensity. The frozen-header regression
+fails before the repair and passes afterward with exponent 8, PQ, XYB and
+10000-nit intensity. `just bitstream-parser-check` preserves the existing
+reference-frame test too. This repairs diagnostic parsing, not pixels.
+
 ### 2026-11-04: perceptual-loop HDR scale and reference primaries
 
 Confirmed by `metric_color_domain` before the repair: at 1000 nits the
