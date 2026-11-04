@@ -89,6 +89,10 @@ fast-decode-conformance source +files:
     CARGO_BUILD_JOBS=4 nice -n 19 cargo build --release --manifest-path "{{justfile_directory()}}/tools/decoder-conformance/Cargo.toml"
     DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" "{{justfile_directory()}}/tools/decoder-conformance/target/release/decoder-conformance" "{{source}}" {{files}}
 
+# Replay every encoder failure recorded in issue 138 through 2026-11-02.
+issue138-replay binary out corpus icc:
+    python3 scripts/replay_issue138.py {{quote(binary)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
+
 # Weekly conformance sweep (tools/conformance-sweep): random real-image
 # encodes checked by djxl v0.12, upstream jxl-rs and zenjxl-decoder.
 # `just conformance-sweep <out> <icc-dir> <images-or-dirs>... [--seed N] [--cells N] [--minutes N]`
