@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Preserve caller color encoding, ICC, tone mapping and intrinsic size in optional subsampled RGB8 encoding; forward cancellation and memory-budget controls into coefficient coding.
+
 - Fix optional RGB8 chroma subsampling on partial MCU dimensions; reject malformed public JPEG coefficient grids before indexing them.
 
 - Expand ICC repetition regressions through 4 MB and validate named RGB/CMYK profiles. Advance the native decoder pin with the ICC read-ahead repair while retaining its paired API review changes; upstream decoder failures remain explicit (`7197f8b5`).

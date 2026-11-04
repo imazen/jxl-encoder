@@ -8206,7 +8206,7 @@ impl<'a> EncodeRequest<'a> {
         // them the InvalidConfig fallback still ships.
         #[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
         if !cfg.chroma_subsampling.is_full() {
-            return self.encode_lossy_sub_via_jpeg_path(cfg, pixels);
+            return self.encode_lossy_sub_via_jpeg_path(cfg, pixels, budget);
         }
         if !cfg.chroma_subsampling.is_full() {
             return Err(EncodeError::InvalidConfig {
@@ -9104,15 +9104,16 @@ impl<'a> EncodeRequest<'a> {
     ///
     /// Currently only honours [`PixelLayout::Rgb8`] — Rgba8 / Bgra8 /
     /// Gray / 16-bit / float / linear layouts return
-    /// [`EncodeError::InvalidConfig`]. The encoder ignores extras,
-    /// EXIF/XMP, ICC profile, progressive mode, butteraugli loop,
-    /// splines, patches, and rate-control for the subsampled paths
-    /// (none of those are wired through the JPEG-shaped pipeline yet).
+    /// [`EncodeError::InvalidConfig`]. Color, ICC, tone mapping, intrinsic
+    /// size and container metadata follow the request. Progressive mode,
+    /// butteraugli loop, splines, patches and rate control are not wired
+    /// through this JPEG-shaped coefficient pipeline.
     #[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
     fn encode_lossy_sub_via_jpeg_path(
         &self,
         cfg: &LossyConfig,
         pixels: &[u8],
+        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
         let mode = cfg.chroma_subsampling;
         let tag = mode.tag();
@@ -9149,12 +9150,75 @@ impl<'a> EncodeRequest<'a> {
                 ),
             });
         }
-        let bytes = crate::vardct::chroma_subsampling::encode_rgb8_via_jpeg_path(
+        let jpeg = crate::vardct::chroma_subsampling::synth_jpeg_data_from_rgb8(
             pixels,
             w,
             h,
             cfg.distance,
             mode,
+        )
+        .map_err(EncodeError::from)?;
+        let mut header = crate::jpeg::build_jpeg_file_header(w, h, false);
+        if let Some(ce) = self.color_encoding.clone() {
+            if ce.color_space != crate::ColorSpace::Rgb {
+                return Err(EncodeError::InvalidConfig {
+                    message: "subsampled RGB8 requires an RGB color encoding".into(),
+                });
+            }
+            // This path codes the supplied nonlinear samples directly; it
+            // cannot convert a separately declared source gamma to another TF.
+            if let Some(gamma) = self.source_gamma
+                && ce.gamma != Some(gamma)
+            {
+                return Err(EncodeError::InvalidConfig {
+                    message: "subsampled RGB8 source gamma must match its color encoding".into(),
+                });
+            }
+            header.metadata.color_encoding = ce;
+        } else if let Some(gamma) = self.source_gamma {
+            header.metadata.color_encoding = crate::ColorEncoding::with_gamma(gamma);
+        }
+        header.metadata.intensity_target = match header.metadata.color_encoding.transfer_function {
+            crate::TransferFunction::Pq => 10_000.0,
+            crate::TransferFunction::Hlg => 1_000.0,
+            _ => 255.0,
+        };
+        let icc = self.metadata.and_then(|m| m.icc_profile);
+        if let Some((width, height)) = self.metadata.and_then(|meta| meta.intrinsic_size) {
+            header.metadata.have_intrinsic_size = true;
+            header.metadata.intrinsic_width = width;
+            header.metadata.intrinsic_height = height;
+        }
+        if let Some(value) = self
+            .intensity_target
+            .or_else(|| self.metadata.and_then(|m| m.intensity_target))
+        {
+            header.metadata.intensity_target = value;
+        }
+        if let Some(value) = self
+            .min_nits
+            .or_else(|| self.metadata.and_then(|m| m.min_nits))
+        {
+            header.metadata.min_nits = value;
+        }
+        if let Some(value) = self
+            .relative_to_max_display
+            .or_else(|| self.metadata.and_then(|m| m.relative_to_max_display))
+        {
+            header.metadata.relative_to_max_display = value;
+        }
+        if let Some(value) = self
+            .linear_below
+            .or_else(|| self.metadata.and_then(|m| m.linear_below))
+        {
+            header.metadata.linear_below = value;
+        }
+        let bytes = crate::jpeg::encode_jpeg_pixels_with_header(
+            &jpeg,
+            &header,
+            icc,
+            self.stop,
+            Some(budget),
         )
         .map_err(EncodeError::from)?;
         let stats = EncodeStats {

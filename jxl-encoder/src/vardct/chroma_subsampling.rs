@@ -670,7 +670,7 @@ fn pad_component_to_mcu(
 /// [`crate::error::Error::InvalidInput`] — the Full444 path uses the
 /// standard VarDCT pipeline, not this JPEG-shaped helper.
 #[cfg(feature = "jpeg-reencoding")]
-fn synth_jpeg_data_from_rgb8(
+pub(crate) fn synth_jpeg_data_from_rgb8(
     rgb: &[u8],
     width: usize,
     height: usize,

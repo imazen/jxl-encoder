@@ -1745,10 +1745,31 @@ validity checks, fifteen existing subsampling checks and focused strict
 Clippy pass (`~/tmp/jxl-subsampled-grid-check.log`). Wrapper: rc=0, 158 s,
 peak RSS 2.72 GiB. No existing expectation changed.
 
-Still active: aligned subsampled RGB8 requests drop caller HDR color/tone,
-intrinsic-size and ICC fields. Independent header regressions reproduce this
-separately from the repaired geometry. EXIF/XMP container forwarding already
-exists; do not describe those fields as dropped.
+### RESOLVED 2026-11-04: optional subsampled RGB8 metadata forwarding
+
+The synthetic pixel-coefficient path now supplies its RGB color encoding,
+ICC, tone mapping and intrinsic size to the JPEG-shaped writer through a
+private header override. Ordinary JPEG input retains its original ICC/EXIF
+import and reconstruction path. Request tone overrides win over metadata;
+unset PQ/HLG intensity targets use 10,000/1,000 nits. Source gamma is tagged;
+incompatible gamma/color-space combinations fail explicitly. The request's
+Stop and memory budget also reach coefficient coding. EXIF/XMP container
+forwarding already existed and remains independent.
+
+The 72 selected HDR cases cover all three subsampling modes, aligned/odd/
+multi-group sizes, default/metadata/request intensity and tone overrides.
+Every stream fully renders through Rust and djxl v0.12; djxl PQ/HLG samples
+and Rust PQ samples stay within the fixed 0.005 source-signal bound. Rust HLG
+output has the separately tracked Z1 discrepancy, so only full rendering is
+claimed there. Nine Display P3 streams preserve exact ICC bytes and render in
+both decoders. Gamma and incompatible-color controls pass. The original
+48-cell shape matrix, minimal JPEG build and strict focused Clippy pass
+(`~/tmp/jxl-subsampled-expanded-2.log`, rc=0, 16 s, peak RSS 1.12 GiB).
+Library/JBRD/subsampling gates also pass with the metadata writer
+(`~/tmp/jxl-subsampled-metadata-check-2.log`); that earlier encompassing
+command fails only at the subsequently repaired collapsible-if lint.
+CI explicitly exercises the optional feature pair through
+`just subsampled-metadata-check`'s test targets.
 
 
 ### RESOLVED 2026-11-04: envelope parser misread floating-point exponent width

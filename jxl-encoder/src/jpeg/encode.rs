@@ -106,7 +106,7 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
 ///
 /// Effort 0-8 is byte-identical to [`encode_jpeg_to_jxl`] (which uses effort 7).
 pub fn encode_jpeg_to_jxl_with_effort(jpeg: &JpegData, effort: u8) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, None, None, None)?;
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, None, None, None, None)?;
     Ok(codestream)
 }
 
@@ -122,7 +122,7 @@ pub(crate) fn encode_jpeg_to_jxl_with_effort_stop(
     stop: Option<&dyn Stop>,
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<Vec<u8>> {
-    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, None)?;
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, None, None)?;
     Ok(codestream)
 }
 
@@ -137,7 +137,22 @@ pub(crate) fn encode_jpeg_to_jxl_oriented_stop(
     budget: Option<&Arc<MemoryBudget>>,
 ) -> Result<Vec<u8>> {
     let (codestream, _split) =
-        encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, Some(orientation))?;
+        encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, Some(orientation), None)?;
+    Ok(codestream)
+}
+
+/// Encode synthetic pixel coefficients with the caller's pixel metadata.
+/// Ordinary JPEG reconstruction always keeps the JPEG-derived header path.
+#[cfg(feature = "chroma-subsampling")]
+pub(crate) fn encode_jpeg_pixels_with_header(
+    jpeg: &JpegData,
+    header: &FileHeader,
+    icc: Option<&[u8]>,
+    stop: Option<&dyn Stop>,
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<Vec<u8>> {
+    let (codestream, _) =
+        encode_jpeg_to_jxl_inner(jpeg, 7, stop, budget, None, Some((header, icc)))?;
     Ok(codestream)
 }
 
@@ -161,6 +176,7 @@ fn encode_jpeg_to_jxl_inner(
     stop: Option<&dyn Stop>,
     budget: Option<&Arc<MemoryBudget>>,
     orientation: Option<crate::headers::file_header::Orientation>,
+    pixel_header: Option<(&FileHeader, Option<&[u8]>)>,
 ) -> Result<(Vec<u8>, usize)> {
     if let Some(s) = stop {
         s.check().map_err(|_| crate::error::Error::Cancelled)?;
@@ -1267,23 +1283,28 @@ fn encode_jpeg_to_jxl_inner(
     let mut writer =
         BitWriter::with_capacity_fallible(budget.is_some_and(|b| b.is_fallible()), output_cap)?;
 
-    // Extract ICC profile from JPEG APP2 markers (if present)
-    let icc_profile = extract_icc(jpeg);
-
-    // File header (write() includes the signature)
-    let mut file_header = build_jpeg_file_header(width, height, is_gray);
+    // Pixel-originated coefficients use their request metadata. JPEG inputs
+    // retain their original ICC and Exif import for exact reconstruction.
+    let jpeg_icc = if pixel_header.is_none() {
+        extract_icc(jpeg)
+    } else {
+        None
+    };
+    let icc_profile = pixel_header.map_or(jpeg_icc.as_deref(), |(_, icc)| icc);
+    let mut file_header = pixel_header.map_or_else(
+        || build_jpeg_file_header(width, height, is_gray),
+        |(header, _)| header.clone(),
+    );
     if let Some(orientation) = orientation {
         file_header.metadata.orientation = orientation;
-    } else if let Some(exif) = super::jbrd::exif_payload(jpeg) {
+    } else if pixel_header.is_none()
+        && let Some(exif) = super::jbrd::exif_payload(jpeg)
+    {
         file_header.metadata.orientation = exif_orientation(exif).unwrap_or_default();
     }
-    if icc_profile.is_some() {
-        file_header.metadata.color_encoding.want_icc = true;
-    }
+    file_header.metadata.color_encoding.want_icc = icc_profile.is_some();
     file_header.write(&mut writer)?;
-
-    // Write ICC profile data after file header (PredictICC encoded)
-    if let Some(ref icc) = icc_profile {
+    if let Some(icc) = icc_profile {
         crate::icc::write_icc(icc, &mut writer)?;
     }
 
@@ -1455,7 +1476,7 @@ pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
     max_pixels: Option<u64>,
 ) -> Result<Vec<u8>> {
     let (codestream, file_header_size) =
-        encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, None)?;
+        encode_jpeg_to_jxl_inner(jpeg, effort, stop, budget, None, None)?;
     let jbrd = encode_jbrd(jpeg)?;
     let exif = extract_exif(jpeg);
     let xmp = extract_xmp(jpeg);
@@ -1859,7 +1880,7 @@ fn exif_orientation(exif: &[u8]) -> Option<crate::headers::file_header::Orientat
 }
 
 /// Build the JXL file header for JPEG reencoding.
-fn build_jpeg_file_header(width: usize, height: usize, is_gray: bool) -> FileHeader {
+pub(crate) fn build_jpeg_file_header(width: usize, height: usize, is_gray: bool) -> FileHeader {
     let color_encoding = if is_gray {
         // Grayscale sRGB with Relative rendering intent (matches libjxl SRGB(true))
         ColorEncoding {

@@ -2066,6 +2066,12 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: optional RGB8 subsampling retains pixel-request metadata
+
+| Site | Ours after repair | libjxl v0.12 | Status |
+|---|---|---|---|
+| `api.rs::encode_lossy_sub_via_jpeg_path`, `jpeg/encode.rs` private pixel header override | Forward RGB color/gamma, ICC, tone mapping and intrinsic size. Request tone values override metadata; default PQ/HLG targets are 10000/1000 nits. Reject contradictory source gamma or non-RGB declarations on RGB8. Ordinary JPEG reconstruction keeps its existing metadata import. | Pixel-input color/profile/basic-info metadata accompanies the encoded image; JPEG inputs import their own metadata. | RESOLVED silent metadata loss on the optional feature pair. 72 HDR and nine ICC cases fully render through both decoders; source-signal checks cover djxl PQ/HLG and Rust PQ. Rust HLG signal equality remains outside this assertion (tracked Z1). This is not a new subsampling quality/default policy. |
+
 ### 2026-11-04: optional RGB8 subsampling completes MCU component grids
 
 | Site | Ours after repair | libjxl v0.12 | Status |
