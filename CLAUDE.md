@@ -1731,6 +1731,31 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-04: native CI runner disk exhaustion
+
+Run 41889610596's Linux native job 126783674073 ended with the runner's
+`System.IO.IOException: No space left on device` while workspace tests were
+in progress. Its test step has no failed-test verdict or downloadable job
+log; the failure is recorded in the check-run annotations. The native job
+configuration now disables incremental output and debug symbols in dev,
+test and release artifacts, retaining optimization and assertion settings.
+The native cache prefix changes with that configuration. Cross, coverage
+and lint job profiles retain their existing settings. Verify a new complete
+CI run; this configuration change is not itself a passing CI result.
+Cargo's [profile debug setting](https://doc.rust-lang.org/cargo/reference/profiles.html#debug)
+controls debug information separately from debug assertions.
+
+The pinned local native-profile control passes the full workspace tests and
+doctests, HDR/optional-subsampling checks and workspace all-target Clippy.
+`RUST_TEST_THREADS=1` isolates local wall-clock gates: the initial parallel
+run fails the unchanged lossy 10x bound at 22.45x, its isolated control passes
+at 4.07x, and the same full workspace suite passes serially. The initial
+failure remains in `~/tmp/jxl-ci-disk-check.log`; accepted control is
+`~/tmp/jxl-ci-disk-check-serial.log` (rc0, 484 s, peak RSS 1.56 GiB).
+This does not establish a speedup or quantify the CI disk saving.
+
+
+
 ### RESOLVED 2026-11-04: implicit tone-mapping peaks and binary16 underflow
 
 Request/animation validation now receives the peak the writer will use:

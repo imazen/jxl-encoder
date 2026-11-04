@@ -27,6 +27,13 @@ jobs:
   # Native x64 testing (full features, full test suite)
   # ==========================================================================
   build-x64:
+    # Native matrices build both release and optional debug feature closures.
+    # Keep debug symbols out of artifacts to fit the hosted runner's disk.
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
     name: Build x64 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -49,7 +56,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust
+          prefix-key: v2-native-no-debug
 
       - name: Build workspace
         run: cargo build --locked --workspace --release
@@ -119,6 +126,11 @@ jobs:
   # Native ARM64 testing (macOS Intel disabled by owner on 2026-09-08).
   # ==========================================================================
   build-native:
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
     name: Build native (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -144,7 +156,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust
+          prefix-key: v2-native-no-debug
 
       - name: Build workspace
         run: cargo build --locked --workspace --release
