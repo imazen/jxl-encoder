@@ -2774,6 +2774,12 @@ impl Default for VarDctEncoder {
 }
 
 impl VarDctEncoder {
+    /// Keep the calibrated normal policy; strict DC parity follows the
+    /// GradientFixedDC override in libjxl AddVarDCTDC at faster decoding.
+    pub(crate) fn uses_gradient_dc_quantization(&self) -> bool {
+        self.resolved_improvements.dc_encode_libjxl_parity && self.profile.decoding_speed_tier >= 1
+    }
+
     pub(super) fn needs_metric_reference(&self) -> bool {
         #[allow(unused_mut)]
         let mut need = false;
@@ -6317,7 +6323,7 @@ impl VarDctEncoder {
         let phase6_env_on = std::env::var_os("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP").is_some()
             && self.profile.effort <= 7;
         if self.profile.use_libjxl_wp_dc_quant || phase6_env_on {
-            super::quantize_wp::requantize_dc_group_wp(
+            super::quantize_wp::requantize_dc_group(
                 &mut transform_out.quant_dc,
                 &transform_out.float_dc,
                 xsize_blocks,
@@ -6327,6 +6333,7 @@ impl VarDctEncoder {
                 ysize_blocks,
                 params.scale_dc,
                 params.extra_dc_precision,
+                self.uses_gradient_dc_quantization(),
             );
         }
         // W45-RECON part 20 probe: dump post-WP quant_dc.
@@ -7483,7 +7490,7 @@ impl VarDctEncoder {
         let phase6_env_on = std::env::var_os("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP").is_some()
             && self.profile.effort <= 7;
         if self.profile.use_libjxl_wp_dc_quant || phase6_env_on {
-            super::quantize_wp::requantize_dc_group_wp(
+            super::quantize_wp::requantize_dc_group(
                 &mut transform_out.quant_dc,
                 &transform_out.float_dc,
                 xsize_blocks,
@@ -7493,6 +7500,7 @@ impl VarDctEncoder {
                 ysize_blocks,
                 params.scale_dc,
                 params.extra_dc_precision,
+                self.uses_gradient_dc_quantization(),
             );
         }
 

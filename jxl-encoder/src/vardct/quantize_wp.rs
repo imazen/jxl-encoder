@@ -2,7 +2,7 @@
 // Algorithms and constants derived from libjxl (BSD-3-Clause).
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
-//! W44-AUDIT-8 Phase 6 — libjxl `QuantizeWP` DC quantization shape.
+//! Prediction-relative DC quantization: libjxl `QuantizeWP` / `QuantizeGradient`.
 //!
 //! Mirrors libjxl `enc_modular.cc::QuantizeWP` (lines 1542-1559) and the
 //! per-channel walk in `enc_modular.cc:1640-1674` (`else if (nl_dc)` branch).
@@ -38,6 +38,10 @@
 //! the algebraically-equivalent `dc_cfl_factor` shortcut
 //! (`vardct/transform.rs:847`), so we re-derive it here for parity
 //! with libjxl's formula.
+//!
+//! Strict DC parity selects Gradient prediction when faster decoding is set,
+//! matching libjxl `AddVarDCTDC`. Normal policies retain Weighted prediction.
+//! Both apply the same deadzone and snap-to-even rule.
 //!
 //! ## Gate
 //!
@@ -76,7 +80,7 @@ const DC_CFL_FACTOR: [f32; 3] = [0.0, 0.0, 0.5];
 
 /// Per-block QuantizeWP for a single DC value (legacy entry — multiplies
 /// `value * inv_factor` internally). Kept for the unit tests; callers
-/// in [`requantize_dc_group_wp`] use [`quantize_wp_one_presvalued`]
+/// in [`requantize_dc_group`] use [`quantize_wp_one_presvalued`]
 /// which takes the already-scaled `svalue_base` (allowing CFL
 /// subtraction in the scaled domain to match libjxl exactly).
 ///
@@ -90,7 +94,7 @@ fn quantize_wp_one(value: f32, inv_factor: f32, pred: i32) -> i32 {
 }
 
 /// QuantizeWP core, taking `svalue_base = value * inv_factor` already
-/// computed by the caller. Used by [`requantize_dc_group_wp`] so the
+/// computed by the caller. Used by [`requantize_dc_group`] so the
 /// CFL pre-subtraction can apply in the same `inv_factor`-scaled
 /// domain libjxl uses (line 1668: `(row[x] - quant_y * y_factor *
 /// cfl_factor) * inv_factor`).
@@ -135,13 +139,13 @@ fn quantize_wp_one_presvalued(svalue_base: f32, pred: i32) -> i32 {
 /// libjxl's edge behaviour: missing neighbours default to
 /// `Predictor::Gradient`'s edge fallbacks (north → west when y=0,
 /// west → 0 when x=0 and y=0 — the seed value).
-fn wp_predict(
+fn dc_predict(
     qrow: &[i32],
     prev_row: Option<&[i32]>,
     x: usize,
     y: usize,
     xsize: usize,
-    wp_state: &mut WeightedPredictorState,
+    wp_state: Option<&mut WeightedPredictorState>,
 ) -> i32 {
     // Build neighbours mirroring our existing dc_tree_learn.rs edge
     // handling (which itself mirrors libjxl's `PredictNoTreeWP` edge
@@ -180,7 +184,10 @@ fn wp_predict(
         nee,
     };
 
-    wp_state.predict(x, y, xsize, &neighbors)
+    match wp_state {
+        Some(state) => state.predict(x, y, xsize, &neighbors),
+        None => crate::modular::predictor::clamped_gradient(n, w, nw),
+    }
 }
 
 /// Apply libjxl QuantizeWP shape to a full DC group in-place.
@@ -199,7 +206,7 @@ fn wp_predict(
 /// Returns the number of values whose final integer differs from the
 /// pre-pass `quant_dc` value (diagnostic — used by tests / probes).
 #[allow(clippy::too_many_arguments)]
-pub fn requantize_dc_group_wp(
+pub(crate) fn requantize_dc_group(
     quant_dc: &mut [Vec<Vec<i32>>; 3],
     float_dc: &[Vec<f32>; 3],
     xsize_blocks: usize,
@@ -209,6 +216,7 @@ pub fn requantize_dc_group_wp(
     end_by: usize,
     scale_dc: f32,
     extra_dc_precision: u8,
+    gradient: bool,
 ) -> usize {
     let mut changed = 0usize;
     let region_width = end_bx.saturating_sub(start_bx);
@@ -234,7 +242,7 @@ pub fn requantize_dc_group_wp(
         // Allocate a fresh WP state per channel (matches libjxl
         // `weighted::State wp_state(header, xsize, ysize)` per channel
         // at `enc_modular.cc:1647`).
-        let mut wp_state = WeightedPredictorState::with_defaults(region_width);
+        let mut wp_state = (!gradient).then(|| WeightedPredictorState::with_defaults(region_width));
 
         // Walk row-major within the region.
         for (ly, gy) in (start_by..end_by).enumerate() {
@@ -281,13 +289,13 @@ pub fn requantize_dc_group_wp(
 
                 // WP prediction over already-updated `row[..lx]`.
                 let qrow_so_far = &row[start_bx..start_bx + lx + 1]; // includes slot at lx (uninitialised, fine — predict only reads x-1)
-                let pred = wp_predict(
+                let pred = dc_predict(
                     qrow_so_far,
                     prev_row.as_deref(),
                     lx,
                     ly,
                     region_width,
-                    &mut wp_state,
+                    wp_state.as_mut(),
                 );
 
                 let q = quantize_wp_one_presvalued(svalue_base, pred);
@@ -309,7 +317,9 @@ pub fn requantize_dc_group_wp(
 
                 // Update WP error state for this position (mirrors libjxl
                 // line 1660 `wp_state.UpdateErrors(quant_row[x], x, y, xsize)`).
-                wp_state.update_errors(qv, lx, ly, region_width);
+                if let Some(state) = &mut wp_state {
+                    state.update_errors(qv, lx, ly, region_width);
+                }
             }
         }
     }
@@ -379,14 +389,111 @@ mod tests {
             (0..xsize * ysize).map(|i| i as f32).collect(),
             vec![0.0; xsize * ysize],
         ];
-        let _changed =
-            requantize_dc_group_wp(&mut quant_dc, &float_dc, xsize, 0, 0, xsize, ysize, 1.0, 1);
+        let _changed = requantize_dc_group(
+            &mut quant_dc,
+            &float_dc,
+            xsize,
+            0,
+            0,
+            xsize,
+            ysize,
+            1.0,
+            1,
+            false,
+        );
         // Just check we didn't panic and Y channel got non-zero values
         // somewhere (input was 0..16, inv_factor = INV_DC_QUANT[1] * 1.0 * 2).
         let y_nonzero = quant_dc[C_Y].iter().flatten().any(|&v| v != 0);
         assert!(
             y_nonzero,
             "Y channel should have some non-zero quantized values"
+        );
+    }
+
+    #[test]
+    fn gradient_dc_matches_unmodified_libjxl_object() {
+        let fixture = include_str!("quantize_gradient_reference.txt");
+        let mut cases = 0;
+        let mut separates_weighted = false;
+        for line in fixture.lines().filter(|line| !line.starts_with('#')) {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            assert_eq!(fields.len(), 4);
+            let width: usize = fields[0].parse().unwrap();
+            let height: usize = fields[1].parse().unwrap();
+            let inputs: Vec<_> = fields[2]
+                .split(',')
+                .map(|bits| f32::from_bits(u32::from_str_radix(bits, 16).unwrap()))
+                .collect();
+            let expected: Vec<i32> = fields[3]
+                .split(',')
+                .map(|value| value.parse().unwrap())
+                .collect();
+            assert_eq!(inputs.len(), width * height);
+            assert_eq!(expected.len(), inputs.len());
+            for offset in [0, 1] {
+                let stride = width + 2 * offset;
+                let rows = height + 2 * offset;
+                let mut quantized = core::array::from_fn(|_| vec![vec![123456; stride]; rows]);
+                let mut floats = core::array::from_fn(|_| vec![0.0; stride * rows]);
+                for y in 0..height {
+                    for x in 0..width {
+                        floats[C_Y][(y + offset) * stride + x + offset] =
+                            inputs[y * width + x] / INV_DC_QUANT[C_Y];
+                    }
+                }
+                requantize_dc_group(
+                    &mut quantized,
+                    &floats,
+                    stride,
+                    offset,
+                    offset,
+                    offset + width,
+                    offset + height,
+                    1.0,
+                    0,
+                    true,
+                );
+                for y in 0..height {
+                    assert_eq!(
+                        &quantized[C_Y][y + offset][offset..offset + width],
+                        &expected[y * width..(y + 1) * width],
+                        "{width}x{height} offset {offset}, row {y}"
+                    );
+                }
+                let mut weighted = quantized.clone();
+                requantize_dc_group(
+                    &mut weighted,
+                    &floats,
+                    stride,
+                    offset,
+                    offset,
+                    offset + width,
+                    offset + height,
+                    1.0,
+                    0,
+                    false,
+                );
+                separates_weighted |= weighted[C_Y] != quantized[C_Y];
+                for channel in &quantized {
+                    for (y, row) in channel.iter().enumerate() {
+                        for (x, &value) in row.iter().enumerate() {
+                            if x < offset
+                                || x >= offset + width
+                                || y < offset
+                                || y >= offset + height
+                            {
+                                assert_eq!(value, 123456, "outside DC region {x},{y}");
+                            }
+                        }
+                    }
+                }
+            }
+            cases += 1;
+        }
+        assert_eq!(cases, 6);
+        assert!(
+            separates_weighted,
+            "oracle inputs must distinguish the two predictors"
         );
     }
 }
